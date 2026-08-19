@@ -8065,8 +8065,18 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
   color:var(--muted,#9aa);font-size:13px;padding:6px 2px;cursor:pointer;text-align:left}
 .fx-trash-hd .chev{margin-left:auto}
 .fx-trash-body{padding:0 2px 4px}
-.fx-trash-row{display:flex;align-items:center;gap:10px;padding:4px 2px;font-size:13px}
-.fx-trash-row .mini{margin-left:auto}
+/* A ROW HOLDS A PATH, AND A PATH IS ARBITRARILY LONG. Three flex children with no `min-width:0`
+   cannot shrink below their content, so a deep path pushed the Restore button past the panel and
+   out of the sidebar — the block "didn't even fit properly". Each text cell is now allowed to
+   shrink and ellipsise (the full path is on the title attribute), the button never shrinks, and the
+   row wraps rather than overflowing on a narrow sidebar or a phone. */
+.fx-trash-row{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:4px 2px;font-size:13px}
+.fx-trash-row > span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fx-trash-row > span:first-child{flex:1 1 8em}
+/* No `direction:rtl` ellipsis trick here: this client ships Arabic and Japanese, and
+   flipping the base direction to clip a path from the left garbles mixed text. */
+.fx-trash-row > span.muted{flex:1 1 6em}
+.fx-trash-row .mini{margin-left:auto;flex:0 0 auto}
 .fx-trash-all{margin-top:6px}
 
 /* The synced view's selection bar is injected INSIDE the file grid, and a grid treats any child

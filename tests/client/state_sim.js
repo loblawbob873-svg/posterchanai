@@ -191,7 +191,9 @@ const only = (p, kind) => {
   const p = plan(state, disk, index);
   ok(p.trash.length === 150, 'setup: 150 planned trashes');
   const v = S.check(p, { state });
-  ok(v.some(x => x.kind === 'massTrash'), 'MASS_CAP fires on an unattended sweep');
+  ok(v.some(x => x.kind === 'massTrash'), 'a bulk delete fires on an unattended sweep');
+  ok(v.some(x => x.kind === 'massTrash' && x.rule === 'floor'),
+     'the ABSOLUTE floor is what catches this — 150 trashes against 10,000 kept passes every ratio');
   ok(S.check(p, { state, allowMassTrash: true }).every(x => x.kind !== 'massTrash'),
      'the deliberate confirm flow may pass the cap');
   // …and the same cap pointing outwards.

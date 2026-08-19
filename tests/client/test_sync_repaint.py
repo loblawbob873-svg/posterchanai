@@ -37,7 +37,12 @@ def src():
 class TestSkipsDoNotRedrawTheScreen(unittest.TestCase):
     def test_a_declined_sweep_updates_only_its_own_line(self):
         body = src()
-        m = re.search(r"if\(!decision\.run && !o\.dryRun\)\{ setStatus\(([^)]*)\)", body)
+        # The branch, then the setStatus INSIDE it — not the two glued together on one line. They
+        # stopped being adjacent when the decline grew its "· watching (…)" wording, and a regex
+        # that wanted them adjacent has been failing (i.e. measuring nothing) ever since.
+        i = body.index("if(!decision.run && !o.dryRun){")
+        branch = body[i:body.index("return { skipped:true, why:decision.why };", i)]
+        m = re.search(r"setStatus\(([^;]*)\);", branch)
         self.assertIsNotNone(m, "the decline branch has moved — check it still reports live-only")
         self.assertIn("true", m.group(1),
                       "a declined sweep must pass liveOnly; it is the commonest outcome there is, and "

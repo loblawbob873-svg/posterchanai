@@ -528,7 +528,13 @@ def test_a_sweep_holds_a_wake_lock_and_can_never_leak_it():
 
     # Taken for a real sweep only, and given back on every exit including a throw.
     assert "!o.dryRun && _wake && _wake.wakeBegin" in sync, "a dry run must not hold the CPU up"
-    tail = sync[sync.index("running.delete(f.id);"):][:400]
+    # The `finally` of the sweep itself, not the first `running.delete` in the file — there are five
+    # now (an early return when the folder has no bridge, the native hand-off, the queue drain), and
+    # anchoring on the first one pointed this assertion at a branch that never took the lock. It
+    # silently stopped measuring the release path, which is the only thing it was written to check.
+    fin = sync.rindex("} finally {")
+    tail = sync[fin:][:700]
+    assert "running.delete(f.id);" in tail, "the sweep's finally block has moved — re-anchor this"
     assert "wakeEnd" in tail, "a sweep that threw would keep the processor awake"
 
 

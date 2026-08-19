@@ -195,8 +195,16 @@
    * be partial: a record set that could not be read throws before plan() runs). Advisory verdicts
    * except `fatal`, which nothing may override. */
   const FLOOR = 20;
-  const MASS_CAP = 100;   // absolute per-sweep trash ceiling for unattended sweeps
+  const MASS_CAP = 100;   // the SERVER's tombstone backstop, exported so one number is quoted
+                          // in both halves. It is no longer a rule here: everything between
+                          // FLOOR and it was the silent band (see check()).
 
+  /* Two rules can raise the same `kind`, and they answer different questions: `shortList` is "this
+   * sweep would remove more than it keeps" (proportional, the phone-book rule) and `floor` is "this
+   * is a bulk change either way, and bulk changes need a person" (absolute, what a ratio cannot
+   * see). `apply()` and every caller key on `kind` alone — one dialog, one answer — but the tests
+   * and the card need to know WHICH rule spoke, or a change to one silently stops the other from
+   * being measured. */
   function check(plan, ctx){
     const c = ctx || {}, p = plan || {}, out = [];
 
@@ -207,30 +215,45 @@
 
     // A SHORT LIST IS A DELETE ORDER: never trash more than survives the sweep.
     if(p.trash.length >= FLOOR && p.trash.length > keep){
-      out.push({ kind:'massTrash', n: p.trash.length, keep,
+      out.push({ kind:'massTrash', rule:'shortList', n: p.trash.length, keep,
                  why: 'this sweep would move ' + p.trash.length + ' files to the trash and keep ' + keep });
     }
-    // And an absolute cap, because proportional is not enough on a big folder.
-    if(!c.allowMassTrash && p.trash.length > MASS_CAP){
-      out.push({ kind:'massTrash', n: p.trash.length, keep,
-                 why: 'this sweep would move ' + p.trash.length + ' files to the trash — more than '
-                    + MASS_CAP + ' needs a deliberate delete, not an unattended sweep' });
+    /* AND AN ABSOLUTE FLOOR, THE SAME ONE RESURRECTIONS HAVE HAD ALL ALONG — because the two
+     * directions were never symmetric and the asymmetry always resolved towards deleted.
+     *
+     * Measured against this file, on the folder it was reported from: 59 stale tombstones against a
+     * 1,000-file folder. Undoing them (59 sends, `resurrect`) tripped the floor at 20 and was
+     * REFUSED on every device, every sweep, for ever — "NOT republished — your other devices deleted
+     * these". Applying them (59 trashes) passed the ratio (59 < 1000 kept) and passed a cap of 100,
+     * so it ran SILENTLY, with no verdict and no dialog, on the laptop and then on the tablet. The
+     * guard built to protect the files is precisely what guaranteed the deletions won: the one
+     * device holding the copies was the only one forbidden to act.
+     *
+     * A ratio cannot see this for the same reason it cannot see a restored backup — a mass deletion
+     * arrives beside thousands of unchanged files, and 59 of 1,000 looks like nothing. So the floor
+     * is absolute and it is the same number in both directions: past FLOOR, neither putting files
+     * back nor taking them away happens without a person, and whichever way they answer, the folder
+     * converges instead of oscillating. A refusal still suppresses ONE BUCKET, never the sweep. */
+    if(!c.allowMassTrash && p.trash.length >= FLOOR){
+      out.push({ kind:'massTrash', rule:'floor', n: p.trash.length, keep,
+                 why: 'this sweep would move ' + p.trash.length + ' files to the trash — '
+                    + FLOOR + ' or more needs a deliberate delete, not an unattended sweep' });
     }
     // The same question pointing outwards: this device telling every other one to delete.
     if(p.tombstone.length >= FLOOR && p.tombstone.length > keep){
-      out.push({ kind:'massTombstone', n: p.tombstone.length, keep,
+      out.push({ kind:'massTombstone', rule:'shortList', n: p.tombstone.length, keep,
                  why: 'this sweep would tell your other devices to delete ' + p.tombstone.length
                       + ' files and keep ' + keep });
     }
-    if(!c.allowMassTrash && p.tombstone.length > MASS_CAP){
-      out.push({ kind:'massTombstone', n: p.tombstone.length, keep,
+    if(!c.allowMassTrash && p.tombstone.length >= FLOOR){
+      out.push({ kind:'massTombstone', rule:'floor', n: p.tombstone.length, keep,
                  why: 'this sweep would tell your other devices to delete ' + p.tombstone.length
-                    + ' files — more than ' + MASS_CAP + ' needs a deliberate delete' });
+                    + ' files — ' + FLOOR + ' or more needs a deliberate delete' });
     }
     // An absolute floor on resurrections: a restored backup arrives beside thousands of ordinary
-    // uploads, so no ratio can see it.
+    // uploads, so no ratio can see it. The trash rules above are now its mirror image.
     const res = p.send.filter(s => s.resurrect).length;
-    if(res >= FLOOR) out.push({ kind:'massResurrect', n: res,
+    if(res >= FLOOR) out.push({ kind:'massResurrect', rule:'floor', n: res,
                                 why: 'this sweep would republish ' + res
                                      + ' files your other devices deleted' });
 

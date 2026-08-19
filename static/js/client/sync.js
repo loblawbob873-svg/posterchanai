@@ -1660,17 +1660,26 @@
    * happens to their files — never in the engine's terms. Nothing erases anything either way: a
    * delete here is a move into `.pc-trash`. */
   function _ask(key, v){
+    /* THE COUNT IN THE SENTENCE HAS TO BE THE ONE THAT MADE IT ASK. Both of these read "this sweep
+     * keeps only N", which was written for the RATIO rule and is nonsense under the absolute floor
+     * that now fires alongside it — "move 59 files to the trash, this sweep keeps only 1,000" reads
+     * as a typo, on the one dialog that has to be trusted. So the survivor count is quoted only when
+     * it is actually the alarming part. */
+    const shortList = (x) => (x.keep != null && x.n > x.keep)
+      ? ' — and this sweep keeps only ' + x.keep + ', which is fewer than it would remove' : '';
     if(v.kind === 'massTrash')
       return '“' + key + '” — move ' + v.n + ' file' + (v.n === 1 ? '' : 's')
-           + ' on this device to the trash?\n\nThey are marked deleted on your other devices, and '
-           + 'this sweep keeps only ' + v.keep + '. If you did not delete them somewhere else, '
-           + 'cancel — nothing is removed and your files stay where they are.\n\nNothing is erased '
+           + ' on this device to the trash?' + '\n\nYour other devices marked them deleted'
+           + shortList(v) + '. If you did not delete them somewhere else — or you have just put '
+           + 'them back from a backup — cancel: nothing is removed and your files stay exactly '
+           + 'where they are.\n\nIf a device still HAS these files, the way to keep them everywhere '
+           + 'is “Put them back everywhere” on that device, not Yes here.\n\nNothing is erased '
            + 'either way: a delete here is a move into .pc-trash.';
     if(v.kind === 'massTombstone')
       return '“' + key + '” — tell your other devices to delete ' + v.n + ' file'
-           + (v.n === 1 ? '' : 's') + '?\n\nThey are gone from this device and this sweep keeps '
-           + 'only ' + v.keep + '. If this device lost sight of the folder rather than you deleting '
-           + 'them, cancel — nothing changes anywhere.';
+           + (v.n === 1 ? '' : 's') + '?\n\nThey are gone from this device' + shortList(v)
+           + '. If this device lost sight of the folder rather than you deleting them, cancel '
+           + '— nothing changes anywhere.';
     if(v.kind === 'massResurrect')
       return '“' + key + '” — put ' + v.n + ' file' + (v.n === 1 ? '' : 's')
            + ' back on your other devices?\n\nYour other devices deleted them, but they look '
@@ -1905,6 +1914,40 @@
     _natWatch.set(id, t);
     // Fallback stays on screen until the first answer lands, so nothing flickers through blank.
     if(fallback) setStatus(id, fallback, null, true);
+  }
+  /* The last background sweep's own report, read once per visit. A phone sweeps with the screen
+   * off and cannot ask anybody anything, so its refusals sit here until the app is opened — which
+   * is precisely when they have to be readable. */
+  let _natLast = null, _natLastAt = 0;
+  const _NAT_LAST_TTL = 20000;
+  function _readNativeLast(){
+    const fs = FS();
+    if(!fs || typeof fs.nativeReport !== 'function') return;
+    if(Date.now() - _natLastAt < _NAT_LAST_TTL) return;
+    _natLastAt = Date.now();
+    fs.nativeReport().then(nat => {
+      let rep = null;
+      try{ rep = nat && nat.report ? JSON.parse(nat.report) : null; }catch(_){ rep = null; }
+      const was = _natLast && _natLast.at;
+      _natLast = rep;
+      if(rep && rep.at !== was && PC.VIEW === 'sync') paint();
+    }).catch(() => {});
+  }
+  /* One sentence, or nothing. Only the states where the sweep has STOPPED and will not resume on
+   * its own get a line — a refusal needs a person, and a person needs to know that. */
+  function _natLastFor(key){
+    const r = _natLast;
+    if(!r || r.key !== key) return '';
+    if(r.refusedTrash)
+      return 'A background sync would have moved files here to the trash and stopped to ask. '
+           + 'Press Sync now to see how many and decide — nothing has been removed.';
+    if(r.refusedResurrect)
+      return 'A background sync would have put files back on your other devices and stopped to ask. '
+           + 'Press Sync now to decide, or use “Put them back everywhere”.';
+    if(r.refusedRemoteDelete)
+      return 'A background sync would have told your other devices to delete files and stopped to '
+           + 'ask. Press Sync now to see how many — nothing has been deleted anywhere.';
+    return '';
   }
   function _stopWatchNative(id){
     const t = _natWatch.get(id);
@@ -2399,8 +2442,17 @@
      * lands — never awaited, because this screen must draw immediately and the answer is an extra. */
     const elsewhere = unmapped();
     accountFolders().then(changed => { if(changed && PC.VIEW === 'sync') paint(); });
+    /* WHAT THE SWEEP THAT RAN WITHOUT THIS PAGE DECIDED. `_watchNative` says "whatever it did is in
+     * the stored report, and the next repaint reads that" — and no repaint ever did: the only
+     * reader was the Background details button, which copies a JSON blob to the clipboard. So a
+     * background sweep that REFUSED something — the case that most needs a person, and the only
+     * case where nothing else will happen until one arrives — was invisible on the screen the
+     * person is looking at. Asked once per visit, and only a refusal or a failure is worth a line;
+     * an ordinary background sweep says nothing, as it should. */
+    _readNativeLast();
     const rows = list.map(f => {
       const st = status.get(f.id) || {};
+      const nat = _natLastFor(keyOf(f));
       const pr = prefs(f);
       // A grant can be revoked in system settings, or the drive can be gone. Saying so beats
       // "unknown sync folder" on every sweep forever.
@@ -2425,6 +2477,7 @@
         <div class="sync-status muted small">${lost ? 'this device can’t reach that folder any more — nothing has been lost, point it at the folder again'
           : PC.enc(st.text || 'not synced yet')}</div>
         ${lost ? '<div class="sync-actions"><button class="btn btn-neon small sync-relink">Point at the folder again…</button></div>' : ''}
+        ${nat ? `<div class="sync-new"><b>Waiting for you.</b> <span class="muted small">${PC.enc(nat)}</span></div>` : ''}
         ${details(st.report)}
         <label class="sync-ex"><span class="muted small">Don't sync these (one per line — a folder name covers everything inside it)</span>
           <textarea class="input sync-ex-ta" rows="2" placeholder="Old&#10;*.tmp">${PC.enc((f.excludes||[]).join('\n'))}</textarea></label>
@@ -2442,6 +2495,8 @@
           ${pr.paused ? '' : '<button class="btn btn-ghost small sync-pause" title="Stop this folder syncing until you press Start. Nothing is deleted and nothing is undone.">Pause</button>'}
           <button class="btn btn-ghost small sync-deep" title="Re-read and re-hash every file. Slow on a big folder — for a file edited in place without changing its size or timestamp.">Deep check</button>
           <button class="btn btn-ghost small sync-verify" title="Read every file on this device and check it against what your devices agree the folder holds. Changes nothing.">Verify</button>
+          ${(st.report && st.report.refusedResurrect)
+            ? `<button class="btn btn-neon small sync-putback">\u267b Put ${st.report.refusedResurrect.n} file${st.report.refusedResurrect.n===1?'':'s'} back everywhere</button>` : ''}
           <button class="btn btn-ghost small sync-tidy">Tidy up conflict copies</button>
           <button class="btn btn-ghost small sync-restore hidden">\u267b Restore from trash</button>
           <button class="btn btn-ghost small sync-trash">Empty trash</button>
@@ -2703,6 +2758,33 @@
           rb.onclick = async () => { rb.disabled = true;
             try{ await restoreTrash(id); }finally{ rb.disabled = false; paint(); } };
         } }
+      /* THE WAY OUT OF A STANDOFF, AND IT HAD TO BE A BUTTON.
+       *
+       * "NOT republished — your other devices deleted these" is a true report of a refusal and a
+       * dead end: the sweep declines every time, the message returns every time, and the only thing
+       * offered was the same mid-sweep dialog that started the round trip. Reported as "it always
+       * wants to republish the conflict files… if I click ok it just restarts the drama".
+       *
+       * This names the paths instead of re-deciding them. They go through `resend`, which is the
+       * caller saying "send these, I mean it" — not an inference from a timestamp — so the
+       * resurrect floor does not apply to them (see the executor) and the files come back on every
+       * device on its next sweep. One press, and the folder converges instead of oscillating. */
+      { const pb = card.querySelector('.sync-putback');
+        if(pb) pb.onclick = async () => {
+          const f = get(); if(!f) return;
+          const rep = (status.get(f.id) || {}).report || {};
+          const paths = ((rep.plan || {}).upload || []).filter(a => a && a.resurrect).map(a => a.path);
+          if(!paths.length){ PC.toast('nothing left to put back — sync again to look afresh'); return; }
+          if(!await PC.uiConfirm('Put ' + paths.length + ' file' + (paths.length === 1 ? '' : 's')
+             + ' back on every device that syncs \u201c' + keyOf(f) + '\u201d?\n\nThese are files this '
+             + 'device still has and your other devices marked deleted. They are uploaded from THIS '
+             + 'copy, and every other device fetches them back on its next sweep.\n\nIf you meant '
+             + 'the deletions to stand, cancel and press Sync — it will ask before removing '
+             + 'anything here.')) return;
+          pb.disabled = true;
+          try{ await swept(f, { manual: true, resend: paths }); }
+          finally{ pb.disabled = false; paint(); }
+        }; }
       card.querySelector('.sync-tidy').onclick = async () => {
         const f = get(); if(!f) return;
         setStatus(f.id, 'looking for redundant copies…');

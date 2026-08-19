@@ -53,7 +53,18 @@ the failures of the two earlier engines impossible rather than guarded:
   ghost conflicts.
 - **The server backstops mass deletion.** A batch that tombstones more than 100 files is refused
   outright unless it came through the deliberate-delete confirmation — a second, server-side copy
-  of the client's own guard, for the client that has gone wrong.
+  of the client's own guard, for the client that has gone wrong. It is a *backstop*, not the guard:
+  the client's own floor is 20, and everything between 20 and 100 is exactly the band a wave of
+  stale tombstones used to cross in silence.
+- **A tombstone keeps the address of what it deleted, taken from the shared record OR the journal —
+  whichever still has one.** Both executors read `index[p] || state[p]`, which reads as "prefer what
+  we applied" and is how the address goes missing: a journal entry that had lost its own (a struck
+  CAS write, an era change, a row from an older build) shadowed a record that still had one. An
+  address-less tombstone breaks two things at once and reports neither — *Deleted on every device*
+  cannot offer the file, because it can only restore what it can address; and no device still holding
+  the file can ever settle against the deletion, because *delete loses to edit* compares checksums and
+  an absent checksum always reads as an edit. That device republishes for ever and trips the
+  resurrect floor for ever, which is the standoff reported as "it always wants to republish".
 
 Each device also keeps a **journal** (what it applied, and what each file looked like on disk when
 it did) — the third input the reconcile needs to tell "changed here" from "changed there". Reads
@@ -111,16 +122,37 @@ These are the rules the engine will not bend, each one a way to lose a file:
   a restore makes everything look edited — the resurrections arrive beside thousands of ordinary
   uploads that any ratio counts as "kept", and 3,930 beside 11,884 sails past every one of them.
   Refusing suppresses only the republishing, records nothing in the agreement, and asks again next
-  sweep. It is reported by name, not as a tally: deciding whether to delete them again is a decision
+  sweep. **And the refusal now has a way out that is not the same dialog again**: the folder's card
+  offers *"Put N files back everywhere"*, which sends those exact paths by name. A named path is not
+  an inference from a timestamp — it is a person answering the question the floor exists to ask — so
+  the floor does not apply to it, and one press converges the folder. It is reported by name, not as a tally: deciding whether to delete them again is a decision
   you can only make if you can see which files they are.
-- **A sweep may not delete more than it keeps.** Every rule above decides one path, and each of them
-  is right — but a manifest that has gone wrong does not produce one bad decision, it produces ten
-  thousand identical ones. Measured on a real Pictures folder: the shared manifest held ~10k paths
-  and every single one was a tombstone (`n=0` live on the server), so re-adding the folder on the
-  device that still had the files read "deleted elsewhere" for all of them and moved the lot into
-  `.pc-trash`, correctly, per path, without a word. Past 20 files, a sweep that would trash more
-  than survives it stops and asks; a background sweep — the watcher, a resume, the heartbeat — has
-  nobody to ask and so refuses. A refusal is **not recorded in the agreement**, so the next sweep
+- **A sweep may not delete more than it keeps, and past 20 it may not delete in bulk at all.** Every
+  rule above decides one path, and each of them is right — but a manifest that has gone wrong does
+  not produce one bad decision, it produces ten thousand identical ones. Measured on a real Pictures
+  folder: the shared manifest held ~10k paths and every single one was a tombstone (`n=0` live on the
+  server), so re-adding the folder on the device that still had the files read "deleted elsewhere"
+  for all of them and moved the lot into `.pc-trash`, correctly, per path, without a word. A sweep
+  that would trash more than survives it stops and asks; a background sweep — the watcher, a resume,
+  the heartbeat — has nobody to ask and so refuses.
+
+  **The absolute floor is the same 20 as the rule above it, and for a long time it was not.** The
+  proportional rule was paired with a cap of 100, and between the two there is a wide silent band:
+  measured on the folder this was reported from, 59 stale tombstones over a 1,000-file pair passed
+  the ratio (59 is nothing beside 1,000 kept) and passed the cap, so a laptop and then a tablet moved
+  the same 59 files into `.pc-trash` with no verdict, no dialog and no line on the card — while the
+  desktop, which still held every one of them, was refused by the resurrect floor at 20 and could
+  only report "NOT republished — your other devices deleted these", on every sweep, for ever. **The
+  guard written to protect the files is what guaranteed the deletions won**: the one device in a
+  position to act was the only one forbidden to. A ratio cannot see a bulk deletion for the same
+  reason it cannot see a restored backup — it arrives beside thousands of unchanged files. So the
+  floor is absolute and it is one number in both directions, and whichever way the person answers,
+  the folder converges instead of oscillating.
+
+  The cost is real and is the right one: an explicit deletion of 20+ files made in Files is confirmed
+  once where it was made, and then confirmed once more on each device as it applies. That is the
+  price of never again applying a deletion nobody watched, and the dialog names the count and says
+  which device is holding the copies. A refusal is **not recorded in the agreement**, so the next sweep
   re-proposes it and asks again, and only deletions are suppressed: uploads and downloads still run,
   because a guard that aborts the whole sweep turns "it deleted everything" into "it syncs nothing,
   for ever". The server's collapse guard cannot cover this — a mass *local* delete writes no

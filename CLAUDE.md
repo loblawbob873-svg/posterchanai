@@ -723,9 +723,44 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   lost record + held file → re-publish ("restoring it from this copy"); address-less record + held
   file → re-send; a JOINING device's unchanged copy OBEYS a tombstone whose csum matches (no more
   resurrect-on-join) while an edited copy still wins; thin journal (<half the folder) forces a hashed
-  scan (dirty join: identical bytes settle, EXACTLY the divergent files conflict); guards kept
-  verbatim (massTrash floor+MASS_CAP=100, massTombstone, massResurrect absolute floor, file/folder
-  `blocked` fatal) and a refusal suppresses ONE BUCKET, never the sweep.
+  scan (dirty join: identical bytes settle, EXACTLY the divergent files conflict); guards
+  (massTrash, massTombstone, massResurrect — **one absolute FLOOR of 20 in every direction**, plus
+  the "shorter than what survives" ratio, plus file/folder `blocked` fatal) and a refusal suppresses
+  ONE BUCKET, never the sweep.
+  **THE GUARDS WERE ASYMMETRIC AND THAT IS WHY THE FOLDER KEPT CONVERGING ON DELETED.** Trash had a
+  ratio and a cap of 100; resurrect had an absolute floor of 20 — and between 20 and 100 is a silent
+  band a wave of stale tombstones crosses without a word. Measured on the reported folder: **59 stale
+  tombstones over 1,000 files**. The laptop trashed all 59, then the tablet trashed all 59, each with
+  no verdict, no dialog and nothing on the card (59 < 1000 kept, 59 < 100). The DESKTOP, which had
+  just had every one of them restored from a NAS backup and was the only device able to fix it, was
+  refused by the resurrect floor and could only print "NOT republished — your other devices deleted
+  these", every sweep, for ever. **The guard written to protect the files is what guaranteed the
+  deletions won.** A ratio cannot see a bulk delete for the same reason it cannot see a restored
+  backup: it arrives beside thousands of unchanged files. So the floor is absolute and identical
+  both ways, and `check()` verdicts now carry `rule` (`shortList` vs `floor`) because two rules
+  raising one `kind` means editing one silently stops the other being measured. The cost is
+  deliberate: an explicit 20+ delete is confirmed once where it is made and once per device as it
+  applies — do NOT "fix" that by exempting deliberate deletes, which is the same hole with a flag on
+  it. The way OUT of a standoff is the card's **"Put N files back everywhere"**, which sends those
+  paths through `resend`; the executor STRIPS `resurrect` from a path somebody named, because a name
+  is a person answering the question the floor exists to ask, not another inference from a timestamp.
+  Left flagged, `apply()` swept the user's own explicit restore back out of the plan and the button
+  did nothing. `tests/client/test_delete_and_restore_symmetry.py`.
+  **A TOMBSTONE'S ADDRESS IS MERGED FROM `state` AND `index`, NEVER PICKED.** Both executors read
+  `index[p] || state[p]` — "prefer what we applied" — so a journal entry that had lost its address (a
+  struck CAS write, an era change, an older build) SHADOWED a record that still had one and the
+  tombstone was published naming nothing. That breaks two things at once and reports neither: Files →
+  "Deleted on every device" can only offer ADDRESSED tombstones (107 deletions, **3 restorable**), and
+  no device still holding the file can settle against it — delete-loses-to-edit compares csums and an
+  absent csum always reads as an edit, so it republishes for ever and trips the resurrect floor for
+  ever. NativeSweep read `index` ALONE, which is worse on the device most likely to have a cleared
+  journal.
+  **`tests/test_android_native_sweep.py` HAD BEEN DEAD SINCE THIS REWRITE** — its fakes still
+  implemented the per-device-document interfaces, so every test in it failed at javac while the sweep
+  it covers was being changed, and a test that cannot compile is a test that does not exist, only
+  quieter. It is rewritten against the record set (a FakeNet with real per-file CAS, era and the
+  tombstone backstop) and RUNS the phone's sweep; `tests/test_android_sync_compiles.py` is the floor
+  that stops the whole package silently losing compile coverage again.
   **Transport** (sync.js `stateS`): IndexedDB cache + DELTA reads (`since` on the relay's
   `list_docs`, era-checked; full read once ever per device), batched CAS puts (400/batch, results
   mapped back to paths: ok/stale/failed), an oversized chunk list (>~58KB JSON — an Android-chunked

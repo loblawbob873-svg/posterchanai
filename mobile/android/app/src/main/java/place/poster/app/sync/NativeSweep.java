@@ -101,6 +101,10 @@ public final class NativeSweep {
             if (repaired > 0) m.put("repaired", (long) repaired);
             if (!refusedTrash.isEmpty()) m.put("refusedTrash", refusedTrash);
             if (!refusedResurrect.isEmpty()) m.put("refusedResurrect", refusedResurrect);
+            /* The outward-pointing refusal was the one kind the report did not carry, so a phone
+             * that declined to tell every other device to delete said so nowhere a person could
+             * read it. All three refusals need a person; all three now travel. */
+            if (refusedRemoteDelete != null) m.put("refusedRemoteDelete", refusedRemoteDelete);
             if (!deferredWhy.isEmpty()) m.put("deferredWhy", deferredWhy);
             if (!error.isEmpty()) m.put("error", error);
             if (!failed.isEmpty()) m.put("firstFailure", failed.get(0));
@@ -430,12 +434,19 @@ public final class NativeSweep {
                 continue;
             }
             Map<String, Object> tomb = new LinkedHashMap<String, Object>();
-            // The tombstone keeps the file's address — mirrors the JS executor: it is what makes
-            // "Restore on every device" possible after the fact.
-            Map<String, Object> prev = index.get(path);
-            if (prev != null)
+            /* The tombstone keeps the file's address — mirrors the JS executor: it is what makes
+             * "Restore on every device" possible after the fact. MERGED from the shared record and
+             * this device's journal, in that order, never picked: reading the journal alone (which
+             * is all this did) published an address-less tombstone for every path whose journal
+             * entry had been struck or cleared by an era change — unrestorable account-wide, and
+             * unsettleable by any device still holding the file, since delete-loses-to-edit
+             * compares csums and an absent csum always reads as an edit. */
+            Map<String, Object> shared = state.get(path);
+            for (Map<String, Object> src : java.util.Arrays.asList(shared, index.get(path))) {
+                if (src == null) continue;
                 for (String k : new String[]{"sha", "csum", "size", "mtime", "chunks", "cs", "ps"})
-                    if (prev.get(k) != null) tomb.put(k, prev.get(k));
+                    if (src.get(k) != null) tomb.put(k, src.get(k));
+            }
             tomb.put("v", t.get("v"));
             tomb.put("by", device);
             tomb.put("deletedAt", now);

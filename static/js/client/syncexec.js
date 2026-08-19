@@ -269,15 +269,30 @@
         extra.push({ path: p, v: E.bump(state[p], index[p]), stat: disk[p],
                      why: 'sending again — the store no longer has these bytes' });
       }
-      if(extra.length){
+      /* A PATH SOMEBODY NAMED IS NOT A GUESS, SO IT IS NOT GUARDED. `resurrect` marks a send the
+       * ENGINE inferred from a fresh timestamp — it may be a real edit or it may be a backup
+       * restored, the engine cannot tell, and past FLOOR it rightly asks. But this list did not come
+       * from an inference: it came from a person pressing a button on these exact files. Left
+       * flagged, the massResurrect verdict swept them straight back out of the plan again
+       * (`apply()` drops every resurrect at once), so the one deliberate way out of a standoff —
+       * "put these back everywhere" — silently did nothing and the folder stayed deleted. */
+      let unflagged = 0;
+      const relist = plan.send.map(u => {
+        if(!u.resurrect || !want.has(u.path)) return u;
+        unflagged++;
+        return Object.assign({}, u, { resurrect: false,
+                                      why: 'putting this back — asked for by name on this device' });
+      });
+      if(extra.length || unflagged){
         const drop = new Set(extra.map(x => x.path));
         plan = Object.assign({}, plan, {
-          send: plan.send.concat(extra),
+          send: relist.concat(extra),
           settle: plan.settle.filter(x => !drop.has(x.path)),
           fetch: plan.fetch.filter(x => !drop.has(x.path)),
           keepBoth: plan.keepBoth.filter(x => !drop.has(x.path)),
         });
-        report.resent = extra.length;
+        if(extra.length) report.resent = extra.length;
+        if(unflagged) report.restoring = unflagged;
       }
     }
     report.plan = plan;
@@ -287,13 +302,30 @@
 
     const verdicts = E.check(plan, { state, indexSize: Object.keys(index).length,
                                      caseFolds: fs.caseFolds !== false });
+    /* ONE QUESTION PER KIND, NOT ONE PER RULE. Two rules can raise `massTrash` — the proportional
+     * "this removes more than it keeps" and the absolute floor — and both fire together on exactly
+     * the sweep that matters most. Asked per verdict, that is the SAME dialog twice in a row about
+     * the same files, which is how a person learns to click through the one that counts. `apply()`
+     * has always keyed on `kind`, so one answer covers both; the SHORT-LIST wording is preferred
+     * when it applies, because "fewer survive than would be removed" is the more alarming fact and
+     * it is the one that must be read. Fatal verdicts are never offered at all. */
     const allowed = [];
+    const asked = new Map();
     for(const v of verdicts){
       if(v.fatal){ report.refused.push(v); continue; }
+      const seen = asked.get(v.kind);
+      if(seen !== undefined){
+        if(!seen) report.refused.push(v);
+        continue;
+      }
+      const worst = verdicts.filter(x => !x.fatal && x.kind === v.kind)
+                            .sort((a, b) => (a.rule === 'shortList' ? -1 : 0)
+                                          - (b.rule === 'shortList' ? -1 : 0))[0] || v;
       let ok = false;
       if(!o.dryRun && o.manual && typeof o.confirm === 'function'){
-        try{ ok = !!(await o.confirm(v)); }catch(_){ ok = false; }
+        try{ ok = !!(await o.confirm(worst)); }catch(_){ ok = false; }
       }
+      asked.set(v.kind, ok);
       if(ok) allowed.push(v.kind); else report.refused.push(v);
     }
     plan = E.apply(plan, verdicts, allowed);
@@ -630,10 +662,18 @@
        * nobody can undo account-wide — the store still holds the bytes, but nothing remembers
        * which bytes. ~100 bytes per tombstone buys "Restore on every device" for as long as the
        * record lives. */
-      const _prev = index[t.path] || state[t.path] || {};
+      /* MERGED, NOT PICKED. `index[p] || state[p]` reads as "prefer what we applied", and it is
+       * how the address goes missing: a journal entry that lost its address (a struck CAS write, an
+       * era change, a row written by an older build) SHADOWED a record that still had one, so the
+       * tombstone was published naming nothing. Two things then break at once and neither says so —
+       * "Deleted on every device" cannot offer the file (it lists only addressed tombstones: 107
+       * deletions, 3 restorable), and a device still holding the file can never settle against it,
+       * because the delete-loses-to-edit test compares csums and an absent csum always reads as an
+       * edit — so it republishes for ever and trips the resurrect floor for ever. */
       const _keep = {};
-      for(const k of ['sha','csum','size','mtime','chunks','cs','ps'])
-        if(_prev[k] !== undefined) _keep[k] = _prev[k];
+      for(const _src of [state[t.path] || {}, index[t.path] || {}])
+        for(const k of ['sha','csum','size','mtime','chunks','cs','ps'])
+          if(_src[k] !== undefined) _keep[k] = _src[k];
       record(t.path, Object.assign(_keep, { v: t.v, by: me, deletedAt: now }), null, true);
       report.removedRemote.push(t.path);
     }
@@ -662,6 +702,15 @@
   /* ---- pieces ---------------------------------------------------------------------------------- */
 
   const msg = (e) => (e && e.message) || String(e);
+  /* WHAT THE PERSON HAS TO DO, IN THE ERROR ITSELF. "checksum mismatch after download" is exactly
+   * what happened and tells nobody what to do about it — pressed again it says the same thing, which
+   * reads as the app being broken rather than as one damaged copy in the store. The repair is not
+   * on this device (refetching gets the same bytes; that is what a content address means), so the
+   * sentence names the device that can fix it. The prefix is what `badFetch` and the conflict loop
+   * match on, so it stays first and stays stable. */
+  const BAD_COPY = 'checksum mismatch after download — refusing to write it. The stored copy is '
+                 + 'damaged, so fetching it again gets the same bytes; the fix is on the device that '
+                 + 'still has this file — it re-sends by itself, or press Verify there';
   const STOPPED = 'stopped by the user — will pick up exactly here next sweep';
   const isStop = (e) => msg(e).indexOf('stopped by the user') === 0;
 
@@ -826,7 +875,7 @@
     const bytes = await io.getBlob(entry.sha);
     if(entry.csum && io.hashBytes){
       const got = await io.hashBytes(bytes);
-      if(got !== entry.csum) throw new Error('checksum mismatch after download — refusing to write it');
+      if(got !== entry.csum) throw new Error(BAD_COPY);
     }
     if(beforeCommit) await beforeCommit();
     return await fs.write(o.id, path, bytes, entry.mtime || 0);
@@ -835,7 +884,7 @@
   async function verifyPart(fs, o, path, entry){
     if(!entry.csum || typeof fs.hashPart !== 'function') return;
     const got = await fs.hashPart(o.id, path);
-    if(got !== entry.csum) throw new Error('checksum mismatch after download — refusing to write it');
+    if(got !== entry.csum) throw new Error(BAD_COPY);
   }
 
   /* An upload, and the record the other devices will read.

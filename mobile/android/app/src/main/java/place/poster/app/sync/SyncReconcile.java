@@ -31,8 +31,9 @@ public final class SyncReconcile {
 
     /** Below this, deleting or republishing a few files is ordinary work and is not questioned. */
     public static final int FLOOR = 20;
-    /** Absolute per-sweep trash/tombstone ceiling for a sweep nobody is watching (see JS engine). */
-    static final int MASS_CAP = 100;
+    /* There is no separate CAP any more. It was 100, and the band between it and FLOOR is exactly
+     * where a wave of stale tombstones used to cross in silence — see check(). The server keeps its
+     * own backstop at 100 for a client that has gone wrong; that is a different job. */
 
     public static long versionOf(Map<String, Object> e) {
         if (e == null) return 0L;
@@ -263,21 +264,29 @@ public final class SyncReconcile {
         int keep = p.unchanged - p.settledGone + p.fetch.size() + p.send.size() + p.keepBoth.size() + settled;
 
         if (p.trash.size() >= FLOOR && p.trash.size() > keep) {
-            out.add(act("kind", "massTrash", "n", (long) p.trash.size(), "keep", (long) keep));
+            out.add(act("kind", "massTrash", "rule", "shortList",
+                        "n", (long) p.trash.size(), "keep", (long) keep));
         }
-        // The absolute cap — proportional is not enough on a big folder, and nobody is watching.
-        if (p.trash.size() > MASS_CAP) {
-            out.add(act("kind", "massTrash", "n", (long) p.trash.size(), "keep", (long) keep));
+        /* THE ABSOLUTE FLOOR, AND IT IS THE SAME NUMBER IN BOTH DIRECTIONS — see the JS engine's
+         * comment. Proportional is not enough on a big folder and nobody is watching: 59 stale
+         * tombstones against a 1,000-file folder passed the ratio AND a cap of 100, so this device
+         * trashed 59 files with no verdict, while the one device still holding them was refused by
+         * the resurrect floor at 20. The asymmetry always resolved towards deleted. */
+        if (p.trash.size() >= FLOOR) {
+            out.add(act("kind", "massTrash", "rule", "floor",
+                        "n", (long) p.trash.size(), "keep", (long) keep));
         }
         if (p.tombstone.size() >= FLOOR && p.tombstone.size() > keep) {
-            out.add(act("kind", "massTombstone", "n", (long) p.tombstone.size(), "keep", (long) keep));
+            out.add(act("kind", "massTombstone", "rule", "shortList",
+                        "n", (long) p.tombstone.size(), "keep", (long) keep));
         }
-        if (p.tombstone.size() > MASS_CAP) {
-            out.add(act("kind", "massTombstone", "n", (long) p.tombstone.size(), "keep", (long) keep));
+        if (p.tombstone.size() >= FLOOR) {
+            out.add(act("kind", "massTombstone", "rule", "floor",
+                        "n", (long) p.tombstone.size(), "keep", (long) keep));
         }
         int res = 0;
         for (Map<String, Object> s : p.send) if (Boolean.TRUE.equals(s.get("resurrect"))) res++;
-        if (res >= FLOOR) out.add(act("kind", "massResurrect", "n", (long) res));
+        if (res >= FLOOR) out.add(act("kind", "massResurrect", "rule", "floor", "n", (long) res));
 
         // A path that another live record sits under cannot be written as a file on any device.
         if (state != null) {

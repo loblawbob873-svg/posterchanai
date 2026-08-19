@@ -17890,17 +17890,23 @@
       if(e.sha || (e.chunks && e.chunks.length)) rows.push(p); else dead.push(p);
     }
     if(!rows.length && !dead.length) return '';
+    /* THE HEADER COUNTS THE DELETIONS, NOT THE RESTORABLE ONES. It showed `rows.length`, which
+       excludes every tombstone that kept no address — so a folder holding 107 deletions announced
+       "3", read as the panel being broken or the deletions having gone somewhere else. The total is
+       the honest number; the split between what this panel can undo and what it cannot belongs
+       INSIDE, where it can be explained. */
+    const total = rows.length + dead.length;
     return `<div class="fx-trash">
       <button class="fx-trash-hd" id="fx-del-toggle">\u267b Deleted on every device
-        <span class="fx-n">${rows.length}</span><span class="chev">${_fxDelOpen?'\u25be':'\u25b8'}</span></button>
+        <span class="fx-n">${total}</span><span class="chev">${_fxDelOpen?'\u25be':'\u25b8'}</span></button>
       <div class="fx-trash-body${_fxDelOpen?'':' hidden'}">
-        <div class="muted small">Files the folder marks deleted whose bytes are still in the store \u2014 restoring republishes them and every device brings them back.</div>
+        <div class="muted small">${rows.length} of ${total} can be undone from here \u2014 the folder marks them deleted and their bytes are still in the store, so restoring republishes them and every device brings them back.</div>
         ${rows.slice(0, 50).map(p2 => `<div class="fx-trash-row"><span title="${enc(p2)}">${enc(p2.split('/').pop())}</span>
-          <span class="muted small">${enc(p2.split('/').slice(0,-1).join('/'))}</span>
+          <span class="muted small" title="${enc(p2)}">${enc(p2.split('/').slice(0,-1).join('/'))}</span>
           <button class="mini" data-undelete="${enc(p2)}">\u267b Restore</button></div>`).join('')}
         ${rows.length > 50 ? `<div class="muted small">\u2026and ${rows.length - 50} more \u2014 Restore all covers every one</div>` : ''}
         ${rows.length > 1 ? `<button class="mini fx-trash-all" id="fx-del-restoreall">\u267b Restore all ${rows.length} everywhere</button>` : ''}
-        ${dead.length ? `<div class="muted small">${dead.length} older deletion${dead.length===1?'':'s'} kept no address and can\u2019t be restored this way \u2014 a device still holding the file restores it by re-adding.</div>` : ''}
+        ${dead.length ? `<div class="muted small">The other ${dead.length} kept no storage address, so nothing here knows which bytes they were. They are not lost: on a device that still HAS those files, open Folder sync and press \u201cPut them back everywhere\u201d on the folder\u2019s card \u2014 it uploads from that copy.</div>` : ''}
       </div>
     </div>`;
   }
@@ -17937,7 +17943,7 @@
     if(!keys.length) return `<div class="fx-trash">
       <button class="fx-trash-hd">\ud83d\uddd1 Trash on this device
         <span class="fx-n">0</span></button>
-      <div class="fx-trash-body"><div class="muted small">Empty \u2014 nothing sync moved aside is waiting here. Files you restored are back in place.</div></div>
+      <div class="fx-trash-body"><div class="muted small">Empty \u2014 nothing sync moved aside is waiting here. Files you restored are back in place. Deleting a file in this browser publishes the deletion; the copies move to trash on each device the next time THAT device syncs, so they appear here after this one sweeps, not before.</div></div>
     </div>`;
     const total = keys.reduce((a, k) => a + days[k], 0);
     /* A SUBORDINATE block, not more chips: dates are not folders and must not dress like them.

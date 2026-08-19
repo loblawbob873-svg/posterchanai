@@ -560,15 +560,40 @@ class TestMassDelete(unittest.TestCase):
     """
 
     def mass(self, plan):
-        """Run the shipped checker over a plan of that shape and hand back the massTrash verdict."""
+        """The SHORT-LIST verdict — "this sweep removes more than it keeps" — and only that one.
+
+        Two rules raise `massTrash` now: this proportional one, and an absolute floor at FLOOR that
+        stops any bulk deletion an unattended sweep would otherwise apply (see
+        test_delete_and_restore_symmetry.py — 59 stale tombstones over a 1,000-file folder passed
+        every proportional test there was and emptied the same files off three devices in turn).
+        Filtering on `rule` keeps this class measuring what it was written to measure: the `keep`
+        accounting, which the floor does not exercise and which still has to be exactly right.
+        """
         js = ("require(%s); const E=require(%s);"
               "const c=%s;"
               "const mk=(n,extra)=>Array.from({length:n},(_,i)=>Object.assign({path:'p'+i},extra||{}));"
               "const plan={fetch:mk(c.download), send:mk(c.upload), trash:mk(c.deleteLocal),"
               " tombstone:[], keepBoth:mk(c.conflicts), settle:mk(c.notes,{why:c.noteWhy}),"
               " unchanged:c.unchanged, excluded:0};"
-              "const v=E.check(plan, {}).find(x=>x.kind==='massTrash')||null;"
+              "const v=E.check(plan, {}).find(x=>x.kind==='massTrash'&&x.rule==='shortList')||null;"
               "process.stdout.write(JSON.stringify(v));"
+              ) % (json.dumps(MOD), json.dumps(ENGINE), json.dumps(plan))
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            raise AssertionError("node failed:\n" + r.stderr[-2000:])
+        return json.loads(r.stdout)
+
+    def any_rule(self, plan):
+        """Whether the sweep would be stopped AT ALL — either rule, which is what a person on the
+        other end actually experiences."""
+        js = ("require(%s); const E=require(%s);"
+              "const c=%s;"
+              "const mk=(n,extra)=>Array.from({length:n},(_,i)=>Object.assign({path:'p'+i},extra||{}));"
+              "const plan={fetch:mk(c.download), send:mk(c.upload), trash:mk(c.deleteLocal),"
+              " tombstone:[], keepBoth:mk(c.conflicts), settle:mk(c.notes,{why:c.noteWhy}),"
+              " unchanged:c.unchanged, excluded:0};"
+              "process.stdout.write(JSON.stringify("
+              "  E.check(plan, {}).some(x=>x.kind==='massTrash')));"
               ) % (json.dumps(MOD), json.dumps(ENGINE), json.dumps(plan))
         r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60)
         if r.returncode != 0:
@@ -594,9 +619,13 @@ class TestMassDelete(unittest.TestCase):
         self.assertIsNone(self.mass(self.plan_of(19)),
                           "the floor is what keeps ordinary deletes silent")
 
-    def test_a_delete_smaller_than_what_survives_is_allowed(self):
-        """Tidying 50 files out of a 5000-file folder is a delete, not a wipe."""
+    def test_a_delete_smaller_than_what_survives_passes_the_ratio(self):
+        """Tidying 50 files out of a 5000-file folder is not a WIPE, and the proportional rule is
+        right not to call it one. It is still a bulk delete, so the absolute floor asks anyway —
+        that is the point of having both, and it is asserted just below."""
         self.assertIsNone(self.mass(self.plan_of(50, keep=4950)))
+        self.assertTrue(self.any_rule(self.plan_of(50, keep=4950)),
+                        "50 unattended deletions on a big folder ran with nothing asked")
 
     def test_kept_counts_every_way_a_file_survives(self):
         """`unchanged` is not the only thing left standing when the sweep ends — a file being
@@ -605,17 +634,22 @@ class TestMassDelete(unittest.TestCase):
         self.assertIsNone(self.mass(self.plan_of(30, download=40)))
         self.assertIsNone(self.mass(self.plan_of(30, notes=40)),
                           "files both sides already agree on are kept files")
+        # …and the floor still speaks for all of them, because 30 is a bulk delete either way.
+        self.assertTrue(self.any_rule(self.plan_of(30, download=40)))
 
     def test_deleted_on_both_is_not_a_kept_file(self):
         """It has no bytes anywhere, so counting it would only make the guard quieter — and quieter
         is the direction that lost the pictures."""
         self.assertIsNotNone(self.mass(self.plan_of(30, notes=40, note_why="deleted on both")))
 
-    def test_exactly_as_many_deleted_as_kept_is_allowed(self):
-        """The rule is 'more than you keep', and a boundary that drifts turns a silent guard into a
-        noisy one or the other way about."""
+    def test_the_ratio_boundary_is_exactly_more_than_you_keep(self):
+        """A boundary that drifts turns a silent guard into a noisy one or the other way about. This
+        is the ratio rule's own boundary; the floor's is asserted in
+        test_delete_and_restore_symmetry.py, and below FLOOR neither speaks."""
         self.assertIsNone(self.mass(self.plan_of(25, keep=25)))
         self.assertIsNotNone(self.mass(self.plan_of(26, keep=25)))
+        self.assertFalse(self.any_rule(self.plan_of(19, keep=19)),
+                         "19 deletions must stay silent — the floor is 20")
 
 
 @unittest.skipIf(not NODE, "no node on this node")
@@ -751,7 +785,13 @@ class LostIsNotAStringCompare(unittest.TestCase):
 class AbsoluteTrashCap(unittest.TestCase):
     """"no way that i should have had deleted files, many!" — proportional guards wave hundreds of
     tombstones through on a big folder (6,000 survivors allow 5,999 trashes). No UNATTENDED sweep
-    moves more than 100 files to trash; a deliberate mass delete passes allowMassTrash."""
+    applies a BULK deletion; a deliberate mass delete passes allowMassTrash.
+
+    The number was 100 and is now FLOOR (20), the same figure that has always governed putting files
+    back. At 100, 59 stale tombstones over a 1,000-file folder still ran silently on three devices in
+    turn while the one device holding the files was refused by the resurrect floor — the guard
+    protecting the files was what guaranteed the deletions won. See
+    tests/client/test_delete_and_restore_symmetry.py."""
 
     def _check(self, n_trash, allow=False):
         js = """
@@ -775,7 +815,11 @@ class AbsoluteTrashCap(unittest.TestCase):
         self.assertEqual(self._check(500, allow=True), 0)
 
     def test_an_ordinary_sweep_is_untouched(self):
-        self.assertEqual(self._check(30), 0)
+        """Below the floor, nothing is questioned — that is what keeps the dialog meaningful. The
+        number moved from 100 to 20 when the two directions were made symmetric: 59 unattended
+        deletions on a 1,000-file folder is what this guard was measured failing to catch."""
+        self.assertEqual(self._check(19), 0)
+        self.assertGreater(self._check(20), 0, "the floor is 20 and it must include 20")
 
 
 class FilesTrashSurface(unittest.TestCase):
@@ -826,11 +870,14 @@ class AccountWideRestore(unittest.TestCase):
 
     def test_tombstones_keep_the_address_in_both_executors(self):
         a = self.exc.index("for(const t of plan.tombstone)")
-        seg = self.exc[a:a + 1200]
+        # Wide enough to survive a comment: this reads SOURCE, so the window is about prose length
+        # and not about the rule. The rule itself is exercised for real (a sweep is RUN, and the
+        # published tombstone is inspected) in test_delete_and_restore_symmetry.py.
+        seg = self.exc[a:a + 3000]
         for k in ("'sha'", "'chunks'", "'csum'"):
             self.assertIn(k, seg, "the JS tombstone forgets %s — account-wide restore dies" % k)
         j = self.java.index("plan.tombstone")
-        jseg = self.java[j:j + 1200]
+        jseg = self.java[j:j + 3000]        # same reason as above — a wider window, not a weaker rule
         self.assertIn('"sha"', jseg)
         self.assertIn('"chunks"', jseg)
 
