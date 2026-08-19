@@ -572,6 +572,25 @@
    * made the signer feel broken the day sync arrived. Sign once, reuse inside the window, refresh
    * with a minute and a half of margin. */
   let _authAt = 0, _authB64 = '';
+  /* THE DEVICE TOKEN: the signer, once per device, ever. Minted on the first signed call and kept
+   * with this identity's local state; every later sync call presents it instead of a signature —
+   * so a sleeping phone signer can no longer stop a laptop syncing. An unknown/revoked token falls
+   * back to exactly one signature and a fresh mint. */
+  const _TOK_KEY = () => 'pc_sync_token_' + ((PC.me && PC.me() && PC.me().pubkey) || 'anon');
+  function _syncToken(){ try{ return localStorage.getItem(_TOK_KEY()) || ''; }catch(_){ return ''; } }
+  async function _mintToken(){
+    const authB64 = await _syncAuth();
+    const r = await _bounded(fetch('/client/sync-state', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ pubkey: PC.me().pubkey, auth: authB64, pair: 'mint', mintToken: true }),
+    }), 'server', _POST_TIMEOUT_MS);
+    const j = await r.json().catch(() => ({}));
+    if(r.ok && j && j.ok && j.token){
+      try{ localStorage.setItem(_TOK_KEY(), j.token); }catch(_){}
+      return j.token;
+    }
+    return '';
+  }
   async function _syncAuth(){
     if(_authB64 && (Date.now() - _authAt) < 210000) return _authB64;
     /* THE SIGNER IS AN AWAIT LIKE ANY OTHER, and it was the one with no ceiling. A remote signer
@@ -585,8 +604,10 @@
     _authAt = Date.now();
     return _authB64;
   }
-  async function _statePost(body){
-    const authB64 = await _syncAuth();
+  async function _statePost(body, _retry){
+    let tok = _syncToken();
+    if(!tok){ try{ tok = await _mintToken(); }catch(e){ tok = ''; } }
+    const authB64 = tok ? '' : await _syncAuth();
     let ctl = null, timer = null;
     try{ ctl = new AbortController(); }catch(_){ ctl = null; }
     if(ctl) timer = setTimeout(() => { try{ ctl.abort(); }catch(_){} }, _POST_TIMEOUT_MS);
@@ -596,7 +617,7 @@
         method:'POST', headers:{'Content-Type':'application/json'},
         signal: ctl ? ctl.signal : undefined,
         body: JSON.stringify(Object.assign({ pubkey: PC.me().pubkey,
-                                             auth: authB64 }, body)),
+                                             auth: authB64, token: tok }, body)),
       }), 'server', _POST_TIMEOUT_MS);
     }catch(e){
       const aborted = e && (e.name === 'AbortError' || /abort|stopped responding/i.test(String(e.message || e)));
@@ -604,6 +625,12 @@
                               : ('could not reach the server: ' + ((e && e.message) || e)));
     }finally{ if(timer) clearTimeout(timer); }
     const j = await r.json().catch(() => ({}));
+    if(r.status === 401 && j && j.tokenInvalid && !_retry){
+      // Revoked or foreign token: one signature mints a fresh one, then the call repeats once.
+      try{ localStorage.removeItem(_TOK_KEY()); }catch(_){}
+      await _mintToken();
+      return _statePost(body, true);
+    }
     if(r.status === 409 && j && j.eraChanged){
       const e = new Error('this folder was retired or re-added elsewhere — syncing again from the top');
       e.eraChanged = true; e.era = j.era; throw e;
@@ -1346,9 +1373,17 @@
       return { skipped: true, why: 'queued behind ' + who };
     }
     _syncQueue.delete(f.id);
+    /* THE RESERVATION IS SYNCHRONOUS, OR THE GATE IS A RACE. Between this check and the job
+     * registering itself there are awaits (the power read, the policy), and two folders starting
+     * in the same moment both saw "nothing running" and both ran — the tablet did exactly that.
+     * The slot is taken HERE, atomically with the check; every decline path below hands it back. */
+    if(!o.dryRun) running.set(f.id, Promise.resolve({ skipped: true, why: 'starting' }));
+    const _unreserve = () => { if(!o.dryRun && running.get(f.id) && !(running.get(f.id) instanceof Promise
+      && running.get(f.id)._job)) running.delete(f.id); };
 
     const fs = FS();
-    if(!fs) throw new Error('this device has no filesystem access');
+    if(!fs){ if(!o.dryRun){ running.delete(f.id); _drainSyncQueue(); }
+             throw new Error('this device has no filesystem access'); }
 
     const p = await power();
     const decision = RUN.due(Object.assign({}, p, {
@@ -1368,6 +1403,7 @@
       const _base = _prev && _prev.text ? String(_prev.text).split(' · watching (')[0] : '';
       const _line = /^in step/.test(_base) ? _base + ' · watching (' + decision.why + ')' : decision.why;
       setStatus(f.id, _line, null, true);
+      if(!o.dryRun){ running.delete(f.id); _drainSyncQueue(); }
       return { skipped:true, why:decision.why };
     }
 

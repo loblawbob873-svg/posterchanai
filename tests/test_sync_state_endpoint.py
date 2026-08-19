@@ -237,6 +237,28 @@ class SyncStateEndpoint(unittest.TestCase):
             code, _ = self.call(put=bad, era=0)
             self.assertEqual(code, 400)
 
+    def test_a_device_token_replaces_the_signer(self):
+        """'if I have to wake up the signer, that is a problem' — one signed call mints a token;
+        every later call authenticates with it and never consults the signer. A bad token is a 401
+        naming tokenInvalid, so the client knows to sign exactly once more."""
+        req = SyncStateReq(pubkey="f" * 64, auth="signed", pair="mint", mintToken=True)
+        resp = _run(sync_state(req, self.db))
+        j = json.loads(resp.body)
+        self.assertTrue(j.get("ok") and j.get("token"))
+        tok = j["token"]
+        # The token authenticates a real call with NO auth at all.
+        with mock.patch.object(client_router, "_verify_self_auth",
+                               side_effect=AssertionError("the signer was consulted")):
+            req2 = SyncStateReq(pubkey="f" * 64, token=tok, pair="TestPair",
+                                put=[{"d": D1, "v": 1, "by": "dev", "ct": "c"}])
+            resp2 = _run(sync_state(req2, self.db))
+        self.assertEqual(resp2.status_code, 200)
+        # A wrong token is refused BY NAME, never treated as an empty anything.
+        req3 = SyncStateReq(pubkey="f" * 64, token="nope", pair="TestPair")
+        resp3 = _run(sync_state(req3, self.db))
+        self.assertEqual(resp3.status_code, 401)
+        self.assertTrue(json.loads(resp3.body).get("tokenInvalid"))
+
     def test_pairs_listing(self):
         self.call(put=[self.rec(D1, 1)], era=0, pair="Pictures")
         self.call(put=[self.rec(D1, 1)], era=0, pair="Documents")

@@ -4560,7 +4560,15 @@ def _fs_tomb_recent(pk: str, pair: str, add: int) -> int:
 
 class SyncStateReq(BaseModel):
     pubkey: str
-    auth: str
+    auth: str = ""
+    # A DEVICE TOKEN in place of a live signature. Folder sync used to demand the signer per
+    # window, which chained every sweep on every device to a remote signer being awake — "if I
+    # have to wake up the signer, that is a problem" is a correct reading of that design. The
+    # first signed call mints a token (32 random bytes; the server keeps only its hash); every
+    # later call presents it. The signer is needed once per device, ever — and a revoked or
+    # unknown token falls back to exactly one signature to mint a fresh one.
+    token: str = ""
+    mintToken: bool = False
     pair: str
     era: int | None = None            # the world the client believes it is in
     since: int | None = None          # delta read: records written at/after this relay timestamp
@@ -4598,8 +4606,6 @@ async def sync_state(data: SyncStateReq, db: Session = Depends(get_db)):
     pk = nostr_service.to_pubkey_hex(data.pubkey)
     if not pk:
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
-    if not _verify_self_auth(data.auth, pk):
-        return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
     user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
     if not user:
         # Never an empty success — "I don't know who you are" must be distinguishable from "you
@@ -4607,6 +4613,34 @@ async def sync_state(data: SyncStateReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "no account here for that key"}, status_code=403)
     sk = store.user_storage_seckey(db, user)
     port = int(_setting(db, "nostr_relay_port", "3052"))
+
+    # ---- who is asking: a device token, or one signature to mint one --------------------------
+    tok_d = f"pcai:kv:synctok:{pk}"
+    if data.token:
+        try:
+            held = await store.get_doc(port, tok_d, seckey=sk, strict=True)
+        except Exception:
+            return JSONResponse({"ok": False, "error": "sync state unavailable"}, status_code=503)
+        digest = hashlib.sha256(data.token.encode()).hexdigest()
+        toks = (held or {}).get("t") or []
+        if digest not in toks:
+            # The one place the signer is still consulted: minting a replacement.
+            return JSONResponse({"ok": False, "error": "unknown device token — sign once to mint "
+                                 "a new one", "tokenInvalid": True}, status_code=401)
+    else:
+        if not _verify_self_auth(data.auth, pk):
+            return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
+        if data.mintToken:
+            token = secrets.token_hex(32)
+            digest = hashlib.sha256(token.encode()).hexdigest()
+            try:
+                held = await store.get_doc(port, tok_d, seckey=sk, strict=True)
+            except Exception:
+                return JSONResponse({"ok": False, "error": "sync state unavailable"}, status_code=503)
+            toks = ((held or {}).get("t") or [])[-19:] + [digest]   # a device a year is plenty
+            if not await store.put_doc(port, sk, tok_d, {"t": toks}):
+                return JSONResponse({"ok": False, "error": "could not store the token"}, status_code=503)
+            return JSONResponse({"ok": True, "token": token})
 
     if data.pairs:
         try:
