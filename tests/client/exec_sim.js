@@ -204,7 +204,15 @@ function device(name, sky, opts){
    * a sweep that "worked": four 16 MB files at once, each held as plaintext, ciphertext and a
    * request body. Counting transfers would have called that healthy. */
   st.bytes = 0; st.peakBytes = 0;
-  const hold = (n) => { st.bytes += n; st.peakBytes = Math.max(st.peakBytes, st.bytes); };
+  /* Bytes AND count, because they answer different questions. Bytes is the memory guarantee (the
+   * Windows OOM); the count is whether anything overlaps at all — and a folder of photographs going
+   * strictly one at a time is bounded by round trips rather than by bandwidth, which no byte
+   * measurement would ever show. */
+  st.inflight = 0; st.peakInflight = 0;
+  const hold = (n) => { st.bytes += n; st.peakBytes = Math.max(st.peakBytes, st.bytes);
+                        // hold() RELEASES with a negative value; the count follows the sign.
+                        st.inflight += (n >= 0 ? 1 : -1);
+                        st.peakInflight = Math.max(st.peakInflight, st.inflight); };
   const chunker = realChunker(sky);
   chunker.CHUNK = CH;
   const io = {
@@ -719,6 +727,36 @@ scenario('a folder of large files does not hold them all at once — the Windows
   t.ok(B.st.peakBytes <= 12 * MB * 2 + MB,
        'held ' + Math.round(B.st.peakBytes / MB) + ' MB at once on download');
   t.eq(identical(A.disk, B.disk), null, 'the files did not survive');
+});
+
+/* PHOTOGRAPHS ARE "BIG", AND BIG WAS STRICTLY ONE AT A TIME.
+ *
+ * The threshold is 2 MB, which is every photograph a camera has produced this decade — so the serial
+ * path was not the exception it was written as, it was the whole folder. Measured against a real
+ * store: one blob per second, sequential, because the wait is a round trip and nothing else was
+ * allowed in flight during it. Sixty files a minute is the ceiling then, however fast the link is,
+ * and 64 photos really is "about 3 h left".
+ *
+ * The rule was protecting the heap and that reason is real — see the Windows OOM scenario above,
+ * which still passes. What was wrong was the instrument: a FILE COUNT cannot tell three 6 MB photos
+ * from three 100 MB videos, and one-at-a-time is what you get when you set it for the videos.
+ */
+scenario('photographs overlap — a byte budget, not one file at a time', async (t) => {
+  const sky = cloud();
+  const disk = {};
+  for(let i = 0; i < 10; i++) disk['DCIM/p' + i + '.jpg'] = video(5, i + 90);   // 5 MB each: "big"
+  const A = device('laptop', sky, { disk, chunk: 16 * MB });
+  const r = await A.sweep();
+  t.eq(r.uploaded.length, 10, 'uploaded ' + r.uploaded.length + ' of 10');
+  t.ok(A.st.peakInflight >= 2,
+       'photographs still went one at a time (peak ' + A.st.peakInflight + ' in flight) — a folder '
+       + 'of them is bounded by round trips, not by bandwidth');
+  // ...and the budget is still honoured: 5 MB * 3 = 15 MB each, so at most two fit in 36 MB.
+  t.ok(A.st.peakBytes <= 36 * MB + MB,
+       'held ' + Math.round(A.st.peakBytes / MB) + ' MB at once — over the budget');
+  const B = device('phone', sky, { chunk: 16 * MB });
+  await B.sweep();
+  t.eq(identical(A.disk, B.disk), null, 'the photos did not survive the overlap');
 });
 
 scenario('small files still overlap — the whole point of the lanes', async (t) => {

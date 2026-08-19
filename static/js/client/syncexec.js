@@ -48,6 +48,16 @@
    * thousand photos, where the wait is the round trip and the bytes are nothing. Anything larger goes
    * one at a time, whether it is chunked or not. */
   const PARALLEL_MAX = 2 * 1024 * 1024;
+  /* How much whole-file transfer may be in flight at once, in BYTES rather than in files.
+   *
+   * A file count is the wrong instrument: three 6 MB photos and three 100 MB videos are the same
+   * number and nowhere near the same risk. The budget is one large file's worth of holding, which
+   * is the guarantee the Windows OOM scenario encodes — so a 12 MB TIFF still goes alone, exactly as
+   * before, while 6 MB photographs go two at a time and 3 MB ones four. The multiplier is what a
+   * transfer really costs: plaintext, ciphertext and a request body, all live at once. */
+  const BIG_BUDGET = 36 * 1024 * 1024;
+  const BIG_COST = 3;
+  const BIG_LANES = 6;              // an upper bound on lanes; the budget is what actually decides
   const SAVE_EVERY = 200;          // files between journal writes (each write publishes first)
   const SAVE_MS = 20 * 1000;
 
@@ -1193,7 +1203,51 @@
       }
     };
     await Promise.all(Array.from({ length: Math.max(1, Math.min(lanes, small.length)) }, (_, i) => lane(i)));
-    for(const item of big){
+
+    /* BIG FILES WERE STRICTLY ONE AT A TIME, AND THAT IS WHAT MADE A PHOTO LIBRARY TAKE HOURS.
+     *
+     * "Big" is anything over 2 MB, which is every photograph a camera has produced this decade — so
+     * the serial path was not the exception it was written as, it was the whole folder. Measured
+     * against a real store: one blob per second, sequential, because the wait is a round trip and
+     * nothing else was allowed to be in flight during it. Sixty files a minute is then the ceiling
+     * however fast the disk or the link is, and 64 photos really is "about 3 h left".
+     *
+     * The serial rule was protecting the HEAP, and that reason is real — each whole-file transfer
+     * holds plaintext, ciphertext and a request body at once, and a Chromium renderer dies quietly
+     * when it runs out ("windows app running out of memory while syncing"). But one at a time is far
+     * more conservative than that requires: a handful of 6 MB files in flight is tens of megabytes,
+     * not gigabytes. So big files get their own small lane count, under the SAME heap backpressure —
+     * `_fat()` collapses every lane but the first the moment the heap is genuinely under strain,
+     * which is the condition that mattered, rather than a size threshold standing in for it.
+     *
+     * CHUNKED files are excluded and stay strictly serial: those are the multi-gigabyte ones, they
+     * stream a chunk at a time, and running several at once puts the part files, the wake lock and
+     * the stall windows into competition for no gain — the link is already saturated by one. */
+    const huge = big.filter(x => !!(x.entry && x.entry.chunks && x.entry.chunks.length));
+    const wide = big.filter(x => !(x.entry && x.entry.chunks && x.entry.chunks.length));
+    let bnext = 0, inflight = 0;
+    const sizeOf = (x) => ((x.stat && x.stat.size) || (x.entry && x.entry.size) || 0) * BIG_COST;
+    const blane = async (id) => {
+      while(bnext < wide.length && !stopping()){
+        if(id > 0 && _fat()){ await new Promise(r => setTimeout(r, 400)); continue; }
+        const cost = sizeOf(wide[bnext]);
+        /* Wait for room — unless nothing is in flight at all, in which case this file goes now
+         * however large it is. Without that a file bigger than the whole budget would never start,
+         * which is the one outcome worse than doing it slowly. */
+        if(inflight > 0 && inflight + cost > BIG_BUDGET){
+          await new Promise(r => setTimeout(r, 40));
+          continue;
+        }
+        const item = wide[bnext++];
+        inflight += cost;
+        try{ await run(item, ++done, n); }
+        finally{ inflight -= cost; }
+        await journal.maybe();
+      }
+    };
+    await Promise.all(Array.from({ length: Math.max(1, Math.min(BIG_LANES, wide.length)) },
+                                 (_, i) => blane(i)));
+    for(const item of huge){
       if(stopping()) break;
       await run(item, ++done, n);
       await journal.maybe();
