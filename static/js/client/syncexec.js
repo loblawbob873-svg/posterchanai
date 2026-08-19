@@ -503,6 +503,21 @@
                                     + 'the device that has this file will send it again' });
           return;
         }
+        /* A DOWNLOAD OF BYTES YOU ALREADY HOLD IS AN ADOPTION, NOT A TRANSFER. A record whose
+         * version moved without its content (the re-seal, a redundant republish) reads as
+         * "changed elsewhere" on every other device, and size+mtime cannot clear it — platforms
+         * stamp their own times. One local hash answers it for real: equal means agree-and-record,
+         * zero bytes moved. 712 phantom re-downloads after one conversion pass, made free. */
+        if(e.csum && disk[d.path] && typeof fs.hashFile === 'function'){
+          let h = null;
+          try{ h = await fs.hashFile(o.id, d.path); }catch(_){ h = null; }
+          if(h && h === e.csum){
+            const L = disk[d.path];
+            record(d.path, Object.assign({}, d.entry), { size: L.size, mtime: L.mtime, csum: h });
+            report.adopted = (report.adopted || 0) + 1;
+            return;
+          }
+        }
         step('downloading', d.path, i, n);
         try{
           const st = await receive(fs, io, o, d.path, d.entry,

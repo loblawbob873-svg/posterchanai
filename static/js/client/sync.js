@@ -1760,6 +1760,7 @@
     // Said out loud, because "900 up" for files that were never sent is how a working first sweep
     // gets mistaken for the resync bug it is recovering from.
     if(rep.alreadyStored) bits.push(rep.alreadyStored + ' already stored');
+    if(rep.adopted) bits.push(rep.adopted + ' already identical here — recorded, not downloaded');
     /* A write another device beat by a moment. Not a failure — the loser's journal forgot the
      * path and the next sweep resolves it as a conflict, both copies kept — but silence about it
      * reads as files quietly vanishing from the count. */
