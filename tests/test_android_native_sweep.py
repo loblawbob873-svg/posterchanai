@@ -97,6 +97,10 @@ class FakeFs implements SyncIo.Files {
         byte[] b = parts.get(rel);
         return b == null ? "" : SyncCrypto.sha256hex(b);
     }
+    public String hashFile(String rel) {
+        byte[] b = disk.get(rel);
+        return b == null ? null : SyncCrypto.sha256hex(b);
+    }
     public long[] commitPart(String rel, long when) {
         byte[] b = parts.remove(rel);
         disk.put(rel, b == null ? new byte[0] : b);
@@ -346,6 +350,24 @@ public class Drv {
     out.put("B2_uploaded", repB2.uploaded.size());
     out.put("B2_trashed", repB2.trashed.size());
     out.put("B2_unchanged", repB2.unchanged);
+
+    /* ---- A REWRITE IS NOT AN EDIT. Every file keeps its bytes and gets a new timestamp, which is
+     * what an rsync, a restore from backup or a second sync engine on the same directory leaves
+     * behind. The plan is built from a stamp, so all 31 read as "changed here" — and re-uploading a
+     * folder that is already stored, over a radio, is the whole cost this rule removes. */
+    Object vWas = net.read("Pictures", mk, "DCIM/img1.jpg").get("v");
+    fsB.mtime = 55555L;
+    NativeSweep.Report repB2r = sweep(ctxB, stB, fB, sec, false, net, mk, fsB);
+    out.put("B2r_uploaded", repB2r.uploaded.size());
+    out.put("B2r_settled", repB2r.settledByContent);
+    out.put("B2r_failed", repB2r.failed.size());
+    out.put("B2r_version_moved", !String.valueOf(vWas)
+            .equals(String.valueOf(net.read("Pictures", mk, "DCIM/img1.jpg").get("v"))));
+    /* And it has to STAY quiet: the settle must write the new stamp into the journal, or the next
+     * sweep hashes all 31 again, for ever. */
+    NativeSweep.Report repB2s = sweep(ctxB, stB, fB, sec, false, net, mk, fsB);
+    out.put("B2s_settled", repB2s.settledByContent);
+    out.put("B2s_unchanged", repB2s.unchanged);
 
     // ---- ONE deletion on A travels as a tombstone, keeps its address, and B applies it once.
     fsA.disk.remove("DCIM/img1.jpg");
@@ -635,6 +657,32 @@ def test_the_next_sweep_is_quiet():
     assert r["B2_uploaded"] == 0, r
     assert r["B2_trashed"] == 0, r
     assert r["B2_unchanged"] == 31, r
+
+
+def test_a_rewrite_that_changed_no_byte_uploads_nothing():
+    """Reported from a desktop whose counts were all in agreement — 11,939 here, 11,939 in the
+    folder, 11,939 in the store — as "why is desktop uploading 2/19 files right now! sync was
+    finished!". Nothing was wrong: the plan is built from a stamp, so anything that rewrites a file
+    without changing a byte reads as an edit. On a phone that is a folder re-sent over a radio."""
+    r = result()
+    assert r["B2r_uploaded"] == 0, r
+    assert r["B2r_settled"] == 31, r
+    assert r["B2r_failed"] == 0, r
+
+
+def test_and_it_publishes_no_new_version():
+    """This device learned nothing the folder did not already know. A bump would hand every other
+    device 31 files to re-examine because one machine ran an rsync."""
+    r = result()
+    assert r["B2r_version_moved"] is False, r
+
+
+def test_and_the_sweep_after_it_is_quiet_again():
+    """The settle must write the new stamp into the journal. Without that the folder is hashed in
+    full on every sweep for ever — cheaper than uploading, and still wrong."""
+    r = result()
+    assert r["B2s_settled"] == 0, r
+    assert r["B2s_unchanged"] == 31, r
 
 
 def test_a_deletion_travels_as_a_tombstone_and_is_applied_once():

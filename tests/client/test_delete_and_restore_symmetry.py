@@ -1023,6 +1023,58 @@ class AWrongKeyBlobIsRepairable(unittest.TestCase):
                          "a transient failure was remembered as a permanently bad copy")
 
 
+class AnotherEngineOnTheSameFolderIsNamed(unittest.TestCase):
+    """Two authorities over one directory produce every symptom this feature has been accused of.
+
+    Measured on a real folder after five days of unexplained losses: `.stversions` held
+    PosterChan-named conflict copies from a fortnight earlier that Syncthing had archived away, and
+    nothing had ever mentioned Syncthing was on the same tree. The scan already skips those
+    directories — that stops us SYNCING them, a different problem — so the fact sat on the disk the
+    whole time and was never said out loud.
+
+    It must change no decision. Naming it is the whole job: the fix is a person choosing which
+    engine owns the folder, and nothing here can choose for them."""
+
+    def _run(self, present):
+        js = """
+        require(%s); const X = require(%s);
+        (async () => {
+          const HERE = %s;
+          const fs = {
+            scanPage: async () => ({ files:{}, done:true }),
+            confirmGone: async (id, rel) => ({ gone: HERE.indexOf(rel) < 0, parentAlive: true }),
+          };
+          const io = { index: async () => ({}), state: async () => ({ state:{}, flagged:{} }),
+                       saveIndex: async () => {},
+                       putState: async (k, r) => ({ ok:r.map(x=>x.path), stale:[], failed:[] }) };
+          const rep = await X.sweep(fs, io, { id:'f', key:'k', device:'me', now:1 });
+          process.stdout.write(JSON.stringify({ engines: rep.otherEngines || [],
+                                                failed: (rep.failed||[]).length, ok: rep.ok }));
+        })().catch(e => { console.error(e && e.stack || e); process.exit(1); });
+        """ % (json.dumps(FOLDERSYNC), json.dumps(EXEC), json.dumps(present))
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr[-1500:])
+        return json.loads(r.stdout)
+
+    def test_syncthing_is_named(self):
+        out = self._run([".stfolder"])
+        self.assertEqual(out["engines"], ["Syncthing"])
+
+    def test_a_clean_folder_says_nothing(self):
+        out = self._run([])
+        self.assertEqual(out["engines"], [],
+                         "a folder with no other engine must not carry a warning — a banner on "
+                         "every card is a banner nobody reads")
+
+    def test_it_changes_no_decision(self):
+        """It is a report, not a guard. A folder shared with another engine still syncs; refusing
+        would be worse than the overlap, and the user may have arranged it deliberately."""
+        out = self._run([".stfolder", ".dropbox"])
+        self.assertEqual(sorted(out["engines"]), ["Dropbox", "Syncthing"])
+        self.assertEqual(out["failed"], 0, "detecting another engine failed the sweep")
+        self.assertTrue(out["ok"], "…or marked it unclean")
+
+
 class CheckDoesNotWedgeThePage(unittest.TestCase):
     """The check reads every file and asks about every record — and it must give the page its
     thread back while it does, or Android kills the renderer and the UI reloads mid-operation."""
@@ -1058,3 +1110,92 @@ class CheckDoesNotWedgeThePage(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ARewriteIsNotAnEdit(unittest.TestCase):
+    """Identical bytes with a fresh timestamp must not be uploaded again.
+
+    `diskChanged` compares a STAMP — size and mtime — because that is all a paged scan can afford to
+    know. Everything that rewrites a file without changing a byte therefore reads as "changed here":
+    a restore from backup, an rsync, a second sync engine on the same directory, a touch, a scanner
+    that rewrites in place. Reported after a sweep had finished cleanly with every count in
+    agreement — 11,939 here, 11,939 in the folder, 11,939 in the store — as "why is desktop
+    uploading 2/19 files right now! sync was finished!".
+
+    The fetch side has adopted by content since the engine was written ("same content both sides").
+    The send side never did."""
+
+    def _run(self, local_hash, resend="[]"):
+        js = """
+        require(%s); const X = require(%s);
+        (async () => {
+          const R = { v:4, by:'other', sha:'s1', csum:'CONTENT', size:5, mtime:1000 };
+          const puts = [], published = [];
+          const fs = {
+            scanPage: async (id, so, off) => (off ? { files:{}, done:true }
+              /* same size, NEW mtime, and no csum — exactly what a paged scan hands back after
+               * something rewrote the file in place. */
+              : { files: { 'a.txt': { size:5, mtime:9999 } }, done:true }),
+            hashFile: async () => %s,
+            read: async () => { puts.push('read'); return new Uint8Array(5); },
+            confirmGone: async () => ({ gone:false, parentAlive:true }),
+          };
+          const io = {
+            index: async () => ({ 'a.txt': Object.assign({}, R,
+                                    { local: { size:5, mtime:1000, csum:'CONTENT' } }) }),
+            state: async () => ({ state: { 'a.txt': JSON.parse(JSON.stringify(R)) }, flagged:{} }),
+            saveIndex: async () => {},
+            hashBytes: async () => 'CONTENT',
+            putBlob: async () => { puts.push('putBlob'); return { sha:'s2' }; },
+            putState: async (k, recs) => { for(const x of recs) published.push(x.path);
+                                           return { ok:recs.map(x=>x.path), stale:[], failed:[] }; },
+          };
+          const rep = await X.sweep(fs, io, { id:'f', key:'k', device:'me', now:9000,
+                                              resend: %s });
+          process.stdout.write(JSON.stringify({
+            puts, published, uploaded: rep.uploaded || [],
+            settled: rep.settledByContent || [], ok: rep.ok }));
+        })().catch(e => { console.error(e && e.stack || e); process.exit(1); });
+        """ % (json.dumps(FOLDERSYNC), json.dumps(EXEC), local_hash, resend)
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=90)
+        self.assertEqual(r.returncode, 0, r.stderr[-1500:])
+        return json.loads(r.stdout)
+
+    def test_identical_bytes_are_not_uploaded(self):
+        out = self._run("'CONTENT'")
+        self.assertEqual(out["settled"], ["a.txt"])
+        self.assertEqual(out["uploaded"], [], "a file the store already holds was uploaded again")
+        self.assertNotIn("putBlob", out["puts"], "…and its bytes were pushed over the wire")
+        self.assertTrue(out["ok"])
+
+    def test_it_publishes_nothing(self):
+        """This device learned nothing the folder did not already know. Publishing a new version
+        would hand every other device a round of work for one local rewrite — one machine's rsync
+        becoming a sync on all of them."""
+        out = self._run("'CONTENT'")
+        self.assertEqual(out["published"], [],
+                         "a rewrite that changed no byte published a new version to every device")
+
+    def test_different_bytes_still_upload(self):
+        out = self._run("'EDITED'")
+        self.assertEqual(out["settled"], [])
+        self.assertEqual(out["uploaded"], ["a.txt"])
+        self.assertIn("putBlob", out["puts"])
+
+    def test_an_unreadable_file_still_uploads(self):
+        """The shortcut may only ever REMOVE work. It cannot decide anything, so anything it cannot
+        answer falls through to the upload that would have happened anyway."""
+        out = self._run("null")
+        self.assertEqual(out["uploaded"], ["a.txt"])
+        out = self._run("(() => { throw new Error('busy'); })()")
+        self.assertEqual(out["uploaded"], ["a.txt"])
+
+    def test_a_repair_is_never_shortcut(self):
+        """The one case where a matching checksum means the OPPOSITE. These paths are here because
+        the STORE lost the bytes; the record still certifies the same content, so a naive shortcut
+        would agree the file is safely stored and skip the repair — leaving a folder that reports
+        itself in step while the bytes behind it stay missing, and nothing left to press."""
+        out = self._run("'CONTENT'", resend="['a.txt']")
+        self.assertEqual(out["settled"], [], "a resend named by hand was answered with a shortcut")
+        self.assertEqual(out["uploaded"], ["a.txt"])
+        self.assertIn("putBlob", out["puts"])

@@ -246,6 +246,33 @@
       if(design.length) report.skippedByDesign = design.slice(0, 200);
       if(denied.length) report.unreadable = denied.slice(0, 200); }
 
+    /* IS ANOTHER SYNC ENGINE WRITING THIS FOLDER? Two authorities over one directory produce every
+     * symptom this feature has ever been accused of, and neither engine can tell it is happening:
+     * a file the OTHER one deletes reads here as a local deletion and is published to every device;
+     * a conflict copy written here is replicated by the other and comes back after you remove it;
+     * a 2 GB `.pcpart` is copied elsewhere while it is still being appended to.
+     *
+     * Measured on a real folder after five days of unexplained losses: `.stversions` held
+     * PosterChan-named conflict copies from a fortnight earlier that Syncthing had archived away,
+     * and nothing anywhere had ever mentioned that Syncthing was on the same tree. The scan already
+     * skips these directories — that stops us SYNCING them, which is a different problem — so the
+     * fact was on the disk the whole time and simply never said out loud.
+     *
+     * One stat per marker, on the path the scan already resolves. It changes no decision: it is
+     * reported, and the card names it, because the fix is a person choosing which engine owns the
+     * folder and nothing here can choose for them. */
+    if(typeof fs.confirmGone === 'function'){
+      for(const [marker, who] of [['.stfolder', 'Syncthing'], ['.sync', 'Resilio Sync'],
+                                  ['.dropbox', 'Dropbox'], ['.nextcloudsync.log', 'Nextcloud']]){
+        try{
+          const ev = await fs.confirmGone(o.id, marker);
+          if(ev && ev.gone === false && ev.parentAlive !== false){
+            (report.otherEngines = report.otherEngines || []).push(who);
+          }
+        }catch(_){}
+      }
+    }
+
     /* 4. Decide, check, and let a person answer for anything that is theirs to answer.
      * Paths the scan could not read join the exclusions: dropped from all three inputs, so an
      * unreadable subtree can neither be deleted here nor tombstoned to anyone. */
@@ -322,14 +349,31 @@
        * flagged, the massResurrect verdict swept them straight back out of the plan again
        * (`apply()` drops every resurrect at once), so the one deliberate way out of a standoff —
        * "put these back everywhere" — silently did nothing and the folder stayed deleted. */
-      let unflagged = 0;
+      /* `mustSend` DEFEATS THE SETTLE-BY-CONTENT SHORTCUT BELOW, and it has to.
+       *
+       * That shortcut skips an upload when the live record's checksum already matches the file on
+       * disk — right for an ordinary sweep, and exactly wrong for these paths, whose whole reason
+       * for being here is that the STORE lost the bytes the record describes. The record still
+       * certifies the same content, so the shortcut would agree the file is safely stored, journal
+       * it, and skip the repair — leaving a folder that reports itself in step while the bytes
+       * behind it stay missing, and no way left to press. */
+      let unflagged = 0, marked = 0;
       const relist = plan.send.map(u => {
-        if(!u.resurrect || !want.has(u.path)) return u;
+        if(!want.has(u.path)) return u;
+        marked++;
+        if(!u.resurrect) return Object.assign({}, u, { mustSend: true });
         unflagged++;
-        return Object.assign({}, u, { resurrect: false,
+        return Object.assign({}, u, { resurrect: false, mustSend: true,
                                       why: 'putting this back — asked for by name on this device' });
       });
-      if(extra.length || unflagged){
+      for(const x of extra) x.mustSend = true;
+      /* `marked` BELONGS IN THIS CONDITION, and leaving it out threw the marks away.
+       *
+       * A path the sweep was already going to send needs no `extra` entry and is no `resurrect`, so
+       * a named repair of an ordinary changed file made both counters zero — the relist carrying its
+       * `mustSend` flags was computed and then dropped on the floor, and the shortcut swallowed the
+       * repair after all. Everything visible said the plan was right; only the flag was missing. */
+      if(extra.length || unflagged || marked){
         /* AND IT COMES OUT OF THE TRASH LIST, which is the half that was missing and the half that
          * mattered. `resend` dropped a named path from settle/fetch/keepBoth and left `trash`
          * alone — so a sweep could be told "send this file" and move it to .pc-trash in the same
@@ -756,6 +800,38 @@
       async (u, i, n) => {
         step('uploading', u.path, i, n);
         try{
+          /* BYTES THE STORE ALREADY HOLDS ARE NOT UPLOADED AGAIN — the send side's half of
+           * adopt-by-content, and it was missing for the whole life of this engine.
+           *
+           * `diskChanged` compares a STAMP (size and mtime), because that is all a paged scan can
+           * afford to know. So anything that rewrites a file without changing a byte — a restore
+           * from backup, an rsync, a second sync engine on the same directory, a touch, a
+           * virus scanner that rewrites in place — reads as "changed here" and is re-uploaded in
+           * full. Reported after a sweep had finished cleanly, with every count in agreement
+           * (11,939 here, 11,939 in the folder, 11,939 in the store): "why is desktop uploading
+           * 2/19 files right now! sync was finished!" Nothing was wrong; the folder simply could
+           * not tell a rewrite from an edit, and a multi-gigabyte file re-uploads either way.
+           *
+           * One whole-file hash answers it, and it is a hash the upload was about to take anyway —
+           * `send()` hashes before it reads the first chunk. Equal to the live record's checksum
+           * means the store holds these exact bytes: journal the new stamp at the record's own
+           * version and publish NOTHING. Not equal, or unreadable, or no checksum to compare
+           * against, and the upload proceeds exactly as before — the shortcut can only ever remove
+           * work, never decide anything.
+           *
+           * The version is the record's, not a bump: this device learned nothing the folder did not
+           * already know, and bumping would hand every other device a new version to re-examine —
+           * one rewrite here becoming a round of work everywhere. */
+          const _R = state[u.path];
+          if(!u.mustSend && _R && !_R.deletedAt && _R.csum && typeof fs.hashFile === 'function'){
+            let _h = null;
+            try{ _h = await fs.hashFile(o.id, u.path); }catch(_){ _h = null; }
+            if(_h && _h === _R.csum){
+              record(u.path, _R, { size: u.stat.size, mtime: u.stat.mtime, csum: _h }, false);
+              (report.settledByContent = report.settledByContent || []).push(u.path);
+              return;
+            }
+          }
           const entry = await send(fs, io, o, u, me,
                                    (pc) => step('uploading', u.path + ' ' + pc + '%', i, n), stopping);
           record(u.path, entry, { size: u.stat.size, mtime: u.stat.mtime, csum: entry.csum }, true);

@@ -497,7 +497,23 @@
      * music library — is a much larger change than this is worth. */
     putParts: PC.syncBlobs && PC.syncBlobs.putParts
       ? (read, size, onProgress, cs, ...rest) => {
-          const w = _stallGuard('upload');
+          /* THE WINDOW SCALES WITH THE CHUNK, exactly as the download's does — and it did not, which
+           * made the guard fire on the files it exists to rescue.
+           *
+           * The bumps here land per CHUNK: once when the chunk is read, once when it is reported
+           * done. Between those two the whole chunk has to cross the wire, so a fixed three-minute
+           * window is really a floor on UPLOAD SPEED — about 180 kbps for a 4 MB chunk, and more for
+           * a bigger one. A domestic upstream misses that regularly. The guard then trips a healthy
+           * transfer, the sweep records a failure and retries, and the retry meets the same ceiling:
+           * a large file can never finish, and the size is what decides it. Reported as "no progress
+           * stuck on same file" on a zip, ending in "had to restart the app".
+           *
+           * `Math.ceil(cs / 32768) * 1000` is the download's rule — roughly a 32 kbps floor — and it
+           * is still a bound on SILENCE, not on the transfer: a chunk that moves at all keeps
+           * bumping. A dead socket is admitted just as fast as before at every ordinary chunk size,
+           * because the fixed three minutes remains the minimum. */
+          const _cs = cs || (PC.syncBlobs && PC.syncBlobs.chunkBytes) || 4 * 1024 * 1024;
+          const w = _stallGuard('upload', Math.max(_STALL_MS, Math.ceil(_cs / 32768) * 1000));
           return Promise.race([
             PC.syncBlobs.putParts((off, len) => { w.bump(); return read(off, len); }, size,
                                   (done, total) => { w.bump(); if(onProgress) onProgress(done, total); },
@@ -2787,6 +2803,12 @@
           : PC.enc(st.text || 'not synced yet')}</div>
         ${lost ? '<div class="sync-actions"><button class="btn btn-neon small sync-relink">Point at the folder again…</button></div>' : ''}
         ${nat ? `<div class="sync-new"><b>Waiting for you.</b> <span class="muted small">${PC.enc(nat)}</span></div>` : ''}
+        ${(st.report && (st.report.otherEngines || []).length) ? `<div class="sync-new"><b>${PC.enc([...new Set(st.report.otherEngines)].join(' and '))} is also syncing this folder.</b>
+          <span class="muted small">Two sync engines writing one directory fight each other: a file the other one
+          deletes reads here as your deletion and is published to every device, a conflict copy written here is
+          replicated back after you remove it, and a part-finished download is copied away mid-write. At minimum add
+          <code>.pc-trash</code>, <code>*.pcpart</code> and <code>*.crswap</code> to its ignore list — better, let one
+          of them own this folder.</span></div>` : ''}
         ${(() => {
           /* Measured beats remembered: a sweep scanned the disk, the fallback is what this device
              last agreed to. Shown either way, and the tooltip says which. */

@@ -5978,6 +5978,16 @@
   // position, so the feed only ever moves when the user asks it to. Per-device for instant use, and
   // synced to Nostr (kind-30078 client-prefs) so it follows across devices.
   let AUTO_NEW_POSTS = ClientSettings.get('autoNewPosts', true) !== false;
+  /* The ↑ N new posts button, which can be turned off entirely.
+   *
+   * It is not the same switch as AUTO_NEW_POSTS: that one decides whether new posts INSERT
+   * themselves while you are reading, and its "off" state is precisely what the button exists to
+   * announce. Turning the button off is the quieter answer to both — nothing moves, and nothing
+   * counts up at you either. Asked for as "quite annoying and sort of leads to over consumption",
+   * which is a reason no amount of tuning the animation would have answered.
+   *
+   * Posts still arrive and still queue; they simply wait until something you did brings them in. */
+  let NEW_POSTS_PILL = ClientSettings.get('newPostsPill', true) !== false;
   // Which timeline the app LANDS on: Nostrverse (the global feed) by default, or Home (people you
   // follow). Per-device for instant use on the very first paint — the boot view is chosen long before
   // the relay can answer — and synced to Nostr (kind-30078 client-prefs) so it follows across devices.
@@ -6410,7 +6420,8 @@
     p.style.top = Math.max(0, (tabs.getBoundingClientRect().bottom - box.top + 10) / z) + 'px';
   }
   function _updateNewPostsPill(){
-    const p=_newPostsPill(); const n=(VIEW==='home'||VIEW==='global')?_livePending.length:0;
+    const p=_newPostsPill();
+    const n=(NEW_POSTS_PILL && (VIEW==='home'||VIEW==='global'))?_livePending.length:0;
     if(n>0){ p.textContent='↑ '+n+' new post'+(n>1?'s':''); _placePill(p); p.classList.remove('hidden'); } else p.classList.add('hidden');
   }
   function _flushPending(){
@@ -13792,7 +13803,7 @@
     // and it was buried in Discover → Streams where nobody found it. Mirrors the desktop sidebar item.
     // Icons come from the shared sprite via ICO() — the same glyphs the desktop sidebar uses, so the
     // phone and desktop navs never drift apart (and they take the theme's colour, unlike emoji).
-    const items=[['ai','ai','PosterChan AI'],['mail','mail','Email'],['websearch','search','Web Search'],['terminal','terminal','Terminal'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['__music','music','Music'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__bug','bug','Report a Bug'],['__accounts','user','Switch account'],['settings','gear','Settings'],
+    const items=[['ai','ai','PosterChan AI'],['mail','mail','Email'],['websearch','search','Web Search'],['terminal','terminal','Terminal'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['__music','music','Music'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['repos','git','Git'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__bug','bug','Report a Bug'],['__accounts','user','Switch account'],['settings','gear','Settings'],
       // Same button, same rule as the sidebar's: a guest is offered a way IN, not a second way out.
       (GUEST ? ['__login','user','Log in'] : ['logout','logout','Logout'])]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai')
@@ -14979,6 +14990,10 @@
       if(!_prefTouched.has('noImages') && typeof pr.noImages==='boolean' && pr.noImages!==NO_IMAGES){
         NO_IMAGES=pr.noImages; ClientSettings.set('noImages', NO_IMAGES);
         if(['home','global','notifications','messages','bookmarks','profile'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
+      }
+      if(!_prefTouched.has('newPostsPill') && typeof pr.newPostsPill==='boolean' && pr.newPostsPill!==NEW_POSTS_PILL){
+        NEW_POSTS_PILL=pr.newPostsPill; ClientSettings.set('newPostsPill', NEW_POSTS_PILL);
+        _updateNewPostsPill();
       }
       if(!_prefTouched.has('autoNewPosts') && typeof pr.autoNewPosts==='boolean' && pr.autoNewPosts!==AUTO_NEW_POSTS){
         AUTO_NEW_POSTS=pr.autoNewPosts; ClientSettings.set('autoNewPosts', AUTO_NEW_POSTS);
@@ -27887,6 +27902,7 @@
           </label>
           <div class="muted small">Which feed you land on when the app starts. Nostrverse is everything the relays carry; Home is only the people you follow. You can still switch any time with the tabs above the timeline. Syncs across your devices.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-refresh"></use></svg>Auto-show new posts<label class="switch"><input type="checkbox" id="set-auto-new-posts" ${AUTO_NEW_POSTS?'checked':''}><span class="slider"></span></label></label>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-chevron-up"></use></svg>Show the “new posts” button<label class="switch"><input type="checkbox" id="set-new-posts-pill" ${NEW_POSTS_PILL?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">On, new notes appear at the top of Home / Nostrverse as they arrive. Off, they wait behind a <b>↑ N new posts</b> button and only appear when you tap it — so the timeline never moves under you. Syncs across your devices.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide replies in timelines<label class="switch"><input type="checkbox" id="set-hide-replies" ${ClientSettings.get('hideReplies',false)?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Keeps replies out of Home and Nostrverse so the feed reads as posts rather than conversation. A reply is still there when you open the thread it belongs to, and your own notifications are unaffected. Syncs across your devices.</div>
@@ -28201,6 +28217,12 @@
         saveClientPrefsNostr({ readAloudHold: on });
         if(!on) stopNarration();          // turning it off while one is playing must stop that one
         toast(on?'hold a post to hear it read aloud':'holding a post no longer reads it aloud');
+      }; }
+    { const np=$('#set-new-posts-pill'); if(np) np.onchange=()=>{
+        NEW_POSTS_PILL = np.checked; ClientSettings.set('newPostsPill', NEW_POSTS_PILL);
+        _prefTouched.add('newPostsPill'); saveClientPrefsNostr({ newPostsPill: NEW_POSTS_PILL });
+        toast(NEW_POSTS_PILL?'the new posts button is back':'the new posts button is off');
+        _updateNewPostsPill();      // take it off the screen now, not on the next arrival
       }; }
     { const an=$('#set-auto-new-posts'); if(an) an.onchange=()=>{
         AUTO_NEW_POSTS = an.checked; ClientSettings.set('autoNewPosts', AUTO_NEW_POSTS);

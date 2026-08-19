@@ -487,6 +487,14 @@ public final class SafFs implements SyncIo.Files {
         return partId == null ? null : sha256(docUri(partId));
     }
 
+    /** The sha256 of the real file, or null when there is nothing to read. */
+    public String hashFile(String rel) {
+        try {
+            String id = resolve(rel, false);
+            return id == null ? null : sha256(docUri(id));
+        } catch (Exception e) { return null; }
+    }
+
     /** Deleted, never trashed: this is not somebody's file, it is bytes we could not confirm. */
     public void discardPart(String rel) {
         String dirId = resolve(dirName(rel), false);

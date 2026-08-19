@@ -29,6 +29,10 @@ public final class SyncIo {
         long partSize(String rel);
         void discardPart(String rel);
         String hashPart(String rel);
+
+        /** The sha256 of the real file, or null when it cannot be read. Never throws: an
+         *  unanswered hash must fall through to the work that would have happened anyway. */
+        String hashFile(String rel);
         long[] commitPart(String rel, long when) throws Exception;
         String trash(String rel, long when) throws Exception;
         /** Positive proof for a deletion claim: {gone, parentAlive}. See SafFs.confirmGone. */

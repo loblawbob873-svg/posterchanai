@@ -71,6 +71,7 @@ public final class NativeSweep {
         /** Set when this sweep refused to tell the other devices to delete in bulk. */
         public String refusedRemoteDelete = null;
         public final List<String> uploaded = new ArrayList<String>();
+        public int settledByContent = 0;
         public final List<String> downloaded = new ArrayList<String>();
         public final List<String> trashed = new ArrayList<String>();
         public final List<String> removedRemote = new ArrayList<String>();
@@ -88,6 +89,7 @@ public final class NativeSweep {
             m.put("key", key);
             m.put("at", at);
             m.put("uploaded", uploaded.size());
+            m.put("settledByContent", settledByContent);
             m.put("downloaded", downloaded.size());
             m.put("trashed", trashed.size());
             m.put("removedRemote", removedRemote.size());
@@ -413,6 +415,36 @@ public final class NativeSweep {
             if (meta == null) continue;
             progress(f.key, "uploading", path, ++ui, plan.send.size());
             try {
+                /* BYTES THE STORE ALREADY HOLDS ARE NOT UPLOADED AGAIN — the web executor's rule,
+                 * mirrored, and it matters more here than anywhere.
+                 *
+                 * The plan is built from a STAMP (size and mtime), so anything that rewrites a file
+                 * without changing a byte — a restore, an rsync, a second sync engine on the same
+                 * directory — reads as "changed here". On a phone that means re-sending the file
+                 * over a radio, on battery, for no gain; on a multi-gigabyte file it means an upload
+                 * that may never finish. One whole-file hash answers it.
+                 *
+                 * Equal to the live record's checksum means the store holds these exact bytes:
+                 * journal the new stamp at the RECORD's own version — not a bump, since this device
+                 * learned nothing the folder did not know — and publish nothing. Anything else, or
+                 * an unreadable hash, falls through to the upload unchanged: the shortcut can only
+                 * remove work, never decide.
+                 *
+                 * The web side must additionally exempt a named repair, whose whole purpose is to
+                 * re-send bytes the STORE lost while the record still certifies them. There is no
+                 * such path here — a background sweep does no repairs by name — and if one is ever
+                 * added it needs the same exemption. */
+                Map<String, Object> R = state.get(path);
+                if (R != null && R.get("deletedAt") == null) {
+                    String was = Json.str(R.get("csum"), "");
+                    String is = was.isEmpty() ? null : fs.hashFile(path);
+                    if (is != null && is.equals(was)) {
+                        j.applied(path, R, meta, false);
+                        rep.settledByContent++;
+                        j.maybe();
+                        continue;
+                    }
+                }
                 Map<String, Object> entry = upload(net, fs, mk, path, meta, device, now, rep);
                 entry.put("v", u.get("v"));
                 entry.put("by", device);

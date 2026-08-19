@@ -30,6 +30,7 @@ PROF = (os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-ustabs")
 WHERE = {
     "set-read-aloud":    "timeline",
     "set-auto-new-posts":"timeline",
+    "set-new-posts-pill":"timeline",
     "set-start-timeline":"timeline",
     "set-hide-replies":  "timeline",
     "set-post-effects":  "timeline",
