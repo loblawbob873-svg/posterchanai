@@ -90,6 +90,33 @@ jobs:
       # /releases/download/apk-latest/posterchan.apk URL that poster.place/apk + refresh.sh depend on) makes
       # the next step create it fresh, with an honest date. Never fail the build over this — a missing release
       # is re-created moments later, and the server keeps serving its local mirror meanwhile.
+
+      # RELEASE NOTES, WRITTEN FROM WHAT IS ACTUALLY IN THE BUILD. Zapstore publishing has been
+      # automated since it was set up, but every release went out with NO NOTES — a version number
+      # and nothing about what changed. `zsp` reads them from the `release_notes:` path in
+      # zapstore.yaml, so they are generated here, before it runs.
+      #
+      # The window is "since the commit the PREVIOUS rolling release was built from", recovered from
+      # that release's own body — which is why the body carries the marker below. Read BEFORE the
+      # release is deleted and re-created, or the marker is already gone. A missing or unusable
+      # marker is not a failure: the generator falls back to a recent window and says so.
+      - name: Release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PREV=$(gh release view apk-latest --repo "$GITHUB_REPOSITORY" --json body -q .body 2>/dev/null \
+                 | grep -oE 'built-from: [0-9a-f]{7,40}' | head -1 | cut -d' ' -f2 || true)
+          echo "previous build: ${PREV:-<none>}"
+          python3 scripts/release_notes.py --since "$PREV" \
+            --version "1.0.${{ github.run_number }}" --out RELEASE_NOTES.md
+          {
+            echo 'NOTES<<PCEOF'
+            cat RELEASE_NOTES.md
+            echo
+            echo "<!-- built-from: $GITHUB_SHA -->"
+            echo PCEOF
+          } >> "$GITHUB_ENV"
+
       - name: Retire the previous rolling release (so the new one is dated today)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -100,7 +127,10 @@ jobs:
         with:
           tag_name: apk-latest
           name: PosterChan APK (latest)
-          body: "Latest PosterChan Android APK — auto-built from the web client. Version 1.0.${{ github.run_number }}."
+          body: |
+            Latest PosterChan Android APK — auto-built from the web client. Version 1.0.${{ github.run_number }}.
+
+            ${{ env.NOTES }}
           files: posterchan.apk
           make_latest: true
 

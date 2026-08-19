@@ -136,3 +136,4 @@ mobile/www/
 # The SSH keeper's unix socket (app/services/ssh_keeper.py). A socket is not a file git can
 # track, and `git add -A` should not be trying.
 .run/
+RELEASE_NOTES.md

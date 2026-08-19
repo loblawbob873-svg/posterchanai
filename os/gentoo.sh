@@ -91,8 +91,15 @@ media-video/pipewire media-video/wireplumber gui-libs/gtk media-fonts/noto media
 www-client/firefox-bin games-util/gamescope \
 sys-apps/xdg-desktop-portal gui-libs/xdg-desktop-portal-wlr media-video/obs-studio"
 
+# The profile has to survive a CHROOT. buildGentoo copies this script into the target and runs it
+# there for the package step, and an environment variable does not cross that boundary — so the
+# choice is a FILE, written into the target once, and read here on every invocation. Without it the
+# chroot run silently rebuilds the KDE package list and installs a second desktop.
+POSTERCHANOS="${POSTERCHANOS:-n}"
+[ -f /etc/posterchanos ] && POSTERCHANOS="y"
+
 PACKAGES="$BASE_PACKAGES $DESKTOP_APPS"
-if [[ "${POSTERCHANOS:-n}" = *y* ]]; then
+if [[ "$POSTERCHANOS" = *y* ]]; then
 	PACKAGES="$BASE_PACKAGES $POSTERCHANOS_PACKAGES"
 	FLATPAK_PACKAGES=""
 fi
@@ -331,7 +338,16 @@ configurePortage() {
 	echo
 	echo
 	echo
-	GENTOO_PROFILE=$(chroot $TARGET /usr/bin/eselect profile list | grep -i 'plasma' | grep systemd | grep -i stable | head -1 | cut -d '[' -f2 | cut -d ']' -f1)
+	# THE GENTOO PROFILE IS THE BIGGEST LEVER THERE IS, and it is chosen here — before a single
+	# package list is consulted. The desktop/plasma profile turns on the KDE USE flags system-wide
+	# and pulls Plasma into @world no matter what PACKAGES says, which is how a "minimal" build was
+	# caught emerging kde-frameworks/breeze-icons. PosterChanOS takes the plain desktop profile: the
+	# desktop USE defaults (which sway, pipewire and OBS all want) without a desktop environment.
+	if [[ "$POSTERCHANOS" = *y* ]]; then
+		GENTOO_PROFILE=$(chroot $TARGET /usr/bin/eselect profile list | grep -i 'desktop' | grep -vi 'plasma\|gnome' | grep systemd | grep -i stable | head -1 | cut -d '[' -f2 | cut -d ']' -f1)
+	else
+		GENTOO_PROFILE=$(chroot $TARGET /usr/bin/eselect profile list | grep -i 'plasma' | grep systemd | grep -i stable | head -1 | cut -d '[' -f2 | cut -d ']' -f1)
+	fi
 	chroot $TARGET /usr/bin/eselect profile set $GENTOO_PROFILE
 
 	mkdir -p $TARGET/etc/portage/package.license
@@ -384,6 +400,11 @@ buildGentoo() {
 	echo -e "\033[1;36m[Installing Packages]\033[0m"
 	echo
 	echo
+	# THE MARKER GOES IN BEFORE THE PACKAGE STEP, NOT AFTER IT. install-packages runs INSIDE the
+	# chroot, where an environment variable does not reach — so without this the chroot rebuilds the
+	# default list and installs the whole KDE desktop, hours of it, on the profile whose entire point
+	# is not having one. finalizeInstall writes the marker too; by then it is far too late.
+	if [[ "$POSTERCHANOS" = *y* ]]; then touch $TARGET/etc/posterchanos; fi
 	cp -f gentoo.sh $TARGET/usr/bin/gentoo.sh
 	chroot $TARGET /usr/bin/bash /usr/bin/gentoo.sh install-packages
 	echo
@@ -399,7 +420,18 @@ finalizeInstall() {
 	echo 'bash /usr/bin/gentoo.sh accounts' >>$TARGET/setup.sh
 	echo 'bash /usr/bin/gentoo.sh services' >>$TARGET/setup.sh
 	echo "chown -R $USER:$USER /home/$USER" >>$TARGET/setup.sh
-	chroot $TARGET /usr/bin/systemctl enable sddm
+	# THE DISPLAY MANAGER IS A KDE COMPONENT AND PosterChanOS DOES NOT HAVE ONE. Enabling a unit
+	# that was never installed fails the whole finalize step — and on the profile whose entire point
+	# is that the shell IS the desktop, there is nothing for a login screen to launch. The shell
+	# session (autologin into sway, which starts PosterChan) goes in instead.
+	if [[ "$POSTERCHANOS" = *y* ]]; then
+		touch $TARGET/etc/posterchanos
+		cp -f gentoo.sh $TARGET/usr/bin/gentoo.sh
+		chroot $TARGET /usr/bin/bash /usr/bin/gentoo.sh posterchan-shell
+		plymouthTheme
+	else
+		chroot $TARGET /usr/bin/systemctl enable sddm
+	fi
 	chmod +x $TARGET/usr/bin/gentoo.sh
 	chmod +x $TARGET/setup.sh
 	cp -f /tmp/disk $TARGET/etc/disk
@@ -516,6 +548,33 @@ services() {
 	for i in "${SERVICES[@]}"; do
 		systemctl enable $i
 	done
+}
+
+plymouthTheme() {
+	# The boot splash. Plymouth is already in BASE_PACKAGES; what it lacks is a theme that is ours,
+	# and the stock one is not merely off-brand here — this boot asks for a LUKS PASSPHRASE, and a
+	# default theme draws that prompt in colours it inherited from somewhere else. On a near-black
+	# background that can leave the prompt invisible, and a person is then typing a disk password at
+	# a screen that looks frozen. The theme draws the prompt itself for that reason.
+	echo -e "\033[1;33m◆ BOOT SPLASH ◆\033[0m"
+	SRC="$(dirname "$0")/plymouth/posterchanos"
+	[ -d "$SRC" ] || SRC="/usr/share/posterchan/plymouth/posterchanos"
+	if [ ! -d "$SRC" ]; then
+		echo -e "\033[1;31mno splash theme found at $SRC — leaving the default\033[0m"
+		return 0
+	fi
+	DEST="${TARGET}/usr/share/plymouth/themes/posterchanos"
+	mkdir -p "$DEST"
+	cp -f "$SRC"/* "$DEST"/
+	# `plymouth-set-default-theme -R` rebuilds the initramfs, which is the half that is actually
+	# load-bearing: the theme lives INSIDE the initramfs at boot, so a theme set without a rebuild
+	# is a theme that will not appear and gives no hint as to why.
+	if [ -n "$TARGET" ] && [ "$TARGET" != "/" ]; then
+		chroot $TARGET /usr/bin/plymouth-set-default-theme -R posterchanos || \
+			chroot $TARGET /usr/bin/plymouth-set-default-theme posterchanos
+	else
+		plymouth-set-default-theme -R posterchanos || plymouth-set-default-theme posterchanos
+	fi
 }
 
 posterchanShell() {
@@ -1056,6 +1115,11 @@ elif [ "$1" = "steam" ]; then
 	installSteam
 elif [ "$1" = "install-packages" ]; then
 	installPackages
+elif [ "$1" = "posterchan-shell" ]; then
+	posterchanShell
+elif [ "$1" = "splash" ]; then
+	export TARGET=/
+	plymouthTheme
 elif [ "$1" = "btrfs-tweaks" ]; then
 	btrfsTweaks
 elif [ "$1" = "install-flatpaks" ]; then

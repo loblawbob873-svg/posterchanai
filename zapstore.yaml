@@ -21,6 +21,11 @@ license: GPL-3.0-or-later
 # The APK the workflow just built and signed (the job copies it here before publishing).
 release_source: ./posterchan.apk
 
+# Written by .github/workflows/android.yml before `zsp publish`, from the commits that actually
+# touched what ships inside the APK. Not committed: it describes one build, and a stale one in the
+# tree would be published as though it described this one.
+release_notes: ./RELEASE_NOTES.md
+
 summary: A Nostr-powered personal cloud and self-hosted AI — notes, calendar, contacts, files, passwords
 description: |
   PosterChan is the Android half of a **Nostr-powered personal cloud** and a **self-hosted AI powerhouse**

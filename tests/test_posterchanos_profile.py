@@ -79,7 +79,7 @@ class PosterChanOSProfile(unittest.TestCase):
     def test_the_profile_replaces_the_desktop_apps_rather_than_adding_to_them(self):
         """Appending would install the minimal stack ON TOP of Plasma — twice the desktop and none of
         the saving, which is exactly the mistake that looks like it worked."""
-        m = re.search(r'if \[\[ "\$\{POSTERCHANOS:-n\}" = \*y\* \]\]; then\s*\n\s*'
+        m = re.search(r'if \[\[ "\$POSTERCHANOS" = \*y\* \]\]; then\s*\n\s*'
                       r'PACKAGES="([^"]*)"', self.src)
         self.assertTrue(m, "the profile switch moved")
         self.assertNotIn("DESKTOP_APPS", m.group(1),
@@ -88,7 +88,7 @@ class PosterChanOSProfile(unittest.TestCase):
     def test_flatpak_is_not_used_by_this_profile(self):
         """Its only real customer was Steam, which portage builds natively — and a flatpak runtime is
         a second copy of most of a graphics stack."""
-        m = re.search(r'if \[\[ "\$\{POSTERCHANOS:-n\}" = \*y\* \]\];.*?\nfi', self.src, re.S)
+        m = re.search(r'if \[\[ "\$POSTERCHANOS" = \*y\* \]\];.*?\nfi', self.src, re.S)
         self.assertTrue(m)
         self.assertIn('FLATPAK_PACKAGES=""', m.group(0))
 
@@ -112,11 +112,37 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertNotIn("swaybar", self.src)
         self.assertNotIn("bar {", self.src)
 
+    def test_the_marker_is_written_before_the_package_step(self):
+        """install-packages runs INSIDE the chroot, where an environment variable does not reach. If
+        the marker is only written by finalizeInstall, the chroot rebuilds the default list and
+        installs the entire KDE desktop — hours of it — on the profile whose point is not having
+        one, and nothing about that looks like a mistake until it finishes."""
+        i = self.src.index("gentoo.sh install-packages")
+        before = self.src[:i]
+        j = before.rindex("buildGentoo() {")
+        self.assertIn("touch $TARGET/etc/posterchanos", before[j:],
+                      "the profile marker is not written before the chroot package step")
+
+    def test_the_gentoo_profile_is_not_the_plasma_one(self):
+        """The Gentoo PROFILE is chosen before any package list is consulted, and desktop/plasma
+        turns on the KDE USE flags system-wide — it pulls Plasma into @world whatever PACKAGES says.
+        A "minimal" build was caught emerging kde-frameworks/breeze-icons because of this line, and
+        nothing in the package list could have prevented it."""
+        i = self.src.index("GENTOO_PROFILE=")
+        block = self.src[max(0, i - 700):i + 700]
+        self.assertIn("POSTERCHANOS", block,
+                      "the profile is picked without consulting PosterChanOS — it gets Plasma")
+        pcos = [ln for ln in block.splitlines()
+                if "GENTOO_PROFILE=" in ln and "-vi 'plasma" in ln]
+        self.assertTrue(pcos, "the PosterChanOS branch does not exclude the plasma profile")
+
     def test_the_default_profile_is_unchanged(self):
         """This is somebody's working installer for their own machines. PosterChanOS is opt-in, and a
         plain run must still build exactly what it built before."""
         self.assertIn('PACKAGES="$BASE_PACKAGES $DESKTOP_APPS"', self.src)
-        self.assertIn("${POSTERCHANOS:-n}", self.src)
+        self.assertIn('POSTERCHANOS="${POSTERCHANOS:-n}"', self.src)
+        self.assertIn("/etc/posterchanos", self.src,
+                      "the profile cannot survive the chroot the package step runs in")
 
 
 if __name__ == "__main__":
