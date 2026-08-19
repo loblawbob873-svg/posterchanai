@@ -1077,6 +1077,32 @@ scenario('the receipts: a torn store copy heals itself, end to end', async (t) =
   t.eq(identical(A2.disk, B2.disk), null, 'the folders do not match after the heal');
 });
 
+scenario('pause cuts into a big upload and the resume is nearly free', async (t) => {
+  const sky = cloud();
+  // One big chunked file plus photos. Pause lands DURING the big upload — the shape that used to
+  // keep uploading a multi-GB ISO to 100% while the card said paused, wedging everything behind it.
+  const A = device('laptop', sky, { disk: Object.assign(photos(5), { 'iso/win.iso': video(12, 99) }),
+                                    chunk: 4 * MB });
+  let reads = 0;
+  const realRead = A.fs.readPart;
+  A.fs.readPart = async (id, r, off, len) => { reads++; return realRead(id, r, off, len); };
+  const r1 = await A.sweep({ shouldStop: () => reads >= 2 });   // stop mid-ISO, chunk 2 of 3
+  t.ok(r1.stopped === true, 'a pause during a chunked upload did not report itself stopped');
+  t.eq(r1.failed.length, 0, 'a user pause was recorded as a failure: ' + JSON.stringify(r1.failed));
+  t.ok(!sky.entry('iso/win.iso'), 'a half-uploaded file was published anyway');
+  const uploadedChunks = reads;
+  // The next sweep finishes it — and the chunks already stored are skipped, not re-sent.
+  const A2 = device('laptop', sky, { disk: A.disk, index: A.st.index, chunk: 4 * MB });
+  const r2 = await A2.sweep();
+  t.eq(r2.failed.length, 0, 'the resume failed: ' + JSON.stringify(r2.failed));
+  const e = sky.entry('iso/win.iso');
+  t.ok(!!e && e.chunks && e.chunks.length === 3, 'the ISO never finished: ' + JSON.stringify(e && e.chunks));
+  const B = device('phone', sky, { chunk: 4 * MB });
+  await B.sweep();
+  t.eq(identical(A2.disk, B.disk), null, 'the resumed ISO is not byte-identical');
+  void uploadedChunks;
+});
+
 scenario('a blob deleted out from under a seed puts itself back — no buttons', async (t) => {
   const sky = cloud();
   const A = device('desktop', sky, { disk: photos(6) });

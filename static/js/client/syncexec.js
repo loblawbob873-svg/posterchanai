@@ -408,11 +408,12 @@
          * has appeared. Fetching first writes to the `.part` file, which is invisible to everything
          * else, so nothing moves until there is something to put in its place. */
         const st = await receive(fs, io, o, c.path, c.entry, () => {},
-                                 () => fs.move(o.id, c.path, c.keepAs));
+                                 () => fs.move(o.id, c.path, c.keepAs), stopping);
         record(c.path, Object.assign({}, c.entry), { size: st.size, mtime: st.mtime,
                                                      csum: c.entry.csum });
         report.conflicted.push({ path: c.path, keptAs: c.keepAs });
       }catch(e){
+        if(isStop(e)) return await halt(report, journal);
         /* Remembered exactly as a download failure is, and for the same reason: a copy that cannot
          * be fetched must not be attempted again every sweep — and here each attempt used to cost a
          * renamed file as well as a round trip. */
@@ -461,11 +462,13 @@
         step('downloading', d.path, i, n);
         try{
           const st = await receive(fs, io, o, d.path, d.entry,
-                                   (pc) => step('downloading', d.path + ' ' + pc + '%', i, n));
+                                   (pc) => step('downloading', d.path + ' ' + pc + '%', i, n),
+                                   undefined, stopping);
           record(d.path, Object.assign({}, d.entry), { size: st.size, mtime: st.mtime,
                                                        csum: d.entry.csum });
           report.downloaded.push(d.path);
         }catch(e){
+          if(isStop(e)) return;               // the loop sees the latch and halts cleanly
           /* TWO KINDS OF UNUSABLE COPY, AND ONLY ONE OF THEM IS PERMANENT-UNTIL-REPAIRED.
            *
            * A checksum failure is deterministic: the same stored bytes produce the same wrong hash
@@ -503,14 +506,17 @@
         step('uploading', u.path, i, n);
         try{
           const entry = await send(fs, io, o, u, me,
-                                   (pc) => step('uploading', u.path + ' ' + pc + '%', i, n));
+                                   (pc) => step('uploading', u.path + ' ' + pc + '%', i, n), stopping);
           record(u.path, entry, { size: u.stat.size, mtime: u.stat.mtime, csum: entry.csum }, true);
           report.uploaded.push(u.path);
           /* COUNTED SEPARATELY, because it is not an ordinary upload: it puts back a file another
            * device deliberately deleted. */
           if(u.resurrect) (report.resurrected = report.resurrected || []).push(u.path);
           if(entry.existed) report.alreadyStored = (report.alreadyStored || 0) + 1;
-        }catch(e){ failed(report, u.path, 'upload', e); }
+        }catch(e){
+          if(isStop(e)) return;               // the loop sees the latch and halts cleanly
+          failed(report, u.path, 'upload', e);
+        }
       });
 
     // Deletions this device is announcing, and the agreements that need no bytes.
@@ -567,6 +573,8 @@
   /* ---- pieces ---------------------------------------------------------------------------------- */
 
   const msg = (e) => (e && e.message) || String(e);
+  const STOPPED = 'stopped by the user — will pick up exactly here next sweep';
+  const isStop = (e) => msg(e).indexOf('stopped by the user') === 0;
 
   /* THE STORAGE ADDRESS IS THE IDENTITY a fetch-refusal is keyed on — sha first, then the chunk
    * list, and the csum only for a record so old it names no storage. Never csum-first: a holder
@@ -678,7 +686,7 @@
    * wrong file is. */
   /** `beforeCommit` runs once the bytes are safely in the part file and before it takes the name —
    *  the one moment a conflict may move the local copy aside. */
-  async function receive(fs, io, o, path, entry, onPercent, beforeCommit){
+  async function receive(fs, io, o, path, entry, onPercent, beforeCommit, stopping){
     const chunks = entry.chunks || null;
     if(chunks && chunks.length && io.getParts && typeof fs.writePart === 'function'){
       const canVerify = !!(entry.csum && typeof fs.hashPart === 'function');
@@ -689,6 +697,7 @@
       const pull = async (from) => {
         let got = from;
         await io.getParts(chunks, (off, bytes) => {
+          if(stopping && stopping()) throw new Error(STOPPED);
           got = Math.max(got, off + ((bytes && bytes.length) || 0));
           if(total && onPercent) onPercent(Math.round(got / total * 100));
           return fs.writePart(o.id, path, off, bytes);
@@ -736,7 +745,12 @@
    * without transferring it. `sha` (or the chunk list) is where the encrypted bytes live — a
    * different number entirely, and comparing one against the other is how a folder duplicates
    * itself. */
-  async function send(fs, io, o, u, me, onPercent){
+  /* `stopping` reaches INSIDE the transfer. Pause used to be honoured only between files, so a
+   * multi-gigabyte ISO paused at 71% uploaded its remaining chunks for minutes while the card said
+   * paused — the folder held its slot, everything queued behind it, and every button answered
+   * "already syncing": reported as "then it breaks completely". A cut chunked upload costs almost
+   * nothing to resume — the chunks already sent are content-addressed and skipped next sweep. */
+  async function send(fs, io, o, u, me, onPercent, stopping){
     const path = u.path, size = (u.stat && u.stat.size) || 0;
     const entry = { v: u.v, by: me, size, mtime: (u.stat && u.stat.mtime) || 0 };
     if(size > chunkAbove(fs, o) && io.putParts && typeof fs.readPart === 'function'){
@@ -755,7 +769,10 @@
       const canHash = typeof fs.hashFile === 'function';
       const before = (u.stat && u.stat.csum) || (canHash ? await fs.hashFile(o.id, path) : undefined);
       const cs = (o.chunkBytes || 0) || (fs.chunkBytes || 0) || undefined;
-      const r = await io.putParts((off, len) => fs.readPart(o.id, path, off, len), size,
+      const r = await io.putParts((off, len) => {
+                                    if(stopping && stopping()) throw new Error(STOPPED);
+                                    return fs.readPart(o.id, path, off, len);
+                                  }, size,
                                   (doneB, totalB) => { if(onPercent && totalB)
                                                          onPercent(Math.round(doneB / totalB * 100)); },
                                   cs);
