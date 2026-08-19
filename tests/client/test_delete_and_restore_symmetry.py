@@ -641,6 +641,77 @@ class MemoryIsMeasuredWhereItGoes(unittest.TestCase):
                       "report and then ignored on the one that mattered")
 
 
+class AnUnansweredHashNeverMintsACopy(unittest.TestCase):
+    """"phone now has conflict files", straight after a large file finished syncing.
+
+    The hash in the conflict path is the only thing between a timestamp difference and a duplicated
+    file — and on Android it reads the WHOLE file back through SAF. On a multi-gigabyte file that is
+    minutes of I/O that can throw, be killed with the renderer, or answer nothing; every one of
+    those landed as `h = null` and fell straight through to minting a second copy. "Could not
+    compare" is not "different", and this is the one place in the sweep where getting that wrong
+    duplicates a file rather than losing one."""
+
+    def _run(self, hash_js):
+        js = """
+        require(%s); const X = require(%s);
+        (async () => {
+          const entry = { v:9, by:'other', sha:'s1', csum:'THEIRS', size:20, mtime:2000 };
+          const disk = { 'Pictures/big.jex': { size:20, mtime:7777 } };
+          const made = [];
+          const fs = {
+            scanPage: async (id, so, off) => (off ? { files:{}, done:true }
+              : { files: JSON.parse(JSON.stringify(disk)), done:true }),
+            %s
+            move: async (id, from, to) => { made.push(to); },
+            write: async () => ({ size:20, mtime:1 }),
+            writeCommit: async () => ({ size:20, mtime:1 }),
+            confirmGone: async () => ({ gone:false, parentAlive:true }),
+          };
+          const io = {
+            index: async () => ({}),
+            state: async () => ({ state: { 'Pictures/big.jex': JSON.parse(JSON.stringify(entry)) },
+                                  flagged:{} }),
+            saveIndex: async () => {},
+            hashBytes: async () => 'THEIRS',
+            getBlob: async () => new Uint8Array(20),
+            putState: async (k, r) => ({ ok:r.map(x=>x.path), stale:[], failed:[] }),
+          };
+          const rep = await X.sweep(fs, io, { id:'f', key:'k', device:'me', now:9000 });
+          process.stdout.write(JSON.stringify({
+            copies: made, conflicted: (rep.conflicted||[]).length,
+            uncompared: (rep.uncompared||[]).length, ok: rep.ok }));
+        })().catch(e => { console.error(e && e.stack || e); process.exit(1); });
+        """ % (json.dumps(FOLDERSYNC), json.dumps(EXEC), hash_js)
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=90)
+        self.assertEqual(r.returncode, 0, r.stderr[-1500:])
+        return json.loads(r.stdout)
+
+    def test_a_hash_that_throws_leaves_both_copies_alone(self):
+        out = self._run("hashFile: async () => { throw new Error('read timed out'); },")
+        self.assertEqual(out["copies"], [],
+                         "a file was duplicated because this device could not read it back")
+        self.assertEqual(out["conflicted"], 0)
+        self.assertEqual(out["uncompared"], 1, "and it has to be reported, not swallowed")
+        self.assertFalse(out["ok"], "an unresolved path is not a clean sweep")
+
+    def test_a_hash_that_answers_nothing_leaves_both_copies_alone(self):
+        out = self._run("hashFile: async () => null,")
+        self.assertEqual(out["copies"], [])
+        self.assertEqual(out["uncompared"], 1)
+
+    def test_matching_bytes_still_settle_with_no_copy(self):
+        out = self._run("hashFile: async () => 'THEIRS',")
+        self.assertEqual(out["copies"], [])
+        self.assertEqual(out["uncompared"], 0, "an answered, equal hash is not an unknown")
+
+    def test_a_hash_that_really_differs_still_keeps_both(self):
+        """The guard must not swallow a REAL conflict — that would lose an edit."""
+        out = self._run("hashFile: async () => 'MINE',")
+        self.assertEqual(out["uncompared"], 0)
+        self.assertEqual(len(out["copies"]), 1,
+                         "a genuinely divergent file must still keep both copies")
+
+
 class CheckDoesNotWedgeThePage(unittest.TestCase):
     """The check reads every file and asks about every record — and it must give the page its
     thread back while it does, or Android kills the renderer and the UI reloads mid-operation."""

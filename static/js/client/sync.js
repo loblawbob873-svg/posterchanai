@@ -2462,6 +2462,8 @@
       + unf + unc + unr
       + grp('Failed', rep.failed, a => a.path + ' — ' + a.what + ': ' + a.error)
       + grp('Skipped', rep.skipped, a => a.path + ' — ' + a.why)
+      + grp('Couldn\u2019t be compared \u2014 both copies left alone, retried next sync',
+            rep.uncompared || [], a => a.path + ' \u2014 ' + a.why)
       + grp('Conflicts kept', rep.conflicted, a => a.path + ' → ' + a.keptAs)
       + grp('Uploaded', rep.uploaded, a => a)
       + grp('Downloaded', rep.downloaded, a => a)

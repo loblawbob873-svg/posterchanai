@@ -514,12 +514,34 @@
        * Equal means both sides hold the same content and the only divergence was a timestamp; the
        * journal records agreement and no copy is minted. This is also what absorbs the CAS race —
        * two devices uploading the same file, the loser refused, resolving here. */
-      if(c.entry && c.entry.csum && typeof fs.hashFile === 'function'){
-        let h = null;
-        try{ h = await fs.hashFile(o.id, c.path); }catch(_){ h = null; }
+      if(c.entry && c.entry.csum && typeof fs.hashFile === 'function' && disk[c.path]){
+        let h = null, asked = true;
+        try{ h = await fs.hashFile(o.id, c.path); }catch(_){ h = null; asked = false; }
         if(h && h === c.entry.csum){
           const L = disk[c.path] || {};
           record(c.path, Object.assign({}, c.entry), { size: L.size, mtime: L.mtime, csum: h });
+          continue;
+        }
+        /* "COULD NOT COMPARE" IS NOT "DIFFERENT", and this is the one place in the sweep where
+         * getting that wrong duplicates a file instead of losing one.
+         *
+         * The hash above is the only thing standing between a timestamp difference and a conflict
+         * copy — and on Android it reads the WHOLE file back through SAF. On a multi-gigabyte file
+         * that is minutes of I/O that can throw, be killed with the renderer, or simply answer
+         * nothing; every one of those landed as `h = null` and fell through to minting a second
+         * copy of a 2 GB file. Reported the first time a big file finished syncing to a phone:
+         * "phone now has conflict files".
+         *
+         * So an unanswered question leaves both copies exactly as they are and says so. The next
+         * sweep asks again — the same shape as an unreadable scan path, a store that could not be
+         * listed, and a deletion that could not be confirmed. A conflict is only ever minted from a
+         * hash that actually came back and actually differed. */
+        if(!asked || !h){
+          report.uncompared = report.uncompared || [];
+          report.uncompared.push({ path: c.path, why: 'this device could not read the file back to '
+            + 'compare it (large files can take minutes) — both copies were left exactly as they '
+            + 'are, and the next sync will try again' });
+          report.ok = false;
           continue;
         }
       }
@@ -729,7 +751,11 @@
     /* AN UNRESOLVED PATH IS NOT A CLEAN SWEEP. A skipped conflict adds nothing to `failed`, so the
      * sweep used to report success and the card said "in step" while a divergence sat unresolved.
      * Silence about that is exactly the shape this feature keeps getting wrong. */
-    report.ok = report.failed.length === 0 && !(report.unfetchable || []).length;
+    /* AN UNCOMPARED PATH IS UNRESOLVED TOO. It adds nothing to `failed` — nothing failed, a
+     * question went unanswered — but the folder is not in step until it is asked again, and a sweep
+     * that reports success there is the same silence this feature keeps paying for. */
+    report.ok = report.failed.length === 0 && !(report.unfetchable || []).length
+              && !(report.uncompared || []).length;
     return report;
   }
 
