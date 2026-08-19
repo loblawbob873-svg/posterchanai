@@ -566,7 +566,14 @@
     const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(path)));
     return [...new Uint8Array(h)].slice(0, 12).map(b => b.toString(16).padStart(2, '0')).join('');
   }
-  async function _statePost(body){
+  /* ONE SIGNATURE PER WINDOW, NOT PER REQUEST. The server accepts a signed proof for five
+   * minutes; asking the signer per request turned a seed into hundreds of signatures — trivial
+   * for a local key, a relay round trip EACH for a remote signer (Amber, NIP-46), which is what
+   * made the signer feel broken the day sync arrived. Sign once, reuse inside the window, refresh
+   * with a minute and a half of margin. */
+  let _authAt = 0, _authB64 = '';
+  async function _syncAuth(){
+    if(_authB64 && (Date.now() - _authAt) < 210000) return _authB64;
     /* THE SIGNER IS AN AWAIT LIKE ANY OTHER, and it was the one with no ceiling. A remote signer
      * that never answers (a sleeping phone, a dropped NIP-46 relay) left the sweep inside this
      * line for ever: the card said "syncing", the folder held its slot, the queue starved — and
@@ -574,6 +581,12 @@
     const auth = await _bounded(PC.signAuth('sync-state'), 'signer', 30000)
       .catch(e => { throw new Error('the signer did not answer — check the signer connection on '
                                     + 'this device (' + ((e && e.message) || e) + ')'); });
+    _authB64 = btoa(JSON.stringify(auth));
+    _authAt = Date.now();
+    return _authB64;
+  }
+  async function _statePost(body){
+    const authB64 = await _syncAuth();
     let ctl = null, timer = null;
     try{ ctl = new AbortController(); }catch(_){ ctl = null; }
     if(ctl) timer = setTimeout(() => { try{ ctl.abort(); }catch(_){} }, _POST_TIMEOUT_MS);
@@ -583,7 +596,7 @@
         method:'POST', headers:{'Content-Type':'application/json'},
         signal: ctl ? ctl.signal : undefined,
         body: JSON.stringify(Object.assign({ pubkey: PC.me().pubkey,
-                                             auth: btoa(JSON.stringify(auth)) }, body)),
+                                             auth: authB64 }, body)),
       }), 'server', _POST_TIMEOUT_MS);
     }catch(e){
       const aborted = e && (e.name === 'AbortError' || /abort|stopped responding/i.test(String(e.message || e)));
