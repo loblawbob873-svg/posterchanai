@@ -172,6 +172,20 @@ except Exception:
 shim = shim.replace('</script>', 'window.__PC_DESKTOP_BUILD__ = ' + _dv + ';\n</script>', 1)
 html = html.replace('</head>', shim + '</head>', 1)
 open('www/index.html', 'w', encoding='utf-8').write(html)
+# THIS BUNDLE'S OWN COMMIT — see mobile/build-www.sh for why. A desktop app is installed by hand
+# and then reported on, so the build has to be readable from the app itself.
+import subprocess as _sp
+try:
+    _sha = _sp.run(['git','rev-parse','--short','HEAD'], capture_output=True, text=True,
+                   timeout=5).stdout.strip() or 'unknown'
+except Exception:
+    _sha = 'unknown'
+_h = open('www/index.html', encoding='utf-8').read()
+_h2 = _re.sub(r'window\.__PC_BUILD="[^"]*"', 'window.__PC_BUILD="' + _sha + '"', _h, count=1)
+if _h2 == _h:
+    _h2 = _h.replace('<head>', '<head><script>window.__PC_BUILD="' + _sha + '";</script>', 1)
+open('www/index.html','w',encoding='utf-8').write(_h2)
+print('build stamp: ' + _sha)
 print('www/index.html built (shell rendered locally, bundled mode injected)')
 PY
 

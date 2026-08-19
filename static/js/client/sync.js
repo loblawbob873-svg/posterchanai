@@ -2639,6 +2639,8 @@
       ${fs ? '' : `<div class="empty">This device can't reach a folder. Folder sync needs the desktop app —
         a browser has no filesystem, and Firefox has no File System Access API at all. Your files are
         still readable here under Files.</div>`}
+      <p class="muted small">Build <code>${PC.enc(String(window.__PC_BUILD || 'unknown'))}</code> \u2014 quote this
+        when reporting anything here; it is the only way to tell whether a fix is on this device.</p>
       <p class="muted small">Folders are kept in step across your devices, encrypted with your own key
         before they leave. Deletions go to <code>.pc-trash</code> inside the folder, never straight out.
         Where a folder lives is set per device.</p>

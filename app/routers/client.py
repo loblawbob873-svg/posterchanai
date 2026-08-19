@@ -16,6 +16,7 @@ import asyncio
 import base64
 import contextlib
 import glob
+import subprocess
 import hashlib
 import hmac
 import json
@@ -114,6 +115,30 @@ def _operator(db: Session) -> User | None:
     return q.filter(User.is_admin == True).first() or q.first()  # noqa: E712
 
 
+_BUILD_SHA = None
+
+
+def _build_sha() -> str:
+    """WHICH COMMIT THIS IS, so nobody has to guess whether a fix is installed.
+
+    Five days of a folder-sync investigation were spent testing devices that were running code from
+    before the fix, because there was no way to tell from the app. `ver` is an mtime — it busts a
+    cache and identifies nothing. This is the git short sha, read once: the WEB shows the node's
+    commit, and a bundled APK/desktop has its own stamped in at build time (see build-www.sh), so
+    the number on screen always describes the code actually running there."""
+    global _BUILD_SHA
+    if _BUILD_SHA is None:
+        sha = ""
+        try:
+            root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=root,
+                                 capture_output=True, text=True, timeout=5).stdout.strip()
+        except Exception:
+            sha = ""
+        _BUILD_SHA = sha or "unknown"
+    return _BUILD_SHA
+
+
 def _static_version() -> str:
     """A cache-busting token derived from the newest mtime of the client's CSS/JS. Cloudflare
     rewrites these assets' Cache-Control to a 31-day max-age, so without a versioned URL a browser
@@ -143,7 +168,8 @@ async def client_app(request: Request, db: Session = Depends(get_db)):
     # Nostr-only deployments hide the AI tab + AI compose actions (POSTERCHANAI_NOSTR_ONLY=1).
     nostr_only = os.getenv("POSTERCHANAI_NOSTR_ONLY", "0").lower() in ("1", "true", "yes", "on")
     return _TEMPLATES.TemplateResponse("client.html",
-        {"request": request, "ver": _static_version(), "secure": proto == "https",
+        {"request": request, "ver": _static_version(), "build": _build_sha(),
+         "secure": proto == "https",
          "nostr_only": nostr_only, "default_theme": _default_theme(db)},
         # This page sent NO Cache-Control, so Chromium (and the Electron desktop app, which loads the client
         # over HTTP) fell back to HEURISTIC caching and served a stale copy. The page is what carries the

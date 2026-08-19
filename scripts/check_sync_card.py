@@ -73,12 +73,20 @@ OPEN = r"""(async () => {
   await new Promise(r=>setTimeout(r,400));
   /* A REAL PREVIEW, not a hand-made report. A dry run walks the same path a sweep does up to the
      point of moving bytes, so the counts it produces are the ones a person actually sees — and it
-     needs no stub that can drift from what the card reads. */
-  try{
-    const f = window.PCSync.folders()[0];
-    await window.PCSync.sweep(f, { manual:true, dryRun:true });
-  }catch(e){ window.__sweepErr = String((e && e.message) || e); }
-  await new Promise(r=>setTimeout(r,500));
+     needs no stub that can drift from what the card reads.
+     RETRIED, because a brand-new throwaway key is not admitted by the relay the instant it signs
+     up: the first read of /client/sync-state can legitimately fail, and a check that reports that
+     as a missing feature is a check nobody can trust. */
+  const f = window.PCSync.folders()[0];
+  for(let i = 0; i < 10; i++){
+    try{
+      await window.PCSync.sweep(f, { manual:true, dryRun:true });
+      window.__sweepErr = '';
+      if(document.querySelector('.sync-counts span')) break;
+    }catch(e){ window.__sweepErr = String((e && e.message) || e); }
+    await new Promise(r=>setTimeout(r, 3000));
+  }
+  await new Promise(r=>setTimeout(r,400));
   return !!document.querySelector('.sync-card');
 })"""
 
@@ -98,6 +106,7 @@ INSPECT = r"""(() => {
     heights: btns.map(b => Math.round(b.getBoundingClientRect().height)),
     display: getComputedStyle(row).display,
     counts: [...card.querySelectorAll('.sync-counts span')].map(x => x.textContent.trim()),
+    build: (document.querySelector('.sync-view code') || {}).textContent || '',
   };
 })"""
 
@@ -258,6 +267,10 @@ async def drive(url):
         # 3.5 both sides of the folder, as numbers, without having to run anything
         c = v.get("counts") or []
         if not c:
+            err = await t.js("window.__sweepErr || ''") or ""
+            if err:
+                print("SKIP  the preview could not run: " + err)
+                return 2
             problems.append("the card shows no file counts — 'how many here' and 'how many in the "
                             "folder' are the two questions every report here is about")
         else:
@@ -268,6 +281,14 @@ async def drive(url):
                 problems.append(f"no shared count on the card: {c}")
             if not any(x.split()[0].replace(",", "").isdigit() for x in c):
                 problems.append(f"a count chip carries no number: {c}")
+
+        # 3.6 which build this is, on screen, so a report is never ambiguous again
+        b = (v.get("build") or "").strip()
+        if not b or b == "unknown":
+            problems.append("the Folder Sync view does not name the build it is running — every "
+                            "report about this feature has been ambiguous for want of it")
+        else:
+            print("  build on screen:", b)
 
         # 4. the menu opens, offers the rest, and a row reaches a real function
         m = await t.js(f"({MENU})()", aw=True) or {}

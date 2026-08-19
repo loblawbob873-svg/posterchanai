@@ -27833,6 +27833,7 @@
           <label class="fld">Theme <span class="muted small">(applies instantly; saved to your account)</span>
             <select class="input" id="us-theme">${THEMES.map(t=>`<option value="${t[0]}"${_curTheme===t[0]?' selected':''}>${t[1]}</option>`).join('')}</select>
           </label>
+          <div class="muted small" id="us-build" style="margin:-2px 0 6px">Build <code>${enc(String(window.__PC_BUILD||'unknown'))}</code>${_standalone()||BUNDLED?' \u00b7 this app':' \u00b7 this server'}</div>
           <label class="fld">Language <span class="muted small">(English is the default; Arabic switches the layout right-to-left)</span>
             <select class="input" id="us-lang">${_langOptions()}</select>
           </label>

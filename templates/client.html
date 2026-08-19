@@ -35,7 +35,11 @@
     <link rel="shortcut icon" href="/static/favicon.png">
     <link rel="apple-touch-icon" href="/static/icon-192.png">
     <link rel="stylesheet" href="/static/css/client.css?v={{ ver }}">
-    <script>window.__VER="{{ ver }}";window.PC_NOSTR_ONLY={{ 'true' if nostr_only else 'false' }};</script>
+    <!-- __PC_BUILD is the COMMIT, not a cache token: `ver` is an mtime and identifies nothing, which
+         is how five days went into testing devices running code from before the fix. A bundled
+         APK/desktop overwrites this with its OWN sha at build time (see mobile|desktop/build-www.sh),
+         so the number on screen always describes the code actually running there. -->
+    <script>window.__VER="{{ ver }}";window.__PC_BUILD="{{ build }}";window.PC_NOSTR_ONLY={{ 'true' if nostr_only else 'false' }};</script>
     <script defer src="/static/vendor/nostr/nostr.bundle.js"></script>
 </head>
 <body>
