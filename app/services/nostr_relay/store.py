@@ -175,6 +175,19 @@ _PRUNE_CHUNK = 20000
 _GIT_KINDS = (30617, 30618, 1617, 1621, 1622, 1623, 1630, 1631, 1632, 1633)
 assert not (set(_GIT_KINDS) & set(_PRUNABLE_KINDS)), "git kinds must never be prunable"
 
+# A NIP-22 comment (kind 1111) whose ROOT is a NIP-34 issue (1621) / patch (1617) / PR (1618) is the
+# collaboration record's CURRENT reply shape — NIP-34 dropped kind 1622, so gitworkshop et al. thread
+# issue discussion as 1111 comments. In spirit these belong to _GIT_KINDS ("kept forever"), but the
+# kind is shared with ordinary community/article comments that MUST keep aging out (the relay's bound
+# on firehose growth), so the shield is TAG-scoped, not kind-scoped: NIP-22 repeats the root kind in
+# an uppercase `K` tag at every depth, which idx_event_tags_tv (tag, value) answers cheaply. Every
+# rule that says "prunable feed content" uses this predicate, so the exemption cannot drift per rule.
+_GIT_COMMENT_ROOT_KINDS = ("1617", "1621", "1618")
+_PRUNABLE_SQL = ("(kind IN (%s) AND NOT (kind = 1111 AND id IN "
+                 "(SELECT event_id FROM event_tags WHERE tag = 'K' AND value IN (%s))))" % (
+                     ",".join(str(k) for k in _PRUNABLE_KINDS),
+                     ",".join("'%s'" % k for k in _GIT_COMMENT_ROOT_KINDS)))
+
 # Kinds a NIP-40 `expiration` tag must NEVER be able to delete. The expiration sweep is otherwise
 # unconditional (it ignores the kind allowlist AND the preserve clause, by design — an author's
 # explicit intent), which makes a single stray tag a silent data-loss vector for anything that is
@@ -1049,11 +1062,10 @@ class RelayStore:
         the two can't drift apart (the preview is what an admin trusts before deleting)."""
         if not self.free_retention_days or not self.tiered_ok:
             return []
-        prunable = ",".join(str(k) for k in _PRUNABLE_KINDS)
         subs = self._subscriber_sql()
         # Same three qualifiers on both rules: only ever direct writes, only ever high-volume feed
         # kinds, and never an author with an account here.
-        base = f"origin = 'direct' AND kind IN ({prunable}) AND {self._not_preserved()}"
+        base = f"origin = 'direct' AND {_PRUNABLE_SQL} AND {self._not_preserved()}"
         out = [("aged_free", f"created_at < ? AND {base} AND pubkey NOT IN ({subs})",
                 (now - self.free_retention_days * 86400,))]
         if self.paid_retention_days:
@@ -1069,7 +1081,6 @@ class RelayStore:
         thousands of rows on a live relay. The rules can overlap (an expired note may also be past
         the age window), so `total` is an UPPER BOUND, not an exact delete count."""
         conn = self._conn()
-        prunable = ",".join(str(k) for k in _PRUNABLE_KINDS)
         preserve = self._preserve_clause()
         _keepk = ",".join(str(k) for k in _NEVER_EXPIRE_KINDS)
         now = int(time.time())
@@ -1085,13 +1096,13 @@ class RelayStore:
         aged = 0
         if self.retention_days:
             aged = _n(f"SELECT COUNT(*) AS c FROM events WHERE created_at < ? AND "
-                      f"kind IN ({prunable}) AND {preserve}{self._subscriber_exempt()}",
+                      f"{_PRUNABLE_SQL} AND {preserve}{self._subscriber_exempt()}",
                       (now - self.retention_days * 86400,))
         bridge_dm = _n("SELECT COUNT(*) AS c FROM events WHERE origin = 'bridge' AND "
                        "kind IN (13, 1059) AND created_at < ?", (now - _BRIDGE_DM_TTL_DAYS * 86400,))
         capped = 0
         if self.max_events:
-            capped = _n(f"SELECT COUNT(*) AS c FROM events WHERE kind IN ({prunable}) AND {preserve}"
+            capped = _n(f"SELECT COUNT(*) AS c FROM events WHERE {_PRUNABLE_SQL} AND {preserve}"
                         f"{self._subscriber_exempt()} "
                         "AND id IN (SELECT id FROM events ORDER BY created_at DESC LIMIT ALL OFFSET ?)",
                         (self.max_events,))
@@ -1122,7 +1133,6 @@ class RelayStore:
         conn = self._conn()
         removed = 0
         gone: list = []   # ids deleted this pass → their event_tags must be removed too (no FK CASCADE)
-        prunable = ",".join(str(k) for k in _PRUNABLE_KINDS)
         preserve = self._preserve_clause()
         budget = int(limit or 0)
         capped = False    # a rule was cut short by the budget → caller should run another pass
@@ -1176,7 +1186,7 @@ class RelayStore:
         # rather than being published here — "your posts stay" would be a lie otherwise.
         if self.retention_days:
             cutoff = int(time.time()) - self.retention_days * 86400
-            ids = _delete(f"created_at < ? AND kind IN ({prunable}) AND {preserve}"
+            ids = _delete(f"created_at < ? AND {_PRUNABLE_SQL} AND {preserve}"
                           f"{self._subscriber_exempt()}", (cutoff,))
             gone += ids; removed += len(ids)
         # NOT retention, and deliberately not folded into the setting above: puppet-addressed DM
@@ -1198,7 +1208,7 @@ class RelayStore:
         # authors and every direct write, so a paying author is not the one to treat more harshly.
         if self.max_events:
             ids = _delete(
-                f"kind IN ({prunable}) AND {preserve}{self._subscriber_exempt()} AND id IN "
+                f"{_PRUNABLE_SQL} AND {preserve}{self._subscriber_exempt()} AND id IN "
                 "(SELECT id FROM events ORDER BY created_at DESC LIMIT ALL OFFSET ?)",
                 (self.max_events,))
             gone += ids; removed += len(ids)

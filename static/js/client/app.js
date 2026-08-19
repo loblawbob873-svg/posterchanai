@@ -14664,7 +14664,16 @@
   // the thread repeats verbatim. Returns [] when the parent isn't a scoped comment, which is what makes
   // `replyKindFor` fall back to a plain NIP-10 kind-1 rather than emit a rootless 1111.
   function _commentScope(parent){
-    if(!parent || parent.kind!==1111) return [];
+    if(!parent) return [];
+    // A NIP-34 issue (1621) / patch (1617) / PR (1618) ROOT starts a NIP-22 thread: current NIP-34
+    // dropped kind-1622 replies ("replies … should follow NIP-22 comment"), so gitworkshop and its
+    // peers render issue discussion from 1111 comments only — a kind-1 reply into an issue thread is
+    // invisible there (measured: every reply on this repo's 38 issues, none shown).
+    if(parent.kind===1621||parent.kind===1617||parent.kind===1618){
+      const r=CFG.relay_url||'';
+      return [['E',parent.id,r,parent.pubkey||''],['K',String(parent.kind)],['P',parent.pubkey||'',r]];
+    }
+    if(parent.kind!==1111) return [];
     const up=parent.tags.filter(t=>['E','A','I','K','P'].includes(t[0]));
     return up.some(t=>t[0]==='E'||t[0]==='A'||t[0]==='I') ? up.map(t=>t.slice()) : [];
   }

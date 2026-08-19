@@ -146,6 +146,25 @@ def _is_ephemeral(kind: int) -> bool:
     return 20000 <= kind < 30000
 
 
+# NIP-34 root kinds a NIP-22 comment can thread under: issue (1621), patch (1617), PR (1618).
+# Current NIP-34 dropped kind-1622 replies — issue/patch discussion is kind-1111 comments now,
+# which is what gitworkshop publishes and renders.
+_GIT_COMMENT_ROOT_KINDS = ("1617", "1621", "1618")
+
+
+def _git_comment_root(ev: dict):
+    """For a NIP-22 comment (kind 1111) whose uppercase K names a NIP-34 kind, the uppercase-E root
+    event id — else None. NIP-22 repeats the root's uppercase tags verbatim at every depth, so this
+    finds the issue for nested replies too."""
+    tags = ev.get("tags") or []
+    if not any(len(t) >= 2 and t[0] == "K" and str(t[1]) in _GIT_COMMENT_ROOT_KINDS for t in tags):
+        return None
+    for t in tags:
+        if len(t) >= 2 and t[0] == "E" and isinstance(t[1], str) and len(t[1]) == 64:
+            return t[1]
+    return None
+
+
 def _event_expiration(ev: dict):
     """NIP-40: the `expiration` unix ts from an event's tags, or None if it has none/invalid."""
     for t in ev.get("tags", []):
@@ -769,6 +788,16 @@ class RelayServer:
                         return True
         return False
 
+    async def _git_comment_for_known_repo(self, root_id: str) -> bool:
+        """True if `root_id` (the uppercase-E root of a NIP-22 comment) is a NIP-34 issue/patch/PR THIS
+        relay holds, referencing a known repo. The comment itself carries no `a` tag — its repo scope
+        lives on the root event, so the root is what gets the _collab_for_known_repo check."""
+        try:
+            evs = await self.store.query([{"ids": [root_id], "kinds": [1617, 1621, 1618]}], hard_cap=1)
+        except Exception:
+            return False
+        return bool(evs) and await self._collab_for_known_repo(evs[0])
+
     async def _on_event(self, conn, ev) -> None:
         if not isinstance(ev, dict) or "id" not in ev:
             return
@@ -948,6 +977,16 @@ class RelayServer:
             # repos have no 30617, so they're never matched (no title/content leak). Signature verified above.
             if _wot and not await self._collab_for_known_repo(ev):
                 self._refuse(conn, eid, ev, "blocked: git patch/issue references an unknown repo")
+                return
+        elif kind == 1111 and (_groot := _git_comment_root(ev)) is not None:
+            # NIP-22 comment on a NIP-34 issue/patch/PR — the CURRENT spec's reply shape (1622 is gone
+            # from NIP-34; gitworkshop publishes these). Same repo-scoped acceptance as the branch
+            # above, reached through the ROOT: the comment's uppercase K names the root kind and E its
+            # id, and the stored root's own `a` tag names the repo. A WoT member skips the lookup; an
+            # ordinary (non-git) 1111 never enters this branch and stays WoT-gated below.
+            if _wot and not (self.gate.is_member(ev.get("pubkey", ""))
+                             or await self._git_comment_for_known_repo(_groot)):
+                self._refuse(conn, eid, ev, "blocked: comment on an unknown repo's issue")
                 return
         elif _wot and not self.gate.is_member(ev.get("pubkey", "")):
             self._refuse(conn, eid, ev, "blocked: not in web of trust")

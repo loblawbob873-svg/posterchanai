@@ -360,6 +360,59 @@ def test_calendars_and_contacts_survive_every_cleaner(store_factory):
     _run(go)
 
 
+def test_git_issue_comments_survive_every_cleaner(store_factory):
+    """NIP-34 dropped kind-1622 replies: issue/patch discussion is NIP-22 kind-1111 comments now —
+    what gitworkshop publishes and renders, and what this client publishes since the same change.
+    But 1111 is ALSO ordinary community/article chatter, whose age-out is the relay's bound on
+    firehose growth — so the shield is the uppercase `K` root-kind tag (1621/1617/1618), never the
+    kind. BOTH halves are asserted: drop the guard and the git comments here are deleted; widen it
+    to all of kind 1111 and the ordinary comments survive — either way this test fails.
+
+    Same worst case as the calendar test: every cleaner at once, pay-to-stay ON, the author neither
+    a subscriber nor preserved."""
+    async def go(loop):
+        store = store_factory(loop, retention_days=0, max_events=1)
+        store.free_retention_days = 1
+        store.paid_retention_days = 30
+        store.set_subscribers([], ledger_ok=True)
+        stranger = "c" * 64
+        root = "d" * 64
+        git = []
+        for i, rk in enumerate((1621, 1617, 1618), start=1):
+            ev = _ev(i, kind=1111, age_days=400, pubkey=stranger)
+            ev["tags"] = [["E", root], ["K", str(rk)], ["P", "b" * 64],
+                          ["e", root], ["k", str(rk)]] + ev["tags"]
+            git.append(ev)
+        # The same shape once more as a DIRECT write — the app's own publish path — which is what the
+        # tiered rules (the only rules that can delete a direct event) would otherwise age out.
+        gd = _ev(10, kind=1111, age_days=400, pubkey=stranger)
+        gd["tags"] = [["E", root], ["K", "1621"], ["e", root], ["k", "1621"]] + gd["tags"]
+        # Ordinary NIP-22 comments (an article thread) — the firehose bulk the cleaners exist for.
+        ordinary = []
+        for i in range(100, 120):
+            ev = _ev(i, kind=1111, age_days=400, pubkey=stranger)
+            ev["tags"] = [["E", "e" * 64], ["K", "30023"], ["e", "e" * 64], ["k", "30023"]] + ev["tags"]
+            ordinary.append(ev)
+        await store.add_events_bulk(git, origin="wot")
+        await store.add_event(gd, origin="direct")
+        await store.add_events_bulk(ordinary, origin="wot")
+
+        for _ in range(6):
+            await store.prune(chunk=5)
+
+        left = {e["id"] for e in await store.query([{"kinds": [1111], "limit": 60}])}
+        want = {e["id"] for e in git} | {gd["id"]}
+        assert want <= left, (
+            "a git issue/patch comment was pruned — these are the collaboration record "
+            "(_GIT_KINDS in spirit); the `K` guard in store._PRUNABLE_SQL is what keeps them")
+        survivors = [e for e in ordinary if e["id"] in left]
+        assert not survivors, (
+            f"{len(survivors)} ordinary kind-1111 comments survived every cleaner — the git-comment "
+            "guard must stay scoped to K in (1617,1621,1618), or 1111 stops aging out at all")
+
+    _run(go)
+
+
 def test_a_webxdc_game_keeps_its_whole_history(store_factory):
     """Kind 4932 is a webxdc mini app's state — every move of every game, as an append-only log.
 

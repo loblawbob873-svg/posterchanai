@@ -26,7 +26,7 @@ from websockets.asyncio.server import serve
 from app.services.nostr import nostr_service
 from .store import RelayStore
 from .wot import WotGate
-from .server import RelayServer
+from .server import RelayServer, _git_comment_root
 from .bridges import (relay_domain as _bridge_domain, reveals_blocked_bridge,
                       author_on_blocked_bridge, is_bridged_post)
 
@@ -825,6 +825,22 @@ async def _main(cfg: dict) -> None:
             # so it's not an open spam firehose.
             if not (_git_event_for_hosted_repo(ev) or await _collab_repo_announced(ev, store)):
                 return
+        elif _kind == 1111 and (_groot := _git_comment_root(ev)) is not None:
+            # NIP-22 comment on a NIP-34 issue/patch/PR — the current spec's reply shape (kind 1622 is
+            # gone from NIP-34). Repo-scoped like the branch above, but through the ROOT: the comment's
+            # uppercase K names the root kind and E its id, and the stored root's own `a` tag names the
+            # repo. A WoT member's comment skips the lookup; an ordinary (non-git) 1111 never enters
+            # this branch and stays WoT-gated below.
+            if not gate.is_member(ev.get("pubkey", "")):
+                _root = None
+                try:
+                    _root = ((await store.query([{"ids": [_groot], "kinds": [1617, 1621, 1618]}],
+                                                hard_cap=1)) or [None])[0]
+                except Exception:
+                    _root = None
+                if not _root or not (_git_event_for_hosted_repo(_root)
+                                     or await _collab_repo_announced(_root, store)):
+                    return
         elif not gate.is_member(ev.get("pubkey", "")):
             return
         eid = ev.get("id")
