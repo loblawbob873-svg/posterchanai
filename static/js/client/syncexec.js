@@ -176,9 +176,22 @@
 
     /* 3. The disk, a page at a time. */
     step('scanning');
+    /* A HEARTBEAT FOR THE MUTE SCAN. The desktop bridge reads the whole folder in one call, and a
+     * hashing first sweep of a real Pictures folder is tens of gigabytes of disk work with nothing
+     * to say until it returns — reported as "scanning and no progress", which after this feature's
+     * history reads as a hang. The clock cannot show progress the bridge does not report, but it
+     * can prove the sweep is alive and say what the wait is. */
+    const _scanAt = now0();
+    const _scanBeat = setInterval(() => {
+      const min = Math.round((now0() - _scanAt) / 60000);
+      tick({ phase: (thin ? 'reading every file (first sweep — the whole folder is re-checked '
+                            + 'by content, which takes a while on photos and video)'
+                          : 'scanning') + (min ? ' · ' + min + ' min in, still going' : '') });
+    }, 5000);
     let disk, unread;
     try{ const got = await scan(fs, scanOpts, stopping, o.onProgress); disk = got.disk; unread = got.unread; }
     catch(e){
+      clearInterval(_scanBeat);
       /* "unknown sync folder" is not a read error — it is this device no longer holding the
        * MAPPING for the folder (a cleared app profile, a reinstall). The files and the shared
        * record are fine; only the handle is gone, and re-picking the folder mints a new one. */
@@ -188,6 +201,7 @@
                       + 're-add it). Your files and the shared record are untouched');
       throw new Error('could not read the folder on this device — nothing has been changed. ('
                               + msg(e) + ')'); }
+    clearInterval(_scanBeat);
     if(stopping()) return halt(report);
     report.scanned = Object.keys(disk).length;
     if(unread.length) report.unreadable = unread.slice(0, 200);
