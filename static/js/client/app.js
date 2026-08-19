@@ -4158,7 +4158,7 @@
     else if(!_consumeLaunchParams()){
       let _osHome = false;
       try{ _osHome = !!(window.PCOS && PCOS.isOn()); }catch(_){}
-      if(!_osHome){ switchView(_startTimeline()); _onLandingView = true; }
+      if(!_osHome){ switchView(_startView()); _onLandingView = true; }
     }
     // Drain a file/text shared IN from another app (a fresh OS-share launch, OR a guest who has just
     // logged in with a share still waiting). Self-guards on GUEST (prompts + keeps the stash) and on an
@@ -5978,6 +5978,23 @@
     const want = ClientSettings.get('startTimeline','global')==='home' ? 'home' : 'global';
     if(!off.has(want)) return want;
     return ['home','global','trending'].find(t => !off.has(t)) || 'global';
+  }
+  // The SCREEN the app opens on (Settings → Profile): 'social' = the timeline (_startTimeline picks
+  // which tab), anything else is a sidebar view slug ('notes', 'messages', 'calendar', …). Stored
+  // per-device like startTimeline — the boot view is chosen before the relay can answer — and synced
+  // to Nostr so it follows the account. Validated against the SIDEBAR AT BOOT, never at save time:
+  // the value can arrive from another device or an older build, and a view this deployment gates
+  // away (instance gating, nostr-only, standalone) must fall back to the timeline rather than land
+  // on a door this node doesn't have. A guest always gets the timeline — most screens need a key.
+  function _startView(){
+    const v = ClientSettings.get('startView','social');
+    if(GUEST || !v || v==='social' || !/^[a-z0-9_-]{1,32}$/.test(v)) return _startTimeline();
+    if(v==='home' || v==='global') return _startTimeline();   // timeline tabs go through the tab pref + hidden-tab rules
+    try{
+      const btn=document.querySelector(`.nav-item[data-view="${v}"]`);
+      if(btn && !btn.classList.contains('hidden')) return v;
+    }catch(_){}
+    return _startTimeline();
   }
   // True while the app is still sitting on the timeline it CHOSE at boot, i.e. the user has not
   // navigated yet. A late-arriving synced pref may move that landing view; once they've picked a view
@@ -14935,6 +14952,12 @@
           try{ switchView(pr.startTimeline); _onLandingView = true; }catch(_){}
         }
       }
+      // The landing SCREEN rides the same rules as the landing timeline above, except it NEVER moves
+      // the current view: home↔global is swapping one feed for its sibling, but yanking someone onto
+      // Notes mid-boot because another device said so is a hijack — the synced value waits for the
+      // next launch, where _startView also re-checks it against what THIS deployment actually shows.
+      if(!_prefTouched.has('startView') && typeof pr.startView==='string' && /^[a-z0-9_-]{1,32}$/.test(pr.startView))
+        ClientSettings.set('startView', pr.startView);
       /* The two STORAGE BUDGETS. localStorage is what a reinstall — or an app update that moves the
        * storage origin — takes with it, which is not hypothetical here: it is what made a synced
        * folder "no longer there" after a Windows update. How much of your own library you want kept
@@ -27724,6 +27747,21 @@
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-compress"></use></svg>Data saver<label class="switch"><input type="checkbox" id="set-no-images" ${NO_IMAGES?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Holds images &amp; videos until you tap them, skips link previews, and loads lighter feed pages — turn it on when you're low on data. Syncs across your devices.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-refresh"></use></svg>Auto-show new posts<label class="switch"><input type="checkbox" id="set-auto-new-posts" ${AUTO_NEW_POSTS?'checked':''}><span class="slider"></span></label></label>
+          <label class="fld"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-compass"></use></svg>Screen the app opens on
+            <select class="input" id="set-start-view">${(()=>{
+              // Options come from the SIDEBAR, not a typed list, so a new feature joins by itself and a
+              // view this deployment gates away (instance gating / nostr-only) is never offered. Rows the
+              // user merely hid from the nav stay offered — hiding a door doesn't remove the room. The
+              // timeline tabs are excluded (the select below owns that choice), as is Settings itself.
+              const cur=ClientSettings.get('startView','social');
+              const seen=new Set(['home','global','settings']);
+              const rows=$$('.nav-item[data-view]').filter(b=>!b.classList.contains('hidden')&&!seen.has(b.dataset.view)&&seen.add(b.dataset.view))
+                .map(b=>[b.dataset.view,_navLabel(b)]).filter(r=>r[1]);
+              return `<option value="social"${rows.some(r=>r[0]===cur)?'':' selected'}>Social — the timeline (default)</option>`
+                + rows.map(([v,l])=>`<option value="${v}"${cur===v?' selected':''}>${enc(l)}</option>`).join('');
+            })()}</select>
+          </label>
+          <div class="muted small">Where the app starts. <b>Social</b> is the timeline (picked below); anything else — Notes, Messages, Calendar… — opens that screen first instead. Syncs across your devices; a device that doesn't have the chosen screen falls back to the timeline.</div>
           <label class="fld"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-home"></use></svg>Timeline the app opens on
             <select class="input" id="set-start-timeline">
               <option value="global"${ClientSettings.get('startTimeline','global')==='home'?'':' selected'}>Nostrverse (default)</option>
@@ -28013,6 +28051,15 @@
         const v = st.value==='home' ? 'home' : 'global';
         ClientSettings.set('startTimeline', v); _prefTouched.add('startTimeline'); saveClientPrefsNostr({ startTimeline: v });
         toast(v==='home'?'opening on Home from now on':'opening on Nostrverse from now on');
+      }; }
+    // Landing SCREEN: same shape as the timeline above — per-device + synced, nothing to re-render
+    // (it only decides where the NEXT start lands). The value is validated at BOOT (_startView), so a
+    // slug from an older/newer build costs a fallback to the timeline, never a blank screen.
+    { const sv=$('#set-start-view'); if(sv) sv.onchange=()=>{
+        const v = /^[a-z0-9_-]{1,32}$/.test(sv.value) ? sv.value : 'social';
+        ClientSettings.set('startView', v); _prefTouched.add('startView'); saveClientPrefsNostr({ startView: v });
+        const lbl = (sv.options[sv.selectedIndex]||{}).text || v;
+        toast(v==='social' ? 'opening on the timeline from now on' : 'opening on '+lbl+' from now on');
       }; }
     _wireNavHide();   // Settings → Profile → 🧭 Sidebar
     { const hr=$('#set-hide-replies'); if(hr) hr.onchange=()=>{

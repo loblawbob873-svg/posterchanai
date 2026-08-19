@@ -2539,7 +2539,11 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   #music-player.mp:not(.mp-mini).playing{animation:none}          /* no bounce on a full screen */
   #music-player.mp:not(.mp-mini) .mp-head{cursor:default;padding-top:calc(10px + env(safe-area-inset-top))}
   #music-player.mp:not(.mp-mini) .mp-viz{height:84px}
-  #music-player.mp:not(.mp-mini) .mp-now{font-size:17px;padding:16px 16px 8px}
+  /* Full screen = room for the whole name. The 2-line clamp above is for the 338px desktop card;
+   * kept here it ellipsized real track names on the one surface with nothing else competing for the
+   * space — reported from a car mount as "the song title is cut off" on the player that appears
+   * when a head-unit press starts playback. */
+  #music-player.mp:not(.mp-mini) .mp-now{font-size:17px;padding:16px 16px 8px;display:block;-webkit-line-clamp:none;line-clamp:none;overflow:visible}
   #music-player.mp:not(.mp-mini) .mp-controls{gap:26px;padding:14px 0 18px}
   #music-player.mp:not(.mp-mini) .mp-controls .mp-big{width:64px;height:64px;font-size:22px}
   #music-player.mp:not(.mp-mini) .mp-controls button{font-size:24px}
@@ -2550,7 +2554,9 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
   #music-player.mp:not(.mp-mini) .mp-seek{height:12px;margin:10px 16px}        /* …and a scrubber it can hit */
   #music-player.mp:not(.mp-mini) .mp-time{padding:1px 16px;font-size:12px}
   #music-player.mp:not(.mp-mini) .mp-search{font-size:15px;padding:10px 14px}
-  #music-player.mp-mini{inset-inline-end:8px;bottom:76px}
+  /* The mini pill was pinned to 240px on screens where 240px is most of the width anyway — let it
+   * use the row, so its single-line title truncates far later. */
+  #music-player.mp-mini{inset-inline-end:8px;bottom:76px;max-width:calc(100vw - 16px)}
 }
 /* Signup captcha (anti-spam) */
 .captcha-box{margin:12px 0;padding:12px;border:1px solid rgba(0,240,255,.3);border-radius:12px;background:rgba(0,240,255,.05)}
