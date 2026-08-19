@@ -579,7 +579,7 @@
      * they are (rare, and a republished tombstone spends the server's mass-delete backstop). */
     { let resealed = 0;
       for(const p2 of (got0.oldSeal || [])){
-        if(resealed >= 4000) break;
+        if(resealed >= 20000) break;   // a record write is ~200 bytes; a whole folder converts in one pass
         const e2 = index[p2], R2 = state[p2];
         if(!e2 || e2.deletedAt || !R2 || R2.deletedAt) continue;
         if(E.versionOf(R2) !== E.versionOf(e2)) continue;      // mid-change: its writer will seal it
