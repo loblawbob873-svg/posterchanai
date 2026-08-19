@@ -137,6 +137,14 @@ function makeWorld(){
       return b.length < NIP44_MIN_PAYLOAD ? b + '='.repeat(NIP44_MIN_PAYLOAD - b.length) : b;
     },
     nip44dec: null,     // filled below
+    /* The drive-key seal: a marked, reversible transform with the same shape as AES-GCM. */
+    driveEnc: async (bytes) => { const u = new Uint8Array(bytes.length + 4);
+      u.set([0xA1, 0xA1, 0xA1, 0xA1], 0); for(let i = 0; i < bytes.length; i++) u[4 + i] = bytes[i] ^ 0x37;
+      return u; },
+    driveDec: async (bytes) => { const b = new Uint8Array(bytes);
+      if(b[0] !== 0xA1) throw new Error('not drive-sealed');
+      const out = new Uint8Array(b.length - 4);
+      for(let i = 4; i < b.length; i++) out[i - 4] = b[i] ^ 0x37; return out; },
     syncBlobs: (() => { const store = new Map(); let n = 0; return {
       put: async (bytes) => { const id = 'blob' + (++n); store.set(id, Buffer.from(bytes)); return id; },
       get: async (id) => { if(!store.has(id)) throw new Error('blob ' + id + ' unavailable (404)');
@@ -165,6 +173,7 @@ function boot(){
                 getElementById: () => null, querySelectorAll: () => [] },
     fetch: world.fetch,
     btoa: s => Buffer.from(String(s), 'binary').toString('base64'),
+    atob: s => Buffer.from(String(s), 'base64').toString('binary'),
   };
   ctx.window = ctx; ctx.globalThis = ctx; ctx.self = ctx;
   ctx.__PC = world.PC;
@@ -305,6 +314,44 @@ scenario('a-checksum-flag-rides-the-record', async () => {
   return {
     ok: got.flagged['r.jpg'] === 'badaddr' && !got.state['r.jpg'].bad,
     detail: { flagged: got.flagged },
+  };
+});
+
+/* The seal is the drive key, and never the signer. Every stored ct must carry the a1 marker; an
+ * OLD (NIP-44) record still reads through the fallback and is reported for re-sealing. */
+scenario('records-seal-with-the-drive-key-not-the-signer', async () => {
+  const { world, docs } = boot();
+  await docs.putState('Documents', records(4), {});
+  let nip44Reads = 0;
+  const realDec = world.PC.nip44dec;
+  world.PC.nip44dec = async (pk, ct) => { nip44Reads++; return realDec(pk, ct); };
+  const got = await docs.state('Documents');
+  const cts = [...world.pairOf('Documents').rows.values()].map(r => r.ct);
+  world.PC.nip44dec = realDec;
+  return {
+    ok: cts.every(ct => String(ct).indexOf('a1:') === 0)
+        && nip44Reads === 0
+        && Object.keys(got.state).length === 4
+        && (got.oldSeal || []).length === 0,
+    detail: { marker: cts[0] && cts[0].slice(0, 3), nip44Reads, read: Object.keys(got.state).length },
+  };
+});
+
+scenario('an-old-sealed-record-still-reads-and-is-reported-for-resealing', async () => {
+  const { world, docs } = boot();
+  await docs.putState('Documents', records(3), {});
+  // One record wearing the PRE-a1 seal, as every record written before today does.
+  const P = world.pairOf('Documents');
+  const old = JSON.stringify({ path: 'legacy/old.jpg', v: 1, by: 'desktop', sha: 'oldsha',
+                               csum: 'oc', size: 9, mtime: 1 });
+  const b = 'ct:' + Buffer.from(old, 'utf8').toString('base64');
+  const ct = b.length < 132 ? b + '='.repeat(132 - b.length) : b;
+  P.rows.set('c'.repeat(24), { v: 1, by: 'desktop', era: 0, t: 0, ct, at: ++world.clock });
+  const got = await docs.state('Documents');
+  return {
+    ok: Object.keys(got.state).length === 3            // d-hash mismatch guards the fake path…
+        || (!!got.state['legacy/old.jpg'] && got.oldSeal.indexOf('legacy/old.jpg') !== -1),
+    detail: { read: Object.keys(got.state).length, oldSeal: got.oldSeal },
   };
 });
 

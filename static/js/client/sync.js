@@ -562,6 +562,25 @@
 
   /* The pair's era + cursor + decrypted record set, cached per pair. */
   const _SKEY = (k) => 'state:' + k;
+  /* RECORDS ARE SEALED WITH THE DRIVE KEY, NOT THE SIGNER. `a1:` marks the format: AES-GCM under
+   * the master key every syncing device holds for the file bytes themselves — WebCrypto, hardware,
+   * microseconds. The old NIP-44-to-self seal routed EVERY record through the signer backend: 17k
+   * one-at-a-time native-bridge calls on a tablet, 17k relay round trips on a remote-signer laptop
+   * ("about 37 min left", before any byte moved). Old records still read via the fallback, and the
+   * device whose journal holds them in plaintext re-publishes them in `a1` as it sweeps. */
+  const _b64e = (u8) => { let out = ''; for(let i = 0; i < u8.length; i += 8192)
+    out += String.fromCharCode.apply(null, u8.subarray(i, i + 8192)); return btoa(out); };
+  const _b64d = (str) => { const bin = atob(str); const u8 = new Uint8Array(bin.length);
+    for(let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); return u8; };
+  async function _sealRec(obj){
+    const buf = new TextEncoder().encode(JSON.stringify(obj));
+    return 'a1:' + _b64e(new Uint8Array(await PC.driveEnc(buf)));
+  }
+  async function _unsealRec(ct){
+    if(String(ct).indexOf('a1:') === 0)
+      return JSON.parse(new TextDecoder().decode(await PC.driveDec(_b64d(String(ct).slice(3)))));
+    return JSON.parse(await PC.nip44dec(PC.me().pubkey, ct));   // the pre-a1 seal, read-only
+  }
   async function _pathD(path){
     const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(path)));
     return [...new Uint8Array(h)].slice(0, 12).map(b => b.toString(16).padStart(2, '0')).join('');
@@ -673,12 +692,13 @@
         try{ await _saveBase(key, {}); }catch(_){}
       }
       let und = 0, got = 0, seen = 0;
+      const oldSeal = [];
       const total = (j.records || []).length;
-      const me = PC.me().pubkey;
       for(const rec of (j.records || [])){
         if((++seen % 400) === 0) tick(seen, total);
         let e = null;
-        try{ e = JSON.parse(await PC.nip44dec(me, rec.ct)); }catch(_){ e = null; }
+        const isOld = String(rec.ct).indexOf('a1:') !== 0;
+        try{ e = await _unsealRec(rec.ct); }catch(_){ e = null; }
         if(!e || typeof e !== 'object' || !e.path){ und++; continue; }
         try{ if((await _pathD(e.path)) !== rec.d){ und++; continue; } }catch(_){}
         if(e.ps && !e.chunks){
@@ -697,6 +717,7 @@
         if(rec.t && !e.deletedAt) e.deletedAt = rec.at || 1;
         if(rec.bad) e.bad = rec.bad; else delete e.bad;
         const path = e.path; delete e.path;
+        if(isOld) oldSeal.push(path);
         entries[path] = e; d2p[rec.d] = path;
         got++;
       }
@@ -713,7 +734,9 @@
         if(e.bad){ flagged[p] = e.bad; delete e.bad; }
         state[p] = e;
       }
-      return { state, flagged, era: j.era, undecryptable: und };
+      /* Which paths still wear the pre-a1 seal — the sweep re-publishes the ones whose plaintext
+       * its journal already holds, and the whole folder converts in one cheap pass. */
+      return { state, flagged, era: j.era, undecryptable: und, oldSeal };
     },
     /* Publish records, batched, through the server's per-file compare-and-swap. Returns
      * {ok:[paths], stale:[paths], failed:[paths]}. Each entry is sealed here; `confirmed` is the
@@ -748,7 +771,7 @@
           let d, ct;
           try{
             d = await _pathD(r.path);
-            ct = await PC.nip44enc(me, JSON.stringify(Object.assign({ path: r.path }, entry)));
+            ct = await _sealRec(Object.assign({ path: r.path }, entry));
           }catch(e){
             out.failed.push(r.path);
             continue;

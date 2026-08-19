@@ -701,7 +701,19 @@ public final class NativeSweep {
                 Map<String, Object> row = Json.obj(o);
                 Map<String, Object> e;
                 try {
-                    e = Json.obj(Json.parse(SyncCrypto.openFromSelf(sec, Json.str(row.get("ct"), ""))));
+                    String ct = Json.str(row.get("ct"), "");
+                    /* `a1:` = sealed with the DRIVE KEY — hardware AES under a key this device
+                     * already holds, never the signer (the pre-a1 seal routed every record through
+                     * the signer backend: "about 37 min left" to read a folder). Old records still
+                     * open through the fallback. */
+                    String json;
+                    if (ct.startsWith("a1:")) {
+                        byte[] raw = java.util.Base64.getDecoder().decode(ct.substring(3));
+                        json = SyncCrypto.fromUtf8(SyncCrypto.decrypt(mk, raw));
+                    } else {
+                        json = SyncCrypto.openFromSelf(sec, ct);
+                    }
+                    e = Json.obj(Json.parse(json));
                 } catch (Exception ex) { continue; }
                 String path = Json.str(e.get("path"), "");
                 if (path.isEmpty() || !pathD(path).equals(Json.str(row.get("d"), ""))) continue;
@@ -841,7 +853,8 @@ public final class NativeSweep {
                         row.put("d", d);
                         row.put("v", SyncReconcile.versionOf(entry));
                         row.put("by", me);
-                        row.put("ct", SyncCrypto.sealToSelf(sec, Json.write(withPath)));
+                        row.put("ct", "a1:" + java.util.Base64.getEncoder().encodeToString(
+                                SyncCrypto.encrypt(mk, SyncCrypto.utf8(Json.write(withPath)))));
                         if (Json.num(entry.get("deletedAt"), 0) != 0) row.put("t", 1L);
                         put.add(row);
                     }

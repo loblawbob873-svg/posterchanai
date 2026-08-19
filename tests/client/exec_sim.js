@@ -1243,6 +1243,31 @@ scenario('a name Windows cannot hold is refused with the fix, not failed for eve
   t.ok(!!B.disk['ok.txt'], 'the ordinary file did not arrive');
 });
 
+scenario('old-sealed records are re-published by whoever holds them in plaintext', async (t) => {
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(30) });
+  await A.sweep();
+  /* The transport reports which paths still wear the pre-a1 seal; the sweep must re-publish them
+   * from its journal — no decrypting, no transfers, one version bump each. */
+  const legacy = Object.keys(sky.folder()).slice(0, 10);
+  const A2 = device('laptop', sky, { disk: A.disk, index: A.st.index });
+  const realState = A2.io.state.bind(A2.io);
+  A2.io.state = async () => Object.assign(await realState(), { oldSeal: legacy.slice() });
+  const before = {};
+  for(const p of legacy) before[p] = sky.entry(p).v;
+  const r = await A2.sweep();
+  t.eq(r.resealed, 10, 'the holder re-sealed ' + (r.resealed || 0) + ' of 10');
+  t.eq(r.uploaded.length, 0, 're-sealing moved bytes for no reason');
+  for(const p of legacy){
+    t.eq(sky.entry(p).v, before[p] + 1, p + ' was not republished at a bumped version');
+  }
+  // …and the sweep after that is quiet: the journal moved with the records.
+  const A3 = device('laptop', sky, { disk: A2.disk, index: A2.st.index });
+  const r2 = await A3.sweep();
+  t.eq(r2.uploaded.length + r2.downloaded.length + (r2.conflicted || []).length, 0,
+       'the re-seal left the folder unsettled');
+});
+
 /* ---- runner ----------------------------------------------------------------------------------- */
 (async () => {
   let bad = 0;

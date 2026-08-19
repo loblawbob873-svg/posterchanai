@@ -571,6 +571,25 @@
       record(s.path, Object.assign({}, s.entry), local);
     }
 
+    /* RE-SEAL WHAT THE OLD FORMAT STILL HOLDS. Records written before the drive-key seal route
+     * every reader through the signer backend — one call per record, which turned a tablet's join
+     * into "about 37 min left". This device's journal holds those entries in PLAINTEXT, so it can
+     * republish them in the new seal without decrypting or transferring anything: one version
+     * bump, one record write each, capped per sweep to bound the batch. Tombstones are left as
+     * they are (rare, and a republished tombstone spends the server's mass-delete backstop). */
+    { let resealed = 0;
+      for(const p2 of (got0.oldSeal || [])){
+        if(resealed >= 4000) break;
+        const e2 = index[p2], R2 = state[p2];
+        if(!e2 || e2.deletedAt || !R2 || R2.deletedAt) continue;
+        if(E.versionOf(R2) !== E.versionOf(e2)) continue;      // mid-change: its writer will seal it
+        const next = Object.assign(strip(e2), { v: E.versionOf(e2) + 1 });
+        record(p2, next, e2.local || null, true);
+        resealed++;
+      }
+      if(resealed) report.resealed = resealed;
+    }
+
     /* 6. Publish what is still queued, then save the journal — in that order, always. */
     step('saving');
     await flushPuts();

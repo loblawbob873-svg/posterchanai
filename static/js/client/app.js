@@ -32223,6 +32223,11 @@
     driveOpen: async (b64) => new TextDecoder().decode(
       await _masterDecrypt(await FilesIdx._ensureMK(), _b64u8(String(b64)))),
     driveKeyWrapped: () => (FilesIdx && FilesIdx._mkWrapped) || '',
+    /* Drive-key seal/unseal for small payloads (folder-sync records). Hardware AES under the key
+     * every syncing device already holds — NEVER the signer: routing 17,000 record decrypts
+     * through a native or remote signer is what turned a join into "about 37 min left". */
+    driveEnc: async (bytes) => _masterEncrypt(await FilesIdx._ensureMK(), bytes),
+    driveDec: async (bytes) => _masterDecrypt(await FilesIdx._ensureMK(), bytes),
     /* WHERE THIS INSTALL'S SERVER ACTUALLY IS, in absolute form.
      *
      * Everything in the page fetches `/client/…` relative and that is right — but the native folder
