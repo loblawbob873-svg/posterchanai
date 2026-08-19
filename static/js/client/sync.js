@@ -2054,7 +2054,15 @@
       if(!server || !me || !me.pubkey) return null;
       const r = await _bounded(fetch(server + '/list/' + me.pubkey, { cache: 'no-store' }),
                                'store listing', 30000);
-      if(r.ok) list = await r.json();
+      /* A CEILING ON WHAT IS PARSED. An account with a long drive history lists a very large number
+       * of blobs, and `r.json()` on a phone builds every one of them as an object before anything
+       * can look at them. Over the cap the chip is simply not shown — an unanswerable question is
+       * better than a reclaimed renderer, which is the failure this device actually has. */
+      if(r.ok){
+        const txt = await r.text();
+        if(txt.length > 24 * 1024 * 1024) return null;
+        list = JSON.parse(txt);
+      }
     }catch(_){ list = null; }
     if(!Array.isArray(list)) return null;
     const have = new Set(list.map(b => b && b.sha256).filter(Boolean));
@@ -2467,6 +2475,17 @@
       // decision this leaves the user holding.
       + grp('Republished — deleted elsewhere, but changed here since',
             rep.resurrected || [], a => a.path)
+      /* THE MEMORY HIGH-WATER MARK, ON SCREEN. The sweep has sampled it all along and nothing ever
+         showed it, so every "the app reloaded itself" has been answered with a theory. Chromium
+         reclaims a renderer under pressure and the APK says so in a toast — this is the other half:
+         how close the sweep got, and to WHAT. */
+      + ((rep.peakHeapMB && rep.peakHeapMB >= 200)
+          ? '<div class="sync-grp"><b>Memory</b><ul><li>peaked at ' + rep.peakHeapMB + ' MB during “'
+            + PC.enc(String(rep.peakHeapPhase || 'the sweep')) + '”'
+            + (rep.peakHeapMB >= 700 ? ' — close to what a phone\u2019s browser process is given, '
+               + 'which is what makes the screen reload itself' : '')
+            + '</li></ul></div>'
+          : '')
       + grp('NOT republished — your other devices deleted these',
             rep.refusedResurrect ? (p.upload || []).filter(a => a && a.resurrect) : [],
             a => a.path)
@@ -2744,7 +2763,14 @@
           const _gone   = _r ? _r.sharedGone : (_c ? _c.gone : null);
           if(_here == null && _shared == null) return '';
           const _how = _r ? 'measured by the last sync' : 'from this device\u2019s record \u2014 press Sync now to re-measure';
-          const _s = _storeAsk(f);
+          /* THE STORE LISTING IS NOT FETCHED ON ENTRY, and on a phone that is the whole point. It
+           * asks the server for EVERY blob this account has — on a drive with a folder-sync history
+           * that is a multi-megabyte JSON parsed into an array of objects inside the renderer, and
+           * the renderer is exactly what keeps being reclaimed on the tablet ("tablet keeps
+           * reloading UI"). The other two counts are local and cost nothing, so they are always
+           * there; this one waits until a sweep has run, which is both when the number is worth
+           * having and when the person is watching. */
+          const _s = _r ? _storeAsk(f) : null;
           return `<div class="sync-counts muted small">
           ${_here == null ? '' : `<span title="Files this device holds in the folder (${_how})">${_num(_here)} here</span>`}
           ${_shared == null ? '' : `<span title="Files your devices agree the folder contains">${_num(_shared)} in the folder</span>`}

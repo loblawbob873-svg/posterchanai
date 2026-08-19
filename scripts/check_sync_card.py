@@ -327,6 +327,12 @@ async def drive(url):
             # "could not ask" has never been allowed to read as "missing" anywhere in this feature.
             if not any("in the store" in x for x in c):
                 print("  note: no store chip — the media server did not answer a listing")
+            # …and it must NOT be there on a cold screen: that listing is the one expensive read on
+            # this card, and the renderer being reclaimed is the tablet's actual failure.
+            if any("in the store" in x for x in (cold or [])):
+                problems.append("the store listing was fetched before any sweep — that is a "
+                                "multi-megabyte parse on entry, on the device that keeps losing "
+                                "its renderer")
             if not any(x.split()[0].replace(",", "").isdigit() for x in c):
                 problems.append(f"a count chip carries no number: {c}")
 

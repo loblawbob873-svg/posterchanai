@@ -96,9 +96,18 @@
     const _heap = () => { try{ return (performance && performance.memory && performance.memory.usedJSHeapSize) || 0; }catch(_){ return 0; } };
     const step = (phase, path, i, n) => {
       _keepAwake();
+      _mark(phase);
+      tick({ phase, path, i, n });
+    };
+    /* SAMPLED WHERE THE MEMORY ACTUALLY GOES, not only where progress is reported. `step` is called
+     * per FILE during transfers, so the peak it found was always a transfer — but the two biggest
+     * allocations in a sweep happen before any of that and between two steps: decrypting the whole
+     * record set (every path, every checksum, and for a chunked file a list of one hash per 4 MB,
+     * so a 2 GB file alone is ~500 of them) and loading this device's journal. Both are live at
+     * once while the plan is built. Unsampled, the report blamed whatever moved next. */
+    const _mark = (phase) => {
       const h = _heap();
       if(h > _peakHeap){ _peakHeap = h; _peakPhase = phase; }
-      tick({ phase, path, i, n });
     };
 
     const report = { uploaded:[], downloaded:[], trashed:[], conflicted:[], removedRemote:[],
@@ -111,6 +120,7 @@
      *    changed. A record that could not be decrypted is COUNTED and its path left untouched:
      *    the safe direction for one unreadable record is one file the sweep does not move. */
     let got0;
+    _mark('before reading the folder\u2019s records');
     try{ got0 = await io.state(key, tick); }
     catch(e){
       throw new Error('could not read the folder’s shared record — nothing has been changed. ('
@@ -127,6 +137,7 @@
      *    journal: with no journal every file on both sides looks new and independently changed,
      *    which is a conflict copy per path — thousands of them, and a folder to repair by hand. */
     let index;
+    _mark('the folder\u2019s records, decrypted');
     try{ index = (await io.index(key)) || {}; }
     catch(e){ throw new Error('could not read this device’s sync record — nothing has been changed. ('
                               + msg(e) + ')'); }
@@ -713,6 +724,7 @@
     if(journal.checkpointError) report.checkpointError = journal.checkpointError;
 
     if(stopping()) report.stopped = true;
+    _mark('finishing');
     if(_peakHeap){ report.peakHeapMB = Math.round(_peakHeap / 1048576); report.peakHeapPhase = _peakPhase; }
     /* AN UNRESOLVED PATH IS NOT A CLEAN SWEEP. A skipped conflict adds nothing to `failed`, so the
      * sweep used to report success and the card said "in step" while a divergence sat unresolved.

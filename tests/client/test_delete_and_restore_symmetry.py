@@ -597,6 +597,45 @@ class StoreCountIsEvidence(unittest.TestCase):
         self.assertIn("paint()", seg, "…and repaint once the answer lands")
 
 
+class MemoryIsMeasuredWhereItGoes(unittest.TestCase):
+    """"tablet keeps reloading UI when doing folder sync" · "probably out of memory from other sync
+    parts". The APK already distinguishes the two renderer deaths in a toast (reclaimed vs crashed);
+    this is the other half — how close the sweep got, and to what.
+
+    The sampling was in `step()`, which is called per FILE during transfers, so the peak it found
+    was always a transfer. The two largest allocations happen before any of that and between two
+    steps: the whole record set decrypted (every path, every checksum, and for a chunked file one
+    hash per 4 MB — a 2 GB file alone is ~500 of them) and this device's journal, both live at once
+    while the plan is built. Unsampled, the report blamed whatever moved next."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(EXEC, encoding="utf-8") as fh:
+            cls.exc = fh.read()
+        with open(os.path.join(CLIENT, "sync.js"), encoding="utf-8") as fh:
+            cls.sync = fh.read()
+
+    def test_the_big_loads_are_sampled(self):
+        for anchor in ("got0 = await io.state(", "index = (await io.index("):
+            i = self.exc.index(anchor)
+            self.assertIn("_mark(", self.exc[max(0, i - 400):i],
+                          "%s is not sampled — the two biggest allocations in a sweep were "
+                          "invisible to the peak" % anchor)
+
+    def test_the_peak_reaches_the_card(self):
+        self.assertIn("peakHeapMB", self.sync,
+                      "the sweep has measured this all along and nothing showed it")
+        i = self.sync.index("rep.peakHeapMB")
+        self.assertIn("peakHeapPhase", self.sync[i:i + 600],
+                      "a number with no phase does not say what to fix")
+
+    def test_it_is_not_shouted_about_on_an_ordinary_sweep(self):
+        i = self.sync.index("rep.peakHeapMB")
+        self.assertIn(">= 200", self.sync[i:i + 400],
+                      "a healthy sweep must not carry a memory warning — it would be noise on every "
+                      "report and then ignored on the one that mattered")
+
+
 class CheckDoesNotWedgeThePage(unittest.TestCase):
     """The check reads every file and asks about every record — and it must give the page its
     thread back while it does, or Android kills the renderer and the UI reloads mid-operation."""
