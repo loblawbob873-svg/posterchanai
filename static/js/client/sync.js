@@ -1747,6 +1747,8 @@
     if(_unr) bits.push(_unr + ' path' + (_unr === 1 ? '' : 's') + ' couldn\u2019t be read on this device \u2014 left alone');
     /* A file being WRITTEN is not a problem, it is a queue: the download finishing is what lets
      * the next sweep take it. Separate from "no permission", which needs a person. */
+    const _dsg = (rep.skippedByDesign || []).length;
+    if(_dsg) bits.push(_dsg + ' system link' + (_dsg === 1 ? '' : 's') + ' — never synced, by design');
     const _busy = (rep.busyNow || []).length;
     if(_busy) bits.push(_busy + ' file' + (_busy === 1 ? '' : 's') + ' being written right now \u2014 '
       + 'will sync when ' + (_busy === 1 ? 'it settles' : 'they settle'));
@@ -1836,7 +1838,7 @@
      * longer syncing" to the person in front of it ("How do you expect me to explain to a user
      * that Documents is no longer syncing"). When the sweep did no real work, the healthy state
      * leads and the advisories follow it; only real work or real failure may take the headline. */
-    const _advisory = (b) => /couldn\u2019t be read on this device|being written right now|deletion.*held|already stored/.test(b);
+    const _advisory = (b) => /couldn\u2019t be read on this device|being written right now|never synced, by design|deletion.*held|already stored|already identical here/.test(b);
     if(bits.length && bits.every(_advisory) && rep.unchanged){
       const gone = +rep.settledGone || 0;
       return 'in step · ' + (rep.unchanged - gone) + ' file' + ((rep.unchanged - gone) === 1 ? '' : 's')
@@ -2122,7 +2124,9 @@
     const unr = grp('Couldn\u2019t be read on this device \u2014 left alone, retried every sweep',
                     rep.unreadable || [], a => String(a))
               + grp('Being written right now \u2014 syncs by itself when the file settles',
-                    rep.busyNow || [], a => String(a));
+                    rep.busyNow || [], a => String(a))
+              + grp('System links and junctions \u2014 never synced, by design',
+                    rep.skippedByDesign || [], a => String(a));
     if(rep.dryRun){
       return '<div class="sync-details">'
         + grp('Would upload', p.upload, a => a.path + ' — ' + a.why)

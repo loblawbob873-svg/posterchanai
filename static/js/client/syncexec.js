@@ -206,9 +206,21 @@
     clearInterval(_scanBeat);
     if(stopping()) return halt(report);
     report.scanned = Object.keys(disk).length;
-    { const busy = unreadWhy.filter(x => /in use|vanished/i.test(x.why)).map(x => x.path);
-      const denied = unread.filter(p => busy.indexOf(p) === -1);
+    { const busy = [], design = [], denied = [];
+      /* Three kinds of "could not read", and only one is anyone's problem: a file being WRITTEN
+       * right now (a queue), a link or Windows junction (ignored BY DESIGN — `My Music` inside
+       * every Documents is an access-denied reparse point, and a venv's `python` symlink must
+       * never sync as a file), and a genuine permission failure (needs a person). The card once
+       * printed all three as "couldn't be read — retried every sweep", which turned system junk
+       * into a standing worry. */
+      const JUNCTIONS = /^(my music|my pictures|my videos|application data|local settings|start menu|templates|cookies|nethood|printhood|recent|sendto)$/i;
+      for(const x of unreadWhy){
+        if(/in use|vanished/i.test(x.why)) busy.push(x.path);
+        else if(/symlink/i.test(x.why) || JUNCTIONS.test(String(x.path).split('/').pop())) design.push(x.path);
+        else denied.push(x.path);
+      }
       if(busy.length) report.busyNow = busy.slice(0, 200);
+      if(design.length) report.skippedByDesign = design.slice(0, 200);
       if(denied.length) report.unreadable = denied.slice(0, 200); }
 
     /* 4. Decide, check, and let a person answer for anything that is theirs to answer.
