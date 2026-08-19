@@ -1222,6 +1222,64 @@ scenario('a checksum published wrong is corrected by the holder, not treated as 
  * record one version ahead carrying a checksum computed by a digest that stopped early. Mirror this
  * Device walks past a LIVE record. Nothing put them right by itself.
  */
+/* AN RSYNC IS NOT A CHANGE, AND THE DOWNLOAD SIDE COULD NOT TELL.
+ *
+ * `same(L, R)` compares content only when BOTH sides carry a checksum, and a paged scan does not
+ * hash — it cannot afford to on a folder of 12,000 files. So the local side has no checksum, the
+ * comparison falls back to size and mtime, and anything that rewrites a timestamp without changing
+ * a byte looks like a different file: a restore from backup, an rsync, a touch.
+ *
+ * Measured on a real folder: a desktop restored from a NAS backup and told to Mirror fetched 223
+ * blobs in twelve minutes, every one a file it already held byte-for-byte, while its actual uploads
+ * sat at eleven in half an hour. The bandwidth was real and the work was not.
+ */
+scenario('a republished file this device already holds is not downloaded again', async (t) => {
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(6) });
+  await A.sweep();
+  const B = device('desktop', sky);
+  await B.sweep();                       // B now holds every file AND a journal covering them
+  // Somebody republishes the same content — the churn a rewritten timestamp produces. Same bytes,
+  // same address, a new version, and the uploader's OWN mtime, which is not B's.
+  for(const p in sky.folder()){
+    const was = sky.entry(p);
+    sky.injectRec(p, Object.assign({}, was, { v: (was.v || 1) + 1, mtime: (was.mtime || 0) + 999000 }));
+  }
+  let fetched = 0;
+  const B2 = device('desktop', sky, { disk: B.disk, index: B.st.index });
+  const realGet = B2.io.getBlob;
+  B2.io.getBlob = async (sha) => { fetched++; return realGet(sha); };
+  const r = await B2.sweep();
+  t.eq(fetched, 0, 'it downloaded ' + fetched + ' blobs it already held byte-for-byte');
+  t.eq((r.heldAlready || []).length, 6, 'the files it already had were not settled by content');
+  t.eq(r.failed.length, 0, JSON.stringify(r.failed));
+  t.eq(identical(A.disk, B2.disk), null, 'the folder no longer matches');
+  // ...and it STAYS settled: the journal must carry the record's version, or every sweep re-hashes
+  // the whole folder for ever.
+  const B3 = device('desktop', sky, { disk: B2.disk, index: B2.st.index });
+  const r3 = await B3.sweep();
+  t.eq(r3.downloaded.length, 0, 'the next sweep fetched them anyway');
+  t.eq((r3.heldAlready || []).length, 0, 'the settle did not stick — every sweep re-hashes');
+});
+
+/* And the other direction, which must NOT be shortcut: bytes that really are different still come
+ * down. The check can only ever remove work. */
+scenario('a file that really did change elsewhere is still downloaded', async (t) => {
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(3) });
+  await A.sweep();
+  const B = device('desktop', sky);
+  await B.sweep();
+  const victim = Object.keys(A.disk)[0];
+  A.disk[victim] = Buffer.from('genuinely different content now');
+  const A2 = device('laptop', sky, { disk: A.disk, index: A.st.index });
+  await A2.sweep();
+  const B2 = device('desktop', sky, { disk: B.disk, index: B.st.index });
+  const r = await B2.sweep();
+  t.eq(r.downloaded.length, 1, 'a real edit was mistaken for a file already held');
+  t.eq(identical(A2.disk, B2.disk), null, 'the edit did not arrive');
+});
+
 scenario('a device holding good bytes BEHIND a broken record re-sends them', async (t) => {
   const sky = cloud();
   const A = device('desktop', sky, { disk: photos(4) });

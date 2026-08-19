@@ -781,6 +781,34 @@
          * rather than attempted, so the sweep stops failing on it every time and the card names the
          * file — which is the only way somebody can go and fix it. */
         const e = d.entry || {};
+        /* BYTES WE ALREADY HOLD ARE NOT DOWNLOADED AGAIN — the mirror image of the send side's
+         * settle-by-content, and the missing half of the same idea.
+         *
+         * `same(L, R)` in the planner compares content only when BOTH sides carry a checksum, and a
+         * paged scan does not hash — it cannot afford to, on a folder of 12,000 files. So the local
+         * side has no checksum and the comparison falls back to size and mtime. Anything that
+         * rewrites a file's timestamp without changing a byte therefore looks like a different file:
+         * a restore from backup, an rsync, a second sync engine, a touch.
+         *
+         * Measured: a desktop restored from a NAS backup and told to Mirror fetched 223 blobs in
+         * twelve minutes — every one of them a file it already held byte-for-byte — while its actual
+         * uploads sat at eleven in half an hour. The bandwidth was real and the work was not.
+         *
+         * One local hash answers it, and it is cheaper than the transfer it replaces by orders of
+         * magnitude. Equal to the record's checksum means this device already has exactly these
+         * bytes: journal the record's own version against the file that is here and download
+         * nothing. Anything else — no checksum to compare, a hash that cannot be read, a real
+         * difference — falls through to the download exactly as before. Like its counterpart on the
+         * send side, it can only ever remove work; it decides nothing. */
+        if(!o.dryRun && e.csum && disk[d.path] && typeof fs.hashFile === 'function'){
+          let _h = null;
+          try{ _h = await fs.hashFile(o.id, d.path); }catch(_){ _h = null; }
+          if(_h && _h === e.csum){
+            record(d.path, e, { size: disk[d.path].size, mtime: disk[d.path].mtime, csum: _h }, false);
+            (report.heldAlready = report.heldAlready || []).push(d.path);
+            return;
+          }
+        }
         /* A NAME THIS PLATFORM CANNOT HOLD IS REFUSED UP FRONT, with the fix named. A Linux
          * device can create `notes:v2.txt`; Windows cannot write it, so the fetch failed on every
          * sweep for ever with a message about disks. The record is fine — the NAME needs a human

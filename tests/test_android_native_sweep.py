@@ -369,6 +369,7 @@ public class Drv {
     out.put("B2s_settled", repB2s.settledByContent);
     out.put("B2s_unchanged", repB2s.unchanged);
 
+
     // ---- ONE deletion on A travels as a tombstone, keeps its address, and B applies it once.
     fsA.disk.remove("DCIM/img1.jpg");
     NativeSweep.Report repA2 = sweep(ctxA, stA, fA, sec, false, net, mk, fsA);
@@ -522,6 +523,21 @@ public class Drv {
       out.put("race_record_v", Json.num(net.read("Race", mk, "r/one.txt").get("v"), 0));
       out.put("race_failed", rH.failed.size());
     }
+
+
+    /* ---- AND A REPUBLISHED RECORD IS NOT FETCHED BACK OVER BYTES THIS PHONE ALREADY HOLDS.
+     * The planner compares content only when both sides carry a checksum, and the scan does not
+     * hash unless it has to — so a record republished with the uploader's own timestamp looks like a
+     * different file, and every device fetches what it is already holding. On a phone that is the
+     * whole folder over a radio, on battery. */
+    for (String p : new ArrayList<String>(net.pair("Pictures").keySet())) {
+      Map<String, Object> rec = net.pair("Pictures").get(p);
+      if (Json.num(rec.get("t"), 0) != 0) continue;
+      rec.put("v", Json.num(rec.get("v"), 1) + 1);          // republished, same bytes, new version
+    }
+    NativeSweep.Report repB4 = sweep(ctxB, stB, fB, sec, false, net, mk, fsB);
+    out.put("B4_downloaded", repB4.downloaded.size());
+    out.put("B4_held", repB4.heldAlready);
 
     System.out.println(Json.write(out));
   }
@@ -683,6 +699,18 @@ def test_and_the_sweep_after_it_is_quiet_again():
     r = result()
     assert r["B2s_settled"] == 0, r
     assert r["B2s_unchanged"] == 31, r
+
+
+def test_a_republished_record_is_not_fetched_back_over_bytes_we_hold():
+    """Measured on a desktop restored from a NAS backup: 223 blobs downloaded in twelve minutes,
+    every one a file it already held byte-for-byte, while its real uploads sat at eleven in half an
+    hour. On a phone the same waste is the whole folder over a radio, on battery."""
+    r = result()
+    assert r["B4_downloaded"] == 0, r
+    # 29, not the original 31: the deletion and conflict steps above account for the other two. The
+    # load-bearing number is the zero — every live file this phone holds was settled against its own
+    # bytes instead of fetched.
+    assert r["B4_held"] == 29, r
 
 
 def test_a_deletion_travels_as_a_tombstone_and_is_applied_once():

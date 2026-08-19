@@ -72,6 +72,7 @@ public final class NativeSweep {
         public String refusedRemoteDelete = null;
         public final List<String> uploaded = new ArrayList<String>();
         public int settledByContent = 0;
+        public int heldAlready = 0;
         public final List<String> downloaded = new ArrayList<String>();
         public final List<String> trashed = new ArrayList<String>();
         public final List<String> removedRemote = new ArrayList<String>();
@@ -90,6 +91,7 @@ public final class NativeSweep {
             m.put("at", at);
             m.put("uploaded", uploaded.size());
             m.put("settledByContent", settledByContent);
+            m.put("heldAlready", heldAlready);
             m.put("downloaded", downloaded.size());
             m.put("trashed", trashed.size());
             m.put("removedRemote", removedRemote.size());
@@ -400,6 +402,30 @@ public final class NativeSweep {
             Map<String, Object> R = Json.obj(d.get("entry"));
             progress(f.key, "downloading", path, ++di, plan.fetch.size());
             try {
+                /* BYTES THIS PHONE ALREADY HOLDS ARE NOT DOWNLOADED AGAIN — the web executor's rule,
+                 * mirrored, and it matters more on a radio than anywhere.
+                 *
+                 * The planner compares content only when BOTH sides carry a checksum, and the scan
+                 * does not hash unless it has to. So a record republished with the uploader's own
+                 * timestamp looks like a different file to every other device, and each of them
+                 * fetches bytes it is already holding. Measured on a desktop: 223 blobs in twelve
+                 * minutes, every one a file it already had.
+                 *
+                 * One local hash instead of a transfer. Equal means we have exactly these bytes:
+                 * journal the record against the file that is here and fetch nothing. Anything
+                 * else — no checksum, an unreadable hash, a real difference — falls through to the
+                 * download unchanged. */
+                Map<String, Object> here = local.get(path);
+                String want = Json.str(R.get("csum"), "");
+                if (!want.isEmpty() && here != null) {
+                    String mine = fs.hashFile(path);
+                    if (mine != null && mine.equals(want)) {
+                        j.applied(path, R, here, false);
+                        rep.heldAlready++;
+                        j.maybe();
+                        continue;
+                    }
+                }
                 long[] got = download(net, fs, mk, path, R, now);
                 j.applied(path, R, stat(got, Json.str(R.get("csum"), "")), false);
                 rep.downloaded.add(path);
