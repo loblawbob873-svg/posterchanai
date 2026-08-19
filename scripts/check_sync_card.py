@@ -78,6 +78,15 @@ OPEN = r"""(async () => {
      RETRIED, because a brand-new throwaway key is not admitted by the relay the instant it signs
      up: the first read of /client/sync-state can legitimately fail, and a check that reports that
      as a missing feature is a check nobody can trust. */
+  /* THE CASE THAT WAS BROKEN: the counts have to be there on ENTRY. They used to render only from
+     the last sweep's report, so a freshly opened screen showed nothing and the only way to see the
+     two numbers the whole feature is about was to press Sync and wait. Sampled before anything is
+     swept, and reported separately below. */
+  for(let i = 0; i < 20; i++){
+    if(document.querySelectorAll('.sync-counts span').length) break;
+    await new Promise(r=>setTimeout(r, 500));
+  }
+  window.__coldCounts = [...document.querySelectorAll('.sync-counts span')].map(x=>x.textContent.trim());
   const f = window.PCSync.folders()[0];
   for(let i = 0; i < 10; i++){
     try{
@@ -290,6 +299,13 @@ async def drive(url):
             problems.append(f"button heights differ: {h}")
         if w and (max(w) - min(w)) <= 2:
             print(f"  all {len(w)} buttons are one size ({w[0]}x{h[0]})")
+
+        cold = await t.js("window.__coldCounts || []") or []
+        if not cold:
+            problems.append("no counts on the card before a sweep is run — they are wanted BEFORE "
+                            "you decide whether to sync, not after")
+        else:
+            print("  on entry:", " | ".join(cold))
 
         # 3.5 both sides of the folder, as numbers, without having to run anything
         c = v.get("counts") or []

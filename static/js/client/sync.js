@@ -608,10 +608,38 @@
           if(a && b) (a === b ? same++ : diff++);
         }catch(_){}
       }
-      if(same && !diff)
-        setStatus(folderId, skipped + ' file' + (skipped === 1 ? ' is' : 's are')
+      if(same && !diff){
+        /* AND THEN OFFER THE ONE THING THAT ENDS IT, HERE, ON THIS BUILD.
+         *
+         * The files are back; the trash holds byte-identical copies that a restore can never clear,
+         * because restoring them is a no-op — their destinations are occupied by themselves. On
+         * Android that state is produced by a `moveDocument` the provider satisfied by COPYING (a
+         * build carrying the fix unlinks the source, but a device is not updated by being told
+         * about a fix). Every press of Restore from then on reports "N already back in place" and
+         * the count never falls: "Restore 172 files comes back again".
+         *
+         * `emptyTrash` is the only call that can remove them and it has been in every build. What
+         * was missing is the CONFIRMATION that it is safe to press — which is exactly what the
+         * hashes above establish. So it is offered, with the count and the proof, instead of being
+         * left as a scary red button somebody has to reason their way to. */
+        const line = skipped + ' file' + (skipped === 1 ? ' is' : 's are')
           + ' already back in your folder \u2014 what is left in .pc-trash are duplicate copies of '
-          + 'them (checked ' + same + '). Nothing you need is in there; Empty trash reclaims the space.');
+          + 'them (checked ' + same + '). Nothing you need is in there.';
+        setStatus(folderId, line + ' Empty trash reclaims the space.');
+        const f2 = folders().find(x => x.id === folderId);
+        if(f2 && fs2.emptyTrash && await PC.uiConfirm(line + '\n\nRemove those ' + skipped
+             + ' leftover copies now?\n\nThe files themselves stay exactly where they are \u2014 this '
+             + 'only clears the duplicates in .pc-trash, which is what keeps asking you to restore '
+             + 'them.', { ok: 'Remove the duplicates' })){
+          setStatus(folderId, 'clearing ' + skipped + ' leftover copies\u2026', null, true);
+          try{
+            const r2 = await fs2.emptyTrash(folderId, 0);
+            const n2 = (r2 && (r2.files || r2.removed)) || 0;
+            setStatus(folderId, 'cleared ' + (n2 || skipped) + ' leftover cop'
+                      + ((n2 || skipped) === 1 ? 'y' : 'ies') + ' \u2014 your files are untouched');
+          }catch(e2){ setStatus(folderId, 'could not clear them: ' + ((e2 && e2.message) || e2)); }
+        }
+      }
       else if(diff)
         setStatus(folderId, skipped + ' trash copies were left alone \u2014 the file already in the '
           + 'folder has DIFFERENT contents, so these are older versions. Open .pc-trash yourself '
@@ -2059,6 +2087,50 @@
     return hit || null;
   }
 
+  /* THE COUNTS ON ENTRY, not only after you have run something.
+   *
+   * They were rendered from the last sweep's report, which means a freshly opened screen showed
+   * nothing at all — "where is the local and remote counter?" — and the only way to see the two
+   * numbers the whole feature is about was to press Sync and wait. Exactly the shape the card's
+   * recovery button had, and exactly the wrong way round: the counts are most wanted BEFORE you
+   * decide whether to sync.
+   *
+   * Both sources here are LOCAL and already on disk: this device's journal (what it last applied)
+   * and the cached record set. Neither costs a scan or a round trip. A sweep still overrides them
+   * with what it actually measured — the journal is what the engine believes, a scan is the truth,
+   * and the chip says which it is showing. */
+  const _cntSeen = new Map();            // pair key -> {at, here, shared, gone}
+  const _CNT_TTL = 30000;
+  function _countsAsk(f){
+    const key = keyOf(f);
+    const hit = _cntSeen.get(key);
+    if(hit && (Date.now() - hit.at) < _CNT_TTL) return hit;
+    if(_cntSeen.get('~c:' + key)) return hit || null;
+    _cntSeen.set('~c:' + key, true);
+    /* THE TWO READS ARE INDEPENDENT, AND THE FAST ONE MUST NOT WAIT FOR THE SLOW ONE. The journal
+     * is on this disk and answers in milliseconds; the record set can take tens of seconds on a
+     * pair this device has not read before (a cold cache, a relay still admitting the key). Awaited
+     * together, the local number nobody had to ask anyone for was held hostage to a network read —
+     * which is how "where is the local and remote counter?" survived the first attempt at it. Each
+     * lands on its own and repaints. */
+    const _bump = (patch) => {
+      const cur = _cntSeen.get(key) || { here: null, shared: null, gone: null };
+      _cntSeen.set(key, Object.assign({}, cur, patch, { at: Date.now() }));
+      if(PC.VIEW === 'sync') paint();
+    };
+    let _left = 2;
+    const _done = () => { if(--_left <= 0) _cntSeen.delete('~c:' + key); };
+    docs.index(key).then(idx => {
+      _bump({ here: Object.keys(idx || {}).filter(p => idx[p] && !idx[p].deletedAt).length });
+    }).catch(() => {}).then(_done);
+    stateS.load(key).then(st => {
+      let shared = 0, gone = 0;
+      for(const p in st.state){ if(st.state[p] && st.state[p].deletedAt) gone++; else shared++; }
+      _bump({ shared, gone });
+    }).catch(() => { /* could not read the folder — say nothing rather than say zero */ }).then(_done);
+    return hit || null;
+  }
+
   /* The last background sweep's own report, read once per visit. A phone sweeps with the screen
    * off and cannot ask anybody anything, so its refusals sit here until the app is opened — which
    * is precisely when they have to be readable. */
@@ -2662,13 +2734,24 @@
           : PC.enc(st.text || 'not synced yet')}</div>
         ${lost ? '<div class="sync-actions"><button class="btn btn-neon small sync-relink">Point at the folder again…</button></div>' : ''}
         ${nat ? `<div class="sync-new"><b>Waiting for you.</b> <span class="muted small">${PC.enc(nat)}</span></div>` : ''}
-        ${(st.report && st.report.shared != null) ? (() => { const _s = _storeAsk(f); return `<div class="sync-counts muted small">
-          <span title="Files this device holds in the folder right now">${_num(st.report.here)} here</span>
-          <span title="Files your devices agree the folder contains">${_num(st.report.shared)} in the folder</span>
+        ${(() => {
+          /* Measured beats remembered: a sweep scanned the disk, the fallback is what this device
+             last agreed to. Shown either way, and the tooltip says which. */
+          const _c = _countsAsk(f);
+          const _r = st.report && st.report.shared != null ? st.report : null;
+          const _here   = _r ? _r.here   : (_c ? _c.here   : null);
+          const _shared = _r ? _r.shared : (_c ? _c.shared : null);
+          const _gone   = _r ? _r.sharedGone : (_c ? _c.gone : null);
+          if(_here == null && _shared == null) return '';
+          const _how = _r ? 'measured by the last sync' : 'from this device\u2019s record \u2014 press Sync now to re-measure';
+          const _s = _storeAsk(f);
+          return `<div class="sync-counts muted small">
+          ${_here == null ? '' : `<span title="Files this device holds in the folder (${_how})">${_num(_here)} here</span>`}
+          ${_shared == null ? '' : `<span title="Files your devices agree the folder contains">${_num(_shared)} in the folder</span>`}
           ${_s ? `<span title="Files whose encrypted bytes are on the Blossom server — what a new device could actually fetch">${_num(_s.ok)} in the store</span>` : ''}
           ${(_s && _s.missing) ? `<span class="warn" title="The folder names these files but the store does not hold all of their bytes — no device can fetch them until whoever still has the file sends it again (Check files → send again)">${_num(_s.missing)} not in the store</span>` : ''}
-          ${st.report.sharedGone ? `<span title="Deleted files the folder still remembers, so any device can undo them">${_num(st.report.sharedGone)} deleted</span>` : ''}
-        </div>`; })() : ''}
+          ${_gone ? `<span title="Deleted files the folder still remembers, so any device can undo them">${_num(_gone)} deleted</span>` : ''}
+        </div>`; })()}
         ${details(st.report)}
         <label class="sync-ex"><span class="muted small">Don't sync these (one per line — a folder name covers everything inside it)</span>
           <textarea class="input sync-ex-ta" rows="2" placeholder="Old&#10;*.tmp">${PC.enc((f.excludes||[]).join('\n'))}</textarea></label>

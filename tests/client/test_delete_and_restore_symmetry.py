@@ -420,7 +420,9 @@ class RestoreSaysWhatHappened(unittest.TestCase):
 
     def _seg(self):
         i = self.sync.index("if(!done && skipped && typeof fs2.hashFile")
-        return self.sync[i:i + 2000]
+        # Wide enough to hold the whole branch including the offer it ends with — this reads SOURCE,
+        # so the window is about prose length and not about the rule.
+        return self.sync[i:i + 4200]
 
     def test_it_does_not_assert_the_copies_are_duplicates(self):
         seg = self._seg()
@@ -435,6 +437,22 @@ class RestoreSaysWhatHappened(unittest.TestCase):
                       "an older version in the trash must not be described as a duplicate")
         i_ok, i_bad = seg.index("Empty trash reclaims"), seg.index("DIFFERENT contents")
         self.assertNotEqual(i_ok, i_bad)
+
+    def test_it_offers_to_clear_the_duplicates_and_only_after_proving_they_are_duplicates(self):
+        """The state the user is stuck in cannot be escaped by restoring — the destinations are
+        occupied by the files themselves, so every press reports "N already back in place" and the
+        count never falls. `emptyTrash` is the only call that can remove them and it is in every
+        build; what was missing was the confirmation that pressing it is safe, which is what the
+        hashes establish. The offer must therefore sit INSIDE the all-matched branch."""
+        seg = self._seg()
+        i_ok = seg.index("same && !diff")
+        i_offer = seg.index("emptyTrash")
+        self.assertGreater(i_offer, i_ok,
+                           "the offer to empty the trash must be inside the branch that PROVED the "
+                           "copies are duplicates — never on the differing-bytes path")
+        self.assertIn("uiConfirm", seg[i_ok:], "it must ask before deleting anything")
+        self.assertIn("Remove the duplicates", seg)
+        self.assertNotIn("emptyTrash", seg[:i_ok])
 
     def test_it_only_speaks_when_nothing_was_restored(self):
         """A partial restore is its own story; this sentence is for the all-skipped case only."""
