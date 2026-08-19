@@ -1,6 +1,6 @@
 """WHEN to sync, held to one answer on both sides.
 
-The rules for WHAT to sync moved to syncengine.js / SyncReconcile.java, and their parity is covered
+The rules for WHAT to sync moved to syncstate.js / SyncReconcile.java, and their parity is covered
 by tests/test_android_reconcile_parity.py. What stays here is the battery and network policy — the
 one piece of the old engine that was never the problem and is still shared: it decides whether the
 phone wakes at all, and a Java port that answers differently either flattens somebody's battery or

@@ -31,12 +31,15 @@ class BadCopyHealTests(unittest.TestCase):
             confirmGone: async () => ({ gone:false, parentAlive:true }),
           };
           let published = null;
+          const badIds = %s;
           const io = {
             index: async () => ({ 'r.jpg': Object.assign({}, entry, { local:{size:5,mtime:10,csum:'GOODCSUM'} }) }),
-            views: async () => ({ views: { me: { 'r.jpg': entry },
-                                           tablet: { 'r.jpg': entry } }, missing: 0, bad: %s }),
+            state: async () => ({ state: { 'r.jpg': JSON.parse(JSON.stringify(entry)) },
+                                  flagged: badIds.length ? { 'r.jpg': badIds[0] } : {} }),
             saveIndex: async () => {},
-            publish: async (k, mine) => { published = JSON.parse(JSON.stringify(mine)); },
+            putState: async (k, recs) => { published = published || {};
+              for(const r of recs) published[r.path] = JSON.parse(JSON.stringify(r.entry));
+              return { ok: recs.map(r => r.path), stale: [], failed: [] }; },
             putBlob: async () => ({ sha: 'newsha' }),
             hashBytes: async () => 'GOODCSUM',
           };
@@ -51,13 +54,13 @@ class BadCopyHealTests(unittest.TestCase):
         return json.loads(r.stdout)
 
     def test_the_holder_reseeds_a_copy_others_refuse(self):
-        out = self._sweep("GOODCSUM", ["GOODCSUM"])
+        out = self._sweep("GOODCSUM", ["oldsha"])
         self.assertEqual(out["reseeding"], ["r.jpg"])
         self.assertIn("r.jpg", out["uploaded"])
         self.assertEqual(out["newSha"], "newsha", "the re-seed did not mint a new identity")
 
     def test_a_holder_whose_own_copy_is_bad_does_not_reseed_poison(self):
-        out = self._sweep("TORN_DIFFERENT", ["GOODCSUM"])
+        out = self._sweep("TORN_DIFFERENT", ["oldsha"])
         self.assertEqual(out["reseeding"], [])
         self.assertEqual(out["badHere"], ["r.jpg"], "a locally-bad copy was not reported")
         self.assertNotIn("r.jpg", out["uploaded"])

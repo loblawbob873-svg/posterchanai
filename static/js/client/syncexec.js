@@ -1,16 +1,15 @@
-/* Folder sync — the executor. It moves the bytes the reconciler decided on, and nothing else.
+/* Folder sync — the executor. It moves the bytes the engine decided on, and nothing else.
  *
- * The split is the safety: syncengine.js decides and cannot touch a file; this decides nothing and
+ * The split is the safety: syncstate.js decides and cannot touch a file; this decides nothing and
  * cannot be reached without a plan that has been checked. Every rule about WHAT should happen lives
  * over there, where it is pure and can be run exhaustively; every rule about HOW to do it without
  * losing anything lives here.
  *
  * WHAT THIS FILE IS RESPONSIBLE FOR, and each line was paid for by a real failure:
  *
- *   AN INPUT IT COULD NOT READ IS NEVER A VALUE. Not the journal, not a device's view, not the
- *   scan. A read that fails throws; a device that does not answer is COUNTED, and the count reaches
- *   the checker, which refuses every deletion. Empty and unreadable were once the same thing here,
- *   and that is what put a Pictures folder in the trash.
+ *   AN INPUT IT COULD NOT READ IS NEVER A VALUE. Not the journal, not the record set, not the
+ *   scan. A read that fails throws, and nothing has been changed. Empty and unreadable were once
+ *   the same thing here, and that is what put a Pictures folder in the trash.
  *
  *   IT RESUMES. Every file is journalled the moment it lands, so an interrupted sweep repeats at
  *   most the last few files — and repeating one is free, because an upload whose bytes the server
@@ -24,16 +23,16 @@
  *   a time and large ones one at a time. What is held for the whole sweep is three compact maps —
  *   about a hundred bytes per path — and never the folder's contents.
  *
- *   IT PUBLISHES ONLY ITS OWN VIEW. One writer per document, so two devices syncing at once cannot
- *   overwrite each other, and there is no merge-on-save, no re-read per checkpoint and no
- *   server-side collapse guard to get wrong.
+ *   IT PUBLISHES PER FILE, THROUGH THE SERVER'S COMPARE-AND-SWAP. A change this sweep made is one
+ *   record, refused individually if another device got there first — there is no document to merge,
+ *   re-read or collapse, and a refused write costs one conflict resolution, never a folder.
  */
 (function(root){
   'use strict';
 
-  const E = root.PCSyncEngine || (typeof require === 'function' ? require('./syncengine.js') : null);
+  const E = root.PCSyncState || (typeof require === 'function' ? require('./syncstate.js') : null);
   const P = root.PCFolderSync || (typeof require === 'function' ? require('./foldersync.js') : null);
-  if(!E || !P) throw new Error('syncexec.js needs syncengine.js and foldersync.js');
+  if(!E || !P) throw new Error('syncexec.js needs syncstate.js and foldersync.js');
 
   const SCAN_PAGE = 1000;          // paths per bridge call — bounds the payload, not the folder
   const LANES = 4;                 // small files in flight at once; the wait is the round trip
@@ -49,9 +48,8 @@
    * thousand photos, where the wait is the round trip and the bytes are nothing. Anything larger goes
    * one at a time, whether it is chunked or not. */
   const PARALLEL_MAX = 2 * 1024 * 1024;
-  const SAVE_EVERY = 200;          // files between journal writes
+  const SAVE_EVERY = 200;          // files between journal writes (each write publishes first)
   const SAVE_MS = 20 * 1000;
-  const PUBLISH_EVERY = 500;       // changes before telling the other devices, mid-sweep
 
   const now0 = () => Date.now();
 
@@ -107,44 +105,31 @@
                      failed:[], skipped:[], unchanged:0, settledGone:0, excluded:0, refused:[], device: me,
                      dryRun: !!o.dryRun, ok: true };
 
-    /* 1. What this device has already applied. A journal that cannot be read is not an empty
+    /* 1. The folder: ONE RECORD PER FILE, read strictly. There are no per-device views to merge
+     *    and no view that can be partial — the transport either hands back the record set (its
+     *    cache plus everything written since its last look) or it throws, and nothing has been
+     *    changed. A record that could not be decrypted is COUNTED and its path left untouched:
+     *    the safe direction for one unreadable record is one file the sweep does not move. */
+    let got0;
+    try{ got0 = await io.state(key); }
+    catch(e){
+      throw new Error('could not read the folder’s shared record — nothing has been changed. ('
+                      + msg(e) + ')');
+    }
+    const state = (got0 && got0.state) || {};
+    report.undecryptable = (got0 && got0.undecryptable) || 0;
+    { const devs = new Set();
+      for(const p in state) if(state[p] && state[p].by) devs.add(state[p].by);
+      devs.add(me);
+      report.devices = devs.size; }
+
+    /* 2. What this device has already applied. A journal that cannot be read is not an empty
      *    journal: with no journal every file on both sides looks new and independently changed,
      *    which is a conflict copy per path — thousands of them, and a folder to repair by hand. */
     let index;
     try{ index = (await io.index(key)) || {}; }
     catch(e){ throw new Error('could not read this device’s sync record — nothing has been changed. ('
                               + msg(e) + ')'); }
-
-    /* 2. What every device says the folder holds. Ours included, so a path we hold is never absent
-     *    from the merge. A device that does not answer is counted, not assumed empty. */
-    let views, missing = 0;
-    try{
-      const got = await io.views(key);
-      var got0 = got;
-      views = (got && got.views) || {};
-      missing = (got && got.missing) || 0;
-      report.cannot = (got && got.cannot) || [];
-      report.badElsewhere = (got && got.bad && got.bad.length) || 0;
-    }catch(e){
-      throw new Error('could not read what your devices have — nothing has been changed. ('
-                      + msg(e) + ')');
-    }
-    if(!Object.keys(views).length && missing) throw new Error('none of your devices could be read — '
-                                                              + 'nothing has been changed');
-    /* A DEVICE'S TRUTH IS ITS JOURNAL, NEVER ITS OWN STALE DOC. The published view under OUR device
-     * id is a derivative of the journal — but after a remove-and-re-add the journal is fresh while
-     * the doc still holds the previous life's entries, and merging it made a device meet its own
-     * GHOST as a rival: every path whose old claim diverges from the folder conflicts with itself,
-     * once per file ("i readded pictures on phone and it instantly has 373 conflicts"). The merge
-     * gets the journal-derived view for `me`; the stale doc is overwritten at the first publish. */
-    const publishedMine = views[me];   // as FETCHED — the lost-document restore decision needs it
-    { const mineNow = {};
-      for(const p2 in index){ const e2 = index[p2];
-        if(e2 && typeof e2 === 'object'){ const c2 = Object.assign({}, e2); delete c2.local; mineNow[p2] = c2; } }
-      views[me] = mineNow; }
-    const merged = E.merge(views);
-    report.devices = merged.devices.length;
-    report.missingViews = missing;
 
     /* COLLECT ABANDONED `.part` FILES BEFORE SCANNING, and this needs a caller or it is decoration.
      *
@@ -165,7 +150,7 @@
     /* AN EMPTY JOURNAL FORCES A HASH. THIS IS NOT AN OPTIMISATION, IT IS THE WHOLE ANSWER.
      *
      * With no journal, every path looks changed on BOTH sides at once — the device has files and
-     * has applied nothing — so the reconciler falls through to "did they end up the same anyway?",
+     * has applied nothing — so the engine falls through to "did they end up the same anyway?",
      * and that question is answered by content when there is a checksum and by size+mtime when there
      * is not. An ordinary sweep does not hash.
      *
@@ -174,25 +159,17 @@
      * Every path therefore reads as "edited on both" and the sweep makes a conflict copy of the
      * entire folder — reported as "phone is now downloading 1803 conflicts".
      *
-     * So a device with nothing applied pays for one full hash and settles the folder by content,
-     * which is what the native sweep has always done (`firstEver` in NativeSweep) and what the page
-     * half was missing. It is expensive once; a conflict copy of every file is expensive for ever.
-     */
-    /* HOW MUCH OF THIS FOLDER CAN THE JOURNAL ACTUALLY ANSWER FOR?
+     * So a device with nothing applied pays for one full hash and settles the folder by content.
+     * It is expensive once; a conflict copy of every file is expensive for ever.
      *
-     * "Empty" was too narrow. The journal is written in batches and the settle entries — the bulk of
-     * what a device that already holds the folder records — land at the very end, so a first sweep
-     * interrupted anywhere (the renderer killed, a stop pressed, a failed write) leaves a handful of
-     * entries behind. The next sweep then sees a non-empty journal, does not hash, and every
-     * remaining path is "edited on both" again: the conflict storm returns by the back door.
-     *
-     * So the test is COVERAGE, not emptiness. Below half, this device cannot answer for its own
-     * folder and must settle it by content.
-     *
-     * A dry run hashes too, or Preview and the sweep disagree by the whole folder — on precisely the
-     * device this exists for. */
+     * HOW MUCH OF THIS FOLDER CAN THE JOURNAL ACTUALLY ANSWER FOR? "Empty" was too narrow: the
+     * journal is written in batches, so a first sweep interrupted anywhere leaves a handful of
+     * entries behind, and the next sweep then did not hash — the conflict storm returned by the
+     * back door. The test is COVERAGE, not emptiness: below half, this device cannot answer for
+     * its own folder and must settle it by content. A dry run hashes too, or Preview and the sweep
+     * disagree by the whole folder — on precisely the device this exists for. */
     const known = Object.keys(index).length;
-    const seen = Object.keys(merged.global).length;
+    const seen = Object.keys(state).length;
     const thin = known === 0 || (seen > 0 && known < seen / 2);
     const scanOpts = thin ? Object.assign({}, o, { hash: true }) : o;
     if(thin) report.hashed = true;
@@ -200,14 +177,14 @@
     /* 3. The disk, a page at a time. */
     step('scanning');
     let disk, unread;
-    try{ const got = await scan(fs, scanOpts, stopping); disk = got.disk; unread = got.unread; }
+    try{ const got = await scan(fs, scanOpts, stopping, o.onProgress); disk = got.disk; unread = got.unread; }
     catch(e){
       /* "unknown sync folder" is not a read error — it is this device no longer holding the
        * MAPPING for the folder (a cleared app profile, a reinstall). The files and the shared
        * record are fine; only the handle is gone, and re-picking the folder mints a new one. */
       if(/unknown sync folder/i.test(String((e && e.message) || e)))
         throw new Error('this device no longer remembers where this folder lives — press '
-                      + '\u201cPoint at the folder again\u2026\u201d on its card (or remove and '
+                      + '“Point at the folder again…” on its card (or remove and '
                       + 're-add it). Your files and the shared record are untouched');
       throw new Error('could not read the folder on this device — nothing has been changed. ('
                               + msg(e) + ')'); }
@@ -218,31 +195,21 @@
     /* 4. Decide, check, and let a person answer for anything that is theirs to answer.
      * Paths the scan could not read join the exclusions: dropped from all three inputs, so an
      * unreadable subtree can neither be deleted here nor tombstoned to anyone. */
-    let plan = E.reconcile({ disk, global: merged.global, rivals: merged.rivals, by: merged.by,
-                             index, device: me, now,
-                             excludes: (o.excludes || []).concat(unread) });
+    let plan = E.plan({ disk, state, index, device: me, now,
+                        excludes: (o.excludes || []).concat(unread) });
 
-    /* PATHS THE CALLER DEMANDS BE SENT AGAIN.
-     *
-     * "The store lost these bytes and this device still has the file" cannot be expressed by editing
-     * the journal: with the entry gone both sides read as changed, the reconciler asks whether they
-     * are the same anyway, the checksums match — because it IS the same file — and it settles. The
-     * repair reported "3 queued to send again" and sent nothing, which is the worst possible
-     * outcome for a repair.
-     *
-     * So it is said outright. Only paths this device actually holds, and the version goes past
-     * whatever the folder shows so the entry is not immediately outvoted. */
-    /* HEAL WHAT OTHERS REFUSE. Any entry of OURS whose current identity a sibling's view marks
-     * checksum-bad, while our local file still hashes to the journal's csum, is re-sent — the
-     * fresh upload carries a new identity, so every puller's remembered refusal expires by
-     * itself. Verified BEFORE sending: re-seeding a copy that is also bad here helps nobody. */
+    /* HEAL WHAT OTHERS REFUSE. A record another device has FLAGGED — its stored copy failed a
+     * checksum on download — is re-sent by whoever still holds a good local copy: the fresh upload
+     * carries a new storage address (a new random IV means new ciphertext), so every puller's
+     * remembered refusal expires by itself. Verified BEFORE sending: re-seeding a copy that is also
+     * bad here helps nobody, and is counted as `badHere` so the card can say which device really
+     * lost the file. */
     let _heal = [];
-    { const badIds = new Set((got0 && got0.bad) || []);
-      if(badIds.size && !o.dryRun){
-        const _idOfE = (e) => (e && (e.csum || e.sha || (e.chunks && e.chunks.join(',')))) || '';
-        for(const p in index){
+    { const flagged = (got0 && got0.flagged) || {};
+      if(!o.dryRun){
+        for(const p in flagged){
           const e = index[p]; if(!e || e.deletedAt || !disk[p]) continue;
-          const id = _idOfE(e); if(!id || !badIds.has(id)) continue;
+          if(idOf(e) !== flagged[p]) continue;          // already re-sent under a new address
           try{
             if(e.csum && typeof fs.hashFile === 'function'){
               const h = await fs.hashFile(o.id, p);
@@ -253,6 +220,14 @@
         }
         if(_heal.length) (report.reseeding = _heal.slice());
       } }
+
+    /* PATHS THE CALLER DEMANDS BE SENT AGAIN.
+     *
+     * "The store lost these bytes and this device still has the file" cannot be expressed by editing
+     * the journal: with the entry gone both sides read as changed, the engine asks whether they
+     * are the same anyway, the checksums match — because it IS the same file — and it settles. So it
+     * is said outright. Only paths this device actually holds, and the version goes past whatever
+     * the folder shows so the record is not immediately refused. */
     const _resend = (o.resend || []).concat(_heal);
     if(_resend.length && !o.dryRun){
       const want = new Set(_resend);
@@ -260,7 +235,7 @@
       const extra = [];
       for(const p of want){
         if(already.has(p) || !disk[p]) continue;
-        extra.push({ path: p, v: E.bump(merged.global[p], index[p]), stat: disk[p],
+        extra.push({ path: p, v: E.bump(state[p], index[p]), stat: disk[p],
                      why: 'sending again — the store no longer has these bytes' });
       }
       if(extra.length){
@@ -279,8 +254,7 @@
     report.settledGone = plan.settledGone || 0;
     report.excluded = plan.excluded;
 
-    const verdicts = E.check(plan, { global: merged.global, missingViews: missing,
-                                     indexSize: Object.keys(index).length });
+    const verdicts = E.check(plan, { state, indexSize: Object.keys(index).length });
     const allowed = [];
     for(const v of verdicts){
       if(v.fatal){ report.refused.push(v); continue; }
@@ -296,14 +270,15 @@
      * it. Read here, above every loop that fetches, because the conflict path needs it as much as
      * the download path does. */
     const skipFetch = o.skipFetch || {};
-    const idOf = (e) => (e && (e.csum || e.sha || (e.chunks && e.chunks.join(',')))) || '';
     /* What a remembered failure still applies to.
      *
-     * `checksum` is for ever — the same bytes always hash the same way. `gone` is a 404 and EXPIRES,
-     * because content-addressed bytes that come back come back under the same identity, so an
-     * unexpiring block would make one bad minute permanent. A pressed button clears both: somebody
-     * standing there asking again is the clearest possible signal to try. Older entries were a bare
-     * string; they are read as permanent, which is what they were. */
+     * `checksum` clears when the holder re-uploads — a new ciphertext is a NEW ADDRESS, which is
+     * why refusals are keyed on the STORAGE address (sha, or the chunk list) and never on the
+     * file's own csum: a re-send of the same good bytes keeps the csum and changes the address, and
+     * a csum key would refuse the repair for ever. `gone` is a 404 and EXPIRES, because
+     * content-addressed bytes that come back come back under the same identity, so an unexpiring
+     * block would make one bad minute permanent. A pressed button clears both: somebody standing
+     * there asking again is the clearest possible signal to try. */
     const GONE_FOR = 6 * 3600 * 1000;
     const skipId = (v, raw) => {
       if(!v) return '';
@@ -317,8 +292,8 @@
       /* WHAT THE PREVIEW PROMISES, THE SWEEP MUST BE WILLING TO DO. A planned download whose bytes
        * the store has already answered 404 for is one the sweep will (rightly) decline — and a
        * preview that counts it as an ordinary change writes a cheque the sweep then quietly
-       * declines to cash: "Would download 200" over a sweep that ends "in step". Counted with the
-       * RAW memory (a preview is a look, not the pressed-button retry a manual sweep is). */
+       * declines to cash. Counted with the RAW memory (a preview is a look, not the pressed-button
+       * retry a manual sweep is). */
       report.plannedGone = plan.fetch.concat(plan.keepBoth).filter(d => {
         const id = idOf(d.entry);
         return id && skipId(skipFetch[d.path], true) === id;
@@ -326,17 +301,36 @@
       return report;
     }
 
-    /* 5. Do it. The journal is the record of what has landed, and it is what makes this resumable. */
+    /* 5. Do it. The journal is the record of what has landed, and it is what makes this resumable.
+     *
+     * A CHANGE THIS SWEEP MAKES IS PUBLISHED PER FILE, BEFORE THE JOURNAL RECORDS IT — the folder
+     * running ahead of the journal is safe (the next sweep adopts its own publish by content),
+     * where a journal ahead of the folder is a device believing in an agreement nobody saw. A
+     * record the server REFUSES (another device won the version) is struck from the journal on the
+     * spot: this device then honestly knows nothing about that path, and the next sweep resolves
+     * the divergence as a conflict, with both copies surviving. */
     const journal = new Journal(io, key, index, o);
-    const mine = {};                                  // what THIS device will publish
-    for(const p in index) mine[p] = strip(index[p]);
-    journal.beforeSave = () => publish(io, key, mine, report);
+    const pending = [];                             // records this sweep must publish
+    const flushPuts = async () => {
+      if(!pending.length) return;
+      const batch = pending.splice(0);
+      const res = await io.putState(key, batch,
+        { confirmed: allowed.indexOf('massTombstone') !== -1 || !!o.allowMassTrash });
+      for(const p of (res && res.stale) || []){
+        delete index[p];
+        report.raced = (report.raced || 0) + 1;
+      }
+      for(const p of (res && res.failed) || []){
+        failed(report, p, 'publish', new Error('the record was not stored — will retry next sweep'));
+      }
+    };
+    journal.beforeSave = flushPuts;
 
-    const record = (path, entry, local) => {
+    const record = (path, entry, local, publish) => {
       const next = Object.assign({}, entry);
       if(local) next.local = local; else delete next.local;
       index[path] = next;
-      mine[path] = strip(next);
+      if(publish) pending.push({ path, entry: strip(next) });
       journal.touch();
     };
 
@@ -348,8 +342,7 @@
       step('to trash', t.path, ++ti, plan.trash.length);
       try{
         const to = await fs.trash(o.id, t.path, now);
-        record(t.path, { v: t.v, by: (t.entry && t.entry.by) || me,
-                         deletedAt: (t.entry && t.entry.deletedAt) || now }, null);
+        record(t.path, Object.assign({}, t.entry), null);
         report.trashed.push({ path: t.path, to });
       }catch(e){ failed(report, t.path, 'delete', e); }
       await journal.maybe();
@@ -360,25 +353,32 @@
     for(const c of plan.keepBoth){
       if(stopping()) return await halt(report, journal);
       /* A CONFLICT AGAINST BYTES THAT DO NOT EXIST IS NOT A CONFLICT — it is one copy, and it is
-       * the one on this disk.
-       *
-       * Two sides disagree, so both are kept: that rule assumes the incoming side can actually be
-       * fetched. When it cannot — the store does not have those bytes, or this device has already
-       * failed to verify that exact copy — resolving it "keeps both" by renaming the local file out
-       * of the way and then failing to write anything in its place. The path is now missing, so the
-       * next sweep reads it as new elsewhere, fetches nothing again, and the sweep after that makes
-       * ANOTHER conflict copy. Measured: 1,803 conflicts, then 2,322, climbing every sweep, with
-       * 11,000 failed fetches in ten minutes.
-       *
-       * So an unfetchable incoming copy leaves the local file exactly where it is and says so. The
-       * moment somebody publishes bytes that exist, it settles normally. */
-      const cid = (c.entry && (c.entry.csum || c.entry.sha
-                  || (c.entry.chunks && c.entry.chunks.join(',')))) || '';
+       * the one on this disk. When the incoming side cannot be fetched, resolving it "keeps both"
+       * by renaming the local file out of the way and then failing to write anything in its place;
+       * the next sweep reads the gap as new-elsewhere and the sweep after that makes ANOTHER
+       * conflict copy. Measured: 1,803 conflicts, then 2,322, climbing every sweep. An unfetchable
+       * incoming copy leaves the local file exactly where it is and says so. */
+      const cid = idOf(c.entry);
       if(cid && skipId(skipFetch[c.path]) === cid){
         report.unfetchable = report.unfetchable || [];
         report.unfetchable.push({ path: c.path, why: 'the incoming copy cannot be fetched, so your '
                                   + 'copy was left exactly as it is' });
         continue;
+      }
+      /* A CONFLICT OVER IDENTICAL BYTES IS NOT A CONFLICT. An unhashed scan compares size+mtime,
+       * and two copies of the same photo can differ on both — so before renaming anything, the one
+       * cheap question that settles it for real: hash the local file against the incoming record.
+       * Equal means both sides hold the same content and the only divergence was a timestamp; the
+       * journal records agreement and no copy is minted. This is also what absorbs the CAS race —
+       * two devices uploading the same file, the loser refused, resolving here. */
+      if(c.entry && c.entry.csum && typeof fs.hashFile === 'function'){
+        let h = null;
+        try{ h = await fs.hashFile(o.id, c.path); }catch(_){ h = null; }
+        if(h && h === c.entry.csum){
+          const L = disk[c.path] || {};
+          record(c.path, Object.assign({}, c.entry), { size: L.size, mtime: L.mtime, csum: h });
+          continue;
+        }
       }
       step('conflict', c.path, ++ci, plan.keepBoth.length);
       try{
@@ -404,8 +404,6 @@
           report.badFetch[c.path] = { id: cid, why: 'checksum' };
           failed(report, c.path, 'conflict', e);
         } else if(cid && /unavailable \(404\)/.test(why)){
-          // The same rule as the download loop below: a 404 is a fact about the store, reported as
-          // "can't be fetched", never as this sweep failing — see the comment there.
           report.badFetch = report.badFetch || {};
           report.badFetch[c.path] = { id: cid, why: 'gone', at: now0() };
           report.unfetchable = report.unfetchable || [];
@@ -419,24 +417,12 @@
       await journal.maybe();
     }
 
-    /* (declared above the conflict loop, which consults it too) A COPY THAT HAS ALREADY FAILED ITS
-     * CHECKSUM IS NOT WORTH FETCHING AGAIN, EVER.
-     *
-     * The bytes are content-addressed, so reassembling them is deterministic: the same stored copy
-     * produces the same wrong hash every time. Retrying it is an infinite loop that moves real bytes
-     * over somebody's connection — reported exactly that way, the same two videos failing on every
-     * sweep, all evening.
-     *
-     * Keyed on the IDENTITY of the copy, not the path, so it lifts by itself the moment the holder
-     * publishes a different one: nothing to clear, no state to go stale. DROPPING THE ENTRY WOULD BE
-     * THE OBVIOUS REPAIR AND IS A CATASTROPHE — the device that HAS the file would read the gap as
-     * "deleted elsewhere" and trash its only good copy. */
     // Downloads.
     await transfers(plan.fetch, o, stopping, journal, LANES,
       (d) => !!(d.entry && d.entry.chunks && d.entry.chunks.length)
              || ((d.entry && d.entry.size) || 0) > PARALLEL_MAX,
       async (d, i, n) => {
-        /* An entry already published without an address cannot be fetched by anybody. Reported
+        /* A record already published without an address cannot be fetched by anybody. Reported
          * rather than attempted, so the sweep stops failing on it every time and the card names the
          * file — which is the only way somebody can go and fix it. */
         const e = d.entry || {};
@@ -451,7 +437,7 @@
         if(badId && badId === idOf(d.entry)){
           report.unfetchable = report.unfetchable || [];
           report.unfetchable.push({ path: d.path, why: 'the copy in the store fails its checksum — '
-                                    + 'the device that has this file must send it again' });
+                                    + 'the device that has this file will send it again' });
           return;
         }
         step('downloading', d.path, i, n);
@@ -462,39 +448,24 @@
                                                        csum: d.entry.csum });
           report.downloaded.push(d.path);
         }catch(e){
-          /* …and REMEMBER it, so the next sweep does not spend the same bytes on the same failure.
-           *
-           * TWO WAYS A COPY CAN BE UNUSABLE, and both are properties of the COPY rather than of the
-           * moment: bytes that fail their checksum, and bytes the store does not have. The second
-           * was retried on every sweep for ever — 243 failures a sweep, on a folder where nothing
-           * was wrong except that those blobs are gone — because a 404 read as an ordinary error.
-           *
-           * Keyed on the copy's identity either way, so it clears itself the moment somebody
-           * publishes a different one; and a 5xx or a dead socket is NOT remembered, because those
-           * really are about the moment. */
-          /* TWO KINDS OF UNUSABLE COPY, AND ONLY ONE OF THEM IS PERMANENT.
+          /* TWO KINDS OF UNUSABLE COPY, AND ONLY ONE OF THEM IS PERMANENT-UNTIL-REPAIRED.
            *
            * A checksum failure is deterministic: the same stored bytes produce the same wrong hash
-           * for ever, and the block lifts by itself when somebody publishes a DIFFERENT copy —
-           * different bytes, different identity.
+           * for ever. It is remembered by STORAGE ADDRESS and — the other half of the repair — it
+           * is FLAGGED on the record, so the device still holding a good copy re-sends it without
+           * anyone asking; the fresh upload is a fresh address and the memory lifts by itself.
            *
            * A 404 is not like that at all. Blobs are content-addressed, so bytes restored by any
-           * route — a re-upload, another device adding the same file, a backup — come back under the
-           * SAME identity, and a block keyed on identity would never lift: one bad minute from a
-           * media server would strand that path for ever. So it is remembered with a clock, and
-           * expires. */
+           * route come back under the SAME identity, and a block keyed on identity would never
+           * lift: one bad minute from a media server would strand that path for ever. So it is
+           * remembered with a clock, and expires. A 5xx or a dead socket is NOT remembered,
+           * because those really are about the moment. */
           const why = msg(e);
           if(/checksum mismatch/.test(why)){
             report.badFetch = report.badFetch || {};
             report.badFetch[d.path] = { id: idOf(d.entry), why: 'checksum' };
             failed(report, d.path, 'download', e);
           } else if(/unavailable \(404\)/.test(why)){
-            /* A 404 IS A FACT ABOUT THE STORE, NOT A FAILURE OF THIS SWEEP — and the label decides
-             * what a person does next. "231 failed" reads as breakage and invites pressing Sync now
-             * again, which (a pressed button means try again) refetches all 231 and prints "231
-             * failed" again: a loop of despair someone sat inside for a day. "231 can't be fetched —
-             * the store doesn't have those bytes" is the truth, points at the device that can fix it
-             * (Verify, on the device that holds the files), and stops indicting the sweep. */
             report.badFetch = report.badFetch || {};
             report.badFetch[d.path] = { id: idOf(d.entry), why: 'gone', at: now0() };
             report.unfetchable = report.unfetchable || [];
@@ -507,8 +478,7 @@
         }
       });
 
-    // Uploads.
-    let published = 0;
+    // Uploads. Each one publishes its record in the next checkpoint's flush.
     await transfers(plan.send, o, stopping, journal, LANES,
       (u) => (u.stat && u.stat.size || 0) > PARALLEL_MAX,
       async (u, i, n) => {
@@ -516,14 +486,12 @@
         try{
           const entry = await send(fs, io, o, u, me,
                                    (pc) => step('uploading', u.path + ' ' + pc + '%', i, n));
-          record(u.path, entry, { size: u.stat.size, mtime: u.stat.mtime, csum: entry.csum });
+          record(u.path, entry, { size: u.stat.size, mtime: u.stat.mtime, csum: entry.csum }, true);
           report.uploaded.push(u.path);
           /* COUNTED SEPARATELY, because it is not an ordinary upload: it puts back a file another
-           * device deliberately deleted. Reported as "3,930 up" once, on a sweep that had just
-           * reversed a delete — a number that says nothing about what happened. */
+           * device deliberately deleted. */
           if(u.resurrect) (report.resurrected = report.resurrected || []).push(u.path);
           if(entry.existed) report.alreadyStored = (report.alreadyStored || 0) + 1;
-          if(++published >= PUBLISH_EVERY){ published = 0; await publish(io, key, mine, report); }
         }catch(e){ failed(report, u.path, 'upload', e); }
       });
 
@@ -546,15 +514,15 @@
              : 'the file is still there' });
         continue;
       }
-      /* THE TOMBSTONE KEEPS THE FILE'S ADDRESS. A dead entry that forgets its sha is a deletion
+      /* THE TOMBSTONE KEEPS THE FILE'S ADDRESS. A dead record that forgets its sha is a deletion
        * nobody can undo account-wide — the store still holds the bytes, but nothing remembers
        * which bytes. ~100 bytes per tombstone buys "Restore on every device" for as long as the
        * record lives. */
-      const _prev = index[t.path] || (merged.global || {})[t.path] || {};
+      const _prev = index[t.path] || state[t.path] || {};
       const _keep = {};
       for(const k of ['sha','csum','size','mtime','chunks','cs','ps'])
         if(_prev[k] !== undefined) _keep[k] = _prev[k];
-      record(t.path, Object.assign(_keep, { v: t.v, by: me, deletedAt: now }), null);
+      record(t.path, Object.assign(_keep, { v: t.v, by: me, deletedAt: now }), null, true);
       report.removedRemote.push(t.path);
     }
     for(const s of plan.settle){
@@ -563,40 +531,17 @@
       record(s.path, Object.assign({}, s.entry), local);
     }
 
-    /* 6. Tell the other devices, and record what we agreed. The publish comes first: a journal that
-     *    runs ahead of what we have published would make this device believe in an agreement nobody
-     *    else has seen.
-     *
-     * AND IF OUR OWN DOCUMENT HAS GONE, PUT IT BACK — even on a sweep that changed nothing.
-     *
-     * `mine` is rebuilt from the journal at the top of every sweep, so it always holds everything
-     * this device knows. Without this, a device whose document was lost or emptied would only
-     * restore it the next time a file happened to change: until then its paths are missing from the
-     * merge, and a path nobody claims is a path no joining device can fetch. The cost of being wrong
-     * here is one document write. */
-    /* STRUCTURAL, NOT A COUNT. "Same number of paths" cannot see an EDIT — a sweep that uploaded
-     * a changed file, checkpointed, and arrived here with a clean journal used to skip the publish
-     * on the strength of matching counts, and the edit was never announced. Entry for entry: the
-     * version and the content have to match what the relay already holds, or we publish. */
+    /* 6. Publish what is still queued, then save the journal — in that order, always. */
     step('saving');
-    if(journal.dirty){
-      await journal.flush();                             // publishes first, then saves — one unit
-    } else if(!viewEquals(mine, publishedMine || {})){
-      await publish(io, key, mine, report);              // nothing new applied, but the relay is behind
-    } else {
-      report.published = report.published || 0;          // nothing to say, and nothing missing
-    }
+    await flushPuts();
     await journal.flush();
     if(journal.checkpointError) report.checkpointError = journal.checkpointError;
 
     if(stopping()) report.stopped = true;
-    /* AN UNRESOLVED PATH IS NOT A CLEAN SWEEP.
-     *
-     * A skipped conflict adds nothing to `failed`, so the sweep reported success, the card said "in
-     * step", and the caller stamped the clock — while a divergence sat unresolved AND the locally
-     * edited copy went unpublished. Silence about that is exactly the shape this feature keeps
-     * getting wrong. */
     if(_peakHeap){ report.peakHeapMB = Math.round(_peakHeap / 1048576); report.peakHeapPhase = _peakPhase; }
+    /* AN UNRESOLVED PATH IS NOT A CLEAN SWEEP. A skipped conflict adds nothing to `failed`, so the
+     * sweep used to report success and the card said "in step" while a divergence sat unresolved.
+     * Silence about that is exactly the shape this feature keeps getting wrong. */
     report.ok = report.failed.length === 0 && !(report.unfetchable || []).length;
     return report;
   }
@@ -605,18 +550,13 @@
 
   const msg = (e) => (e && e.message) || String(e);
 
-  /** Entry for entry: does what we would publish match what the relay already holds? */
-  function viewEquals(a, b){
-    const ka = Object.keys(a), kb = Object.keys(b);
-    if(ka.length !== kb.length) return false;
-    for(const p of ka){
-      const x = a[p], y = b[p];
-      if(!y) return false;
-      if(E.versionOf(x) !== E.versionOf(y)) return false;
-      if(!P.same(x, y)) return false;
-    }
-    return true;
-  }
+  /* THE STORAGE ADDRESS IS THE IDENTITY a fetch-refusal is keyed on — sha first, then the chunk
+   * list, and the csum only for a record so old it names no storage. Never csum-first: a holder
+   * re-sending the same good bytes keeps the csum and changes the address, and a csum key would
+   * refuse the repair for ever. */
+  const idOf = (e) => (e && (e.sha || (e.chunks && e.chunks.length && e.chunks.join(','))
+                             || e.csum)) || '';
+
   const strip = (e) => { const c = Object.assign({}, e); delete c.local; return c; };
 
   function failed(report, path, what, e){
@@ -639,7 +579,7 @@
    * PAGED BECAUSE OF THE BRIDGE, not because of the engine: a scan crosses the Capacitor bridge as
    * one JSON string, and a whole Pictures folder in one call is what killed the WebView's renderer.
    * What is kept is three numbers per path. */
-  async function scan(fs, o, stopping){
+  async function scan(fs, o, stopping, onProgress){
     const disk = {};
     /* WHAT THE SCAN COULD NOT READ IS NOT ABSENT — IT IS UNKNOWN, and the difference is a deleted
      * subtree. A folder the walk could not enter (permissions, a disk hiccup, an antivirus holding
@@ -667,10 +607,10 @@
       note(page);
       off += n;
       /* SAY WHERE IT IS. A first sweep after a restore hashes every file — many minutes of disk
-       * work behind a status that read only "syncing\u2026", which is indistinguishable from a hang
-       * ("been stuck there for a while now, can't tell wtf is going on"). One line per page. */
-      try{ if(o.onProgress) o.onProgress({ phase: so.hash ? 'reading every file (first sweep)' : 'scanning',
-                                           i: off }); }catch(_){}
+       * work behind a status that read only "syncing…", which is indistinguishable from a hang.
+       * One line per page. */
+      try{ if(onProgress) onProgress({ phase: so.hash ? 'reading every file (first sweep)' : 'scanning',
+                                       i: off }); }catch(_){}
       if(!n || !page || page.done) break;
     }
     return { disk, unread };
@@ -740,16 +680,13 @@
       try{
         await verifyPart(fs, o, path, entry);
       }catch(e){
-        /* A RESUMED DOWNLOAD THAT FAILS ITS CHECKSUM IS THE PART FILE'S FAULT UNTIL PROVEN OTHERWISE.
-         *
-         * A part file is tied to nothing but its length, so one left by an EARLIER version of the
-         * same path resumes into a splice of two files — and the checksum, correctly, refuses it.
-         * Blaming the stored copy there is worse than the corruption: the caller remembers that copy
-         * as bad and never fetches it again, so a perfectly good file becomes permanently
-         * unfetchable on this device because of a stale temp file we wrote ourselves.
-         *
-         * So: throw the part file away and fetch the whole thing. Only a from-scratch download that
-         * still fails is evidence about the copy. */
+        /* A RESUMED DOWNLOAD THAT FAILS ITS CHECKSUM IS THE PART FILE'S FAULT UNTIL PROVEN
+         * OTHERWISE. A part file is tied to nothing but its length, so one left by an EARLIER
+         * version of the same path resumes into a splice of two files — and the checksum,
+         * correctly, refuses it. Blaming the stored copy there is worse than the corruption: a
+         * perfectly good file becomes permanently unfetchable on this device because of a stale
+         * temp file we wrote ourselves. So: throw the part file away and fetch the whole thing.
+         * Only a from-scratch download that still fails is evidence about the copy. */
         if(!have) throw e;
         try{ if(typeof fs.discardPart === 'function') await fs.discardPart(o.id, path); }catch(_){}
         await pull(0);
@@ -774,7 +711,7 @@
     if(got !== entry.csum) throw new Error('checksum mismatch after download — refusing to write it');
   }
 
-  /* An upload, and the entry the other devices will read.
+  /* An upload, and the record the other devices will read.
    *
    * `csum` is the FILE's own hash and is always recorded: it is what a download is checked against,
    * what tells a restored backup from an edit, and what lets two devices holding the same file agree
@@ -787,21 +724,16 @@
     if(size > chunkAbove(fs, o) && io.putParts && typeof fs.readPart === 'function'){
       /* THE CALLER'S FIGURE FIRST. It is the platform's chunk clamped to what the NODE accepts, and a
        * chunk IS one upload — reading `fs.chunkBytes` here ignored the clamp entirely, so a node with
-       * a small limit chunked at the right threshold and then sent pieces it would still reject.
-       * Every large file fails while small ones sail through, which is the confusing half. */
+       * a small limit chunked at the right threshold and then sent pieces it would still reject. */
       /* THE CHECKSUM MUST CERTIFY THE CHUNKS, and they used to be taken at different moments.
        *
        * The chunks are read over minutes; the csum came from the scan (minutes earlier) or from
        * hashing the file AFTER the last chunk (minutes later). A file edited anywhere inside that
        * window published chunks of a TORN file under a clean checksum of the final one — and then
        * every device that downloads it fails its checksum for ever, while the uploader's own journal
-       * says all is well, because its local file really does hash to the published csum. Documents
-       * are the folder people edit, which is where it was reported.
-       *
-       * So the file is hashed on BOTH sides of the chunk reads. Equal means it sat still for the
-       * whole window and the csum certifies what was stored; different means the store holds a torn
-       * copy, so nothing is recorded and the next sweep takes the file fresh. The scan's own hash
-       * (when it ran) serves as the before-side for free. */
+       * says all is well. So the file is hashed on BOTH sides of the chunk reads. Equal means it sat
+       * still for the whole window and the csum certifies what was stored; different means the store
+       * holds a torn copy, so nothing is recorded and the next sweep takes the file fresh. */
       const canHash = typeof fs.hashFile === 'function';
       const before = (u.stat && u.stat.csum) || (canHash ? await fs.hashFile(o.id, path) : undefined);
       const cs = (o.chunkBytes || 0) || (fs.chunkBytes || 0) || undefined;
@@ -824,18 +756,11 @@
       if(!entry.csum) delete entry.csum;
       return addressed(entry, path);
     }
-    /* A WHOLE-FILE READ IS EXACTLY THE FILE, OR IT IS A FAILURE — the same rule `_exactPart` applies
-     * to a chunk, on the path that did not have it.
-     *
-     * This is the worse half of that bug, because a truncation here is SELF-CONSISTENT: the short
-     * buffer is what gets hashed, so the entry's checksum matches the truncation, the receiving
-     * device verifies it happily and writes a short file, and every check afterwards agrees. Nothing
-     * would ever notice.
-     *
-     * A length that does not match the scan also happens when somebody edits the file WHILE the
-     * sweep is reading it, and the right answer is the same either way: do not store this, report it,
-     * pick it up next sweep. Storing a half-written file under a checksum that certifies it is the
-     * one outcome there is no recovering from. */
+    /* A WHOLE-FILE READ IS EXACTLY THE FILE, OR IT IS A FAILURE. A truncation here is
+     * SELF-CONSISTENT: the short buffer is what gets hashed, so the record's checksum matches the
+     * truncation, the receiving device verifies it happily and writes a short file, and every check
+     * afterwards agrees. Storing a half-written file under a checksum that certifies it is the one
+     * outcome there is no recovering from. */
     const bytes = await fs.read(o.id, path);
     const got = (bytes && bytes.length) || 0;
     if(got !== size){
@@ -850,14 +775,11 @@
     return addressed(entry, path);
   }
 
-  /* AN ENTRY THAT NAMES NO BYTES IS NOT A FILE.
+  /* A RECORD THAT NAMES NO BYTES IS NOT A FILE.
    *
-   * A live entry with neither a `sha` nor a chunk list says "this file exists" and does not say
-   * where — so every other device plans a download, fetches nothing, and fails, for ever, while the
-   * file browser answers "this file has no stored copy". Reported exactly that way.
-   *
-   * Publishing one is the bug; this is the last place before it goes out. It is cheap, it cannot
-   * fire for a tombstone, and the alternative is a folder that can never settle. */
+   * A live record with neither a `sha` nor a chunk list says "this file exists" and does not say
+   * where — so every other device plans a download, fetches nothing, and fails, for ever.
+   * Publishing one is the bug; this is the last place before it goes out. */
   function addressed(entry, path){
     const has = entry && (entry.sha || (entry.chunks && entry.chunks.length));
     if(entry && !entry.deletedAt && !has){
@@ -867,30 +789,17 @@
     return entry;
   }
 
-  /* Our own document, and nothing else's. No merge, no re-read, no compare-and-swap: this is the one
-   * writer this document will ever have. */
-  async function publish(io, key, mine, report){
-    await io.publish(key, mine);
-    report.published = (report.published || 0) + 1;
-  }
-
   /* The journal, written in batches.
    *
    * Per file would be correct and far too expensive; per sweep is what made an interrupted first
    * sync start from the beginning. In batches, an interruption costs at most the last few files —
-   * and redoing one is nearly free: an upload whose bytes the server already has is skipped, and a
-   * download already on disk hashes equal and settles. */
-  /* THE VIEW GOES FIRST, ALWAYS — the rule the Android Journal already had and this one did not.
+   * and redoing one is nearly free.
    *
-   * A journal persisted ahead of the published view is a device that believes in an agreement no
-   * other device has seen, and the next sweep reads its own stale view as "the folder changed":
-   * that fetched old bytes back over an edit and resurrected deliberate deletions. So every save of
-   * the journal publishes the view in the same breath, view first — a crash between the two leaves
-   * the VIEW ahead, which is safe (the next sweep settles it by content). `beforeSave` is that
-   * publish; the sweep wires it in before the first byte moves.
-   *
-   * A failed CHECKPOINT is not a failed sweep — the work is real either way, so `maybe` records the
-   * error and carries on; only the final `flush` throws. */
+   * THE RECORDS GO FIRST, ALWAYS. A journal persisted ahead of the published records is a device
+   * that believes in an agreement no other device has seen; records ahead of the journal are safe —
+   * the next sweep adopts its own publish by content. `beforeSave` is that publish; the sweep wires
+   * it in before the first byte moves. A failed CHECKPOINT is not a failed sweep — the work is real
+   * either way, so `maybe` records the error and carries on; only the final `flush` throws. */
   function Journal(io, key, index, o){
     this.io = io; this.key = key; this.index = index; this.o = o;
     this.dirty = false; this.since = 0; this.at = now0();
@@ -914,32 +823,31 @@
   /* ---- the consistency check -------------------------------------------------------------------
    *
    * Read-only, and it answers the question the sweep cannot: is what I have actually what the folder
-   * says it is? It re-hashes the files on this disk against the merged view, asks the server whether
-   * the bytes behind every entry are still there, and compares the devices' views with each other.
-   * Nothing is written, nothing is deleted, nothing is fetched.
+   * says it is? It re-hashes the files on this disk against the record set, and — deep — asks the
+   * server whether the bytes behind every record are still there. Nothing is written, nothing is
+   * deleted, nothing is fetched.
    */
   async function verify(fs, io, opts){
     const o = opts || {};
     const key = o.key || o.id;
     const tick = (p) => { try{ if(typeof o.onProgress === 'function') o.onProgress(p); }catch(_){} };
     const out = { corrupt:[], missingHere:[], missingBytes:[], extra:[], unverified:[],
-                  checked:0, devices:[], disagree:[] };
+                  checked:0, devices:[] };
 
-    const got = await io.views(key);
-    const views = (got && got.views) || {};
-    out.missingViews = (got && got.missing) || 0;
-    out.cannot = (got && got.cannot) || [];
-    const merged = E.merge(views);
-    out.devices = merged.devices;
-    for(const p in merged.rivals) out.disagree.push(p);
+    const got = await io.state(key);
+    const state = (got && got.state) || {};
+    out.undecryptable = (got && got.undecryptable) || 0;
+    { const devs = new Set();
+      for(const p in state) if(state[p] && state[p].by) devs.add(state[p].by);
+      out.devices = [...devs]; }
 
     tick({ phase: 'scanning' });
     const disk = (await scan(fs, Object.assign({}, o, { hash: false }), () => false)).disk;
 
-    const paths = Object.keys(merged.global).filter(p => merged.global[p] && !merged.global[p].deletedAt);
+    const paths = Object.keys(state).filter(p => state[p] && !state[p].deletedAt);
     let i = 0;
     for(const p of paths){
-      const entry = merged.global[p];
+      const entry = state[p];
       tick({ phase: 'checking', path: p, i: ++i, n: paths.length });
       if(!entry.sha && !(entry.chunks && entry.chunks.length)){
         out.unaddressed = out.unaddressed || [];
@@ -955,23 +863,22 @@
       out.checked++;
       if(h !== entry.csum) out.corrupt.push({ path: p, why: 'the bytes on this device do not match' });
     }
-    for(const p in disk) if(!merged.global[p] || merged.global[p].deletedAt) out.extra.push(p);
+    for(const p in disk) if(!state[p] || state[p].deletedAt) out.extra.push(p);
 
-    /* Are the bytes still on the server? Only asked of entries this device cannot prove locally,
-     * and only when the store can answer a cheap existence question. */
+    /* Are the bytes still on the server? Only asked when the store can answer a cheap existence
+     * question. `null` is "I could not ask" — never "missing": this list drives a repair that
+     * publishes deletions, and a rate limiter answering 429 a thousand times in a row is the
+     * expected case here, not the exotic one. */
     if(typeof io.hasBlob === 'function' && o.deep){
       const want = paths.slice(0, o.blobLimit || 5000);
       let j = 0;
       for(const p of want){
-        const e = merged.global[p];
+        const e = state[p];
         const ids = e.chunks && e.chunks.length ? e.chunks : (e.sha ? [e.sha] : []);
         tick({ phase: 'checking the store', path: p, i: ++j, n: want.length });
         for(const id of ids){
           let there = null;
           try{ there = await io.hasBlob(id); }catch(_){ there = null; }
-          // `null` is "I could not ask" — never "missing". This list drives a repair that publishes
-          // deletions, and a rate limiter answering 429 a thousand times in a row is the expected
-          // case here, not the exotic one.
           if(there === false){ out.missingBytes.push(p); break; }
           if(there === null){ out.unverified.push(p); break; }
         }
@@ -980,7 +887,7 @@
     return out;
   }
 
-  const API = { sweep, verify, scan, SCAN_PAGE, LANES };
+  const API = { sweep, verify, scan, idOf, SCAN_PAGE, LANES };
   root.PCSyncExec = API;
   if(typeof module !== 'undefined' && module.exports) module.exports = API;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

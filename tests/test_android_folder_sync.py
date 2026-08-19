@@ -685,8 +685,10 @@ def test_the_unattended_sweep_refuses_what_it_cannot_ask_about():
     # instead, and since `base` here is written only by this sweep and the page keeps its own copy
     # where Java cannot read it, the whole native path could never run once on any device — every
     # alarm answered "first sync — open the app once" and opening the app did nothing.
-    assert "boolean firstEver = index.isEmpty();" in sweep
-    assert "if (firstEver) { hash = true;" in sweep
+    # COVERAGE, not emptiness — an interrupted first sweep leaves a handful of entries behind, and
+    # "empty" then never fires again: the conflict storm's back door.
+    assert "boolean thin = index.isEmpty()" in sweep
+    assert "if (thin) { hash = true;" in sweep
     assert 'rep.deferredWhy = "first sync' not in sweep, (
         "the native sweep defers on an empty agreement again — nothing else ever writes one, so it "
         "can never run"

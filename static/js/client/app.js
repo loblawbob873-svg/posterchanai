@@ -17304,13 +17304,12 @@
     // not stay wrong until reload either.
     const hit = _syncManifests.get(key);
     if(!force && hit && (Date.now() - hit.at) < _SYNC_TTL) return hit.paths;
-    const S = window.PCSync, E = window.PCSyncEngine;
-    if(!S || !S.docs || !E) throw new Error('folder sync is not loaded on this build');
-    /* THE MERGE OF EVERY DEVICE'S RECORD, not one document. There is no shared manifest any more —
-     * each device publishes its own and the folder is what they say between them, so a screen that
-     * reads only one would show whatever that device happened to know. */
-    const got = await S.docs.views(key);
-    const paths = E.merge((got && got.views) || {}).global || {};
+    const S = window.PCSync;
+    if(!S || !S.docs || !S.docs.state) throw new Error('folder sync is not loaded on this build');
+    /* ONE RECORD PER FILE. The record set IS the folder — no per-device views, no merge; the
+     * transport throws rather than answering {} when the server cannot be asked. */
+    const got = await S.docs.state(key);
+    const paths = (got && got.state) || {};
     _syncManifests.set(key, { at: Date.now(), paths });
     return paths;
   }
@@ -17443,16 +17442,18 @@
       if(!Array.isArray(pairs)) return null;
       const ids = new Set();
       for(const p2 of pairs){
-        const got = await S.docs.views(p2.key);
-        if(!got || got.missing) return null;               // an unread device = an unknown reference
-        for(const sid of (got.sealedIds || [])) ids.add(sid);
-        for(const dev in (got.views || {})){
-          const v = got.views[dev];
-          for(const path in v){
-            const e = v[path]; if(!e) continue;
-            if(e.sha) ids.add(e.sha);
-            for(const c of (e.chunks || [])) ids.add(c);
-          }
+        /* Throws when the server cannot be asked — and an unreadable folder means the whole
+         * enumeration is unusable, because a reference this could not see is a blob the reclaim
+         * would offer to delete. TOMBSTONES COUNT TOO: they keep their addresses so the
+         * account-wide Restore can put the file back, and reclaiming those bytes would quietly
+         * turn every Restore button into a 404. */
+        const got = await S.docs.state(p2.key);
+        const st = (got && got.state) || {};
+        for(const path in st){
+          const e = st[path]; if(!e) continue;
+          if(e.sha) ids.add(e.sha);
+          if(e.ps) ids.add(e.ps);
+          for(const c of (e.chunks || [])) ids.add(c);
         }
       }
       return ids;

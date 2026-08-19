@@ -28,7 +28,7 @@ import unittest
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 MOD = os.path.join(REPO, "static", "js", "client", "foldersync.js")
-ENGINE = os.path.join(os.path.dirname(MOD), "syncengine.js")
+ENGINE = os.path.join(os.path.dirname(MOD), "syncstate.js")
 NODE = shutil.which("node") or shutil.which("nodejs")
 
 DAY = 86400000
@@ -50,38 +50,39 @@ class TestFolderSync(unittest.TestCase):
     def plan(self, local, remote, base, device="laptop", now=5 * DAY):
         """The rules, against the CURRENT engine, stated the way this file has always stated them.
 
-        The decision code moved from foldersync.js to syncengine.js when the storage shape changed —
-        one document per device instead of one shared one — but the RULES did not, and these are the
-        rules. So the inputs are translated rather than the tests rewritten: `remote` is one other
-        device's view, and `base` becomes this device's journal, which records what a file looked
-        like on disk when it was applied (the old engine compared the local scan against `base`
-        directly, which is the same comparison).
+        The decision code has moved twice — foldersync.js → syncengine.js (one document per device)
+        → syncstate.js (one versioned record per file) — but the RULES did not, and these are the
+        rules. So the inputs are translated rather than the tests rewritten: `remote` becomes the
+        per-file record set, `base` this device's journal, and the translator synthesises the
+        VERSIONS the fixtures predate — a record whose content matches the journal shares its
+        version, one that differs is one ahead, which is exactly what the server's counter would
+        have produced.
         """
-        # Every PUBLISHED live entry carries a storage address in reality — that is what makes it
-        # fetchable — and the engine now treats an address-less live record as a half-finished
-        # upload to re-send. These fixtures predate the field, so the translator supplies it
-        # (derived from content, as the real one is) rather than every rule table row growing one.
         def _addr(e):
             e = dict(e)
             if not e.get("deletedAt") and "sha" not in e:
                 e["sha"] = "b_" + str(e.get("csum", e.get("mtime", "x")))
             return e
-        remote = {k: _addr(v) for k, v in (remote or {}).items()}
-        index = {}
+        def _same(a, b):
+            return (a.get("csum") == b.get("csum")
+                    and bool(a.get("deletedAt")) == bool(b.get("deletedAt")))
+        state, index = {}, {}
         for path, e in (base or {}).items():
             local_stat = {k: e[k] for k in ("size", "mtime", "csum") if k in e}
-            index[path] = dict(_addr(e), local=local_stat)
+            index[path] = dict(_addr(e), v=1, local=local_stat)
+        for path, e in (remote or {}).items():
+            b = (base or {}).get(path)
+            v = 1 if (b is not None and _same(e, b)) else (2 if b is not None else 1)
+            state[path] = dict(_addr(e), v=v, by=e.get("device", "phone"))
         js = (
             "const path=require('path');"
             "require(%s);"
             "const E=require(%s);"
-            "const m=E.merge({other: %s});"
-            "const p=E.reconcile({disk:%s, global:m.global, rivals:m.rivals, by:m.by,"
-            "                     index:%s, device:%s, now:%d});"
+            "const p=E.plan({disk:%s, state:%s, index:%s, device:%s, now:%d});"
             "process.stdout.write(JSON.stringify({upload:p.send, download:p.fetch,"
             " deleteLocal:p.trash, deleteRemote:p.tombstone, conflicts:p.keepBoth, notes:p.settle,"
             " unchanged:p.unchanged, excluded:p.excluded}));"
-        ) % (json.dumps(MOD), json.dumps(ENGINE), json.dumps(remote), json.dumps(local),
+        ) % (json.dumps(MOD), json.dumps(ENGINE), json.dumps(local), json.dumps(state),
              json.dumps(index), json.dumps(device), now)
         r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60)
         if r.returncode != 0:
@@ -219,9 +220,9 @@ class TestFolderSync(unittest.TestCase):
         entry = {"csum": "A", "sha": "b_A", "size": 10, "mtime": 1000}
         js = ("const S=require(%s); const E=require(%s);"
               "const base=S.advance({base:{}, done:{'a.txt':%s}, now:%d});"
-              "const idx={'a.txt': Object.assign({}, base['a.txt'], {local:%s})};"
-              "const m=E.merge({other:{'a.txt':%s}});"
-              "const p=E.reconcile({disk:{'a.txt':%s}, global:m.global, rivals:m.rivals, by:m.by,"
+              "const idx={'a.txt': Object.assign({}, base['a.txt'], {v:1, local:%s})};"
+              "const st={'a.txt': Object.assign({}, %s, {v:1})};"
+              "const p=E.plan({disk:{'a.txt':%s}, state:st,"
               " index:idx, device:'laptop', now:%d});"
               "process.stdout.write(JSON.stringify({base, unchanged:p.unchanged,"
               " upload:p.send, download:p.fetch}));"
@@ -480,8 +481,8 @@ class TestExclusions(unittest.TestCase):
         for path, e in (base or {}).items():
             index[path] = dict(e, local={k: e[k] for k in ("size", "mtime", "csum") if k in e})
         js = ("require(%s); const E=require(%s);"
-              "const m=E.merge({other: %s});"
-              "const p=E.reconcile({disk:%s, global:m.global, rivals:m.rivals, by:m.by, index:%s,"
+              "const st=%s;"
+              "const p=E.plan({disk:%s, state:st, index:%s,"
               " excludes:%s, device:'laptop', now:%d});"
               "process.stdout.write(JSON.stringify({upload:p.send, download:p.fetch,"
               " deleteLocal:p.trash, deleteRemote:p.tombstone, conflicts:p.keepBoth,"
@@ -758,9 +759,9 @@ class AbsoluteTrashCap(unittest.TestCase):
         const plan = { fetch:[], send:[], keepBoth:[], settle:[], tombstone:[],
                        trash: Array.from({length:%d}, (_,i)=>({path:'f'+i})),
                        unchanged: 10000, settledGone: 0, excluded: 0 };
-        const out = E.check(plan, { views: 1, missing: 0%s });
+        const out = E.check(plan, { state: {}%s });
         process.stdout.write(JSON.stringify(out.filter(v=>v.kind==='massTrash').length));
-        """ % (json.dumps(os.path.join(REPO, "static", "js", "client", "syncengine.js")),
+        """ % (json.dumps(os.path.join(REPO, "static", "js", "client", "syncstate.js")),
                n_trash, ", allowMassTrash: true" if allow else "")
         r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0, r.stderr[-800:])
@@ -849,15 +850,20 @@ class AccountWideRestore(unittest.TestCase):
         self.assertIn(".pc-trash", seg, "trash-relative entries would be offered as restorable")
 
 
-class ReclaimSeesTheKeptGeneration(unittest.TestCase):
-    """"Device check never ends with space to reclaim!" — the one-generation-back manifest blob
-    (prevSha, the rollback the server keeps on purpose) was invisible to the reference collector,
-    so every sweep re-offered the safety copies as reclaimable garbage."""
+class ReclaimSeesEveryReference(unittest.TestCase):
+    """"Device check never ends with space to reclaim!" — under per-device documents the reference
+    collector kept missing classes of live blob (sealed path lists, then the kept prevSha
+    generation), so the reclaim offer regenerated for ever. Per-file records have no side blobs to
+    forget: the collector reads the record set itself, and the one thing it must not skip is
+    TOMBSTONES — their retained addresses are what the account-wide Restore fetches."""
 
-    def test_prevSha_counts_as_referenced(self):
+    def test_the_collector_reads_records_and_counts_tombstones(self):
         root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        src = open(os.path.join(root, "static", "js", "client", "sync.js"), encoding="utf-8").read()
-        a = src.index("sealedIds.push(d0.pathsSha)")
-        seg = src[a:a + 800]
-        self.assertIn("d0.prevSha", seg, "the kept generation reads as garbage and the reclaim "
-                                         "offer regenerates for ever")
+        src = open(os.path.join(root, "static", "js", "client", "app.js"), encoding="utf-8").read()
+        a = src.index("async function _syncRefIds")
+        seg = src[a:a + 1600]
+        self.assertIn("S.docs.state(", seg, "the reclaim no longer reads the record set")
+        self.assertIn("TOMBSTONES COUNT TOO", seg,
+                      "reclaiming a tombstone's bytes turns every Restore button into a 404")
+        self.assertNotIn("deletedAt) continue", seg,
+                         "tombstoned records are being skipped — their addresses are live references")

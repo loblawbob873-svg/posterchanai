@@ -40,9 +40,11 @@ class TornUploadTests(unittest.TestCase):
           };
           const io = {
             index: async () => ({}),
-            views: async () => ({ views: { me: {} }, missing: 0 }),
+            state: async () => ({ state: {}, flagged: {} }),
             saveIndex: async () => {},
-            publish: async (key, mine) => { global._published = JSON.parse(JSON.stringify(mine)); },
+            putState: async (key, recs) => { global._published = global._published || {};
+              for(const r of recs) global._published[r.path] = JSON.parse(JSON.stringify(r.entry));
+              return { ok: recs.map(r => r.path), stale: [], failed: [] }; },
             putParts: async (read, size) => { await read(0, 4); await read(4, 4); await read(8, 2);
                                               return { chunks: ['c1', 'c2', 'c3'], cs: 4 }; },
             hashBytes: async () => 'unused',
@@ -102,9 +104,11 @@ class UnreadableSubtreeTests(unittest.TestCase):
                                             skipped: [{ path:'Locked', why:'EACCES' }] }) };
           const io = {
             index: async () => idx,
-            views: async () => ({ views: { me: view }, missing: 0 }),
+            state: async () => ({ state: JSON.parse(JSON.stringify(view)), flagged: {} }),
             saveIndex: async () => {},
-            publish: async (k, mine) => { published = JSON.parse(JSON.stringify(mine)); },
+            putState: async (k, recs) => { published = published || {};
+              for(const r of recs) published[r.path] = JSON.parse(JSON.stringify(r.entry));
+              return { ok: recs.map(r => r.path), stale: [], failed: [] }; },
             putBlob: async () => ({ sha:'oks' }), hashBytes: async () => 'okc',
           };
           const rep = await X.sweep(fs, io, { id:'f', key:'k', device:'me' });

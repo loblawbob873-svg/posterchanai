@@ -27,22 +27,29 @@ const check = (c, w) => { if(!c) fail.push(w); };
  * `forgetAll` is modelled the way the endpoint implements it — every document for that pair replaced
  * with an empty one — so a forget that clears only its OWN document fails here, which is exactly the
  * bug this shape can have. */
-function makeWorld(views){
-  const docs = JSON.parse(JSON.stringify(views));
+function makeWorld(state){
   const w = {
-    docs,
+    era: 0,
+    recs: JSON.parse(JSON.stringify(state)),      // path -> entry, all at era 0
     posts: [],
-    async views(){ return { views: JSON.parse(JSON.stringify(docs)), missing: 0 }; },
-    async publish(key, mine){ docs[w.me] = JSON.parse(JSON.stringify(mine)); },
-    store: {
-      async _post(body){
-        w.posts.push(body);
-        if(body.forgetAll){ for(const dev in docs) docs[dev] = {}; return { ok: true }; }
-        return { ok: true };
+    cacheCleared: 0, journalCleared: 0,
+    /* What forget() talks to: the state store's surface, with the endpoint's era rule — one bump,
+     * and every record is of a dead world. */
+    stateS: {
+      async load(key){
+        const out = {};
+        if(w.era === 0) for(const p in w.recs) out[p] = JSON.parse(JSON.stringify(w.recs[p]));
+        return { state: out, flagged: {}, era: w.era };
       },
+      async clear(key){ w.cacheCleared++; },
     },
+    async _statePost(body){
+      w.posts.push(body);
+      if(body.forgetAll){ w.era++; return { ok: true, era: w.era }; }
+      return { ok: true, era: w.era };
+    },
+    async _saveBase(key, v){ if(!Object.keys(v || {}).length) w.journalCleared++; },
   };
-  w.me = 'laptop-a1b2';
   return w;
 }
 
@@ -60,48 +67,51 @@ function loadForget(world, engine){
   }
   const body = src.slice(at, end + 1);
   // eslint-disable-next-line no-new-func
-  return new Function('docs', 'store', 'S_ENGINE', 'return ({ ' + body + ' }).forget;')(
-    world, world.store, engine);
+  return new Function('stateS', '_statePost', '_saveBase', 'S_ENGINE',
+                      'return ({ ' + body + ' }).forget;')(
+    world.stateS, world._statePost, world._saveBase, engine);
 }
 
 (async () => {
   const path = require('path');
   require(path.join(__dirname, '..', '..', 'static', 'js', 'client', 'foldersync.js'));
-  const engine = require(path.join(__dirname, '..', '..', 'static', 'js', 'client', 'syncengine.js'));
+  const engine = require(path.join(__dirname, '..', '..', 'static', 'js', 'client', 'syncstate.js'));
 
   const N = 8132;
-  const laptop = {}, phone = {};
-  for(let i = 0; i < N; i++) laptop['Pictures/p' + i + '.jpg'] = { v: 2, by: 'laptop', deletedAt: 4000 };
-  laptop['Pictures/live.jpg'] = { v: 1, by: 'laptop', size: 10, mtime: 1 };
-  // A second device holding the same folder. Clearing only our own document leaves this one, and the
-  // folder comes straight back — the exact shape of "Pictures never removed in Blossom".
-  phone['Pictures/live.jpg'] = { v: 1, by: 'phone', size: 10, mtime: 1 };
+  const state = {};
+  for(let i = 0; i < N; i++) state['Pictures/p' + i + '.jpg'] = { v: 2, by: 'laptop', deletedAt: 4000 };
+  state['Pictures/live.jpg'] = { v: 1, by: 'phone', size: 10, mtime: 1, sha: 's' };
 
-  const world = makeWorld({ 'laptop-a1b2': laptop, 'phone-c3d4': phone });
+  const world = makeWorld(state);
   const forget = loadForget(world, engine);
 
   const out = await forget('Pictures');
-  const after = engine.merge((await world.views('Pictures')).views).global;
-  const left = Object.keys(after).length;
+  const after = await world.stateS.load('Pictures');
+  const left = Object.keys(after.state).length;
 
-  check(left === 0, 'the record still holds ' + left + ' entries — nothing was cleared');
-  check(Object.keys(world.docs['phone-c3d4']).length === 0,
-        'the other device’s document was left behind, so the folder comes back');
+  check(left === 0, 'the record still holds ' + left + ' entries — the era did not kill the world');
+  check(world.posts.some(p => p && p.forgetAll), 'it never asked the server to retire the pair');
   check(out && out.removed === N + 1, 'reported ' + (out && out.removed) + ' cleared, expected ' + (N + 1));
   check(out && out.live === 1, 'the live count was ' + (out && out.live) + ', expected 1');
   check(out && out.tombstones === N, 'the tombstone count was wrong');
-  check(out && out.devices === 2, 'it reported ' + (out && out.devices) + ' devices, expected 2');
-  check(world.posts.some(p => p && p.forgetAll), 'it never asked the server to retire the pair');
+  check(world.cacheCleared >= 1, 'the local state cache survived the forget');
+  check(world.journalCleared >= 1, 'the journal survived the forget — the next sweep resurrects');
+  check(out && out.verified === true, 'the forget did not verify the server answer');
 
   // …and a second press finds nothing, which is the thing that never happened before.
   const again = await forget('Pictures');
   check(again && again.removed === 0,
         'a second forget reported ' + (again && again.removed) + ' cleared — it is still lying');
 
-  console.log(JSON.stringify({ entriesBefore: N + 1, entriesAfter: left,
-                               devices: out && out.devices,
-                               reported: out && out.removed, live: out && out.live,
-                               tombstones: out && out.tombstones,
-                               secondPress: again && again.removed, failures: fail }, null, 1));
+  console.log(JSON.stringify({
+    failures: fail,
+    entriesBefore: N + 1,
+    entriesAfter: left,
+    secondPress: again ? again.removed : -1,
+    live: out ? out.live : -1,
+    tombstones: out ? out.tombstones : -1,
+    cacheCleared: world.cacheCleared,
+    journalCleared: world.journalCleared,
+  }));
   process.exit(fail.length ? 1 : 0);
-})().catch(e => { console.error('FAILED: ' + (e && e.stack || e)); process.exit(1); });
+})();

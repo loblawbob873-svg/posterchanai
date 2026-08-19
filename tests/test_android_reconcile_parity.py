@@ -46,14 +46,9 @@ public class Parity {
     List<Object> out = new ArrayList<Object>();
     for (Object c : cases) {
       Map<String, Object> o = Json.obj(c);
-      Map<String, Map<String, Map<String, Object>>> views =
-          new LinkedHashMap<String, Map<String, Map<String, Object>>>();
-      for (Map.Entry<String, Object> e : Json.obj(o.get("views")).entrySet()) {
-        Map<String, Map<String, Object>> v = new LinkedHashMap<String, Map<String, Object>>();
-        for (Map.Entry<String, Object> p : Json.obj(e.getValue()).entrySet())
-          v.put(p.getKey(), Json.obj(p.getValue()));
-        views.put(e.getKey(), v);
-      }
+      Map<String, Map<String, Object>> state = new LinkedHashMap<String, Map<String, Object>>();
+      for (Map.Entry<String, Object> e : Json.obj(o.get("state")).entrySet())
+        state.put(e.getKey(), Json.obj(e.getValue()));
       Map<String, Map<String, Object>> disk = new LinkedHashMap<String, Map<String, Object>>();
       for (Map.Entry<String, Object> e : Json.obj(o.get("disk")).entrySet())
         disk.put(e.getKey(), Json.obj(e.getValue()));
@@ -63,8 +58,7 @@ public class Parity {
       List<String> ex = new ArrayList<String>();
       for (Object x : Json.arr(o.get("excludes"))) ex.add(String.valueOf(x));
 
-      SyncReconcile.Merged m = SyncReconcile.merge(views);
-      SyncReconcile.Plan p = SyncReconcile.reconcile(disk, m, index, ex, "me", 9000L);
+      SyncReconcile.Plan p = SyncReconcile.plan(disk, state, index, ex, "me", 9000L);
       Map<String, Object> res = new LinkedHashMap<String, Object>();
       res.put("fetch", names(p.fetch));
       res.put("send", names(p.send));
@@ -74,7 +68,7 @@ public class Parity {
       res.put("settle", names(p.settle));
       res.put("unchanged", (long) p.unchanged);
       res.put("excluded", (long) p.excluded);
-      res.put("verdicts", kinds(SyncReconcile.check(p, (int) num(o.get("missing")))));
+      res.put("verdicts", kinds(SyncReconcile.check(p, state)));
       out.add(res);
     }
     System.out.println(Json.write(out));
@@ -99,21 +93,20 @@ public class Parity {
 JS_DRIVER = r"""
 const path = require('path');
 require(path.join(process.argv[2], 'foldersync.js'));
-const E = require(path.join(process.argv[2], 'syncengine.js'));
+const E = require(path.join(process.argv[2], 'syncstate.js'));
 let raw = '';
 process.stdin.on('data', d => raw += d);
 process.stdin.on('end', () => {
   const cases = JSON.parse(raw);
   const names = (xs) => xs.map(x => x.path + '|' + x.v + '|' + x.why);
   const out = cases.map(c => {
-    const m = E.merge(c.views || {});
-    const p = E.reconcile({ disk: c.disk || {}, global: m.global, rivals: m.rivals, by: m.by,
-                            index: c.index || {}, device: 'me', now: 9000,
-                            excludes: c.excludes || [] });
+    const p = E.plan({ disk: c.disk || {}, state: c.state || {},
+                       index: c.index || {}, device: 'me', now: 9000,
+                       excludes: c.excludes || [] });
     return { fetch: names(p.fetch), send: names(p.send), trash: names(p.trash),
              tombstone: names(p.tombstone), keepBoth: names(p.keepBoth), settle: names(p.settle),
              unchanged: p.unchanged, excluded: p.excluded,
-             verdicts: E.check(p, { missingViews: c.missing || 0 }).map(v => v.kind) };
+             verdicts: E.check(p, { state: c.state || {} }).map(v => v.kind) };
   });
   process.stdout.write(JSON.stringify(out));
 });
@@ -132,26 +125,30 @@ def _cases(n=250, seed=20260817):
     devices = ["laptop", "phone", "tablet"]
     out = []
     for _ in range(n):
-        views, disk, index = {}, {}, {}
+        state, disk, index = {}, {}, {}
         paths = ["a.txt", "b/c.txt", "d.bin", "Old/e.jpg"]
-        for dev in rnd.sample(devices, rnd.randint(1, 3)):
-            v = {}
-            for p in paths:
-                if rnd.random() < 0.35:
-                    continue
-                ver = rnd.randint(0, 3)
-                if rnd.random() < 0.3:
-                    v[p] = {"v": ver, "by": dev, "deletedAt": rnd.choice([4000, 6000])}
-                else:
-                    v[p] = {"v": ver, "by": dev, "csum": rnd.choice(["A", "B", "C"]),
-                            "sha": "blob", "size": rnd.choice([100, 200]), "mtime": rnd.choice([1000, 3000])}
-            views[dev] = v
+        for p in paths:
+            if rnd.random() < 0.35:
+                continue
+            dev = rnd.choice(devices)
+            ver = rnd.randint(1, 4)
+            if rnd.random() < 0.3:
+                state[p] = {"v": ver, "by": dev, "deletedAt": rnd.choice([4000, 6000]),
+                            "csum": rnd.choice(["A", "B", "C", ""]) or None}
+                if state[p]["csum"] is None:
+                    del state[p]["csum"]
+            else:
+                state[p] = {"v": ver, "by": dev, "csum": rnd.choice(["A", "B", "C"]),
+                            "sha": rnd.choice(["blob", ""]) or None,
+                            "size": rnd.choice([100, 200]), "mtime": rnd.choice([1000, 3000])}
+                if state[p]["sha"] is None:
+                    del state[p]["sha"]
         for p in paths:
             if rnd.random() < 0.5:
                 disk[p] = {"csum": rnd.choice(["A", "B", "C"]), "size": rnd.choice([100, 200]),
                            "mtime": rnd.choice([1000, 3000])}
             if rnd.random() < 0.5:
-                e = {"v": rnd.randint(0, 3), "by": rnd.choice(devices)}
+                e = {"v": rnd.randint(0, 4), "by": rnd.choice(devices), "sha": "blob"}
                 if rnd.random() < 0.3:
                     e["deletedAt"] = 4000
                 else:
@@ -161,9 +158,8 @@ def _cases(n=250, seed=20260817):
                     if rnd.random() < 0.5:
                         e["local"]["csum"] = rnd.choice(["A", "B", "C"])
                 index[p] = e
-        out.append({"views": views, "disk": disk, "index": index,
-                    "excludes": rnd.choice([[], ["Old"], ["*.bin"]]),
-                    "missing": rnd.choice([0, 0, 0, 1])})
+        out.append({"state": state, "disk": disk, "index": index,
+                    "excludes": rnd.choice([[], ["Old"], ["*.bin"]])})
     return out
 
 

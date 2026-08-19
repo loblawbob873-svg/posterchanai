@@ -19,7 +19,7 @@ REQUIRED = [
     "a fresh pair",                        # "i want to add the folder to be synced and be good to go"
     "two hosts updating at the same time",  # "need to support 2 hosts or more updating at the same time"
     "three hosts, all writing",
-    "a device that cannot be read",         # "UPDATE APK DURING SYNC ... SENDING EVERYTHING TO TRASH"
+    "a server that cannot be asked",         # "UPDATE APK DURING SYNC ... SENDING EVERYTHING TO TRASH"
     "the store was emptied by hand",        # "i cleared out the Pictures in blossom"
     "the folder handle is gone",            # a device that cannot see its own folder
     "a reinstall lost the journal",         # "why is the phone always downloading 1/32"
@@ -34,8 +34,11 @@ REQUIRED = [
     "a journal that cannot be read",
     "a copy that fails its checksum is not fetched again",
     "the preview and the sweep agree",
-    "a device whose own document is lost",
+    "records the folder lost are put back",
     "the scale that killed the desktop",    # "make sure electron desktop apps don't shit themselves"
+    "the CAS race",                         # two devices editing one file at once — both survive
+    "remove-and-re-add cannot haunt",       # the era; "instantly has 373 conflicts"
+    "the receipts",                         # the torn store copy that healed itself, end to end
 ]
 
 

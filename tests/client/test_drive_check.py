@@ -266,13 +266,14 @@ class ReclaimTests(unittest.TestCase):
         self.assertIn("Array.isArray(pairs)", body)
 
     def test_an_unreadable_folder_kills_the_offer_entirely(self):
-        """`_syncRefIds` answers null when any device view could not be read, and the caller treats
-        null as NO — a reclaim with a partial reference set is a delete order for whatever the
-        unread folder holds."""
+        """`_syncRefIds` answers null when any folder's record set could not be read (the state
+        read THROWS on failure — never an empty answer), and the caller treats null as NO — a
+        reclaim with a partial reference set is a delete order for whatever the unread folder
+        holds."""
         at = self.src.index("async function _syncRefIds(")
-        body = self.src[at:at + 1600]
+        body = self.src[at:at + 1800]
         self.assertIn("return null", body)
-        self.assertIn("got.missing", body, "an unread device view does not kill the offer")
+        self.assertIn("S.docs.state(", body, "the reclaim no longer reads the record set strictly")
         caller = self.src[self.src.index("const refs = await _syncRefIds();"):][:1600]
         self.assertIn("if(refs)", caller, "a null reference set still produces an offer")
 
@@ -289,12 +290,12 @@ class ReclaimTests(unittest.TestCase):
         self.assertLess(ref, call, "the index shas are added AFTER the set was computed")
 
     def test_sealed_manifest_blobs_count_as_references(self):
-        with open(os.path.join(ROOT, "static", "js", "client", "sync.js"), encoding="utf-8") as fh:
-            sync = fh.read()
-        self.assertIn("sealedIds", sync)
         at = self.src.index("async function _syncRefIds(")
-        self.assertIn("sealedIds", self.src[at:at + 1600],
-                      "a reclaim could delete the very blob a manifest's paths live in")
+        body = self.src[at:at + 1800]
+        self.assertIn("e.ps", body,
+                      "a reclaim could delete the very blob a huge file's chunk list lives in")
+        self.assertIn("TOMBSTONES COUNT TOO", body,
+                      "reclaiming a tombstone's bytes turns every Restore into a 404")
 
     def test_it_asks_with_the_size_and_deletes_only_on_yes(self):
         at = self.src.index("fx-ck-reclaim', r)")

@@ -305,6 +305,7 @@ async def drive(url):
           // a REAL re-add: the journal is cleared through the same API the remove flow uses; the
           // device id stays (that is what a phone keeps across remove-and-re-add)
           await window.PCSync.docs.saveIndex('E2EPair', {});
+          try{ await window.PCSync.docs.state && null; }catch(_){}
           const me = window.__PC.me().pubkey;
           localStorage.setItem('pc_sync_folders_' + me, JSON.stringify([
             { id: 'vdisk', key: 'E2EPair', dir: '/vdisk', name: 'E2EPair',
@@ -374,7 +375,7 @@ async def drive(url):
         try:
             await a.js("""(async () => {
               for(const k of ['E2EPair']){
-                try{ await window.PCSync.store._post({ folder: k, forgetAll: true }); }catch(_){}
+                try{ await window.PCSync.edit.forget(k); }catch(_){}
               } return true; })()""", aw=True)
         except Exception:
             pass

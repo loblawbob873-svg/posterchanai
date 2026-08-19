@@ -697,131 +697,64 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   treated as "not configured" rather than honoured, since the box behind it is gone.
   See `docs/WEBSEARCH.md`; `tests/test_websearch.py` + `scripts/check_websearch_mobile.py` (the
   generic `check_client_mobile.py` never opens this screen).
-- **Folder Sync** (`static/js/client/syncengine.js` + `syncexec.js` + `sync.js`, `desktop/fsbridge.js` /
-  `FolderSyncPlugin.java` + `SyncReconcile.java`; sidebar → Folder Sync): Documents/Pictures kept in
-  step across devices in encrypted Blossom. **Desktop + Android only** — a browser has no filesystem,
-  and Firefox has no File System Access API at all.
-  **THERE IS NO SHARED DOCUMENT. Every device publishes its own and the folder is the MERGE.**
-  `pcai:sync:<pair>:<device>`, one writer for ever. That single fact is the rewrite (2026-08-17), and
-  it exists because the previous shape could not be made safe: one document that every device read,
-  edited and wrote back is last-writer-wins on the record of whether your files exist. It needed a
-  merge on save, a re-read per checkpoint and a server-side collapse guard, and it still lost writes —
-  and worse, a document that failed to load, came back empty, or lost a race read as *"every file you
-  have was deleted"*, which put a real 6,331-file Pictures folder into `.pc-trash`. Now: two devices
-  syncing at once cannot overwrite each other, and **no single document can empty the folder** — a
-  view that is missing, unreadable or wrong is one device's opinion, and the checker refuses every
-  deletion while any view is unreadable.
-  **ABSENCE IS NOT A DELETION.** A deletion is a tombstone somebody published, at a version, and it
-  survives in that device's view. A path nobody claims is a path nobody claims. Under the old shape
-  those were the same thing, which is why an empty read was a delete order for the whole folder.
-  **VERSIONS, NOT TIMESTAMPS.** Each entry carries `v` (a counter a device raises when it publishes a
-  change to that path) and `by`. Two devices publishing the SAME version with different content is a
-  concurrent edit, and every device resolves it identically — winner keeps the name, loser is written
-  beside it under a conflict name — so three devices cannot each pick a different answer. This removes
-  every clock heuristic the old engine needed ("was the deletion later than this copy" cannot be asked
-  of two machines' clocks); entries written before versions carry `v=0` and fall back to comparing
-  content, so an old pair keeps working and upgrades itself one publish at a time.
-  **THE JOURNAL IS THIS DEVICE'S RECORD, NOT AN OPINION.** `index[path] = {…entry, local:{size,mtime,
-  csum}}` — what was applied, and what the file looked like on disk when it was. `local` is compared
-  against the scan; a PUBLISHED entry never is, because a downloaded file gets whatever last-modified
-  the platform hands out (SAF assigns its own) and comparing the two reports every downloaded file as
-  edited on every sweep, for ever. With a csum in the journal a restored backup (an rsync without
-  `-t`) is not even an edit — the case that once republished 3,930 deleted files does not arise.
-  **Split:** `syncengine.js` decides (pure: merge → reconcile → check → apply) and cannot touch a
-  file; `syncexec.js` moves bytes and decides nothing. `foldersync.js` keeps only what was never
-  wrong — content identity (`same`), the exclusion matcher, conflict/trash naming, the battery policy
-  (`shouldSync`) — and `syncrun.js` is now just `due()`.
-  **Rules that cost data if changed**, each with a test verified to bite: a conflict renames the local
-  copy BEFORE writing the incoming one; delete loses to edit both ways; identical bytes arriving
-  independently is NOT a conflict; nothing is deleted in place (`.pc-trash/<date>/`); excluding a
-  folder drops it from all three inputs so it can never be deleted anywhere; a refusal suppresses ONE
-  BUCKET, never the sweep (a guard that aborts everything is the same bug with its sign flipped —
-  that is what stopped the contacts sweep syncing at all).
-  **FOUR RULES FOUND BROKEN IN THE 2026-08-18 ADVERSARIAL REVIEW, each demonstrated against the
-  shipped engine before fixing, each now pinned in `engine_sim.js`/`test_stopped_sweep.py`:**
-  (1) *the rival branch is GATED* — only a device holding a local copy that is not the winner, and
-  whose journal has not already resolved it, keeps both. Ungated it re-resolved on EVERY sweep while
-  the loser stayed offline (re-downloading the winner and — desktop rename OVERWRITES — destroying
-  the conflict copy the first sweep preserved), and told a device with NO local copy to move a file
-  it does not have, which throws on both platforms: that was the desktop "Failed" loop.
-  (2) *a journal AHEAD of the merge is never remote news* — `viewChanged` is `vr > vi`, not
-  `vr !== vi`. A paused sweep or failed publish leaves this device knowing v2 while its published
-  view says v1; read as "the folder changed" it fetched the OLD bytes back over the edit (silent
-  revert) and resurrected deliberate deletions.
-  (3) *every journal save publishes the view FIRST, in the same breath* (`Journal.beforeSave` —
-  the discipline NativeSweep's Java Journal already had), and the end-of-sweep publish decision is
-  STRUCTURAL (`viewEquals`), never a path count — counts cannot see an edit, so a >20s sweep of
-  edited files used to end without publishing at all.
-  (4) *the stop signal is LATCHED for the life of the sweep* — Pause then Start inside one
-  minutes-long scan un-latched `shouldStop`, and the partial disk the scan had already returned then
-  read every unscanned file as "deleted locally".
-  Also from that review: `check()`'s `keep` counts LIVE survivors only — `unchanged` includes agreed
-  tombstones, and that ballast let a sweep trash every live file in a folder with a long deletion
-  history while the mass-delete guard watched (measured: 50 live + 10,000 tombstones, guard silent).
-  **Guards, all in one `check()` the executor cannot bypass:** never trash more than survives the
-  sweep (floor 20), the same pointing outwards for tombstones, mass-resurrect as an ABSOLUTE floor
-  (a restore makes everything look edited, so resurrections arrive beside thousands of ordinary
-  uploads and any ratio waves them through), a file/folder collision, and `partialViews` — fatal, not
-  overridable — whenever a device could not be read.
-  **Resume, checksums, memory:** the journal is written in batches so an interruption costs the last
-  few files (and redoing one is nearly free: an upload the server already holds is skipped, a download
-  already on disk hashes equal and settles); every transfer is checksummed in both directions, written
-  to a `.part` file, verified, then renamed; small files go four at a time (a download is a round trip,
-  and serialising 6,000 photos leaves the connection idle) and large ones one at a time (a chunked
-  transfer holds a chunk of plaintext and a chunk of ciphertext — four at once undoes the ceiling
-  chunking exists to impose); the scan is paged (1,000 paths per bridge call) because a whole Pictures
-  folder in one JSON string is what killed the WebView renderer; a copy that fails its checksum is
-  never fetched again (keyed on the copy's IDENTITY, so it unblocks by itself when the holder
-  republishes). Past ~45 KB a view's paths move into an encrypted blob with a pointer — NIP-44 refuses
-  a plaintext over 65535 bytes, which is about 376 files.
-  **A THIN JOURNAL IS NOT AN EMPTY FOLDER, AND THAT DISTINCTION IS A CONFLICT STORM.** A device whose
-  journal was lost (a reinstall, a cleared app, a first sweep against a folder that already holds the
-  files) has the bytes on disk and no record of them, so size+mtime says "edited here" for every path
-  at once and every one becomes a conflict copy — measured on a real phone: 1,803, then 2,322. So when
-  the journal knows nothing, or knows less than half of what the merge shows, the scan HASHES
-  (`thin` → `scanOpts.hash`, reported as `report.hashed`): identical bytes then settle instead of
-  conflicting, at the cost of one full read of the folder exactly once. Two nearby rules from the same
-  report: a conflict FETCHES the incoming copy before renaming the local one (renaming first and
-  404ing left the path empty and re-conflicted on the next sweep, for ever), and an incoming copy
-  nothing can fetch is skipped and counted (`report.unfetchable`) rather than half-applied.
-  **A 404 IS FORGOTTEN AFTER SIX HOURS, NOT FOR EVER.** A copy the store does not have is remembered
-  so a sweep does not re-ask 11,113 times in ten minutes — but the bytes are content-addressed, so
-  another device republishing them makes the same id valid again; a permanent record would refuse a
-  file that is now perfectly fetchable. The record is `{id, why:'gone', at}` and a MANUAL sweep clears
-  it outright. **"Send them again" is an explicit `o.resend`**, not a cleared journal: clearing the
-  journal settles as "same content both sides" and uploads nothing, which is a button that reports
-  success and does nothing.
-  **Check my files** (`EXEC.verify`) is read-only: it re-hashes every local file against the merged
-  record, asks the store whether the bytes behind each entry are still there, and reports which
-  devices disagree. Repair can only PULL — a deep *sweep* cannot fix corruption, because re-hashing
-  makes damaged bytes look like an edit made here and publishes them; repair trashes the local copy
-  and forgets that path's journal entry so the next sweep fetches it fresh.
-  **Android runs the same rules in Java** (`SyncReconcile.java`), because a hidden WebView's
-  JavaScript is throttled to ~1 timer/minute and screen-off sync cannot be the JS one.
-  `tests/test_android_reconcile_parity.py` RUNS both engines over hundreds of generated folder states
-  and compares the plans decision for decision. The alarm/foreground-service/wake-lock work is
-  unchanged and is still what makes screen-off sync happen at all: `SyncClock` (an EXACT alarm where
-  the platform allows one — Android 12+ only lets an exact alarm start a background FGS) →
-  `SyncTickReceiver` → `SyncService` (`specialUse`, NOT `dataSync`), falling back to an expedited
-  `SyncWork` job when an FGS start is refused, never to a bare thread. `NativeRunner.deviceState`
-  treats an unreadable network as UNSET, never as offline — a dozing device answers null, which is
-  the exact moment the feature exists for. The CPU lease is TIMED and is renewed from `step()`.
-  **The server** (`/client/sync-manifest`) writes only the caller's own document (`device`), answers
-  `views:true` with every device's document for a pair, and `forgetAll:true` — the one deliberate
-  exception to single-writer — empties them all when a folder is retired for the account.
-  `/client/sync-folders` lists one row per PAIR, not per document.
-  **Files → Synced folders** can add/rename/delete: the edit is published as THIS device's claim at a
-  version above what the folder shows, and the devices carry it out on their next sweep. A delete is a
-  tombstone, never a removed key. Deleting is refused while any device is unreadable, because the
-  count the confirmation quotes comes from the merged folder.
-  Tests: `tests/client/engine_sim.js` (merge determinism, concurrency, the whole state table, every
-  guard), `tests/client/exec_sim.js` (37 end-to-end scenarios named after the reports that produced
-  them — three-host convergence, an unreadable device, an emptied store, a lost folder handle, a
-  reinstall, an interrupted sweep, corruption on both transfer paths, a lost own-document,
-  6,000 files), `tests/client/test_fs_bridge.py` (the real desktop bridge against real files),
-  `tests/client/sync_store_sim.js` (the NIP-44 ceiling), `tests/client/test_folder_sync.py` (the rules
-  and the battery policy), `tests/client/sync_tick_sim.js` (screen-off ticking). See
-  `docs/FOLDER_SYNC.md`.
+- **Folder Sync — the THIRD engine (2026-08-18), and the design is ONE VERSIONED RECORD PER FILE.**
+  (`static/js/client/syncstate.js` (pure engine) + `syncexec.js` (executor) + `sync.js` (transport/UI),
+  `desktop/fsbridge.js` / `FolderSyncPlugin.java` + `SyncReconcile.java` + `NativeSweep.java`;
+  server `/client/sync-state` in `app/routers/client.py`; sidebar → Folder Sync.)
+  The two document-shaped engines (one shared doc, then one doc per device) each let one stale read
+  speak for thousands of files; after four days of field failures the user ordered this shape:
+  `pcai:fs:<pair>:<sha256(path)[:24]>` on the LOCAL relay, envelope `{v, by, era, t, bad}` PLAINTEXT
+  (the server's CAS reads it — 12k Python NIP-44 decrypts per sweep is not payable), entry
+  (path/csum/sha/chunks) NIP-44-sealed to the user's own key. Storage-key signed via the server —
+  **records never touch the client relay pool and replicate nowhere**.
+  **What is structural now, not guarded:** no read can empty a folder (a record is one file; a failed
+  read throws, an unreadable record is one path left alone); a deletion is a TOMBSTONE RECORD keeping
+  its address (account-wide Restore); every write is a per-file CAS under a server lock — the race
+  loser is refused, strikes the path from its journal, and next sweep resolves it as a conflict with
+  both copies surviving; retiring a pair bumps an **ERA** (one write — every old record is instantly
+  of a dead world; a journal from a dead era is cleared inside the state load, which kills the
+  remove-and-re-add ghosts — "373 conflicts instantly"); the server REFUSES >100 tombstones per batch
+  or rolling hour without the deliberate-delete confirm (`_FS_TOMB_CAP` backstop, for the client that
+  has gone wrong).
+  **The engine's table** (syncstate.js, mirrored decision-for-decision in SyncReconcile.java,
+  parity-run over generated states): diskChanged vs journal / recordAhead (STRICTLY ahead — a journal
+  ahead of the folder is ours to publish, never theirs to teach us); adopt-by-content in the
+  remote-moved branch (own publish coming back, or a file we already hold — settle, no transfer);
+  lost record + held file → re-publish ("restoring it from this copy"); address-less record + held
+  file → re-send; a JOINING device's unchanged copy OBEYS a tombstone whose csum matches (no more
+  resurrect-on-join) while an edited copy still wins; thin journal (<half the folder) forces a hashed
+  scan (dirty join: identical bytes settle, EXACTLY the divergent files conflict); guards kept
+  verbatim (massTrash floor+MASS_CAP=100, massTombstone, massResurrect absolute floor, file/folder
+  `blocked` fatal) and a refusal suppresses ONE BUCKET, never the sweep.
+  **Transport** (sync.js `stateS`): IndexedDB cache + DELTA reads (`since` on the relay's
+  `list_docs`, era-checked; full read once ever per device), batched CAS puts (400/batch, results
+  mapped back to paths: ok/stale/failed), an oversized chunk list (>~58KB JSON — an Android-chunked
+  file past ~4GB) sealed into its OWN encrypted blob with a `ps` pointer resolved on read (fetch
+  failure = unreadable record = no action, never address-less). Fetch-refusals are keyed on the
+  STORAGE ADDRESS (sha/chunk-list, csum last) — NEVER csum-first: a holder's re-send keeps the csum
+  and changes the address, and a csum key refuses the repair for ever (that was v1354's heal bug).
+  Checksum-bad copies are FLAGGED on the record (plaintext `bad` beside the envelope, no version
+  bump); the holder verifies its local copy against the journal csum and re-sends; a fresh address
+  clears flag and refusals alike. 404s expire after 6h; 5xx is never remembered.
+  **Executor** (syncexec.js, preserved machinery): state read FIRST (era shift clears the journal
+  before it is loaded), then journal, paged scans, `.part` verify-then-rename with stale-part retry,
+  chunked transfers with heap backpressure, wake-lock renewal, journal in batches with RECORDS
+  PUBLISHED FIRST (records ahead of journal is safe — adopt-by-content absorbs it; journal ahead of
+  records is a device believing in an agreement nobody saw). The conflict loop hashes the local file
+  against the incoming csum BEFORE renaming anything — identical bytes settle instead of minting a
+  copy (also what absorbs the CAS race for same-content uploads). Tombstones still need confirmGone
+  proof (ENOENT under a live ancestor) and keep their addresses.
+  **Tests, each verified to fail without its rule:** `tests/client/state_sim.js` (the table, 145+
+  checks), `exec_sim.js` (41 end-to-end scenarios incl. the CAS race, the era ghosts, "the receipts"
+  torn-store heal, emptied-store restore), `sync_store_sim.js` (the shipped transport against a fake
+  endpoint enforcing real CAS/era/delta), `test_fs_bridge.py` (139 real-filesystem cases),
+  `test_sync_state_endpoint.py` (server CAS/era/backstop/12k-paging/flags),
+  `test_android_reconcile_parity.py` (both engines over generated states, decision for decision),
+  `forget_sim.js`, `test_folder_sync.py`, `scripts/check_sync_full.py` (two real browsers against a
+  real server: replicate, DIRTY JOIN, delete, lying scan, one drive key).
+  **Java sweep** (NativeSweep) mirrors all of it: same state read w/ file-backed cache + era clear,
+  same CAS batching in its Journal (stale → path struck), never passes `confirmed` (no person
+  present), still defers conflicts to the foreground. See `docs/FOLDER_SYNC.md`.
 - **Files → Blossom has a drive check, and Admin → Blossom has a STORE scan** — the two halves of
   "does the drive hold what it says it holds", asked from the two ends. The client one
   (`driveCheck`) compares the encrypted index against a FRESH server listing; the admin one

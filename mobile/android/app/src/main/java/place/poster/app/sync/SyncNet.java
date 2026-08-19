@@ -283,6 +283,77 @@ public final class SyncNet implements SyncIo.Net {
         }
     }
 
+    // ---------------------------------------------------------------------------- sync-state
+    //
+    // Folder sync v3: one versioned record per file behind /client/sync-state — the server's
+    // compare-and-swap, the era, and the tombstone backstop all live there. These are the only two
+    // calls the native sweep needs: read the record set (delta when the era matches) and publish a
+    // batch of records.
+
+    /** The pair was retired or re-added elsewhere — the caller's cached world is dead. */
+    public static final class EraChanged extends Exception {
+        public final long era;
+        EraChanged(long era) { super("the folder was retired or re-added elsewhere"); this.era = era; }
+    }
+
+    /** {era, now, full, records:[{d,v,by,t,bad,at,ct}]} — throws rather than answering empty. */
+    public Map<String, Object> state(String pair, Long era, Long since)
+            throws IOException, EraChanged {
+        Map<String, Object> extra = new LinkedHashMap<String, Object>();
+        if (era != null) extra.put("era", era);
+        if (since != null) extra.put("since", since);
+        return statePost(pair, extra);
+    }
+
+    /** Publish records through the CAS. Each row: {d, v, by, ct, t?}. Answer carries `results`. */
+    public Map<String, Object> putState(String pair, long era, List<Object> put, boolean confirmed)
+            throws IOException, EraChanged {
+        Map<String, Object> extra = new LinkedHashMap<String, Object>();
+        extra.put("era", era);
+        extra.put("put", put);
+        if (confirmed) extra.put("confirmed", Boolean.TRUE);
+        return statePost(pair, extra);
+    }
+
+    private Map<String, Object> statePost(String pair, Map<String, Object> extra)
+            throws IOException, EraChanged {
+        Map<String, Object> body = new LinkedHashMap<String, Object>();
+        body.put("pubkey", pub);
+        body.put("auth", Crypt.b64(SyncCrypto.utf8(
+                signedEvent(27235, "sync-state", Arrays.asList(tag("p", pub))))));
+        body.put("pair", pair);
+        body.putAll(extra);
+        HttpURLConnection c = open(apiBase + "/client/sync-state", "POST", POST_TIMEOUT_MS);
+        try {
+            byte[] payload = SyncCrypto.utf8(Json.write(body));
+            c.setDoOutput(true);
+            c.setFixedLengthStreamingMode(payload.length);
+            c.setRequestProperty("Content-Type", "application/json");
+            OutputStream os = c.getOutputStream();
+            os.write(payload);
+            os.flush();
+            os.close();
+            int code = c.getResponseCode();
+            InputStream in = (code >= 200 && code < 300) ? c.getInputStream() : c.getErrorStream();
+            String text = in == null ? "" : new String(drain(in), "UTF-8");
+            Map<String, Object> j;
+            try {
+                j = Json.obj(Json.parse(text));
+            } catch (RuntimeException e) {
+                throw new IOException("the server answered something that is not JSON (" + code + ")");
+            }
+            if (code == 409 && Json.bool(j.get("eraChanged"), false)) {
+                throw new EraChanged(Json.num(j.get("era"), 0));
+            }
+            if (code < 200 || code >= 300 || !Json.bool(j.get("ok"), false)) {
+                throw new IOException(Json.str(j.get("error"), "sync state " + code));
+            }
+            return j;
+        } finally {
+            c.disconnect();
+        }
+    }
+
     /** The server refused a write that would shrink the folder. Answerable, not retryable. */
     public static final class Collapse extends Exception {
         public final long oldCount, newCount;

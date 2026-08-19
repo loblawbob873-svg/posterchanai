@@ -1,21 +1,12 @@
-/* The folder-sync STORE — the layer that could not save a real folder.
+/* The folder-sync STORE — the transport half of the per-file design, run for real.
  *
- * `PCSync.store` is where the manifest is sealed and where this device's agreement is written, and
- * both had a ceiling nothing checked:
- *
- *   NIP-44 refuses a plaintext over 65535 bytes. A manifest entry measures ~174, so the document
- *   held about 376 files — and a folder with more than that could not be saved AT ALL. Every sweep
- *   of a real 15790-file folder uploaded everything, threw at the very last step, wrote no
- *   agreement, and started again from the first file on the next sweep. Everything except the last
- *   step worked, which is why it looked like a sync.
- *
- *   `base` went to localStorage under a try/catch that swallowed everything, including the quota
- *   error a 2.6 MB agreement earns. Same infinite resync, different cause, equally silent.
- *
- * sync.js is a browser IIFE with no load-time side effects, so it is loaded here for real against
- * stub globals — the store under test IS the shipped one. The NIP-44 stub enforces the SAME
- * 65535-byte ceiling nostr-tools does, and localStorage the same 5 MB quota a browser does, because
- * a stub that cheerfully accepts 2.6 MB would test nothing at all.
+ * `PCSync.docs` is where records are sealed, cached, delta-read and pushed through the server's
+ * per-file compare-and-swap. sync.js is a browser IIFE with no load-time side effects, so it is
+ * loaded here against stub globals and a fake /client/sync-state that enforces the SAME rules the
+ * real endpoint does — CAS, era, delta — because the client's handling of those answers is what
+ * these scenarios are about. The NIP-44 stub enforces the same 65535-byte ceiling nostr-tools does:
+ * per-file records are what made that ceiling stop mattering per folder, and the one place it can
+ * still bite (a single file's enormous chunk list) has to fail ALONE, not take the batch with it.
  *
  * Usage: node sync_store_sim.js   → one JSON line per scenario, non-zero exit if any failed.
  */
@@ -25,21 +16,24 @@ const path = require('path');
 const vm = require('vm');
 
 const CLIENT = path.join(__dirname, '..', '..', 'static', 'js', 'client');
-const NIP44_MAX = 65535;          // nostr-tools: "invalid plaintext size: must be between 1 and 65535 bytes"
-const NIP44_MIN_PAYLOAD = 132;    // ...and it rejects a payload shorter than this before reading it
-const LS_QUOTA = 5 * 1024 * 1024; // what a browser gives an origin, shared with everything else
+const NIP44_MAX = 65535;
+const NIP44_MIN_PAYLOAD = 132;
+const LS_QUOTA = 5 * 1024 * 1024;
 
 function makeWorld(){
   const w = {
-    docs: new Map(),     // folder key -> the manifest document, as the server would hold it
-    blobs: new Map(),    // sha -> bytes
-    ls: new Map(),       // localStorage
-    idb: new Map(),      // object store name -> Map
-    posts: [],           // every /client/sync-manifest body
-    saves: 0,
-    idbBroken: false,    // flip to model a device that cannot write to IndexedDB at all
+    pairs: new Map(),    // pair -> { era, rows: Map(d -> {v, by, t, bad, ct, at}) }
+    ls: new Map(),
+    idb: new Map(),
+    posts: [],
+    clock: 1000000,
+    idbBroken: false,
   };
-  let seq = 0;
+  const pairOf = (name) => {
+    if(!w.pairs.has(name)) w.pairs.set(name, { era: 0, rows: new Map() });
+    return w.pairs.get(name);
+  };
+  w.pairOf = pairOf;
 
   w.localStorage = {
     getItem: k => (w.ls.has(k) ? w.ls.get(k) : null),
@@ -52,7 +46,6 @@ function makeWorld(){
     removeItem: k => { w.ls.delete(k); },
   };
 
-  // Enough IndexedDB for one object store: open → transaction → get/put/delete, all async.
   w.indexedDB = {
     open(){
       const rq = {};
@@ -68,7 +61,7 @@ function makeWorld(){
             const done = () => setTimeout(() => tx.oncomplete && tx.oncomplete(), 0);
             tx.objectStore = () => ({
               get(k){ const r = { result: map.get(k) }; done(); return r; },
-              put(v, k){ map.set(k, v); done(); return { result: true }; },
+              put(v, k){ map.set(k, JSON.parse(JSON.stringify(v))); done(); return { result: true }; },
               delete(k){ map.delete(k); done(); return { result: true }; },
             });
             return tx;
@@ -80,42 +73,48 @@ function makeWorld(){
     },
   };
 
-  /* The endpoint, including its collapse guard — the server refuses a manifest that drops to under
-   * half of what it holds, and that refusal is the only thing standing between a bug and a folder
-   * emptied on every device. Modelled here rather than stubbed away, because the client's handling
-   * of the 409 is what these scenarios are about. */
-  w.collapseGuard = true;
+  /* /client/sync-state, with the server's actual rules: strictly-newer CAS under the pair, the era
+   * that kills a retired world, delta by `since`, and per-record results. */
   w.fetch = async (_url, opts) => {
     const body = JSON.parse((opts && opts.body) || '{}');
     w.posts.push(body);
-    /* Every device's document for a folder. Keyed the way the server keys them —
-     * `pcai:sync:<pair>:<device>` — so the store's own splitting is exercised rather than assumed. */
-    if(body.views){
-      const views = {};
-      for(const [k, doc] of w.docs){
-        const at = k.indexOf(':');
-        if(at < 0 || k.slice(0, at) !== body.folder) continue;
-        views[k.slice(at + 1)] = doc;
+    const P = pairOf(body.pair);
+    const j = (o) => ({ ok: true, json: async () => o });
+    const j409 = (o) => ({ ok: false, status: 409, json: async () => o });
+    if(body.forgetAll){ P.era++; P.rowsRetired = true; return j({ ok: true, era: P.era }); }
+    if(body.put){
+      if(body.era !== undefined && body.era !== null && +body.era !== P.era)
+        return j409({ ok: false, eraChanged: true, era: P.era });
+      const results = [];
+      for(const r of body.put){
+        const cur = P.rows.get(r.d);
+        if(cur && cur.era === P.era && cur.v >= r.v){ results.push({ d: r.d, stale: true, v: cur.v }); continue; }
+        P.rows.set(r.d, { v: r.v, by: r.by, era: P.era, t: r.t ? 1 : 0, ct: r.ct, at: ++w.clock });
+        results.push({ d: r.d, ok: true });
       }
-      return { ok: true, json: async () => ({ ok: true, views, legacy: w.docs.get(body.folder) || null,
-                                              unreadable: w.unreadable || 0 }) };
+      return j({ ok: true, results, era: P.era });
     }
-    if(body.manifest === undefined){
-      return { ok: true, json: async () => ({ ok: true, manifest: w.docs.get(body.folder) || {} }) };
+    if(body.flag){
+      let flagged = 0;
+      for(const f of body.flag){
+        const cur = P.rows.get(f.d);
+        if(cur && cur.era === P.era && !cur.t){ cur.bad = String(f.bad); flagged++; }
+      }
+      return j({ ok: true, flagged });
     }
-    const at = body.device ? body.folder + ':' + body.device : body.folder;
-    const prev = w.docs.get(at);
-    const oldN = prev && typeof prev.n === 'number' ? prev.n : null;
-    const newN = typeof body.manifest.n === 'number' ? body.manifest.n : null;
-    if(w.collapseGuard && !body.force && oldN !== null && newN !== null && oldN >= 10 && newN < Math.floor(oldN / 2)){
-      w.refusals = (w.refusals || 0) + 1;
-      return { ok: false, status: 409, json: async () => ({
-        ok: false, collapse: true, old: oldN, new: newN, error: 'refused: ' + oldN + ' entries -> ' + newN }) };
+    // list
+    const sameEra = body.era !== undefined && body.era !== null && +body.era === P.era;
+    const since = (sameEra && body.since) ? +body.since : null;
+    const records = [];
+    for(const [d, row] of P.rows){
+      if(row.era !== P.era) continue;
+      if(since !== null && row.at < since) continue;
+      const rec = { d, v: row.v, by: row.by, ct: row.ct, at: row.at };
+      if(row.t) rec.t = 1;
+      if(row.bad) rec.bad = row.bad;
+      records.push(rec);
     }
-    w.saves++;
-    if(body.force) w.forced = (w.forced || 0) + 1;
-    w.docs.set(at, JSON.parse(JSON.stringify(body.manifest)));
-    return { ok: true, json: async () => ({ ok: true }) };
+    return j({ ok: true, era: P.era, now: ++w.clock, full: since === null, records });
   };
 
   w.nip44dec = async (_pk, ct) => {
@@ -130,23 +129,29 @@ function makeWorld(){
     signAuth: async () => ({ id: 'auth', sig: 'x' }),
     enc: s => String(s == null ? '' : s),
     toast(){}, uiConfirm: async () => true, uiPrompt: async () => '',
-    nip44enc: async (_pk, text) => {                       // the ceiling is the whole point
-      const n = Buffer.byteLength(String(text), 'utf8');
-      if(n < 1 || n > NIP44_MAX)
+    nip44enc: async (_pk, text) => {                       // the ceiling is real, per record
+      const raw = Buffer.from(String(text), 'utf8');
+      if(raw.length < 1 || raw.length > NIP44_MAX)
         throw new Error('invalid plaintext size: must be between 1 and ' + NIP44_MAX + ' bytes');
-      return 'ct:' + Buffer.from(String(text), 'utf8').toString('base64');
+      const b = 'ct:' + raw.toString('base64');
+      return b.length < NIP44_MIN_PAYLOAD ? b + '='.repeat(NIP44_MIN_PAYLOAD - b.length) : b;
     },
-    nip44dec: w.nip44dec,
-    syncBlobs: {
-      put: async (bytes) => { const id = 'blob' + (++seq); w.blobs.set(id, Buffer.from(bytes)); return id; },
-      get: async (id) => { if(!w.blobs.has(id)) throw new Error('blob ' + id + ' unavailable (404)'); return w.blobs.get(id); },
-    },
+    nip44dec: null,     // filled below
+    syncBlobs: (() => { const store = new Map(); let n = 0; return {
+      put: async (bytes) => { const id = 'blob' + (++n); store.set(id, Buffer.from(bytes)); return id; },
+      get: async (id) => { if(!store.has(id)) throw new Error('blob ' + id + ' unavailable (404)');
+                           return new Uint8Array(store.get(id)); },
+    }; })(),
+  };
+  w.PC.nip44dec = async (_pk, ct) => {
+    const s = String(ct).replace(/=+$/, m => (String(ct).startsWith('ct:') ? '' : m));
+    if(String(ct).length < NIP44_MIN_PAYLOAD) throw new Error('invalid payload length');
+    if(!String(ct).startsWith('ct:')) throw new Error('unknown encryption version');
+    return Buffer.from(String(ct).slice(3).replace(/=+$/, ''), 'base64').toString('utf8');
   };
   return w;
 }
 
-/* Load the SHIPPED sync.js into its own context, so module-level state (the IndexedDB handle) cannot
- * leak between scenarios. */
 function boot(){
   const world = makeWorld();
   const ctx = {
@@ -165,21 +170,21 @@ function boot(){
   ctx.__PC = world.PC;
   ctx.PCFolderSync = require(path.join(CLIENT, 'foldersync.js'));
   ctx.PCSyncRun = require(path.join(CLIENT, 'syncrun.js'));
-  ctx.PCSyncEngine = require(path.join(CLIENT, 'syncengine.js'));
+  ctx.PCSyncState = require(path.join(CLIENT, 'syncstate.js'));
   ctx.PCSyncExec = require(path.join(CLIENT, 'syncexec.js'));
   ctx.ClientSettings = { get: (k, d) => d, set(){} };
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(path.join(CLIENT, 'sync.js'), 'utf8'), ctx, { filename: 'sync.js' });
-  return { world, ctx, store: ctx.PCSync.store, docs: ctx.PCSync.docs };
+  return { world, ctx, docs: ctx.PCSync.docs };
 }
 
-// A manifest of `n` files, shaped like a real one: a path, a sha, a size, an mtime, a device.
-function manifest(n){
-  const out = {};
+// `n` records, shaped like real ones.
+function records(n){
+  const out = [];
   for(let i = 0; i < n; i++){
-    out['Pictures/2019/Holiday/DSC_' + String(i).padStart(5, '0') + '.jpg'] =
-      { sha: (i % 16).toString(16).repeat(64).slice(0, 64), size: 4000000 + i,
-        mtime: 1786000000000 + i, device: 'DESKTOP-7QK1' };
+    out.push({ path: 'Pictures/2019/Holiday/DSC_' + String(i).padStart(5, '0') + '.jpg',
+               entry: { v: 1, by: 'DESKTOP-7QK1', sha: (i % 16).toString(16).repeat(64).slice(0, 64),
+                        csum: 'c' + i, size: 4000000 + i, mtime: 1786000000000 + i } });
   }
   return out;
 }
@@ -187,182 +192,164 @@ function manifest(n){
 const scenarios = [];
 const scenario = (name, fn) => scenarios.push({ name, fn });
 
-/* THE ONE THIS FILE EXISTS FOR. A real 15790-file folder found this; 2000 is five times over the
- * ceiling and quick to build. */
-scenario('a-folder-past-the-nip44-ceiling-saves', async () => {
-  const { world, docs } = boot();
-  const paths = manifest(2000);
-  let err = '';
-  try{ await docs.publish('Documents', paths); await docs.saveIndex('Documents', paths); }
-  catch(e){ err = (e && e.message) || String(e); }
-  // Stored under `<pair>:<device>` now: one document per device, and only that device writes it.
-  let doc = {};
-  for(const [k, d] of world.docs) if(k.indexOf('Documents:') === 0) doc = d;
-  return {
-    ok: !err && !!doc.pathsSha && doc.n === 2000,
-    detail: { plaintextBytes: JSON.stringify(paths).length, ceiling: NIP44_MAX, error: err,
-              storedAs: doc.pathsSha ? 'blossom blob' : 'inline', n: doc.n },
-  };
-});
-
-scenario('a-huge-manifest-round-trips', async () => {
+/* THE ONE THE OLD STORE EXISTED TO WORK AROUND. A folder five times over the old per-document
+ * ceiling stores per file, every record lands, and a fresh device reads all of it back. */
+scenario('a-huge-folder-round-trips', async () => {
   const { docs } = boot();
-  const paths = manifest(2000);
-  await docs.publish('Documents', paths);
-  const got = await docs.views('Documents');
-  const back = got.views[Object.keys(got.views)[0]] || {};
-  const keys = Object.keys(paths);
+  const recs = records(2000);
+  const put = await docs.putState('Documents', recs, {});
+  const got = await docs.state('Documents');
+  const back = got.state;
+  const first = recs[0], last = recs[recs.length - 1];
   return {
-    ok: Object.keys(back).length === keys.length
-        && back[keys[0]].sha === paths[keys[0]].sha
-        && back[keys[keys.length-1]].mtime === paths[keys[keys.length-1]].mtime,
-    detail: { wrote: keys.length, read: Object.keys(back).length },
+    ok: put.ok.length === 2000 && put.failed.length === 0
+        && Object.keys(back).length === 2000
+        && back[first.path].sha === first.entry.sha
+        && back[last.path].mtime === last.entry.mtime
+        && back[last.path].v === 1,
+    detail: { stored: put.ok.length, read: Object.keys(back).length, failed: put.failed.length },
   };
 });
 
-/* A CLIENT OLDER THAN THIS CHANGE MUST FAIL, NOT READ AN EMPTY FOLDER. It looks for `sealed` and
- * falls back to `doc.paths`, so without a marker a v2 document reads as {} — and an empty remote is
- * not a harmless misread: every file becomes "deleted elsewhere", and that device trashes all of
- * them and publishes tombstones the other devices honour. */
-scenario('an-old-client-cannot-read-a-v2-manifest-as-empty', async () => {
+/* A chunk list too big to seal — an Android-chunked file past ~4 GB — moves into its own encrypted
+ * blob (`ps`) and ROUND-TRIPS: the record lands, and a reader gets the full list back. The old
+ * shape's ceiling failed the whole folder at the very last step, invisibly, for ever. */
+scenario('an-oversized-chunk-list-is-sealed-and-round-trips', async () => {
+  const { docs } = boot();
+  const recs = records(5);
+  const chunks = [];
+  for(let i = 0; i < 1200; i++) chunks.push(('' + (i % 10)).repeat(64));
+  recs.push({ path: 'huge.bin', entry: { v: 1, by: 'x', chunks, cs: 4194304, size: 5e9, mtime: 1 } });
+  const put = await docs.putState('Documents', recs, {});
+  const got = await docs.state('Documents');
+  const e = got.state['huge.bin'];
+  return {
+    ok: put.ok.length === 6 && put.failed.length === 0
+        && !!e && Array.isArray(e.chunks) && e.chunks.length === 1200
+        && e.chunks[7] === chunks[7] && e.cs === 4194304,
+    detail: { ok: put.ok.length, failed: put.failed,
+              chunksBack: e && e.chunks && e.chunks.length, cs: e && e.cs },
+  };
+});
+
+/* THE CAS: a write that is not strictly newer is refused, reported, and lands nothing. */
+scenario('a-stale-write-is-refused-and-named', async () => {
+  const { docs } = boot();
+  await docs.putState('Documents', [{ path: 'a.txt', entry: { v: 2, by: 'desktop', sha: 'x', size: 1, mtime: 1 } }], {});
+  const put = await docs.putState('Documents',
+    [{ path: 'a.txt', entry: { v: 2, by: 'phone', sha: 'y', size: 2, mtime: 2 } },
+     { path: 'b.txt', entry: { v: 1, by: 'phone', sha: 'z', size: 3, mtime: 3 } }], {});
+  const got = await docs.state('Documents');
+  return {
+    ok: put.stale.length === 1 && put.stale[0] === 'a.txt' && put.ok.length === 1
+        && got.state['a.txt'].by === 'desktop' && !!got.state['b.txt'],
+    detail: { stale: put.stale, ok: put.ok, aBy: got.state['a.txt'] && got.state['a.txt'].by },
+  };
+});
+
+/* THE ERA. A pair retired and re-added elsewhere makes this device's journal a record of a dead
+ * world; kept, every path reads "lost record — restoring", which resurrects a retired folder. The
+ * load must void the journal BEFORE the executor reads it. */
+scenario('an-era-shift-voids-the-journal', async () => {
   const { world, docs } = boot();
-  await docs.publish('Documents', manifest(2000));
-  // Stored under `<pair>:<device>` now: one document per device, and only that device writes it.
-  let doc = {};
-  for(const [k, d] of world.docs) if(k.indexOf('Documents:') === 0) doc = d;
-
-  // Exactly what the pre-v2 client did with a document: seal first, `paths` otherwise.
-  let oldResult = null, threw = '';
-  if(doc.sealed){
-    try{ oldResult = JSON.parse(await world.nip44dec('x', doc.sealed)); }
-    catch(e){ threw = (e && e.message) || String(e); }
-  } else {
-    oldResult = doc.paths || {};       // the empty-manifest path — the one that must be unreachable
-  }
+  await docs.putState('Documents', records(10), {});
+  await docs.state('Documents');                                  // cache at era 0
+  await docs.saveIndex('Documents', { 'old.jpg': { v: 3, sha: 'x' } });
+  world.pairOf('Documents').era = 1;                              // retired + re-added elsewhere
+  const got = await docs.state('Documents');
+  const journal = await docs.index('Documents');
   return {
-    ok: !!threw && oldResult === null,
-    detail: { sealedPresent: !!doc.sealed, sealed: String(doc.sealed).slice(0, 20), threw, oldResult },
+    ok: Object.keys(got.state).length === 0 && Object.keys(journal).length === 0 && got.era === 1,
+    detail: { state: Object.keys(got.state).length, journal: Object.keys(journal).length, era: got.era },
   };
 });
 
-/* `base` must survive a folder too big for localStorage: ~2.6 MB for 15790 entries, against a 5 MB
- * budget shared with everything else this client stores. */
+/* DELTA READS. The second look asks only for the news and still answers the whole folder. */
+scenario('a-delta-read-fetches-only-the-news', async () => {
+  const { world, docs } = boot();
+  await docs.putState('Documents', records(50), {});
+  await docs.state('Documents');                                  // full read, cache primed
+  const postsBefore = world.posts.length;
+  await docs.putState('Documents',
+    [{ path: 'new.jpg', entry: { v: 1, by: 'other', sha: 'n', size: 1, mtime: 1 } }], {});
+  const got = await docs.state('Documents');
+  const listPost = world.posts.slice(postsBefore).filter(p => !p.put).pop();
+  return {
+    ok: Object.keys(got.state).length === 51 && !!got.state['new.jpg']
+        && listPost && typeof listPost.since === 'number',
+    detail: { n: Object.keys(got.state).length, since: listPost && listPost.since },
+  };
+});
+
+/* Tombstones are RECORDS: they come back from a list, deletedAt intact, addresses kept. */
+scenario('tombstones-travel-with-their-addresses', async () => {
+  const { docs } = boot();
+  await docs.putState('Documents',
+    [{ path: 'gone.jpg', entry: { v: 2, by: 'desktop', deletedAt: 7777, sha: 'keepme', csum: 'cc',
+                                  size: 9, mtime: 1 } }], {});
+  const got = await docs.state('Documents');
+  const e = got.state['gone.jpg'];
+  return {
+    ok: !!e && !!e.deletedAt && e.sha === 'keepme' && e.csum === 'cc',
+    detail: { entry: e },
+  };
+});
+
+/* The bad-copy flag rides the record and comes back in `flagged`, keyed by path. */
+scenario('a-checksum-flag-rides-the-record', async () => {
+  const { docs } = boot();
+  await docs.putState('Documents',
+    [{ path: 'r.jpg', entry: { v: 1, by: 'desktop', sha: 'badaddr', size: 1, mtime: 1 } }], {});
+  await docs.flagBad('Documents', [{ path: 'r.jpg', id: 'badaddr' }]);
+  const got = await docs.state('Documents');
+  return {
+    ok: got.flagged['r.jpg'] === 'badaddr' && !got.state['r.jpg'].bad,
+    detail: { flagged: got.flagged },
+  };
+});
+
+/* ---- the journal, unchanged rules ------------------------------------------------------------ */
+
 scenario('a-huge-base-persists', async () => {
-  const { world, store } = boot();
-  const base = manifest(15790);
-  await store.save('Documents', { manifest: {}, base });
-  const back = await store.base('Documents');
+  const { docs } = boot();
+  const base = {};
+  for(const r of records(15790)) base[r.path] = r.entry;
+  await docs.saveIndex('Documents', base);
+  const back = await docs.index('Documents');
   return {
-    ok: Object.keys(back).length === 15790,
-    detail: { approxBytes: JSON.stringify(base).length, readBack: Object.keys(back).length,
-              wentToLocalStorage: world.ls.size },
+    ok: Object.keys(back).length === Object.keys(base).length,
+    detail: { wrote: Object.keys(base).length, readBack: Object.keys(back).length },
   };
 });
 
-/* And a base that CANNOT be written must say so. The old try/catch made a quota failure look
- * identical to a successful save; the only symptom was the next sweep starting from file one. */
 scenario('a-base-that-cannot-be-stored-throws', async () => {
-  const { world, store } = boot();
+  const { world, docs } = boot();
   world.idbBroken = true;
   let threw = '';
-  try{ await store.save('Documents', { manifest: {}, base: manifest(3) }); }
+  try{ await docs.saveIndex('Documents', { 'a.txt': { v: 1 } }); }
   catch(e){ threw = (e && e.message) || String(e); }
   return { ok: !!threw, detail: { threw } };
 });
 
-/* A device that already has an agreement in localStorage keeps it — otherwise everyone's first
- * sweep after this change re-uploads their whole folder once, for nothing. */
 scenario('an-existing-localstorage-base-is-still-read', async () => {
-  const { world, store } = boot();
-  const old = manifest(20);
+  const { world, docs } = boot();
+  const old = {};
+  for(const r of records(20)) old[r.path] = r.entry;
   world.ls.set('pc_sync_base_Documents', JSON.stringify(old));
-  const back = await store.base('Documents');
+  const back = await docs.index('Documents');
   return { ok: Object.keys(back).length === 20, detail: { readBack: Object.keys(back).length } };
 });
 
-/* Small folders stay INLINE: the blob path costs an upload and a fetch, most folders never need it,
- * and staying inline is what keeps every manifest written before this change readable. */
-/* The manifest cache must not hand the same object to two callers: a sweep mutates what it gets. */
-scenario('a-cached-manifest-is-not-shared-between-callers', async () => {
-  const { store } = boot();
-  const paths = manifest(2000);
-  await store.save('Documents', { manifest: paths, base: {} });
-  const a = await store.manifest('Documents');
-  a['Pictures/2019/Holiday/DSC_00000.jpg'].size = 1;         // a caller mutating its copy
-  const b = await store.manifest('Documents');               // served from the cache
-  return {
-    ok: b['Pictures/2019/Holiday/DSC_00000.jpg'].size !== 1,
-    detail: { mutatedLeakedIntoNextRead: b['Pictures/2019/Holiday/DSC_00000.jpg'].size === 1 },
-  };
-});
-
-scenario('a-small-folder-stays-inline', async () => {
-  const { world, store } = boot();
-  const paths = manifest(50);
-  await store.save('Notes', { manifest: paths, base: {} });
-  const doc = world.docs.get('Notes') || {};
-  const back = await store.manifest('Notes');
-  return {
-    ok: !doc.pathsSha && typeof doc.sealed === 'string' && Object.keys(back).length === 50,
-    detail: { bytes: JSON.stringify(paths).length, storedAs: doc.pathsSha ? 'blob' : 'inline' },
-  };
-});
-
-/* The count the server's collapse guard reads must stay truthful when the paths are in a blob — it
- * is the ONLY thing the server can see, and it is what stands between a bug and a wiped folder. */
-scenario('the-collapse-guard-still-gets-a-count', async () => {
-  const { world, docs } = boot();
-  const paths = manifest(2000);
-  paths['Pictures/gone.jpg'] = { deletedAt: 1786000000000 };     // a tombstone is not a live file
-  await docs.publish('Documents', paths);
-  // Stored under `<pair>:<device>` now: one document per device, and only that device writes it.
-  let doc = {};
-  for(const [k, d] of world.docs) if(k.indexOf('Documents:') === 0) doc = d;
-  return { ok: doc.n === 2000, detail: { n: doc.n, entries: Object.keys(paths).length } };
-});
-
-/* THE COLLAPSE GUARD IS GONE, AND ITS ABSENCE IS THE POINT.
- *
- * It existed because one document had many writers: a device with a stale copy could write it back
- * and erase everything another device had added, and the server refusing a sharp shrink was the only
- * thing standing between that and an emptied folder. A document with ONE writer for ever cannot have
- * that problem — a shrink in this device's own record is this device's own doing, and the other
- * devices' records are untouched by it.
- *
- * What replaces it is the self-heal below: our view is rebuilt from our journal on every sweep, so
- * even a document that is somehow emptied comes back without re-uploading a byte. */
-scenario('our own document is restored from the journal, not from the network', async () => {
-  const { world, docs } = boot();
-  const paths = manifest(40);
-  await docs.publish('Documents', paths);
-  let key = null;
-  for(const [k] of world.docs) if(k.indexOf('Documents:') === 0) key = k;
-  world.docs.delete(key);
-  await docs.publish('Documents', paths);              // the sweep republishes what it knows
-  const back = world.docs.get(key);
-  return { ok: !!back && back.n === 40, detail: { restored: !!back, n: back && back.n } };
-});
-
-scenario('each-save-points-at-a-fresh-blob', async () => {
-  const { world, store } = boot();
-  const paths = manifest(2000);
-  await store.save('Documents', { manifest: paths, base: {} });
-  const first = (world.docs.get('Documents') || {}).pathsSha;
-  paths['Pictures/2019/Holiday/NEW.jpg'] = { sha: 'b'.repeat(64), size: 1, mtime: 2, device: 'x' };
-  await store.save('Documents', { manifest: paths, base: {} });
-  const second = (world.docs.get('Documents') || {}).pathsSha;
-  return {
-    ok: !!first && !!second && first !== second && world.blobs.size === 2,
-    detail: { first, second, blobs: world.blobs.size },
-  };
-});
-
 (async () => {
-  const rows = [];
+  const out = [];
+  let bad = 0;
   for(const s of scenarios){
-    try{ const r = await s.fn(); rows.push({ name: s.name, ok: !!r.ok, detail: r.detail }); }
-    catch(e){ rows.push({ name: s.name, ok: false, detail: { threw: (e && e.stack) || String(e) } }); }
+    let row;
+    try{ row = Object.assign({ name: s.name }, await s.fn()); }
+    catch(e){ row = { name: s.name, ok: false, detail: { threw: String((e && e.stack) || e) } }; }
+    if(!row.ok) bad++;
+    out.push(row);
   }
-  process.stdout.write(JSON.stringify(rows, null, 1));
-  process.exit(rows.every(r => r.ok) ? 0 : 1);
+  process.stdout.write(JSON.stringify(out, null, 1));
+  process.exit(bad ? 1 : 0);
 })();

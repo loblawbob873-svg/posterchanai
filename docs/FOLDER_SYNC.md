@@ -31,47 +31,34 @@ each one synced happily with itself and cross-device sync could not work at all.
 `tests/client/exec_sim.js` now runs two and three independent devices against one folder so that
 cannot come back silently.
 
-## Every device publishes its own record
+## One versioned record per file
 
-There is **no shared document**. Each device writes exactly one, and nothing else ever writes it:
+The folder's shared state is **one record per file** — `pcai:fs:<pair>:<sha256(path)>` on this
+node's local relay — and the server refuses any write that is not **strictly newer** (a higher `v`)
+than the record it replaces, decided under a lock. That is the whole design, and it is what makes
+the failures of the two earlier engines impossible rather than guarded:
 
-```
-pcai:sync:Documents:laptop-a1b2     ← only the laptop writes this
-pcai:sync:Documents:phone-c3d4      ← only the phone writes this
-pcai:sync:Documents:tablet-9f7e     ← only the tablet writes this
-```
+- **No read can empty the folder.** There is no document whose absence, emptiness or staleness
+  describes more than one file. A record that fails to load is one file the sweep leaves alone —
+  in the safe direction, which is *doing nothing*.
+- **A deletion is a record, never an absence.** Deleting publishes a tombstone at a higher
+  version, carrying the file's last address so any device can restore it account-wide. A path with
+  no record is a path nobody has said anything about.
+- **Two devices cannot silently overwrite each other.** Every write goes through the server's
+  per-file compare-and-swap: the loser of a race is *refused*, learns immediately, and resolves the
+  divergence as a conflict on its next sweep — both copies survive.
+- **A device's past life cannot haunt it.** Removing a folder for the account bumps its **era**
+  (one integer): every existing record is instantly of a dead world, and a device that comes back
+  with a journal from that world clears it and rejoins by content. Re-adding a folder cannot mint
+  ghost conflicts.
+- **The server backstops mass deletion.** A batch that tombstones more than 100 files is refused
+  outright unless it came through the deliberate-delete confirmation — a second, server-side copy
+  of the client's own guard, for the client that has gone wrong.
 
-The folder is the **merge** of them: per path, the entry with the highest version wins, and every
-device computes the same answer from the same records. Two consequences, and they are the reason the
-feature was rebuilt this way:
-
-* **Two devices syncing at the same time cannot lose each other's work.** The previous shape was one
-  document that every device read, edited and wrote back, which is last-writer-wins on the record of
-  whether your files exist. It needed a merge on save, a re-read per checkpoint and a server-side
-  guard against sudden shrinkage, and it still lost writes.
-* **No single record can empty the folder.** One that is missing, unreadable or simply wrong is one
-  device's opinion. The others still assert their files, and a deletion requires a positive
-  *tombstone* published by the device that made it — **absence is never a deletion**. Under the old
-  shape those were the same thing, which is how a document that failed to load once read as "every
-  file you have was deleted" and moved a 6,331-file Pictures folder into `.pc-trash`.
-
-Each entry carries a **version** (`v`) that a device raises when it publishes a change to that path,
-and the device that wrote it. Two devices publishing the same version with different content is
-exactly what a concurrent edit looks like: both copies are kept, the winner takes the name and the
-other is written beside it under a conflict name — and every device works that out identically,
-without anybody coordinating. This is what removes the clock guesswork the old engine needed; "was
-the deletion later than this copy" cannot be asked of two machines' clocks and reliably answered, and
-the times it was answered wrong it either emptied a folder or refilled one.
-
-Entries written before versions existed compare by content instead, so a folder that predates this
-keeps working and upgrades itself one publish at a time.
-
-Alongside the shared records, each device keeps a private **journal**: which version of each path it
-has applied, and what the file looked like on disk when it did. That is the only thing a later scan
-is ever compared against — comparing a local file to a *published* entry reports every downloaded
-file as edited for ever, because a downloaded file gets whatever last-modified the platform hands it
-(Android's SAF assigns its own). It is also what makes a sweep resumable, and what makes a restored
-backup harmless: if the bytes still hash the same, moving the timestamps is not an edit.
+Each device also keeps a **journal** (what it applied, and what each file looked like on disk when
+it did) — the third input the reconcile needs to tell "changed here" from "changed there". Reads
+are **cache plus delta**: the record set lives in IndexedDB and each sweep asks only for records
+written since its last look, so a 12,000-file folder costs one full read ever.
 
 ## What is encrypted, and what this node can see
 
@@ -139,46 +126,14 @@ These are the rules the engine will not bend, each one a way to lose a file:
   for ever". The server's collapse guard cannot cover this — a mass *local* delete writes no
   manifest at all, it only advances `base`.
 
-## Size, and why a big folder used to be unsyncable
+## Size
 
-A folder of 15790 files uploaded everything, then resynced from the first file — over and over. Three
-separate ceilings, all of them silent, all now handled:
-
-- **The manifest.** NIP-44 refuses a plaintext over 65535 bytes and a manifest entry measures ~174,
-  so the document held about **376 files**. Past that `save()` threw at the very last step of every
-  sweep: the uploads had happened, the manifest was never stored, the agreement was never written,
-  and the next sweep read the whole folder as new. Everything except the final step worked, which is
-  precisely why it looked like a working sync. Past 45 KB the paths now move into an encrypted
-  Blossom blob and the document keeps a pointer — the same thing the files index does, for the same
-  reason. `sealed` is still set, to a deliberately undecryptable marker, so a client older than this
-  change **fails** instead of reading the document as an empty folder and trashing everything in it.
-- **The agreement.** `base` is the same size as the manifest (~2.6 MB for that folder) and lived in
-  localStorage under a `catch` that swallowed the quota error. It is in IndexedDB now, and a write
-  that fails is reported rather than swallowed — a base that does not persist is the same infinite
-  resync from a different cause.
-- **Interruption.** `base` advanced per file in memory but was written once, at the end, so a sweep
-  that never reached the end recorded nothing and the next began at file one. On a big folder that is
-  not a slow resume, it is a folder that can never finish on a machine anyone ever closes. Progress
-  is checkpointed during the sweep now, at most 20 times per sweep however large the folder is —
-  each checkpoint rewrites the whole manifest, so they are bounded on purpose.
-- **Big files are chunked, on every platform.** Past 16 MB a file goes up in pieces rather than
-  whole, because the whole-file path holds the plaintext, the ciphertext and the upload body at once
-  — three to four times the file — and that killed the desktop renderer and the Android WebView
-  alike. Each chunk is content-addressed and checked before it is sent, so an interrupted transfer
-  resumes, appending to a file re-sends only the new part, and no single request exceeds a chunk
-  (which is also what makes this work behind a proxy that refuses bodies over ~95 MB).
-- **Superseded manifest blobs.** Each save past that threshold uploads a whole new encrypted blob, so
-  a long first sync leaves one per checkpoint. The document carries a one-deep chain and the server
-  lets go of the generation behind it once the replacement is safely stored — ownership-checked, so
-  bytes another account also references are never touched, and then on a week's TTL rather than
-  deleted outright, so letting go of the wrong thing stays recoverable. (`keep` blobs are exempt from
-  the admin's blanket age TTL, which is what stops turning that setting on from eating an encrypted
-  drive; an expiry stamped on one proven-unreferenced blob is honoured.)
-- **A deliberate mass delete.** Deleting most of a folder trips the server's collapse guard, and a
-  refused save meant the agreement was never written and every later sweep proposed the same delete
-  and was refused again — the delete could never land. The sweep knows how many paths it removed, so
-  when that accounts for the shrink it re-sends with `force`; when it does not, it asks, and honours
-  a no.
+The old per-document ceiling (NIP-44 refuses a plaintext over 65535 bytes — about 376 files per
+document) is gone by construction: a record is one file's metadata. The one place the seal can
+still bind — a single file whose chunk list outgrows it (an Android-chunked file past ~4 GB) —
+moves the chunk list into its own encrypted blob and the record carries the pointer (`ps`).
+Transfers are unchanged: content-addressed encrypted blobs, chunked past one platform chunk,
+`.part` files verified then renamed, four small files in flight at once, big ones one at a time.
 
 ## If a device loses its mapping
 

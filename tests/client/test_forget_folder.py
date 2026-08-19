@@ -50,7 +50,7 @@ def test_forget_wipes_the_document_rather_than_tombstoning_it():
 
 def test_it_does_nothing_when_there_is_nothing_to_forget():
     body = _fn(_src(SYNC), "forget")
-    assert "if(!all.length && !devices) return" in body, "an empty record is rewritten for no reason"
+    assert "if(readOk && !all.length) return" in body, "an empty record is rewritten for no reason"
 
 
 def test_the_button_exists_and_says_what_it_does_not_do():

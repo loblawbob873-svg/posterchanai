@@ -93,7 +93,7 @@ class TestFsBridge(unittest.TestCase):
             if rel in base and "mtime" not in base[rel]:
                 st = os.stat(full)
                 base[rel] = dict(base[rel], size=st.st_size, mtime=int(st.st_mtime * 1000))
-        eng = os.path.join(REPO, "static", "js", "client", "syncengine.js")
+        eng = os.path.join(REPO, "static", "js", "client", "syncstate.js")
         exe = os.path.join(REPO, "static", "js", "client", "syncexec.js")
         fold = os.path.join(REPO, "static", "js", "client", "foldersync.js")
         # The journal records what the file looked like when this device applied — the real stat,
@@ -104,17 +104,30 @@ class TestFsBridge(unittest.TestCase):
             local = {"size": e.get("size"), "mtime": e.get("mtime")}
             if e.get("csum"):
                 local["csum"] = e["csum"]
-            index[rel] = dict(e, local=local)
+            index[rel] = dict(e, v=1, local=local)
+        # The record set, with the versions the fixtures predate: a record whose content matches
+        # the journal shares its version, one that differs is one ahead — exactly what the server's
+        # counter would have produced. Live records carry a storage address, as real ones must.
+        state = {}
+        for rel, e in manifest.items():
+            b0 = base.get(rel)
+            same = (b0 is not None and e.get("csum") == b0.get("csum")
+                    and bool(e.get("deletedAt")) == bool(b0.get("deletedAt")))
+            se = dict(e, v=(1 if same else 2), by=e.get("device", "other"))
+            if not se.get("deletedAt") and "sha" not in se:
+                se["sha"] = "b_" + str(se.get("csum", rel))
+            state[rel] = se
         js = textwrap.dedent("""
             const B = require(%s);
             require(%s); require(%s);
             const X = require(%s);
             B.init({ roots: [{id:'r1', dir: %s}], save(){} });
-            const view = %s, index = %s;
+            const state = %s, index = %s;
             const io = {
               published: [],
-              async views(){ return { views: { other: JSON.parse(JSON.stringify(view)) }, missing: 0 }; },
-              async publish(k, mine){ this.published.push(mine); },
+              async state(){ return { state: JSON.parse(JSON.stringify(state)), flagged: {} }; },
+              async putState(k, recs){ for(const r of recs) this.published.push(r);
+                return { ok: recs.map(r => r.path), stale: [], failed: [] }; },
               async index(){ return JSON.parse(JSON.stringify(index)); },
               async saveIndex(){},
               async getBlob(){ return new Uint8Array([1]); },
@@ -135,7 +148,7 @@ class TestFsBridge(unittest.TestCase):
               }));
             })().catch(e => { process.stderr.write(String(e && e.stack || e)); process.exit(1); });
         """) % (json.dumps(MOD), json.dumps(fold), json.dumps(eng), json.dumps(exe),
-                json.dumps(self.root), json.dumps(manifest), json.dumps(index),
+                json.dumps(self.root), json.dumps(state), json.dumps(index),
                 json.dumps(excludes or []),
                 "true" if force_resurrect else "false",
                 "true" if force_resurrect else "false")

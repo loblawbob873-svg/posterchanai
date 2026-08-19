@@ -122,8 +122,11 @@ class BulkSelectTests(unittest.TestCase):
             cls.sync = fh.read()
 
     def test_the_tool_exists_and_selection_is_keyed_on_full_paths(self):
-        self.assertIn("ss-toggle", self.app)
-        self.assertIn("Select all shown", self.app)
+        # The select bar was unified with the drive's grammar (ss-all/ss-none/ss-count/ss-del) —
+        # "why is the select button inconsistent with the entire blossom UI" — so the old
+        # ss-toggle name is gone on purpose.
+        self.assertIn("ss-all", self.app)
+        self.assertIn("ss-none", self.app)
         self.assertIn("_syncSel = new Set()", self.app)
 
     def test_it_deletes_through_one_publish_with_one_honest_confirmation(self):

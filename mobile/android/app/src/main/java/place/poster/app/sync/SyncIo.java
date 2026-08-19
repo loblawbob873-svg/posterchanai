@@ -38,6 +38,9 @@ public final class SyncIo {
     /** The node, and the encrypted store behind it. */
     public interface Net {
         Map<String, Object> views(String folder) throws Exception;
+        Map<String, Object> state(String pair, Long era, Long since) throws Exception;
+        Map<String, Object> putState(String pair, long era, java.util.List<Object> put,
+                                     boolean confirmed) throws Exception;
         Map<String, Object> manifest(String folder, Map<String, Object> doc, boolean force,
                                      String device) throws Exception;
         byte[] getBlob(String sha) throws Exception;

@@ -1,9 +1,10 @@
-/* THE NEW SYNC, END TO END — real devices, real bytes, every failure that has been reported.
+/* THE PER-FILE SYNC, END TO END — real devices, real bytes, every failure that has been reported.
  *
- * This drives the shipped syncengine.js + syncexec.js through a fake network and a fake filesystem
- * that behave like the real ones: content-addressed blobs, one document per device that only that
- * device may write, a journal in "IndexedDB", and files whose bytes are checked at every step. A
- * wrong offset, a dropped chunk or a truncation changes a hash and fails the run.
+ * This drives the shipped syncstate.js + syncexec.js through a fake network and a fake filesystem
+ * that behave like the real ones: content-addressed blobs, ONE VERSIONED RECORD PER FILE behind the
+ * server's compare-and-swap (the sim's store enforces the same CAS and era rules the real endpoint
+ * does), a journal in "IndexedDB", and files whose bytes are checked at every step. A wrong offset,
+ * a dropped chunk or a truncation changes a hash and fails the run.
  *
  * The scenarios are named after the reports that produced them.
  *
@@ -14,7 +15,7 @@ const crypto = require('crypto');
 const fs_ = require('fs');
 const path = require('path');
 require(path.join(__dirname, '..', '..', 'static', 'js', 'client', 'foldersync.js'));
-require(path.join(__dirname, '..', '..', 'static', 'js', 'client', 'syncengine.js'));
+require(path.join(__dirname, '..', '..', 'static', 'js', 'client', 'syncstate.js'));
 const EXEC = require(path.join(__dirname, '..', '..', 'static', 'js', 'client', 'syncexec.js'));
 
 const MB = 1024 * 1024;
@@ -87,22 +88,54 @@ function realChunker(sky){
 function cloud(){
   const blobs = new Map();               // plaintext blobs (the whole-file path)
   const ciphers = new Map();             // what the SHIPPED chunker stores: encrypted chunks
-  const docs = {};                       // device -> {path: entry}
-  return {
-    docs,
+  const recs = {};                       // path -> {v, by, era, t, bad, entry} — the server's store
+  let era = 0;
+  const sky = {
+    recs,
+    era: () => era,
+    bumpEra(){ era++; },                 // what forgetAll does: one write, the old world dies
+    /* The record set the CURRENT era can see, as a folder — what io.state hands the executor. */
+    folder(){
+      const out = {};
+      for(const p in recs){
+        const r = recs[p];
+        if(r.era !== era) continue;
+        const e = JSON.parse(JSON.stringify(r.entry));
+        e.v = r.v; e.by = r.by;
+        if(r.t && !e.deletedAt) e.deletedAt = 1;
+        out[p] = e;
+      }
+      return out;
+    },
+    entry(p){ const f = sky.folder(); return f[p]; },
+    liveCount(){ const f = sky.folder(); let n = 0;
+                 for(const p in f) if(!f[p].deletedAt) n++; return n; },
+    injectRec(p, entry){ recs[p] = { v: entry.v || 1, by: entry.by || 'x', era,
+                                     t: entry.deletedAt ? 1 : 0,
+                                     entry: JSON.parse(JSON.stringify(entry)) }; },
+    dropRec(p){ delete recs[p]; },
+    /* THE CAS, exactly as the server enforces it: strictly newer or refused. */
+    putRec(p, entry){
+      const cur = recs[p];
+      if(cur && cur.era === era && cur.v >= (entry.v || 0)) return 'stale';
+      recs[p] = { v: entry.v || 1, by: entry.by || '?', era, t: entry.deletedAt ? 1 : 0,
+                  entry: JSON.parse(JSON.stringify(entry)) };
+      return 'ok';
+    },
+    flagRec(p, id){ const r = recs[p]; if(r && r.era === era && !r.t) r.bad = String(id); },
     putCipher(h, b){ ciphers.set(h, Buffer.from(b)); },
     getCipher(h){ return ciphers.get(h); },
     hasCipher(h){ return ciphers.has(h); },
     corruptCipher(h){ ciphers.set(h, Buffer.from('rubbish that is long enough to look like a chunk')); },
-    down: new Set(),                     // devices whose document cannot be read right now
     put(b){ const h = sha(b); blobs.set(h, Buffer.from(b)); return h; },
     putRaw(h, b){ blobs.set(h, Buffer.from(b)); },
     get(h){ return blobs.get(h); },
     has(h){ return blobs.has(h); },
     corrupt(h){ blobs.set(h, Buffer.from('rubbish')); },
     forget(h){ blobs.delete(h); },
-    wipe(){ blobs.clear(); for(const k in docs) delete docs[k]; },
+    wipe(){ blobs.clear(); for(const k in recs) delete recs[k]; },
   };
+  return sky;
 }
 
 function device(name, sky, opts){
@@ -167,20 +200,34 @@ function device(name, sky, opts){
   const chunker = realChunker(sky);
   chunker.CHUNK = CH;
   const io = {
-    async views(){
-      if(o.viewsFail) throw new Error('the server did not answer');
-      const views = {}; let missing = 0;
-      for(const dev in sky.docs){
-        if(sky.down.has(dev)){ missing++; continue; }
-        views[dev] = JSON.parse(JSON.stringify(sky.docs[dev]));
+    /* The transport contract, as sync.js implements it: throws when the server cannot be asked; on
+     * an era shift it voids this device's journal BEFORE the executor reads it (the journal answers
+     * for a dead world). `st.era` plays the state cache's role. */
+    async state(){
+      if(o.stateFail) throw new Error('the server did not answer');
+      if(st.era !== undefined && st.era !== sky.era()) st.index = {};
+      st.era = sky.era();
+      const state = sky.folder(), flagged = {};
+      for(const p in sky.recs){
+        const r = sky.recs[p];
+        if(r.era === sky.era() && r.bad && !r.t) flagged[p] = r.bad;
       }
-      missing += o.extraMissing || 0;
-      return { views, missing };
+      return { state, flagged, undecryptable: 0 };
     },
-    async publish(key, entries){
+    async putState(key, batch, o2){
       st.publishes++;
-      sky.docs[name] = JSON.parse(JSON.stringify(entries));
+      const out = { ok: [], stale: [], failed: [] };
+      let tombs = 0;
+      for(const r of batch) if(r.entry && r.entry.deletedAt) tombs++;
+      if(tombs > 100 && !(o2 && o2.confirmed))
+        throw new Error('refused: ' + tombs + ' tombstones need the deliberate delete flow');
+      for(const r of batch){
+        const res = sky.putRec(r.path, Object.assign({ by: name }, r.entry));
+        (res === 'ok' ? out.ok : out.stale).push(r.path);
+      }
+      return out;
     },
+    async flagBad(key, items){ for(const it of items || []) sky.flagRec(it.path, it.id); },
     index: async () => { if(o.indexFails) throw new Error('IndexedDB: UnknownError');
                          return JSON.parse(JSON.stringify(st.index)); },
     saveIndex: async (k, idx) => { st.saves++; st.index = JSON.parse(JSON.stringify(idx)); },
@@ -189,7 +236,9 @@ function device(name, sky, opts){
       // What the real path holds at once: the plaintext, the ciphertext and the upload body.
       hold(b.length * 3);
       await new Promise(r => setTimeout(r, 2));
+      const existed = sky.has(sha(Buffer.from(b)));
       const out = { sha: sky.put(Buffer.from(b)) };
+      if(existed) out.existed = true;
       hold(-b.length * 3);
       return out;
     },
@@ -307,19 +356,21 @@ scenario('three hosts, all writing, converge on the same folder', async (t) => {
   t.eq(identical(round3[0].disk, round3[2].disk), null, 'the laptop and the tablet disagree');
 });
 
-scenario('a device that cannot be read deletes nothing — "SENDING EVERYTHING TO TRASH"', async (t) => {
+scenario('a server that cannot be asked changes NOTHING — "SENDING EVERYTHING TO TRASH"', async (t) => {
   const sky = cloud();
   const A = device('laptop', sky, { disk: photos(200) });
   await A.sweep();
   const B = device('phone', sky, {});
   await B.sweep();
-  // The laptop's document goes unreadable. Its 200 files must not vanish from the phone.
-  sky.down.add('laptop');
-  const B2 = device('phone', sky, { disk: B.disk, index: B.st.index, extraMissing: 0 });
-  const r = await B2.sweep();
+  /* The record set cannot be read. Under per-file records there is no partial view to misread —
+   * the transport throws, and the sweep must change nothing at all. */
+  const B2 = device('phone', sky, { disk: B.disk, index: B.st.index, stateFail: true });
+  let err = null;
+  try{ await B2.sweep(); }catch(e){ err = e; }
+  t.ok(!!err, 'a sweep with no record set reported success');
+  t.ok(/nothing has been changed/.test(String(err && err.message)), 'it does not say it was safe');
   t.eq(B2.st.trashed.length, 0, 'it trashed ' + B2.st.trashed.length + ' files');
   t.eq(Object.keys(B2.disk).length, 200, 'files went missing');
-  t.ok(r.missingViews >= 1, 'the unreadable device was not counted');
 });
 
 scenario('the store was emptied by hand — nothing is trashed without a person', async (t) => {
@@ -332,6 +383,13 @@ scenario('the store was emptied by hand — nothing is trashed without a person'
   const r = await A2.sweep();
   t.eq(A2.st.trashed.length, 0, 'an emptied store trashed ' + A2.st.trashed.length + ' files');
   t.eq(identical(A2.disk, kept), null, 'the files on disk changed');
+  /* …and the holder PUTS THE FOLDER BACK: a record the store lost, for a file this journal knows
+   * it applied and this disk still holds, is re-published — bytes included, since the wipe took
+   * those too. Absence used to be carefully ignored; per-file, restoring one record risks nothing. */
+  t.eq(r.uploaded.length, 200, 'the holder restored ' + r.uploaded.length + ' of 200 lost records');
+  const C = device('tablet', sky, {});
+  await C.sweep();
+  t.eq(identical(A2.disk, C.disk), null, 'a joining device could not fetch the restored folder');
 });
 
 scenario('the folder handle is gone — nobody is told the files were deleted', async (t) => {
@@ -388,8 +446,8 @@ scenario('corrupt bytes are refused, never written over a good file', async (t) 
   const sky = cloud();
   const A = device('laptop', sky, { disk: photos(20) });
   await A.sweep();
-  const victim = Object.keys(sky.docs.laptop)[0];
-  sky.corrupt(sky.docs.laptop[victim].sha);
+  const victim = Object.keys(sky.folder())[0];
+  sky.corrupt(sky.entry(victim).sha);
   const B = device('phone', sky, {});
   const r = await B.sweep();
   t.ok(!B.disk[victim], 'the corrupt file was written to disk');
@@ -403,7 +461,7 @@ scenario('a corrupt large file is refused too — the chunked path', async (t) =
   const sky = cloud();
   const A = device('laptop', sky, { disk: { 'DCIM/clip.mp4': video(9, 3) }, chunk: 4 * MB });
   await A.sweep();
-  const chunks = sky.docs.laptop['DCIM/clip.mp4'].chunks;
+  const chunks = sky.entry('DCIM/clip.mp4').chunks;
   sky.corruptCipher(chunks[1]);
   const B = device('phone', sky, { chunk: 4 * MB });
   const r = await B.sweep();
@@ -420,7 +478,7 @@ scenario('the consistency check finds corruption, gaps and strays without changi
   A.disk[names[1]] = Buffer.alloc(A.disk[names[1]].length, 7);   // right size, wrong bytes
   delete A.disk[names[2]];                                        // missing here
   A.disk['DCIM/stray.jpg'] = Buffer.from('never synced');
-  sky.forget(sky.docs.laptop[names[3]].sha);                      // the store lost the bytes
+  sky.forget(sky.entry(names[3]).sha);                            // the store lost the bytes
   const before = Object.keys(A.disk).length;
   const v = await A.verify();
   t.eq(v.corrupt.length, 2, 'found ' + v.corrupt.length + ' corrupt files, expected 2');
@@ -465,7 +523,7 @@ scenario('a restored backup does not refill everybody else\'s folder', async (t)
   const B2 = device('phone', sky, { disk: B.disk, index: B.st.index, mtimes: mt });
   const r = await B2.sweep();
   t.ok(!!r.refused.find(x => x.kind === 'massResurrect'), 'the resurrection was not refused');
-  const live = Object.keys(sky.docs.laptop).filter(p => !sky.docs.laptop[p].deletedAt).length;
+  const live = sky.liveCount();
   t.eq(live, 140, 'the folder came back to life: ' + live + ' live, expected 140');
 });
 
@@ -508,9 +566,11 @@ scenario('a copy that fails its checksum is not fetched again for ever', async (
   const sky = cloud();
   const A = device('laptop', sky, { disk: photos(10) });
   await A.sweep();
-  const victim = Object.keys(sky.docs.laptop)[0];
-  const id = sky.docs.laptop[victim].csum;
-  sky.corrupt(sky.docs.laptop[victim].sha);
+  const victim = Object.keys(sky.folder())[0];
+  /* Remembered by STORAGE ADDRESS, never csum: the holder's repair re-sends the same bytes under a
+   * NEW address (fresh ciphertext), and a csum key would refuse the repair for ever. */
+  const id = sky.entry(victim).sha;
+  sky.corrupt(sky.entry(victim).sha);
   const B = device('phone', sky, {});
   const r1 = await B.sweep();
   t.ok(!!(r1.badFetch && r1.badFetch[victim]), 'the failed copy was not remembered');
@@ -545,19 +605,21 @@ scenario('the preview and the sweep agree about what is outstanding', async (t) 
        'Check offered ' + dry.plan.fetch.length + ' and the sweep did ' + real.downloaded.length);
 });
 
-scenario('a device whose own document is lost puts it back from its journal', async (t) => {
+scenario('records the folder lost are put back by whoever holds the files', async (t) => {
   const sky = cloud();
   const A = device('laptop', sky, { disk: photos(30) });
   await A.sweep();
   const B = device('phone', sky, {});
   await B.sweep();
-  // The laptop's document is wiped — a bad write, a cleared record, anything. Its journal is intact.
-  delete sky.docs.laptop;
+  // Ten records vanish — a bad write, a cleared row, anything. The bytes and the journal are intact.
+  const gone = Object.keys(sky.folder()).slice(0, 10);
+  for(const p of gone) sky.dropRec(p);
   const A2 = device('laptop', sky, { disk: A.disk, index: A.st.index });
   const r = await A2.sweep();
-  t.ok(!!sky.docs.laptop, 'the lost document was not restored');
-  t.eq(Object.keys(sky.docs.laptop).length, 30, 'it restored ' + Object.keys(sky.docs.laptop || {}).length + ' of 30');
-  t.eq(r.uploaded.length, 0, 'it re-uploaded ' + r.uploaded.length + ' files to do it');
+  t.eq(Object.keys(sky.folder()).length, 30, 'it restored ' + Object.keys(sky.folder()).length + ' of 30 records');
+  // The bytes were still in the store, so the uploads dedup to record writes.
+  t.eq(r.uploaded.length, 10, 'it re-published ' + r.uploaded.length + ' of the 10 lost records');
+  t.eq(r.alreadyStored, 10, 'it moved bytes the store already had');
   t.eq(A2.st.trashed.length, 0, 'it trashed something');
   // …and a joining device can still get everything.
   const C = device('tablet', sky, {});
@@ -577,7 +639,7 @@ scenario('a short read is refused, not stored under a checksum that certifies it
   const rep = await A.sweep();
   t.eq(rep.failed.length, 1, 'a short read was accepted (' + rep.failed.length + ' failures)');
   t.ok(/bytes of/.test(rep.failed[0].error), 'reported as something else: ' + rep.failed[0].error);
-  t.ok(!sky.docs.laptop[victim], 'the truncated file was published anyway');
+  t.ok(!sky.entry(victim), 'the truncated file was published anyway');
   t.eq(rep.uploaded.length, 5, 'the other five files did not upload');
 });
 
@@ -666,7 +728,7 @@ scenario('a conflict whose incoming copy never arrives leaves the local file whe
   const A2 = device('laptop', sky, { disk: A.disk, index: A.st.index, mtimes: { [p]: 5000 } });
   await A2.sweep();
   // …and the store loses the incoming copy before the phone can fetch it.
-  sky.forget(sky.docs.laptop[p].sha);
+  sky.forget(sky.entry(p).sha);
   const B2 = device('phone', sky, { disk: B.disk, index: B.st.index, mtimes: { [p]: 5000 } });
   const r = await B2.sweep();
   /* "Can't be fetched", not "failed": a 404 is a fact about the STORE, and labelling it a failure
@@ -688,7 +750,7 @@ scenario('a record that names no bytes is reported, never chased for ever', asyn
   // A live entry with neither a sha nor a chunk list: it says the file exists and not where it is.
   // Reported from a real folder — "Files → Blossom says this file has no stored copy" — and every
   // device planned a download, fetched nothing and failed, on every sweep.
-  sky.docs.laptop['DCIM/orphan.mp4'] = { v: 1, by: 'laptop', size: 400, mtime: 1000 };
+  sky.injectRec('DCIM/orphan.mp4', { v: 1, by: 'laptop', size: 400, mtime: 1000 });
   const B = device('phone', sky, {});
   const r = await B.sweep();
   t.eq(r.failed.length, 0, 'it tried to fetch a file with no address: ' + JSON.stringify(r.failed));
@@ -709,7 +771,7 @@ scenario('an upload that finishes without an address is refused, not published',
   t.eq(r.uploaded.length, 0, 'it recorded a file nothing can fetch');
   t.eq(r.failed.length, 2, 'the failure was not reported: ' + JSON.stringify(r.failed));
   t.ok(/without an address/.test(r.failed[0].error), r.failed[0].error);
-  t.ok(!Object.keys(sky.docs.laptop || {}).length, 'an addressless entry was published anyway');
+  t.ok(!Object.keys(sky.folder()).length, 'an addressless entry was published anyway');
 });
 
 scenario('a sweep that loses the network resumes rather than starting over', async (t) => {
@@ -783,7 +845,7 @@ scenario('a conflict against bytes that do not exist does not multiply every swe
   }
   const A2 = device('laptop', sky, { disk: A.disk, index: A.st.index, mtimes: mtA });
   await A2.sweep();
-  for(const p of paths) sky.forget(sky.docs.laptop[p].sha);     // the store loses the incoming bytes
+  for(const p of paths) sky.forget(sky.entry(p).sha);           // the store loses the incoming bytes
 
   const B2 = device('phone', sky, { disk: B.disk, index: B.st.index, mtimes: mtB });
   const r1 = await B2.sweep();
@@ -810,7 +872,7 @@ scenario('a 404 is forgotten in time, and by a pressed button', async (t) => {
   const A = device('laptop', sky, { disk: photos(4) });
   await A.sweep();
   const victim = Object.keys(A.disk)[0];
-  const sha = sky.docs.laptop[victim].sha;
+  const sha = sky.entry(victim).sha;
   const bytes = sky.get(sha);
   sky.forget(sha);
 
@@ -839,7 +901,7 @@ scenario('a checksum failure is NOT forgotten with time', async (t) => {
   const A = device('laptop', sky, { disk: photos(3) });
   await A.sweep();
   const victim = Object.keys(A.disk)[0];
-  sky.corrupt(sky.docs.laptop[victim].sha);
+  sky.corrupt(sky.entry(victim).sha);
   const B = device('phone', sky, {});
   const r1 = await B.sweep();
   t.eq(r1.badFetch[victim].why, 'checksum', 'a corrupt copy was recorded as something that expires');
@@ -860,7 +922,7 @@ scenario('an interrupted first sweep does not bring the conflict storm back', as
   const mt = {}; for(const p in A.disk) mt[p] = 777777;
   const partial = {};
   const first = Object.keys(A.disk)[0];
-  partial[first] = Object.assign({}, sky.docs.laptop[first],
+  partial[first] = Object.assign({}, sky.entry(first),
                                  { local: { size: A.disk[first].length, mtime: 777777 } });
   const B = device('phone', sky, { disk: Object.assign({}, A.disk), mtimes: mt, index: partial });
   const r = await B.sweep();
@@ -873,7 +935,7 @@ scenario('"send them again" actually sends them', async (t) => {
   const A = device('laptop', sky, { disk: photos(5) });
   await A.sweep();
   const paths = Object.keys(A.disk).slice(0, 3);
-  for(const p of paths) sky.forget(sky.docs.laptop[p].sha);   // the store loses the bytes
+  for(const p of paths) sky.forget(sky.entry(p).sha);         // the store loses the bytes
 
   /* Clearing the journal does NOT make the next sweep upload: both sides then read as changed, the
    * reconciler asks whether they are the same anyway, the checksums match — because it IS the same
@@ -884,7 +946,7 @@ scenario('"send them again" actually sends them', async (t) => {
   t.eq(r.uploaded.length, 3, 'it uploaded ' + r.uploaded.length + ' of the 3 asked for');
   t.eq(r.resent, 3, 'the resend was not recorded');
   for(const p of paths){
-    const e = sky.docs.laptop[p];
+    const e = sky.entry(p);
     t.ok(!!e && sky.has(e.sha), 'the bytes for ' + p + ' are still not in the store');
   }
   // …and another device can now fetch them.
@@ -899,7 +961,7 @@ scenario('a sweep that could not settle a path does not call itself clean', asyn
   const A = device('laptop', sky, { disk: photos(6) });
   await A.sweep();
   const victim = Object.keys(A.disk)[0];
-  sky.forget(sky.docs.laptop[victim].sha);
+  sky.forget(sky.entry(victim).sha);
   const B = device('phone', sky, {});
   const r1 = await B.sweep();
   const B2 = device('phone', sky, { disk: B.disk, index: B.st.index });
@@ -923,6 +985,110 @@ scenario('the scale that killed the desktop: 6,000 files, checked and quiet the 
   const B2 = device('phone', sky, { disk: B.disk, index: B.st.index });
   const r3 = await B2.sweep();
   t.eq(r3.unchanged, N, 'the second sweep re-examined ' + (N - r3.unchanged) + ' files');
+});
+
+scenario('the CAS race: two devices edit one file at once — both copies survive, nothing silent', async (t) => {
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(6) });
+  await A.sweep();
+  const B = device('phone', sky, {});
+  await B.sweep();
+  const p = 'DCIM/img2.jpg';
+  A.disk[p] = Buffer.from('the laptop edit');
+  B.disk[p] = Buffer.from('the phone edit, which is different');
+  const A2 = device('laptop', sky, { disk: A.disk, index: A.st.index, mtimes: { [p]: 5000 } });
+  const B2 = device('phone', sky, { disk: B.disk, index: B.st.index, mtimes: { [p]: 6000 } });
+  /* Both sweep against the SAME starting record, so both publish v2 — the server accepts exactly
+   * one and refuses the other. The loser is struck from its own journal on the spot. */
+  await Promise.all([A2.sweep(), B2.sweep()]);
+  const winner = sky.entry(p);
+  t.ok(!!winner && !winner.deletedAt, 'the record vanished in the race');
+  /* Everyone sweeps again: the loser resolves the divergence as a conflict — both versions on both
+   * disks, the winner under the real name. */
+  let dA = A2.disk, iA = A2.st.index, dB = B2.disk, iB = B2.st.index;
+  for(let round = 0; round < 3; round++){
+    const A3 = device('laptop', sky, { disk: dA, index: iA });
+    const B3 = device('phone', sky, { disk: dB, index: iB });
+    await A3.sweep(); await B3.sweep();
+    dA = A3.disk; iA = A3.st.index; dB = B3.disk; iB = B3.st.index;
+  }
+  t.eq(identical(dA, dB), null, 'the devices did not converge after the race');
+  const names = Object.keys(dA).filter(x => x.indexOf('img2') !== -1);
+  t.eq(names.length, 2, 'a copy was silently lost — ' + names.length + ' of 2 versions survive');
+});
+
+scenario('remove-and-re-add cannot haunt: the era kills the ghosts', async (t) => {
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(50) });
+  await A.sweep();
+  const B = device('phone', sky, {});
+  await B.sweep();
+  /* The pair is retired (Stop syncing everywhere) and re-added: one era bump. The phone comes back
+   * with its old journal AND the old records still physically present — the exact state that
+   * minted 373 conflicts, once per file, on the real phone. */
+  sky.bumpEra();
+  const A2 = device('laptop', sky, { disk: A.disk, index: A.st.index });
+  const r1 = await A2.sweep();
+  t.eq(r1.conflicted.length, 0, 'the re-seeding device conflicted with its own past life');
+  t.eq(r1.uploaded.length, 50, 'the folder was not re-seeded into the new era');
+  const B2 = device('phone', sky, { disk: B.disk, index: B.st.index });
+  const r2 = await B2.sweep();
+  t.eq(r2.conflicted.length, 0, 'the re-joining device minted ' + r2.conflicted.length + ' ghost conflicts');
+  t.eq(r2.downloaded.length, 0, 're-downloaded ' + r2.downloaded.length + ' files it already had');
+  t.eq(B2.st.trashed.length, 0, 'the era change trashed files');
+  t.eq(identical(A2.disk, B2.disk), null, 'the pair did not converge in the new era');
+});
+
+scenario('the receipts: a torn store copy heals itself, end to end', async (t) => {
+  const sky = cloud();
+  const A = device('desktop', sky, { disk: photos(8) });
+  await A.sweep();
+  const victim = Object.keys(sky.folder())[0];
+  /* THE TORN UPLOAD, faithfully: the file changed mid-upload, so the STORED bytes are a version
+   * that never matched the record's checksum — a perfectly valid blob of the wrong content. (The
+   * shipped uploader now hashes on both sides of the read, so this can no longer be produced; the
+   * store still holds copies from the era when it could.) */
+  const torn = Buffer.from('the half-written version the upload actually captured');
+  const rec = sky.entry(victim);
+  const tornSha = sky.put(torn);
+  sky.injectRec(victim, Object.assign({}, rec, { sha: tornSha }));
+  /* The holder's own journal recorded the torn address too — it is what it uploaded — with the
+   * clean checksum beside it. That is exactly why the holder "settles clean" while every other
+   * device fails the download. */
+  A.st.index[victim] = Object.assign({}, A.st.index[victim], { sha: tornSha });
+  /* The tablet pulls, refuses the poison, and FLAGS the record — exactly what the client does
+   * after a sweep with a checksum badFetch. */
+  const B = device('tablet', sky, {});
+  const r1 = await B.sweep();
+  t.eq(r1.badFetch[victim].why, 'checksum', 'the poison was not remembered as a checksum failure');
+  await B.io.flagBad('Pictures', [{ path: victim, id: r1.badFetch[victim].id }]);
+  /* The desktop's next ordinary sweep sees the flag, verifies its local copy is good, and re-sends
+   * — a NEW storage address, so every refusal expires by itself. No buttons, no人 asking. */
+  const A2 = device('desktop', sky, { disk: A.disk, index: A.st.index });
+  const r2 = await A2.sweep();
+  t.eq((r2.reseeding || []).length, 1, 'the holder did not re-seed the flagged file');
+  t.ok(sky.entry(victim).sha !== r1.badFetch[victim].id, 'the re-send kept the poisoned address');
+  /* And the tablet — still carrying its refusal — fetches clean, because the refusal is keyed on
+   * the storage address the repair just replaced. */
+  const B2 = device('tablet', sky, { disk: B.disk, index: B.st.index });
+  const r3 = await B2.sweep({ skipFetch: r1.badFetch });
+  t.eq(r3.failed.length, 0, 'the healed copy still failed: ' + JSON.stringify(r3.failed));
+  t.eq(r3.downloaded.length, 1, 'the tablet did not fetch the healed copy');
+  t.eq(identical(A2.disk, B2.disk), null, 'the folders do not match after the heal');
+});
+
+scenario('a holder whose own copy is ALSO bad re-seeds nothing and says so', async (t) => {
+  const sky = cloud();
+  const A = device('desktop', sky, { disk: photos(4) });
+  await A.sweep();
+  const victim = Object.keys(sky.folder())[0];
+  sky.corrupt(sky.entry(victim).sha);
+  sky.flagRec(victim, sky.entry(victim).sha);
+  A.disk[victim] = Buffer.from('rotted on this disk too');       // bit-rot on the holder
+  const A2 = device('desktop', sky, { disk: A.disk, index: A.st.index });
+  const r = await A2.sweep();
+  t.eq((r.reseeding || []).length, 0, 'it re-seeded a copy it could not verify');
+  t.ok((r.badHere || []).indexOf(victim) !== -1, 'the rot on this device was not named');
 });
 
 /* ---- runner ----------------------------------------------------------------------------------- */

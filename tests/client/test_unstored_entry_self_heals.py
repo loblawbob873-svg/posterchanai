@@ -12,7 +12,7 @@ import subprocess
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-ENGINE = os.path.join(ROOT, "static", "js", "client", "syncengine.js")
+ENGINE = os.path.join(ROOT, "static", "js", "client", "syncstate.js")
 NODE = shutil.which("node") or shutil.which("nodejs")
 
 
@@ -29,10 +29,10 @@ class UnstoredEntryTests(unittest.TestCase):
     def test_the_holder_republishes(self):
         out = self._run("""
           const entry = %s;
-          const p = E.reconcile({ device:'desktop',
+          const p = E.plan({ device:'desktop',
             disk: { 'clip.mp4': { size:9, mtime:10, csum:'c1' } },
             index: { 'clip.mp4': Object.assign({}, entry, { local:{ size:9, mtime:10, csum:'c1' } }) },
-            global: { 'clip.mp4': entry }, by: { 'clip.mp4': 'desktop' } });
+            state: { 'clip.mp4': entry } });
           process.stdout.write(JSON.stringify({
             send: p.send.map(x=>x.path), trash: p.trash.length, why: (p.send[0]||{}).why||'' }));
         """ % self.ENTRY)
@@ -44,8 +44,8 @@ class UnstoredEntryTests(unittest.TestCase):
     def test_a_device_without_the_file_does_not_pretend_to(self):
         out = self._run("""
           const entry = %s;
-          const p = E.reconcile({ device:'laptop', disk:{}, index:{},
-            global: { 'clip.mp4': entry }, by: { 'clip.mp4': 'desktop' } });
+          const p = E.plan({ device:'laptop', disk:{}, index:{},
+            state: { 'clip.mp4': entry } });
           process.stdout.write(JSON.stringify({ send: p.send.length, trash: p.trash.length }));
         """ % self.ENTRY)
         self.assertEqual(out["send"], 0)
@@ -54,10 +54,10 @@ class UnstoredEntryTests(unittest.TestCase):
     def test_a_stored_entry_is_untouched_by_the_rule(self):
         out = self._run("""
           const entry = Object.assign(%s, { sha: 'ab'.repeat(32) });
-          const p = E.reconcile({ device:'desktop',
+          const p = E.plan({ device:'desktop',
             disk: { 'clip.mp4': { size:9, mtime:10, csum:'c1' } },
             index: { 'clip.mp4': Object.assign({}, entry, { local:{ size:9, mtime:10, csum:'c1' } }) },
-            global: { 'clip.mp4': entry }, by: { 'clip.mp4': 'desktop' } });
+            state: { 'clip.mp4': entry } });
           process.stdout.write(JSON.stringify({ send: p.send.length, unchanged: p.unchanged }));
         """ % self.ENTRY)
         self.assertEqual(out["send"], 0, "a healthy entry is re-published on every sweep")

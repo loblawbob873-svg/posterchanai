@@ -79,7 +79,10 @@ function boot(opts){
     navigator: { onLine: true, userAgent: 'node' },
     document: { hidden: o.hidden !== false, addEventListener(){}, querySelector: () => null,
                 getElementById: () => null, querySelectorAll: () => [] },
-    fetch: async () => ({ ok: true, status: 200, json: async () => ({ ok: true, manifest: {} }) }),
+    fetch: async (url) => ({ ok: true, status: 200, json: async () =>
+      String(url).indexOf('sync-state') !== -1
+        ? { ok: true, era: 0, now: 1, full: true, records: [], results: [], folders: [] }
+        : { ok: true, manifest: {} } }),
     btoa: s => Buffer.from(String(s), 'binary').toString('base64'),
   };
   ctx.window = ctx; ctx.globalThis = ctx; ctx.self = ctx;
@@ -107,7 +110,7 @@ function boot(opts){
   ctx.PC = ctx.__PC;
   ctx.PCFolderSync = require(path.join(CLIENT, 'foldersync.js'));
   ctx.PCSyncRun = require(path.join(CLIENT, 'syncrun.js'));
-  ctx.PCSyncEngine = require(path.join(CLIENT, 'syncengine.js'));
+  ctx.PCSyncState = require(path.join(CLIENT, 'syncstate.js'));
   ctx.PCSyncExec = require(path.join(CLIENT, 'syncexec.js'));
   ctx.ClientSettings = { get: (k, d) => d, set(){} };
   vm.createContext(ctx);

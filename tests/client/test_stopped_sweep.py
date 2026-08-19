@@ -89,9 +89,10 @@ class TheStopIsLatchedTests(unittest.TestCase):
           const io = {
             index: async () => ({ 'a.txt': {v:1, by:'x', sha:'s', size:1, mtime:1, local:{size:1,mtime:1}},
                                   'b.txt': {v:1, by:'x', sha:'t', size:1, mtime:1, local:{size:1,mtime:1}} }),
-            views: async () => ({ views: { x: { 'a.txt': {v:1, by:'x', sha:'s', size:1, mtime:1},
-                                                'b.txt': {v:1, by:'x', sha:'t', size:1, mtime:1} } }, missing: 0 }),
-            saveIndex: async () => {}, publish: async () => {},
+            state: async () => ({ state: { 'a.txt': {v:1, by:'x', sha:'s', size:1, mtime:1},
+                                           'b.txt': {v:1, by:'x', sha:'t', size:1, mtime:1} }, flagged: {} }),
+            saveIndex: async () => {},
+            putState: async (k, recs) => ({ ok: recs.map(r => r.path), stale: [], failed: [] }),
           };
           const rep = await X.sweep(fs, io, { id:'f', key:'k', device:'me', shouldStop: flap });
           process.stdout.write(JSON.stringify({ stopped: !!rep.stopped,

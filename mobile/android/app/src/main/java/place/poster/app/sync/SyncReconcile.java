@@ -9,7 +9,8 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * The reconciler, in Java — the same rules as static/js/client/syncengine.js, decision for decision.
+ * The per-file engine, in Java — the same rules as static/js/client/syncstate.js, decision for
+ * decision.
  *
  * WHY IT EXISTS TWICE. A phone must sync with its screen off, and a WebView's JavaScript is throttled
  * to about one timer a minute the moment the page is hidden — so the sweep that runs while the phone
@@ -18,11 +19,11 @@ import java.util.Set;
  * tests/test_android_reconcile_parity.py RUNS both against the same generated inputs and compares
  * the plans, decision for decision.
  *
- * The design, in one paragraph: every device publishes its OWN document and nothing else ever writes
- * it, the folder is the merge of those documents, and each entry carries a version counter that a
- * device raises when it publishes a change. Two devices syncing at once therefore cannot overwrite
- * each other's record, and no single document — missing, unreadable or wrong — can make the folder
- * look empty. Absence is never a deletion; a deletion is a tombstone somebody published.
+ * The design, in one paragraph: THE FOLDER IS ONE VERSIONED RECORD PER FILE, and the server refuses
+ * any write that is not strictly newer than the record it replaces. There is no per-device document,
+ * no merge and no view that can be partial: a record set that could not be read throws before this
+ * runs, a deletion is always a positive tombstone record, and a device's own past life cannot haunt
+ * it because retiring a folder bumps an ERA that makes every old record unspeakable.
  */
 public final class SyncReconcile {
 
@@ -30,7 +31,8 @@ public final class SyncReconcile {
 
     /** Below this, deleting or republishing a few files is ordinary work and is not questioned. */
     public static final int FLOOR = 20;
- static final int MASS_CAP = 100;   // absolute per-sweep trash ceiling (see JS engine)
+    /** Absolute per-sweep trash/tombstone ceiling for a sweep nobody is watching (see JS engine). */
+    static final int MASS_CAP = 100;
 
     public static long versionOf(Map<String, Object> e) {
         if (e == null) return 0L;
@@ -38,72 +40,9 @@ public final class SyncReconcile {
         return v instanceof Number ? ((Number) v).longValue() : 0L;
     }
 
-    private static long stampOf(Map<String, Object> e) {
-        if (e == null) return 0L;
-        long d = num(e.get("deletedAt"));
-        return d != 0 ? d : num(e.get("mtime"));
-    }
-
     private static long num(Object v) { return v instanceof Number ? ((Number) v).longValue() : 0L; }
 
     private static String str(Object v) { return v == null ? "" : String.valueOf(v); }
-
-    /** The merged folder, plus the losing claim wherever two devices published the same version. */
-    public static final class Merged {
-        public final Map<String, Map<String, Object>> global = new LinkedHashMap<String, Map<String, Object>>();
-        public final Map<String, Map<String, Object>> rivals = new LinkedHashMap<String, Map<String, Object>>();
-        public final Map<String, String> rivalBy = new LinkedHashMap<String, String>();
-        public final Map<String, String> by = new LinkedHashMap<String, String>();
-        public final List<String> devices = new ArrayList<String>();
-    }
-
-    /**
-     * Merge every device's view.
-     *
-     * Version first, then the entry's own timestamp (which is what orders a pair that has not
-     * published a version yet), then the device id — which decides nothing meaningful and is there so
-     * every device reaches the SAME answer. A merge that is not deterministic is a folder that
-     * flickers between two states as the devices take turns.
-     */
-    public static Merged merge(Map<String, Map<String, Map<String, Object>>> views) {
-        Merged m = new Merged();
-        List<String> devs = new ArrayList<String>(views == null ? Collections.<String>emptySet() : views.keySet());
-        Collections.sort(devs);
-        m.devices.addAll(devs);
-        for (String dev : devs) {
-            Map<String, Map<String, Object>> view = views.get(dev);
-            if (view == null) continue;
-            for (Map.Entry<String, Map<String, Object>> e : view.entrySet()) {
-                String path = e.getKey();
-                Map<String, Object> claim = e.getValue();
-                Map<String, Object> cur = m.global.get(path);
-                if (cur == null) { m.global.put(path, claim); m.by.put(path, dev); continue; }
-                String curBy = m.by.get(path);
-                boolean claimWins = laterThan(claim, dev, cur, curBy);
-                Map<String, Object> win = claimWins ? claim : cur;
-                Map<String, Object> lose = claimWins ? cur : claim;
-                String winBy = claimWins ? dev : curBy;
-                String loseBy = claimWins ? curBy : dev;
-                m.global.put(path, win);
-                m.by.put(path, winBy);
-                /* A RIVAL IS A CONCURRENT EDIT, not an out-of-date copy: same version, different
-                 * content means two devices changed this without either seeing the other. */
-                if (versionOf(win) == versionOf(lose) && !SyncDiff.same(win, lose)) {
-                    m.rivals.put(path, lose);
-                    m.rivalBy.put(path, loseBy);
-                }
-            }
-        }
-        return m;
-    }
-
-    private static boolean laterThan(Map<String, Object> a, String aBy, Map<String, Object> b, String bBy) {
-        long va = versionOf(a), vb = versionOf(b);
-        if (va != vb) return va > vb;
-        long sa = stampOf(a), sb = stampOf(b);
-        if (sa != sb) return sa > sb;
-        return str(aBy).compareTo(str(bBy)) > 0;
-    }
 
     /**
      * Did the file on disk change since this device last applied something to it?
@@ -126,26 +65,26 @@ public final class SyncReconcile {
     }
 
     /**
-     * Did the folder's own record change since this device last applied it?
-     *
-     * ABSENCE IS NOT NEWS. A path nobody currently claims means exactly that; it does NOT mean
-     * deleted. A deletion is a tombstone, published by the device that made it. The old shape could
-     * not tell those apart — there was one document and a path missing from it was the only way a
-     * delete could look — which is why a document that failed to load, or came back empty, read as
-     * "every file you have was deleted".
+     * Did the folder's record move past what this device applied? STRICTLY AHEAD, never merely
+     * different: the journal legitimately runs ahead of the record set for the length of one publish
+     * (a sweep that uploaded and then failed to publish), and reading that as "changed elsewhere" is
+     * the silent revert the second engine had to learn the hard way. What the journal knows and the
+     * folder does not is OURS TO PUBLISH, never theirs to teach us.
      */
-    public static boolean viewChanged(Map<String, Object> remote, Map<String, Object> idx) {
-        if (remote == null) return false;
-        long vr = versionOf(remote), vi = versionOf(idx);
-        // Strictly ahead, never merely different: a journal ahead of the merge is OURS TO PUBLISH.
-        // Read as remote news it fetched old bytes back over an edit (see the JS engine's comment).
-        if (vr != 0 || vi != 0) return vr > vi;
-        if (idx == null) return true;
-        return !SyncDiff.same(remote, idx);
+    public static boolean recordAhead(Map<String, Object> record, Map<String, Object> idx) {
+        return record != null && versionOf(record) > versionOf(idx);
     }
 
-    public static long bump(Map<String, Object> remote, Map<String, Object> idx) {
-        return Math.max(versionOf(remote), versionOf(idx)) + 1;
+    public static long bump(Map<String, Object> record, Map<String, Object> idx) {
+        return Math.max(versionOf(record), versionOf(idx)) + 1;
+    }
+
+    private static boolean hasAddress(Map<String, Object> e) {
+        if (e == null) return false;
+        Object sha = e.get("sha");
+        if (sha instanceof String && !((String) sha).isEmpty()) return true;
+        Object chunks = e.get("chunks");
+        return chunks instanceof List && !((List<?>) chunks).isEmpty();
     }
 
     /** The plan, in the same buckets and the same order as the JS engine's. */
@@ -180,15 +119,15 @@ public final class SyncReconcile {
         return m;
     }
 
-    public static Plan reconcile(Map<String, Map<String, Object>> disk,
-                                 Merged m,
-                                 Map<String, Map<String, Object>> index,
-                                 List<String> excludes, String me, long now) {
+    public static Plan plan(Map<String, Map<String, Object>> disk,
+                            Map<String, Map<String, Object>> state,
+                            Map<String, Map<String, Object>> index,
+                            List<String> excludes, String me, long now) {
         Plan plan = new Plan();
         SyncDiff.Excluder excluded = SyncDiff.excluder(excludes);
         Set<String> paths = new LinkedHashSet<String>();
         paths.addAll(disk.keySet());
-        paths.addAll(m.global.keySet());
+        paths.addAll(state.keySet());
         paths.addAll(index.keySet());
         List<String> sorted = new ArrayList<String>(paths);
         Collections.sort(sorted);
@@ -197,41 +136,30 @@ public final class SyncReconcile {
             if (excluded.test(path)) { plan.excluded++; continue; }
 
             Map<String, Object> L = disk.get(path);
-            Map<String, Object> R = m.global.get(path);
+            Map<String, Object> R = state.get(path);
             Map<String, Object> idx = index.get(path);
-            Map<String, Object> rival = m.rivals.get(path);
 
-            /* Two other devices changed this at the same time. Both sets of bytes are stored and both
-             * claims are content-addressed, so every device can make the identical repair without
-             * asking anyone — which is what stops three devices each picking a different winner. */
-            /* Gated exactly like the JS engine (see its comment): only a device holding a local
-             * copy that is not already the winner, and whose journal has not already resolved this,
-             * keeps both. Ungated, an already-resolved device re-resolved on every sweep while the
-             * loser stayed offline, and a device with no local copy failed the move for ever. */
-            if (rival != null && SyncDiff.live(R) && SyncDiff.live(rival)
-                    && L != null && !SyncDiff.same(L, R)
-                    && !(idx != null && SyncDiff.same(idx, R) && !diskChanged(L, idx))) {
-                plan.keepBoth.add(act("path", path, "v", versionOf(R), "entry", R, "rival", rival,
-                        "keepAs", SyncDiff.conflictPath(path, str(m.rivalBy.get(path)),
-                                stampOf(rival) != 0 ? stampOf(rival) : now),
-                        "why", "two devices changed this at the same time — both copies kept"));
-                continue;
-            }
-
-            /* AN ADDRESS-LESS RECORD, HELD HERE, IS A SEND — mirrors the JS engine (see its
-             * comment): an entry published without sha/chunks strands every other device on
-             * "does not say where this file is stored" while the holder settles it as unchanged. */
-            if (L != null && SyncDiff.live(R)
-                    && !(R.get("sha") instanceof String && !((String) R.get("sha")).isEmpty())
-                    && !(R.get("chunks") instanceof java.util.List
-                         && !((java.util.List<?>) R.get("chunks")).isEmpty())) {
+            /* AN ADDRESS-LESS RECORD, HELD HERE, IS A SEND — an upload that died between the record
+             * and its bytes strands every other device on "does not say where this file is stored"
+             * while the holder settles it as unchanged. Whoever has a local copy re-publishes it. */
+            if (L != null && SyncDiff.live(R) && !hasAddress(R)) {
                 plan.send.add(act("path", path, "v", bump(R, idx), "stat", L,
                         "why", "the shared record names no storage — re-publishing from this copy"));
                 continue;
             }
 
+            /* A RECORD THE FOLDER LOST IS RESTORED BY WHOEVER HOLDS THE FILE. Absent this, the path
+             * sits "unchanged" here for ever while no other device can learn it exists. (A lost
+             * TOMBSTONE needs no restoring: no record and no file is a path nobody claims.) */
+            if (R == null && idx != null && num(idx.get("deletedAt")) == 0
+                    && L != null && !diskChanged(L, idx)) {
+                plan.send.add(act("path", path, "v", bump(null, idx), "stat", L,
+                        "why", "the folder has no record of this file — restoring it from this copy"));
+                continue;
+            }
+
             boolean here = diskChanged(L, idx);
-            boolean there = viewChanged(R, idx);
+            boolean there = recordAhead(R, idx);
 
             if (!here && !there) {
                 plan.unchanged++;
@@ -239,10 +167,16 @@ public final class SyncReconcile {
                 continue;
             }
 
+            /* ---- the folder moved and this device did not: apply it. */
             if (there && !here) {
-                if (SyncDiff.live(R)) {
+                /* Bytes we already hold are ADOPTED, not downloaded — our own publish coming back,
+                 * or another device uploading a file we already have. */
+                if (SyncDiff.live(R) && L != null && SyncDiff.same(L, R)) {
+                    plan.settle.add(act("path", path, "v", versionOf(R), "entry", R,
+                            "why", "same content both sides"));
+                } else if (SyncDiff.live(R)) {
                     plan.fetch.add(act("path", path, "v", versionOf(R), "entry", R,
-                            "from", str(m.by.get(path)),
+                            "from", str(R.get("by")),
                             "why", idx != null ? "changed elsewhere" : "new elsewhere"));
                 } else if (L != null) {
                     plan.trash.add(act("path", path, "v", versionOf(R), "entry", R,
@@ -254,6 +188,7 @@ public final class SyncReconcile {
                 continue;
             }
 
+            /* ---- this device moved and the folder did not: publish it. */
             if (here && !there) {
                 if (L != null) {
                     plan.send.add(act("path", path, "v", bump(R, idx), "stat", L,
@@ -264,7 +199,7 @@ public final class SyncReconcile {
                 continue;
             }
 
-            // Both moved. The first two are not conflicts at all.
+            /* ---- both moved. The first two are not conflicts at all. */
             if (L == null && SyncDiff.gone(R)) {
                 plan.settle.add(act("path", path, "v", versionOf(R), "entry", R, "why", "deleted on both"));
                 continue;
@@ -277,19 +212,36 @@ public final class SyncReconcile {
             // Delete loses to edit, both ways.
             if (L == null && SyncDiff.live(R)) {
                 plan.fetch.add(act("path", path, "v", versionOf(R), "entry", R,
-                        "from", str(m.by.get(path)),
+                        "from", str(R.get("by")),
                         "why", "deleted here but edited elsewhere — keeping the edit"));
                 continue;
             }
             if (L != null && SyncDiff.gone(R)) {
-                plan.send.add(act("path", path, "v", bump(R, idx), "stat", L, "resurrect", Boolean.TRUE,
-                        "why", "deleted elsewhere but edited here — keeping the edit"));
+                /* A JOINING DEVICE'S UNCHANGED COPY OBEYS THE DELETION. Tombstones keep the deleted
+                 * content's csum, and a journal-less join hashes its scan — so when this local copy
+                 * IS the bytes that were deliberately deleted, the deletion applies here too instead
+                 * of resurrecting on every device that ever held the file. Only an actual edit wins
+                 * over a delete. */
+                String rc = R == null ? "" : str(R.get("csum"));
+                String lc = str(L.get("csum"));
+                if (!rc.isEmpty() && !lc.isEmpty() && rc.equals(lc)) {
+                    plan.trash.add(act("path", path, "v", versionOf(R), "entry", R,
+                            "to", SyncDiff.trashPath(path, now),
+                            "why", "deleted elsewhere — this copy is the deleted version"));
+                } else {
+                    plan.send.add(act("path", path, "v", bump(R, idx), "stat", L,
+                            "resurrect", Boolean.TRUE,
+                            "why", "deleted elsewhere but edited here — keeping the edit"));
+                }
                 continue;
             }
-            String by = m.by.get(path);
+            // Divergent bytes: keep both, the incoming copy takes the name, ours is renamed.
+            String by = R == null ? "" : str(R.get("by"));
+            long stamp = R == null ? 0 : num(R.get("mtime"));
+            if (stamp == 0 && R != null) stamp = num(R.get("deletedAt"));
             plan.keepBoth.add(act("path", path, "v", versionOf(R), "entry", R,
-                    "keepAs", SyncDiff.conflictPath(path, by == null || by.isEmpty() ? "another device" : by,
-                            stampOf(R) != 0 ? stampOf(R) : now),
+                    "keepAs", SyncDiff.conflictPath(path, by.isEmpty() ? "another device" : by,
+                            stamp != 0 ? stamp : now),
                     "why", "edited on both — the incoming copy takes the name, yours is renamed"));
         }
         return plan;
@@ -300,7 +252,7 @@ public final class SyncReconcile {
      * produces ten thousand identical ones. This is the only thing that looks at the SHAPE of the
      * answer, and the native sweep has nobody to ask, so every verdict here is a refusal.
      */
-    public static List<Map<String, Object>> check(Plan p, int missingViews) {
+    public static List<Map<String, Object>> check(Plan p, Map<String, Map<String, Object>> state) {
         List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
         int settled = 0;
         for (Map<String, Object> s : p.settle) {
@@ -310,24 +262,37 @@ public final class SyncReconcile {
         // engine's comment — 50 live files beside 10,000 old deletions trashed all 50, guard silent).
         int keep = p.unchanged - p.settledGone + p.fetch.size() + p.send.size() + p.keepBoth.size() + settled;
 
-        if (missingViews > 0) {
-            if (!p.trash.isEmpty()) out.add(act("kind", "partialViews", "n", (long) p.trash.size()));
-            if (!p.tombstone.isEmpty()) out.add(act("kind", "partialViewsOut", "n", (long) p.tombstone.size()));
-        }
         if (p.trash.size() >= FLOOR && p.trash.size() > keep) {
             out.add(act("kind", "massTrash", "n", (long) p.trash.size(), "keep", (long) keep));
         }
-        // Absolute cap, mirroring the JS engine: proportional is not enough on a big folder —
-        // an unattended sweep never moves more than MASS_CAP files to trash.
+        // The absolute cap — proportional is not enough on a big folder, and nobody is watching.
         if (p.trash.size() > MASS_CAP) {
             out.add(act("kind", "massTrash", "n", (long) p.trash.size(), "keep", (long) keep));
         }
         if (p.tombstone.size() >= FLOOR && p.tombstone.size() > keep) {
             out.add(act("kind", "massTombstone", "n", (long) p.tombstone.size(), "keep", (long) keep));
         }
+        if (p.tombstone.size() > MASS_CAP) {
+            out.add(act("kind", "massTombstone", "n", (long) p.tombstone.size(), "keep", (long) keep));
+        }
         int res = 0;
         for (Map<String, Object> s : p.send) if (Boolean.TRUE.equals(s.get("resurrect"))) res++;
         if (res >= FLOOR) out.add(act("kind", "massResurrect", "n", (long) res));
+
+        // A path that another live record sits under cannot be written as a file on any device.
+        if (state != null) {
+            for (Map<String, Object> a : p.fetch) {
+                String path = str(a.get("path"));
+                String pre = path + "/";
+                for (Map.Entry<String, Map<String, Object>> q : state.entrySet()) {
+                    if (!q.getKey().equals(path) && SyncDiff.live(q.getValue())
+                            && q.getKey().startsWith(pre)) {
+                        out.add(act("kind", "blocked", "fatal", Boolean.TRUE, "path", path));
+                        break;
+                    }
+                }
+            }
+        }
         return out;
     }
 
@@ -344,13 +309,17 @@ public final class SyncReconcile {
         out.settledGone = p.settledGone;
         out.excluded = p.excluded;
         boolean noTrash = false, noTomb = false, noRes = false;
+        Set<String> blocked = new LinkedHashSet<String>();
         for (Map<String, Object> v : verdicts) {
             String k = str(v.get("kind"));
-            if ("massTrash".equals(k) || "partialViews".equals(k)) noTrash = true;
-            else if ("massTombstone".equals(k) || "partialViewsOut".equals(k)) noTomb = true;
+            if ("massTrash".equals(k)) noTrash = true;
+            else if ("massTombstone".equals(k)) noTomb = true;
             else if ("massResurrect".equals(k)) noRes = true;
+            else if ("blocked".equals(k)) blocked.add(str(v.get("path")));
         }
-        out.fetch.addAll(p.fetch);
+        for (Map<String, Object> f : p.fetch) {
+            if (!blocked.contains(str(f.get("path")))) out.fetch.add(f);
+        }
         out.keepBoth.addAll(p.keepBoth);
         out.settle.addAll(p.settle);
         if (!noTrash) out.trash.addAll(p.trash);

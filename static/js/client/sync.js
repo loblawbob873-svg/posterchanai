@@ -31,7 +31,7 @@
   'use strict';
   const PC = window.__PC || {};
   const S = window.PCFolderSync, RUN = window.PCSyncRun, EXEC = window.PCSyncExec;
-  const S_ENGINE = window.PCSyncEngine;
+  const S_ENGINE = window.PCSyncState;
   const FS = () => window.pcFs || null;            // desktop only, for now — Android SAF lands next
   /* Sizes for the humans reading this screen.
    *
@@ -139,10 +139,6 @@
     return o[id] || o['dir:' + (dir || '')] || '';
   }
 
-  /* Past this the paths leave the document for an encrypted Blossom blob. 45 KB is the FILES INDEX's
-   * threshold, chosen for the same reason and kept identical on purpose: NIP-44 refuses a plaintext
-   * over 65535 bytes, and the margin is for the JSON growing between the check and the encrypt. */
-  const MANIFEST_INLINE_MAX = 45000;
 
   /* ---- `base`: this device's agreement, in IndexedDB ------------------------------------------
    *
@@ -402,46 +398,6 @@
      *
      * One entry. Two folders alternating would evict each other, which costs exactly what this used
      * to cost and never more. */
-    _mcache: { sha:null, paths:null },
-    async manifest(id){
-      const j = await this._post({ folder: id });
-      const doc = j.manifest || {};
-      if(doc.pathsSha && this._mcache.sha === doc.pathsSha && this._mcache.paths){
-        return JSON.parse(JSON.stringify(this._mcache.paths));   // a copy: callers mutate what they get
-      }
-      // v2 first: the paths are an encrypted Blossom blob. See save() for why they had to leave the
-      // document, and for the marker `sealed` carries so an older build cannot misread this.
-      if(doc.pathsSha){
-        /* FETCH AND DECRYPT FAIL FOR OPPOSITE REASONS, so they must not share a message. "Stored but
-         * unreadable" told someone nothing and sent an evening into checking the server, which had
-         * the blob the whole time: present, kept, no expiry. One of these is a media-server or
-         * network problem and the other is a key problem, and the fix for each is the other's
-         * mistake. */
-        let bytes;
-        try{ bytes = await PC.syncBlobs.get(doc.pathsSha); }
-        catch(e){
-          const m = String((e && e.message) || e);
-          if(/OperationError|decrypt|importKey|drive key/i.test(m)){
-            throw new Error('this device cannot decrypt your folder list — it is stored and intact, '
-                            + 'but the drive key here cannot open it (' + m + ')');
-          }
-          throw new Error('could not fetch your folder list from ' + (PC.mediaServer ? PC.mediaServer() : 'the media server')
-                          + ' (' + m + '). The list itself is fine — check this device is pointed at the '
-                          + 'same media server as your others.');
-        }
-        try{
-          const paths = JSON.parse(new TextDecoder().decode(bytes)) || {};
-          this._mcache = { sha: doc.pathsSha, paths };
-          return JSON.parse(JSON.stringify(paths));
-        }
-        catch(e){ throw new Error('the stored folder list is damaged'); }
-      }
-      if(doc.sealed){
-        try{ return JSON.parse(await PC.nip44dec(PC.me().pubkey, doc.sealed)) || {}; }
-        catch(e){ throw new Error('could not decrypt the manifest — wrong key or damaged'); }
-      }
-      return doc.paths || {};          // pre-seal manifests, still readable
-    },
     // The per-device agreement. Local by definition, and a corrupt one is recoverable by resyncing —
     // it costs a full compare, never data.
     base(id){ return _loadBase(id); },
@@ -489,77 +445,6 @@
      *
      * With an empty `touched` the merge simply resolves to whatever the manifest holds now, which is
      * the correct thing to write back. */
-    async save(id, s){
-      let paths = s.manifest || {};
-      if(Array.isArray(s.touched)){
-        let fresh = null;
-        try{ fresh = await this.manifest(id); }
-        catch(_){ /* keep our snapshot — see above */ }
-        if(fresh && typeof fresh === 'object'){
-          /* `verify` gets the LAST read before the write, which is the only copy that can answer
-           * "is this still safe?" — the merge below is what would otherwise quietly overwrite a
-           * path another device published while we were deciding. Throwing here saves nothing. */
-          if(typeof s.verify === 'function') s.verify(fresh);
-          const merged = Object.assign({}, fresh);
-          for(const p of s.touched) if(paths[p] !== undefined) merged[p] = paths[p];
-          paths = merged;
-        }
-      }
-      const live = Object.keys(paths).filter(p => paths[p] && !paths[p].deletedAt).length;
-      const json = JSON.stringify(paths);
-      /* `entries` IS PLAINTEXT AND HAS TO BE, for the same reason `n` is.
-       *
-       * The paths are sealed, so a server looking at this document cannot tell "no entries at all"
-       * from "every entry is a tombstone" — both report n = 0. That difference decides whether a
-       * folder still exists: a forgotten folder must leave the account's list, and a folder whose
-       * files were all deleted must NOT, because its tombstones are how another device learns they
-       * were deleted. Without this the wipe worked and the folder stayed listed for ever.
-       *
-       * It discloses one number — how many paths the manifest holds — to a server that already
-       * learns the live count for the collapse guard. It says nothing about what they are. */
-      const doc = { n: live, entries: Object.keys(paths).length };
-      if(json.length < MANIFEST_INLINE_MAX){
-        doc.sealed = await PC.nip44enc(PC.me().pubkey, json);
-      } else {
-        // put() may answer {sha, existed} or a bare sha — normalise, or the pointer becomes an
-        // object and every device reads a manifest it cannot find.
-        const put = await PC.syncBlobs.put(new TextEncoder().encode(json));
-        doc.pathsSha = (put && typeof put === 'object') ? put.sha : put;
-        doc.sealed = 'v2:' + doc.pathsSha;      // the marker above — deliberately undecryptable
-      }
-      try{
-        await this._post({ folder: id, manifest: doc });
-      }catch(e){
-        /* THE SERVER REFUSED A SHRINK. It holds a count and nothing else, so a deliberate mass
-         * delete and a broken client about to empty the folder on every device look identical from
-         * there — which is exactly why the guard is server-side. THIS side is not guessing: `removed`
-         * is how many paths this sweep deleted, and if it accounts for the shrink then the write is
-         * precisely what the user asked for and there is nothing to ask about.
-         *
-         * Without this the guard makes a legitimate mass delete IMPOSSIBLE: the save fails, the
-         * agreement is never written, and every sweep from then on proposes the same delete and is
-         * refused again. */
-        if(!e || !e.collapse) throw e;
-        const c = e.collapse, shrink = Math.max(0, (+c.old || 0) - (+c.new || 0));
-        const removed = +(s.removed || 0);
-        if(!(removed > 0 && removed >= shrink)){
-          const ok = await PC.uiConfirm('“' + id + '” is about to go from ' + c.old + ' files to '
-            + c.new + ' on every device.\n\nThis device only deleted ' + removed
-            + '. If you did not expect that, cancel — nothing has been changed anywhere yet.');
-          if(!ok) throw new Error('not saved — the change was refused (' + c.old + ' → ' + c.new + ')');
-        }
-        await this._post({ folder: id, manifest: doc, force: true });
-      }
-      // Only after the shared manifest is safely stored — a base that runs ahead of it would make
-      // this device believe in an agreement the others never saw. AWAITED: an unawaited write is a
-      // save that reports success before it has one, and its failure is an unhandled rejection
-      // nobody sees.
-      //
-      // OMITTING `base` means "I have no agreement to record", which is what a manifest edit made
-      // from Files → Synced folders is (see _mutate). `{}` still WRITES an empty agreement, because
-      // a sweep that genuinely settled on nothing has to be able to say so.
-      if(s.base !== undefined) await _saveBase(id, s.base);
-    },
     /* The FILE's hash, for the manifest's content identity — distinct from the blob address, which is
      * the hash of the ciphertext. Provided by the store because syncrun.js has no crypto of its own. */
     hashBytes: async (bytes) => {
@@ -623,21 +508,23 @@
         } : null,
   };
 
-  /* ---- THE FOLDER, AS EVERY DEVICE DESCRIBES IT -------------------------------------------------
+  /* ---- THE FOLDER, ONE RECORD PER FILE ----------------------------------------------------------
    *
-   * One document per device, and nothing but that device ever writes it:
+   * Every file has exactly one versioned record on the server — `pcai:fs:<pair>:<sha256(path)>` —
+   * and the server refuses any write that is not strictly newer than what it holds. There is no
+   * per-device document, no merge, and no read whose absence, emptiness or staleness can describe
+   * more than one file. The ENTRY (path, checksums, blob addresses) is NIP-44-sealed to this
+   * account's own key before it leaves; the server sees only a version, a device name and an era.
    *
-   *     pcai:sync:<pair>:<device>
+   * READS ARE A CACHE PLUS A DELTA. The record set is kept in IndexedDB and each load asks the
+   * server only for records written since the last look — a 12,000-file folder costs one full read
+   * ever, then a few rows per sweep. Falling behind is SAFE by construction: a record this device
+   * has not seen yet is a file the sweep does not touch, and a deletion is always a positive
+   * tombstone record, never an inference from absence.
    *
-   * Reading is therefore a plain read of them all, and writing is a plain write of ours. There is no
-   * merge on save, no re-read per checkpoint, no compare-and-swap and no server-side collapse guard
-   * to get wrong — those all existed to make ONE document survive several writers, and it did not.
-   *
-   * A DEVICE THAT COULD NOT BE READ IS COUNTED, NEVER SKIPPED. Left out, its files are absent from
-   * the merge, and absent is indistinguishable from deleted — which is the confusion that emptied a
-   * Pictures folder. The count travels with the answer and the checker refuses every deletion while
-   * it is above zero.
-   */
+   * THE ERA is what makes "remove the folder and add it back" clean: retiring a pair bumps one
+   * integer, every existing record becomes part of a dead world, and a device that shows up with a
+   * journal from that world clears it and rejoins by content — no ghosts, no resurrections. */
   /* \u267b RESTORE FROM TRASH — shared by the folder card and Files \u2192 Synced folders.
    * Bridge-level (below the exclusion machinery), never overwrites, per-operation timeouts so one
    * stuck file is a counted failure rather than a hung button. `only` restricts to a subset of
@@ -673,90 +560,196 @@
     return { done, skipped, failed };
   }
 
-  const docs = {
-    /** {views: {device: {path: entry}}, missing: n} — throws if the server could not be asked. */
-    async views(key){
-      const j = await store._post({ folder: key, views: true });
-      const raw = (j && j.views) || {};
-      const views = {};
-      // WHICH devices could not be read, not just how many. A view that cannot be opened holds back
-      // every deletion in the pair, and the only way out is for somebody to say "that one is gone" —
-      // which they cannot do if nothing will name it.
-      const cannot = Array.isArray(j && j.cannot) ? j.cannot.slice() : [];
-      // The sealed path-list blobs are REFERENCES too: a storage reclaim that cannot see them would
-      // delete the very blob a manifest's paths live in. Collected off the raw docs, before opening.
-      const sealedIds = [];
-      for(const dev of Object.keys(raw)){
-        const d0 = raw[dev];
-        if(d0 && d0.pathsSha) sealedIds.push(d0.pathsSha);
-        /* The kept one-generation-back blob is REFERENCED — it is the rollback the server holds on
-         * purpose. Invisible to this collector, every device-doc's previous generation read as
-         * "belongs to nothing", so the drive check offered a fresh ~25-blob reclaim after every
-         * sweep, for ever ("Device check never ends with space to reclaim!") — and pressing it
-         * would have deleted the safety copies. */
-        if(d0 && d0.prevSha) sealedIds.push(d0.prevSha);
+  /* The pair's era + cursor + decrypted record set, cached per pair. */
+  const _SKEY = (k) => 'state:' + k;
+  async function _pathD(path){
+    const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(path)));
+    return [...new Uint8Array(h)].slice(0, 12).map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  async function _statePost(body){
+    const auth = await PC.signAuth('sync-state');
+    let ctl = null, timer = null;
+    try{ ctl = new AbortController(); }catch(_){ ctl = null; }
+    if(ctl) timer = setTimeout(() => { try{ ctl.abort(); }catch(_){} }, _POST_TIMEOUT_MS);
+    let r;
+    try{
+      r = await _bounded(fetch('/client/sync-state', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        signal: ctl ? ctl.signal : undefined,
+        body: JSON.stringify(Object.assign({ pubkey: PC.me().pubkey,
+                                             auth: btoa(JSON.stringify(auth)) }, body)),
+      }), 'server', _POST_TIMEOUT_MS);
+    }catch(e){
+      const aborted = e && (e.name === 'AbortError' || /abort|stopped responding/i.test(String(e.message || e)));
+      throw new Error(aborted ? 'the server did not answer in time — will try again'
+                              : ('could not reach the server: ' + ((e && e.message) || e)));
+    }finally{ if(timer) clearTimeout(timer); }
+    const j = await r.json().catch(() => ({}));
+    if(r.status === 409 && j && j.eraChanged){
+      const e = new Error('this folder was retired or re-added elsewhere — syncing again from the top');
+      e.eraChanged = true; e.era = j.era; throw e;
+    }
+    if(r.status === 409 && j && j.backstop){
+      const e = new Error(j.error || 'refused'); e.backstop = true; throw e;
+    }
+    if(!r.ok || !j.ok) throw new Error(j.error || ('sync state ' + r.status));
+    return j;
+  }
+  const stateS = {
+    async _cache(key){
+      try{ const v = await _IDB._tx('readonly', st => st.get(_SKEY(key)));
+           if(v && typeof v === 'object' && v.entries) return v; }catch(_){}
+      return null;
+    },
+    async _saveCache(key, c){
+      try{ await _IDB._tx('readwrite', st => st.put(c, _SKEY(key))); }catch(_){}
+    },
+    async clear(key){
+      try{ await _IDB._tx('readwrite', st => st.delete(_SKEY(key))); }catch(_){}
+    },
+    /* The record set. Throws when the server could not be asked — a failed read is never an empty
+     * folder. On an era shift (the pair was retired/re-added elsewhere) this device's JOURNAL is a
+     * record of a dead world: it is cleared here, before the executor reads it, and the folder
+     * re-settles by content on this very sweep. */
+    async load(key){
+      const cache = await this._cache(key);
+      const body = { pair: key };
+      if(cache && cache.cursor){ body.since = Math.max(0, cache.cursor - 60); body.era = cache.era; }
+      const j = await _statePost(body);
+      let entries, d2p;
+      if(j.full){ entries = {}; d2p = {}; }
+      else { entries = cache.entries; d2p = cache.d2p || {}; }
+      if(cache && j.era !== cache.era){
+        /* The world changed under this device. Its journal answers for records that no longer
+         * exist; kept, every path would read "lost record — restoring", which resurrects a folder
+         * somebody deliberately retired. Cleared, the next reconcile settles by content. */
+        try{ await _saveBase(key, {}); }catch(_){}
       }
-      let missing = +(j && j.unreadable) || 0;
-      for(const dev of Object.keys(raw)){
-        try{ views[dev] = await _openDoc(raw[dev]); }
-        catch(e){
-          missing++;
-          /* A DEVICE THAT CANNOT BE READ AND A SERVER THAT BLINKED ARE NOT THE SAME THING, and only
-           * one of them is worth offering to retire. `_openDoc` throws for both: a media server that
-           * 502s while fetching the sealed path list, and a document this account has no key for.
-           * The first is a minute-long outage; the second is a fact about the record.
-           *
-           * Only the second joins `cannot`, because that list is what the repair screen offers to
-           * retire — and retiring a LIVE device on the strength of a blip zeroes its published
-           * record, which takes its paths out of the merge until it next sweeps. */
-          const why = String((e && e.message) || e);
-          if(/decrypt|drive key|damaged/i.test(why)) cannot.push(dev);
-          console.warn('folder sync: could not open ' + dev + '\u2019s view', e);
+      let und = 0, got = 0;
+      const me = PC.me().pubkey;
+      for(const rec of (j.records || [])){
+        let e = null;
+        try{ e = JSON.parse(await PC.nip44dec(me, rec.ct)); }catch(_){ e = null; }
+        if(!e || typeof e !== 'object' || !e.path){ und++; continue; }
+        try{ if((await _pathD(e.path)) !== rec.d){ und++; continue; } }catch(_){}
+        if(e.ps && !e.chunks){
+          /* The pointer resolves back into the list; one that cannot be fetched makes the record
+           * UNREADABLE (counted, nothing moved) rather than address-less — address-less on a
+           * holder is a resend order, and this is not that. */
+          try{
+            const raw = JSON.parse(new TextDecoder().decode(await PC.syncBlobs.get(e.ps)));
+            if(Array.isArray(raw.chunks) && raw.chunks.length){ e.chunks = raw.chunks; e.cs = raw.cs || e.cs; }
+            else { und++; continue; }
+          }catch(_){ und++; continue; }
+        }
+        /* The ENVELOPE is authoritative for version and device — it is what the server's
+         * compare-and-swap actually judged. The sealed entry carries the rest. */
+        e.v = rec.v; if(rec.by) e.by = rec.by;
+        if(rec.t && !e.deletedAt) e.deletedAt = rec.at || 1;
+        if(rec.bad) e.bad = rec.bad; else delete e.bad;
+        const path = e.path; delete e.path;
+        entries[path] = e; d2p[rec.d] = path;
+        got++;
+      }
+      /* A FULL read where NOTHING decrypts is a key problem and must stop the sweep; one corrupt
+       * record in a small delta is one file left alone, never a reason to abort — the counted
+       * `undecryptable` reaches the card either way. */
+      if(j.full && (j.records || []).length > 2 && !got && und)
+        throw new Error('none of this folder’s records could be decrypted — this device’s '
+                        + 'key cannot open them');
+      await this._saveCache(key, { era: j.era, cursor: j.now || 0, entries, d2p });
+      const state = {}, flagged = {};
+      for(const p in entries){
+        const e = Object.assign({}, entries[p]);
+        if(e.bad){ flagged[p] = e.bad; delete e.bad; }
+        state[p] = e;
+      }
+      return { state, flagged, era: j.era, undecryptable: und };
+    },
+    /* Publish records, batched, through the server's per-file compare-and-swap. Returns
+     * {ok:[paths], stale:[paths], failed:[paths]}. Each entry is sealed here; `confirmed` is the
+     * deliberate-delete flow and nothing else may pass it. */
+    async put(key, recs, opts){
+      const o = opts || {};
+      const cache = await this._cache(key);
+      const era = cache ? cache.era : 0;
+      const me = PC.me().pubkey;
+      const out = { ok: [], stale: [], failed: [] };
+      for(let at = 0; at < recs.length; at += 400){
+        const batch = recs.slice(at, at + 400);
+        const put = [], byD = {};
+        for(const r of batch){
+          const entry = Object.assign({}, r.entry);
+          delete entry.local; delete entry.bad;
+          /* A HUGE FILE'S CHUNK LIST CAN OUTGROW THE SEAL — NIP-44 refuses a plaintext over 65535
+           * bytes, and an Android-chunked (4 MB) file past ~4 GB lists more chunks than that. The
+           * list moves into its own encrypted blob and the record carries the pointer; the drive
+           * key already encrypts it, the store already dedups it, and the reclaim already counts
+           * `ps` as a reference. */
+          try{
+            if(entry.chunks && JSON.stringify(entry.chunks).length > 58000){
+              const sealed = new TextEncoder().encode(
+                JSON.stringify({ chunks: entry.chunks, cs: entry.cs || 0 }));
+              const putB = await PC.syncBlobs.put(sealed);
+              entry.ps = (putB && typeof putB === 'object') ? putB.sha : putB;
+              entry.pn = entry.chunks.length;
+              delete entry.chunks;
+            }
+          }catch(e){ out.failed.push(r.path); continue; }
+          let d, ct;
+          try{
+            d = await _pathD(r.path);
+            ct = await PC.nip44enc(me, JSON.stringify(Object.assign({ path: r.path }, entry)));
+          }catch(e){
+            out.failed.push(r.path);
+            continue;
+          }
+          byD[d] = r.path;
+          const row = { d, v: +entry.v || 1, by: String(entry.by || deviceId()), ct };
+          if(entry.deletedAt) row.t = 1;
+          put.push(row);
+        }
+        if(!put.length) continue;
+        const j = await _statePost({ pair: key, era, put, confirmed: !!o.confirmed });
+        for(const res of (j.results || [])){
+          const path = byD[res.d];
+          if(!path) continue;
+          if(res.ok) out.ok.push(path);
+          else if(res.stale) out.stale.push(path);
+          else out.failed.push(path);
+        }
+        // Keep the cache in step with what landed, so the next delta starts from the truth.
+        if(cache){
+          for(const r of batch){
+            if(out.ok.indexOf(r.path) === -1) continue;
+            const e = Object.assign({}, r.entry); delete e.local;
+            const d = await _pathD(r.path);
+            cache.entries[r.path] = e; cache.d2p = cache.d2p || {}; cache.d2p[d] = r.path;
+          }
         }
       }
-      /* The single shared document older builds still write, read as one more view. It carries no
-       * versions, so its entries compare by content — which is exactly what this engine did before
-       * versions existed, and it is how a pair that predates this upgrade keeps working. */
-      if(j && j.legacy){
-        if(j.legacy.pathsSha) sealedIds.push(j.legacy.pathsSha);
-        try{ const v = await _openDoc(j.legacy); if(Object.keys(v).length) views['(shared)'] = v; }
-        catch(e){ missing++; }
+      if(cache) await this._saveCache(key, cache);
+      return out;
+    },
+    /* Mark records whose STORED copy failed its checksum here — the flag rides the record, the
+     * holder verifies its local copy and re-sends, and the fresh address clears everything. */
+    async flag(key, items){
+      const cache = await this._cache(key);
+      const flag = [];
+      for(const it of items || []){
+        try{ flag.push({ d: await _pathD(it.path), bad: String(it.id || '') }); }catch(_){}
       }
-      /* Union of every device's refused-copy identities — the holder-side half of the signal. */
-      const bad = [];
-      for(const dev of Object.keys(raw)){
-        const b = raw[dev] && raw[dev].bad;
-        if(Array.isArray(b)) for(const id of b.slice(0, 64)) bad.push(String(id));
-      }
-      return { views, missing, cannot, sealedIds, bad };
+      if(!flag.length) return;
+      await _statePost({ pair: key, era: cache ? cache.era : 0, flag });
     },
-    /** Publish OUR view. One writer, so this is a write and nothing else. */
-    async publish(key, entries){
-      const doc = await _sealDoc(entries);
-      /* THE BAD-COPY SIGNAL. A checksum failure is known only to the PULLER, while the fix — send
-       * the bytes again — belongs to the device still holding the good file, which sees nothing
-       * wrong ("every device is complaining about this" while the desktop settles clean). The
-       * identities this device refuses ride its view; holders re-seed on their next sweep, the
-       * re-upload changes the identity, and the record clears itself. Plaintext by choice: they
-       * are content hashes the store already exposes. */
-      try{
-        const bf = _badFetch(key);
-        const ids = [...new Set(Object.values(bf)
-          .filter(r => r && r.why === 'checksum' && r.id).map(r => String(r.id)))].slice(0, 64);
-        if(ids.length) doc.bad = ids;
-      }catch(_){}
-      await store._post({ folder: key, device: deviceId(), manifest: doc, force: true });
-    },
-    /* RETIRE ONE DEVICE'S RECORD — the escape hatch for the rule above.
-     *
-     * A view that cannot be read holds back every deletion in the pair, for ever and silently. That
-     * is the right default (absent from the merge is indistinguishable from deleted), but it needs a
-     * way out, or a phone that was thrown away can freeze a folder permanently. Named explicitly by
-     * a person: it is never inferred from a failed read, because a failed read is exactly what a
-     * device that is merely offline looks like. */
-    async retire(key, device){
-      await store._post({ folder: key, forgetDevice: device });
-    },
+  };
+
+  const docs = {
+    /* The io the executor sweeps through. `state` throws rather than answering {} — a failed read
+     * must never look like an empty folder. */
+    state: (key) => stateS.load(key),
+    putState: (key, recs, o) => stateS.put(key, recs, o),
+    flagBad: (key, items) => stateS.flag(key, items),
     index: (key) => _loadBase(key),
     saveIndex: (key, idx) => _saveBase(key, idx),
     getBlob: (sha) => store.getBlob(sha),
@@ -782,57 +775,6 @@
       }catch(_){ return null; }
     },
   };
-
-  /* A document's paths, whether they are sealed inline or in an encrypted blob. Fetch and decrypt
-   * fail for opposite reasons and must not share a message: one is a media-server problem and the
-   * other is a key problem, and the fix for each is the other's mistake. */
-  async function _openDoc(doc){
-    if(!doc || typeof doc !== 'object') return {};
-    if(doc.pathsSha){
-      let bytes;
-      /* BOUNDED. `fetch` imposes no timeout of its own, and this is a media-server request made from
-       * a SCREEN — Files → Synced folders opens a folder by reading its records. A server that
-       * accepts the connection and never answers leaves that await pending for ever: the view sits
-       * blank, nothing errors, and nothing can be retried. Reported as "Blossom is hanging trying to
-       * load the Posts folder that emptied". */
-      try{ bytes = await _bounded(PC.syncBlobs.get(doc.pathsSha), 'media server', _POST_TIMEOUT_MS); }
-      catch(e){
-        const m = String((e && e.message) || e);
-        if(/OperationError|decrypt|importKey|drive key/i.test(m))
-          throw new Error('this device cannot decrypt that folder list (' + m + ')');
-        throw new Error('could not fetch that folder list from the media server (' + m + ')');
-      }
-      try{ return JSON.parse(new TextDecoder().decode(bytes)) || {}; }
-      catch(_){ throw new Error('that stored folder list is damaged'); }
-    }
-    if(doc.sealed){
-      try{ return JSON.parse(await PC.nip44dec(PC.me().pubkey, doc.sealed)) || {}; }
-      catch(e){ throw new Error('could not decrypt that folder list'); }
-    }
-    return doc.paths || {};
-  }
-
-  /* Our view, ready to publish. Past ~45 KB the paths move into an encrypted blob and the document
-   * keeps a pointer — NIP-44 refuses a plaintext over 65535 bytes, and at ~174 bytes an entry that
-   * ceiling arrives at about 376 files. `n` and `entries` stay in the clear because the server reads
-   * them: one is the count it guards on, the other is how it tells a folder somebody forgot from one
-   * whose files were all deleted. Neither says anything about what the files are. */
-  async function _sealDoc(entries){
-    const paths = entries || {};
-    const live = Object.keys(paths).filter(p => paths[p] && !paths[p].deletedAt).length;
-    const json = JSON.stringify(paths);
-    const doc = { n: live, entries: Object.keys(paths).length, by: deviceId() };
-    if(json.length < MANIFEST_INLINE_MAX){
-      doc.sealed = await PC.nip44enc(PC.me().pubkey, json);
-    } else {
-      const put = await PC.syncBlobs.put(new TextEncoder().encode(json));
-      doc.pathsSha = (put && typeof put === 'object') ? put.sha : put;
-      /* Still set, to something that cannot decrypt: a client older than the blob split looks for
-       * `sealed`, falls back to `doc.paths`, and would read this as an EMPTY view. */
-      doc.sealed = 'v2:' + doc.pathsSha;
-    }
-    return doc;
-  }
 
   /* ---- WHAT THIS ACCOUNT SYNCS, as opposed to what THIS DEVICE maps ---------------------------
    *
@@ -867,11 +809,8 @@
     if(!force && _acct !== null && age < (_acct === 'error' ? _ACCT_RETRY : _ACCT_TTL)) return false;
     _acctBusy = true; _acctAt = Date.now();
     try{
-      const auth = await PC.signAuth('sync-folders');
-      const r = await fetch('/client/sync-folders', { method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ pubkey: PC.me().pubkey, auth: btoa(JSON.stringify(auth)) }) });
-      const j = await r.json().catch(() => ({}));
-      _acct = (r.ok && j && j.ok && Array.isArray(j.folders)) ? j.folders : 'error';
+      const j = await _statePost({ pair: 'pairs', pairs: true });
+      _acct = (j && Array.isArray(j.folders)) ? j.folders : 'error';
     }catch(_){ _acct = 'error'; }
     _acctBusy = false;
     return true;
@@ -945,38 +884,50 @@
    * server-side guard. It needs none of them now: the edit is published into THIS device's own
    * document, at a version above whatever the folder currently shows, and the merge does the rest.
    *
-   * A device that could not be read makes this refuse to DELETE. The count a deletion is confirmed
-   * against comes from the merged folder, so a missing view makes that number too small — and a
-   * confirmation for the wrong number of files is not a confirmation.
+   * The read is STRICT — a record set that could not be fetched throws before anything is decided
+   * — and every write goes through the server's per-file compare-and-swap, so an edit racing a
+   * sweep loses one file's write, learns it immediately, and nothing is silently overwritten.
    */
   async function _mutate(key, build, verify){
-    const got = await docs.views(key);
-    const m = S_ENGINE.merge(got.views || {});
+    const got = await stateS.load(key);
+    const paths = got.state;
     const meId = deviceId();
-    const mine = Object.assign({}, (got.views || {})[meId] || {});
-    const touched = [], now = Date.now();
+    const puts = [], now = Date.now();
     let removed = 0;
     // A build that THROWS saves nothing: every check a caller wants to make against the current
     // folder belongs in here, where it is reading what is about to be published against.
     build({
-      paths: m.global, now,
+      paths, now,
       put(p, entry){
-        mine[p] = Object.assign({}, entry, { v: S_ENGINE.versionOf(m.global[p]) + 1, by: meId });
-        touched.push(p);
+        puts.push({ path: p, entry: Object.assign({}, entry,
+                    { v: S_ENGINE.versionOf(paths[p]) + 1, by: meId }) });
       },
       drop(p){
-        const cur = m.global[p];
+        const cur = paths[p];
         if(!cur || cur.deletedAt) return;          // already gone: not a deletion
-        if(got.missing) throw new Error('one of your devices could not be read, so this cannot be '
-                                        + 'counted safely — nothing was deleted. Try again in a moment.');
-        mine[p] = { v: S_ENGINE.versionOf(cur) + 1, by: meId, deletedAt: now };
-        touched.push(p); removed++;
+        /* THE TOMBSTONE KEEPS THE FILE'S ADDRESS — the account-wide Restore reads it back. */
+        const keep = {};
+        for(const k of ['sha','csum','size','mtime','chunks','cs','ps'])
+          if(cur[k] !== undefined) keep[k] = cur[k];
+        puts.push({ path: p, entry: Object.assign(keep,
+                    { v: S_ENGINE.versionOf(cur) + 1, by: meId, deletedAt: now }) });
+        removed++;
       },
     });
-    if(!touched.length) return { touched: [], removed: 0 };
-    if(typeof verify === 'function') verify(m.global);
-    await docs.publish(key, mine);
-    return { touched, removed };
+    if(!puts.length) return { touched: [], removed: 0 };
+    if(typeof verify === 'function') verify(paths);
+    /* `confirmed` because every deleting caller here has ALREADY confirmed with the person —
+     * remove() checks its expected count, removeMany is handed a reviewed list. The server's
+     * backstop exists for a sweep gone wrong, not for a person who said yes. */
+    const res = await stateS.put(key, puts, { confirmed: removed > 0 });
+    if(res.stale.length || res.failed.length){
+      const n = res.stale.length + res.failed.length;
+      throw new Error(n + ' of ' + puts.length + ' change' + (puts.length === 1 ? '' : 's')
+                      + ' could not be written' + (res.stale.length
+                        ? ' — another device changed those files at the same moment; look again'
+                        : ' — try again in a moment'));
+    }
+    return { touched: puts.map(x => x.path), removed };
   }
 
   /* The per-blob ceiling this NODE will accept, which is not the same question as maxBytes() asks:
@@ -1080,20 +1031,25 @@
      * repeated it every time it was pressed; a read-back is one request and it is the only thing
      * that can tell the difference. */
     async forget(key){
-      const got = await docs.views(key);
-      const m = S_ENGINE.merge(got.views || {});
-      const all = Object.keys(m.global);
-      const live = all.filter(p => m.global[p] && !m.global[p].deletedAt).length;
-      const devices = Object.keys(got.views || {}).length;
-      if(!all.length && !devices) return { removed: 0, live: 0, tombstones: 0, devices: 0 };
-      await store._post({ folder: key, forgetAll: true });
-      let after = null;
-      try{ after = await docs.views(key); }catch(_){ after = null; }
-      const left = after ? Object.keys(S_ENGINE.merge(after.views || {}).global).length : null;
-      if(left) throw new Error('the record still holds ' + left + ' entr' + (left === 1 ? 'y' : 'ies')
-                               + ' — nothing was cleared');
-      return { removed: all.length, live, tombstones: all.length - live, devices,
-               verified: left === 0 };
+      let all = [], live = 0, readOk = false;
+      try{
+        const got = await stateS.load(key);
+        all = Object.keys(got.state);
+        live = all.filter(p => got.state[p] && !got.state[p].deletedAt).length;
+        readOk = true;
+      }catch(_){ /* retiring is one write either way; the counts are for the toast */ }
+      /* NOTHING TO FORGET IS NOT A WRITE. A confirmed-empty record gets no era bump — the second
+       * press honestly reports zero instead of re-retiring a pair that is already gone. */
+      if(readOk && !all.length) return { removed: 0, live: 0, tombstones: 0, devices: 0,
+                                         verified: true };
+      /* Retiring is ONE ERA BUMP, atomic on the server: every record becomes part of a dead world
+       * the moment it lands, whatever the folder's size. Nothing to read back — the server answers
+       * with the new era or it answers with an error. */
+      const j = await _statePost({ pair: key, forgetAll: true });
+      await stateS.clear(key);
+      try{ await _saveBase(key, {}); }catch(_){}
+      return { removed: all.length, live, tombstones: all.length - live, devices: 0,
+               verified: !!(j && j.ok) };
     },
     /* REMOVE A NAMED SET OF PATHS. Not `remove`, which takes one path and everything under it and
      * re-counts to protect against a screen left open — this is handed an exact list that something
@@ -1138,8 +1094,8 @@
     // How many live files a remove would take. Read fresh, because it is what the confirmation
     // promises and what `expect` is then checked against.
     async count(key, path){
-      const got = await docs.views(key);
-      return _liveUnder(S_ENGINE.merge(got.views || {}).global, path).length;
+      const got = await stateS.load(key);
+      return _liveUnder(got.state, path).length;
     },
     /* Rename a file or a directory. `to` is a full path, not a leaf, so this is also a move.
      *
@@ -1224,7 +1180,7 @@
        * against the manifest actually being written — this only saves sending a 2 GB file to a path
        * that was never going to be accepted, and leaving its blobs referenced by nothing. */
       let known = null;
-      try{ known = S_ENGINE.merge((await docs.views(key)).views || {}).global; }catch(_){}
+      try{ known = (await stateS.load(key)).state; }catch(_){}
       for(let i = 0; i < files.length; i++){
         const f = files[i];
         try{
@@ -1497,7 +1453,19 @@
           },
         }));
         if(!o.dryRun){
-          if(rep && rep.badFetch) _rememberBadFetch(keyOf(f), rep.badFetch);
+          if(rep && rep.badFetch){
+            _rememberBadFetch(keyOf(f), rep.badFetch);
+            /* THE OTHER HALF OF THE CHECKSUM REPAIR: the refusal is this device's memory, and the
+             * fix belongs to whoever still holds a good copy. The flag rides the file's own record;
+             * the holder's next sweep verifies its copy and re-sends, and the fresh storage address
+             * clears both the flag and this device's memory of the bad one. */
+            const _fl = [];
+            for(const _p in rep.badFetch){
+              const _r = rep.badFetch[_p];
+              if(_r && _r.why === 'checksum' && _r.id) _fl.push({ path: _p, id: _r.id });
+            }
+            if(_fl.length){ try{ await stateS.flag(keyOf(f), _fl); }catch(_){} }
+          }
           // Tell the background checker what "synced" now looks like, or its next run compares
           // against a stale signature and notifies about changes that are already up.
           try{ if(fs.markSynced) await fs.markSynced(); }catch(_){}
@@ -1644,6 +1612,10 @@
     // Said out loud, because "900 up" for files that were never sent is how a working first sweep
     // gets mistaken for the resync bug it is recovering from.
     if(rep.alreadyStored) bits.push(rep.alreadyStored + ' already stored');
+    /* A write another device beat by a moment. Not a failure — the loser's journal forgot the
+     * path and the next sweep resolves it as a conflict, both copies kept — but silence about it
+     * reads as files quietly vanishing from the count. */
+    if(rep.raced) bits.push(rep.raced + ' crossed with another device — sorted next sweep');
     // A checkpoint that could not be stored means the next sweep repeats this work. Say so — the
     // alternative is a progress bar that starts at one again with no explanation anywhere.
     if(rep.checkpointFailed) bits.push('couldn’t save progress (' + rep.checkpointFailed + ')');
@@ -1809,24 +1781,9 @@
       + ' with no stored copy recorded');
     if((v.missingBytes || []).length) bits.push((v.missingBytes || []).length
       + ' the store no longer holds');
-    if(v.disagree.length) bits.push(v.disagree.length + ' your devices disagree about');
-    if(v.missingViews) bits.push(v.missingViews + ' device(s) unreadable');
+    if(v.undecryptable) bits.push(v.undecryptable + ' record' + (v.undecryptable === 1 ? '' : 's')
+      + ' this device could not decrypt');
     setStatus(f.id, bits.length ? bits.join(' · ') : 'everything checks out', null, true);
-
-    /* A DEVICE NOBODY CAN READ IS THE ONE FAULT THAT HIDES ITSELF: it holds back every deletion in
-     * the pair, silently and for ever, and the sweep is right to let it. So this is where it gets
-     * said out loud and where somebody can decide that device is gone for good. Never inferred —
-     * a device that is merely offline reads exactly the same way from here. */
-    for(const dev of (v.cannot || [])){
-      const ok = await PC.uiConfirm('“' + keyOf(f) + '” — the record from “' + dev + '” cannot be '
-        + 'read.\n\nWhile that is true, nothing in this folder will be deleted on any device, '
-        + 'because a record that cannot be read is not the same as a device that holds nothing.\n\n'
-        + 'If that device is gone for good, retire its record. If it is only offline or its key is '
-        + 'not on this device, cancel and it will sort itself out.');
-      if(!ok) continue;
-      try{ await docs.retire(keyOf(f), dev); PC.toast('retired ' + dev); }
-      catch(e){ PC.toast('could not retire that record: ' + ((e && e.message) || e)); }
-    }
 
     /* BYTES THE STORE NO LONGER HAS, ON A DEVICE THAT STILL HAS THE FILE, ARE REPAIRED BY SENDING
      * THEM AGAIN — never by fetching, which is what "repair" means for a damaged local copy and is
@@ -1920,7 +1877,7 @@
     // Guarded: this runs AFTER the person has said yes, and a blip here would throw out of the
     // handler — leaving the status line reading the pre-repair summary and nothing set aside, with
     // only a generic "action failed" to show for it.
-    try{ merged = S_ENGINE.merge((await docs.views(keyOf(f))).views || {}).global; }
+    try{ merged = (await stateS.load(keyOf(f))).state; }
     catch(e){
       setStatus(f.id, 'could not check the store before repairing — nothing was changed', null, true);
       return;
@@ -2145,7 +2102,7 @@
     const fs = FS();
     if(!fs) throw new Error('this device has no filesystem access');
     const key = keyOf(f);
-    const man = S_ENGINE.merge((await docs.views(key)).views || {}).global;
+    const man = (await stateS.load(key)).state;
     const list = S.redundantConflicts(man);
     /* IF THE MANIFEST CANNOT PROVE IT, READ THE FILES — this is the one operation where that is the
      * right trade, and without it the button could not clean up the copies it exists for.

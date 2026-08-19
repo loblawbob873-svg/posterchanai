@@ -55,15 +55,12 @@ def test_live_files_and_tombstones_are_counted_separately():
     assert got["tombstones"] == got["entriesBefore"] - 1
 
 
-def test_it_clears_every_devices_record_not_just_this_ones():
-    """The mechanism behind the bug, in its current form.
-
-    Under one shared document the failure was `touched`: a merge cannot express "remove this key",
-    so a wipe that passed one changed nothing while reporting 8,132 entries cleared. Under one
-    document PER DEVICE the same shape is different — clearing only our own leaves the others, and
-    the folder returns the moment one of them publishes again. So the sim holds two devices, and the
-    counts below are the merged record after the wipe."""
+def test_the_era_takes_the_local_ghosts_with_it():
+    """The mechanism, in its current form: retiring a pair is ONE era bump on the server — every
+    record becomes part of a dead world at once, whatever the folder's size — and the LOCAL halves
+    must go with it. A state cache or journal that survives the forget is this device's past life,
+    and a past life is exactly what minted 373 ghost conflicts on a re-add."""
     got = _run()
-    assert got["devices"] == 2, got
     assert got["entriesAfter"] == 0, got
-    assert got["secondPress"] == 0, got
+    assert got["cacheCleared"] >= 1, "the local state cache survived the forget"
+    assert got["journalCleared"] >= 1, "the journal survived the forget"

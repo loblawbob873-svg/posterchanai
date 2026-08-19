@@ -1,6 +1,6 @@
 /* Folder sync — when to sweep. The policy, and nothing else.
  *
- * THIS FILE USED TO BE THE EXECUTOR. It was replaced by syncengine.js (which decides what should
+ * THIS FILE USED TO BE THE EXECUTOR. It was replaced by the engine (syncstate.js decides what should
  * happen) and syncexec.js (which does it), because the shape underneath it could not be made safe:
  * one shared document that every device read, edited and wrote back is last-writer-wins on the
  * record of whether your files exist, and no amount of merging, re-reading or server-side guarding

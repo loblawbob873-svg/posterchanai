@@ -284,9 +284,13 @@ async def get_doc(port: int, d_tag: str, *, seckey: bytes | None = None, pubkey:
 
 async def list_docs(port: int, prefix: str, *, seckey: bytes | None = None, pubkey: str | None = None,
                     encrypt: bool = True, kind: int = APP_KIND, strict: bool = False,
-                    limit: int = 5000, until: int | None = None,
+                    limit: int = 5000, until: int | None = None, since: int | None = None,
                     with_meta: bool = False) -> dict:
     """Return {d_tag: data} for every doc whose `d` tag starts with `prefix`, newest per d_tag.
+
+    `since` is NIP-01's other cursor (created_at >= since): a caller keeping a local copy in step
+    can ask only for what was written after its last look, instead of re-reading a namespace of
+    thousands. Folder sync's per-file records are why it exists here.
 
     `strict=True` RAISES when the relay is unreachable rather than answering {} — use it in any
     caller that DECIDES something from an absence (deleting what is "no longer there", checking that
@@ -313,6 +317,8 @@ async def list_docs(port: int, prefix: str, *, seckey: bytes | None = None, pubk
     # re-reading (and re-decrypting) everything already on screen.
     if until:
         flt["until"] = int(until)
+    if since:
+        flt["since"] = int(since)
     evs = await _ws_query(port, [flt], strict=strict)
     best: dict = {}
     for ev in evs:

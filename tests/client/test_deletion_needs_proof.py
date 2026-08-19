@@ -33,9 +33,11 @@ class DeletionProofTests(unittest.TestCase):
           let published = null;
           const io = {
             index: async () => ({ 'gone.txt': Object.assign({}, entry, { local:{size:9,mtime:10,csum:'c1'} }) }),
-            views: async () => ({ views: { me: { 'gone.txt': entry } }, missing: 0 }),
+            state: async () => ({ state: { 'gone.txt': JSON.parse(JSON.stringify(entry)) }, flagged: {} }),
             saveIndex: async () => {},
-            publish: async (k, mine) => { published = JSON.parse(JSON.stringify(mine)); },
+            putState: async (k, recs) => { published = published || {};
+              for(const r of recs) published[r.path] = JSON.parse(JSON.stringify(r.entry));
+              return { ok: recs.map(r => r.path), stale: [], failed: [] }; },
           };
           const rep = await X.sweep(fs, io, { id:'f', key:'k', device:'me' });
           const tomb = published && published['gone.txt'] && published['gone.txt'].deletedAt;

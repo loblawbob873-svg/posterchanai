@@ -4490,6 +4490,280 @@ def _sync_folder_rows(docs: dict) -> list:
     return out
 
 
+
+
+# ---- folder sync v3: one record per file --------------------------------------------------------
+#
+# The third engine's transport, and the reason there is a third engine: the folder is ONE VERSIONED
+# RECORD PER FILE, compared against each device's disk — never a document that speaks for thousands
+# of paths at once. Records are kind-30078 docs on the LOCAL relay only, signed with the user's
+# server-held storage key, so they replicate nowhere. The ENVELOPE ({v, by, era, t, bad}) is
+# plaintext — it is what the server's compare-and-swap reads, and decrypting 12,000 documents in
+# Python per sweep is not a price a sweep can pay — while the ENTRY (`ct`: path, checksums, blob
+# addresses) is NIP-44-sealed to the user's own key on the client. The server never learns a
+# filename.
+#
+# What the server enforces, because a client cannot be trusted to (a buggy client is how every
+# previous engine failed):
+#   - CAS: a write must be strictly newer (v) than the record it replaces, decided under a per-pair
+#     lock. Two devices editing one file cannot silently overwrite each other — the loser is
+#     REFUSED, sees the winner next sweep, and keeps both copies.
+#   - ERA: re-adding a folder starts a new integer era; records from the old world are dead the
+#     moment it changes. A device's past life cannot haunt it.
+#   - BACKSTOP: a batch that tombstones more than _FS_TOMB_CAP files needs `confirmed` — the
+#     deliberate-delete flow — or it is refused whole. The client has the same guard; this one is
+#     for the client that has gone wrong.
+
+_FS_D_RX = re.compile(r"^[0-9a-f]{16,64}$")
+_FS_TOMB_CAP = 100
+_FS_BATCH_MAX = 500
+_FS_CT_MAX = 100_000
+_fs_locks: dict = {}                       # f"{pk}:{pair}" -> asyncio.Lock (single app process)
+_fs_tomb_log: dict = {}                    # f"{pk}:{pair}" -> [(ts, n)] rolling hour
+
+
+def _fs_pair(pair: str) -> str | None:
+    f = "".join(c for c in str(pair or "") if c.isalnum() or c in "-_")
+    return f if 4 <= len(f) <= 64 else None
+
+
+def _fs_lock(pk: str, pair: str) -> asyncio.Lock:
+    k = f"{pk}:{pair}"
+    if k not in _fs_locks:
+        _fs_locks[k] = asyncio.Lock()
+    return _fs_locks[k]
+
+
+def _fs_tomb_recent(pk: str, pair: str, add: int) -> int:
+    """Tombstones this pair has been sent in the rolling hour, `add` included."""
+    k = f"{pk}:{pair}"
+    now = time.time()
+    log = [(t, n) for (t, n) in _fs_tomb_log.get(k, []) if now - t < 3600]
+    if add:
+        log.append((now, add))
+    _fs_tomb_log[k] = log
+    return sum(n for _t, n in log)
+
+
+class SyncStateReq(BaseModel):
+    pubkey: str
+    auth: str
+    pair: str
+    era: int | None = None            # the world the client believes it is in
+    since: int | None = None          # delta read: records written at/after this relay timestamp
+    put: list | None = None           # [{d, v, by, ct, t?}] — versioned upserts, CAS-checked
+    flag: list | None = None          # [{d, bad}] — mark a record's stored copy checksum-bad
+    confirmed: bool = False           # the deliberate mass-delete flow
+    forgetAll: bool = False           # retire the pair: bump the era
+    pairs: bool = False               # list this account's pairs (metas only)
+
+
+async def _fs_list_all(port: int, sk: bytes, prefix: str, since: int | None = None) -> dict:
+    """Every doc under `prefix`, PAGED past list_docs' window — {d: (envelope, at)}. Strict."""
+    from app.services import nostr_store as store
+    out: dict = {}
+    until = None
+    for _page in range(40):                       # 40 * 5000 = far past any real folder
+        got = await store.list_docs(port, prefix, seckey=sk, strict=True, encrypt=False,
+                                    with_meta=True, until=until, since=since)
+        fresh = 0
+        oldest = None
+        for d, (doc, at) in got.items():
+            oldest = at if oldest is None else min(oldest, at)
+            if d not in out:
+                fresh += 1
+                out[d] = (doc, at)
+        if fresh == 0 or len(got) < 4500 or not oldest:
+            break                                 # a page of nothing new, or an unfilled window
+        until = oldest                            # inclusive boundary; dedup above absorbs overlap
+    return out
+
+
+@router.post("/sync-state")
+async def sync_state(data: SyncStateReq, db: Session = Depends(get_db)):
+    from app.services import nostr_store as store
+    pk = nostr_service.to_pubkey_hex(data.pubkey)
+    if not pk:
+        return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
+    if not _verify_self_auth(data.auth, pk):
+        return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
+    user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
+    if not user:
+        # Never an empty success — "I don't know who you are" must be distinguishable from "you
+        # have no folders", because the caller decides things from absence.
+        return JSONResponse({"ok": False, "error": "no account here for that key"}, status_code=403)
+    sk = store.user_storage_seckey(db, user)
+    port = int(_setting(db, "nostr_relay_port", "3052"))
+
+    if data.pairs:
+        try:
+            metas = await _fs_list_all(port, sk, "pcai:fsmeta:")
+        except Exception as e:
+            logger.warning("[client] sync-state: pairs unreadable: %s", e)
+            return JSONResponse({"ok": False, "error": "folder list unavailable"}, status_code=503)
+        rows = []
+        for d, (doc, at) in metas.items():
+            doc = doc if isinstance(doc, dict) else {}
+            if doc.get("retired"):
+                continue
+            rows.append({"key": d[len("pcai:fsmeta:"):], "n": int(doc.get("n") or 0),
+                         "era": int(doc.get("era") or 0), "updated_at": int(at or 0)})
+        rows.sort(key=lambda r: r["key"].lower())
+        return JSONResponse({"ok": True, "folders": rows})
+
+    pair = _fs_pair(data.pair)
+    if not pair:
+        return JSONResponse({"ok": False, "error": "invalid folder id"}, status_code=400)
+    meta_d = f"pcai:fsmeta:{pair}"
+    prefix = f"pcai:fs:{pair}:"
+
+    async with _fs_lock(pk, pair):
+        # The meta doc is the pair's spine: {era, n}. Reads of it are STRICT — deciding anything
+        # from "I could not read the era" would put a device into the wrong world.
+        try:
+            meta = await store.get_doc(port, meta_d, seckey=sk, strict=True, encrypt=False)
+        except Exception as e:
+            logger.warning("[client] sync-state: meta unreadable %s: %s", meta_d, e)
+            return JSONResponse({"ok": False, "error": "sync state unavailable"}, status_code=503)
+        meta = meta if isinstance(meta, dict) else {}
+        era = int(meta.get("era") or 0)
+
+        if data.forgetAll:
+            # Retiring the pair IS the era bump: every existing record is instantly of a dead world,
+            # readable by nobody and haunting nobody. One write, whatever the folder's size.
+            new = {"era": era + 1, "n": 0, "at": int(time.time()), "retired": True}
+            if not await store.put_doc(port, sk, meta_d, new, encrypt=False):
+                return JSONResponse({"ok": False, "error": "could not retire the folder"},
+                                    status_code=503)
+            logger.info("[client] sync-state: forgetAll %s -> era %d", pair, era + 1)
+            return JSONResponse({"ok": True, "era": era + 1})
+
+        if data.put is not None or data.flag is not None:
+            if data.era is not None and int(data.era) != era:
+                return JSONResponse({"ok": False, "eraChanged": True, "era": era}, status_code=409)
+
+            if data.flag is not None:
+                items = [f for f in data.flag if isinstance(f, dict)][:_FS_BATCH_MAX]
+                want = [str(f.get("d") or "") for f in items if _FS_D_RX.match(str(f.get("d") or ""))]
+                try:
+                    cur = await store.get_docs(port, [prefix + d for d in want], seckey=sk,
+                                               strict=True, encrypt=False)
+                except Exception:
+                    return JSONResponse({"ok": False, "error": "sync state unavailable"}, status_code=503)
+                flagged = 0
+                for f in items:
+                    d = str(f.get("d") or "")
+                    bad = str(f.get("bad") or "")[:300]
+                    env = cur.get(prefix + d)
+                    if not (isinstance(env, dict) and bad) or int(env.get("era") or 0) != era:
+                        continue
+                    if env.get("t") or env.get("bad") == bad:
+                        continue                     # tombstones have no bytes; already flagged is done
+                    env = dict(env)
+                    env["bad"] = bad
+                    if await store.put_doc(port, sk, prefix + d, env, encrypt=False):
+                        flagged += 1
+                return JSONResponse({"ok": True, "flagged": flagged})
+
+            recs = [r for r in data.put if isinstance(r, dict)]
+            if not recs or len(recs) > _FS_BATCH_MAX:
+                return JSONResponse({"ok": False, "error": f"a put carries 1..{_FS_BATCH_MAX} records"},
+                                    status_code=400)
+            clean = []
+            for r in recs:
+                d = str(r.get("d") or "")
+                try:
+                    v = int(r.get("v") or 0)
+                except (TypeError, ValueError):
+                    v = 0
+                by = "".join(c for c in str(r.get("by") or "") if c.isalnum() or c in "-_ .")[:64]
+                ct = r.get("ct")
+                if not _FS_D_RX.match(d) or not (1 <= v <= 1_000_000_000) or not by:
+                    return JSONResponse({"ok": False, "error": "malformed record"}, status_code=400)
+                if not isinstance(ct, str) or not (0 < len(ct) <= _FS_CT_MAX):
+                    return JSONResponse({"ok": False, "error": "malformed record body"}, status_code=400)
+                clean.append({"d": d, "v": v, "by": by, "ct": ct, "t": 1 if r.get("t") else 0})
+
+            # THE BACKSTOP. The client runs the same guard with a person attached; this one exists
+            # for the client that has gone wrong, which is how every previous engine emptied a
+            # folder. Refused WHOLE: a batch that is part delete-order is not worth salvaging.
+            tombs = sum(1 for r in clean if r["t"])
+            if not data.confirmed:
+                if tombs > _FS_TOMB_CAP or _fs_tomb_recent(pk, pair, 0) + tombs > _FS_TOMB_CAP:
+                    logger.warning("[client] sync-state: REFUSED %d tombstones for %s (backstop)",
+                                   tombs, pair)
+                    return JSONResponse({"ok": False, "backstop": True, "n": tombs,
+                                         "error": "this would tell every device to delete "
+                                                  f"{tombs} files — more than {_FS_TOMB_CAP} needs "
+                                                  "the deliberate delete flow"}, status_code=409)
+            try:
+                cur = await store.get_docs(port, [prefix + r["d"] for r in clean], seckey=sk,
+                                           strict=True, encrypt=False)
+            except Exception:
+                return JSONResponse({"ok": False, "error": "sync state unavailable"}, status_code=503)
+
+            results, n_delta, landed_tombs = [], 0, 0
+            for r in clean:
+                d_tag = prefix + r["d"]
+                c = cur.get(d_tag)
+                c = c if isinstance(c, dict) else None
+                c_live = bool(c) and int(c.get("era") or 0) == era
+                if c_live and int(c.get("v") or 0) >= r["v"]:
+                    # THE CAS. The loser learns immediately, keeps its bytes, and resolves the
+                    # divergence as a conflict next sweep — never a silent overwrite.
+                    results.append({"d": r["d"], "stale": True, "v": int(c.get("v") or 0)})
+                    continue
+                env = {"v": r["v"], "by": r["by"], "era": era, "ct": r["ct"]}
+                if r["t"]:
+                    env["t"] = 1
+                if not await store.put_doc(port, sk, d_tag, env, encrypt=False):
+                    results.append({"d": r["d"], "error": "not stored"})
+                    continue
+                was_live = c_live and not c.get("t")
+                now_live = not r["t"]
+                n_delta += (1 if now_live and not was_live else 0) - (1 if was_live and not now_live else 0)
+                if r["t"] and was_live:
+                    landed_tombs += 1
+                results.append({"d": r["d"], "ok": True})
+            if landed_tombs:
+                _fs_tomb_recent(pk, pair, landed_tombs)
+            new_meta = {"era": era, "n": max(0, int(meta.get("n") or 0) + n_delta),
+                        "at": int(time.time())}
+            if not await store.put_doc(port, sk, meta_d, new_meta, encrypt=False):
+                logger.warning("[client] sync-state: meta write failed for %s", pair)
+            stored = sum(1 for x in results if x.get("ok"))
+            logger.info("[client] sync-state: put %s -> %d stored, %d stale, %d tombstones, n=%d",
+                        pair, stored, sum(1 for x in results if x.get("stale")), landed_tombs,
+                        new_meta["n"])
+            return JSONResponse({"ok": True, "results": results, "era": era, "n": new_meta["n"]})
+
+        # ---- list. Strict, paged, and DELTA when the client's era matches: records written since
+        # its last look, instead of the whole folder. An era change always answers full.
+        now_ts = int(time.time())
+        use_since = None
+        if data.since and data.era is not None and int(data.era) == era:
+            use_since = max(0, int(data.since))
+        try:
+            docs = await _fs_list_all(port, sk, prefix, since=use_since)
+        except Exception as e:
+            logger.warning("[client] sync-state: list unreadable %s: %s", pair, e)
+            return JSONResponse({"ok": False, "error": "sync state unavailable"}, status_code=503)
+        records = []
+        for d_tag, (env, at) in docs.items():
+            env = env if isinstance(env, dict) else {}
+            if int(env.get("era") or 0) != era:
+                continue                              # a dead world's record
+            row = {"d": d_tag[len(prefix):], "v": int(env.get("v") or 0),
+                   "by": env.get("by") or "", "ct": env.get("ct") or "", "at": int(at or 0)}
+            if env.get("t"):
+                row["t"] = 1
+            if env.get("bad"):
+                row["bad"] = env.get("bad")
+            records.append(row)
+        return JSONResponse({"ok": True, "era": era, "now": now_ts,
+                             "full": use_since is None, "records": records})
+
+
 class FilesIndexReq(BaseModel):
     pubkey: str
     auth: str

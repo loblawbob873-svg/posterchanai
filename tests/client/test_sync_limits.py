@@ -133,7 +133,7 @@ class TestABrokenSweepStaysDue(unittest.TestCase):
 
     def setUp(self):
         self.src = src()
-        at = self.src.index("if(rep && rep.badFetch) _rememberBadFetch(")
+        at = self.src.index("if(rep && rep.badFetch){")
         self.body = self.src[at:self.src.index("setStatus(f.id, summarise(", at)]
 
     def test_a_clean_sweep_is_what_advances_the_clock(self):

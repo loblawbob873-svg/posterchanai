@@ -197,6 +197,32 @@ public final class SyncStore {
         return new File(dir, SyncCrypto.sha256hex(SyncCrypto.utf8(key)) + ".json");
     }
 
+    /** The pair's cached record set — {era, cursor, entries:{path: entry}} — file-backed like the
+     *  journal. Losing it costs one full re-read, never data. */
+    public Map<String, Object> stateCache(String key) {
+        File f = new File(baseFile(key).getPath() + ".state");
+        if (!f.exists()) return null;
+        RandomAccessFile r = null;
+        try {
+            r = new RandomAccessFile(f, "r");
+            byte[] buf = new byte[(int) r.length()];
+            r.readFully(buf);
+            return Json.obj(Json.parse(SyncCrypto.fromUtf8(buf)));
+        } catch (Exception ignored) {
+            return null;
+        } finally { try { if (r != null) r.close(); } catch (Exception ignored) { } }
+    }
+
+    public void saveStateCache(String key, Map<String, Object> cache) {
+        File f = new File(baseFile(key).getPath() + ".state");
+        File tmp = new File(f.getPath() + ".tmp");
+        try {
+            FileOutputStream out = new FileOutputStream(tmp);
+            try { out.write(SyncCrypto.utf8(Json.write(cache))); } finally { out.close(); }
+            if (!tmp.renameTo(f)) { f.delete(); tmp.renameTo(f); }
+        } catch (Exception ignored) { /* a lost cache is one full re-read */ }
+    }
+
     public Map<String, Map<String, Object>> base(String key) {
         Map<String, Map<String, Object>> out = new LinkedHashMap<String, Map<String, Object>>();
         File f = baseFile(key);
