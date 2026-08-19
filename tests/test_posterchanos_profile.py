@@ -136,6 +136,49 @@ class PosterChanOSProfile(unittest.TestCase):
                 if "GENTOO_PROFILE=" in ln and "-vi 'plasma" in ln]
         self.assertTrue(pcos, "the PosterChanOS branch does not exclude the plasma profile")
 
+    def test_steam_is_opt_in_and_not_in_the_base_profile(self):
+        """Steam is a separate step and always was. Its tooling belongs with it: gamescope is a
+        micro-compositor for GAMES and has no business being emerged on a machine that never
+        installs Steam."""
+        for game in ("steam", "gamescope", "wine"):
+            self.assertFalse([p for p in self.pkgs if game in p],
+                             f"{game} is in the always-installed profile")
+        i = self.src.index("installSteam() {")
+        steam = self.src[i:i + 2200]
+        self.assertIn("gamescope", steam, "gamescope is not installed with Steam")
+        # ...and it must not drag a multilib world rebuild in with it. Native steam-launcher pulls
+        # ABI_X86=32 through the whole graphics stack — every library built twice, hours of it, for
+        # a program that ships its own runtime.
+        self.assertIn("com.valvesoftware.Steam", steam,
+                      "PosterChanOS builds Steam natively — that is the 32-bit stack from source")
+        self.assertIn("$POSTERCHANOS", steam, "the flatpak path is not gated on the profile")
+
+    def test_every_package_name_has_a_category(self):
+        """`games-util/gamescope` does not exist — it is `gui-wm/gamescope` — and emerge refuses the
+        ENTIRE set for one unresolvable atom. That typo installed a kernel, a shell session and a
+        portal config, and no sway, no browser and no OBS, while the install reported success. A
+        category check cannot know what exists in the tree, but it can insist every entry looks like
+        an atom rather than a bare name."""
+        for pkg in self.pkgs:
+            self.assertRegex(pkg, r"^[a-z0-9-]+/[A-Za-z0-9._+-]+$", f"{pkg!r} is not an atom")
+
+    def test_a_bad_package_name_cannot_cost_the_whole_desktop(self):
+        """emerge is all-or-nothing for a set, and nothing checked its exit — buildGentoo carried
+        straight on to finalizeInstall. The retry names what failed, which is the difference between
+        "the desktop is missing" and "these two names are wrong"."""
+        i = self.src.index("installPackages() {")
+        body = self.src[i:i + 2400]
+        self.assertIn("FAILED_PKGS", body, "a failed package set is still silent")
+        self.assertIn("for pkg in $PACKAGES", body, "there is no per-package retry")
+        self.assertIn("return 1", body, "the failure is not reported to the caller")
+
+    def test_the_installer_can_be_driven_without_the_menu(self):
+        """Driving the menu from a pipe worked until the input ran out: `read` returned instantly,
+        `menu` recursed on every empty answer, and bash died of a stack overflow at the end of an
+        hour-long install."""
+        for arg in ('"$1" = "download"', '"$1" = "build"', '"$1" = "install"'):
+            self.assertIn(arg, self.src, f"no unattended entry point for {arg}")
+
     def test_the_default_profile_is_unchanged(self):
         """This is somebody's working installer for their own machines. PosterChanOS is opt-in, and a
         plain run must still build exactly what it built before."""

@@ -32459,10 +32459,32 @@
          * file is never cleared and that path can never be downloaded again. Resuming is an
          * optimisation, so anything that does not add up cleanly falls back to a full download —
          * never to a guess. */
+        /* A PART FILE THAT STOPPED MID-CHUNK STILL RESUMES, and requiring otherwise is what made a
+         * multi-gigabyte file restart from zero for ever.
+         *
+         * `have % cs === 0` demanded that the interruption happened exactly on a chunk boundary.
+         * Almost nothing does: a stall, a dropped radio, a killed renderer or a closed lid all stop
+         * part-way through a chunk, so `have` is almost never an exact multiple and `skip` stayed 0.
+         * On a small file that is invisible — it finishes inside one attempt either way. On a 2 GB
+         * .jex over a tablet's wifi it is fatal: every attempt throws away every byte and starts
+         * again, and the bigger the file the likelier it is to be interrupted before it can finish.
+         * Reported as "restarted .jex download again", repeatedly, on two devices.
+         *
+         * The partial chunk simply does not count. Whole chunks are kept, the write resumes at the
+         * boundary below `have`, and the leftover tail is overwritten by the very next write —
+         * sequential from that offset to the end of the file, so nothing of it can survive. That is
+         * the same reasoning the original clamp used, applied one step further: what is kept must be
+         * provably complete, and a whole chunk is, whatever happened after it.
+         *
+         * The other conditions stay exactly as they were. `whole < total` and `whole * cs < expect`
+         * are what stop a stale, longer part file pushing the offset past the real file — the last
+         * chunk is short, and an offset past `expect` fails the size check on every attempt while
+         * the throw prevents the caller ever clearing the part. Resuming is an optimisation:
+         * anything that does not add up falls back to a full download, never to a guess. */
         const total = (chunks || []).length;
-        if(have > 0 && cs > 0 && have % cs === 0 && total > 0){
+        if(have > 0 && cs > 0 && total > 0){
           const whole = Math.floor(have / cs);
-          if(whole < total && (expect == null || whole * cs < +expect)){
+          if(whole > 0 && whole < total && (expect == null || whole * cs < +expect)){
             skip = whole;
             off = skip * cs;
           }

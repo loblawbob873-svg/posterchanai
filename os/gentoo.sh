@@ -88,7 +88,7 @@ FLATPAK_PACKAGES="com.valvesoftware.Steam com.vscodium.codium org.kde.konsole co
 # them fails at the moment somebody presses record, which is the worst possible moment to find out.
 POSTERCHANOS_PACKAGES="gui-wm/sway x11-base/xwayland gui-apps/foot gui-apps/wl-clipboard \
 media-video/pipewire media-video/wireplumber gui-libs/gtk media-fonts/noto media-fonts/noto-emoji \
-www-client/firefox-bin games-util/gamescope \
+www-client/firefox-bin \
 sys-apps/xdg-desktop-portal gui-libs/xdg-desktop-portal-wlr media-video/obs-studio"
 
 # The profile has to survive a CHROOT. buildGentoo copies this script into the target and runs it
@@ -447,7 +447,40 @@ installPackages() {
 	unmaskPackages
 	/usr/bin/emerge -uDN $PACKAGES --autounmask-write
 	/usr/sbin/etc-update -q --automode -5
-	/usr/bin/emerge -uDN $PACKAGES
+	if /usr/bin/emerge -uDN $PACKAGES; then
+		return 0
+	fi
+
+	# ONE BAD ATOM MUST NOT COST THE WHOLE DESKTOP, and it silently did.
+	#
+	# emerge refuses the entire set if a single name cannot be resolved, and nothing here checked:
+	# buildGentoo carried straight on to finalizeInstall, the install reported success, and the
+	# machine came up with a kernel, a shell session, a portal config — and no sway, no browser, no
+	# OBS. The cause was one typo, `games-util/gamescope` for `gui-wm/gamescope`, and the only trace
+	# was a line in the middle of a very long log.
+	#
+	# So a failure is retried package by package. What resolves gets installed, what does not is
+	# NAMED — which is the difference between "the desktop is missing" and "these two names are
+	# wrong". Slower, and it only runs on the path that was previously a total loss.
+	echo -e "\033[1;31m◆ THE PACKAGE SET FAILED — RETRYING ONE AT A TIME ◆\033[0m"
+	FAILED_PKGS=""
+	for pkg in $PACKAGES; do
+		if ! /usr/bin/emerge -uDN --autounmask-write "$pkg" >/dev/null 2>&1; then
+			/usr/sbin/etc-update -q --automode -5 >/dev/null 2>&1
+		fi
+		if ! /usr/bin/emerge -uDN "$pkg"; then
+			echo -e "\033[1;31m  ✗ $pkg\033[0m"
+			FAILED_PKGS="$FAILED_PKGS $pkg"
+		fi
+	done
+	if [ -n "$FAILED_PKGS" ]; then
+		echo
+		echo -e "\033[1;31m◆ THESE PACKAGES DID NOT INSTALL ◆\033[0m"
+		echo -e "\033[1;31m $FAILED_PKGS\033[0m"
+		echo -e "\033[1;33mEverything else did. Fix the names and re-run: gentoo.sh install-packages\033[0m"
+		echo
+		return 1
+	fi
 }
 
 installFlatpaks() {
@@ -557,7 +590,13 @@ plymouthTheme() {
 	# background that can leave the prompt invisible, and a person is then typing a disk password at
 	# a screen that looks frozen. The theme draws the prompt itself for that reason.
 	echo -e "\033[1;33m◆ BOOT SPLASH ◆\033[0m"
+	# WHERE THE THEME IS depends on who is calling. From the installer on the live system it sits
+	# beside the script; from inside the chroot `$0` is /usr/bin/gentoo.sh and there is no theme
+	# next to it. Both are tried, and a miss is stated rather than skipped — an installer that
+	# quietly leaves the stock splash looks identical to one that set ours.
 	SRC="$(dirname "$0")/plymouth/posterchanos"
+	[ -d "$SRC" ] || SRC="/tmp/plymouth/posterchanos"
+	[ -d "$SRC" ] || SRC="${TARGET}/usr/share/posterchan/plymouth/posterchanos"
 	[ -d "$SRC" ] || SRC="/usr/share/posterchan/plymouth/posterchanos"
 	if [ ! -d "$SRC" ]; then
 		echo -e "\033[1;31mno splash theme found at $SRC — leaving the default\033[0m"
@@ -651,12 +690,34 @@ posterchanShell() {
 }
 
 installSteam() {
+	# Steam is OPT-IN and stays that way — a separate step, exactly as it was. gamescope belongs
+	# here rather than in the base package list: it is a micro-compositor for GAMES, useless on a
+	# machine that never installs Steam, and it has no business being emerged on one. (It also does
+	# not live where its name suggests — `gui-wm/gamescope`, not `games-util/` — and one
+	# unresolvable atom makes emerge refuse the whole set it appears in.)
+	# THE 32-BIT STACK IS THE WHOLE COST, and on a source distribution it is measured in hours.
+	# Native steam-launcher pulls ABI_X86=32 through the entire graphics stack — every one of those
+	# libraries built twice — for a program that ships its own runtime anyway. So on PosterChanOS
+	# Steam comes as a FLATPAK, which is what this script always did before the minimal profile
+	# dropped flatpak: one prebuilt download instead of a multilib world rebuild, and the base
+	# system stays free of a 32-bit ABI it has no other use for.
+	#
+	# gamescope is emerged natively either way: it is 64-bit only, small, and it is what lets a game
+	# have the screen to itself under the compositor.
+	if [[ "$POSTERCHANOS" = *y* ]]; then
+		emerge -uDN sys-apps/flatpak gui-wm/gamescope --autounmask-write
+		etc-update -q --automode -5
+		emerge -uDN sys-apps/flatpak gui-wm/gamescope
+		/usr/bin/flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+		/usr/bin/flatpak install -y com.valvesoftware.Steam
+		return 0
+	fi
 	eselect repository enable steam-overlay
 	emerge --sync steam-overlay
-	emerge -uDN games-util/steam-launcher app-emulation/wine-vanilla --autounmask-write
+	emerge -uDN games-util/steam-launcher app-emulation/wine-vanilla gui-wm/gamescope --autounmask-write
 	etc-update -q --automode -5
 	emerge -uDN @world
-	emerge -uDN games-util/steam-launcher app-emulation/wine-vanilla
+	emerge -uDN games-util/steam-launcher app-emulation/wine-vanilla gui-wm/gamescope
 }
 
 locale() {
@@ -1120,6 +1181,20 @@ elif [ "$1" = "posterchan-shell" ]; then
 elif [ "$1" = "splash" ]; then
 	export TARGET=/
 	plymouthTheme
+# UNATTENDED ENTRY POINTS. Driving the MENU from a pipe is how this was run the first time, and when
+# the piped input ran out `read` returned instantly, `menu` recursed on every empty answer, and bash
+# died of a stack overflow — "Segmentation fault (core dumped)" at the end of an install that had
+# otherwise finished. A phase you can name is not a nicety for an installer that takes an hour.
+elif [ "$1" = "download" ]; then
+	setDevices
+	download-setup
+elif [ "$1" = "build" ]; then
+	setDevices
+	buildGentoo
+elif [ "$1" = "install" ]; then
+	setDevices
+	download-setup
+	buildGentoo
 elif [ "$1" = "btrfs-tweaks" ]; then
 	btrfsTweaks
 elif [ "$1" = "install-flatpaks" ]; then
