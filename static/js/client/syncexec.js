@@ -934,10 +934,25 @@
           return _write(off, bytes);
         }, entry.size, from, entry.cs || 0);
       };
-      await pull(have);
+      /* A PART FILE THAT IS ALREADY WHOLE MUST NOT BE FETCHED AGAIN. Resume works in whole chunks
+       * — `have % cs === 0` — and a COMPLETE file almost never satisfies that, because the last
+       * chunk is short. So a download that finished and then failed only its verification came back
+       * here with the entire file on disk, failed the modulo, computed skip=0 and pulled all of it
+       * a second time. On a 2 GB file that is the difference between a verification retry and an
+       * unbounded loop. Nothing is trusted by skipping the pull: the verify below still has to
+       * pass, and it is what decides whether these bytes are usable. */
+      if(!(entry.size && have >= entry.size)) await pull(have);
       try{
         await verifyPart(fs, o, path, entry);
       }catch(e){
+        /* AN UNANSWERED HASH IS NOT A FAILED ONE, and here the difference is 2 GB. `hashPart` reads
+         * the whole part file back — on Android through SAF, minutes of I/O that can throw or be
+         * killed with the renderer. Treated as a checksum failure it discards the part file and
+         * downloads everything again, which on a large file never terminates: the bigger the file,
+         * the likelier the hash fails, and the more there is to re-fetch. So an unanswered verify
+         * keeps the bytes and reports; the next sweep finds a complete part file and (per the block
+         * above) only has to hash it. */
+        if(e && e.unverified) throw e;
         /* A RESUMED DOWNLOAD THAT FAILS ITS CHECKSUM IS THE PART FILE'S FAULT UNTIL PROVEN
          * OTHERWISE. A part file is tied to nothing but its length, so one left by an EARLIER
          * version of the same path resumes into a splice of two files — and the checksum,
@@ -963,9 +978,16 @@
     return await fs.write(o.id, path, bytes, entry.mtime || 0);
   }
 
+  /* "Could not compute the hash" and "the hash was wrong" are different answers with opposite
+   * repairs: one keeps the bytes and asks again, the other throws them away. They were the same
+   * exception. */
+  const UNVERIFIED = 'downloaded, but this device could not read it back to check it — the bytes '
+                   + 'are kept and the next sync will verify them';
   async function verifyPart(fs, o, path, entry){
     if(!entry.csum || typeof fs.hashPart !== 'function') return;
-    const got = await fs.hashPart(o.id, path);
+    let got = null, asked = true;
+    try{ got = await fs.hashPart(o.id, path); }catch(_){ asked = false; }
+    if(!asked || !got){ const e = new Error(UNVERIFIED); e.unverified = true; throw e; }
     if(got !== entry.csum) throw new Error(BAD_COPY);
   }
 

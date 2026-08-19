@@ -712,6 +712,82 @@ class AnUnansweredHashNeverMintsACopy(unittest.TestCase):
                          "a genuinely divergent file must still keep both copies")
 
 
+class ALargeDownloadFinishes(unittest.TestCase):
+    """The two things that go wrong at the END of a multi-gigabyte download, both of which throw the
+    whole file away and start again — so the bigger the file, the less likely it ever lands.
+
+    1. Resume works in WHOLE chunks (`have % cs === 0`), and a COMPLETE part file almost never
+       satisfies that because the last chunk is short. A download that finished and then failed only
+       its verification therefore came back with the entire file on disk, failed the modulo, and
+       pulled all of it a second time.
+    2. `hashPart` reads the whole part file back — on Android through SAF, minutes of I/O that can
+       throw or be killed with the renderer. Treated as a checksum FAILURE it discards the part file
+       and re-downloads everything, which on a large file never terminates."""
+
+    def _run(self, hashpart_js, have):
+        js = """
+        require(%s); const X = require(%s);
+        (async () => {
+          const CS = 1000, SIZE = 2400;                 // 3 chunks, last one short — the real shape
+          const entry = { v:9, by:'other', csum:'GOOD', size:SIZE, cs:CS,
+                          chunks:['a','b','c'] };
+          const pulled = [];
+          const fs = {
+            chunkBytes: CS,
+            scanPage: async () => ({ files:{}, done:true }),
+            partSize: async () => %d,
+            %s
+            discardPart: async () => { pulled.push('DISCARD'); },
+            writePart: async (id, p, off) => { pulled.push(off); },
+            writeCommit: async () => ({ size:SIZE, mtime:2 }),
+            confirmGone: async () => ({ gone:false, parentAlive:true }),
+          };
+          const io = {
+            index: async () => ({}),
+            state: async () => ({ state: { 'big.jex': JSON.parse(JSON.stringify(entry)) }, flagged:{} }),
+            saveIndex: async () => {},
+            putState: async (k, r) => ({ ok:r.map(x=>x.path), stale:[], failed:[] }),
+            getParts: async (chunks, write, expect, have, cs) => {
+              let off = 0, skip = 0;
+              if(have > 0 && cs > 0 && have %% cs === 0){ skip = Math.floor(have / cs); off = skip * cs; }
+              for(let i = skip; i < chunks.length; i++){
+                const n = (i === chunks.length - 1) ? 400 : cs;
+                await write(off, new Uint8Array(n)); off += n;
+              }
+              return off;
+            },
+          };
+          const rep = await X.sweep(fs, io, { id:'f', key:'k', device:'me', now:1 });
+          process.stdout.write(JSON.stringify({ pulled, downloaded: (rep.downloaded||[]).length,
+                                                failed: (rep.failed||[]).map(f => f.error) }));
+        })().catch(e => { console.error(e && e.stack || e); process.exit(1); });
+        """ % (json.dumps(FOLDERSYNC), json.dumps(EXEC), have, hashpart_js)
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=90)
+        self.assertEqual(r.returncode, 0, r.stderr[-1500:])
+        return json.loads(r.stdout)
+
+    def test_a_complete_part_file_is_not_downloaded_again(self):
+        """It is whole on disk and only needs hashing."""
+        out = self._run("hashPart: async () => 'GOOD',", 2400)
+        self.assertEqual(out["pulled"], [],
+                         "a file already fully on disk was fetched again from byte 0")
+        self.assertEqual(out["downloaded"], 1, "…and it must still be committed")
+
+    def test_an_unanswered_hash_keeps_the_bytes(self):
+        out = self._run("hashPart: async () => { throw new Error('read timed out'); },", 2400)
+        self.assertNotIn("DISCARD", out["pulled"],
+                         "2 GB was thrown away because this device could not read it back")
+        self.assertEqual(out["pulled"], [], "and it must not re-fetch either")
+        self.assertTrue(any("could not read it back" in f for f in out["failed"]),
+                        "it has to be reported: %r" % (out["failed"],))
+
+    def test_a_hash_that_really_differs_still_discards_and_refetches(self):
+        """The guard must not protect a genuinely spliced part file — that is what it is for."""
+        out = self._run("hashPart: async () => 'WRONG',", 1000)
+        self.assertIn("DISCARD", out["pulled"],
+                      "a part file that failed a real checksum must be thrown away")
+
+
 class CheckDoesNotWedgeThePage(unittest.TestCase):
     """The check reads every file and asks about every record — and it must give the page its
     thread back while it does, or Android kills the renderer and the UI reloads mid-operation."""
