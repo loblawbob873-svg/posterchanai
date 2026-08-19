@@ -5724,6 +5724,9 @@
   }
 
   function switchView(v, quiet){
+    /* Leaving the screen stops the narration. The chip is fixed to the viewport, so without this it
+       outlives the post it belongs to and offers to stop something the reader can no longer see. */
+    try{ if(typeof stopNarration === 'function') stopNarration(); }catch(_){}
     _onLandingView = false;   // an explicit navigation — a late pref restore must not move them now
     if(window.PC_NOSTR_ONLY && (v==='ai' || v==='markets')) v='home';   // AI-backed views disabled in Nostr-only deployments
     // Deep links, a restored last-view and the keyboard can all name a view the nav no longer shows —
@@ -13214,7 +13217,41 @@
   }
   // 🔊 Read Aloud — narrate the post via the node's built-in TTS: author name, then the content.
   // URLs, hashtags and attachments are stripped (mediaParts removes media; regex drops links/tags).
-  let _narrateAudio=null;
+  let _narrateAudio=null, _narrateWatch=null;
+  /* STOPPING IT IS PART OF THE FEATURE, and there was no way to. Once a post started reading, the
+     only control was long-pressing a DIFFERENT post (which starts another one) — reported as "I
+     should be able to stop a post from being read aloud while it's playing (maybe by scrolling
+     away?)". So: a chip that says what is playing and stops it, scrolling the post out of view
+     stops it (the reader's own suggestion, and the honest signal that you have moved on), and
+     leaving the screen stops it. Idempotent — every path calls this one function. */
+  function stopNarration(why){
+    try{ if(_narrateAudio){ _narrateAudio.pause(); _narrateAudio.src=''; } }catch(_){}
+    _narrateAudio=null;
+    try{ if(_narrateWatch){ _narrateWatch.disconnect(); } }catch(_){}
+    _narrateWatch=null;
+    const chip=$('#narrate-chip'); if(chip) chip.remove();
+    if(why) toast(why);
+  }
+  function _narrateChip(name, note){
+    const old=$('#narrate-chip'); if(old) old.remove();
+    const b=document.createElement('button');
+    b.id='narrate-chip'; b.className='narrate-chip';
+    b.innerHTML='<span aria-hidden="true">\u23f9</span> Stop reading \u00b7 <span class="muted">'+enc(name)+'</span>';
+    b.onclick=()=>stopNarration();
+    document.body.appendChild(b);
+    /* SCROLLED AWAY IS STOPPED. An observer on the post itself rather than a scroll handler: the
+       timeline is virtualised and re-drawn constantly, and a threshold on the element is the only
+       thing that stays true through that. If the card is gone from the DOM entirely there is
+       nothing to observe and the chip is the way out. */
+    try{
+      if(note && 'IntersectionObserver' in window){
+        _narrateWatch=new IntersectionObserver((es)=>{
+          for(const e of es) if(!e.isIntersecting) stopNarration('stopped reading — you scrolled away');
+        }, { threshold: 0 });
+        _narrateWatch.observe(note);
+      }
+    }catch(_){}
+  }
   async function narratePost(id, pk){
     let ev=Store.get(id); if(!ev){ ev=await fetchEvent(id); if(ev) Store.saveEvent(ev); }
     if(!ev){ toast('post not loaded'); return; }
@@ -13226,7 +13263,7 @@
              .replace(/#[\p{L}\p{N}_]+/gu,' ').replace(/\s+/g,' ').trim();
     if(!body){ toast('nothing to read aloud'); return; }
     const who=profOf(pk)||{}; const name=((who.display_name||who.name||'someone')+'').replace(/[#@_]/g,' ').replace(/\s+/g,' ').trim()||'someone';
-    try{ if(_narrateAudio){ _narrateAudio.pause(); _narrateAudio=null; } }catch(_){}
+    stopNarration();                     // one at a time, and the old chip/observer go with it
     toast('🔊 reading aloud…');
     try{
       const r=await fetch('/client/narrate',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -13234,6 +13271,8 @@
       const j=await r.json().catch(()=>({}));
       if(!r.ok || !j.audio){ toast(j.error||'narration unavailable'); return; }
       _narrateAudio=new Audio('data:audio/mp3;base64,'+j.audio);
+      _narrateAudio.onended=()=>stopNarration();
+      _narrateChip(name, document.querySelector('.note[data-id="'+id+'"]'));
       _narrateAudio.play().catch(()=>{   // autoplay blocked (e.g. fired from a long-press timer) — play on the next tap
         toast('tap anywhere to play 🔊');
         const go=()=>{ document.removeEventListener('click',go); document.removeEventListener('touchend',go); try{ _narrateAudio && _narrateAudio.play(); }catch(_){} };
@@ -13248,6 +13287,12 @@
     let t=null, sx=0, sy=0, held=false;
     const start=e=>{
       if(e.pointerType==='mouse' && e.button!==0) return;   // left button only on desktop
+      /* OFF IS A REAL ANSWER. A press-and-hold that starts talking is delightful once and a
+         nuisance daily — and on a touch screen it fires on holds nobody meant as a gesture
+         ("I should also be able to turn this long press to read aloud off"). Default ON, so
+         nothing changes for anyone who likes it; Settings → Appearance turns it off, and the
+         setting follows the account. */
+      if(!ClientSettings.get('readAloudHold', true)) return;
       const note=e.target.closest && e.target.closest('.note[data-id]'); if(!note) return;
       if(e.target.closest('a,button,img,video,input,textarea,[contenteditable]')) return;
       const id=note.dataset.id; if(!id) return;
@@ -14940,6 +14985,16 @@
         // Synced ON while notes are already parked behind the pill → adopt them now (see the toggle handler).
         if(AUTO_NEW_POSTS){ const feed=$('#feed');
           if(feed && (VIEW==='home'||VIEW==='global') && _livePending.length && feed.scrollTop <= _LIVE_READ_PX) _flushPending(); }
+      }
+      /* SAVED AND NEVER LOADED IS THE DEFAULT OUTCOME HERE. Writing a key in a toggle handler
+         syncs it OUT for free (the patch is merged whole), but the way back in is a clause per key,
+         hand-written — so a setting with no clause turns itself off again on every other device and
+         reads as the toggle not sticking. No re-render: the gesture is read live from
+         ClientSettings on each press, so adopting the value is the whole job. */
+      if(!_prefTouched.has('readAloudHold') && typeof pr.readAloudHold==='boolean'
+         && pr.readAloudHold!==ClientSettings.get('readAloudHold', true)){
+        ClientSettings.set('readAloudHold', pr.readAloudHold);
+        if(!pr.readAloudHold) stopNarration();
       }
       // Re-render on restore: `fn` is captured when a timeline draws, so adopting the synced value
       // without redrawing would leave the feed showing whatever the previous setting produced.
@@ -27779,6 +27834,8 @@
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-compress"></use></svg>Data saver<label class="switch"><input type="checkbox" id="set-no-images" ${NO_IMAGES?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Holds images &amp; videos until you tap them, skips link previews, and loads lighter feed pages — turn it on when you're low on data. Syncs across your devices.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-refresh"></use></svg>Auto-show new posts<label class="switch"><input type="checkbox" id="set-auto-new-posts" ${AUTO_NEW_POSTS?'checked':''}><span class="slider"></span></label></label>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hold a post to read it aloud<label class="switch"><input type="checkbox" id="set-read-aloud" ${ClientSettings.get('readAloudHold',true)?'checked':''}><span class="slider"></span></label></label>
+          <div class="muted small">Press and hold any post and it is narrated. Turn it off if you hold posts by accident. While one is playing a <b>Stop reading</b> button sits at the bottom of the screen, and scrolling the post out of view stops it too.</div>
           <label class="fld"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-compass"></use></svg>Screen the app opens on
             <select class="input" id="set-start-view">${(()=>{
               // Options come from the SIDEBAR, not a typed list, so a new feature joins by itself and a
@@ -28106,6 +28163,13 @@
         _prefTouched.add('hideFediBridge'); saveClientPrefsNostr({ hideFediBridge: hf.checked });
         toast(hf.checked?'fediverse posts hidden in timelines':'fediverse posts shown in timelines');
         if(VIEW==='home'||VIEW==='global') renderView(true);   // same captured-`fn` reason as above
+      }; }
+    { const ra=$('#set-read-aloud'); if(ra) ra.onchange=()=>{
+        const on = ra.checked;
+        ClientSettings.set('readAloudHold', on); _prefTouched.add('readAloudHold');
+        saveClientPrefsNostr({ readAloudHold: on });
+        if(!on) stopNarration();          // turning it off while one is playing must stop that one
+        toast(on?'hold a post to hear it read aloud':'holding a post no longer reads it aloud');
       }; }
     { const an=$('#set-auto-new-posts'); if(an) an.onchange=()=>{
         AUTO_NEW_POSTS = an.checked; ClientSettings.set('autoNewPosts', AUTO_NEW_POSTS);
@@ -31870,6 +31934,12 @@
        shell (the APK's WebView and the desktop's app:// origin both refuse it), so a module that
        calls it directly has a copy button that silently does nothing on two of three platforms. */
     copyValue,
+    /* The ⋯ menu, for the sub-modules. It was already passed INTO the git.js factory, which is easy
+       to mistake for an export list and has been mistaken for one before (`PC._fmtBytes is not a
+       function`, on the confirmation of an irreversible action, where a throw reads only as "action
+       failed"). Folder Sync's card puts everything but its four urgent controls behind one, so it
+       needs the real surface and not that argument list. */
+    openMenuPopover,
     ensureProfile: _ensureProfile, NT, compose, switchView,   // compose → News "Share as note"; switchView → nav
     /* The one pass that fills every `.name[data-prof]` (and avatars, nip05s, @mentions) once a kind-0
      * arrives. A sub-module that paints author names MUST be able to call it, or its names are frozen

@@ -289,8 +289,33 @@ class VerifyRepairsTests(unittest.TestCase):
         self.assertIn("Nothing is deleted", seg)
 
     def test_the_three_controls_do_not_all_say_check(self):
-        """Preview / Deep check / Verify — reported as "why is there Check and Check my files?"."""
-        self.assertIn(">Preview</button>", self.src)
-        self.assertIn(">Verify</button>", self.src)
+        """Preview / Deep sync / Verify — reported first as "why is there Check and Check my
+        files?", then as "why is DeepCheck and Verify needed? Seem redundant".
+
+        They are three different things and only one of them is an inspection. Preview is a dry
+        run, Deep sync is a full sync that re-hashes first (it uploads, downloads and TRASHES), and
+        Verify is the read-only audit. Two of them being called "check" made the pair look like one
+        feature with two buttons — and the one that sounded safest was the one that moves files."""
+        self.assertIn("Preview", self.src)
         self.assertNotIn(">Check</button>", self.src)
         self.assertNotIn("Check my files", self.src)
+        # Deep sync is GONE as a separate control: hashing every file is the expensive half and both
+        # buttons did it, so there is one action that hashes once, reports, and then asks which
+        # answer applies — an edit you made here, or a damaged copy.
+        self.assertNotIn(">Deep check</button>", self.src)
+        self.assertNotIn(">Deep sync</button>", self.src)
+        self.assertNotIn("sync-deep", self.src, "the deep-sync control came back as a second button")
+        self.assertIn("Check files", self.src)
+
+    def test_the_check_asks_which_kind_of_difference_it_found(self):
+        """The merge is only safe because of this question. Bytes that no longer match the record
+        are EITHER an edit made here or damage, and nothing can tell them apart — the old deep sync
+        answered "edit" for all of them and published corruption; this screen answered "damage" for
+        all of them and offered to overwrite an edit."""
+        i = self.src.index("const bad = v.corrupt.map(c => c.path);")
+        seg = self.src[i:i + 2600]
+        self.assertIn("Did YOU change", seg, "the merged check no longer asks which it is")
+        self.assertIn("resend: bad", seg, "answering \"my edits\" must publish them")
+        self.assertIn("Fetch fresh copies?", seg, "the repair path was lost in the merge")
+        self.assertLess(seg.index("Did YOU change"), seg.index("Fetch fresh copies?"),
+                        "the destructive repair must not be offered before the question")

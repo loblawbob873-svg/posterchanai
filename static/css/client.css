@@ -7628,12 +7628,22 @@ html.os-on #upload-badge.upbadge{z-index:333}
 .sync-ex .input{margin:0;font-size:15px;resize:vertical;min-height:52px;font-family:ui-monospace,monospace}
 .sync-opts{display:flex;flex-wrap:wrap;gap:14px}
 .sync-opts label{display:flex;align-items:center;gap:6px;font-size:15px}
-.sync-actions{display:flex;flex-wrap:wrap;gap:8px}
+/* ONE SIZE, BECAUSE THE ROW IS A SET OF PEERS. A wrapping flex row sizes every button to its own
+   label, so nine actions whose names run from "Pause" to "Put 172 files back everywhere" came out
+   nine different widths on three ragged lines — "make all buttons the same size. Very
+   inconsistent". A grid of equal tracks is the fix rather than a min-width, because a min-width
+   still lets the long ones grow: `auto-fit` + `1fr` makes every cell identical and reflows the
+   count per row with the card's width, so it stays right on a phone and on a wide desktop without
+   a second set of rules. `min-height` keeps them level when one label wraps to two lines. */
+.sync-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(11.5rem,1fr));gap:8px}
+.sync-actions .btn{min-height:40px;display:inline-flex;align-items:center;justify-content:center;
+  text-align:center;padding-left:10px;padding-right:10px}
 .sync-actions .danger{color:var(--danger);border-color:rgba(255,107,139,.5)}
 @media(max-width:820px){
   .sync-view{padding:12px}
-  /* Four actions do not fit on a phone row; let them wrap and give each a thumb-sized target. */
-  .sync-actions .btn{flex:1 1 auto;min-height:38px}
+  /* Narrower tracks so two still fit side by side on a phone, and a thumb-sized target. */
+  .sync-actions{grid-template-columns:repeat(auto-fit,minmax(9rem,1fr))}
+  .sync-actions .btn{min-height:44px}
   .sync-ex .input{font-size:16px}   /* 16px minimum or iOS zooms on focus and never zooms back */
 }
 /* What a sweep actually did, per file — the part that lets someone believe the headline, and the
@@ -8084,3 +8094,18 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
  * bleeding into them. It is a toolbar: it spans the whole row, always. Same for the details
  * header when it rides inside the grid. */
 .files-grid .sync-selbar, .files-grid .fx-cols{grid-column:1 / -1}
+
+/* 🔊 READ ALOUD — the stop control, which the feature shipped without.
+   Fixed to the viewport rather than to the post, because the post is exactly what scrolls away and
+   the whole point is to still be able to stop it. Above the mobile nav bar, clear of the safe area,
+   and never wider than the screen. */
+.narrate-chip{position:fixed;left:50%;transform:translateX(-50%);
+  bottom:calc(76px + env(safe-area-inset-bottom,0px));z-index:70;
+  max-width:min(92vw,26rem);display:inline-flex;align-items:center;gap:8px;
+  padding:10px 16px;border-radius:999px;cursor:pointer;
+  border:1px solid var(--line);background:var(--panel2);color:var(--text);
+  font-size:14px;font-weight:600;box-shadow:0 6px 24px rgba(0,0,0,.35);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.narrate-chip .muted{color:var(--muted);font-weight:400}
+.narrate-chip:hover{transform:translateX(-50%) translateY(-1px)}
+@media(min-width:821px){ .narrate-chip{bottom:calc(28px + env(safe-area-inset-bottom,0px))} }

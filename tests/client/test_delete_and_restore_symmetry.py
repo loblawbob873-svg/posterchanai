@@ -267,6 +267,79 @@ class FloorSymmetryTests(unittest.TestCase):
                          "the same question was asked more than once, or with the milder wording")
         self.assertEqual(out["trashed"], 59, "one Yes must cover both rules")
 
+    # ---- restore from trash must not be undone by the sweep that follows it ------------------
+
+    def test_a_named_resend_is_taken_out_of_the_trash_list(self):
+        """RESTORE, SWEEP, BACK IN THE TRASH — 172 files, every round reporting success.
+
+        Putting a file back was left entirely implicit: the bytes returned to the disk and nothing
+        else changed, so the next sweep re-derived the intent from versions and timestamps — and it
+        derives the opposite. The restored bytes ARE the bytes the tombstone describes, so wherever
+        this device's journal entry is missing (struck by a lost compare-and-swap, cleared by an
+        era change, never there) a hashed scan reads "deleted elsewhere, and this copy is the
+        deleted version" and trashes the lot again.
+
+        `resend` is the way to say it outright — and it dropped a named path from settle, fetch and
+        keepBoth while leaving `trash` alone, so a sweep could be told "send this file" and move it
+        to .pc-trash in the same pass. Both halves are asserted: the path leaves the trash list, and
+        it is actually sent."""
+        out = self._run("""
+          const X = require(%s);
+          (async () => {
+          const paths = [];
+          const state = {}, disk = {}, index = {};
+          for(let i = 0; i < 5; i++){        // BELOW the floor on purpose: past it the
+            const p = 'restored/f' + i + '.docx', c = 'k' + i;   // mass guard answers first
+                                                                 // and this would be measuring that
+            paths.push(p);
+            // The folder says deleted, at a version this device never applied…
+            state[p] = { v:9, by:'other', deletedAt:5000, size:20, mtime:2000, csum:c, sha:'blob-' + c };
+            // …this device's journal knows nothing (struck / cleared)…
+            // …and the file is back on disk, hashed, byte-identical to what was deleted.
+            disk[p] = { size:20, mtime:7777, csum:c };
+          }
+          const trashed = [], sent = [];
+          const fs = {
+            scanPage: async (id, so, off, n) => {
+              const all = Object.keys(disk).sort().slice(off, off + n), files = {};
+              for(const p of all) files[p] = disk[p];
+              return { files, done: off + all.length >= Object.keys(disk).length };
+            },
+            read: async (id, p) => new Uint8Array(disk[p].size),
+            hashFile: async (id, p) => disk[p].csum,
+            trash: async (id, p) => { trashed.push(p); return '.pc-trash/' + p; },
+            confirmGone: async () => ({ gone:false, parentAlive:true }),
+          };
+          const io = {
+            index: async () => JSON.parse(JSON.stringify(index)),
+            state: async () => ({ state: JSON.parse(JSON.stringify(state)), flagged:{} }),
+            saveIndex: async () => {},
+            hashBytes: async () => 'h',
+            putBlob: async () => ({ sha:'fresh' }),
+            putState: async (k, recs) => { for(const r of recs) sent.push(r.path);
+              return { ok: recs.map(r => r.path), stale:[], failed:[] }; },
+          };
+          // Without saying anything: the sweep undoes the restore.
+          const before = await X.sweep(fs, io, { id:'f', key:'k', device:'me', now:9000 });
+          const undone = trashed.length;
+          trashed.length = 0; sent.length = 0;
+          // Naming them is the whole difference.
+          const after = await X.sweep(fs, io, { id:'f', key:'k', device:'me', now:9000,
+                                               manual:true, resend: paths });
+          process.stdout.write(JSON.stringify({
+            undoneWithoutSaying: undone,
+            trashedAnyway: trashed.length,
+            uploaded: (after.uploaded || []).length,
+            published: sent.length }));
+          })().catch(e => { console.error(e && e.stack || e); process.exit(1); });
+        """ % (json.dumps(EXEC),))
+        self.assertEqual(out["undoneWithoutSaying"], 5,
+                         "setup: an unannounced restore should be undone — that IS the report")
+        self.assertEqual(out["trashedAnyway"], 0,
+                         "the sweep trashed files it had been told, by name, to send")
+        self.assertEqual(out["uploaded"], 5)
+        self.assertEqual(out["published"], 5)
+
     # ---- a tombstone that names nothing is a deletion nobody can undo ------------------------
 
     def test_a_tombstone_takes_its_address_from_whichever_side_still_has_one(self):
@@ -326,6 +399,39 @@ class FloorSymmetryTests(unittest.TestCase):
         self.assertFalse(out["oldWouldAsk"],
                          "the old rules already caught this, so the fix is not the fix")
         self.assertEqual(out["trash"], 59)
+
+
+class CheckDoesNotWedgeThePage(unittest.TestCase):
+    """The check reads every file and asks about every record — and it must give the page its
+    thread back while it does, or Android kills the renderer and the UI reloads mid-operation."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(EXEC, encoding="utf-8") as fh:
+            cls.exc = fh.read()
+        with open(os.path.join(CLIENT, "sync.js"), encoding="utf-8") as fh:
+            cls.sync = fh.read()
+
+    def test_the_hashing_loop_yields(self):
+        i = self.exc.index("const paths = Object.keys(state).filter")
+        seg = self.exc[i:i + 900]
+        self.assertIn("await breathe()", seg,
+                      "the per-file hash loop never yields — a phone holds its renderer flat out "
+                      "for minutes and Chromium reclaims it")
+
+    def test_the_store_pass_is_not_one_request_at_a_time(self):
+        i = self.exc.index("checking the store")
+        seg = self.exc[max(0, i - 1200):i + 1200]
+        self.assertIn("Promise.all", seg,
+                      "twelve thousand serial HEADs is long enough to lose the renderer before the "
+                      "answer arrives")
+
+    def test_a_check_holds_the_processor_and_always_gives_it_back(self):
+        i = self.sync.index("async function verifyFolder(f)")
+        seg = self.sync[i:i + 3000]
+        self.assertIn("wakeBegin", seg, "a check can run for minutes with no wake lock at all")
+        self.assertIn("finally", seg)
+        self.assertIn("wakeEnd", seg, "a lock that is never released is a flat battery")
 
 
 if __name__ == "__main__":

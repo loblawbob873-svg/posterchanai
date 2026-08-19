@@ -755,6 +755,36 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   absent csum always reads as an edit, so it republishes for ever and trips the resurrect floor for
   ever. NativeSweep read `index` ALONE, which is worse on the device most likely to have a cleared
   journal.
+  **RESTORE FROM TRASH UNDID ITSELF, and reported success every round** ("it clears then goes right
+  back to restore 172 from trash"). Putting a file back was a SILENT act: bytes returned to the disk
+  and nothing else changed, so the next sweep re-derived the intent from versions and timestamps —
+  and it derives the opposite, because the restored bytes ARE the bytes the tombstone describes.
+  Wherever the journal entry is missing (struck by a lost CAS, cleared by an era change) a hashed
+  scan reads "deleted elsewhere — this copy is the deleted version" and trashes the lot again. Two
+  fixes: `restoreTrash` now finishes by sweeping with `resend: <the paths it put back>` (inside the
+  function, so Files and the card cannot drift), and **`resend` takes those paths out of `plan.trash`
+  as well** — it dropped them from settle/fetch/keepBoth and left `trash` alone, so a sweep could be
+  told "send this file" and move it to `.pc-trash` in the same pass. `scripts/check_sync_full.py`
+  drives the whole round trip against a real server (the vdisk has a real trash + `listTrash` now);
+  pre-fix it reports `{"trashed": 1}, trash=['.pc-trash/x/dir0/f0.bin']`.
+  **DEEP CHECK AND VERIFY ARE ONE BUTTON** ("Check files"). Both re-read and re-hashed every file —
+  the entire expensive half was identical — and differed only in what they did with the answer: the
+  "check"-sounding one SYNCED it (publishing whatever the bytes now are), the other only reported.
+  They cannot simply be added, which is why they were split: bytes that no longer match the record
+  are EITHER an in-place edit or damage and nothing can tell them apart, so deep-sync published
+  corruption everywhere and verify offered to overwrite edits. The merged action looks first (read
+  only), then ASKS which it is; "my edits" goes through `resend`, "damage" through the existing
+  re-fetch. **A CHECK ALSO TAKES THE WAKE LOCK AND YIELDS** — it did neither, and on a tablet a
+  minutes-long unyielding loop of native hash calls plus ~12k SERIAL blob HEADs is a renderer
+  Chromium reclaims: the WebView is rebuilt and the UI "reloads" mid-operation, nothing logged.
+  Yield every 16 files, 6 lanes on the HEAD pass, `wakeBegin`/`wakeEnd` in a `finally`.
+  **THE CARD IS FOUR CONTROLS AND A ⋯ MENU** (Sync now, the conditional rescues, More, Stop syncing).
+  Two traps in doing that: `PC.openMenuPopover` was NOT on `window.__PC` — it appears in the git.js
+  FACTORY ARGUMENT LIST, the same thing that produced `PC._fmtBytes is not a function`, and
+  `tests/client/test_pc_surface_exists.py` is what caught it before it shipped; and four handlers
+  were bound as `card.querySelector('.sync-X').onclick = …` with no null check, so moving those
+  buttons would have thrown and taken **every control below them**, Stop syncing included, with the
+  card still drawing perfectly. `tests/client/test_sync_card_bindings.py` fails on both shapes.
   **`tests/test_android_native_sweep.py` HAD BEEN DEAD SINCE THIS REWRITE** — its fakes still
   implemented the per-device-document interfaces, so every test in it failed at javac while the sweep
   it covers was being changed, and a test that cannot compile is a test that does not exist, only

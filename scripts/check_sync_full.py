@@ -9,7 +9,8 @@ field failures were about:
   1. Device B receives EVERY file device A holds, byte-identical.
   2. A real deletion on B propagates to A — exactly that file, into .pc-trash, nothing else.
   3. A device whose scan LIES (empty listing over a full disk) deletes NOTHING anywhere.
-  4. Both devices end on one drive key; no "sealed with a different key" in any report.
+  4. Restore from trash STICKS — the sweep that follows it does not put the file straight back.
+  5. Both devices end on one drive key; no "sealed with a different key" in any report.
 
 Exit 0 pass, 1 fail, 2 could-not-run.
 """
@@ -33,7 +34,7 @@ PROF = (os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-syncfull")
 # exact failure shape that used to delete folders.
 VDISK = r"""
 (() => {
-  const D = window.__vdisk = { files: {}, trash: [], lying: false, moved: [] };
+  const D = window.__vdisk = { files: {}, bin: {}, trash: [], lying: false, moved: [] };
   const sha = async (u8) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', u8)))
     .map(b => b.toString(16).padStart(2, '0')).join('');
   const stat = (r) => ({ size: D.files[r].bytes.length, mtime: D.files[r].mtime });
@@ -69,10 +70,24 @@ VDISK = r"""
       D.files[r] = { bytes: D.parts[r], mtime: mtime || 1000 }; delete D.parts[r];
       return { size: D.files[r].bytes.length, mtime: D.files[r].mtime };   // like the desktop bridge
     },
-    move: async (id, from, to) => { D.files[to] = D.files[from]; delete D.files[from]; D.moved.push([from, to]); },
-    trash: async (id, r, when) => { D.trash.push(r); delete D.files[r]; return '.pc-trash/x/' + r; },
-    emptyTrash: async () => 0,
-    trashStat: async () => ({ files: D.trash.length, bytes: 0 }),
+    /* Moves happen BOTH ways across the trash boundary — a conflict rename out of the live tree,
+       and a restore back into it — so the source is whichever side holds the path. */
+    move: async (id, from, to) => {
+      const src = from.indexOf('.pc-trash/') === 0 ? D.bin : D.files;
+      const dst = to.indexOf('.pc-trash/') === 0 ? D.bin : D.files;
+      dst[to] = src[from]; delete src[from]; D.moved.push([from, to]);
+    },
+    /* THE TRASH KEEPS THE BYTES. It used to drop them on the floor, which made "Restore from
+       trash" — the one recovery a person reaches for when a sweep has taken files — impossible to
+       drive here at all. */
+    trash: async (id, r, when) => {
+      const at = '.pc-trash/x/' + r;
+      D.bin[at] = D.files[r];
+      D.trash.push(r); delete D.files[r]; return at;
+    },
+    listTrash: async (id) => Object.keys(D.bin).map(at => ({ at, to: at.slice('.pc-trash/x/'.length) })),
+    emptyTrash: async () => { D.bin = {}; return 0; },
+    trashStat: async () => ({ files: Object.keys(D.bin).length, bytes: 0 }),
     sweepParts: async () => 0,
     confirmGone: async (id, r) => ({ gone: !(r in D.files), parentAlive: true }),
     watch: async () => {}, unwatch: async () => {},
@@ -124,7 +139,21 @@ DISK = r"""(async () => {
   for(const [k, v] of Object.entries(window.__vdisk.files))
     out[k] = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', v.bytes)))
       .map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 16);
-  return { files: out, trash: window.__vdisk.trash.slice() };
+  return { files: out, trash: window.__vdisk.trash.slice(),
+           bin: Object.keys(window.__vdisk.bin) };
+})"""
+
+# Restore everything in this device's .pc-trash, through the SHIPPED loop (which now tells the
+# sweep that follows it what was put back). uiConfirm is stubbed: there is nobody to press it.
+RESTORE = r"""(async () => {
+  const was = window.__PC.uiConfirm;
+  window.__PC.uiConfirm = async () => true;
+  try{
+    const f = window.PCSync.folders()[0];
+    const r = await window.PCSync.restoreTrash(f.id);
+    return r || { done: 0 };
+  }catch(e){ return { err: String((e && e.message) || e) }; }
+  finally{ window.__PC.uiConfirm = was; }
 })"""
 
 
@@ -359,6 +388,58 @@ async def drive(url):
         else:
             print("  lying scan deleted nothing anywhere")
 
+        # ---- 3.5 RESTORE FROM TRASH MUST STICK --------------------------------------------------
+        # "i did restore from trash and it clears then goes right back to restore 172 from trash".
+        # Putting a file back was a silent act: the bytes returned to the disk and nothing else
+        # changed, so the next sweep re-derived the intent from versions and timestamps — and it
+        # derives the opposite, because the restored bytes ARE the bytes the tombstone describes.
+        # With this device's journal entry missing (struck by a lost compare-and-swap, cleared by an
+        # era change) a hashed scan reads "deleted elsewhere, and this copy is the deleted version"
+        # and trashes it straight back, reporting success every round.
+        #
+        # A's journal is cleared here, which is the real shape of it AND what forces the hashed scan
+        # the branch needs — the same re-add the dirty join above models.
+        await a.js("""(async () => {
+          await window.PCSync.docs.saveIndex('E2EPair', {});
+          return true; })()""", aw=True)
+        rr = await a.js(f"({RESTORE})()", aw=True) or {}
+        print("  A restore from trash:", json.dumps(rr))
+        if rr.get("err"):
+            problems.append(f"restore from trash threw: {rr['err']}")
+        elif not rr.get("done"):
+            problems.append(f"restore from trash put nothing back: {rr}")
+        da4 = await a.js(f"({DISK})()", aw=True) or {}
+        if "dir0/f0.bin" not in da4.get("files", {}):
+            problems.append("the restored file is not on A's disk — the sweep undid the restore "
+                            f"(trash now {da4.get('bin')})")
+        elif da4.get("bin"):
+            problems.append(f"restore left {len(da4['bin'])} file(s) in .pc-trash — it went "
+                            f"straight back: {da4['bin'][:4]}")
+        else:
+            print("  restore from trash stuck: the file is back and the trash is empty")
+        # AND IT SURVIVES THE NEXT SWEEP, which is the half the person actually sees: the restore
+        # reports success, the button clears, and one sweep later the file is back in .pc-trash and
+        # the button reads "Restore N from trash" again. A deep sweep, because the branch that
+        # undoes it needs the content hash the trash-restored bytes will match.
+        r6b = await a.js("""(async () => {
+          const f = window.PCSync.folders()[0];
+          const rep = await window.PCSync.sweep(f, { manual: true, deep: true });
+          return { trashed: (rep.plan && rep.plan.deleteLocal || []).length }; })()""", aw=True) or {}
+        da5 = await a.js(f"({DISK})()", aw=True) or {}
+        if "dir0/f0.bin" not in da5.get("files", {}) or da5.get("bin"):
+            problems.append("the sweep after the restore put the file straight back in the trash "
+                            f"({json.dumps(r6b)}, trash={da5.get('bin')})")
+        else:
+            print("  and the sweep after it left the restore alone")
+
+        # …and the other device gets it back, which is what makes it a restore and not a local undo.
+        r7 = await b.js(f"({SWEEP})()", aw=True) or {}
+        dbf = await b.js(f"({DISK})()", aw=True) or {}
+        if "dir0/f0.bin" not in dbf.get("files", {}):
+            problems.append(f"B never got the restored file back ({json.dumps(r7)[:200]})")
+        else:
+            print("  the restore reached the other device")
+
         # ---- 4. one drive key, no wrong-key anywhere --------------------------------------------
         ka = await a.js("window.__PC.driveKeyWrapped()")
         kb = await b.js("window.__PC.driveKeyWrapped()")
@@ -385,7 +466,7 @@ async def drive(url):
         for p in problems:
             print("FAIL ", p)
         return 1
-    print("PASS  full sync loop: replicate, delete, survive a lying scan, one key")
+    print("PASS  full sync loop: replicate, delete, survive a lying scan, restore from trash, one key")
     return 0
 
 

@@ -539,6 +539,7 @@
          + ' back where they came from?\n\nNothing is overwritten: a file that already '
          + 'exists again is skipped and its trash copy stays put.')) return null;
     let done = 0, skipped = 0, failed = 0;
+    const back = [];                 // paths actually put back, for the sweep that follows
     const timed = (pr, ms) => Promise.race([pr,
       new Promise((_, rej) => setTimeout(() => rej(new Error('timed out')), ms))]);
     for(const r of rows){
@@ -549,7 +550,7 @@
         try{ const ev = fs2.confirmGone ? await timed(fs2.confirmGone(folderId, r.to), 15000) : null;
              free = !!(ev && (ev.gone === true || ev.parentAlive === false)); }catch(_){ free = false; }
         if(!free){ skipped++; continue; }
-        await timed(fs2.move(folderId, r.at, r.to), 30000); done++;
+        await timed(fs2.move(folderId, r.at, r.to), 30000); done++; back.push(r.to);
       }catch(_){ failed++; }
       const n = done + skipped + failed;
       if(n % 10 === 0) setStatus(folderId, 'restoring\u2026 ' + n + ' / ' + rows.length
@@ -557,7 +558,31 @@
     }
     PC.toast('restored ' + done + (skipped ? ' \u00b7 ' + skipped + ' already back in place' : '')
              + (failed ? ' \u00b7 ' + failed + ' failed' : ''));
-    return { done, skipped, failed };
+    /* AND THE SWEEP IS TOLD WHAT WAS RESTORED, or it undoes it.
+     *
+     * Putting a file back is a statement of intent, and it was left entirely implicit: the bytes
+     * returned to the disk and nothing else changed, so the next sweep had to re-derive the intent
+     * from versions and timestamps. It derives the opposite. The restored bytes ARE the bytes the
+     * tombstone describes, so wherever this device's journal entry is missing — struck by a lost
+     * compare-and-swap, cleared by an era change, or never there — a hashed scan reads "deleted
+     * elsewhere, and this copy is the deleted version" and moves all of them straight back to
+     * .pc-trash. Reported as "I did restore from trash and it clears then goes right back to
+     * restore 172 from trash", with every restore honestly reporting success.
+     *
+     * `resend` says it outright instead: send these exact paths, at a version past whatever the
+     * folder shows. It is the same channel the card's "Put them back everywhere" uses, and a named
+     * path is now removed from the sweep's trash list (see the executor), so the two cannot fight.
+     * Done HERE rather than in each caller, because Files restores through this same function and a
+     * second copy of this rule is how the two would drift. */
+    if(back.length){
+      const f = folders().find(x => x.id === folderId);
+      if(f){
+        setStatus(folderId, 'telling your other devices about ' + back.length + ' restored file'
+                  + (back.length === 1 ? '' : 's') + '\u2026', null, true);
+        try{ await swept(f, { manual: true, resend: back }); }catch(_){}
+      }
+    }
+    return { done, skipped, failed, restored: back };
   }
 
   /* The pair's era + cursor + decrypted record set, cached per pair. */
@@ -1975,6 +2000,15 @@
       return;
     }
     setStatus(f.id, 'checking your files…', null, true);
+    /* HOLD THE PROCESSOR, THE SAME WAY A SWEEP DOES. This reads and re-hashes every file in the
+     * folder and then asks the store about every record — minutes of work on a tablet, and a sweep
+     * takes a wake lock for exactly that reason. This did not, so the screen could dim mid-check,
+     * the process go to the background, and Android reclaim the WebView's renderer: the app comes
+     * back rebuilt and the check is simply gone. Released on EVERY exit, including a throw — a lock
+     * never given back is a flat battery, which is the one way this could be worse than the bug. */
+    const _w = fs;
+    let _held = false;
+    if(_w && _w.wakeBegin){ try{ await _w.wakeBegin(); _held = true; }catch(_){} }
     let v;
     try{
       v = await EXEC.verify(fs, docs, { id: f.id, key: keyOf(f), deep: true,
@@ -1983,6 +2017,8 @@
     }catch(e){
       setStatus(f.id, 'could not check: ' + ((e && e.message) || e), null, true);
       return;
+    }finally{
+      if(_held && _w.wakeEnd){ try{ await _w.wakeEnd(); }catch(_){} }
     }
     const bits = [];
     if(v.checked) bits.push(v.checked + ' verified');
@@ -2071,6 +2107,35 @@
 
     const bad = v.corrupt.map(c => c.path);
     if(!bad.length) return;
+    /* THE ONE QUESTION HASHING CANNOT ANSWER, ASKED OF THE PERSON WHO KNOWS.
+     *
+     * A file whose bytes no longer match the record is either an edit made here in place or a
+     * damaged copy, and they are byte-for-byte indistinguishable — that is the entire reason this
+     * used to be two buttons. "Deep sync" answered "edit" for all of them and published whatever
+     * was on the disk, which spreads corruption to every device; this screen answered "damage" for
+     * all of them and offered to overwrite the files from the store, which throws an edit away.
+     * Both answers are right some of the time and neither is right by default.
+     *
+     * So it is asked, once, with the count and the consequence — and the SAFE answer is the
+     * default: cancelling here does nothing at all, and the second question (fetch fresh copies)
+     * still cannot run without its own yes. */
+    const mine = await PC.uiConfirm('“' + keyOf(f) + '” — ' + bad.length + ' file'
+      + (bad.length === 1 ? '' : 's') + ' on this device no longer match what your devices agreed '
+      + 'the folder holds.\n\nDid YOU change ' + (bad.length === 1 ? 'it' : 'them') + ' on this '
+      + 'device?\n\nYes — send ' + (bad.length === 1 ? 'it' : 'them') + ' to your other devices as '
+      + 'the new version. Only answer yes if you edited '
+      + (bad.length === 1 ? 'this file' : 'these files') + ' here: a damaged copy sent this way '
+      + 'replaces the good copy everywhere.\n\nNo — this screen will offer to fetch fresh copies '
+      + 'instead.', { ok: 'Yes, these are my edits' });
+    if(mine){
+      /* Named paths, through the same channel as every other deliberate send — so the mass-restore
+       * floor does not question a list a person just reviewed, and the sweep cannot decide to trash
+       * them in the pass it was told to send them in. */
+      setStatus(f.id, 'sending ' + bad.length + ' edited file' + (bad.length === 1 ? '' : 's')
+                + ' to your other devices…', null, true);
+      swept(f, { manual: true, resend: bad });
+      return;
+    }
     const ok = await PC.uiConfirm('“' + keyOf(f) + '” — ' + bad.length + ' file'
       + (bad.length === 1 ? '' : 's') + ' on this device do not match what your devices agreed.\n\n'
       + 'Fetch fresh copies? The copies here move to .pc-trash first — nothing is erased, and '
@@ -2488,19 +2553,20 @@
         ${pr.paused ? `<div class="sync-new"><b>Not syncing yet.</b>
           <span class="muted small">Nothing has been uploaded. Add anything you want left out below —
           a folder name covers everything inside it — then press Start. You can change it later.</span></div>` : ''}
+        <!-- FOUR THINGS STAY OUT ON THE CARD AND THE REST GO IN A MENU.
+             Eleven equal-looking buttons is not a set of choices, it is a wall — and the two that
+             matter (the one you press every day, and the one that recovers files) were lost in it.
+             Out here: the PRIMARY action, anything CONDITIONAL (it only exists when something needs
+             attention, and burying a recovery is how this feature earned its reputation), the menu,
+             and Stop syncing, which is asked for by name.
+             Everything else is one press away and none of it is urgent. -->
         <div class="sync-actions">
-          <button class="btn btn-ghost small sync-dry" title="What this sweep would change, without changing anything.">Preview</button>
           ${pr.paused ? '<button class="btn btn-neon small sync-start">Start syncing ▶</button>'
                       : '<button class="btn btn-neon small sync-now">Sync now</button>'}
-          ${pr.paused ? '' : '<button class="btn btn-ghost small sync-pause" title="Stop this folder syncing until you press Start. Nothing is deleted and nothing is undone.">Pause</button>'}
-          <button class="btn btn-ghost small sync-deep" title="Re-read and re-hash every file. Slow on a big folder — for a file edited in place without changing its size or timestamp.">Deep check</button>
-          <button class="btn btn-ghost small sync-verify" title="Read every file on this device and check it against what your devices agree the folder holds. Changes nothing.">Verify</button>
           ${(st.report && st.report.refusedResurrect)
             ? `<button class="btn btn-neon small sync-putback">\u267b Put ${st.report.refusedResurrect.n} file${st.report.refusedResurrect.n===1?'':'s'} back everywhere</button>` : ''}
-          <button class="btn btn-ghost small sync-tidy">Tidy up conflict copies</button>
           <button class="btn btn-ghost small sync-restore hidden">\u267b Restore from trash</button>
-          <button class="btn btn-ghost small sync-trash">Empty trash</button>
-          ${(FS() && FS().tickStats) ? '<button class="btn btn-ghost small sync-bg" title="What this phone measured about background syncing: alarms scheduled, alarms that fired, and ticks that reached the app.">Background details</button>' : ''}
+          <button class="btn btn-ghost small sync-more" title="Preview, check, tidy up, trash and background details.">\u22ef More</button>
           <button class="btn btn-ghost small danger sync-forget">Stop syncing</button>
         </div></div>`;
     }).join('');
@@ -2683,7 +2749,13 @@
         put(f => { f.prefs = Object.assign({}, f.prefs, { onlyWhenCharging: e.target.checked }); });
       card.querySelector('.sync-wifi').onchange = (e) =>
         put(f => { f.prefs = Object.assign({}, f.prefs, { wifiOnly: e.target.checked }); });
-      card.querySelector('.sync-dry').onclick = () => swept(get(), { manual:true, dryRun:true });
+      /* EVERY ACTION IS A NAMED FUNCTION, AND THE MENU AND THE CARD BOTH CALL IT.
+       * Half of these used to be bound as `card.querySelector('.sync-X').onclick = …` with no null
+       * check, which is fine only while every button is always in the markup — the moment one moves
+       * behind a menu that line throws, this whole binding function aborts, and EVERY control below
+       * it silently stops working. That is the "three unrelated bugs at once" shape: the card looks
+       * perfect and nothing is in any log. */
+      const _doPreview = () => swept(get(), { manual:true, dryRun:true });
       { const now = card.querySelector('.sync-now');
         if(now) now.onclick = () => swept(get(), { manual:true }); }
       /* PAUSE, for a folder that is already running.
@@ -2695,13 +2767,12 @@
        *
        * It stops the automatic paths only. Nothing is deleted, nothing already uploaded is undone,
        * and Start picks it up exactly where it was. */
-      { const pz = card.querySelector('.sync-pause');
-        if(pz) pz.onclick = () => {
-          put(f => { f.prefs = Object.assign({}, f.prefs, { paused: true }); });
-          stopping.add(id);                       // and stop the sweep that is running RIGHT NOW
-          setStatus(id, running.has(id) ? 'stopping…' : 'paused — press Start when you want it to run again');
-          paint();
-        }; }
+      const _doPause = () => {
+        put(f => { f.prefs = Object.assign({}, f.prefs, { paused: true }); });
+        stopping.add(id);                       // and stop the sweep that is running RIGHT NOW
+        setStatus(id, running.has(id) ? 'stopping…' : 'paused — press Start when you want it to run again');
+        paint();
+      };
       { const st = card.querySelector('.sync-start');
         if(st) st.onclick = () => {
           // Commit whatever is in the exclusions box FIRST — someone types the patterns and presses
@@ -2713,9 +2784,22 @@
           paint();
           swept(get(), { manual:true });
         }; }
-      card.querySelector('.sync-deep').onclick = () => swept(get(), { manual:true, deep:true });
-      { const vb = card.querySelector('.sync-verify');
-        if(vb) vb.onclick = () => verifyFolder(get()); }
+      /* ONE CHECK, NOT TWO. "Deep check" and "Verify" both re-read and re-hash every file in the
+       * folder — the entire expensive half is identical — and they differed only in what they did
+       * with the answer: the deep one SYNCED it (publishing whatever the bytes now are), the other
+       * only reported. Two buttons for one job, and the one that sounded like an inspection was the
+       * one that moved files ("cant you combine Deep and Verify? This is silly to have 2
+       * functions").
+       *
+       * They cannot simply be added together, and that is the whole reason they were separate: a
+       * file whose bytes no longer match the record is EITHER an edit you made in place or a
+       * damaged copy, and no amount of hashing can tell which. Syncing assumes the first and
+       * publishes damage everywhere; repairing assumes the second and overwrites your edit.
+       *
+       * So they are one action that looks FIRST and then asks, which is what a person could have
+       * answered all along. `verifyFolder` reads without writing, reports, and puts the choice
+       * where the evidence is. */
+      const _doCheck = () => verifyFolder(get());
       /* RECONNECT, rather than "remove it and add it again".
        *
        * A grant can go without the folder going: a desktop config file truncated by a crash, an
@@ -2785,7 +2869,7 @@
           try{ await swept(f, { manual: true, resend: paths }); }
           finally{ pb.disabled = false; paint(); }
         }; }
-      card.querySelector('.sync-tidy').onclick = async () => {
+      const _doTidy = async () => {
         const f = get(); if(!f) return;
         setStatus(f.id, 'looking for redundant copies…');
         let found;
@@ -2830,7 +2914,7 @@
        * policy: these files are already gone from the other devices, so this copy is the last one.
        * That is the sentence that belongs in front of an irreversible act — not a retention window,
        * which is what somebody pressing a button called "Empty trash" is least interested in. */
-      card.querySelector('.sync-trash').onclick = async () => {
+      const _doEmptyTrash = async () => {
         let stat = null;
         try{ stat = FS().trashStat ? await FS().trashStat(id) : null; }catch(_){}
         const what = stat && stat.files
@@ -2860,8 +2944,7 @@
        * SUCCESS — an alarm that never fires, a tick emitted into a dead page and a sweep that ran
        * are all silence from every other vantage point — and counters nothing renders are no better
        * than no counters, which is what shipped in the first version of them. */
-      { const bg = card.querySelector('.sync-bg');
-        if(bg) bg.onclick = async () => {
+      const _doBg = async () => {
           let st = null;
           try{ st = await FS().tickStats(); }catch(_){ st = null; }
           if(!st){ PC.toast('this build can’t report background sync'); return; }
@@ -2913,6 +2996,28 @@
           const full = line + extra;
           PC.copyValue ? PC.copyValue(full, 'background details copied', 'Background sync:')
                        : setStatus(id, full.replace(/\n/g, ' · '));
+      };
+      /* THE MENU. One list, built from what this device and this folder can actually do — a row
+       * that offers Pause on a paused folder, or Background details on a desktop, is a row that
+       * teaches people not to read it. Every entry calls the SAME function the card would have. */
+      { const more = card.querySelector('.sync-more');
+        if(more) more.onclick = () => {
+          const items = [['preview', '\ud83d\udc41 Preview \u2014 what would change']];
+          if(!prefs(get()).paused) items.push(['pause', '\u23f8 Pause syncing']);
+          items.push(['check', '\ud83e\ude7a Check files \u2014 read every one, change nothing']);
+          items.push(['tidy', '\ud83e\uddf9 Tidy up conflict copies']);
+          items.push(['trash', '\ud83d\uddd1 Empty trash']);
+          if(FS() && FS().tickStats) items.push(['bg', '\ud83d\udcf1 Background sync details']);
+          const pick = (a) => {
+            if(a === 'preview') return _doPreview();
+            if(a === 'pause') return _doPause();
+            if(a === 'check') return _doCheck();
+            if(a === 'tidy') return _doTidy();
+            if(a === 'trash') return _doEmptyTrash();
+            if(a === 'bg') return _doBg();
+          };
+          if(PC.openMenuPopover) PC.openMenuPopover(more, items, pick);
+          else pick('check');            // a shell without the popover still reaches the main one
         }; }
       card.querySelector('.sync-forget').onclick = async () => {
         if(!await PC.uiConfirm('Stop syncing this folder?\n\nNothing is deleted — the files stay on this '

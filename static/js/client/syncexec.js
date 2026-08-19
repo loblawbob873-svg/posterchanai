@@ -284,12 +284,22 @@
                                       why: 'putting this back — asked for by name on this device' });
       });
       if(extra.length || unflagged){
+        /* AND IT COMES OUT OF THE TRASH LIST, which is the half that was missing and the half that
+         * mattered. `resend` dropped a named path from settle/fetch/keepBoth and left `trash`
+         * alone — so a sweep could be told "send this file" and move it to .pc-trash in the same
+         * pass. That is exactly what happens after Restore from trash: the restored bytes ARE the
+         * bytes the tombstone describes, so on a hashed scan the engine reads "this copy is the
+         * deleted version" and trashes it again. Restore, sweep, back in the trash, 172 files at a
+         * time, with the restore reporting success every round. A path somebody named is not a
+         * candidate for deletion in the sweep they named it in. */
         const drop = new Set(extra.map(x => x.path));
+        const named = new Set(want);
         plan = Object.assign({}, plan, {
           send: relist.concat(extra),
           settle: plan.settle.filter(x => !drop.has(x.path)),
           fetch: plan.fetch.filter(x => !drop.has(x.path)),
           keepBoth: plan.keepBoth.filter(x => !drop.has(x.path)),
+          trash: plan.trash.filter(x => !named.has(x.path)),
         });
         if(extra.length) report.resent = extra.length;
         if(unflagged) report.restoring = unflagged;
@@ -1028,10 +1038,19 @@
     tick({ phase: 'scanning' });
     const disk = (await scan(fs, Object.assign({}, o, { hash: false }), () => false)).disk;
 
+    /* BREATHE. This walks every record in the folder, hashing each file through the platform
+     * bridge — thousands of round trips with no await that ever yields to the page. On Android that
+     * is a renderer holding its own thread flat out for minutes while the app looks frozen, and
+     * Chromium's response to a renderer under that kind of pressure is to KILL it: the WebView is
+     * rebuilt and the user sees the UI reload, in the middle of an operation, with nothing in any
+     * log ("Deep Check, Verify, cause tablet to reload UI"). One macrotask yield every few files
+     * costs nothing measurable against a hash and gives the page its thread back. */
+    const breathe = () => new Promise(r => setTimeout(r, 0));
     const paths = Object.keys(state).filter(p => state[p] && !state[p].deletedAt);
     let i = 0;
     for(const p of paths){
       const entry = state[p];
+      if((i % 16) === 0) await breathe();
       tick({ phase: 'checking', path: p, i: ++i, n: paths.length });
       if(!entry.sha && !(entry.chunks && entry.chunks.length)){
         out.unaddressed = out.unaddressed || [];
@@ -1059,18 +1078,32 @@
        * the exact lie this feature keeps paying for. A HEAD is milliseconds on a LAN; the whole
        * folder is a minute or two, and a caller that truly wants a bound passes one. */
       const want = o.blobLimit ? paths.slice(0, o.blobLimit) : paths;
-      let j = 0;
-      for(const p of want){
+      /* A FEW AT A TIME, because this is twelve thousand round trips and every one of them is
+       * mostly waiting. Serially it is long enough for a phone to lose its renderer before the
+       * answer arrives — and the answer is what the whole screen is for. A HEAD changes nothing, so
+       * there is no ordering to preserve; the only reason to bound it at all is the same one the
+       * transfer lanes have, which is not drowning a node that is also serving everything else. */
+      const LANE = 6;
+      let j = 0, at = 0;
+      const one = async (p) => {
         const e = state[p];
         const ids = e.chunks && e.chunks.length ? e.chunks : (e.sha ? [e.sha] : []);
         tick({ phase: 'checking the store', path: p, i: ++j, n: want.length });
         for(const id of ids){
           let there = null;
           try{ there = await io.hasBlob(id); }catch(_){ there = null; }
-          if(there === false){ out.missingBytes.push(p); break; }
-          if(there === null){ out.unverified.push(p); break; }
+          if(there === false){ out.missingBytes.push(p); return; }
+          if(there === null){ out.unverified.push(p); return; }
         }
-      }
+      };
+      await Promise.all(Array.from({ length: Math.min(LANE, want.length) }, async () => {
+        for(;;){
+          const k = at++;
+          if(k >= want.length) return;
+          await one(want[k]);
+          if((k % 16) === 0) await breathe();
+        }
+      }));
     }
     return out;
   }
