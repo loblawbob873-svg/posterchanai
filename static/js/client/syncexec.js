@@ -318,7 +318,26 @@
       if(!o.dryRun){
         for(const p in flagged){
           const e = index[p]; if(!e || e.deletedAt || !disk[p]) continue;
-          if(idOf(e) !== flagged[p]) continue;          // already re-sent under a new address
+          /* "ALREADY RE-SENT" IS A VERSION QUESTION, NOT AN ADDRESS ONE — and read as an address it
+           * skipped the case this whole repair exists for.
+           *
+           * The check meant: our journal names different bytes from the flagged ones, so we must
+           * have re-sent already; nothing to do. That holds only when our journal is at or past the
+           * flagged record. When it is BEHIND, the addresses differ for the opposite reason — we
+           * hold an older version and never applied the newer one — and that is precisely the shape
+           * of a record whose checksum is wrong: the newer version cannot be downloaded by anybody,
+           * every device fails it, and the one machine still holding good bytes is skipped here for
+           * looking like it had already helped.
+           *
+           * Measured on a real folder: four receipts, a good copy on the desktop restored from a NAS
+           * backup, a record one version ahead carrying a checksum that describes nothing, and no
+           * path in the app that would put them right. Mirror this Device walks past a LIVE record;
+           * Check files can do it by hand; nothing did it by itself.
+           *
+           * Re-sending an older copy over a newer one is a real cost and it is the right trade here,
+           * because the newer one is not a usable file — it fails verification on every device that
+           * fetches it. A working older version beats a newer one nobody can open. */
+          if(E.versionOf(e) >= E.versionOf(state[p]) && idOf(e) !== flagged[p]) continue;
           try{
             /* A LOCAL COPY THAT DISAGREES WITH ITS OWN JOURNAL IS RE-SENT, NOT REFUSED — and this
              * used to be a dead end that no button could get out of.

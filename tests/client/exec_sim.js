@@ -1208,7 +1208,50 @@ scenario('a checksum published wrong is corrected by the holder, not treated as 
 /* And the other reading of the same evidence, which must still be refused: the holder's bytes hash
  * to something DIFFERENT from what the downloader measured, so the two copies really are different
  * and this one is not evidence of anything. */
+/* THE ONE THE APP HAD NO ANSWER FOR, and the reason "already re-sent" had to stop being an address
+ * comparison.
+ *
+ * A device holds good bytes and is BEHIND the record: it never applied the newer version, because
+ * the newer version cannot be applied — its checksum describes nothing, so every device that fetches
+ * it fails verification and refuses to overwrite the good copy it already has. Correct behaviour,
+ * and a permanent standoff. The heal path then skipped this device for the worst possible reason:
+ * its journal names different bytes from the flagged record, which was read as "it must have re-sent
+ * already" when it actually means "it never caught up".
+ *
+ * Measured on a real folder: four receipts, a good copy restored to the desktop from a NAS backup, a
+ * record one version ahead carrying a checksum computed by a digest that stopped early. Mirror this
+ * Device walks past a LIVE record. Nothing put them right by itself.
+ */
+scenario('a device holding good bytes BEHIND a broken record re-sends them', async (t) => {
+  const sky = cloud();
+  const A = device('desktop', sky, { disk: photos(4) });
+  await A.sweep();
+  const victim = Object.keys(sky.folder())[0];
+  const good = require('crypto').createHash('sha256').update(A.disk[victim]).digest('hex');
+  // Somebody else published a NEWER version whose checksum describes nothing — the shape a
+  // truncated digest produces. Its address is new, so it differs from what this device's journal
+  // holds, and the journal stays where it was because the download can never succeed.
+  const was = sky.entry(victim);
+  const broken = Object.assign({}, was, { v: (was.v || 1) + 1,
+                                          sha: 'a-newer-address-nobody-can-verify',
+                                          csum: 'a-checksum-that-describes-nothing' });
+  sky.injectRec(victim, broken);
+  sky.putCipher('a-newer-address-nobody-can-verify', Buffer.from('whatever'));
+  sky.flagRec(victim, broken.sha, good);       // a downloader tried it, failed, and said what it saw
+  const A2 = device('desktop', sky, { disk: A.disk, index: A.st.index });
+  const r = await A2.sweep();
+  t.ok((r.reseeding || []).indexOf(victim) !== -1,
+       'the one device still holding a usable copy was skipped for looking like it had already '
+       + 'helped — the file stays unfetchable on every device for ever');
+  t.eq(sky.entry(victim).csum, good, 'the record still describes bytes nobody can produce');
+  const B = device('laptop', sky);
+  const rb = await B.sweep();
+  t.eq(rb.failed.length, 0, 'the file still will not download: ' + JSON.stringify(rb.failed));
+  t.eq(identical(A2.disk, B.disk), null, 'the recovered file did not reach the other device');
+});
+
 scenario('a holder whose bytes disagree with the store as well is still refused', async (t) => {
+
   const sky = cloud();
   const A = device('desktop', sky, { disk: photos(4) });
   await A.sweep();
