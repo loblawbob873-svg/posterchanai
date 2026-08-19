@@ -1337,7 +1337,17 @@
     // fires for every file a sweep itself writes, so a folder downloading a thousand files asks a
     // thousand times and is told no a thousand times. Rebuilding the screen for each of those is what
     // "the UI keeps refreshing during sync" was.
-    if(!decision.run && !o.dryRun){ setStatus(f.id, decision.why, null, true); return { skipped:true, why:decision.why }; }
+    if(!decision.run && !o.dryRun){
+      /* THE SCHEDULER'S REASON IS A FOOTNOTE, NEVER THE HEADLINE. "Nothing changed since the last
+       * sweep" is the policy declining a redundant pass — printed bare it replaced "in step ·
+       * 11,950 files checked" and read as the sync having died. A folder with a clean standing
+       * state keeps it on the card; the decline rides behind it in parentheses. */
+      const _prev = status.get(f.id);
+      const _base = _prev && _prev.text ? String(_prev.text).split(' · watching (')[0] : '';
+      const _line = /^in step/.test(_base) ? _base + ' · watching (' + decision.why + ')' : decision.why;
+      setStatus(f.id, _line, null, true);
+      return { skipped:true, why:decision.why };
+    }
 
     const job = (async () => {
       setStatus(f.id, o.dryRun ? 'checking…' : 'syncing…', null, true);
@@ -1714,6 +1724,17 @@
      * needs nothing. Calling those "files" is why a folder could read "5,556 files" on its card and
      * "6,159 files checked" on the line underneath, which reads as a contradiction and sent somebody
      * looking for a bug that was not there. */
+    /* AN ADVISORY IS NOT A HEADLINE. A folder that checked 11,950 files and moved nothing is IN
+     * STEP — and a card whose only line was "13 paths couldn't be read — left alone" read as "no
+     * longer syncing" to the person in front of it ("How do you expect me to explain to a user
+     * that Documents is no longer syncing"). When the sweep did no real work, the healthy state
+     * leads and the advisories follow it; only real work or real failure may take the headline. */
+    const _advisory = (b) => /couldn\u2019t be read on this device|deletion.*held|already stored/.test(b);
+    if(bits.length && bits.every(_advisory) && rep.unchanged){
+      const gone = +rep.settledGone || 0;
+      return 'in step · ' + (rep.unchanged - gone) + ' file' + ((rep.unchanged - gone) === 1 ? '' : 's')
+             + ' checked · ' + bits.join(' · ') + _exc;
+    }
     if(!bits.length){
       if(!rep.unchanged) return 'in step · nothing to sync' + _exc;
       const gone = +rep.settledGone || 0;
