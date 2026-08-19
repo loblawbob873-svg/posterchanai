@@ -144,8 +144,16 @@
     /* Positive proof for a deletion claim. An APK too old to answer returns "cannot confirm",
      * which deletes nothing — the safe direction for a stale build. */
     listTrash: (id) => P.listTrash
-      ? P.listTrash({ id }).then(r => (r && r.rows) || [], () => [])
+      ? P.listTrash({ id }).then(r => ((r && r.rows) || []).map(x => ({
+            at: x.at, to: x.to, size: +x.size || 0, mtime: +x.mtime || 0 })), () => [])
       : Promise.resolve([]),
+    /* Named-file trash delete. ABSENT on an older APK, and the reconcile checks for it rather than
+     * falling back to emptyTrash: a per-day empty cannot express "these are proved redundant and
+     * these are not", so the safe answer on a build that lacks it is to do nothing and say so. */
+    purgeTrash: P.purgeTrash
+      ? (id, rels) => P.purgeTrash({ id, rels: rels || [] })
+          .then(r => ({ removed: (r && r.removed) || 0, failed: (r && r.failed) || [] }))
+      : null,
     confirmGone: (id, rel) => P.confirmGone
       ? P.confirmGone({ id, rel }).then(r => ({ gone: !!(r && r.gone), parentAlive: !!(r && r.parentAlive) }),
                                         () => ({ gone: false, parentAlive: false }))

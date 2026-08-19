@@ -326,7 +326,7 @@ public final class NativeSweep {
             out.put("mtime", src.get("mtime"));
             Object sha = src.get("sha");
             if (sha instanceof String && !((String) sha).isEmpty()) out.put("csum", sha);
-            local.put(e.getKey(), out);
+            local.put(normPath(e.getKey()), out);
         }
 
         SyncReconcile.Plan planned = SyncReconcile.plan(local, state, index, f.excludes, device, now);
@@ -582,6 +582,17 @@ public final class NativeSweep {
     }
 
     /** One file up, whole or in pieces, and the manifest entry it earns. */
+    /* ONE FILE MUST HAVE ONE SPELLING ON EVERY PLATFORM — the web executor's rule, mirrored,
+     * because the record's ADDRESS is sha256(path) and two spellings are two records. Android is not
+     * where names decompose (macOS is), but the two halves of this engine must agree about a path or
+     * a phone and a laptop publish the same file twice. A no-op for every name either of them has
+     * ever produced; it exists so the day a Mac joins is not the day the folder doubles. */
+    private static String normPath(String p) {
+        String s = String.valueOf(p);
+        try { return java.text.Normalizer.normalize(s, java.text.Normalizer.Form.NFC); }
+        catch (Exception e) { return s; }
+    }
+
     private static Map<String, Object> upload(SyncIo.Net net, SyncIo.Files fs, byte[] mk, String path,
                                               Map<String, Object> meta, String device, long now,
                                               Report rep) throws Exception {

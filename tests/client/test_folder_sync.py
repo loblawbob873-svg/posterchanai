@@ -845,13 +845,32 @@ class FilesTrashSurface(unittest.TestCase):
                          "two confirm strings = two loops")
 
     def test_files_shows_the_trash_only_where_it_exists(self):
-        a = self.app.index("function _fxTrashHTML()")
-        seg = self.app[a:a + 1600]
-        self.assertIn("window.pcFs", seg, "the section would render on a phone with no bridge")
+        """The trash is a FOLDER now, not a panel of dates — it used to render a collapsed block of
+        dated groups with a Restore button each, which told you that "2026-08-19 · 107 files"
+        existed and nothing about what they were. The gating rule is unchanged and is what this
+        checks: a device with no filesystem bridge, or one browsing a folder it does not itself
+        sync, has no local trash and must be offered no door to one."""
+        a = self.app.index("const _inTrash = ")
+        seg = self.app[a:a + 1800]
+        self.assertIn("window.pcFs", seg, "the door would render on a phone with no bridge")
+        self.assertIn("listTrash", seg)
         self.assertIn("_syncRoot", seg)
         self.assertIn("PCSync", seg)
-        self.assertIn("data-trashrestore", self.app)
-        self.assertIn("fx-trash-restoreall", self.app)
+        # ...and only when there is something in it. An empty folder with a permanent Trash row in
+        # it is a control that never does anything.
+        self.assertIn("_trashRows.length", seg, "the door renders even when the trash is empty")
+
+    def test_the_trash_folder_carries_its_own_two_verbs(self):
+        """Every ordinary row action is wrong inside the trash: Download offers bytes the manifest
+        has no address for, Rename renames a dead copy, and "Delete on every device" would publish a
+        deletion for a file that is ALREADY deleted — which is how a wave of stale tombstones
+        starts. Two verbs belong here: put it back, or destroy this copy."""
+        self.assertIn("tr-back", self.app)
+        self.assertIn("tr-gone", self.app)
+        self.assertIn("purgeTrash", self.app, "delete-one-copy has no bridge call behind it")
+        a = self.app.index("const selbar = ")
+        self.assertIn("!_inTrash", self.app[a:a + 200],
+                      "the delete-on-every-device bar is shown inside the trash")
 
 
 class AccountWideRestore(unittest.TestCase):

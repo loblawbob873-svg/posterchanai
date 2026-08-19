@@ -86,11 +86,21 @@ def test_the_pending_list_is_never_used_while_parked():
 
 
 def test_the_pill_really_is_blind_while_parked():
-    """The premise above, asserted against the real function so it cannot quietly stop being true."""
+    """The premise above, asserted against the real function so it cannot quietly stop being true.
+
+    Asserted as the RULE rather than as one spelling of it. The literal this used to match broke the
+    day the pill gained an off switch — a change with nothing whatever to do with parked windows —
+    and a test that fails for the wrong reason teaches people to edit the test."""
     fn = APP_JS[APP_JS.index("function _updateNewPostsPill(){"):]
     fn = fn[:fn.index("\n  }")]
-    assert "(VIEW==='home'||VIEW==='global')?_livePending.length:0" in fn, \
-        "if the pill learns about parked windows, the branch above can use it again"
+    assert "(VIEW==='home'||VIEW==='global')" in fn and "_livePending.length:0" in fn, \
+        "the pill's count must still be forced to 0 outside home/global"
+    # NOT the bare word "hidden" — the pill shows and hides itself with that CSS class, which is
+    # the function doing its job, not the function learning where it is.
+    for parked in ("parked", "_tlPark", "document.hidden", "visibilityState"):
+        assert parked not in fn, (
+            f"the pill now consults {parked!r} — if it can tell it is parked, the parked branch can "
+            f"start using it again, and a batch inserted at firstChild comes out in the wrong order")
 
 
 def test_the_media_grid_is_still_excluded():

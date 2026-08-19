@@ -742,6 +742,7 @@ public class FolderSyncPlugin extends Plugin {
         for (String[] r : fs(id).listTrash()) {
           JSObject o = new JSObject();
           o.put("at", r[0]); o.put("to", r[1]);
+          if (r.length > 3) { o.put("size", Long.parseLong(r[2])); o.put("mtime", Long.parseLong(r[3])); }
           rows.put(o);
         }
         JSObject ret = new JSObject(); ret.put("rows", rows);
@@ -961,6 +962,57 @@ public class FolderSyncPlugin extends Plugin {
         ret.put("to", fs(id).trash(rel, when == null ? 0L : when));
         call.resolve(ret);
       } catch (Exception e) { call.reject("delete failed: " + e.getMessage()); }
+    });
+  }
+
+  @PluginMethod
+  /* Delete NAMED files from .pc-trash, and nothing else.
+   *
+   * emptyTrash removes whole DAYS, which is all "reclaim the space" ever needed. The reconcile needs
+   * the opposite: it has proved file by file which trash copies are redundant, and every path it
+   * could NOT prove has to survive the same call that removes the ones it could. A per-day delete
+   * cannot say that — one unprovable file either protects a hundred redundant ones or is thrown away
+   * with them.
+   *
+   * The path is re-checked against the trash prefix HERE and not trusted from the caller. This is
+   * the one call whose entire purpose is deleting, and a plugin must not let a caller that has gone
+   * wrong name a path outside .pc-trash. */
+  public void purgeTrash(PluginCall call) {
+    final String id = call.getString("id", "");
+    final JSArray rels = call.getArray("rels");
+    getBridge().execute(() -> {
+      try {
+        SafFs f = fs(id);
+        int removed = 0, missing = 0;
+        JSArray failed = new JSArray();
+        List<Object> list = rels == null ? new ArrayList<Object>() : rels.toList();
+        for (Object o : list) {
+          String rel = String.valueOf(o);
+          String why = null;
+          if (!rel.startsWith(SafFs.TRASH + "/")) why = "not in the trash";
+          else {
+            try {
+              String docId = f.resolve(rel, false);
+              // Already gone is neither a removal nor a failure — counted on its own, so a purge of
+              // ghosts cannot report work it did not do.
+              if (docId == null) missing++;
+              else if (f.deleteDoc(docId)) removed++;
+              else why = "refused";
+            } catch (Exception e) { why = String.valueOf(e.getMessage()); }
+          }
+          if (why != null) {
+            JSObject bad = new JSObject();
+            bad.put("at", rel);
+            bad.put("why", why);
+            failed.put(bad);
+          }
+        }
+        JSObject ret = new JSObject();
+        ret.put("removed", removed);
+        ret.put("missing", missing);
+        ret.put("failed", failed);
+        call.resolve(ret);
+      } catch (Exception e) { call.reject("purge trash failed: " + e.getMessage()); }
     });
   }
 

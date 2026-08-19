@@ -588,6 +588,129 @@
    * Bridge-level (below the exclusion machinery), never overwrites, per-operation timeouts so one
    * stuck file is a counted failure rather than a hung button. `only` restricts to a subset of
    * listTrash rows (Files' per-date restore). */
+  /* RECONCILE TRASH — decide each file, instead of putting them all back.
+   *
+   * "Restore from trash" restored everything the folder no longer held, and that is right for only
+   * half of what is in there. The other half is files every device AGREED to delete: putting one
+   * back republishes it everywhere, which is the resurrection the delete guards exist to question,
+   * reached by pressing the rescue button. Meanwhile the trash never emptied itself, so the count
+   * only grew and the button kept offering to undo deletions somebody meant.
+   *
+   * So every row is proved first — `E.trashPlan` is the decision table — and the ruling principle is
+   * the drive check's: NOTHING IS DELETED THAT CANNOT BE PROVED REDUNDANT. What it cannot prove, it
+   * keeps and says why, one line per reason. The two destructive halves are confirmed separately,
+   * because "put 12 files back" and "delete 107 copies for ever" are different questions and a
+   * single OK covering both is not consent to either.
+   *
+   * Reading is the expensive part (one hash per trashed file), so it yields and holds the wake lock
+   * like the check does — a tablet reclaims a renderer that loops for minutes without either. */
+  async function reconcileTrash(folderId, only){
+    const fs2 = FS(); if(!fs2 || !fs2.listTrash){ PC.toast('this device has no filesystem access'); return null; }
+    if(typeof fs2.hashFile !== 'function'){
+      PC.toast('this build cannot read files back to check them — use Restore, then Empty trash');
+      return restoreTrash(folderId, only);
+    }
+    const f = folders().find(x => x.id === folderId);
+    let rows = [];
+    try{ rows = await fs2.listTrash(folderId) || []; }catch(_){}
+    if(only && only.length){ const want = new Set(only); rows = rows.filter(r => want.has(r.at)); }
+    if(!rows.length){ PC.toast('the trash is empty'); return { restored:[], purged:0, kept:0 }; }
+
+    const timed = (pr, ms) => Promise.race([pr,
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timed out')), ms))]);
+    let recs = {};
+    if(f){ try{ recs = (await stateS.load(keyOf(f))).state || {}; }catch(_){ recs = {}; } }
+
+    const hashes = {}, held = {};
+    /* Same wake lock the check takes, for the same reason: a minutes-long loop of native hash calls
+     * with the screen dimming is a renderer Android reclaims, and the operation simply vanishes.
+     * Released on every exit including a throw — a lock never given back is a flat battery. */
+    let _held = false;
+    if(fs2.wakeBegin){ try{ await fs2.wakeBegin(); _held = true; }catch(_){} }
+    try{
+      let n = 0;
+      for(const r of rows){
+        if(!r || !r.at || !r.to) continue;
+        try{ hashes[r.at] = await timed(fs2.hashFile(folderId, r.at), 30000) || null; }catch(_){ hashes[r.at] = null; }
+        /* PRESENCE IS ASKED SEPARATELY FROM CONTENT. A hash that comes back empty means "could not
+         * read", and a file that is not there is not the same answer — read as one, an unreadable
+         * destination would look like a free slot and the restore would overwrite it. */
+        let there = false;
+        try{ const ev = fs2.confirmGone ? await timed(fs2.confirmGone(folderId, r.to), 15000) : null;
+             there = !!(ev && ev.gone === false && ev.parentAlive !== false); }catch(_){ there = false; }
+        if(there){
+          held[r.to] = true;
+          try{ hashes[r.to] = await timed(fs2.hashFile(folderId, r.to), 30000) || null; }catch(_){ hashes[r.to] = null; }
+        }
+        if(++n % 16 === 0){
+          setStatus(folderId, 'checking the trash\u2026 ' + n + ' / ' + rows.length, null, true);
+          await new Promise(r => setTimeout(r, 0));      // yield, or the page stops answering
+        }
+      }
+    } finally { if(_held && fs2.wakeEnd){ try{ await fs2.wakeEnd(); }catch(_){} } }
+
+    if(!S_ENGINE || typeof S_ENGINE.trashPlan !== 'function'){
+      PC.toast('this build cannot reconcile the trash'); return null;
+    }
+    const plan = S_ENGINE.trashPlan({ rows, hashes, held, state: recs });
+    const nR = plan.restore.length, nP = plan.purge.length, nK = plan.keep.length;
+    /* One line per REASON, not per file: 107 identical sentences is not a report. */
+    const why = {};
+    for(const k of plan.keep) why[k.why] = (why[k.why] || 0) + 1;
+    const kept = Object.keys(why).map(w => '  \u00b7 ' + why[w] + ' \u2014 ' + w).join('\n');
+    const summary = nR + ' to put back \u00b7 ' + nP + ' redundant \u00b7 ' + nK + ' left alone'
+                    + (nK ? ':\n' + kept : '');
+    if(!nR && !nP){
+      setStatus(folderId, 'nothing in the trash could be settled either way \u2014 ' + summary);
+      await PC.uiConfirm('Nothing in this trash can be settled automatically.\n\n' + summary
+                         + '\n\nThey stay exactly where they are.', { ok: 'OK' });
+      return { restored: [], purged: 0, kept: nK, why };
+    }
+
+    const back = [];
+    if(nR && await PC.uiConfirm('Put ' + nR + ' file' + (nR === 1 ? '' : 's') + ' back?\n\n'
+         + 'Your other devices still have ' + (nR === 1 ? 'this one' : 'these') + ', so this device '
+         + 'is the one that lost ' + (nR === 1 ? 'it' : 'them') + '. Nothing is overwritten.\n\n'
+         + summary)){
+      let failed = 0, done = 0;
+      for(const r of plan.restore){
+        try{ await timed(fs2.move(folderId, r.at, r.to), 30000); done++; back.push(r.to); }
+        catch(_){ failed++; }
+        if((done + failed) % 10 === 0)
+          setStatus(folderId, 'putting back\u2026 ' + (done + failed) + ' / ' + nR, null, true);
+      }
+      PC.toast('put back ' + done + (failed ? ' \u00b7 ' + failed + ' failed' : ''));
+    }
+
+    let purged = 0;
+    if(nP && fs2.purgeTrash && await PC.uiConfirm('Delete ' + nP + ' redundant cop'
+         + (nP === 1 ? 'y' : 'ies') + ' from .pc-trash?\n\nEvery one was checked: either the '
+         + 'identical file is already back in your folder, or all your devices agreed to delete '
+         + 'exactly those bytes. The ' + nK + ' this device could not prove are NOT touched.\n\n'
+         + 'This cannot be undone.', { ok: 'Delete the ' + nP })){
+      try{
+        const r = await fs2.purgeTrash(folderId, plan.purge.map(x => x.at));
+        purged = (r && r.removed) || 0;
+        const bad = (r && r.failed && r.failed.length) || 0;
+        PC.toast('removed ' + purged + (bad ? ' \u00b7 ' + bad + ' refused' : ''));
+      }catch(e){ PC.toast('could not remove them: ' + ((e && e.message) || e)); }
+    } else if(nP && !fs2.purgeTrash){
+      PC.toast(nP + ' redundant copies found \u2014 this build cannot remove them one by one');
+    }
+
+    setStatus(folderId, 'trash reconciled \u2014 ' + summary);
+    /* THE SWEEP IS TOLD WHAT CAME BACK, or it undoes it. Same rule, same reason, same channel as the
+     * old restore: the returned bytes ARE the bytes a tombstone describes, so a sweep left to
+     * re-derive the intent derives the opposite and trashes them again. */
+    if(back.length && f){
+      setStatus(folderId, 'telling your other devices about ' + back.length + ' restored file'
+                + (back.length === 1 ? '' : 's') + '\u2026', null, true);
+      try{ await swept(f, { manual: true, resend: back }); }catch(_){}
+    }
+    paint();
+    return { restored: back, purged, kept: nK, why };
+  }
+
   async function restoreTrash(folderId, only){
     const fs2 = FS(); if(!fs2 || !fs2.listTrash){ PC.toast('this device has no filesystem access'); return null; }
     let rows = [];
@@ -2856,7 +2979,7 @@
                       : `<button class="btn btn-neon small sync-now">${_ic('refresh')}Sync now</button>`}
           ${(st.report && st.report.refusedResurrect)
             ? `<button class="btn btn-neon small sync-putback">${_ic('restore')}Put ${st.report.refusedResurrect.n} file${st.report.refusedResurrect.n===1?'':'s'} back everywhere</button>` : ''}
-          <button class="btn btn-ghost small sync-restore hidden">${_ic('restore')}Restore from trash</button>
+          <button class="btn btn-ghost small sync-restore hidden">${_ic('restore')}Reconcile Trash</button>
           <button class="btn btn-ghost small danger sync-forget">${_ic('close')}Stop syncing</button>
           <button class="btn btn-ghost small sync-more" title="Preview, check, tidy up, trash and background details.">${_ic('menu')}More</button>
         </div></div>`;
@@ -3107,18 +3230,6 @@
        * other device re-read the folder from nothing. Says one thing instead of forgetting
        * everything: the files here are real, and the deletions the folder is carrying for them are
        * wrong. */
-      const _doAuthoritative = async () => {
-        const f = get(); if(!f) return;
-        if(!await PC.uiConfirm('\u201c' + keyOf(f) + '\u201d \u2014 treat THIS device\u2019s copy as '
-             + 'correct?\n\nEvery file here that the folder thinks was deleted, or has no record at '
-             + 'all, is published again from this copy. Your other devices bring those files back on '
-             + 'their next sync.\n\nNothing here is deleted and nothing is overwritten \u2014 files '
-             + 'the folder already agrees about are left alone. Do this on the device whose copy you '
-             + 'trust; if that is not this one, cancel.', { ok: 'Publish this copy' })) return;
-        setStatus(f.id, 'publishing this device\u2019s copy\u2026', null, true);
-        await swept(f, { manual: true, resendAll: true });
-        paint();
-      };
       /* RECONNECT, rather than "remove it and add it again".
        *
        * A grant can go without the folder going: a desktop config file truncated by a crash, an
@@ -3156,12 +3267,12 @@
             try{ const rows = FS().listTrash ? await FS().listTrash(id) : [];
               /* innerHTML, not textContent: the label carries the sprite <svg>, and textContent
                  would drop the icon and leave the button visibly different from its neighbours. */
-              if(rows && rows.length){ rb.innerHTML = _ic('restore') + 'Restore ' + rows.length + ' file'
-                    + (rows.length === 1 ? '' : 's') + ' from trash';
+              if(rows && rows.length){ rb.innerHTML = _ic('restore') + 'Reconcile Trash \u00b7 '
+                    + rows.length + ' file' + (rows.length === 1 ? '' : 's');
                 rb.classList.remove('hidden'); } }catch(_){}
           })();
           rb.onclick = async () => { rb.disabled = true;
-            try{ await restoreTrash(id); }finally{ rb.disabled = false; paint(); } };
+            try{ await reconcileTrash(id); }finally{ rb.disabled = false; paint(); } };
         } }
       /* THE WAY OUT OF A STANDOFF, AND IT HAD TO BE A BUTTON.
        *
@@ -3265,6 +3376,25 @@
        * SUCCESS — an alarm that never fires, a tick emitted into a dead page and a sweep that ran
        * are all silence from every other vantage point — and counters nothing renders are no better
        * than no counters, which is what shipped in the first version of them. */
+      /* MIRROR THIS DEVICE — the big hammer, and the only one that resurrects in bulk.
+       *
+       * Every file here the folder thinks was deleted, or has no record of at all, is published
+       * again from this copy. That is the right answer on the device whose copy you trust and the
+       * wrong one everywhere else, which is why it names the direction in its own title rather than
+       * describing the outcome: the question a person needs to answer before pressing it is "is
+       * THIS the good copy?", not "are these files correct?". */
+      const _doAuthoritative = async () => {
+        const f = get(); if(!f) return;
+        if(!await PC.uiConfirm('Mirror \u201c' + keyOf(f) + '\u201d from THIS device?\n\nEvery file '
+             + 'here that the folder thinks was deleted, or has no record at all, is published again '
+             + 'from this copy. Your other devices bring those files back on their next sync.\n\n'
+             + 'Nothing here is deleted and nothing is overwritten \u2014 files the folder already '
+             + 'agrees about are left alone. Do this on the device whose copy you trust; if that is '
+             + 'not this one, cancel.', { ok: 'Mirror this device' })) return;
+        setStatus(f.id, 'mirroring this device\u2019s copy\u2026', null, true);
+        await swept(f, { manual: true, resendAll: true });
+        paint();
+      };
       const _doBg = async () => {
           let st = null;
           try{ st = await FS().tickStats(); }catch(_){ st = null; }
@@ -3327,13 +3457,13 @@
              comes out as literal angle brackets — so a sprite cannot go in one without changing a
              component every other menu in the app shares. Emoji would render, which is exactly
              what is not wanted, so the rows say what they do and nothing else. */
-          const items = [['preview', 'Preview \u2014 what would change']];
+          const items = [['preview', 'Sync Preview']];
           if(!prefs(get()).paused) items.push(['pause', 'Pause syncing']);
-          items.push(['check', 'Check files \u2014 read every one, change nothing']);
-          items.push(['tidy', 'Tidy up conflict copies']);
+          items.push(['check', 'Check files']);
+          items.push(['tidy', 'Tidy conflict copies']);
           items.push(['trash', 'Empty trash']);
-          items.push(['mine', 'This device\u2019s copy is correct \u2014 publish it']);
-          if(FS() && FS().tickStats) items.push(['bg', 'Background sync details']);
+          items.push(['mine', 'Mirror this Device']);
+            if(FS() && FS().tickStats) items.push(['bg', 'Background sync']);
           const pick = (a) => {
             if(a === 'preview') return _doPreview();
             if(a === 'pause') return _doPause();
@@ -3685,7 +3815,7 @@
   // through the same guarded save a sweep uses, and the devices carry the change out.
   // `docs` is the per-device document layer: Files borrows it to read a folder it does not hold,
   // and the tests drive it directly at the sizes where NIP-44's ceiling used to lose whole folders.
-  window.PCSync = { paint, folders, sweep, startAll, store, docs, status, edit, verifyFolder, restoreTrash,
+  window.PCSync = { paint, folders, sweep, startAll, store, docs, status, edit, verifyFolder, restoreTrash, reconcileTrash,
                     accountFolders, acct: () => _acct, deviceId,
                     /* Anything destructive asks this first: reclaim, verify-repair, tidy. A sweep
                      * mid-flight makes "unreferenced" and "redundant" unstable answers. */

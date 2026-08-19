@@ -8071,28 +8071,8 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
 .short-back{background:rgba(0,0,0,.55);color:#fff;border:none;border-radius:10px;padding:6px 12px}
 
 /* Files → the per-device trash block: subordinate to the folder chips, never dressed like them */
-.fx-trash{margin:10px 4px 4px;border-left:3px solid var(--border,#333);border-radius:6px;
-  background:color-mix(in srgb, var(--panel,#16161c) 70%, transparent);padding:2px 8px 6px}
-.fx-trash-hd{display:flex;align-items:center;gap:8px;width:100%;background:none;border:none;
-  color:var(--muted,#9aa);font-size:13px;padding:6px 2px;cursor:pointer;text-align:left}
-.fx-trash-hd .chev{margin-left:auto}
-.fx-trash-body{padding:0 2px 4px}
-/* A ROW HOLDS A PATH, AND A PATH IS ARBITRARILY LONG. Three flex children with no `min-width:0`
-   cannot shrink below their content, so a deep path pushed the Restore button past the panel and
-   out of the sidebar — the block "didn't even fit properly". Each text cell is now allowed to
-   shrink and ellipsise (the full path is on the title attribute), the button never shrinks, and the
-   row wraps rather than overflowing on a narrow sidebar or a phone. */
-.fx-trash-row{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:4px 2px;font-size:13px}
-.fx-trash-row > span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.fx-trash-row > span:first-child{flex:1 1 8em}
-/* No `direction:rtl` ellipsis trick here: this client ships Arabic and Japanese, and
-   flipping the base direction to clip a path from the left garbles mixed text. */
-.fx-trash-row > span.muted{flex:1 1 6em}
-.fx-trash-row .mini{margin-left:auto;flex:0 0 auto;display:inline-flex;align-items:center;gap:5px}
-/* Same sprite, same treatment, in the two trash panels' headings and their row buttons. */
-.fx-trash-hd .ic,.fx-trash-row .mini .ic,.fx-trash-all .ic{flex:0 0 auto}
-.fx-trash-all{display:inline-flex;align-items:center;gap:5px}
-.fx-trash-all{margin-top:6px}
+/* The .fx-trash block is gone: the trash is browsed as a folder in the ordinary listing now,
+   so it wears the file-card/details-row styles every other folder does. */
 
 /* The synced view's selection bar is injected INSIDE the file grid, and a grid treats any child
  * as a tile — so the bar was squeezed into a column at the same level as the folder cards,

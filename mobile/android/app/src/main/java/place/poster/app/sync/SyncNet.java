@@ -402,7 +402,10 @@ public final class SyncNet implements SyncIo.Net {
     private static void copy(InputStream in, OutputStream out) throws IOException {
         byte[] buf = new byte[64 * 1024];
         int n;
-        while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+        // -1 is end of stream; 0 is not. On a socket a zero-length read is ordinary, and treating it
+        // as EOF truncates the RESPONSE BODY — a chunk that is short but hashes to something, or a
+        // JSON reply that ends mid-object. Neither says a word about being incomplete.
+        while ((n = in.read(buf)) != -1) if (n > 0) out.write(buf, 0, n);
         out.flush();
     }
 }

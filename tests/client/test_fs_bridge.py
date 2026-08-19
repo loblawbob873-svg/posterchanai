@@ -501,6 +501,54 @@ class TestFsBridge(unittest.TestCase):
         self.assertEqual(out["e"]["value"]["removed"], 0, out["e"])
         self.assertTrue(os.path.exists(os.path.join(self.root, ".pc-trash", "2099-01-01")))
 
+    def test_purge_trash_removes_only_the_named_files(self):
+        """The reconcile proves file by file which trash copies are redundant, so the delete has to
+        be per file. `emptyTrash` takes whole DAYS, and a day is exactly the wrong unit for that:
+        one unprovable file either protects a hundred redundant ones or is thrown away with them."""
+        d = os.path.join(self.root, ".pc-trash", "2026-08-19")
+        os.makedirs(os.path.join(d, "sub"))
+        for name in ("a.txt", "b.txt", os.path.join("sub", "c.txt")):
+            with open(os.path.join(d, name), "w") as fh:
+                fh.write("x" * 10)
+        out = self.run_js("await attempt('p', () => B.purgeTrash('r1', "
+                          "['.pc-trash/2026-08-19/a.txt', '.pc-trash/2026-08-19/sub/c.txt']));")
+        v = out["p"]["value"]
+        self.assertEqual((v["removed"], v["bytes"], v["failed"]), (2, 20, []), v)
+        self.assertFalse(os.path.exists(os.path.join(d, "a.txt")))
+        self.assertFalse(os.path.exists(os.path.join(d, "sub", "c.txt")))
+        self.assertTrue(os.path.exists(os.path.join(d, "b.txt")),
+                        "a file the reconcile could not prove was deleted anyway")
+
+    def test_purge_trash_refuses_a_path_outside_the_trash(self):
+        """This is the one bridge call whose entire purpose is deleting. The caller is checked here
+        and not trusted, because the caller is the half that has been wrong all week — and the paths
+        it hands over come from a listing it did minutes earlier, on a tree other programs write."""
+        with open(os.path.join(self.root, "keep.txt"), "w") as fh:
+            fh.write("precious")
+        os.makedirs(os.path.join(self.root, ".pc-trash", "2026-08-19"))
+        out = self.run_js("await attempt('p', () => B.purgeTrash('r1', "
+                          "['keep.txt', '.pc-trash/2026-08-19/../../keep.txt']));")
+        v = out["p"]["value"]
+        self.assertEqual(v["removed"], 0, v)
+        self.assertEqual(len(v["failed"]), 2, v)
+        self.assertTrue(os.path.exists(os.path.join(self.root, "keep.txt")),
+                        "a path outside .pc-trash was deleted")
+
+    def test_purge_trash_keeps_going_past_one_failure(self):
+        """One locked file must not cost the rest — on Windows that is the likely case, not the
+        unlikely one, and a partial purge that reports what it could not do is worth far more than
+        a clean error that did nothing."""
+        d = os.path.join(self.root, ".pc-trash", "2026-08-19")
+        os.makedirs(d)
+        with open(os.path.join(d, "real.txt"), "w") as fh:
+            fh.write("x")
+        out = self.run_js("await attempt('p', () => B.purgeTrash('r1', "
+                          "['.pc-trash/2026-08-19/ghost.txt', '.pc-trash/2026-08-19/real.txt']));")
+        v = out["p"]["value"]
+        self.assertEqual(v["removed"], 1, v)
+        self.assertEqual(v["missing"], 1, "a path that was already gone was counted as removed")
+        self.assertFalse(os.path.exists(os.path.join(d, "real.txt")))
+
     def test_trash_stat_on_a_folder_with_no_trash_is_not_an_error(self):
         """The button reads this before asking anything, so a folder that has never had a delete
         must answer zero rather than throw — otherwise the confirmation cannot be drawn at all."""

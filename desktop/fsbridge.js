@@ -607,6 +607,41 @@ async function emptyTrash(id, olderThanDays){
 /* Everything currently in the trash, as [{at, to}] — `at` the path inside .pc-trash, `to` where it
  * came from (the day segment stripped). The RESTORE lives in the client over the ordinary move(),
  * so both platforms share one restore and the bridge only enumerates. */
+/* Delete NAMED files from .pc-trash, and nothing else.
+ *
+ * `emptyTrash` removes whole days, which is the only shape "reclaim the space" ever needed. The
+ * reconcile needs the opposite: it has proved, file by file, which trash copies are redundant, and
+ * every path it could NOT prove must survive the same call that removes the ones it could. A
+ * per-day delete cannot express that — one unprovable file in a day protects a hundred redundant
+ * ones, or emptying the day throws it away with them.
+ *
+ * Every path is re-checked against the trash directory here rather than trusted from the caller:
+ * this is the one bridge call whose whole purpose is deleting, and a caller that has gone wrong
+ * must not be able to name a path outside .pc-trash. */
+async function purgeTrash(id, rels){
+  const base = await resolveIn(id, '.pc-trash');
+  let removed = 0, bytes = 0, missing = 0;
+  const failed = [];
+  for(const rel of (rels || [])){
+    try{
+      const abs = await resolveIn(id, rel);
+      if(abs !== base && !abs.startsWith(base + path.sep)){
+        failed.push({ at: rel, why: 'not in the trash' }); continue;
+      }
+      /* A FILE THAT IS NOT THERE IS NOT A FILE THIS CALL REMOVED. `fsp.rm` with `force` succeeds
+       * silently on a missing path, so a purge of ten ghosts reported "removed 10" — the same shape
+       * as every other failure this feature has produced, an action reporting success for something
+       * it did not do. Counted separately: already-gone is not an error either. */
+      let sz = null;
+      try{ sz = (await fsp.stat(abs)).size; }catch(_){ sz = null; }
+      if(sz === null){ missing++; continue; }
+      await fsp.rm(abs, { force: true, maxRetries: 5, retryDelay: 150 });
+      removed++; bytes += sz;
+    }catch(e){ failed.push({ at: rel, why: e.code || String((e && e.message) || e) }); }
+  }
+  return { removed, bytes, missing, failed };
+}
+
 async function listTrash(id){
   const base = await resolveIn(id, '.pc-trash');
   const out = [];
@@ -619,7 +654,17 @@ async function listTrash(id){
       if(e.isDirectory()) await walk(path.join(abs, e.name), r);
       else if(e.isFile() && !e.name.endsWith(PART)){
         const cut = r.indexOf('/');
-        if(cut > 0) out.push({ at: '.pc-trash/' + r, to: r.slice(cut + 1) });
+        /* SIZE AND DATE TRAVEL WITH THE ROW. The trash is browsed as a folder now, and a folder
+         * listing without them is a list of names — you cannot tell the 4 GB video from the empty
+         * file, or last night's delete from March's, which is exactly what a person is trying to
+         * work out before they empty it. One stat per file, on a directory walk that is already
+         * doing one per entry to know it IS a file. */
+        if(cut > 0){
+          let st = null;
+          try{ st = await fsp.stat(path.join(abs, e.name)); }catch(_){ st = null; }
+          out.push({ at: '.pc-trash/' + r, to: r.slice(cut + 1),
+                     size: st ? st.size : 0, mtime: st ? Math.floor(st.mtimeMs) : 0 });
+        }
       }
     }
   }
@@ -682,7 +727,7 @@ function removeRoot(id){
 
 module.exports = { init, list, addRoot, removeRoot, resolveIn, scan, sha256,
                    readPart, writePart, writeCommit, confirmGone, listTrash,
-                   read, write, move, trash, emptyTrash, trashStat, hashPart, hashFile, discardPart, partSize, sweepParts, watch, unwatch, IGNORE,
+                   read, write, move, trash, emptyTrash, purgeTrash, trashStat, hashPart, hashFile, discardPart, partSize, sweepParts, watch, unwatch, IGNORE,
                    /* Whether THIS filesystem folds case (Windows/macOS: yes; Linux: no) — the
                     * engine refuses to write colliding twins on a folding disk. And the platform,
                     * so the executor can refuse names Windows cannot hold before failing on them

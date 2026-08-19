@@ -131,7 +131,12 @@ class BulkSelectTests(unittest.TestCase):
 
     def test_it_deletes_through_one_publish_with_one_honest_confirmation(self):
         at = self.app.index('id="ss-del"')
-        h = self.app[at:at + 2600]
+        # A byte window, and it has to be generous: this reads FORWARD from the button's markup to
+        # its handler, so anything rendered between them pushes the handler out of range and the
+        # test fails for a reason that has nothing to do with what it is checking. (The trash's own
+        # bar landed in that gap.) Anchored on the handler would be better; a window that clears the
+        # markup between them is the cheap version of the same thing.
+        h = self.app[at:at + 6000]
         self.assertIn("removeMany", h, "the bulk delete publishes the whole document once per file")
         self.assertIn("uiConfirm", h)
         self.assertIn(".pc-trash", h, "the confirmation does not say where the copies go")

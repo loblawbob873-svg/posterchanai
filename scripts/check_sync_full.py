@@ -53,7 +53,12 @@ VDISK = r"""
     },
     read: async (id, r) => D.files[r].bytes,
     readPart: async (id, r, off, len) => D.files[r].bytes.subarray(off, off + len),
-    hashFile: async (id, r) => sha(D.files[r] ? D.files[r].bytes : new Uint8Array(0)),
+    /* A TRASH PATH IS HASHED FROM THE TRASH, like `move` reads it and like both real bridges do —
+       they resolve any relative path, and .pc-trash is just a directory to them. Reading only the
+       live tree returned the hash of an EMPTY buffer for every trashed file: not an error, a wrong
+       answer, which the reconcile then correctly refused to act on ("different bytes"). */
+    hashFile: async (id, r) => { const src = r.indexOf('.pc-trash/') === 0 ? D.bin : D.files;
+      return src[r] ? sha(src[r].bytes) : null; },
     write: async (id, r, bytes, mtime) => {
       D.files[r] = { bytes: new Uint8Array(bytes), mtime: mtime || 1000 };
       return { size: D.files[r].bytes.length, mtime: D.files[r].mtime };   // like the desktop bridge
@@ -87,6 +92,12 @@ VDISK = r"""
     },
     listTrash: async (id) => Object.keys(D.bin).map(at => ({ at, to: at.slice('.pc-trash/x/'.length) })),
     emptyTrash: async () => { D.bin = {}; return 0; },
+    purgeTrash: async (id, rels) => { let removed = 0, missing = 0;
+      for(const r of (rels || [])){
+        if(r.indexOf('.pc-trash/') !== 0) continue;      // the bridges refuse it; so does this
+        if(D.bin[r]){ delete D.bin[r]; removed++; } else missing++;
+      }
+      return { removed, missing, failed: [] }; },
     trashStat: async () => ({ files: Object.keys(D.bin).length, bytes: 0 }),
     sweepParts: async () => 0,
     confirmGone: async (id, r) => ({ gone: !(r in D.files), parentAlive: true }),
@@ -152,6 +163,21 @@ RESTORE = r"""(async () => {
     const f = window.PCSync.folders()[0];
     const r = await window.PCSync.restoreTrash(f.id);
     return r || { done: 0 };
+  }catch(e){ return { err: String((e && e.message) || e) }; }
+  finally{ window.__PC.uiConfirm = was; }
+})"""
+
+
+# Reconcile the trash through the SHIPPED loop. The difference from RESTORE is the whole point:
+# this one PROVES each row first, so a deletion every device agreed to is removed rather than put
+# back. uiConfirm is stubbed — there is nobody to press it.
+RECONCILE = r"""(async () => {
+  const was = window.__PC.uiConfirm;
+  window.__PC.uiConfirm = async () => true;
+  try{
+    const f = window.PCSync.folders()[0];
+    const r = await window.PCSync.reconcileTrash(f.id);
+    return r || { restored: [], purged: 0, kept: 0 };
   }catch(e){ return { err: String((e && e.message) || e) }; }
   finally{ window.__PC.uiConfirm = was; }
 })"""
@@ -387,6 +413,117 @@ async def drive(url):
             problems.append(f"after the lying scan, A's trash is {da3.get('trash')} — files were deleted")
         else:
             print("  lying scan deleted nothing anywhere")
+
+        # ---- 3.4 RECONCILE MUST NOT PUT BACK WHAT EVERY DEVICE AGREED TO DELETE -----------------
+        # B deleted dir0/f0.bin and A applied it, so A's .pc-trash holds exactly the bytes the
+        # tombstone describes. "Restore from trash" would put it back and republish it to B — the
+        # rescue button undoing a deletion somebody meant, which is how a folder of deleted files
+        # keeps coming back. Reconcile proves it instead: the record is a tombstone whose checksum
+        # matches this copy, so the copy is redundant and goes.
+        # The reconcile DELETES what it proves, and the restore scenario below needs that same trash.
+        # Snapshot it rather than reordering the two — each is testing a different half and neither
+        # should be arranged around the other.
+        await a.js("(() => { window.__vdisk._keep = Object.assign({}, window.__vdisk.bin); "
+                   "return true; })()")
+        db0 = await a.js(f"({DISK})()", aw=True) or {}
+        if db0.get("bin"):
+            rc = await a.js(f"({RECONCILE})()", aw=True) or {}
+            print("  A reconcile trash:", json.dumps(rc))
+            if rc.get("why"):
+                print("     kept because:", json.dumps(rc["why"]))
+            if rc.get("err"):
+                problems.append(f"reconcile trash threw: {rc['err']}")
+            elif rc.get("restored"):
+                problems.append("reconcile PUT BACK a file every device agreed to delete: "
+                                f"{rc['restored']}")
+            elif not rc.get("purged"):
+                problems.append(f"reconcile proved nothing and removed nothing: {rc}")
+            else:
+                db1 = await a.js(f"({DISK})()", aw=True) or {}
+                if "dir0/f0.bin" in db1.get("files", {}):
+                    problems.append("reconcile restored the deleted file onto the disk")
+                elif db1.get("bin"):
+                    problems.append(f"reconcile left the proved-redundant copy: {db1['bin'][:4]}")
+                else:
+                    print("  reconcile removed the agreed deletion and restored nothing")
+        else:
+            problems.append("nothing in A's trash to reconcile — the delete step did not land")
+
+        await a.js("(() => { window.__vdisk.bin = window.__vdisk._keep; return true; })()")
+
+        # ---- 3.45 THE TRASH IS BROWSED AS A FOLDER ----------------------------------------------
+        # It used to be a collapsed block of DATES with a Restore button per date: you could see that
+        # "2026-08-19 · 107 files" existed and nothing about WHAT they were, which is the only
+        # question somebody standing in front of 107 deleted files is asking. Reported as "Trash on
+        # this device is terrible UI, make it a Folder like the regular folders with a list of
+        # contents". So it is a directory row in the folder it belongs to, and entering it gives the
+        # ordinary listing — driven here through the real DOM, because a redesign that was only read
+        # is a redesign that was not checked.
+        tr = await a.js("""(async () => {
+          window.__trErr = null;
+          window.addEventListener('unhandledrejection', e => {
+            window.__trErr = String((e.reason && (e.reason.stack || e.reason.message)) || e.reason); });
+          window.addEventListener('error', e => { window.__trErr = String(e.message) + ' @' + e.lineno; });
+          window.__PC.switchView('blossom');
+          for(let i = 0; i < 60 && !document.querySelector('.folder-chip[data-synckey]'); i++)
+            await new Promise(r => setTimeout(r, 100));
+          const chip = document.querySelector('.folder-chip[data-synckey]');
+          if(!chip) return { err: 'no synced-folder chip in Files' };
+          chip.click();
+          for(let i = 0; i < 80 && !document.querySelector('#bl-grid .file-card, #bl-grid .empty'); i++)
+            await new Promise(r => setTimeout(r, 100));
+          const door = [...document.querySelectorAll('#bl-grid [data-dir]')]
+            .find(el => el.getAttribute('data-dir') === '.pc-trash');
+          if(!door) return { err: 'no .pc-trash folder row at the root of the synced folder',
+                             saw: [...document.querySelectorAll('#bl-grid [data-dir]')]
+                                    .map(e => e.getAttribute('data-dir')).slice(0, 8),
+                             root: (window.PCSync.folders()[0] || {}).key,
+                             trash: (await window.pcFs.listTrash((window.PCSync.folders()[0]||{}).id) || []).length,
+                             err2: window.__trErr,
+                             grid: (document.querySelector('#bl-grid') || {}).innerHTML ?
+                                   document.querySelector('#bl-grid').innerHTML.slice(0, 300) : 'NO GRID' };
+          door.click();
+          /* Descend to the files. The trash keeps the engine's own dated sub-folders, so the first
+           * screen inside it is directories — which is the point of making it a folder rather than a
+           * flat list, and is what a person walks through too. */
+          for(let hop = 0; hop < 4; hop++){
+            for(let i = 0; i < 80; i++){
+              await new Promise(r => setTimeout(r, 100));
+              if(document.querySelector('#bl-grid .tr-back, #bl-grid .file-card')) break;
+            }
+            if(document.querySelector('#bl-grid .tr-back')) break;
+            const down = document.querySelector('#bl-grid .file-card.isdir[data-dir]');
+            if(!down) break;
+            down.click();
+          }
+          const names = [...document.querySelectorAll('#bl-grid .fname')].map(e => e.textContent);
+          return { names, back: document.querySelectorAll('.tr-back').length,
+                   gone: document.querySelectorAll('.tr-gone').length,
+                   reconcile: !!document.querySelector('#tr-reconcile'),
+                   deleteEverywhere: !!document.querySelector('#ss-del'),
+                   crumbs: [...document.querySelectorAll('.fx-crumb, .crumb')].map(e => e.textContent) };
+        })()""", aw=True) or {}
+        if tr.get("err"):
+            problems.append(f"trash folder: {tr['err']} saw={tr.get('saw')} "
+                            f"root={tr.get('root')!r} trash={tr.get('trash')} "
+                            f"grid={tr.get('grid')!r} err2={tr.get('err2')!r}")
+        else:
+            print("  trash as a folder:", json.dumps({k: tr.get(k) for k in
+                                                      ("names", "back", "gone", "reconcile")}))
+            if not tr.get("names"):
+                problems.append("the trash folder listed no files — it is a folder with no contents")
+            elif tr.get("back") != 1 or tr.get("gone") != 1:
+                problems.append(f"trash rows carry the wrong verbs: back={tr.get('back')} "
+                                f"gone={tr.get('gone')} (want one of each)")
+            elif not tr.get("reconcile"):
+                problems.append("no Reconcile Trash action inside the trash folder")
+            elif tr.get("deleteEverywhere"):
+                # Its one action publishes a deletion, and every file here is already deleted —
+                # pressing it would tell the other devices to delete files they already deleted,
+                # which is how a wave of stale tombstones starts.
+                problems.append("the 'Delete on every device' bar is shown INSIDE the trash")
+            else:
+                print("  the trash browses as a folder: names, two verbs, no delete-everywhere bar")
 
         # ---- 3.5 RESTORE FROM TRASH MUST STICK --------------------------------------------------
         # "i did restore from trash and it clears then goes right back to restore 172 from trash".

@@ -148,7 +148,13 @@ public final class SafFs implements SyncIo.Files {
                 if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) walkTrash(id, r, out);
                 else {
                     int cut = r.indexOf('/');
-                    if (cut > 0) out.add(new String[]{TRASH + "/" + r, r.substring(cut + 1)});
+                    // Size and date travel with the row: the trash is browsed as a folder now, and a
+                    // listing without them is a list of names — you cannot tell the 4 GB video from
+                    // the empty file, which is the question somebody about to empty it is asking.
+                    // Free here: both columns are already in COLS and already in this cursor.
+                    if (cut > 0) out.add(new String[]{TRASH + "/" + r, r.substring(cut + 1),
+                                                      String.valueOf(c.getLong(3)),
+                                                      String.valueOf(c.getLong(4))});
                 }
             }
         } catch (Exception ignored) {
@@ -285,7 +291,21 @@ public final class SafFs implements SyncIo.Files {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
             byte[] buf = new byte[65536];
             int n;
-            while ((n = in.read(buf)) > 0) md.update(buf, 0, n);
+            /* -1 IS END OF STREAM. 0 IS NOT, AND THE DIFFERENCE IS A FILE THIS APP CALLS DAMAGED.
+             *
+             * `while (read(buf) > 0)` stops on a zero-length read as if the file had ended, and a
+             * zero-length read is legal: a DocumentsProvider hands its bytes over a PIPE, and a pipe
+             * can answer 0 without being finished. The digest then covers a PREFIX of the file and is
+             * returned as though it covered all of it — no exception, no short count, nothing in any
+             * log, just a wrong hash that every layer above trusts completely.
+             *
+             * Both directions are ruinous, and both are silent. On the way OUT this certifies an
+             * upload with the checksum of its first few megabytes, so every other device downloads
+             * the file correctly, checks it, and refuses it FOR EVER. On the way IN it condemns a
+             * perfect download: "the copy in the store fails its checksum" about bytes whose every
+             * chunk verified against its own content address on arrival. The odds scale with the
+             * number of reads, which is why it is the biggest file in a folder that shows it. */
+            while ((n = in.read(buf)) != -1) if (n > 0) md.update(buf, 0, n);
             StringBuilder sb = new StringBuilder();
             for (byte b : md.digest()) sb.append(Character.forDigit((b >> 4) & 0xf, 16))
                                          .append(Character.forDigit(b & 0xf, 16));
@@ -393,7 +413,9 @@ public final class SafFs implements SyncIo.Files {
             java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
             byte[] buf = new byte[65536];
             int n;
-            while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
+            // -1 is end of stream; 0 is not. See sha256() above — a provider's pipe can answer 0
+            // without being finished, and here that returns a SHORT FILE with no error at all.
+            while ((n = in.read(buf)) != -1) if (n > 0) bos.write(buf, 0, n);
             return bos.toByteArray();
         } finally { try { in.close(); } catch (Exception ignored) { } }
     }

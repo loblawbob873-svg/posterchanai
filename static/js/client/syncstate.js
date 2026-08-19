@@ -342,7 +342,67 @@
     return out;
   }
 
-  const API = { plan, check, apply, versionOf, bump, diskChanged, recordAhead, FLOOR, MASS_CAP };
+  /* WHAT SHOULD HAPPEN TO EACH FILE SITTING IN .pc-trash.
+   *
+   * "Restore from trash" put back everything the folder no longer held, and that is only right for
+   * half of what is in there. The other half is files every device AGREED to delete — restoring one
+   * republishes it to all of them, which is the resurrection the delete guards exist to question,
+   * arrived at by pressing the rescue button. And the trash never emptied itself either, so the
+   * count only ever grew and the button kept offering to put back files somebody deliberately
+   * removed.
+   *
+   * So each row is CLASSIFIED, and the ruling principle is the one the drive check and the store
+   * scan already answer to: **nothing is deleted that cannot be proved redundant**. Three outcomes:
+   *
+   *   restore — the folder's record says this file is alive and this device has lost it.
+   *   purge   — proved redundant: the identical bytes are already back in the folder, or every
+   *             device agreed to delete exactly these bytes.
+   *   keep    — anything else, WITH THE REASON. An unreadable hash, a record that never arrived, a
+   *             deletion record that does not say which bytes it deleted, or bytes that differ from
+   *             both the folder and the record — every one of those is "I could not tell", and this
+   *             is the function where "I could not tell" must never become "throw it away".
+   *
+   * Pure: the caller does the reading and hashing and hands the answers in. `hashes` is keyed by the
+   * trash path AND the destination path; a missing key means the read failed, which is not the same
+   * as a file that is not there — `held` answers that separately. */
+  function trashPlan(o){
+    const rows = (o && o.rows) || [], hashes = (o && o.hashes) || {},
+          held = (o && o.held) || {}, recs = (o && o.state) || {};
+    const out = { restore: [], purge: [], keep: [] };
+    const keep = (r, why) => out.keep.push({ at: r.at, to: r.to, why });
+    for(const r of rows){
+      if(!r || !r.at || !r.to) continue;
+      const h = hashes[r.at];
+      if(!h){ keep(r, 'this device could not read the copy in the trash'); continue; }
+      if(held[r.to]){
+        const now = hashes[r.to];
+        if(!now) keep(r, 'a file is back in its place, but this device could not read it to compare');
+        else if(now === h) out.purge.push({ at: r.at, to: r.to,
+                                            why: 'the identical file is already back in your folder' });
+        else keep(r, 'the file in your folder has different contents — this trash copy is an older version');
+        continue;
+      }
+      const R = recs[r.to];
+      if(!R){ keep(r, 'no record of this path — there is nothing to check it against'); continue; }
+      if(R.deletedAt){
+        if(!R.csum) keep(r, 'the deletion does not record which bytes it deleted');
+        else if(R.csum === h) out.purge.push({ at: r.at, to: r.to,
+                                               why: 'every device agreed to delete exactly these bytes' });
+        else keep(r, 'deleted on your devices, but these are different bytes — an older version');
+        continue;
+      }
+      /* Alive elsewhere, and gone from this folder. Restore ONLY the bytes the record describes: a
+       * copy that differs is an old version, and putting it back would publish it over the current
+       * one — the rescue button minting the conflict. With no csum to compare there is nothing to
+       * contradict, so the record's word stands. */
+      if(!R.csum || R.csum === h) out.restore.push({ at: r.at, to: r.to,
+                                                     why: 'your other devices still have this file' });
+      else keep(r, 'your devices hold a different version — syncing will fetch it; this copy is older');
+    }
+    return out;
+  }
+
+  const API = { plan, check, apply, versionOf, bump, diskChanged, recordAhead, trashPlan, FLOOR, MASS_CAP };
   root.PCSyncState = API;
   if(typeof module !== 'undefined' && module.exports) module.exports = API;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

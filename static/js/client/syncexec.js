@@ -246,6 +246,23 @@
       if(design.length) report.skippedByDesign = design.slice(0, 200);
       if(denied.length) report.unreadable = denied.slice(0, 200); }
 
+    /* NAMES THAT ARE ONE FILE ON ONE PLATFORM AND TWO ON ANOTHER — REPORTED, NEVER RESOLVED.
+     *
+     * `Foo.txt` and `foo.txt` are two files on Linux and the SAME file on macOS and Windows. There
+     * is no correct automatic answer: folding them loses one of two files a Linux user legitimately
+     * holds, and leaving them makes a Windows device download each over the other for ever, one
+     * version bump per sweep — which is a churn loop, and this feature has had enough of those to
+     * know what one costs. Naming it is the whole job; a person has to rename one.
+     *
+     * The comparison is over the RECORD SET, not the disk: the collision is only visible from the
+     * side that holds both spellings, and the device suffering for it is the one that can hold
+     * neither. Bounded work — a lowercase map of paths already in memory. */
+    { const seen = {}, clash = [];
+      for(const p in state){ const R = state[p]; if(!R || R.deletedAt) continue;
+        const lc = p.toLowerCase();
+        if(seen[lc] && seen[lc] !== p){ clash.push([seen[lc], p]); } else seen[lc] = p; }
+      if(clash.length) report.caseClash = clash.slice(0, 50); }
+
     /* IS ANOTHER SYNC ENGINE WRITING THIS FOLDER? Two authorities over one directory produce every
      * symptom this feature has ever been accused of, and neither engine can tell it is happening:
      * a file the OTHER one deletes reads here as a local deletion and is published to every device;
@@ -961,6 +978,26 @@
    * PAGED BECAUSE OF THE BRIDGE, not because of the engine: a scan crosses the Capacitor bridge as
    * one JSON string, and a whole Pictures folder in one call is what killed the WebView's renderer.
    * What is kept is three numbers per path. */
+  /* ONE FILE MUST HAVE ONE SPELLING ON EVERY PLATFORM, because the record's ADDRESS is
+   * sha256(path). Two spellings of one name are two records, and two records for one file is the
+   * duplication loop this engine has no defence against — each device downloads the other's
+   * spelling, and the folder grows a second copy of everything with an accent in its name.
+   *
+   * macOS is where they diverge. HFS+ stored filenames decomposed and APFS still hands NFD back
+   * through some APIs, so a file Linux and Windows both call "café.txt" (NFC, U+00E9) arrives from a
+   * Mac as "cafe\u0301.txt" — visually identical, byte-different, a different sha256, a different
+   * record. Normalising here means every device publishes the same spelling: a NO-OP on Windows and
+   * Linux, which never decompose, so this changes nothing that exists today and closes the door
+   * before a Mac joins. There is no Mac here to measure on; that is exactly why it is done at the
+   * ONE boundary where a path enters the engine rather than sprinkled through the call sites.
+   *
+   * Case is deliberately NOT folded. macOS and Windows are case-INSENSITIVE while Linux is not, so
+   * `Foo.txt` and `foo.txt` are one file on two platforms and two on the third — and folding would
+   * make a Linux user lose one of two files they can legitimately hold. It is reported instead (see
+   * `caseClash` below): the sweep says the collision exists and touches neither. */
+  const normPath = (p) => { const s = String(p);
+    try{ return s.normalize ? s.normalize('NFC') : s; }catch(_){ return s; } };
+
   async function scan(fs, o, stopping, onProgress){
     const disk = {};
     /* WHAT THE SCAN COULD NOT READ IS NOT ABSENT — IT IS UNKNOWN, and the difference is a deleted
@@ -974,13 +1011,13 @@
                               // right now" are opposite messages and must not share a count
     const note = (r) => { for(const k of (r && r.skipped) || []){
       const p = (k && k.path) || k; if(!p) continue;
-      unread.push(String(p));
-      unreadWhy.push({ path: String(p), why: String((k && k.why) || 'unreadable') });
+      unread.push(normPath(p));
+      unreadWhy.push({ path: normPath(p), why: String((k && k.why) || 'unreadable') });
     } };
     const so = { hash: !!o.hash, excludes: o.excludes || [], maxBytes: 0 };
     if(typeof fs.scanPage !== 'function'){
       const r = await fs.scan(o.id, so);
-      for(const p in (r && r.files) || {}) disk[p] = compact(r.files[p]);
+      for(const p in (r && r.files) || {}) disk[normPath(p)] = compact(r.files[p]);
       note(r);
       return { disk, unread, unreadWhy };
     }
@@ -990,7 +1027,7 @@
       const page = await fs.scanPage(o.id, so, off, SCAN_PAGE);
       const files = (page && page.files) || {};
       const n = Object.keys(files).length;
-      for(const p in files) disk[p] = compact(files[p]);
+      for(const p in files) disk[normPath(p)] = compact(files[p]);
       note(page);
       off += n;
       /* SAY WHERE IT IS. A first sweep after a restore hashes every file — many minutes of disk

@@ -1199,3 +1199,78 @@ class ARewriteIsNotAnEdit(unittest.TestCase):
         self.assertEqual(out["settled"], [], "a resend named by hand was answered with a shortcut")
         self.assertEqual(out["uploaded"], ["a.txt"])
         self.assertIn("putBlob", out["puts"])
+
+
+class OneFileHasOneSpellingOnEveryPlatform(unittest.TestCase):
+    """The record's ADDRESS is sha256(path), so two spellings of one name are two records — and two
+    records for one file is a duplication loop this engine has no defence against: each device
+    downloads the other's spelling and the folder grows a second copy of everything with an accent
+    in its name.
+
+    macOS is where they diverge. HFS+ stored filenames decomposed and APFS still hands NFD back
+    through some APIs, so a file Linux and Windows both call "café.txt" (U+00E9) arrives from a Mac
+    as "cafe\u0301.txt" — visually identical, byte-different, a different record. There is no Mac
+    here to measure on, which is the reason it is normalised at the ONE boundary a path enters the
+    engine rather than at the call sites."""
+
+    def _sweep(self, scan_paths, state="{}"):
+        js = """
+        require(%s); const X = require(%s);
+        (async () => {
+          const files = {};
+          for(const p of %s) files[p] = { size: 5, mtime: 1000 };
+          const sent = [];
+          const fs = {
+            scanPage: async (id, so, off) => (off ? { files:{}, done:true } : { files, done:true }),
+            read: async () => new Uint8Array(5),
+            confirmGone: async () => ({ gone:false, parentAlive:true }),
+          };
+          const io = {
+            index: async () => ({}),
+            state: async () => ({ state: %s, flagged:{} }),
+            saveIndex: async () => {},
+            hashBytes: async () => 'H',
+            putBlob: async () => ({ sha:'s1' }),
+            putState: async (k, recs) => { for(const r of recs) sent.push(r.path);
+                                           return { ok:recs.map(r=>r.path), stale:[], failed:[] }; },
+          };
+          const rep = await X.sweep(fs, io, { id:'f', key:'k', device:'me', now:9000 });
+          process.stdout.write(JSON.stringify({ sent, clash: rep.caseClash || [] }));
+        })().catch(e => { console.error(e && e.stack || e); process.exit(1); });
+        """ % (json.dumps(FOLDERSYNC), json.dumps(EXEC), json.dumps(scan_paths), state)
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=90)
+        self.assertEqual(r.returncode, 0, r.stderr[-1500:])
+        return json.loads(r.stdout)
+
+    def test_a_decomposed_name_is_published_composed(self):
+        out = self._sweep(["cafe\u0301.txt"])
+        self.assertEqual(out["sent"], ["caf\u00e9.txt"],
+                         "a macOS-decomposed filename was published under its own spelling — every "
+                         "other device will fetch it as a second file")
+
+    def test_a_composed_name_is_left_exactly_as_it_is(self):
+        """Windows and Linux never decompose, so this must be a no-op for them — otherwise the
+        normalisation is itself a re-keying of every existing record."""
+        out = self._sweep(["caf\u00e9.txt"])
+        self.assertEqual(out["sent"], ["caf\u00e9.txt"])
+
+    def test_both_spellings_collapse_to_one_record(self):
+        """The proof that it is the same file afterwards, not merely tidier."""
+        out = self._sweep(["cafe\u0301.txt", "caf\u00e9.txt"])
+        self.assertEqual(out["sent"], ["caf\u00e9.txt"], out)
+
+    def test_case_only_collisions_are_reported_and_not_touched(self):
+        """`Foo.txt` and `foo.txt` are two files on Linux and ONE on macOS and Windows. There is no
+        correct automatic answer — folding loses one of two files a Linux user legitimately holds,
+        and leaving it makes a Windows device download each over the other for ever. Naming it is
+        the whole job."""
+        st = ('{"Foo.txt":{"v":1,"by":"a","csum":"H","sha":"s","size":5,"mtime":1000},'
+              ' "foo.txt":{"v":1,"by":"a","csum":"H2","sha":"s2","size":5,"mtime":1000}}')
+        out = self._sweep([], state=st)
+        self.assertEqual(len(out["clash"]), 1, out)
+        self.assertEqual(sorted(out["clash"][0]), ["Foo.txt", "foo.txt"])
+
+    def test_a_folder_with_no_collision_reports_none(self):
+        st = '{"a.txt":{"v":1,"by":"a","csum":"H","sha":"s","size":5,"mtime":1000}}'
+        out = self._sweep([], state=st)
+        self.assertEqual(out["clash"], [], "a banner on every sweep is a banner nobody reads")

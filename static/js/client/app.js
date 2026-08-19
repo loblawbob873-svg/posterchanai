@@ -17350,6 +17350,14 @@
    * behind it. Downloads decrypt in the browser, like every other encrypted file here. */
   let _syncRoot = '';                 // the pair key being browsed ('' = the drive, not a synced folder)
   let _syncPath = '';                 // subdirectory inside it ('' = its root)
+  /* The engine's own name for the trash, in the scope that RENDERS it. app.js is several closures,
+   * not one: declared in the Files-sidebar closure further down it was not defined here at all, and
+   * the symptom is the folder listing stuck on its spinner for ever — the render is async, so the
+   * ReferenceError became a rejected promise and nothing on screen or in any log said a word. */
+  const TRASH_DIR = '.pc-trash';
+  /* What listTrash last answered for `_syncRoot`, so walking in and out of the trash does not
+   * re-read the device every time. Cleared (set to null) by anything that changes what is in there. */
+  let _trashCache = null;             // {key, rows:[{at,to,size,mtime}]} or null
   /* Selection for the BULK delete. Keyed on FULL paths, so ticks survive navigating and searching
    * within the folder; cleared when the root changes or the basket is acted on. Built for the
    * conflict-storm cleanup: search "conflict", Select all shown, one delete — the storm published
@@ -17941,7 +17949,7 @@
         ${folders.map(f=>`<button class="folder-chip${(!_syncRoot&&_filesFolder===f)?' active':''}" data-folder="${enc(f)}">${f==='Music'?'🎵':(FilesIdx.isEncFolder(f)?'🔒':'📁')} ${enc(f)}</button>`).join('')}
         <button class="folder-chip newfolder" id="bl-newfolder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New folder</button>
         ${(!_syncRoot && _filesFolder && _filesFolder!=='Music') ? `<button class="folder-chip delfolder" id="bl-delfolder" title="Delete this folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete “${enc(_filesFolder)}”</button>` : ''}
-      </div>` + _fxSyncedHTML() + _fxTrashHTML() + _fxDeletedHTML();
+      </div>` + _fxSyncedHTML() + _fxDeletedHTML();
   }
   /* \u267b DELETED ON EVERY DEVICE — the account-wide undo, beside the per-device trash. Entries
    * the record marks deleted BUT whose address was retained (executors keep sha/chunks on
@@ -17985,51 +17993,16 @@
    * bridge exists AND this device actually maps the pair being viewed — a phone browsing a folder
    * it doesn't sync sees nothing, honestly. Grouped by the dated folders the engine writes;
    * restore reuses PCSync.restoreTrash (the card's exact loop: never overwrite, per-op timeouts). */
-  let _fxTrash = null;      // {key, days:{date:count}} for the root last probed, or null
-  let _fxTrashOpen = false; // the block starts collapsed — a safety net, not a destination
-  function _fxTrashHTML(){
-    if(!_syncRoot || !window.pcFs || !window.pcFs.listTrash) return '';
-    const S = window.PCSync;
-    const row = S && S.folders ? (S.folders() || []).find(f => (f.key || f.name) === _syncRoot) : null;
-    if(!row) return `<div class="fx-trash"><div class="muted small" style="padding:6px 2px"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>This device doesn\u2019t sync \u201c${enc(_syncRoot)}\u201d, so it has no local trash to show \u2014 each device\u2019s trash lives on that device.</div></div>`;
-    if(!_fxTrash || _fxTrash.key !== _syncRoot){
-      _fxTrash = { key: _syncRoot, days: null };
-      (async () => {
-        try{
-          const rows = await window.pcFs.listTrash(row.id) || [];
-          const days = {};
-          for(const r of rows){ const d = String(r.at).split('/')[1] || '?'; days[d] = (days[d] || 0) + 1; }
-          _fxTrash = { key: _syncRoot, days, rows };
-          renderBlossom();
-        }catch(_){ _fxTrash = { key: _syncRoot, days: {} }; }
-      })();
-      return '';
-    }
-    const days = _fxTrash.days || {};
-    const keys = Object.keys(days).sort().reverse();
-    /* AN EMPTY TRASH SAYS SO. Hidden-because-empty and hidden-because-broken are identical from
-     * the outside ("where the fuck is the trash folder") — the block always renders inside a
-     * synced folder on a device that can see the disk; emptiness is a stated fact, not silence. */
-    if(!keys.length) return `<div class="fx-trash">
-      <button class="fx-trash-hd"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Trash on this device
-        <span class="fx-n">0</span></button>
-      <div class="fx-trash-body"><div class="muted small">Empty \u2014 nothing sync moved aside is waiting here. Files you restored are back in place. Deleting a file in this browser publishes the deletion; the copies move to trash on each device the next time THAT device syncs, so they appear here after this one sweeps, not before.</div></div>
-    </div>`;
-    const total = keys.reduce((a, k) => a + days[k], 0);
-    /* A SUBORDINATE block, not more chips: dates are not folders and must not dress like them.
-     * Collapsed by default — the trash is a safety net, not a destination. */
-    return `<div class="fx-trash">
-      <button class="fx-trash-hd" id="fx-trash-toggle"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Trash on this device
-        <span class="fx-n">${total}</span><span class="chev">${_fxTrashOpen?'\u25be':'\u25b8'}</span></button>
-      <div class="fx-trash-body${_fxTrashOpen?'':' hidden'}">
-        <div class="muted small">What sync moved aside on this machine \u2014 nothing here is lost, and restoring never overwrites a file that came back.</div>
-        ${keys.map(d => `<div class="fx-trash-row"><span>${enc(d)}</span>
-          <span class="muted small">${days[d]} file${days[d]===1?'':'s'}</span>
-          <button class="mini" data-trashrestore="${enc(d)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Restore</button></div>`).join('')}
-        ${keys.length > 1 ? `<button class="mini fx-trash-all" id="fx-trash-restoreall"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Restore all ${total}</button>` : ''}
-      </div>
-    </div>`;
-  }
+  /* The trash is a FOLDER now (see the synced-folder listing), not a panel of dates.
+   *
+   * What was here rendered a collapsed block of dated groups with a Restore button per date: you
+   * could see that "2026-08-19 · 107 files" existed and nothing whatever about what those files
+   * were, which is the only question somebody deciding what to do with 107 deleted files is asking.
+   * A folder answers it with the machinery Files already has — names, sizes, dates, sub-folders,
+   * search and the sort columns — so the block is gone rather than improved. Its cache went with
+   * it: `_trashCache` lives in the closure that RENDERS the listing, which is a different one, and
+   * reaching across for the old variable was a ReferenceError that showed up only as a folder stuck
+   * on its spinner (the render is async, so the throw became a rejected promise nobody saw). */
   /* Dropping a file onto a folder chip moves it. Lives in its own function because the sidebar can
    * repaint on its own — when the synced-folder list lands a moment after first paint — and a chip
    * redrawn without this is a drop target that silently stops accepting drops. */
@@ -18044,19 +18017,10 @@
     const r = root || document;
     $$('.folder-chip[data-folder]', r).forEach(b=> b.onclick=()=>{ _syncRoot=''; _syncPath=''; _filesFolder=b.dataset.folder; renderBlossom(); });
     $$('.folder-chip[data-synckey]', r).forEach(b=> b.onclick=()=>{ _syncRoot=b.dataset.synckey; _syncPath=''; renderBlossom(); });
-    /* Trash restore, wired beside the chips it renders with. Per-date passes only that day's rows;
-     * Restore-all passes none (= everything). Both funnel into PCSync.restoreTrash — ONE loop. */
-    { const S = window.PCSync;
-      const row = _syncRoot && S && S.folders ? (S.folders() || []).find(f => (f.key || f.name) === _syncRoot) : null;
-      const go = async (only) => { if(!row || !S.restoreTrash) return;
-        await S.restoreTrash(row.id, only); _fxTrash = null; renderBlossom(); };
-      $$('[data-trashrestore]', r).forEach(b => b.onclick = () => {
-        const d = b.dataset.trashrestore;
-        const only = ((_fxTrash && _fxTrash.rows) || []).filter(x => String(x.at).split('/')[1] === d).map(x => x.at);
-        go(only); });
-      const all = $('#fx-trash-restoreall', r); if(all) all.onclick = () => go(null);
-      const tg = $('#fx-trash-toggle', r); if(tg) tg.onclick = () => { _fxTrashOpen = !_fxTrashOpen; renderBlossom(); };
-      const dt = $('#fx-del-toggle', r); if(dt) dt.onclick = () => { _fxDelOpen = !_fxDelOpen; renderBlossom(); };
+    /* The trash's own bindings live with the LISTING now that it is a folder, not here beside the
+     * chips — a set of handlers left behind for markup that no longer renders is how a dead control
+     * survives a redesign and quietly does nothing. */
+    { const dt = $('#fx-del-toggle', r); if(dt) dt.onclick = () => { _fxDelOpen = !_fxDelOpen; renderBlossom(); };
       const un = async (paths) => {
         const S2 = window.PCSync;
         if(!S2 || !S2.edit || !S2.edit.restoreMany){ toast('this build can\u2019t restore account-wide yet'); return; }
@@ -18328,7 +18292,46 @@
         + '<span class="muted small">Your files are safe — this is the shared list of them, not the files.</span></div>';
       return;
     }
+    /* THE TRASH IS A FOLDER, BROWSED LIKE ANY OTHER.
+     *
+     * It used to be a collapsed block of DATES with a Restore button per date — you could see that
+     * "2026-08-19 · 107 files" existed and nothing about what they were, which is precisely the
+     * question somebody standing in front of 107 deleted files needs answered before they decide
+     * anything. Now `.pc-trash` is a directory row in the folder it belongs to, and entering it
+     * gives the ordinary listing: names, sizes, dates, sub-folders, the search box, the sort
+     * columns. The rows are read from the DEVICE (listTrash), not the manifest, because the trash is
+     * per-device and deliberately absent from the shared list of files.
+     *
+     * `_syncEntries` needs no special case: its "the folder's own trash is not content" rule only
+     * fires at the ROOT, so once `_syncPath` is inside .pc-trash the ordinary grouping applies. */
+    const _inTrash = String(_syncPath || '').split('/')[0] === TRASH_DIR;
+    let _trashRows = null;
+    if(_inTrash || !_syncPath){
+      const row = (window.PCSync && window.PCSync.folders)
+        ? (window.PCSync.folders() || []).find(f => (f.key || f.name) === _syncRoot) : null;
+      if(row && window.pcFs && window.pcFs.listTrash){
+        if(!_trashCache || _trashCache.key !== _syncRoot){
+          try{ _trashCache = { key: _syncRoot, rows: await window.pcFs.listTrash(row.id) || [] }; }
+          catch(_){ _trashCache = { key: _syncRoot, rows: [] }; }
+        }
+        _trashRows = _trashCache.rows || [];
+      }
+    }
+    if(_inTrash){
+      /* Shaped like a manifest so every renderer below is unchanged. `at` is the real path on this
+       * device and is what a restore or a purge is given. */
+      paths = {};
+      for(const r of (_trashRows || [])) paths[r.at] = { size:+r.size||0, mtime:+r.mtime||0, trash:r };
+    }
     const { dirs, files } = _syncEntries(paths, _syncPath);
+    /* THE DOOR. A directory row at the folder's root, so the trash is reached the way every other
+     * folder is instead of through a control somewhere else on the page. Named for what it is
+     * called on disk — a person who goes looking in Explorer finds the same name. */
+    if(!_syncPath && _trashRows && _trashRows.length){
+      dirs.push({ name: TRASH_DIR, dir: true, trashdir: true, n: _trashRows.length,
+                  size: _trashRows.reduce((a, r) => a + (+r.size || 0), 0),
+                  mtime: _trashRows.reduce((a, r) => Math.max(a, +r.mtime || 0), 0) });
+    }
     // FOLDERS ALWAYS FIRST, whatever the sort — the one place a file manager overrides the column
     // you clicked, and every one of them does it. Within each group the chosen sort applies.
     const cmp = _fxCompare(_syncSortKey);
@@ -18349,13 +18352,30 @@
     }
     const rowFor = (it) => {
       const ext = it.dir ? '' : ((String(it.name).match(/\.([A-Za-z0-9]{1,8})$/)||[])[1]||'').toLowerCase();
-      const icon = it.dir ? '📁' : _fxIcon(ext, '');
+      const icon = it.trashdir ? '🗑️' : (it.dir ? '📁' : _fxIcon(ext, ''));
       const type = it.dir ? (it.n + ' item' + (it.n===1?'':'s'))
                 : (it.where ? (_fxType(ext) + ' · in ' + it.where) : _fxType(ext));
       const canThumb = !it.dir && it.sha && _THUMB_EXT.test(ext) && (it.size||0) <= _THUMB_MAX;
       // The FULL path is what an edit needs — a manifest has no folders, only paths — and a directory
       // row has none of its own, so it is rebuilt from where we are standing.
       const full = it.dir ? ((_syncPath ? _syncPath + '/' : '') + it.name) : it.path;
+      /* INSIDE THE TRASH THE VERBS ARE DIFFERENT, and every one of the ordinary ones would be wrong:
+       * Download offers bytes the manifest has no address for, Rename renames a dead copy, and
+       * "Delete on every device" would publish a deletion for a file that is already deleted. Two
+       * verbs belong here — put it back, or destroy this copy — and the second says so plainly
+       * because it is the only button in Files that cannot be undone. */
+      if(_inTrash){
+        const at = it.dir ? '' : it.path;
+        const tact = it.dir ? '' :
+          `<button class="tr-back" data-at="${enc(at)}" title="Put this file back where it came from"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg></button>`
+          + `<button class="tr-gone" data-at="${enc(at)}" data-name="${enc(it.name)}" title="Delete this copy permanently"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg></button>`;
+        const tnav = it.dir ? ` data-dir="${enc(it.name)}"` : '';
+        if(details) return _fxDetailsRow({ dir:!!it.dir, name:it.name, icon:icon, size:_fxBytes(it.size),
+          type:type, when:_fxWhen(it.mtime), acts:tact });
+        return `<div class="file-card${it.dir?' isdir':''}"${tnav}>
+          <div class="file-icon">${icon}<span>${enc(it.dir?'folder':(ext||'file'))}</span></div>
+          <div class="meta"><span class="fname" title="${enc(it.name)}">${enc(fileLabel(it.name, ext, it.size))}</span>${tact?`<span class="fc-acts">${tact}</span>`:''}</div></div>`;
+      }
       const edits = !canEdit ? ''
         : `<button class="rnsync" data-path="${enc(full)}" data-name="${enc(it.name)}" title="Rename${it.dir?' this folder everywhere':''}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg></button>`
           + `<button class="rmsync" data-path="${enc(full)}" data-name="${enc(it.name)}"${it.dir?' data-dir="1"':''} title="Delete${it.dir?' this folder':''} on every device"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg></button>`;
@@ -18377,14 +18397,51 @@
      * broken ("the select button is inconsistent with the entire blossom UI"). Same classes, same
      * order, same icons; only the delete's LABEL differs, because here it means every device. */
     const _ssAll = fileItems.length && fileItems.every(it => _syncSel.has((_syncPath?_syncPath+'/':'')+it.name));
-    const selbar = canEdit ? `<div class="sync-selbar">
+    /* NO SELECT-AND-DELETE-EVERYWHERE BAR IN THE TRASH. Its one action publishes a deletion, and
+     * every file here is already deleted — pressing it would tell the other devices to delete files
+     * they have already deleted, which is how a wave of stale tombstones starts. */
+    const selbar = (canEdit && !_inTrash) ? `<div class="sync-selbar">
         <button class="btn btn-ghost small" id="ss-all">${_ssAll?'\u2611':'\u2610'} Select all${fileItems.length?' ('+fileItems.length+')':''}</button>
         <button class="btn btn-ghost small" id="ss-none"${_syncSel.size?'':' disabled'}><svg class="ic b-ic" aria-hidden="true"><use href="#i-close"></use></svg>Select none</button>
         <span class="muted small" id="ss-count" style="margin:0 4px">${_syncSel.size?_syncSel.size+' selected':'none selected'}</span>
         <button class="btn btn-neon small" id="ss-del"${_syncSel.size ? '' : ' disabled'} style="color:var(--danger)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete on every device</button>
       </div>` : '';
-    grid.innerHTML = selbar + (details ? _fxColsHTML(false) : '') + items.map(rowFor).join('');
+    const trashbar = _inTrash ? `<div class="sync-selbar">
+        <span class="muted small" style="margin-right:auto">${items.filter(i=>!i.dir).length} file${items.filter(i=>!i.dir).length===1?'':'s'} moved aside on this device \u2014 nothing here is on your other devices' screens.</span>
+        <button class="btn btn-ghost small" id="tr-reconcile"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Reconcile Trash</button>
+      </div>` : '';
+    grid.innerHTML = selbar + trashbar + (details ? _fxColsHTML(false) : '') + items.map(rowFor).join('');
     if(details) _fxBindCols(grid);
+    /* The two verbs. Both go through PCSync so the sweep that follows is told what happened — a
+     * restore that says nothing is re-derived as "this copy is the deleted version" and undone. */
+    if(_inTrash){
+      const S = window.PCSync;
+      const row = (S && S.folders) ? (S.folders() || []).find(f => (f.key || f.name) === _syncRoot) : null;
+      $$('.tr-back', grid).forEach(b => b.onclick = async (e) => {
+        e.stopPropagation();
+        if(!row || !S.restoreTrash) return;
+        b.disabled = true;
+        try{ await S.restoreTrash(row.id, [b.dataset.at]); }
+        finally{ _trashCache = null; renderBlossom(); }
+      });
+      $$('.tr-gone', grid).forEach(b => b.onclick = async (e) => {
+        e.stopPropagation();
+        if(!row || !window.pcFs || !window.pcFs.purgeTrash){
+          toast('this build can\u2019t delete a single trashed file'); return; }
+        if(!await __PC.uiConfirm('Permanently delete “' + b.dataset.name + '”?\n\nThis is the last '
+             + 'copy on this device — it is already gone from your other devices. It cannot be '
+             + 'undone.', { ok: 'Delete permanently' })) return;
+        b.disabled = true;
+        try{ const r = await window.pcFs.purgeTrash(row.id, [b.dataset.at]);
+             toast((r && r.removed) ? 'deleted' : 'nothing was removed'); }
+        catch(err){ toast('failed: ' + ((err && err.message) || err)); }
+        finally{ _trashCache = null; renderBlossom(); }
+      });
+      const rc = $('#tr-reconcile', grid);
+      if(rc) rc.onclick = async () => { if(!row || !S.reconcileTrash) return;
+        rc.disabled = true;
+        try{ await S.reconcileTrash(row.id); } finally{ _trashCache = null; renderBlossom(); } };
+    }
     /* selmode follows the DRIVE's grammar: having a selection IS the mode — no toggle. */
     _syncSelOn = _syncSel.size > 0;
     if(_syncSelOn) grid.classList.add('selmode'); else grid.classList.remove('selmode');

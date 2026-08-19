@@ -867,6 +867,7 @@ ipcMain.handle('pc:fs:hash-part', (e, id, rel) => { fsGuard(e); return fsbridge.
 ipcMain.handle('pc:fs:hash-file', (e, id, rel) => { fsGuard(e); return fsbridge.hashFile(String(id || ''), String(rel || '')); });
 ipcMain.handle('pc:fs:confirm-gone', (e, id, rel) => { fsGuard(e); return fsbridge.confirmGone(String(id || ''), String(rel || '')); });
 ipcMain.handle('pc:fs:list-trash', (e, id) => { fsGuard(e); return fsbridge.listTrash(String(id || '')); });
+ipcMain.handle('pc:fs:purge-trash', (e, id, rels) => { fsGuard(e); return fsbridge.purgeTrash(String(id || ''), (rels || []).map(String)); });
 ipcMain.handle('pc:fs:discard-part', (e, id, rel) => { fsGuard(e); return fsbridge.discardPart(String(id || ''), String(rel || '')); });
 ipcMain.handle('pc:fs:part-size', (e, id, rel) => { fsGuard(e); return fsbridge.partSize(String(id || ''), String(rel || '')); });
 ipcMain.handle('pc:fs:sweep-parts', (e, id, ms) => { fsGuard(e); return fsbridge.sweepParts(String(id || ''), ms); });

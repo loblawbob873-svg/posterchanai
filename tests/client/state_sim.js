@@ -275,6 +275,65 @@ const only = (p, kind) => {
   eq(a, b, 'the plan is independent of input order');
 }
 
+/* ---------------------------------------------------------------------------------------------
+ * RECONCILE TRASH. "Restore from trash" put back everything the folder no longer held, which is
+ * right for only half of what is in there — the other half is files every device agreed to delete,
+ * and putting one back republishes it to all of them. The table proves each row instead, and the
+ * ruling principle is the drive check's: NOTHING IS DELETED THAT CANNOT BE PROVED REDUNDANT.
+ */
+{
+  const rows = (n) => Array.from({ length: n }, (_, i) => ({ at: '.pc-trash/d/f' + i, to: 'f' + i }));
+  const R1 = rows(1);
+  const run = (hashes, held, state) => S.trashPlan({ rows: R1, hashes, held, state });
+
+  // The two provable deletions.
+  eq(run({ '.pc-trash/d/f0': 'H', f0: 'H' }, { f0: true }, {}).purge.map(x => x.to), ['f0'],
+     'trash: the identical file is already back in the folder — the trash copy is redundant');
+  eq(run({ '.pc-trash/d/f0': 'H' }, {}, { f0: T(3, { csum: 'H' }) }).purge.map(x => x.to), ['f0'],
+     'trash: every device agreed to delete exactly these bytes');
+
+  // The restore.
+  eq(run({ '.pc-trash/d/f0': 'H' }, {}, { f0: F(3, 'H') }).restore.map(x => x.to), ['f0'],
+     'trash: alive on the other devices and missing here — put it back');
+
+  /* EVERY WAY OF NOT KNOWING, and each one is a KEEP. These are the cells that decide whether this
+   * feature is a tidy-up or a second way to lose files. */
+  const keeps = [
+    [{ '.pc-trash/d/f0': null }, {}, {}, 'the trashed copy could not be read'],
+    [{ '.pc-trash/d/f0': 'H' }, {}, {}, 'no record of the path at all'],
+    [{ '.pc-trash/d/f0': 'H' }, {}, { f0: T(3) }, 'a deletion that does not say which bytes it deleted'],
+    [{ '.pc-trash/d/f0': 'H' }, {}, { f0: T(3, { csum: 'OTHER' }) }, 'deleted, but these are different bytes'],
+    [{ '.pc-trash/d/f0': 'H', f0: null }, { f0: true }, {}, 'a file is back but could not be read to compare'],
+    [{ '.pc-trash/d/f0': 'H', f0: 'OTHER' }, { f0: true }, {}, 'the file in the folder differs — this is an older version'],
+    [{ '.pc-trash/d/f0': 'H' }, {}, { f0: F(3, 'OTHER') }, 'alive elsewhere with different bytes — syncing fetches it'],
+  ];
+  for(const [h, held, st, name] of keeps){
+    const p = run(h, held, st);
+    ok(p.purge.length === 0 && p.restore.length === 0 && p.keep.length === 1,
+       'trash keeps what it cannot prove: ' + name);
+    ok(!!(p.keep[0] && p.keep[0].why), 'trash says WHY it kept it: ' + name);
+  }
+
+  /* A HELD FILE IS ANSWERED BY `held`, NEVER BY A MISSING HASH. Read as one, an unreadable
+   * destination looks like a free slot and the restore overwrites the file that is really there. */
+  {
+    const p = run({ '.pc-trash/d/f0': 'H' }, { f0: true }, { f0: F(3, 'H') });
+    eq(p.restore.length, 0, 'trash: an occupied destination is never restored over');
+  }
+
+  // Mixed: the three outcomes are independent, and one unprovable file does not protect or condemn
+  // the rest — which is the whole reason the purge is per-file and not per-day.
+  {
+    const mixed = [{ at: '.pc-trash/d/a', to: 'a' }, { at: '.pc-trash/d/b', to: 'b' },
+                   { at: '.pc-trash/d/c', to: 'c' }];
+    const p = S.trashPlan({ rows: mixed,
+      hashes: { '.pc-trash/d/a': 'HA', '.pc-trash/d/b': 'HB', '.pc-trash/d/c': null },
+      held: {}, state: { a: T(2, { csum: 'HA' }), b: F(2, 'HB') } });
+    eq([p.purge.length, p.restore.length, p.keep.length], [1, 1, 1],
+       'trash: one unprovable row neither blocks nor joins the provable ones');
+  }
+}
+
 console.log(failures ? ('state_sim: ' + failures + ' of ' + checks + ' checks FAILED')
                      : ('state_sim: all ' + checks + ' checks passed'));
 process.exit(failures ? 1 : 0);
