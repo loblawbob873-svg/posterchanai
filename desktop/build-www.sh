@@ -53,7 +53,7 @@ cp "$SRC"/static/*.png "$SRC"/static/*.webp "$SRC"/static/*.svg \
    "$SRC"/static/*.jpg "$SRC"/static/*.ico  www/static/ 2>/dev/null || true
 
 PC_VER="$(date -u +%s)" python3 - "$SRC" <<'PY'
-import os, re, sys
+import os, re, sys, subprocess
 
 src = sys.argv[1]
 ver = os.environ.get('PC_VER', '0')
@@ -72,6 +72,18 @@ html = re.sub(r'\{%\s*if nostr_only\s*%\}.*?\{%\s*endif\s*%\}', '', html, flags=
 html = re.sub(r'\{%\s*if secure\s*%\}.*?\{%\s*endif\s*%\}', '', html, flags=re.S)
 html = html.replace('{{ default_theme|default("cyberpunk") }}', 'cyberpunk')
 html = html.replace('{{ ver }}', ver)
+# The build stamp. Substituted with the CHECKOUT's own commit rather than left for the stamping step
+# below, because this file renders client.html locally and then hard-fails on any tag it does not
+# know — so a new `{{ … }}` in the template breaks every desktop platform at once until it is listed
+# here. That is exactly what happened: three builds, five retries each, all red, and no new Windows
+# app for hours while the Android one sailed through (mobile FETCHES a rendered page, so it never
+# sees a raw tag). If a template tag is ever added again, this is the line it also has to reach.
+try:
+    _sha = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], capture_output=True, text=True,
+                          timeout=5).stdout.strip() or 'unknown'
+except Exception:
+    _sha = 'unknown'
+html = html.replace('{{ build }}', _sha)
 html = html.replace("{{ 'true' if nostr_only else 'false' }}", 'false')
 left = re.search(r'\{\{.*?\}\}|\{%.*?%\}', html, flags=re.S)
 if left:
