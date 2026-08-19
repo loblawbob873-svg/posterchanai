@@ -1601,7 +1601,9 @@
       const c = (p.conflicts||[]).length;
       const n = (p.upload||[]).length + (p.download||[]).length + (p.deleteLocal||[]).length
               + (p.deleteRemote||[]).length + c;
-      if(!n) return 'already in step';
+      const _unrd = (rep.unreadable || []).length;
+      if(!n) return 'already in step' + (_unrd ? ' \u00b7 ' + _unrd + ' path'
+        + (_unrd === 1 ? '' : 's') + ' couldn\u2019t be read \u2014 left alone, not counted' : '');
       /* The conflict count is called out separately because a dry run has NOT verified it — see
        * details(). Folding it into one number told someone their phone had hundreds of conflicts
        * when a real sweep would have settled every one of them without making a copy. */
