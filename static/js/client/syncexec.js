@@ -1005,7 +1005,11 @@
      * publishes deletions, and a rate limiter answering 429 a thousand times in a row is the
      * expected case here, not the exotic one. */
     if(typeof io.hasBlob === 'function' && o.deep){
-      const want = paths.slice(0, o.blobLimit || 5000);
+      /* NO SILENT CAP. Checking the first 5,000 of 11,939 records reads as "covered everything"
+       * and leaves the tail's missing bytes undiscovered — a Verify that then reports success is
+       * the exact lie this feature keeps paying for. A HEAD is milliseconds on a LAN; the whole
+       * folder is a minute or two, and a caller that truly wants a bound passes one. */
+      const want = o.blobLimit ? paths.slice(0, o.blobLimit) : paths;
       let j = 0;
       for(const p of want){
         const e = state[p];
