@@ -622,16 +622,21 @@ class MemoryIsMeasuredWhereItGoes(unittest.TestCase):
                           "%s is not sampled — the two biggest allocations in a sweep were "
                           "invisible to the peak" % anchor)
 
+    def _details(self):
+        """The DETAILS block's use of it. `summarise` has carried a peak-memory line for a long time
+        and only past 1024 MB — a threshold a phone's renderer rarely survives to report — so
+        anchoring on the first occurrence in the file measures that one instead of this."""
+        i = self.sync.index('<b>Memory</b>')
+        return self.sync[max(0, i - 300):i + 700]
+
     def test_the_peak_reaches_the_card(self):
-        self.assertIn("peakHeapMB", self.sync,
-                      "the sweep has measured this all along and nothing showed it")
-        i = self.sync.index("rep.peakHeapMB")
-        self.assertIn("peakHeapPhase", self.sync[i:i + 600],
-                      "a number with no phase does not say what to fix")
+        seg = self._details()
+        self.assertIn("peakHeapMB", seg,
+                      "the sweep has measured this all along and the details never showed it")
+        self.assertIn("peakHeapPhase", seg, "a number with no phase does not say what to fix")
 
     def test_it_is_not_shouted_about_on_an_ordinary_sweep(self):
-        i = self.sync.index("rep.peakHeapMB")
-        self.assertIn(">= 200", self.sync[i:i + 400],
+        self.assertIn(">= 200", self._details(),
                       "a healthy sweep must not carry a memory warning — it would be noise on every "
                       "report and then ignored on the one that mattered")
 
