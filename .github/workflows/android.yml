@@ -21,6 +21,12 @@ on:
       - '.github/workflows/android.yml'
   workflow_dispatch:
 
+# One build per branch at a time, newest wins — a burst of pushes otherwise starves the
+# free runners and the stragglers fail on missing artifacts.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 

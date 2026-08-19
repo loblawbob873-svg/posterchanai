@@ -28,6 +28,12 @@ on:
       - '.github/workflows/desktop.yml'
   workflow_dispatch:
 
+# One build per branch at a time, newest wins — a burst of pushes otherwise starves the
+# free runners and the stragglers fail on missing artifacts.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   # Tor Expert Bundle version. Bump deliberately — a bad value fails the build (see "Bundle Tor"), which
   # is the intended behaviour: shipping an installer whose Tor switch does nothing is worse than not
@@ -269,7 +275,7 @@ jobs:
 
   publish:
     needs: build
-    if: always() && needs.build.result != 'cancelled'
+    if: needs.build.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
