@@ -527,7 +527,22 @@
      * silently swallowed the same way. */
     getParts: PC.syncBlobs && PC.syncBlobs.getParts
       ? (chunks, write, ...rest) => {
-          const w = _stallGuard('download');
+          /* THE CEILING ON SILENCE HAS TO KNOW HOW MUCH HAS TO ARRIVE BEFORE THE NEXT WORD.
+           *
+           * The guard bumps when a CHUNK lands, so between bumps a whole chunk must download and
+           * decrypt. Three minutes is right for the 4 MB a phone cuts, and wrong for the 16 MB a
+           * desktop cut — 16 MB inside three minutes demands ~90 KB/s sustained, which a phone on a
+           * poor link simply does not have, so a transfer that was working was declared dead every
+           * time. Reported as "the download stopped moving, will try again", over and over, on the
+           * one file big enough to be chunked that way.
+           *
+           * So the window is the greater of the old floor and what the incoming chunk needs at a
+           * deliberately pessimistic 32 KB/s. It still catches a dead socket — nothing arriving for
+           * eight minutes on a 16 MB chunk is not a slow link — and it no longer punishes a file for
+           * having been uploaded by a faster machine. Cheap to be wrong now in the other direction:
+           * a trip costs the chunk in flight, because resume works. */
+          const _cs = +rest[2] || 0;
+          const w = _stallGuard('download', Math.max(_STALL_MS, Math.ceil(_cs / 32768) * 1000));
           return Promise.race([
             PC.syncBlobs.getParts(chunks, (off, bytes) => { w.bump(); return write(off, bytes); },
                                   ...rest),
@@ -1922,8 +1937,13 @@
       bits.unshift('nothing deleted — ' + (rep.refusedTrash.n) + ' file'
         + (rep.refusedTrash.n === 1 ? '' : 's') + ' held back because a device could not be read');
     } else if(rep.refusedTrash){
+      /* NAME THE WAY OUT. "kept N files, nothing trashed" is a true report of a refusal and reads
+         as a malfunction to somebody who has just deliberately deleted those files somewhere else
+         — "no files disappearing". The sweep declines because nobody was there to ask; saying so,
+         and saying which button asks, is the difference between a guard and a dead end. */
       bits.unshift('kept ' + rep.refusedTrash.n + ' file'
-        + (rep.refusedTrash.n === 1 ? '' : 's') + ' the others say are deleted — nothing trashed');
+        + (rep.refusedTrash.n === 1 ? '' : 's') + ' the others say are deleted — press Sync now to '
+        + 'be asked about them');
     }
     if(rep.refusedRemoteDelete && rep.refusedRemoteDelete.kind === 'partialViewsOut'){
       bits.unshift('did not publish ' + rep.refusedRemoteDelete.n + ' deletion'

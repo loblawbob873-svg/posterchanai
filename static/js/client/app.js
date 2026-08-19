@@ -18395,7 +18395,17 @@
         try{
           const r = await PCSync.edit.removeMany(_syncRoot, doomed);
           const n = (r && r.removed) || 0;
-          toast('marked ' + n + ' deleted \u2014 every device applies it on its next sweep');
+          /* SAY WHAT WILL ACTUALLY HAPPEN, INCLUDING THE ASKING. Past 20 files a sweep no longer
+             removes anything unattended — that floor is what stopped a wave of stale tombstones
+             emptying three devices in turn — so "every device applies it on its next sweep" is
+             wrong for exactly the bulk deletions people do here (searching "conflict" and clearing
+             the lot). Reported as "chose delete all, says it will be picked up on next sweep, no
+             files disappearing": the deletion WAS published, and every device was waiting to be
+             asked. */
+          toast(n >= 20
+            ? 'marked ' + n + ' deleted \u2014 that is a bulk deletion, so each device asks before '
+              + 'removing them: open Folder sync there and press Sync now'
+            : 'marked ' + n + ' deleted \u2014 every device applies it on its next sweep');
           _syncSel.clear(); _syncSelOn = false;
           renderBlossom();
         }catch(e){

@@ -898,9 +898,47 @@
   async function receive(fs, io, o, path, entry, onPercent, beforeCommit, stopping){
     const chunks = entry.chunks || null;
     if(chunks && chunks.length && io.getParts && typeof fs.writePart === 'function'){
+      /* RESUME WITHOUT A WHOLE-FILE CHECKSUM — the case that needed it most and never had it.
+       *
+       * A part file is tied to nothing but its length, so resuming onto one left by a DIFFERENT
+       * version of the same path splices two files together. With a `csum` the verify at the end
+       * catches that; without one there was nothing to catch it, so the part file was discarded at
+       * the start of every attempt and resume was simply off.
+       *
+       * And a large file added through Files → Synced folders has no csum ON PURPOSE: computing one
+       * means holding the whole file, which is the single thing chunking exists to avoid. So the
+       * files that could least afford to start over were the only ones that always did — reported
+       * as a 2 GB .jex reaching 100% and going back to the beginning, again and again.
+       *
+       * What was missing is an IDENTITY for the part file, and it does not have to be a hash of the
+       * content: it only has to say which record these bytes were being written for. That is one
+       * small JSON beside the part file, written before the first byte and read before a resume —
+       * `.pc-trash/.parts.json`, the name both platforms' scanners already skip, using `read` and
+       * `write`, which every adapter already has. A part file whose identity is absent or different
+       * is thrown away exactly as before; only a part file that provably belongs to THIS record is
+       * resumed onto. */
+      const _partsAt = '.pc-trash/.parts.json';
+      const _readParts = async () => {
+        try{ return JSON.parse(new TextDecoder().decode(await fs.read(o.id, _partsAt))) || {}; }
+        catch(_){ return {}; }
+      };
+      const _writeParts = async (m) => {
+        try{ await fs.write(o.id, _partsAt,
+                            new TextEncoder().encode(JSON.stringify(m)), 0); }catch(_){}
+      };
       const canVerify = !!(entry.csum && typeof fs.hashPart === 'function');
+      const _id = idOf(entry);
       let have = 0;
       if(canVerify){ try{ if(fs.partSize) have = await fs.partSize(o.id, path); }catch(_){ have = 0; } }
+      else if(_id && entry.cs > 0 && typeof fs.partSize === 'function'
+              && typeof fs.read === 'function' && typeof fs.write === 'function'){
+        let n = 0;
+        try{ n = await fs.partSize(o.id, path); }catch(_){ n = 0; }
+        const reg = await _readParts();
+        if(n > 0 && n % entry.cs === 0 && reg[path] === _id) have = n;
+        else if(n > 0){ try{ if(fs.discardPart) await fs.discardPart(o.id, path); }catch(_){} }
+        if(reg[path] !== _id){ reg[path] = _id; await _writeParts(reg); }
+      }
       else { try{ if(fs.discardPart) await fs.discardPart(o.id, path); }catch(_){} }
       const total = entry.size || 0;
       const pull = async (from) => {

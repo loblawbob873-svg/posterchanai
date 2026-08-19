@@ -788,6 +788,51 @@ class ALargeDownloadFinishes(unittest.TestCase):
                       "a part file that failed a real checksum must be thrown away")
 
 
+class TheStallWindowKnowsWhatIsComing(unittest.TestCase):
+    """"the download stopped moving will try again", repeatedly, on a file that was in fact moving.
+
+    The guard bumps when a CHUNK lands, so between bumps an entire chunk has to download AND decrypt.
+    Three minutes is right for the 4 MB a phone cuts and wrong for the 16 MB a desktop cuts: 16 MB
+    inside three minutes demands ~90 KB/s sustained, which a phone on a poor link does not have. A
+    transfer that was working was therefore declared dead every time — and before resume worked,
+    each declaration threw away everything."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(CLIENT, "sync.js"), encoding="utf-8") as fh:
+            cls.sync = fh.read()
+
+    def _seg(self):
+        i = self.sync.index("getParts: PC.syncBlobs")
+        return self.sync[i:i + 2200]
+
+    def test_the_window_scales_with_the_incoming_chunk(self):
+        seg = self._seg()
+        self.assertIn("rest[2]", seg,
+                      "the download guard never saw the chunk size, so it could not know how much "
+                      "had to arrive before the next bump")
+        self.assertIn("Math.max(_STALL_MS", seg,
+                      "it must never go BELOW the old floor — a small chunk keeps the tight window")
+
+    def test_the_arithmetic_gives_a_phone_a_chance(self):
+        """A 16 MB chunk at the pessimistic floor must buy minutes, not seconds; a 4 MB one must not
+        change from the three-minute default."""
+        import re as _re
+        m = _re.search(r"Math\.ceil\(_cs / (\d+)\) \* 1000", self._seg())
+        self.assertIsNotNone(m, "the window is no longer derived from the chunk size")
+        rate = int(m.group(1))
+        big = -(-(16 * 1024 * 1024) // rate)          # seconds allowed for a 16 MB chunk
+        small = -(-(4 * 1024 * 1024) // rate)
+        self.assertGreater(big, 300, "16 MB still has to arrive inside five minutes")
+        self.assertLessEqual(small, 180, "a 4 MB chunk must keep the original three-minute window")
+
+    def test_the_upload_guard_is_left_alone(self):
+        """Uploads bump per chunk READ and per progress report, so they were never the problem —
+        and widening a guard that is working is how a dead socket goes unnoticed."""
+        i = self.sync.index("putParts: PC.syncBlobs")
+        self.assertNotIn("_cs", self.sync[i:i + 900])
+
+
 class CheckDoesNotWedgeThePage(unittest.TestCase):
     """The check reads every file and asks about every record — and it must give the page its
     thread back while it does, or Android kills the renderer and the UI reloads mid-operation."""
