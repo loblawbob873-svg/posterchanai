@@ -1222,6 +1222,55 @@ scenario('a chunked file with NO checksum resumes instead of starting over', asy
   t.eq(identical(A.disk, B2.disk), null, 'the resumed file is not byte-identical');
 });
 
+/* THE ONE THAT DECIDES WHETHER ANY OF THIS IS WORTH HAVING.
+ *
+ * "if you cant do an initial sync and sync to the clients, this will never be trusted." Every other
+ * scenario here tests a recovery from something already wrong; this is the plain case, at a size
+ * that is not a toy: one device holding a real folder — thousands of files across nested
+ * directories, a chunked video among them — and TWO empty clients that must end up holding exactly
+ * it. Byte for byte, no conflict copies, nothing trashed, nobody told to delete anything.
+ *
+ * The second client matters as much as the first: two devices joining the same fresh pair is where
+ * a mint race or a double-publish shows up, and neither is visible with one. */
+scenario('the plain case: one full folder, two empty clients, everybody converges', async (t) => {
+  const sky = cloud();
+  const disk = Object.assign({}, photos(1200), photos(900, 'Docs/2025/'),
+                             photos(400, 'Docs/2024/scans/'));
+  disk['Video/clip.mp4'] = video(9, 31);          // chunked, so the whole chunk path is exercised
+  const N = Object.keys(disk).length;
+
+  const A = device('desktop', sky, { disk, chunk: 4 * MB });
+  const r1 = await A.sweep();
+  t.eq(r1.failed.length, 0, 'the first sweep failed: ' + JSON.stringify(r1.failed.slice(0, 3)));
+  t.eq(r1.uploaded.length, N, 'published ' + r1.uploaded.length + ' of ' + N + ' files');
+  t.eq(r1.removedRemote.length, 0, 'a first sweep told the world to delete something');
+
+  for(const name of ['laptop', 'phone']){
+    const B = device(name, sky, { chunk: 4 * MB });
+    const r = await B.sweep();
+    t.eq(r.failed.length, 0, name + ' failed: ' + JSON.stringify(r.failed.slice(0, 3)));
+    t.eq(r.downloaded.length, N, name + ' got ' + r.downloaded.length + ' of ' + N);
+    t.eq(r.conflicted.length, 0, name + ' minted ' + r.conflicted.length + ' conflict copies');
+    t.eq(B.st.trashed.length, 0, name + ' trashed ' + B.st.trashed.length + ' files on arrival');
+    t.eq(r.removedRemote.length, 0, name + ' told the world to delete something');
+    t.eq(identical(A.disk, B.disk), null, name + ' is not byte-identical to the source');
+
+    // …and the sweep after it is silent. A client that re-downloads or republishes on its second
+    // pass never settles, which is indistinguishable from broken however correct pass one was.
+    const r2 = await B.sweep();
+    t.eq(r2.downloaded.length, 0, name + ' re-downloaded ' + r2.downloaded.length + ' files');
+    t.eq(r2.uploaded.length, 0, name + ' republished ' + r2.uploaded.length + ' files');
+    t.eq(r2.conflicted.length, 0, name + ' minted conflicts on its second pass');
+    t.eq(B.st.trashed.length, 0, name + ' trashed files on its second pass');
+  }
+
+  // And the source is undisturbed by either of them arriving.
+  const r3 = await A.sweep();
+  t.eq(r3.uploaded.length, 0, 'the source re-uploaded ' + r3.uploaded.length + ' files');
+  t.eq(r3.downloaded.length, 0, 'the source downloaded its own files back');
+  t.eq(A.st.trashed.length, 0, 'the source trashed ' + A.st.trashed.length + ' of its own files');
+});
+
 scenario('a crash that lost the journal checkpoint settles by content — no re-upload, no conflicts', async (t) => {
   const sky = cloud();
   const A = device('laptop', sky, { disk: photos(60) });
