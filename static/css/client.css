@@ -7637,7 +7637,9 @@ html.os-on #upload-badge.upbadge{z-index:333}
    a second set of rules. `min-height` keeps them level when one label wraps to two lines. */
 .sync-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(11.5rem,1fr));gap:8px}
 .sync-actions .btn{min-height:40px;display:inline-flex;align-items:center;justify-content:center;
-  text-align:center;padding-left:10px;padding-right:10px}
+  gap:6px;text-align:center;padding-left:10px;padding-right:10px}
+/* The sprite sits with the label, never stretched by the flex row it is in. */
+.sync-actions .btn .ic{flex:0 0 auto}
 .sync-actions .danger{color:var(--danger);border-color:rgba(255,107,139,.5)}
 @media(max-width:820px){
   .sync-view{padding:12px}
@@ -8086,7 +8088,10 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
 /* No `direction:rtl` ellipsis trick here: this client ships Arabic and Japanese, and
    flipping the base direction to clip a path from the left garbles mixed text. */
 .fx-trash-row > span.muted{flex:1 1 6em}
-.fx-trash-row .mini{margin-left:auto;flex:0 0 auto}
+.fx-trash-row .mini{margin-left:auto;flex:0 0 auto;display:inline-flex;align-items:center;gap:5px}
+/* Same sprite, same treatment, in the two trash panels' headings and their row buttons. */
+.fx-trash-hd .ic,.fx-trash-row .mini .ic,.fx-trash-all .ic{flex:0 0 auto}
+.fx-trash-all{display:inline-flex;align-items:center;gap:5px}
 .fx-trash-all{margin-top:6px}
 
 /* The synced view's selection bar is injected INSIDE the file grid, and a grid treats any child

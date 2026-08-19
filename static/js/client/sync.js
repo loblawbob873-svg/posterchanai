@@ -40,6 +40,12 @@
    * function` reached a user, on the confirmation dialog of an irreversible action, where a throw
    * means the button simply reports "action failed". Six lines here cannot be broken by anything
    * app.js does to its own internals. */
+  /* THE SPRITE, NOT AN EMOJI. Every other control in this client draws its icon from the shared
+     symbol sheet, so an emoji here renders in the system's font — a different weight, a different
+     colour, a different size on every platform, and no theme awareness at all ("no emojis! flat
+     icons like the rest of the UI"). Local for the same reason `_bytes` is: six lines that nothing
+     in app.js can take away. */
+  const _ic = (name) => '<svg class="ic b-ic" aria-hidden="true"><use href="#i-' + name + '"></use></svg>';
   const _bytes = (n) => {
     n = +n || 0;
     const u = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -2561,13 +2567,13 @@
              and Stop syncing, which is asked for by name.
              Everything else is one press away and none of it is urgent. -->
         <div class="sync-actions">
-          ${pr.paused ? '<button class="btn btn-neon small sync-start">Start syncing ▶</button>'
-                      : '<button class="btn btn-neon small sync-now">Sync now</button>'}
+          ${pr.paused ? `<button class="btn btn-neon small sync-start">${_ic('play')}Start syncing</button>`
+                      : `<button class="btn btn-neon small sync-now">${_ic('refresh')}Sync now</button>`}
           ${(st.report && st.report.refusedResurrect)
-            ? `<button class="btn btn-neon small sync-putback">\u267b Put ${st.report.refusedResurrect.n} file${st.report.refusedResurrect.n===1?'':'s'} back everywhere</button>` : ''}
-          <button class="btn btn-ghost small sync-restore hidden">\u267b Restore from trash</button>
-          <button class="btn btn-ghost small sync-more" title="Preview, check, tidy up, trash and background details.">\u22ef More</button>
-          <button class="btn btn-ghost small danger sync-forget">Stop syncing</button>
+            ? `<button class="btn btn-neon small sync-putback">${_ic('restore')}Put ${st.report.refusedResurrect.n} file${st.report.refusedResurrect.n===1?'':'s'} back everywhere</button>` : ''}
+          <button class="btn btn-ghost small sync-restore hidden">${_ic('restore')}Restore from trash</button>
+          <button class="btn btn-ghost small danger sync-forget">${_ic('close')}Stop syncing</button>
+          <button class="btn btn-ghost small sync-more" title="Preview, check, tidy up, trash and background details.">${_ic('menu')}More</button>
         </div></div>`;
     }).join('');
 
@@ -2835,7 +2841,9 @@
         if(rb){
           (async () => {
             try{ const rows = FS().listTrash ? await FS().listTrash(id) : [];
-              if(rows && rows.length){ rb.textContent = '\u267b Restore ' + rows.length + ' file'
+              /* innerHTML, not textContent: the label carries the sprite <svg>, and textContent
+                 would drop the icon and leave the button visibly different from its neighbours. */
+              if(rows && rows.length){ rb.innerHTML = _ic('restore') + 'Restore ' + rows.length + ' file'
                     + (rows.length === 1 ? '' : 's') + ' from trash';
                 rb.classList.remove('hidden'); } }catch(_){}
           })();
@@ -3002,12 +3010,16 @@
        * teaches people not to read it. Every entry calls the SAME function the card would have. */
       { const more = card.querySelector('.sync-more');
         if(more) more.onclick = () => {
-          const items = [['preview', '\ud83d\udc41 Preview \u2014 what would change']];
-          if(!prefs(get()).paused) items.push(['pause', '\u23f8 Pause syncing']);
-          items.push(['check', '\ud83e\ude7a Check files \u2014 read every one, change nothing']);
-          items.push(['tidy', '\ud83e\uddf9 Tidy up conflict copies']);
-          items.push(['trash', '\ud83d\uddd1 Empty trash']);
-          if(FS() && FS().tickStats) items.push(['bg', '\ud83d\udcf1 Background sync details']);
+          /* PLAIN WORDS. `openMenuPopover` renders each label through `enc()` — markup in a label
+             comes out as literal angle brackets — so a sprite cannot go in one without changing a
+             component every other menu in the app shares. Emoji would render, which is exactly
+             what is not wanted, so the rows say what they do and nothing else. */
+          const items = [['preview', 'Preview \u2014 what would change']];
+          if(!prefs(get()).paused) items.push(['pause', 'Pause syncing']);
+          items.push(['check', 'Check files \u2014 read every one, change nothing']);
+          items.push(['tidy', 'Tidy up conflict copies']);
+          items.push(['trash', 'Empty trash']);
+          if(FS() && FS().tickStats) items.push(['bg', 'Background sync details']);
           const pick = (a) => {
             if(a === 'preview') return _doPreview();
             if(a === 'pause') return _doPause();

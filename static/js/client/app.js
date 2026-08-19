@@ -13236,7 +13236,7 @@
     const old=$('#narrate-chip'); if(old) old.remove();
     const b=document.createElement('button');
     b.id='narrate-chip'; b.className='narrate-chip';
-    b.innerHTML='<span aria-hidden="true">\u23f9</span> Stop reading \u00b7 <span class="muted">'+enc(name)+'</span>';
+    b.innerHTML='<svg class="ic b-ic" aria-hidden="true"><use href="#i-stop"></use></svg>Stop reading <span class="muted">\u00b7 '+enc(name)+'</span>';
     b.onclick=()=>stopNarration();
     document.body.appendChild(b);
     /* SCROLLED AWAY IS STOPPED. An observer on the post itself rather than a scroll handler: the
@@ -17952,15 +17952,15 @@
        INSIDE, where it can be explained. */
     const total = rows.length + dead.length;
     return `<div class="fx-trash">
-      <button class="fx-trash-hd" id="fx-del-toggle">\u267b Deleted on every device
+      <button class="fx-trash-hd" id="fx-del-toggle"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Deleted on every device
         <span class="fx-n">${total}</span><span class="chev">${_fxDelOpen?'\u25be':'\u25b8'}</span></button>
       <div class="fx-trash-body${_fxDelOpen?'':' hidden'}">
         <div class="muted small">${rows.length} of ${total} can be undone from here \u2014 the folder marks them deleted and their bytes are still in the store, so restoring republishes them and every device brings them back.</div>
         ${rows.slice(0, 50).map(p2 => `<div class="fx-trash-row"><span title="${enc(p2)}">${enc(p2.split('/').pop())}</span>
           <span class="muted small" title="${enc(p2)}">${enc(p2.split('/').slice(0,-1).join('/'))}</span>
-          <button class="mini" data-undelete="${enc(p2)}">\u267b Restore</button></div>`).join('')}
+          <button class="mini" data-undelete="${enc(p2)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Restore</button></div>`).join('')}
         ${rows.length > 50 ? `<div class="muted small">\u2026and ${rows.length - 50} more \u2014 Restore all covers every one</div>` : ''}
-        ${rows.length > 1 ? `<button class="mini fx-trash-all" id="fx-del-restoreall">\u267b Restore all ${rows.length} everywhere</button>` : ''}
+        ${rows.length > 1 ? `<button class="mini fx-trash-all" id="fx-del-restoreall"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Restore all ${rows.length} everywhere</button>` : ''}
         ${dead.length ? `<div class="muted small">The other ${dead.length} kept no storage address, so nothing here knows which bytes they were. They are not lost: on a device that still HAS those files, open Folder sync and press \u201cPut them back everywhere\u201d on the folder\u2019s card \u2014 it uploads from that copy.</div>` : ''}
       </div>
     </div>`;
@@ -17976,7 +17976,7 @@
     if(!_syncRoot || !window.pcFs || !window.pcFs.listTrash) return '';
     const S = window.PCSync;
     const row = S && S.folders ? (S.folders() || []).find(f => (f.key || f.name) === _syncRoot) : null;
-    if(!row) return `<div class="fx-trash"><div class="muted small" style="padding:6px 2px">\ud83d\uddd1 This device doesn\u2019t sync \u201c${enc(_syncRoot)}\u201d, so it has no local trash to show \u2014 each device\u2019s trash lives on that device.</div></div>`;
+    if(!row) return `<div class="fx-trash"><div class="muted small" style="padding:6px 2px"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>This device doesn\u2019t sync \u201c${enc(_syncRoot)}\u201d, so it has no local trash to show \u2014 each device\u2019s trash lives on that device.</div></div>`;
     if(!_fxTrash || _fxTrash.key !== _syncRoot){
       _fxTrash = { key: _syncRoot, days: null };
       (async () => {
@@ -17996,7 +17996,7 @@
      * the outside ("where the fuck is the trash folder") — the block always renders inside a
      * synced folder on a device that can see the disk; emptiness is a stated fact, not silence. */
     if(!keys.length) return `<div class="fx-trash">
-      <button class="fx-trash-hd">\ud83d\uddd1 Trash on this device
+      <button class="fx-trash-hd"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Trash on this device
         <span class="fx-n">0</span></button>
       <div class="fx-trash-body"><div class="muted small">Empty \u2014 nothing sync moved aside is waiting here. Files you restored are back in place. Deleting a file in this browser publishes the deletion; the copies move to trash on each device the next time THAT device syncs, so they appear here after this one sweeps, not before.</div></div>
     </div>`;
@@ -18004,14 +18004,14 @@
     /* A SUBORDINATE block, not more chips: dates are not folders and must not dress like them.
      * Collapsed by default — the trash is a safety net, not a destination. */
     return `<div class="fx-trash">
-      <button class="fx-trash-hd" id="fx-trash-toggle">\ud83d\uddd1 Trash on this device
+      <button class="fx-trash-hd" id="fx-trash-toggle"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Trash on this device
         <span class="fx-n">${total}</span><span class="chev">${_fxTrashOpen?'\u25be':'\u25b8'}</span></button>
       <div class="fx-trash-body${_fxTrashOpen?'':' hidden'}">
         <div class="muted small">What sync moved aside on this machine \u2014 nothing here is lost, and restoring never overwrites a file that came back.</div>
         ${keys.map(d => `<div class="fx-trash-row"><span>${enc(d)}</span>
           <span class="muted small">${days[d]} file${days[d]===1?'':'s'}</span>
-          <button class="mini" data-trashrestore="${enc(d)}">\u267b Restore</button></div>`).join('')}
-        ${keys.length > 1 ? `<button class="mini fx-trash-all" id="fx-trash-restoreall">\u267b Restore all ${total}</button>` : ''}
+          <button class="mini" data-trashrestore="${enc(d)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Restore</button></div>`).join('')}
+        ${keys.length > 1 ? `<button class="mini fx-trash-all" id="fx-trash-restoreall"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Restore all ${total}</button>` : ''}
       </div>
     </div>`;
   }
@@ -18399,7 +18399,12 @@
           _syncSel.clear(); _syncSelOn = false;
           renderBlossom();
         }catch(e){
-          del.disabled = false; del.textContent = '\ud83d\uddd1 Delete on every device';
+          /* innerHTML, not textContent — the label IS a sprite <use>, and textContent both drops
+             the icon and (as it did here) invites an emoji to be typed in its place. Same trap as
+             _syncDownload's button, one screen away. */
+          del.disabled = false;
+          del.innerHTML = '<svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>'
+                        + 'Delete on every device';
           toast('nothing was deleted: ' + ((e && e.message) || e));
         }
       };
@@ -27800,7 +27805,7 @@
     const _torTab = (_hasNativeTor() || !!window.Capacitor) ? [['tor','Tor']] : [];
     // 🧭 Sidebar is its OWN tab, not a block in Profile: it is ~35 switches, which inside a pane of
     // unrelated settings is a wall you scroll past rather than a thing you go to.
-    const tabs=[['profile','Profile'],['sidebar','Sidebar'],['relays','Relays'],..._torTab,['media','Media'],['zaps','Zaps'],['muted','Muted'],['mail','Mail'],['telegram','Telegram'],['social','Social'],['keys','API Keys']]
+    const tabs=[['profile','Profile'],['timeline','Timeline'],['sidebar','Sidebar'],['relays','Relays'],..._torTab,['media','Media'],['cache','Cache'],['zaps','Zaps'],['privacy','Privacy'],['muted','Muted'],['mail','Mail'],['telegram','Telegram'],['social','Social'],['keys','API Keys']]
       .filter(t => !(_standalone() && INSTANCE_SETTINGS_TABS.has(t[0])));
     // Standalone has no built-in relay for the switch to fall back TO, so "use my own relays" is not a
     // choice there — the list IS the relay config, always on. The switch is hidden and forced checked
@@ -27833,9 +27838,6 @@
           </label>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-compress"></use></svg>Data saver<label class="switch"><input type="checkbox" id="set-no-images" ${NO_IMAGES?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Holds images &amp; videos until you tap them, skips link previews, and loads lighter feed pages — turn it on when you're low on data. Syncs across your devices.</div>
-          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-refresh"></use></svg>Auto-show new posts<label class="switch"><input type="checkbox" id="set-auto-new-posts" ${AUTO_NEW_POSTS?'checked':''}><span class="slider"></span></label></label>
-          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hold a post to read it aloud<label class="switch"><input type="checkbox" id="set-read-aloud" ${ClientSettings.get('readAloudHold',true)?'checked':''}><span class="slider"></span></label></label>
-          <div class="muted small">Press and hold any post and it is narrated. Turn it off if you hold posts by accident. While one is playing a <b>Stop reading</b> button sits at the bottom of the screen, and scrolling the post out of view stops it too.</div>
           <label class="fld"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-compass"></use></svg>Screen the app opens on
             <select class="input" id="set-start-view">${(()=>{
               // Options come from the SIDEBAR, not a typed list, so a new feature joins by itself and a
@@ -27851,33 +27853,8 @@
             })()}</select>
           </label>
           <div class="muted small">Where the app starts. <b>Social</b> is the timeline (picked below); anything else — Notes, Messages, Calendar… — opens that screen first instead. Syncs across your devices; a device that doesn't have the chosen screen falls back to the timeline.</div>
-          <label class="fld"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-home"></use></svg>Timeline the app opens on
-            <select class="input" id="set-start-timeline">
-              <option value="global"${ClientSettings.get('startTimeline','global')==='home'?'':' selected'}>Nostrverse (default)</option>
-              <option value="home"${ClientSettings.get('startTimeline','global')==='home'?' selected':''}>Home — people you follow</option>
-            </select>
-          </label>
-          <div class="muted small">Which feed you land on when the app starts. Nostrverse is everything the relays carry; Home is only the people you follow. You can still switch any time with the tabs above the timeline. Syncs across your devices.</div>
-          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide replies in timelines<label class="switch"><input type="checkbox" id="set-hide-replies" ${ClientSettings.get('hideReplies',false)?'checked':''}><span class="slider"></span></label></label>
-          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide fediverse posts in timelines<label class="switch"><input type="checkbox" id="set-hide-fedi" ${ClientSettings.get('hideFediBridge',true)?'checked':''}><span class="slider"></span></label></label>
-          <div class="muted small">On by default. The bridge mirrors whole fediverse timelines onto Nostr under stand-in keys — this keeps them out of Home and Nostrverse. Mentions, replies and DMs from fediverse people still reach you either way.</div>
-          <div class="muted small">On, new notes appear at the top of Home / Nostrverse as they arrive. Off, they wait behind a <b>↑ N new posts</b> button and only appear when you tap it — so the timeline never moves under you. Syncs across your devices.</div>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center" title="h j k l to move, gg / G for top and bottom. h and l cross between the nav rail, the feed and notifications."><svg class="ic fld-ico" aria-hidden="true"><use href="#i-terminal"></use></svg>Vim keys<label class="switch"><input type="checkbox" id="set-vim" ${ClientSettings.get('vimKeys',false)?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small"><code>h j k l</code> to move, <code>gg</code> / <code>G</code> for top and bottom. <code>h</code> and <code>l</code> also cross between the nav rail, the feed and notifications. While on, <code>l</code> is movement, so React is <code>f</code> — <code>Alt</code>+<code>L</code> always works either way. Syncs across your devices.</div>
-          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-wand"></use></svg>Post effects<label class="switch"><input type="checkbox" id="set-post-effects" ${_postEffectsOn()?'checked':''}><span class="slider"></span></label></label>
-          <div class="muted small">Celebratory animations on notes: confetti on congrats, a sunrise on <code>gm</code>, and drifting tears on 😭 reactions. Off by default. Syncs across your devices.</div>
-          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-broom"></use></svg>Remove link trackers when I post<label class="switch"><input type="checkbox" id="set-clean-links" ${ClientSettings.get('cleanLinks',false)?'checked':''}><span class="slider"></span></label></label>
-          <div class="muted small">Strips tracking parameters (<code>utm_*</code>, <code>fbclid</code>, <code>gclid</code>, YouTube's <code>si</code>…) out of every link in a post or reply, and unwraps click-wrappers like <code>google.com/url?q=</code> and Outlook safelinks, so what you share can't be tied back to you. Runs on this device with no network call — it's a published list of tracker names, not a guess. Off by default; you can always run it by hand from <b>🤖 AI → 🧹 Clean links</b> in the composer. Syncs across your devices.</div>
-          <label class="fld"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-image"></use></svg>Media cache size
-            <select class="input" id="set-media-cache">${[1,2,4,8,16,32].map(g=>`<option value="${g}"${(+ClientSettings.get('mediaCacheGB',4)===g)?' selected':''}>${g} GB${g===4?' (default)':''}</option>`).join('')}</select>
-          </label>
-          <div class="muted small">How much offline media (avatars, images, played videos) to keep cached on THIS device. Larger = fewer re-downloads on a slow/throttled link, but more storage used. The setting follows your account; what a device can actually hold is capped by its own free space.</div>
-          <div class="muted small" id="media-cache-stat" style="margin-top:4px">Checking device storage…</div>
-          <label class="fld"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-music"></use></svg>Offline music limit
-            <select class="input" id="set-music-offline">${(()=>{const cur=+ClientSettings.get('musicOfflineGB',0)||0;const opts=[0,5,10,20,50,100,250,500];if(!opts.includes(cur))opts.push(cur);return opts.sort((a,b)=>a-b).map(g=>`<option value="${g}"${cur===g?' selected':''}>${g?g+' GB':'No limit (default)'}</option>`).join('');})()}</select>
-          </label>
-          <div class="muted small">How much of your music library to keep playable offline on THIS device. <b>No limit</b> keeps everything you download — a library is not a cache, and nothing is ever evicted. Set a size and the tracks stored longest ago make room once it is reached. The setting follows your account, so a new device starts where you left off; what each device can actually hold is still capped by its own free space.</div>
-          <div class="muted small" id="music-offline-stat" style="margin-top:4px">Checking…</div>
           ${BUNDLED ? `<label class="fld"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-globe"></use></svg>Instance
             <div class="instance-pick" id="us-instance-pick"></div>
             <span class="input-row" style="display:flex;gap:6px;margin-top:6px"><input class="input" id="us-instance-inp" type="text" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="https://your-instance" value="${enc(_instanceBase())}"><button class="btn btn-ghost small" id="us-instance-go">Connect</button></span>
@@ -27887,6 +27864,25 @@
           ` : ''}
           ${_standalone() ? '' : `<label class="fld">Notification email<input class="input" id="us-email" value="${enc(s.notification_email||'')}" placeholder="you@example.com"></label>
           <label class="fld">News sources <span class="muted small">(one per line: url|name) — used by the <code>news</code> command</span><textarea class="input" id="us-news-src" rows="4">${enc(s.news_sources||'')}</textarea></label>`}
+        </div>
+        <div class="us-pane" data-pane="timeline">
+          <div class="muted small">How the feed behaves: what lands in it, when it moves, and what a
+            post does when you touch it.</div>
+          <label class="fld"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-home"></use></svg>Timeline the app opens on
+            <select class="input" id="set-start-timeline">
+              <option value="global"${ClientSettings.get('startTimeline','global')==='home'?'':' selected'}>Nostrverse (default)</option>
+              <option value="home"${ClientSettings.get('startTimeline','global')==='home'?' selected':''}>Home — people you follow</option>
+            </select>
+          </label>
+          <div class="muted small">Which feed you land on when the app starts. Nostrverse is everything the relays carry; Home is only the people you follow. You can still switch any time with the tabs above the timeline. Syncs across your devices.</div>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-refresh"></use></svg>Auto-show new posts<label class="switch"><input type="checkbox" id="set-auto-new-posts" ${AUTO_NEW_POSTS?'checked':''}><span class="slider"></span></label></label>
+          <div class="muted small">On, new notes appear at the top of Home / Nostrverse as they arrive. Off, they wait behind a <b>↑ N new posts</b> button and only appear when you tap it — so the timeline never moves under you. Syncs across your devices.</div>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide replies in timelines<label class="switch"><input type="checkbox" id="set-hide-replies" ${ClientSettings.get('hideReplies',false)?'checked':''}><span class="slider"></span></label></label>
+          <div class="muted small">Keeps replies out of Home and Nostrverse so the feed reads as posts rather than conversation. A reply is still there when you open the thread it belongs to, and your own notifications are unaffected. Syncs across your devices.</div>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-wand"></use></svg>Post effects<label class="switch"><input type="checkbox" id="set-post-effects" ${_postEffectsOn()?'checked':''}><span class="slider"></span></label></label>
+          <div class="muted small">Celebratory animations on notes: confetti on congrats, a sunrise on <code>gm</code>, and drifting tears on 😭 reactions. Off by default. Syncs across your devices.</div>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hold a post to read it aloud<label class="switch"><input type="checkbox" id="set-read-aloud" ${ClientSettings.get('readAloudHold',true)?'checked':''}><span class="slider"></span></label></label>
+          <div class="muted small">Press and hold any post and it is narrated. Turn it off if you hold posts by accident. While one is playing a <b>Stop reading</b> button sits at the bottom of the screen, and scrolling the post out of view stops it too.</div>
         </div>
         <div class="us-pane" data-pane="sidebar">${_navHideHtml()}</div>
         <div class="us-pane" data-pane="mail">
@@ -27906,6 +27902,9 @@
           <label class="fld">Nitter feeds <span class="muted small">(one RSS URL per line)</span><textarea class="input" id="us-nitter" rows="4">${enc(s.nitter_feeds||'')}</textarea></label>
         </div>
         <div class="us-pane" data-pane="social">
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide fediverse posts in timelines<label class="switch"><input type="checkbox" id="set-hide-fedi" ${ClientSettings.get('hideFediBridge',true)?'checked':''}><span class="slider"></span></label></label>
+          <div class="muted small">On by default. The bridge mirrors whole fediverse timelines onto Nostr under stand-in keys — this keeps them out of Home and Nostrverse. Mentions, replies and DMs from fediverse people still reach you either way.</div>
+
           <div class="us-conn"><div class="set-title small">Pleroma / Mastodon</div>
             <label class="fld">Instance URL<input class="input" id="us-plr-url" value="${enc(s.pleroma_instance_url||'')}" placeholder="https://pleroma.example"></label>
             ${s.pleroma_has_access_token
@@ -28006,11 +28005,32 @@
           <label class="fld"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-coin"></use></svg>Bitcoin Cash tip amounts <span class="muted small">(BCH — your one-tap presets)</span><input class="input" id="us-bch-presets" value="${enc(ClientSettings.get('bchPresets','')||_BCH_DEFAULTS.join(', '))}" placeholder="0.001, 0.01, 0.05, 0.1"></label>
           <div class="muted small">Your one-tap amounts in the ⚡ zap / ɱ Monero tip dialogs. Comma-separated; synced to your other devices.</div>
         </div>
+        <div class="us-pane" data-pane="cache">
+          <div class="muted small">What this device keeps on disk so it works without the network.
+            Both settings follow your account; what a device can actually hold is capped by its own
+            free space, whatever is chosen here.</div>
+          <label class="fld"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-image"></use></svg>Media cache size
+            <select class="input" id="set-media-cache">${[1,2,4,8,16,32].map(g=>`<option value="${g}"${(+ClientSettings.get('mediaCacheGB',4)===g)?' selected':''}>${g} GB${g===4?' (default)':''}</option>`).join('')}</select>
+          </label>
+          <div class="muted small">How much offline media (avatars, images, played videos) to keep cached on THIS device. Larger = fewer re-downloads on a slow/throttled link, but more storage used. The setting follows your account; what a device can actually hold is capped by its own free space.</div>
+          <div class="muted small" id="media-cache-stat" style="margin-top:4px">Checking device storage…</div>
+          <label class="fld"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-music"></use></svg>Offline music limit
+            <select class="input" id="set-music-offline">${(()=>{const cur=+ClientSettings.get('musicOfflineGB',0)||0;const opts=[0,5,10,20,50,100,250,500];if(!opts.includes(cur))opts.push(cur);return opts.sort((a,b)=>a-b).map(g=>`<option value="${g}"${cur===g?' selected':''}>${g?g+' GB':'No limit (default)'}</option>`).join('');})()}</select>
+          </label>
+          <div class="muted small">How much of your music library to keep playable offline on THIS device. <b>No limit</b> keeps everything you download — a library is not a cache, and nothing is ever evicted. Set a size and the tracks stored longest ago make room once it is reached. The setting follows your account, so a new device starts where you left off; what each device can actually hold is still capped by its own free space.</div>
+          <div class="muted small" id="music-offline-stat" style="margin-top:4px">Checking…</div>
+        </div>
+        <div class="us-pane" data-pane="privacy">
+          <div class="muted small">What this device gives away, and to whom. Everything here is off by
+            default — turning any of it on costs you nothing but a little convenience.</div>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-broom"></use></svg>Remove link trackers when I post<label class="switch"><input type="checkbox" id="set-clean-links" ${ClientSettings.get('cleanLinks',false)?'checked':''}><span class="slider"></span></label></label>
+          <div class="muted small">Strips tracking parameters (<code>utm_*</code>, <code>fbclid</code>, <code>gclid</code>, YouTube's <code>si</code>…) out of every link in a post or reply, and unwraps click-wrappers like <code>google.com/url?q=</code> and Outlook safelinks, so what you share can't be tied back to you. Runs on this device with no network call — it's a published list of tracker names, not a guess. Off by default; you can always run it by hand from <b>🤖 AI → 🧹 Clean links</b> in the composer. Syncs across your devices.</div>
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide DM previews until opened<label class="switch"><input type="checkbox" id="set-hide-dm-prev" ${ClientSettings.get('hideDmPreview', false)?'checked':''}><span class="slider"></span></label></label>
+          <div class="muted small">Don’t show the last message text in the Messages list — only reveal it when you open the conversation. Saved on this device.</div>
+        </div>
         <div class="us-pane" data-pane="muted">
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Blur sensitive / NSFW posts<label class="switch"><input type="checkbox" id="set-blur-nsfw" ${BLUR_NSFW?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Posts flagged sensitive (NIP-36 content warning) are blurred behind a “Show” reveal. Turn this off to see them unblurred. Saved on this device.</div>
-          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide DM previews until opened<label class="switch"><input type="checkbox" id="set-hide-dm-prev" ${ClientSettings.get('hideDmPreview', false)?'checked':''}><span class="slider"></span></label></label>
-          <div class="muted small">Don’t show the last message text in the Messages list — only reveal it when you open the conversation. Saved on this device.</div>
           <div class="muted small">Hide posts containing any of these words or phrases (case-insensitive, one per line). Saved to your Nostr mute list (NIP-51), so it follows you to other clients.</div>
           <textarea class="input" id="set-muted-words" rows="4" placeholder="one word or phrase per line">${enc([...MUTED_WORDS].join('\n'))}</textarea>
           <div class="set-actions"><button class="btn btn-neon small" id="set-words-save">Save muted words</button></div>
