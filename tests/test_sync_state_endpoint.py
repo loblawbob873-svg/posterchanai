@@ -179,6 +179,19 @@ class SyncStateEndpoint(unittest.TestCase):
         code, j = self.call(put=tombs, era=0, confirmed=True)
         self.assertEqual(code, 200)
 
+    def test_a_restore_is_never_blocked_by_the_memory_of_a_delete(self):
+        """'this would tell every device to delete 0 files' — the rolling deletion counter gated
+        EVERY write, so the account-wide RESTORE was refused minutes after the delete it undoes.
+        A batch with zero tombstones passes whatever the counter remembers."""
+        recs = [self.rec(("%024x" % i), 1) for i in range(120)]
+        self.call(put=recs, era=0)
+        tombs = [self.rec(("%024x" % i), 2, t=1) for i in range(120)]
+        self.call(put=tombs, era=0, confirmed=True)
+        restore = [self.rec(("%024x" % i), 3) for i in range(120)]
+        code, j = self.call(put=restore, era=0)
+        self.assertEqual(code, 200, j)
+        self.assertEqual(sum(1 for x in j["results"] if x.get("ok")), 120)
+
     def test_backstop_rolls_across_batches(self):
         recs = [self.rec(("%024x" % i), 1) for i in range(120)]
         self.call(put=recs, era=0)

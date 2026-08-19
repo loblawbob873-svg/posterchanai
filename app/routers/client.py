@@ -4735,7 +4735,11 @@ async def sync_state(data: SyncStateReq, db: Session = Depends(get_db)):
             # for the client that has gone wrong, which is how every previous engine emptied a
             # folder. Refused WHOLE: a batch that is part delete-order is not worth salvaging.
             tombs = sum(1 for r in clean if r["t"])
-            if not data.confirmed:
+            # ONLY A BATCH THAT DELETES CAN BE REFUSED FOR DELETING. The rolling counter exists to
+            # stop batch-splitting a mass delete — read unconditionally it blocked a RESTORE minutes
+            # after a legitimate delete ("would tell every device to delete 0 files"), which is the
+            # undo being refused by the memory of the thing it undoes.
+            if tombs and not data.confirmed:
                 if tombs > _FS_TOMB_CAP or _fs_tomb_recent(pk, pair, 0) + tombs > _FS_TOMB_CAP:
                     logger.warning("[client] sync-state: REFUSED %d tombstones for %s (backstop)",
                                    tombs, pair)
