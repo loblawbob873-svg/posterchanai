@@ -925,6 +925,23 @@ public class FolderSyncPlugin extends Plugin {
           if (moved != null && !SafFs.baseName(from).equals(SafFs.baseName(to))) {
             DocumentsContract.renameDocument(cr, f.docUri(moved), SafFs.baseName(to));
           }
+          /* A MOVE THAT LEFT THE SOURCE BEHIND IS A COPY, AND IT HAS TO BE FINISHED HERE.
+           *
+           * `moveDocument` is an OPTIONAL provider capability (FLAG_SUPPORTS_MOVE) and it does not
+           * report which it did: some providers relink, some copy the bytes and leave the original
+           * exactly where it was, and it throws in neither case. Restoring from `.pc-trash` is the
+           * caller that cannot survive the difference — the file reappears in the folder AND stays
+           * in the trash, so the count never drops, the next attempt finds every destination
+           * occupied, and the whole thing reports "restored 0 · N already back in place" for ever.
+           * Reported as "restore 172 files from trash did nothing … says already restored".
+           *
+           * So the source is re-read after the fact and unlinked if it survived. Only ever when the
+           * destination is confirmed present: an unlink on the strength of an assumption is the one
+           * mistake this whole feature exists to avoid. */
+          if (moved != null) {
+            String stale = f.resolve(from, false);
+            if (stale != null) f.deleteDoc(stale);
+          }
         }
         call.resolve();
       } catch (Exception e) { call.reject("move failed: " + e.getMessage()); }

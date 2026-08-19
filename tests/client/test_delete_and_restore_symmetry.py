@@ -401,6 +401,134 @@ class FloorSymmetryTests(unittest.TestCase):
         self.assertEqual(out["trash"], 59)
 
 
+class RestoreSaysWhatHappened(unittest.TestCase):
+    """"restore 172 files from trash did nothing … says already restored", three times.
+
+    Every row skipped means every destination already holds the file — a previous restore DID put
+    them back and the trash copies survived it, which on Android is what an optional `moveDocument`
+    does when the provider satisfies it by COPYING. From the outside that is indistinguishable from
+    a dead button, and the count never drops, so it is pressed again and again.
+
+    The reassurance ("your files are back, the trash holds duplicates") is only safe if it is TRUE,
+    so it is measured — a sample of pairs hashed on both sides — and the opposite case gets the
+    opposite advice."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(CLIENT, "sync.js"), encoding="utf-8") as fh:
+            cls.sync = fh.read()
+
+    def _seg(self):
+        i = self.sync.index("if(!done && skipped && typeof fs2.hashFile")
+        return self.sync[i:i + 2000]
+
+    def test_it_does_not_assert_the_copies_are_duplicates(self):
+        seg = self._seg()
+        self.assertIn("hashFile(folderId, r.at)", seg)
+        self.assertIn("hashFile(folderId, r.to)", seg)
+        self.assertIn("same && !diff", seg,
+                      "the reassuring sentence must need every sampled pair to match")
+
+    def test_differing_bytes_get_the_opposite_advice(self):
+        seg = self._seg()
+        self.assertIn("DIFFERENT contents", seg,
+                      "an older version in the trash must not be described as a duplicate")
+        i_ok, i_bad = seg.index("Empty trash reclaims"), seg.index("DIFFERENT contents")
+        self.assertNotEqual(i_ok, i_bad)
+
+    def test_it_only_speaks_when_nothing_was_restored(self):
+        """A partial restore is its own story; this sentence is for the all-skipped case only."""
+        self.assertIn("if(!done && skipped", self.sync)
+
+
+class BigFilesCanActuallyLand(unittest.TestCase):
+    """A 2 GB file could never finish on a phone, and the two reasons were both size-blind.
+
+    "ANDROID ISSUES WRITING >2GB FILE  DOWNLOAD STOPPED MOVING WILL TRY AGAIN", then "tablet keeps
+    reloading UI when doing folder sync".
+
+    1. RESUME WAS DEAD. The executor has always called `io.getParts(chunks, write, expect, have, cs)`
+       and sync.js's stall-guard wrapper declared `(chunks, write)` — three arguments dropped on the
+       floor. Without `have`/`cs` the resume arithmetic cannot run, so `skip` stays 0 and every retry
+       restarts at byte 0; without `expect` the "rebuilt N bytes, expected M" check never fires at
+       all. Invisible on a small file, fatal on a large one: the three-minute stall guard trips, the
+       sweep retries, and the retry throws away every byte.
+    2. THE BRIDGE PAYLOAD WAS THE UPLOADER'S CHOICE. `cs` is set once by whoever stored the file — a
+       desktop picks 16 MB — and each chunk crosses Capacitor as base64 held as UTF-16, so a phone
+       was asked to hold ~80 MB of renderer heap per chunk. That is the render process being killed
+       and the UI "reloading" mid-sweep."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(CLIENT, "sync.js"), encoding="utf-8") as fh:
+            cls.sync = fh.read()
+        with open(EXEC, encoding="utf-8") as fh:
+            cls.exc = fh.read()
+
+    def _run(self, body):
+        js = "require(%s);\n%s" % (json.dumps(FOLDERSYNC), body)
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+        return json.loads(r.stdout)
+
+    def test_the_transfer_wrappers_forward_every_argument(self):
+        for name in ("getParts", "putParts"):
+            i = self.sync.index("    %s: PC.syncBlobs" % name)
+            seg = self.sync[i:i + 1900]
+            self.assertIn("...rest", seg,
+                          "%s drops the arguments the executor passes — resume and the size check "
+                          "silently stop working" % name)
+            self.assertGreaterEqual(seg.count("...rest"), 2,
+                                    "%s must both ACCEPT and FORWARD the rest" % name)
+
+    def test_the_executor_hands_the_store_what_resume_needs(self):
+        """The contract the wrapper was breaking, RUN: a chunked download must arrive at the store
+        with the expected size, how much is already on disk, and the chunk size — or resume cannot
+        be computed and every retry starts at byte 0."""
+        out = self._run("""
+          const X = require(%s);
+          (async () => {
+          const entry = { v:1, by:'other', size:9000, mtime:1, csum:'k',
+                          chunks:['a','b','c'], cs:4000 };
+          let seen = null;
+          const fs = {
+            chunkBytes: 1000,
+            scanPage: async () => ({ files:{}, done:true }),
+            partSize: async () => 4000,                 // one whole chunk already on disk
+            hashPart: async () => 'k',
+            writePart: async () => {},
+            writeCommit: async () => ({ size:9000, mtime:2 }),
+            confirmGone: async () => ({ gone:false, parentAlive:true }),
+          };
+          const io = {
+            index: async () => ({}),
+            state: async () => ({ state: { 'big.jex': JSON.parse(JSON.stringify(entry)) }, flagged:{} }),
+            saveIndex: async () => {},
+            putState: async (k, r) => ({ ok:r.map(x=>x.path), stale:[], failed:[] }),
+            getParts: async (chunks, write, expect, have, cs) => {
+              seen = { expect, have, cs, chunks: chunks.length };
+              await write(0, new Uint8Array(1));
+              return 9000;
+            },
+          };
+          await X.sweep(fs, io, { id:'f', key:'k', device:'me', now:1 });
+          process.stdout.write(JSON.stringify(seen || {}));
+          })().catch(e => { console.error(e && e.stack || e); process.exit(1); });
+        """ % (json.dumps(EXEC),))
+        self.assertEqual(out.get("expect"), 9000, "the store cannot check the rebuilt size")
+        self.assertEqual(out.get("have"), 4000,
+                         "the store never learns what is already on disk — every retry restarts at "
+                         "byte 0, which is why a 2 GB file could never finish")
+        self.assertEqual(out.get("cs"), 4000, "without the chunk size resume cannot be computed")
+
+    def test_a_big_incoming_chunk_reaches_the_disk_in_platform_sized_pieces(self):
+        i = self.exc.index("const _piece = (fs.chunkBytes")
+        seg = self.exc[i:i + 700]
+        self.assertIn("bytes.subarray(", seg, "a 16 MB chunk still crosses the bridge whole")
+        self.assertIn("bytes.length <= _piece", seg,
+                      "it must stay a single call when the sizes already agree")
+
+
 class CheckDoesNotWedgeThePage(unittest.TestCase):
     """The check reads every file and asks about every record — and it must give the page its
     thread back while it does, or Android kills the renderer and the UI reloads mid-operation."""

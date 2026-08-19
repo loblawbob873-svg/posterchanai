@@ -206,6 +206,18 @@
     clearInterval(_scanBeat);
     if(stopping()) return halt(report);
     report.scanned = Object.keys(disk).length;
+    /* BOTH SIDES OF THE FOLDER, AS TWO NUMBERS. "how many files do I have here" and "how many does
+     * the folder agree exist" are the two questions every report in this feature has been about,
+     * and neither was ever on the screen — so "271 in the trash", "3 restorable" and "nothing is
+     * syncing" all had to be interpreted against a total nobody could see. Counted where both are
+     * already in hand and free. Tombstones are counted separately: they are records, they are not
+     * files, and folding them into one figure is what made a folder of 8,132 deletions read as a
+     * folder of 8,132 files. */
+    { let live = 0, gone = 0;
+      for(const p in state){ if(state[p] && state[p].deletedAt) gone++; else live++; }
+      report.here = report.scanned;
+      report.shared = live;
+      report.sharedGone = gone; }
     { const busy = [], design = [], denied = [];
       /* Three kinds of "could not read", and only one is anyone's problem: a file being WRITTEN
        * right now (a queue), a link or Windows junction (ignored BY DESIGN — `My Music` inside
@@ -855,11 +867,33 @@
       const total = entry.size || 0;
       const pull = async (from) => {
         let got = from;
+        /* THE CHUNK SIZE IS THE UPLOADER'S, AND THE RECEIVER HAS TO SURVIVE IT.
+         *
+         * `cs` is decided once, by whichever device stored the file — a desktop picks 16 MB. Every
+         * byte handed to `writePart` then crosses the Capacitor bridge as base64 held as UTF-16, so
+         * a 16 MB chunk is ~21 MB of base64 as ~42 MB of UTF-16, on top of the decrypted array and
+         * whatever the platform copies on the far side: ~80 MB of renderer heap per chunk, over and
+         * over. That is the WebView's render process being killed — the app rebuilds itself and the
+         * screen "reloads" mid-sweep, with nothing thrown and nothing logged. The upload path has
+         * always bounded this (Android chunks at 4 MB deliberately); the download path took whatever
+         * it was given, so a file uploaded from a desktop was the one a phone could not receive.
+         *
+         * The wire chunk stays as it is — it is content-addressed and cannot be re-cut — but it
+         * reaches the disk in pieces the platform sized itself. Costs nothing when they already
+         * agree, which is every same-platform transfer. */
+        const _piece = (fs.chunkBytes || 4 * 1024 * 1024);
+        const _write = async (off, bytes) => {
+          if(!bytes || bytes.length <= _piece) return fs.writePart(o.id, path, off, bytes);
+          for(let at = 0; at < bytes.length; at += _piece){
+            if(stopping && stopping()) throw new Error(STOPPED);
+            await fs.writePart(o.id, path, off + at, bytes.subarray(at, Math.min(bytes.length, at + _piece)));
+          }
+        };
         await io.getParts(chunks, (off, bytes) => {
           if(stopping && stopping()) throw new Error(STOPPED);
           got = Math.max(got, off + ((bytes && bytes.length) || 0));
           if(total && onPercent) onPercent(Math.round(got / total * 100));
-          return fs.writePart(o.id, path, off, bytes);
+          return _write(off, bytes);
         }, entry.size, from, entry.cs || 0);
       };
       await pull(have);

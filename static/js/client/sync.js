@@ -45,6 +45,7 @@
      colour, a different size on every platform, and no theme awareness at all ("no emojis! flat
      icons like the rest of the UI"). Local for the same reason `_bytes` is: six lines that nothing
      in app.js can take away. */
+  const _num = (n) => (+n || 0).toLocaleString();
   const _ic = (name) => '<svg class="ic b-ic" aria-hidden="true"><use href="#i-' + name + '"></use></svg>';
   const _bytes = (n) => {
     n = +n || 0;
@@ -495,20 +496,41 @@
      * waiting. Threading a real abort through PC.syncBlobs — shared with the drive, Notes and the
      * music library — is a much larger change than this is worth. */
     putParts: PC.syncBlobs && PC.syncBlobs.putParts
-      ? (read, size, onProgress, cs) => {
+      ? (read, size, onProgress, cs, ...rest) => {
           const w = _stallGuard('upload');
           return Promise.race([
             PC.syncBlobs.putParts((off, len) => { w.bump(); return read(off, len); }, size,
                                   (done, total) => { w.bump(); if(onProgress) onProgress(done, total); },
-                                  cs),
+                                  cs, ...rest),
             w.tripped,
           ]).then(v => { w.stop(); return v; }, e => { w.stop(); throw e; });
         } : null,
+    /* EVERY ARGUMENT, OR A BIG FILE CAN NEVER LAND.
+     *
+     * This wrapper declared `(chunks, write)` and forwarded exactly those two, while the executor
+     * has always called it as `(chunks, write, expect, have, cs)`. Three arguments went in the bin,
+     * and each one is load-bearing:
+     *
+     *   `have` + `cs` are how a part file RESUMES. Without them `getParts` cannot compute how many
+     *   chunks are already on disk, so `skip` stays 0 and every attempt restarts at byte 0. On a
+     *   small file that is invisible — it finishes inside one window either way. On a 2 GB file it
+     *   is fatal: the stall guard trips at three minutes of silence, the sweep retries, and the
+     *   retry throws away every byte and begins again. It can never finish, and the size is what
+     *   decides it. Reported as "ANDROID ISSUES WRITING >2GB FILE, DOWNLOAD STOPPED MOVING WILL TRY
+     *   AGAIN" — the retry was real, the progress was not.
+     *
+     *   `expect` is the size check. Without it `getParts` skips "rebuilt N bytes, expected M" and a
+     *   short rebuild is committed with no complaint — the checksum catches most of that, but only
+     *   after the bytes are on disk and only when the record carries one.
+     *
+     * Forwarded with ...rest rather than by name, so the next argument this call grows cannot be
+     * silently swallowed the same way. */
     getParts: PC.syncBlobs && PC.syncBlobs.getParts
-      ? (chunks, write) => {
+      ? (chunks, write, ...rest) => {
           const w = _stallGuard('download');
           return Promise.race([
-            PC.syncBlobs.getParts(chunks, (off, bytes) => { w.bump(); return write(off, bytes); }),
+            PC.syncBlobs.getParts(chunks, (off, bytes) => { w.bump(); return write(off, bytes); },
+                                  ...rest),
             w.tripped,
           ]).then(v => { w.stop(); return v; }, e => { w.stop(); throw e; });
         } : null,
@@ -564,6 +586,37 @@
     }
     PC.toast('restored ' + done + (skipped ? ' \u00b7 ' + skipped + ' already back in place' : '')
              + (failed ? ' \u00b7 ' + failed + ' failed' : ''));
+    /* "RESTORED 0 · 271 ALREADY BACK IN PLACE" IS TRUE AND TELLS NOBODY ANYTHING.
+     *
+     * Every row was skipped because the file is already at its destination — which means a previous
+     * restore DID put them back and the trash copies were never unlinked (Android's `moveDocument`
+     * is an optional capability that some providers satisfy by COPYING, leaving the original where
+     * it was; fixed on that side too, but a folder in this state stays in it). From the outside that
+     * is indistinguishable from the button doing nothing, and it is the third round of "restore N
+     * from trash did nothing" this has produced.
+     *
+     * So it is CHECKED and then said. A sample of the skipped pairs is hashed on both sides; only if
+     * they match is the reassuring sentence printed, because "your files are safe, delete the trash"
+     * is not something to say on an assumption. Different bytes get the opposite advice. */
+    if(!done && skipped && typeof fs2.hashFile === 'function'){
+      const sample = rows.filter(r => r && r.at && r.to).slice(0, 5);
+      let same = 0, diff = 0;
+      for(const r of sample){
+        try{
+          const a = await timed(fs2.hashFile(folderId, r.at), 20000);
+          const b = await timed(fs2.hashFile(folderId, r.to), 20000);
+          if(a && b) (a === b ? same++ : diff++);
+        }catch(_){}
+      }
+      if(same && !diff)
+        setStatus(folderId, skipped + ' file' + (skipped === 1 ? ' is' : 's are')
+          + ' already back in your folder \u2014 what is left in .pc-trash are duplicate copies of '
+          + 'them (checked ' + same + '). Nothing you need is in there; Empty trash reclaims the space.');
+      else if(diff)
+        setStatus(folderId, skipped + ' trash copies were left alone \u2014 the file already in the '
+          + 'folder has DIFFERENT contents, so these are older versions. Open .pc-trash yourself '
+          + 'before emptying it.');
+    }
     /* AND THE SWEEP IS TOLD WHAT WAS RESTORED, or it undoes it.
      *
      * Putting a file back is a statement of intent, and it was left entirely implicit: the bytes
@@ -2549,6 +2602,11 @@
           : PC.enc(st.text || 'not synced yet')}</div>
         ${lost ? '<div class="sync-actions"><button class="btn btn-neon small sync-relink">Point at the folder again…</button></div>' : ''}
         ${nat ? `<div class="sync-new"><b>Waiting for you.</b> <span class="muted small">${PC.enc(nat)}</span></div>` : ''}
+        ${(st.report && st.report.shared != null) ? `<div class="sync-counts muted small">
+          <span title="Files this device holds in the folder right now">${_num(st.report.here)} here</span>
+          <span title="Files your devices agree the folder contains">${_num(st.report.shared)} in the folder</span>
+          ${st.report.sharedGone ? `<span title="Deleted files the folder still remembers, so any device can undo them">${_num(st.report.sharedGone)} deleted</span>` : ''}
+        </div>` : ''}
         ${details(st.report)}
         <label class="sync-ex"><span class="muted small">Don't sync these (one per line — a folder name covers everything inside it)</span>
           <textarea class="input sync-ex-ta" rows="2" placeholder="Old&#10;*.tmp">${PC.enc((f.excludes||[]).join('\n'))}</textarea></label>

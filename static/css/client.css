@@ -8114,3 +8114,9 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
 .narrate-chip .muted{color:var(--muted);font-weight:400}
 .narrate-chip:hover{transform:translateX(-50%) translateY(-1px)}
 @media(min-width:821px){ .narrate-chip{bottom:calc(28px + env(safe-area-inset-bottom,0px))} }
+
+/* Folder Sync — the two numbers every report in this feature has implicitly been about. Chips
+   rather than a sentence: they are read at a glance and compared against each other, which is the
+   whole point of showing them together. */
+.sync-counts{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 4px}
+.sync-counts span{padding:2px 8px;border-radius:999px;background:var(--panel2);border:1px solid var(--line)}
