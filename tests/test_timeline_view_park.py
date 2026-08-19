@@ -135,8 +135,12 @@ def test_the_desktop_does_not_open_social_on_its_own():
     boot = APP[APP.index("if(_deepLink){ VIEW='thread';"):]
     boot = boot[: boot.index("_consumeSharedFiles()")]
     assert "PCOS.isOn()" in boot, "the landing still materialises a window on the desktop"
-    assert "switchView(_startTimeline()); _onLandingView = true;" in boot, (
-        "the classic landing changed — it must be byte-identical off the desktop")
+    # THE SHAPE, NOT THE FUNCTION'S NAME. This asserted the literal `_startTimeline()`, which is
+    # what the landing called until the "screen the app opens on" preference arrived and it became
+    # `_startView()`. The rule never changed — off the desktop the landing switches to the chosen
+    # screen and marks itself — but the test read as a regression in the landing for weeks.
+    assert re.search(r"switchView\(_start\w*\(\)\);\s*_onLandingView\s*=\s*true;", boot), (
+        "off the desktop the landing must still switch to the start screen and mark itself")
 
 
 def test_the_landing_guard_is_a_question_and_never_a_latch():
@@ -154,7 +158,8 @@ def test_the_landing_guard_is_a_question_and_never_a_latch():
         "_osHome is written somewhere other than the landing that computes it")
     # And `_onLandingView` must stay unset when there is no landing view, or a late synced pref
     # would open a window of its own through restoreClientPrefsNostr.
-    assert "if(!_osHome){ switchView(_startTimeline()); _onLandingView = true; }" in boot
+    assert re.search(r"if\(!_osHome\)\{\s*switchView\(_start\w*\(\)\);\s*_onLandingView\s*=\s*true;\s*\}",
+                     boot), ("the landing must stay guarded by _osHome and set the flag only there")
 
 
 @pytest.mark.skipif(not shutil.which("node"), reason="node is what runs the shipped function")

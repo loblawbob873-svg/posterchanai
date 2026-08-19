@@ -49,7 +49,13 @@ class InstallerSourceTests(unittest.TestCase):
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         app = open(os.path.join(root, "static", "js", "client", "app.js"), encoding="utf-8").read()
         at = app.index("function applyUpdate()")
-        body = app[at:at + 1600]
+        # THE WHOLE FUNCTION, not a fixed byte count. A window of 1600 chars fitted when this was
+        # written and stopped fitting the moment the function grew a desktop branch and a paragraph
+        # explaining the store launch — so the sideload assertion below silently started reading
+        # somebody else's code and went red over a line that was still there. Every source-reading
+        # test in this repo has now been bitten by that; bound them to a syntactic edge instead.
+        end = app.find("\n  function ", at + 1)
+        body = app[at:end if end > at else at + 6000]
         self.assertIn("_fromZapstore()", body)
         self.assertIn("zapstore.dev", body)
         # …and the sideload path survives for everyone else.

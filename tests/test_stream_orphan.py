@@ -48,7 +48,16 @@ def test_a_stale_mediamtx_is_killed_before_we_bind_its_ports():
     try:
         stream_service._PIDFILE.write_text(str(proc.pid))
         stream_service._kill_stale()
-        assert proc.poll() is not None or proc.wait(timeout=5) is not None, \
+        # THE PROPERTY IS THAT IT DIES, NOT THAT IT DIES IN FIVE SECONDS. `_kill_stale` signals and
+        # the kernel reaps whenever it gets round to it — which, on a box already running the rest
+        # of the suite, is sometimes longer than the five seconds this allowed. It then failed with
+        # the process's returncode ALREADY -9 in the traceback: killed, just not fast enough for the
+        # clock. A wall-clock assertion about someone else's scheduler is a test that reports load
+        # as a bug, which is how a suite teaches people to ignore it.
+        deadline = time.monotonic() + 60
+        while proc.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert proc.poll() is not None, \
             "the stale mediamtx survived — the new one cannot bind its ports and the old config lives on"
         assert not stream_service._PIDFILE.exists(), "the pidfile outlived the process it names"
     finally:

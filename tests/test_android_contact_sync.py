@@ -497,8 +497,22 @@ def test_signing_out_takes_the_phones_copy_with_it():
     assert "forgetDevice()" in CONTACTS_JS
     assert "_forgetPhonebook()" in APPJS
     logout = re.search(r"function logout\(\)\{(.*?)\n\n", APPJS, re.S)
-    assert logout and "_forgetPhonebook().then(()=> location.reload())" in logout.group(1), \
-        "logout must wipe before the reload cuts the bridge call off"
+    assert logout, "logout() moved — re-read this test"
+    body = logout.group(1)
+    assert "_forgetPhonebook()" in body, "logout does not wipe the phone's copy at all"
+    # THE ORDER AND THE ESCAPE HATCH, not one exact expression. This asserted the literal
+    # `_forgetPhonebook().then(()=> location.reload())`, which was the code until the reload grew a
+    # TIMEOUT — because a bridge call that never settles would otherwise leave somebody signed in
+    # for ever, staring at a screen that has already forgotten them. The current shape wipes first
+    # AND cannot be stranded, which is strictly better than what the test demanded, and the test
+    # called it a regression for weeks.
+    wipe = body.index("_forgetPhonebook()")
+    tail = body[wipe:]
+    assert "location.reload()" in body, "logout never reloads"
+    assert re.search(r"_forgetPhonebook\(\)[^\n]*\.then\(", tail), (
+        "the reload is not sequenced after the wipe — it would cut the bridge call off")
+    assert "setTimeout(" in body, (
+        "no fallback: a bridge call that never settles leaves the user signed in for ever")
     switch = re.search(r"function _accountSwitch\(a\)\{(.*?)\n  \}", APPJS, re.S)
     assert switch and "_forgetPhonebook()" in switch.group(1)
     # Removing the ACCOUNT is what makes it complete — the provider deletes every row under it.

@@ -150,7 +150,13 @@ function device(name, sky, opts){
     chunkBytes: CH,
     scanPage: async (id, so, off, lim) => {
       if(o.scanFails) throw new Error('the folder is no longer readable');
-      const k = o.scanEmpty ? [] : Object.keys(disk).sort();
+      /* `.pc-trash` IS NOT PART OF THE FOLDER, and both real adapters already know it: the desktop
+       * bridge's walk ignores the directory outright and SafFs skips it plus the `.parts.json`
+       * resume registry inside it. A fake that listed them would let the sweep sync its own
+       * bookkeeping to every device — and, worse, would hide the fact that it does. */
+      const k = o.scanEmpty ? []
+        : Object.keys(disk).filter(p => p.indexOf('.pc-trash/') !== 0
+                                     && p.indexOf('/.pc-trash/') < 0).sort();
       const end = Math.min(k.length, off + lim), files = {};
       for(let i = off; i < end; i++){
         // Honours the SCAN's request, as both real adapters do: `so.hash` is how the sweep asks for
@@ -294,7 +300,14 @@ function video(mb, seed){
   for(let o = 0; o + 4 <= b.length; o += 4) b.writeUInt32BE(((seed * 40503) ^ o) >>> 0, o);
   return b;
 }
-const identical = (a, b) => {
+/* `.pc-trash` is DELIBERATELY per-device — one device's trash and its resume bookkeeping are not
+ * part of what the folder holds, and neither adapter scans them. Comparing two devices' CONTENT
+ * therefore means comparing what the folder agreed on, not what each machine keeps beside it. */
+const _content = (m) => { const o = {};
+  for(const k in m) if(k.indexOf('.pc-trash/') !== 0 && k.indexOf('/.pc-trash/') < 0) o[k] = m[k];
+  return o; };
+const identical = (a0, b0) => {
+  const a = _content(a0), b = _content(b0);
   const ka = Object.keys(a).sort(), kb = Object.keys(b).sort();
   if(ka.join('|') !== kb.join('|'))
     return 'different file lists (' + ka.length + ' vs ' + kb.length + '): '
@@ -1165,6 +1178,47 @@ scenario('pause cuts into a big DOWNLOAD too, and the part file resumes it', asy
   B2.st.parts['iso/big.iso'] = B.st.parts['iso/big.iso'];
   const r2 = await B2.sweep();
   t.eq(r2.failed.length, 0, 'the resumed download failed: ' + JSON.stringify(r2.failed));
+  t.eq(identical(A.disk, B2.disk), null, 'the resumed file is not byte-identical');
+});
+
+/* THE FILE THAT COULD NEVER LAND. A chunked record with NO whole-file checksum — which is what
+ * Files → Synced folders publishes for a big upload, deliberately, because computing one means
+ * holding the whole file — used to have its part file DISCARDED at the start of every attempt,
+ * since without a csum nothing could prove the part belonged to this record. So the one class of
+ * file that cannot afford to restart was the only one that always did: reported as a 2 GB .jex
+ * reaching 100%, going back to the beginning, forever. The identity is a note beside the part file
+ * now, not a hash of the content. */
+scenario('a chunked file with NO checksum resumes instead of starting over', async (t) => {
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: { 'big/no-csum.jex': video(12, 71) }, chunk: 4 * MB });
+  await A.sweep();
+  // Strip the whole-file checksum from the published record, exactly as the Files upload path does.
+  for(const k of Object.keys(sky.recs || {})){
+    const r = sky.recs[k];
+    if(r && r.entry && r.entry.chunks && r.entry.chunks.length) delete r.entry.csum;
+  }
+  let writes = 0;
+  const B = device('phone', sky, { chunk: 4 * MB });
+  const realWrite = B.fs.writePart;
+  B.fs.writePart = async (id, r, off, bytes) => { writes++; return realWrite(id, r, off, bytes); };
+  const r1 = await B.sweep({ shouldStop: () => writes >= 2 });
+  t.ok(r1.stopped === true, 'the interrupted download did not report itself stopped');
+  const held = (B.st.parts['big/no-csum.jex'] || Buffer.alloc(0)).length;
+  t.ok(held > 0, 'the part file was thrown away even though the transfer was only paused');
+
+  // Second attempt: same device, same part file. It must NOT start from zero.
+  const B2 = device('phone', sky, { chunk: 4 * MB, disk: B.disk, index: B.st.index });
+  B2.st.parts['big/no-csum.jex'] = B.st.parts['big/no-csum.jex'];
+  B2.st.files = B.st.files;                       // the sidecar lives on the same disk
+  let from = null;
+  const realWrite2 = B2.fs.writePart;
+  B2.fs.writePart = async (id, r, off, bytes) => {
+    if(from === null) from = off;
+    return realWrite2(id, r, off, bytes);
+  };
+  const r2 = await B2.sweep();
+  t.eq(r2.failed.length, 0, 'the resumed download failed: ' + JSON.stringify(r2.failed));
+  t.ok(from > 0, 'it restarted at byte 0 — every retry throws the whole file away');
   t.eq(identical(A.disk, B2.disk), null, 'the resumed file is not byte-identical');
 });
 

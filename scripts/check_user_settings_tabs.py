@@ -64,9 +64,19 @@ LOGIN = r"""(async (nsec) => {
 })"""
 
 OPEN = r"""(async () => {
+  /* PATIENT, AND WILLING TO PRESS RETRY. renderUserSettings fetches /api/auth/settings first and
+     dead-ends on "Couldn't load your settings" — a pane with no tabs in it — whenever that request
+     is slow or refused. Under the full suite, 33 browser checks share one node and one relay, so
+     ten seconds is simply not long enough: this check SKIPPED in a real run while the screen it was
+     waiting for had in fact drawn, in its error state. A check that reports "could not run" when the
+     app is fine is noise, and noise is what gets ignored on the run that matters. */
   window.__PC.switchView('settings');
-  for(let i=0;i<40;i++){ await new Promise(r=>setTimeout(r,250));
-    if(document.querySelector('.us-tabs')) return true; }
+  for(let i=0;i<120;i++){
+    await new Promise(r=>setTimeout(r,500));
+    if(document.querySelector('.us-tabs')) return true;
+    const retry = document.querySelector('#us-retry');
+    if(retry && (i % 8) === 0) retry.click();
+  }
   return false;
 })"""
 

@@ -25,6 +25,22 @@ class TestSeedFailSafe(unittest.TestCase):
         self.wt = mock.AsyncMock(return_value=0)
         self.p_wt = mock.patch.object(S, "write_through", self.wt)
         self.p_set = mock.patch.object(S, "_set_local")
+        # THE OPERATOR KEY, PINNED — it is a precondition here, not the thing under test.
+        #
+        # `seed_relay_defaults` opens with `op_sk = _OP_SK or _operator_seckey(db)` and returns 0
+        # when that is empty. `_OP_SK` is a PROCESS-GLOBAL, so whether these tests found a key
+        # depended entirely on what had run before them in the same interpreter: alone they passed,
+        # in a full run they returned 0 and the spy was never awaited, and the failure surfaced as
+        # `NoneType has no attribute 'args'` — which reads like a broken assertion rather than a
+        # test that never reached the code it is about. Three of them sat red for exactly that.
+        #
+        # These tests exist to pin the SEEDING DECISION (what is authoritative, what may be
+        # overwritten). Operator-key discovery is a different mechanism with its own tests, so it is
+        # held still here rather than left to whatever the process happens to be carrying.
+        self.p_sk = mock.patch.object(S, "_OP_SK", b"\x01" * 32)
+        self.p_op = mock.patch.object(S, "_operator_seckey", return_value=b"\x01" * 32)
+        self.p_sk.start(); self.p_op.start()
+        self.addCleanup(self.p_sk.stop); self.addCleanup(self.p_op.stop)
         self.p_wt.start(); self.p_set.start()
         self.addCleanup(self.p_wt.stop); self.addCleanup(self.p_set.stop)
 

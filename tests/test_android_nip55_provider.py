@@ -125,12 +125,29 @@ def test_the_plugin_is_registered():
 def test_the_key_only_travels_one_way():
     """The entire reason to move the key out of the WebView.
 
-    A `getKey` here would hand it back to the layer it was moved away from — and a script in the page
-    is exactly what it is being protected against.
+    A method that hands the secret back would return it to the layer it was moved away from, and a
+    script in the page is exactly what it is being protected against.
+
+    ASSERTED AGAINST THE DECLARED PLUGIN METHODS, NOT AGAINST THE TEXT. The first version searched
+    the whole file for the substring "getKey" — which is also `Map.Entry.getKey()`, so the moment
+    this plugin grew a per-app list it iterated with `for (Map.Entry e : …) apps.put(e.getKey(), a)`
+    the test failed over code that has nothing to do with keys, and stayed red. A guard that cries
+    wolf about a real invariant is worse than none: it gets ignored, and then it is ignored on the
+    day it means it. What matters is the SURFACE — what `@PluginMethod` exposes to JavaScript — so
+    that is what is checked, plus the fact that the secret is never handed to a resolve().
     """
     src = _code(os.path.join(SIG, "SignerPlugin.java"))
-    for bad in ("getKey", "exportKey", "readKey"):
-        assert bad not in src, f"SignerPlugin exposes {bad}, which undoes the whole point"
+    exposed = re.findall(r"@PluginMethod[^\n]*\s*(?:public\s+)?void\s+([A-Za-z0-9_]+)\s*\(", src)
+    assert exposed, "no @PluginMethod found — the plugin's shape changed, re-read this test"
+    leaky = [m for m in exposed
+             if re.search(r"(get|export|read|reveal|dump|copy)_?(key|secret|nsec|seckey)", m, re.I)]
+    assert leaky == [], f"SignerPlugin exposes {leaky} to JavaScript, which undoes the whole point"
+    # …and no path may put the raw secret into a response, whatever the method is called.
+    for hand_back in ("SignerKey.load", "SignerKey.read", "SignerKey.get"):
+        for m in re.finditer(re.escape(hand_back), src):
+            near = src[m.start():m.start() + 400]
+            assert "call.resolve" not in near, (
+                f"{hand_back} is followed by a resolve() — the secret reaches the page")
     assert "SignerKey.store" in src and "SignerKey.clear" in src
 
 

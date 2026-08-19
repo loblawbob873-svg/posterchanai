@@ -483,7 +483,15 @@
       try{
         const to = await fs.trash(o.id, t.path, now);
         record(t.path, Object.assign({}, t.entry), null);
-        report.trashed.push({ path: t.path, to });
+        /* NAME THE DEVICE THAT ASKED. A deletion below the floor is applied without a dialog, which
+         * is right — being asked about three files is how people learn to click through the
+         * question about three thousand. But then the only trace is N files in the trash and no way
+         * to tell whether you did it, another device did it, or something went wrong: reported as
+         * "somehow tablet got 7 files in the trash magically". The record carries the device that
+         * published the tombstone and when; both are free to report. */
+        report.trashed.push({ path: t.path, to,
+                              by: (t.entry && t.entry.by) || '',
+                              at: (t.entry && t.entry.deletedAt) || 0 });
       }catch(e){ failed(report, t.path, 'delete', e); }
       await journal.maybe();
     }

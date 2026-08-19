@@ -2487,7 +2487,9 @@
       + grp('Conflicts kept', rep.conflicted, a => a.path + ' → ' + a.keptAs)
       + grp('Uploaded', rep.uploaded, a => a)
       + grp('Downloaded', rep.downloaded, a => a)
-      + grp('Moved to trash', rep.trashed, a => a.path + ' → ' + a.to)
+      + grp('Moved to trash', rep.trashed, a => a.path
+            + (a.by ? ' — deleted on ' + a.by : ' — deleted elsewhere')
+            + (a.at ? ' ' + new Date(a.at).toLocaleString() : ''))
       // What the guard would not do, named. "Nothing trashed" is only believable next to the list of
       // what it declined to trash — and pressing Sync is what asks about it.
       + grp('Kept — your other devices say these were deleted',

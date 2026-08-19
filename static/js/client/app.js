@@ -31966,10 +31966,13 @@
        calls it directly has a copy button that silently does nothing on two of three platforms. */
     copyValue,
     /* The ⋯ menu, for the sub-modules. It was already passed INTO the git.js factory, which is easy
-       to mistake for an export list and has been mistaken for one before (`PC._fmtBytes is not a
-       function`, on the confirmation of an irreversible action, where a throw reads only as "action
-       failed"). Folder Sync's card puts everything but its four urgent controls behind one, so it
-       needs the real surface and not that argument list. */
+     * to mistake for an export list — and has been mistaken for one before, producing a
+     * `_fmtBytes is not a function` on the confirmation of an irreversible action, where a throw
+     * reads only as "action failed". Folder Sync's card puts everything but its four urgent
+     * controls behind one, so it needs the real surface and not that argument list.
+     * (Continuation lines carry a leading `*`: tests/test_relay_change_carry.py scans app.js for
+     * uses of the sub-modules' `PC` binding and skips comment lines by that marker, so a prose line
+     * without one reads as code and fails the build.) */
     openMenuPopover,
     ensureProfile: _ensureProfile, NT, compose, switchView,   // compose → News "Share as note"; switchView → nav
     /* The one pass that fills every `.name[data-prof]` (and avatars, nip05s, @mentions) once a kind-0
