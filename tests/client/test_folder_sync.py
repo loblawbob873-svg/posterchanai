@@ -888,9 +888,10 @@ class OneSweepAtATime(unittest.TestCase):
         self.assertIn("waiting for", seg, "a queued folder must say so, or it reads as broken")
 
     def test_the_queue_is_drained_on_settle_never_dropped(self):
-        self.assertIn("_drainSyncQueue();", self.sync)
-        fin = self.sync.index("_drainSyncQueue();")
-        # It lives in the sweep's finally, so a THROWN sweep still starts the next folder.
+        # Drained from EVERY exit: the declines hand the slot back, and the sweep's own finally
+        # drains after wakeEnd — so a THROWN sweep still starts the next folder.
+        self.assertGreaterEqual(self.sync.count("_drainSyncQueue();"), 3)
+        fin = self.sync.index("wakeEnd(); }catch(_){} }\n        _drainSyncQueue();")
         seg = self.sync[max(0, fin - 900):fin]
         self.assertIn("finally", seg)
 
