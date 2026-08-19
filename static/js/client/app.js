@@ -4507,7 +4507,14 @@
     Session.clear(); try{ localStorage.removeItem('pc_settings_cache'); }catch(_){}   // per-user cache — never leak/save it across identities on a shared install
     try{ fetch('/api/auth/logout',{method:'POST'}); }catch(_){}   // clear the server session cookie too
     Relay.worker.call('clearKey',{});
-    _forgetPhonebook().then(()=> location.reload()); }
+    /* THE RELOAD MUST NOT WAIT ON ANYONE. The phonebook cleanup is an Android plugin call that can
+     * reject or hang — chained ahead of the reload it left a tablet signed-out-in-limbo on
+     * whatever screen was underneath ("brings me to zapstore and never logs out"). The cleanup
+     * gets four seconds of courtesy; the logout happens regardless. */
+    { let _done = false;
+      const _go = () => { if(!_done){ _done = true; try{ location.reload(); }catch(_){} } };
+      setTimeout(_go, 4000);
+      _forgetPhonebook().catch(() => {}).then(_go); } }
 
   // Settings → Account → "Delete all my notes": NIP-09 delete EVERY kind-1 (posts AND replies) the user
   // authored — and ONLY kind-1 (profile, follows, reactions, reposts, DMs, streams are untouched). Pages back

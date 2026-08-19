@@ -358,6 +358,34 @@
       journal.touch();
     };
 
+    /* RE-SEAL WHAT THE OLD FORMAT STILL HOLDS — FIRST, before a byte moves. It ran at the tail
+     * of the sweep, after hours of transfers, on the machine that keeps running out of memory —
+     * so the conversion everything else was waiting on kept dying unconverted. It is a couple of
+     * minutes of pure record writes from the journal's plaintext; nothing about it needs to wait. Records written before the drive-key seal route
+     * every reader through the signer backend — one call per record, which turned a tablet's join
+     * into "about 37 min left". This device's journal holds those entries in PLAINTEXT, so it can
+     * republish them in the new seal without decrypting or transferring anything: one version
+     * bump, one record write each, capped per sweep to bound the batch. Tombstones are left as
+     * they are (rare, and a republished tombstone spends the server's mass-delete backstop). */
+    { let resealed = 0;
+      for(const p2 of (got0.oldSeal || [])){
+        if(resealed >= 20000) break;   // a record write is ~200 bytes; a whole folder converts in one pass
+        const e2 = index[p2], R2 = state[p2];
+        if(!e2 || e2.deletedAt || !R2 || R2.deletedAt) continue;
+        if(E.versionOf(R2) !== E.versionOf(e2)) continue;      // mid-change: its writer will seal it
+        const next = Object.assign(strip(e2), { v: E.versionOf(e2) + 1 });
+        record(p2, next, e2.local || null, true);
+        resealed++;
+      }
+      if(resealed){
+        report.resealed = resealed;
+        step('modernizing the folder\u2019s records');
+        await flushPuts();
+        await journal.flush();
+      }
+    }
+
+
     // Deletions first: they are a rename into .pc-trash, they cost nothing, and queued behind hours
     // of transfer they are simply never reached.
     let ti = 0;
@@ -569,25 +597,6 @@
       const local = disk[s.path] ? { size: disk[s.path].size, mtime: disk[s.path].mtime,
                                      csum: disk[s.path].csum } : null;
       record(s.path, Object.assign({}, s.entry), local);
-    }
-
-    /* RE-SEAL WHAT THE OLD FORMAT STILL HOLDS. Records written before the drive-key seal route
-     * every reader through the signer backend — one call per record, which turned a tablet's join
-     * into "about 37 min left". This device's journal holds those entries in PLAINTEXT, so it can
-     * republish them in the new seal without decrypting or transferring anything: one version
-     * bump, one record write each, capped per sweep to bound the batch. Tombstones are left as
-     * they are (rare, and a republished tombstone spends the server's mass-delete backstop). */
-    { let resealed = 0;
-      for(const p2 of (got0.oldSeal || [])){
-        if(resealed >= 20000) break;   // a record write is ~200 bytes; a whole folder converts in one pass
-        const e2 = index[p2], R2 = state[p2];
-        if(!e2 || e2.deletedAt || !R2 || R2.deletedAt) continue;
-        if(E.versionOf(R2) !== E.versionOf(e2)) continue;      // mid-change: its writer will seal it
-        const next = Object.assign(strip(e2), { v: E.versionOf(e2) + 1 });
-        record(p2, next, e2.local || null, true);
-        resealed++;
-      }
-      if(resealed) report.resealed = resealed;
     }
 
     /* 6. Publish what is still queued, then save the journal — in that order, always. */
