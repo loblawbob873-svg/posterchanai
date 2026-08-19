@@ -1688,6 +1688,7 @@
           hash: decision.mode === 'full', dryRun: !!o.dryRun,
           forceTrash: !!o.forceTrash,
           forceResurrect: !!o.forceResurrect,
+          resendAll: !!o.resendAll,
           /* ONLY A SWEEP SOMEBODY IS WATCHING MAY ASK. An automatic one — the watcher, a resume,
            * the heartbeat — has nobody in front of it, so a dialog there is a modal no one answers
            * blocking a background job. It refuses instead and says so on the card. `o.manual` is
@@ -3061,6 +3062,23 @@
        * answered all along. `verifyFolder` reads without writing, reports, and puts the choice
        * where the evidence is. */
       const _doCheck = () => verifyFolder(get());
+      /* The way out of a folder whose record says files are deleted that this device is holding —
+       * without retiring the pair, which throws away every record for every file and makes every
+       * other device re-read the folder from nothing. Says one thing instead of forgetting
+       * everything: the files here are real, and the deletions the folder is carrying for them are
+       * wrong. */
+      const _doAuthoritative = async () => {
+        const f = get(); if(!f) return;
+        if(!await PC.uiConfirm('\u201c' + keyOf(f) + '\u201d \u2014 treat THIS device\u2019s copy as '
+             + 'correct?\n\nEvery file here that the folder thinks was deleted, or has no record at '
+             + 'all, is published again from this copy. Your other devices bring those files back on '
+             + 'their next sync.\n\nNothing here is deleted and nothing is overwritten \u2014 files '
+             + 'the folder already agrees about are left alone. Do this on the device whose copy you '
+             + 'trust; if that is not this one, cancel.', { ok: 'Publish this copy' })) return;
+        setStatus(f.id, 'publishing this device\u2019s copy\u2026', null, true);
+        await swept(f, { manual: true, resendAll: true });
+        paint();
+      };
       /* RECONNECT, rather than "remove it and add it again".
        *
        * A grant can go without the folder going: a desktop config file truncated by a crash, an
@@ -3274,6 +3292,7 @@
           items.push(['check', 'Check files \u2014 read every one, change nothing']);
           items.push(['tidy', 'Tidy up conflict copies']);
           items.push(['trash', 'Empty trash']);
+          items.push(['mine', 'This device\u2019s copy is correct \u2014 publish it']);
           if(FS() && FS().tickStats) items.push(['bg', 'Background sync details']);
           const pick = (a) => {
             if(a === 'preview') return _doPreview();
@@ -3281,6 +3300,7 @@
             if(a === 'check') return _doCheck();
             if(a === 'tidy') return _doTidy();
             if(a === 'trash') return _doEmptyTrash();
+            if(a === 'mine') return _doAuthoritative();
             if(a === 'bg') return _doBg();
           };
           if(PC.openMenuPopover) PC.openMenuPopover(more, items, pick);

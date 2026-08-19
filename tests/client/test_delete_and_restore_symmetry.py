@@ -340,6 +340,135 @@ class FloorSymmetryTests(unittest.TestCase):
         self.assertEqual(out["uploaded"], 5)
         self.assertEqual(out["published"], 5)
 
+    def test_a_device_can_declare_its_copy_correct_without_retiring_the_pair(self):
+        """The folder says deleted; the files are sitting right here.
+
+        Retiring the pair works and is a sledgehammer: it throws away every record for every file,
+        so every other device re-reads the whole folder from nothing — offered for a situation that
+        needs ONE thing said. "why do I have to remove and readd" is the right question.
+
+        Only the paths the folder DISAGREES about are published (no record, or a tombstone); a file
+        whose record is live and correct is left alone, so a 12,000-file folder republishes the
+        handful actually in dispute. And because they are named, they come out of the trash list —
+        a path somebody asked to publish is not a deletion candidate in the same sweep."""
+        out = self._run("""
+          const X = require(%s);
+          (async () => {
+          const state = {}, disk = {}, index = {};
+          // 10 files everyone agrees about — these must NOT be republished.
+          for(let i = 0; i < 10; i++){ const p = 'ok/f' + i, c = 'c' + i;
+            state[p] = { v:1, by:'x', size:5, mtime:1, csum:c, sha:'b' + c };
+            disk[p]  = { size:5, mtime:1, csum:c };
+            index[p] = { v:1, by:'x', size:5, mtime:1, csum:c, sha:'b' + c,
+                         local:{ size:5, mtime:1, csum:c } }; }
+          // 30 the folder calls deleted, at a version this device never applied, held here with
+          // the very bytes the tombstone describes — so the engine would obey the deletion.
+          const doomed = [];
+          for(let i = 0; i < 30; i++){ const p = 'restored/f' + i, c = 'k' + i;
+            doomed.push(p);
+            state[p] = { v:9, by:'phone', deletedAt:5000, size:9, mtime:2, csum:c, sha:'b' + c };
+            index[p] = { v:4, by:'me', size:9, mtime:2, csum:c, sha:'b' + c,
+                         local:{ size:9, mtime:2, csum:c } };
+            disk[p]  = { size:9, mtime:2, csum:c }; }
+          const trashed = [], put = [];
+          const fs = {
+            scanPage: async (id, so, off, n) => {
+              const all = Object.keys(disk).sort().slice(off, off + n), files = {};
+              for(const p of all) files[p] = disk[p];
+              return { files, done: off + all.length >= Object.keys(disk).length };
+            },
+            read: async (id, p) => new Uint8Array(disk[p].size),
+            hashFile: async (id, p) => disk[p].csum,
+            trash: async (id, p) => { trashed.push(p); return '.pc-trash/' + p; },
+            confirmGone: async () => ({ gone:false, parentAlive:true }),
+          };
+          const io = {
+            index: async () => JSON.parse(JSON.stringify(index)),
+            state: async () => ({ state: JSON.parse(JSON.stringify(state)), flagged:{} }),
+            saveIndex: async () => {},
+            hashBytes: async () => 'h',
+            putBlob: async () => ({ sha:'fresh' }),
+            putState: async (k, recs) => { for(const r of recs) put.push(r.path);
+              return { ok: recs.map(r => r.path), stale:[], failed:[] }; },
+          };
+          const rep = await X.sweep(fs, io, { id:'f', key:'k', device:'me', now:9000,
+                                              manual:true, resendAll:true });
+          process.stdout.write(JSON.stringify({
+            reclaiming: rep.reclaiming || 0,
+            uploaded: (rep.uploaded || []).length,
+            trashed: trashed.length,
+            republishedAgreed: put.filter(p => p.indexOf('ok/') === 0).length }));
+          })().catch(e => { console.error(e && e.stack || e); process.exit(1); });
+        """ % (json.dumps(EXEC),))
+        self.assertEqual(out["reclaiming"], 30, "it did not pick out the disputed files")
+        self.assertEqual(out["uploaded"], 30, "the disputed files were not published")
+        self.assertEqual(out["trashed"], 0,
+                         "it trashed files it had just been told to publish")
+        self.assertEqual(out["republishedAgreed"], 0,
+                         "it republished files the folder already agrees about — on a real folder "
+                         "that is re-encrypting and re-uploading everything")
+
+    def test_a_device_that_can_see_nothing_may_not_delete_the_folder(self):
+        """FATAL — never offered, never confirmable, and that is the difference that matters.
+
+        Every other guard here asks. There is no answer a person could give that makes this one
+        right: a scan that found NOTHING while the journal knows about hundreds of files is a device
+        that has lost sight of a folder — a revoked grant, an unmounted volume, a phone whose copy
+        was cleared — not a folder somebody emptied. Asking puts a destructive default one tap away
+        and hands over a decision the evidence cannot support, because nothing survives the sweep to
+        weigh it against.
+
+        Reported twice in one evening from two emptied devices: "tell your other devices to delete
+        966 files?" and then 107, against files that were on the desktop the whole time."""
+        out = self._run("""
+          const state = {}, disk = {}, index = {};
+          for(let i = 0; i < 107; i++){ const p = 'p' + i, c = 'c' + i;
+            state[p] = { v:1, by:'x', size:1, mtime:1, csum:c, sha:'b' + c };
+            index[p] = { v:1, by:'x', size:1, mtime:1, csum:c, sha:'b' + c,
+                         local:{ size:1, mtime:1, csum:c } }; }
+          const p = S.plan({ state, disk, index, device:'emptied', now:9000 });
+          const v = S.check(p, { state });
+          const fatal = v.filter(x => x.fatal);
+          // Even a caller that says yes to everything must not get past it.
+          const a = S.apply(p, v, ['massTombstone', 'massTrash', 'massResurrect']);
+          process.stdout.write(JSON.stringify({
+            planned: p.tombstone.length,
+            fatalKinds: fatal.map(x => x.kind + '/' + (x.rule || '')),
+            doesTombstone: a.tombstone.length }));
+        """)
+        self.assertEqual(out["planned"], 107, "setup: the engine should plan 107 tombstones")
+        self.assertIn("massTombstone/emptyDevice", out["fatalKinds"],
+                      "an empty device is still merely ASKED, so one tap deletes the folder")
+        self.assertEqual(out["doesTombstone"], 0,
+                         "a confirmation got past it — this one must not be confirmable")
+
+    def test_a_device_that_still_holds_something_keeps_its_voice(self):
+        """The fatal rule is `keep === 0`, not a ratio, deliberately: a device holding real files has
+        a real opinion about them, and the proportional rule already covers 'removes more than it
+        keeps'. Widening this would stop legitimate deletions propagating at all — the guard that
+        stops everything is the same bug with its sign flipped."""
+        out = self._run("""
+          const state = {}, disk = {}, index = {};
+          for(let i = 0; i < 107; i++){ const p = 'gone' + i, c = 'c' + i;
+            state[p] = { v:1, by:'x', size:1, mtime:1, csum:c, sha:'b' + c };
+            index[p] = { v:1, by:'x', size:1, mtime:1, csum:c, sha:'b' + c,
+                         local:{ size:1, mtime:1, csum:c } }; }
+          for(let i = 0; i < 5; i++){ const p = 'here' + i, c = 'h' + i;
+            state[p] = { v:1, by:'x', size:1, mtime:1, csum:c, sha:'b' + c };
+            disk[p]  = { size:1, mtime:1, csum:c };
+            index[p] = { v:1, by:'x', size:1, mtime:1, csum:c, sha:'b' + c,
+                         local:{ size:1, mtime:1, csum:c } }; }
+          const p = S.plan({ state, disk, index, device:'has-some', now:9000 });
+          const v = S.check(p, { state });
+          process.stdout.write(JSON.stringify({
+            fatal: v.filter(x => x.fatal).length,
+            asks: v.some(x => x.kind === 'massTombstone'),
+            confirmable: S.apply(p, v, ['massTombstone']).tombstone.length }));
+        """)
+        self.assertEqual(out["fatal"], 0, "a device holding files was refused outright")
+        self.assertTrue(out["asks"], "…but it must still be asked")
+        self.assertEqual(out["confirmable"], 107, "and a yes must still carry it out")
+
     # ---- a tombstone that names nothing is a deletion nobody can undo ------------------------
 
     def test_a_tombstone_takes_its_address_from_whichever_side_still_has_one(self):

@@ -282,7 +282,30 @@
      * are the same anyway, the checksums match — because it IS the same file — and it settles. So it
      * is said outright. Only paths this device actually holds, and the version goes past whatever
      * the folder shows so the record is not immediately refused. */
-    const _resend = (o.resend || []).concat(_heal);
+    /* "THIS DEVICE'S COPY IS CORRECT — PUBLISH IT." The recovery that was missing, and whose
+     * absence made "remove the folder and add it again" the only way out of a folder carrying
+     * deletions for files you still have.
+     *
+     * Retiring a pair works, but it is a sledgehammer: it throws away every record for every file,
+     * so every other device re-reads the whole folder from nothing, and it is offered for a
+     * situation — "the shared record says these are deleted and they are sitting right here" —
+     * that needs one thing said, not everything forgotten.
+     *
+     * Deliberately NOT every file on the disk: only the paths where the FOLDER DISAGREES that the
+     * file exists — no record at all, or a tombstone. A file whose record is live and correct needs
+     * nothing said about it, so a 12,000-file folder republishes the handful actually in dispute
+     * instead of re-encrypting and re-uploading everything. Named paths, so the resurrect floor
+     * does not question a list the person chose, and (see below) they are taken out of the trash
+     * list as well, because a path somebody asked to publish is not a deletion candidate. */
+    let _reclaim = [];
+    if(o.resendAll && !o.dryRun){
+      for(const p in disk){
+        const R = state[p];
+        if(!R || R.deletedAt) _reclaim.push(p);
+      }
+      report.reclaiming = _reclaim.length;
+    }
+    const _resend = (o.resend || []).concat(_heal, _reclaim);
     if(_resend.length && !o.dryRun){
       const want = new Set(_resend);
       const already = new Set(plan.send.map(u => u.path));

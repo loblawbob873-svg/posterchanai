@@ -276,6 +276,15 @@ public final class SyncReconcile {
             out.add(act("kind", "massTrash", "rule", "floor",
                         "n", (long) p.trash.size(), "keep", (long) keep));
         }
+        /* A DEVICE HOLDING NOTHING MAY NOT DELETE THE FOLDER — fatal, never offered. See the JS
+         * engine. A scan that found NOTHING while the journal knows about hundreds of files is a
+         * device that has lost sight of a folder, not one somebody emptied, and the native sweep
+         * has nobody to ask in the first place: without this it simply refuses and retries for
+         * ever, while the page-side sweep puts a destructive default one tap away. */
+        if (p.tombstone.size() >= FLOOR && keep == 0) {
+            out.add(act("kind", "massTombstone", "rule", "emptyDevice", "fatal", Boolean.TRUE,
+                        "n", (long) p.tombstone.size(), "keep", (long) keep));
+        }
         if (p.tombstone.size() >= FLOOR && p.tombstone.size() > keep) {
             out.add(act("kind", "massTombstone", "rule", "shortList",
                         "n", (long) p.tombstone.size(), "keep", (long) keep));

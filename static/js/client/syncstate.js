@@ -239,6 +239,29 @@
                  why: 'this sweep would move ' + p.trash.length + ' files to the trash — '
                     + FLOOR + ' or more needs a deliberate delete, not an unattended sweep' });
     }
+    /* A DEVICE HOLDING NOTHING MAY NOT DELETE THE FOLDER. FATAL — never offered, never confirmable.
+     *
+     * Every other guard here asks. This one refuses, because there is no answer a person could give
+     * that makes it right: a scan that found NOTHING while the journal knows about hundreds of files
+     * is not a folder somebody emptied, it is a device that has lost sight of one — a revoked grant,
+     * an unmounted volume, a folder picked at the wrong path, a phone whose copy was cleared. The
+     * moment such a device is allowed to speak, one tap deletes the folder everywhere.
+     *
+     * Reported twice in one evening, from two emptied devices, offering to delete 966 files and then
+     * 107 — against files that were sitting on the desktop the whole time. The proof-of-absence
+     * probe would have held most of them back, and the mass floor would have asked first, but ASKING
+     * is the bug: it puts a destructive default one tap away and hands the user a decision the
+     * evidence cannot support. Nothing survives the sweep, so there is nothing to weigh it against.
+     *
+     * Deliberately `keep === 0`, not a ratio: a device that still holds SOMETHING has a real folder
+     * and a real opinion about it, and the proportional rule above already covers "removes more than
+     * it keeps". This is only the case where the device's own evidence is empty. */
+    if(p.tombstone.length >= FLOOR && keep === 0){
+      out.push({ kind:'massTombstone', rule:'emptyDevice', fatal:true, n: p.tombstone.length, keep,
+                 why: 'this device can see none of the ' + p.tombstone.length + ' files it knows '
+                    + 'about — that is a folder it has lost sight of, not one you emptied, so it '
+                    + 'will not tell your other devices to delete anything' });
+    }
     // The same question pointing outwards: this device telling every other one to delete.
     if(p.tombstone.length >= FLOOR && p.tombstone.length > keep){
       out.push({ kind:'massTombstone', rule:'shortList', n: p.tombstone.length, keep,
