@@ -115,28 +115,53 @@ def _operator(db: Session) -> User | None:
     return q.filter(User.is_admin == True).first() or q.first()  # noqa: E712
 
 
-_BUILD_SHA = None
+_BUILD_SHA = ("", 0.0)
 
 
 def _build_sha() -> str:
     """WHICH COMMIT THIS IS, so nobody has to guess whether a fix is installed.
 
-    Five days of a folder-sync investigation were spent testing devices that were running code from
+    Five days of a folder-sync investigation went into testing devices that were running code from
     before the fix, because there was no way to tell from the app. `ver` is an mtime — it busts a
-    cache and identifies nothing. This is the git short sha, read once: the WEB shows the node's
-    commit, and a bundled APK/desktop has its own stamped in at build time (see build-www.sh), so
-    the number on screen always describes the code actually running there."""
+    cache and identifies nothing. This is the git short sha: the WEB shows the node's commit, and a
+    bundled APK/desktop stamps its own in at build time (see build-www.sh).
+
+    READ FROM `.git`, NOT CACHED FOR THE PROCESS. The first version resolved it once and held it
+    for the life of the worker, and a deploy that changes only UI files PULLS WITHOUT RESTARTING
+    PYTHON (scripts/deploy_targets.py decides that separately, and rightly — a restart is an
+    outage). So the node served new JavaScript under the OLD commit and said so on screen, which is
+    precisely the confusion this exists to end. Measured immediately: the tree was on ac7b1252 and
+    the page still said 729898d8. A stamp that lies is worse than no stamp.
+
+    So it is re-read whenever `.git/HEAD` or the ref it points at has moved — two small file reads,
+    no subprocess, cached for a few seconds so a busy page does not stat per request."""
     global _BUILD_SHA
-    if _BUILD_SHA is None:
-        sha = ""
-        try:
-            root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=root,
-                                 capture_output=True, text=True, timeout=5).stdout.strip()
-        except Exception:
-            sha = ""
-        _BUILD_SHA = sha or "unknown"
-    return _BUILD_SHA
+    sha, at = _BUILD_SHA
+    now = time.time()
+    if sha and (now - at) < 10.0:
+        return sha
+    out = ""
+    try:
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        head = os.path.join(root, ".git", "HEAD")
+        with open(head, encoding="utf-8") as fh:
+            line = fh.read().strip()
+        if line.startswith("ref:"):
+            ref = line.split(" ", 1)[1].strip()
+            try:
+                with open(os.path.join(root, ".git", ref), encoding="utf-8") as fh:
+                    out = fh.read().strip()
+            except OSError:
+                # A packed ref — no loose file for it. One subprocess is fine on this path.
+                out = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True,
+                                     text=True, timeout=5).stdout.strip()
+        else:
+            out = line                      # detached HEAD holds the sha itself
+    except Exception:
+        out = ""
+    out = (out[:8] if out else "") or "unknown"
+    _BUILD_SHA = (out, now)
+    return out
 
 
 def _static_version() -> str:
