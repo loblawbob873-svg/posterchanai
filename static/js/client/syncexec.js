@@ -189,7 +189,9 @@
                           : 'scanning') + (min ? ' · ' + min + ' min in, still going' : '') });
     }, 5000);
     let disk, unread;
-    try{ const got = await scan(fs, scanOpts, stopping, o.onProgress); disk = got.disk; unread = got.unread; }
+    let unreadWhy = [];
+    try{ const got = await scan(fs, scanOpts, stopping, o.onProgress);
+         disk = got.disk; unread = got.unread; unreadWhy = got.unreadWhy || []; }
     catch(e){
       clearInterval(_scanBeat);
       /* "unknown sync folder" is not a read error — it is this device no longer holding the
@@ -204,7 +206,10 @@
     clearInterval(_scanBeat);
     if(stopping()) return halt(report);
     report.scanned = Object.keys(disk).length;
-    if(unread.length) report.unreadable = unread.slice(0, 200);
+    { const busy = unreadWhy.filter(x => /in use|vanished/i.test(x.why)).map(x => x.path);
+      const denied = unread.filter(p => busy.indexOf(p) === -1);
+      if(busy.length) report.busyNow = busy.slice(0, 200);
+      if(denied.length) report.unreadable = denied.slice(0, 200); }
 
     /* 4. Decide, check, and let a person answer for anything that is theirs to answer.
      * Paths the scan could not read join the exclusions: dropped from all three inputs, so an
@@ -630,19 +635,24 @@
      * device. Measured: five files under one unreadable folder → five tombstones, guards silent
      * (below the mass floor). So the skipped paths travel with the result, and the sweep treats
      * them exactly like exclusions: dropped from all three inputs, deletable by no one. */
-    const unread = [];
+    const unread = [];        // paths, for the exclusion machinery
+    const unreadWhy = [];     // {path, why}, for the report — "no permission" and "being written
+                              // right now" are opposite messages and must not share a count
     const note = (r) => { for(const k of (r && r.skipped) || []){
-      const p = (k && k.path) || k; if(p) unread.push(String(p)); } };
+      const p = (k && k.path) || k; if(!p) continue;
+      unread.push(String(p));
+      unreadWhy.push({ path: String(p), why: String((k && k.why) || 'unreadable') });
+    } };
     const so = { hash: !!o.hash, excludes: o.excludes || [], maxBytes: 0 };
     if(typeof fs.scanPage !== 'function'){
       const r = await fs.scan(o.id, so);
       for(const p in (r && r.files) || {}) disk[p] = compact(r.files[p]);
       note(r);
-      return { disk, unread };
+      return { disk, unread, unreadWhy };
     }
     let off = 0;
     for(;;){
-      if(stopping()) return { disk, unread };
+      if(stopping()) return { disk, unread, unreadWhy };
       const page = await fs.scanPage(o.id, so, off, SCAN_PAGE);
       const files = (page && page.files) || {};
       const n = Object.keys(files).length;
@@ -656,7 +666,7 @@
                                        i: off }); }catch(_){}
       if(!n || !page || page.done) break;
     }
-    return { disk, unread };
+    return { disk, unread, unreadWhy };
   }
   const compact = (f) => ({ size: (f && f.size) || 0, mtime: (f && f.mtime) || 0,
                             csum: (f && (f.csum || f.sha)) || undefined });
