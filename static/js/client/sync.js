@@ -1983,6 +1983,11 @@
                     rep.unfetchable || [], a => a.path + ' \u2014 ' + a.why);
     const unc = grp('Deletions held \u2014 absence couldn\u2019t be confirmed on disk',
                     rep.unconfirmedAbsent || [], a => a.path + ' \u2014 ' + a.why);
+    /* Named, not tallied — "13 paths couldn't be read" is only actionable if you can see which 13:
+     * a file locked by another program, a cloud placeholder, a permission. They are excluded from
+     * every decision until they can be read, so the list is the whole story. */
+    const unr = grp('Couldn\u2019t be read on this device \u2014 left alone, retried every sweep',
+                    rep.unreadable || [], a => String(a));
     if(rep.dryRun){
       return '<div class="sync-details">'
         + grp('Would upload', p.upload, a => a.path + ' — ' + a.why)
@@ -2005,7 +2010,7 @@
         + '</div>';
     }
     return '<div class="sync-details">'
-      + unf + unc
+      + unf + unc + unr
       + grp('Failed', rep.failed, a => a.path + ' — ' + a.what + ': ' + a.error)
       + grp('Skipped', rep.skipped, a => a.path + ' — ' + a.why)
       + grp('Conflicts kept', rep.conflicted, a => a.path + ' → ' + a.keptAs)
