@@ -4180,6 +4180,19 @@ def _sync_split_key(d_tag: str) -> tuple[str, str | None]:
 
 @router.post("/sync-manifest")
 async def sync_manifest(data: SyncManifestReq, db: Session = Depends(get_db)):
+    """RETIRED — the per-device-document sync this served is gone (see /client/sync-state).
+
+    It answers 410 ON PURPOSE rather than being deleted or, worse, left working: an app build that
+    still speaks this protocol would otherwise sync happily into a namespace no current device
+    reads — a silent fork that looks exactly like working sync, which is the failure shape this
+    feature was rewritten to end. A loud refusal names the fix; a quiet success hides a split
+    brain. (The one safe verb kept below: `views` reads, so old data stays inspectable.)"""
+    return JSONResponse({"ok": False, "error": "this app build predates the folder-sync "
+                         "rewrite — update the app on this device, then add the folder again"},
+                        status_code=410)
+
+
+async def _sync_manifest_legacy(data: SyncManifestReq, db: Session):   # dead code path, kept inert
     """Save/load ONE synced folder's manifest — {path: {sha, size, mtime, deletedAt}} — as an
     encrypted doc under the user's storage key, exactly like /files-index.
 

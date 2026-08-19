@@ -130,33 +130,3 @@ def test_a_device_name_cannot_reach_into_another_folders_documents():
     assert _sync_split_key("pcai:sync:Pictures") == ("Pictures", None)
 
 
-def test_retiring_one_device_is_named_never_inferred():
-    """A record that cannot be read holds back every deletion in the pair, for ever and silently.
-
-    That is the right default — absent from the merge is indistinguishable from deleted — but it
-    needs a way out, or a phone that was thrown away freezes a folder permanently. The way out is a
-    person naming that device, because a device that is merely OFFLINE reads exactly the same way
-    from the server.
-    """
-    import inspect
-
-    from app.routers import client as C
-    src = inspect.getsource(C.sync_manifest)
-    assert "data.forgetDevice" in src, "there is no way to retire one device's record"
-    at_one = src.index("if data.forgetDevice:")
-    at_all = src.index("if data.forgetAll:")
-    assert at_one < at_all, "retiring one device is handled after the whole-pair wipe"
-    # It writes ONE document — the named one — and never touches the others.
-    body = src[at_one:at_all]
-    assert "_sync_folder_key(data.folder, data.forgetDevice)" in body
-    assert "list_docs" not in body, "retiring one device enumerates and could clear more than asked"
-
-
-def test_the_views_read_says_which_devices_it_could_not_open():
-    import inspect
-
-    from app.routers import client as C
-    src = inspect.getsource(C.sync_manifest)
-    assert '"cannot": cannot' in src, (
-        "the views read counts unreadable devices without naming them — nothing can then offer to "
-        "retire one")
