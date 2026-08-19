@@ -2152,7 +2152,16 @@
     docs.index(key).then(idx => {
       _bump({ here: Object.keys(idx || {}).filter(p => idx[p] && !idx[p].deletedAt).length });
     }).catch(() => {}).then(_done);
-    stateS.load(key).then(st => {
+    /* NOT ON A FOLDER THAT HAS NEVER SWEPT HERE. `stateS.load` decrypts the whole record set, and
+     * on a 12,000-file pair that is seconds of crypto on the renderer's only thread — paid on the
+     * paint that immediately follows ADDING the folder, which is why the app locks up for a moment
+     * the instant you attach one. There is nothing useful to show at that point either: the device
+     * holds no journal, so "in the folder" would be the only number on screen and the sweep is
+     * about to produce it properly. Established folders keep the count, because for them the load
+     * is a cached delta rather than a first read. */
+    const _f0 = folders().find(x => keyOf(x) === key);
+    if(_f0 && !_f0.lastScanOkAt && !_f0.lastSyncAt){ _done(); }
+    else stateS.load(key).then(st => {
       let shared = 0, gone = 0;
       for(const p in st.state){ if(st.state[p] && st.state[p].deletedAt) gone++; else shared++; }
       _bump({ shared, gone });
@@ -2920,6 +2929,15 @@
           + 'device — one folder per name'); return; }
         l.push({ id: picked.id, key, dir: picked.dir, name: key,
                  excludes: [], prefs: { paused: true }, lastSyncAt: 0, lastFullScanAt: 0 });
+        /* THE PICK IS A GRANT — here too. `granted` is fetched when the screen paints, so a folder
+         * attached afterwards is not in it, and the next repaint draws "Point at the folder
+         * again…" over a folder that was just pointed at. The ADD path records this and has done
+         * for a while; the ATTACH path never did — and attach is the one used for a folder the
+         * account ALREADY syncs, which is every folder being re-established on a second device.
+         * So the banner appeared on precisely the path people use most, and stayed until the first
+         * sweep happened to prove the grant some other way. */
+        if(Array.isArray(granted) && !granted.some(g => g && g.id === picked.id))
+          granted.push({ id: picked.id, dir: picked.dir });
         saveFolders(l); rememberPair(picked.id, picked.dir, key); watch(picked.id); paint();
         PC.toast('“' + key + '” is set up here — the first check compares, it does not re-upload');
       }catch(e){ PC.toast('could not set that up: ' + ((e && e.message) || e)); }

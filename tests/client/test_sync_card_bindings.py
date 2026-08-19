@@ -63,5 +63,52 @@ class SyncCardBindings(unittest.TestCase):
             self.assertIn(c, self._classes_in_markup(), "%s left the card" % c)
 
 
+class EveryPickIsRecordedAsAGrant(unittest.TestCase):
+    """"still says to point Documents after adding it."
+
+    `granted` is fetched when the screen paints, so a folder attached afterwards is not in it and
+    the next repaint draws "Point at the folder again…" over a folder that was just pointed at. The
+    ADD path has recorded the grant for a while. The ATTACH path never did — and attach is the path
+    for a folder the account ALREADY syncs, which is every folder being re-established on a second
+    device. So the banner appeared on the path people use most.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        with open(SRC, encoding="utf-8") as fh:
+            cls.src = fh.read()
+
+    def _handler(self, marker):
+        """To the end of the handler, not a byte count — the add path runs to ~4 KB of code and
+        comment, and a fixed window is how three other tests in this repo ended up asserting
+        against somebody else's code today."""
+        i = self.src.index(marker)
+        end = self.src.find("\n    const add = document.getElementById", i + 1)
+        if end < 0:
+            end = self.src.find("\n    feed.querySelectorAll('.sync-card')", i + 1)
+        return self.src[i:end if end > i else i + 6000]
+
+    def test_the_attach_path_records_the_grant(self):
+        seg = self._handler("feed.querySelectorAll('.sync-attach')")
+        self.assertIn("granted.push(", seg,
+                      "attaching a folder does not record the grant, so the card claims the folder "
+                      "needs pointing at until something else proves it")
+
+    def test_the_add_path_still_does(self):
+        seg = self._handler("const add = document.getElementById('sync-add')")
+        self.assertIn("granted.push(", seg)
+
+    def test_both_guard_against_a_missing_grant_list(self):
+        """`granted` is null while the platform is being asked and null again if that failed —
+        pushing into either is a throw inside a click handler, which reads as the button doing
+        nothing at all."""
+        for marker in ("feed.querySelectorAll('.sync-attach')",
+                       "const add = document.getElementById('sync-add')"):
+            seg = self._handler(marker)
+            i = seg.index("granted.push(")
+            self.assertIn("Array.isArray(granted)", seg[:i],
+                          "%s pushes without checking the list exists" % marker)
+
+
 if __name__ == "__main__":
     unittest.main()
