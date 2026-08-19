@@ -611,7 +611,8 @@
      * folder. On an era shift (the pair was retired/re-added elsewhere) this device's JOURNAL is a
      * record of a dead world: it is cleared here, before the executor reads it, and the folder
      * re-settles by content on this very sweep. */
-    async load(key){
+    async load(key, onTick){
+      const tick = (i, n) => { try{ if(onTick) onTick({ phase: 'reading the folder\u2019s shared records', i, n }); }catch(_){} };
       const cache = await this._cache(key);
       const body = { pair: key };
       if(cache && cache.cursor){ body.since = Math.max(0, cache.cursor - 60); body.era = cache.era; }
@@ -625,9 +626,11 @@
          * somebody deliberately retired. Cleared, the next reconcile settles by content. */
         try{ await _saveBase(key, {}); }catch(_){}
       }
-      let und = 0, got = 0;
+      let und = 0, got = 0, seen = 0;
+      const total = (j.records || []).length;
       const me = PC.me().pubkey;
       for(const rec of (j.records || [])){
+        if((++seen % 400) === 0) tick(seen, total);
         let e = null;
         try{ e = JSON.parse(await PC.nip44dec(me, rec.ct)); }catch(_){ e = null; }
         if(!e || typeof e !== 'object' || !e.path){ und++; continue; }
@@ -747,7 +750,7 @@
   const docs = {
     /* The io the executor sweeps through. `state` throws rather than answering {} — a failed read
      * must never look like an empty folder. */
-    state: (key) => stateS.load(key),
+    state: (key, onTick) => stateS.load(key, onTick),
     putState: (key, recs, o) => stateS.put(key, recs, o),
     flagBad: (key, items) => stateS.flag(key, items),
     index: (key) => _loadBase(key),
@@ -1485,7 +1488,22 @@
           onProgress: (ev) => {
             const where = ev.path ? ' ' + ev.path.split('/').pop() : '';
             const of = ev.n > 1 ? ' ' + ev.i + '/' + ev.n : '';
-            setStatus(f.id, ev.phase + of + where, null, true);
+            /* A stranger needs an ETA, not counters to interpret. Rate = this phase's own history;
+             * only shown once there is enough of it to mean something, and rounded hard — a wrong
+             * minute is worse than a vague one. */
+            let eta = '';
+            if(ev.n > 20 && ev.i > 5){
+              const ph = _phaseAt.get(f.id);
+              if(!ph || ph.phase !== ev.phase) _phaseAt.set(f.id, { phase: ev.phase, t0: Date.now(), i0: ev.i });
+              else if(ev.i - ph.i0 > 5){
+                const per = (Date.now() - ph.t0) / (ev.i - ph.i0);
+                const min = Math.round(per * (ev.n - ev.i) / 60000);
+                eta = min >= 120 ? ' · about ' + Math.round(min / 60) + ' h left'
+                    : min >= 2 ? ' · about ' + min + ' min left'
+                    : min >= 1 ? ' · about a minute left' : ' · nearly done';
+              }
+            }
+            setStatus(f.id, ev.phase + of + where + eta, null, true);
           },
         }));
         if(!o.dryRun){
@@ -1767,6 +1785,7 @@
    *
    * A build whose plugin has no `nativeLive` answers null, and null keeps the old sentence — the
    * one honest thing to print about a sweep that cannot say what it is doing. */
+  const _phaseAt = new Map();         // folder id -> {phase, t0, i0} — the ETA's memory
   const _natWatch = new Map();
   const _NAT_POLL_MS = 1200, _NAT_STALE_MS = 90000;
   function _watchNative(f, fallback){
@@ -1821,6 +1840,10 @@
   async function verifyFolder(f){
     const fs = FS();
     if(!fs){ PC.toast('this device has no filesystem access'); return; }
+    if(running.size > 0 || _syncQueue.size > 0){
+      setStatus(f.id, 'a sync is running — Verify opens again when it finishes', null, true);
+      return;
+    }
     setStatus(f.id, 'checking your files…', null, true);
     let v;
     try{
@@ -2168,6 +2191,8 @@
   async function conflictCleanup(f, opts){
     const fs = FS();
     if(!fs) throw new Error('this device has no filesystem access');
+    if(!(opts && opts.dryRun) && (running.size > 0 || _syncQueue.size > 0))
+      throw new Error('a sync is running — tidy up when it finishes');
     const key = keyOf(f);
     const man = (await stateS.load(key)).state;
     const list = S.redundantConflicts(man);
@@ -3058,5 +3083,8 @@
   // `docs` is the per-device document layer: Files borrows it to read a folder it does not hold,
   // and the tests drive it directly at the sizes where NIP-44's ceiling used to lose whole folders.
   window.PCSync = { paint, folders, sweep, startAll, store, docs, status, edit, verifyFolder, restoreTrash,
-                    accountFolders, acct: () => _acct, deviceId };
+                    accountFolders, acct: () => _acct, deviceId,
+                    /* Anything destructive asks this first: reclaim, verify-repair, tidy. A sweep
+                     * mid-flight makes "unreferenced" and "redundant" unstable answers. */
+                    busyNow: () => running.size > 0 || _syncQueue.size > 0 };
 })();

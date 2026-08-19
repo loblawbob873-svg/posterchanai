@@ -111,7 +111,7 @@
      *    changed. A record that could not be decrypted is COUNTED and its path left untouched:
      *    the safe direction for one unreadable record is one file the sweep does not move. */
     let got0;
-    try{ got0 = await io.state(key); }
+    try{ got0 = await io.state(key, tick); }
     catch(e){
       throw new Error('could not read the folder’s shared record — nothing has been changed. ('
                       + msg(e) + ')');

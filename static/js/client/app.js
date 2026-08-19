@@ -17579,6 +17579,16 @@
          * drive index (already in hand) plus every synced folder's ids. A null reference set means
          * a folder could not be fully read, and the offer simply does not appear — a reclaim that
          * guesses is the folder-sync wipe wearing a storage hat. */
+        /* NEVER OFFER DELETION WHILE A SYNC RUNS. The fresh-blob guard already protects the
+         * bytes; this protects the PERSON — a reclaim button during a seed is a decision nobody
+         * should be handed mid-flight. */
+        if(window.PCSync && PCSync.busyNow && PCSync.busyNow()){
+          lines.push(`<div class="muted small">${otherN} blob(s), ${_fxBytes(otherBytes)}, are stored `
+            + `but not named by this index. A sync is running — reclaim is disabled until it `
+            + `finishes.</div>`);
+          r.innerHTML = lines.join('');
+          return;
+        }
         const refs = await _syncRefIds();
         /* THE INDEX'S OWN CONTAINER IS LOAD-BEARING AND INVISIBLE. The drive index lives in an
          * encrypted blob (`indexSha`) that is keep-flagged, named by no ledger, and deliberately
