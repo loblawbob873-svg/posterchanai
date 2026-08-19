@@ -962,6 +962,67 @@ class TheStallWindowKnowsWhatIsComing(unittest.TestCase):
         self.assertNotIn("_cs", self.sync[i:i + 900])
 
 
+class AWrongKeyBlobIsRepairable(unittest.TestCase):
+    """"the bytes are intact but were sealed with a different key" … "never recover".
+
+    A blob this account can no longer open is a THIRD kind of unusable copy and it was the only one
+    with no repair. `hasBlob` says it is there, so none of the missing-bytes machinery applies, and
+    the error's own advice — press "Send them again" on the device that HAS the file — pointed at a
+    path that only ever covered blobs the store had LOST. It failed every sweep, for ever.
+
+    It is deterministic like a checksum failure, so it is remembered by storage ADDRESS and FLAGGED
+    on the record: whoever holds the plaintext re-uploads, which seals it under the current key and
+    gives it a new address, and a fresh address lifts every device's memory of the old one."""
+
+    def _run(self, err):
+        js = """
+        require(%s); const X = require(%s);
+        (async () => {
+          const entry = { v:3, by:'other', sha:'ab06adca', csum:'c1', size:9, mtime:10 };
+          const flags = [];
+          const fs = {
+            scanPage: async () => ({ files:{}, done:true }),
+            write: async () => ({ size:9, mtime:1 }),
+            confirmGone: async () => ({ gone:false, parentAlive:true }),
+          };
+          const io = {
+            index: async () => ({}),
+            state: async () => ({ state: { 'a.jpg': JSON.parse(JSON.stringify(entry)) }, flagged:{} }),
+            saveIndex: async () => {},
+            hashBytes: async () => 'c1',
+            getBlob: async () => { throw new Error(%s); },
+            flagBad: async (k, batch) => { for(const b of batch) flags.push(b.path); },
+            putState: async (k, r) => ({ ok:r.map(x=>x.path), stale:[], failed:[] }),
+          };
+          const rep = await X.sweep(fs, io, { id:'f', key:'k', device:'me', now:1 });
+          process.stdout.write(JSON.stringify({
+            flagged: flags,
+            remembered: Object.keys(rep.badFetch || {}),
+            wrongKey: rep.wrongKey || [] }));
+        })().catch(e => { console.error(e && e.stack || e); process.exit(1); });
+        """ % (json.dumps(FOLDERSYNC), json.dumps(EXEC), json.dumps(err))
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr[-1500:])
+        return json.loads(r.stdout)
+
+    def test_a_wrong_key_blob_is_flagged_so_a_holder_repairs_it(self):
+        out = self._run("this device\u2019s drive key does not open ab06adca — the bytes are "
+                        "intact but were sealed with a different key")
+        self.assertEqual(out["wrongKey"], ["a.jpg"], "a wrong-key blob was not recognised as one")
+        self.assertEqual(out["flagged"], ["a.jpg"],
+                         "nothing was flagged, so no device is ever asked to re-send it — that is "
+                         "the 'never recover' loop")
+        self.assertIn("a.jpg", out["remembered"],
+                      "it will be re-fetched every sweep for ever")
+
+    def test_an_ordinary_network_error_is_still_not_remembered(self):
+        """A 5xx or a dead socket really is about the moment; remembering it strands a good copy."""
+        out = self._run("the server did not answer in time — will try again")
+        self.assertEqual(out["wrongKey"], [])
+        self.assertEqual(out["remembered"], [],
+                         "a transient failure was remembered as a permanently bad copy")
+
+
 class CheckDoesNotWedgeThePage(unittest.TestCase):
     """The check reads every file and asks about every record — and it must give the page its
     thread back while it does, or Android kills the renderer and the UI reloads mid-operation."""

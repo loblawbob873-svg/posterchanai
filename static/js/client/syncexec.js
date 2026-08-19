@@ -545,6 +545,28 @@
        * Equal means both sides hold the same content and the only divergence was a timestamp; the
        * journal records agreement and no copy is minted. This is also what absorbs the CAS race —
        * two devices uploading the same file, the loser refused, resolving here. */
+      /* A RECORD WITH NO CHECKSUM CANNOT BE COMPARED — SO IT MUST NOT BE DUPLICATED.
+       *
+       * The settle-by-content check below needs `entry.csum`, and a record published by the Files
+       * upload path does not have one (computing it means holding the whole file, which is what
+       * chunking exists to avoid). With no csum the check was SKIPPED ENTIRELY and the code fell
+       * straight through to minting a copy — so on a device joining with an empty journal, where
+       * `same()` has only size and mtime to work with and a restored backup carries fresh mtimes,
+       * EVERY such file became a conflict copy. Reported as a desktop join producing "a bunch of
+       * conflict files" on a folder whose bytes were already correct.
+       *
+       * Same size and no way to compare is not evidence of difference. Different size IS, and still
+       * conflicts. This leaves both copies untouched, names the path, and the next sweep asks again
+       * — the same answer as a hash that could not be computed, a few lines down. */
+      if(c.entry && !c.entry.csum && disk[c.path]
+         && (c.entry.size || 0) === (disk[c.path].size || 0)){
+        report.uncompared = report.uncompared || [];
+        report.uncompared.push({ path: c.path, why: 'the shared record carries no checksum for this '
+          + 'file, so nothing here can tell the two copies apart — both were left exactly as they '
+          + 'are. The device holding it will publish a checksum on its next sweep' });
+        report.ok = false;
+        continue;
+      }
       if(c.entry && c.entry.csum && typeof fs.hashFile === 'function' && disk[c.path]){
         let h = null, asked = true;
         try{ h = await fs.hashFile(o.id, c.path); }catch(_){ h = null; asked = false; }
@@ -686,7 +708,30 @@
            * remembered with a clock, and expires. A 5xx or a dead socket is NOT remembered,
            * because those really are about the moment. */
           const why = msg(e);
-          if(/checksum mismatch/.test(why)){
+          /* A BLOB SEALED WITH A DIFFERENT DRIVE KEY IS A THIRD KIND OF UNUSABLE COPY, and it was
+           * the only one with no repair at all.
+           *
+           * The bytes are in the store and intact; this account simply has more than one drive key
+           * in its history (two cold devices racing the mint is the known way that happens) and the
+           * one this device holds does not open them. `hasBlob` says the blob is THERE, so none of
+           * the missing-bytes machinery applies, and the error's own advice — "press Send them
+           * again on the device that HAS this file" — pointed at a repair that only ever covered
+           * blobs the store had LOST. So it failed on every sweep, for ever: "never recover".
+           *
+           * It is deterministic like a checksum failure — the same bytes will not open tomorrow —
+           * so it is remembered by storage ADDRESS and FLAGGED on the record. Whoever still holds
+           * the plaintext re-uploads it, which seals it under the CURRENT key and gives it a new
+           * address, and the fresh address lifts every device's memory of the old one by itself.
+           * On a device that both fails the fetch and holds the file — a restored desktop, which is
+           * exactly where this was hit — the flag is picked up by its own next sweep and it repairs
+           * itself. */
+          if(/drive key does not open|different key/.test(why)){
+            report.badFetch = report.badFetch || {};
+            report.badFetch[d.path] = { id: idOf(d.entry), why: 'checksum', v: E.versionOf(d.entry) };
+            flagQueue.push({ path: d.path, id: idOf(d.entry) });
+            (report.wrongKey = report.wrongKey || []).push(d.path);
+            failed(report, d.path, 'download', e);
+          } else if(/checksum mismatch/.test(why)){
             report.badFetch = report.badFetch || {};
             report.badFetch[d.path] = { id: idOf(d.entry), why: 'checksum', v: E.versionOf(d.entry) };
             flagQueue.push({ path: d.path, id: idOf(d.entry) });
