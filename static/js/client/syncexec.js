@@ -526,7 +526,7 @@
         if(badId && badId === idOf(d.entry)){
           report.unfetchable = report.unfetchable || [];
           report.unfetchable.push({ path: d.path, why: 'the copy in the store fails its checksum — '
-                                    + 'the device that has this file will send it again' });
+                                    + 'the device that has this file will send it again by itself' });
           flagQueue.push({ path: d.path, id: badId });   // the holder keeps hearing until it is fixed
           return;
         }
@@ -578,8 +578,8 @@
             report.badFetch[d.path] = { id: idOf(d.entry), why: 'gone', at: now0(), v: E.versionOf(d.entry) };
             flagQueue.push({ path: d.path, id: idOf(d.entry) });
             report.unfetchable = report.unfetchable || [];
-            report.unfetchable.push({ path: d.path, why: 'the store does not have these bytes — run '
-                                      + 'Verify on the device that has this file to send it again' });
+            report.unfetchable.push({ path: d.path, why: 'the store does not have these bytes yet — the '
+                                      + 'device that has this file will send it again by itself' });
             report.ok = false;
           } else {
             failed(report, d.path, 'download', e);
