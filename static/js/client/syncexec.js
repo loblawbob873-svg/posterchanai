@@ -347,7 +347,18 @@
      * the divergence as a conflict, with both copies surviving. */
     const journal = new Journal(io, key, index, o);
     const pending = [];                             // records this sweep must publish
+    /* FLAGS FLOW WITH THE CHECKPOINTS, NOT AFTER THE SWEEP. A sweep failing a thousand fetches
+     * used to hold every flag until it finished — so the device that could REPAIR them sat idle
+     * for the whole grind. Reported failures reach the record within a checkpoint now, and the
+     * holder starts re-sending while the reporter is still discovering. */
+    const flagQueue = [];
+    const flushFlags = async () => {
+      if(!flagQueue.length || typeof io.flagBad !== 'function') return;
+      const batch = flagQueue.splice(0);
+      try{ await io.flagBad(key, batch); }catch(_){ /* flags are advisory; the final pass retries */ }
+    };
     const flushPuts = async () => {
+      await flushFlags();
       if(!pending.length) return;
       const batch = pending.splice(0);
       const res = await io.putState(key, batch,
@@ -556,10 +567,12 @@
           if(/checksum mismatch/.test(why)){
             report.badFetch = report.badFetch || {};
             report.badFetch[d.path] = { id: idOf(d.entry), why: 'checksum', v: E.versionOf(d.entry) };
+            flagQueue.push({ path: d.path, id: idOf(d.entry) });
             failed(report, d.path, 'download', e);
           } else if(/unavailable \(404\)/.test(why)){
             report.badFetch = report.badFetch || {};
             report.badFetch[d.path] = { id: idOf(d.entry), why: 'gone', at: now0(), v: E.versionOf(d.entry) };
+            flagQueue.push({ path: d.path, id: idOf(d.entry) });
             report.unfetchable = report.unfetchable || [];
             report.unfetchable.push({ path: d.path, why: 'the store does not have these bytes — run '
                                       + 'Verify on the device that has this file to send it again' });
@@ -628,6 +641,7 @@
 
     /* 6. Publish what is still queued, then save the journal — in that order, always. */
     step('saving');
+    await flushFlags();
     await flushPuts();
     await journal.flush();
     if(journal.checkpointError) report.checkpointError = journal.checkpointError;

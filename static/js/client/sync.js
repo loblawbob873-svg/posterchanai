@@ -811,8 +811,11 @@
       for(const it of items || []){
         try{ flag.push({ d: await _pathD(it.path), bad: String(it.id || '') }); }catch(_){}
       }
-      if(!flag.length) return;
-      await _statePost({ pair: key, era: cache ? cache.era : 0, flag });
+      // Chunked under the server's batch cap — a report larger than the cap used to silently
+      // truncate, which is a repair list with the tail torn off.
+      for(let at = 0; at < flag.length; at += 400){
+        await _statePost({ pair: key, era: cache ? cache.era : 0, flag: flag.slice(at, at + 400) });
+      }
     },
   };
 
