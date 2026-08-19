@@ -280,11 +280,15 @@
      * block would make one bad minute permanent. A pressed button clears both: somebody standing
      * there asking again is the clearest possible signal to try. */
     const GONE_FOR = 6 * 3600 * 1000;
-    const skipId = (v, raw) => {
+    const skipId = (v, raw, entry) => {
       if(!v) return '';
       if(typeof v === 'string') return v;
       if(o.manual && !raw) return '';
       if(v.why === 'gone' && (now0() - (v.at || 0)) > GONE_FOR) return '';
+      /* THE RECORD MOVED ON — RETRY NOW, not in six hours. A holder's automatic re-send bumps the
+       * file's version; a memory that ignored that held the repaired copy at arm's length for the
+       * rest of the window, which turned a self-heal into an afternoon. */
+      if(entry && v.v != null && E.versionOf(entry) > v.v) return '';
       return v.id || '';
     };
 
@@ -296,7 +300,7 @@
        * retry a manual sweep is). */
       report.plannedGone = plan.fetch.concat(plan.keepBoth).filter(d => {
         const id = idOf(d.entry);
-        return id && skipId(skipFetch[d.path], true) === id;
+        return id && skipId(skipFetch[d.path], true, d.entry) === id;
       }).length;
       return report;
     }
@@ -359,7 +363,7 @@
        * conflict copy. Measured: 1,803 conflicts, then 2,322, climbing every sweep. An unfetchable
        * incoming copy leaves the local file exactly where it is and says so. */
       const cid = idOf(c.entry);
-      if(cid && skipId(skipFetch[c.path]) === cid){
+      if(cid && skipId(skipFetch[c.path], false, c.entry) === cid){
         report.unfetchable = report.unfetchable || [];
         report.unfetchable.push({ path: c.path, why: 'the incoming copy cannot be fetched, so your '
                                   + 'copy was left exactly as it is' });
@@ -401,11 +405,11 @@
         const why = msg(e);
         if(cid && /checksum mismatch/.test(why)){
           report.badFetch = report.badFetch || {};
-          report.badFetch[c.path] = { id: cid, why: 'checksum' };
+          report.badFetch[c.path] = { id: cid, why: 'checksum', v: E.versionOf(c.entry) };
           failed(report, c.path, 'conflict', e);
         } else if(cid && /unavailable \(404\)/.test(why)){
           report.badFetch = report.badFetch || {};
-          report.badFetch[c.path] = { id: cid, why: 'gone', at: now0() };
+          report.badFetch[c.path] = { id: cid, why: 'gone', at: now0(), v: E.versionOf(c.entry) };
           report.unfetchable = report.unfetchable || [];
           report.unfetchable.push({ path: c.path, why: 'the incoming copy is not in the store — your '
                                     + 'copy was left exactly as it is' });
@@ -433,7 +437,7 @@
                                     + 'it again from the device that has it' });
           return;
         }
-        const badId = skipId(skipFetch[d.path]);
+        const badId = skipId(skipFetch[d.path], false, d.entry);
         if(badId && badId === idOf(d.entry)){
           report.unfetchable = report.unfetchable || [];
           report.unfetchable.push({ path: d.path, why: 'the copy in the store fails its checksum — '
@@ -463,11 +467,11 @@
           const why = msg(e);
           if(/checksum mismatch/.test(why)){
             report.badFetch = report.badFetch || {};
-            report.badFetch[d.path] = { id: idOf(d.entry), why: 'checksum' };
+            report.badFetch[d.path] = { id: idOf(d.entry), why: 'checksum', v: E.versionOf(d.entry) };
             failed(report, d.path, 'download', e);
           } else if(/unavailable \(404\)/.test(why)){
             report.badFetch = report.badFetch || {};
-            report.badFetch[d.path] = { id: idOf(d.entry), why: 'gone', at: now0() };
+            report.badFetch[d.path] = { id: idOf(d.entry), why: 'gone', at: now0(), v: E.versionOf(d.entry) };
             report.unfetchable = report.unfetchable || [];
             report.unfetchable.push({ path: d.path, why: 'the store does not have these bytes — run '
                                       + 'Verify on the device that has this file to send it again' });

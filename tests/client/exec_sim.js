@@ -1077,6 +1077,37 @@ scenario('the receipts: a torn store copy heals itself, end to end', async (t) =
   t.eq(identical(A2.disk, B2.disk), null, 'the folders do not match after the heal');
 });
 
+scenario('a blob deleted out from under a seed puts itself back — no buttons', async (t) => {
+  const sky = cloud();
+  const A = device('desktop', sky, { disk: photos(6) });
+  await A.sweep();
+  /* Somebody reclaimed mid-seed: the bytes are gone from the store, the records and the
+   * desktop's files are fine. Nothing about this repair may require a person. */
+  const victims = Object.keys(sky.folder()).slice(0, 3);
+  for(const p of victims) sky.forget(sky.entry(p).sha);
+  // A joining device fails the fetches, remembers them, and FLAGS the records — as the client does.
+  const B = device('phone', sky, {});
+  const r1 = await B.sweep();
+  t.eq((r1.unfetchable || []).length, 3, 'the missing bytes were not reported');
+  const fl = [];
+  for(const p in (r1.badFetch || {})){ const r = r1.badFetch[p];
+    if(r && r.id && (r.why === 'checksum' || r.why === 'gone')) fl.push({ path: p, id: r.id }); }
+  t.eq(fl.length, 3, 'gone blobs were not flagged for the holder');
+  await B.io.flagBad('Pictures', fl);
+  // The desktop's next ORDINARY sweep re-seeds them — same bytes, same address, bytes restored.
+  const A2 = device('desktop', sky, { disk: A.disk, index: A.st.index });
+  const r2 = await A2.sweep();
+  t.eq((r2.reseeding || []).length, 3, 'the holder did not re-seed: ' + JSON.stringify(r2.reseeding));
+  for(const p of victims) t.ok(sky.has(sky.entry(p).sha), 'the bytes for ' + p + ' are still missing');
+  /* And the phone's next AUTOMATIC sweep retries at once — the record's version moved past the
+   * memory, so the six-hour clock does not apply. */
+  const B2 = device('phone', sky, { disk: B.disk, index: B.st.index });
+  const r3 = await B2.sweep({ skipFetch: r1.badFetch });
+  t.eq(r3.failed.length, 0, 'the retry failed: ' + JSON.stringify(r3.failed));
+  t.eq(r3.downloaded.length, 3, 'the healed files were not fetched (' + r3.downloaded.length + ' of 3)');
+  t.eq(identical(A2.disk, B2.disk), null, 'the folders do not match after the self-heal');
+});
+
 scenario('a holder whose own copy is ALSO bad re-seeds nothing and says so', async (t) => {
   const sky = cloud();
   const A = device('desktop', sky, { disk: photos(4) });

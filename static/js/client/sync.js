@@ -1462,7 +1462,12 @@
             const _fl = [];
             for(const _p in rep.badFetch){
               const _r = rep.badFetch[_p];
-              if(_r && _r.why === 'checksum' && _r.id) _fl.push({ path: _p, id: _r.id });
+              /* BOTH failure kinds reach the holder now. A checksum-bad copy and bytes the store
+               * no longer has have the same repair — the device still holding the file re-sends
+               * it — and requiring a person to press Verify for the second kind is how a
+               * mid-seed reclaim became an afternoon of manual recovery. */
+              if(_r && _r.id && (_r.why === 'checksum' || _r.why === 'gone'))
+                _fl.push({ path: _p, id: _r.id });
             }
             if(_fl.length){ try{ await stateS.flag(keyOf(f), _fl); }catch(_){} }
           }
