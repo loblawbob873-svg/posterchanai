@@ -903,3 +903,36 @@ class OneSweepAtATime(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OneMappingPerPair(unittest.TestCase):
+    """Two mappings with the same pair name on one device share one journal and one record set
+    while scanning two different directories — every sweep contradicts the last, permanently. All
+    three add flows refuse the duplicate by name."""
+
+    def test_every_add_flow_refuses_a_duplicate_name(self):
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        sync = open(os.path.join(root, "static", "js", "client", "sync.js"), encoding="utf-8").read()
+        self.assertEqual(sync.count("is already syncing on this"), 3,
+                         "an add flow lost its duplicate-pair guard")
+
+
+class FoldingDiskCapability(unittest.TestCase):
+    """The desktop bridge tells the engine whether this filesystem folds case, and which platform
+    it is — the collision and impossible-name rules decide with it. Absent flags default SAFE
+    (fold: report the twin rather than flip-flop)."""
+
+    def test_the_bridge_exports_the_capabilities(self):
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        br = open(os.path.join(root, "desktop", "fsbridge.js"), encoding="utf-8").read()
+        self.assertIn("caseFolds: process.platform !== 'linux'", br)
+        self.assertIn("platform: process.platform", br)
+
+    def test_the_bridge_heals_an_unreadable_file_itself(self):
+        """"I will not tell a user to run terminal commands" — the app clears the read-only bits
+        and resets the ACL itself, once per path, and only then gives up and names the file."""
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        br = open(os.path.join(root, "desktop", "fsbridge.js"), encoding="utf-8").read()
+        self.assertIn("function healRead(", br)
+        self.assertIn("icacls", br)
+        self.assertIn("_healed", br, "an unhealable file must be attempted once, not every sweep")

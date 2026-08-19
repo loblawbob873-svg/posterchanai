@@ -246,6 +246,34 @@
         }
       }
     }
+
+    /* TWO NAMES, ONE FILE, ON A FOLDING FILESYSTEM. `Photo.jpg` and `photo.jpg` are two records —
+     * legitimate, distinct files on Linux — and ONE file on Windows, macOS and most of Android. A
+     * device that folds and fetches both writes them over each other: each sweep then reads the
+     * survivor as "changed here" for one record, republishes, and the two records climb versions
+     * against each other for ever — the flip-flop every mixed-platform sync system has had to
+     * learn about (macOS adds NFC/NFD normalisation to the same trap, so the fold normalises
+     * first). On a folding device only the WINNER (highest version, then first name — the same
+     * determinism rule as everything else) may be written; the rest are refused fatally and NAMED,
+     * because the fix is a human renaming a file, not an engine guessing which twin to destroy. */
+    if(c.caseFolds !== false){
+      const fold = (x) => { try{ return String(x).normalize('NFC').toLowerCase(); }
+                            catch(_){ return String(x).toLowerCase(); } };
+      const groups = {};
+      for(const q in g) if(live(g[q])) (groups[fold(q)] = groups[fold(q)] || []).push(q);
+      const writes = new Set(p.fetch.concat(p.keepBoth).map(a => a.path));
+      for(const f in groups){
+        const twins = groups[f];
+        if(twins.length < 2) continue;
+        twins.sort((a, b) => (versionOf(g[b]) - versionOf(g[a])) || (a < b ? -1 : 1));
+        for(const q of twins.slice(1)){
+          if(!writes.has(q)) continue;
+          out.push({ kind:'blocked', fatal:true, path: q,
+                     why: '“' + q + '” and “' + twins[0] + '” are the same name on this device — '
+                        + 'rename one of them where it was created' });
+        }
+      }
+    }
     return out;
   }
 
@@ -260,7 +288,10 @@
       if(v.kind === 'massTrash') out.trash = [];
       else if(v.kind === 'massTombstone') out.tombstone = [];
       else if(v.kind === 'massResurrect') out.send = out.send.filter(s => !s.resurrect);
-      else if(v.kind === 'blocked') out.fetch = out.fetch.filter(f => f.path !== v.path);
+      else if(v.kind === 'blocked'){
+        out.fetch = out.fetch.filter(f => f.path !== v.path);
+        out.keepBoth = out.keepBoth.filter(f => f.path !== v.path);
+      }
     }
     return out;
   }

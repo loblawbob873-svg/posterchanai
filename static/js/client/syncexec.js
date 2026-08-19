@@ -268,7 +268,8 @@
     report.settledGone = plan.settledGone || 0;
     report.excluded = plan.excluded;
 
-    const verdicts = E.check(plan, { state, indexSize: Object.keys(index).length });
+    const verdicts = E.check(plan, { state, indexSize: Object.keys(index).length,
+                                     caseFolds: fs.caseFolds !== false });
     const allowed = [];
     for(const v of verdicts){
       if(v.fatal){ report.refused.push(v); continue; }
@@ -445,6 +446,16 @@
          * rather than attempted, so the sweep stops failing on it every time and the card names the
          * file — which is the only way somebody can go and fix it. */
         const e = d.entry || {};
+        /* A NAME THIS PLATFORM CANNOT HOLD IS REFUSED UP FRONT, with the fix named. A Linux
+         * device can create `notes:v2.txt`; Windows cannot write it, so the fetch failed on every
+         * sweep for ever with a message about disks. The record is fine — the NAME needs a human
+         * (renaming where it was created), and the card says exactly that. */
+        if(fs.platform === 'win32' && _winBad(d.path)){
+          report.unfetchable = report.unfetchable || [];
+          report.unfetchable.push({ path: d.path, why: 'this name cannot exist on Windows — '
+                                    + 'rename it on the device it was created on' });
+          return;
+        }
         if(!e.sha && !(e.chunks && e.chunks.length)){
           report.unfetchable = report.unfetchable || [];
           report.unfetchable.push({ path: d.path, why: 'the shared record does not say where this '
@@ -584,6 +595,12 @@
                              || e.csum)) || '';
 
   const strip = (e) => { const c = Object.assign({}, e); delete c.local; return c; };
+
+  /* Names NTFS refuses: reserved device words, characters no Windows API accepts, and a trailing
+   * dot or space (silently stripped, which is its own corruption). */
+  const _winBad = (p) => String(p).split('/').some(seg =>
+    /[<>:"\\|?*\x00-\x1f]/.test(seg) || /[. ]$/.test(seg)
+    || /^(con|prn|aux|nul|com[0-9\u00b9\u00b2\u00b3]|lpt[0-9\u00b9\u00b2\u00b3])(\.|$)/i.test(seg));
 
   function failed(report, path, what, e){
     report.failed.push({ path, what, error: msg(e) });

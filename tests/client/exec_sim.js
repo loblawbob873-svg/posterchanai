@@ -1148,6 +1148,101 @@ scenario('a holder whose own copy is ALSO bad re-seeds nothing and says so', asy
   t.ok((r.badHere || []).indexOf(victim) !== -1, 'the rot on this device was not named');
 });
 
+scenario('pause cuts into a big DOWNLOAD too, and the part file resumes it', async (t) => {
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: { 'iso/big.iso': video(12, 55) }, chunk: 4 * MB });
+  await A.sweep();
+  let writes = 0;
+  const B = device('phone', sky, { chunk: 4 * MB });
+  const realWrite = B.fs.writePart;
+  B.fs.writePart = async (id, r, off, bytes) => { writes++; return realWrite(id, r, off, bytes); };
+  const r1 = await B.sweep({ shouldStop: () => writes >= 2 });
+  t.ok(r1.stopped === true, 'a pause during a chunked download did not report itself stopped');
+  t.eq(r1.failed.length, 0, 'a user pause was recorded as a failure: ' + JSON.stringify(r1.failed));
+  t.ok(!B.disk['iso/big.iso'], 'a half-fetched file was committed under the real name');
+  t.ok((B.st.parts['iso/big.iso'] || Buffer.alloc(0)).length > 0, 'the part file was thrown away');
+  const B2 = device('phone', sky, { chunk: 4 * MB, disk: B.disk, index: B.st.index });
+  B2.st.parts['iso/big.iso'] = B.st.parts['iso/big.iso'];
+  const r2 = await B2.sweep();
+  t.eq(r2.failed.length, 0, 'the resumed download failed: ' + JSON.stringify(r2.failed));
+  t.eq(identical(A.disk, B2.disk), null, 'the resumed file is not byte-identical');
+});
+
+scenario('a crash that lost the journal checkpoint settles by content — no re-upload, no conflicts', async (t) => {
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(60) });
+  await A.sweep();
+  /* The renderer died between publishing records and saving the journal — the records run AHEAD
+   * of the journal, which is the safe direction and must stay free: half the journal is gone, the
+   * records and the disk are complete. */
+  const partial = {};
+  const keys = Object.keys(A.st.index);
+  for(let i = 0; i < keys.length / 2; i++) partial[keys[i]] = A.st.index[keys[i]];
+  const A2 = device('laptop', sky, { disk: A.disk, index: partial });
+  const r = await A2.sweep();
+  t.eq(r.uploaded.length, 0, 'a lost checkpoint re-uploaded ' + r.uploaded.length + ' files');
+  t.eq(r.conflicted.length, 0, 'a lost checkpoint minted ' + r.conflicted.length + ' conflicts');
+  t.eq(A2.st.trashed.length, 0, 'a lost checkpoint trashed files');
+  t.eq(r.downloaded.length, 0, 'a lost checkpoint re-downloaded its own files');
+});
+
+scenario('zero-byte files are files', async (t) => {
+  const sky = cloud();
+  const disk = photos(3);
+  disk['empty/placeholder.txt'] = Buffer.alloc(0);
+  const A = device('laptop', sky, { disk });
+  const r1 = await A.sweep();
+  t.eq(r1.failed.length, 0, 'an empty file failed to upload: ' + JSON.stringify(r1.failed));
+  t.eq(r1.uploaded.length, 4, 'the empty file was skipped');
+  const B = device('phone', sky, {});
+  const r2 = await B.sweep();
+  t.eq(r2.failed.length, 0, 'an empty file failed to download: ' + JSON.stringify(r2.failed));
+  t.eq(identical(A.disk, B.disk), null, 'the folders differ');
+  const B2 = device('phone', sky, { disk: B.disk, index: B.st.index });
+  const r3 = await B2.sweep();
+  t.eq(r3.unchanged, 4, 'an empty file cannot settle — it re-decides every sweep');
+});
+
+scenario('the era changing mid-sweep fails that sweep cleanly and the next one rejoins fresh', async (t) => {
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(30) });
+  await A.sweep();
+  // Another device retires the pair while this one is mid-sweep: its next publish is refused with
+  // the new era. The sweep must end as a FAILURE (nothing corrupted), and the next sweep — reading
+  // the new era — must void its journal and re-seed into the new world without conflicts.
+  Object.assign(A.disk, photos(5, 'new/'));
+  const A2 = device('laptop', sky, { disk: A.disk, index: A.st.index });
+  const realPut = A2.io.putState.bind(A2.io);
+  A2.io.putState = async (k, recs, o2) => { sky.bumpEra(); throw new Error('the folder was retired or re-added elsewhere'); };
+  /* The sweep may end by THROWING here — a failed final publish is a failed sweep, said loudly —
+   * and what matters is what it did NOT do: corrupt the journal or touch a file. */
+  let r1 = null, threw = '';
+  try{ r1 = await A2.sweep(); }catch(e){ threw = String((e && e.message) || e); }
+  t.ok(threw || (r1 && (r1.checkpointError || r1.failed.length > 0 || !r1.ok)),
+       'an era change mid-sweep claimed a clean pass');
+  t.eq(A2.st.trashed.length, 0, 'an era change trashed files');
+  const A3 = device('laptop', sky, { disk: A2.disk, index: A2.st.index });
+  const r2 = await A3.sweep();
+  t.eq(r2.failed.length, 0, 'the rejoin failed: ' + JSON.stringify(r2.failed.slice(0, 2)));
+  t.eq(r2.conflicted.length, 0, 'the rejoin minted ' + r2.conflicted.length + ' conflicts');
+  t.eq(Object.keys(sky.folder()).length, 35, 'the new era holds ' + Object.keys(sky.folder()).length + ' of 35');
+  void realPut;
+});
+
+scenario('a name Windows cannot hold is refused with the fix, not failed for ever', async (t) => {
+  const sky = cloud();
+  const A = device('linux', sky, { disk: { 'notes:v2.txt': Buffer.from('colon'), 'ok.txt': Buffer.from('fine'),
+                                           'aux.cfg': Buffer.from('reserved'), 'trail. ': Buffer.from('dot') } });
+  await A.sweep();
+  const B = device('windows', sky, {});
+  B.fs.platform = 'win32';
+  const r = await B.sweep();
+  t.eq(r.failed.length, 0, 'impossible names were retried as failures: ' + JSON.stringify(r.failed));
+  t.eq((r.unfetchable || []).filter(u => /cannot exist on Windows/.test(u.why)).length, 3,
+       'the impossible names were not refused by name: ' + JSON.stringify(r.unfetchable));
+  t.ok(!!B.disk['ok.txt'], 'the ordinary file did not arrive');
+});
+
 /* ---- runner ----------------------------------------------------------------------------------- */
 (async () => {
   let bad = 0;

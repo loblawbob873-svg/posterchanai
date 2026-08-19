@@ -224,6 +224,39 @@ const only = (p, kind) => {
   ok(S.apply(p, v, ['blocked']).fetch.every(f => f.path !== 'a'), 'fatal verdicts ignore allows');
 }
 
+/* ---- one file, two names: the folding-filesystem trap ---------------------------------------- */
+{
+  // Photo.jpg and photo.jpg are two legitimate records (a Linux device holds both) and ONE file on
+  // Windows/macOS. Writing both makes the records climb versions against each other for ever — so
+  // on a folding device only the winner may be written, and the twin is refused BY NAME.
+  const state = { 'Photo.jpg': F(3, 'a', { by: 'linux' }), 'photo.jpg': F(1, 'b', { by: 'linux' }) };
+  const p1 = plan(state, {}, {});
+  const v = S.check(p1, { state, caseFolds: true });
+  const b = v.filter(x => x.kind === 'blocked');
+  ok(b.length === 1 && b[0].path === 'photo.jpg' && b[0].fatal === true,
+     'the losing twin was not refused: ' + JSON.stringify(b));
+  const applied = S.apply(p1, v, []);
+  ok(applied.fetch.length === 1 && applied.fetch[0].path === 'Photo.jpg',
+     'a folding device fetched both twins');
+  // …and a NON-folding device (Linux) fetches both, because there they are two real files.
+  const v2 = S.check(p1, { state, caseFolds: false });
+  ok(v2.every(x => x.kind !== 'blocked'), 'a case-sensitive device refused legitimate twins');
+  // macOS's other trap: NFC vs NFD spellings of the same name fold together too.
+  const nfc = 'café.txt', nfd = 'café.txt';
+  const st2 = {}; st2[nfc] = F(2, 'x'); st2[nfd] = F(1, 'y');
+  const p2 = plan(st2, {}, {});
+  const v3 = S.check(p2, { state: st2, caseFolds: true });
+  ok(v3.some(x => x.kind === 'blocked' && x.path === nfd),
+     'NFD/NFC twins were not detected: ' + JSON.stringify(v3));
+  // A blocked twin also never resolves as a conflict write.
+  const st3 = { 'A.txt': F(2, 'p', { by: 'x' }), 'a.txt': F(2, 'q', { by: 'y' }) };
+  const p3 = plan(st3, { 'a.txt': D('local') }, {});
+  const v4 = S.check(p3, { state: st3, caseFolds: true });
+  const ap = S.apply(p3, v4, []);
+  ok(ap.keepBoth.every(k => k.path !== 'a.txt') || ap.keepBoth.every(k => k.path !== 'A.txt'),
+     'both twins were written through the conflict path');
+}
+
 /* ---- determinism ------------------------------------------------------------------------------ */
 {
   const mk = (order) => {

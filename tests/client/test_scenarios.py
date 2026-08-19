@@ -39,6 +39,13 @@ REQUIRED = [
     "the CAS race",                         # two devices editing one file at once — both survive
     "remove-and-re-add cannot haunt",       # the era; "instantly has 373 conflicts"
     "the receipts",                         # the torn store copy that healed itself, end to end
+    "pause cuts into a big upload",         # "i paused it during a large windows ISO upload"
+    "pause cuts into a big DOWNLOAD",
+    "a crash that lost the journal checkpoint",   # records ahead of the journal is the SAFE direction
+    "zero-byte files are files",
+    "the era changing mid-sweep",
+    "a name Windows cannot hold",           # Linux creates notes:v2.txt, Windows can never write it
+    "a blob deleted out from under a seed", # the mid-seed reclaim heals with no buttons
 ]
 
 

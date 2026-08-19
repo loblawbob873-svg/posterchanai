@@ -2379,6 +2379,11 @@
       const id = b.dataset.oid, dir = b.dataset.odir || '';
       if(l.some(x => x.id === id)) return;
       const add = (key) => {
+        /* ONE MAPPING PER PAIR PER DEVICE. Two mappings with the same name share one journal and
+         * one record set while scanning two different directories — every sweep then contradicts
+         * the last one, permanently. Refused with the reason, not deduped silently. */
+        if(l.some(x => keyOf(x) === key)){ PC.toast('“' + key + '” is already syncing on this '
+          + 'device — one folder per name'); return; }
         // Paused: adding a folder must not start uploading it before its exclusions are set.
         l.push({ id, key, dir, name: key, excludes: [], prefs: { paused: true }, lastSyncAt: 0, lastFullScanAt: 0 });
         saveFolders(l); rememberPair(id, dir, key); watch(id); paint();
@@ -2407,6 +2412,8 @@
         if(!picked) return;
         const l = folders();
         if(l.some(x => x.id === picked.id)){ PC.toast('that folder is already syncing'); return; }
+        if(l.some(x => keyOf(x) === key)){ PC.toast('“' + key + '” is already syncing on this '
+          + 'device — one folder per name'); return; }
         l.push({ id: picked.id, key, dir: picked.dir, name: key,
                  excludes: [], prefs: { paused: true }, lastSyncAt: 0, lastFullScanAt: 0 });
         saveFolders(l); rememberPair(picked.id, picked.dir, key); watch(picked.id); paint();
@@ -2441,6 +2448,8 @@
           + 'folder can be anywhere on each one.', guess) || '');
         if(!key) return;
         if(key.length < 4){ PC.toast('use at least 4 letters or digits'); return; }
+        if(list2.some(x => keyOf(x) === key)){ PC.toast('“' + key + '” is already syncing on this '
+          + 'device — one folder per name'); return; }
         /* ADDING A FOLDER STARTS IT CLEAN, WHATEVER WAS LEFT BEHIND.
          *
          * The agreement is keyed on the NAME, so a record from a previous pairing of that name

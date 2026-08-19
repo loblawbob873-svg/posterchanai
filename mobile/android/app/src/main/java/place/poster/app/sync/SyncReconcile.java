@@ -292,6 +292,38 @@ public final class SyncReconcile {
                     }
                 }
             }
+            /* TWO NAMES, ONE FILE, ON A FOLDING FILESYSTEM — mirrors the JS engine: `Photo.jpg`
+             * and `photo.jpg` are one file on Windows/macOS/most of Android, and fetching both
+             * makes the two records climb versions against each other for ever. Only the winner
+             * (highest version, then first name) may be written; the twins are refused fatally. */
+            Map<String, List<String>> groups = new LinkedHashMap<String, List<String>>();
+            for (Map.Entry<String, Map<String, Object>> q : state.entrySet()) {
+                if (!SyncDiff.live(q.getValue())) continue;
+                String f = java.text.Normalizer.normalize(q.getKey(),
+                        java.text.Normalizer.Form.NFC).toLowerCase(java.util.Locale.ROOT);
+                List<String> gg = groups.get(f);
+                if (gg == null) { gg = new ArrayList<String>(); groups.put(f, gg); }
+                gg.add(q.getKey());
+            }
+            Set<String> writes = new LinkedHashSet<String>();
+            for (Map<String, Object> a : p.fetch) writes.add(str(a.get("path")));
+            for (Map<String, Object> a : p.keepBoth) writes.add(str(a.get("path")));
+            for (List<String> twins : groups.values()) {
+                if (twins.size() < 2) continue;
+                final Map<String, Map<String, Object>> st = state;
+                Collections.sort(twins, new java.util.Comparator<String>() {
+                    public int compare(String x, String y) {
+                        long d = versionOf(st.get(y)) - versionOf(st.get(x));
+                        if (d != 0) return d > 0 ? 1 : -1;
+                        return x.compareTo(y);
+                    }
+                });
+                for (int i = 1; i < twins.size(); i++) {
+                    if (writes.contains(twins.get(i))) {
+                        out.add(act("kind", "blocked", "fatal", Boolean.TRUE, "path", twins.get(i)));
+                    }
+                }
+            }
         }
         return out;
     }
@@ -320,7 +352,9 @@ public final class SyncReconcile {
         for (Map<String, Object> f : p.fetch) {
             if (!blocked.contains(str(f.get("path")))) out.fetch.add(f);
         }
-        out.keepBoth.addAll(p.keepBoth);
+        for (Map<String, Object> f : p.keepBoth) {
+            if (!blocked.contains(str(f.get("path")))) out.keepBoth.add(f);
+        }
         out.settle.addAll(p.settle);
         if (!noTrash) out.trash.addAll(p.trash);
         if (!noTomb) out.tombstone.addAll(p.tombstone);

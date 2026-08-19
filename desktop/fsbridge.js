@@ -94,6 +94,25 @@ const ignored = name => IGNORE.has(name) || name.endsWith(PART) || TEMP_RX.test(
  * Symlinks are SKIPPED rather than followed: following them duplicates data at best and walks out
  * of the tree (or into a cycle) at worst, and a sync that silently uploads whatever ~/Documents/link
  * points at is a data leak, not a feature. */
+/* AN UNREADABLE FILE GETS ONE REPAIR ATTEMPT BEFORE IT IS SKIPPED — by the APP, never by asking a
+ * person to open a terminal. The case that produced it: files restored by rsync under WSL carry
+ * ACLs the Windows process cannot read, so 13 paths sat "left alone" with a fix that only icacls
+ * could apply. The bridge runs in the main process and can do exactly that itself: clear the
+ * read-only/system attributes, reset the ACL to inherit, retry. Once per path per process — a file
+ * that stays unreadable after a repair is genuinely somebody else's. */
+const _healed = new Set();
+function healRead(abs){
+  if(_healed.has(abs)) return false;
+  _healed.add(abs);
+  try{ fs.chmodSync(abs, 0o644); }catch(_){}
+  if(process.platform === 'win32'){
+    const { spawnSync } = require('child_process');
+    try{ spawnSync('attrib', ['-r', '-s', '-h', abs], { timeout: 5000, windowsHide: true }); }catch(_){}
+    try{ spawnSync('icacls', [abs, '/reset', '/q'], { timeout: 10000, windowsHide: true }); }catch(_){}
+  }
+  return true;
+}
+
 async function scan(id, opts){
   const root = roots.find(r => r.id === id);
   if(!root) throw new Error('unknown sync folder');
@@ -121,7 +140,11 @@ async function scan(id, opts){
       if(!ent.isFile()) continue;
       let st;
       try{ st = await fsp.stat(abs); }
-      catch(e){ skipped.push({ path: path.relative(base, abs), why: e.code || 'unreadable' }); continue; }
+      catch(e){
+        let ok = false;
+        if(healRead(abs)){ try{ st = await fsp.stat(abs); ok = true; }catch(_){ ok = false; } }
+        if(!ok){ skipped.push({ path: path.relative(base, abs), why: e.code || 'unreadable' }); continue; }
+      }
       const rel = relDir;
       if(isExcluded(rel)) continue;
       if(maxBytes && st.size > maxBytes){ skipped.push({ path: rel, why: 'too big', size: st.size }); continue; }
@@ -132,7 +155,13 @@ async function scan(id, opts){
          * corrupt copy with a perfectly good checksum. Re-stat afterwards: if size or mtime moved,
          * something else owns this file right now, so leave it and take it on the next sweep. A
          * delay is recoverable; a torn upload is not. */
-        e.sha = await sha256(abs);
+        /* Guarded: one unreadable file must cost one skip, never the whole hashing scan. */
+        try{ e.sha = await sha256(abs); }
+        catch(err){
+          let ok = false;
+          if(healRead(abs)){ try{ e.sha = await sha256(abs); ok = true; }catch(_){ ok = false; } }
+          if(!ok){ skipped.push({ path: rel, why: err.code || 'unreadable' }); continue; }
+        }
         let after;
         try{ after = await fsp.stat(abs); }catch(_){ skipped.push({ path: rel, why: 'vanished' }); continue; }
         if(after.size !== st.size || Math.floor(after.mtimeMs) !== Math.floor(st.mtimeMs)){
@@ -653,4 +682,9 @@ function removeRoot(id){
 
 module.exports = { init, list, addRoot, removeRoot, resolveIn, scan, sha256,
                    readPart, writePart, writeCommit, confirmGone, listTrash,
-                   read, write, move, trash, emptyTrash, trashStat, hashPart, hashFile, discardPart, partSize, sweepParts, watch, unwatch, IGNORE };
+                   read, write, move, trash, emptyTrash, trashStat, hashPart, hashFile, discardPart, partSize, sweepParts, watch, unwatch, IGNORE,
+                   /* Whether THIS filesystem folds case (Windows/macOS: yes; Linux: no) — the
+                    * engine refuses to write colliding twins on a folding disk. And the platform,
+                    * so the executor can refuse names Windows cannot hold before failing on them
+                    * every sweep. */
+                   caseFolds: process.platform !== 'linux', platform: process.platform };
