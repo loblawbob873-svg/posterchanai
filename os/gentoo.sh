@@ -1994,6 +1994,18 @@ FSTAB
 			echo "etc/shadow f 640 0 0 cat $WORK/shadow"
 			echo "home d 755 0 0"
 			echo "home/live d 755 1000 1000"
+			# AN EMPTY HOME IS A TERMINAL, NOT A DESKTOP.
+			#
+			# What starts the GUI is `~/.bash_profile` — the login shell on tty1 execs sway, which
+			# is how accounts() sets a real user up. Excluding /home and creating an empty
+			# /home/live therefore produced a live image that autologged in correctly and dropped
+			# straight to a bash prompt: "posterchan live cd is totally shit ... booted to a
+			# terminal, no gui". The scrub removed the operator AND the one file that starts the
+			# session, because on this system they live in the same directory.
+			#
+			# Written from the SAME heredoc the installer uses rather than a copy, so the live
+			# session and an installed one cannot drift apart.
+			echo "home/live/.bash_profile f 644 1000 1000 cat $WORK/live.bash_profile"
 			echo "etc/systemd/system/getty@tty1.service.d d 755 0 0"
 			echo "etc/systemd/system/getty@tty1.service.d/override.conf f 644 0 0 cat $WORK/gettyd/override.conf"
 			# A hostname that is not yours. `posterchanos` is what an unconfigured install should
@@ -2037,6 +2049,16 @@ FSTAB
 			echo "usr/share/applications/posterchanos-install.desktop f 644 0 0 cat $WORK/install.desktop"
 		fi
 	} >"$PSEUDO"
+
+	# The live user's login shell, identical to the one accounts() writes for a real user — see the
+	# pseudo-file above.
+	cat >"$WORK/live.bash_profile" <<'PROFILE'
+[[ -f ~/.bashrc ]] && . ~/.bashrc
+if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
+	export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=sway MOZ_ENABLE_WAYLAND=1
+	exec sway
+fi
+PROFILE
 
 	cat >"$WORK/install.desktop" <<'DESKTOP'
 [Desktop Entry]

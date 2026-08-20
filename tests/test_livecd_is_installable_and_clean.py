@@ -235,6 +235,53 @@ class ItFindsItsOwnFilesWhereverItIsInstalled(unittest.TestCase):
         self.assertNotIn("exit 1", seg)
 
 
+class TheLiveSessionActuallyStarts(unittest.TestCase):
+    """An empty home is a terminal, not a desktop.
+
+    "posterchan live cd is totally shit! it used Grub instead of systemd-boot and booted to a
+     terminal, no gui"
+
+    What starts the GUI is `~/.bash_profile` — the login shell on tty1 execs sway. Excluding /home
+    and creating an empty /home/live produced an image that autologged in perfectly and dropped to a
+    bash prompt. The scrub removed the operator AND the one file that starts a session, because on
+    this system they live in the same directory.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        src = GENTOO.read_text()
+        i = src.index("liveCD() {")
+        cls.fn = src[i:src.index("\n}", i)]
+        cls.src = src
+
+    def test_the_live_user_gets_a_login_shell(self):
+        self.assertIn("home/live/.bash_profile", self.fn,
+                      "the live user's home is empty, so autologin lands on a bash prompt")
+
+    def test_it_starts_the_compositor(self):
+        i = self.fn.index('cat >"$WORK/live.bash_profile"')
+        self.assertIn("exec sway", self.fn[i:i + 400])
+
+    def test_it_only_does_so_on_the_first_tty(self):
+        """A second console must still be a console."""
+        i = self.fn.index('cat >"$WORK/live.bash_profile"')
+        self.assertIn("XDG_VTNR", self.fn[i:i + 400])
+
+    def test_it_matches_what_a_real_install_gets(self):
+        """The live session and an installed one must not drift — both exec sway from tty1 with the
+        same environment."""
+        for line in ("exec sway", "XDG_SESSION_TYPE=wayland", "MOZ_ENABLE_WAYLAND=1"):
+            with self.subTest(line=line):
+                self.assertGreaterEqual(self.src.count(line), 2,
+                                        "%r appears in only one of the two profiles" % line)
+
+    def test_the_file_exists_before_the_image_is_packed(self):
+        """A pseudo-file naming a path that does not exist yet is a silently missing entry."""
+        write = self.src.index('cat >"$WORK/live.bash_profile"')
+        pack = self.src.index('mksquashfs / "$WORK/iso/LiveOS/squashfs.img"')
+        self.assertLess(write, pack)
+
+
 class TheAccountRewriteActuallyWorks(unittest.TestCase):
     """RUN, not grepped. It fails in two opposite silent ways: leaving a person in, or dropping the
     system users the image needs to boot."""

@@ -1126,9 +1126,22 @@
       repainting++;
       try{
         if(w.render){ try{ w.render(); }catch(err){ /* a stale document is not fatal */ } }
+        /* A `noFeed` WINDOW HAS NO CLIENT VIEW TO SWITCH TO, and asking for one is destructive.
+         *
+         * A native window's view name is `native:<con_id>` — an id, not a view. Handed to
+         * `switchView` it matched nothing, and `renderView` blanks `#feed` to a spinner BEFORE it
+         * discovers there is nothing to draw. `#feed` at that moment belongs to whichever window
+         * last claimed it, so opening foot wrote a spinner into the Terminal and left it there:
+         * "my foot terminal went black", "the posterchanOS terminal goes black with spinning
+         * circle". Measured on the machine — feedParent stayed `osw-body`, spinner went true the
+         * instant the native window was adopted.
+         *
+         * `w.render` is still honoured, because a folder is `noFeed` too and paints itself. What is
+         * skipped is only the FALLBACK, which exists to repaint a feature into the shared feed —
+         * and a window that does not use the shared feed has no feature to repaint. */
         // `appView` first, exactly as the restored branch above — repaint what the window IS
         // showing, not what it was opened as. See noteView.
-        else try{ const v = w.appView || w.view;
+        else if(!w.noFeed) try{ const v = w.appView || w.view;
                   PC().switchView ? PC().switchView(v) : null; }catch(err){ /* a view that refuses is not fatal */ }
       }finally{ repainting--; }
     }
@@ -1551,6 +1564,23 @@
     }catch(_){}
   }
 
+  /* A WINDOW THAT COULD NOT BE MEASURED YET GETS ANOTHER LOOK.
+   *
+   * Bounded, because "no area" is also what a genuinely hidden or zero-sized window reports, and an
+   * unbounded retry there would poll the compositor for the life of the page. Two frames and a short
+   * settle is enough for a layout that is merely pending; anything still unmeasurable after that is
+   * not waiting on layout, and the next real event (a focus, a drag, the 4-second poll) will catch
+   * it. The counter resets whenever a pass places something, so a busy desktop never exhausts it. */
+  let _natRetry = 0, _natRetryT = 0;
+  function _natMeasureAgain(){
+    if(_natRetryT || _natRetry >= 6) return;
+    _natRetry++;
+    _natRetryT = setTimeout(() => {
+      _natRetryT = 0;
+      requestAnimationFrame(() => { if(nativeWins().length) nsync(); });
+    }, 60);
+  }
+
   /* One sync pass. Serialised rather than queued: while a drag is in flight this is called on every
    * frame, and letting two overlap means the compositor is sent the second-to-last position last. */
   async function nsync(){
@@ -1625,7 +1655,21 @@
           continue;
         }
         const rect = NAT().mapRect(_bodyRect(it.w), scale);
-        if(!rect) continue;                     // measured with no area — leave it where it is
+        if(!rect){
+          /* MEASURED WITH NO AREA — AND THAT HAS TO BE RETRIED, not merely skipped.
+           *
+           * The commonest cause is not a minimised window, it is a BRAND NEW one: `adoptNative`
+           * calls this the moment it builds the frame, before the browser has laid it out, so the
+           * body is 0x0 and the app is never placed. Skipping left it wherever the compositor first
+           * put it, with our frame drawn somewhere else — a black rectangle until something else
+           * happened to run a sync. Moving it is one of those things, which is exactly the report:
+           * "my foot terminal went black until i moved it".
+           *
+           * Retried on a frame rather than immediately, because the layout that is missing is the
+           * one the browser has not performed yet — an instant re-run measures the same zero. */
+          _natMeasureAgain();
+          continue;
+        }
         const was = _natSent.get(it.native);
         if(was === 'hidden'){
           // Left as 'hidden' on failure ON PURPOSE: that is what makes the next pass try again.
@@ -1633,7 +1677,9 @@
         }
         if(was === 'hidden' || NAT().changed(was, rect)){
           try{ await pcWM.place(it.native, rect.x, rect.y, rect.w, rect.h);
-               _natSent.set(it.native, rect); }
+               _natSent.set(it.native, rect);
+               _natRetry = 0;              // something landed: the budget is for a STUCK measure
+          }
           catch(_){ _natSent.delete(it.native); }
         }
       }
