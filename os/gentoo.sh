@@ -1451,6 +1451,33 @@ liveCD() {
 	echo -e "${COLOR_CYAN}═══════════════════════════════════════════════════════${COLOR_RESET}"
 	echo
 
+	# ---------------------------------------------------------------- the log, before anything else
+	#
+	# "i can't read the error generating a live cd because it goes back to the menu."
+	#
+	# Every failure below prints a line and waits for a keypress — and then the menu redraws with
+	# `clear`, so whatever was on screen is gone the moment somebody presses the key they were just
+	# told to press. On a build that takes half an hour and prints hundreds of lines, the message
+	# that matters has usually scrolled away before that anyway. A transcript is the only thing that
+	# survives both.
+	#
+	# It is opened HERE, at a fixed path, rather than under the output directory — the earliest
+	# failures (a missing tool, a squashfs-tools without zstd) happen before anybody has been asked
+	# where the ISO should go, and a log that only exists after that point cannot record them.
+	local LOG="/var/tmp/pc-livecd.log"
+	: >"$LOG" 2>/dev/null || LOG="/dev/null"
+	{ echo "=== $(date) ==="; echo "host=$(uname -a)"; } >>"$LOG" 2>/dev/null
+	# Every "it went back to the menu" path routes through this, so the path is on screen at the
+	# moment of failure AND the reason is in a file that outlives the redraw.
+	_lcd_fail() {
+		echo "FAILED: $*" >>"$LOG" 2>/dev/null
+		echo
+		echo -e "${COLOR_YELLOW}$*${COLOR_RESET}"
+		echo -e "${COLOR_YELLOW}Full details: $LOG${COLOR_RESET}"
+		echo -e "${COLOR_YELLOW}(read it with:  less $LOG )${COLOR_RESET}"
+		read -p "Press enter key to Continue"
+	}
+
 	if [[ $EUID -ne 0 ]]; then
 		echo -e "${COLOR_YELLOW}This has to run as root — it reads every file on the disk.${COLOR_RESET}"
 		read -p "Press enter key to Continue"
@@ -1473,10 +1500,12 @@ liveCD() {
 	if [[ -n "$NEED" ]]; then
 		echo -e "${COLOR_YELLOW}Installing what this needs:${COLOR_RESET}$NEED"
 		echo
-		if ! /usr/bin/emerge -n $NEED; then
-			echo
-			echo -e "${COLOR_YELLOW}Could not install:$NEED — stopping rather than building half an ISO.${COLOR_RESET}"
-			read -p "Press enter key to Continue"
+		/usr/bin/emerge -n $NEED 2>&1 | tee -a "$LOG"
+		# PIPESTATUS, NOT the pipeline's own status. `if ! cmd | tee` tests TEE, which succeeds
+		# whatever happened upstream — the same trap the /logs board paid for, and it would turn
+		# every failure here into a silent success that goes on to build half an ISO.
+		if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+			_lcd_fail "Could not install:$NEED — stopping rather than building half an ISO."
 			return
 		fi
 	fi
@@ -1498,16 +1527,16 @@ liveCD() {
 		echo
 		mkdir -p /etc/portage/package.use
 		echo "sys-fs/squashfs-tools zstd lzma lzo xz" >/etc/portage/package.use/livecd-squashfs
-		if ! /usr/bin/emerge -n --newuse sys-fs/squashfs-tools; then
-			echo
-			echo -e "${COLOR_YELLOW}Could not rebuild squashfs-tools with zstd — stopping.${COLOR_RESET}"
-			read -p "Press enter key to Continue"
+		/usr/bin/emerge -n --newuse sys-fs/squashfs-tools 2>&1 | tee -a "$LOG"
+		# PIPESTATUS, NOT the pipeline's own status. `if ! cmd | tee` tests TEE, which succeeds
+		# whatever happened upstream — the same trap the /logs board paid for, and it would turn
+		# every failure here into a silent success that goes on to build half an ISO.
+		if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+			_lcd_fail "Could not rebuild squashfs-tools with zstd — stopping."
 			return
 		fi
 		if ! mksquashfs -help 2>&1 | grep -qw zstd; then
-			echo
-			echo -e "${COLOR_YELLOW}It rebuilt and still has no zstd. Check USE for sys-fs/squashfs-tools.${COLOR_RESET}"
-			read -p "Press enter key to Continue"
+			_lcd_fail "It rebuilt and still has no zstd. Check USE for sys-fs/squashfs-tools."
 			return
 		fi
 	fi
@@ -1519,7 +1548,7 @@ liveCD() {
 	# one, resolves against whatever directory the script was started from — usually the home
 	# directory of whoever ran it — and a multi-gigabyte image plus its work tree lands on the
 	# partition least able to take it, silently.
-	local OUTDIR ISO WORK LABEL DEFOUT LOG
+	local OUTDIR ISO WORK LABEL DEFOUT
 	DEFOUT="/var/tmp/livecd"
 	read -p 'Write the ISO where? ' -e -i "$DEFOUT" OUTDIR
 	# An empty answer is the default, not the current directory. `read -e -i` pre-fills only on a
@@ -1535,7 +1564,7 @@ liveCD() {
 		[[ "$OUTDIR" != /* ]] && { echo "still not a full path — stopping."; read -p "Press enter key to Continue"; return; }
 	fi
 	OUTDIR="${OUTDIR%/}"
-	mkdir -p "$OUTDIR" || { echo "cannot write to $OUTDIR"; read -p "Press enter key to Continue"; return; }
+	mkdir -p "$OUTDIR" || { _lcd_fail "cannot write to $OUTDIR"; return; }
 	LABEL="PCLIVE"
 	ISO="$OUTDIR/posterchan-live-$(date +%Y%m%d).iso"
 	WORK="$OUTDIR/work"
@@ -1559,8 +1588,7 @@ liveCD() {
 	# on and the build is far too long to ask somebody to sit through twice. Every step below appends
 	# a line; the failure paths already print, and this is where those prints end up when the screen
 	# has scrolled or the terminal has been closed.
-	LOG="$OUTDIR/build.log"
-	{ echo; echo "=== $(date) ==="; echo "iso=$ISO work=$WORK free=${FREE:-?}G kernel-to-find=$(uname -r)"; } >>"$LOG" 2>/dev/null
+	{ echo "iso=$ISO work=$WORK free=${FREE:-?}G kernel-to-find=$(uname -r)"; } >>"$LOG" 2>/dev/null
 	echo -e "${COLOR_YELLOW}Log:  $LOG${COLOR_RESET}"
 
 	local KEEP_HOME
@@ -1761,9 +1789,7 @@ DESKTOP
 		-comp zstd -Xcompression-level 15 -noappend -no-progress \
 		-pf "$PSEUDO" "${EXARGS[@]}"; then
 		echo
-		echo "mksquashfs FAILED" >>"$LOG" 2>/dev/null
-		echo -e "${COLOR_YELLOW}mksquashfs failed — nothing was written. See $LOG${COLOR_RESET}"
-		read -p "Press enter key to Continue"
+		_lcd_fail "mksquashfs failed — nothing was written."
 		return
 	fi
 
@@ -1800,11 +1826,9 @@ DESKTOP
 		[[ -n "$KERNEL" ]] && echo -e "${COLOR_YELLOW}The running kernel ($KVER) is not under /boot; using $KERNEL instead.${COLOR_RESET}"
 	fi
 	if [[ -z "$KERNEL" ]]; then
-		echo -e "${COLOR_YELLOW}No kernel found under /boot — cannot build a bootable ISO.${COLOR_RESET}"
-		echo -e "${COLOR_YELLOW}Looked for /boot/<machine-id>/$KVER/linux, /boot/vmlinuz-$KVER*,${COLOR_RESET}"
-		echo -e "${COLOR_YELLOW}/lib/modules/$KVER/vmlinuz. What is actually there:${COLOR_RESET}"
+		{ echo "no kernel; /boot holds:"; ls -1 /boot 2>/dev/null | head -40; } >>"$LOG" 2>/dev/null
 		ls -1 /boot 2>/dev/null | head -20
-		read -p "Press enter key to Continue"
+		_lcd_fail "No kernel found under /boot — looked for /boot/<machine-id>/$KVER/linux, /boot/vmlinuz-$KVER* and /lib/modules/$KVER/vmlinuz."
 		return
 	fi
 	echo -e "${COLOR_YELLOW}Kernel: $KERNEL${COLOR_RESET}"
@@ -1821,9 +1845,7 @@ DESKTOP
 		--add "dmsquash-live" --omit "crypt crypt-gpg crypt-loop" \
 		--kver "$KVER" "$WORK/iso/boot/initramfs.img"; then
 		echo
-		echo "dracut FAILED (kver=$KVER)" >>"$LOG" 2>/dev/null
-		echo -e "${COLOR_YELLOW}dracut failed — the ISO would not boot, so nothing was written. See $LOG${COLOR_RESET}"
-		read -p "Press enter key to Continue"
+		_lcd_fail "dracut failed (kernel $KVER) — the ISO would not boot, so nothing was written."
 		return
 	fi
 
@@ -1854,11 +1876,11 @@ GRUB
 	echo
 	echo -e "${COLOR_YELLOW}Writing $ISO${COLOR_RESET}"
 	echo
-	if ! grub-mkrescue -o "$ISO" "$WORK/iso" -- -volid "$LABEL" 2>&1 | tee -a "$LOG"; then
+	grub-mkrescue -o "$ISO" "$WORK/iso" -- -volid "$LABEL" 2>&1 | tee -a "$LOG"
+	# PIPESTATUS, not the pipeline's — see the note above. `tee` succeeds whatever grub-mkrescue did.
+	if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
 		echo
-		echo "grub-mkrescue FAILED" >>"$LOG" 2>/dev/null
-		echo -e "${COLOR_YELLOW}grub-mkrescue failed — no ISO was written. See $LOG${COLOR_RESET}"
-		read -p "Press enter key to Continue"
+		_lcd_fail "grub-mkrescue failed — no ISO was written."
 		return
 	fi
 

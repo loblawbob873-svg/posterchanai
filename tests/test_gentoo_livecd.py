@@ -123,11 +123,22 @@ class LiveCD(unittest.TestCase):
             self.assertIn(pkg, self.code, "it does not install " + pkg)
 
     def test_a_failure_stops_rather_than_writing_half_an_iso(self):
-        """An ISO that was written anyway is one somebody discovers is unbootable with a laptop in
-        pieces in front of them."""
-        for step in ("mksquashfs", "dracut", "grub-mkrescue"):
-            self.assertRegex(self.code, r"if ! %s[\s\S]{0,400}?return" % step,
-                             step + " failing does not stop the build")
+        """Every expensive step is checked and stops the build rather than carrying on with a hole
+        in the image. The grub step is teed to the transcript now, so its status is read from
+        PIPESTATUS rather than from the pipeline — see TheFailureCanActuallyBeREAD."""
+        # Anchored on the INVOCATION, not the first mention — every one of these is named in a
+        # comment paragraphs earlier, and matching that measures the prose instead of the code.
+        for step, call in (("mksquashfs", "mksquashfs / "),
+                           ("dracut", "dracut --force"),
+                           ("grub-mkrescue", "grub-mkrescue -o")):
+            with self.subTest(step=step):
+                self.assertIn(call, self.body, "%s is never actually run" % step)
+                i = self.body.index(call)
+                after = self.body[i:i + 900]
+                self.assertIn("return", after, "%s does not stop the build when it fails" % step)
+                self.assertTrue("_lcd_fail" in after or "COLOR_YELLOW" in after,
+                                "%s fails without saying so" % step)
+
 
     def test_the_machine_id_is_blanked(self):
         """A duplicated machine-id gives every live boot the same identity, which breaks journald,
@@ -135,11 +146,70 @@ class LiveCD(unittest.TestCase):
         self.assertIn("etc/machine-id", self.code)
 
     def test_it_is_reachable_from_the_menu(self):
-        """A function nothing calls is a feature nobody has."""
+        """A function nothing calls is a feature nobody has.
+
+        The LABEL is not pinned word for word — it has already been rewritten once ("Build a
+        LiveCD" -> "Build an installable ISO of this system") and this test failed for that alone,
+        which is a test that cries about prose while saying nothing about reachability. What matters
+        is that the menu offers a numbered entry that mentions an ISO and that the branch behind it
+        calls the function."""
         tweaks = _fn("tweaks")
         self.assertIn("liveCD", tweaks)
-        self.assertIn("Build a LiveCD", tweaks)
+        entries = [l for l in tweaks.splitlines() if "ISO" in l and "echo" in l]
+        self.assertTrue(entries, "no menu line offers to build an ISO")
+        import re as _re
+        self.assertTrue(_re.search(r"\[\d\]", entries[0]),
+                        "the ISO entry has no number to type: %s" % entries[0])
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheFailureCanActuallyBeREAD(unittest.TestCase):
+    """"i can't read the error generating a live cd because it goes back to the menu."
+
+    Every failure printed a line and waited for a keypress — and then the menu redraws with `clear`,
+    so the message vanishes the instant somebody presses the key they were just told to press. On a
+    build that runs for half an hour and prints hundreds of lines, the one that matters has usually
+    scrolled off before that anyway. A transcript is the only thing that survives both, and it has
+    to be opened at the TOP of the function: the earliest failures — a missing tool, a
+    squashfs-tools without zstd — happen long before anybody has been asked where the ISO goes, so a
+    log living under the output directory cannot record them.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.body = _fn("liveCD")
+
+    def test_there_is_one_log_and_it_is_opened_before_anything_can_fail(self):
+        self.assertIn('LOG="/var/tmp/pc-livecd.log"', self.body)
+        # Before the first thing that can stop the build: the tool preflight.
+        self.assertLess(self.body.index('LOG="/var/tmp/pc-livecd.log"'),
+                        self.body.index("command -v mksquashfs"),
+                        "the log is opened after the first step that can fail, so that step's "
+                        "failure is exactly the one it cannot record")
+
+    def test_every_way_out_says_where_to_read_it(self):
+        """A path that prints and returns without naming the log is a path whose message is gone the
+        moment the menu redraws."""
+        self.assertIn("_lcd_fail()", self.body)
+        self.assertIn("$LOG", self.body)
+        # No failure path may still be the old print-and-wait shape.
+        stray = [l.strip() for l in self.body.splitlines()
+                 if "COLOR_YELLOW" in l and "failed" in l.lower() and "_lcd_fail" not in l]
+        self.assertEqual(stray, [], "these failures do not go through _lcd_fail: %s" % stray)
+
+    def test_no_failure_is_judged_by_a_pipelines_own_status(self):
+        """`if ! cmd | tee` tests TEE, which succeeds whatever happened upstream — the same trap the
+        /logs board paid for, and here it would turn a failure into a silent success that goes on to
+        build half an ISO. Teed commands must be judged by PIPESTATUS."""
+        bad = [l.strip() for l in self.body.splitlines()
+               if "| tee" in l and l.strip().startswith("if ")]
+        self.assertEqual(bad, [], "judged by the pipeline's own status: %s" % bad)
+        for cmd in ("emerge -n $NEED", "--newuse sys-fs/squashfs-tools", "grub-mkrescue -o"):
+            i = self.body.index(cmd)
+            after = self.body[i:i + 400]
+            if "| tee" in after:
+                self.assertIn("PIPESTATUS", after,
+                              "%s is teed and its real exit status is never read" % cmd)
