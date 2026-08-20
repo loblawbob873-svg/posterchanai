@@ -76,6 +76,24 @@ public final class HomeMetrics {
     public static int drawerColumnDp(int smallestWidthDp) { return isTablet(smallestWidthDp) ? 104 : 80; }
 
     /**
+     * HOW FAR UP A FINGER MUST TRAVEL TO OPEN THE DRAWER.
+     *
+     * `ViewConfiguration`'s touch slop is a DENSITY answer to a SIZE question. Six times the slop is
+     * about 48dp, which is a deliberate drag on a phone and a twitch on a ten-inch screen — the same
+     * gesture that feels right in a hand feels accidental on a tablet propped on a desk. So the
+     * threshold is the larger of the two: unchanged on every phone (where slop wins), proportional
+     * on anything bigger.
+     *
+     * The FLING path is untouched and is why this cannot make the drawer hard to open: a quick flick
+     * still opens it at any distance. This only governs the slow, deliberate drag.
+     */
+    public static int swipeUpMinPx(int slopPx, int viewHeightPx) {
+        int byFeel = Math.max(1, slopPx) * 6;
+        int byScreen = viewHeightPx / 16;
+        return Math.max(byFeel, byScreen);
+    }
+
+    /**
      * THE KEY THE ARRANGEMENT IS STORED UNDER. One desktop per grid shape, so a tablet's landscape
      * and its portrait are two arrangements rather than one that keeps being re-flowed into the
      * other. Rotating back puts every icon where it was.

@@ -47,13 +47,61 @@ reported as *"missing traditional home desktop view"*. There are three layers no
 * **the drawer** — every app on the phone, alphabetical and searchable, over the top. Opened from the
   dock's last button, closed by BACK.
 
-**Widgets are real `AppWidgetHost` widgets**, picked through Android's own picker and resized by
-dragging the frame's edges. Three things there are easy to get half right and each fails silently:
-`BIND_APPWIDGET` is signature-level so a third-party launcher must ask via `ACTION_APPWIDGET_BIND`
-(skip it and the widget draws nothing, for ever); a provider's configuration activity that is never
-started leaves the classic grey box; and a widget that is not told its new size with
-`updateAppWidgetOptions` keeps drawing its old layout inside the new hole. Every failure path gives
-the allocated id back — a leaked one is a row in the system's own table nothing will reclaim.
+**Widgets are real `AppWidgetHost` widgets**, picked from **our own list** and resized by dragging
+the frame's edges.
+
+**The list is ours because nothing on a modern Android answers `ACTION_APPWIDGET_PICK`.** That
+activity belonged to the era when a system dialog owned "Add to Home screen"; every launcher since
+has drawn its own. The first version fired that intent as step 1, so `startActivityForResult` threw
+`ActivityNotFoundException`, the catch freed the widget id and showed "this phone has no widget
+picker", and *every* route into the flow ended there — which is why "no widgets can be added to
+posterchan launcher home screen" survived a round of fixes that included making the flow findable
+from three menus. All three led to the same dead end. **Nothing about that is visible from a source
+file**: an intent nobody answers and a person cancelling a dialog land two lines apart.
+`Widgets.systemPickerExists()` is kept only so a device test can state the fact as a measurement.
+
+`providers()` builds the list from `getInstalledProviders()`, sorted by owning app then by the
+widget's own label, each row showing its size in cells. **An empty list says "no app on this phone
+offers a widget"** — a different sentence from "the picker is missing", and telling those apart is
+the difference between this round of the bug and the last three.
+
+Three things after that are easy to get half right and each fails silently: `BIND_APPWIDGET` is
+signature-level so a third-party launcher must ask via `ACTION_APPWIDGET_BIND` (skip it and the
+widget draws nothing, for ever — and the ask must carry `EXTRA_APPWIDGET_PROVIDER_PROFILE`, or a
+work-profile widget binds against the wrong user and the dialog refuses in a way that looks like the
+person said no); a provider's configuration activity that is never started leaves the classic grey
+box; and a widget that is not told its new size with `updateAppWidgetOptions` keeps drawing its old
+layout inside the new hole. Every failure path gives the allocated id back — a leaked one is a row in
+the system's own table nothing will reclaim.
+
+`WidgetDeviceTest` drives all of it on a real API-34 device. `appwidget grantbind` stands in for the
+one step that needs a person, so allocate → bind → configure-or-ready → draw → place all run for
+real; it asserts the refusal **before** the grant too, so the bind dialog cannot quietly become dead
+code, and it checks the id count so an abandoned add cannot leak.
+
+### It fits the screen it is on
+
+`HomeMetrics` is pure and run by tests. Four columns and a five-slot dock are right on a phone; on a
+ten-inch screen they are four icons the size of coasters and five more floating in the middle of a
+bar. Above `smallestScreenWidthDp` 600 the grid widens to 5-7 columns, the dock to 6-9 slots at 64dp,
+and the drawer's `auto_fit` column width goes from 80dp to 104.
+
+**Columns come from the SHORT side, never from the current width.** If they came from the width, every
+rotation would re-flow the arrangement through `Desk.fit` — nothing deleted, but rotate to landscape
+and back and your icons are not where you left them, for ever, and a tablet rotates all the time. A
+phone in landscape is still a phone for the same reason: its width in dp is tablet-sized and its
+ergonomics are not.
+
+**Rows come from the height that was actually available, and that is only knowable after layout.**
+`deskRows` divides the desktop's measured height, which during `onCreate` and `onStart` is zero — so
+every first draw used the fallback and the grid only ever adapted if something later happened to
+redraw it. `resizeSoon()` is a `post` after the first layout pass; it redraws only if the shape
+changed.
+
+**The desktop is stored per grid shape** (`desk.6x4`), so landscape and portrait are two
+arrangements rather than one being fitted into the other. A shape that has never been seen
+*inherits* the previous one rather than starting empty — a blank desktop after a rotation reads as
+the launcher having thrown everything away.
 
 Where things sit is `Desk`, which is pure and run by tests. Its three load-bearing rules:
 
@@ -369,7 +417,11 @@ sets. No emoji anywhere — `tests/test_android_icon_sprite.py` fails on one in 
 | call-state legality, the dialpad, the role components | `tests/test_android_dialer.py` |
 | nine palettes against `client.css` | `tests/test_android_theme_palettes.py` |
 | icons against the sprite | `tests/test_android_icon_sprite.py` |
+| the tablet grid, the dock and the per-shape desktop | `tests/test_android_launcher.py` |
 | the whole shell compiles against the real `android.jar` | `tests/test_android_shell_compiles.py` |
+| the instrumented tests themselves compile | `tests/test_android_device_tests_compile.py` |
+| adding a widget, end to end, on a real device | `androidTest/.../home/WidgetDeviceTest.java` |
+| Messages, Phone and Email are in the drawer | `androidTest/.../shortcut/DrawerAppsDeviceTest.java` |
 | on a real Android | `mobile/android/app/src/androidTest/` |
 | the lifecycle, Doze, and what the launcher costs | `scripts/android_device_checks.sh` |
 
@@ -390,7 +442,7 @@ genuine SDK instead of hand-written stubs. It found three real bugs on its first
 
 ---
 
-## Messages and Phone are apps, not just handlers
+## Messages, Phone and Email are apps, not just handlers
 
 Only `MainActivity` carried a `MAIN`/`LAUNCHER` filter, so Messages and Phone could be *routed* to as
 the phone's default handlers and appeared in no drawer at all — PosterChan's own or the stock one.
@@ -405,9 +457,24 @@ uses for `ShareToAi`.
 
 They appear in **every** launcher, which matters because the HOME role is opt-in and most people will
 keep their existing home screen. The icons are generated from the same sprite
-(`scripts/gen_android_app_icons.py`) — a handset and a speech bubble, so a drawer shows three
-different things rather than the PosterChan mark three times. Adaptive for Android 8+, with legacy
-rasters per density because minSdk is 23 and an adaptive icon alone does not resolve on 23-25.
+(`scripts/gen_android_app_icons.py`) — a handset, a speech bubble and an envelope, so a drawer shows
+four different things rather than the PosterChan mark four times. Adaptive for Android 8+, with
+legacy rasters per density because minSdk is 23 and an adaptive icon alone does not resolve on 23-25.
+
+**Email is the third one and it could not be an alias onto a native activity** — the mail client is a
+view inside the WebView, so there is nothing to target. `.shortcut.ViewActivity` is a trampoline: no
+layout, no window, no WebView of its own, it starts `MainActivity` carrying the same
+`HomeActivity.EXTRA_VIEW` the launcher's own tiles use (consumed by `HomePlugin.consumeLaunchView` →
+`PC.switchView`) and finishes before it has drawn anything. **Which view is the alias's `meta-data`,
+not a Java fact**, read back off the launching component — an alias reports *itself* from
+`getComponentName()`, the same property `.ShareToAi` relies on — so the next PosterChan screen in the
+phone's drawer is an alias and a string and no code at all.
+
+`DrawerAppsDeviceTest` asks the only authority there is: a `MAIN`/`LAUNCHER` query against this
+package on a real device, plus that no two entries share a name or an icon. A routing filter
+(`SENDTO`, `APP_MESSAGING`, `DIAL`) makes an app the phone's default handler and puts it in no drawer
+at all, which is exactly how Messages and Phone existed while their owner correctly reported that
+they did not.
 
 ## A tile that cannot launch is never drawn
 
@@ -430,7 +497,12 @@ The drawer opens by swiping up from the home surface and the button is off the d
 Android launcher has done since Pixel dropped it, and a dock slot back for an app somebody uses.
 
 The gesture is measured against `ViewConfiguration`'s slop and fling velocity rather than a hand-picked
-pixel count, which would feel wrong at a different density; it is only ever considered while nothing
+pixel count, which would feel wrong at a different density. **But slop is a density answer to a size
+question**: six times it is about 48dp, a deliberate drag in a hand and a twitch on a ten-inch screen
+propped on a desk, so the travel needed is the larger of that and a sixteenth of the desktop's height
+(`HomeMetrics.swipeUpMinPx` — unchanged on every phone, proportional above). The **fling** half is
+untouched, which is why this cannot make the drawer harder to open: a flick still opens it at any
+distance. It is only ever considered while nothing
 is lifted and nothing is being dragged, so a long-press-drag always wins; and it closes three ways —
 **Back**, a **swipe down** (only while the grid is already at the top, or flicking back up through a
 long list would close it under your finger) and **Home**.
@@ -452,3 +524,37 @@ destroys it.
 Two things that make a stateful Drawable actually work, both silent when wrong: it must declare
 `isStateful()` **and** return `true` from `onStateChange` to ask for the redraw, and the view must be
 `clickable` or the background never hears about the press at all.
+
+---
+
+## The device was answering, and the job was throwing the answer away
+
+Twice, and both cost rounds of guessing at things a device had already measured.
+
+**`connectedDebugAndroidTest` fans out to every subproject**, and the subprojects here are the
+Capacitor plugins under `node_modules`. One of them, `send-intent`, declares `minSdkVersion 22`,
+which the manifest merger refuses against `capacitor-android`'s 23 — for the **androidTest variant
+only**. So `:send-intent:processDebugAndroidTestManifest` failed, gradle exited non-zero and the step
+went red **after `:app:connectedDebugAndroidTest` had already run all 34 tests on the device and
+passed every one**. A red job whose real answer was green is worse than a red job: it read as "the
+device tests are still broken", so the icon fix underneath it was reported as unverified when the
+device had in fact verified it. It is `:app:connectedDebugAndroidTest` now, and none of those plugin
+modules has a single androidTest source (every one logs `NO-SOURCE`), so nothing is being skipped.
+
+**The HOME check pressed HOME on a locked device.** The section above it deliberately turns the
+screen off, so the phone comes back on the keyguard, and a HOME press there resolves to
+`com.android.settings/.FallbackHome` — the placeholder shown to a user who has not unlocked. That is
+neither our launcher nor the stock one, so the check stood the stock launcher down (which changed
+nothing), pressed HOME again, saw `FallbackHome` again, and failed with "HOME did not bring up our
+launcher". Every emulator run reported the launcher as broken for a reason entirely about the lock
+screen. `wm dismiss-keyguard` comes first now.
+
+**And the logcat the tests themselves write is published.** A device test can measure something there
+is no assertion for — whether an image ships the system widget picker, how many widget providers it
+has — and the XML report carries only failures. `android_instrumented.sh` dumps logcat into the
+report artifact, so getting a fact off the device no longer means failing a test on purpose.
+
+**Tablet mode is measured on the same emulator**, with no second AVD and no second boot:
+`android_device_checks.sh` runs `wm size 2560x1600` + `wm density 240` (a 1066dp short side, which
+Android reports as a large screen), presses HOME, screenshots the desktop and the drawer, scans for
+a crash, and resets unconditionally — a device left resized would poison every check after it.

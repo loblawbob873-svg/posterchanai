@@ -186,6 +186,11 @@ public class Harness {
     say("rows-unknown", HomeMetrics.deskRows(0, 411) + " " + HomeMetrics.deskRows(0, 800));
     say("tablet", HomeMetrics.isTablet(599) + " " + HomeMetrics.isTablet(600));
     say("geometry", HomeMetrics.geometry(6, 4));
+    // The swipe-up threshold: a phone (slop 24px on a x3 density, ~1700px of desk) is unchanged at
+    // six times the slop; a tablet (slop 12px at x1.5, ~2200px of desk) is governed by the screen.
+    say("swipe-phone", HomeMetrics.swipeUpMinPx(24, 1700));
+    say("swipe-tablet", HomeMetrics.swipeUpMinPx(12, 2200));
+    say("swipe-unmeasured", HomeMetrics.swipeUpMinPx(24, 0));
 
     // 13b. Our own tile and a phone app publishing the same key never double up.
     List<AppShelf.Entry> dup = new ArrayList<AppShelf.Entry>(phone);
@@ -419,6 +424,18 @@ class Launcher(unittest.TestCase):
         self.assertEqual(self.out["rows-phone"], "7 3")
         self.assertEqual(self.out["rows-tab10"], "8 5")
         self.assertEqual(self.out["rows-unknown"], "5 6")
+
+    def test_the_swipe_up_gesture_scales_with_the_screen_not_just_the_density(self):
+        """"the swipe-up-for-apps gesture has to feel right at that size too". ViewConfiguration's
+        touch slop is a density answer to a size question: six times it is about 48dp, a deliberate
+        drag in a hand and a twitch on a tablet propped on a desk. The phone number must not move."""
+        self.assertEqual(self.out["swipe-phone"], "144")        # 24 * 6, unchanged
+        self.assertEqual(self.out["swipe-tablet"], "137")       # 2200/16 beats 12 * 6
+        self.assertEqual(self.out["swipe-unmeasured"], "144")   # before layout: fall back to feel
+        desk = _code(open(os.path.join(HOME, "DeskView.java")).read())
+        self.assertIn("HomeMetrics.swipeUpMinPx(slop, getHeight())", desk)
+        # AND THE FLING PATH IS UNTOUCHED, which is why this cannot make the drawer hard to open.
+        self.assertIn("vy < -flingMin", desk)
 
     def test_the_desktop_is_stored_per_grid_shape(self):
         """One arrangement re-flowed on every rotation is lossy in the way that matters. A shape

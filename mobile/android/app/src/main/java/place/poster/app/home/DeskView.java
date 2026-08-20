@@ -262,7 +262,11 @@ public class DeskView extends ViewGroup {
                     swiping = false;
                     // Up, and either far enough or fast enough. Both, because a slow deliberate drag
                     // and a quick flick are the same intention and people do each.
-                    if (y - downY < -slop * 6 || vy < -flingMin) {
+                    //
+                    // "Far enough" scales with the SCREEN, not only with the density — six times the
+                    // touch slop is a deliberate drag on a phone and a twitch on a tablet. The fling
+                    // half is unchanged, so a flick opens the drawer at any distance either way.
+                    if (y - downY < -HomeMetrics.swipeUpMinPx(slop, getHeight()) || vy < -flingMin) {
                         if (host != null) host.onSwipeUp();
                         return true;
                     }
