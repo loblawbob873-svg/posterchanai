@@ -110,6 +110,41 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertTrue(m)
         self.assertIn('FLATPAK_PACKAGES=""', m.group(0))
 
+    def test_nobody_is_baked_into_the_image(self):
+        """Accounts are made when somebody signs in with a key, so a named human in the installer is
+        wrong twice over: it is not their machine, and it is the account every copy of the image
+        would share. What must exist is a session to run the shell in BEFORE anyone has signed in."""
+        acc = self._fn("accounts")
+        i = acc.index("$POSTERCHANOS")
+        pcos = acc[i:acc.index("return 0", i)]
+        self.assertIn('SHELL_USER="posterchan"', pcos)
+        self.assertNotIn("$USER", pcos, "the PosterChanOS branch still creates a named account")
+
+    def test_the_session_account_cannot_be_logged_into(self):
+        """It is reached by autologin and must not be a way IN from anywhere else — not ssh, not a
+        login prompt, not su."""
+        acc = self._fn("accounts")
+        i = acc.index("$POSTERCHANOS")
+        self.assertIn("passwd -l $SHELL_USER", acc[i:acc.index("return 0", i)])
+
+    def test_root_keeps_a_password_on_this_profile(self):
+        """The default path locks root, which is defensible when one named human has NOPASSWD sudo
+        and catastrophic here, where nobody does. Measured the hard way: sudo refused a sudoers file
+        it had been handed at the wrong mode, root was locked, and the only way back into a freshly
+        installed machine was editing the kernel command line at the boot menu."""
+        acc = self._fn("accounts")
+        i = acc.index("$POSTERCHANOS")
+        pcos = acc[i:acc.index("return 0", i)]
+        self.assertIn('echo "root:$ROOT_PASSWORD" | chpasswd', pcos)
+        self.assertNotIn("passwd -dl root", pcos, "root is locked with nobody able to sudo")
+
+    def test_the_session_account_is_not_an_administrator(self):
+        acc = self._fn("accounts")
+        i = acc.index("$POSTERCHANOS")
+        pcos = acc[i:acc.index("return 0", i)]
+        self.assertNotIn("NOPASSWD: ALL", pcos, "the shell account was given blanket sudo")
+        self.assertIn("NOPASSWD: /usr/local/bin/pc-provision-user", pcos)
+
     def test_anyone_can_be_given_an_account_but_not_root(self):
         """Anyone may sign in, so an account must exist before they have anywhere to put anything.
         The sudoers rule is limited to that ONE command: signing in with a key is not the same as
@@ -142,7 +177,9 @@ class PosterChanOSProfile(unittest.TestCase):
         acc = self._fn("accounts")
         self.assertIn("chmod 0440 /etc/sudoers", acc, "sudo will refuse the file it just wrote")
         self.assertIn("chown root:root /etc/sudoers", acc)
-        self.assertLess(acc.index("chmod 0440 /etc/sudoers"), acc.index("passwd -dl root"),
+        # The COMMAND, not the phrase — the PosterChanOS branch mentions it in prose to explain why
+        # it does not do it, and a test that matches prose is a test about the comments.
+        self.assertLess(acc.index("chmod 0440 /etc/sudoers"), acc.index("/usr/bin/passwd -dl root"),
                         "sudoers is fixed after root is locked — if it fails there is no way back")
 
     def test_no_html_engine_can_be_built_from_source(self):

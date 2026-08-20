@@ -622,6 +622,13 @@ posterchanShell() {
 	# a terminal — is an ordinary client that PosterChan places over its own desktop through the IPC.
 	echo -e "\033[1;33m◆ POSTERCHAN SHELL ◆\033[0m"
 
+	# THE SESSION ACCOUNT, not a named human — see accounts(). Nobody is baked into the image; the
+	# people who use the machine get accounts when they sign in with a key. Defined FIRST because
+	# the sudoers rule below names it, and an empty subject there is a rule that grants nothing to
+	# nobody while looking perfectly well formed.
+	SHELL_USER="posterchan"
+	id -u "$SHELL_USER" >/dev/null 2>&1 || SHELL_USER="${USER:-posterchan}"
+
 	# NOTHING HERE MAY PULL WEBKIT — masked so a future dependency FAILS rather than costing hours.
 	# webkit-gtk is one of the longest builds in the tree, and the way you find out you need it is
 	# that an install which looked nearly finished sits on one package all night. A mask turns that
@@ -784,29 +791,30 @@ posterchanShell() {
 		mkdir -p ${TARGET}/etc/sudoers.d
 		printf '%s\n' \
 			"# The shell provisions a Unix account for whoever signs in. This one command, nothing else." \
-			"$USER ALL=(root) NOPASSWD: /usr/local/bin/pc-provision-user" \
+			"$SHELL_USER ALL=(root) NOPASSWD: /usr/local/bin/pc-provision-user" \
 			> ${TARGET}/etc/sudoers.d/posterchan-provision
 		chmod 0440 ${TARGET}/etc/sudoers.d/posterchan-provision
 	else
-		echo -e "\033[1;31m  ✗ pc-provision-user not shipped — nobody but $USER can sign in\033[0m"
+		echo -e "\033[1;31m  ✗ pc-provision-user not shipped — nobody can be given an account\033[0m"
 	fi
 
 	# Autologin straight into the shell. A display manager is another package, another theme and
 	# another thing between the power button and the desktop.
-	GETTY_DIR="/etc/systemd/system/getty@tty1.service.d"
+	GETTY_DIR="${TARGET}/etc/systemd/system/getty@tty1.service.d"
 	mkdir -p $GETTY_DIR
 	printf '[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin %s --noclear %%I $TERM\n' \
-		"$USER" >$GETTY_DIR/override.conf
+		"$SHELL_USER" >$GETTY_DIR/override.conf
 
 	# ...and start sway from the login shell on tty1 only, so a second console is still a console.
-	cat >/home/$USER/.bash_profile <<-'PROFILE'
+	mkdir -p ${TARGET}/home/$SHELL_USER
+	cat >${TARGET}/home/$SHELL_USER/.bash_profile <<-'PROFILE'
 	[[ -f ~/.bashrc ]] && . ~/.bashrc
 	if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
 		export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=sway MOZ_ENABLE_WAYLAND=1
 		exec sway
 	fi
 	PROFILE
-	chown $USER:$USER /home/$USER/.bash_profile
+	chown $SHELL_USER:$SHELL_USER ${TARGET}/home/$SHELL_USER/.bash_profile 2>/dev/null
 }
 
 installSteam() {
@@ -863,6 +871,49 @@ fstab() {
 }
 
 accounts() {
+	# ── PosterChanOS ─────────────────────────────────────────────────────────────────────────────
+	# NOBODY IS NAMED IN THE IMAGE. Accounts are made when somebody signs in with a key
+	# (pc-provision-user), so baking one person's login into the installer is wrong twice over: it
+	# is not their machine, and it is the account every copy of the image would share.
+	#
+	# What still has to exist is a session to run the shell in BEFORE anyone has signed in — the
+	# thing that draws the login screen. That is `posterchan`: unprivileged, no password (it is
+	# reached by autologin and by nothing else), and allowed exactly one command through sudo.
+	#
+	# AND ROOT KEEPS A PASSWORD. The default path locks it (`passwd -dl root`), which is defensible
+	# when one named human has NOPASSWD sudo — and catastrophic here, where nobody does. Measured
+	# the hard way: sudo refused a sudoers file it had been handed at the wrong mode, root was
+	# locked, and the only way back into a freshly installed machine was editing the kernel command
+	# line at the boot menu. A recovery path is not a weakness when the alternative is a brick.
+	if [[ "$POSTERCHANOS" = *y* ]]; then
+		SHELL_USER="posterchan"
+		echo -e "\033[1;33mCreating the shell session account: $SHELL_USER\033[0m"
+		id -u "$SHELL_USER" >/dev/null 2>&1 || \
+			useradd -m -d /home/$SHELL_USER -s /bin/bash -c "PosterChan shell" $SHELL_USER
+		# No password: this account is entered by autologin and must not be a way IN from anywhere
+		# else — not ssh, not a login prompt, not su.
+		passwd -l $SHELL_USER >/dev/null 2>&1
+		for g in audio video input netdev render; do
+			getent group "$g" >/dev/null 2>&1 && gpasswd -a $SHELL_USER "$g" >/dev/null 2>&1
+		done
+		# One command, not ALL. The shell provisions accounts; it is not an administrator.
+		mkdir -p /etc/sudoers.d
+		printf '%s\n' \
+			"# The shell provisions a Unix account for whoever signs in. This one command, nothing else." \
+			"$SHELL_USER ALL=(root) NOPASSWD: /usr/local/bin/pc-provision-user" \
+			> /etc/sudoers.d/posterchan-provision
+		chmod 0440 /etc/sudoers.d/posterchan-provision
+		echo "root:$ROOT_PASSWORD" | chpasswd
+		grep -q '^@includedir /etc/sudoers.d' /etc/sudoers 2>/dev/null || \
+			echo "@includedir /etc/sudoers.d" >>/etc/sudoers
+		chown root:root /etc/sudoers && chmod 0440 /etc/sudoers
+		if command -v visudo >/dev/null 2>&1; then
+			visudo -c >/dev/null 2>&1 || echo -e "\033[1;31m  ✗ /etc/sudoers is not valid — sudo will refuse everything\033[0m"
+		fi
+		/usr/bin/hostnamectl set-hostname "${ROOT_NAME:-posterchanos}" 2>/dev/null
+		return 0
+	fi
+
 	echo
 	echo -e "\033[1;33mSet Password for $USER\033[0m"
 	useradd -m -d /home/$USER -s /bin/bash $USER
