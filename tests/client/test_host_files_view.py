@@ -111,6 +111,17 @@ class HostFilesView(unittest.TestCase):
         # exactly. The branch is what makes the chip do anything.
         self.assertIn("if(_hostOn) return _renderHostRoot", src.replace("  ", ""),
                       "nothing routes the Files screen to the host source, so the chip is inert")
+        # AND THE BINDER HAS TO BE IN THE FUNCTION THAT OWNS THE MARKUP. This one was written into
+        # the HOME screen's binder by mistake, where it queried a `r` that does not exist in that
+        # scope — so it bound nothing, silently, and `node --check` cannot see it because an
+        # undefined identifier is a runtime error. The chips live in `_fxSideHTML`, so their
+        # handlers belong in `_fxBindSide`.
+        import re as _re
+        m = _re.search(r"\n  function _fxBindSide\(.*?\n  \}", src, _re.S)
+        self.assertTrue(m, "_fxBindSide could not be found — if it was renamed, rename it here")
+        self.assertIn("data-host", m.group(0),
+                      "the 'this computer' chip is drawn in the sidebar and bound somewhere else, "
+                      "so pressing it does nothing")
         self.assertIn("data-host", src, "there is no way to get to it from the Files screen")
         # …and choosing another source must leave it, or the chip is a one-way door.
         self.assertIn("_hostOn=false", src.replace(" ", ""),

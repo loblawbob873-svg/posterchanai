@@ -17421,6 +17421,23 @@
    * answers — so the chip is simply not drawn rather than drawn and broken. */
   let _hostOn = false;
   const _hostFs = () => (window.PCHostFiles && PCHostFiles.available()) ? PCHostFiles : null;
+  /* ONE opener for both surfaces. The sidebar chip and the home-screen tile are two ways to the
+   * same place, and two copies of "where does this start" is how they end up starting somewhere
+   * different. */
+  function _openHostFiles(){
+    _syncRoot=''; _syncPath=''; _filesFolder=null; _hostOn=true;
+    const H2 = _hostFs();
+    /* HOME on a fresh entry only. Walking into a folder and back out must not throw you back to
+     * your home directory, so the path is kept in the module between visits. */
+    if(H2 && !H2.at()){
+      H2.roots().then(rs => {
+        const home = (rs || []).find(x => x.kind === 'home') || (rs || [])[0];
+        H2.enter(home ? home.path : '/');
+        if(VIEW==='blossom' && _filesTab==='public' && _hostOn) renderBlossom();
+      }, () => {});
+    }
+    renderBlossom();
+  }
   let _syncRoot = '';                 // the pair key being browsed ('' = the drive, not a synced folder)
   let _syncPath = '';                 // subdirectory inside it ('' = its root)
   /* The engine's own name for the trash, in the scope that RENDERS it. app.js is several closures,
@@ -18105,8 +18122,9 @@
   }
   function _fxBindSide(root){
     const r = root || document;
-    $$('.folder-chip[data-folder]', r).forEach(b=> b.onclick=()=>{ _syncRoot=''; _syncPath=''; _filesFolder=b.dataset.folder; renderBlossom(); });
-    $$('.folder-chip[data-synckey]', r).forEach(b=> b.onclick=()=>{ _syncRoot=b.dataset.synckey; _syncPath=''; renderBlossom(); });
+    $$('.folder-chip[data-folder]', r).forEach(b=> b.onclick=()=>{ _syncRoot=''; _syncPath=''; _hostOn=false; _filesFolder=b.dataset.folder; renderBlossom(); });
+    $$('.folder-chip[data-synckey]', r).forEach(b=> b.onclick=()=>{ _syncRoot=b.dataset.synckey; _syncPath=''; _hostOn=false; renderBlossom(); });
+    $$('.folder-chip[data-host]', r).forEach(b=> b.onclick=_openHostFiles);
     /* The trash's own bindings live with the LISTING now that it is a folder, not here beside the
      * chips — a set of handlers left behind for markup that no longer renders is how a dead control
      * survives a redesign and quietly does nothing. */
@@ -18734,23 +18752,18 @@
       + (synced ? '<div class="fx-home-sec">Synced folders</div>' + synced : '')
       + '<div class="fx-home-sec">Everything</div>'
       + tile('🗂', 'All files', known ? ('at least ' + known + ' known') : 'browse the whole drive', 'data-folder=""')
+      /* The machine's own disk, on the landing screen as well as in the sidebar — this is where
+       * somebody arrives, and on PosterChanOS it is the source they reach for first. Absent where
+       * there is no filesystem to browse. */
+      + (_hostFs() ? '<div class="fx-home-sec">This computer</div>'
+                   + tile('💻', 'Files on this computer', 'browse this machine', 'data-hosthome="1"') : '')
       + '</div>';
     { const cb = $('.fx-check', pane); if(cb) cb.onclick = () => driveCheck(cb); }
     $$('.fx-home-tile[data-folder]', pane).forEach(b => b.onclick = () => {
       _syncRoot=''; _syncPath=''; _hostOn=false; _filesFolder=b.dataset.folder; renderBlossom(); });
     $$('.fx-home-tile[data-synckey]', pane).forEach(b => b.onclick = () => {
       _syncRoot=b.dataset.synckey; _syncPath=''; _hostOn=false; renderBlossom(); });
-    $$('.folder-chip[data-host]', r).forEach(b=> b.onclick=()=>{
-      _syncRoot=''; _syncPath=''; _filesFolder=null; _hostOn=true;
-      /* Start at HOME, not wherever the last visit ended, only when this is a fresh entry — walking
-       * into a folder and back out must not reset you to your home directory. */
-      const H2 = _hostFs();
-      if(H2 && !H2.at()) H2.roots().then(rs => {
-        const home = (rs || []).find(x => x.kind === 'home') || rs[0];
-        H2.enter(home ? home.path : '/');
-        if(VIEW==='blossom' && _filesTab==='public' && _hostOn) renderBlossom();
-      });
-      renderBlossom(); });
+    $$('.fx-home-tile[data-hosthome]', pane).forEach(b => b.onclick = _openHostFiles);
     // The synced list arrives after first paint on a cold visit; repaint when it does, or the shelf
     // stays missing until the user navigates away and back.
     if(!Array.isArray(_syncPairs)){
