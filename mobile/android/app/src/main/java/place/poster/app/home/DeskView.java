@@ -51,6 +51,14 @@ public class DeskView extends ViewGroup {
         /** The smallest this item may be, in cells. Icons are 1x1; a widget states its own. */
         int minSpanX(Desk.Item item);
         int minSpanY(Desk.Item item);
+        /**
+         * The LARGEST this item may be, in cells — the provider's own ceiling, or the grid when it
+         * declares none. Asked here as well as on redraw so the two agree: clamping only on the
+         * redraw would let somebody drag a widget wide, see it stay, and find it shrunk on the next
+         * resume, which is the "it moves on its own" failure this whole class is built to avoid.
+         */
+        int maxSpanX(Desk.Item item);
+        int maxSpanY(Desk.Item item);
         boolean resizable(Desk.Item item);
         /** Tell the provider its new pixel size — a widget that is not told draws its old layout. */
         void onResized(Desk.Item item, int cellW, int cellH);
@@ -440,6 +448,11 @@ public class DeskView extends ViewGroup {
         invalidate();
     }
 
+    private static int clampSpan(int want, int lo, int hi) {
+        int a = Math.max(1, lo), b = Math.max(a, hi);
+        return want < a ? a : (want > b ? b : want);
+    }
+
     private int edgeAt(float x, float y) {
         if (host == null || !host.resizable(editing)) return EDGE_NONE;
         int cw = cellW(), ch = cellH();
@@ -457,16 +470,20 @@ public class DeskView extends ViewGroup {
     private void resizeTo(float x, float y) {
         int cw = cellW(), ch = cellH();
         int minX = host.minSpanX(editing), minY = host.minSpanY(editing);
+        int maxX = Math.max(minX, host.maxSpanX(editing)), maxY = Math.max(minY, host.maxSpanY(editing));
         int col = editing.col, row = editing.row, sx = editing.spanX, sy = editing.spanY;
-        if (resizeEdge == EDGE_R) sx = Math.max(minX, (int) Math.round(x / cw) - col);
-        else if (resizeEdge == EDGE_B) sy = Math.max(minY, (int) Math.round(y / ch) - row);
+        // BOUNDED AT BOTH ENDS. The floor is the smallest shape the provider will draw; the ceiling
+        // is the biggest it says it wants. Without the ceiling a drag could put a widget back at the
+        // gigantic span the redraw exists to correct, and the next resume would shrink it again.
+        if (resizeEdge == EDGE_R) sx = clampSpan((int) Math.round(x / cw) - col, minX, maxX);
+        else if (resizeEdge == EDGE_B) sy = clampSpan((int) Math.round(y / ch) - row, minY, maxY);
         else if (resizeEdge == EDGE_L) {
             int right = col + sx;
-            col = Math.max(0, Math.min(right - minX, (int) Math.round(x / cw)));
+            col = Math.max(0, Math.min(right - minX, Math.max(right - maxX, (int) Math.round(x / cw))));
             sx = right - col;
         } else if (resizeEdge == EDGE_T) {
             int bottom = row + sy;
-            row = Math.max(0, Math.min(bottom - minY, (int) Math.round(y / ch)));
+            row = Math.max(0, Math.min(bottom - minY, Math.max(bottom - maxY, (int) Math.round(y / ch))));
             sy = bottom - row;
         }
         int wasC = editing.col, wasR = editing.row;

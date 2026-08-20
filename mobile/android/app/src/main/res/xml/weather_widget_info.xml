@@ -16,11 +16,20 @@
      by 6-8, and the same rectangle that lands on one is refused by the other with "no room".
      Declaring the floor is the widget SAYING which smaller shapes it can still draw, which is the
      whole point of resizeMode. -->
+<!-- maxResizeWidth / maxResizeHeight: THE PROVIDER'S OWN CEILING, and on a phone it is the half
+     that matters. A widget that has been placed is stored with a SPAN, and nothing re-derives it —
+     so a span produced by the density-inflated arithmetic that used to run here (a 180dp card
+     asking for six of a four-column grid, capped to the full width) stayed full width for ever, on
+     every draw, with no way back except removing it. Reported as "the weather widget is just too
+     gigantic on phones". Stating the ceiling lets the launcher put a widget back inside what the
+     widget itself says it wants, once, instead of guessing. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:minWidth="180dp"
     android:minHeight="80dp"
     android:minResizeWidth="110dp"
     android:minResizeHeight="80dp"
+    android:maxResizeWidth="260dp"
+    android:maxResizeHeight="200dp"
     android:targetCellWidth="3"
     android:targetCellHeight="2"
     android:updatePeriodMillis="3600000"

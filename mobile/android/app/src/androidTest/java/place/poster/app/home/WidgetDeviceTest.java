@@ -333,6 +333,8 @@ public class WidgetDeviceTest {
                     @Override public void onChanged() { }
                     @Override public int minSpanX(Desk.Item item) { return 1; }
                     @Override public int minSpanY(Desk.Item item) { return 1; }
+                    @Override public int maxSpanX(Desk.Item item) { return 4; }
+                    @Override public int maxSpanY(Desk.Item item) { return 5; }
                     @Override public boolean resizable(Desk.Item item) { return false; }
                     @Override public void onResized(Desk.Item item, int cw, int ch) { }
                 }, place.poster.app.ui.PcTheme.of("cyberpunk"));
@@ -459,6 +461,8 @@ public class WidgetDeviceTest {
                     @Override public void onChanged() { }
                     @Override public int minSpanX(Desk.Item item) { return 1; }
                     @Override public int minSpanY(Desk.Item item) { return 1; }
+                    @Override public int maxSpanX(Desk.Item item) { return 4; }
+                    @Override public int maxSpanY(Desk.Item item) { return 5; }
                     @Override public boolean resizable(Desk.Item item) { return true; }
                     @Override public void onResized(Desk.Item item, int cw, int ch) { }
                 }, place.poster.app.ui.PcTheme.of("cyberpunk"));
@@ -509,6 +513,74 @@ public class WidgetDeviceTest {
                     3, span[0]);
         } finally {
             s.close();
+        }
+    }
+
+    @Test
+    public void onAPhoneAnAlreadyGiganticWidgetIsBroughtBackINSIDEItsOwnCeiling() throws Exception {
+        // "the weather widget is just too gigantic on phones", still, after the arithmetic that
+        // produced the giant span was fixed — because a PLACED widget is stored with a SPAN and
+        // nothing re-derives it. The old density-inflated maths made a 180dp card ask for six of a
+        // four-column grid, which the cap turned into the full width, and there it stayed on every
+        // draw of every later build. The only way out was to remove it.
+        //
+        // So a stored span is put back inside `maxResizeWidth`/`maxResizeHeight` — the widget's own
+        // statement of how big it wants to get. Written straight into the arrangement here, exactly
+        // as the buggy build left it, and then the launcher is asked to draw.
+        shell("appwidget grantbind --package " + ctx.getPackageName() + " --user 0");
+        Widgets.Choice pick = null;
+        String mine = ctx.getPackageName();
+        for (Widgets.Choice c : widgets.providers(200, 200)) {
+            if (c.info.configure != null) continue;
+            if (!mine.equals(c.info.provider.getPackageName())) continue;
+            if (c.info.maxResizeWidth > 0) { pick = c; break; }
+        }
+        // A SKIP WITH ITS REASON, never a pass: on an image where none of ours declares a ceiling
+        // there is nothing here to measure.
+        org.junit.Assume.assumeTrue("no widget of ours declares maxResizeWidth on this image",
+                pick != null);
+
+        HomeRoles.enableLauncherComponent(ctx, true);
+        asAPhone();
+        LauncherPrefs prefs = new LauncherPrefs(ctx);
+        String geom = "";
+        String before = "";
+        try {
+            int[] g = deskShape();
+            assertEquals("a phone did not get the phone grid", 4, g[0]);
+            geom = HomeMetrics.geometry(g[0], g[1]);
+            before = prefs.desk(geom);
+
+            final Widgets.Choice chosen = pick;
+            final int[] made = new int[]{ -1 };
+            ActivityScenario<HomeActivity> mk = ActivityScenario.launch(HomeActivity.class);
+            try { mk.onActivity(a -> made[0] = widgets.add(a, chosen)); } finally { mk.close(); }
+            assertTrue("the widget was not bound", made[0] >= 0);
+            allocated.add(made[0]);
+
+            int ceilingCells = Math.max(1, chosen.info.maxResizeWidth / g[2]);
+            org.junit.Assume.assumeTrue("its ceiling is the whole grid here, so there is nothing to"
+                    + " bring back", ceilingCells < g[0]);
+
+            // FULL WIDTH, which is what the old arithmetic always ended at.
+            List<Desk.Item> items = new ArrayList<Desk.Item>();
+            items.add(new Desk.Item(Desk.widgetKey(made[0]), 0, 0, g[0], 2));
+            prefs.setDesk(geom, Desk.serialize(items));
+
+            ActivityScenario<HomeActivity> s = ActivityScenario.launch(HomeActivity.class);
+            try { Thread.sleep(1500); } finally { s.close(); }
+
+            String after = prefs.desk(geom);
+            Log.i(TAG, "phone widgets: gigantic " + g[0] + "-wide widget redrew as -> "
+                    + after.replace('\n', ' ') + " (ceiling " + ceilingCells + " cells)");
+            Desk.Item back = Desk.byKey(Desk.parse(after), Desk.widgetKey(made[0]));
+            assertNotNull("the widget was dropped rather than resized: " + after, back);
+            assertTrue("a widget stored at the full width of the grid stayed there — its provider"
+                    + " says it wants at most " + ceilingCells + " cells. desktop=" + after,
+                    back.spanX <= ceilingCells);
+        } finally {
+            if (!geom.isEmpty()) prefs.setDesk(geom, before);
+            asItWas();
         }
     }
 

@@ -89,3 +89,43 @@ class EveryWidgetDeclaresItsFloor(unittest.TestCase):
         for p in PROVIDERS:
             with self.subTest(widget=p.name):
                 self.assertIn("resizeMode", attrs(p), p.name)
+
+
+class EveryWidgetDeclaresItsCeiling(unittest.TestCase):
+    """"the weather widget is just too gigantic on phones" — and it stayed gigantic after the
+    arithmetic that produced the giant span was fixed, because a PLACED widget is stored with a SPAN
+    and nothing ever re-derives it. The old density-inflated maths made a 180dp card ask for six of a
+    four-column grid, the cap turned that into the full width, and there it stayed on every draw of
+    every later build. Removing it was the only way out, and removing it was broken too.
+
+    `maxResizeWidth`/`maxResizeHeight` are the widget SAYING how big it wants to get, so putting a
+    stored span back inside them is not the launcher overruling a person — it is the launcher
+    stopping overruling the widget. A provider that declares nothing gets no opinion, which is every
+    third-party widget on the phone.
+    """
+
+    def test_each_one_says_how_big_it_wants_to_get(self):
+        for p in PROVIDERS:
+            with self.subTest(widget=p.name):
+                a = attrs(p)
+                for k in ("maxResizeWidth", "maxResizeHeight"):
+                    self.assertIn(k, a, "%s declares no %s, so nothing can ever bring a span the "
+                                        "old arithmetic invented back down" % (p.name, k))
+
+    def test_the_ceiling_is_above_the_floor_and_above_the_ask(self):
+        for p in PROVIDERS:
+            with self.subTest(widget=p.name):
+                a = attrs(p)
+                for hi, lo in (("maxResizeWidth", "minWidth"), ("maxResizeHeight", "minHeight")):
+                    self.assertGreaterEqual(dp(a[hi]), dp(a[lo]),
+                                            "%s: %s is below %s, so the widget can never be placed "
+                                            "at the size it asks for" % (p.name, hi, lo))
+
+    def test_the_ceiling_is_not_simply_the_whole_phone(self):
+        """A ceiling of four phone columns is no ceiling: a phone cell is roughly 90dp, and the
+        report is about a widget occupying every one of them."""
+        CELL, COLS = 90, 4
+        wide = [p.name for p in PROVIDERS if dp(attrs(p)["maxResizeWidth"]) // CELL >= COLS]
+        self.assertNotIn("weather_widget_info.xml", wide,
+                         "the weather widget may still take a phone's whole width, which is the "
+                         "report")

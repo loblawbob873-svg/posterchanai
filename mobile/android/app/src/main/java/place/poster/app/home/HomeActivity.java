@@ -542,6 +542,16 @@ public class HomeActivity extends Activity implements DeskView.Host {
             cellW = deskHost.getWidth() / Math.max(1, cols);
             cellH = deskHost.getHeight() / Math.max(1, rows);
         }
+        // PUT ANYTHING OVERSIZED BACK INSIDE WHAT ITS PROVIDER ASKED FOR, before anything is fitted
+        // around it. A widget left at a span the old arithmetic invented takes cells nothing else
+        // can use, which is how one gigantic weather card pushed the rest of the desktop into
+        // overflow as well as looking wrong.
+        for (Desk.Item it : live) {
+            if (!it.isWidget()) continue;
+            int mx = maxCells(it, cols, cellW, true), my = maxCells(it, rows, cellH, false);
+            if (it.spanX > mx) it.spanX = mx;
+            if (it.spanY > my) it.spanY = my;
+        }
         List<Desk.Item> stranded = new ArrayList<Desk.Item>();
         for (Desk.Item it : Desk.fit(live, cols, rows)) {
             if (Desk.addShrinking(live, it, minCells(it, cols, cellW, true),
@@ -621,6 +631,14 @@ public class HomeActivity extends Activity implements DeskView.Host {
         return minCells(item, desk.rows(), desk.cellH(), false);
     }
 
+    @Override public int maxSpanX(Desk.Item item) {
+        return maxCells(item, desk.cols(), desk.cellW(), true);
+    }
+
+    @Override public int maxSpanY(Desk.Item item) {
+        return maxCells(item, desk.rows(), desk.cellH(), false);
+    }
+
     /**
      * THE FEWEST CELLS THIS ITEM MAY OCCUPY, on a grid that is not necessarily the one the DeskView
      * is currently showing.
@@ -636,6 +654,38 @@ public class HomeActivity extends Activity implements DeskView.Host {
      * `minWidth`/`minHeight`: a resizable widget declaring both is saying "this is what I asked for,
      * and this is the smallest I can still draw".
      */
+    /**
+     * THE MOST CELLS THIS ITEM MAY OCCUPY — the provider's own ceiling, and on a phone it is the
+     * half that matters.
+     *
+     * "the weather widget is just too gigantic on phones." A placed widget is stored with a SPAN and
+     * nothing ever re-derives it, so a span produced by the density-inflated arithmetic that used to
+     * run here — a 180dp card asking for six of a four-column grid, capped to the full width —
+     * stayed full width for ever, on every draw, on every build after the arithmetic was fixed. The
+     * only way out was to remove it, and removing it was broken too.
+     *
+     * `maxResizeWidth`/`maxResizeHeight` are the widget SAYING how big it wants to get, so putting
+     * it back inside them is not the launcher overruling a person: it is the launcher stopping
+     * overruling the widget. A provider that declares nothing gets no opinion and is left alone,
+     * which is every third-party widget on the phone.
+     *
+     * FLOOR, not ceil — a ceiling rounded up is not a ceiling — and never below the minimum, or a
+     * widget with a silly manifest would be clamped into a shape it cannot draw.
+     */
+    private int maxCells(Desk.Item item, int gridSpan, int cellPx, boolean wide) {
+        int grid = Math.max(1, gridSpan);
+        if (item == null || !item.isWidget() || cellPx <= 0) return grid;
+        if (android.os.Build.VERSION.SDK_INT < 31) return grid;
+        AppWidgetProviderInfo i = widgets.infoOf(item.widgetId());
+        if (i == null) return grid;
+        int px;
+        try { px = wide ? i.maxResizeWidth : i.maxResizeHeight; }
+        catch (Throwable t) { return grid; }
+        if (px <= 0) return grid;                    // the provider has no opinion
+        int cells = Math.max(1, px / cellPx);
+        return Math.max(minCells(item, grid, cellPx, wide), Math.min(grid, cells));
+    }
+
     private int minCells(Desk.Item item, int gridSpan, int cellPx, boolean wide) {
         if (item == null || !item.isWidget() || cellPx <= 0) return 1;
         AppWidgetProviderInfo i = widgets.infoOf(item.widgetId());
