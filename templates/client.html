@@ -434,6 +434,12 @@
 <script src="/static/js/client/syncstate.js?v={{ ver }}"></script>
 <script src="/static/js/client/syncexec.js?v={{ ver }}"></script>
 <script src="/static/js/client/sync.js?v={{ ver }}"></script>
+<!-- PosterChanOS: the shell surface. Loads everywhere and does nothing unless the compositor
+     bridges exist, which is how one client is an app on one machine and an operating system on
+     another. -->
+<script src="/static/js/client/osfirstrun.js?v={{ ver }}"></script>
+<script src="/static/js/client/osshell.js?v={{ ver }}"></script>
+<script src="/static/js/client/termhist.js?v={{ ver }}"></script>
 <script src="/static/js/client/notes.js?v={{ ver }}"></script>
 <script src="/static/js/client/playlists.js?v={{ ver }}"></script>
 <script src="/static/js/client/vaultcore.js?v={{ ver }}"></script>

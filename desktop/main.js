@@ -23,6 +23,15 @@ const fs = require('fs');
 const tor = require('./tor');
 const background = require('./background');
 
+/* --shell: this process IS the desktop, not an app running on one.
+ *
+ * PosterChanOS execs the same binary the Windows and macOS builds ship, and the difference is
+ * entirely in what it must NOT show: an application menu reading File / Edit / View / Help across
+ * the top of an operating system is the single most convincing way to tell somebody they are
+ * looking at an app in a window. Same for a title bar, a resize border and remembered geometry —
+ * the compositor decides the size, and it is the whole screen. */
+const SHELL_MODE = process.argv.includes('--shell');
+
 const DEFAULT_INSTANCE = 'https://poster.place';
 const APP_ORIGIN = 'app://posterchan';                  // the bundle's own origin
 const APP_URL = APP_ORIGIN + '/index.html';
@@ -389,8 +398,12 @@ function createWindow() {
     minHeight: 520,
     backgroundColor: '#0a0a10',            // matches the client's dark shell — no white flash on open
     // Menu bar stays VISIBLE: it carries "Switch instance…" and "Tor…", and behind an Alt-press nobody
-    // would ever find them.
-    autoHideMenuBar: false,
+    // would ever find them. NOT in shell mode — see SHELL_MODE: those settings live in the client's
+    // own UI there, and a menu bar across the top of an operating system is what makes it look like
+    // an app in a window.
+    autoHideMenuBar: SHELL_MODE,
+    frame: !SHELL_MODE,
+    ...(SHELL_MODE ? { fullscreen: true, kiosk: false, resizable: false, movable: false } : {}),
     icon: path.join(__dirname, 'icon.png'),
     // Started by the login item: come up HIDDEN rather than showing and then hiding, which is a
     // window flashing on screen at every boot — the thing that makes people turn autostart off.
@@ -702,6 +715,10 @@ function pickScreenSource() {
 
 function buildMenu() {
   const inst = instance();
+  /* NO APPLICATION MENU WHEN THIS IS THE DESKTOP. `null` rather than an empty template: an empty
+   * one still reserves the bar's height, which is a strip of nothing across the top of the screen
+   * that people will ask about. */
+  if (SHELL_MODE) { Menu.setApplicationMenu(null); return; }
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
       label: 'File',

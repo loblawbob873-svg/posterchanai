@@ -98,6 +98,25 @@ class Bridge(unittest.TestCase):
         for mod in ("./power.js", "./audio.js"):
             self.assertIn(mod, self.main, f"{mod} is tested and not called")
 
+    def test_shell_mode_shows_no_application_menu(self):
+        """A menu bar reading File / Edit / View / Help across the top of an operating system is the
+        single most convincing way to tell somebody they are looking at an app in a window. `null`
+        rather than an empty template: an empty one still reserves the bar's height, which is a strip
+        of nothing across the top of the screen that people will ask about."""
+        self.assertIn("SHELL_MODE", self.main, "--shell is passed by the compositor and does nothing")
+        i = self.main.index("function buildMenu")
+        self.assertIn("Menu.setApplicationMenu(null)", self.main[i:i + 900],
+                      "the shell still builds an application menu")
+
+    def test_shell_mode_has_no_window_chrome(self):
+        """The compositor decides the size, and it is the whole screen. A title bar, a resize border
+        and remembered geometry are all statements that this is a window on a desktop."""
+        i = self.main.index("win = new BrowserWindow")
+        opts = self.main[i:i + 1400]
+        self.assertIn("frame: !SHELL_MODE", opts)
+        self.assertIn("autoHideMenuBar: SHELL_MODE", opts)
+        self.assertIn("fullscreen: true", opts)
+
     def test_it_is_absent_rather_than_broken_without_a_compositor(self):
         """A desktop install that is not PosterChanOS has no sway. The page must be able to ask,
         rather than discovering it through a thrown error on every call."""

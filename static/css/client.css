@@ -8103,3 +8103,30 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
 /* Bytes the folder names and the store does not hold: nothing can fetch these, so the chip is not
    the same colour as the ones that are simply counts. */
 .sync-counts span.warn{color:var(--danger);border-color:rgba(255,107,139,.5)}
+
+/* ── PosterChanOS shell ──────────────────────────────────────────────────────────────────────────
+   The launcher, the taskbar of REAL windows and the system panel. Present only when PosterChan is
+   the desktop; everywhere else the markup is never emitted, so none of this applies.
+   Fixed to the screen edges rather than laid out in the page: the desktop underneath scrolls and
+   these must not go with it. */
+.os-launcher, .os-taskbar, .os-panel{
+  position:fixed; z-index:70; display:flex; gap:6px; align-items:center;
+  background:var(--panel2,rgba(26,26,42,.85)); border:1px solid var(--border,#333);
+  border-radius:10px; padding:6px 8px; backdrop-filter:blur(8px);
+}
+.os-launcher{ left:12px; bottom:12px; }
+/* Above the desktop (z 300) — these are the shell's own furniture, not windows on it. */
+#os-shell .os-launcher, #os-shell .os-taskbar, #os-shell .os-panel{ z-index:310; }
+.os-taskbar{ left:50%; transform:translateX(-50%); bottom:12px; max-width:60vw; overflow-x:auto; }
+.os-panel{ right:12px; bottom:12px; }
+.os-app, .os-task, .os-chip{
+  background:none; border:1px solid transparent; color:var(--fg,#d6e2ff);
+  font:inherit; font-size:13px; padding:4px 10px; border-radius:7px; cursor:pointer;
+  white-space:nowrap;
+}
+.os-app:hover, .os-task:hover, .os-chip:hover{ border-color:var(--neon,#3ce8ff); }
+.os-task.on{ background:rgba(60,232,255,.14); border-color:var(--neon,#3ce8ff); }
+/* A reading that could not be taken is DIM and marked, never a plausible default — a full-strength
+   wifi icon on a machine whose NetworkManager is dead is a lie that costs somebody an hour. */
+.os-chip.os-unknown{ color:var(--muted,#7a8699); font-style:italic; }
+@media (max-width:900px){ .os-taskbar{ max-width:44vw; } }

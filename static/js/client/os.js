@@ -4459,6 +4459,19 @@
     root.className = 'os-root';
     root.innerHTML = '<div class="os-desk" id="os-desk"></div><div class="os-bar" id="os-bar"></div>';
     document.body.appendChild(root);
+    /* THE POSTERCHANOS SHELL, when this machine IS the desktop. A launcher, a taskbar of real
+     * compositor windows and the system panel — mounted here rather than inside `.os-desk` so the
+     * icon grid can be scrolled and rearranged underneath without taking them with it. Absent
+     * everywhere else: `PCOSShell.available()` is false without the bridges, and `watch` returns a
+     * no-op, so a browser tab and the APK are unaffected by any of it. */
+    try{
+      if(window.PCOSShell && PCOSShell.available()){
+        const shellHost = document.createElement('div');
+        shellHost.id = 'os-shell';
+        root.appendChild(shellHost);
+        PCOSShell.watch(shellHost).then(off => { _shellOff = off; }, () => {});
+      }
+    }catch(_){}
     document.body.classList.add('os-on');
     // …and on <html>, because the overlays that matter here — the music player, the upload badge —
     // are appended to documentElement, i.e. SIBLINGS of <body>. A `body.os-on #music-player` rule
@@ -4517,6 +4530,9 @@
   function exit(){
     if(!on) return;
     on = false;
+    // The shell's watcher holds a compositor subscription and a 30s timer. Left running it redraws
+    // markup that is no longer in the document, for the rest of the session.
+    if(_shellOff){ try{ _shellOff(); }catch(_){} _shellOff = null; }
     clearInterval(_clock); _clock = null;
     clearInterval(mailT); mailT = 0; mailSeen = null;
     // The pool outlives the desktop — leaving this subscribed keeps a watcher calling drawBar()
@@ -4716,6 +4732,11 @@
     if(remember) settings().set(KEY, true);
     return true;
   }
+
+  /* Released on exit. A watcher left running after the desktop closes keeps a compositor
+   * subscription and a 30s timer alive for the rest of the session, redrawing markup that is no
+   * longer in the document. */
+  let _shellOff = null;
 
   window.PCOS = { enter, exit, suspend, toggle, restore, refresh, isOn: () => on, openDoc, focusDoc, routeView, snapTo, osToast,
                   // app.js calls this when the player's state changes — the Now-playing widget has

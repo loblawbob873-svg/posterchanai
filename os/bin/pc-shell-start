@@ -12,6 +12,28 @@
 [ -n "$SWAYSOCK" ] || SWAYSOCK=$(ls /run/user/$(id -u)/sway-ipc.*.sock 2>/dev/null | head -1)
 export SWAYSOCK
 
+# A STALE SINGLE-INSTANCE LOCK IS A BLACK SCREEN FOREVER, and this is the bug that proves the
+# shell needs a launcher at all rather than a bare exec line.
+#
+# Electron writes ~/.config/posterchan-desktop/SingletonLock as a symlink naming `host-pid`. If the
+# app dies without removing it — killed, OOM, power cut, which on the machine that IS the desktop is
+# every crash — the next launch finds the lock, tries to hand off to an instance that is not there,
+# and EXITS SILENTLY. The compositor comes up, execs the shell, the shell quits, and the person is
+# looking at an empty black screen with no error anywhere. It cannot recover by itself, which for a
+# desktop is the difference between a crash and a brick.
+#
+# Removed only when the pid it names is genuinely gone: a live lock belongs to a running instance,
+# and deleting that would let two copies fight over one profile directory.
+LOCK="${HOME:-/home/$(id -un)}/.config/posterchan-desktop/SingletonLock"
+if [ -L "$LOCK" ]; then
+    target=$(readlink "$LOCK" 2>/dev/null || echo '')
+    pid=${target##*-}
+    case "$pid" in
+        ''|*[!0-9]*) rm -f "$LOCK" ;;               # unparseable: it names no process we can check
+        *) kill -0 "$pid" 2>/dev/null || rm -f "$LOCK" ;;
+    esac
+fi
+
 /usr/local/bin/posterchan --shell &
 
 # Up to 60s: an Electron cold start on a slow disk is not a failure. Polling rather than
