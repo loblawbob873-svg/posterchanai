@@ -100,6 +100,32 @@ class TheImageDoesNotCarryTheOperator(unittest.TestCase):
         """Removing the autologin gives a prompt for an account with no password set."""
         self.assertIn("--autologin live", self.fn)
 
+    def test_the_live_user_can_become_root(self):
+        """An empty password is what makes autologin work, and sudo REFUSES an empty password — so a
+        live user in `wheel` still could not become root, on a disc whose entire purpose is
+        installing. "Install PosterChanOS" runs `sudo gentoo.sh` and would have stopped at a prompt
+        with nothing to type."""
+        self.assertIn("NOPASSWD", self.fn)
+        self.assertIn("etc/sudoers.d/live", self.fn)
+
+    def test_the_sudoers_drop_in_has_the_mode_sudo_demands(self):
+        """sudo refuses to run AT ALL if a sudoers file has a mode it dislikes — which would lock
+        the disc out of root far more thoroughly than having no drop-in."""
+        i = self.fn.index("etc/sudoers.d/live f")
+        self.assertIn("440", self.fn[i:i + 60])
+
+    def test_it_does_not_touch_the_real_sudoers(self):
+        """An installed system keeps whatever policy it was given."""
+        i = self.fn.index("NOPASSWD")
+        seg = self.fn[max(0, i - 500):i + 500]
+        self.assertNotIn("/etc/sudoers ", seg)
+
+    def test_it_grants_only_the_live_account(self):
+        i = self.fn.index("NOPASSWD")
+        line = self.fn[self.fn.rindex("printf", 0, i):i + 60]
+        self.assertIn("live ALL=", line)
+        self.assertNotIn("ALL ALL=", line)
+
     def test_the_live_account_is_passwordless_not_locked(self):
         """`!` is locked, and a locked account cannot autologin."""
         self.assertIn("live::20000", self.fn)
@@ -274,6 +300,31 @@ class TheLiveSessionActuallyStarts(unittest.TestCase):
             with self.subTest(line=line):
                 self.assertGreaterEqual(self.src.count(line), 2,
                                         "%r appears in only one of the two profiles" % line)
+
+    def test_home_itself_is_not_excluded(self):
+        """`-e home` removes the directory AND everything the pseudo-file list puts back inside it.
+
+        The image then has no /home/live at all, so the live user autologins into a home that does
+        not exist: bash finds no profile and gives a prompt ("booted to a terminal, no gui"), and
+        sway started by hand has nowhere for the Electron shell to write its profile, so it paints
+        nothing ("sway loads a black screen"). One missing directory, two symptoms that look
+        unrelated. Excluding each real home individually leaves /home in the image."""
+        self.assertNotIn("EXCLUDES+=(home)", self.fn,
+                         "excluding /home wholesale suppresses the pseudo-entries written into it")
+
+    def test_every_real_home_is_still_left_out(self):
+        """Leaving /home in must not leave anybody's files in it."""
+        self.assertIn("for H in /home/*", self.fn)
+        self.assertIn('EXCLUDES+=("${H#/}")', self.fn)
+
+    def test_dotted_directories_under_home_are_covered(self):
+        """/home/.snapshots exists on btrfs installs and a plain glob misses it."""
+        self.assertIn("/home/.[!.]*", self.fn)
+
+    def test_the_pseudo_entries_still_create_the_home(self):
+        for entry in ("home d 755 0 0", "home/live d 755 1000 1000"):
+            with self.subTest(entry=entry):
+                self.assertIn(entry, self.fn)
 
     def test_the_file_exists_before_the_image_is_packed(self):
         """A pseudo-file naming a path that does not exist yet is a silently missing entry."""

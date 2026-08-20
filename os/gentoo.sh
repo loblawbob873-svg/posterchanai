@@ -1906,7 +1906,28 @@ liveCD() {
 	# answered in contradiction — strip the accounts, keep the home directories — and honouring both
 	# literally would ship somebody's files under a user that no longer exists to own them, readable
 	# by uid 1000, which is `live`.
-	[[ "$KEEP_HOME" = *n* || "$CLEAN" = *y* ]] && EXCLUDES+=(home)
+	# EXCLUDE THE HOMES, NOT /home ITSELF — and that distinction is the whole live image.
+	#
+	# `-e home` removes the directory and everything the pseudo-file list tries to put back inside
+	# it: `home/live`, and the `.bash_profile` that starts the desktop. The image then has no
+	# /home/live at all, so the live user autologins with a home that does not exist. Bash finds no
+	# profile and gives a prompt — "booted to a terminal, no gui" — and when sway is started by hand
+	# the Electron shell has nowhere to write its profile and paints nothing: "sway loads a black
+	# screen". One missing directory, two symptoms that look unrelated.
+	#
+	# Excluding each real home individually leaves /home itself in the image, so the pseudo entries
+	# land. There is nothing of anybody's in it: every directory under it is named here.
+	if [[ "$KEEP_HOME" = *n* || "$CLEAN" = *y* ]]; then
+		local H
+		for H in /home/*; do
+			[[ -e "$H" ]] && EXCLUDES+=("${H#/}")
+		done
+		# A dotfile directly under /home (rare, but /home/.snapshots exists on btrfs installs) is
+		# not matched by the glob above.
+		for H in /home/.[!.]*; do
+			[[ -e "$H" ]] && EXCLUDES+=("${H#/}")
+		done
+	fi
 	local f
 	for f in $SWAPFILES; do
 		[[ -n "$f" ]] && EXCLUDES+=("${f#/}")
@@ -1973,6 +1994,21 @@ FSTAB
 		for G in wheel video input audio render seat plugdev users; do
 			grep -q "^$G:" /etc/group && sed -i "s/^\($G:[^:]*:[^:]*:\)\(.*\)$/\1\2,live/; s/,live,live/,live/; s/:,live$/:live/" "$WORK/group"
 		done
+		# AND IT CAN BECOME ROOT WITHOUT ONE.
+		#
+		# `live` has an EMPTY password so autologin works, and sudo REFUSES an empty password — so a
+		# live user in `wheel` still cannot become root, and the disc's whole purpose is installing,
+		# which is root's job. The "Install PosterChanOS" entry runs `sudo gentoo.sh` and would have
+		# failed at the password prompt with nothing to type. Reported from the other end: "my root
+		# password 123456 don't even work" — on a disc where the account is not that user at all.
+		#
+		# NOPASSWD for the live account only, in its own drop-in. This is what every live image does
+		# and it is safe for the same reason theirs is: the medium is read-only, the session is
+		# transient, and anybody holding the disc can already read every file on it. It does NOT
+		# touch /etc/sudoers, so an installed system keeps whatever policy it was given.
+		mkdir -p "$WORK/sudoers.d"
+		printf 'live ALL=(ALL:ALL) NOPASSWD: ALL\n' >"$WORK/sudoers.d/live"
+
 		# Autologin as the live user. Same file the installed system uses, rewritten rather than
 		# removed — deleting it gives a login prompt for an account with no password set.
 		mkdir -p "$WORK/gettyd"
@@ -2011,6 +2047,11 @@ FSTAB
 			# A hostname that is not yours. `posterchanos` is what an unconfigured install should
 			# call itself, and it is what the installer changes.
 			echo "etc/hostname f 644 0 0 echo posterchanos"
+			# 0440, which is what sudo demands of a sudoers file — a mode it dislikes makes sudo
+			# refuse to run AT ALL, not merely ignore the file, which would lock the disc out of
+			# root far more thoroughly than having no drop-in.
+			echo "etc/sudoers.d d 750 0 0"
+			echo "etc/sudoers.d/live f 440 0 0 cat $WORK/sudoers.d/live"
 		fi
 
 		# ---------------------------------------------------------------- the installer
