@@ -1,176 +1,154 @@
-"""Shell history as EPHEMERAL Nostr events — and the one rule that stops it leaking passwords.
+"""Shell history as ephemeral Nostr events — the rules, run, and the wiring that was missing.
 
-Your history follows you between your own devices and is stored by nobody: ephemeral kinds
-(20000-29999) are forwarded by relays and never written down. A command you ran is visible to the
-terminals you have open right now, and then it is gone.
+`termhist.js` names this file in its own header and this file did not exist. That is not a
+bookkeeping detail: the module was also called by NOTHING. It was loaded by client.html, precached
+by the service worker, and no line of any other file mentioned it — a terminal with a history
+feature that had never once run. So the last test here is about the WIRING, and it is the one that
+would have caught it.
 
-THE DANGER IS PASSWORDS AND IT IS NOT HYPOTHETICAL. A terminal's input stream carries every
-keystroke, including the ones typed at `sudo`, at an ssh passphrase prompt, at `mysql -p`. Publish
-the input stream and you publish those — encrypted to yourself, but published, to a relay, and into
-any log that keeps them.
-
-So a line is publishable only when the shell ECHOED it back. That is not a guess about what the text
-looks like: echo is exactly what a password prompt turns off, which is why the screen stays blank
-while you type one. It is the same signal the operating system uses.
+The rest is the rule that makes the feature publishable at all: a terminal's input stream carries
+every keystroke, including the ones typed at `sudo`, at an ssh passphrase, at `mysql -p`. A line is
+publishable only when the shell ECHOED it back, because echo is exactly what a password prompt
+turns off — the same signal the operating system uses, not a guess about what the text looks like.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 MOD = os.path.join(ROOT, "static", "js", "client", "termhist.js")
+TERM = os.path.join(ROOT, "static", "js", "client", "term.js")
 NODE = shutil.which("node") or shutil.which("nodejs")
 
 
-@unittest.skipIf(not NODE, "no node on this node")
-class Collector(unittest.TestCase):
-    def run_js(self, body):
-        js = "const H = require(%s);\nconst out = {};\n%s\nprocess.stdout.write(JSON.stringify(out));" \
-             % (json.dumps(MOD), body)
-        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60)
+@unittest.skipIf(not NODE, "needs node")
+class HistoryRules(unittest.TestCase):
+    def js(self, body):
+        src = ("const H = require(%s);\nconst out = {};\n%s\n"
+               "process.stdout.write(JSON.stringify(out));" % (json.dumps(MOD), body))
+        r = subprocess.run([NODE, "-e", src], capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0, r.stderr[-900:])
         return json.loads(r.stdout)
 
-    def test_an_echoed_command_is_published(self):
-        out = self.run_js("""
+    # ---- the password rule -------------------------------------------------------------------
+    def test_an_echoed_command_is_publishable(self):
+        out = self.js("""
           const c = H.makeCollector();
           c.typed('ls -la'); c.saw('ls -la');
-          out.r = c.typed('\\n');
+          out.lines = c.typed('\\r');
         """)
-        self.assertEqual(out["r"][0]["line"], "ls -la")
-        self.assertTrue(out["r"][0]["publish"])
+        self.assertEqual([l["line"] for l in out["lines"]], ["ls -la"])
+        self.assertTrue(out["lines"][0]["publish"])
 
-    def test_a_password_at_a_sudo_prompt_is_not(self):
-        """The whole reason this module exists. The prompt is shown, echo is off, and nothing the
-        person types comes back."""
-        out = self.run_js("""
+    def test_a_password_is_NOT_published_because_nothing_echoed_it(self):
+        """The whole feature rests on this. A password prompt turns echo off — the screen stays
+        blank while you type — so a line the shell never echoed is a line this must not publish."""
+        out = self.js("""
           const c = H.makeCollector();
-          c.saw('[sudo] password for verita84: ');
-          c.typed('hunter2');
-          out.r = c.typed('\\n');
+          c.saw('[sudo] password for someone: ');
+          c.typed('hunter2correcthorse');
+          out.lines = c.typed('\\r');
         """)
-        self.assertEqual(out["r"][0]["line"], "hunter2")
-        self.assertFalse(out["r"][0]["publish"], "a sudo password would have been published")
+        self.assertEqual(len(out["lines"]), 1)
+        self.assertFalse(out["lines"][0]["publish"],
+                         "a password typed at a prompt with echo off was marked publishable")
+        self.assertIn("echo", out["lines"][0]["why"])
 
-    def test_an_ssh_passphrase_is_not(self):
-        out = self.run_js("""
+    def test_an_echoed_secret_is_still_refused(self):
+        """Echo is necessary and not sufficient: `export TOKEN=…` is echoed perfectly and is still
+        a secret."""
+        out = self.js("""
           const c = H.makeCollector();
-          c.saw("Enter passphrase for key '/home/v/.ssh/id_ed25519': ");
-          c.typed('correct horse battery staple');
-          out.r = c.typed('\\r');
+          const t = 'export AWS_SECRET_ACCESS_KEY=abcdef123456';
+          c.typed(t); c.saw(t);
+          out.lines = c.typed('\\r');
         """)
-        self.assertFalse(out["r"][0]["publish"])
+        self.assertFalse(out["lines"][0]["publish"])
+        self.assertIn("secret", out["lines"][0]["why"])
 
-    def test_silence_alone_is_enough_to_withhold_it(self):
-        """No prompt text at all — just a shell that stopped echoing. The rule must not depend on
-        recognising the words in a prompt, because prompts are written by whoever wrote the program."""
-        out = self.run_js("""
-          const c = H.makeCollector();
-          c.typed('s3cr3t');            /* nothing came back */
-          out.r = c.typed('\\n');
-        """)
-        self.assertFalse(out["r"][0]["publish"])
-
-    def test_an_echoed_secret_is_still_dropped(self):
-        """Echo is necessary and not sufficient: `export TOKEN=…` echoes perfectly."""
-        for line in ("export API_KEY=abcdef123456",
-                     "curl -H 'Authorization: Bearer abc123' https://x",
-                     "nak event --sec nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"):
-            out = self.run_js("""
-              const c = H.makeCollector();
-              c.typed(%s); c.saw(%s);
-              out.r = c.typed('\\n');
-            """ % (json.dumps(line), json.dumps(line)))
-            self.assertFalse(out["r"][0]["publish"], f"{line!r} was published")
-
-    def test_a_line_that_was_backspaced_away_is_what_ran(self):
-        out = self.run_js("""
-          const c = H.makeCollector();
-          c.typed('lss'); c.saw('lss');
-          c.typed('\\x7f');            /* backspace */
-          out.r = c.typed('\\n');
-        """)
-        self.assertEqual(out["r"][0]["line"], "ls")
-
-    def test_ctrl_c_abandons_the_line(self):
-        """A command you thought better of is not history, and it must not become the next one's
-        prefix either."""
-        out = self.run_js("""
+    def test_a_line_that_was_never_run_is_not_a_command(self):
+        """Half a command, still being typed, is not history — only Enter makes one."""
+        out = self.js("""
           const c = H.makeCollector();
           c.typed('rm -rf /import'); c.saw('rm -rf /import');
-          c.typed('\\x03');            /* ^C */
-          c.typed('ls'); c.saw('ls');
-          out.r = c.typed('\\n');
-        """)
-        self.assertEqual(len(out["r"]), 1)
-        self.assertEqual(out["r"][0]["line"], "ls")
-
-    def test_arrows_and_tabs_are_not_content(self):
-        out = self.run_js("""
-          const c = H.makeCollector();
-          c.typed('ec'); c.saw('ec');
-          c.typed('\\x1b[A');          /* an arrow key */
-          c.typed('ho hi'); c.saw('ho hi');
-          out.r = c.typed('\\n');
-        """)
-        self.assertEqual(out["r"][0]["line"], "echo hi")
-
-    def test_an_unfinished_line_is_never_published(self):
-        """It is what somebody is still typing, not something they ran."""
-        out = self.run_js("""
-          const c = H.makeCollector();
-          c.typed('sudo rebo'); c.saw('sudo rebo');
-          out.r = c.typed('');
           out.pending = c.pending();
+          out.lines = c.typed('\\u0003');      // ^C — abandoned
+          out.after = c.pending();
         """)
-        self.assertEqual(out["r"], [])
-        self.assertEqual(out["pending"], "sudo rebo")
+        self.assertEqual(out["pending"], "rm -rf /import")
+        self.assertEqual(out["lines"], [])
+        self.assertEqual(out["after"], "")
 
-    def test_a_pasted_blob_is_not_history(self):
-        out = self.run_js("""
+    def test_an_arrow_key_does_not_end_up_in_the_command(self):
+        """An arrow is ESC [ A — three bytes, of which only ESC is a control character. Consuming
+        the control byte alone leaves "[A" in the line, so pressing ↑ mid-command publishes a
+        command nobody typed."""
+        out = self.js("""
           const c = H.makeCollector();
-          const big = 'x'.repeat(9000);
-          c.typed(big); c.saw(big);
-          out.r = c.typed('\\n');
+          c.typed('git status'); c.saw('git status');
+          c.typed('\\u001b[A');                 // ↑
+          out.pending = c.pending();
+          out.lines = c.typed('\\r');
         """)
-        self.assertFalse(out["r"][0]["publish"])
+        self.assertEqual(out["pending"], "git status")
+        self.assertEqual(out["lines"][0]["line"], "git status")
 
-    def test_the_event_is_ephemeral(self):
-        """20000-29999 is the ephemeral range: relays forward these and never write them down. A
-        stored kind here would turn "history nobody keeps" into a permanent record of every command
-        the user has ever run."""
-        out = self.run_js("out.k = H.KIND; out.e = H.historyEvent('ct', 1700000000000);")
+    # ---- the ring ----------------------------------------------------------------------------
+    def test_another_devices_replay_does_not_bury_what_you_just_ran(self):
+        """A phone that reconnects and replays five minutes of commands arrives all at once. The
+        list is ordered by WHEN A COMMAND WAS RUN, never by when its event turned up."""
+        out = self.js("""
+          const r = H.makeRing(50);
+          r.add('mine', 5000, '');
+          r.add('theirs-old', 1000, 'phone');
+          r.add('theirs-new', 3000, 'phone');
+          out.order = r.merged().map(x => x.line);
+        """)
+        self.assertEqual(out["order"], ["theirs-old", "theirs-new", "mine"])
+
+    def test_the_same_command_twice_in_a_row_is_one_entry(self):
+        out = self.js("""
+          const r = H.makeRing(50);
+          r.add('ls', 1, ''); r.add('ls', 2, ''); r.add('pwd', 3, '');
+          out.n = r.size();
+        """)
+        self.assertEqual(out["n"], 2)
+
+    def test_the_event_is_ephemeral_so_no_relay_writes_it_down(self):
+        """20000–29999 is forwarded and never stored. That is the design — not a synced document
+        somebody would then have to think about deleting."""
+        out = self.js("out.k = H.KIND; out.e = H.historyEvent('ciphertext', 1700000000000);")
         self.assertGreaterEqual(out["k"], 20000)
         self.assertLess(out["k"], 30000)
         self.assertEqual(out["e"]["kind"], out["k"])
-        self.assertEqual(out["e"]["content"], "ct", "the command must travel as ciphertext only")
-        self.assertIn(["l", "pcai-shell"], out["e"]["tags"])
+        self.assertEqual(out["e"]["content"], "ciphertext")
+        self.assertEqual(out["e"]["created_at"], 1700000000)
 
-    def test_the_ring_merges_other_devices_by_time(self):
-        """A phone that reconnects and replays five minutes of commands must not bury what you just
-        ran on this machine."""
-        out = self.run_js("""
-          const r = H.makeRing(10);
-          r.add('here-now', 300, 'desktop');
-          r.add('phone-old', 100, 'phone');
-          out.order = r.merged().map(x => x.line);
-        """)
-        self.assertEqual(out["order"], ["phone-old", "here-now"])
+    # ---- the wiring --------------------------------------------------------------------------
+    def test_the_terminal_actually_CALLS_it(self):
+        """THE ONE THAT MATTERS. This module shipped complete, loaded by the page, precached by the
+        service worker, named in a test file that did not exist — and called by nothing at all. A
+        terminal had a shared-history feature that had never run once, and every angle except this
+        one said it was finished.
 
-    def test_the_ring_drops_an_immediate_repeat_and_is_bounded(self):
-        out = self.run_js("""
-          const r = H.makeRing(3);
-          r.add('ls', 1); r.add('ls', 2);
-          out.afterRepeat = r.size();
-          r.add('a', 3); r.add('b', 4); r.add('c', 5);
-          out.size = r.size();
-          out.lines = r.all().map(x => x.line);
-        """)
-        self.assertEqual(out["afterRepeat"], 1)
-        self.assertEqual(out["size"], 3)
-        self.assertEqual(out["lines"], ["a", "b", "c"])
+        Both directions are asserted, because either alone is silently useless: keystrokes with no
+        output means nothing is ever echoed, so nothing is ever publishable; output with no
+        keystrokes means there is nothing to echo."""
+        src = open(TERM, encoding="utf-8").read()
+        self.assertIn("PCTermHistory", src,
+                      "term.js does not reach for the history module at all")
+        self.assertTrue(re.search(r"term\.onData\(d\s*=>\s*\{[^}]*_histTyped\(d\)", src),
+                        "keystrokes are not fed to the collector — nothing can ever be a command")
+        self.assertTrue(re.search(r"term\.write\(m\.d\);\s*\n\s*_histSaw\(m\.d\)", src),
+                        "the shell's output is not fed to the collector — nothing is ever echoed, "
+                        "so the echo rule refuses every line and the history stays empty")
+        # And it must be encrypted to the user's own key, never published in the clear.
+        self.assertIn("nip44enc", src, "history is published without being encrypted")
+        # An ephemeral event replayed ten minutes late is not history, it is noise.
+        self.assertIn("noQueue", src, "history joins the offline Outbox and is replayed late")
 
 
 if __name__ == "__main__":

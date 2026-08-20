@@ -41,12 +41,19 @@
   function init(){
     const PC = window.__PC;
     if(!PC){ return setTimeout(init, 50); }
-    const { $, $$, enc, toast, authFetch } = PC;
+    const { $, $$, enc, toast, authFetch, publish } = PC;
 
     const XT = () => window.Terminal;              // xterm's global, once its <script> has run
     /* The desktop's local PTY, when PosterChan IS the desktop. Absent everywhere else, and then
      * every line that mentions it is unreachable rather than broken. */
     const LOCAL = () => window.pcTerm || null;
+    /* SHELL HISTORY AS EPHEMERAL NOSTR EVENTS. `termhist.js` holds every judgement — what counts as
+     * a command, and the rule that stops it publishing a password — and shipped wired to NOTHING,
+     * which is the shape that looks finished from every angle except the one that matters. This is
+     * the wiring: keystrokes in, shell output in, publishable lines out, and other devices' lines
+     * in from the relay. Absent when the module is not loaded, which is every surface that has no
+     * terminal. */
+    const HIST = () => window.PCTermHistory || null;
     const LOCAL_HOST = { name: 'local', label: 'this computer', keyed: true, local: true };
     const isLocal = (h) => String(h || '') === 'local';
     const localSid = (id) => 'local:' + id;
@@ -78,6 +85,126 @@
       return 14;
     }
 
+    /* ── SHELL HISTORY ─────────────────────────────────────────────────────────────────────────
+     *
+     * The commands you ran, on the terminals you have open right now, wherever they are. Ephemeral
+     * kinds are forwarded by relays and never written down, so this is not a synced document that
+     * would then have to be deleted — it is a conversation between your own open terminals, and it
+     * ends when they close.
+     *
+     * NIP-44 to your OWN key. A relay operator sees an encrypted blob of unknown length; nobody
+     * else can read a command, and neither can this instance.
+     *
+     * NEVER WITHOUT A KEY. Signed out, there is nothing to encrypt to and nothing to sign with, so
+     * the collector is not even built — a terminal still works, it simply has no history.
+     */
+    let hist = null, ring = null, histOff = null, histSeen = null;
+
+    const _histLabel = () => {
+      try{
+        const n = (navigator.platform || navigator.userAgent || '').slice(0, 24);
+        return n || 'a device';
+      }catch(_){ return 'a device'; }
+    };
+
+    function _histStart(){
+      const H = HIST();
+      if(!H || hist) return;
+      let me = ''; try{ me = (PC.me && PC.me() && PC.me().pubkey) || (window.ME && ME.pubkey) || ''; }catch(_){}
+      if(!me) return;
+      hist = H.makeCollector();
+      ring = H.makeRing();
+      histSeen = new Set();
+      /* Everything published SINCE NOW. A terminal opened today has no business replaying what a
+       * relay happens to have held on to, and an ephemeral event has no business being held on to
+       * at all — `since` says which of those two we are relying on. */
+      try{
+        if(!window.Relay || typeof Relay.subscribe !== 'function') return;
+        histOff = Relay.subscribe([{ kinds: [H.KIND], authors: [me], since: Math.floor(Date.now() / 1000) }],
+          async (ev) => {
+            if(!ev || !ev.id || histSeen.has(ev.id)) return;
+            histSeen.add(ev.id);
+            let o = null;
+            try{ o = JSON.parse(await PC.nip44dec(me, ev.content)); }catch(_){ return; }
+            if(!o || !o.c) return;
+            ring.add(String(o.c), Number(o.at) || (ev.created_at * 1000), String(o.d || ''));
+            _histPaint();
+          });
+      }catch(_){ histOff = null; }
+    }
+
+    function _histStop(){
+      if(histOff){ try{ histOff(); }catch(_){} histOff = null; }
+      hist = null; ring = null; histSeen = null;
+    }
+
+    /** Keystrokes on the way to the shell. Returns nothing; publishing is its own decision. */
+    function _histTyped(d){
+      if(!hist) return;
+      let lines = [];
+      try{ lines = hist.typed(d) || []; }catch(_){ return; }
+      for(const l of lines){
+        if(!l.publish) continue;              // not echoed, too long, or secret-shaped — see termhist.js
+        _histPublish(l.line);
+      }
+    }
+
+    /** Bytes coming back. Echo is the permission — see termhist.js. */
+    function _histSaw(d){ if(hist){ try{ hist.saw(d); }catch(_){} } }
+
+    async function _histPublish(line){
+      const H = HIST(); if(!H || !ring) return;
+      const at = Date.now();
+      /* Added LOCALLY first, so ↑ on this device works whether or not a relay is reachable — the
+       * publish is how it reaches your OTHER terminals, not how it reaches this one. */
+      ring.add(line, at, '');
+      _histPaint();
+      let me = ''; try{ me = (window.ME && ME.pubkey) || ''; }catch(_){}
+      if(!me) return;
+      try{
+        const ct = await PC.nip44enc(me, JSON.stringify({ c: line, at, d: _histLabel() }));
+        const evt = H.historyEvent(ct, at);
+        /* `noQueue` — the Outbox replays what it holds when a socket comes back, and an ephemeral
+         * event replayed ten minutes late is a command that arrives on another device long after
+         * the moment it belonged to. Quiet, because a history line failing to publish is not
+         * something to interrupt somebody's terminal about. */
+        await publish(evt.kind, evt.content, evt.tags, { quiet: true, noQueue: true });
+      }catch(_){}
+    }
+
+    /* THE PANEL, and it is a PANEL rather than ↑ on purpose. The shell already owns ↑ — readline's
+     * own history, which knows about multi-line commands and searching and is not ours to fight
+     * over. What the shell cannot know is what you ran on your OTHER computer, so that is the only
+     * thing offered here. A line is TYPED IN, not run: it lands at the prompt for you to read,
+     * edit and press Enter on, because a command from another machine may name a path this one
+     * does not have. */
+    function _histPaint(){
+      const box = $('#tty-hist-panel'), btn = $('#tty-hist');
+      if(!box || !btn) return;
+      const rows = ring ? ring.merged() : [];
+      btn.classList.toggle('hidden', !rows.length);
+      if(box.hidden) return;
+      box.innerHTML = rows.length
+        ? rows.slice().reverse().map((r, i) =>
+            `<button class="tty-hist-row" data-h="${rows.length - 1 - i}">
+               <span class="tty-hist-cmd">${enc(r.line)}</span>
+               ${r.from ? `<span class="tty-hist-from">${enc(r.from)}</span>` : ''}</button>`).join('')
+        : '<div class="tty-hist-none">Nothing yet. Commands you run appear here, on every terminal '
+          + 'you have open.</div>';
+      $$('.tty-hist-row', box).forEach(b => b.onclick = () => {
+        const r = rows[Number(b.dataset.h)];
+        if(r) _send({ t: 'in', d: r.line });     // typed, never run — see above
+        box.hidden = true;
+        try{ if(term) term.focus(); }catch(_){}
+      });
+    }
+
+    function _histToggle(){
+      const box = $('#tty-hist-panel'); if(!box) return;
+      box.hidden = !box.hidden;
+      _histPaint();
+    }
+
     function _shellHtml(){
       return `<div class="tty-wrap">
         <div class="tty-bar">
@@ -85,8 +212,11 @@
           <button class="btn btn-neon small" id="tty-go">Connect</button>
           <button class="btn btn-ghost small hidden" id="tty-stop" title="Leave it running">Detach</button>
           <button class="btn btn-ghost small hidden tty-kill" id="tty-kill" title="End this session">Kill</button>
+          <button class="btn btn-ghost small hidden" id="tty-hist"
+                  title="Commands from your terminals">History</button>
           <span class="tty-state" id="tty-state"></span>
         </div>
+        <div class="tty-hist" id="tty-hist-panel" hidden></div>
         <div class="tty-sessions" id="tty-sessions" hidden></div>
         <div class="tty-screen" id="tty-screen"></div>
         <div class="tty-keys" id="tty-keys" hidden>
@@ -172,7 +302,7 @@
       }catch(_){ fit = null; }
       term.open(box);
       _fit();
-      term.onData(d => _send({ t: 'in', d }));
+      term.onData(d => { _histTyped(d); _send({ t: 'in', d }); });
       /* The PTY has to be told the size, and it has to be told the size that xterm actually chose —
        * a mismatch is what makes a shell wrap in the wrong place and redraw over itself. */
       ro = (typeof ResizeObserver !== 'undefined') ? new ResizeObserver(() => _fit()) : null;
@@ -372,6 +502,7 @@
       if(!term) return;
           if(m.t === 'out'){
             term.write(m.d);
+            _histSaw(m.d);
             // The CURSOR is what a reconnect resumes from, so it advances only for bytes that reached
             // the screen. Trusting a locally counted length instead would drift the first time a
             // multi-byte character straddled a frame.
@@ -625,8 +756,14 @@
       feed.innerHTML = _shellHtml();
       mounted = feed;
       _state('');
+      /* The collector is built here rather than on the first keystroke: it has to be watching the
+       * shell's OUTPUT from the beginning, because echo is what gives it permission to publish a
+       * line and a collector armed halfway through one has seen no echo for it. */
+      _histStart();
+      _histPaint();
       const ok = await loadHosts();
       _wire();
+      { const hb = $('#tty-hist'); if(hb) hb.onclick = _histToggle; }
       document.addEventListener('visibilitychange', _wake);
       if(ok && !hosts.length) _state('no hosts configured — add some in Admin → Nodes', 'err');
       if(ok){
@@ -667,6 +804,9 @@
       if(term){ try{ term.dispose(); }catch(_){} term = null; fit = null; }
       if(_fitT){ clearTimeout(_fitT); _fitT = null; }
       window.removeEventListener('resize', _fit);
+      /* The relay subscription goes with the screen. Left running it decrypts other devices'
+       * commands into a ring nothing will ever draw, for the rest of the session. */
+      _histStop();
       mounted = null;
     }
 

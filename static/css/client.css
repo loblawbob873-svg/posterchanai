@@ -8213,3 +8213,19 @@ html.osfr-on body > .app, html.osfr-on #os-root{ visibility:hidden; }
 .osfr-sig{ color:var(--muted,#7a8699); font-size:12px; flex:none; }
 .osfr-none,.osfr-note{ color:var(--muted,#7a8699); font-size:13px; line-height:1.5; padding:6px 2px; }
 .osfr-foot{ display:flex; gap:10px; justify-content:flex-end; margin-top:20px; flex-wrap:wrap; }
+
+/* ── the terminal's shared history ─────────────────────────────────────────────────────────────
+ * A PANEL, not ↑: the shell owns ↑ and knows its own history far better than we do. What it cannot
+ * know is what you ran on your other computer, and that is all this offers. */
+.tty-hist{ max-height:38vh; overflow-y:auto; display:flex; flex-direction:column; gap:2px;
+           padding:6px; border-block-end:1px solid var(--border,#2a3446);
+           background:rgba(0,0,0,.35); }
+.tty-hist-row{ display:flex; align-items:baseline; justify-content:space-between; gap:12px;
+               width:100%; padding:6px 9px; border-radius:7px; border:1px solid transparent;
+               background:transparent; color:inherit; text-align:start; cursor:pointer;
+               font:inherit; }
+.tty-hist-row:hover{ background:rgba(60,232,255,.10); border-color:var(--neon,#3ce8ff); }
+.tty-hist-cmd{ font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:13px;
+               overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tty-hist-from{ color:var(--muted,#7a8699); font-size:11px; flex:none; }
+.tty-hist-none{ color:var(--muted,#7a8699); font-size:13px; padding:8px; line-height:1.5; }
