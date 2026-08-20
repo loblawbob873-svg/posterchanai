@@ -558,7 +558,15 @@ public class WidgetDeviceTest {
             assertTrue("the widget was not bound", made[0] >= 0);
             allocated.add(made[0]);
 
-            int ceilingCells = Math.max(1, chosen.info.maxResizeWidth / g[2]);
+            // IN THE LAUNCHER'S OWN UNITS, not re-derived here. `maxResizeWidth` is the manifest's
+            // raw dp while `minWidth` is pixels — the first version of this test divided the two by
+            // the same cell size, computed a ceiling of one cell, and blamed the product. What is
+            // asserted below is the user-visible claim instead: it came back from the full width.
+            float density = ctx.getResources().getDisplayMetrics().density;
+            int ceilingCells = Math.max(1, (int) (chosen.info.maxResizeWidth * density) / g[2]);
+            Log.i(TAG, "phone widgets: " + chosen.info.provider.getShortClassName()
+                    + " ceiling raw=" + chosen.info.maxResizeWidth + " density=" + density
+                    + " cell=" + g[2] + "px -> " + ceilingCells + " cells of " + g[0]);
             org.junit.Assume.assumeTrue("its ceiling is the whole grid here, so there is nothing to"
                     + " bring back", ceilingCells < g[0]);
 
@@ -737,6 +745,10 @@ public class WidgetDeviceTest {
                         + i.provider.flattenToShortString()
                         + " min=" + i.minWidth + "x" + i.minHeight + "px"
                         + " floor=" + floorW + "x" + floorH + "px"
+                        // RAW, and labelled raw. minWidth/minResizeWidth are density-resolved by
+                        // the platform; maxResizeWidth (API 31) comes back as the manifest's dp.
+                        // Printed side by side so that stays a measurement, not a memory.
+                        + " ceiling=" + i.maxResizeWidth + "x" + i.maxResizeHeight + "(raw)"
                         + " -> smallest " + needX + "x" + needY + " cells of " + g[0] + "x" + g[1]
                         + (fits ? "" : "  DOES NOT FIT"));
                 if (!isOurs) continue;

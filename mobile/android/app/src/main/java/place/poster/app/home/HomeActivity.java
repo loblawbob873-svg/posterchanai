@@ -542,16 +542,6 @@ public class HomeActivity extends Activity implements DeskView.Host {
             cellW = deskHost.getWidth() / Math.max(1, cols);
             cellH = deskHost.getHeight() / Math.max(1, rows);
         }
-        // PUT ANYTHING OVERSIZED BACK INSIDE WHAT ITS PROVIDER ASKED FOR, before anything is fitted
-        // around it. A widget left at a span the old arithmetic invented takes cells nothing else
-        // can use, which is how one gigantic weather card pushed the rest of the desktop into
-        // overflow as well as looking wrong.
-        for (Desk.Item it : live) {
-            if (!it.isWidget()) continue;
-            int mx = maxCells(it, cols, cellW, true), my = maxCells(it, rows, cellH, false);
-            if (it.spanX > mx) it.spanX = mx;
-            if (it.spanY > my) it.spanY = my;
-        }
         List<Desk.Item> stranded = new ArrayList<Desk.Item>();
         for (Desk.Item it : Desk.fit(live, cols, rows)) {
             if (Desk.addShrinking(live, it, minCells(it, cols, cellW, true),
@@ -578,6 +568,28 @@ public class HomeActivity extends Activity implements DeskView.Host {
         desk.post(new Runnable() {
             @Override public void run() {
                 if (desk.getWidth() <= 0 || desk.getHeight() <= 0) return;
+                // PUT ANYTHING OVERSIZED BACK INSIDE WHAT ITS PROVIDER ASKED FOR — and it happens
+                // HERE, not up in the body of redrawDesk, because up there the desk has not been
+                // laid out yet: `cellW` is zero on the draw that follows a launch, a ceiling
+                // derived from zero is no ceiling, and nothing redraws again once the grid SHAPE
+                // has settled (see resizeSoon). The first version of this clamp sat in that dead
+                // spot and a full-width widget stayed full width, which is the bug it was written
+                // for. Measured first, then acted on.
+                boolean changed = false;
+                for (Desk.Item it : told) {
+                    if (!it.isWidget()) continue;
+                    int mx = maxCells(it, desk.cols(), desk.cellW(), true);
+                    int my = maxCells(it, desk.rows(), desk.cellH(), false);
+                    if (it.spanX > mx) { it.spanX = mx; changed = true; }
+                    if (it.spanY > my) { it.spanY = my; changed = true; }
+                }
+                if (changed) {
+                    // Written and redrawn ONCE — the next pass finds nothing over its ceiling and
+                    // stops, so this cannot become a loop.
+                    prefs.setDesk(geom, Desk.serialize(told));
+                    redrawDesk();
+                    return;
+                }
                 for (Desk.Item it : told) if (it.isWidget()) onResized(it, desk.cellW(), desk.cellH());
             }
         });
@@ -678,10 +690,19 @@ public class HomeActivity extends Activity implements DeskView.Host {
         if (android.os.Build.VERSION.SDK_INT < 31) return grid;
         AppWidgetProviderInfo i = widgets.infoOf(item.widgetId());
         if (i == null) return grid;
-        int px;
-        try { px = wide ? i.maxResizeWidth : i.maxResizeHeight; }
+        int declared;
+        try { declared = wide ? i.maxResizeWidth : i.maxResizeHeight; }
         catch (Throwable t) { return grid; }
-        if (px <= 0) return grid;                    // the provider has no opinion
+        if (declared <= 0) return grid;              // the provider has no opinion
+        // MEASURED ON A DEVICE, because the two families of field do NOT agree with each other.
+        // `minWidth` and `minResizeWidth` are resolved against the display density by the platform
+        // (a 180dp manifest reads back as 495 at density 2.75); `maxResizeWidth`, added in API 31,
+        // comes back as the RAW DP — the emulator returned 260 for `android:maxResizeWidth="260dp"`
+        // on that same device, which is what made the first version of this clamp compute a ceiling
+        // of one cell and then never fire. Converted here, and both numbers are printed by
+        // WidgetDeviceTest's phone table so this stays a measurement rather than a memory.
+        float d = getResources().getDisplayMetrics().density;
+        int px = d > 0 ? (int) (declared * d) : declared;
         int cells = Math.max(1, px / cellPx);
         return Math.max(minCells(item, grid, cellPx, wide), Math.min(grid, cells));
     }
