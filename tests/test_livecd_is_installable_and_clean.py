@@ -188,6 +188,53 @@ class TheMenusSayWhatThisInstalls(unittest.TestCase):
                 self.assertIn("POSTERCHANOS", h.upper())
 
 
+class ItFindsItsOwnFilesWhereverItIsInstalled(unittest.TestCase):
+    """`$(dirname $0)` is right in a checkout and wrong once installed.
+
+    "replace /usr/bin/gentoo.sh with the latest gentoo.sh" — at that path `dirname` is /usr/bin, so
+    the script looked for /usr/bin/bin and /usr/bin/plymouth, found neither, and carried on. Nothing
+    fails: the pc-* helpers are simply not copied, and the first sign is a freshly installed machine
+    whose desktop has no pc-shell-start.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = GENTOO.read_text()
+
+    def test_the_tree_is_resolved_once(self):
+        self.assertIn("PCOS_TREE=", self.src)
+
+    def test_no_use_site_still_guesses_from_argv0(self):
+        """Only the RESOLVER may look at $0 — checked as a span, since the resolver's own loop
+        naturally mentions it on a line that says nothing else."""
+        lines = self.src.splitlines()
+        start = next(i for i, l in enumerate(lines) if l.startswith('PCOS_TREE=""'))
+        end = next(i for i, l in enumerate(lines) if l.startswith('[ -n "$PCOS_TREE" ]'))
+        for n, line in enumerate(lines, 1):
+            if 'dirname "$0"' in line and not line.strip().startswith("#"):
+                if start < n <= end + 1:
+                    continue                      # inside the resolver, which is its whole job
+                with self.subTest(line=n):
+                    self.fail("line %d derives a path from $0 outside the resolver: %s"
+                              % (n, line.strip()))
+
+    def test_it_looks_where_the_iso_puts_it(self):
+        i = self.src.index("PCOS_TREE=")
+        self.assertIn("/usr/local/share/posterchanos", self.src[i:i + 500],
+                      "an ISO-installed copy cannot find the tree the ISO shipped")
+
+    def test_the_helpers_and_theme_use_it(self):
+        self.assertIn('"$PCOS_TREE/bin/$helper"', self.src)
+        self.assertIn('"$PCOS_TREE/plymouth/posterchanos"', self.src)
+
+    def test_a_bare_script_still_runs(self):
+        """Not finding the tree must not be fatal — every use site has its own fallbacks, and an
+        install from a lone script beats no install."""
+        i = self.src.index("PCOS_TREE=")
+        seg = self.src[i:i + 900]
+        self.assertNotIn("exit 1", seg)
+
+
 class TheAccountRewriteActuallyWorks(unittest.TestCase):
     """RUN, not grepped. It fails in two opposite silent ways: leaving a person in, or dropping the
     system users the image needs to boot."""

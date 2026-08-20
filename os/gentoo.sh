@@ -26,6 +26,26 @@
 ########################
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # Cyberpunk color codes
+# WHERE THIS SCRIPT'S SUPPORT FILES ARE — asked, not assumed from $0.
+#
+# gentoo.sh needs `bin/` (the pc-* helpers it installs) and `plymouth/` (the boot theme) beside it,
+# and it used to find them with `$(dirname "$0")`. That is right when it is run out of a checkout and
+# WRONG the moment it is installed: at /usr/bin/gentoo.sh, dirname is /usr/bin, so it looks for
+# /usr/bin/bin and /usr/bin/plymouth, finds neither, and carries on. Nothing fails — the helpers are
+# simply not copied, and the first sign is a desktop with no pc-shell-start on the machine it just
+# installed.
+#
+# So the directory is resolved once, from the places the tree actually lives: beside the script, then
+# where the LiveCD builder puts it, then the two staging paths the installer already used.
+PCOS_TREE=""
+for _d in "$(cd "$(dirname "$0")" 2>/dev/null && pwd)" /usr/local/share/posterchanos \
+          /usr/share/posterchan /tmp; do
+	[ -n "$_d" ] && [ -d "$_d/bin" ] && { PCOS_TREE="$_d"; break; }
+done
+# Nothing found is not fatal here: every use site already has its own fallbacks, and an install from
+# a bare script is still better than no install. It just cannot copy what it does not have.
+[ -n "$PCOS_TREE" ] || PCOS_TREE="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+
 COLOR_CYAN="\033[1;36m"; COLOR_MAGENTA="\033[1;35m"; COLOR_YELLOW="\033[1;33m"
 COLOR_GREEN="\033[1;32m"; COLOR_RESET="\033[0m"; COLOR_BOLD="\033[1;97m"
 TARGET='/tmp/install'
@@ -797,7 +817,7 @@ plymouthTheme() {
 	# beside the script; from inside the chroot `$0` is /usr/bin/gentoo.sh and there is no theme
 	# next to it. Both are tried, and a miss is stated rather than skipped — an installer that
 	# quietly leaves the stock splash looks identical to one that set ours.
-	SRC="$(dirname "$0")/plymouth/posterchanos"
+	SRC="$PCOS_TREE/plymouth/posterchanos"
 	[ -d "$SRC" ] || SRC="/tmp/plymouth/posterchanos"
 	[ -d "$SRC" ] || SRC="${TARGET}/usr/share/posterchan/plymouth/posterchanos"
 	[ -d "$SRC" ] || SRC="/usr/share/posterchan/plymouth/posterchanos"
@@ -1150,8 +1170,8 @@ posterchanShell() {
 	# exactly that one command — signing in with a key is not the same as being trusted with root,
 	# and a machine anyone may log into must not hand every visitor sudo.
 	for helper in pc-provision-user pc-shell-start pc-key; do
-		if [ -f "$(dirname "$0")/bin/$helper" ]; then
-			cp -f "$(dirname "$0")/bin/$helper" ${TARGET}/usr/local/bin/$helper
+		if [ -f "$PCOS_TREE/bin/$helper" ]; then
+			cp -f "$PCOS_TREE/bin/$helper" ${TARGET}/usr/local/bin/$helper
 		elif [ -f /tmp/bin/$helper ]; then
 			cp -f /tmp/bin/$helper ${TARGET}/usr/local/bin/$helper
 		fi
@@ -1615,14 +1635,14 @@ FSTAB
 		# This builds a LIVE image of a running machine, and a live image with no way to install is
 		# a thing you can look at and not a thing you can adopt. The installer is THIS script, so
 		# the ISO gets a copy of the directory it was run from — gentoo.sh plus bin/ and plymouth/,
-		# which it reads with `$(dirname "$0")` and half-works without.
+		# which it reads through $PCOS_TREE and half-works without.
 		#
 		# Injected as pseudo-files rather than copied into `/` first, for the reason the fstab
 		# rewrite is: building an ISO must not modify the machine being imaged. And it must not come
 		# from /home either — that is EXCLUDED by default, so an installer living in somebody's home
 		# directory is precisely the file that would not be on the disc.
 		local IHERE ISRC
-		IHERE="$(cd "$(dirname "$0")" && pwd)"
+		IHERE="$PCOS_TREE"
 		if [[ -f "$IHERE/gentoo.sh" ]]; then
 			echo "usr/local/share/posterchanos d 755 0 0"
 			while IFS= read -r ISRC; do
