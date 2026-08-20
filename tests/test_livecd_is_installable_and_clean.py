@@ -108,6 +108,86 @@ class TheImageDoesNotCarryTheOperator(unittest.TestCase):
         self.assertIn("etc/hostname f 644 0 0 echo posterchanos", self.fn)
 
 
+class TheCloneToolIsStillThere(unittest.TestCase):
+    """The ISO builder is a NEW option, not a replacement for anything.
+
+    Reported as "you kinda ruined the important feature of gentoo.sh, option 6 used to let you clone
+    desktop -> usb and vice versa". It had not been removed — but there are now two different [6]s,
+    one per menu, and both move an operating system around. The main menu's has cloned a running
+    system between a disk and a USB since the first commit; mine writes an ISO and lives under Tools
+    and Tweaks. This pins the older one so a future tidy-up cannot quietly take it, and pins the
+    labels apart so they cannot be confused again.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = GENTOO.read_text()
+
+    def test_backup_restore_is_still_offered(self):
+        self.assertIn("Backup/Restore Live OS", self.src)
+
+    def test_it_still_has_a_function_behind_it(self):
+        self.assertIn("liveOSrestore()", self.src)
+        self.assertIn('liveOSrestore "$HARD_DISK"', self.src)
+
+    def test_backup_to_a_server_is_still_offered(self):
+        """The other direction."""
+        self.assertIn("Backup OS to Build Server", self.src)
+        self.assertIn("backupOS()", self.src)
+
+    def test_option_six_means_exactly_one_thing(self):
+        """The ISO builder is numbered 7 and 6 is left empty in that menu on purpose. Two [6]s that
+        both move an operating system around, one menu apart, is what made a working feature look
+        deleted."""
+        # Only MENU ENTRIES count. A `[6]` in a comment explaining this rule is prose, and so is the
+        # hint pointing at the clone tool — both name the number without being it. An entry's number
+        # follows the colour escape directly, which is what tells them apart.
+        sixes = [l for l in re.findall(r"(?m)^\s*echo -e .*?m\[6\][^\\]*", self.src)]
+        self.assertEqual(len(sixes), 1, "there is more than one [6] menu entry again: %r" % sixes)
+        self.assertIn("Backup/Restore", sixes[0])
+
+    def test_the_iso_builder_is_not_numbered_six(self):
+        i = self.src.index("Build an installable ISO")
+        self.assertIn("[7]", self.src[max(0, i - 40):i])
+
+    def test_the_dispatch_agrees_with_the_label(self):
+        """A renumbered label with the old branch behind it is a menu entry that does nothing."""
+        i = self.src.rindex("fixSound")
+        self.assertRegex(self.src[i:i + 200], r"choice = 7 \]\]; then\s*liveCD")
+
+    def test_the_iso_builder_points_at_the_clone_tool(self):
+        i = self.src.index("Build an installable ISO")
+        self.assertIn("main menu", self.src[i:i + 600])
+
+
+class TheMenusSayWhatThisInstalls(unittest.TestCase):
+    """"you need to rename the menus to PosterChanOS Installer".
+
+    The script builds PosterChanOS and nothing else — the Gentoo-profile branches were taken out
+    already — but the headings still announced a Gentoo installer, so the thing on screen disagreed
+    with the thing being installed.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = GENTOO.read_text()
+
+    def test_no_menu_heading_calls_this_a_gentoo_installer(self):
+        for line in self.src.splitlines():
+            if line.strip().startswith("echo -e") and "nstaller" in line:
+                with self.subTest(line=line.strip()[:70]):
+                    self.assertNotIn("Gentoo Installer", line)
+                    self.assertNotIn("GENTOO CYBERPUNK", line)
+
+    def test_the_headings_name_posterchanos(self):
+        heads = [l for l in self.src.splitlines()
+                 if l.strip().startswith("echo -e") and "nstaller" in l.lower()]
+        self.assertTrue(heads, "the installer headings are gone — re-read this test")
+        for h in heads:
+            with self.subTest(head=h.strip()[:70]):
+                self.assertIn("POSTERCHANOS", h.upper())
+
+
 class TheAccountRewriteActuallyWorks(unittest.TestCase):
     """RUN, not grepped. It fails in two opposite silent ways: leaving a person in, or dropping the
     system users the image needs to boot."""

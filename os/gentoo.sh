@@ -1291,7 +1291,7 @@ btrfs-tweaks() {
 initializeDisk() {
 	clear
 	echo
-	echo -e "\033[1;36m[Gentoo Installer - Initialize Device]\033[0m"
+	echo -e "\033[1;36m[PosterChanOS Installer - Initialize Device]\033[0m"
 	echo
 	read -p 'Proceed with Wiping the disk? (y/n): ' -i "local" choice
 	if [[ $choice = *y* ]]; then
@@ -1342,14 +1342,21 @@ show-help() {
 tweaks() {
 	clear
 	echo
-	echo -e "\033[1;36m[Gentoo Installer System Tweaks]\033[0m"
+	echo -e "\033[1;36m[PosterChanOS Installer - Tools and Tweaks]\033[0m"
 	echo
 	echo -e "\033[1;36m[1] Chroot into existing OS\033[0m"
 	echo -e "\033[1;36m[2] Enable/Disable Disk Password at Boot\033[0m"
 	echo -e "\033[1;36m[3] Compile the Kernel\033[0m"
 	echo -e "\033[1;36m[4] Upgrade gentoo.sh\033[0m"
 	echo -e "\033[1;36m[5] Fix Audio\033[0m"
-	echo -e "\033[1;36m[6] Build a LiveCD from this OS\033[0m"
+	# DELIBERATELY NOT [6], AND THE GAP IS THE POINT. The main menu's [6] is Backup/Restore Live OS,
+	# which clones a running system between a disk and a USB and has been there since the first
+	# commit. Adding a second [6] that also moves an operating system around — one menu away — sent
+	# somebody reaching for the clone tool straight into the ISO builder, and left them sure the
+	# clone tool had been deleted. It had not. Numbering this 7 and leaving 6 empty here costs a gap
+	# in a list and buys "option 6" meaning exactly one thing in this script.
+	echo -e "\033[1;36m[7] Build an installable ISO of this system\033[0m"
+	echo -e "\033[0;90m    (to clone this system to or from a USB, use [6] on the main menu)\033[0m"
 	echo
 	read -p 'Your Choice: ' choice
 	if [[ $choice = 1 ]]; then
@@ -1381,7 +1388,7 @@ tweaks() {
 		scp verita84@nas.lan:~/configs/scripts/gentoo.sh .
 	elif [[ $choice = 5 ]]; then
 		fixSound
-	elif [[ $choice = 6 ]]; then
+	elif [[ $choice = 7 ]]; then
 		liveCD
 		tweaks
 	else
@@ -1783,7 +1790,7 @@ menu() {
 	clear
 	echo
 	echo -e "\033[1;36m═══════════════════════════════════════════════════════\033[0m"
-	echo -e "\033[1;97m  ⚡ POSTER.PLACE GENTOO CYBERPUNK INSTALLER ⚡\033[0m"
+	echo -e "\033[1;97m  ⚡ POSTERCHANOS INSTALLER ⚡\033[0m"
 	echo -e "\033[1;36m═══════════════════════════════════════════════════════\033[0m"
 	echo
 	echo -e "\033[1;36m[1] ▶ Setup Disk\033[0m"
