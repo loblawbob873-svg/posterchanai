@@ -40,6 +40,7 @@
     open: '',            // the address whose conversation is on screen
     q: '',
     ready: false,
+    localRead: false,    // this session read rows out of THIS phone's own message store
     loading: false,
     error: '',
     scroll: 0,
@@ -467,6 +468,7 @@
                             incoming: !!r.incoming, name: r.name || '' });
         n++; total++;
       }
+      if(n) S.localRead = true;      // rows came out of THIS device's store — see noteWhere
       quiet = n ? 0 : quiet + 1;
       if(n){ rebuild(); if(onProgress) try{ onProgress(total); }catch(_){ } }
       if(top <= since) break;            // the provider has nothing newer — we are at the end
@@ -519,6 +521,7 @@
         n++; total++;
         if(m.date && m.date < oldest) oldest = m.date;
       }
+      if(n) S.localRead = true;      // rows came out of THIS device's store — see noteWhere
       quiet = n ? 0 : quiet + 1;
       if(n){ rebuild(); if(onProgress) try{ onProgress(total); }catch(_){ } }
       if(from === 0) break;                  // reached the beginning of time; nothing older exists
@@ -676,6 +679,39 @@
     return { archive, phone };
   }
 
+  /* ASK ANDROID FOR THE SMS ROLE. One implementation, two buttons — the empty state's and the one
+   * in the header that is reachable once messages are on screen. They were about to be two copies,
+   * and two copies of a flow whose whole difficulty is what to say when it silently fails is how
+   * one of them ends up saying nothing.
+   *
+   * THE HOME-SCREEN PLUGIN, not the Sms one. The role dialog belongs to the shell half
+   * (HomePlugin.requestSms is what the settings card's switch calls), and asking the Sms plugin for
+   * it gets a proxy that answers every name and then rejects — a button that does nothing, on the
+   * control that exists to stop doing nothing. */
+  async function askForRole(btn){
+    const P = PC.capPlugin ? PC.capPlugin('HomeScreen', 'requestSms') : null;
+    if(!P || !P.requestSms){
+      S.emptyWhy = 'This build cannot ask for it — update the app.'; paint(); return;
+    }
+    if(btn) btn.disabled = true;
+    let held = false;
+    try{ held = !!((await P.requestSms()) || {}).isDefault; }catch(_){ held = false; }
+    /* RE-ASKED AFTERWARDS RATHER THAN BELIEVED. Android refuses a role the app cannot hold by
+     * starting the request activity and finishing it immediately — no dialog, no error, nothing in
+     * any log — which is indistinguishable from somebody declining. The state decides what to say. */
+    const st2 = await phoneState();
+    if(st2.isDefault || held){
+      S.emptyWhy = ''; S.emptyFix = '';
+      await loadFromPhone();
+      paint();
+      return;
+    }
+    S.emptyWhy = roleLine(st2) + ' Android did not change it just now — open Default apps below '
+               + 'and set Messages there.';
+    S.emptyFix = 'role';
+    paint();
+  }
+
   // ---------------------------------------------------------------- view
 
   function paint(){
@@ -700,6 +736,18 @@
           <button class="btn btn-neon small" id="sms-new">${ICO('plus','b-ic')}New</button>
         </div>
         <div class="muted small" id="sms-note"></div>
+        <!-- THE ROLE IS ASKED FOR HERE, WHERE IT IS ALWAYS REACHABLE.
+             It used to live in the EMPTY state only, which is exactly backwards: reading works
+             WITHOUT the role and sending does not, so the moment somebody's texts appeared — the
+             moment they would try to reply — the only control that grants it disappeared. Reported
+             as "there is no button", then "PosterChan is not this phone's messaging app when i send
+             message", which is the same fact from either end.
+             Hidden by default and revealed by noteWhere, because it is a question only a device
+             that CAN hold the role should be asked, and only while it does not. -->
+        <div id="sms-rolebar" style="display:none;margin-top:8px">
+          <button class="btn btn-neon small" id="sms-role2">Make PosterChan my messages app</button>
+          <button class="btn small" id="sms-defaults2" style="margin-left:8px">Android\u2019s Default apps</button>
+        </div>
         <div class="muted small" style="margin-top:6px">
           <button class="btn small" id="sms-why">Why isn\u2019t this working?</button></div>
         <div class="sms-threads">${rows.map(t => {
@@ -739,6 +787,13 @@
         </div>
       </div>`;
 
+    /* Bound whether or not the bar is visible right now — `noteWhere` reveals it asynchronously,
+       after this runs, and a button revealed with no handler is the dead-button bug one layer on. */
+    { const rb = PC.$('#sms-role2'); if(rb) rb.onclick = () => askForRole(rb); }
+    { const db = PC.$('#sms-defaults2'); if(db) db.onclick = () => {
+        const P = PC.capPlugin ? PC.capPlugin('HomeScreen', 'openDefaultApps') : null;
+        try{ if(P && P.openDefaultApps) P.openDefaultApps(); }catch(_){}
+      }; }
     const q = PC.$('#sms-q');
     if(q) q.oninput = () => { S.q = q.value; paint(); q.focus(); };
     const nw = PC.$('#sms-new');
@@ -752,27 +807,7 @@
                                 : 'This build cannot report it — it is older than this screen.';
     };
     const role = PC.$('#sms-role');
-    if(role) role.onclick = async () => {
-      // THE HOME-SCREEN PLUGIN, not the Sms one. The role dialog belongs to the shell half
-      // (HomePlugin.requestSms is what the settings card's switch calls), and asking the Sms plugin
-      // for it gets a proxy that answers every name and then rejects — which looks like a button
-      // that does nothing, on the screen this button exists to stop doing nothing.
-      const P = PC.capPlugin ? PC.capPlugin('HomeScreen', 'requestSms') : null;
-      if(!P || !P.requestSms){ S.emptyWhy = 'This build cannot ask for it — update the app.'; paint(); return; }
-      role.disabled = true;
-      let held = false;
-      try{ held = !!((await P.requestSms()) || {}).isDefault; }catch(_){ held = false; }
-      /* RE-ASKED AFTERWARDS RATHER THAN BELIEVED. Android refuses a role the app cannot hold by
-       * starting the request activity and finishing it immediately — no dialog, no error, nothing
-       * in any log — which is indistinguishable from somebody declining. The state is what decides
-       * what to say, and when it did not move the person is sent to the one screen that always
-       * works. */
-      const st2 = await phoneState();
-      if(st2.isDefault || held){ S.emptyWhy = ''; S.emptyFix = ''; await loadFromPhone(); paint(); return; }
-      S.emptyWhy = roleLine(st2) + ' Android did not change it just now, so use the button below.';
-      S.emptyFix = 'role';
-      paint();
-    };
+    if(role) role.onclick = () => askForRole(role);
     const defs = PC.$('#sms-defaults');
     if(defs) defs.onclick = () => {
       const P = PC.capPlugin ? PC.capPlugin('HomeScreen', 'openDefaultApps') : null;
@@ -817,6 +852,26 @@
     const el = PC.$('#sms-note');
     if(!el) return;
     const st = await phoneState();
+    /* WHAT ACTUALLY HAPPENED BEATS WHAT THE STATE SAYS.
+     *
+     * The last branch describes a device reading somebody ELSE'S phone over Nostr — "your phone has
+     * to be reachable" — and it was chosen whenever `phoneState()` answered `canRead:false`, which
+     * includes every way that call can simply fail: a plugin that did not answer, a bridge not ready,
+     * an exception swallowed into the default. So a person holding their own phone, looking at their
+     * own texts on the screen directly below, was told this was a remote copy. That is not a wrong
+     * emphasis; it is a sentence contradicted by the thing it sits on top of.
+     *
+     * Having read rows out of THIS device's store is a fact, and it outranks a re-queried
+     * permission. Only a `list` that returned messages can set it. */
+    /* Shown only where it can do something: a device that can hold the role and does not. A tablet
+     * with no radio is never offered it, and a phone that already IS the default is not asked again. */
+    const bar = PC.$('#sms-rolebar');
+    if(bar) bar.style.display = (st.present && !st.isDefault) ? '' : 'none';
+    if(!st.isDefault && S.localRead){
+      el.textContent = 'Your phone\u2019s messages, read from the phone itself. New ones still '
+        + 'arrive in whichever app is the default \u2014 make PosterChan the default to send from here.';
+      return;
+    }
     if(st.isDefault){
       el.textContent = 'This phone. Messages are stored in the phone’s own message app as well, '
         + 'so nothing else on the phone loses them.';
