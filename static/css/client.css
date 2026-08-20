@@ -8283,3 +8283,12 @@ html.osfr-on body > .app, html.osfr-on #os-root{ visibility:hidden; }
    conversation. */
 .feed.feed-texts{display:flex;flex-direction:column;min-height:0}
 .feed.feed-texts>.sms-wrap{flex:1 1 auto;min-height:0;height:auto;padding:var(--s3)}
+
+/* Contacts, read from this device while the server cannot be reached. A NOTICE, not an error: the
+   address book is on screen and only the refresh failed, so it sits above the list rather than
+   replacing it. Amber, because nothing is wrong with the data — it is merely unconfirmed. */
+.ct-stale{padding:8px 14px;border-bottom:1px solid var(--line);
+  background:linear-gradient(180deg,rgba(255,190,80,.10),transparent);
+  color:var(--muted);display:flex;align-items:center;gap:8px}
+.ct-stale::before{content:"";width:7px;height:7px;border-radius:50%;flex:none;
+  background:#ffbe50;box-shadow:0 0 8px rgba(255,190,80,.7)}

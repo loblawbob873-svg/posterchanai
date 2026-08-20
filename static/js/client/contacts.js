@@ -91,9 +91,44 @@
                         || c.org || '';
 
     // ---- load --------------------------------------------------------------------------------
+    /* THE ADDRESS BOOK IS KEPT ON THIS DEVICE, so it is readable with no server.
+     *
+     * "contacts should be like notes and passwords, work offline." Notes and the vault paint from
+     * what the client already holds and refresh behind it; Contacts went to the network first and
+     * had nothing to show when it could not be reached — which is a whole screen of "could not
+     * reach your contacts" over an address book the device had already downloaded. It happened on
+     * an ordinary service restart.
+     *
+     * DISPLAY ONLY, AND THAT LINE IS LOAD-BEARING. The phone-book reconcile decides what to DELETE
+     * from a handset from this same list, and a keep-set built from a cache is a cache deciding
+     * somebody's contacts. So `S.fromCache` marks the state as unconfirmed, `loadedOk` is never set
+     * from it, and `partial` is true — the sweep already refuses to delete under exactly that flag.
+     * A cached read can put a name on screen; it can never take one off a phone.
+     *
+     * Written after a WHOLE load only, for the same reason: caching a partial one would persist the
+     * short list this feature has twice nearly lost an address book to. */
+    const CKEY = () => 'pc_contacts_cache:' + ((PC.ME && PC.ME.pubkey) || '');
+    function _saveCache(){
+      try{ localStorage.setItem(CKEY(), JSON.stringify({ books: S.books, cards: S.cards, at: Date.now() })); }
+      catch(_){ /* quota, private mode — the network path is unaffected */ }
+    }
+    function _loadCache(){
+      try{
+        const j = JSON.parse(localStorage.getItem(CKEY()) || 'null');
+        if(!j || !Array.isArray(j.books) || !j.books.length) return false;
+        S.books = j.books; S.cards = j.cards || {};
+        if(!S.book || !S.books.some(b => b.id === S.book)) S.book = (S.books[0] || {}).id || '';
+        S.enabled = true; S.ready = true;
+        S.fromCache = true; S.partial = true;      // never a keep-set — see above
+        return true;
+      }catch(_){ return false; }
+    }
+
     async function load(){
-      S.loading = true; S.error = '';
-      paint();
+      S.loading = true; S.error = ''; S.stale = '';
+      // Paint what this device already has BEFORE the first await, so an unreachable server costs a
+      // refresh rather than the screen.
+      if(!S.ready && _loadCache()) paint(); else paint();
       try{
         const r = await api('/api/contacts/books');
         S.books = r.books || [];
@@ -118,13 +153,17 @@
         S.cards = got;
         S.rev = (S.rev || 0) + 1;
         S.partial = !whole;     // this load, not the screen's whole history — see the sweep
-        if(whole) S.loadedOk = true;
+        S.fromCache = false;    // this came from the server; it may speak for deletions again
+        if(whole){ S.loadedOk = true; _saveCache(); }
                                 // …and only here. Never cleared: a LATER failure leaves the last
                                 // good books/cards in place, which is real state worth pushing.
       }catch(e){
         const msg = (e && e.message) || '';
         // 404 is the server being off, which is a state to explain rather than an error to report.
         if(/off on this node/i.test(msg)) S.enabled = false;
+        /* A FAILED REFRESH OVER A CACHED BOOK IS NOT AN ERROR SCREEN. The contacts are on screen;
+         * what failed is finding out whether they changed. Say that quietly and keep them. */
+        else if(S.books.length) S.stale = msg || 'showing this device\u2019s copy — the server could not be reached';
         else S.error = msg || 'could not load your contacts';
       }finally{
         S.loading = false; S.ready = true; paint();
@@ -222,7 +261,12 @@
       const feed = $('#feed'); if(!feed) return;
       if(S.loading && !S.ready){ feed.innerHTML = '<div class="ct-wrap"><div class="spinner"></div></div>'; return; }
       if(S.enabled === false || S.error){ feed.innerHTML = `<div class="ct-wrap">${offScreen()}</div>`; return; }
-      feed.innerHTML = `<div class="ct-wrap">${head()}${list()}</div>`;
+      /* The contacts ARE on screen; what failed is finding out whether they changed. A banner over
+       * the list says so without taking the list away — the distinction the old error page could
+       * not draw, because it replaced the whole view. */
+      const staleBar = S.stale
+        ? `<div class="ct-stale muted small" role="status">${enc(S.stale)}</div>` : '';
+      feed.innerHTML = `<div class="ct-wrap">${staleBar}${head()}${list()}</div>`;
       wire(feed);
       const s = $('#feed');
       if(s) requestAnimationFrame(()=>{ try{ s.scrollTop = S.scroll || 0; }catch(_){} });
