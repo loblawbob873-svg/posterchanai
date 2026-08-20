@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- GENERATED from static/js/client/sprite.js #i-grid by scripts/gen_android_icons.py.
+     Do not edit: the web client and the native screens must draw the same glyph, and this
+     file is how that is enforced (tests/test_android_icon_sprite.py). Colour is applied at
+     runtime from the active PcTheme palette, so nothing here is themed. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFFFF">
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.7"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M5.6,3.4 h12.799999999999999 a2.2,2.2 0 0 1 2.2,2.2 v12.799999999999999 a2.2,2.2 0 0 1 -2.2,2.2 h-12.799999999999999 a2.2,2.2 0 0 1 -2.2,-2.2 v-12.799999999999999 a2.2,2.2 0 0 1 2.2,-2.2 z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.7"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M3.4 9.2h17.2M3.4 14.8h17.2M9.2 3.4v17.2M14.8 3.4v17.2" />
+</vector>

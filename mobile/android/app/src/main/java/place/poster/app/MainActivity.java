@@ -60,6 +60,8 @@ public class MainActivity extends BridgeActivity {
         // this line Capacitor.Plugins.QrScan is simply absent, the client's guarded lookup falls
         // through to the jsQR camera modal, and the fix looks like it shipped and did nothing.
         registerPlugin(place.poster.app.scan.QrScanPlugin.class);
+        // The opt-in home screen, and the mirror of the client's theme into the native screens.
+        registerPlugin(place.poster.app.home.HomePlugin.class);
         if (isSend(getIntent())) shareNonce++;   // cold-started BY a share
         super.onCreate(savedInstanceState);
         allowMediaWithoutAGesture();

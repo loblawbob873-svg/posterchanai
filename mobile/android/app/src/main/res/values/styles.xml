@@ -39,4 +39,23 @@
         <item name="android:paddingBottom">2dp</item>
         <item name="android:visibility">gone</item>
     </style>
+
+    <!-- THE HOME SCREEN'S THEME. Three things it must do that an ordinary activity theme does not:
+         show the wallpaper THROUGH the window (windowShowWallpaper + a transparent background, both
+         — either alone gives a black home screen), draw no title bar, and skip the window animation
+         so pressing HOME feels instant rather than like opening an app.
+
+         Parent is a PLATFORM theme, not Theme.AppCompat: HomeActivity is a plain android.app.Activity
+         on purpose. The launcher is the fallback that has to work when everything else in this app is
+         broken, so it depends on as little of this app as possible — no AppCompat delegate, no
+         Capacitor bridge, no WebView. -->
+    <style name="PcHomeTheme" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowShowWallpaper">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:windowDisablePreview">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
 </resources>

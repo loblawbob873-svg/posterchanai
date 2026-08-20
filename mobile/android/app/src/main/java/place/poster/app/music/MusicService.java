@@ -135,6 +135,26 @@ public class MusicService extends Service {
 
   public static volatile MusicService INSTANCE;
 
+  /* THE HOME SCREEN'S NOW-PLAYING STRIP, and why it is a second hook rather than a second listener.
+   *
+   * `listener` above belongs to MusicPlugin and carries TRANSPORT PRESSES into the WebView; there is
+   * exactly one and taking it would silence the lock screen. This one carries state OUT, to the
+   * launcher, which is a plain Activity with no bridge and no key. It pushes — the launcher never
+   * polls, because with the HOME role this process is resident for the life of the battery and
+   * anything it polls it polls for ever.
+   *
+   * It deliberately does NOT touch audio focus, start the service, or hold anything: the sound lives
+   * in the WebView and a second focus request from this same app would take it from the first, at
+   * which point Chromium pauses the very element the music controls exist to keep playing. */
+  public interface Watcher { void onNowPlaying(String title, String artist, boolean playing); }
+  private static volatile Watcher watcher;
+  public static void setWatcher(Watcher w) { watcher = w; }
+
+  /** What is playing right now, for a surface that has just appeared and has been pushed nothing. */
+  public static String nowTitle()   { MusicService s = INSTANCE; return s == null ? "" : s.title; }
+  public static String nowArtist()  { MusicService s = INSTANCE; return s == null ? "" : s.artist; }
+  public static boolean nowPlaying(){ MusicService s = INSTANCE; return s != null && s.playing; }
+
   private MediaSessionCompat session;
   private Bitmap art;
   private boolean foreground = false;
@@ -662,6 +682,8 @@ public class MusicService extends Service {
 
   /** Push the current state to the media session, the notification and the home-screen widget. */
   private void publish() {
+    Watcher w = watcher;
+    if (w != null) { try { w.onNowPlaying(title, artist, playing); } catch (Throwable ignored) { } }
     MediaMetadataCompat.Builder md = new MediaMetadataCompat.Builder()
         .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
         .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist)

@@ -1,0 +1,188 @@
+/* THE PHONE SHELL — the app's side of the three Android roles: home screen, messages, phone.
+ *
+ * The screens themselves are NATIVE (mobile/android/.../home, .../sms, .../phone) and that is
+ * deliberate: a launcher that fails takes the phone's home screen with it, and this app's WebView
+ * renderer is measured to die under memory pressure. So none of those screens is drawn here. What
+ * lives in this file is the part that belongs to the app:
+ *
+ *   * the OPT-IN — the switches that ask Android for each role, and give them back;
+ *   * the THEME mirror, so nine palettes drawn by Android match the one drawn by CSS;
+ *   * the LANDING — a home-screen tile says which PosterChan screen to open, and this reads it.
+ *
+ * Everything here degrades to nothing in a browser: `capPlugin` returns null off the packaged app,
+ * every entry point checks, and the settings card simply is not rendered. A permanently greyed
+ * switch reads as broken, so it is absent instead.
+ */
+(function(){
+  let PC = null;
+
+  function plug(method){
+    try{ return PC && PC.capPlugin ? PC.capPlugin('HomeScreen', method) : null; }catch(_){ return null; }
+  }
+
+  /* THE THEME, PUSHED ACROSS THE BOUNDARY. Called from app.js's applyTheme on every change AND every
+   * preview. Fire-and-forget on purpose: the theme has already been applied to this page, and a
+   * failure to mirror it must never turn into an error on the settings screen. */
+  function mirrorTheme(slug){
+    const P = plug('setTheme');
+    if(!P) return;
+    try{ const r = P.setTheme({ slug: String(slug||'') }); if(r && r.catch) r.catch(()=>{}); }catch(_){}
+  }
+
+  /* WHICH SCREEN A HOME-SCREEN TILE ASKED FOR.
+   *
+   * The tile starts the app with an extra; the native side hands it over exactly once and then
+   * forgets it, so a later resume does not jump to Notes again. Read at boot and on every resume,
+   * because a tile pressed while the app is already running arrives through onNewIntent and there is
+   * no page load to hang it off.
+   *
+   * It goes through switchView, which is the same function the sidebar uses — including its instance
+   * gating, so a tile for a server-backed screen on a server-less install lands where that gating
+   * sends it rather than on a blank page. */
+  async function consumeLaunchView(){
+    const P = plug('consumeLaunchView');
+    if(!P) return '';
+    let v = '';
+    try{ v = ((await P.consumeLaunchView()) || {}).view || ''; }catch(_){ return ''; }
+    if(!v) return '';
+    try{ PC.switchView(v); }catch(_){}
+    return v;
+  }
+
+  async function status(){
+    const P = plug('status');
+    if(!P) return null;
+    try{ return await P.status(); }catch(_){ return null; }
+  }
+
+  /* THE SETTINGS CARD. Rendered into #phone-shell by app.js's renderSettings, and only on a build
+   * that has the plugin — so this whole feature is invisible in a browser and on an APK older than
+   * it, rather than being a row of switches that refuse. */
+  async function renderSettings(host){
+    if(!host) return;
+    const st = await status();
+    if(!st){ host.innerHTML = ''; return; }
+    const enc = PC.enc;
+    const yes = (b) => b ? 'yes' : 'no';
+    host.innerHTML = `
+      <section class="set-card">
+        <div class="set-head"><div>
+          <div class="set-title"><svg class="ic b-ic" aria-hidden="true"><use href="#i-home"></use></svg>Use PosterChan as your phone</div>
+          <div class="muted small">Optional. PosterChan can be this phone's home screen, its messages
+            app and its phone app — each one separately, each one given back the same way, in
+            Android's own dialog. Nothing changes until you ask.</div>
+        </div></div>
+        <div class="set-body">
+          <label class="set-stay"><input type="checkbox" id="ps-home"${st.isDefaultHome?' checked':''}>
+            Home screen</label>
+          <div class="muted small" id="ps-home-note">The app grid is drawn by Android, not by this
+            page, so it keeps working if the app itself does not. Your apps and PosterChan's screens
+            sit side by side; long-press the wallpaper to choose which.</div>
+
+          <label class="set-stay" style="margin-top:12px"><input type="checkbox" id="ps-sms"${st.isDefaultSms?' checked':''}>
+            Messages (SMS &amp; MMS)</label>
+          <div class="muted small" id="ps-sms-note">Texts stay in the phone's own message store, so
+            nothing else on the phone loses them. <strong>MMS (picture messages) is not supported
+            yet</strong> — if you receive many, keep your current app.</div>
+
+          <label class="set-stay" style="margin-top:12px"><input type="checkbox" id="ps-dialer"${st.isDefaultDialer?' checked':''}>
+            Phone (calls over the mobile network)</label>
+          <div class="muted small">Different from PosterChan's own Calls screen, which is a call over
+            the internet to another Nostr user. This one is the cellular dialer.</div>
+
+          <div class="muted small" style="margin-top:12px">
+            Battery: these roles are what let Android keep PosterChan running properly in the
+            background — a home screen is never a background app, and the messages and phone roles are
+            grounds for a battery exemption rather than a guess.
+            Doze exemption: <strong>${yes(st.batteryExempt)}</strong>.
+          </div>
+          <div class="muted small" id="ps-msg" style="margin-top:8px"></div>
+        </div>
+      </section>`;
+
+    const $ = (s) => host.querySelector(s);
+    const msg = (t) => { const m = $('#ps-msg'); if(m) m.textContent = t || ''; };
+
+    async function refresh(){
+      const s = await status();
+      if(!s) return;
+      const set = (id, on) => { const b = $(id); if(b) b.checked = !!on; };
+      set('#ps-home', s.isDefaultHome);
+      set('#ps-sms', s.isDefaultSms);
+      set('#ps-dialer', s.isDefaultDialer);
+      return s;
+    }
+
+    /* Every switch re-reads the platform afterwards rather than trusting the checkbox. A role can be
+     * refused in the dialog, granted by another route, or taken away in Settings while this page is
+     * open; a switch showing a state the phone is not in is worse than no switch. */
+    function wire(id, ask, method){
+      const box = $(id);
+      if(!box) return;
+      box.onchange = async () => {
+        const want = box.checked;
+        const P = plug(method);
+        if(!P){ box.checked = !want; msg('this build has no phone-shell support'); return; }
+        try{
+          if(want){ await P[method](); }
+          else { await ask(); }
+        }catch(e){ msg('could not change it: ' + ((e && (e.message||e.errorMessage)) || 'refused')); }
+        await refresh();
+      };
+    }
+
+    wire('#ps-home', async () => {
+      const P = plug('disableLauncher');
+      const r = P ? await P.disableLauncher() : null;
+      /* THE ONE REFUSAL THAT MATTERS. Turning this off disables the home component, and doing that
+       * while PosterChan is the ONLY home app on the phone leaves the device with no home screen at
+       * all — HOME does nothing and there is no way to install one. The native side refuses; this is
+       * where the person is told why, rather than a switch that quietly springs back. */
+      if(r && r.released === false){
+        msg('Kept as your home screen: ' + (r.reason || 'there is no other home app on this phone') +
+            '. Install another launcher first, or change it in Android Settings → Default apps.');
+      } else { msg(''); }
+    }, 'enableLauncher');
+
+    wire('#ps-sms', async () => {
+      msg('Android has no way for an app to give up the messages role by itself — ' +
+          'choose a different messages app in Settings → Default apps.');
+    }, 'requestSms');
+
+    wire('#ps-dialer', async () => {
+      msg('Android has no way for an app to give up the phone role by itself — ' +
+          'choose a different phone app in Settings → Default apps.');
+    }, 'requestDialer');
+  }
+
+  function init(){
+    PC = window.__PC;
+    if(!PC){ return setTimeout(init, 50); }
+    // The theme is applied before this module loads (app.js paints the cached pc_theme pre-boot), so
+    // mirror the current one once on arrival — otherwise a phone whose theme has not changed since
+    // the app was updated shows native screens in the flagship theme for ever.
+    try{ mirrorTheme(localStorage.getItem('pc_theme') || 'cyberpunk'); }catch(_){}
+
+    /* THE LANDING RUNS AFTER BOOT, NEVER INSIDE IT — and that is not caution, it is a scar.
+     *
+     * A speculative boot-landing guard (`_viewChosen`) once shipped and BROKE the APK, because
+     * applyInstanceGating can switchView during boot and the guard made the landing skip itself. A
+     * home-screen tile calling switchView while boot is still choosing a screen is the same mistake
+     * wearing a different hat. So: wait until the app is plainly up (#feed drawn), then navigate —
+     * at which point it is an ordinary navigation, identical to tapping the sidebar. */
+    const land = () => {
+      if(!document.querySelector('#feed')) return setTimeout(land, 250);
+      consumeLaunchView();
+    };
+    setTimeout(land, 600);
+
+    // A tile pressed while the app is ALREADY running arrives through onNewIntent, with no page load
+    // to hang the read off. This is that read.
+    document.addEventListener('visibilitychange', () => {
+      if(document.visibilityState === 'visible' && document.querySelector('#feed')) consumeLaunchView();
+    });
+  }
+  init();
+
+  window.PCPhone = { mirrorTheme, consumeLaunchView, status, renderSettings };
+})();

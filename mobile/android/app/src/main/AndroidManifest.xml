@@ -78,6 +78,47 @@
             </intent-filter>
         </activity-alias>
 
+        <!-- THE HOME SCREEN (opt-in). Everything about this declaration is deliberate.
+
+             android:enabled="false" — IT SHIPS OFF. A CATEGORY_HOME activity makes Android offer this
+             app in the "Select a Home app" chooser from the moment it is installed, including to
+             people who installed a Nostr client and have no idea it can be a launcher, and on OEM
+             builds that pop that chooser on the next HOME press. HomeRoles.enableLauncherComponent
+             switches it on at the moment somebody asks, which is what makes "opt-in" true rather
+             than nearly true. It is switched back off the same way — but only after checking another
+             home app exists, because disabling the last one leaves the phone with no home screen and
+             no way to install one.
+
+             A PLATFORM THEME AND A PLAIN Activity. HomeActivity does not extend BridgeActivity and
+             never inflates a WebView: the launcher is the fallback that must work when everything
+             else in this app is broken, so it depends on as little of this app as possible. The
+             theme shows the wallpaper through the window rather than painting over it.
+
+             launchMode=singleTask + stateNotNeeded + excludeFromRecents is the standard launcher
+             shape: HOME while already home is delivered to onNewIntent (which resets to the top)
+             rather than starting a second copy, the home screen is never in the recents list, and
+             the system may kill it without saving state because there is no state worth saving.
+
+             The wide configChanges list keeps a rotation or a keyboard from tearing the grid down
+             and rebuilding it — on the one screen where that stutter is most visible. -->
+        <activity
+            android:name=".home.HomeActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/PcHomeTheme"
+            android:launchMode="singleTask"
+            android:stateNotNeeded="true"
+            android:excludeFromRecents="true"
+            android:resizeableActivity="true"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|locale|density|fontScale">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -381,6 +422,15 @@
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <!-- OTHER HOME APPS. Android 11+ hides the package list, and HomeRoles.releaseHome refuses to
+             stop being the launcher unless it can SEE another one — so without this the answer is
+             always "there is no other home screen" and the launcher could never be handed back. The
+             MAIN/HOME intent is the narrow form: it reveals nothing beyond which app draws the home
+             screen, which the person is looking at anyway. -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
         </intent>
     </queries>
 

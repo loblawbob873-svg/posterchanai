@@ -6,4 +6,19 @@
     <string name="custom_url_scheme">place.poster.app</string>
     <string name="music_widget_description">Play, pause and skip your PosterChan music from the home screen.</string>
     <string name="calendar_widget_description">Today\'s events from your PosterChan calendars, on the home screen.</string>
+    <!-- Launcher (opt-in home screen). -->
+    <string name="home_search_hint">Search apps</string>
+    <string name="home_no_match">Nothing matched</string>
+    <string name="home_pause">Pause</string>
+    <string name="home_play">Play</string>
+    <string name="home_app_info">App info</string>
+    <string name="home_uninstall">Uninstall</string>
+    <string name="home_hide">Hide from home</string>
+    <string name="home_unhide">Show hidden apps</string>
+    <string name="home_hidden_none">Nothing is hidden</string>
+    <string name="home_apps">PosterChan apps</string>
+    <string name="home_wallpaper">Change wallpaper</string>
+    <string name="home_settings">PosterChan settings</string>
+    <string name="home_cannot_open">That app would not open</string>
+    <string name="home_no_uninstaller">This app cannot be uninstalled on this phone</string>
 </resources>

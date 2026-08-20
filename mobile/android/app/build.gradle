@@ -107,6 +107,15 @@ dependencies {
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    // INSTRUMENTED TESTS, which as of the emulator workflow actually RUN. ActivityScenario (core)
+    // is how the launcher, the dialer and the SMS screens are started on a real device — they live
+    // behind system roles and providers (RoleManager, Telephony.Sms, CallLog, InCallService) that do
+    // not exist off one, so a javac test cannot reach them and a text-matching test proves nothing.
+    // Declared EXPLICITLY rather than relied on transitively through ext:junit: the day a version
+    // bump resolves it lower, the whole device suite stops compiling in a file nothing else touches.
+    androidTestImplementation "androidx.test:core:1.5.0"
+    androidTestImplementation "androidx.test:runner:1.5.2"
+    androidTestImplementation "androidx.test:rules:1.5.0"
     implementation project(':capacitor-cordova-android-plugins')
 }
 

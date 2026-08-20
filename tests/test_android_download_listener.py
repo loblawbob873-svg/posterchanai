@@ -45,7 +45,11 @@ def test_it_is_installed_after_the_bridge_exists():
     method runs, throws into its own catch, and the app behaves exactly as if the code were absent.
     """
     src = _java()
-    body = src[src.index("public void onCreate("):src.index("public void onCreate(") + 1400]
+    # To the END of onCreate, not a fixed number of characters. The window used to be 1400 chars and
+    # broke the first time a plugin was registered above super.onCreate() — a test that fails because
+    # an UNRELATED line was added tells you nothing about the thing it guards.
+    start = src.index("public void onCreate(")
+    body = src[start:src.index("\n    }", start)]
     sup = body.index("super.onCreate(")
     call = body.index("catchWebViewDownloads()")
     assert sup < call, "catchWebViewDownloads() runs before the bridge (and its WebView) exists"

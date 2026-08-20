@@ -1,0 +1,147 @@
+package place.poster.app.home;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
+/**
+ * POSTERCHAN'S OWN SCREENS, AS HOME-SCREEN ICONS — and the one tile that is the way back from
+ * everything.
+ *
+ * Every view in the app's sidebar can sit on the home screen beside the phone's other apps: Social,
+ * Notes, Files, Messages, the games, all of it. That is the difference between a launcher and a
+ * kiosk, taken from the other end — the phone's apps belong on PosterChan's home screen, and
+ * PosterChan's screens belong there too, as equals.
+ *
+ * NOT ALL OF THEM AT ONCE. Forty tiles on first run is a worse home screen than none, so `DEFAULT_ON`
+ * is the handful that ship visible and the rest arrive hidden, offered in one place: long-press →
+ * "PosterChan apps", a checklist. After the first run the person's choices are the only thing that
+ * decides, and a view added to the app later joins the checklist unchecked rather than appearing on a
+ * home screen somebody had already arranged.
+ *
+ * "Phone settings" is the exception to all of it: PRESENT ALWAYS, ESSENTIAL ALWAYS. It opens the
+ * system Settings app by intent action, which works when the package query returned nothing, when the
+ * arrangement is corrupt, when the WebView is dead and when this app's own UI will not start. It is
+ * the single thing standing between a bad build and a phone whose owner cannot change their home
+ * screen back. tests/test_android_launcher.py asserts it, because a refactor that quietly makes it
+ * hideable is a refactor that can brick somebody's phone.
+ *
+ * Pure — no Android — so all of that is run rather than grepped.
+ */
+public final class HomeTiles {
+
+    /** Opens the app itself with no particular screen. */
+    public static final String VIEW_APP = "app";
+    /** Native PosterChan screens, drawn by Android and reachable with the WebView dead. */
+    public static final String VIEW_PHONE = "_phone";
+    public static final String VIEW_TEXTS = "_texts";
+    /** The phone's own Settings. Never ours, always present, never hideable. */
+    public static final String VIEW_SETTINGS = "_settings";
+
+    /** One offerable tile: the view slug the client's switchView takes, and how to label and draw it. */
+    public static final class Tile {
+        public final String view;
+        public final String label;
+        /** The sprite symbol name — `ic_pc_<icon with dashes as underscores>` in res/drawable. */
+        public final String icon;
+        public final boolean defaultOn;
+        Tile(String view, String label, String icon, boolean defaultOn) {
+            this.view = view; this.label = label; this.icon = icon; this.defaultOn = defaultOn;
+        }
+    }
+
+    /**
+     * The catalogue, in the sidebar's own order. Labels and icons match `templates/client.html`, so a
+     * tile is recognisably the same thing as its row in the app — that is the whole point of
+     * transcribing the sprite (scripts/gen_android_icons.py) rather than drawing new glyphs.
+     */
+    private static final Tile[] CATALOGUE = {
+        new Tile(VIEW_APP,        "PosterChan",    "flower",   true),
+        new Tile(VIEW_PHONE,      "Phone",         "call",     true),
+        new Tile(VIEW_TEXTS,      "Messages",      "chat",     true),
+        new Tile("global",        "Social",        "globe",    true),
+        new Tile("notifications", "Notifications", "bell",     true),
+        new Tile("messages",      "DMs",           "speech",   true),
+        new Tile("notes",         "Notes",         "note",     true),
+        new Tile("blossom",       "Files",         "folder",   true),
+        new Tile("calendar",      "Calendar",      "clock",    true),
+        new Tile("contacts",      "Contacts",      "user",     true),
+        new Tile("ai",            "AI",            "ai",       false),
+        new Tile("websearch",     "Web Search",    "search",   false),
+        new Tile("mail",          "Email",         "mail",     false),
+        new Tile("bookmarks",     "Bookmarks",     "bookmark", false),
+        new Tile("calls",         "Calls",         "phone",    false),
+        new Tile("vault",         "Passwords",     "key",      false),
+        new Tile("drafts",        "Drafts",        "draft",    false),
+        new Tile("sync",          "Folder Sync",   "refresh",  false),
+        new Tile("chat",          "Chat",          "chat",     false),
+        new Tile("communities",   "Communities",   "users",    false),
+        new Tile("articles",      "Articles",      "article",  false),
+        new Tile("news",          "News",          "news",     false),
+        new Tile("markets",       "Markets",       "chart",    false),
+        new Tile("budget",        "Budget",        "bars",     false),
+        new Tile("market",        "Shopping",      "bag",      false),
+        new Tile("streams",       "Streams",       "tv",       false),
+        new Tile("shorts",        "Shorts",        "tv",       false),
+        new Tile("meme",          "Meme Builder",  "tv",       false),
+        new Tile("translate",     "Live Translate","translate",false),
+        new Tile("torrents",      "Torrents",      "magnet",   false),
+        new Tile("repos",         "Git",           "git",      false),
+        new Tile("terminal",      "Terminal",      "terminal", false),
+        new Tile("stats",         "Server Stats",  "bars",     false),
+        new Tile("xdc",           "Mini apps",     "gamepad",  false),
+        new Tile("chess",         "Chess",         "pawn",     false),
+        new Tile("ttt",           "Tic-Tac-Toe",   "hash",     false),
+        new Tile("hangman",       "Hangman",       "target",   false),
+        new Tile("connect4",      "Connect Four",  "discs",    false),
+        new Tile("blackjack",     "Blackjack",     "cards",    false),
+        new Tile("holdem",        "Hold'em",       "spade",    false),
+        new Tile("settings",      "App settings",  "gear",     false),
+        // Last, and never hideable. See the class comment.
+        new Tile(VIEW_SETTINGS,   "Phone settings","gear",     true),
+    };
+
+    private HomeTiles() { }
+
+    public static Tile[] catalogue() { return CATALOGUE.clone(); }
+
+    public static Tile tile(String view) {
+        for (Tile t : CATALOGUE) if (t.view.equals(view)) return t;
+        return null;
+    }
+
+    /**
+     * The keys that start hidden on a phone that has never arranged its home screen. Written once, on
+     * first run, so that a view the app gains LATER joins the checklist unchecked instead of turning
+     * up on a home screen somebody had already made their own.
+     */
+    public static Set<String> defaultHidden() {
+        Set<String> out = new HashSet<String>();
+        for (Tile t : CATALOGUE) if (!t.defaultOn && !isEssential(t.view)) out.add("pc:" + t.view);
+        return out;
+    }
+
+    public static boolean isEssential(String view) { return VIEW_SETTINGS.equals(view); }
+
+    /**
+     * @param dialer whether the native Phone screen should be offered — it is only useful once this
+     *               app actually holds the dialer role, and offered before that it is a tile that
+     *               opens an empty call log.
+     * @param sms    likewise for the native Messages screen.
+     */
+    public static List<AppShelf.Entry> ours(boolean dialer, boolean sms) {
+        List<AppShelf.Entry> out = new ArrayList<AppShelf.Entry>();
+        for (Tile t : CATALOGUE) {
+            if (VIEW_PHONE.equals(t.view) && !dialer) continue;
+            if (VIEW_TEXTS.equals(t.view) && !sms) continue;
+            out.add(AppShelf.Entry.ours(t.view, t.label, isEssential(t.view)));
+        }
+        return out;
+    }
+
+    /** True for the tiles that hand off to the app's WebView rather than to a native screen. */
+    public static boolean opensTheApp(String view) {
+        return view != null && !view.isEmpty() && !view.startsWith("_");
+    }
+}

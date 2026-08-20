@@ -85,6 +85,10 @@
   <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.4 12S5.9 5.8 12 5.8 21.6 12 21.6 12 18.1 18.2 12 18.2 2.4 12 2.4 12z"/><circle cx="12" cy="12" r="3"/></symbol>
   <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9.2" y="3" width="5.6" height="10.4" rx="2.8"/><path d="M5.8 11.6a6.2 6.2 0 0012.4 0"/><path d="M12 17.8v3.2M9 21h6"/></symbol>
   <symbol id="i-zap" viewBox="0 0 24 24"><path d="M13.4 2.6L4.8 13.6h5.6l-.8 7.8 8.6-11h-5.6z"/></symbol>
+  <!-- A month grid. Added for the native launcher's Calendar tile, which draws from this same
+       sprite (scripts/gen_android_icons.py transcribes it to a VectorDrawable) — the web client has
+       never needed one because its Calendar nav row reuses i-clock. -->
+  <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3.4" y="5.4" width="17.2" height="15.2" rx="2.2"/><path d="M3.4 10h17.2"/><path d="M8.2 3.4v4M15.8 3.4v4"/><path d="M7.6 13.6h2M11 13.6h2M14.4 13.6h2M7.6 17h2M11 17h2"/></symbol>
   <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.8"/><path d="M12 6.9V12l3.4 2"/></symbol>
   <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="12" r="4"/><path d="M12 12h9.4"/><path d="M18 12v3.2M20.8 12v2.4"/></symbol>
   <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4.4 7.6h3l1.4-2.2h6.4l1.4 2.2h3a1.8 1.8 0 011.8 1.8v8.2a1.8 1.8 0 01-1.8 1.8H4.4a1.8 1.8 0 01-1.8-1.8V9.4a1.8 1.8 0 011.8-1.8z"/><circle cx="12" cy="13.2" r="3.4"/></symbol>
