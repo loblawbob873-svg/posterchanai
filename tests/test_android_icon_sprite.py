@@ -45,6 +45,28 @@ class IconSprite(unittest.TestCase):
             except Exception as e:
                 self.fail("%s is not valid XML: %s" % (f, e))
 
+    def test_no_arc_packs_its_flags(self):
+        """THE BUG THAT MADE THE LAUNCHER SHOW LETTERS, and it took a real device to find.
+
+        SVG lets an arc pack its two flags against the next number — `a9.8 9.8 0 01-2.6-.35` is
+        large-arc 0, sweep 1, x=-2.6 — and every SVG renderer reads it correctly. Android's
+        PathParser reads numbers GREEDILY: `01` becomes the single number 1, the arc runs out of
+        parameters, and the whole VectorDrawable fails to inflate with Resources$NotFoundException.
+        The icon does not draw at all.
+
+        26 of the 63 transcribed glyphs were written that way in the sprite, which is exactly "the
+        icons are mostly letters for posterchan apps on launcher". Rasterising them here showed
+        nothing wrong, because rsvg is a real SVG parser; only Android is this strict."""
+        packed = re.compile(r"[aA]\s*[-\d.]+[,\s]+[-\d.]+[,\s]+[-\d.]+[,\s]*\d\d")
+        for f in sorted(os.listdir(DRAWABLE)):
+            if not f.startswith(("ic_pc_", "ic_app_")):
+                continue
+            src = open(os.path.join(DRAWABLE, f), encoding="utf-8").read()
+            for d in re.findall(r'android:pathData="([^"]*)"', src):
+                m = packed.search(d)
+                self.assertIsNone(m, "%s packs its arc flags (%r) — Android will not parse it"
+                                  % (f, m.group(0) if m else ""))
+
     def test_nothing_bakes_a_colour_into_an_icon(self):
         """Nine themes cost nine tints, not nine icon sets. A path that carries a real colour cannot
         be tinted at runtime, so it would stay one theme's colour on every other theme."""

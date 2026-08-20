@@ -84,6 +84,92 @@ def num(s, dflt=0.0):
         return dflt
 
 
+# How many numbers each path command takes. Arcs are the special case and the whole reason this
+# normaliser exists.
+_ARGS = {"m": 2, "l": 2, "h": 1, "v": 1, "c": 6, "s": 4, "q": 4, "t": 2, "a": 7, "z": 0}
+
+
+def normalize_path(d):
+    """Re-emit path data with every argument separated by a space.
+
+    THE BUG THIS EXISTS FOR, and it took a real device to find. SVG lets an arc pack its two flags
+    against the following number — `a9.8 9.8 0 01-2.6-.35` is the large-arc flag 0, the sweep flag 1
+    and then x=-2.6 — and every SVG renderer reads it correctly, which is why rasterising all 63
+    icons here showed nothing wrong. Android's PathParser reads numbers GREEDILY: it takes `01` as
+    the single number 1, runs out of parameters, and the whole VectorDrawable fails to inflate with
+    `Resources$NotFoundException`. The icon does not draw, and in this app that meant the launcher
+    fell back to the app's initial.
+
+    26 of the 63 transcribed glyphs were written that way in the sprite, which is exactly "the icons
+    are mostly letters for posterchan apps on launcher".
+
+    Nothing about the geometry changes — only the whitespace between the numbers.
+    """
+    d = d or ""
+    i, n, out = 0, len(d), []
+
+    def skip_sep():
+        nonlocal i
+        while i < n and d[i] in " ,\t\n\r":
+            i += 1
+
+    def number():
+        nonlocal i
+        skip_sep()
+        start = i
+        if i < n and d[i] in "+-":
+            i += 1
+        while i < n and d[i].isdigit():
+            i += 1
+        if i < n and d[i] == ".":
+            i += 1
+            while i < n and d[i].isdigit():
+                i += 1
+        if i < n and d[i] in "eE":
+            i += 1
+            if i < n and d[i] in "+-":
+                i += 1
+            while i < n and d[i].isdigit():
+                i += 1
+        return d[start:i]
+
+    def flag():
+        """Exactly ONE character. This is the whole fix: a flag is a single digit, never a number."""
+        nonlocal i
+        skip_sep()
+        c = d[i] if i < n else "0"
+        i += 1
+        return c
+
+    cmd = None
+    while True:
+        skip_sep()
+        if i >= n:
+            break
+        if d[i].isalpha():
+            cmd = d[i]
+            i += 1
+        elif cmd is None:
+            break
+        else:
+            # An implicit repeat. After a moveto the repeats are linetos, per the SVG grammar.
+            cmd = {"m": "l", "M": "L"}.get(cmd, cmd)
+        out.append(cmd)
+        k = cmd.lower()
+        if k == "z":
+            continue
+        if k == "a":
+            args = [number(), number(), number(), flag(), flag(), number(), number()]
+        else:
+            args = [number() for _ in range(_ARGS.get(k, 0))]
+        if any(a == "" for a in args):
+            # Malformed rather than merely compact: hand it back untouched rather than emitting
+            # something subtly different from what the sprite draws.
+            return d
+        out.append(" ".join(args))
+    return " ".join(out)
+
+
 def paths(inner):
     """[(pathData, filled, strokeWidth)] for one symbol, in draw order."""
     out = []
@@ -100,7 +186,7 @@ def paths(inner):
             d = rounded_rect(num(a.get("x")), num(a.get("y")),
                              num(a.get("width")), num(a.get("height")), num(a.get("rx")))
         if d:
-            out.append((d.strip(), filled, width))
+            out.append((normalize_path(d.strip()), filled, width))
     return out
 
 

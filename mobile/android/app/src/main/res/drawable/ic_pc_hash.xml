@@ -19,5 +19,5 @@
         android:strokeWidth="1.7"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
-        android:pathData="M9 3.6v16.8M15 3.6v16.8M3.6 9h16.8M3.6 15h16.8" />
+        android:pathData="M 9 3.6 v 16.8 M 15 3.6 v 16.8 M 3.6 9 h 16.8 M 3.6 15 h 16.8" />
 </vector>

@@ -331,6 +331,20 @@ it changes (`PcThemePlugin` → `PcThemeStore`). `localStorage` stays authoritat
 written only from it. `tests/test_android_theme_palettes.py` parses `client.css`, runs the Java and
 compares them value for value.
 
+**The icons were broken by packed SVG arc flags, and only a device could say so.** SVG lets an arc
+pack its two flags against the following number — `a9.8 9.8 0 01-2.6-.35` is large-arc 0, sweep 1,
+x=-2.6 — and every SVG renderer reads it correctly. Android's `PathParser` reads numbers greedily:
+`01` becomes the number 1, the arc runs out of parameters, and the whole `VectorDrawable` fails to
+inflate with `Resources$NotFoundException`. **26 of the 63 transcribed glyphs were written that way**,
+which is exactly *"the icons are mostly letters"*. `normalize_path()` in the generator re-emits every
+command space-separated; the geometry is untouched (all 119 sprite glyphs rasterise byte-identically
+before and after).
+
+Every static check had passed: the files existed, the names were right, the geometry was there, and
+rasterising all 63 locally showed visible pixels — because `rsvg` is a real SVG parser and only
+Android is this strict. The instrumented test that draws each icon and counts lit pixels is what
+found it, the first time it was ever able to run.
+
 **A tile is never blank.** An icon that does not resolve falls back to the app's initial rather than
 to an empty circle — a coloured circle with nothing in it is indistinguishable from a broken
 launcher, and that is how it was reported. The cause was a vector carrying a baked `android:tint`
