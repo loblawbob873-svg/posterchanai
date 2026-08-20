@@ -939,14 +939,16 @@ public class HomeActivity extends Activity implements DeskView.Host {
         final List<Widgets.Choice> rows =
                 widgets.providers(cellDp(desk.cellW()), cellDp(desk.cellH()));
         if (rows.isEmpty()) { toast(getString(R.string.home_no_widgets)); return; }
+        final WidgetChoices adapter = new WidgetChoices(rows);
         try {
             new AlertDialog.Builder(this)
                 .setTitle(R.string.home_add_widget)
-                .setAdapter(new WidgetChoices(rows),
+                .setAdapter(adapter,
                         new android.content.DialogInterface.OnClickListener() {
                     @Override public void onClick(android.content.DialogInterface d, int w) {
-                        if (w < 0 || w >= rows.size()) return;
-                        int id = widgets.add(HomeActivity.this, rows.get(w));
+                        Widgets.Choice c = adapter.choiceAt(w);
+                        if (c == null) return;               // a group header
+                        int id = widgets.add(HomeActivity.this, c);
                         // >= 0 means it was already allowed to bind and wants no configuration: it
                         // is ready now and there is no activity result coming. -1 means an activity
                         // is asking, or it was refused and has already said so.
@@ -962,26 +964,63 @@ public class HomeActivity extends Activity implements DeskView.Host {
     }
 
     /**
-     * The rows of the widget list: the provider's own preview picture, its name, and who it belongs
-     * to with the size it will take. A picker of bare class names is not a picker anybody uses — and
-     * a phone has dozens of providers, half of them called "Clock".
+     * THE ROWS OF THE WIDGET LIST: a header per app, then that app's widgets with the real picture
+     * of each one.
      *
-     * The preview is `loadPreviewImage` falling back to the provider's icon; a provider that offers
-     * neither still gets a row, because a widget missing from this list is indistinguishable from
-     * the bug this whole screen was written to fix.
+     * The header is why this is an adapter rather than a list of strings. Thirty rows in one flat
+     * column is not scannable, and three of those rows were PosterChan's own — sitting between
+     * Photos and System UI, both labelled "PosterChan", which is how "i want the calendar widget and
+     * weather widget!" turned out to be a report about a list rather than about missing features.
+     * Ours are grouped and first (Widgets.providers), so the three that belong to this launcher are
+     * the three you see.
+     *
+     * A header is NOT selectable — `areAllItemsEnabled`/`isEnabled` — or tapping the word "Clock"
+     * silently adds whatever row happened to be under it.
+     *
+     * The picture is `widgets.preview`, four fallbacks deep. A provider that offers nothing at all
+     * still gets a row with its app's initial, because a widget missing from this list is
+     * indistinguishable from the bug this screen exists to fix.
      */
     private final class WidgetChoices extends BaseAdapter {
-        private final List<Widgets.Choice> rows;
-        WidgetChoices(List<Widgets.Choice> rows) { this.rows = rows; }
+        private final List<Object> rows = new ArrayList<Object>();   // String header | Widgets.Choice
+
+        WidgetChoices(List<Widgets.Choice> choices) {
+            String app = null;
+            for (Widgets.Choice c : choices) {
+                if (!c.appLabel.equals(app)) { app = c.appLabel; rows.add(app); }
+                rows.add(c);
+            }
+        }
+
+        /** The index in the ORIGINAL list, or -1 for a header. */
+        Widgets.Choice choiceAt(int i) {
+            Object o = i >= 0 && i < rows.size() ? rows.get(i) : null;
+            return o instanceof Widgets.Choice ? (Widgets.Choice) o : null;
+        }
+
         @Override public int getCount() { return rows.size(); }
         @Override public Object getItem(int i) { return rows.get(i); }
         @Override public long getItemId(int i) { return i; }
+        @Override public int getViewTypeCount() { return 2; }
+        @Override public int getItemViewType(int i) { return rows.get(i) instanceof String ? 0 : 1; }
+        @Override public boolean areAllItemsEnabled() { return false; }
+        @Override public boolean isEnabled(int i) { return choiceAt(i) != null; }
+
         @Override public View getView(int i, View reuse, ViewGroup parent) {
-            Widgets.Choice c = rows.get(i);
+            int p = Skin.dp(HomeActivity.this, 12);
+            Widgets.Choice c = choiceAt(i);
+            if (c == null) {
+                TextView head = new TextView(HomeActivity.this);
+                head.setText(String.valueOf(rows.get(i)));
+                head.setTextColor(pal.accent);
+                head.setTextSize(12);
+                head.setAllCaps(true);
+                head.setPadding(p, Skin.dp(HomeActivity.this, 14), p, Skin.dp(HomeActivity.this, 4));
+                return head;
+            }
             LinearLayout row = new LinearLayout(HomeActivity.this);
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
-            int p = Skin.dp(HomeActivity.this, 12);
             row.setPadding(p, p, p, p);
 
             // A WIDGET PREVIEW IS WIDE. A square thumbnail crops a 4x1 clock into a smear; this is
@@ -1006,7 +1045,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
             name.setTextColor(pal.text);
             name.setTextSize(15);
             TextView sub = new TextView(HomeActivity.this);
-            sub.setText(c.appLabel + "   ·   " + c.spanX + " x " + c.spanY);
+            sub.setText(c.spanX + " x " + c.spanY);
             sub.setTextColor(pal.muted);
             sub.setTextSize(12);
             text.addView(name);

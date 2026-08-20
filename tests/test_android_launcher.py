@@ -389,6 +389,22 @@ class Launcher(unittest.TestCase):
         # whole difference between this round and the last three.
         self.assertIn("home_no_widgets", home)
 
+    def test_the_picker_is_grouped_and_our_own_widgets_come_first(self):
+        """"i want the calendar widget and weather widget!" turned out to be a report about a LIST,
+        not about missing features: all three of ours were already installed and sitting in it,
+        scattered alphabetically and every one of them labelled "PosterChan"."""
+        w = _code(open(os.path.join(HOME, "Widgets.java")).read())
+        i = w.index("public java.util.List<Choice> providers(")
+        seg = w[i:i + 3000]
+        self.assertIn("getPackageName()", seg, "the sort cannot tell our widgets from anyone's")
+        self.assertIn("return am ? -1 : 1;", seg, "our own widgets are not sorted first")
+        home = _code(open(os.path.join(HOME, "HomeActivity.java")).read())
+        # A HEADER MUST NOT BE SELECTABLE, or tapping the word "Clock" silently adds whatever row
+        # happened to be under it.
+        self.assertIn("public boolean isEnabled(int i) { return choiceAt(i) != null; }", home)
+        self.assertIn("areAllItemsEnabled", home)
+        self.assertIn("if (c == null) return;", home, "a header tap is not refused")
+
     # ---------------------------------------------------------------- the tablet
 
     def test_a_tablet_gets_a_wider_grid_than_a_phone(self):

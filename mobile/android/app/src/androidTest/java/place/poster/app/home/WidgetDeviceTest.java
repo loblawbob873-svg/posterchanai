@@ -215,6 +215,54 @@ public class WidgetDeviceTest {
     }
 
     @Test
+    public void ourThreeAreTogetherAtTheTopUnderOneHeading() {
+        // "our own three widgets are sitting in that list and the user could not identify them."
+        // Grouped by app so the list is scannable, and OURS FIRST — this is PosterChan's launcher and
+        // PosterChan's widgets were the ones nobody could find, scattered alphabetically between
+        // Photos and System UI. Everything after them stays alphabetical, so nothing is hidden.
+        java.util.List<Widgets.Choice> rows = widgets.providers(90, 90);
+        assertTrue("nothing to group", rows.size() >= 3);
+        int mine = 0;
+        for (Widgets.Choice c : rows) {
+            if (ctx.getPackageName().equals(c.provider().getPackageName())) mine++; else break;
+        }
+        assertEquals("PosterChan's own widgets are not the first rows in the picker", 3, mine);
+        // One contiguous run: nothing of ours further down.
+        int total = 0;
+        for (Widgets.Choice c : rows) {
+            if (ctx.getPackageName().equals(c.provider().getPackageName())) total++;
+        }
+        assertEquals("our widgets are split across the list", 3, total);
+        // And every other app's rows are contiguous too, or a header would appear twice.
+        java.util.Set<String> seen = new java.util.HashSet<String>();
+        String cur = null;
+        for (Widgets.Choice c : rows) {
+            if (!c.appLabel.equals(cur)) {
+                assertTrue("'" + c.appLabel + "' appears in two places, so its heading would too",
+                        seen.add(c.appLabel));
+                cur = c.appLabel;
+            }
+        }
+    }
+
+    @Test
+    public void ourOwnWidgetsDrawARealPreviewAndNotJustTheAppIcon() {
+        // THE COORDINATOR'S FIRST-THING-TO-CHECK: do ours look worse than a third-party row?
+        // None of our three sets `android:previewImage`; all three set `previewLayout`, which
+        // `loadPreviewImage` does not render. Without the inflation step they would every one fall
+        // through to the app icon — three identical PosterChan marks, which is the complaint.
+        // A BitmapDrawable here means the layout was actually inflated and drawn.
+        for (Widgets.Choice c : widgets.providers(90, 90)) {
+            if (!ctx.getPackageName().equals(c.provider().getPackageName())) continue;
+            android.graphics.drawable.Drawable d = widgets.preview(c);
+            assertNotNull(c.label + " has no picture at all", d);
+            assertTrue(c.label + " fell through to an icon — its previewLayout was not rendered,"
+                    + " so all three of ours draw the same PosterChan mark",
+                    d instanceof android.graphics.drawable.BitmapDrawable);
+        }
+    }
+
+    @Test
     public void everyWidgetInTheListHasAPictureToChooseBy() {
         // A row with no art is a row you cannot choose by, which is the complaint. The chain is
         // previewImage -> previewLayout (API 31+, which is what modern providers ship INSTEAD and

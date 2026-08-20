@@ -127,8 +127,23 @@ public final class Widgets {
             out.add(new Choice(i, label.trim(), app,
                     spanFor(i.minWidth, cellWdp), spanFor(i.minHeight, cellHdp)));
         }
+        // GROUPED BY APP, AND OURS FIRST.
+        //
+        // Grouping is what makes a list of thirty rows scannable — somebody is looking for "the
+        // clock in Google Clock", not for a provider class name, and three apps ship something
+        // called "Clock". The picker draws a header per app (HomeActivity.WidgetChoices) and this
+        // order is what those headers are cut from.
+        //
+        // Ours first is not vanity: this is PosterChan's own launcher, and PosterChan's own three
+        // widgets were the ones nobody could find — scattered alphabetically between Photos and
+        // System UI, both of them called "PosterChan" because neither receiver declared a label.
+        // Everything else stays alphabetical, so nothing is hidden by the choice.
+        final String mine = ctx.getPackageName();
         java.util.Collections.sort(out, new java.util.Comparator<Choice>() {
             @Override public int compare(Choice a, Choice b) {
+                boolean am = mine.equals(a.info.provider.getPackageName());
+                boolean bm = mine.equals(b.info.provider.getPackageName());
+                if (am != bm) return am ? -1 : 1;
                 int n = a.appLabel.compareToIgnoreCase(b.appLabel);
                 return n != 0 ? n : a.label.compareToIgnoreCase(b.label);
             }
