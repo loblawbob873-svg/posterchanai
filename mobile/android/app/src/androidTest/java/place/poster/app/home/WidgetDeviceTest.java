@@ -558,15 +558,14 @@ public class WidgetDeviceTest {
             assertTrue("the widget was not bound", made[0] >= 0);
             allocated.add(made[0]);
 
-            // IN THE LAUNCHER'S OWN UNITS, not re-derived here. `maxResizeWidth` is the manifest's
-            // raw dp while `minWidth` is pixels — the first version of this test divided the two by
-            // the same cell size, computed a ceiling of one cell, and blamed the product. What is
-            // asserted below is the user-visible claim instead: it came back from the full width.
-            float density = ctx.getResources().getDisplayMetrics().density;
-            int ceilingCells = Math.max(1, (int) (chosen.info.maxResizeWidth * density) / g[2]);
+            // PIXELS, like every other size here — the device printed `ceiling=715x550` for a
+            // manifest saying `260dp` at density 2.75. What is asserted below is the user-visible
+            // claim rather than the arithmetic: a widget stored at the full width does not stay
+            // there.
+            int ceilingCells = Math.max(1, chosen.info.maxResizeWidth / g[2]);
             Log.i(TAG, "phone widgets: " + chosen.info.provider.getShortClassName()
-                    + " ceiling raw=" + chosen.info.maxResizeWidth + " density=" + density
-                    + " cell=" + g[2] + "px -> " + ceilingCells + " cells of " + g[0]);
+                    + " ceiling=" + chosen.info.maxResizeWidth + "px cell=" + g[2]
+                    + "px -> " + ceilingCells + " cells of " + g[0]);
             org.junit.Assume.assumeTrue("its ceiling is the whole grid here, so there is nothing to"
                     + " bring back", ceilingCells < g[0]);
 

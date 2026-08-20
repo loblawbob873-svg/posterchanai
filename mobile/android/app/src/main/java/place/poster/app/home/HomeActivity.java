@@ -694,16 +694,15 @@ public class HomeActivity extends Activity implements DeskView.Host {
         try { declared = wide ? i.maxResizeWidth : i.maxResizeHeight; }
         catch (Throwable t) { return grid; }
         if (declared <= 0) return grid;              // the provider has no opinion
-        // MEASURED ON A DEVICE, because the two families of field do NOT agree with each other.
-        // `minWidth` and `minResizeWidth` are resolved against the display density by the platform
-        // (a 180dp manifest reads back as 495 at density 2.75); `maxResizeWidth`, added in API 31,
-        // comes back as the RAW DP — the emulator returned 260 for `android:maxResizeWidth="260dp"`
-        // on that same device, which is what made the first version of this clamp compute a ceiling
-        // of one cell and then never fire. Converted here, and both numbers are printed by
-        // WidgetDeviceTest's phone table so this stays a measurement rather than a memory.
-        float d = getResources().getDisplayMetrics().density;
-        int px = d > 0 ? (int) (declared * d) : declared;
-        int cells = Math.max(1, px / cellPx);
+        // PIXELS, like every other size on this class, and that was worth measuring rather than
+        // reasoning about — twice. `maxResizeWidth` (API 31) is resolved against the display density
+        // by the platform exactly as `minWidth` is: the device printed `ceiling=715x550` for a
+        // manifest saying `260dp` at density 2.75, beside `min=495x220` for `180dp`. A previous
+        // version of this line multiplied by the density a second time, which put every ceiling past
+        // the width of the grid and made the clamp a no-op — the same shape as the px/dp bug it was
+        // written to clean up after. WidgetDeviceTest prints both families side by side so the next
+        // person reads a number instead of guessing.
+        int cells = Math.max(1, declared / cellPx);
         return Math.max(minCells(item, grid, cellPx, wide), Math.min(grid, cells));
     }
 
