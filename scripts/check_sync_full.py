@@ -85,6 +85,16 @@ VDISK = r"""
     /* THE TRASH KEEPS THE BYTES. It used to drop them on the floor, which made "Restore from
        trash" — the one recovery a person reaches for when a sweep has taken files — impossible to
        drive here at all. */
+    /* REMOVE — what a deletion does now. The trash is ONE place and it is on the server (the
+       tombstoned records, account-wide, carrying the addresses their files restore from), so a
+       deletion here really deletes. Safe because the executor asks the store whether it still
+       holds the bytes BEFORE calling this, and keeps the file when the answer is no or absent.
+       `D.trash` keeps its name: it records what this device deleted, which is what the assertions
+       below are about. */
+    remove: async (id, r) => {
+      if(!(r in D.files)) return true;                   // already gone is where it was going
+      D.trash.push(r); delete D.files[r]; return true;
+    },
     trash: async (id, r, when) => {
       const at = '.pc-trash/x/' + r;
       D.bin[at] = D.files[r];
@@ -386,7 +396,7 @@ async def drive(url):
         else:
             print("  dirty join: identical settled, exactly 2 real conflicts kept both")
 
-        # ---- 2. a real delete on B reaches A: exactly one file, into trash ----------------------
+        # ---- 2. a real delete on B reaches A: exactly one file, and it is GONE ------------------
         await b.js("(() => { delete window.__vdisk.files['dir0/f0.bin']; return true; })()")
         r3 = await b.js(f"({SWEEP})()", aw=True) or {}
         print("  B delete sweep:", json.dumps(r3))
@@ -396,9 +406,12 @@ async def drive(url):
         r4 = await a.js(f"({SWEEP})()", aw=True) or {}
         da2 = await a.js(f"({DISK})()", aw=True) or {}
         if da2.get("trash") != ["dir0/f0.bin"]:
-            problems.append(f"A trashed {da2.get('trash')}, wanted exactly ['dir0/f0.bin']")
+            problems.append(f"A deleted {da2.get('trash')}, wanted exactly ['dir0/f0.bin'] "
+                            f"(kept back: {r4.get('keptUnconfirmed')})")
+        elif "dir0/f0.bin" in da2.get("files", {}):
+            problems.append("A recorded the deletion but the file is still on its disk")
         else:
-            print("  deletion propagated: exactly one file, into .pc-trash")
+            print("  deletion propagated: exactly one file, and it is gone from the disk")
 
         # ---- 3. THE KILLER: B's scan lies (empty listing) — nothing may be deleted anywhere -----
         await b.js("(() => { window.__vdisk.lying = true; return true; })()")
@@ -414,158 +427,57 @@ async def drive(url):
         else:
             print("  lying scan deleted nothing anywhere")
 
-        # ---- 3.4 RECONCILE MUST NOT PUT BACK WHAT EVERY DEVICE AGREED TO DELETE -----------------
-        # B deleted dir0/f0.bin and A applied it, so A's .pc-trash holds exactly the bytes the
-        # tombstone describes. "Restore from trash" would put it back and republish it to B — the
-        # rescue button undoing a deletion somebody meant, which is how a folder of deleted files
-        # keeps coming back. Reconcile proves it instead: the record is a tombstone whose checksum
-        # matches this copy, so the copy is redundant and goes.
-        # The reconcile DELETES what it proves, and the restore scenario below needs that same trash.
-        # Snapshot it rather than reordering the two — each is testing a different half and neither
-        # should be arranged around the other.
-        await a.js("(() => { window.__vdisk._keep = Object.assign({}, window.__vdisk.bin); "
-                   "return true; })()")
-        db0 = await a.js(f"({DISK})()", aw=True) or {}
-        if db0.get("bin"):
-            rc = await a.js(f"({RECONCILE})()", aw=True) or {}
-            print("  A reconcile trash:", json.dumps(rc))
-            if rc.get("why"):
-                print("     kept because:", json.dumps(rc["why"]))
-            if rc.get("err"):
-                problems.append(f"reconcile trash threw: {rc['err']}")
-            elif rc.get("restored"):
-                problems.append("reconcile PUT BACK a file every device agreed to delete: "
-                                f"{rc['restored']}")
-            elif not rc.get("purged"):
-                problems.append(f"reconcile proved nothing and removed nothing: {rc}")
-            else:
-                db1 = await a.js(f"({DISK})()", aw=True) or {}
-                if "dir0/f0.bin" in db1.get("files", {}):
-                    problems.append("reconcile restored the deleted file onto the disk")
-                elif db1.get("bin"):
-                    problems.append(f"reconcile left the proved-redundant copy: {db1['bin'][:4]}")
-                else:
-                    print("  reconcile removed the agreed deletion and restored nothing")
-        else:
-            problems.append("nothing in A's trash to reconcile — the delete step did not land")
-
-        await a.js("(() => { window.__vdisk.bin = window.__vdisk._keep; return true; })()")
-
-        # ---- 3.45 THE TRASH IS BROWSED AS A FOLDER ----------------------------------------------
-        # It used to be a collapsed block of DATES with a Restore button per date: you could see that
-        # "2026-08-19 · 107 files" existed and nothing about WHAT they were, which is the only
-        # question somebody standing in front of 107 deleted files is asking. Reported as "Trash on
-        # this device is terrible UI, make it a Folder like the regular folders with a list of
-        # contents". So it is a directory row in the folder it belongs to, and entering it gives the
-        # ordinary listing — driven here through the real DOM, because a redesign that was only read
-        # is a redesign that was not checked.
-        tr = await a.js("""(async () => {
-          window.__trErr = null;
-          window.addEventListener('unhandledrejection', e => {
-            window.__trErr = String((e.reason && (e.reason.stack || e.reason.message)) || e.reason); });
-          window.addEventListener('error', e => { window.__trErr = String(e.message) + ' @' + e.lineno; });
-          window.__PC.switchView('blossom');
-          for(let i = 0; i < 60 && !document.querySelector('.folder-chip[data-synckey]'); i++)
-            await new Promise(r => setTimeout(r, 100));
-          const chip = document.querySelector('.folder-chip[data-synckey]');
-          if(!chip) return { err: 'no synced-folder chip in Files' };
-          chip.click();
-          for(let i = 0; i < 80 && !document.querySelector('#bl-grid .file-card, #bl-grid .empty'); i++)
-            await new Promise(r => setTimeout(r, 100));
-          const door = [...document.querySelectorAll('#bl-grid [data-dir]')]
-            .find(el => el.getAttribute('data-dir') === '.pc-trash');
-          if(!door) return { err: 'no .pc-trash folder row at the root of the synced folder',
-                             saw: [...document.querySelectorAll('#bl-grid [data-dir]')]
-                                    .map(e => e.getAttribute('data-dir')).slice(0, 8),
-                             root: (window.PCSync.folders()[0] || {}).key,
-                             trash: (await window.pcFs.listTrash((window.PCSync.folders()[0]||{}).id) || []).length,
-                             err2: window.__trErr,
-                             grid: (document.querySelector('#bl-grid') || {}).innerHTML ?
-                                   document.querySelector('#bl-grid').innerHTML.slice(0, 300) : 'NO GRID' };
-          door.click();
-          /* Descend to the files. The trash keeps the engine's own dated sub-folders, so the first
-           * screen inside it is directories — which is the point of making it a folder rather than a
-           * flat list, and is what a person walks through too. */
-          for(let hop = 0; hop < 4; hop++){
-            for(let i = 0; i < 80; i++){
-              await new Promise(r => setTimeout(r, 100));
-              if(document.querySelector('#bl-grid .tr-back, #bl-grid .file-card')) break;
-            }
-            if(document.querySelector('#bl-grid .tr-back')) break;
-            const down = document.querySelector('#bl-grid .file-card.isdir[data-dir]');
-            if(!down) break;
-            down.click();
-          }
-          const names = [...document.querySelectorAll('#bl-grid .fname')].map(e => e.textContent);
-          return { names, back: document.querySelectorAll('.tr-back').length,
-                   gone: document.querySelectorAll('.tr-gone').length,
-                   reconcile: !!document.querySelector('#tr-reconcile'),
-                   deleteEverywhere: !!document.querySelector('#ss-del'),
-                   crumbs: [...document.querySelectorAll('.fx-crumb, .crumb')].map(e => e.textContent) };
-        })()""", aw=True) or {}
-        if tr.get("err"):
-            problems.append(f"trash folder: {tr['err']} saw={tr.get('saw')} "
-                            f"root={tr.get('root')!r} trash={tr.get('trash')} "
-                            f"grid={tr.get('grid')!r} err2={tr.get('err2')!r}")
-        else:
-            print("  trash as a folder:", json.dumps({k: tr.get(k) for k in
-                                                      ("names", "back", "gone", "reconcile")}))
-            if not tr.get("names"):
-                problems.append("the trash folder listed no files — it is a folder with no contents")
-            elif tr.get("back") != 1 or tr.get("gone") != 1:
-                problems.append(f"trash rows carry the wrong verbs: back={tr.get('back')} "
-                                f"gone={tr.get('gone')} (want one of each)")
-            elif not tr.get("reconcile"):
-                problems.append("no Reconcile Trash action inside the trash folder")
-            elif tr.get("deleteEverywhere"):
-                # Its one action publishes a deletion, and every file here is already deleted —
-                # pressing it would tell the other devices to delete files they already deleted,
-                # which is how a wave of stale tombstones starts.
-                problems.append("the 'Delete on every device' bar is shown INSIDE the trash")
-            else:
-                print("  the trash browses as a folder: names, two verbs, no delete-everywhere bar")
-
-        # ---- 3.5 RESTORE FROM TRASH MUST STICK --------------------------------------------------
-        # "i did restore from trash and it clears then goes right back to restore 172 from trash".
-        # Putting a file back was a silent act: the bytes returned to the disk and nothing else
-        # changed, so the next sweep re-derived the intent from versions and timestamps — and it
-        # derives the opposite, because the restored bytes ARE the bytes the tombstone describes.
-        # With this device's journal entry missing (struck by a lost compare-and-swap, cleared by an
-        # era change) a hashed scan reads "deleted elsewhere, and this copy is the deleted version"
-        # and trashes it straight back, reporting success every round.
+        # ---- 3.4 RESTORE FROM THE ONE TRASH, WHICH IS ON THE SERVER ----------------------------
         #
-        # A's journal is cleared here, which is the real shape of it AND what forces the hashed scan
-        # the branch needs — the same re-add the dirty join above models.
+        # There is no per-device `.pc-trash` any more, and no reconcile: a deletion removes the local
+        # copy, and only once the store has confirmed it still holds the bytes. The trash is the
+        # TOMBSTONED RECORDS — account-wide, carrying the addresses their files restore from — so the
+        # recovery a person actually reaches for is `restoreMany`, which republishes them live and
+        # every device downloads its copy back on the next sweep.
+        #
+        # This drives that end to end on two real browsers against a real server, because it is the
+        # path somebody uses on the worst day they will have with this feature.
+        #
+        # A's journal is cleared first: that is the real shape of a device that has been re-added or
+        # lost a checkpoint, AND it forces the hashed scan — which is the branch that used to undo a
+        # restore. A silent restore is re-derived as "deleted elsewhere, and this copy is the deleted
+        # version" and removed straight back, reporting success every round. `restoreMany` states the
+        # intent on the RECORD, so there is nothing left to re-derive.
         await a.js("""(async () => {
           await window.PCSync.docs.saveIndex('E2EPair', {});
           return true; })()""", aw=True)
-        rr = await a.js(f"({RESTORE})()", aw=True) or {}
-        print("  A restore from trash:", json.dumps(rr))
+        rr = await a.js("""(async () => {
+          try{
+            const r = await window.PCSync.edit.restoreMany('E2EPair', ['dir0/f0.bin']);
+            return { restored: (r && r.restored) || 0, unaddressed: (r && r.unaddressed) || 0 };
+          }catch(e){ return { err: String(e && e.message || e) }; }
+        })()""", aw=True) or {}
+        print("  A restore from the account trash:", json.dumps(rr))
         if rr.get("err"):
-            problems.append(f"restore from trash threw: {rr['err']}")
-        elif not rr.get("done"):
-            problems.append(f"restore from trash put nothing back: {rr}")
+            problems.append(f"account-wide restore threw: {rr['err']}")
+        elif not rr.get("restored"):
+            problems.append(f"the account-wide restore put nothing back: {rr} — a tombstone that "
+                            "kept its address is the only thing that makes recovery possible")
+        # …and the file comes back to the device that deleted it, from the store.
+        r6 = await a.js(f"({SWEEP})()", aw=True) or {}
         da4 = await a.js(f"({DISK})()", aw=True) or {}
         if "dir0/f0.bin" not in da4.get("files", {}):
-            problems.append("the restored file is not on A's disk — the sweep undid the restore "
-                            f"(trash now {da4.get('bin')})")
-        elif da4.get("bin"):
-            problems.append(f"restore left {len(da4['bin'])} file(s) in .pc-trash — it went "
-                            f"straight back: {da4['bin'][:4]}")
+            problems.append(f"A never got the restored file back ({json.dumps(r6)})")
         else:
-            print("  restore from trash stuck: the file is back and the trash is empty")
+            print("  the restored file came back to A from the store")
         # AND IT SURVIVES THE NEXT SWEEP, which is the half the person actually sees: the restore
-        # reports success, the button clears, and one sweep later the file is back in .pc-trash and
-        # the button reads "Restore N from trash" again. A deep sweep, because the branch that
-        # undoes it needs the content hash the trash-restored bytes will match.
+        # reports success, and one sweep later the file is gone again. A DEEP sweep, because the
+        # branch that used to undo it needs the content hash the restored bytes will match.
         r6b = await a.js("""(async () => {
           const f = window.PCSync.folders()[0];
           const rep = await window.PCSync.sweep(f, { manual: true, deep: true });
-          return { trashed: (rep.plan && rep.plan.deleteLocal || []).length }; })()""", aw=True) or {}
+          return { deleted: (rep.plan && rep.plan.deleteLocal || []).length,
+                   kept: (rep.keptUnconfirmed || []).length }; })()""", aw=True) or {}
         da5 = await a.js(f"({DISK})()", aw=True) or {}
-        if "dir0/f0.bin" not in da5.get("files", {}) or da5.get("bin"):
-            problems.append("the sweep after the restore put the file straight back in the trash "
-                            f"({json.dumps(r6b)}, trash={da5.get('bin')})")
+        if "dir0/f0.bin" not in da5.get("files", {}):
+            problems.append("the sweep after the restore deleted the file again "
+                            f"({json.dumps(r6b)}) — a restore must state its intent on the record, "
+                            "or the next hashed scan re-derives the deletion from the bytes")
         else:
             print("  and the sweep after it left the restore alone")
 
@@ -603,7 +515,7 @@ async def drive(url):
         for p in problems:
             print("FAIL ", p)
         return 1
-    print("PASS  full sync loop: replicate, delete, survive a lying scan, restore from trash, one key")
+    print("PASS  full sync loop: replicate, delete, survive a lying scan, restore from the account trash, one key")
     return 0
 
 
