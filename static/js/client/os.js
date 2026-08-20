@@ -5024,6 +5024,10 @@
              * `takeShot` itself answers that, so the binding does not have to. */
             else if(p === 'pc:shot') _shot('screen');
             else if(p === 'pc:shot:region') _shot('region');
+            /* Super+Return. `openApp` is what a start-menu entry and a desktop icon both go through,
+             * so the terminal opened by the key is the same window, in the same place in the
+             * stacking order, as the one opened by clicking it. */
+            else if(p === 'pc:terminal') openApp('terminal');
           });
         }catch(_){}
         PCOSShell.watch(() => { adoptAll(); drawBar(); }).then(off => {
