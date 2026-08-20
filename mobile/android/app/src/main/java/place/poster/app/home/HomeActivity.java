@@ -595,6 +595,9 @@ public class HomeActivity extends Activity implements DeskView.Host {
 
     @Override public void onChanged() { prefs.setDesk(geom, Desk.serialize(desk.items())); }
 
+    /** What is on the desktop right now. For the device test that drives placeWidget for real. */
+    java.util.List<Desk.Item> deskItemsForTest() { return desk.items(); }
+
     @Override public int minSpanX(Desk.Item item) {
         return minCells(item, desk.cols(), desk.cellW(), true);
     }
@@ -622,9 +625,12 @@ public class HomeActivity extends Activity implements DeskView.Host {
         if (item == null || !item.isWidget() || cellPx <= 0) return 1;
         AppWidgetProviderInfo i = widgets.infoOf(item.widgetId());
         if (i == null) return 1;
-        int dp = wide ? (i.minResizeWidth > 0 ? i.minResizeWidth : i.minWidth)
+        // PIXELS, both of them. These fields are resolved against the display density by the
+        // platform, so comparing them to a cell measured in dp multiplied every demand by the
+        // density — see Widgets.spanFor.
+        int px = wide ? (i.minResizeWidth > 0 ? i.minResizeWidth : i.minWidth)
                       : (i.minResizeHeight > 0 ? i.minResizeHeight : i.minHeight);
-        return Math.min(Math.max(1, gridSpan), Widgets.spanFor(dp, cellDp(cellPx)));
+        return Math.min(Math.max(1, gridSpan), Widgets.spanFor(px, cellPx));
     }
 
     @Override public boolean resizable(Desk.Item item) {
@@ -1043,7 +1049,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
      */
     private void addWidget() {
         final List<Widgets.Choice> rows =
-                widgets.providers(cellDp(desk.cellW()), cellDp(desk.cellH()));
+                widgets.providers(desk.cellW(), desk.cellH());
         if (rows.isEmpty()) { toast(getString(R.string.home_no_widgets)); return; }
         final WidgetChoices adapter = new WidgetChoices(rows);
         try {
@@ -1179,13 +1185,16 @@ public class HomeActivity extends Activity implements DeskView.Host {
      * nearly always a true statement; on a phone (4 columns, 3-6 rows) the same widget asking for the
      * same rectangle is refused by a desktop with eight icons on it. See Desk.addShrinking.
      */
-    private void placeWidget(int id) {
+    // Package-private so the device test can drive the REAL placement rather than re-deriving it:
+    // "still can't add widget to phone" is about this method's answer, and arithmetic copied into a
+    // test is arithmetic that can agree with itself while the product refuses.
+    void placeWidget(int id) {
         AppWidgetProviderInfo info = widgets.infoOf(id);
         int cols = desk.cols(), rows = desk.rows();
         int sx = 1, sy = 1;
         if (info != null) {
-            sx = Math.min(cols, Widgets.spanFor(info.minWidth, cellDp(desk.cellW())));
-            sy = Math.min(rows, Widgets.spanFor(info.minHeight, cellDp(desk.cellH())));
+            sx = Math.min(cols, Widgets.spanFor(info.minWidth, desk.cellW()));
+            sy = Math.min(rows, Widgets.spanFor(info.minHeight, desk.cellH()));
         }
         List<Desk.Item> items = new ArrayList<Desk.Item>(desk.items());
         Desk.Item it = new Desk.Item(Desk.widgetKey(id), 0, 0, sx, sy);

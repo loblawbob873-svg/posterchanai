@@ -87,8 +87,47 @@
       // An older APK's `status` has no `canRead`. Absent is "it never asked", and on those builds
       // reading was gated on the role — so the role is the honest answer to give.
       return { isDefault: !!st.isDefault, present: true,
-               canRead: st.canRead === undefined ? !!st.isDefault : !!st.canRead };
-    }catch(_){ return { isDefault:false, canRead:false, present:true }; }
+               canRead: st.canRead === undefined ? !!st.isDefault : !!st.canRead,
+               // MEASURED, so the screen can state a fact rather than a verdict. Older builds report
+               // neither; `telephony` defaults to true there because every APK before this one that
+               // could answer `status` at all was assumed to be a phone.
+               defaultPkg: String(st.defaultPackage || ''),
+               pkg: String(st.package || ''),
+               roleHeld: !!st.roleHeld,
+               telephony: st.telephony === undefined ? true : !!st.telephony };
+    }catch(_){ return { isDefault:false, canRead:false, present:true, defaultPkg:'', pkg:'',
+                        telephony:true }; }
+  }
+
+  /* WHAT TO SAY ABOUT NOT BEING THE MESSAGES APP — and it names what Android named.
+   *
+   * "android keeps saying posterchan is not the phones messaging app but I see all my texts". A bare
+   * verdict is unanswerable: it could be a role that was never granted, one granted in a different
+   * profile, or a device with no telephony at all, and the person is left arguing with a sentence.
+   * The package Android reports is the same measurement the verdict is derived from, so printing it
+   * cannot contradict the verdict and it turns "you are wrong" into something checkable. */
+  function roleLine(st){
+    if(!st.telephony)
+      return 'This device has no SIM, so it cannot be a messages app. It shows what your phone '
+           + 'publishes here.';
+    if(st.roleHeld && st.defaultPkg && st.pkg && st.defaultPkg !== st.pkg)
+      /* THE TWO TABLES DISAGREE, AND SAYING SO IS THE ONLY USEFUL ANSWER. Android keeps the SMS
+       * ROLE and the messages provider's default-app row separately, and on some builds granting
+       * the role does not move the row. The row is the one that decides what is delivered, so the
+       * app cannot simply believe the role — but "you are not the default" to somebody who just set
+       * it is unanswerable, and this is not. */
+      return 'Android has given PosterChan the messages role, but its message store still lists '
+           + st.defaultPkg + ' as the messages app — so new texts are delivered there. Setting the '
+           + 'default again in Settings \u2192 Apps \u2192 Default apps \u2192 SMS usually moves it.';
+    if(st.defaultPkg && st.pkg && st.defaultPkg !== st.pkg)
+      return 'Android says this phone\u2019s messages app is ' + st.defaultPkg + ', not PosterChan, '
+           + 'so new messages arrive there. Set it in Settings \u2192 Apps \u2192 Default apps '
+           + '\u2192 SMS.';
+    if(!st.defaultPkg)
+      return 'Android has not named a messages app for this phone. Set PosterChan in Settings '
+           + '\u2192 Apps \u2192 Default apps \u2192 SMS.';
+    return 'PosterChan is not the default SMS app on this phone, so new messages arrive in '
+         + 'whichever app is. Set it in Settings \u2192 Apps \u2192 Default apps \u2192 SMS.';
   }
 
   /* ASK ANDROID FOR PERMISSION TO READ. Resolves whether it was granted; a refusal is an answer, not
@@ -121,9 +160,7 @@
       return { why: 'PosterChan has not been allowed to read this phone\u2019s messages yet.',
                phone: true, fix: 'perm' };
     if(!st.isDefault && !S.msgs.size)
-      return { why: 'PosterChan is not the default SMS app on this phone, so new messages arrive in '
-                  + 'whichever app is. Set it in Settings \u2192 Apps \u2192 Default apps \u2192 SMS.',
-               phone: true, fix: 'role' };
+      return { why: roleLine(st), phone: true, fix: 'role' };
     let mark = 0;
     try{ mark = Number(localStorage.getItem(HWM()) || 0) || 0; }catch(_){ }
     if(!mark)
@@ -287,7 +324,22 @@
    * entire history. The mark only ever moves FORWARD and only once a batch has actually landed. */
   async function mirror(opts){
     const P = plug('list');
-    if(!P || !(await isPhone())) return { published:0, skipped:'not the phone' };
+    /* PUBLISHING NEEDS TO READ, NOT TO BE THE DEFAULT APP — and that was the difference between an
+     * archive and nothing at all.
+     *
+     * "phone conversations not on the other posterchan apps either", from a handset whose own Texts
+     * screen was showing every message. The archive exists to get this device's messages to the
+     * devices that cannot read a SIM, and the thing that makes this device able to do that is
+     * READ_SMS. The ROLE decides whether new messages ARRIVE here and whether a send may be
+     * performed — neither of which is publishing. Gated on the role, a phone that had granted the
+     * permission and not (or not successfully) handed over its messaging published nothing, for
+     * ever, with a full Texts screen in front of the person and nothing anywhere to say why.
+     *
+     * A device that cannot read still publishes nothing, which is the rule that actually matters:
+     * a laptop has no plugin and no permission, so it can never fight the handset over a message's
+     * newest version. */
+    const st = await phoneState();
+    if(!P || !st.canRead) return { published:0, skipped:'cannot read this phone' };
     let since = 0;
     try{ since = Number(localStorage.getItem(HWM()) || 0) || 0; }catch(_){ }
     if(!since) since = Date.now() - FIRST_RUN_DAYS * 86400000;
@@ -780,7 +832,10 @@
       await load();
       loadFromPhone().then(() => { if(!S.msgs.size) paint(); else paint(); }, () => {});
     }
-    if(st.isDefault){ mirror(); drainOutbox(); }
+    // PUBLISHING needs to read; PERFORMING A SEND another device asked for needs the role, because
+    // only the default SMS app may write the provider. Two jobs, two gates.
+    if(st.canRead) mirror();
+    if(st.isDefault) drainOutbox();
   }
 
   function init(){
@@ -792,10 +847,11 @@
      * the HOME role. */
     document.addEventListener('visibilitychange', async () => {
       if(document.visibilityState !== 'visible') return;
-      if(!(await isPhone())) return;
+      const st = await phoneState();
+      if(!st.canRead && !st.isDefault) return;
       await load();
-      mirror();
-      drainOutbox();
+      if(st.canRead) mirror();
+      if(st.isDefault) drainOutbox();
     });
   }
   init();

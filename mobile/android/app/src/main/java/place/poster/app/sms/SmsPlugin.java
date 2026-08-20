@@ -1,6 +1,7 @@
 package place.poster.app.sms;
 
 import android.content.Context;
+import android.provider.Telephony;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -125,6 +126,29 @@ public class SmsPlugin extends Plugin {
         Context ctx = getContext();
         JSObject o = new JSObject();
         o.put("isDefault", HasRole.sms(ctx));
+        // WHO ANDROID ACTUALLY NAMES, so the screen can state a fact instead of a verdict.
+        // "android keeps saying posterchan is not the phones messaging app but I see all my texts"
+        // is unanswerable from the app's side as long as the only thing reported is a boolean: it
+        // could be a role that was never granted, a role granted in another profile, or a device
+        // with no telephony at all. The package name tells the three apart in one line, and it is
+        // the same measurement the boolean above is derived from, so the two cannot disagree.
+        String cur = "";
+        try { cur = Telephony.Sms.getDefaultSmsPackage(ctx); } catch (Throwable ignored) { }
+        o.put("defaultPackage", cur == null ? "" : cur);
+        o.put("package", ctx.getPackageName());
+        // THE SECOND OPINION, REPORTED SEPARATELY. RoleManager and the legacy default-package row
+        // are two different tables on Android 10+, and OEM builds do not always keep them in step.
+        // Collapsing them into one boolean is what let the app tell somebody who had just set it as
+        // their messages app that it was not; showing both means a disagreement is visible instead.
+        o.put("roleHeld", HasRole.roleHeld(ctx));
+        // A TABLET IS NOT AN SMS APP THAT LOST AN ARGUMENT. With no telephony there is no default
+        // messages app to be, and telling somebody to set one in Settings is advice they cannot take.
+        boolean tel = false;
+        try {
+            tel = ctx.getPackageManager().hasSystemFeature(
+                    android.content.pm.PackageManager.FEATURE_TELEPHONY);
+        } catch (Throwable ignored) { }
+        o.put("telephony", tel);
         // THREE KINDS OF EMPTY, AND THEY ARE NOT THE SAME SENTENCE — the same distinction the native
         // ThreadListActivity draws. "you have no texts", "I am not allowed to read them" and "I can
         // read them but I am not the app that receives them" all rendered as one sentence, and the

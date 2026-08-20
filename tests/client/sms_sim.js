@@ -48,7 +48,15 @@ const PLUGIN = {
     // client must not read `undefined` as "not allowed" and hide a working screen behind a button
     // that cannot exist.
     if(opt.oldApk) return { isDefault: isPhone(), unread: 0, mms: false };
-    return { isDefault: isPhone(), canRead, unread: 0, mms: false };
+    return { isDefault: isPhone(), canRead, unread: 0, mms: false,
+             // What Android NAMED, which is what the screen quotes back. A bare boolean left the
+             // person arguing with a sentence: "android keeps saying posterchan is not the phones
+             // messaging app but I see all my texts".
+             defaultPackage: opt.defaultPkg === undefined
+                 ? (isPhone() ? 'place.poster.app' : '') : opt.defaultPkg,
+             package: 'place.poster.app',
+             roleHeld: opt.roleHeld === true,
+             telephony: opt.telephony !== false };
   },
   async list(a){
     calls.push(['list', a && a.since || 0]);

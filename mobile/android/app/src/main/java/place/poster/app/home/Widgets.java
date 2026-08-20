@@ -103,11 +103,14 @@ public final class Widgets {
      * person is scanning in — they are looking for "the clock in Google Clock", not for a provider
      * class name.
      *
-     * `cellDp` is only used to state a size in the list ("4 x 1"); a provider that reports nothing
-     * useful still appears, at 1 x 1, rather than being filtered out — a widget missing from the
-     * list is indistinguishable from the bug this method was written to fix.
+     * The cell size is only used to state a size in the list ("4 x 1"); a provider that reports
+     * nothing useful still appears, at 1 x 1, rather than being filtered out — a widget missing from
+     * the list is indistinguishable from the bug this method was written to fix.
+     *
+     * IN PIXELS. See spanFor: the provider's own minimums are pixels, and handing this dp made every
+     * row claim a size several times the one the widget would actually take.
      */
-    public java.util.List<Choice> providers(int cellWdp, int cellHdp) {
+    public java.util.List<Choice> providers(int cellWpx, int cellHpx) {
         java.util.List<Choice> out = new java.util.ArrayList<Choice>();
         java.util.List<AppWidgetProviderInfo> all;
         try { all = manager.getInstalledProviders(); }
@@ -125,7 +128,7 @@ public final class Widgets {
                 if (c != null && c.length() > 0) app = c.toString();
             } catch (Throwable ignored) { }
             out.add(new Choice(i, label.trim(), app,
-                    spanFor(i.minWidth, cellWdp), spanFor(i.minHeight, cellHdp)));
+                    spanFor(i.minWidth, cellWpx), spanFor(i.minHeight, cellHpx)));
         }
         // GROUPED BY APP, AND OURS FIRST.
         //
@@ -218,9 +221,13 @@ public final class Widgets {
                     Context.CONTEXT_RESTRICTED);
             android.view.View v = android.view.LayoutInflater.from(theirs).inflate(layout, null);
             if (v == null) return null;
+            // ALREADY PIXELS. `info.minWidth` is resolved against the display's density by the
+            // platform, so multiplying by it again drew every preview at density-squared and then
+            // clipped it at the bound below — which is why previews came out cropped. Only the
+            // fallbacks, which are written here in dp, need converting.
             float d = ctx.getResources().getDisplayMetrics().density;
-            int w = Math.max(1, (int) ((info.minWidth > 0 ? info.minWidth : 180) * d));
-            int h = Math.max(1, (int) ((info.minHeight > 0 ? info.minHeight : 110) * d));
+            int w = Math.max(1, info.minWidth > 0 ? info.minWidth : (int) (180 * d));
+            int h = Math.max(1, info.minHeight > 0 ? info.minHeight : (int) (110 * d));
             // Bounded: a widget declaring an absurd minimum must not allocate an absurd bitmap.
             w = Math.min(w, (int) (400 * d));
             h = Math.min(h, (int) (400 * d));
@@ -417,10 +424,24 @@ public final class Widgets {
         } catch (Throwable ignored) { }
     }
 
-    /** How many cells this provider needs at minimum, and whether it may be resized at all. */
-    public static int spanFor(int minDp, int cellDp) {
-        if (cellDp <= 0) return 1;
-        return Math.max(1, (int) Math.ceil(minDp / (double) cellDp));
+    /**
+     * How many cells this provider needs at minimum. BOTH ARGUMENTS ARE PIXELS.
+     *
+     * `AppWidgetProviderInfo.minWidth` and friends are PIXELS, not dp — the platform resolves the
+     * manifest's `250dp` against the device's density when it parses the provider, so the field
+     * this reads is 688 on a 440dpi phone. Every call site here used to hand it a cell width in DP,
+     * which multiplied every widget's demand by the density: on that phone a 250dp music widget
+     * asked for eight of a four-column grid, was capped to the full width, and then no free
+     * rectangle of that shape existed — "No room left on the home screen", for every widget, on
+     * every phone. A tablet's density is lower AND its grid is bigger, so the same arithmetic very
+     * nearly worked there: "widgets look great on tablet".
+     *
+     * Measured on a device rather than reasoned about — the assertion that caught it printed
+     * "MusicWidget needs 688x110dp, a phone cell gives it 376x186" against a manifest saying 250dp.
+     */
+    public static int spanFor(int minPx, int cellPx) {
+        if (cellPx <= 0) return 1;
+        return Math.max(1, (int) Math.ceil(minPx / (double) cellPx));
     }
 
     public boolean resizableWide(int id) {

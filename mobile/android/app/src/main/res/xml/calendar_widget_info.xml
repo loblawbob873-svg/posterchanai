@@ -3,9 +3,18 @@
      the app (CalendarPlugin.push) or the date rolling over, and both arrive as broadcasts — and the
      platform clamps polling to 30 minutes anyway, which would be a wake-up an hour to redraw the
      same list. -->
+<!-- minResizeWidth / minResizeHeight ARE NOT OPTIONAL ON A PHONE, and their absence is what
+     "widgets need support to fit on mobile phone screen" actually was. Without them EVERY launcher
+     - ours included - treats minWidth/minHeight as the floor, so the widget can only ever be placed
+     at exactly the size it asked for: a phone grid is 4 columns by 3-6 rows against a tablet's 5-7
+     by 6-8, and the same rectangle that lands on one is refused by the other with "no room".
+     Declaring the floor is the widget SAYING which smaller shapes it can still draw, which is the
+     whole point of resizeMode. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:minWidth="180dp"
     android:minHeight="110dp"
+    android:minResizeWidth="110dp"
+    android:minResizeHeight="80dp"
     android:targetCellWidth="3"
     android:targetCellHeight="3"
     android:updatePeriodMillis="0"

@@ -472,43 +472,113 @@ public class WidgetDeviceTest {
             assertTrue("no rows were measured: " + g[1], g[1] >= 3);
             assertTrue("the desk was never laid out: cell " + g[2] + "x" + g[3], g[2] > 0 && g[3] > 0);
 
+            // EVERYTHING HERE IS PIXELS. `AppWidgetProviderInfo.minWidth` and friends are resolved
+            // against the display density by the platform — a manifest saying 250dp reads back as
+            // 688 on a 440dpi phone — and mixing them with a cell measured in dp is what multiplied
+            // every widget's demand by the density. That is the bug this test found: the first run
+            // printed "MusicWidget needs 688x110dp, a phone cell gives it 376x186".
             float density = ctx.getResources().getDisplayMetrics().density;
-            int cellWdp = Math.max(1, (int) (g[2] / density));
-            int cellHdp = Math.max(1, (int) (g[3] / density));
-            Log.i(TAG, "phone widgets: sw=" + sw + "dp grid=" + g[0] + "x" + g[1]
-                    + " cell=" + cellWdp + "x" + cellHdp + "dp");
+            Log.i(TAG, "phone widgets: sw=" + sw + "dp density=" + density
+                    + " grid=" + g[0] + "x" + g[1] + " cell=" + g[2] + "x" + g[3] + "px");
 
             String mine = ctx.getPackageName();
             List<String> tooBig = new ArrayList<String>();
             int ours = 0;
-            for (Widgets.Choice c : widgets.providers(90, 90)) {
+            for (Widgets.Choice c : widgets.providers(g[2], g[3])) {
                 AppWidgetProviderInfo i = c.info;
-                int wantX = Math.min(g[0], Widgets.spanFor(i.minWidth, cellWdp));
-                int wantY = Math.min(g[1], Widgets.spanFor(i.minHeight, cellHdp));
                 int floorW = i.minResizeWidth > 0 ? i.minResizeWidth : i.minWidth;
                 int floorH = i.minResizeHeight > 0 ? i.minResizeHeight : i.minHeight;
-                boolean fits = wantX * cellWdp >= floorW && wantY * cellHdp >= floorH;
+                // THE ONLY QUESTION THAT MATTERS: does the SMALLEST shape this widget will accept
+                // fit on a phone's grid at all? If it needs more columns than the grid has, no free
+                // rectangle of that shape can ever exist and the answer is always "no room".
+                int needX = Widgets.spanFor(floorW, g[2]);
+                int needY = Widgets.spanFor(floorH, g[3]);
+                boolean fits = needX <= g[0] && needY <= g[1];
                 boolean isOurs = mine.equals(i.provider.getPackageName());
                 Log.i(TAG, "phone widgets: " + (isOurs ? "OURS " : "     ")
                         + i.provider.flattenToShortString()
-                        + " min=" + i.minWidth + "x" + i.minHeight + "dp"
-                        + " floor=" + floorW + "x" + floorH + "dp"
-                        + " -> " + wantX + "x" + wantY + " cells = "
-                        + (wantX * cellWdp) + "x" + (wantY * cellHdp) + "dp"
+                        + " min=" + i.minWidth + "x" + i.minHeight + "px"
+                        + " floor=" + floorW + "x" + floorH + "px"
+                        + " -> smallest " + needX + "x" + needY + " cells of " + g[0] + "x" + g[1]
                         + (fits ? "" : "  DOES NOT FIT"));
                 if (!isOurs) continue;
                 ours++;
-                if (!fits) tooBig.add(i.provider.getShortClassName() + " needs "
-                        + floorW + "x" + floorH + "dp, a phone cell gives it "
-                        + (wantX * cellWdp) + "x" + (wantY * cellHdp));
+                if (!fits) tooBig.add(i.provider.getShortClassName() + " needs at least "
+                        + needX + "x" + needY + " cells of a " + g[0] + "x" + g[1] + " phone grid");
             }
             assertTrue("none of our own widget providers was listed at all", ours > 0);
-            assertTrue("one of OUR widgets cannot be drawn at the size a phone grid gives it: "
-                    + tooBig, tooBig.isEmpty());
+            assertTrue("one of OUR widgets cannot fit a phone's home screen at any size it will"
+                    + " accept, so adding it can only ever answer \"No room left on the home"
+                    + " screen\": " + tooBig, tooBig.isEmpty());
         } finally {
             asItWas();
         }
         assertEquals("the phone grid did not come back", 4, deskShape()[0]);
+    }
+
+    @Test
+    public void onAPhoneAWidgetCanActuallyBeADDED() throws Exception {
+        // "still can't add widget to phone" — the string being seen is `home_desktop_full`, so the
+        // widget is being REFUSED A PLACE, and no amount of listing or previewing proves otherwise.
+        // This drives the launcher's real `placeWidget` on a real phone-sized grid with a real
+        // seeded desktop, and asks the only question the report asks: is it on the desk afterwards?
+        shell("appwidget grantbind --package " + ctx.getPackageName() + " --user 0");
+        List<Widgets.Choice> rows = widgets.providers(200, 200);
+        Widgets.Choice pick = null;
+        String mine = ctx.getPackageName();
+        // OURS BY PREFERENCE — a third-party widget demanding more than a phone can give is a fact
+        // about that widget; ours failing to fit is a fact about us.
+        for (Widgets.Choice c : rows) {
+            if (c.info.configure != null) continue;
+            if (mine.equals(c.info.provider.getPackageName())) { pick = c; break; }
+            if (pick == null) pick = c;
+        }
+        assertNotNull("nothing addable without a person", pick);
+
+        HomeRoles.enableLauncherComponent(ctx, true);
+        asAPhone();
+        LauncherPrefs prefs = new LauncherPrefs(ctx);
+        String geom = "";
+        String before = "";
+        try {
+            int[] g = deskShape();
+            assertEquals("a phone did not get the phone grid", 4, g[0]);
+            geom = HomeMetrics.geometry(g[0], g[1]);
+            before = prefs.desk(geom);
+
+            // A DESKTOP LIKE A REAL ONE: the default tiles across the first two rows, which is what
+            // `seedHome` leaves and what the person adding a widget is looking at.
+            List<Desk.Item> seed = new ArrayList<Desk.Item>();
+            HomeTiles.Tile[] cat = HomeTiles.catalogue();
+            for (int n = 0; n < 8 && n < cat.length; n++) {
+                seed.add(new Desk.Item("pc:" + cat[n].view, n % g[0], n / g[0], 1, 1));
+            }
+            prefs.setDesk(geom, Desk.serialize(seed));
+
+            final Widgets.Choice chosen = pick;
+            final int[] made = new int[]{ -1 };
+            final String[] landed = new String[]{ "" };
+            ActivityScenario<HomeActivity> s = ActivityScenario.launch(HomeActivity.class);
+            try {
+                Thread.sleep(1200);                       // the app scan and the first layout
+                s.onActivity(a -> made[0] = widgets.add(a, chosen));
+                assertTrue("the widget was not bound", made[0] >= 0);
+                allocated.add(made[0]);
+                s.onActivity(a -> a.placeWidget(made[0]));
+                Thread.sleep(400);
+                s.onActivity(a -> landed[0] = Desk.serialize(a.deskItemsForTest()));
+            } finally {
+                s.close();
+            }
+            Log.i(TAG, "phone widgets: after placeWidget the desktop is "
+                    + landed[0].replace('\n', ' '));
+            assertTrue("a widget could not be added to a phone's home screen at all — this is the"
+                    + " \"No room left on the home screen\" report, measured. desktop=" + landed[0],
+                    landed[0].contains(Desk.widgetKey(made[0])));
+        } finally {
+            if (!geom.isEmpty()) prefs.setDesk(geom, before);
+            asItWas();
+        }
     }
 
     @Test

@@ -70,9 +70,10 @@ class Mirror(unittest.TestCase):
         self.assertEqual(sorted(res["relay"]),
                          ["pcai:sms:%024d" % 1, "pcai:sms:%024d" % 2])
 
-    def test_a_device_that_is_not_the_phone_publishes_nothing(self):
-        """Every device reads the archive; only the handset writes it. A laptop republishing what it
-        read would fight the phone over every message's newest version."""
+    def test_a_device_that_cannot_read_publishes_nothing(self):
+        """Every device reads the archive; only a device that can read the phone's own message store
+        writes it. A laptop republishing what it read would fight the handset over every message's
+        newest version — and a laptop has no plugin, no permission, and so no way in."""
         res = run(isPhone=False, rows=[msg(1)], steps=["load", "mirror"])
         self.assertEqual(res["relay"], [])
         self.assertEqual(calls_of(res, "list"), [])
@@ -297,3 +298,49 @@ class Permission(unittest.TestCase):
         res = run(rows=[msg(1)], oldApk=True, steps=["render", "settle"])
         self.assertEqual(res["docs"], ["pcai:sms:%024d" % 1])
         self.assertEqual(calls_of(res, "ensureRead"), [])
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class PublishingIsNotTheRole(unittest.TestCase):
+    """"phone conversations not on the other posterchan apps either" — from a handset whose own Texts
+    screen was showing every message.
+
+    The archive exists to get THIS device's messages to the devices that cannot read a SIM, and what
+    makes a device able to do that is READ_SMS. The ROLE decides whether new messages arrive here and
+    whether a send another device asked for may be performed; neither of those is publishing. Gated
+    on the role, a phone that had granted the permission and not handed over its messaging published
+    nothing, for ever, with a full inbox in front of the person and nothing anywhere to say why.
+    """
+
+    def test_a_phone_that_may_read_publishes_even_without_the_role(self):
+        res = run(rows=[msg(1), msg(2)], isPhone=False, canRead=True, steps=["load", "mirror"])
+        self.assertEqual(sorted(res["relay"]),
+                         ["pcai:sms:%024d" % 1, "pcai:sms:%024d" % 2])
+
+    def test_the_notice_names_who_android_named(self):
+        """A bare verdict is unanswerable — a role never granted, a role in another profile and a
+        device with no telephony all read the same. The package Android reports is the measurement
+        the verdict comes from, so quoting it cannot contradict it."""
+        res = run(rows=[], isPhone=False, canRead=True,
+                  defaultPkg="com.google.android.apps.messaging", steps=["load", "why"])
+        why = calls_of(res, "why")[0]
+        self.assertEqual(why[1], "role", why)
+        self.assertIn("com.google.android.apps.messaging", why[2])
+
+    def test_a_device_with_no_sim_is_not_told_to_set_a_messages_app(self):
+        """Advice somebody cannot take is worse than none: a tablet cannot be an SMS app."""
+        res = run(rows=[], isPhone=False, canRead=True, telephony=False,
+                  defaultPkg="", steps=["load", "why"])
+        self.assertIn("no SIM", calls_of(res, "why")[0][2])
+
+    def test_a_role_the_provider_disagrees_with_is_named_as_such(self):
+        """"posterchan still not working as default Messenger app despite being set as default
+        messenger". Android keeps the SMS ROLE and the message store's default-app row in two
+        different tables, and on some builds granting the role does not move the row. The row is the
+        one that decides what is delivered, so the app must not simply believe the role — but "you
+        are not the default" to somebody who has just set it is unanswerable, and this is not."""
+        res = run(rows=[], isPhone=False, canRead=True, roleHeld=True,
+                  defaultPkg="com.samsung.android.messaging", steps=["load", "why"])
+        why = calls_of(res, "why")[0][2]
+        self.assertIn("messages role", why)
+        self.assertIn("com.samsung.android.messaging", why)
