@@ -7096,6 +7096,17 @@ body.os-on #os-root{pointer-events:auto}
 .osw.focused{border-color:color-mix(in srgb, var(--neon) 55%, var(--line));
   box-shadow:0 22px 64px rgba(0,0,0,.62)}
 .osw.minimised{display:none}
+/* WHERE 100% IS, on a slider that goes to 150. Everything past the mark is PipeWire scaling the
+   samples in software rather than the hardware being asked for more, and a slider with no mark
+   makes "loud" and "boosted" the same gesture — you cannot tell you have left the safe range until
+   something clips. The mark is drawn at exactly 100/150 of the track and is decoration only
+   (pointer-events:none), so it can never swallow a drag. */
+.os-boostable{background-image:linear-gradient(to right,transparent calc(66.667% - 1px),
+  color-mix(in srgb, var(--neon) 70%, transparent) calc(66.667% - 1px),
+  color-mix(in srgb, var(--neon) 70%, transparent) calc(66.667% + 1px),transparent calc(66.667% + 1px));
+  background-repeat:no-repeat;background-size:100% 100%}
+.os-boostable::-webkit-slider-runnable-track,.os-boostable::-moz-range-track{background:transparent}
+
 /* While a window is being dragged it is moved with a transform on the compositor, so promote it to
    its own layer and stop hit-testing its contents — on a tablet the pointer-events work alone was
    showing up in the gesture. Both are removed on release. */

@@ -449,7 +449,7 @@
       rows.push(`<div class="os-qs-row">
         <button class="os-qs-ic" data-os="mute" title="${s.volume.muted ? 'Unmute' : 'Mute'}"
           aria-label="${s.volume.muted ? 'Unmute' : 'Mute'}">${ICO(volIcon(s.volume))}</button>
-        <input class="os-qs-range" data-qs="vol" type="range" min="0" max="100"
+        <input class="os-qs-range os-boostable" data-qs="vol" type="range" min="0" max="${VOL_MAX}"
                value="${H(s.volume.percent)}" aria-label="Volume">
         <span class="os-qs-val" data-val="vol">${H(s.volume.percent)}%</span>
         <button class="os-qs-more" data-os="outputs" title="Change output device"
@@ -608,11 +608,27 @@
     });
   }
 
+  /* VOLUME GOES PAST 100, BRIGHTNESS DOES NOT, and they are not the same kind of number.
+   *
+   * 100% is the loudest the hardware is being ASKED for, not the loudest it can be — everything
+   * above it is PipeWire scaling the samples up in software, which is what every desktop mixer
+   * offers and what a quiet recording, a laptop speaker or a film mixed for a cinema actually needs.
+   * The backend has allowed it all along (audio.js MAX = 1.5); only these sliders stopped at 100, so
+   * the ceiling was three copies of a number in the markup rather than a decision anybody made.
+   *
+   * 150 matches audio.js so the slider cannot ask for something `clamp` will silently reduce — a
+   * control that lands somewhere other than where it was dropped is worse than one that stops.
+   * Brightness has no equivalent: 100% is the panel at full power and there is nothing above it, so
+   * it keeps the default. */
+  var VOL_MAX = 150;
+
   /* A SLIDER, and the reading it started from. Applied as it moves — a volume control you have to
    * confirm is one you cannot use to turn something down quickly. */
-  function sliderPop(anchor, title, value, extra, onSet){
+  function sliderPop(anchor, title, value, extra, onSet, max){
+    const top = max || 100;
     const d = openPop(anchor, `<div class="os-pop-h">${H(title)}</div>
-      <div class="os-pop-b"><input class="os-pop-range" type="range" min="0" max="100"
+      <div class="os-pop-b"><input class="os-pop-range${top > 100 ? ' os-boostable' : ''}"
+           type="range" min="0" max="${top}"
            value="${H(value)}" aria-label="${H(title)}"><span class="os-pop-val">${H(value)}%</span>
       </div>${extra || ''}`);
     const r = d.querySelector('.os-pop-range'), v = d.querySelector('.os-pop-val');
@@ -635,7 +651,7 @@
     const muted = !!_sum.volume.muted;
     const d = sliderPop(anchor, 'Volume', _sum.volume.percent,
       `<div class="os-pop-f"><button class="os-pop-btn" data-mute="1">${muted ? 'Unmute' : 'Mute'}</button></div>`,
-      (n) => a.setVolume(n, 'sink'));
+      (n) => a.setVolume(n, 'sink'), VOL_MAX)
     d.querySelector('[data-mute]').onclick = async () => {
       try{ await a.setMuted(!muted, 'sink'); }catch(_){}
       closePop(); await refresh();
@@ -876,7 +892,7 @@
           aria-label="${r.muted ? 'Unmute' : 'Mute'} ${H(r.name)}"
           >${ICO(r.muted ? 'volume-mute' : 'volume')}</button>
         <div class="os-mix-body"><span class="os-mix-nm">${H(r.name)}</span>
-          <input class="os-qs-range" data-mixvol="${H(r.id)}" type="range" min="0" max="100"
+          <input class="os-qs-range os-boostable" data-mixvol="${H(r.id)}" type="range" min="0" max="${VOL_MAX}"
                  value="${H(r.percent == null ? 100 : r.percent)}" aria-label="${H(r.name)} volume"></div>
         <span class="os-qs-val" data-val="mix${H(r.id)}">${H(r.percent == null ? '—' : r.percent + '%')}</span>
       </div>`).join('');
