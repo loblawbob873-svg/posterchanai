@@ -121,10 +121,13 @@ class TheImageDoesNotCarryTheOperator(unittest.TestCase):
         self.assertNotIn("/etc/sudoers ", seg)
 
     def test_it_grants_only_the_live_account(self):
-        i = self.fn.index("NOPASSWD")
-        line = self.fn[self.fn.rindex("printf", 0, i):i + 60]
-        self.assertIn("live ALL=", line)
-        self.assertNotIn("ALL ALL=", line)
+        # The RULE, not the first mention of the word — "NOPASSWD" appears in the comment above it
+        # explaining why it is there, which is what my first version of this matched.
+        rules = [l.strip() for l in self.fn.splitlines()
+                 if "NOPASSWD" in l and "printf" in l]
+        self.assertEqual(len(rules), 1, "expected exactly one sudoers rule, got %r" % rules)
+        self.assertIn("live ALL=", rules[0])
+        self.assertNotIn("ALL ALL=", rules[0])
 
     def test_the_live_account_is_passwordless_not_locked(self):
         """`!` is locked, and a locked account cannot autologin."""
