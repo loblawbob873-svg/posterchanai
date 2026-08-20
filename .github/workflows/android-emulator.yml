@@ -142,7 +142,11 @@ jobs:
           # TESTS NEVER RAN ONCE. Every emulator run since they were written was red for that reason
           # and green on everything it did manage to do, which is the worst possible combination:
           # the job that exists to catch what static checks cannot was itself never running.
-          script: bash scripts/android_device_checks.sh && bash scripts/android_instrumented.sh
+          # BOTH RUN, ALWAYS, and the step fails if either did. Chained with `&&` the instrumented
+          # tests were skipped whenever a lifecycle check failed — which is exactly when their answer
+          # is most wanted, and it kept them from running a second time after the `sh` fix.
+          script: |
+            bash scripts/android_device_checks.sh; a=$?; bash scripts/android_instrumented.sh; b=$?; echo "device=$a instrumented=$b"; [ $a -eq 0 ] && [ $b -eq 0 ]
 
       - name: Upload logcat
         if: always()

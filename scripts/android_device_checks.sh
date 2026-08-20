@@ -131,15 +131,36 @@ adb shell pm enable "$HOME_ACT" >/dev/null 2>&1
 adb shell cmd package set-home-activity "$HOME_ACT" >/dev/null 2>&1
 adb shell cmd role add-role-holder android.app.role.HOME $PKG >/dev/null 2>&1
 sleep 2
-HOLDER=$(adb shell cmd shortcut get-default-launcher 2>/dev/null | tr -d '\r')
-[ -z "$HOLDER" ] && HOLDER=$(adb shell cmd role get-role-holders android.app.role.HOME 2>/dev/null | tr -d '\r')
-# The authority is what actually RESOLVES for an Intent, not what a command printed.
-RESOLVED=$(adb shell 'cmd package resolve-activity -c android.intent.category.HOME -a android.intent.action.MAIN' 2>/dev/null | grep -m1 packageName | tr -d '\r')
-echo "    holder: ${HOLDER:-<none>}   resolves: ${RESOLVED:-<none>}"
-case "$HOLDER$RESOLVED" in
-  *$PKG*) ok "PosterChan is the home screen" ;;
-  *)      fail "could not take the HOME role on this image — the launcher was NOT exercised"
-          HOLDER="" ;;
+# THE AUTHORITY IS WHAT COMES UP WHEN YOU PRESS HOME — not what a command printed. `set-home-activity`
+# answers "Success" on this image and `resolve-activity` still names the stock launcher, because with
+# two home apps installed the query has no single answer. Pressing the key does.
+#
+# If ours is not what appears, the stock launcher is disabled so that it is: the AVD is ephemeral and
+# both are put back at the end. Skipping instead is what left the launcher unexercised on every run.
+adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1
+adb shell input keyevent KEYCODE_HOME
+sleep 3
+TOP=$(adb shell dumpsys activity activities 2>/dev/null | grep -m1 -E 'mResumedActivity|topResumedActivity' | tr -d '\r')
+echo "    after HOME: $TOP"
+STOCK=""
+case "$TOP" in
+  *HomeActivity*) ok "PosterChan is the home screen" ; HOLDER="ours" ;;
+  *)
+    STOCK=$(adb shell "cmd package query-activities -a android.intent.action.MAIN -c android.intent.category.HOME 2>/dev/null" \
+            | grep -o '[a-z0-9._]*launcher[a-z0-9._]*' | grep -v "$PKG" | sort -u | head -1 | tr -d '\r')
+    if [ -n "$STOCK" ]; then
+      echo "    standing the stock launcher down for the test: $STOCK"
+      adb shell pm disable-user --user 0 "$STOCK" >/dev/null 2>&1
+      adb shell input keyevent KEYCODE_HOME
+      sleep 3
+      TOP=$(adb shell dumpsys activity activities 2>/dev/null | grep -m1 -E 'mResumedActivity|topResumedActivity' | tr -d '\r')
+      echo "    after HOME: $TOP"
+    fi
+    case "$TOP" in
+      *HomeActivity*) ok "PosterChan is the home screen" ; HOLDER="ours" ;;
+      *) fail "HOME did not bring up our launcher — it was NOT exercised: $TOP" ; HOLDER="" ;;
+    esac
+    ;;
 esac
 
 if [ -n "$HOLDER" ]; then
@@ -272,6 +293,7 @@ if [ -n "$HOLDER" ]; then
               "$(echo "$PREV_HOME" | sed 's/.*: *//')" >/dev/null 2>&1 ;;
   esac
   adb shell pm disable-user --user 0 "$HOME_ACT" >/dev/null 2>&1
+  [ -n "${STOCK:-}" ] && adb shell pm enable "$STOCK" >/dev/null 2>&1
   adb shell input keyevent KEYCODE_HOME
   sleep 2
   ok "restored"
