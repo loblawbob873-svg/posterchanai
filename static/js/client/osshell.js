@@ -62,22 +62,27 @@
    *
    * `match` is what the app's WINDOW is called, which is a different fact again: "Browser" opens
    * firefox, and looking for a window named "browser" never finds the one it just started. */
-  const APPS = [
-    { id: 'browser',  name: 'Browser',  match: 'firefox', icon: 'globe', candidates: [
-        ['/usr/bin/firefox'], ['/usr/bin/firefox-bin'], ['/opt/firefox/firefox'] ] },
-    /* THE TERMINAL IS POSTERCHAN'S OWN, not somebody else's emulator. It is a PTY on THIS machine
-     * through the desktop bridge — no SSH, no server, nothing to reach over a network to get a
-     * shell on the computer you are sitting at — and its history is ephemeral Nostr events, so it
-     * follows you between your own devices and is stored by nobody. Launching `foot` here would
-     * throw all of that away and open a terminal that knows none of it.
-     *
-     * `foot` still exists on the machine and is still bound to $mod+Return in the compositor, and
-     * that is deliberate: it is the escape hatch for when the shell itself is what has gone wrong,
-     * which is exactly when a terminal drawn BY the shell cannot help you. */
-    { id: 'terminal', name: 'Terminal', icon: 'terminal', view: 'terminal' },
-    { id: 'steam',    name: 'Steam',    match: 'steam', icon: 'gamepad', candidates: [
-        ['/usr/bin/steam'], ['/usr/bin/flatpak', 'run', 'com.valvesoftware.Steam'] ] },
-  ];
+  /* DELIBERATELY EMPTY, AND THAT IS THE FEATURE.
+   *
+   * This was a hardcoded list — Browser, Terminal, Steam — and every entry was wrong in its own way
+   * once the launcher learned to read `.desktop` files:
+   *
+   *   STEAM was offered on every machine, installed or not. A launcher that lists software you do
+   *   not have is a launcher you stop believing: "why is steam there? not everyone will install
+   *   steam". The scan shows it when it exists and says nothing when it does not.
+   *
+   *   BROWSER was a second Firefox beside the scanned one, under a different name.
+   *
+   *   TERMINAL was a duplicate of the client's own Terminal view — and the icon-less one, because
+   *   these entries named icons (`globe`, `terminal`, `gamepad`) that are not in the sprite, so all
+   *   three rendered with no icon at all. The view has a real one and always did.
+   *
+   * Anything installed comes from the `.desktop` scan, with the name and icon its own author gave
+   * it. Anything of PosterChan's own is a VIEW, and views are already on the desktop, in the start
+   * menu and in the sidebar. There is no third category, which is why this list is empty rather
+   * than shorter — and it stays a list so a genuine exception has somewhere to go, with `view:` for
+   * one of ours and `candidates:` for a program with no `.desktop` entry. */
+  const APPS = [];
 
   /* ── THE MACHINE'S OWN APPLICATIONS ────────────────────────────────────────────────────────
    *
@@ -107,7 +112,12 @@
       try{
         const r = await A.list();
         _apps = ((r && r.apps) || []).map(a => ({
-          id: 'app:' + a.id, name: a.name, match: a.match, icon: 'window',
+          /* `grid`, and it has to be a symbol that EXISTS. This was `window`, which is not in
+           * the sprite — and `iconSvg` emits a `<use href="#i-window">` that draws empty space
+           * with no error, no fallback and nothing in the console. So every program found by the
+           * .desktop scan appeared in the start menu with no icon at all: "browser terminal have
+           * no desktop icons or start menu icons". */
+          id: 'app:' + a.id, name: a.name, match: a.match, icon: 'grid',
           comment: a.comment || '', group: a.group || 'Other', argv: a.argv, machine: true,
         }));
         _appsAt = Date.now();

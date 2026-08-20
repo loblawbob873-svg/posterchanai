@@ -29,6 +29,22 @@ class IconSprite(unittest.TestCase):
                            capture_output=True, text=True, cwd=ROOT, timeout=120)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
+    def test_the_generated_files_are_valid_xml(self):
+        """`--` IS ILLEGAL INSIDE AN XML COMMENT, and a generator that emits one writes a resource
+        file the Android build refuses. It happened: a comment explaining the fix for the blank icons
+        used an em-dash pair and every one of the sixty-three drawables became unparseable at once.
+        Caught by test_android_music_controls' resource sweep, which is a whole suite away from the
+        thing that broke it — so it is asserted here too, next to the generator."""
+        import xml.dom.minidom
+        for f in sorted(os.listdir(DRAWABLE)):
+            if not f.startswith("ic_pc_"):
+                continue
+            path = os.path.join(DRAWABLE, f)
+            try:
+                xml.dom.minidom.parse(path)
+            except Exception as e:
+                self.fail("%s is not valid XML: %s" % (f, e))
+
     def test_nothing_bakes_a_colour_into_an_icon(self):
         """Nine themes cost nine tints, not nine icon sets. A path that carries a real colour cannot
         be tinted at runtime, so it would stay one theme's colour on every other theme."""

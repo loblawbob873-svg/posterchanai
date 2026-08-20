@@ -1,7 +1,6 @@
 package place.poster.app.ui;
 
 import android.app.Activity;
-import android.graphics.PorterDuff;
 import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.os.Bundle;
@@ -70,15 +69,7 @@ public abstract class PcActivity extends Activity {
     }
 
     /** A sprite icon in a palette colour. One drawable, nine themes — see scripts/gen_android_icons.py. */
-    protected Drawable tint(int res, int color) {
-        try {
-            Drawable d = getResources().getDrawable(res);
-            if (d == null) return null;
-            d = d.mutate();
-            d.setColorFilter(color, PorterDuff.Mode.SRC_IN);
-            return d;
-        } catch (Throwable t) { return null; }
-    }
+    protected Drawable tint(int res, int color) { return Skin.icon(this, res, color); }
 
     protected void icon(int viewId, int res, int color) {
         View v = findViewById(viewId);

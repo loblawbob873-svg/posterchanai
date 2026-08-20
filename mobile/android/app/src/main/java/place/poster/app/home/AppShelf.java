@@ -188,6 +188,38 @@ public final class AppShelf {
     }
 
     /**
+     * THE DOCK — the toolbar of main icons along the bottom.
+     *
+     * ITS LAST SLOT IS ALWAYS THE ESSENTIAL TILE, appended if the person's own list does not carry
+     * it. The dock is the one part of a home screen that is visible on every page and never scrolls
+     * away, which makes it the right place for the way back to the phone's own Settings — and the
+     * only place that stays reachable when the desktop has been arranged into something broken.
+     *
+     * Unknown keys (an app that was uninstalled) are skipped rather than drawn as gaps, and the
+     * result is capped so a long saved list cannot squeeze the icons to nothing.
+     */
+    public static List<Entry> dock(List<Entry> all, List<String> keys, int max) {
+        List<Entry> out = new ArrayList<Entry>();
+        Entry essential = null;
+        for (Entry e : all == null ? new ArrayList<Entry>() : all) if (e.essential) essential = e;
+        if (keys != null) {
+            for (String k : keys) {
+                if (out.size() >= Math.max(1, max) - (essential == null ? 0 : 1)) break;
+                Entry e = byKey(all, k);
+                if (e != null && !out.contains(e)) out.add(e);
+            }
+        }
+        if (essential != null && !out.contains(essential)) out.add(essential);
+        return out;
+    }
+
+    /** The entry for a key, or null — an app that has since been uninstalled. */
+    public static Entry byKey(List<Entry> all, String key) {
+        if (all != null && key != null) for (Entry e : all) if (key.equals(e.key())) return e;
+        return null;
+    }
+
+    /**
      * PIN A TILE TO THE FRONT. The saved `order` is a short list of keys that lead; everything else
      * follows alphabetically, so pinning is simply "put this key first".
      *

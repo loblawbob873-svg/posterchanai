@@ -114,6 +114,73 @@ public final class HomeRoles {
         } catch (Throwable t) { return false; }
     }
 
+    /**
+     * CAN THIS BUILD EVEN HOLD THE SMS ROLE?
+     *
+     * Android refuses the role outright unless the app declares all four of the SMS components, and
+     * "refuses" here does not mean an error — `createRequestRoleIntent` returns an Intent, the
+     * activity starts, the platform sees the app does not qualify and finishes it immediately with
+     * RESULT_CANCELED. From the settings screen that is INDISTINGUISHABLE from a switch that is not
+     * wired up: it flips, nothing appears, it flips back. Reported exactly that way.
+     *
+     * So the switch asks this first and says what it finds, rather than offering a request that
+     * cannot succeed. Two of the four are checked because either one missing is fatal and together
+     * they cover the receiver half and the service half.
+     */
+    public static boolean canBeSms(Context ctx) {
+        return resolvesBroadcast(ctx, "android.provider.Telephony.SMS_DELIVER")
+            && resolvesService(ctx, "android.intent.action.RESPOND_VIA_MESSAGE");
+    }
+
+    /** Likewise for the dialer: an InCallService that draws the UI, and an ACTION_DIAL activity. */
+    public static boolean canBeDialer(Context ctx) {
+        return resolvesService(ctx, "android.telecom.InCallService")
+            && resolvesActivity(ctx, new Intent(Intent.ACTION_DIAL));
+    }
+
+    private static boolean resolvesBroadcast(Context ctx, String action) {
+        try {
+            for (android.content.pm.ResolveInfo r : ctx.getPackageManager()
+                    .queryBroadcastReceivers(new Intent(action), PackageManager.MATCH_ALL)) {
+                if (r.activityInfo != null && ctx.getPackageName().equals(r.activityInfo.packageName)) return true;
+            }
+        } catch (Throwable ignored) { }
+        return false;
+    }
+
+    private static boolean resolvesService(Context ctx, String action) {
+        try {
+            for (android.content.pm.ResolveInfo r : ctx.getPackageManager()
+                    .queryIntentServices(new Intent(action), PackageManager.MATCH_ALL)) {
+                if (r.serviceInfo != null && ctx.getPackageName().equals(r.serviceInfo.packageName)) return true;
+            }
+        } catch (Throwable ignored) { }
+        return false;
+    }
+
+    private static boolean resolvesActivity(Context ctx, Intent i) {
+        try {
+            for (android.content.pm.ResolveInfo r : ctx.getPackageManager()
+                    .queryIntentActivities(i, PackageManager.MATCH_ALL)) {
+                if (r.activityInfo != null && ctx.getPackageName().equals(r.activityInfo.packageName)) return true;
+            }
+        } catch (Throwable ignored) { }
+        return false;
+    }
+
+    /**
+     * THE WAY THROUGH WHEN THE ROLE DIALOG DID NOT TAKE. Android's own "Default apps" screen, which
+     * exists on every phone and is where an OEM that suppresses the role dialog puts the choice.
+     * Offered only AFTER a request came back without the role, so it is a second chance rather than
+     * an extra step.
+     */
+    public static Intent defaultAppsSettings() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            return new Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS);
+        }
+        return new Intent(Settings.ACTION_SETTINGS);
+    }
+
     public static Intent requestSms(Context ctx) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             RoleManager rm = role(ctx);

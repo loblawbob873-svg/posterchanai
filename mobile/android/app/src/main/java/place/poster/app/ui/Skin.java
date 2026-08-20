@@ -228,6 +228,121 @@ public final class Skin {
         t.setShadowLayer(dp(t.getContext(), 3), 0, 1, lightText ? 0xE6000000 : 0xE6FFFFFF);
     }
 
+    /**
+     * A SPRITE ICON IN A PALETTE COLOUR — and the one place that tinting is done.
+     *
+     * `ContextCompat.getDrawable` rather than `Resources.getDrawable`, and `DrawableCompat.setTint`
+     * rather than `setColorFilter`, because both are the documented route for a VectorDrawable and
+     * the plain calls are the ones that quietly return or draw nothing on some platform versions.
+     * That is what "a lot of the PosterChan apps in the launcher are empty circles" was: the pill
+     * background drawn and no glyph inside it.
+     *
+     * Returns null only when the resource genuinely is not there — and every caller has a visible
+     * fallback for that (see `letter`), because a blank icon is the one outcome that tells the
+     * person nothing at all.
+     */
+    public static Drawable icon(Context c, int res, int color) {
+        if (res == 0) return null;
+        try {
+            Drawable d = androidx.core.content.ContextCompat.getDrawable(c, res);
+            if (d == null) return null;
+            d = androidx.core.graphics.drawable.DrawableCompat.wrap(d.mutate());
+            androidx.core.graphics.drawable.DrawableCompat.setTint(d, color);
+            return d;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /**
+     * WHAT TO DRAW WHEN THERE IS NO ICON: the first letter, in the theme's colours.
+     *
+     * Never nothing. A missing glyph inside a coloured circle is indistinguishable from a broken
+     * launcher, and it is the shape this was reported in — so the fallback is something that
+     * identifies the app rather than an absence that identifies a bug.
+     */
+    public static Drawable letter(final Context c, final PcTheme.Palette p, String label) {
+        final String ch = (label == null || label.trim().isEmpty())
+                ? "?" : label.trim().substring(0, 1).toUpperCase(java.util.Locale.ROOT);
+        final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        paint.setColor(p.accent);
+        paint.setTextAlign(Paint.Align.CENTER);
+        paint.setFakeBoldText(true);
+        return new Drawable() {
+            @Override public void draw(Canvas canvas) {
+                Rect b = getBounds();
+                if (b.width() <= 0) return;
+                paint.setTextSize(b.height() * 0.62f);
+                Paint.FontMetrics fm = paint.getFontMetrics();
+                float y = b.centerY() - (fm.ascent + fm.descent) / 2f;
+                canvas.drawText(ch, b.centerX(), y, paint);
+            }
+            @Override public void setAlpha(int a) { paint.setAlpha(a); }
+            @Override public void setColorFilter(ColorFilter cf) { paint.setColorFilter(cf); }
+            @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
+        };
+    }
+
+    /**
+     * A NEON EDGE — a hairline in the accent with a bloom under it, for the bottom of a header bar
+     * or the top of a compose bar.
+     *
+     * The flagship theme is called Cyberpunk and a flat panel with a 1px grey line is not it. On a
+     * theme that does not glow (`p.neon` false — every light palette) this degrades to exactly that
+     * hairline, because a bloom behind dark text on a light background is the readability bug
+     * client.css turns every text-shadow off to avoid.
+     */
+    public static Drawable edge(final Context c, final PcTheme.Palette p, final boolean top) {
+        final int h = dp(c, p.neon ? 10 : 1);
+        return new Drawable() {
+            private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            @Override public void draw(Canvas canvas) {
+                Rect b = getBounds();
+                if (b.width() <= 0) return;
+                float y = top ? b.top : b.bottom - dp(c, 1);
+                if (p.neon) {
+                    paint.setShader(new LinearGradient(0, top ? b.top : b.bottom - h,
+                            0, top ? b.top + h : b.bottom,
+                            top ? new int[]{ alpha(p.accent, 0.30), 0 }
+                                : new int[]{ 0, alpha(p.accent, 0.30) },
+                            null, Shader.TileMode.CLAMP));
+                    canvas.drawRect(b.left, top ? b.top : b.bottom - h,
+                                    b.right, top ? b.top + h : b.bottom, paint);
+                    paint.setShader(null);
+                }
+                paint.setColor(p.neon ? alpha(p.accent, 0.75) : p.line);
+                canvas.drawRect(b.left, y, b.right, y + dp(c, 1), paint);
+            }
+            @Override public void setAlpha(int a) { }
+            @Override public void setColorFilter(ColorFilter cf) { }
+            @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
+        };
+    }
+
+    /**
+     * A HEADER SURFACE: the panel, with the neon edge under it. One call, so every bar in the native
+     * screens is the same object rather than four places that drift.
+     */
+    public static Drawable bar(Context c, PcTheme.Palette p, boolean edgeOnTop) {
+        GradientDrawable fill = new GradientDrawable();
+        fill.setColor(opaque(p.panel2, p.bg));
+        return new android.graphics.drawable.LayerDrawable(
+                new Drawable[]{ fill, edge(c, p, edgeOnTop) });
+    }
+
+    /**
+     * A SECTION HEADING in the flagship's voice: small, letter-spaced, muted, and glowing where the
+     * theme glows. Applied rather than styled per screen so "RECENTS" looks the same everywhere.
+     */
+    public static void heading(TextView t, PcTheme.Palette p) {
+        if (t == null) return;
+        t.setTextColor(p.muted);
+        t.setAllCaps(true);
+        t.setTextSize(11);
+        try { t.setLetterSpacing(0.14f); } catch (Throwable ignored) { }
+        if (p.neon) t.setShadowLayer(dp(t.getContext(), 6), 0, 0, alpha(p.accent, 0.45));
+    }
+
     /** A 1px divider in the theme's line colour, for a list. */
     public static Drawable divider(Context c, PcTheme.Palette p) {
         GradientDrawable g = new GradientDrawable();

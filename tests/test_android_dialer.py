@@ -295,6 +295,46 @@ class DialerRole(unittest.TestCase):
         self.assertIn("pcai_cell_incoming", src)
         self.assertIn("pcai_cell_ongoing", src)
 
+    def test_the_dialer_shows_contacts_voicemail_and_a_search(self):
+        """A keypad and a call log is the half of a dialer nobody opens it for — which is how it was
+        reported. All four are one list and one search box, because they are the same question asked
+        four ways: who do I want to call."""
+        src = ""
+        for f in ("DialerActivity.java", "ContactList.java", "Voicemail.java"):
+            path = os.path.join(PHONE, f)
+            self.assertTrue(os.path.exists(path), f + " is missing")
+            src += open(path, encoding="utf-8").read()
+        self.assertIn("ContactList.search", src, "contacts cannot be searched")
+        self.assertIn("Voicemail.messages", src, "voicemail is not listed")
+        self.assertIn("Voicemail.number", src, "voicemail cannot be called")
+
+    def test_the_contact_list_reads_the_phones_own_book(self):
+        """Across every account, like PhoneBook — a dialer with its own contact store is the third
+        one on the phone and the one that is always out of date. And it must not WRITE."""
+        src = open(os.path.join(PHONE, "ContactList.java"), encoding="utf-8").read()
+        code = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
+        code = re.sub(r"//[^\n]*", " ", code)
+        self.assertIn("ContactsContract", code)
+        for banned in ("insert(", "update(", "delete(", "applyBatch"):
+            self.assertNotIn(banned, code, "the dialer writes to the address book")
+
+    def test_holding_one_never_guesses_the_voicemail_number(self):
+        """A phone with no voicemail configured has no voicemail number. Dialling the literal "1"
+        instead calls a stranger."""
+        src = open(os.path.join(PHONE, "Voicemail.java"), encoding="utf-8").read()
+        code = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
+        self.assertIn("getVoiceMailNumber", code)
+        dialer = open(os.path.join(PHONE, "DialerActivity.java"), encoding="utf-8").read()
+        i = dialer.index("private void callVoicemail")
+        block = dialer[i:i + 600]
+        self.assertIn("isEmpty()", block, "an unset voicemail number is dialled anyway")
+
+    def test_a_contact_row_per_person_not_per_number(self):
+        """The Phone table has a row per NUMBER, so somebody with a mobile and a work line appears
+        twice — which in a contact list reads as duplicate contacts rather than as two numbers."""
+        src = open(os.path.join(PHONE, "ContactList.java"), encoding="utf-8").read()
+        self.assertIn("seen.add(id)", src)
+
     def test_nothing_in_the_dialer_holds_a_wake_lock(self):
         """The call screen keeps the screen on with a WINDOW flag, which is scoped to the activity and
         released with it. A PowerManager lock survives whatever forgets to release it, and on a phone

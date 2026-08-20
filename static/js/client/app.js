@@ -342,6 +342,17 @@
   function _viewNeedsInstance(v){
     if(!_standalone()) return false;
     if(v === 'blossom') return !_ownMediaServer();   // listable only with a server of their own
+    /* THE TERMINAL NEEDS NO SERVER ON A MACHINE THAT IS ONE. It is in INSTANCE_VIEWS because it was
+     * SSH-only — a PTY on a host the operator listed, reached over a socket to the instance — and
+     * with no instance there was nothing behind the screen. That stopped being true when the
+     * desktop grew a LOCAL PTY: on PosterChanOS the machine IS the node, and going out over a
+     * network to reach the computer you are sitting at is absurd.
+     *
+     * Left gated, the effect was the exact opposite of the intent: the one platform where a
+     * terminal matters most had no terminal at all. No nav item, so no desktop icon and no start
+     * menu entry — reported as "still no terminal app for the laptop, all I see is our remote
+     * terminal". */
+    if(v === 'terminal' && window.pcTerm) return false;
     return INSTANCE_VIEWS.has(v);
   }
   // A media server the USER named, as opposed to an instance's built-in one or the nostr.build fallback.
@@ -27932,15 +27943,11 @@
           </div>
         </div>
       </section>
-      <!-- The phone-shell switches (home screen / messages / phone). Rendered by phoneshell.js and
-           EMPTY off the packaged app — a permanently greyed row of switches reads as broken. -->
-      <div id="phone-shell"></div>
       <div id="user-settings"></div>
     </div>`;
 
     _wirePushToggle();
     _wireStayConnected();
-    { const ps=$('#phone-shell'); if(ps) _withPhoneShell(m => m.renderSettings(ps)); }
     { const sq=$('#set-scan-qr'); if(sq) sq.onclick=()=>openQrScanner(); }
     _renderSignerApps();
     _renderNip55();
@@ -28106,9 +28113,14 @@
     // or Android (Orbot). It is deliberately NOT in INSTANCE_SETTINGS_TABS: a relays-only install is
     // exactly where someone is most likely to want everything routed through Tor.
     const _torTab = (_hasNativeTor() || !!window.Capacitor) ? [['tor','Tor']] : [];
+    /* 📱 Phone — the launcher, messages and dialer roles. Its own tab, and only on the packaged app:
+     * the three switches ask ANDROID for a system role, so on the web and on the desktop shell there
+     * is nothing for them to ask. Not in INSTANCE_SETTINGS_TABS, because none of it needs a server —
+     * a phone running PosterChan with no instance at all is exactly where this matters most. */
+    const _phoneTab = window.Capacitor ? [['phone','Phone']] : [];
     // 🧭 Sidebar is its OWN tab, not a block in Profile: it is ~35 switches, which inside a pane of
     // unrelated settings is a wall you scroll past rather than a thing you go to.
-    const tabs=[['profile','Profile'],['timeline','Timeline'],['sidebar','Sidebar'],['relays','Relays'],..._torTab,['media','Media'],['cache','Cache'],['zaps','Zaps'],['privacy','Privacy'],['muted','Muted'],['mail','Mail'],['telegram','Telegram'],['social','Social'],['keys','API Keys']]
+    const tabs=[['profile','Profile'],['timeline','Timeline'],['sidebar','Sidebar'],['relays','Relays'],..._phoneTab,..._torTab,['media','Media'],['cache','Cache'],['zaps','Zaps'],['privacy','Privacy'],['muted','Muted'],['mail','Mail'],['telegram','Telegram'],['social','Social'],['keys','API Keys']]
       .filter(t => !(_standalone() && INSTANCE_SETTINGS_TABS.has(t[0])));
     // Standalone has no built-in relay for the switch to fall back TO, so "use my own relays" is not a
     // choice there — the list IS the relay config, always on. The switch is hidden and forced checked
@@ -28232,6 +28244,9 @@
              carried the instance picker, the relays-only switch, the media cache and the email/news
              fields — and Tor is not a profile setting, it is how the whole app reaches the network.
              The wiring below is keyed on these ids and did not move. -->
+        <!-- The phone shell (launcher / messages / dialer). Rendered by phoneshell.js, which is
+             where the roles and their refusals are understood; this is only the pane it lives in. -->
+        <div class="us-pane" data-pane="phone"><div id="phone-shell"></div></div>
         <div class="us-pane" data-pane="tor">
           ${_hasNativeTor() ? `<div class="fld" id="us-ntor-row"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-shield"></use></svg>Tor
             <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center;margin:6px 0 0">Route everything through Tor<label class="switch"><input type="checkbox" id="us-ntor-on"><span class="slider"></span></label></label>
@@ -28346,6 +28361,11 @@
       <div class="muted small set-foot" id="us-save-status"></div>
     </section>`;
     // tab switching
+    /* The Phone pane. Rendered whenever User Settings is drawn rather than on the tab click: the
+       card reads three system roles, and a tab that shows a spinner on first open reads as broken on
+       the one screen whose whole job is to say what state the phone is in. */
+    { const ps=$('#phone-shell',host); if(ps) _withPhoneShell(m => m.renderSettings(ps)); }
+
     $$('.us-tab',host).forEach(b=> b.onclick=()=>{
       $$('.us-tab',host).forEach(x=>x.classList.toggle('active',x===b));
       $$('.us-pane',host).forEach(p=>p.classList.toggle('active', p.dataset.pane===b.dataset.tab));

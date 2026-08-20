@@ -29,7 +29,7 @@ JAVARUN = shutil.which("java")
 # are compiled by CI's `assembleDebug` (.github/workflows/android-emulator.yml) and exercised on a
 # real device by mobile/android/app/src/androidTest — a stub of RoleManager or the package manager
 # would be a stub of exactly the thing being tested.
-PURE = ["AppShelf.java", "HomeTiles.java", "LauncherPrefs.java"]
+PURE = ["AppShelf.java", "HomeTiles.java", "LauncherPrefs.java", "Desk.java"]
 
 def _code(src):
     """The Java with its comments removed.
@@ -124,7 +124,53 @@ public class Harness {
     // 12. An empty phone (the package query failed) still leaves a way to Settings.
     say("no-apps", keys(AppShelf.arrange(new ArrayList<AppShelf.Entry>(), ours, null, null, "")));
 
-    // 13. Our own tile and a phone app publishing the same key never double up.
+    // 13. THE DOCK. Its last slot is always the essential tile, however it was arranged.
+    say("dock", keys(AppShelf.dock(AppShelf.arrange(phone, ours, null, null, ""),
+            Arrays.asList("com.android.chrome/com.android.chrome.Main"), 5)));
+    say("dock-empty", keys(AppShelf.dock(AppShelf.arrange(phone, ours, null, null, ""),
+            new ArrayList<String>(), 5)));
+    say("dock-gone", keys(AppShelf.dock(AppShelf.arrange(phone, ours, null, null, ""),
+            Arrays.asList("com.gone.app/x"), 5)));
+    say("dock-cap", AppShelf.dock(AppShelf.arrange(phone, ours, null, null, ""),
+            Arrays.asList("a/a", "com.android.chrome/com.android.chrome.Main",
+                          "com.zebra.app/com.zebra.app.Main",
+                          "org.thoughtcrime.securesms/org.thoughtcrime.securesms.Main",
+                          "com.android.settings/com.android.settings.Main"), 3).size());
+
+    // 14. THE DESKTOP GRID.
+    List<Desk.Item> d = new ArrayList<Desk.Item>();
+    say("desk-place", Desk.add(d, new Desk.Item("a", 0, 0, 1, 1), 4, 4)
+                    + " " + Desk.add(d, new Desk.Item("b", 0, 0, 1, 1), 4, 4) + " " + d);
+    // A widget takes the first rectangle that fits, not the first cell.
+    say("desk-widget", Desk.add(d, new Desk.Item("widget:7", 0, 0, 2, 2), 4, 4) + " "
+                     + Desk.byKey(d, "widget:7"));
+    // Overlap is refused, and refusing leaves it where it was.
+    Desk.Item w = Desk.byKey(d, "widget:7");
+    say("desk-move-blocked", Desk.moveTo(d, w, 0, 0, 4, 4) + " " + w);
+    say("desk-move-ok", Desk.moveTo(d, w, 2, 2, 4, 4) + " " + w);
+    // A resize that would leave the grid, or collide, is refused rather than clamped.
+    say("desk-resize-out", Desk.resize(d, w, 4, 4, 1, 1, 4, 4) + " " + w);
+    say("desk-resize-ok", Desk.resize(d, w, 2, 2, 1, 1, 4, 4) + " " + w);
+    // A full desktop says so instead of swallowing the app.
+    List<Desk.Item> full = new ArrayList<Desk.Item>();
+    for (int i = 0; i < 4; i++) Desk.add(full, new Desk.Item("f" + i, 0, 0, 1, 1), 2, 2);
+    say("desk-full", Desk.add(full, new Desk.Item("one-too-many", 0, 0, 1, 1), 2, 2)
+                   + " " + full.size());
+
+    // 15. A SMALLER GRID RE-PLACES; IT NEVER DROPS.
+    List<Desk.Item> big = new ArrayList<Desk.Item>();
+    big.add(new Desk.Item("x", 3, 3, 1, 1));
+    big.add(new Desk.Item("widget:9", 0, 0, 3, 2));
+    List<Desk.Item> over = Desk.fit(big, 3, 3);
+    say("desk-fit", big.size() + " over=" + over.size() + " " + big);
+
+    // 16. Storage round-trips, and junk on disk is skipped rather than fatal.
+    say("desk-roundtrip", Desk.serialize(Desk.parse(Desk.serialize(big))).equals(Desk.serialize(big)));
+    say("desk-junk", Desk.parse("garbage\nb|1|1|1|1\n|||\nc|x|y|1|1").size());
+    say("desk-widget-id", new Desk.Item("widget:12", 0, 0, 1, 1).widgetId()
+                       + " " + new Desk.Item("com.a/b", 0, 0, 1, 1).widgetId());
+
+    // 13b. Our own tile and a phone app publishing the same key never double up.
     List<AppShelf.Entry> dup = new ArrayList<AppShelf.Entry>(phone);
     dup.add(AppShelf.Entry.ours("notes", "Notes (impostor)", false));
     say("dedupe", keys(AppShelf.arrange(dup, ours, null, null, "notes")));
@@ -235,6 +281,63 @@ class Launcher(unittest.TestCase):
 
     def test_one_tile_per_key(self):
         self.assertEqual(self.out["dedupe"].count("pc:notes"), 1)
+
+    # ---------------------------------------------------------------- the dock
+
+    def test_the_dock_always_ends_with_the_way_back(self):
+        """The dock is the one part of a home screen that never scrolls away, which makes it the
+        right place for the route to the phone's own Settings — and the only place that stays
+        reachable when the desktop has been arranged into something broken."""
+        self.assertTrue(self.out["dock"].rstrip("]").endswith("pc:_settings"), self.out["dock"])
+        self.assertTrue(self.out["dock-empty"].endswith("[pc:_settings]"), self.out["dock-empty"])
+
+    def test_an_uninstalled_app_leaves_no_gap_in_the_dock(self):
+        self.assertEqual(self.out["dock-gone"], "[pc:_settings]")
+
+    def test_the_dock_is_capped_so_the_icons_stay_a_usable_size(self):
+        self.assertEqual(self.out["dock-cap"], "3")
+
+    # ---------------------------------------------------------------- the desktop
+
+    def test_things_land_in_the_first_free_spot(self):
+        self.assertEqual(self.out["desk-place"], "true true [a@0,0 1x1, b@1,0 1x1]")
+
+    def test_a_widget_takes_the_first_rectangle_that_fits(self):
+        """Not the first free CELL — a 2x2 widget dropped at the first free cell would overhang
+        whatever is beside it, which `free` then refuses, and the search would give up."""
+        self.assertEqual(self.out["desk-widget"], "true widget:7@2,0 2x2")
+
+    def test_a_move_onto_something_else_is_refused_and_puts_it_back(self):
+        """Not clamped, not stacked. Two things in one cell means the one underneath is unreachable,
+        and an icon that lands somewhere the person did not drop it feels like a different bug."""
+        self.assertEqual(self.out["desk-move-blocked"], "false widget:7@2,0 2x2")
+        self.assertEqual(self.out["desk-move-ok"], "true widget:7@2,2 2x2")
+
+    def test_a_resize_off_the_grid_is_refused_rather_than_clamped(self):
+        """A widget that comes back a different size from the one the person dragged to is a widget
+        that feels broken, and they cannot tell whether it was them or the app."""
+        self.assertEqual(self.out["desk-resize-out"], "false widget:7@2,2 2x2")
+        self.assertEqual(self.out["desk-resize-ok"], "true widget:7@2,2 2x2")
+
+    def test_a_full_desktop_says_so(self):
+        """Silently swallowing the app is how somebody taps "add to home" four times and then
+        reports that the launcher does nothing."""
+        self.assertEqual(self.out["desk-full"], "false 4")
+
+    def test_a_smaller_grid_re_places_rather_than_dropping(self):
+        """THE RULE THAT LOSES SOMEBODY'S WORK IF IT IS WRONG. The grid changes size on a rotation, on
+        a tablet, and on a restored backup from a bigger phone. `if (!fits) continue` deletes what
+        they arranged, silently."""
+        self.assertTrue(self.out["desk-fit"].startswith("2 over=0"), self.out["desk-fit"])
+
+    def test_the_arrangement_survives_a_round_trip_and_junk_is_skipped(self):
+        """This string comes off disk and may have been written by an older build; throwing here
+        would take the home screen down with it."""
+        self.assertEqual(self.out["desk-roundtrip"], "true")
+        self.assertEqual(self.out["desk-junk"], "1")
+
+    def test_a_widget_id_is_read_back_and_an_app_key_is_not_mistaken_for_one(self):
+        self.assertEqual(self.out["desk-widget-id"], "12 -1")
 
 
 @unittest.skipIf(not os.path.isdir(HOME), "no android sources here")

@@ -26,9 +26,48 @@
             android:textStyle="bold"
             android:letterSpacing="0.04" />
 
+        <ImageView android:id="@+id/pc_dl_search_btn" android:layout_width="42dp"
+            android:layout_height="42dp" android:padding="10dp"
+            android:contentDescription="@string/tel_search" />
+
         <ImageView android:id="@+id/pc_dl_texts" android:layout_width="42dp"
             android:layout_height="42dp" android:padding="10dp"
             android:contentDescription="@string/sms_title" />
+    </LinearLayout>
+
+    <EditText
+        android:id="@+id/pc_dl_search"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginLeft="12dp"
+        android:layout_marginRight="12dp"
+        android:layout_marginBottom="6dp"
+        android:visibility="gone"
+        android:hint="@string/tel_search"
+        android:inputType="text"
+        android:singleLine="true"
+        android:importantForAutofill="no" />
+
+    <!-- Recents / Contacts / Voicemail. A row of three, because a dialer with only a call log is
+         missing the two things people open it for most often. -->
+    <LinearLayout
+        android:id="@+id/pc_dl_tabs"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginLeft="12dp"
+        android:layout_marginRight="12dp"
+        android:layout_marginBottom="6dp">
+
+        <TextView android:id="@+id/pc_dl_t_recent" android:layout_width="0dp"
+            android:layout_height="wrap_content" android:layout_weight="1" android:gravity="center"
+            android:paddingTop="9dp" android:paddingBottom="9dp" android:text="@string/tel_tab_recent" />
+        <TextView android:id="@+id/pc_dl_t_contacts" android:layout_width="0dp"
+            android:layout_height="wrap_content" android:layout_weight="1" android:gravity="center"
+            android:paddingTop="9dp" android:paddingBottom="9dp" android:text="@string/tel_tab_contacts" />
+        <TextView android:id="@+id/pc_dl_t_vm" android:layout_width="0dp"
+            android:layout_height="wrap_content" android:layout_weight="1" android:gravity="center"
+            android:paddingTop="9dp" android:paddingBottom="9dp" android:text="@string/tel_tab_voicemail" />
     </LinearLayout>
 
     <TextView
@@ -69,6 +108,14 @@
         android:textSize="30sp"
         android:textIsSelectable="true" />
 
+    <TextView
+        android:id="@+id/pc_dl_empty"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:padding="22dp"
+        android:visibility="gone" />
+
     <LinearLayout
         android:id="@+id/pc_dl_pad"
         android:layout_width="match_parent"
@@ -85,7 +132,13 @@
         android:paddingBottom="24dp"
         android:paddingTop="6dp">
 
-        <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+        <FrameLayout android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1">
+            <ImageView android:id="@+id/pc_dl_padtoggle" android:layout_width="52dp"
+                android:layout_height="52dp" android:padding="14dp"
+                android:layout_gravity="center_vertical|right" android:layout_marginRight="14dp"
+                android:contentDescription="@string/tel_keypad" />
+        </FrameLayout>
         <ImageView android:id="@+id/pc_dl_call" android:layout_width="70dp"
             android:layout_height="70dp" android:padding="19dp"
             android:contentDescription="@string/tel_call" />

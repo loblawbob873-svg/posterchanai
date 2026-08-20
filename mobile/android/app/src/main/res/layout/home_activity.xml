@@ -4,95 +4,141 @@
      A launcher that fails takes the phone's home screen with it: there is no second home screen to
      fall back to, and somebody who cannot reach Settings cannot change it back without knowing a
      hardware key sequence. This app's WebView renderer is measured to die under memory pressure
-     (see MainActivity.surviveRenderProcessDeath) — so the grid that must always work is drawn by
-     Android, from views, with no browser engine anywhere near it. PosterChan's own screens sit on
-     it as icons that START the WebView; they are never what the home screen is made of. -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+     (see MainActivity.surviveRenderProcessDeath) — so the home screen is drawn by Android, from
+     views, with no browser engine anywhere near it.
+
+     Three layers, in the shape every launcher has:
+       * the DESKTOP — a cell grid of icons and widgets the person arranged (DeskView, added in
+         code because it is a custom ViewGroup);
+       * the DOCK — the toolbar of main icons, fixed along the bottom, visible always;
+       * the DRAWER — every app on the phone, over the top, opened by swiping up or by the dock's
+         last button.
+     The drawer is a sibling rather than another activity so that opening it cannot fail. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/pc_home_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:fitsSystemWindows="true"
-    android:background="@android:color/transparent">
+    android:fitsSystemWindows="true">
 
-    <!-- NOW PLAYING. Gone unless MusicService is actually holding a session; it is fed by a push
-         from that service, never by a poll — see HomeActivity.nowPlaying(). -->
     <LinearLayout
-        android:id="@+id/pc_home_now"
+        android:id="@+id/pc_home_desktop"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:visibility="gone"
-        android:layout_marginLeft="10dp"
-        android:layout_marginRight="10dp"
-        android:layout_marginTop="10dp"
-        android:paddingLeft="14dp"
-        android:paddingRight="6dp"
-        android:paddingTop="6dp"
-        android:paddingBottom="6dp">
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <!-- NOW PLAYING. Gone unless MusicService is holding a session; fed by a push from that
+             service, never by a poll — see HomeActivity.paintNowPlaying. -->
+        <LinearLayout
+            android:id="@+id/pc_home_now"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:visibility="gone"
+            android:layout_marginLeft="10dp"
+            android:layout_marginRight="10dp"
+            android:layout_marginTop="8dp"
+            android:paddingLeft="14dp"
+            android:paddingRight="6dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp">
+
+            <TextView
+                android:id="@+id/pc_home_now_text"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:textSize="13sp" />
+
+            <ImageView
+                android:id="@+id/pc_home_now_toggle"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:padding="9dp"
+                android:scaleType="fitCenter"
+                android:contentDescription="@string/home_pause" />
+        </LinearLayout>
+
+        <!-- The DeskView goes in here. Weighted, so the dock keeps its height and the grid takes
+             whatever is left — which is what makes the cell size adapt to a rotation. -->
+        <FrameLayout
+            android:id="@+id/pc_home_desk"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:padding="6dp"
+            android:clipChildren="false" />
 
         <TextView
-            android:id="@+id/pc_home_now_text"
-            android:layout_width="0dp"
+            android:id="@+id/pc_home_hint"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:maxLines="1"
-            android:ellipsize="end"
-            android:textColor="#FFFFFF"
-            android:textSize="13sp" />
+            android:gravity="center"
+            android:paddingBottom="4dp"
+            android:textSize="11sp"
+            android:text="@string/home_swipe_hint" />
 
-        <ImageView
-            android:id="@+id/pc_home_now_toggle"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:padding="9dp"
-            android:scaleType="fitCenter"
-            android:contentDescription="@string/home_pause" />
+        <LinearLayout
+            android:id="@+id/pc_home_dock"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:layout_marginLeft="10dp"
+            android:layout_marginRight="10dp"
+            android:layout_marginBottom="10dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp" />
     </LinearLayout>
 
-    <EditText
-        android:id="@+id/pc_home_search"
+    <!-- THE DRAWER. Every app on the phone, alphabetical, searchable — and it always lists
+         everything, including whatever has been hidden from the desktop, so hiding is never a
+         one-way door. -->
+    <LinearLayout
+        android:id="@+id/pc_home_drawer"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginLeft="10dp"
-        android:layout_marginRight="10dp"
-        android:layout_marginTop="6dp"
-        android:hint="@string/home_search_hint"
-        android:textColorHint="#B0FFFFFF"
-        android:textColor="#FFFFFF"
-        android:textSize="15sp"
-        android:inputType="text"
-        android:imeOptions="actionSearch"
-        android:singleLine="true"
-        android:background="#55000000"
-        android:padding="10dp"
-        android:importantForAutofill="no" />
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:visibility="gone">
 
-    <GridView
-        android:id="@+id/pc_home_grid"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:numColumns="auto_fit"
-        android:columnWidth="80dp"
-        android:stretchMode="columnWidth"
-        android:horizontalSpacing="2dp"
-        android:verticalSpacing="6dp"
-        android:padding="8dp"
-        android:clipToPadding="false"
-        android:scrollbarStyle="outsideOverlay"
-        android:fastScrollEnabled="false" />
+        <EditText
+            android:id="@+id/pc_home_search"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginLeft="10dp"
+            android:layout_marginRight="10dp"
+            android:layout_marginTop="10dp"
+            android:hint="@string/home_search_hint"
+            android:textSize="15sp"
+            android:inputType="text"
+            android:imeOptions="actionSearch"
+            android:singleLine="true"
+            android:importantForAutofill="no" />
 
-    <!-- The grid can never actually be empty (AppShelf guarantees the essential tiles survive every
-         filter), so this only ever shows for a SEARCH that matched nothing. -->
-    <TextView
-        android:id="@+id/pc_home_empty"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center"
-        android:padding="24dp"
-        android:visibility="gone"
-        android:textColor="#DDFFFFFF"
-        android:text="@string/home_no_match" />
-</LinearLayout>
+        <GridView
+            android:id="@+id/pc_home_grid"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:numColumns="auto_fit"
+            android:columnWidth="80dp"
+            android:stretchMode="columnWidth"
+            android:horizontalSpacing="2dp"
+            android:verticalSpacing="6dp"
+            android:padding="8dp"
+            android:clipToPadding="false"
+            android:scrollbarStyle="outsideOverlay"
+            android:fastScrollEnabled="false" />
+
+        <TextView
+            android:id="@+id/pc_home_empty"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:padding="24dp"
+            android:visibility="gone"
+            android:text="@string/home_no_match" />
+    </LinearLayout>
+</FrameLayout>

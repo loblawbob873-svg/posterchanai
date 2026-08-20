@@ -99,6 +99,7 @@
             Doze exemption: <strong>${yes(st.batteryExempt)}</strong>.
           </div>
           <div class="muted small" id="ps-msg" style="margin-top:8px"></div>
+          <button class="btn small" id="ps-defaults" hidden style="margin-top:6px">Open Android\u2019s Default apps</button>
         </div>
       </section>`;
 
@@ -117,20 +118,64 @@
 
     /* Every switch re-reads the platform afterwards rather than trusting the checkbox. A role can be
      * refused in the dialog, granted by another route, or taken away in Settings while this page is
-     * open; a switch showing a state the phone is not in is worse than no switch. */
-    function wire(id, ask, method){
+     * open; a switch showing a state the phone is not in is worse than no switch.
+     *
+     * AND IT SAYS WHAT HAPPENED WHEN THE ROLE DID NOT ARRIVE. That is the bug this shape was reported
+     * for — "sms does nothing when checked". Android refuses a role the app cannot hold by starting
+     * the request activity and finishing it immediately with RESULT_CANCELED: no dialog, no error, no
+     * log. The switch flipped, nothing appeared, and it flipped back, which is exactly what a switch
+     * that was never wired up does. Now the state is compared before and after, and a request that
+     * did not take is named and offered Android's own Default apps screen — which on an OEM build
+     * that suppresses the role dialog is the only route there is. */
+    function wire(id, ask, method, holds, capable, what){
       const box = $(id);
       if(!box) return;
       box.onchange = async () => {
         const want = box.checked;
         const P = plug(method);
         if(!P){ box.checked = !want; msg('this build has no phone-shell support'); return; }
+        if(want && capable === false){
+          box.checked = false;
+          msg('This build of PosterChan cannot be your ' + what + ' — it is missing the parts '
+            + 'Android requires for that. Update the app and try again.');
+          return;
+        }
         try{
           if(want){ await P[method](); }
-          else { await ask(); }
+          else { await ask(); return void await refresh(); }
         }catch(e){ msg('could not change it: ' + ((e && (e.message||e.errorMessage)) || 'refused')); }
-        await refresh();
+        /* RE-READ, ONCE MORE, A MOMENT LATER. Granting a role is asynchronous on the system side:
+           the native half already waits for it to settle, and this is the second net under it for a
+           phone that takes longer than that. Without it the switch springs back on a role that was
+           in fact granted, and Android's own settings screen disagrees with ours. */
+        let after = await refresh();
+        if(want && after && !after[holds]){
+          await new Promise(r => setTimeout(r, 900));
+          after = await refresh();
+        }
+        if(want && after && !after[holds]){
+          msg('Android did not hand over the ' + what + ' role.');
+          const b = $('#ps-defaults');
+          if(b) b.hidden = false;
+        } else { msg(''); const b = $('#ps-defaults'); if(b) b.hidden = true; }
       };
+    }
+
+    { const b = $('#ps-defaults'); if(b) b.onclick = () => {
+        const P = plug('openDefaultApps');
+        if(P) P.openDefaultApps().catch(() => msg('this phone has no Default apps screen'));
+      }; }
+
+    /* COMING BACK FROM ANDROID'S OWN SCREEN. The role dialog and the Default apps screen both take
+       the person out of this app entirely, and whatever they did there is invisible to us until we
+       look again. Without this the switches show whatever was true when the pane was drawn. */
+    if(!renderSettings._resumeBound){
+      renderSettings._resumeBound = true;
+      document.addEventListener('visibilitychange', () => {
+        if(document.visibilityState !== 'visible') return;
+        const host = document.querySelector('#phone-shell');
+        if(host && host.querySelector('#ps-home')) renderSettings(host);
+      });
     }
 
     wire('#ps-home', async () => {
@@ -144,19 +189,21 @@
         msg('Kept as your home screen: ' + (r.reason || 'there is no other home app on this phone') +
             '. Install another launcher first, or change it in Android Settings → Default apps.');
       } else { msg(''); }
-    }, 'enableLauncher');
+    }, 'enableLauncher', 'isDefaultHome', true, 'home screen');
 
     { const t = $('#ps-texts'); if(t) t.onclick = (e) => { e.preventDefault(); PC.switchView('texts'); }; }
 
     wire('#ps-sms', async () => {
       msg('Android has no way for an app to give up the messages role by itself — ' +
-          'choose a different messages app in Settings → Default apps.');
-    }, 'requestSms');
+          'choose a different messages app in Android\u2019s Default apps screen.');
+      const b = $('#ps-defaults'); if(b) b.hidden = false;
+    }, 'requestSms', 'isDefaultSms', st.smsCapable, 'messages app');
 
     wire('#ps-dialer', async () => {
       msg('Android has no way for an app to give up the phone role by itself — ' +
-          'choose a different phone app in Settings → Default apps.');
-    }, 'requestDialer');
+          'choose a different phone app in Android\u2019s Default apps screen.');
+      const b = $('#ps-defaults'); if(b) b.hidden = false;
+    }, 'requestDialer', 'isDefaultDialer', st.dialerCapable, 'phone app');
   }
 
   function init(){

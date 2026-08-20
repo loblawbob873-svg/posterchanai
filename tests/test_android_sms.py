@@ -249,6 +249,49 @@ class SmsRole(unittest.TestCase):
             block = self.man[i:i + 500]
             self.assertRegex(block, r'android:permission="android\.permission\.BROADCAST_(SMS|WAP_PUSH)"')
 
+    def test_a_granted_role_is_not_read_before_it_settles(self):
+        """THE SECOND HALF OF "sms does nothing when checked", and the harder half.
+
+        Granting a role is asynchronous on the system side: the dialog returns and for a moment
+        `getDefaultSmsPackage` still names the OLD app. Read once, right there, and the answer is
+        "no" for a role that WAS granted — the switch springs back while Android's own settings
+        screen already says PosterChan. Reported exactly that way.
+
+        And the retry must watch the role that was ASKED for. Settling on "any role is held" returns
+        instantly for somebody who already has the home screen and is now granting SMS, which is the
+        same bug wearing a different hat."""
+        plugin = os.path.join(ROOT, "mobile", "android", "app", "src", "main", "java",
+                              "place", "poster", "app", "home", "HomePlugin.java")
+        src = open(plugin, encoding="utf-8").read()
+        code = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
+        code = re.sub(r"//[^\n]*", " ", code)
+        # Sliced to roleResult ITSELF, not the whole file: `settle(call` also appears in its own
+        # declaration and in its recursion, so a search over the file passes against a roleResult
+        # that reads the state once and answers.
+        i = code.index("private void roleResult(")
+        body = code[i:code.index("\n    }", i)]
+        self.assertIn("settle(", body, "the role result is read once, immediately")
+        self.assertNotIn("status(call)", body, "it answers before the grant has settled")
+        self.assertIn("postDelayed", code, "there is no re-read")
+        # It watches the requested role, not "anything at all".
+        self.assertIn('asking = "sms"', code)
+        self.assertIn('asking = "dialer"', code)
+        self.assertIn('asking = "home"', code)
+        self.assertIn("private boolean asked()", code)
+        # And it is BOUNDED — this codebase does not poll, and an unbounded retry on the one process
+        # that holds the HOME role would run for the life of the battery.
+        self.assertIn("SETTLE_TRIES", code)
+        self.assertIn("tries >= SETTLE_TRIES", code)
+
+    def test_the_switch_can_say_the_role_was_refused(self):
+        """Android refuses a role the app cannot hold by starting the request activity and finishing
+        it with RESULT_CANCELED — no dialog, no error, no log, which is indistinguishable from a
+        switch that was never wired up."""
+        js = open(os.path.join(ROOT, "static", "js", "client", "phoneshell.js"), encoding="utf-8").read()
+        self.assertIn("smsCapable", js, "the switch cannot tell whether the role is even possible")
+        self.assertIn("openDefaultApps", js, "there is no route when the role dialog does not take")
+        self.assertIn("visibilitychange", js, "coming back from Android's own screen changes nothing")
+
     def test_telephony_is_not_a_required_feature(self):
         """Declaring it required removes this app from every tablet and Wi-Fi-only device."""
         i = self.man.index('android.hardware.telephony')

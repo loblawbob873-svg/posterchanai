@@ -36,6 +36,34 @@ never what the home screen is made of. `tests/test_android_launcher.py` asserts 
 mentions no WebView, no `BridgeActivity` and no Capacitor, and the emulator asserts its live view
 tree contains no `WebView` at all.
 
+### It is shaped like a home screen
+
+The first version was one scrolling grid of every app — an app drawer used as a home screen — and was
+reported as *"missing traditional home desktop view"*. There are three layers now:
+
+* **the desktop** (`DeskView` + `Desk`) — a cell grid holding icons **and other apps' widgets**,
+  dragged into place and resized by hand;
+* **the dock** — the toolbar of main icons along the bottom, on screen always;
+* **the drawer** — every app on the phone, alphabetical and searchable, over the top. Opened from the
+  dock's last button, closed by BACK.
+
+**Widgets are real `AppWidgetHost` widgets**, picked through Android's own picker and resized by
+dragging the frame's edges. Three things there are easy to get half right and each fails silently:
+`BIND_APPWIDGET` is signature-level so a third-party launcher must ask via `ACTION_APPWIDGET_BIND`
+(skip it and the widget draws nothing, for ever); a provider's configuration activity that is never
+started leaves the classic grey box; and a widget that is not told its new size with
+`updateAppWidgetOptions` keeps drawing its old layout inside the new hole. Every failure path gives
+the allocated id back — a leaked one is a row in the system's own table nothing will reclaim.
+
+Where things sit is `Desk`, which is pure and run by tests. Its three load-bearing rules:
+
+* **nothing is dropped for not fitting.** The grid changes size on a rotation, on a tablet, on a
+  restored backup from a bigger phone — anything that no longer fits is re-placed, never deleted.
+  `if (!fits) continue` is the silent version of throwing away what somebody arranged by hand.
+* **nothing overlaps**, and a move onto something else is refused and puts the icon back.
+* **a resize that would collide is refused, not clamped.** A widget that comes back a different size
+  from the one you dragged to is a widget that feels broken, and you cannot tell whether it was you.
+
 ### The way back
 
 The grid always carries a **Phone settings** tile. It is *essential*: it cannot be hidden, it
@@ -227,6 +255,24 @@ since 10), and a phone that rings with nothing on screen is a missed call.
 
 A tap on a recent call **fills the pad**; it does not dial. The green button is the commitment.
 
+### Contacts, voicemail and search
+
+A keypad and a call log is the half of a dialer nobody opens it for — which is how the first version
+was reported. **Recents, Contacts and Voicemail** are three tabs over one list and one search box,
+because they are the same question asked three ways.
+
+Contacts come from `ContactsContract` across every account (`ContactList`), which is where
+PosterChan's synced cards already are; searching is handed to `Contacts.CONTENT_FILTER_URI` rather
+than reimplemented, because the provider already does the T9-style matching the rest of the phone
+does. One row per person, not per number — the Phone table has a row per number, so somebody with a
+mobile and a work line otherwise appears twice.
+
+Voicemail is two different things and a dialer that offers one of them feels broken in a way people
+find hard to describe: **holding "1"** calls the SIM's own voicemail number (`getVoiceMailNumber`,
+never the literal "1", which just dials a stranger — a phone with none says so), and the **messages**
+are the `VOICEMAIL_TYPE` rows the carrier logs. Opening one is handed to whoever owns the voicemail
+source; the audio is the carrier's and fetching it is their protocol, not ours.
+
 ### The call log
 
 `CallLog.Calls`, the phone's own, for the same reason as the message store. It is **deliberately not
@@ -255,6 +301,28 @@ Nothing here builds a second store of anything.
 
 ---
 
+## The settings live in one place
+
+**User Settings → Phone**, and only on the packaged app: the three switches ask *Android* for a
+system role, so on the web and in the desktop shell there is nothing for them to ask.
+
+**A granted role is not read before it settles.** Granting is asynchronous on the system side: the
+dialog returns and for a moment `getDefaultSmsPackage` still names the old app, so reading once in the
+activity callback answers *no* for a role that was in fact granted — the switch springs back while
+Android's own settings screen already says PosterChan. `HomePlugin.settle()` re-reads for about a
+second and a half, watching **the specific role that was asked for**; settling on "any role is held"
+returns instantly for somebody who already has the home screen, which is the same bug wearing a
+different hat. The client re-reads once more after a moment, and again whenever the page becomes
+visible, because the role dialog takes the person out of the app entirely.
+
+**A refused role is named.** Android refuses a role the app cannot hold by starting the request
+activity and finishing it immediately with `RESULT_CANCELED` — no dialog, no error, no log. The
+switch flips, nothing appears, and it flips back, which is exactly what a switch that was never wired
+up does; it was reported as *"sms does nothing when checked"*. So `status()` now reports whether the
+build declares the components each role needs at all, the switch says so instead of offering a request
+that cannot succeed, and a request that comes back without the role offers Android's own **Default
+apps** screen — which on an OEM build that suppresses the role dialog is the only route there is.
+
 ## Themes and icons
 
 The native screens have no stylesheet, so all nine of the client's themes are transcribed into
@@ -262,6 +330,14 @@ The native screens have no stylesheet, so all nine of the client's themes are tr
 it changes (`PcThemePlugin` → `PcThemeStore`). `localStorage` stays authoritative; this is a copy,
 written only from it. `tests/test_android_theme_palettes.py` parses `client.css`, runs the Java and
 compares them value for value.
+
+**A tile is never blank.** An icon that does not resolve falls back to the app's initial rather than
+to an empty circle — a coloured circle with nothing in it is indistinguishable from a broken
+launcher, and that is how it was reported. The cause was a vector carrying a baked `android:tint`
+*and* a runtime colour filter: it inflates fine, reports a size, and paints no pixels. The tint is
+gone, tinting goes through `DrawableCompat`, and an instrumented test now **draws every tile icon and
+counts the lit pixels**, which is the only question that separates "the resource exists" from "the
+icon is visible".
 
 Icons are **transcribed, not redrawn**: `scripts/gen_android_icons.py` reads
 `static/js/client/sprite.js` and emits a `VectorDrawable` per glyph plus the name→`R.drawable` switch.

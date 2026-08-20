@@ -28,6 +28,8 @@ public final class LauncherPrefs {
     private static final String K_ORDER = "order";
     private static final String K_OPTED_IN = "opted_in";
     private static final String K_SEEDED = "seeded";
+    private static final String K_DESK = "desk";
+    private static final String K_DOCK = "dock";
 
     private final SharedPreferences sp;
 
@@ -52,6 +54,26 @@ public final class LauncherPrefs {
         sp.edit().putString(K_HIDDEN, join(new ArrayList<String>(merged)))
                  .putBoolean(K_SEEDED, true).apply();
     }
+
+    /**
+     * THE DESKTOP: what is on it, where, and how big — serialized by Desk.
+     *
+     * Kept apart from `hidden` and `order`, which belong to the DRAWER. They are two different
+     * questions ("is this app on my home screen" versus "is it in my list of all apps") and merging
+     * them is how removing an icon from the desktop would uninstall it from view entirely.
+     */
+    public String desk() { return sp.getString(K_DESK, ""); }
+
+    public void setDesk(String serialized) {
+        sp.edit().putString(K_DESK, serialized == null ? "" : serialized).apply();
+    }
+
+    /** The dock — the toolbar of main icons that stays put while the desktop scrolls. */
+    public List<String> dock() { return split(sp.getString(K_DOCK, "")); }
+
+    public void setDock(List<String> keys) { sp.edit().putString(K_DOCK, join(keys)).apply(); }
+
+    public boolean seeded() { return sp.getBoolean(K_SEEDED, false); }
 
     public Set<String> hidden() {
         return new HashSet<String>(split(sp.getString(K_HIDDEN, "")));

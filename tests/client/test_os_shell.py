@@ -11,6 +11,7 @@ something — because a wifi icon at full strength on a machine whose NetworkMan
 that costs somebody an hour.
 """
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -28,6 +29,20 @@ class Shell(unittest.TestCase):
         const B = %s;
         for(const k in B) globalThis[k] = B[k];
         const S = require(%s);
+        /* THE FIXTURES ARE THE TEST'S, NOT THE PRODUCT'S.
+         *
+         * These used to launch `browser`, `terminal` and `steam` because the shipped list contained
+         * them — so the tests pinned a PRODUCT DECISION (which apps exist) while meaning to cover
+         * MACHINERY (launch by id, focus-if-open, a view app, a program that is not installed). That
+         * is how a hardcoded Steam survived on every machine, installed or not: removing it broke
+         * eight tests that were never about Steam. The list ships empty now — everything installed
+         * comes from the `.desktop` scan — so a test that needs an app brings its own. */
+        S.APPS.push(
+          { id: 'browser', name: 'Browser', match: 'firefox', icon: 'globe',
+            candidates: [['/usr/bin/firefox'], ['/usr/bin/firefox-bin']] },
+          { id: 'terminal', name: 'Terminal', icon: 'terminal', view: 'terminal' },
+          { id: 'steam', name: 'Steam', match: 'steam', icon: 'gamepad',
+            candidates: [['/usr/bin/steam']] });
         (async () => { const out = {};
         try { %s } catch(e){ out.threw = String(e.message || e); }
         process.stdout.write(JSON.stringify(out)); })();
@@ -267,3 +282,47 @@ class Shell(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(not NODE, "no node on this node")
+class TheLauncherShowsWhatIsInstalled(unittest.TestCase):
+    """"why is steam there? not everyone will install steam" — and they were right.
+
+    Three apps were hardcoded, and each was wrong once the launcher learned to read `.desktop`
+    files: Steam was offered on machines that do not have it, Browser was a second Firefox beside
+    the scanned one under a different name, and Terminal duplicated the client's own view. All
+    three also named icons that are not in the sprite (`globe`, `terminal`, `gamepad`), so they
+    rendered with no icon at all — reported as "browser terminal have no desktop icons or start
+    menu icons".
+    """
+
+    def test_nothing_is_hardcoded_into_the_launcher(self):
+        src = open(MOD, encoding="utf-8").read()
+        body = src[src.index("const APPS = ["):src.index("];", src.index("const APPS = [")) + 2]
+        self.assertNotIn("steam", body.lower(),
+                         "an app is hardcoded again — it will be offered on machines without it")
+        self.assertNotIn("firefox", body.lower())
+
+    def test_the_list_survives_so_a_real_exception_has_somewhere_to_go(self):
+        """Empty, not deleted: a program with no `.desktop` entry, or one of PosterChan's own views,
+        still needs a way in. The point is that neither is the DEFAULT."""
+        src = open(MOD, encoding="utf-8").read()
+        self.assertIn("const APPS = []", src)
+
+    def test_an_icon_that_is_not_in_the_sprite_renders_nothing(self):
+        """The reason the three built-ins were invisible. `iconSvg` emits a `<use href="#i-NAME">`,
+        and a sprite with no such symbol draws empty space — no error, no fallback, no clue. So any
+        icon named here has to exist, and this asserts it against the real template."""
+        src = open(MOD, encoding="utf-8").read()
+        # The sprite is sprite.js, NOT the template — I checked the template first and concluded
+        # three icons were missing that were there all along. A guard reading the wrong file is
+        # worse than none: it answers confidently.
+        with open(os.path.join(ROOT, "static", "js", "client", "sprite.js"), encoding="utf-8") as fh:
+            page = fh.read()
+        for m in re.findall(r"icon:\s*'([a-z0-9-]+)'", src):
+            with self.subTest(icon=m):
+                # The sprite DEFINES `id="i-grid"`; `#i-grid` is how a use site REFERS to it. Look
+                # for the definition, or this passes on any file that happens to reference the icon.
+                self.assertIn('id="i-%s"' % m, page,
+                              "osshell names icon '%s', which is not defined in the sprite — it "
+                              "renders as blank space with nothing to say so" % m)

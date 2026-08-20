@@ -129,6 +129,12 @@ public class ThreadListActivity extends PcActivity {
 
     private void applySkin() {
         paintPage(R.id.pc_sms_root);
+        // The header carries the neon edge, so Messages reads as the same product as the rest of the
+        // client rather than as a stock Android list. Every light palette degrades it to a hairline —
+        // a bloom behind dark text on a light background is the readability bug client.css turns
+        // every text-shadow off to avoid.
+        View bar = findViewById(R.id.pc_sms_bar);
+        if (bar != null) bar.setBackground(Skin.bar(this, pal, false));
         title.setTextColor(pal.text);
         Skin.glow(title, pal);
         icon(R.id.pc_sms_search_btn, R.drawable.ic_pc_search, pal.muted);

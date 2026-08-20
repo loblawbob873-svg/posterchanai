@@ -54,6 +54,13 @@ class Render(unittest.TestCase):
         for(const k in B) globalThis[k] = B[k];
         globalThis.PC = { toast: (m) => { (globalThis.__toasts = globalThis.__toasts || []).push(m); } };
         const S = require(%s);
+        // See test_os_shell.py: the shipped list is empty on purpose, so a test brings its own app.
+        S.APPS.push(
+          { id: 'browser', name: 'Browser', match: 'firefox', icon: 'globe',
+            candidates: [['/usr/bin/firefox'], ['/usr/bin/firefox-bin']] },
+          { id: 'terminal', name: 'Terminal', icon: 'terminal', view: 'terminal' },
+          { id: 'steam', name: 'Steam', match: 'steam', icon: 'gamepad',
+            candidates: [['/usr/bin/steam']] });
         (async () => { const out = {}; const host = el();
         try { %s } catch(e){ out.threw = String(e.message || e); }
         out.toasts = globalThis.__toasts || [];

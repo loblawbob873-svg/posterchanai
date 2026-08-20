@@ -178,7 +178,9 @@ public class InCallActivity extends PcActivity {
         avatar.setBackground(Skin.avatar(this, pal, who));
         context.setBackground(Skin.ghost(this, pal, pal.accent2, false));
         context.setTextColor(pal.text);
+        Skin.heading(status, pal);
         status.setTextColor(pal.muted);
+        status.setTextSize(14);
 
         boolean ringing = CallRules.canAnswer(state);
         answer.setVisibility(ringing ? View.VISIBLE : View.GONE);

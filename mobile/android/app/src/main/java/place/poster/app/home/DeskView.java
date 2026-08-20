@@ -1,0 +1,329 @@
+package place.poster.app.home;
+
+import android.content.Context;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.Rect;
+import android.view.MotionEvent;
+import android.view.View;
+import android.view.ViewGroup;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import place.poster.app.ui.PcTheme;
+import place.poster.app.ui.Skin;
+
+/**
+ * THE DESKTOP ITSELF: a cell grid you can drag things around on and resize widgets in.
+ *
+ * A ViewGroup rather than a GridView, because a home screen is not a list — items have a POSITION
+ * and a SIZE that the person chose, and both have to survive a rotation, a redraw and the app being
+ * killed. Where those live is `Desk`, which is pure and tested; this class does three things and
+ * defers every decision to it: measure the cells, lay the children out on them, and turn finger
+ * movement into `Desk.moveTo` / `Desk.resize` calls that may be REFUSED.
+ *
+ * That refusal is the point. Dropping an icon on an occupied cell puts it back where it came from,
+ * visibly, rather than stacking two things in one place — and a resize that would collide simply
+ * does not happen, so a widget never comes back a size nobody asked for.
+ *
+ * EDIT MODE IS EXPLICIT. A long press lifts one item; while it is lifted it can be dragged, a widget
+ * shows resize handles, and a tap anywhere else puts it down. Without that, every scroll of a widget's
+ * own content would be a drag of the widget, which is the thing that makes a hand-rolled launcher
+ * feel broken.
+ */
+public class DeskView extends ViewGroup {
+
+    /** What the desktop needs from whoever owns it. */
+    public interface Host {
+        /** Build the view for an item — an icon or a widget's AppWidgetHostView. */
+        View viewFor(Desk.Item item);
+        void onOpen(Desk.Item item);
+        void onLongPress(Desk.Item item);
+        /** A long press on empty space — the launcher's own menu. */
+        void onLongPressEmpty();
+        /** Save: the arrangement changed. */
+        void onChanged();
+        /** The smallest this item may be, in cells. Icons are 1x1; a widget states its own. */
+        int minSpanX(Desk.Item item);
+        int minSpanY(Desk.Item item);
+        boolean resizable(Desk.Item item);
+        /** Tell the provider its new pixel size — a widget that is not told draws its old layout. */
+        void onResized(Desk.Item item, int cellW, int cellH);
+    }
+
+    private Host host;
+    private PcTheme.Palette pal;
+    private int cols = 4, rows = 5;
+    private final List<Desk.Item> items = new ArrayList<Desk.Item>();
+    private final List<View> views = new ArrayList<View>();
+
+    /** The lifted item, or null. */
+    private Desk.Item editing;
+    private boolean dragging, resizing;
+    private int grabDx, grabDy, resizeEdge;
+    private float lastX, lastY;
+    private final Rect tmp = new Rect();
+    private final Paint grid = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint frame = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+    private static final int EDGE_NONE = 0, EDGE_L = 1, EDGE_T = 2, EDGE_R = 3, EDGE_B = 4;
+
+    public DeskView(Context c) {
+        super(c);
+        setWillNotDraw(false);
+        setClipChildren(false);
+    }
+
+    public void bind(Host h, PcTheme.Palette p) { host = h; pal = p; }
+
+    public void setGrid(int c, int r) {
+        cols = Math.max(1, c); rows = Math.max(1, r);
+        requestLayout();
+    }
+
+    public int cols() { return cols; }
+    public int rows() { return rows; }
+    public List<Desk.Item> items() { return items; }
+
+    /** Replace everything on the desktop. Re-inflates every child, so it is not called per frame. */
+    public void setItems(List<Desk.Item> list) {
+        editing = null; dragging = false; resizing = false;
+        items.clear();
+        views.clear();
+        removeAllViews();
+        if (list != null) items.addAll(list);
+        for (Desk.Item it : items) {
+            View v = host == null ? null : host.viewFor(it);
+            if (v == null) v = new View(getContext());
+            // The child must not eat the gesture: the desktop decides what a press means (open,
+            // lift, drag), and a widget's own content would otherwise swallow the long press that
+            // is the only way to move it.
+            v.setClickable(false);
+            v.setLongClickable(false);
+            views.add(v);
+            addView(v);
+        }
+        requestLayout();
+    }
+
+    public int cellW() { return Math.max(1, getWidth() / cols); }
+    public int cellH() { return Math.max(1, getHeight() / rows); }
+
+    @Override
+    protected void onMeasure(int wSpec, int hSpec) {
+        int w = MeasureSpec.getSize(wSpec), h = MeasureSpec.getSize(hSpec);
+        setMeasuredDimension(w, h);
+        int cw = Math.max(1, w / cols), ch = Math.max(1, h / rows);
+        for (int i = 0; i < views.size() && i < items.size(); i++) {
+            Desk.Item it = items.get(i);
+            views.get(i).measure(
+                    MeasureSpec.makeMeasureSpec(cw * it.spanX, MeasureSpec.EXACTLY),
+                    MeasureSpec.makeMeasureSpec(ch * it.spanY, MeasureSpec.EXACTLY));
+        }
+    }
+
+    @Override
+    protected void onLayout(boolean changed, int l, int t, int r, int b) {
+        int cw = cellW(), ch = cellH();
+        for (int i = 0; i < views.size() && i < items.size(); i++) {
+            Desk.Item it = items.get(i);
+            View v = views.get(i);
+            // The lifted item follows the finger instead of its cell.
+            if (it == editing && dragging) continue;
+            v.layout(it.col * cw, it.row * ch, (it.col + it.spanX) * cw, (it.row + it.spanY) * ch);
+        }
+    }
+
+    // ---------------------------------------------------------------- painting
+
+    @Override
+    protected void dispatchDraw(Canvas canvas) {
+        if (editing != null && pal != null) {
+            // The grid appears only while something is lifted — a permanently visible grid is a
+            // wireframe, not a home screen.
+            grid.setStyle(Paint.Style.STROKE);
+            grid.setStrokeWidth(1f);
+            grid.setColor(Skin.alpha(pal.accent, 0.18));
+            int cw = cellW(), ch = cellH();
+            for (int c = 1; c < cols; c++) canvas.drawLine(c * cw, 0, c * cw, getHeight(), grid);
+            for (int r = 1; r < rows; r++) canvas.drawLine(0, r * ch, getWidth(), r * ch, grid);
+        }
+        super.dispatchDraw(canvas);
+        if (editing != null && pal != null) drawFrame(canvas);
+    }
+
+    private void drawFrame(Canvas canvas) {
+        int cw = cellW(), ch = cellH();
+        int x0 = editing.col * cw, y0 = editing.row * ch;
+        int x1 = (editing.col + editing.spanX) * cw, y1 = (editing.row + editing.spanY) * ch;
+        frame.setStyle(Paint.Style.STROKE);
+        frame.setStrokeWidth(Skin.dp(getContext(), 2));
+        frame.setColor(pal.accent);
+        float r = Skin.dp(getContext(), Math.max(4, pal.radiusDp));
+        canvas.drawRoundRect(x0, y0, x1, y1, r, r, frame);
+        if (host == null || !host.resizable(editing)) return;
+        frame.setStyle(Paint.Style.FILL);
+        float k = Skin.dp(getContext(), 7);
+        canvas.drawCircle(x0, (y0 + y1) / 2f, k, frame);
+        canvas.drawCircle(x1, (y0 + y1) / 2f, k, frame);
+        canvas.drawCircle((x0 + x1) / 2f, y0, k, frame);
+        canvas.drawCircle((x0 + x1) / 2f, y1, k, frame);
+    }
+
+    // ---------------------------------------------------------------- gestures
+
+    private Runnable pending;
+
+    @Override
+    public boolean onTouchEvent(MotionEvent e) {
+        int cw = cellW(), ch = cellH();
+        float x = e.getX(), y = e.getY();
+        switch (e.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN: {
+                lastX = x; lastY = y;
+                resizeEdge = editing == null ? EDGE_NONE : edgeAt(x, y);
+                if (resizeEdge != EDGE_NONE) { resizing = true; return true; }
+                final int c = (int) (x / cw), r = (int) (y / ch);
+                final Desk.Item hit = Desk.at(items, c, r);
+                // A long press LIFTS; a tap opens. Posted rather than using a GestureDetector so the
+                // same code path serves both and there is one place the two can be told apart.
+                pending = new Runnable() {
+                    @Override public void run() {
+                        pending = null;
+                        if (hit == null) { if (host != null) host.onLongPressEmpty(); return; }
+                        lift(hit);
+                        if (host != null) host.onLongPress(hit);
+                    }
+                };
+                postDelayed(pending, 400);
+                return true;
+            }
+            case MotionEvent.ACTION_MOVE: {
+                float dx = x - lastX, dy = y - lastY;
+                if (Math.abs(dx) > Skin.dp(getContext(), 8) || Math.abs(dy) > Skin.dp(getContext(), 8)) {
+                    cancelPending();
+                }
+                if (resizing && editing != null) { resizeTo(x, y); return true; }
+                if (editing != null && !dragging && hits(editing, x, y)) {
+                    dragging = true;
+                    grabDx = (int) x - editing.col * cw;
+                    grabDy = (int) y - editing.row * ch;
+                }
+                if (dragging && editing != null) {
+                    View v = viewOf(editing);
+                    if (v != null) {
+                        int left = (int) x - grabDx, top = (int) y - grabDy;
+                        v.layout(left, top, left + v.getMeasuredWidth(), top + v.getMeasuredHeight());
+                    }
+                    invalidate();
+                    return true;
+                }
+                return true;
+            }
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL: {
+                boolean wasTap = pending != null;
+                cancelPending();
+                if (resizing) { resizing = false; commitResize(); return true; }
+                if (dragging && editing != null) { drop(x, y); return true; }
+                if (wasTap) {
+                    Desk.Item hit = Desk.at(items, (int) (x / cw), (int) (y / ch));
+                    // A tap while something is lifted PUTS IT DOWN rather than opening whatever was
+                    // tapped — otherwise leaving edit mode always launches something.
+                    if (editing != null) { editing = null; invalidate(); return true; }
+                    if (hit != null && host != null) host.onOpen(hit);
+                }
+                return true;
+            }
+        }
+        return super.onTouchEvent(e);
+    }
+
+    private void cancelPending() {
+        if (pending != null) { removeCallbacks(pending); pending = null; }
+    }
+
+    private void lift(Desk.Item it) {
+        editing = it;
+        dragging = false;
+        performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+        invalidate();
+    }
+
+    /** Put the dragged item down on the cell under the finger, or back where it came from. */
+    private void drop(float x, float y) {
+        dragging = false;
+        int cw = cellW(), ch = cellH();
+        int c = Math.max(0, Math.min(cols - editing.spanX, (int) ((x - grabDx + cw / 2f) / cw)));
+        int r = Math.max(0, Math.min(rows - editing.spanY, (int) ((y - grabDy + ch / 2f) / ch)));
+        if (Desk.moveTo(items, editing, c, r, cols, rows) && host != null) host.onChanged();
+        requestLayout();
+        invalidate();
+    }
+
+    private int edgeAt(float x, float y) {
+        if (host == null || !host.resizable(editing)) return EDGE_NONE;
+        int cw = cellW(), ch = cellH();
+        float x0 = editing.col * cw, y0 = editing.row * ch;
+        float x1 = (editing.col + editing.spanX) * cw, y1 = (editing.row + editing.spanY) * ch;
+        float k = Skin.dp(getContext(), 22);
+        if (Math.abs(x - x0) < k && y > y0 - k && y < y1 + k) return EDGE_L;
+        if (Math.abs(x - x1) < k && y > y0 - k && y < y1 + k) return EDGE_R;
+        if (Math.abs(y - y0) < k && x > x0 - k && x < x1 + k) return EDGE_T;
+        if (Math.abs(y - y1) < k && x > x0 - k && x < x1 + k) return EDGE_B;
+        return EDGE_NONE;
+    }
+
+    /** Live resize: recompute spans from the dragged edge, and let Desk refuse a collision. */
+    private void resizeTo(float x, float y) {
+        int cw = cellW(), ch = cellH();
+        int minX = host.minSpanX(editing), minY = host.minSpanY(editing);
+        int col = editing.col, row = editing.row, sx = editing.spanX, sy = editing.spanY;
+        if (resizeEdge == EDGE_R) sx = Math.max(minX, (int) Math.round(x / cw) - col);
+        else if (resizeEdge == EDGE_B) sy = Math.max(minY, (int) Math.round(y / ch) - row);
+        else if (resizeEdge == EDGE_L) {
+            int right = col + sx;
+            col = Math.max(0, Math.min(right - minX, (int) Math.round(x / cw)));
+            sx = right - col;
+        } else if (resizeEdge == EDGE_T) {
+            int bottom = row + sy;
+            row = Math.max(0, Math.min(bottom - minY, (int) Math.round(y / ch)));
+            sy = bottom - row;
+        }
+        int wasC = editing.col, wasR = editing.row;
+        editing.col = col; editing.row = row;
+        if (!Desk.resize(items, editing, sx, sy, minX, minY, cols, rows)) {
+            editing.col = wasC; editing.row = wasR;
+        }
+        requestLayout();
+        invalidate();
+    }
+
+    private void commitResize() {
+        if (editing == null || host == null) return;
+        host.onResized(editing, cellW(), cellH());
+        host.onChanged();
+    }
+
+    private boolean hits(Desk.Item it, float x, float y) {
+        int cw = cellW(), ch = cellH();
+        tmp.set(it.col * cw, it.row * ch, (it.col + it.spanX) * cw, (it.row + it.spanY) * ch);
+        return tmp.contains((int) x, (int) y);
+    }
+
+    private View viewOf(Desk.Item it) {
+        int i = items.indexOf(it);
+        return i >= 0 && i < views.size() ? views.get(i) : null;
+    }
+
+    /** Put down whatever is lifted. Called when the drawer opens or HOME is pressed. */
+    public void clearEditing() {
+        if (editing == null) return;
+        editing = null; dragging = false; resizing = false;
+        requestLayout();
+        invalidate();
+    }
+
+    public Desk.Item lifted() { return editing; }
+}

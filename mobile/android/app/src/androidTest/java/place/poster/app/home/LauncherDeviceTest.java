@@ -172,6 +172,57 @@ public class LauncherDeviceTest {
     }
 
     @Test
+    public void everyTileIconActuallyDRAWSSOMETHING() {
+        // THE CHECK THAT WOULD HAVE CAUGHT "a lot of the PosterChan apps are empty circles".
+        //
+        // Every earlier check asked whether the resource EXISTS. All of them passed while the icons
+        // rendered nothing: a VectorDrawable carrying a baked android:tint, tinted again at runtime
+        // with setColorFilter, inflates fine, reports a size, and paints no pixels. The only question
+        // that separates the two is whether anything is on the canvas — so this draws each one and
+        // counts.
+        for (HomeTiles.Tile t : HomeTiles.catalogue()) {
+            int res = TileIcons.of(t.icon);
+            assertTrue("no drawable for tile " + t.view + " (" + t.icon + ")", res != 0);
+            android.graphics.drawable.Drawable d =
+                    place.poster.app.ui.Skin.icon(ctx, res, 0xFFFFFFFF);
+            assertNotNull("could not load " + t.icon, d);
+            int size = 96;
+            android.graphics.Bitmap bmp = android.graphics.Bitmap.createBitmap(
+                    size, size, android.graphics.Bitmap.Config.ARGB_8888);
+            android.graphics.Canvas canvas = new android.graphics.Canvas(bmp);
+            d.setBounds(0, 0, size, size);
+            d.draw(canvas);
+            int lit = 0;
+            for (int x = 0; x < size; x += 2) {
+                for (int y = 0; y < size; y += 2) {
+                    if (android.graphics.Color.alpha(bmp.getPixel(x, y)) > 24) lit++;
+                }
+            }
+            bmp.recycle();
+            assertTrue(t.icon + " drew nothing — an empty circle on the home screen", lit > 8);
+        }
+    }
+
+    @Test
+    public void aTileWithNoIconStillShowsSomething() {
+        // A coloured circle with nothing in it is indistinguishable from a broken launcher. The
+        // fallback identifies the app instead of identifying a bug.
+        android.graphics.drawable.Drawable d = place.poster.app.ui.Skin.letter(
+                ctx, place.poster.app.ui.PcTheme.of("cyberpunk"), "Notes");
+        assertNotNull(d);
+        android.graphics.Bitmap bmp = android.graphics.Bitmap.createBitmap(
+                64, 64, android.graphics.Bitmap.Config.ARGB_8888);
+        d.setBounds(0, 0, 64, 64);
+        d.draw(new android.graphics.Canvas(bmp));
+        int lit = 0;
+        for (int x = 0; x < 64; x += 2) for (int y = 0; y < 64; y += 2) {
+            if (android.graphics.Color.alpha(bmp.getPixel(x, y)) > 24) lit++;
+        }
+        bmp.recycle();
+        assertTrue("the fallback drew nothing either", lit > 4);
+    }
+
+    @Test
     public void everyTileIconResolvesAndInflates() {
         // A tile whose icon does not resolve draws a blank square with a label under it, which reads
         // as a broken app rather than as a missing file.

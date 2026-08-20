@@ -48,6 +48,13 @@ public class HomePlugin extends Plugin {
            settings screen needs to tell those apart: "you turned this on and something else took it"
            is a different sentence from "you never turned it on". */
         o.put("optedIn", new LauncherPrefs(getContext()).optedIn());
+        /* WHETHER THIS BUILD CAN HOLD EACH ROLE AT ALL. Android refuses the SMS role unless the app
+           declares all four of its components, and refuses SILENTLY — the request activity starts and
+           finishes with RESULT_CANCELED, which on the settings screen looks exactly like a switch
+           that is not wired up. Reported as "sms does nothing when checked". The switch reads this
+           and explains, rather than offering a request that cannot succeed. */
+        o.put("smsCapable", HomeRoles.canBeSms(getContext()));
+        o.put("dialerCapable", HomeRoles.canBeDialer(getContext()));
         call.resolve(o);
     }
 
@@ -56,6 +63,7 @@ public class HomePlugin extends Plugin {
         try {
             Intent i = HomeRoles.requestHome(getContext());
             new LauncherPrefs(getContext()).setOptedIn(true);
+            asking = "home";
             startActivityForResult(call, i, "roleResult");
         } catch (Throwable t) {
             call.reject("could not ask to be the home screen: " + t);
@@ -79,12 +87,14 @@ public class HomePlugin extends Plugin {
 
     @PluginMethod
     public void requestSms(PluginCall call) {
+        asking = "sms";
         try { startActivityForResult(call, HomeRoles.requestSms(getContext()), "roleResult"); }
         catch (Throwable t) { call.reject("could not ask to be the messages app: " + t); }
     }
 
     @PluginMethod
     public void requestDialer(PluginCall call) {
+        asking = "dialer";
         try { startActivityForResult(call, HomeRoles.requestDialer(getContext()), "roleResult"); }
         catch (Throwable t) { call.reject("could not ask to be the phone app: " + t); }
     }
@@ -95,11 +105,63 @@ public class HomePlugin extends Plugin {
      * route mid-dialog, an OEM can substitute its own picker with its own result convention, and
      * ACTION_CHANGE_DEFAULT (the pre-29 path) returns nothing meaningful at all. Asking the platform
      * what is true now is the only answer that is true on every phone.
+     *
+     * BUT NOT IMMEDIATELY, AND THAT IS THE WHOLE OF THE SECOND BUG. Granting a role is asynchronous
+     * on the system side: the dialog returns, and for a moment `getDefaultSmsPackage` still names the
+     * OLD app. Read once, right there, and the answer is "no" for a role that was in fact granted —
+     * the switch springs back while Android's own settings screen already says PosterChan. Reported
+     * exactly that way: "i check the box to make it my sms app, it unchecks, android says my default
+     * app is posterchan."
+     *
+     * So it is re-read until it settles, or for a second and a half, whichever comes first. Polling
+     * is normally what this codebase refuses to do; here it is bounded, it happens once per press,
+     * and the alternative is telling somebody the opposite of what their phone says.
      */
     @ActivityCallback
-    private void roleResult(PluginCall call, ActivityResult result) {
+    private void roleResult(final PluginCall call, ActivityResult result) {
         if (call == null) return;
-        status(call);
+        settle(call, 0);
+    }
+
+    private static final int SETTLE_TRIES = 6;
+    private static final int SETTLE_STEP_MS = 250;
+
+    /**
+     * WHICH role the outstanding request was for. Settling on "any role is held" would return
+     * instantly for somebody who already has the home screen and is now granting SMS — which is the
+     * same bug wearing a different hat, and the harder one to spot because it only happens to people
+     * who have already opted into something.
+     */
+    private String asking = "";
+
+    private boolean asked() {
+        if ("sms".equals(asking)) return HomeRoles.isDefaultSms(getContext());
+        if ("dialer".equals(asking)) return HomeRoles.isDefaultDialer(getContext());
+        if ("home".equals(asking)) return HomeRoles.isDefaultHome(getContext());
+        return true;                       // nothing outstanding: answer with what is true now
+    }
+
+    private void settle(final PluginCall call, final int tries) {
+        if (asked() || tries >= SETTLE_TRIES) { asking = ""; status(call); return; }
+        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(new Runnable() {
+            @Override public void run() { settle(call, tries + 1); }
+        }, SETTLE_STEP_MS);
+    }
+
+    /**
+     * Android's own "Default apps" screen. The settings card offers it only after a role request
+     * came back without the role — on an OEM build that suppresses the role dialog it is the only
+     * route, and without it the switch is a dead end that never says so.
+     */
+    @PluginMethod
+    public void openDefaultApps(PluginCall call) {
+        try {
+            getContext().startActivity(HomeRoles.defaultAppsSettings()
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            call.resolve();
+        } catch (Throwable t) {
+            call.reject("this phone has no default-apps screen: " + t);
+        }
     }
 
     /** Mirror the client's theme where the native screens can read it. Unknown slugs are ignored. */

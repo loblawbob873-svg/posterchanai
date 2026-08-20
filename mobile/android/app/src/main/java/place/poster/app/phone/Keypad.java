@@ -55,6 +55,34 @@ public final class Keypad {
         }
     }
 
+    /**
+     * Attach an extra long-press to one key after the pad is built — the dialer uses it for "1",
+     * which has called voicemail since before smartphones. Done here rather than by passing another
+     * callback into `build` so the in-call keypad, which must send a DTMF "1" and nothing else, is
+     * unaffected by construction.
+     */
+    public static void onLongPress(LinearLayout host, char digit, final Runnable what) {
+        if (host == null) return;
+        for (int r = 0; r < host.getChildCount(); r++) {
+            View row = host.getChildAt(r);
+            if (!(row instanceof LinearLayout)) continue;
+            LinearLayout line = (LinearLayout) row;
+            for (int c = 0; c < line.getChildCount(); c++) {
+                View cell = line.getChildAt(c);
+                if (!(cell instanceof LinearLayout)) continue;
+                View first = ((LinearLayout) cell).getChildAt(0);
+                if (!(first instanceof TextView)) continue;
+                if (!String.valueOf(digit).contentEquals(((TextView) first).getText())) continue;
+                cell.setOnLongClickListener(new View.OnLongClickListener() {
+                    @Override public boolean onLongClick(View v) {
+                        if (what != null) what.run();
+                        return true;
+                    }
+                });
+            }
+        }
+    }
+
     private static View key(final Context ctx, PcTheme.Palette pal, int size,
                             final String digit, String sub, final Press press) {
         LinearLayout cell = new LinearLayout(ctx);

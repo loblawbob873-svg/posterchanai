@@ -1600,7 +1600,7 @@
     if(existing){ focusWin(existing); return existing; }
     /* `noFeed` — it owns its contents in the most literal way available: they are not in this
      * document at all. Handing it the shared #feed would blank whichever window was using it. */
-    const w = openApp(view, nw.title || nw.app || 'App', 'i-window', null, true);
+    const w = openApp(view, nw.title || nw.app || 'App', 'grid', null, true);
     if(!w) return null;
     w.native = Number(nw.id);
     w.el.classList.add('osw-native');
@@ -4685,7 +4685,7 @@
           if(nat.length) natives = `<div class="os-applist-h">This computer</div>`
             + nat.map(a => `<button class="os-app" data-app="${enc(a.id)}"${
                  a.comment ? ` title="${enc(a.comment)}"` : ''}>
-                 ${iconSvg(a.icon || 'window')}<span>${enc(a.name)}</span></button>`).join('');
+                 ${iconSvg(a.icon || 'grid')}<span>${enc(a.name)}</span></button>`).join('');
         }
       }catch(_){ natives = ''; }
       $('#os-applist', menu).innerHTML = nrow + (list.length

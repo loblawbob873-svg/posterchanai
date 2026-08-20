@@ -170,6 +170,10 @@ public class ThreadActivity extends PcActivity {
 
     private void applySkin() {
         paintPage(R.id.pc_th_root);
+        View bar = findViewById(R.id.pc_th_bar);
+        if (bar != null) bar.setBackground(Skin.bar(this, pal, false));
+        View composeBar = findViewById(R.id.pc_th_compose);
+        if (composeBar != null) composeBar.setBackground(Skin.panel(this, pal));
         String label = PhoneBook.label(this, address);
         name.setText(label);
         name.setTextColor(pal.text);
@@ -183,7 +187,6 @@ public class ThreadActivity extends PcActivity {
         icon(R.id.pc_th_menu, R.drawable.ic_pc_menu, pal.muted);
         icon(R.id.pc_th_send, R.drawable.ic_pc_send, pal.onAccent());
         findViewById(R.id.pc_th_send).setBackground(Skin.pill(this, pal, pal.accent, true));
-        findViewById(R.id.pc_th_compose).setBackground(Skin.panel(this, pal));
         input.setTextColor(pal.text);
         input.setHintTextColor(pal.muted);
         count.setTextColor(pal.muted);
