@@ -53,11 +53,19 @@ public final class WeatherStore {
     public static boolean day(Context c) { return sp(c).getBoolean(K_DAY, true); }
     public static String unitSuffix(Context c) { return sp(c).getString(K_UNIT_SUFFIX, "°"); }
 
-    /** The instance to ask, and in what units. Written by the client, never guessed at here. */
-    public static void setServer(Context c, String base, String units) {
+    /**
+     * The instance to ask, and in what units. Written by the client, never guessed at here.
+     *
+     * @return true when the UNITS changed, which means the reading on screen is in the wrong scale
+     *         and a repaint of it would be a repaint of the wrong number. See WeatherPlugin.sync.
+     */
+    public static boolean setServer(Context c, String base, String units) {
+        String want = "imperial".equals(units) ? "imperial" : "metric";
+        boolean moved = !want.equals(units(c));
         sp(c).edit().putString(K_BASE, base == null ? "" : base.trim())
-                    .putString(K_UNITS, "imperial".equals(units) ? "imperial" : "metric")
+                    .putString(K_UNITS, want)
                     .apply();
+        return moved;
     }
 
     public static void setPlace(Context c, double lat, double lon, String name) {

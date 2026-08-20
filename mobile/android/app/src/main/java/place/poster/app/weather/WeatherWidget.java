@@ -67,6 +67,13 @@ public class WeatherWidget extends AppWidgetProvider {
         } catch (Throwable ignored) { }
     }
 
+    /**
+     * Fetch again NOW and repaint when it lands. Used when the stored reading is in the wrong scale
+     * — see WeatherPlugin.sync — because repainting a Celsius number after somebody asked for
+     * Fahrenheit shows the same figure with the same sign and reads as a switch that does nothing.
+     */
+    public static void refreshNow(Context ctx) { refreshInBackground(ctx); }
+
     private static void refreshInBackground(final Context ctx) {
         final Context app = ctx.getApplicationContext();
         new Thread(new Runnable() {

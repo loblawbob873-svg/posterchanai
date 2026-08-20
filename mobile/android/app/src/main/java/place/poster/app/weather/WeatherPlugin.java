@@ -24,11 +24,20 @@ public class WeatherPlugin extends Plugin {
 
     @PluginMethod
     public void sync(PluginCall call) {
-        WeatherStore.setServer(getContext(), call.getString("base", ""),
-                                             call.getString("units", "metric"));
-        // Redraw with whatever it now knows: a widget that has been sitting on "no server" since
-        // the app was installed must not wait for the next hourly tick to notice one appeared.
-        WeatherWidget.paint(getContext());
+        boolean unitsMoved = WeatherStore.setServer(getContext(), call.getString("base", ""),
+                                                    call.getString("units", "metric"));
+        if (unitsMoved) {
+            // A REPAINT WOULD REDRAW THE WRONG NUMBER. The stored reading is a temperature AND the
+            // suffix it came back with, in whichever scale was asked for at the time — so switching
+            // to Fahrenheit and repainting shows the same Celsius figure with a Celsius sign, and
+            // the switch looks broken until the next hourly tick an hour later. The forecast is
+            // fetched again instead, off the main thread, and the widget is painted when it lands.
+            WeatherWidget.refreshNow(getContext());
+        } else {
+            // Redraw with whatever it now knows: a widget that has been sitting on "no server" since
+            // the app was installed must not wait for the next hourly tick to notice one appeared.
+            WeatherWidget.paint(getContext());
+        }
         call.resolve();
     }
 

@@ -106,6 +106,16 @@
             grounds for a battery exemption rather than a guess.
             Doze exemption: <strong>${yes(st.batteryExempt)}</strong>.
           </div>
+          <div class="muted small" style="margin-top:12px">
+            Weather widget temperature:
+            <label class="set-stay" style="display:inline-block;margin-left:8px"><input type="radio"
+              name="ps-units" id="ps-unit-f" value="imperial"${unitsPref()==='imperial'?' checked':''}>
+              \u00b0F</label>
+            <label class="set-stay" style="display:inline-block;margin-left:8px"><input type="radio"
+              name="ps-units" id="ps-unit-c" value="metric"${unitsPref()==='metric'?' checked':''}>
+              \u00b0C</label>
+            <div class="muted small">Starts from this phone\u2019s region and stays wherever you put it.</div>
+          </div>
           <div class="muted small" id="ps-msg" style="margin-top:8px"></div>
           <button class="btn small" id="ps-defaults" hidden style="margin-top:6px">Open Android\u2019s Default apps</button>
         </div>
@@ -113,6 +123,10 @@
 
     const $ = (s) => host.querySelector(s);
     const msg = (t) => { const m = $('#ps-msg'); if(m) m.textContent = t || ''; };
+
+    host.querySelectorAll('input[name="ps-units"]').forEach(r => {
+      r.onchange = () => { if(r.checked) setUnits(r.value); };
+    });
 
     async function refresh(){
       const s = await status();
@@ -226,6 +240,53 @@
    * the forecast is proxied so the upstream never sees a user.
    *
    * Fire-and-forget, like mirrorTheme: nothing on this page depends on it. */
+  /* WHICH TEMPERATURE SCALE — AND IT IS NOT ALWAYS CELSIUS.
+   *
+   * "weather widget is in Celcius, i am in the US". `pc_units` was READ here and written by nothing,
+   * anywhere, so the fallback was the answer for every person on every device: a hardcoded
+   * 'metric', with no switch and no way to reach it. A default that cannot be changed is not a
+   * default, it is a decision made on somebody else's behalf.
+   *
+   * The device already knows. `Intl.DateTimeFormat().resolvedOptions().locale` is the region the
+   * phone is actually set to, and the set of places that give weather in Fahrenheit is small,
+   * closed and easy to name — so the default is derived rather than assumed, and the stored
+   * preference always wins over it. A person who has chosen is never re-guessed at.
+   *
+   * Region, never LANGUAGE: `en` is spoken in Britain, Australia and India, all of which report the
+   * weather in Celsius, and guessing from the language would put half of them on Fahrenheit. */
+  const FAHRENHEIT = ['US', 'BS', 'BZ', 'KY', 'FM', 'LR', 'MH', 'PW', 'PR', 'GU', 'VI', 'AS', 'MP'];
+
+  function regionOf(){
+    try{
+      const l = (Intl.DateTimeFormat().resolvedOptions().locale
+                || navigator.language || '').toUpperCase();
+      // en-US, en-Latn-US, und-US-u-ca-gregory — take the two-letter region wherever it sits.
+      const parts = l.split(/[-_]/);
+      for(let i = 1; i < parts.length; i++){
+        if(/^[A-Z]{2}$/.test(parts[i])) return parts[i];
+      }
+    }catch(_){}
+    return '';
+  }
+
+  /* 'imperial' or 'metric'. A stored answer wins; otherwise the phone's own region decides. */
+  function unitsPref(){
+    try{
+      const v = localStorage.getItem('pc_units');
+      if(v === 'imperial' || v === 'metric') return v;
+    }catch(_){}
+    return FAHRENHEIT.indexOf(regionOf()) >= 0 ? 'imperial' : 'metric';
+  }
+
+  /* Chosen deliberately — stored, and pushed to the widget straight away so the change is visible on
+   * the home screen rather than at the next forecast. */
+  function setUnits(v){
+    const want = v === 'imperial' ? 'imperial' : 'metric';
+    try{ localStorage.setItem('pc_units', want); }catch(_){}
+    syncWeather();
+    return want;
+  }
+
   function syncWeather(){
     let P = null;
     try{ P = PC && PC.capPlugin ? PC.capPlugin('Weather', 'sync') : null; }catch(_){ return; }
@@ -235,8 +296,7 @@
       base = (typeof window.__PC_API_BASE__ !== 'undefined' ? (window.__PC_API_BASE__ || '')
                                                            : location.origin) || '';
     }catch(_){ base = ''; }
-    let units = 'metric';
-    try{ units = localStorage.getItem('pc_units') === 'imperial' ? 'imperial' : 'metric'; }catch(_){}
+    const units = unitsPref();
     try{ const r = P.sync({ base: String(base).replace(/\/+$/, ''), units });
          if(r && r.catch) r.catch(()=>{}); }catch(_){}
   }
@@ -291,5 +351,6 @@
   }
   init();
 
-  window.PCPhone = { mirrorTheme, syncWeather, consumeLaunchView, status, renderSettings };
+  window.PCPhone = { mirrorTheme, syncWeather, consumeLaunchView, status, renderSettings,
+                     unitsPref, setUnits, regionOf };
 })();
