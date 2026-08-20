@@ -997,6 +997,15 @@ const hostfs = () => (_hostfs || (_hostfs = require('./hostfs.js')));
 
 ipcMain.handle('pc:host:list', (e, dir) => { fsGuard(e); return hostfs().list(String(dir || '')); });
 ipcMain.handle('pc:host:roots', (e) => { fsGuard(e); return hostfs().roots(); });
+/* Searched from the start menu, so it is called while somebody is typing. Every bound lives in
+ * hostfs.search; the only thing decided here is that the renderer does not get to raise them —
+ * `limit` and `ms` are clamped there, and a page asking for a 10-minute walk of the whole disk on
+ * each keystroke is exactly the sort of thing this bridge exists to refuse. */
+ipcMain.handle('pc:host:search', (e, q, opts) => {
+  fsGuard(e);
+  const o = opts || {};
+  return hostfs().search(String(q || ''), { limit: Number(o.limit) || 8, ms: Number(o.ms) || 350 });
+});
 ipcMain.handle('pc:host:mkdir', (e, dir, name) => {
   fsGuard(e); return hostfs().mkdir(String(dir || ''), String(name || ''));
 });

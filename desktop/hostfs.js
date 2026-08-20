@@ -230,5 +230,53 @@ function open(target) {
   return { pid: child.pid, failed };
 }
 
-module.exports = { list, roots, trash, mkdir, rename, open, clean, parentOf, shape,
+/* THE MACHINE'S OWN FILES, FOR A SEARCH BOX — and every bound here exists because the thing being
+ * searched is somebody's whole disk.
+ *
+ * BREADTH-FIRST, not depth-first. A depth-first walk disappears into the first deep directory it
+ * meets (node_modules, a git object store, a photo library by year) and spends the entire budget
+ * there, so the answer depends on which folder happens to sort first. Breadth-first spends it near
+ * the top, which is where the file somebody is searching for by name almost always is.
+ *
+ * FOUR SEPARATE BOUNDS, because each one alone has a case that defeats it: a DEADLINE (a spinning
+ * disk or a stale network mount can make one readdir take seconds), a RESULT cap (a menu shows a
+ * handful), a SCAN cap (a flat directory of 200,000 files is one readdir and no recursion at all),
+ * and a DEPTH cap. Hitting any of them returns what was found rather than failing — a partial
+ * answer to "find me a file" is the normal answer.
+ *
+ * Dotfiles are skipped, which also takes .git, .cache and .config out of the walk. Symlinks are not
+ * followed: a link back up the tree is an infinite walk, and the deadline would be the only thing
+ * that noticed.
+ */
+function search(query, opts) {
+  const q = String(query || '').trim().toLowerCase();
+  if (q.length < 2) return [];                 // one character matches a whole disk
+  const o = opts || {};
+  const limit = Math.max(1, Math.min(Number(o.limit) || 8, 50));
+  const until = Date.now() + Math.max(50, Math.min(Number(o.ms) || 350, 3000));
+  const maxDepth = Math.max(1, Math.min(Number(o.depth) || 4, 8));
+  const maxScan = 40000;
+  const out = [];
+  let scanned = 0;
+  const queue = (Array.isArray(o.roots) && o.roots.length ? o.roots : roots(o.env).map(r => r.path))
+                  .map(p => ({ p: p, d: 0 }));
+  while (queue.length && out.length < limit && scanned < maxScan && Date.now() < until) {
+    const cur = queue.shift();
+    let ents = [];
+    try { ents = fs.readdirSync(cur.p, { withFileTypes: true }); } catch (_) { continue; }
+    for (const e of ents) {
+      if (out.length >= limit) break;
+      if (++scanned > maxScan) break;
+      const nm = e.name;
+      if (!nm || nm.charAt(0) === '.') continue;
+      if (e.isSymbolicLink()) continue;
+      const full = path.join(cur.p, nm);
+      if (nm.toLowerCase().indexOf(q) >= 0) out.push({ name: nm, path: full, dir: e.isDirectory() });
+      if (e.isDirectory() && cur.d < maxDepth) queue.push({ p: full, d: cur.d + 1 });
+    }
+  }
+  return out;
+}
+
+module.exports = { list, roots, search, trash, mkdir, rename, open, clean, parentOf, shape,
                    trashInfo, freeName, trashDir };

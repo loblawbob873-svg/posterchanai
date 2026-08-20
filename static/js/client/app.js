@@ -16386,6 +16386,53 @@
   // folder's browser, which has no track list.
   function openMusicFolder(){ _filesTab='public'; _filesFolder='Music'; _syncRoot=''; _syncPath=''; switchView('blossom'); }
 
+  /* THE DRIVE, SEARCHABLE FROM ANYWHERE THAT HAS A SEARCH BOX — the desktop's start menu first.
+   *
+   * READ-ONLY AND SYNCHRONOUS ON PURPOSE. A start menu repaints on every keystroke, so anything it
+   * calls per character must not touch the network, the relay or the signer: this walks the index
+   * already decrypted in memory and nothing else. If the drive has not been read yet the answer is
+   * an empty list, which is honest — the menu is not the place to make somebody wait for a pull.
+   *
+   * Matches on the NAME only. The index also holds mime and folder, but a search box that
+   * silently matches a folder name returns files whose names have nothing to do with what was
+   * typed, and there is no room in a menu row to explain why a result is there. */
+  function driveSearch(q, limit){
+    const s = String(q || '').trim().toLowerCase();
+    if(s.length < 2) return [];          // one character matches most of a drive
+    const cap = Math.max(1, Math.min(+limit || 8, 50));
+    const files = (FilesIdx && FilesIdx.data && FilesIdx.data.files) || {};
+    const hits = [];
+    for(const sha in files){
+      const m = files[sha] || {};
+      const name = String(m.name || '');
+      if(!name) continue;
+      const i = name.toLowerCase().indexOf(s);
+      if(i < 0) continue;
+      hits.push({ sha, name, folder: String(m.folder || ''), size: +m.size || 0,
+                  mime: String(m.mime || ''), at: i });
+      // Scanned in full rather than stopping at `cap`: object key order is arbitrary, so breaking
+      // early returns an arbitrary EIGHT of the matches instead of the best eight.
+      if(hits.length > 4000) break;      // a drive this size has better tools than a menu
+    }
+    /* A name that STARTS with what was typed is what somebody meant; ties break alphabetically so
+     * the same query gives the same order twice running. */
+    hits.sort((a, b) => a.at - b.at || a.name.localeCompare(b.name));
+    return hits.slice(0, cap).map(h => ({ sha: h.sha, name: h.name, folder: h.folder,
+                                          size: h.size, mime: h.mime }));
+  }
+
+  /* Open Files ON that file — its folder, with the drive's own search box set to its name, so the
+   * result is on screen rather than somewhere in a folder the person now has to find. Same shape as
+   * openMusicFolder, which is the pattern for arriving at a place in this view. */
+  function driveReveal(sha){
+    const m = (FilesIdx && FilesIdx.meta && FilesIdx.meta(sha)) || {};
+    _filesTab = 'public';
+    _filesFolder = m.folder || null;
+    _filesQ = String(m.name || '');
+    _syncRoot = ''; _syncPath = '';
+    switchView('blossom');
+  }
+
   /* The Music APP: a player, not a folder. Opening Music used to land you in Files → 🎵 Music — the
    * same screen you use to UPLOAD, complete with folder chips and a drop zone — which is a file
    * manager that happens to contain songs. This is the library as a playlist with transport on top;
@@ -32588,6 +32635,9 @@
                live: n ? n._live().length : null, urls: n ? (n._urls || []).length : null };
     },
     runSearch,                                                // → the desktop's taskbar search box
+    /* The drive, for the desktop's start menu. Both must be HERE and not merely defined — a
+       function reachable only inside this file is the `PC._fmtBytes is not a function` trap. */
+    driveSearch, driveReveal,
     openExternal,                                             // → web search results, and anything else that must leave the app
     /* THE NATIVE PLUGIN LOOKUP, shared. Not a convenience: `_capPlugin` falls back to
      * `Capacitor.registerPlugin(name)`, which is what a plugin registered in Java but with no JS

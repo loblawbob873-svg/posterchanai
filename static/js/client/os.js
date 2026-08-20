@@ -1625,6 +1625,33 @@
     }
   }
 
+  /* THE MACHINE'S FILES, ASKED FOR ONCE THE TYPING SETTLES.
+   *
+   * Keyed by the query it answers, so a slow walk that lands after the box has moved on is
+   * DISCARDED rather than painted under a different word — the same reason the profile view checks
+   * the pubkey after its read. One timer and one in-flight request: a disk walk per keystroke is
+   * how a search box becomes the reason a laptop's fan is on. */
+  let _localQ = '', _localHits = [], _localT = 0, _localWant = '';
+  function _askLocal(q){
+    if(!window.pcHost || !pcHost.search) return;
+    if(q === _localQ || q === _localWant) return;      // answered, or already on its way
+    clearTimeout(_localT);
+    _localT = setTimeout(() => {
+      _localWant = q;
+      pcHost.search(q, { limit: 6 }).then(rows => {
+        _localWant = '';
+        if(!Array.isArray(rows)) return;
+        _localHits = rows; _localQ = q;
+        // Repaint only if the box still says what this answer is about.
+        const box = $('#os-q', root);
+        if(box && String(box.value || '').trim() === q) _repaintStart(q);
+      }, () => { _localWant = ''; });
+    }, 220);
+  }
+  /* Redrawing the LIST only. Rebuilding the menu would take the focus and the caret out of the
+   * search box mid-word, which is the classic way a live-updating menu becomes unusable. */
+  let _repaintStart = () => {};
+
   /* A screenshot asked for by the KEY. Guarded because the desktop can be entered on a machine with
    * no compositor bridge at all (a browser, the Windows build), where PCOSShell exists but has
    * nothing behind it — and a key that quietly throws is worse than one that is not bound. */
@@ -4748,6 +4775,7 @@
       }, false, true);
     };
     const paint = (q) => {
+      _repaintStart = paint;                 // so a late local-file answer can redraw the list
       // Folded when idle; FLAT while searching, so typing "chess" finds Chess rather than requiring
       // you to know it lives in a folder.
       /* Idle, the start menu is the DESKTOP plus whatever the desktop is hiding — that is what makes
@@ -4785,11 +4813,53 @@
                  ${appIcon(a)}<span>${enc(a.name)}</span></button>`).join('');
         }
       }catch(_){ natives = ''; }
+      /* YOUR FILES, AND THIS COMPUTER'S. "search in the start menu should search blossom files,
+       * local files as well" — a start menu that finds apps and not documents is half a search box.
+       *
+       * The two halves are fetched very differently and that is not an inconsistency. The drive is
+       * an index this page already holds decrypted, so it is filtered SYNCHRONOUSLY on every
+       * keystroke like the app list. The machine's files are a disk walk in another process, so
+       * they are asked for once the typing settles and painted when they arrive — a menu that
+       * blocks on readdir stutters, and one that reorders under the cursor is worse than one that
+       * is slightly late. */
+      let drive = '';
+      try{
+        const hits = (PC().driveSearch && q) ? PC().driveSearch(q, 6) : [];
+        if(hits.length) drive = `<div class="os-applist-h">Your files</div>`
+          + hits.map(h => `<button class="os-app" data-sha="${enc(h.sha)}"${
+               h.folder ? ` title="${enc(h.folder)}"` : ''}>
+               ${iconSvg('folder')}<span>${enc(h.name)}</span></button>`).join('');
+      }catch(_){ drive = ''; }
+
+      let local = '';
+      try{
+        const hits = (q && _localQ === q) ? _localHits : [];
+        if(hits.length) local = `<div class="os-applist-h">Files on this computer</div>`
+          + hits.map(h => `<button class="os-app" data-path="${enc(h.path)}" title="${enc(h.path)}">
+               ${iconSvg(h.dir ? 'folder' : 'note')}<span>${enc(h.name)}</span></button>`).join('');
+      }catch(_){ local = ''; }
+      if(q) _askLocal(q);
+
+      const nothing = !list.length && !natives && !drive && !local;
       $('#os-applist', menu).innerHTML = nrow + (list.length
         ? list.map(a => `<button class="os-app" data-view="${enc(a.view)}">
              ${iconSvg(a.icon)}<span>${enc(a.label)}</span></button>`).join('')
-        : (q || natives ? '' : '<div class="muted small" style="padding:10px">Nothing matches that.</div>'))
-        + natives;
+        : (q || !nothing ? '' : '<div class="muted small" style="padding:10px">Nothing matches that.</div>'))
+        + natives + drive + local;
+
+      /* A DRIVE RESULT OPENS FILES ON THAT FILE, not on Files. `driveReveal` sets the folder and the
+       * drive's own name filter, so the thing that was searched for is the thing on screen. */
+      $$('.os-app[data-sha]', menu).forEach(b => b.onclick = () => {
+        toggleStart(false);
+        try{ PC().driveReveal && PC().driveReveal(b.dataset.sha); }catch(_){}
+      });
+      /* A LOCAL result is handed to the machine — `xdg-open`, the same thing the host file manager
+       * does — because this desktop has no viewer for an arbitrary file on the disk and pretending
+       * otherwise is how you get a menu entry that opens a blank window. */
+      $$('.os-app[data-path]', menu).forEach(b => b.onclick = () => {
+        toggleStart(false);
+        try{ window.pcHost && pcHost.open(b.dataset.path); }catch(_){}
+      });
       /* RIGHT-CLICK IN THE START MENU PUTS IT ON THE DESKTOP — "right-click should offer
        * add-to-desktop". Until now the only way back for an icon you had hidden was the desktop's
        * own right-click menu, which lists them by name and only shows twelve; the place people

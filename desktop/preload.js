@@ -176,6 +176,7 @@ if (isOurPage) {
   contextBridge.exposeInMainWorld('pcHost', {
     list: (dir) => ipcRenderer.invoke('pc:host:list', String(dir || '')),
     roots: () => ipcRenderer.invoke('pc:host:roots'),
+    search: (q, opts) => ipcRenderer.invoke('pc:host:search', String(q || ''), opts || {}),
     mkdir: (dir, name) => ipcRenderer.invoke('pc:host:mkdir', String(dir || ''), String(name || '')),
     rename: (from, to) => ipcRenderer.invoke('pc:host:rename', String(from || ''), String(to || '')),
     trash: (target) => ipcRenderer.invoke('pc:host:trash', String(target || '')),
