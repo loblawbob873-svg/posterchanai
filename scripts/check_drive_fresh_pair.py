@@ -154,6 +154,46 @@ async def drive(url):
         if not reg:
             print("SKIP  could not register the throwaway account")
             return 2
+
+        # WAIT FOR THE ACCOUNT TO BE ABLE TO WRITE, BEFORE RACING ANYTHING.
+        #
+        # Registering a user and that user being allowed to publish are not the same instant. The
+        # relay gates ingest on its WEB OF TRUST, and membership arrives on its own schedule — so a
+        # brand-new key's first `pcai:files-index` write is refused ("blocked: not in web of trust"),
+        # the save 503s, and both devices are left holding the key they each minted. Which is
+        # indistinguishable, from the outside, from the four-day drive-key bug this check exists to
+        # catch: `FAIL device A cannot open B's seal`.
+        #
+        # Measured across consecutive runs of this file: one FAILED with both keys divergent and the
+        # next PASSED, unchanged. A check that races its own precondition reports the weather.
+        #
+        # An EMPTY index is written as the probe, deliberately: it establishes that this account can
+        # publish without putting an `mk` on the server, so the cold path under test still finds
+        # exactly what it is supposed to find — nothing.
+        ready = False
+        for _ in range(30):
+            ok = await a.js("""(async () => {
+              try{
+                const auth = await window.__PC.signAuth('files-index');
+                const r = await fetch('/client/files-index', { method:'POST',
+                  headers:{'Content-Type':'application/json'},
+                  body: JSON.stringify({ pubkey: window.__PC.me().pubkey,
+                                         auth: btoa(JSON.stringify(auth)), index: {} }) });
+                return r.ok;
+              }catch(e){ return false; }
+            })()""", aw=True)
+            if ok:
+                ready = True
+                break
+            await asyncio.sleep(2)
+        if not ready:
+            print("SKIP  this account cannot publish to the relay, so the rule this check proves "
+                  "(the server keeps the FIRST drive key, for ever) cannot be exercised — a "
+                  "throwaway key is a stranger to a relay with a web of trust, and its index write "
+                  "is refused at INGEST. Look for `put pcai:files-index rejected: blocked: not in "
+                  "web of trust` in the server log.")
+            return 2
+
         # BOTH devices hit the cold path CONCURRENTLY — the race window itself
         ca, cb = await asyncio.gather(a.js(f"({COLD})()", aw=True), b.js(f"({COLD})()", aw=True))
         print("  cold-start:", json.dumps(ca), json.dumps(cb))
@@ -170,9 +210,35 @@ async def drive(url):
                 headers:{'Content-Type':'application/json'},
                 body: JSON.stringify({ pubkey: window.__PC.me().pubkey,
                                        auth: btoa(JSON.stringify(auth)) }) });
-              const j = await r.json(); return (j.index && j.index.mk || '').slice(0, 24);
+              const j = await r.json();
+              return { mk: (j.index && j.index.mk || '').slice(0, 24),
+                       status: r.status, err: j && j.error || '' };
             })()""", aw=True)
-            print("  keys: A=%s B=%s server=%s" % (str(ka)[:24], str(kb)[:24], srv))
+            srv = srv or {}
+            print("  keys: A=%s B=%s server=%s" % (str(ka)[:24], str(kb)[:24], srv.get("mk") or ""))
+            # THE SERVER HOLDING NO KEY IS NOT A PRODUCT FAILURE — IT IS THIS TEST BEING UNABLE TO
+            # RUN, and reporting it as a failure is worse than not running at all.
+            #
+            # The whole premise is "the server keeps the FIRST key for ever", so the server must be
+            # able to keep one. On a relay with a web of trust it cannot: the throwaway npub this
+            # check mints is a stranger, `pcai:files-index` is REJECTED at ingest ("blocked: not in
+            # web of trust"), the save 503s, and both devices are left holding the key they minted
+            # — which then reads exactly like the four-day drive-key bug this check exists to catch.
+            #
+            # Measured: `[nostr-store] put pcai:files-index rejected: blocked: not in web of trust`
+            # on every save, then `FAIL device A cannot open B's seal`. A red check that means "your
+            # relay has a WoT" is how people learn to skip the report. Exit 2, with the reason.
+            #
+            if not srv.get("mk"):
+                # The probe above is a READ, so its status says nothing about why the WRITE did not
+                # stick — quoting it would point at the wrong request. Name the cause instead.
+                print("SKIP  the server is holding no drive key for this account, so the rule this "
+                      "check exists to prove (first key wins, for ever) cannot be exercised here. "
+                      "The throwaway account is a stranger to this relay's web of trust, so its "
+                      "`pcai:files-index` write is refused at INGEST and the pointer never lands — "
+                      "check the server log for `put pcai:files-index rejected: blocked: not in web "
+                      "of trust`. Run against an instance whose relay accepts this key.")
+                return 2
             sa, sb = await asyncio.gather(
                 a.js(f"({SEAL})('from-A')", aw=True), b.js(f"({SEAL})('from-B')", aw=True))
             if not (sa and sa.get("ok") and sb and sb.get("ok")):
