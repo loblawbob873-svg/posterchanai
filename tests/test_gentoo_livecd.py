@@ -348,3 +348,58 @@ class TheDefaultIsTheHomeDirectory(unittest.TestCase):
         i = self.body.index("ISO:  $ISO")
         j = self.body.index("mksquashfs / ")
         self.assertLess(i, j, "the destination is announced after the filesystem is packed")
+
+
+class TheLiveInitramfsStartsFromNothing(unittest.TestCase):
+    """"live cd error: dracut failed the iso would not boot / module systemd-cryptsetup depends on
+    module crypt."
+
+    Two problems wearing one hat, and only the first one announced itself.
+
+    An encrypted install writes `add_dracutmodules+=" crypt systemd-cryptsetup dm rootfs-block "`
+    into /etc/dracut.conf, and dracut reads that file whatever the command line says. So the config
+    ADDED systemd-cryptsetup while this build OMITTED crypt, and dracut refused the contradiction —
+    correctly. Omitting crypt is right: a live image boots from a squashfs on an ISO, not a LUKS
+    disk.
+
+    The second problem is the one nobody would have noticed. That same file carries
+    `install_items+=" /boot/unlock.sh /boot/keyfile.key "` — the key that unlocks THIS machine's disk
+    with no password. Inherited, every ISO built on an encrypted install would have shipped that key
+    inside its initramfs, on a disc meant to be handed to somebody, defeating the whole "clean out
+    this machine's accounts and secrets" pass a few dozen lines above.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.body = _fn("liveCD")
+
+    def test_it_does_not_read_the_host_config(self):
+        i = self.body.index("dracut --force")
+        call = self.body[i:i + 500]
+        self.assertIn("--conf /dev/null", call,
+                      "the live initramfs inherits /etc/dracut.conf, which on an encrypted install "
+                      "adds systemd-cryptsetup and installs the machine's LUKS keyfile")
+        self.assertIn("--confdir", call,
+                      "dracut.conf.d is read even when --conf is redirected")
+
+    def test_the_confdir_it_is_pointed_at_is_one_we_made_empty(self):
+        self.assertIn('mkdir -p "$WORK/dracut.conf.d"', self.body)
+        i = self.body.index('mkdir -p "$WORK/dracut.conf.d"')
+        self.assertLess(i, self.body.index("dracut --force"),
+                        "the directory is created after it is used")
+
+    def test_the_contradiction_is_removed_rather_than_silenced(self):
+        """`--omit systemd-cryptsetup` would have stopped the error and left the keyfile in the
+        image, which is the worse of the two failures and the silent one."""
+        i = self.body.index("dracut --force")
+        call = self.body[i:i + 500]
+        self.assertNotIn("systemd-cryptsetup", call,
+                         "the module is omitted by name, which hides the config leak instead of "
+                         "ending it")
+
+    def test_dracuts_own_output_reaches_the_log(self):
+        """"dracut failed" with no reason is the report. Its output is what names the module."""
+        i = self.body.index("dracut --force")
+        call = self.body[i:i + 600]
+        self.assertIn('tee -a "$LOG"', call)
+        self.assertIn("PIPESTATUS", self.body[i:i + 900])

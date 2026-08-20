@@ -1437,6 +1437,7 @@ tweaks() {
 	# in a list and buys "option 6" meaning exactly one thing in this script.
 	echo -e "\033[1;36m[7] Build an installable ISO of this system\033[0m"
 	echo -e "\033[0;90m    (to clone this system to or from a USB, use [6] on the main menu)\033[0m"
+	echo -e "\033[1;36m[8] Change the disk encryption password\033[0m"
 	echo
 	read -p 'Your Choice: ' choice
 	if [[ $choice = 1 ]]; then
@@ -1466,9 +1467,135 @@ tweaks() {
 	elif [[ $choice = 7 ]]; then
 		liveCD
 		tweaks
+	elif [[ $choice = 8 ]]; then
+		changeDiskPassword
+		tweaks
 	else
 		tweaks
 	fi
+}
+
+# ===============================================================================================
+# CHANGE THE DISK ENCRYPTION PASSWORD.
+#
+# `cryptsetup luksChangeKey`, on the slot the old password opens, and nothing else — no reformat, no
+# re-encrypt, no reboot. The data is encrypted with a master key that never changes; a LUKS password
+# only unlocks that key, so changing one is a header write of a few kilobytes and is instant even on
+# a full disk.
+#
+# THREE THINGS ARE VERIFIED BEFORE ANYTHING IS WRITTEN, because the failure here is not an error
+# message, it is a machine that will not boot:
+#
+#   1. THE DEVICE IS ACTUALLY LUKS. `partitionDetection` reads /etc/disk and picks the second
+#      partition; on a machine partitioned differently that is somebody's data. `isLuks` refuses
+#      rather than writing a header over it.
+#   2. THE OLD PASSWORD REALLY OPENS IT, tested with `luksOpen --test-passphrase` first. Handing a
+#      wrong one to luksChangeKey fails harmlessly, but asking first means the person is told which
+#      password was wrong instead of reading a cryptsetup exit code.
+#   3. THE NEW ONE IS TYPED TWICE and is not empty. There is no "forgot password" for this.
+#
+# AND THE KEYFILE IS THE PART THAT IS EASY TO FORGET. If this install unlocks itself at boot, there
+# is a SECOND key in another slot — /boot/keyfile.key, added by setLuksKeyfile — and it is untouched
+# by a password change, which is correct: the machine goes on booting hands-free and the typed
+# password changes. It is said out loud, because "I changed my disk password and it still boots
+# without asking" is otherwise a very reasonable thing to be alarmed by.
+# ===============================================================================================
+changeDiskPassword() {
+	clear
+	echo
+	echo -e "${COLOR_CYAN}═══════════════════════════════════════════════════════${COLOR_RESET}"
+	echo -e "${COLOR_BOLD}  ⚡ CHANGE THE DISK ENCRYPTION PASSWORD ⚡${COLOR_RESET}"
+	echo -e "${COLOR_CYAN}═══════════════════════════════════════════════════════${COLOR_RESET}"
+	echo
+
+	if [[ $EUID -ne 0 ]]; then
+		echo -e "${COLOR_YELLOW}This has to run as root — it writes the LUKS header.${COLOR_RESET}"
+		read -p "Press enter key to Continue"
+		return
+	fi
+	if ! command -v cryptsetup >/dev/null 2>&1; then
+		echo -e "${COLOR_YELLOW}cryptsetup is not installed on this system.${COLOR_RESET}"
+		read -p "Press enter key to Continue"
+		return
+	fi
+
+	partitionDetection
+
+	local DEV
+	DEV="$BTRFS"
+	read -p 'Encrypted device: ' -e -i "$DEV" DEV
+	if [[ -z "$DEV" || ! -b "$DEV" ]]; then
+		echo -e "${COLOR_YELLOW}$DEV is not a block device — nothing was changed.${COLOR_RESET}"
+		read -p "Press enter key to Continue"
+		return
+	fi
+	# THE ONE CHECK THAT STOPS THIS DESTROYING A DISK. Detection guesses at the layout; this asks.
+	if ! cryptsetup isLuks "$DEV" 2>/dev/null; then
+		echo -e "${COLOR_YELLOW}$DEV is not a LUKS volume. Nothing was changed.${COLOR_RESET}"
+		echo -e "${COLOR_YELLOW}(Detection guesses the layout from /etc/disk; this machine's may differ.)${COLOR_RESET}"
+		read -p "Press enter key to Continue"
+		return
+	fi
+
+	echo
+	cryptsetup luksDump "$DEV" 2>/dev/null | grep -iE '^Version|^[[:space:]]*[0-9]+: luks|Key Slot' | head -12
+	echo
+
+	# -s: never echoed, and never left in the environment or a file. `read -s` keeps it in a shell
+	# variable that dies with the function.
+	local OLD NEW1 NEW2
+	read -rsp 'Current disk password: ' OLD; echo
+	if [[ -z "$OLD" ]]; then
+		echo -e "${COLOR_YELLOW}Nothing entered — nothing was changed.${COLOR_RESET}"
+		read -p "Press enter key to Continue"
+		return
+	fi
+	# ASKED BEFORE IT MATTERS. --test-passphrase opens nothing and writes nothing; it just answers
+	# whether this password has a slot, so a typo is reported as a typo.
+	if ! printf '%s' "$OLD" | cryptsetup luksOpen --test-passphrase "$DEV" - >/dev/null 2>&1; then
+		echo -e "${COLOR_YELLOW}That password does not open $DEV. Nothing was changed.${COLOR_RESET}"
+		read -p "Press enter key to Continue"
+		return
+	fi
+
+	read -rsp 'New disk password: ' NEW1; echo
+	read -rsp 'New disk password again: ' NEW2; echo
+	if [[ -z "$NEW1" ]]; then
+		echo -e "${COLOR_YELLOW}An empty password is not a password — nothing was changed.${COLOR_RESET}"
+		read -p "Press enter key to Continue"
+		return
+	fi
+	if [[ "$NEW1" != "$NEW2" ]]; then
+		echo -e "${COLOR_YELLOW}The two did not match — nothing was changed.${COLOR_RESET}"
+		read -p "Press enter key to Continue"
+		return
+	fi
+
+	echo
+	echo -e "${COLOR_YELLOW}Writing the new key…${COLOR_RESET}"
+	# BOTH ON STDIN, old then new, which is what luksChangeKey reads when no key file is given. It
+	# replaces the slot the old password occupied rather than adding a second one, so the old
+	# password stops working the moment this returns.
+	if printf '%s\n%s' "$OLD" "$NEW1" | cryptsetup luksChangeKey "$DEV" 2>&1; then
+		echo
+		echo -e "${COLOR_GREEN}◆ DONE ◆${COLOR_RESET}"
+		echo -e "    The disk password for $DEV has been changed."
+		# The hands-free unlock, if this install has one. Untouched on purpose, and said out loud.
+		if [[ -f /boot/keyfile.key ]] || grep -q 'keyfile' /etc/crypttab 2>/dev/null; then
+			echo
+			echo -e "${COLOR_YELLOW}This machine also unlocks itself at boot with /boot/keyfile.key,${COLOR_RESET}"
+			echo -e "${COLOR_YELLOW}which is a separate key slot and is unchanged — so it will still${COLOR_RESET}"
+			echo -e "${COLOR_YELLOW}boot without asking. Use [2] above to turn that off.${COLOR_RESET}"
+		fi
+		echo
+		echo -e "${COLOR_YELLOW}Test it before you reboot: open another terminal and run${COLOR_RESET}"
+		echo -e "    cryptsetup luksOpen --test-passphrase $DEV"
+	else
+		echo
+		echo -e "${COLOR_YELLOW}cryptsetup refused the change. The old password still works.${COLOR_RESET}"
+	fi
+	echo
+	read -p "Press enter key to Continue"
 }
 
 # ===============================================================================================
@@ -1983,9 +2110,32 @@ DESKTOP
 	# --no-hostonly is the load-bearing flag. The installed initramfs is built for THIS machine and
 	# carries only its drivers, plus the LUKS unlock for its disk; booted on somebody else's laptop
 	# it finds no root and drops to an emergency shell. This one carries every driver dracut has.
-	if ! dracut --force --no-hostonly --nolvmconf --nomdadmconf \
+	#
+	# AND IT MUST NOT READ THIS MACHINE'S DRACUT CONFIG, which is two problems wearing one hat.
+	#
+	# "live cd error: dracut failed the iso would not boot / module systemd-cryptsetup depends on
+	# module crypt". An encrypted install writes `add_dracutmodules+=" crypt systemd-cryptsetup dm
+	# rootfs-block "` into /etc/dracut.conf (see hibernation/bootloader above), and dracut reads that
+	# file whatever the command line says. So the config ADDED systemd-cryptsetup while this line
+	# OMITTED crypt, and dracut refused the contradiction — correctly. Omitting crypt is right: a
+	# live image boots from a squashfs on an ISO, not from a LUKS disk.
+	#
+	# The second problem is the one nobody would have noticed. That same file carries
+	# `install_items+=" /boot/unlock.sh /boot/keyfile.key "` — the key that unlocks THIS machine's
+	# disk without a password. Inherited here, every ISO built on an encrypted install would have
+	# shipped that key inside its initramfs, on a disc meant to be handed to somebody, defeating the
+	# entire "clean out this machine's accounts and secrets" pass a few dozen lines above.
+	#
+	# `--conf /dev/null --confdir` with an empty directory is dracut's own way to say "this build
+	# starts from nothing". Not `--omit systemd-cryptsetup` — that would silence the error and leave
+	# the keyfile.
+	mkdir -p "$WORK/dracut.conf.d"
+	dracut --force --no-hostonly --nolvmconf --nomdadmconf \
+		--conf /dev/null --confdir "$WORK/dracut.conf.d" \
 		--add "dmsquash-live" --omit "crypt crypt-gpg crypt-loop" \
-		--kver "$KVER" "$WORK/iso/boot/initramfs.img"; then
+		--kver "$KVER" "$WORK/iso/boot/initramfs.img" 2>&1 | tee -a "$LOG"
+	# PIPESTATUS, not the pipeline's — `tee` succeeds whatever dracut did.
+	if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
 		echo
 		_lcd_fail "dracut failed (kernel $KVER) — the ISO would not boot, so nothing was written."
 		return
