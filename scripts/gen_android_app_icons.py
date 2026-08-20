@@ -37,6 +37,10 @@ from gen_android_icons import symbols, paths  # noqa: E402  the one transcriber,
 APPS = {
     "messages": ("chat", "#0E2A33"),
     "phone": ("call", "#0E2A33"),
+    # EMAIL. "no Email app phone launcher either" — and unlike the other two there is no native
+    # activity to alias, so it is a `.shortcut.Email` alias over the view trampoline. Same plate,
+    # its own glyph, for the same reason: a drawer must show three different things.
+    "email": ("mail", "#0E2A33"),
 }
 GLYPH = "#3CE8FF"
 DENSITIES = {"mdpi": 48, "hdpi": 72, "xhdpi": 96, "xxhdpi": 144, "xxxhdpi": 192}

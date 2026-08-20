@@ -159,10 +159,13 @@
   <symbol id="i-quotes" viewBox="0 0 24 24"><path d="M9.6 5.8H5.2a1.2 1.2 0 00-1.2 1.2v4.4a1.2 1.2 0 001.2 1.2h4.4V7a1.2 1.2 0 00-1.2-1.2z"/><path d="M9.6 12.6c0 3-1.6 4.8-4.4 5.6"/><path d="M19.6 5.8h-4.4A1.2 1.2 0 0014 7v4.4a1.2 1.2 0 001.2 1.2h4.4V7a1.2 1.2 0 00-1.2-1.2z"/><path d="M19.6 12.6c0 3-1.6 4.8-4.4 5.6"/></symbol>
   <symbol id="i-close" viewBox="0 0 24 24"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></symbol>
   <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 3.6l9 15.6H3z"/><path d="M12 9.4v4.4"/><path d="M12 16.6v.1" stroke-width="2.4"/></symbol>
-  <!-- ── The machine's own tray: wifi, sound, light, power. ────────────────────────────────────
-       EVERY ARC FLAG IS SPACE-SEPARATED. `a9 9 0 01-2.6 0` packs the two flags and the x into `01-2.6`,
-       which a browser reads correctly and Android's PathParser reads as ONE number — the whole drawable
-       then fails to inflate, silently. See tests/test_android_icon_sprite.py. -->
+  <!-- The machine's own tray: wifi, sound, light, power.
+       EVERY ARC FLAG IS SPACE-SEPARATED. Writing an arc as a9 9 0 01-2.6 0 packs the two flags and
+       the x into "01-2.6" — a browser reads that correctly and Android's PathParser reads it as ONE
+       number, and the whole drawable then fails to inflate, silently. Keep every command spaced.
+       See tests/test_android_icon_sprite.py.
+       (No backticks anywhere in this file: the sprite is one JS template literal, so a backtick in
+       a comment ends it and EVERY icon in the client disappears with nothing in any log. It did.) -->
   <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M2.6 9.1a14 14 0 0 1 18.8 0"/><path d="M5.9 12.6a9.2 9.2 0 0 1 12.2 0"/><path d="M9.1 16.1a4.5 4.5 0 0 1 5.8 0"/><circle cx="12" cy="19.3" r="1" fill="currentColor" stroke="none"/></symbol>
   <symbol id="i-wifi-low" viewBox="0 0 24 24"><path d="M2.6 9.1a14 14 0 0 1 18.8 0" opacity=".25"/><path d="M5.9 12.6a9.2 9.2 0 0 1 12.2 0" opacity=".25"/><path d="M9.1 16.1a4.5 4.5 0 0 1 5.8 0"/><circle cx="12" cy="19.3" r="1" fill="currentColor" stroke="none"/></symbol>
   <symbol id="i-wifi-mid" viewBox="0 0 24 24"><path d="M2.6 9.1a14 14 0 0 1 18.8 0" opacity=".25"/><path d="M5.9 12.6a9.2 9.2 0 0 1 12.2 0"/><path d="M9.1 16.1a4.5 4.5 0 0 1 5.8 0"/><circle cx="12" cy="19.3" r="1" fill="currentColor" stroke="none"/></symbol>
@@ -171,8 +174,8 @@
   <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.6v2.4M12 19v2.4M2.6 12h2.4M19 12h2.4M5.4 5.4l1.7 1.7M16.9 16.9l1.7 1.7M18.6 5.4l-1.7 1.7M7.1 16.9l-1.7 1.7"/></symbol>
   <symbol id="i-volume-mute" viewBox="0 0 24 24"><path d="M5 9.4h3.2L12.6 6v12l-4.4-3.4H5z"/><path d="M16.2 9.8l4.4 4.4M20.6 9.8l-4.4 4.4"/></symbol>
   <!-- A FLAT BATTERY, not an emoji. The shell only — the CHARGE is a rectangle the tray sizes from
-       the reading, because a `<use>` cannot be given a percentage and a fixed glyph would have to
-       lie about the level. `i-battery-bolt` is the charging mark, drawn over it. -->
+       the reading, because a use element cannot be given a percentage and a fixed glyph would have
+       to lie about the level. i-battery-bolt is the charging mark, drawn over it. -->
   <symbol id="i-battery" viewBox="0 0 24 24"><rect x="2.4" y="7.6" width="17" height="8.8" rx="2.2"/><path d="M21.6 10.6v2.8" stroke-width="2.6" stroke-linecap="round"/></symbol>
   <symbol id="i-battery-bolt" viewBox="0 0 24 24"><path d="M12.8 8.2l-3.2 4h2.6l-1 3.6 3.4-4.2h-2.6z" fill="currentColor" stroke="none"/></symbol>
   <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3.4v8.2"/><path d="M7.3 6.6a7.6 7.6 0 1 0 9.4 0"/></symbol>

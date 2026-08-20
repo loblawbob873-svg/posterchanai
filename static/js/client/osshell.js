@@ -257,9 +257,10 @@
    * whose NetworkManager is dead is a lie that costs somebody an hour. */
   function panelSummary(state){
     const s = state || {};
-    const net = !s.net ? { text: 'network unknown', known: false }
-              : !s.net.online ? { text: 'offline', known: true }
-              : { text: s.net.name || s.net.kind || 'online', known: true,
+    const net = !s.net ? { text: 'network unknown', known: false, online: false, kind: '' }
+              : !s.net.online ? { text: 'offline', known: true, online: false, kind: s.net.kind || '' }
+              : { text: s.net.name || s.net.kind || 'online', known: true, online: true,
+                  kind: s.net.kind || '',
                   signal: s.net.kind === 'wifi' ? s.net.signal : null };
     const bat = !s.power || !s.power.battery ? { known: false }
               : !s.power.battery.present ? { known: true, present: false }
@@ -277,7 +278,12 @@
               : { present: true, on: !!s.tor.enabled,
                   bootstrapped: Number(s.tor.bootstrapped || 0),
                   country: s.tor.country || '', countryName: s.tor.countryName || '' };
+    /* The ACTIVE power profile, for the Power tile's second line. `profileMenu` is the one place
+     * that knows a bridge may answer with an object or an array, so it is asked here too rather
+     * than re-derived — that difference already cost a laptop its power modes once. */
+    const prof = profileMenu(s.power || null);
     return { net, battery: bat, volume: vol, brightness: bright, tor,
+             profile: prof.active, profiles: prof.list,
              canHibernate: !!(s.power && s.power.canHibernate) };
   }
 
@@ -317,37 +323,149 @@
   const H = (s) => String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+  const ICO = (n, cls) => `<svg class="ic${cls ? ' ' + cls : ''}" aria-hidden="true"><use href="#i-${n}"></use></svg>`;
+
+  /* WHICH WIFI GLYPH. Signal is drawn in three steps, the way every phone and every Windows tray
+   * draws it, because a single bar-less "connected" icon cannot tell somebody their wifi is the
+   * reason a page will not load. An UNKNOWN reading is not full strength — it takes the plain
+   * glyph, which is what "on, and I did not measure how well" looks like. */
+  function wifiIcon(net){
+    const n = net || {};
+    if(!n.known) return 'wifi-off';
+    if(!n.online) return 'wifi-off';
+    if(n.kind && n.kind !== 'wifi') return 'ethernet';
+    if(n.signal == null) return 'wifi';
+    if(n.signal < 34) return 'wifi-low';
+    if(n.signal < 67) return 'wifi-mid';
+    return 'wifi';
+  }
+
+  /* WHICH SPEAKER GLYPH — and mute is a DIFFERENT icon, not a dimmed one. A muted machine that
+   * looks like a quiet one is how somebody spends a minute turning a slider up on silence. */
+  const volIcon = (v) => (!v || !v.known) ? 'volume-mute'
+                       : (v.muted || v.percent === 0) ? 'volume-mute' : 'volume';
+
+  /* THE BATTERY IS DRAWN, NOT PICKED — flat, with the charge as a rectangle sized from the reading.
+   *
+   * Asked for as "battery/charging should be a flat icon": it was the number plus a ⚡ EMOJI, which
+   * takes the emoji font's own colour and shape and sits at a different weight to every other glyph
+   * in the tray. A sprite symbol cannot carry the level (a `<use>` takes no parameters), and a set
+   * of ten symbols would be ten chances for the level and the picture to disagree, so the shell is
+   * the sprite's and the fill is computed here. Inline, because that is the only way one SVG can
+   * hold both. */
+  function batterySvg(pct, charging){
+    const p = Math.max(0, Math.min(100, Number(pct) || 0));
+    const w = (15 * p) / 100;
+    /* Below about a pixel the fill is invisible anyway, and a 0.2-wide rounded rect renders as a
+     * smudge — an empty battery is drawn empty. */
+    const fill = w >= 1 ? `<rect class="os-bat-fill" x="4.2" y="9.4" width="${w.toFixed(1)}"
+        height="5.2" rx="1" fill="currentColor" stroke="none"/>` : '';
+    const bolt = charging ? `<path d="M12.8 8.2l-3.2 4h2.6l-1 3.6 3.4-4.2h-2.6z"
+        fill="currentColor" stroke="none" class="os-bat-bolt"/>` : '';
+    return `<svg class="ic os-bat${p <= 15 && !charging ? ' os-bat-low' : ''}" viewBox="0 0 24 24"
+        aria-hidden="true"><rect x="2.4" y="7.6" width="17" height="8.8" rx="2.2"/>
+      <path d="M21.6 10.6v2.8" stroke-width="2.6" stroke-linecap="round"/>${fill}${bolt}</svg>`;
+  }
+
+  /* ONE BUTTON IN THE BOTTOM-RIGHT CORNER, AND THAT IS THE WHOLE POINT.
+   *
+   * This was a strip of text chips: `95% Tribble` `72%` `33%` `🧅 off` `100% ⚡` `⏻`. Six controls,
+   * five of them a bare percentage with no picture of what the percentage was OF, and the only way
+   * to tell the volume from the brightness was that one of them was bigger. Reported as "volume and
+   * brightness have no icons", "battery/charging should be a flat icon", "network icon with no way
+   * to configure networking", and then, plainly: "we need the desktop experience to mirror win11
+   * basically — including all the control in the bottom-right".
+   *
+   * Windows groups exactly these three — network, sound, battery — into ONE button that opens Quick
+   * Settings, and everything else is inside it. That is what this is. The individual popovers are
+   * all still here and still reachable; they are reached from the flyout now instead of from six
+   * buttons competing for the corner of a taskbar.
+   *
+   * A reading that could not be TAKEN still shows: the wifi glyph goes to `wifi-off` and the button
+   * says so in its title. An icon quietly omitted is indistinguishable from hardware that is fine. */
   function panelHTML(sum){
     const s = sum || {};
     const bits = [];
-    /* Every one says UNKNOWN out loud rather than showing a plausible default. A dash is not a
-     * reading; it is the panel admitting it could not take one. */
-    bits.push(s.net.known
-      ? `<button class="os-chip" data-os="net" title="Network">${s.net.signal != null
-          ? H(s.net.signal) + '%' : ''} ${H(s.net.text)}</button>`
-      : `<button class="os-chip os-unknown" data-os="net" title="The network could not be read">network ?</button>`);
-    if(s.volume.known)
-      bits.push(`<button class="os-chip" data-os="vol" title="Volume">${s.volume.muted
-        ? 'muted' : H(s.volume.percent) + '%'}</button>`);
-    if(s.brightness.known)
-      bits.push(`<button class="os-chip" data-os="bright" title="Brightness">${H(s.brightness.percent)}%</button>`);
+    const title = [];
+    bits.push(ICO(wifiIcon(s.net), 'os-tr-net'));
+    title.push(s.net && s.net.known ? String(s.net.text || '') : 'network unknown');
+    if(s.volume && s.volume.known){
+      bits.push(ICO(volIcon(s.volume), 'os-tr-vol'));
+      title.push(s.volume.muted ? 'muted' : s.volume.percent + '% volume');
+    }
+    if(s.battery && s.battery.known && s.battery.present){
+      bits.push(batterySvg(s.battery.percent, s.battery.charging));
+      title.push(s.battery.percent + '%' + (s.battery.charging ? ' charging' : ''));
+    }
+    /* Tor gets its own place in the group ONLY when it is on, the way Windows shows a VPN. Off, it
+     * is a tile inside the flyout — a corner of a taskbar is not where a switch that is not
+     * switched belongs. */
+    if(s.tor && s.tor.present && s.tor.on){
+      bits.push(ICO('shield', 'os-tr-tor'));
+      title.push(s.tor.bootstrapped >= 100 ? 'Tor on' : 'Tor ' + s.tor.bootstrapped + '%');
+    }
+    return `<div class="os-panel"><button class="os-tray-group" data-os="quick"
+        title="${H(title.join(' · '))}" aria-label="${H('Quick settings — ' + title.join(', '))}"
+        aria-haspopup="dialog">${bits.join('')}</button></div>`;
+  }
+
+  /* ── QUICK SETTINGS ────────────────────────────────────────────────────────────────────────────
+   *
+   * The flyout the group opens: the four things people change without opening anything (wifi, Tor,
+   * a screenshot, power), then the two sliders, then the battery. Laid out like Windows 11's
+   * because that is what was asked for, and because a tile grid over sliders is genuinely the right
+   * shape — a tile is a state you toggle, a slider is a value you drag, and mixing them into one
+   * list makes both worse.
+   *
+   * The tiles carry `data-os`, so `bindPanel` wires them exactly as it wired the old chips: the
+   * network list, the Tor switch and the power menu are the SAME popovers, not second copies. */
+  function quickHTML(sum, opts){
+    const s = sum || {};
+    const o = opts || {};
+    const tiles = [];
+    tiles.push(`<button class="os-qs-tile${s.net && s.net.online ? ' on' : ''}" data-os="net">
+        ${ICO(wifiIcon(s.net))}<b>Wi-Fi</b><span>${H(s.net && s.net.known
+          ? (s.net.text || '') : 'could not be read')}</span></button>`);
     if(s.tor && s.tor.present)
-      /* The BOOTSTRAP PERCENTAGE while it is coming up, because "on" and "on and actually usable"
-       * are minutes apart on a slow circuit and the difference is every page failing to load. */
-      bits.push(`<button class="os-chip${s.tor.on ? ' on' : ' os-off'}" data-os="tor"
-          title="${s.tor.on ? 'Tor is on' : 'Tor is off'}">🧅${s.tor.on
-            ? (s.tor.bootstrapped >= 100 ? '' : ' ' + H(s.tor.bootstrapped) + '%') : ' off'}</button>`);
-    /* THE BATTERY IS A BUTTON, and it opens the POWER popover — the one that carries the profiles.
-     * It was a `<span>`: a reading, with the thing you actually want to change from it (balanced /
-     * power-saver / performance) hidden behind a separate ⏻ two chips along. Asked for as "clicking
-     * on battery should let me change power mode", which is where everybody looks for it, because a
-     * battery percentage and how fast it is being spent are one subject. */
-    if(s.battery.known && s.battery.present)
-      bits.push(`<button class="os-chip" data-os="power" title="Battery and power mode">`
-        + `${H(s.battery.percent)}%${s.battery.charging ? ' ⚡' : ''}</button>`);
-    /* Kept beside it, and it is the ONLY one on a desktop with no battery — which is most of them. */
-    bits.push(`<button class="os-chip" data-os="power" title="Power">⏻</button>`);
-    return `<div class="os-panel">${bits.join('')}</div>`;
+      tiles.push(`<button class="os-qs-tile${s.tor.on ? ' on' : ''}" data-os="tor">
+          ${ICO('shield')}<b>Tor</b><span>${s.tor.on
+            ? (s.tor.bootstrapped >= 100 ? 'On' : H(s.tor.bootstrapped) + '%') : 'Off'}</span></button>`);
+    /* OFFERED ONLY WHERE IT CAN WORK. `grim` is a package, not a guarantee, and a Screenshot tile on
+     * a machine without it is a button whose only outcome is an apology. */
+    if(o.shot && o.shot.ok)
+      tiles.push(`<button class="os-qs-tile" data-os="shot">
+          ${ICO('screenshot')}<b>Screenshot</b><span>${o.shot.region ? 'Screen or area' : 'Whole screen'}</span></button>`);
+    tiles.push(`<button class="os-qs-tile" data-os="power">
+        ${ICO('power')}<b>Power</b><span>${H(s.profile || 'Sleep, restart…')}</span></button>`);
+
+    const rows = [];
+    if(s.volume && s.volume.known)
+      rows.push(`<div class="os-qs-row">
+        <button class="os-qs-ic" data-os="mute" title="${s.volume.muted ? 'Unmute' : 'Mute'}"
+          aria-label="${s.volume.muted ? 'Unmute' : 'Mute'}">${ICO(volIcon(s.volume))}</button>
+        <input class="os-qs-range" data-qs="vol" type="range" min="0" max="100"
+               value="${H(s.volume.percent)}" aria-label="Volume">
+        <span class="os-qs-val" data-val="vol">${H(s.volume.percent)}%</span>
+        <button class="os-qs-more" data-os="outputs" title="Change output device"
+          aria-label="Change output device">${ICO('chevron-right')}</button></div>`);
+    if(s.brightness && s.brightness.known)
+      rows.push(`<div class="os-qs-row">
+        <span class="os-qs-ic os-qs-static">${ICO('sun')}</span>
+        <input class="os-qs-range" data-qs="bright" type="range" min="1" max="100"
+               value="${H(s.brightness.percent)}" aria-label="Brightness">
+        <span class="os-qs-val" data-val="bright">${H(s.brightness.percent)}%</span></div>`);
+
+    const foot = [];
+    if(s.battery && s.battery.known && s.battery.present)
+      foot.push(`<span class="os-qs-bat">${batterySvg(s.battery.percent, s.battery.charging)}`
+        + `${H(s.battery.percent)}%${s.battery.charging ? ' charging' : ''}</span>`);
+    if(s.volume && s.volume.known)
+      foot.push(`<button class="os-qs-link" data-os="mixer">${ICO('sliders')}Volume mixer</button>`);
+
+    return `<div class="os-qs">
+      <div class="os-qs-tiles">${tiles.join('')}</div>
+      ${rows.join('')}
+      ${foot.length ? `<div class="os-qs-foot">${foot.join('')}</div>` : ''}</div>`;
   }
 
   /* ── THE PANEL'S CHIPS ACTUALLY DO SOMETHING ───────────────────────────────────────────────
@@ -368,10 +486,11 @@
     if(_popOff){ document.removeEventListener('pointerdown', _popOff, true); _popOff = null; }
   }
   let _popOff = null;
-  function openPop(anchor, html){
+  function openPop(anchor, html, opts){
     closePop();
+    const o = opts || {};
     const d = document.createElement('div');
-    d.className = 'os-pop';
+    d.className = 'os-pop' + (o.cls ? ' ' + o.cls : '');
     d.innerHTML = html;
     document.body.appendChild(d);
     /* Anchored to the chip and kept ON SCREEN: the tray is at the right-hand end of the taskbar, so
@@ -379,8 +498,28 @@
     try{
       const r = anchor.getBoundingClientRect();
       const w = d.offsetWidth || 280, h = d.offsetHeight || 200;
-      const x = Math.max(8, Math.min(window.innerWidth - w - 8, r.left + r.width / 2 - w / 2));
-      const y = Math.max(8, r.top - h - 10);
+      /* TWO DIFFERENT PIXELS, AND MIXING THEM PUT THIS PANEL IN THE MIDDLE OF THE SCREEN.
+       *
+       * The client scales the whole page with `body{zoom}` by viewport width (.67–.77 on a desktop
+       * tier). Under zoom, `getBoundingClientRect()` answers in VISUAL pixels — what is on the
+       * glass — while `offsetWidth` and anything written to `style.left` are LAYOUT pixels. So a
+       * rect at x=1708 and a width of 340 are not measured in the same unit, and subtracting one
+       * from the other is arithmetic on two scales: the flyout was placed at 1440 layout px, which
+       * painted at 1440 × 0.77 = 1109 — a corner panel floating in open desktop, measured on the
+       * machine.
+       *
+       * The factor is taken from the anchor itself rather than read out of a stylesheet or a
+       * variable, because it is exactly the ratio between the two things being mixed, whatever set
+       * it. Everything below is then in layout px, which is what `style.left` will be read as. */
+      const zf = (anchor.offsetWidth > 0 && r.width > 0) ? (r.width / anchor.offsetWidth) : 1;
+      const L = r.left / zf, T = r.top / zf, W = r.width / zf;
+      const vw = window.innerWidth / zf, vh = window.innerHeight / zf;
+      /* `end` pins the flyout's RIGHT edge near the screen's, which is where Windows puts Quick
+       * Settings and where a corner panel has to sit — centred on its button, a 340px panel opened
+       * from a tray 60px from the edge is a panel that starts halfway across the taskbar. */
+      const want = o.align === 'end' ? (L + W) - w + 6 : L + W / 2 - w / 2;
+      const x = Math.max(8, Math.min(vw - w - 8, want));
+      const y = Math.max(8, Math.min(vh - h - 8, T - h - 10));
       d.style.left = Math.round(x) + 'px';
       d.style.top = Math.round(y) + 'px';
     }catch(_){}
@@ -567,6 +706,206 @@
     });
   }
 
+  /* ── THE FLYOUT ───────────────────────────────────────────────────────────────────────────────
+   *
+   * One popover holding the whole of Quick Settings, and every control in it does its work in
+   * place: the sliders apply as they move, mute redraws its own icon, and the sub-panels (output
+   * devices, the mixer, the screenshot modes) REPLACE the body with a back arrow rather than
+   * opening a second popover on top of the first. That is what Windows does and it is the only
+   * shape that survives a corner — two stacked flyouts in the bottom-right have nowhere to go.
+   */
+  let _shotCan = null;               // { ok, region, why } — asked once; it is a package either way
+
+  async function shotAvailable(){
+    if(_shotCan) return _shotCan;
+    const sh = root.pcShot;
+    if(!sh || typeof sh.available !== 'function') return (_shotCan = { ok: false, region: false, why: '' });
+    try{ _shotCan = await sh.available(); }
+    catch(_){ _shotCan = { ok: false, region: false, why: '' }; }
+    return _shotCan;
+  }
+
+  async function quickPop(anchor){
+    const can = await shotAvailable();
+    const d = openPop(anchor, quickHTML(_sum, { shot: can }), { align: 'end', cls: 'os-pop-quick' });
+    wireQuick(d);
+    return d;
+  }
+
+  /* Re-drawn IN PLACE after anything that changes a reading, so the panel never shows a stale
+   * number beside a control somebody just moved. The popover is not reopened — reopening drops it
+   * out from under the cursor and loses whichever sub-panel somebody is standing in. */
+  async function repaintQuick(){
+    const d = _pop;
+    if(!d || !d.className || String(d.className).indexOf('os-pop-quick') < 0) return;
+    await refresh();
+    if(_pop !== d) return;
+    d.innerHTML = quickHTML(_sum, { shot: _shotCan || { ok: false, region: false } });
+    wireQuick(d);
+  }
+
+  function wireQuick(d){
+    if(!d) return;
+    bindPanel(d);
+    /* THE SLIDERS APPLY AS THEY MOVE, and they are serialised: `wpctl` and a sysfs write each take
+     * milliseconds, and one drag fires a hundred input events. Without the queue those pile up and
+     * the level lands wherever the last one to FINISH left it, which is not where the thumb is. */
+    d.querySelectorAll('[data-qs]').forEach(r => {
+      const kind = r.dataset.qs;
+      const val = d.querySelector('[data-val="' + kind + '"]');
+      let busy = false, want = null;
+      const push = async () => {
+        if(busy) return;
+        busy = true;
+        while(want !== null){
+          const n = want; want = null;
+          try{
+            if(kind === 'vol'){ const a = AUDIO(); if(a) await a.setVolume(n, 'sink'); }
+            else { const p = POWER(); if(p) await p.setBrightness(n); }
+          }catch(e){
+            /* SAID OUT LOUD, ONCE PER DRAG. A brightness slider on a machine whose backlight is
+             * root-owned moves perfectly and changes nothing; a control that fails in silence is
+             * the recurring failure this whole screen exists to stop. */
+            if(!r.dataset.said){ r.dataset.said = '1'; toast(String((e && e.message) || e)); }
+          }
+        }
+        busy = false;
+      };
+      r.oninput = () => { if(val) val.textContent = r.value + '%'; want = Number(r.value); push(); };
+    });
+  }
+
+  /* THE OUTPUT DEVICE PICKER — "volume should switch audio devices". Replaces the flyout's body,
+   * with a way back, and marks the one sound is actually coming out of. */
+  async function outputsPanel(){
+    const a = AUDIO(); if(!a) return;
+    const d = _pop; if(!d) return;
+    d.innerHTML = `<div class="os-pop-h"><button class="os-pop-back" data-os="quickback"
+        aria-label="Back">${ICO('chevron-left')}</button>Output device</div>
+      <div class="os-pop-b">Looking…</div>`;
+    bindPanel(d);
+    let st = null;
+    try{ st = await a.status(); }catch(_){ st = null; }
+    if(_pop !== d) return;
+    const body = d.querySelector('.os-pop-b');
+    if(!body) return;
+    if(!st){
+      /* "Could not ask" is not "this machine has no speakers", the same distinction the wifi list
+       * makes. One is a broken sound server; the other is a server with nothing plugged in. */
+      body.innerHTML = `<div class="os-pop-none">The sound devices could not be read on this machine.</div>`;
+      return;
+    }
+    const sinks = st.sinks || [];
+    body.innerHTML = sinks.length
+      ? sinks.map(x => `<button class="os-pop-row${x.isDefault ? ' on' : ''}" data-sink="${H(x.id)}">
+           <span class="os-pop-nm">${H(x.name)}</span>
+           ${x.isDefault ? '<span class="os-pop-sig">in use</span>' : ''}</button>`).join('')
+      : `<div class="os-pop-none">This machine has no sound output.</div>`;
+    body.querySelectorAll('[data-sink]').forEach(b => b.onclick = async () => {
+      try{ await a.setDefault(Number(b.dataset.sink)); }
+      catch(e){ toast(String((e && e.message) || e)); return; }
+      await refresh();
+      if(_pop === d) outputsPanel();
+    });
+  }
+
+  /* THE APP MIXER — one row per playing application, which is the "proper app-level mixer".
+   *
+   * NOTHING PLAYING IS A REAL ANSWER and it is written as one. An empty mixer drawn as a blank
+   * panel is indistinguishable from a mixer that could not read the machine, which is the same
+   * mistake as an empty wifi list. */
+  async function mixerPanel(){
+    const a = AUDIO(); if(!a || typeof a.mixer !== 'function') return;
+    const d = _pop; if(!d) return;
+    d.innerHTML = `<div class="os-pop-h"><button class="os-pop-back" data-os="quickback"
+        aria-label="Back">${ICO('chevron-left')}</button>Volume mixer</div>
+      <div class="os-pop-b">Looking…</div>`;
+    bindPanel(d);
+    let rows = null;
+    try{ rows = await a.mixer(); }catch(_){ rows = null; }
+    if(_pop !== d) return;
+    const body = d.querySelector('.os-pop-b');
+    if(!body) return;
+    if(rows === null){
+      body.innerHTML = `<div class="os-pop-none">The mixer could not be read on this machine.</div>`;
+      return;
+    }
+    if(!rows.length){
+      body.innerHTML = `<div class="os-pop-none">Nothing is playing.</div>`;
+      return;
+    }
+    body.innerHTML = rows.map(r => `<div class="os-qs-row os-mix-row">
+        <button class="os-qs-ic" data-mix="${H(r.id)}" title="${r.muted ? 'Unmute' : 'Mute'}"
+          aria-label="${r.muted ? 'Unmute' : 'Mute'} ${H(r.name)}"
+          >${ICO(r.muted ? 'volume-mute' : 'volume')}</button>
+        <div class="os-mix-body"><span class="os-mix-nm">${H(r.name)}</span>
+          <input class="os-qs-range" data-mixvol="${H(r.id)}" type="range" min="0" max="100"
+                 value="${H(r.percent == null ? 100 : r.percent)}" aria-label="${H(r.name)} volume"></div>
+        <span class="os-qs-val" data-val="mix${H(r.id)}">${H(r.percent == null ? '—' : r.percent + '%')}</span>
+      </div>`).join('');
+    body.querySelectorAll('[data-mixvol]').forEach(sl => {
+      const id = sl.dataset.mixvol;
+      const val = body.querySelector('[data-val="mix' + id + '"]');
+      let busy = false, want = null;
+      const push = async () => {
+        if(busy) return;
+        busy = true;
+        while(want !== null){
+          const n = want; want = null;
+          try{ await a.setStreamVolume(Number(id), n); }
+          catch(e){ if(!sl.dataset.said){ sl.dataset.said = '1'; toast(String((e && e.message) || e)); } }
+        }
+        busy = false;
+      };
+      sl.oninput = () => { if(val) val.textContent = sl.value + '%'; want = Number(sl.value); push(); };
+    });
+    body.querySelectorAll('[data-mix]').forEach(b => b.onclick = async () => {
+      const row = rows.filter(x => String(x.id) === b.dataset.mix)[0];
+      try{ await a.setStreamMuted(Number(b.dataset.mix), !(row && row.muted)); }
+      catch(e){ toast(String((e && e.message) || e)); return; }
+      if(_pop === d) mixerPanel();
+    });
+  }
+
+  /* A SCREENSHOT, AND THEN A SENTENCE SAYING WHERE IT WENT. A screenshot whose only feedback is a
+   * shutter nobody can hear is a key people press three times and then go looking in four folders
+   * for — and if the tool is missing they never find out at all.
+   *
+   * The flyout closes FIRST and the capture waits a frame, or the picture is of the flyout. */
+  async function takeShot(mode){
+    const sh = root.pcShot;
+    if(!sh || typeof sh.take !== 'function'){ toast('screenshots are not available here'); return null; }
+    closePop();
+    await new Promise(r => setTimeout(r, 180));
+    let res = null;
+    try{ res = await sh.take({ mode: mode || 'screen' }); }
+    catch(e){ toast(String((e && e.message) || e)); return null; }
+    /* CANCELLED IS NOT FAILED. `slurp` exits nonzero when somebody presses Escape, and a toast
+     * apologising every time a person changes their mind is noise. */
+    if(!res || res.cancelled) return res || null;
+    if(!res.ok){ toast(res.why || 'the screenshot did not save'); return res; }
+    const m = /Screenshots\/[^/]+$/.exec(String(res.path || ''));
+    toast('Screenshot saved · ' + (m ? m[0] : res.path) + (res.copied ? ' · copied' : ''));
+    return res;
+  }
+
+  /* The screenshot tile OFFERS THE MODES rather than assuming one. Windows' own keys do the same
+   * (PrtSc takes the screen, Win+Shift+S picks an area) and which one somebody wants cannot be
+   * guessed from a press. */
+  function shotPanel(){
+    const d = _pop; if(!d) return;
+    const can = _shotCan || { ok: true, region: false };
+    d.innerHTML = `<div class="os-pop-h"><button class="os-pop-back" data-os="quickback"
+        aria-label="Back">${ICO('chevron-left')}</button>Screenshot</div>
+      <div class="os-pop-b os-pop-acts">
+        <button class="os-pop-row" data-shot="screen">Whole screen</button>
+        ${can.region ? `<button class="os-pop-row" data-shot="region">Choose an area…</button>` : ''}
+      </div>${can.region ? ''
+        : `<div class="os-pop-none">Choosing an area needs slurp (gui-apps/slurp), which is not installed.</div>`}`;
+    bindPanel(d);
+    d.querySelectorAll('[data-shot]').forEach(b => b.onclick = () => takeShot(b.dataset.shot));
+  }
+
   /** Wires whichever chips are present in `into`. Safe to call on markup that has none. */
   function bindPanel(into){
     if(!into) return;
@@ -576,9 +915,27 @@
       /* A second press on the SAME chip closes it. Without this the popover is dismissed by the
        * outside-press handler and reopened by the click, so the button appears not to work. */
       if(_pop && _pop.dataset.kind === kind){ closePop(); return; }
+      /* THE FLYOUT'S OWN BUTTONS DO NOT OPEN A SECOND POPOVER — they replace what is in this one,
+       * and are therefore handled BEFORE the closePop below. Two stacked popovers in the
+       * bottom-right corner have nowhere to go, which is why Windows makes Quick Settings navigate
+       * within itself, and why a sub-panel that closed its own host would simply vanish. */
+      if(kind === 'quickback'){
+        if(_pop){ _pop.innerHTML = quickHTML(_sum, { shot: _shotCan || { ok: false } }); wireQuick(_pop); }
+        return;
+      }
+      if(kind === 'outputs'){ outputsPanel(); return; }
+      if(kind === 'mixer'){ mixerPanel(); return; }
+      if(kind === 'shot'){ shotPanel(); return; }
+      if(kind === 'mute'){
+        const a = AUDIO();
+        const muted = !!(_sum && _sum.volume && _sum.volume.muted);
+        if(a) a.setMuted(!muted, 'sink').then(repaintQuick, (err) => toast(String((err && err.message) || err)));
+        return;
+      }
       closePop();
       const done = (d) => { if(d) d.dataset.kind = kind; };
-      if(kind === 'net') netPop(b).then(() => done(_pop));
+      if(kind === 'quick') quickPop(b).then(() => done(_pop));
+      else if(kind === 'net') netPop(b).then(() => done(_pop));
       else if(kind === 'vol') volPop(b).then(() => done(_pop));
       else if(kind === 'bright') brightPop(b).then(() => done(_pop));
       else if(kind === 'tor') torPop(b).then(() => done(_pop));
@@ -667,8 +1024,9 @@
   }
 
   const API = { available, detect, APPS, taskbarRows, existingWindow, launch, panelState, panelSummary,
-                profileMenu, machineApps, mergedApps, allApps,
-                ensureAccount, panelHTML, taskbarHTML, launcherHTML, render, watch,
+                profileMenu, machineApps, mergedApps, allApps, wifiIcon, volIcon, batterySvg,
+                ensureAccount, panelHTML, quickHTML, taskbarHTML, launcherHTML, render, watch,
+                takeShot, shotAvailable, closePop,
                 setViewOpener, refresh, paintTray, bindApps, bindPanel,
                 summary: () => _sum, rows: () => _rows, readAt: () => _readAt };
   root.PCOSShell = API;

@@ -8174,6 +8174,86 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
   font-size:12px; padding:5px 10px; border-radius:7px; cursor:pointer;
 }
 .os-pop-btn:hover, .os-pop-btn.on{ border-color:var(--neon,#3ce8ff); background:rgba(60,232,255,.12); }
+/* ── The Windows 11 tray group, bottom-right ────────────────────────────────────────────────────
+ *
+ * Network, sound and battery are ONE button. It was six text chips reading `95% Tribble` `72%`
+ * `33%` `off` `100% ⚡` `⏻` — five bare percentages with no picture of what they measured. Windows
+ * groups exactly these three and puts everything else inside the flyout, which is what was asked
+ * for: "we need the desktop experience to mirror win11 basically — including all the control in the
+ * bottom-right". */
+.os-tray-group{
+  display:flex; align-items:center; gap:7px; height:34px; padding:0 9px;
+  background:transparent; border:1px solid transparent; border-radius:8px;
+  color:var(--text); cursor:pointer;
+}
+.os-tray-group:hover, .os-tray-group.on{ background:var(--panel2); border-color:var(--line); }
+.os-tray-group .ic{ width:17px; height:17px; flex:0 0 auto; }
+/* The battery is drawn at the tray's own colour; the CHARGE inside it takes the accent, so a glance
+   separates the shell from the level without reading a number. */
+.os-bat-fill{ color:var(--neon,#3ce8ff); }
+.os-bat.os-bat-low{ color:#ff8a6b; }
+.os-bat-bolt{ color:var(--neon,#3ce8ff); }
+
+/* ── Quick Settings ─────────────────────────────────────────────────────────────────────────────
+   A tile grid over sliders, the way Windows lays it out — a tile is a state you toggle and a slider
+   is a value you drag, and mixing them into one list makes both harder to hit. */
+.os-pop-quick{ width:340px; max-width:calc(100vw - 16px); }
+.os-qs{ padding:10px; display:flex; flex-direction:column; gap:10px; }
+.os-qs-tiles{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.os-qs-tile{
+  display:flex; flex-direction:column; align-items:flex-start; gap:2px;
+  padding:10px 11px; min-height:64px; border-radius:9px; cursor:pointer;
+  border:1px solid var(--line); background:var(--panel2); color:var(--text); text-align:start;
+}
+.os-qs-tile:hover{ border-color:var(--neon,#3ce8ff); }
+.os-qs-tile.on{ background:rgba(60,232,255,.16); border-color:var(--neon,#3ce8ff); }
+.os-qs-tile .ic{ width:19px; height:19px; margin-bottom:3px; color:var(--neon,#3ce8ff); }
+.os-qs-tile b{ font-size:12.5px; font-weight:600; }
+.os-qs-tile span{
+  font-size:11px; color:var(--muted,#7a8699);
+  max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.os-qs-row{ display:flex; align-items:center; gap:9px; }
+.os-qs-ic{
+  display:flex; align-items:center; justify-content:center; width:30px; height:30px; flex:none;
+  border:0; border-radius:8px; background:transparent; color:var(--text); cursor:pointer;
+}
+.os-qs-ic:hover{ background:var(--panel2); }
+.os-qs-ic.os-qs-static{ cursor:default; }
+.os-qs-ic .ic{ width:17px; height:17px; }
+.os-qs-range{ flex:1; min-width:0; accent-color:var(--neon,#3ce8ff); }
+.os-qs-val{ flex:none; min-width:40px; text-align:end; font-size:12px; color:var(--muted,#7a8699); }
+.os-qs-more{
+  display:flex; align-items:center; justify-content:center; width:26px; height:26px; flex:none;
+  border:0; border-radius:7px; background:transparent; color:var(--muted,#7a8699); cursor:pointer;
+}
+.os-qs-more:hover{ background:var(--panel2); color:var(--text); }
+.os-qs-more .ic{ width:15px; height:15px; }
+.os-qs-foot{
+  display:flex; align-items:center; justify-content:space-between; gap:8px;
+  padding-top:8px; border-top:1px solid var(--line); font-size:12px; color:var(--muted,#7a8699);
+}
+.os-qs-bat{ display:flex; align-items:center; gap:6px; }
+.os-qs-bat .ic{ width:18px; height:18px; }
+.os-qs-link{
+  display:flex; align-items:center; gap:6px; padding:5px 8px; border-radius:7px;
+  border:1px solid var(--line); background:transparent; color:var(--text);
+  font:inherit; font-size:12px; cursor:pointer;
+}
+.os-qs-link:hover{ border-color:var(--neon,#3ce8ff); }
+.os-qs-link .ic{ width:14px; height:14px; }
+/* A sub-panel's way back. In the header so it reads as the panel's own title bar, not as a row. */
+.os-pop-back{
+  display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px;
+  margin-inline-end:6px; vertical-align:-6px;
+  border:0; border-radius:6px; background:transparent; color:var(--text); cursor:pointer;
+}
+.os-pop-back:hover{ background:var(--panel2); }
+.os-pop-back .ic{ width:15px; height:15px; }
+.os-mix-row{ padding:4px 2px; }
+.os-mix-body{ flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.os-mix-nm{ font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
 .os-applist-h{
   padding:10px 12px 4px; font-size:11px; letter-spacing:.08em; text-transform:uppercase;
   color:var(--muted,#7a8699);

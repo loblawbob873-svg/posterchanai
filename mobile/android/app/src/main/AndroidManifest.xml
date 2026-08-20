@@ -259,6 +259,38 @@
             </intent-filter>
         </activity-alias>
 
+        <!-- EMAIL AS AN APP, and every other PosterChan screen somebody wants in the phone's own
+             drawer. "no Email app phone launcher either".
+
+             Messages and Phone could be aliases straight onto native activities. Mail is a view
+             inside the WebView, so there is nothing to alias — hence the trampoline: it starts
+             MainActivity carrying the same view extra the launcher's tiles use and finishes without
+             drawing. Translucent and noHistory so nothing flashes and nothing is left in recents.
+
+             WHICH VIEW IS THE ALIAS'S META-DATA, so the next one of these is a manifest edit and
+             no Java at all. An alias reports ITSELF from getComponentName(), which is what makes
+             one activity able to be several drawer apps. -->
+        <activity
+            android:name=".shortcut.ViewActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <activity-alias
+            android:name=".shortcut.Email"
+            android:targetActivity=".shortcut.ViewActivity"
+            android:label="@string/app_email_title"
+            android:icon="@mipmap/ic_launcher_email"
+            android:roundIcon="@mipmap/ic_launcher_email"
+            android:exported="true">
+            <meta-data android:name="pc.view" android:value="mail" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
         <!-- One conversation. singleTop + adjustResize: a notification tapped while the thread is
              already open must not stack a second copy of it, and the compose box must sit above the
              keyboard rather than under it. -->

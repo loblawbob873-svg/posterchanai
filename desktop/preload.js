@@ -136,6 +136,18 @@ if (isOurPage) {
     setVolume: (pct, which) => ipcRenderer.invoke('pc:audio:volume', Number(pct), which || 'sink'),
     setMuted: (on, which) => ipcRenderer.invoke('pc:audio:mute', !!on, which || 'sink'),
     setDefault: (id) => ipcRenderer.invoke('pc:audio:default', Number(id)),
+    /* One row per playing application, each with its own level. Read only while the mixer is open:
+     * `wpctl status` does not print a stream's volume, so every row costs a subprocess. */
+    mixer: () => ipcRenderer.invoke('pc:audio:mixer'),
+    setStreamVolume: (id, pct) => ipcRenderer.invoke('pc:audio:streamvol', Number(id), Number(pct)),
+    setStreamMuted: (id, on) => ipcRenderer.invoke('pc:audio:streammute', Number(id), !!on),
+  });
+
+  /* SCREENSHOTS. `available()` answers before anything is drawn, so the tray never offers a button
+   * whose only possible outcome is an error about a missing package. */
+  contextBridge.exposeInMainWorld('pcShot', {
+    available: () => ipcRenderer.invoke('pc:shot:available'),
+    take: (opts) => ipcRenderer.invoke('pc:shot:take', opts || {}),
   });
 
   contextBridge.exposeInMainWorld('pcTerm', {

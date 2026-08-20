@@ -1084,6 +1084,22 @@ ipcMain.handle('pc:audio:status', (e) => { fsGuard(e); return audio.status(); })
 ipcMain.handle('pc:audio:volume', (e, pct, which) => { fsGuard(e); return audio.setVolume(pct, which); });
 ipcMain.handle('pc:audio:mute', (e, on, which) => { fsGuard(e); return audio.setMuted(!!on, which); });
 ipcMain.handle('pc:audio:default', (e, id) => { fsGuard(e); return audio.setDefault(id); });
+/* THE PER-APPLICATION MIXER. Its own calls rather than a wider `pc:audio:set(id, …)`, for the same
+ * reason the power actions are four verbs and not `pc:power:do(action)`: a single id-taking setter
+ * makes "turn this app down" and "turn the whole machine down" one typo apart. */
+ipcMain.handle('pc:audio:mixer', (e) => { fsGuard(e); return audio.mixer(); });
+ipcMain.handle('pc:audio:streamvol', (e, id, pct) => { fsGuard(e); return audio.setStreamVolume(id, pct); });
+ipcMain.handle('pc:audio:streammute', (e, id, on) => { fsGuard(e); return audio.setStreamMuted(id, !!on); });
+
+/* SCREENSHOTS. See screenshot.js for why this is grim and not capturePage() or desktopCapturer.
+ * `available` is asked separately so a tray can hide a button that could only ever fail. */
+ipcMain.handle('pc:shot:available', (e) => { fsGuard(e); return require('./screenshot.js').available(); });
+ipcMain.handle('pc:shot:take', (e, opts) => {
+  fsGuard(e);
+  const o = opts || {};
+  return require('./screenshot.js').capture({ mode: String(o.mode || 'screen'),
+                                              geometry: o.geometry, copy: o.copy !== false });
+});
 
 ipcMain.handle('pc:net:available', (e) => { fsGuard(e); return net.available(); });
 ipcMain.handle('pc:net:status', (e) => { fsGuard(e); return net.status(); });

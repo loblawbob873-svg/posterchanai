@@ -242,10 +242,13 @@ if [ -n "$HOLDER" ]; then
   echo "    launcher entries for $PKG: ${LAUNCHABLE:-0}"
   adb shell "cmd package query-activities -a android.intent.action.MAIN -c android.intent.category.LAUNCHER 2>/dev/null" \
     | grep -o "$PKG/[A-Za-z0-9_.]*" | sort -u | sed 's/^/      /'
-  if [ "${LAUNCHABLE:-0}" -ge 3 ]; then
-    ok "PosterChan, Messages and Phone are all launchable"
+  # FOUR NOW: PosterChan, Messages, Phone and Email. "no Email app phone launcher either" — and
+  # Email is the one that cannot be an alias onto a native activity, because the mail client is a
+  # view inside the WebView; it is an alias over the .shortcut.ViewActivity trampoline.
+  if [ "${LAUNCHABLE:-0}" -ge 4 ]; then
+    ok "PosterChan, Messages, Phone and Email are all launchable"
   else
-    fail "fewer than three launcher entries — Messages or Phone has no icon in any drawer"
+    fail "fewer than four launcher entries — Messages, Phone or Email has no icon in any drawer"
   fi
 
   say "what it looks like"
@@ -298,6 +301,44 @@ if [ -n "$HOLDER" ]; then
   crash_scan drawer
   adb shell input keyevent KEYCODE_HOME
   sleep 2
+
+  # ---------------------------------------------------------------------------------------------
+  # TABLET MODE, ON THE SAME EMULATOR. "the launcher needs to work on tablet mode too".
+  #
+  # `wm size` and `wm density` reshape the running device, which is the whole measurement: a
+  # 2560x1600 screen at 240dpi has a short side of 1066dp, so Android reports it as a large screen
+  # and HomeMetrics gives a wider grid, a longer dock and bigger icons. No second AVD, no second
+  # boot — and it exercises exactly the path a real tablet takes, because a resize arrives as the
+  # same configuration change a rotation does.
+  #
+  # It is put back unconditionally. `wm size reset` on a device left resized would otherwise poison
+  # every check after this one, and the AVD is reused within the boot.
+  say "tablet mode: a wider grid, a longer dock, and it must not crash"
+  adb shell wm size 2560x1600 >/dev/null 2>&1
+  adb shell wm density 240 >/dev/null 2>&1
+  sleep 3
+  adb shell input keyevent KEYCODE_HOME
+  sleep 3
+  TOP=$(adb shell dumpsys activity activities 2>/dev/null | grep -m1 -E 'mResumedActivity|topResumedActivity' | tr -d '\r')
+  case "$TOP" in
+    *HomeActivity*) ok "the launcher survived being resized to a tablet" ;;
+    *) fail "the home screen did not come back after a tablet-sized configuration change: $TOP" ;;
+  esac
+  shot tablet-home
+  # The drawer at that size too — its columns come from the GridView's column width, which is the
+  # one part of the tablet layout that is not HomeMetrics arithmetic.
+  TW=2560; TH=1600
+  (adb shell input swipe $((TW / 2)) $((TH * 80 / 100)) $((TW / 2)) $((TH * 25 / 100)) 500 >/dev/null 2>&1 &)
+  sleep 2
+  shot tablet-drawer
+  crash_scan tablet
+  adb shell input keyevent KEYCODE_HOME
+  adb shell wm size reset >/dev/null 2>&1
+  adb shell wm density reset >/dev/null 2>&1
+  sleep 3
+  adb shell input keyevent KEYCODE_HOME
+  sleep 2
+  crash_scan tablet-reset
 
   say "give the home screen back"
   case "$PREV_HOME" in

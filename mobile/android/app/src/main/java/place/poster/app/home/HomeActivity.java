@@ -77,8 +77,12 @@ public class HomeActivity extends Activity implements DeskView.Host {
     public static final String EXTRA_VIEW = "pc_home_view";
     public static final String EXTRA_VIEW_AT = "pc_home_view_at";
 
-    /** How many icons fit across the dock before it starts squeezing them. */
-    private static final int DOCK_MAX = 5;
+    /**
+     * THE SHAPE OF THE GRID THE DESKTOP IS CURRENTLY STORED UNDER — "4x5" on a phone, "6x4" on a
+     * tablet turned sideways. Every read and every write of the arrangement goes through it, which
+     * is what lets a rotation be reversible instead of a re-flow. See HomeMetrics.geometry.
+     */
+    private String geom = "";
 
     private AppRepo repo;
     private LauncherPrefs prefs;
@@ -127,6 +131,9 @@ public class HomeActivity extends Activity implements DeskView.Host {
 
         adapter = new Shelf();
         grid.setAdapter(adapter);
+        // The drawer's GridView is `numColumns="auto_fit"`, so this number and the screen width are
+        // its column count. 80dp across a 10-inch tablet is a mosaic of thumbnails.
+        grid.setColumnWidth(Skin.dp(this, HomeMetrics.drawerColumnDp(swDp())));
         grid.setOnItemClickListener(new AdapterView.OnItemClickListener() {
             @Override public void onItemClick(AdapterView<?> p, View v, int i, long id) {
                 open(adapter.at(i));
@@ -154,6 +161,26 @@ public class HomeActivity extends Activity implements DeskView.Host {
         applyTheme();
         refreshRoles();
         reload(firstRun);
+        resizeSoon();
+    }
+
+    /**
+     * THE ROW COUNT AFTER THE FIRST LAYOUT PASS, which is the only moment it can be known.
+     *
+     * `deskRows()` divides the height the desktop actually got, and during onCreate and onStart that
+     * height is zero — so every first draw used the fallback and the grid only ever adapted to the
+     * screen if something later happened to redraw it (a package installed, the drawer closing). On
+     * a tall phone that meant five rows on a screen with room for seven, permanently, unless you
+     * installed an app. `post` runs after layout, and this redraws only if the shape actually
+     * changed, so it costs nothing when the fallback was already right.
+     */
+    private void resizeSoon() {
+        if (desk == null) return;
+        desk.post(new Runnable() {
+            @Override public void run() {
+                if (deskCols() != desk.cols() || deskRows() != desk.rows()) redrawDesk();
+            }
+        });
     }
 
     // ---------------------------------------------------------------- theme
@@ -352,7 +379,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
             if (HomeTiles.VIEW_PHONE.equals(t.view) || HomeTiles.VIEW_TEXTS.equals(t.view)) continue;
             Desk.add(items, new Desk.Item("pc:" + t.view, 0, 0, 1, 1), cols, rows);
         }
-        prefs.setDesk(Desk.serialize(items));
+        prefs.setDesk(HomeMetrics.geometry(cols, rows), Desk.serialize(items));
         // THE DOCK IS NEVER SEEDED WITH SOMETHING UNVERIFIED. `ourTiles` has already been filtered
         // to what resolves, so seeding from it means the very first thing a new person sees cannot
         // be a dead button — which is exactly what was reported.
@@ -364,15 +391,48 @@ public class HomeActivity extends Activity implements DeskView.Host {
         prefs.setDock(d);
     }
 
-    private int deskCols() { return 4; }
+    /** The device's short side in dp — the same number in both orientations. See HomeMetrics. */
+    private int swDp() {
+        try { return getResources().getConfiguration().smallestScreenWidthDp; }
+        catch (Throwable t) { return 360; }
+    }
+
+    private int widthDp() {
+        try { return getResources().getConfiguration().screenWidthDp; }
+        catch (Throwable t) { return 360; }
+    }
+
+    private int deskCols() { return HomeMetrics.deskCols(swDp()); }
 
     /** Rows from the space actually available, so a tall phone gets more and a rotation adapts. */
     private int deskRows() {
         View host = findViewById(R.id.pc_home_desk);
         int h = host == null ? 0 : host.getHeight();
-        if (h <= 0) return 5;
-        int cell = Skin.dp(this, 92);
-        return Math.max(3, Math.min(8, h / cell));
+        return HomeMetrics.deskRows(cellDp(h), swDp());
+    }
+
+    private int dockMax() { return HomeMetrics.dockMax(widthDp(), swDp()); }
+
+    /**
+     * A ROTATION IS A DIFFERENT HOME SCREEN, NOT A REDRAW OF THE SAME ONE — and until now it was
+     * neither. `configChanges` lists orientation and screenSize so the activity is not torn down,
+     * which is right; but nothing recomputed the grid, so a tablet turned sideways kept its portrait
+     * row count and simply stretched every cell. The dock kept a phone's five slots at a phone's
+     * size across a foot of bar.
+     *
+     * Recomputing is only safe because the arrangement is stored per grid shape: the landscape
+     * desktop is its own arrangement, inherited from the portrait one the first time and its own
+     * from then on, so turning the tablet back puts everything exactly where it was.
+     */
+    @Override
+    public void onConfigurationChanged(android.content.res.Configuration cfg) {
+        super.onConfigurationChanged(cfg);
+        applyTheme();
+        if (grid != null) grid.setColumnWidth(Skin.dp(this, HomeMetrics.drawerColumnDp(swDp())));
+        redrawAll();
+        // The new height is not laid out yet at this point — the width in the Configuration is,
+        // which is why the columns are right immediately and the rows need the pass below.
+        resizeSoon();
     }
 
     private void redrawAll() {
@@ -385,8 +445,9 @@ public class HomeActivity extends Activity implements DeskView.Host {
     // ---------------------------------------------------------------- the desktop
 
     private void redrawDesk() {
-        List<Desk.Item> items = Desk.parse(prefs.desk());
         int cols = deskCols(), rows = deskRows();
+        geom = HomeMetrics.geometry(cols, rows);
+        List<Desk.Item> items = Desk.parse(prefs.desk(geom));
         // NOTHING IS DROPPED FOR NOT FITTING — a rotation or a different phone re-places it. See
         // Desk.fit; the alternative silently deletes what somebody arranged.
         List<Desk.Item> overflow = Desk.fit(items, cols, rows);
@@ -400,7 +461,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
             }
             live.add(it);
         }
-        if (live.size() != items.size() || !overflow.isEmpty()) prefs.setDesk(Desk.serialize(live));
+        if (live.size() != items.size() || !overflow.isEmpty()) prefs.setDesk(geom, Desk.serialize(live));
         desk.setGrid(cols, rows);
         desk.setItems(live);
         // An empty desktop says how to fill it; a full one goes back to the swipe hint.
@@ -440,7 +501,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
      */
     @Override public void onSwipeUp() { openDrawer(); }
 
-    @Override public void onChanged() { prefs.setDesk(Desk.serialize(desk.items())); }
+    @Override public void onChanged() { prefs.setDesk(geom, Desk.serialize(desk.items())); }
 
     @Override public int minSpanX(Desk.Item item) {
         if (!item.isWidget()) return 1;
@@ -481,7 +542,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
     private void redrawDock() {
         if (dock == null) return;
         dock.removeAllViews();
-        List<AppShelf.Entry> row = AppShelf.dock(everything, prefs.dock(), DOCK_MAX);
+        List<AppShelf.Entry> row = AppShelf.dock(everything, prefs.dock(), dockMax());
         for (final AppShelf.Entry e : row) dock.addView(dockIcon(e));
         // NO ALL-APPS BUTTON. The drawer opens by swiping up from the home surface (DeskView), which
         // is what every Android launcher has done since Pixel dropped the button and what people's
@@ -490,7 +551,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
     }
 
     private LinearLayout.LayoutParams dockParams() {
-        int s = Skin.dp(this, 52);
+        int s = Skin.dp(this, HomeMetrics.dockIconDp(swDp()));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(s, s);
         int m = Skin.dp(this, 6);
         lp.setMargins(m, 0, m, 0);
@@ -652,7 +713,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
         show(getString(R.string.app_name), labels, new Pick() {
             @Override public void pick(int w) {
                 switch (w) {
-                    case 0: widgets.pick(HomeActivity.this); break;
+                    case 0: addWidget(); break;
                     case 1: pickOurApps(); break;
                     case 2: showHidden(); break;
                     case 3: fire(new Intent(Intent.ACTION_SET_WALLPAPER)); break;
@@ -682,7 +743,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
                     case 0: removeFromDesk(item); break;
                     case 1: addToDock(e); break;
                     case 2: repo.appInfo(e); break;
-                    case 3: widgets.pick(HomeActivity.this); break;
+                    case 3: addWidget(); break;
                     default: break;                        // 9 = the hint; the frame is already up
                 }
             }
@@ -715,7 +776,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
                     case 3: if (!repo.uninstall(e)) toast(getString(R.string.home_no_uninstaller)); break;
                     case 4: prefs.setHidden(AppShelf.hide(prefs.hidden(), e)); redrawDrawer(); break;
                     case 5: pickOurApps(); break;
-                    case 6: closeDrawer(); widgets.pick(HomeActivity.this); break;
+                    case 6: closeDrawer(); addWidget(); break;
                 }
             }
         });
@@ -748,7 +809,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
             toast(getString(R.string.home_desktop_full));
             return;
         }
-        prefs.setDesk(Desk.serialize(items));
+        prefs.setDesk(geom, Desk.serialize(items));
         closeDrawer();
         redrawDesk();
     }
@@ -759,7 +820,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
         // A widget removed from the desktop must give its id back, or it is a row in the system's
         // own table that nothing will ever reclaim.
         if (item.isWidget()) widgets.release(item.widgetId());
-        prefs.setDesk(Desk.serialize(items));
+        prefs.setDesk(geom, Desk.serialize(items));
         redrawDesk();
     }
 
@@ -767,7 +828,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
         if (e == null) return;
         List<String> d = new ArrayList<String>(prefs.dock());
         if (d.contains(e.key())) { toast(getString(R.string.home_already_there)); return; }
-        if (d.size() >= DOCK_MAX - 1) { toast(getString(R.string.home_dock_full)); return; }
+        if (d.size() >= dockMax() - 1) { toast(getString(R.string.home_dock_full)); return; }
         d.add(e.key());
         prefs.setDock(d);
         closeDrawer();
@@ -830,13 +891,55 @@ public class HomeActivity extends Activity implements DeskView.Host {
 
     // ---------------------------------------------------------------- widgets
 
+    /**
+     * "ADD A WIDGET" — OUR OWN LIST, and that is the fix for the top complaint.
+     *
+     * This used to fire ACTION_APPWIDGET_PICK and let Android draw the list. Nothing on a modern
+     * Android answers that intent — the system picker belonged to the era when a dialog owned "Add
+     * to Home screen" — so the very first step threw, the id was freed, a toast said "this phone has
+     * no widget picker", and every route into the flow ended there. Making it findable from three
+     * menus did not help, because all three arrived at the same dead end.
+     *
+     * So the list is drawn here, from `getInstalledProviders()`, the way every third-party launcher
+     * has done it for a decade. AND AN EMPTY LIST SAYS SO: "no widgets" and "the picker is missing"
+     * are different sentences, and telling them apart is the whole difference between the last three
+     * rounds of this bug and this one.
+     */
+    private void addWidget() {
+        final List<Widgets.Choice> rows =
+                widgets.providers(cellDp(desk.cellW()), cellDp(desk.cellH()));
+        if (rows.isEmpty()) { toast(getString(R.string.home_no_widgets)); return; }
+        final List<String> labels = new ArrayList<String>();
+        for (Widgets.Choice c : rows) {
+            // ONE LINE. `AlertDialog.setItems` inflates `select_dialog_item`, whose TextView is
+            // single-line on most platform versions — a second line there is not wrapped, it is
+            // simply never drawn.
+            String app = c.appLabel.equalsIgnoreCase(c.label) ? "" : "  ·  " + c.appLabel;
+            labels.add(c.label + app + "   (" + c.spanX + " x " + c.spanY + ")");
+        }
+        show(getString(R.string.home_add_widget), labels, new Pick() {
+            @Override public void pick(int w) {
+                if (w < 0 || w >= rows.size()) return;
+                int id = widgets.add(HomeActivity.this, rows.get(w));
+                // >= 0 means it was already allowed to bind and wants no configuration: it is ready
+                // now and there is no activity result coming. -1 means an activity is asking, or it
+                // was refused and has already said so.
+                if (id >= 0) placeWidget(id);
+            }
+        });
+    }
+
     @Override
     protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
-        if (request != Widgets.REQ_PICK && request != Widgets.REQ_BIND
-                && request != Widgets.REQ_CONFIGURE) return;
+        if (request != Widgets.REQ_BIND && request != Widgets.REQ_CONFIGURE) return;
         int id = widgets.onResult(this, request, result, data);
         if (id < 0) return;                       // still asking, or the person changed their mind
+        placeWidget(id);
+    }
+
+    /** A bound, configured widget onto the grid — or its id straight back if there is no room. */
+    private void placeWidget(int id) {
         AppWidgetProviderInfo info = widgets.infoOf(id);
         int sx = 1, sy = 1;
         if (info != null) {
@@ -851,7 +954,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
             toast(getString(R.string.home_desktop_full));
             return;
         }
-        prefs.setDesk(Desk.serialize(items));
+        prefs.setDesk(geom, Desk.serialize(items));
         redrawDesk();
         onResized(it, desk.cellW(), desk.cellH());
         toast(getString(R.string.home_widget_added));

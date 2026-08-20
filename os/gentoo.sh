@@ -91,7 +91,16 @@ SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 
 # failure to read the portal version, which is Folder Sync's "choose a folder" having nowhere to
 # ask. `xdg-desktop-portal-gtk` is the backend that answers it — GTK, which sway's own stack pulls
 # in regardless, and emphatically not webkit.
+#
+# SCREENSHOTS are `gui-apps/grim` (+ `gui-apps/slurp` to choose an area). grim reads the
+# compositor's own output, so it captures everything on the screen INCLUDING the native app
+# surfaces a PosterChan window holds over a hole in the page — which Electron's own capturePage()
+# renders as a black rectangle, and which the portal screencast path only reaches by putting a
+# "share your screen?" dialog in front of every single screenshot. Without these two the tray hides
+# its Screenshot tile and PrtSc says which package is missing, which is honest and is not the same
+# thing as working.
 POSTERCHANOS_PACKAGES="gui-wm/sway x11-base/xwayland gui-apps/foot gui-apps/wl-clipboard \
+gui-apps/grim gui-apps/slurp \
 media-video/pipewire media-video/wireplumber gui-libs/gtk media-fonts/noto media-fonts/noto-emoji \
 www-client/firefox-bin \
 sys-apps/xdg-desktop-portal gui-libs/xdg-desktop-portal-wlr sys-apps/xdg-desktop-portal-gtk \

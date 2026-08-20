@@ -59,6 +59,11 @@
     const localSid = (id) => 'local:' + id;
     const isLocalSid = (x) => /^local:/.test(String(x || ''));
 
+    /* The host the NEXT mount should open, when something asked for one by name (Ctrl+Enter, the
+     * start menu's "Terminal on this computer"). Cleared as soon as it is honoured — it is an
+     * instruction for one opening, never a preference. */
+    let _want = '';
+
     let term = null, fit = null, ws = null, link = null, host = null, ro = null;
     let hosts = [], connected = false, ctrl = false, mounted = null;
     let sid = '', cursor = 0, retry = 0, retryT = null, want = false, live = [];
@@ -773,6 +778,25 @@
          * session rather than at a host picker with your work invisible behind it. Anything the
          * ACCOUNT has running that this device has no id for is offered in the list instead, which
          * is what makes a session started on the laptop resumable on the phone. */
+        /* A SHELL ON THIS MACHINE, ASKED FOR BY NAME. Ctrl+Enter on PosterChanOS means "give me a
+         * terminal here" the way $mod+Return does in sway, and the one thing it must not do is
+         * reattach to somebody's SSH session on another computer — which is exactly what happened,
+         * because "come back to the shell you left" is remembered per DEVICE and the shell this
+         * device last left was `server1`. Measured on the test machine: pressing the Terminal icon
+         * reattached to `verita84@server1.lan` over the network while the local PTY sat unused, and
+         * that is the whole of "still no terminal app for the laptop, all I see is our remote
+         * terminal".
+         *
+         * So the keystroke NAMES the machine, and naming it wins over the memory. Clicking the
+         * icon still reattaches, because that is the right answer for a session you left running. */
+        if(_want === 'local' && LOCAL() && hosts.some(h => h && h.local)){
+          _want = '';
+          if($('#tty-host')) $('#tty-host').value = 'local';
+          connect();
+          if(!XT()) _state('the terminal library did not load', 'err');
+          return;
+        }
+        _want = '';
         const prev = _recall();
         if(prev && live.some(x => x.sid === prev)){
           const s0 = live.find(x => x.sid === prev);
@@ -810,8 +834,25 @@
       mounted = null;
     }
 
+    /* Open the terminal ON THIS COMPUTER. Sets the intent and lets whoever is routing views do the
+     * opening, so there is one path into this screen rather than a second mount that has to know
+     * about windows, the feed and the desktop. Answers whether a local PTY exists at all, so a
+     * caller can say so instead of opening a terminal that will offer a host picker. */
+    function openLocal(){
+      if(!LOCAL()) return false;
+      _want = 'local';
+      /* ALREADY ON THE SCREEN is the case that would otherwise do nothing: the view is mounted, so
+       * nothing re-runs the block that reads `_want`. Connect here instead. */
+      if(mounted && hosts.some(h => h && h.local)){
+        _want = '';
+        if($('#tty-host')) $('#tty-host').value = 'local';
+        connect();
+      }
+      return true;
+    }
+
     window.PCTerm = { render, unmount, isOpen: () => !!mounted, connected: () => connected,
-                      sessionId: () => sid };
+                      openLocal, sessionId: () => sid };
   }
   init();
 })();

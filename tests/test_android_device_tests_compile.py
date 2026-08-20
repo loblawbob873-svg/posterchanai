@@ -41,7 +41,7 @@ class DeviceTestsCompile(unittest.TestCase):
         # The app's own sources come along, because these tests call into them and a signature that
         # moved is exactly the drift this is here to catch.
         app = []
-        for pkg in ("home", "ui", "sms", "phone"):
+        for pkg in ("home", "ui", "sms", "phone", "shortcut"):
             app += glob.glob(os.path.join(ac.JAVA, "place", "poster", "app", pkg, "*.java"))
         shims = {
             # MusicService needs androidx.media, which is not on this box; the launcher only uses

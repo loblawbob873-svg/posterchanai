@@ -18,9 +18,18 @@ import android.util.Log;
  * A launcher without this is not a home screen, and there is no shortcut: `AppWidgetHost` is the
  * only way, and it comes with a three-step dance that is easy to get half right.
  *
- *   1. PICK a provider. Android's own picker (ACTION_APPWIDGET_PICK) is used rather than a
- *      hand-rolled one, because it already knows about configuration activities, profiles and
- *      restricted providers.
+ *   1. PICK a provider. OUR OWN LIST, from `getInstalledProviders()` — and that is a correction,
+ *      not a preference. The first version handed this to Android by firing
+ *      ACTION_APPWIDGET_PICK, on the reasoning that the platform already knows about configuration
+ *      activities and restricted providers. THE PLATFORM DOES NOT ANSWER THAT INTENT. It was
+ *      `com.android.settings.AppWidgetPickActivity` in the Gingerbread era, when the system dialog
+ *      owned "Add to Home screen"; every launcher since has drawn its own list, and Settings
+ *      stopped declaring the filter. So `startActivityForResult` threw ActivityNotFoundException,
+ *      the catch freed the id and showed "This phone has no widget picker", and the answer to
+ *      "no widgets can be added to posterchan launcher home screen" was that the very first step
+ *      could not run — on any phone, from any of the three entry points, for the whole life of the
+ *      feature. `systemPickerExists()` is kept solely so a device test can state that as a
+ *      measurement rather than as a claim.
  *   2. BIND the allocated id to that provider. `BIND_APPWIDGET` is a SIGNATURE permission no
  *      third-party launcher can hold, so `bindAppWidgetIdIfAllowed` fails and the sanctioned route
  *      is ACTION_APPWIDGET_BIND, which asks the person. Skipping straight to step 3 gives a widget
@@ -43,7 +52,6 @@ public final class Widgets {
     /** Any constant will do; it identifies OUR host to the system's widget table. */
     private static final int HOST_ID = 0x5C11;
 
-    public static final int REQ_PICK = 4501;
     public static final int REQ_BIND = 4502;
     public static final int REQ_CONFIGURE = 4503;
 
@@ -71,29 +79,134 @@ public final class Widgets {
         listening = false;
     }
 
-    /** Step 1: Android's own provider picker, with an id already allocated for it to fill. */
-    public void pick(Activity a) {
+    /**
+     * ONE WIDGET SOMEBODY MAY ADD. `info` is what the rest of the flow needs; the two labels are
+     * what makes the list readable — a phone has dozens of providers and half of them are called
+     * "Clock".
+     */
+    public static final class Choice {
+        public final AppWidgetProviderInfo info;
+        public final String label;
+        public final String appLabel;
+        public final int spanX, spanY;
+        Choice(AppWidgetProviderInfo info, String label, String appLabel, int spanX, int spanY) {
+            this.info = info; this.label = label; this.appLabel = appLabel;
+            this.spanX = spanX; this.spanY = spanY;
+        }
+        public ComponentName provider() { return info.provider; }
+    }
+
+    /**
+     * STEP 1: EVERY WIDGET ON THIS PHONE, asked of the widget manager itself.
+     *
+     * Sorted by the owning app and then by the widget's own label, because that is the order the
+     * person is scanning in — they are looking for "the clock in Google Clock", not for a provider
+     * class name.
+     *
+     * `cellDp` is only used to state a size in the list ("4 x 1"); a provider that reports nothing
+     * useful still appears, at 1 x 1, rather than being filtered out — a widget missing from the
+     * list is indistinguishable from the bug this method was written to fix.
+     */
+    public java.util.List<Choice> providers(int cellWdp, int cellHdp) {
+        java.util.List<Choice> out = new java.util.ArrayList<Choice>();
+        java.util.List<AppWidgetProviderInfo> all;
+        try { all = manager.getInstalledProviders(); }
+        catch (Throwable t) { Log.w(TAG, "home: the widget manager would not list providers", t); return out; }
+        if (all == null) return out;
+        android.content.pm.PackageManager pm = ctx.getPackageManager();
+        for (AppWidgetProviderInfo i : all) {
+            if (i == null || i.provider == null) continue;
+            String label = null;
+            try { label = i.loadLabel(pm); } catch (Throwable ignored) { }
+            if (label == null || label.trim().isEmpty()) label = i.provider.getShortClassName();
+            String app = i.provider.getPackageName();
+            try {
+                CharSequence c = pm.getApplicationLabel(pm.getApplicationInfo(app, 0));
+                if (c != null && c.length() > 0) app = c.toString();
+            } catch (Throwable ignored) { }
+            out.add(new Choice(i, label.trim(), app,
+                    spanFor(i.minWidth, cellWdp), spanFor(i.minHeight, cellHdp)));
+        }
+        java.util.Collections.sort(out, new java.util.Comparator<Choice>() {
+            @Override public int compare(Choice a, Choice b) {
+                int n = a.appLabel.compareToIgnoreCase(b.appLabel);
+                return n != 0 ? n : a.label.compareToIgnoreCase(b.label);
+            }
+        });
+        return out;
+    }
+
+    /** The little picture the picker draws. Preview if the provider has one, its icon if not. */
+    public android.graphics.drawable.Drawable preview(Choice c) {
+        if (c == null) return null;
+        int density = 0;
+        try { density = ctx.getResources().getDisplayMetrics().densityDpi; } catch (Throwable ignored) { }
+        try {
+            android.graphics.drawable.Drawable d = c.info.loadPreviewImage(ctx, density);
+            if (d != null) return d;
+        } catch (Throwable ignored) { }
+        try { return c.info.loadIcon(ctx, density); } catch (Throwable ignored) { }
+        return null;
+    }
+
+    /**
+     * STEPS 2 AND 3, started. Returns the widget id when it is ready to place RIGHT NOW (already
+     * allowed to bind and no configuration activity), or -1 — which means either "an activity is
+     * asking the person something, wait for onActivityResult" or "it was refused, and has said so".
+     *
+     * The id is allocated here and freed on every path that does not hand it back.
+     */
+    public int add(Activity a, Choice c) {
+        if (c == null) return -1;
         int id = -1;
         try {
             id = host.allocateAppWidgetId();
-            Intent i = new Intent(AppWidgetManager.ACTION_APPWIDGET_PICK);
-            i.putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id);
-            // An empty custom list, or the picker offers our own shortcuts alongside the widgets.
-            i.putParcelableArrayListExtra(AppWidgetManager.EXTRA_CUSTOM_INFO,
-                    new java.util.ArrayList<android.os.Parcelable>());
-            i.putParcelableArrayListExtra(AppWidgetManager.EXTRA_CUSTOM_EXTRAS,
-                    new java.util.ArrayList<android.os.Parcelable>());
-            a.startActivityForResult(i, REQ_PICK);
+            boolean bound = false;
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    bound = manager.bindAppWidgetIdIfAllowed(id, profileOf(c.info), c.info.provider, null);
+                } else {
+                    bound = manager.bindAppWidgetIdIfAllowed(id, c.info.provider);
+                }
+            } catch (Throwable ignored) { }
+            if (!bound) { askToBind(a, id, c.info); return -1; }
+            return configureOrReady(a, id);
         } catch (Throwable t) {
-            // The id is freed on EVERY failure path. A leaked one is a row in the system's table
-            // that nothing will ever reclaim.
             if (id >= 0) release(id);
-            Log.w(TAG, "home: no widget picker on this phone", t);
-            // AND IT SAYS SO. A control that does nothing and says nothing is the recurring shape in
-            // this feature — the dead tile, the role switch that unchecked itself — and it always
-            // reads as a broken app rather than as an Android refusal.
-            say(a, "no picker");
+            Log.w(TAG, "home: could not add a widget", t);
+            say(a, "refused");
+            return -1;
         }
+    }
+
+    private static android.os.UserHandle profileOf(AppWidgetProviderInfo i) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && i.getProfile() != null) {
+                return i.getProfile();
+            }
+        } catch (Throwable ignored) { }
+        return android.os.Process.myUserHandle();
+    }
+
+    /**
+     * DOES THIS IMAGE ANSWER ACTION_APPWIDGET_PICK? Nothing in the flow depends on it any more; it
+     * exists so a device test can print the answer. Believing it did is what made the whole feature
+     * dead on arrival, and the belief survived three rounds of fixes because a missing activity
+     * throws in exactly the same place a cancelled dialog returns.
+     */
+    public boolean systemPickerExists() {
+        try {
+            Intent i = new Intent(AppWidgetManager.ACTION_APPWIDGET_PICK);
+            return ctx.getPackageManager().resolveActivity(i, 0) != null;
+        } catch (Throwable t) { return false; }
+    }
+
+    /** Whether Android will even offer to ask the person about binding. */
+    public boolean bindDialogExists() {
+        try {
+            Intent i = new Intent(AppWidgetManager.ACTION_APPWIDGET_BIND);
+            return ctx.getPackageManager().resolveActivity(i, 0) != null;
+        } catch (Throwable t) { return false; }
     }
 
     /**
@@ -111,27 +224,27 @@ public final class Widgets {
         }
         if (id < 0) return -1;
 
-        if (request == REQ_PICK) {
-            AppWidgetProviderInfo info = infoOf(id);
-            if (info == null) { release(id); return -1; }
-            // BIND_APPWIDGET is signature-level, so this only succeeds where the platform has
-            // already granted it. Everywhere else, ask.
-            boolean bound = false;
-            try { bound = manager.bindAppWidgetIdIfAllowed(id, info.provider); }
-            catch (Throwable ignored) { }
-            if (!bound) { askToBind(a, id, info.provider); return -1; }
-            return configureOrReady(a, id);
-        }
         if (request == REQ_BIND) return configureOrReady(a, id);
         if (request == REQ_CONFIGURE) return id;
         return -1;
     }
 
-    private void askToBind(Activity a, int id, ComponentName provider) {
+    /**
+     * ASK. `BIND_APPWIDGET` is signature-level, so on a third-party launcher this is the ONLY route
+     * and it is normal, not exceptional — the person sees "Allow PosterChan to create widgets?".
+     *
+     * EXTRA_APPWIDGET_PROVIDER_PROFILE is not decoration: without it a widget belonging to a work
+     * profile binds against the personal user and the dialog refuses, which looks from the outside
+     * like the person said no.
+     */
+    private void askToBind(Activity a, int id, AppWidgetProviderInfo info) {
         try {
             Intent i = new Intent(AppWidgetManager.ACTION_APPWIDGET_BIND);
             i.putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id);
-            i.putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, provider);
+            i.putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, info.provider);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                i.putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER_PROFILE, profileOf(info));
+            }
             a.startActivityForResult(i, REQ_BIND);
         } catch (Throwable t) {
             release(id);
@@ -159,13 +272,13 @@ public final class Widgets {
         return -1;
     }
 
-    /** Say it on screen. BIND_APPWIDGET is signature-level, so a refusal here is normal and silent. */
-    private void say(Activity a, String which) {
+    /** Say it on screen. Every Android refusal in this flow is silent; none of ours is. */
+    void say(Activity a, String which) {
         if (a == null) return;
         try {
             android.widget.Toast.makeText(a,
                     "no picker".equals(which)
-                        ? place.poster.app.R.string.home_no_widget_picker
+                        ? place.poster.app.R.string.home_no_widgets
                         : place.poster.app.R.string.home_widget_refused,
                     android.widget.Toast.LENGTH_LONG).show();
         } catch (Throwable ignored) { }
@@ -181,6 +294,18 @@ public final class Widgets {
         if (info == null) return null;
         try { return host.createView(themed, id, info); }
         catch (Throwable t) { Log.w(TAG, "home: widget would not draw", t); return null; }
+    }
+
+    /**
+     * THE IDS THIS HOST CURRENTLY HOLDS. Only a device test reads it, and only to prove that an
+     * abandoned add left nothing behind — a leaked id is a row in the system's own widget table that
+     * nothing will ever reclaim, and the picker is where people change their mind most often.
+     */
+    int[] hostIds() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) return host.getAppWidgetIds();
+        } catch (Throwable ignored) { }
+        return new int[0];
     }
 
     /** Give the id back to the system. Called on every removal and every abandoned add. */

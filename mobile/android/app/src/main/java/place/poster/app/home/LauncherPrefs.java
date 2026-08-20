@@ -68,6 +68,32 @@ public final class LauncherPrefs {
         sp.edit().putString(K_DESK, serialized == null ? "" : serialized).apply();
     }
 
+    /**
+     * ONE DESKTOP PER GRID SHAPE — "4x5", "6x4" — and that is what makes a rotation non-destructive.
+     *
+     * A single arrangement re-flowed through Desk.fit on every geometry change is lossy in the way
+     * that matters: nothing is deleted, but rotate to landscape and back and your icons are not
+     * where you left them, for ever. A tablet rotates all the time.
+     *
+     * A SHAPE THAT HAS NEVER BEEN SEEN INHERITS, IT DOES NOT START EMPTY. The first read for a new
+     * geometry falls back to the legacy single arrangement, which the caller then fits and writes
+     * back under this shape. Starting blank would read as the launcher having thrown the desktop
+     * away — the exact fear Desk.fit exists to answer.
+     */
+    public String desk(String geometry) {
+        if (geometry == null || geometry.isEmpty()) return desk();
+        String v = sp.getString(K_DESK + "." + geometry, null);
+        return v == null ? desk() : v;
+    }
+
+    public void setDesk(String geometry, String serialized) {
+        String v = serialized == null ? "" : serialized;
+        if (geometry == null || geometry.isEmpty()) { setDesk(v); return; }
+        // The legacy key is written too, so a build that rolls back — or the very first read on a
+        // shape this device has not been in yet — still finds a desktop.
+        sp.edit().putString(K_DESK + "." + geometry, v).putString(K_DESK, v).apply();
+    }
+
     /** The dock — the toolbar of main icons that stays put while the desktop scrolls. */
     public List<String> dock() { return split(sp.getString(K_DOCK, "")); }
 

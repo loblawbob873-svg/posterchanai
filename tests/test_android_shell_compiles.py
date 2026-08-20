@@ -25,16 +25,27 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import androidcompile as ac  # noqa: E402
 
-HOME = os.path.join(ac.JAVA, "place", "poster", "app", "home")
-UI = os.path.join(ac.JAVA, "place", "poster", "app", "ui")
-SMS = os.path.join(ac.JAVA, "place", "poster", "app", "sms")
-PHONE = os.path.join(ac.JAVA, "place", "poster", "app", "phone")
+APP = os.path.join(ac.JAVA, "place", "poster", "app")
+HOME = os.path.join(APP, "home")
+UI = os.path.join(APP, "ui")
+SMS = os.path.join(APP, "sms")
+PHONE = os.path.join(APP, "phone")
+SHORTCUT = os.path.join(APP, "shortcut")
 
-# THE FLOOR IS DISCOVERED, NOT TYPED. A package added under place/poster/app that belongs to the
-# phone shell joins this compile the moment it exists — the alternative is a new package with no
-# compile coverage at all, which is the failure `tests/test_android_sync_compiles.py` was written
-# after living through.
-PACKAGES = [HOME, UI, SMS, PHONE]
+# The phone shell: the packages that are plain platform API and therefore compilable here.
+SHELL = ["home", "ui", "sms", "phone", "shortcut"]
+PACKAGES = [os.path.join(APP, p) for p in SHELL]
+
+# EVERY OTHER PACKAGE UNDER place/poster/app, NAMED — not because this file compiles them, but so
+# that a package which appears LATER cannot quietly have no compile coverage at all. The earlier
+# version of this list claimed to be "discovered" and was in fact four typed paths; `shortcut` was
+# added and compiled by nothing here until the claim was made true. They are excluded because each
+# needs androidx, Capacitor or the media library, none of which is on this box; CI's assembleDebug
+# is their compile check.
+NOT_SHELL = {
+    "calendar", "call", "contacts", "gamepad", "music", "nip55", "push", "scan",
+    "screenshare", "share", "signer", "sync", "tor", "vault",
+}
 
 # WHAT IS SHIMMED, AND WHY. HomeActivity reads the music service's now-playing state and presses its
 # widget's button. That service is built on androidx.media (MediaSessionCompat, MediaButtonReceiver),
@@ -89,6 +100,17 @@ class ShellCompiles(unittest.TestCase):
         self.assertTrue(os.path.isdir(HOME))
         self.assertTrue(os.path.isdir(UI))
         self.assertTrue(os.path.isdir(SMS))
+        self.assertTrue(os.path.isdir(SHORTCUT))
+
+    def test_a_new_package_is_classified_rather_than_forgotten(self):
+        """The floor's real guarantee. A package added under place/poster/app must be either part of
+        the shell (and compiled above) or deliberately listed as not — never simply absent, which is
+        how `shortcut` would have shipped with no compile check on this box at all."""
+        found = set(n for n in os.listdir(APP) if os.path.isdir(os.path.join(APP, n)))
+        unclassified = found - set(SHELL) - NOT_SHELL
+        self.assertEqual(set(), unclassified,
+                         "new package(s) under place/poster/app: add to SHELL (and it gets "
+                         "compiled here) or to NOT_SHELL (and say why): " + ", ".join(sorted(unclassified)))
 
     def test_the_home_activity_is_among_them(self):
         """Named, because it is the file this test exists for: the one that draws the phone's home

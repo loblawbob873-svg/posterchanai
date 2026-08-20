@@ -29,7 +29,8 @@ JAVARUN = shutil.which("java")
 # are compiled by CI's `assembleDebug` (.github/workflows/android-emulator.yml) and exercised on a
 # real device by mobile/android/app/src/androidTest — a stub of RoleManager or the package manager
 # would be a stub of exactly the thing being tested.
-PURE = ["AppShelf.java", "HomeTiles.java", "LauncherPrefs.java", "Desk.java"]
+PURE = ["AppShelf.java", "HomeTiles.java", "LauncherPrefs.java", "Desk.java",
+        "HomeMetrics.java"]
 
 def _code(src):
     """The Java with its comments removed.
@@ -169,6 +170,22 @@ public class Harness {
     say("desk-junk", Desk.parse("garbage\nb|1|1|1|1\n|||\nc|x|y|1|1").size());
     say("desk-widget-id", new Desk.Item("widget:12", 0, 0, 1, 1).widgetId()
                        + " " + new Desk.Item("com.a/b", 0, 0, 1, 1).widgetId());
+
+    // 17. THE SCREEN IT IS ACTUALLY ON. Real devices, in dp, both ways up:
+    //   phone portrait 411x820, phone landscape 820x411 (short side 411)
+    //   7" tablet 600x960 / 960x600, 10" tablet 800x1280 / 1280x800
+    say("cols-phone", HomeMetrics.deskCols(411));
+    say("cols-tab7", HomeMetrics.deskCols(600));
+    say("cols-tab10", HomeMetrics.deskCols(800));
+    say("dock-phone", HomeMetrics.dockMax(411, 411) + " " + HomeMetrics.dockMax(820, 411));
+    say("dock-tab10", HomeMetrics.dockMax(800, 800) + " " + HomeMetrics.dockMax(1280, 800));
+    say("icon-dp", HomeMetrics.dockIconDp(411) + " " + HomeMetrics.dockIconDp(800));
+    say("drawer-dp", HomeMetrics.drawerColumnDp(411) + " " + HomeMetrics.drawerColumnDp(800));
+    say("rows-phone", HomeMetrics.deskRows(700, 411) + " " + HomeMetrics.deskRows(320, 411));
+    say("rows-tab10", HomeMetrics.deskRows(1150, 800) + " " + HomeMetrics.deskRows(680, 800));
+    say("rows-unknown", HomeMetrics.deskRows(0, 411) + " " + HomeMetrics.deskRows(0, 800));
+    say("tablet", HomeMetrics.isTablet(599) + " " + HomeMetrics.isTablet(600));
+    say("geometry", HomeMetrics.geometry(6, 4));
 
     // 13b. Our own tile and a phone app publishing the same key never double up.
     List<AppShelf.Entry> dup = new ArrayList<AppShelf.Entry>(phone);
@@ -332,12 +349,90 @@ class Launcher(unittest.TestCase):
         """"no widgets can be added to posterchan launcher home screen" — the flow existed, behind a
         long press on the wallpaper, which is not somewhere anybody looks first."""
         home = _code(open(os.path.join(HOME, "HomeActivity.java")).read())
-        self.assertGreaterEqual(home.count("widgets.pick("), 3,
+        self.assertGreaterEqual(home.count("addWidget()"), 3,
                                 "there is still only one way to reach the widget picker")
         # …and a refusal is said out loud. BIND_APPWIDGET is signature-level, so being refused is
         # normal — and silent, which reads as a broken app.
         w = _code(open(os.path.join(HOME, "Widgets.java")).read())
         self.assertIn("Toast.makeText", w, "a refused widget bind says nothing")
+
+    def test_the_widget_list_is_ours_and_not_an_intent_nobody_answers(self):
+        """THE BUG UNDER ALL THREE ROUNDS OF THIS.
+
+        Step 1 was `startActivityForResult(ACTION_APPWIDGET_PICK)`. Nothing on a modern Android
+        declares a filter for it — the system picker belonged to the era when a dialog owned "Add to
+        Home screen" — so it threw ActivityNotFoundException, the catch freed the widget id and said
+        "this phone has no widget picker", and every entry point arrived at that same dead end.
+        Making the flow findable from three menus could not help.
+
+        So the list must be built here, from the widget manager. `systemPickerExists()` may stay
+        (a device test prints what it answers), but nothing in the flow may DEPEND on the intent."""
+        w = _code(open(os.path.join(HOME, "Widgets.java")).read())
+        self.assertIn("getInstalledProviders", w, "the picker does not ask the widget manager")
+        self.assertIn("public java.util.List<Choice> providers(", w)
+        start = w.index("public int add(Activity a, Choice c)")
+        end = w.index("private static android.os.UserHandle profileOf")
+        self.assertNotIn("ACTION_APPWIDGET_PICK", w[start:end],
+                         "the add flow still fires an intent nothing answers")
+        self.assertNotIn("ACTION_APPWIDGET_PICK", w[:start],
+                         "something before the add flow still fires it")
+        # The bind ask must survive: it is the sanctioned route for a signature-level permission.
+        self.assertIn("ACTION_APPWIDGET_BIND", w)
+        home = _code(open(os.path.join(HOME, "HomeActivity.java")).read())
+        self.assertNotIn("widgets.pick(", home)
+        # An empty list and a missing picker are different sentences, and telling them apart is the
+        # whole difference between this round and the last three.
+        self.assertIn("home_no_widgets", home)
+
+    # ---------------------------------------------------------------- the tablet
+
+    def test_a_tablet_gets_a_wider_grid_than_a_phone(self):
+        """"the launcher needs to work on tablet mode too". Four columns and a five-slot dock are a
+        phone layout; on a ten-inch screen they are four icons the size of coasters."""
+        self.assertEqual(self.out["cols-phone"], "4")
+        self.assertEqual(self.out["cols-tab7"], "5")
+        self.assertEqual(self.out["cols-tab10"], "6")
+        self.assertEqual(self.out["tablet"], "false true")
+
+    def test_a_rotation_does_not_change_the_column_count(self):
+        """COLUMNS COME FROM THE SHORT SIDE. If they came from the current width, every rotation
+        would re-flow the arrangement through Desk.fit — nothing deleted, but rotate to landscape and
+        back and your icons are not where you left them, for ever. A tablet rotates all the time."""
+        # deskCols takes only smallestScreenWidthDp, so landscape and portrait are the same call.
+        self.assertEqual(self.out["cols-tab10"], "6")
+        src = open(os.path.join(HOME, "HomeMetrics.java")).read()
+        self.assertIn("public static int deskCols(int smallestWidthDp)", src,
+                      "deskCols can see the current width, which makes a rotation destructive")
+
+    def test_a_phone_in_landscape_is_still_a_phone(self):
+        """Its width in dp is tablet-sized and its ergonomics are not."""
+        self.assertEqual(self.out["dock-phone"], "5 5")
+
+    def test_a_tablet_dock_is_not_five_icons_floating_in_a_metre_of_bar(self):
+        self.assertEqual(self.out["dock-tab10"], "6 9")
+        self.assertEqual(self.out["icon-dp"], "52 64")
+        self.assertEqual(self.out["drawer-dp"], "80 104")
+
+    def test_rows_come_from_the_height_that_was_actually_available(self):
+        """And a height of zero — every draw before the first layout pass — falls back rather than
+        computing three rows out of nothing."""
+        self.assertEqual(self.out["rows-phone"], "7 3")
+        self.assertEqual(self.out["rows-tab10"], "8 5")
+        self.assertEqual(self.out["rows-unknown"], "5 6")
+
+    def test_the_desktop_is_stored_per_grid_shape(self):
+        """One arrangement re-flowed on every rotation is lossy in the way that matters. A shape
+        that has never been seen INHERITS the previous one rather than starting empty — a blank
+        desktop after a rotation reads as the launcher having thrown everything away."""
+        self.assertEqual(self.out["geometry"], "6x4")
+        prefs = _code(open(os.path.join(HOME, "LauncherPrefs.java")).read())
+        self.assertIn("public String desk(String geometry)", prefs)
+        self.assertIn("return v == null ? desk() : v;", prefs)
+        home = _code(open(os.path.join(HOME, "HomeActivity.java")).read())
+        self.assertNotIn("prefs.setDesk(Desk.serialize", home,
+                         "an arrangement is still written without its grid shape")
+        self.assertIn("onConfigurationChanged", home,
+                      "a rotation never recomputes the grid at all")
 
     # ---------------------------------------------------------------- the desktop
 

@@ -21,6 +21,7 @@
     <string name="home_apps">PosterChan apps</string>
     <string name="home_all_apps">All apps</string>
     <string name="home_swipe_hint">Swipe up for all apps</string>
+    <string name="app_email_title">Email</string>
     <string name="home_add_widget">Add a widget</string>
     <string name="home_add_to_home">Add to home screen</string>
     <string name="home_remove_from_home">Remove from home screen</string>
@@ -36,8 +37,8 @@
     <string name="home_settings">PosterChan settings</string>
     <string name="home_phone_settings">Phone settings</string>
     <string name="home_empty_hint">Long-press the wallpaper to add apps and widgets</string>
-    <string name="home_no_widget_picker">This phone has no widget picker</string>
-    <string name="home_widget_refused">Android would not let the widget be added</string>
+    <string name="home_no_widgets">No app on this phone offers a widget</string>
+    <string name="home_widget_refused">Android would not let that widget be added</string>
     <string name="home_cannot_open">That app would not open</string>
     <string name="home_no_uninstaller">This app cannot be uninstalled on this phone</string>
     <!-- Messages (the opt-in SMS app). -->
