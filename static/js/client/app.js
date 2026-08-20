@@ -6033,6 +6033,17 @@
     // every other view; renderAdmin shows it for admin.
     const _ah=document.getElementById('admin-host');
     if(VIEW!=='admin'){ if(_ah) _ah.style.display='none'; feed.style.display=''; }
+    /* THE LAST MOMENT THE READER'S POSITION EXISTS. Replacing the feed with a spinner collapses
+     * scrollHeight, so scrollTop is 0 from the next line onwards — and the capture that used to live
+     * inside renderTimeline therefore read zero and saved nothing. The restore then faithfully put
+     * them back at 0, which is the bug wearing the fix's clothes: "firefox just brought me back to
+     * the top after commenting", after four separate attempts that each looked right.
+     *
+     * Nothing engine-specific about it. Firefox is simply where it was noticed. */
+    if(reset && _TL_TABS.indexOf(VIEW) >= 0){
+      try{ const at = feed ? feed.scrollTop : 0;
+           if(at > 0) _tlScrollMemo[VIEW] = at; }catch(_){ }
+    }
     if (reset && VIEW!=='admin') feed.innerHTML = '<div class="spinner"></div>';
     if (VIEW==='home' || VIEW==='global') return renderTimeline(VIEW, reset);
     if (VIEW==='trending') return renderTrending();
@@ -6272,6 +6283,9 @@
      * draw. Only when this IS the view already on screen: arriving from somewhere else, #feed still
      * holds the OLD view's content and its scrollTop means nothing about this one. */
     const fn = _tlFilter(view);
+    /* A repaint that did NOT come through renderView still has its offset here — renderView's own
+     * capture (above the spinner) covers the reset path, because by the time this runs on that path
+     * the feed has already been blanked and scrollTop is 0. Both are needed; neither is enough. */
     if(VIEW === view){
       try{ const f0 = $('#feed'); const at = (f0 && f0.scrollTop) || 0;
            if(at > 0 && !(_tlScrollMemo[view] > 0)) _tlScrollMemo[view] = at; }catch(_){ }

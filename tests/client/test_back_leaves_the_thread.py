@@ -235,7 +235,7 @@ class RepaintingTheCurrentTimelineKeepsThePlace(unittest.TestCase):
 
     def test_a_repaint_of_the_current_timeline_captures_the_offset_itself(self):
         i = self.src.index("function renderTimeline(view, reset){")
-        blk = self.src[i:i + 1400]
+        blk = self.src[i:i + 2200]
         self.assertIn("if(VIEW === view){", blk,
                       "renderTimeline cannot tell a repaint of the current feed from an arrival")
         self.assertIn("_tlScrollMemo[view] = at", blk)
@@ -244,7 +244,7 @@ class RepaintingTheCurrentTimelineKeepsThePlace(unittest.TestCase):
         """#feed is shared: coming from elsewhere it still holds the OLD view's content, and its
         scrollTop says nothing about this timeline."""
         i = self.src.index("function renderTimeline(view, reset){")
-        blk = self.src[i:i + 1400]
+        blk = self.src[i:i + 2200]
         j = blk.index("_tlScrollMemo[view] = at")
         self.assertIn("VIEW === view", blk[:j], "the capture is not gated on already being here")
 
@@ -252,5 +252,44 @@ class RepaintingTheCurrentTimelineKeepsThePlace(unittest.TestCase):
         """A save made on the way OUT is the reader's real position. A repaint that happens after the
         feed has been redrawn to the top would otherwise overwrite it with 0-ish noise."""
         i = self.src.index("function renderTimeline(view, reset){")
-        blk = self.src[i:i + 1400]
+        blk = self.src[i:i + 2200]
         self.assertIn("!(_tlScrollMemo[view] > 0)", blk)
+
+
+class TheOffsetIsTakenBeforeTheFeedIsBlanked(unittest.TestCase):
+    """THE ONE THAT MADE FOUR PREVIOUS ATTEMPTS LOOK RIGHT AND CHANGE NOTHING.
+
+    `renderView` replaces the feed with a spinner and THEN dispatches to the view:
+
+        if (reset && VIEW!=='admin') feed.innerHTML = '<div class="spinner"></div>';
+        if (VIEW==='home' || VIEW==='global') return renderTimeline(VIEW, reset);
+
+    Replacing the content collapses scrollHeight, so scrollTop is 0 from that line onwards. Every
+    capture that ran inside renderTimeline therefore read zero, saved nothing, and the restore
+    faithfully put the reader back at 0 — the bug wearing the fix's clothes. Reported four times,
+    latest as "firefox just brought me back to the top after commenting".
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = APP.read_text()
+
+    def test_the_capture_happens_before_the_spinner(self):
+        blank = self.src.index("""feed.innerHTML = '<div class="spinner"></div>'""")
+        cap = self.src.rindex("_tlScrollMemo[VIEW] = at", 0, blank)
+        self.assertLess(cap, blank,
+                        "the offset is read after the feed has been blanked, so it reads 0")
+
+    def test_it_only_captures_for_a_timeline(self):
+        """#feed is shared. Saving a Notes or Mail offset under a timeline key would restore into
+        the wrong view."""
+        blank = self.src.index("""feed.innerHTML = '<div class="spinner"></div>'""")
+        blk = self.src[blank - 500:blank]
+        self.assertIn("_TL_TABS.indexOf(VIEW) >= 0", blk)
+
+    def test_it_only_captures_on_a_reset(self):
+        """A non-reset render leaves the feed alone, so there is nothing to preserve against and the
+        live offset is still correct."""
+        blank = self.src.index("""feed.innerHTML = '<div class="spinner"></div>'""")
+        blk = self.src[blank - 500:blank]
+        self.assertIn("if(reset &&", blk)
