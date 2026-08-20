@@ -38,6 +38,8 @@ public final class SmsSender {
         public String error = "";
         public Uri row;
         public int parts;
+        /** Whether the phone's OWN message store has a copy. False when we sent without the role. */
+        public boolean stored;
     }
 
     /**
@@ -48,16 +50,29 @@ public final class SmsSender {
         Result r = new Result();
         if (address == null || address.trim().isEmpty()) { r.error = "no number"; return r; }
         if (body == null || body.isEmpty()) { r.error = "nothing to send"; return r; }
-        if (!HasRole.sms(ctx)) {
-            // Not a technicality. A non-default app CAN still call SmsManager with SEND_SMS, but it
-            // may not write the provider — so the message would be sent and then be missing from the
-            // thread it was sent in, which reads as "it didn't send".
-            r.error = "PosterChan is not this phone's messages app";
-            return r;
-        }
+        /* SENDING DOES NOT NEED THE ROLE. WRITING THE PROVIDER DOES.
+         *
+         * This used to refuse outright, and the reasoning was sound as far as it went: a non-default
+         * app may call SmsManager with SEND_SMS but may not write the message store, so the sent
+         * message would be missing from the thread it was sent in — "it didn't send".
+         *
+         * It does not hold HERE, because this screen does not render the provider. It renders our
+         * own encrypted archive, which we can always write; the copy that would be missing is the
+         * one in the phone's STOCK messages app. So the trade was: refuse to send at all, on every
+         * phone that has not granted the role, to avoid a gap in a different app's UI. Reported as
+         * "POsterchan is not the this phones messaging app when i send message" — a texting app that
+         * cannot text.
+         *
+         * So it sends either way, and says which happened. `stored` false means the radio was asked
+         * and the phone's own store has no copy; the caller puts it in the archive and says so once,
+         * rather than pretending nothing was sent. */
+        boolean mayWrite = HasRole.sms(ctx);
 
         long now = System.currentTimeMillis();
-        r.row = SmsStore.storeSent(ctx, address, body, now, Telephony.Sms.MESSAGE_TYPE_OUTBOX);
+        r.row = mayWrite
+                ? SmsStore.storeSent(ctx, address, body, now, Telephony.Sms.MESSAGE_TYPE_OUTBOX)
+                : null;
+        r.stored = r.row != null;
 
         try {
             SmsManager sms = manager(ctx);
@@ -78,7 +93,9 @@ public final class SmsSender {
         } catch (Throwable t) {
             Log.w(TAG, "sms: send failed", t);
             r.error = String.valueOf(t.getMessage());
-            SmsStore.setType(ctx, r.row, Telephony.Sms.MESSAGE_TYPE_FAILED);
+            // Only if there is a row to move. Without the role there is none, and marking a null one
+            // failed is how a send that legitimately went out gets reported as broken.
+            if (r.row != null) SmsStore.setType(ctx, r.row, Telephony.Sms.MESSAGE_TYPE_FAILED);
         }
         return r;
     }

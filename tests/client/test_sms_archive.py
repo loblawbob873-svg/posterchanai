@@ -180,12 +180,32 @@ class SendingFromAnotherDevice(unittest.TestCase):
 
     def test_a_laptop_queues_a_request_and_says_so(self):
         """It cannot reach a radio. Reporting the message as sent would be a lie the person only
-        discovers when the reply never comes."""
-        res = run(isPhone=False, steps=["load", "send:+15550100:on my way"])
+        discovers when the reply never comes.
+
+        `telephony=False` is what makes this a LAPTOP. It used to rely on `isPhone=False`, which
+        means "does not hold the SMS role" — a different thing, and true of plenty of phones. The
+        distinction did not matter while sending was gated on the role; it decides everything now
+        that a phone without the role sends its own texts (see the case below)."""
+        res = run(isPhone=False, telephony=False, steps=["load", "send:+15550100:on my way"])
         result = calls_of(res, "sendResult")[0]
         self.assertEqual([result[1], result[2]], [True, "queued"])
         self.assertTrue(any(p["d"].startswith("pcai:smsout:") for p in res["published"]))
         self.assertEqual(calls_of(res, "send"), [], "a laptop tried to use a radio")
+
+    def test_a_phone_without_the_role_still_sends_its_own_text(self):
+        """The reported bug: "POsterchan is not the this phones messaging app when i send message".
+
+        A phone that has not been made the default has a radio and SEND_SMS; only WRITING the
+        phone's own message store needs the role. Queuing the message as a request for "your phone"
+        to perform — on the phone holding it — meant a text typed on the handset sat in a queue
+        addressed to itself."""
+        res = run(isPhone=False, telephony=True, steps=["load", "send:+15550100:on my way"])
+        result = calls_of(res, "sendResult")[0]
+        self.assertEqual(result[1], True)
+        self.assertEqual(result[2], "phone", "a phone with a radio queued its own text for itself")
+        self.assertTrue(calls_of(res, "send"), "the radio was never asked")
+        self.assertFalse(any(p["d"].startswith("pcai:smsout:") for p in res["published"]),
+                         "it published a request as well as sending")
 
     def test_the_phone_sends_it_and_marks_it_done(self):
         req = {"to": "+15550100", "body": "on my way", "at": None}

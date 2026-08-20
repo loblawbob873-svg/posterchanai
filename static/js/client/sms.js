@@ -544,17 +544,47 @@
    * "waiting for your phone", never as sent. */
   async function send(to, body){
     if(!to || !body) return { ok:false, error:'nothing to send' };
-    if(await isPhone()){
+    /* THE RADIO IS IN THIS DEVICE OR IT IS NOT — the ROLE is a different question.
+     *
+     * This used to ask `isPhone()`, which is "do we hold the SMS role". On a phone that has not
+     * granted it, the answer is no and the message went down the branch below: published as a
+     * REQUEST for "your phone" to perform — on the very phone holding it. Nothing was ever going to
+     * pick that up, so a text typed on the handset sat in a queue addressed to itself.
+     *
+     * Sending needs SEND_SMS, which we have; only WRITING the phone's own message store needs the
+     * role. So a device with a radio sends its own texts, and `stored` says whether the phone's
+     * stock messages app also got a copy. */
+    const st0 = await phoneState();
+    /* `telephony`, NOT `present`. They are different questions and the names are close enough to
+     * pick the wrong one: `present` means the Sms plugin ANSWERED — true of any Android build,
+     * including a tablet with no radio — while `telephony` is whether this device can actually put
+     * a message on a network. Gating on `present` sent a laptop's text down the radio path, which
+     * the archive test caught by name. */
+    if(st0.telephony){
       const P = plug('send');
       if(!P) return { ok:false, error:'no messages plugin' };
       let r = null;
       try{ r = await P.send({ to, body }); }catch(e){ return { ok:false, error:String(e) }; }
       if(r && r.ok){
+        if(r.stored === false){
+          /* WE KEEP THE COPY THE PROVIDER WOULD HAVE. `mirror` republishes from the phone's store,
+           * and without the role there is no row there to find — so this message would send and
+           * then be missing from the thread it was sent in, which is the exact failure the old
+           * refusal was written to avoid. Made up here ONLY because the send SUCCEEDED: the thing
+           * that must never be invented is a message nobody received. */
+          const at = Date.now();
+          try{
+            const doc = await outboxId(to, body, at);
+            S.msgs.set(doc, { doc, address: to, body, date: at, incoming: false, name: '' });
+            rebuild();
+          }catch(_){ }
+          return { ok:true, where:'phone', stored:false };
+        }
         // Published from the provider on the next mirror rather than made up here: the phone's row
         // is the message, and inventing a document for one that failed to send would put a message
         // into the archive that nobody ever received.
         mirror({ limit: 20 });
-        return { ok:true, where:'phone' };
+        return { ok:true, where:'phone', stored:true };
       }
       return { ok:false, error:(r && r.error) || 'the phone refused it' };
     }

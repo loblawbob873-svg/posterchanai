@@ -374,6 +374,9 @@ public class SmsPlugin extends Plugin {
         o.put("ok", r.ok);
         o.put("error", r.error);
         o.put("parts", r.parts);
+        // FALSE means the radio was asked and the phone's OWN messages app has no copy — we lack the
+        // role to write its store. The caller keeps its own copy and says so; it is not a failure.
+        o.put("stored", r.stored);
         o.put("row", r.row == null ? "" : r.row.toString());
         call.resolve(o);
     }
