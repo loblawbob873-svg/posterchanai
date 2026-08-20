@@ -106,8 +106,18 @@ class TheFeedDoesNotJumpToTheTop(unittest.TestCase):
     def test_entering_a_timeline_still_starts_at_the_top(self):
         """The fix must not become 'never reset', or opening a feed drops you wherever the last one
         happened to be — one scroll container is shared by every view."""
+        # Brace-matched: a fixed window is a test that breaks the next time somebody adds a comment
+        # to the function, which is exactly what happened to this one.
         i = self.src.index("function renderTimeline(view, reset){")
-        self.assertIn("_drawTimeline(false)", self.src[i:i + 400],
+        j = self.src.index("{", i)
+        depth, k = 0, j
+        while k < len(self.src):
+            if self.src[k] == "{": depth += 1
+            elif self.src[k] == "}":
+                depth -= 1
+                if depth == 0: break
+            k += 1
+        self.assertIn("_drawTimeline(false)", self.src[i:k],
                       "entering a timeline no longer starts at the top")
 
 
@@ -192,3 +202,39 @@ class CommentingDoesNotThrowYouToTheTop(unittest.TestCase):
         i = self.src.index("async function renderThread(id, hints){")
         blk = self.src[i:i + 2200]
         self.assertIn("setTimeout(", blk[blk.index("if(_keepTop > 0)"):])
+
+
+class RepaintingTheCurrentTimelineKeepsThePlace(unittest.TestCase):
+    """"on desktop replying to a post is still bringing me to top of timeline."
+
+    On the windowed desktop, focusing a window calls `switchView` with the view that window is
+    ALREADY showing. So the save in switchView is skipped — `VIEW !== v` is false — `renderView(true)`
+    reaches renderTimeline with reset, and the draw puts the reader at the top with no remembered
+    offset to return to. Anything else that repaints the current timeline does the same.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = APP.read_text()
+
+    def test_a_repaint_of_the_current_timeline_captures_the_offset_itself(self):
+        i = self.src.index("function renderTimeline(view, reset){")
+        blk = self.src[i:i + 1400]
+        self.assertIn("if(VIEW === view){", blk,
+                      "renderTimeline cannot tell a repaint of the current feed from an arrival")
+        self.assertIn("_tlScrollMemo[view] = at", blk)
+
+    def test_it_does_not_capture_when_arriving_from_another_view(self):
+        """#feed is shared: coming from elsewhere it still holds the OLD view's content, and its
+        scrollTop says nothing about this timeline."""
+        i = self.src.index("function renderTimeline(view, reset){")
+        blk = self.src[i:i + 1400]
+        j = blk.index("_tlScrollMemo[view] = at")
+        self.assertIn("VIEW === view", blk[:j], "the capture is not gated on already being here")
+
+    def test_an_offset_already_remembered_wins(self):
+        """A save made on the way OUT is the reader's real position. A repaint that happens after the
+        feed has been redrawn to the top would otherwise overwrite it with 0-ish noise."""
+        i = self.src.index("function renderTimeline(view, reset){")
+        blk = self.src[i:i + 1400]
+        self.assertIn("!(_tlScrollMemo[view] > 0)", blk)

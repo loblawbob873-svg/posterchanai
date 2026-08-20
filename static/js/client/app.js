@@ -6225,7 +6225,22 @@
   }
   let _liveSince = 0;   // sub start time — only events at/after this are "live" (prependable as new)
   function renderTimeline(view, reset){
+    /* RE-ENTERING THE TIMELINE YOU ARE ALREADY ON IS A REPAINT, NOT AN ARRIVAL.
+     *
+     * "on desktop replying to a post is still bringing me to top of timeline." On the windowed
+     * desktop, focusing a window calls `switchView` with the view that window is ALREADY showing —
+     * so the save in switchView is skipped (`VIEW !== v` is false), `renderView(true)` lands here
+     * with reset, and `_drawTimeline(false)` puts the reader at the top with no remembered offset to
+     * come back to. The same thing happens anywhere else that repaints the current timeline.
+     *
+     * So the offset is taken from the live feed here, where it is still real, and put back after the
+     * draw. Only when this IS the view already on screen: arriving from somewhere else, #feed still
+     * holds the OLD view's content and its scrollTop means nothing about this one. */
     const fn = _tlFilter(view);
+    if(VIEW === view){
+      try{ const f0 = $('#feed'); const at = (f0 && f0.scrollTop) || 0;
+           if(at > 0 && !(_tlScrollMemo[view] > 0)) _tlScrollMemo[view] = at; }catch(_){ }
+    }
     if(reset){ _tl = { oldest:0, loading:false, done:false, pages:0, eosed:false }; _resetLive(); _liveSince = Math.floor(Date.now()/1000); }
     _drawTimeline(false);
     /* PUT THEM BACK WHERE THEY WERE. The offset was saved by switchView on the way out; this is the
