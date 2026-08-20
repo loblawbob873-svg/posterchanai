@@ -71,6 +71,16 @@ class ThereIsAMarkAtTheSafeCeiling(unittest.TestCase):
         i = css.index(".os-boostable{")
         self.assertIn("66.667%", css[i:i + 700])
 
+    def test_vendor_pseudo_elements_are_not_in_one_selector_list(self):
+        """An unknown pseudo-element poisons the ENTIRE selector list, so
+        `::-webkit-slider-runnable-track,::-moz-range-track` applies in neither engine and the native
+        track paints over the mark. Invalid CSS fails silently — nothing logs it."""
+        css = CSS.read_text()
+        for line in css.splitlines():
+            if "-webkit-slider-runnable-track" in line:
+                with self.subTest(line=line.strip()[:60]):
+                    self.assertNotIn("-moz-", line)
+
     def test_the_mark_cannot_swallow_a_drag(self):
         """Decoration painted over a control has to be inert."""
         css = CSS.read_text()

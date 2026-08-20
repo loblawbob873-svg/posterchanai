@@ -1625,6 +1625,15 @@
     }
   }
 
+  /* A screenshot asked for by the KEY. Guarded because the desktop can be entered on a machine with
+   * no compositor bridge at all (a browser, the Windows build), where PCOSShell exists but has
+   * nothing behind it — and a key that quietly throws is worse than one that is not bound. */
+  function _shot(mode){
+    try{
+      if(window.PCOSShell && PCOSShell.takeShot) PCOSShell.takeShot(mode);
+    }catch(_){ }
+  }
+
   /* Adopt a compositor window into a PosterChan window. Called when one appears, whether the
    * launcher started it or the app opened a second window of its own. */
   function adoptNative(nw){
@@ -4924,6 +4933,13 @@
             const p = String(ev.payload || '');
             if(p === 'pc:start') toggleStart();
             else if(p === 'pc:start:close') toggleStart(false);
+            /* PRINT SCREEN, through the same function the tray button calls. A screenshot taken by
+             * the key and one taken from the tray must land in the same folder under the same
+             * naming with the same "saved to…" notice, and the only way to be sure of that is for
+             * there to be one of them. Region shots are only offered when `slurp` is installed —
+             * `takeShot` itself answers that, so the binding does not have to. */
+            else if(p === 'pc:shot') _shot('screen');
+            else if(p === 'pc:shot:region') _shot('region');
           });
         }catch(_){}
         PCOSShell.watch(() => { adoptAll(); drawBar(); }).then(off => {
