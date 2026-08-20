@@ -284,6 +284,48 @@ class ANewTextCanActuallyBeANNOUNCED(unittest.TestCase):
         self.assertIn("canNotify", js, "the panel cannot say whether a text can be announced")
 
 
+class TheNativeScreenNamesWhatAndroidNamed(unittest.TestCase):
+    """"1.0.1336 says PosterChan is not this phone's messages app still!"
+
+    A flat verdict is unanswerable. A role that was never granted, a role granted in another profile,
+    and the two platform tables disagreeing all produce the identical sentence, and none of them
+    tells the person anything they can act on. Android keeps the SMS ROLE and the message store's
+    default-app row separately on 10+, and OEM builds do not always keep them in step; the STORE's
+    row is the one that decides what is delivered, so the app must not simply believe the role — but
+    it can say which one says what, and name the package. The web Texts panel already did; the
+    native Messages screen, which is the one most likely to be open, did not.
+    """
+
+    def setUp(self):
+        self.src = strip_comments((SMS / "ThreadListActivity.java").read_text())
+
+    def test_the_notice_is_measured_rather_than_asserted(self):
+        body = method(self.src, "private String whyNotDefault")
+        self.assertIn("getDefaultSmsPackage", body,
+                      "the notice never asks who Android actually names")
+        self.assertIn("roleHeld", body,
+                      "it cannot tell a role that was never granted from one the message store "
+                      "disagrees with")
+
+    def test_the_three_answers_are_three_sentences(self):
+        body = method(self.src, "private String whyNotDefault")
+        for k in ("sms_default_none", "sms_role_split", "sms_default_is"):
+            self.assertIn(k, body, k)
+
+    def test_every_one_of_them_exists(self):
+        x = (MAIN / "res/values/strings.xml").read_text()
+        for k in ("sms_default_none", "sms_role_split", "sms_default_is"):
+            self.assertIn('name="%s"' % k, x)
+        # The two that name a package must have somewhere to put it.
+        for k in ("sms_role_split", "sms_default_is"):
+            row = [l for l in x.splitlines() if 'name="%s"' % k in l][0]
+            self.assertIn("%1$s", row, "%s names no package, so it says nothing new" % k)
+
+    def test_the_screen_uses_it(self):
+        body = method(self.src, "private void draw")
+        self.assertIn("whyNotDefault()", body)
+
+
 class TheDrawerStillHidesOurOwnPackage(unittest.TestCase):
     """The filter that made the tiles load-bearing. If this ever goes away the catalogue tile and the
     alias would BOTH be listed — one app, two Messages entries."""

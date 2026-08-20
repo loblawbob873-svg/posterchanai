@@ -236,8 +236,25 @@ public class ThreadListActivity extends PcActivity {
             notice.setText(R.string.sms_no_permission);
         } else {
             notice.setVisibility(isDefault ? View.GONE : View.VISIBLE);
-            if (!isDefault) notice.setText(R.string.sms_not_default);
+            // NAME WHAT ANDROID NAMED. "1.0.1336 says PosterChan is not this phone's messages app
+            // still!" — and a flat verdict gives the person nothing to argue with or act on. The
+            // role and the message store's default-app row are two different tables on Android 10+,
+            // and OEM builds do not always keep them in step; the STORE's row is the one that
+            // decides what is delivered, so the app cannot simply believe the role. Saying which
+            // one says what is the only honest answer, and it is the one that can be acted on.
+            if (!isDefault) notice.setText(whyNotDefault());
         }
+    }
+
+    /** The measured reason this app is not the messages app, in a sentence naming the packages. */
+    private String whyNotDefault() {
+        String cur = "";
+        try { cur = android.provider.Telephony.Sms.getDefaultSmsPackage(this); }
+        catch (Throwable ignored) { }
+        boolean role = HasRole.roleHeld(this);
+        if (cur == null || cur.isEmpty()) return getString(R.string.sms_default_none);
+        if (role) return getString(R.string.sms_role_split, cur);
+        return getString(R.string.sms_default_is, cur);
     }
 
     private void compose() {

@@ -129,3 +129,64 @@ class EveryWidgetDeclaresItsCeiling(unittest.TestCase):
         self.assertNotIn("weather_widget_info.xml", wide,
                          "the weather widget may still take a phone's whole width, which is the "
                          "report")
+
+
+class ACeilingNeverPinsAWidget(unittest.TestCase):
+    """A ceiling that lands on the same cell count as the floor is not a ceiling — it is a lock.
+
+        "now I can't resize the weather widget wtf are you doing to it"
+
+    That was self-inflicted, one commit after the ceilings were introduced to bring a full-width
+    widget back down. Weather's floor is 110dp and its ceiling was 260dp; on the phone the emulator
+    actually measures — 261x256px cells at density 2.75 — those work out to `ceil(303/261) = 2` and
+    `floor(715/261) = 2`. Two is two, so the widget could only ever be exactly two cells wide, the
+    handles moved nothing, and the fix for "too gigantic" became "cannot be resized at all".
+
+    The arithmetic here is the launcher's own (`Widgets.spanFor` for the floor, a whole-cell divide
+    for the ceiling) run against REAL phone metrics, and what it asserts is that every axis a widget
+    declares resizable has more than one answer available. A number that satisfies this on paper and
+    not on a phone is the entire failure being guarded against.
+    """
+
+    # The device measured these: 1080x2340 at 440dpi is a 4x6 grid of 261x256px cells. The second
+    # is a smaller, denser phone, because a ceiling can pin on one size and not on another.
+    PHONES = [("1080x2340 @440dpi", 2.75, 261, 256, 4, 6),
+              ("1080x1920 @480dpi", 3.00, 270, 288, 4, 5)]
+
+    def _range(self, lo_dp, hi_dp, cell_px, density, grid):
+        import math
+        lo = max(1, math.ceil(int(lo_dp * density) / cell_px))       # Widgets.spanFor
+        hi = max(1, int(hi_dp * density) // cell_px)                 # HomeActivity.maxCells
+        hi = max(lo, min(grid, hi))
+        return lo, hi
+
+    def test_every_resizable_axis_has_more_than_one_answer(self):
+        for p in PROVIDERS:
+            a = attrs(p)
+            mode = a.get("resizeMode", "")
+            for axis, lo_k, hi_k, cell_i, grid_i, flag in (
+                    ("width", "minResizeWidth", "maxResizeWidth", 2, 4, "horizontal"),
+                    ("height", "minResizeHeight", "maxResizeHeight", 3, 5, "vertical")):
+                if flag not in mode:
+                    continue                     # not resizable that way; nothing is promised
+                for phone in self.PHONES:
+                    with self.subTest(widget=p.name, axis=axis, phone=phone[0]):
+                        lo, hi = self._range(dp(a[lo_k]), dp(a[hi_k]),
+                                             phone[cell_i], phone[1], phone[grid_i])
+                        self.assertGreater(
+                            hi, lo,
+                            "%s can only ever be %d cells %s on %s — its %s and its %s land on the "
+                            "same cell count, so the resize handles move nothing"
+                            % (p.name, lo, axis, phone[0], lo_k, hi_k))
+
+    def test_the_weather_widget_is_still_never_the_whole_phone(self):
+        """Both halves at once, because they pull against each other: it must have room to grow AND
+        must not be able to take every column, which is the report this all started from."""
+        a = attrs([p for p in PROVIDERS if "weather" in p.name][0])
+        for phone in self.PHONES:
+            with self.subTest(phone=phone[0]):
+                lo, hi = self._range(dp(a["minResizeWidth"]), dp(a["maxResizeWidth"]),
+                                     phone[2], phone[1], phone[4])
+                self.assertGreater(hi, lo, "pinned on %s" % phone[0])
+                self.assertLess(hi, phone[4],
+                                "it can still take all %d columns on %s" % (phone[4], phone[0]))
