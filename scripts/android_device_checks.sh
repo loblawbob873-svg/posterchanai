@@ -137,7 +137,18 @@ sleep 2
 #
 # If ours is not what appears, the stock launcher is disabled so that it is: the AVD is ephemeral and
 # both are put back at the end. Skipping instead is what left the launcher unexercised on every run.
+# WAKE, THEN UNLOCK, and the second one is not optional. The section above deliberately turns the
+# screen off, so the device comes back on the KEYGUARD — and a HOME press against a locked device
+# resolves to `com.android.settings/.FallbackHome`, the placeholder Android shows a user who has not
+# unlocked yet. That is not our launcher and not the stock one, so the check then stood the stock
+# launcher down (which changed nothing, because the stock launcher was never what was on top),
+# pressed HOME again, saw FallbackHome again and failed with "HOME did not bring up our launcher".
+# Every emulator run reported the launcher as broken for a reason that was entirely about the lock
+# screen. `wm dismiss-keyguard` is the direct form; MENU is the fallback for images without it.
 adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1
+adb shell wm dismiss-keyguard >/dev/null 2>&1
+adb shell input keyevent KEYCODE_MENU >/dev/null 2>&1
+sleep 1
 adb shell input keyevent KEYCODE_HOME
 sleep 3
 TOP=$(adb shell dumpsys activity activities 2>/dev/null | grep -m1 -E 'mResumedActivity|topResumedActivity' | tr -d '\r')
@@ -167,6 +178,7 @@ if [ -n "$HOLDER" ]; then
   adb logcat -c
   say "press HOME"
   adb shell input keyevent KEYCODE_WAKEUP
+  adb shell wm dismiss-keyguard >/dev/null 2>&1
   adb shell input keyevent KEYCODE_HOME
   sleep 6
   TOP=$(adb shell dumpsys activity activities 2>/dev/null | grep -m1 -E 'mResumedActivity|topResumedActivity' | tr -d '\r')

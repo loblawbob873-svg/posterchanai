@@ -74,24 +74,88 @@ async function setMuted(on, which) {
  * coming out of. Ids are what everything else takes, so they travel with the name. */
 function parseStatus(out) {
   const lines = String(out).split('\n');
-  const sinks = [], sources = [];
+  const sinks = [], sources = [], streams = [];
   let section = '';
   for (const raw of lines) {
     const line = raw.replace(/[│├└─]/g, ' ');
     if (/^\s*Sinks:/.test(line)) { section = 'sink'; continue; }
     if (/^\s*Sources:/.test(line)) { section = 'source'; continue; }
-    if (/^\s*(Filters|Streams|Devices|Clients):/.test(line)) { section = ''; continue; }
+    if (/^\s*Streams:/.test(line)) { section = 'stream'; continue; }
+    if (/^\s*(Filters|Devices|Clients):/.test(line)) { section = ''; continue; }
     if (!section) continue;
     const m = /^\s*(\*?)\s*(\d+)\.\s+(.+?)\s*(?:\[vol:\s*([0-9.]+)[^\]]*\])?\s*$/.exec(line);
     if (!m) continue;
     const row = { id: Number(m[2]), name: m[3].trim(), isDefault: m[1] === '*',
                   volume: m[4] ? parseFloat(m[4]) : null };
+    if (section === 'stream') {
+      /* A STREAM'S PORTS ARE NUMBERED ROWS TOO, and they are the majority of them. Measured on the
+       * real machine, one playing app is three lines:
+       *
+       *     80. Chromium
+       *          69. output_FR       > ALC257 Analog:playback_FR   [active]
+       *          77. output_FL       > ALC257 Analog:playback_FL   [active]
+       *
+       * Every one matches the row regex. Taken as streams, a mixer draws "Chromium", "output_FR"
+       * and "output_FL" as three separate applications with three sliders, two of which control a
+       * port and therefore nothing anybody can hear. Indentation would separate them and is not
+       * safe to lean on — the tree is drawn with box characters this function has already stripped
+       * — so they are identified by what a PORT is: it is linked to a device with `>`, and it is
+       * named for a channel. */
+      if (isPortRow(row.name)) continue;
+      streams.push(row);
+      continue;
+    }
     (section === 'sink' ? sinks : sources).push(row);
   }
-  return { sinks, sources };
+  return { sinks, sources, streams };
+}
+
+/** A port row inside `Streams:`, rather than the stream itself. See parseStatus. */
+function isPortRow(name) {
+  const n = String(name || '');
+  return n.indexOf('>') >= 0 || /^(output|input|monitor|capture|playback)[_-]/i.test(n);
 }
 
 const devices = () => run(['status']).then(parseStatus);
+
+/* ONE APPLICATION'S OWN LEVEL. `wpctl` takes a node id wherever it takes `@DEFAULT_AUDIO_SINK@`,
+ * so a stream is set exactly like a sink — measured on the machine: `wpctl set-volume 80 0.40`
+ * moved the browser and left every other stream alone.
+ *
+ * `wpctl status` does NOT print `[vol:]` for a stream, so the level has to be asked for per stream.
+ * That is one subprocess each and the reason the mixer reads them only while it is open. */
+async function streamVolume(id) {
+  const n = Number(id);
+  if (!Number.isInteger(n) || n <= 0) throw new Error('not a stream id');
+  return parseVolume(await run(['get-volume', String(n)]));
+}
+
+async function setStreamVolume(id, percent) {
+  const n = Number(id);
+  if (!Number.isInteger(n) || n <= 0) throw new Error('not a stream id');
+  const v = clamp(percent);
+  await run(['set-volume', String(n), v.toFixed(3)]);
+  return { id: n, percent: Math.round(v * 100) };
+}
+
+async function setStreamMuted(id, on) {
+  const n = Number(id);
+  if (!Number.isInteger(n) || n <= 0) throw new Error('not a stream id');
+  await run(['set-mute', String(n), on ? '1' : '0']);
+  return { id: n, muted: !!on };
+}
+
+/** The mixer's rows: every playing application, with the level it is playing at. */
+async function mixer() {
+  const devs = await devices();
+  const out = [];
+  for (const st of devs.streams || []) {
+    let v = { percent: null, muted: false };
+    try { v = await streamVolume(st.id); } catch (_) {}
+    out.push({ id: st.id, name: st.name, percent: v.percent, muted: !!v.muted });
+  }
+  return out;
+}
 
 async function setDefault(id) {
   const n = Number(id);
@@ -111,4 +175,5 @@ async function status() {
 }
 
 module.exports = { available, sink, source, setVolume, setMuted, devices, setDefault, status,
-                   parseVolume, parseStatus, MAX };
+                   streamVolume, setStreamVolume, setStreamMuted, mixer,
+                   parseVolume, parseStatus, isPortRow, MAX };
