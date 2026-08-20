@@ -18045,9 +18045,13 @@
    * which is the whole reason they share a screen instead of having three. */
   function _fxHostHTML(){
     if(!_hostFs()) return '';
-    return `<div class="fx-side-h">This computer</div>
-      <button class="folder-chip${_hostOn ? ' active' : ''}" data-host="1"
-              title="Browse this machine's own files">💻 Files on this computer</button>`;
+    /* `.fx-sec` — the SAME section wrapper the synced folders use, not a class of this feature's
+     * own. An invented one has no stylesheet behind it, so the heading renders as unstyled body
+     * text in a sidebar where every other heading is a small cyan caption: it looks like a bug in
+     * the theme rather than a section nobody wrote CSS for. */
+    return '<div class="fx-sec"><b>This computer</b>'
+      + `<button class="folder-chip${_hostOn ? ' active' : ''}" data-host="1"
+           title="Browse this machine's own files">💻 Files on this computer</button></div>`;
   }
   /* \u267b DELETED ON EVERY DEVICE — the account-wide undo, beside the per-device trash. Entries
    * the record marks deleted BUT whose address was retained (executors keep sha/chunks on

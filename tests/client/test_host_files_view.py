@@ -6,6 +6,7 @@ thousand items is simply unusable.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import unittest
@@ -122,6 +123,18 @@ class HostFilesView(unittest.TestCase):
         self.assertIn("data-host", m.group(0),
                       "the 'this computer' chip is drawn in the sidebar and bound somewhere else, "
                       "so pressing it does nothing")
+        # AND ITS SECTION USES A CLASS THAT HAS A STYLESHEET BEHIND IT. An invented one renders as
+        # unstyled body text among small cyan captions, which reads as a broken theme rather than
+        # as a section nobody wrote CSS for.
+        side = re.search(r"\n  function _fxHostHTML\(.*?\n  \}", src, re.S)
+        self.assertTrue(side, "_fxHostHTML could not be found")
+        css = open(os.path.join(ROOT, "static", "css", "client.css"), encoding="utf-8").read()
+        for cls in re.findall(r'class="([a-z][a-z0-9 _-]*)"', side.group(0)):
+            for one in cls.split():
+                if one.startswith("fx-") or one.startswith("folder-"):
+                    self.assertIn("." + one, css,
+                                  f"{one} has no stylesheet behind it — the section will render "
+                                  f"unstyled")
         self.assertIn("data-host", src, "there is no way to get to it from the Files screen")
         # …and choosing another source must leave it, or the chip is a one-way door.
         self.assertIn("_hostOn=false", src.replace(" ", ""),
