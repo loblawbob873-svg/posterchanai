@@ -128,9 +128,17 @@ adb shell pm enable "$HOME_ACT" >/dev/null 2>&1
 # LAUNCHER CHECK when it was missing — which is what happened on every run: "(no 'cmd role' on this
 # image)" and then nothing about the launcher was ever exercised. `cmd package set-home-activity` is
 # the older, more widely present route and is what actually works on the API-34 google_apis image.
-adb shell cmd package set-home-activity "$HOME_ACT" >/dev/null 2>&1
+echo "    pm enable: $(adb shell pm enable --user 0 "$HOME_ACT" 2>&1 | tr -d '\r')"
+echo "    set-home-activity: $(adb shell cmd package set-home-activity "$HOME_ACT" 2>&1 | tr -d '\r')"
 adb shell cmd role add-role-holder android.app.role.HOME $PKG >/dev/null 2>&1
 sleep 2
+# WHAT THE SYSTEM THINKS A HOME SCREEN IS, printed. A run that fails here used to say only "HOME did
+# not bring up our launcher", which is a symptom with three unrelated causes — the component still
+# disabled, the preferred home unchanged, or the device not unlocked. This is the line that tells
+# them apart, and it costs nothing on a passing run.
+echo "    home activities the system can see:"
+adb shell "cmd package query-activities -a android.intent.action.MAIN -c android.intent.category.HOME 2>/dev/null" \
+  | grep -oE '[a-zA-Z0-9._]+/[a-zA-Z0-9._]+' | sort -u | sed 's/^/      /'
 # THE AUTHORITY IS WHAT COMES UP WHEN YOU PRESS HOME — not what a command printed. `set-home-activity`
 # answers "Success" on this image and `resolve-activity` still names the stock launcher, because with
 # two home apps installed the query has no single answer. Pressing the key does.
@@ -169,7 +177,25 @@ case "$TOP" in
     fi
     case "$TOP" in
       *HomeActivity*) ok "PosterChan is the home screen" ; HOLDER="ours" ;;
-      *) fail "HOME did not bring up our launcher — it was NOT exercised: $TOP" ; HOLDER="" ;;
+      *)
+        # FallbackHome IS THE SYSTEM SAYING "there is no home app I can use", not a launcher that
+        # beat ours. With the stock one stood down it means our component did not actually become a
+        # home candidate — so say so once, re-assert it, and try again before giving up. A single
+        # attempt reported the launcher as broken on a run where nothing about the launcher was.
+        echo "    nothing usable came up; re-asserting the component"
+        echo "    pm enable: $(adb shell pm enable --user 0 "$HOME_ACT" 2>&1 | tr -d '\r')"
+        echo "    set-home-activity: $(adb shell cmd package set-home-activity "$HOME_ACT" 2>&1 | tr -d '\r')"
+        adb shell wm dismiss-keyguard >/dev/null 2>&1
+        sleep 2
+        adb shell input keyevent KEYCODE_HOME
+        sleep 3
+        TOP=$(adb shell dumpsys activity activities 2>/dev/null | grep -m1 -E 'mResumedActivity|topResumedActivity' | tr -d '\r')
+        echo "    after HOME: $TOP"
+        case "$TOP" in
+          *HomeActivity*) ok "PosterChan is the home screen" ; HOLDER="ours" ;;
+          *) fail "HOME did not bring up our launcher — it was NOT exercised: $TOP" ; HOLDER="" ;;
+        esac
+        ;;
     esac
     ;;
 esac

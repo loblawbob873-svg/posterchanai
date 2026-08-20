@@ -33,7 +33,7 @@ PHONE = os.path.join(APP, "phone")
 SHORTCUT = os.path.join(APP, "shortcut")
 
 # The phone shell: the packages that are plain platform API and therefore compilable here.
-SHELL = ["home", "ui", "sms", "phone", "shortcut"]
+SHELL = ["home", "ui", "sms", "phone", "shortcut", "weather"]
 PACKAGES = [os.path.join(APP, p) for p in SHELL]
 
 # EVERY OTHER PACKAGE UNDER place/poster/app, NAMED — not because this file compiles them, but so

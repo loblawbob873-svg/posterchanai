@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The weather widget's conditions. Hand-written (the sprite has no weather glyphs);
+     stroked paths only, every number space-separated, and no arcs — see the note in
+     scripts/gen_android_icons.py about packed arc flags failing to inflate on Android. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#00000000" android:strokeColor="#00F0FF"
+        android:strokeWidth="1.6" android:strokeLineCap="round"
+        android:strokeLineJoin="round" android:pathData="M 6.5 18 C 4.0 18 2.5 16.3 2.5 14.4 C 2.5 12.6 3.9 11.1 5.7 10.9 C 6.2 8.3 8.5 6.4 11.2 6.4 C 14.0 6.4 16.3 8.4 16.7 11.1 C 19.0 11.2 20.8 13.0 20.8 15.1 C 20.8 16.7 19.5 18 17.9 18 Z" />
+</vector>

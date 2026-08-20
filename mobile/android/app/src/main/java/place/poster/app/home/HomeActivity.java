@@ -679,14 +679,26 @@ public class HomeActivity extends Activity implements DeskView.Host {
         } catch (Throwable t) { toast(getString(R.string.home_cannot_open)); }
     }
 
-    /** The only WebView start in this package. */
+    /**
+     * The only WebView start in this package.
+     *
+     * NOT DRESSED AS A LAUNCHER PRESS. This used to add ACTION_MAIN and CATEGORY_LAUNCHER, which is
+     * the intent the system delivers when somebody taps an icon on their home screen — and its
+     * contract is "bring this app back the way I left it". On a warm start the extras therefore went
+     * nowhere and every tile opened whatever had been on screen last: "on tablet, email app is
+     * loading News!", "same for other apps". The component is explicit, so those two decorations
+     * bought nothing and cost the payload. See LaunchView.
+     */
     private void openApp(String view) {
         try {
+            boolean particular = view != null && !view.isEmpty() && !HomeTiles.VIEW_APP.equals(view);
+            // Parked BEFORE the start, never after: on a fast device the target can resume and read
+            // before this method's next line runs.
+            if (particular) LaunchView.request(view, System.currentTimeMillis());
+            else LaunchView.clear();
             Intent i = new Intent(this, MainActivity.class)
-                    .setAction(Intent.ACTION_MAIN)
-                    .addCategory(Intent.CATEGORY_LAUNCHER)
                     .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            if (view != null && !view.isEmpty() && !HomeTiles.VIEW_APP.equals(view)) {
+            if (particular) {
                 i.putExtra(EXTRA_VIEW, view);
                 i.putExtra(EXTRA_VIEW_AT, System.currentTimeMillis());
             }
@@ -736,7 +748,10 @@ public class HomeActivity extends Activity implements DeskView.Host {
             if (!e.isOurs()) { labels.add(getString(R.string.home_app_info)); acts.add(2); }
         }
         labels.add(getString(R.string.home_add_widget)); acts.add(3);
-        show(item.isWidget() ? getString(R.string.home_add_widget) : (e == null ? "" : e.label),
+        // THE TITLE NAMES WHAT WAS PRESSED. A menu about an existing widget headed "Add a widget"
+        // reads as the wrong menu, which on the one item whose Remove was unreachable is the last
+        // thing it should say.
+        show(item.isWidget() ? widgetLabel(item) : (e == null ? "" : e.label),
              labels, new Pick() {
             @Override public void pick(int w) {
                 switch (acts.get(w)) {
@@ -780,6 +795,17 @@ public class HomeActivity extends Activity implements DeskView.Host {
                 }
             }
         });
+    }
+
+    /** What a placed widget calls itself, for the menu that removes it. */
+    private String widgetLabel(Desk.Item item) {
+        AppWidgetProviderInfo i = widgets.infoOf(item.widgetId());
+        if (i == null) return getString(R.string.home_widget_gone);
+        try {
+            CharSequence c = i.loadLabel(getPackageManager());
+            if (c != null && c.length() > 0) return c.toString();
+        } catch (Throwable ignored) { }
+        return getString(R.string.home_add_widget);
     }
 
     /** EVERY dock item can be removed, including the ones seeded on the first run. */
@@ -954,9 +980,11 @@ public class HomeActivity extends Activity implements DeskView.Host {
             int p = Skin.dp(HomeActivity.this, 12);
             row.setPadding(p, p, p, p);
 
+            // A WIDGET PREVIEW IS WIDE. A square thumbnail crops a 4x1 clock into a smear; this is
+            // the shape of the thing that will actually land on the home screen.
             ImageView art = new ImageView(HomeActivity.this);
-            int s = Skin.dp(HomeActivity.this, 44);
-            art.setLayoutParams(new LinearLayout.LayoutParams(s, s));
+            art.setLayoutParams(new LinearLayout.LayoutParams(
+                    Skin.dp(HomeActivity.this, 76), Skin.dp(HomeActivity.this, 52)));
             art.setScaleType(ImageView.ScaleType.FIT_CENTER);
             Drawable d = widgets.preview(c);
             if (d != null) art.setImageDrawable(d);

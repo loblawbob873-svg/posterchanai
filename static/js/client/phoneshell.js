@@ -206,6 +206,33 @@
     }, 'requestDialer', 'isDefaultDialer', st.dialerCapable, 'phone app');
   }
 
+  /* THE ONE FACT THE WEATHER WIDGET CANNOT WORK OUT FOR ITSELF.
+   *
+   * That widget is drawn by the LAUNCHER's process, which has no session and no localStorage, and
+   * the instance is chosen at runtime by the person — one bundle serves every instance, so it
+   * cannot be baked into the APK. So the base URL is mirrored across, exactly as the theme is.
+   *
+   * AN EMPTY BASE IS A REAL ANSWER, not a failure to send one: on a standalone install the widget
+   * says "weather needs your PosterChan server", which is a different sentence from "no location
+   * yet" and from "no network". Weather is the one feature here that genuinely needs the server —
+   * the forecast is proxied so the upstream never sees a user.
+   *
+   * Fire-and-forget, like mirrorTheme: nothing on this page depends on it. */
+  function syncWeather(){
+    let P = null;
+    try{ P = PC && PC.capPlugin ? PC.capPlugin('Weather', 'sync') : null; }catch(_){ return; }
+    if(!P) return;
+    let base = '';
+    try{
+      base = (typeof window.__PC_API_BASE__ !== 'undefined' ? (window.__PC_API_BASE__ || '')
+                                                           : location.origin) || '';
+    }catch(_){ base = ''; }
+    let units = 'metric';
+    try{ units = localStorage.getItem('pc_units') === 'imperial' ? 'imperial' : 'metric'; }catch(_){}
+    try{ const r = P.sync({ base: String(base).replace(/\/+$/, ''), units });
+         if(r && r.catch) r.catch(()=>{}); }catch(_){}
+  }
+
   function init(){
     PC = window.__PC;
     if(!PC){ return setTimeout(init, 50); }
@@ -213,6 +240,7 @@
     // mirror the current one once on arrival — otherwise a phone whose theme has not changed since
     // the app was updated shows native screens in the flagship theme for ever.
     try{ mirrorTheme(localStorage.getItem('pc_theme') || 'cyberpunk'); }catch(_){}
+    syncWeather();
 
     /* THE LANDING RUNS AFTER BOOT, NEVER INSIDE IT — and that is not caution, it is a scar.
      *
@@ -235,5 +263,5 @@
   }
   init();
 
-  window.PCPhone = { mirrorTheme, consumeLaunchView, status, renderSettings };
+  window.PCPhone = { mirrorTheme, syncWeather, consumeLaunchView, status, renderSettings };
 })();

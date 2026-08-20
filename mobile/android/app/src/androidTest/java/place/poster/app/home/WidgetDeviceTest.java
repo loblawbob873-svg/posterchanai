@@ -75,19 +75,37 @@ public class WidgetDeviceTest {
     }
 
     @Test
-    public void theSystemWidgetPickerIsNotSomethingToBuildOn() {
-        // THE DIAGNOSIS, STATED AS A MEASUREMENT. ACTION_APPWIDGET_PICK was answered by
-        // `com.android.settings.AppWidgetPickActivity` in the era when a system dialog owned "Add to
-        // Home screen"; every launcher since has drawn its own list. If this ever comes back true on
-        // some image, that is worth knowing — but the flow must not depend on it either way, which
-        // is what the next test proves.
+    public void whatTheSystemWidgetPickerActuallyIsOnThisImage() {
+        // A THEORY THIS DEVICE REFUTED, KEPT AS A MEASUREMENT.
+        //
+        // The first version of this test asserted that ACTION_APPWIDGET_PICK resolves to nothing on
+        // a modern Android — the tidy explanation for why "Add a widget" could never work. THE
+        // EMULATOR SAID `systemPicker=true` ON API 34, so that explanation is wrong, at least here,
+        // and it is not repeated anywhere as fact.
+        //
+        // Resolving is not the same as being usable, which is the distinction the original guess
+        // skipped: a third-party app calling `startActivityForResult` on an activity that is not
+        // exported, or that is guarded by a permission it does not hold, gets an exception in the
+        // same catch a cancelled dialog returns quietly through. So this prints what the activity
+        // IS — package, exported, permission — and leaves the conclusion to whoever reads it.
+        //
+        // What does NOT depend on the answer: our own list. Every launcher builds one, it works on
+        // an image with no picker and on an image with a picker we may not start, and it is the only
+        // version of this flow that can show a preview or say "no app on this phone offers a widget".
         boolean picker = widgets.systemPickerExists();
         boolean bind = widgets.bindDialogExists();
+        StringBuilder detail = new StringBuilder();
+        try {
+            android.content.pm.ResolveInfo ri = ctx.getPackageManager().resolveActivity(
+                    new android.content.Intent(android.appwidget.AppWidgetManager.ACTION_APPWIDGET_PICK), 0);
+            if (ri == null) detail.append("resolves to nothing");
+            else detail.append(ri.activityInfo.packageName).append('/').append(ri.activityInfo.name)
+                       .append(" exported=").append(ri.activityInfo.exported)
+                       .append(" permission=").append(ri.activityInfo.permission);
+        } catch (Throwable t) { detail.append("query threw ").append(t); }
         Log.i(TAG, "widget probe: API " + Build.VERSION.SDK_INT
-                + " systemPicker=" + picker + " bindDialog=" + bind);
-        assertFalse("ACTION_APPWIDGET_PICK resolves on API " + Build.VERSION.SDK_INT
-                + " after all — the flow still must not rely on it, but the diagnosis that step 1"
-                + " could never run needs re-checking against the reporter's phone", picker);
+                + " systemPicker=" + picker + " bindDialog=" + bind + " -> " + detail);
+
         // The bind dialog is the one system activity the flow DOES need, on every phone where
         // BIND_APPWIDGET is not already granted — which is every phone.
         assertTrue("no ACTION_APPWIDGET_BIND activity: a third-party launcher cannot bind a widget"
@@ -174,6 +192,114 @@ public class WidgetDeviceTest {
         assertEquals(widgetId, items.get(0).widgetId());
 
         Log.i(TAG, "widget probe: added id=" + widgetId + " span=" + sx + "x" + sy + " OK");
+    }
+
+    @Test
+    public void ourOwnWidgetsAreNamedAndNotJustThreeCopiesOfTheAppName() {
+        // "You have no idea which widget you are adding." A widget's label is its RECEIVER's label,
+        // and without one `loadLabel` falls back to the APPLICATION label — so both of ours listed
+        // as "PosterChan / PosterChan" on this very emulator while every other app's read
+        // "Clock / Analog". Measured from the provider dump, not guessed.
+        java.util.Map<String, String> ours = new java.util.HashMap<String, String>();
+        for (Widgets.Choice c : widgets.providers(90, 90)) {
+            if (ctx.getPackageName().equals(c.provider().getPackageName())) {
+                ours.put(c.provider().getShortClassName(), c.label);
+            }
+        }
+        assertTrue("PosterChan offers no widgets of its own: " + ours, ours.size() >= 3);
+        assertEquals("Calendar", ours.get(".calendar.CalendarWidget"));
+        assertEquals("Music", ours.get(".music.MusicWidget"));
+        assertEquals("Weather", ours.get(".weather.WeatherWidget"));
+        assertEquals("two of our widgets share a name: " + ours,
+                ours.size(), new java.util.HashSet<String>(ours.values()).size());
+    }
+
+    @Test
+    public void everyWidgetInTheListHasAPictureToChooseBy() {
+        // A row with no art is a row you cannot choose by, which is the complaint. The chain is
+        // previewImage -> previewLayout (API 31+, which is what modern providers ship INSTEAD and
+        // which loadPreviewImage does not render) -> the provider's icon -> the app's icon.
+        java.util.List<Widgets.Choice> rows = widgets.providers(90, 90);
+        assertTrue(rows.size() > 0);
+        java.util.List<String> blank = new java.util.ArrayList<String>();
+        for (Widgets.Choice c : rows) {
+            if (widgets.preview(c) == null) blank.add(c.appLabel + "/" + c.label);
+        }
+        assertTrue("no picture for: " + blank, blank.isEmpty());
+    }
+
+    @Test
+    public void aPlacedWidgetCanBeLongPressedWhichIsHowItIsREMOVED() throws Exception {
+        // "no way to remove widgets". The menu with Remove in it hangs off a long press on the
+        // desktop, and an AppWidgetHostView's RemoteViews children are CLICKABLE — they consume the
+        // DOWN, so DeskView was never told a finger had gone down on a widget and the long press was
+        // never armed. Moving and resizing died with it.
+        shell("appwidget grantbind --package " + ctx.getPackageName() + " --user 0");
+        java.util.List<Widgets.Choice> rows = widgets.providers(90, 90);
+        Widgets.Choice pick = null;
+        for (Widgets.Choice c : rows) if (c.info.configure == null) { pick = c; break; }
+        assertNotNull("nothing addable without a person", pick);
+
+        HomeRoles.enableLauncherComponent(ctx, true);
+        final Widgets.Choice chosen = pick;
+        final int[] made = new int[]{ -1 };
+        ActivityScenario<HomeActivity> s = ActivityScenario.launch(HomeActivity.class);
+        try {
+            s.onActivity(a -> made[0] = widgets.add(a, chosen));
+            assertTrue("could not place a widget to press", made[0] >= 0);
+            allocated.add(made[0]);
+
+            final DeskView[] deskOut = new DeskView[1];
+            s.onActivity(a -> {
+                // Put it on the grid the way the launcher does, then hand the view to the desk.
+                java.util.List<Desk.Item> items = new java.util.ArrayList<Desk.Item>();
+                Desk.Item it = new Desk.Item(Desk.widgetKey(made[0]), 0, 0, 2, 2);
+                Desk.add(items, it, 4, 5);
+                DeskView d = (DeskView) ((android.view.ViewGroup)
+                        a.findViewById(place.poster.app.R.id.pc_home_desk)).getChildAt(0);
+                d.setGrid(4, 5);
+                d.setItems(items);
+                deskOut[0] = d;
+            });
+            Thread.sleep(600);                       // let it lay out and the host build its view
+
+            final DeskView desk = deskOut[0];
+            assertNotNull("no desk", desk);
+            // THE PREMISE, ASSERTED: the widget really does put a clickable view under the finger.
+            final boolean[] clickable = new boolean[]{ false };
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(
+                    () -> clickable[0] = hasClickable(desk));
+            // (Not fatal if a provider ships no clickable content — the guard below is the point.)
+            Log.i(TAG, "widget probe: clickable widget content present = " + clickable[0]);
+
+            final boolean[] lifted = new boolean[]{ false };
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                long t = android.os.SystemClock.uptimeMillis();
+                float x = desk.cellW() / 2f, y = desk.cellH() / 2f;
+                desk.dispatchTouchEvent(android.view.MotionEvent.obtain(
+                        t, t, android.view.MotionEvent.ACTION_DOWN, x, y, 0));
+            });
+            Thread.sleep(700);                       // past the 400ms long-press
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                long t = android.os.SystemClock.uptimeMillis();
+                float x = desk.cellW() / 2f, y = desk.cellH() / 2f;
+                desk.dispatchTouchEvent(android.view.MotionEvent.obtain(
+                        t, t, android.view.MotionEvent.ACTION_MOVE, x, y + 4, 0));
+                lifted[0] = desk.editingItem() != null;
+            });
+            assertTrue("a long press on a placed widget never reached the desktop — its Remove,"
+                    + " Resize and drag are all unreachable", lifted[0]);
+        } finally {
+            s.close();
+        }
+    }
+
+    private static boolean hasClickable(android.view.View v) {
+        if (v.isClickable()) return true;
+        if (!(v instanceof android.view.ViewGroup)) return false;
+        android.view.ViewGroup g = (android.view.ViewGroup) v;
+        for (int i = 0; i < g.getChildCount(); i++) if (hasClickable(g.getChildAt(i))) return true;
+        return false;
     }
 
     @Test

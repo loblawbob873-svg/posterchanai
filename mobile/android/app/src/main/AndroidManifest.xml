@@ -562,6 +562,7 @@
              which on a home screen can be hours. -->
         <receiver
             android:name=".calendar.CalendarWidget"
+            android:label="@string/calendar_widget_title"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
@@ -573,6 +574,42 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/calendar_widget_info" />
         </receiver>
+
+        <!-- THE WEATHER, and what it contacts is worth stating in the manifest as well as in the
+             code: `<base>/api/weather` on the user's OWN PosterChan instance, and nothing else. No
+             third-party service is called from the phone, no location permission is declared or
+             used anywhere in this feature, and the place is TYPED rather than sensed. The node then
+             asks Open-Meteo from its own IP with the coordinate rounded to about a kilometre
+             (app/services/weather_service.py), so the upstream sees a server and a grid square.
+
+             It is the one widget here with a polling period; WeatherWidget says why. -->
+        <receiver
+            android:name=".weather.WeatherWidget"
+            android:label="@string/weather_widget_title"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="place.poster.app.WEATHER_TAP" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/weather_widget_info" />
+        </receiver>
+
+        <!-- "Where are you". Started by the system when the widget is placed (android:configure) and
+             by a tap on a widget that has no place yet. exported=true because the SYSTEM starts it
+             for the configuration step; it takes no data from the caller beyond the widget id. -->
+        <activity
+            android:name=".weather.WeatherConfigActivity"
+            android:exported="true"
+            android:theme="@style/PcAppTheme"
+            android:label="@string/weather_pick_title"
+            android:excludeFromRecents="true"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
 
         <!-- Headset / steering-wheel buttons on Android versions that deliver them as a broadcast.
              MediaSessionCompat looks this receiver up BY NAME at construction and warns (then routes
@@ -590,6 +627,7 @@
              are explicit intents from inside the app. -->
         <receiver
             android:name=".music.MusicWidget"
+            android:label="@string/music_widget_title"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />

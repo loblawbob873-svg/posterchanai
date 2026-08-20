@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The weather, on the home screen. Plain RemoteViews for the same reason the calendar widget is:
+     the LAUNCHER draws this, in its own process, with a fixed handful of supported view types and no
+     custom drawing.
+
+     Colours are baked rather than themed. The launcher does not carry this app's theme, so an
+     attribute reference here resolves to whatever the launcher happens to be using — which on a
+     light launcher is white text on white. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/ww_body"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:background="@drawable/widget_bg"
+    android:padding="12dp">
+
+    <ImageView
+        android:id="@+id/ww_icon"
+        android:layout_width="46dp"
+        android:layout_height="46dp"
+        android:layout_marginEnd="12dp"
+        android:scaleType="fitCenter"
+        android:contentDescription="@string/weather_widget_title" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/ww_temp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textSize="28sp"
+            android:textStyle="bold"
+            android:textColor="#00F0FF"
+            android:text="—" />
+
+        <TextView
+            android:id="@+id/ww_desc"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textSize="12sp"
+            android:textColor="#CFE9F2" />
+
+        <TextView
+            android:id="@+id/ww_place"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textSize="11sp"
+            android:textAllCaps="true"
+            android:textColor="#7FD8E8" />
+
+        <TextView
+            android:id="@+id/ww_range"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textSize="11sp"
+            android:textColor="#7FD8E8" />
+    </LinearLayout>
+</LinearLayout>

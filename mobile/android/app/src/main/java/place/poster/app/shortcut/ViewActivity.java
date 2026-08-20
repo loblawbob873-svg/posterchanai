@@ -10,6 +10,7 @@ import android.util.Log;
 
 import place.poster.app.MainActivity;
 import place.poster.app.home.HomeActivity;
+import place.poster.app.home.LaunchView;
 
 /**
  * ONE POSTERCHAN SCREEN AS AN APP IN THE PHONE'S DRAWER.
@@ -35,6 +36,13 @@ import place.poster.app.home.HomeActivity;
  * IT MUST NOT BE A TASK OF ITS OWN. `FLAG_ACTIVITY_NEW_TASK` plus the app's normal launch flags
  * brings the existing app forward if it is already running — which is what tapping Email should do
  * when PosterChan is already open — instead of stacking a second copy behind a transparent shim.
+ *
+ * AND IT MUST NOT LOOK LIKE ONE. The first version also set ACTION_MAIN and CATEGORY_LAUNCHER,
+ * reasoning that this is a launcher entry so it should carry a launcher intent. That is exactly
+ * backwards: an activity declared singleTask, handed the intent the home screen sends, is brought
+ * back the way the person left it — extras and all discarded. Every drawer app opened the last
+ * screen instead of its own ("email app is loading News", "same for other apps"). The component is
+ * explicit; those two decorations only ever cost the payload.
  * And `finish()` runs unconditionally: an activity with no window that fails to start its target and
  * then stays is a phone showing nothing with no way to say why.
  */
@@ -49,11 +57,14 @@ public class ViewActivity extends Activity {
         super.onCreate(saved);
         String view = viewOf(this, getComponentName());
         try {
+            boolean particular = view != null && !view.isEmpty();
+            // Parked BEFORE the start. See LaunchView: the intent extra alone only survives a COLD
+            // start, and this trampoline is most often pressed while the app is already running.
+            if (particular) LaunchView.request(view, System.currentTimeMillis());
+            else LaunchView.clear();
             Intent i = new Intent(this, MainActivity.class)
-                    .setAction(Intent.ACTION_MAIN)
-                    .addCategory(Intent.CATEGORY_LAUNCHER)
                     .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            if (view != null && !view.isEmpty()) {
+            if (particular) {
                 i.putExtra(HomeActivity.EXTRA_VIEW, view);
                 // The timestamp is what makes the extra safe to replay: HomePlugin ignores one older
                 // than a minute, so a stale intent restored with the task does not yank somebody

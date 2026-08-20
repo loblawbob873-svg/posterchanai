@@ -98,6 +98,10 @@ public class DeskView extends ViewGroup {
         requestLayout();
     }
 
+    /** What is currently lifted, if anything. Read by the device test that proves a long press
+     *  reaches a WIDGET — the gesture an AppWidgetHostView's clickable children used to swallow. */
+    Desk.Item editingItem() { return editing; }
+
     public int cols() { return cols; }
     public int rows() { return rows; }
     public List<Desk.Item> items() { return items; }
@@ -190,6 +194,89 @@ public class DeskView extends ViewGroup {
     // ---------------------------------------------------------------- gestures
 
     private Runnable pending;
+    /** True once a long press has fired: from then on this view takes the gesture off its child. */
+    private boolean stealing;
+    /** Whether the DOWN bookkeeping has already run for this gesture (intercept sees it first). */
+    private boolean begun;
+
+    /**
+     * A WIDGET COULD NOT BE LONG-PRESSED, WHICH MEANT IT COULD NOT BE REMOVED — reported as "no way
+     * to remove widgets", and it was also why one could not be moved or resized.
+     *
+     * An icon cell is an inert View, so its touches fall straight through to `onTouchEvent` here. An
+     * `AppWidgetHostView` is not: the RemoteViews inside it carry PendingIntents, so its children
+     * are clickable and CONSUME the DOWN. This view was never told a finger had gone down on a
+     * widget, so the long-press was never armed, and every menu that hangs off it — Remove from
+     * home, Resize, Add a widget — was unreachable on the one kind of item that most needs them.
+     *
+     * That is the same shape as 247a1be8 on the desktop, where `.os-wgt-body` being `overflow:auto`
+     * handed the touch to the scroller and `touch-action:none` on the ancestor could not save it: a
+     * child that consumes the gesture is invisible in the parent's code.
+     *
+     * So the DOWN is watched HERE, before the child sees it, and the gesture is only STOLEN once the
+     * long press has actually fired. A short tap still reaches the widget's own buttons, which is
+     * the half a blanket intercept would break.
+     */
+    @Override
+    public boolean onInterceptTouchEvent(MotionEvent e) {
+        float x = e.getX(), y = e.getY();
+        switch (e.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                stealing = false;
+                beginTouch(e, x, y);
+                return false;                       // let the child have its tap
+            case MotionEvent.ACTION_MOVE:
+                if (!stealing && (Math.abs(x - downX) > slop || Math.abs(y - downY) > slop)) {
+                    cancelPending();
+                }
+                return stealing;
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
+                cancelPending();
+                begun = false;
+                boolean was = stealing;
+                stealing = false;
+                return was;
+            default:
+                return stealing;
+        }
+    }
+
+    /**
+     * The DOWN bookkeeping, shared by the intercept above and `onTouchEvent`.
+     *
+     * `begun` makes it idempotent for one gesture: over empty space and over an icon BOTH run —
+     * intercept first, then onTouchEvent, because nothing consumed the DOWN — and arming the
+     * long-press twice would fire two menus.
+     */
+    private void beginTouch(MotionEvent e, float x, float y) {
+        if (begun) return;
+        begun = true;
+        int cw = cellW(), ch = cellH();
+        lastX = x; lastY = y;
+        downX = x; downY = y; swiping = false;
+        if (vel != null) vel.recycle();
+        vel = VelocityTracker.obtain();
+        vel.addMovement(e);
+        resizeEdge = editing == null ? EDGE_NONE : edgeAt(x, y);
+        if (resizeEdge != EDGE_NONE) { resizing = true; return; }
+        final int c = (int) (x / cw), r = (int) (y / ch);
+        final Desk.Item hit = Desk.at(items, c, r);
+        // A long press LIFTS; a tap opens. Posted rather than using a GestureDetector so the
+        // same code path serves both and there is one place the two can be told apart.
+        pending = new Runnable() {
+            @Override public void run() {
+                pending = null;
+                // FROM HERE THE GESTURE IS OURS. The child gets an ACTION_CANCEL from the framework
+                // the moment the next event is intercepted, so a widget's button does not also fire.
+                stealing = true;
+                if (hit == null) { if (host != null) host.onLongPressEmpty(); return; }
+                lift(hit);
+                if (host != null) host.onLongPress(hit);
+            }
+        };
+        postDelayed(pending, 400);
+    }
 
     @Override
     public boolean onTouchEvent(MotionEvent e) {
@@ -197,26 +284,8 @@ public class DeskView extends ViewGroup {
         float x = e.getX(), y = e.getY();
         switch (e.getActionMasked()) {
             case MotionEvent.ACTION_DOWN: {
-                lastX = x; lastY = y;
-                downX = x; downY = y; swiping = false;
-                if (vel != null) vel.recycle();
-                vel = VelocityTracker.obtain();
-                vel.addMovement(e);
-                resizeEdge = editing == null ? EDGE_NONE : edgeAt(x, y);
-                if (resizeEdge != EDGE_NONE) { resizing = true; return true; }
-                final int c = (int) (x / cw), r = (int) (y / ch);
-                final Desk.Item hit = Desk.at(items, c, r);
-                // A long press LIFTS; a tap opens. Posted rather than using a GestureDetector so the
-                // same code path serves both and there is one place the two can be told apart.
-                pending = new Runnable() {
-                    @Override public void run() {
-                        pending = null;
-                        if (hit == null) { if (host != null) host.onLongPressEmpty(); return; }
-                        lift(hit);
-                        if (host != null) host.onLongPress(hit);
-                    }
-                };
-                postDelayed(pending, 400);
+                beginTouch(e, x, y);
+                if (resizing) return true;
                 return true;
             }
             case MotionEvent.ACTION_MOVE: {
@@ -254,6 +323,8 @@ public class DeskView extends ViewGroup {
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL: {
                 boolean wasTap = pending != null;
+                begun = false;
+                stealing = false;
                 cancelPending();
                 if (swiping && e.getActionMasked() == MotionEvent.ACTION_UP) {
                     float vy = 0;

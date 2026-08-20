@@ -188,19 +188,27 @@ public class HomePlugin extends Plugin {
     public void consumeLaunchView(PluginCall call) {
         JSObject o = new JSObject();
         o.put("view", "");
+        // THE PARKED REQUEST IS READ FIRST, and the intent extra second. They cover disjoint halves:
+        // a warm start is the case where the extra is dropped, a cold start is the case where there
+        // is no process to have parked anything. Whichever answers wins, and BOTH are cleared either
+        // way — leaving one behind is how a press gets re-performed on a later resume.
+        String parked = "";
+        try { parked = LaunchView.take(System.currentTimeMillis()); } catch (Throwable ignored) { }
         try {
             android.app.Activity a = getActivity();
             Intent i = a == null ? null : a.getIntent();
             if (i != null) {
                 String v = i.getStringExtra(HomeActivity.EXTRA_VIEW);
                 long at = i.getLongExtra(HomeActivity.EXTRA_VIEW_AT, 0);
-                if (v != null && !v.isEmpty() && System.currentTimeMillis() - at < 60000) {
-                    o.put("view", v);
+                if (parked.isEmpty() && v != null && !v.isEmpty()
+                        && System.currentTimeMillis() - at < LaunchView.MAX_AGE_MS) {
+                    parked = v;
                 }
                 i.removeExtra(HomeActivity.EXTRA_VIEW);
                 i.removeExtra(HomeActivity.EXTRA_VIEW_AT);
             }
         } catch (Throwable ignored) { }
+        o.put("view", parked);
         call.resolve(o);
     }
 }

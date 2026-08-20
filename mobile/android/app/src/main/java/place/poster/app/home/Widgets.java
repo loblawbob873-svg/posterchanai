@@ -136,17 +136,89 @@ public final class Widgets {
         return out;
     }
 
-    /** The little picture the picker draws. Preview if the provider has one, its icon if not. */
+    /**
+     * THE PICTURE THE PICKER DRAWS, and it is four fallbacks deep on purpose.
+     *
+     * "widgets UI is terrible now. You have no idea which widget you are adding." A name is not
+     * enough to choose by, and a row's picture is the only thing that says what will land on the
+     * home screen.
+     *
+     *   1. `previewImage` — a real picture the provider shipped. The obvious one, and increasingly
+     *      the rare one.
+     *   2. `previewLayout` (API 31+) — what modern providers ship INSTEAD, and `loadPreviewImage`
+     *      does not render it: it is a layout id in the PROVIDER's resources, so it has to be
+     *      inflated against that package's own context and drawn. Skipping this step is why every
+     *      Google widget on the emulator would have fallen through to an app icon.
+     *   3. the provider's icon, then 4. the owning app's icon. A row is never blank; the caller's
+     *      last resort is a letter, and a letter here means all four of these failed.
+     *
+     * Cached per provider, because `getView` is called again for every row that scrolls back.
+     */
+    private final java.util.HashMap<String, android.graphics.drawable.Drawable> art =
+            new java.util.HashMap<String, android.graphics.drawable.Drawable>();
+
     public android.graphics.drawable.Drawable preview(Choice c) {
         if (c == null) return null;
+        String key = c.info.provider.flattenToShortString();
+        if (art.containsKey(key)) return art.get(key);
+        android.graphics.drawable.Drawable d = buildPreview(c);
+        art.put(key, d);
+        return d;
+    }
+
+    private android.graphics.drawable.Drawable buildPreview(Choice c) {
         int density = 0;
         try { density = ctx.getResources().getDisplayMetrics().densityDpi; } catch (Throwable ignored) { }
         try {
             android.graphics.drawable.Drawable d = c.info.loadPreviewImage(ctx, density);
             if (d != null) return d;
         } catch (Throwable ignored) { }
-        try { return c.info.loadIcon(ctx, density); } catch (Throwable ignored) { }
+        android.graphics.drawable.Drawable laid = fromPreviewLayout(c.info);
+        if (laid != null) return laid;
+        try {
+            android.graphics.drawable.Drawable d = c.info.loadIcon(ctx, density);
+            if (d != null) return d;
+        } catch (Throwable ignored) { }
+        try {
+            return ctx.getPackageManager().getApplicationIcon(c.info.provider.getPackageName());
+        } catch (Throwable ignored) { }
         return null;
+    }
+
+    /**
+     * Render a provider's `previewLayout` to a bitmap.
+     *
+     * IT MUST BE INFLATED AGAINST THE PROVIDER'S OWN CONTEXT — the layout id means nothing in ours,
+     * and `CONTEXT_RESTRICTED` is what stops another app's layout running code in this process.
+     * Everything here is guarded and returns null rather than throwing: one badly-behaved provider
+     * must not cost the whole list, which is the same rule the client's `noteHtml` learned.
+     */
+    private android.graphics.drawable.Drawable fromPreviewLayout(AppWidgetProviderInfo info) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return null;
+        int layout;
+        try { layout = info.previewLayout; } catch (Throwable t) { return null; }
+        if (layout == 0) return null;
+        try {
+            Context theirs = ctx.createPackageContext(info.provider.getPackageName(),
+                    Context.CONTEXT_RESTRICTED);
+            android.view.View v = android.view.LayoutInflater.from(theirs).inflate(layout, null);
+            if (v == null) return null;
+            float d = ctx.getResources().getDisplayMetrics().density;
+            int w = Math.max(1, (int) ((info.minWidth > 0 ? info.minWidth : 180) * d));
+            int h = Math.max(1, (int) ((info.minHeight > 0 ? info.minHeight : 110) * d));
+            // Bounded: a widget declaring an absurd minimum must not allocate an absurd bitmap.
+            w = Math.min(w, (int) (400 * d));
+            h = Math.min(h, (int) (400 * d));
+            v.measure(android.view.View.MeasureSpec.makeMeasureSpec(w, android.view.View.MeasureSpec.EXACTLY),
+                      android.view.View.MeasureSpec.makeMeasureSpec(h, android.view.View.MeasureSpec.EXACTLY));
+            v.layout(0, 0, w, h);
+            android.graphics.Bitmap bmp = android.graphics.Bitmap.createBitmap(
+                    w, h, android.graphics.Bitmap.Config.ARGB_8888);
+            v.draw(new android.graphics.Canvas(bmp));
+            return new android.graphics.drawable.BitmapDrawable(ctx.getResources(), bmp);
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     /**

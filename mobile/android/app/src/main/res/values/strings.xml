@@ -22,6 +22,23 @@
     <string name="home_all_apps">All apps</string>
     <string name="home_swipe_hint">Swipe up for all apps</string>
     <string name="app_email_title">Email</string>
+    <!-- A WIDGET'S LABEL IS THE RECEIVER'S LABEL, and without one `loadLabel` falls back to the
+         APPLICATION label — which is why both of ours listed as "PosterChan / PosterChan" in the
+         picker on a real device while every other app's read "Clock / Analog". Measured, not
+         guessed: the emulator's provider dump is in the run's logcat artifact. -->
+    <string name="calendar_widget_title">Calendar</string>
+    <string name="music_widget_title">Music</string>
+    <string name="weather_widget_title">Weather</string>
+    <string name="weather_widget_description">The weather where you are, from your own PosterChan</string>
+    <!-- THREE DIFFERENT EMPTY STATES, because they need three different things from whoever is
+         reading them. A single "unavailable" sends somebody looking in the wrong place. -->
+    <string name="weather_need_place">Tap to set your location</string>
+    <string name="weather_need_server">Weather needs your PosterChan server — open the app and sign in to your instance</string>
+    <string name="weather_need_network">No forecast yet — tap to try again</string>
+    <string name="weather_pick_title">Where are you?</string>
+    <string name="weather_pick_hint">Type a town or city. The lookup goes to your own PosterChan server, which asks the forecast service on your behalf — your phone never contacts it and never reads your location.</string>
+    <string name="weather_pick_hint_field">Town or city</string>
+    <string name="weather_pick_none">No places matched that</string>
     <string name="home_add_widget">Add a widget</string>
     <string name="home_add_to_home">Add to home screen</string>
     <string name="home_remove_from_home">Remove from home screen</string>

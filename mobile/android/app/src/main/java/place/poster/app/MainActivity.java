@@ -52,6 +52,10 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(place.poster.app.music.MusicPlugin.class);
         registerPlugin(place.poster.app.call.CallPlugin.class);
         registerPlugin(place.poster.app.calendar.CalendarPlugin.class);
+        // The weather widget is drawn by the LAUNCHER, which has no session and cannot know
+        // which instance this person signed in to. This is the one fact the client mirrors
+        // across for it — see WeatherPlugin.
+        registerPlugin(place.poster.app.weather.WeatherPlugin.class);
         registerPlugin(place.poster.app.sync.FolderSyncPlugin.class);
         registerPlugin(place.poster.app.gamepad.GamepadPlugin.class);
         registerPlugin(place.poster.app.contacts.ContactSyncPlugin.class);

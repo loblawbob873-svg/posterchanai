@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- THE ONE WIDGET IN THIS APP THAT POLLS, and it is worth saying why.
+
+     The calendar widget is pushed a month ahead and the music widget is pushed on every change, so
+     both set updatePeriodMillis="0" and neither ever wakes the phone. A forecast is the one thing
+     here that genuinely goes stale on its own, so this one asks for an hourly tick — which the
+     platform clamps to a 30-minute minimum and batches with other wake-ups anyway. A tap refreshes
+     immediately, which is what makes an hour rather than a minute acceptable.
+
+     `configure` is what makes the "where are you" picker open the moment the widget is placed. A
+     widget that lands blank and offers no way to fix itself is the classic grey box. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="180dp"
+    android:minHeight="80dp"
+    android:targetCellWidth="3"
+    android:targetCellHeight="2"
+    android:updatePeriodMillis="3600000"
+    android:initialLayout="@layout/widget_weather"
+    android:previewLayout="@layout/widget_weather"
+    android:configure="place.poster.app.weather.WeatherConfigActivity"
+    android:description="@string/weather_widget_description"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen" />
