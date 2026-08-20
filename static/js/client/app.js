@@ -4062,7 +4062,23 @@
         apply(ClientSettings.get('filesOpen', false));
         ft.onclick=()=>{ const o=!ClientSettings.get('filesOpen', false); ClientSettings.set('filesOpen', o); apply(o); }; } }
     ensureNavItems();          // MUST precede the click binding below — an injected row needs a handler
-    $$('.nav-item[data-view]').forEach(b=> b.onclick = ()=>switchView(b.dataset.view));
+    /* TAPPING THE VIEW YOU ARE ALREADY ON MEANS "TAKE ME TO THE TOP". Everywhere else that is what
+     * a second tap on a nav item does, and it is the deliberate action the reader can use to give up
+     * their remembered place — the user's own words: "It should only reset to the index when some
+     * other action is done. For example clicking that 'n new posts' button if it's visible or double
+     * tapping home/social button". The pill already scrolls to the top; this is the other one.
+     *
+     * The memo is dropped as well as the scroll, or the next return would restore a position they
+     * have just told us to forget. */
+    $$('.nav-item[data-view]').forEach(b=> b.onclick = ()=>{
+      const v = b.dataset.view;
+      if(v === VIEW && _TL_TABS.indexOf(v) >= 0){
+        delete _tlScrollMemo[v];
+        const f = $('#feed'); if(f) f.scrollTop = 0;
+        return;
+      }
+      switchView(v);
+    });
     // …and AFTER the injection, or a row this shell was too old to carry arrives un-hidden. Boot
     // already ran this once via applyInstanceGating; it is idempotent and reads localStorage, so the
     // sidebar is tidy before the relay has answered rather than reshuffling once it does.
@@ -5808,6 +5824,21 @@
    * longer exists. */
   const _tlScrollMemo = Object.create(null);
 
+  /* REMEMBER WHERE THEY WERE READING. Called by every route that leaves a timeline, which is more
+   * than switchView: renderThread and renderProfileView set VIEW themselves and never go through it,
+   * so the first version of this saved nothing at all for the commonest journey of the lot — scroll
+   * the feed, open a post, read the replies, press Home. Reported exactly that way.
+   *
+   * Must run BEFORE VIEW changes and while the old view's nodes are still on screen; afterwards
+   * there is nothing left to measure. */
+  function _rememberTlScroll(){
+    try{
+      if(_TL_TABS.indexOf(VIEW) < 0) return;
+      const f = $('#feed');
+      if(f && f.scrollTop > 0) _tlScrollMemo[VIEW] = f.scrollTop;
+    }catch(_){ }
+  }
+
   function switchView(v, quiet){
     /* Leaving the screen stops the narration. The chip is fixed to the viewport, so without this it
        outlives the post it belongs to and offers to stop something the reader can no longer see. */
@@ -5862,12 +5893,7 @@
      *
      * Saved on the way OUT, while the old view's nodes are still on screen and its scrollTop is
      * still real — after `VIEW = v` there is nothing left to measure. */
-    try{
-      if(_TL_TABS.indexOf(VIEW) >= 0 && VIEW !== v){
-        const f = $('#feed');
-        if(f && f.scrollTop > 0) _tlScrollMemo[VIEW] = f.scrollTop;
-      }
-    }catch(_){ }
+    if(VIEW !== v) _rememberTlScroll();
     _navUrl('/');   // top-level views aren't entity URLs — reset the address bar to the root
     VIEW = v;
     if(v==='notifications'){ _notifShown = 25;   // fresh entry → collapse pagination back to one page
@@ -24165,6 +24191,7 @@
     const ab=feed.querySelector('.prof .about'); if(ab) ab.innerHTML=linkify(p.about||'');
   }
   async function renderProfileView(pk){
+    _rememberTlScroll();          // opening a profile is leaving the feed — see _rememberTlScroll
     // PosterChan OS: a profile opens in its OWN window, for the same reason a post does — opening
     // one from the timeline used to REPLACE the timeline, and with the sidebar hidden there was
     // then no way back to it. _routing is the back/forward button; see openThread.
@@ -29134,6 +29161,7 @@
   }
   async function renderThread(id, hints){
     renderThread._tok = id;   // guards the async expansion below against a newer thread opening mid-flight
+    _rememberTlScroll();          // opening a post is leaving the feed — see _rememberTlScroll
     VIEW='thread'; _hidePill(); _clearNav(); $('#view-title').textContent='Thread';
     const feed=_feedScrollable();   // scrollable view — clear the chat/AI overflow:hidden (see _feedScrollable)
     feed.innerHTML='<div class="spinner"></div>';

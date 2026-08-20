@@ -109,3 +109,43 @@ class TheFeedDoesNotJumpToTheTop(unittest.TestCase):
         i = self.src.index("function renderTimeline(view, reset){")
         self.assertIn("_drawTimeline(false)", self.src[i:i + 400],
                       "entering a timeline no longer starts at the top")
+
+
+class EveryRouteOutOfTheFeedRemembers(unittest.TestCase):
+    """"if I scroll, click a post, read through the comments, then click home, I go back to the top."
+
+    The first version of this saved the offset in switchView only — and `renderThread` and
+    `renderProfileView` set VIEW themselves without going through it, so the commonest journey of
+    the lot (scroll, open a post, read replies, press Home) saved nothing at all. One helper, called
+    by every route that leaves a timeline.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = APP.read_text()
+
+    def test_opening_a_post_or_a_profile_remembers_the_feed(self):
+        # Anchored on text unique to the route being asserted. `VIEW='thread'` alone also matches the
+        # deep-link branch four thousand lines earlier — matching the FIRST occurrence of a common
+        # string is how a guard ends up asserting something nobody meant.
+        for where in ("VIEW='thread'; _hidePill(); _clearNav();",
+                      "async function renderProfileView(pk){"):
+            with self.subTest(where=where):
+                i = self.src.index(where)
+                near = self.src[max(0, i - 260):i + 260]
+                self.assertIn("_rememberTlScroll()", near,
+                              "this route leaves the timeline without remembering where the reader was")
+
+    def test_the_helper_reads_before_the_view_changes(self):
+        """After VIEW moves there is nothing left to measure."""
+        i = self.src.index("if(VIEW !== v) _rememberTlScroll();")
+        j = self.src.index("VIEW = v;", i)
+        self.assertLess(i, j)
+
+    def test_tapping_the_view_you_are_on_gives_up_the_saved_place(self):
+        """The user's own spec for when it SHOULD reset. Dropping the scroll without dropping the
+        memo would restore the position they just discarded, on the next return."""
+        i = self.src.index("$$('.nav-item[data-view]').forEach(b=> b.onclick = ()=>{")
+        blk = self.src[i:i + 700]
+        self.assertIn("delete _tlScrollMemo[v]", blk)
+        self.assertIn("f.scrollTop = 0", blk)
