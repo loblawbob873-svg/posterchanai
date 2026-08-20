@@ -909,24 +909,79 @@ public class HomeActivity extends Activity implements DeskView.Host {
         final List<Widgets.Choice> rows =
                 widgets.providers(cellDp(desk.cellW()), cellDp(desk.cellH()));
         if (rows.isEmpty()) { toast(getString(R.string.home_no_widgets)); return; }
-        final List<String> labels = new ArrayList<String>();
-        for (Widgets.Choice c : rows) {
-            // ONE LINE. `AlertDialog.setItems` inflates `select_dialog_item`, whose TextView is
-            // single-line on most platform versions — a second line there is not wrapped, it is
-            // simply never drawn.
-            String app = c.appLabel.equalsIgnoreCase(c.label) ? "" : "  ·  " + c.appLabel;
-            labels.add(c.label + app + "   (" + c.spanX + " x " + c.spanY + ")");
+        try {
+            new AlertDialog.Builder(this)
+                .setTitle(R.string.home_add_widget)
+                .setAdapter(new WidgetChoices(rows),
+                        new android.content.DialogInterface.OnClickListener() {
+                    @Override public void onClick(android.content.DialogInterface d, int w) {
+                        if (w < 0 || w >= rows.size()) return;
+                        int id = widgets.add(HomeActivity.this, rows.get(w));
+                        // >= 0 means it was already allowed to bind and wants no configuration: it
+                        // is ready now and there is no activity result coming. -1 means an activity
+                        // is asking, or it was refused and has already said so.
+                        if (id >= 0) placeWidget(id);
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+        } catch (Throwable t) {
+            Log.w(TAG, "home: the widget list would not open", t);
+            toast(getString(R.string.home_widget_refused));
         }
-        show(getString(R.string.home_add_widget), labels, new Pick() {
-            @Override public void pick(int w) {
-                if (w < 0 || w >= rows.size()) return;
-                int id = widgets.add(HomeActivity.this, rows.get(w));
-                // >= 0 means it was already allowed to bind and wants no configuration: it is ready
-                // now and there is no activity result coming. -1 means an activity is asking, or it
-                // was refused and has already said so.
-                if (id >= 0) placeWidget(id);
-            }
-        });
+    }
+
+    /**
+     * The rows of the widget list: the provider's own preview picture, its name, and who it belongs
+     * to with the size it will take. A picker of bare class names is not a picker anybody uses — and
+     * a phone has dozens of providers, half of them called "Clock".
+     *
+     * The preview is `loadPreviewImage` falling back to the provider's icon; a provider that offers
+     * neither still gets a row, because a widget missing from this list is indistinguishable from
+     * the bug this whole screen was written to fix.
+     */
+    private final class WidgetChoices extends BaseAdapter {
+        private final List<Widgets.Choice> rows;
+        WidgetChoices(List<Widgets.Choice> rows) { this.rows = rows; }
+        @Override public int getCount() { return rows.size(); }
+        @Override public Object getItem(int i) { return rows.get(i); }
+        @Override public long getItemId(int i) { return i; }
+        @Override public View getView(int i, View reuse, ViewGroup parent) {
+            Widgets.Choice c = rows.get(i);
+            LinearLayout row = new LinearLayout(HomeActivity.this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            int p = Skin.dp(HomeActivity.this, 12);
+            row.setPadding(p, p, p, p);
+
+            ImageView art = new ImageView(HomeActivity.this);
+            int s = Skin.dp(HomeActivity.this, 44);
+            art.setLayoutParams(new LinearLayout.LayoutParams(s, s));
+            art.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            Drawable d = widgets.preview(c);
+            if (d != null) art.setImageDrawable(d);
+            else art.setImageDrawable(Skin.letter(HomeActivity.this, pal, c.appLabel));
+            row.addView(art);
+
+            LinearLayout text = new LinearLayout(HomeActivity.this);
+            text.setOrientation(LinearLayout.VERTICAL);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            lp.setMargins(p, 0, 0, 0);
+            text.setLayoutParams(lp);
+            TextView name = new TextView(HomeActivity.this);
+            name.setText(c.label);
+            name.setTextColor(pal.text);
+            name.setTextSize(15);
+            TextView sub = new TextView(HomeActivity.this);
+            sub.setText(c.appLabel + "   ·   " + c.spanX + " x " + c.spanY);
+            sub.setTextColor(pal.muted);
+            sub.setTextSize(12);
+            text.addView(name);
+            text.addView(sub);
+            row.addView(text);
+            return row;
+        }
     }
 
     @Override
