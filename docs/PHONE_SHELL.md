@@ -608,9 +608,15 @@ instead of the key, because the screenshots, the drawer swipe, the tablet resize
 measurement need the launcher *on screen*, not the role.
 
 **Tablet mode is measured on the same emulator**, with no second AVD and no second boot:
-`android_device_checks.sh` runs `wm size 2560x1600` + `wm density 240` (a 1066dp short side, which
-Android reports as a large screen), presses HOME, screenshots the desktop and the drawer, scans for
-a crash, and resets unconditionally — a device left resized would poison every check after it.
+`wm size 2560x1600` + `wm density 240` gives a 1066dp short side, which Android reports as a large
+screen, so the launcher takes the tablet path through the same configuration change a real rotation
+delivers. It lives in `LauncherDeviceTest.onATabletTheGridIsWiderAndTheDockIsLonger` rather than in
+`android_device_checks.sh`, because that script's whole launcher section skips on this image (it
+cannot enable the home component) — an instrumented test enables it from *inside* the app, which
+does work. The phone grid is read first as a control on the same boot, the live configuration is
+checked against `HomeMetrics` rather than assumed, and the size is reset in a `finally`: a device
+left resized poisons every test after it. **Verified green on API 34.** The script still does the
+resize for its screenshots when it does hold the launcher.
 
 ---
 
