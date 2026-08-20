@@ -185,14 +185,37 @@ class Render(unittest.TestCase):
         """)
         self.assertEqual(out["n"], 0)
 
-    def test_the_panel_shows_what_it_read(self):
+    def test_the_tray_shows_what_it_read(self):
+        """THE TRAY IS PICTURES NOW, AND THAT IS THE POINT. It used to be a strip of six text chips
+        — `Tribble` `35%` `60%` `80%` `⏻` — five of them a bare percentage with no picture of what
+        the percentage was OF, and the only way to tell the volume from the brightness was that one
+        of them was bigger. Windows 11 groups network, sound and battery into ONE button and puts
+        the numbers inside the flyout, which is what this does.
+
+        So the READINGS are asserted where they now live: the group's title (which is what a
+        pointer resting on it says, and what a screen reader reads), and Quick Settings."""
         out = self.run_js(self.WM, """
           globalThis.__wins = [];
           await S.render(host);
-          out.html = host.innerHTML;
+          const g = host.querySelectorAll('[data-os]').find(b => b.dataset.os === 'quick');
+          out.group = !!g;
+          out.icons = host.innerHTML;
+          out.title = (/os-tray-group[^>]*title="([^"]*)"/.exec(out.icons) || [, ''])[1];
+          out.quick = S.quickHTML(S.summary(), { shot: { ok: false, region: false } });
         """)
-        for want in ("Tribble", "35%", "60%", "80%"):
-            self.assertIn(want, out["html"], f"the panel does not show {want}")
+        self.assertTrue(out["group"], "the tray group is not there")
+        # The corner still SAYS what it draws, in one string, for a pointer and a screen reader —
+        # the network, the volume and the battery, which are the three Windows groups there.
+        # BRIGHTNESS is deliberately not among them: it has no glyph in the corner, it is a slider
+        # in the flyout, and a number with no picture beside it is what this replaced.
+        for want in ("Tribble", "35%", "80%"):
+            self.assertIn(want, out["title"], f"the tray group does not report {want}")
+        # And the pictures are drawn rather than described.
+        for want in ("#i-wifi", "#i-volume", "os-bat"):
+            self.assertIn(want, out["icons"], f"the tray has no {want} glyph")
+        # The numbers you can act on are in the flyout, on their sliders.
+        for want in ("Tribble", 'value="60"', 'value="35"', "80%"):   # both sliders and the battery
+            self.assertIn(want, out["quick"], f"Quick Settings does not show {want}")
 
     def test_the_profiles_are_read_as_the_bridge_returns_them(self):
         """`power.js` answers `profiles: { available, kind, list, active }` and the panel read it as
@@ -228,13 +251,15 @@ class Render(unittest.TestCase):
         out = self.run_js(self.WM, """
           globalThis.__wins = [];
           await S.render(host);
-          const tor = host.querySelectorAll('[data-os]').filter(b => b.dataset.os === 'tor');
-          out.chip = tor.length;
-          out.bound = tor.length === 1 && typeof tor[0].onclick === 'function';
+          /* Tor is a TILE inside Quick Settings now — a corner of a taskbar is not where a switch
+           * that is not switched belongs, and it rejoins the group in the corner when it is ON.
+           * Asserted on the MARKUP: this file has no DOM (it renders, it does not press), and the
+           * pressing half is test_os_tray_controls.py, which has one. */
+          const quick = S.quickHTML(S.summary(), { shot: { ok: false } });
+          out.chip = (quick.match(/data-os="tor"/g) || []).length;
           out.sum = S.panelSummary(await S.panelState()).tor;
         """)
         self.assertEqual(out["chip"], 1, "there is no Tor control in the tray")
-        self.assertTrue(out["bound"], "the Tor chip is painted but nothing is wired to it")
         self.assertTrue(out["sum"]["present"])
         self.assertEqual(out["sum"]["country"], "us",
                          "the exit country is not carried, so the tray cannot say where it leaves")
@@ -247,10 +272,13 @@ class Render(unittest.TestCase):
         out = self.run_js(bridges, """
           globalThis.__wins = [];
           await S.render(host);
-          out.chip = host.querySelectorAll('[data-os]').filter(b => b.dataset.os === 'tor').length;
+          const quick = S.quickHTML(S.summary(), { shot: { ok: false } });
+          out.chip = (quick.match(/data-os="tor"/g) || []).length;
+          out.inCorner = /i-shield/.test(host.innerHTML) ? 1 : 0;
           out.sum = S.panelSummary(await S.panelState()).tor;
         """)
-        self.assertEqual(out["chip"], 0, "a Tor chip was drawn on a build with no Tor")
+        self.assertEqual(out["chip"], 0, "a Tor tile was drawn on a build with no Tor")
+        self.assertEqual(out["inCorner"], 0, "a Tor glyph was drawn in the tray with no Tor")
         self.assertFalse(out["sum"]["present"])
 
     def test_the_battery_opens_the_power_menu_rather_than_only_reporting(self):
@@ -263,9 +291,12 @@ class Render(unittest.TestCase):
         out = self.run_js(self.WM, """
           globalThis.__wins = [];
           await S.render(host);
-          const pw = host.querySelectorAll('[data-os]').filter(b => b.dataset.os === 'power');
-          out.battery = pw.some(b => /80%/.test(b.text));
-          out.bound = pw.length > 0 && pw.every(b => typeof b.onclick === 'function');
+          /* The battery READING sits in the flyout's footer beside the drawn battery, and the
+           * POWER MODES are one press from it — the thing that used to be two chips along. */
+          const quick = S.quickHTML(S.summary(), { shot: { ok: false } });
+          out.battery = /80%/.test(quick);
+          out.bound = /data-os="power"/.test(quick);
+          out.profile = /low-power|balanced/.test(quick);
         """)
         self.assertTrue(out["battery"],
                         "the battery is not a button that opens the power menu")
@@ -279,12 +310,18 @@ class Render(unittest.TestCase):
           globalThis.__wins = [];
           await S.render(host);
           out.html = host.innerHTML;
+          out.title = (/os-tray-group[^>]*title="([^"]*)"/.exec(out.html) || [, ''])[1];
         """)
-        self.assertIn("os-unknown", out["html"])
+        # A wifi glyph at full strength on a machine whose NetworkManager is dead is a lie that
+        # costs somebody an hour, so an unreadable network takes the OFF glyph and says so in the
+        # group's title — which is the only text the corner has room for now.
+        self.assertIn("#i-wifi-off", out["html"], "an unreadable network was drawn as connected")
         self.assertNotIn("Tribble", out["html"])
-        # ...and the rest of the panel is still there. A panel that blanks because one subsystem is
+        self.assertIn("network unknown", out["title"])
+        # ...and the rest of the tray is still there. A panel that blanks because one subsystem is
         # down tells you nothing about a battery that is still draining.
-        self.assertIn("80%", out["html"])
+        self.assertIn("80%", out["title"])
+        self.assertIn("os-bat", out["html"])
 
 
 if __name__ == "__main__":

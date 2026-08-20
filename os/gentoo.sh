@@ -99,13 +99,40 @@ SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 
 # "share your screen?" dialog in front of every single screenshot. Without these two the tray hides
 # its Screenshot tile and PrtSc says which package is missing, which is honest and is not the same
 # thing as working.
-POSTERCHANOS_PACKAGES="gui-wm/sway x11-base/xwayland gui-apps/foot gui-apps/wl-clipboard \
+# EVERY PROGRAM THE SHELL SHELLS OUT TO IS NAMED HERE, and each line says which bridge needs it.
+#
+# The shell is an Electron page; everything it knows about this machine it learns by running a
+# command. When one of those is missing the bridge does not crash — it returns a refusal, and a
+# refusal that nobody installed a package for reads to the person using it as a control that does
+# nothing. `grim` was the live example: it is the entire screenshot feature, it was in no list, and
+# the tray could only ever have apologised for it.
+#
+# `brightnessctl` is the counter-example and is why this comment exists rather than a longer list:
+# desktop/power.js falls back to it when /sys/class/backlight is root-owned, and it is NOT IN THE
+# GENTOO TREE — adding it breaks emerge on every fresh build. It is deliberately absent, and what
+# makes the slider work instead is the udev rule further down that gives the backlight to the
+# `video` group, which pc-provision-user puts every account in. Do not "fix" a brightness slider by
+# adding that package; check the rule and the group.
+#
+# So this list is derived from the CODE, not from what happened to be installed on the test laptop —
+# where `xdg-open` and `nmcli` were both present as somebody else's dependency, which is exactly how
+# a tool goes missing on the next fresh build with nothing to say why.
+# Audited against desktop/*.js: grim slurp wl-copy wpctl nmcli systemctl xdg-open script sudo
+# swaymsg (+ brightnessctl, see above). `tests/test_posterchanos_profile.py` re-runs that audit.
+POSTERCHANOS_PACKAGES="gui-wm/sway x11-base/xwayland gui-apps/foot \
+gui-apps/wl-clipboard \
 gui-apps/grim gui-apps/slurp \
+x11-misc/xdg-utils \
 media-video/pipewire media-video/wireplumber gui-libs/gtk media-fonts/noto media-fonts/noto-emoji \
 www-client/firefox-bin \
 sys-apps/xdg-desktop-portal gui-libs/xdg-desktop-portal-wlr sys-apps/xdg-desktop-portal-gtk \
 media-video/obs-studio \
 sec-keys/openpgp-keys-gentoo-release dev-vcs/git"
+# net-misc/networkmanager (nmcli, the whole network tray), app-admin/sudo, sys-apps/systemd
+# (systemctl: sleep, reboot, power profiles) and sys-apps/util-linux (`script`, which IS the local
+# terminal's PTY — see desktop/localterm.js) come from BASE_PACKAGES / @system above. They are
+# listed here in a comment rather than repeated as packages so the audit above stays complete
+# without emerge being asked for the same thing twice.
 
 # THIS SCRIPT BUILDS POSTERCHANOS. THERE IS NO SECOND PROFILE.
 #
@@ -565,12 +592,111 @@ installFlatpaks() {
 	/usr/bin/flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 }
 
-btrfsTweaks() {
-	DISABLE_COW=("/var/lib/postgresql" "/var/lib/mysql" "/var/lib/libvirt")
+# ── NODATACOW FOR THE PATHS THAT ARE WRITTEN TO CONSTANTLY ──────────────────────────────────────
+#
+# A database, a VM image and a browser profile all do the same thing to btrfs: many small overwrites
+# inside one large file. Copy-on-write turns each of those into a new extent, and the file ends up
+# in tens of thousands of fragments — the write amplification and the seek cost are both real, and
+# on the machine that IS the desktop it is felt as the whole UI stuttering.
+#
+# THE TRADE, stated here so nobody "fixes" it later: nodatacow also turns OFF checksums for those
+# files, and effectively opts them out of compression. For a database that is the intended bargain —
+# the database has its own integrity checks and its own page format — but it is a real loss of
+# btrfs's own scrubbing, and it is why this is a short, named list rather than something applied
+# broadly. It also means a nodatacow file inside a snapshot is CoW'd once on the next write anyway.
+#
+# TWO THINGS MAKE THE OBVIOUS `chattr -R +C <dir>` A SILENT NO-OP, and this used to do exactly that:
+#
+#   1. +C ONLY TAKES ON A ZERO-LENGTH FILE. On a file that already has extents the ioctl is either
+#      refused or accepted and changes nothing about the data already written. What actually works
+#      is setting +C on the DIRECTORY, which every file created in it afterwards inherits — so it
+#      has to run BEFORE the data lands. `-R` over a populated tree reports success and converts
+#      nothing, which is the worst possible outcome: it looks done.
+#   2. IT IS BTRFS-ONLY. On ext4/xfs/zfs chattr fails, and that is not a reason to stop an install —
+#      but a bare failure prints a scary error on every non-btrfs box for a tuning step that simply
+#      does not apply there.
+#
+# So: check the filesystem, create the directory (a directory that does not exist yet is the ideal
+# case — nothing to convert), set +C on the DIRECTORY, and then say honestly how many files were
+# already there and are therefore still CoW. Converting those is `gentoo.sh btrfs-tweaks-rewrite`,
+# which is deliberately a separate, explicit command: it rewrites files, and doing that under a
+# running database is how you corrupt one.
+nodatacow() {
+	local dir="$1"
+	local fs
+	fs=$(stat -f -c %T "$dir" 2>/dev/null || stat -f -c %T "$(dirname "$dir")" 2>/dev/null)
+	if [ "$fs" != "btrfs" ]; then
+		echo "  skip $dir — ${fs:-unknown filesystem}, nodatacow is btrfs-only"
+		return 0
+	fi
+	mkdir -p "$dir" 2>/dev/null
+	if ! chattr +C "$dir" 2>/dev/null; then
+		echo "  skip $dir — could not set +C (not btrfs, or no permission)"
+		return 0
+	fi
+	# What is ALREADY in there keeps the extents it was written with. Counted and named rather than
+	# glossed over, because "I ran the command" and "the data is nodatacow" are different facts.
+	local n
+	n=$(find "$dir" -type f 2>/dev/null | head -20000 | wc -l)
+	if [ "$n" -gt 0 ]; then
+		echo "  +C $dir — new files inherit it; $n existing file(s) keep copy-on-write"
+		echo "      convert them with: gentoo.sh btrfs-tweaks-rewrite $dir   (service STOPPED)"
+	else
+		echo "  +C $dir — empty, so everything written here is nodatacow"
+	fi
+}
 
+btrfsTweaks() {
+	# The system's write-heavy stores. `/var/lib/postgresql` is the one that matters on a node
+	# running the relay — the event store is a stream of small writes and is what the user named.
+	DISABLE_COW=("/var/lib/postgresql" "/var/lib/mysql" "/var/lib/libvirt" \
+	             "/var/lib/docker" "/volumes")
+
+	echo -e "\033[1;36m[nodatacow on the write-heavy paths]\033[0m"
 	for i in "${DISABLE_COW[@]}"; do
-		chattr -R +C $i
+		nodatacow "$i"
 	done
+	# The per-user Electron profile is the OTHER write-heavy path on a PosterChanOS box, and it is
+	# the busiest: the client's local relay lives in IndexedDB inside it. Measured on the test
+	# laptop, ~/.config/posterchan-desktop was 453 MB of LevelDB and cache with no C attribute at
+	# all. It cannot be done here because accounts are created when somebody signs in, long after
+	# the installer has finished — pc-provision-user sets +C on it as it creates the home, which is
+	# the one moment it is free.
+	echo "  (per-user ~/.config/posterchan-desktop is handled by pc-provision-user, at sign-in)"
+}
+
+# CONVERT WHAT IS ALREADY THERE. Deliberately separate and never part of an install: the only way to
+# give an existing file nodatacow is to write its contents into a NEW file inside a +C directory, so
+# this rewrites every file in the tree. Under a running database that is data loss, which is why it
+# asks, and why the message says to stop the service rather than assuming somebody did.
+nodatacowRewrite() {
+	local dir="$1"
+	[ -n "$dir" ] || { echo "usage: gentoo.sh btrfs-tweaks-rewrite <dir>"; return 1; }
+	[ -d "$dir" ] || { echo "$dir is not a directory"; return 1; }
+	if [ "$(stat -f -c %T "$dir" 2>/dev/null)" != "btrfs" ]; then
+		echo "$dir is not on btrfs — nothing to do"; return 0
+	fi
+	echo -e "\033[1;33mThis rewrites every file under $dir.\033[0m"
+	echo "Anything using it MUST be stopped first — rewriting a live database corrupts it."
+	read -p "Type the directory again to confirm: " -r confirm
+	[ "$confirm" = "$dir" ] || { echo "not confirmed"; return 1; }
+
+	chattr +C "$dir" 2>/dev/null
+	local done=0 failed=0
+	# cp to a NEW file inside the +C directory (so it inherits nodatacow), then rename over the
+	# original. --preserve=all keeps the mode, owner and timestamps a database cares about;
+	# --reflink=never is the point — a reflink would share the old CoW extents.
+	while IFS= read -r -d '' f; do
+		if cp --preserve=all --reflink=never "$f" "$f.nocow.$$" 2>/dev/null \
+		   && mv -f "$f.nocow.$$" "$f" 2>/dev/null; then
+			done=$((done + 1))
+		else
+			rm -f "$f.nocow.$$" 2>/dev/null
+			failed=$((failed + 1))
+		fi
+	done < <(find "$dir" -type f -print0 2>/dev/null)
+	echo "rewritten: $done   failed: $failed"
+	[ "$failed" -eq 0 ]
 }
 
 liveOSrestore() {
@@ -1150,12 +1276,16 @@ accounts() {
 	/usr/bin/hostnamectl set-hostname "${ROOT_NAME:-posterchanos}" 2>/dev/null
 }
 
+# THERE WERE TWO OF THESE. `btrfsTweaks` above and `btrfs-tweaks` here — same job, different lists
+# (`/var/lib/docker` and `/volumes` only existed in this one, `/var/lib/postgresql` only in the
+# other), and only one name is reachable from the command line, so half the paths were never
+# touched by anything. Both were the naive `chattr -R +C $i`, which on a populated directory
+# converts nothing and says nothing.
+#
+# One function now, with the union of the two lists; this name is kept as an alias because the help
+# text and people's shell history both use it.
 btrfs-tweaks() {
-	DISABLE_COW=("/var/lib/docker" "/volumes" "/var/lib/mysql" "/var/lib/libvirt")
-
-	for i in "${DISABLE_COW[@]}"; do
-		chattr -R +C $i
-	done
+	btrfsTweaks
 }
 
 initializeDisk() {
@@ -1810,6 +1940,8 @@ elif [ "$1" = "install" ]; then
 	buildGentoo
 elif [ "$1" = "btrfs-tweaks" ]; then
 	btrfsTweaks
+elif [ "$1" = "btrfs-tweaks-rewrite" ]; then
+	nodatacowRewrite "$2"
 elif [ "$1" = "install-flatpaks" ]; then
 	installFlatpaks
 elif [ "$1" = "compile-kernel" ]; then

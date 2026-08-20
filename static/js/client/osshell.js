@@ -117,6 +117,12 @@
            * with no error, no fallback and nothing in the console. So every program found by the
            * .desktop scan appeared in the start menu with no icon at all: "browser terminal have
            * no desktop icons or start menu icons". */
+          /* `iconUri` is the app's REAL picture, resolved by the main process (see pc:apps:list);
+           * `icon: 'grid'` stays as the fallback for anything whose theme icon could not be found,
+           * and it has to be a symbol that EXISTS. This was `window`, which is not in the sprite —
+           * and `iconSvg` emits a <use href="#i-window"> that draws empty space with no error, no
+           * fallback and nothing in the console. */
+          iconUri: String(a.iconUri || ''),
           id: 'app:' + a.id, name: a.name, match: a.match, icon: 'grid',
           comment: a.comment || '', group: a.group || 'Other', argv: a.argv, machine: true,
         }));
@@ -531,7 +537,26 @@
     return d;
   }
 
-  const toast = (m) => { try{ root.PC && root.PC.toast(m); }catch(_){} };
+  /* THE CLIENT'S OWN API IS __PC, NOT PC, AND THAT ONE PREFIX KILLED FOUR CONTROLS.
+   *
+   * app.js publishes window.__PC; there is no window.PC on the page at all. Every call in this file
+   * went through the short name, so — measured in the running shell —
+   *
+   *   • toast() was guarded with `&&`, which was FALSE, so it silently did nothing. Every refusal
+   *     this file is careful to word ("could not join", "the mixer could not be read", a power
+   *     profile that failed) was written to nowhere.
+   *   • the wifi join's uiPrompt THREW, into a catch that reads a throw as "the person cancelled"
+   *     — so a secured network could not be joined, ever. That is the whole of "network icon with
+   *     no way to configure networking".
+   *   • the power menu's uiConfirm threw into a catch that reads a throw as "they said no", so
+   *     Restart and Shut down were dead buttons that reported nothing.
+   *
+   * None of it appeared in any log, and the unit tests passed the entire time, because the harness
+   * defines globalThis.PC — the name this file was written against rather than the one the page
+   * actually has. So the accessor takes EITHER, the tests now assert against __PC as well, and
+   * test_os_shell.py fails if the short name comes back. */
+  const APP = () => root.__PC || root.PC || {};
+  const toast = (m) => { try{ const a = APP(); if(a.toast) a.toast(m); }catch(_){} };
 
   /* NETWORK. A list of what is in range, strongest first, with the one we are on marked. Joining
    * asks for a password only when the network wants one — and through the app's own prompt, never
@@ -562,7 +587,14 @@
       let pw = '';
       if(b.dataset.sec && ssid !== here){
         closePop();
-        try{ pw = await root.PC.uiPrompt('Password for ' + ssid, { password: true, ok: 'Join' }); }
+        const app = APP();
+        if(!app.uiPrompt){
+          /* NEVER window.prompt: it does not exist in a WebView and it wedges Electron. With no
+           * prompt to ask through, say so — a join that silently does nothing is what this was. */
+          toast('cannot ask for a password on this build');
+          return;
+        }
+        try{ pw = await app.uiPrompt('Password for ' + ssid, { password: true, ok: 'Join' }); }
         catch(_){ pw = null; }
         if(pw === null) return;
       }
@@ -695,10 +727,15 @@
       if(act === 'reboot' || act === 'poweroff'){
         closePop();
         let ok = false;
-        try{ ok = await root.PC.uiConfirm(act === 'reboot' ? 'Restart this computer?'
-                                                           : 'Shut down this computer?',
-                                          { ok: act === 'reboot' ? 'Restart' : 'Shut down', danger: true }); }
-        catch(_){ ok = false; }
+        const app = APP();
+        try{
+          /* NO CONFIRM MEANS NO SHUTDOWN, and it says which. Reading a missing dialog as "they said
+           * no" is what made these two buttons do nothing at all. */
+          if(!app.uiConfirm){ toast('cannot confirm on this build'); return; }
+          ok = await app.uiConfirm(act === 'reboot' ? 'Restart this computer?'
+                                                    : 'Shut down this computer?',
+                                   { ok: act === 'reboot' ? 'Restart' : 'Shut down', danger: true });
+        }catch(_){ ok = false; }
         if(!ok) return;
       }
       closePop();
@@ -985,8 +1022,8 @@
   function bindApps(into, after){
     into.querySelectorAll('[data-app]').forEach(b => b.onclick = async () => {
       b.disabled = true;
-      try{ const r = await launch(b.dataset.app); if(r && r.why && root.PC) root.PC.toast(r.why); }
-      catch(e){ if(root.PC) root.PC.toast(String((e && e.message) || e)); }
+      try{ const r = await launch(b.dataset.app); if(r && r.why) toast(r.why); }
+      catch(e){ toast(String((e && e.message) || e)); }
       finally{ b.disabled = false; if(after) after(); }
     });
   }

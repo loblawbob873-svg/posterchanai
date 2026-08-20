@@ -158,6 +158,87 @@ function groupOf(entry) {
 }
 
 /** Everything installed here that belongs in a menu. Sorted by name; ids are unique. */
+/* ── THE APP'S OWN PICTURE ──────────────────────────────────────────────────────────────────────
+ *
+ * Every program found by this scan was drawn in the start menu with ONE generic glyph, because the
+ * `Icon=` key is a THEME NAME (`firefox`, `btop`) and a web page cannot resolve one — that lookup
+ * is a walk over icon directories on a disk, which only this side can do. So the menu listed
+ * Firefox, OBS, mupdf, qemu and btop as five identical grey squares: "start menu ... missing icons".
+ *
+ * The result travels as a data: URI rather than a path. The renderer is on the `app://` origin and
+ * cannot read `/usr/share/icons` — a `<img src="file:///…">` there is blocked, silently, which
+ * would have produced the same blank square by a longer route.
+ *
+ * SIZE IS THE WHOLE RISK. These are inlined into a menu that repaints on every keystroke, so a
+ * 1 MB PNG per app is a stutter you can feel. Preferred sizes are asked for smallest-usable-first
+ * and anything past the cap is skipped rather than shrunk — there is no image decoder here, and a
+ * missing icon costs one grey square while a slow menu costs the whole feature.
+ */
+const ICON_DIRS = (env) => {
+  const home = (env || process.env).HOME || '';
+  const dirs = [];
+  if (home) dirs.push(path.join(home, '.local', 'share', 'icons'), path.join(home, '.icons'));
+  const data = String((env || process.env).XDG_DATA_DIRS || '/usr/local/share:/usr/share');
+  for (const d of data.split(':')) if (d) dirs.push(path.join(d, 'icons'));
+  return dirs;
+};
+/* Biggest-of-the-sensible-sizes first: a start menu row draws at ~20px on a scaled desktop, and a
+ * 16px source upscaled to that is mush. `scalable` (SVG) wins outright where it exists — it is one
+ * small file that is sharp at every size. */
+const ICON_SIZES = ['scalable', '128x128', '96x96', '64x64', '48x48', '256x256', '32x32'];
+const ICON_EXT = { '.svg': 'image/svg+xml', '.png': 'image/png' };
+const ICON_MAX = 96 * 1024;
+
+/** Where an `Icon=` value actually lives on this disk, or '' — an absolute path is used as given. */
+function iconFile(name, opts) {
+  const o = opts || {};
+  const env = o.env || process.env;
+  const n = String(name || '').trim();
+  if (!n) return '';
+  const ok = (f) => { try { return fs.statSync(f).isFile() ? f : ''; } catch (_) { return ''; } };
+  if (n.startsWith('/')) return ICON_EXT[path.extname(n).toLowerCase()] ? ok(n) : '';
+  /* An `Icon=` that already carries an extension is still a NAME, not a path — the spec says to
+   * strip it — but plenty of entries in the wild mean the pixmaps file, so both are tried. */
+  const bare = n.replace(/\.(png|svg|xpm)$/i, '');
+  const roots = o.dirs || ICON_DIRS(env);
+  for (const root of roots) {
+    let themes = [];
+    try { themes = fs.readdirSync(root); } catch (_) { continue; }
+    /* hicolor is the spec's fallback theme and is where almost everything installs. The rest are
+     * tried after it rather than instead of it, so a half-installed theme cannot hide an icon. */
+    themes = ['hicolor'].concat(themes.filter((t) => t !== 'hicolor'));
+    for (const theme of themes) {
+      for (const size of ICON_SIZES) {
+        for (const ext of Object.keys(ICON_EXT)) {
+          const f = ok(path.join(root, theme, size, 'apps', bare + ext));
+          if (f) return f;
+        }
+      }
+    }
+  }
+  for (const d of ['/usr/share/pixmaps', '/usr/local/share/pixmaps']) {
+    for (const ext of Object.keys(ICON_EXT)) {
+      const f = ok(path.join(d, bare + ext));
+      if (f) return f;
+    }
+  }
+  return '';
+}
+
+/** That file as a `data:` URI a renderer can actually paint, or '' when it is missing or too big. */
+function iconDataUri(name, opts) {
+  const f = iconFile(name, opts);
+  if (!f) return '';
+  const mime = ICON_EXT[path.extname(f).toLowerCase()];
+  if (!mime) return '';
+  let buf;
+  try {
+    if (fs.statSync(f).size > ICON_MAX) return '';
+    buf = fs.readFileSync(f);
+  } catch (_) { return ''; }
+  return 'data:' + mime + ';base64,' + buf.toString('base64');
+}
+
 function scan(opts) {
   const o = opts || {};
   const env = o.env || process.env;
@@ -214,4 +295,4 @@ function walk(dir, root, depth) {
 }
 
 module.exports = { scan, parseEntry, menuable, execArgv, entryId, appDirs, groupOf, onPath,
-                   walk, DESKTOP_NAMES, FIELD_CODES };
+                   walk, iconFile, iconDataUri, DESKTOP_NAMES, FIELD_CODES };

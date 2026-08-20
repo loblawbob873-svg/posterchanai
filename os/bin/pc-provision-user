@@ -66,6 +66,33 @@ for g in audio video input netdev render; do
   getent group "$g" >/dev/null 2>&1 && gpasswd -a "$USERNAME" "$g" >/dev/null 2>&1
 done
 
+# ── NODATACOW ON THE PROFILE, WHILE IT IS STILL EMPTY ───────────────────────────────────────────
+#
+# ~/.config/posterchan-desktop is the busiest path on this machine: it is Chromium's profile, and
+# the client's LOCAL RELAY lives in the IndexedDB inside it — every event the client stores is a
+# small write into a LevelDB file, forever. Measured on the test laptop: 453 MB, and no `C`
+# attribute at all, so every one of those writes was copy-on-write and the store was fragmenting
+# into tens of thousands of extents.
+#
+# THIS IS THE ONE MOMENT IT IS FREE. `chattr +C` only takes on a ZERO-LENGTH file; on a file that
+# already has extents it is refused or silently does nothing, and `chattr -R +C` over a populated
+# tree reports success having converted nothing. What works is +C on the DIRECTORY, which every
+# file created inside it inherits — so it has to be set BEFORE the profile exists, which is here,
+# as the home is created. Afterwards the only fix is rewriting every file
+# (`gentoo.sh btrfs-tweaks-rewrite`), with the app stopped.
+#
+# btrfs-only, and a failure is not worth a word: on ext4/xfs this tuning does not exist, and the
+# account is perfectly fine without it. Nodatacow also disables checksums for these files and opts
+# them out of compression — for a browser profile that is the right trade (it is a cache and a
+# database, both of which check themselves), and it is why this is one named directory rather than
+# the whole home.
+PROFILE_DIR="$HOME_DIR/.config/posterchan-desktop"
+if [ "$(stat -f -c %T "$HOME_DIR" 2>/dev/null)" = "btrfs" ]; then
+  mkdir -p "$PROFILE_DIR"
+  chattr +C "$PROFILE_DIR" 2>/dev/null || true
+  chown -R "$USERNAME:$USERNAME" "$HOME_DIR/.config"
+fi
+
 # The identity, recorded where the session can read it back without asking the user again.
 printf '%s\n' "$NPUB" > "$HOME_DIR/.posterchan-npub"
 chown "$USERNAME:$USERNAME" "$HOME_DIR/.posterchan-npub"

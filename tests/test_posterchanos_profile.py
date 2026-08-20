@@ -95,6 +95,88 @@ class PosterChanOSProfile(unittest.TestCase):
                           f"{where}: the desktop NAME is what selects the portal backend, and it "
                           f"is not among the variables being carried over")
 
+    # ── EVERY PROGRAM THE SHELL RUNS IS INSTALLED ──────────────────────────────────────────────
+    #
+    # The shell learns everything it knows about this machine by running a command, and a missing
+    # one does not crash it — the bridge returns a refusal, which reads to the person using it as a
+    # control that does nothing at all. Two of these were live: `brightnessctl` is what
+    # desktop/power.js falls back to whenever /sys/class/backlight is root-owned, and it was in no
+    # list, so on such a machine the brightness slider moved and changed nothing; `grim` is the
+    # whole of the screenshot feature and was the same shape.
+    #
+    # THE POINT OF DOING IT THIS WAY is that the list is derived from the CODE. Both of those tools
+    # were present on the test laptop as somebody else's dependency, so nothing was visibly wrong
+    # there — the failure only appears on the next fresh build, which is hours of emerge away from
+    # the mistake. So this reads desktop/*.js for the binaries it actually invokes and asserts each
+    # one has a package, rather than checking a list against another list.
+    #
+    # `base` is the things @system and BASE_PACKAGES already carry. They are exempt from needing a
+    # POSTERCHANOS_PACKAGES entry, but NOT exempt from being known about: an unrecognised binary
+    # appearing in desktop/*.js fails this test, which is the whole mechanism.
+    PKG_FOR = {
+        "grim": "gui-apps/grim",
+        "slurp": "gui-apps/slurp",
+        "wl-copy": "gui-apps/wl-clipboard",
+        # Same package. `wl-paste` is how a screenshot's "· copied" claim is CHECKED — Electron's
+        # own clipboard.writeImage does not take the Wayland selection here, and readImage() cannot
+        # prove otherwise because Chromium hands back its own cached write. It is allowed to be a
+        # subprocess where wl-copy is not, because it EXITS: a child of the shell inherits
+        # Chromium's non-CLOEXEC descriptors, so a daemon holds them for ever and a short-lived
+        # process does not.
+        "wl-paste": "gui-apps/wl-clipboard",
+        "wpctl": "media-video/wireplumber",
+        # DELIBERATELY NOT PACKAGED, and this entry is the record of why: it is not in the Gentoo
+        # tree, so adding it breaks emerge on every fresh build. desktop/power.js only reaches for
+        # it when /sys/class/backlight is root-owned, and what makes that path unnecessary here is
+        # the udev rule that hands the backlight to the `video` group. Adding the package is the
+        # obvious wrong fix for a brightness slider that does nothing;
+        # test_power_and_media_need_no_extra_packages is what stops it.
+        "brightnessctl": "none:not in the Gentoo tree — the udev rule covers this instead",
+        "xdg-open": "x11-misc/xdg-utils",
+        "swaymsg": "gui-wm/sway",
+        "nmcli": "base:net-misc/networkmanager",   # BASE_PACKAGES
+        "systemctl": "base:sys-apps/systemd",
+        "script": "base:sys-apps/util-linux",      # the local terminal's PTY
+        "sudo": "base:app-admin/sudo",
+        # Windows-only, and never run on this profile.
+        "attrib": "base:n/a", "icacls": "base:n/a",
+    }
+
+    def _binaries_the_shell_runs(self):
+        """Every external program desktop/*.js invokes, read out of the source."""
+        d = os.path.join(ROOT, "desktop")
+        found = set()
+        for name in sorted(os.listdir(d)):
+            if not name.endswith(".js"):
+                continue
+            src = open(os.path.join(d, name), encoding="utf-8").read()
+            # spawn('x', …) / execFile('x', …) / run('x', …)
+            found |= set(re.findall(r"(?:execFile|execFileSync|spawnSync|spawn|run)\(\s*'([a-z][a-z0-9._-]*)'", src))
+            # const GRIM = process.env.PC_GRIM || 'grim';
+            found |= set(re.findall(r"process\.env\.PC_[A-Z_]+\s*\|\|\s*'([a-z][a-z0-9._-]*)'", src))
+        return found
+
+    def test_every_program_the_shell_runs_has_a_package(self):
+        for binary in sorted(self._binaries_the_shell_runs()):
+            with self.subTest(binary=binary):
+                pkg = self.PKG_FOR.get(binary)
+                self.assertIsNotNone(
+                    pkg,
+                    "desktop/*.js runs `%s`, and nothing in this test knows which package provides "
+                    "it. Add it to PKG_FOR and to os/gentoo.sh — a tool with no package is a "
+                    "control that silently does nothing on a fresh build." % binary)
+                if pkg.startswith("base:") or pkg.startswith("none:"):
+                    continue
+                self.assertIn(pkg, self.pkgs,
+                              "the shell runs `%s`, so %s has to be in POSTERCHANOS_PACKAGES"
+                              % (binary, pkg))
+
+    def test_the_screenshot_tools_are_installed(self):
+        """Named on their own because this is a whole feature, not a fallback path: with no grim
+        there is no screenshot at all, and with no slurp there is no way to pick an area."""
+        for pkg in ("gui-apps/grim", "gui-apps/slurp"):
+            self.assertIn(pkg, self.pkgs, pkg + " is what takes a screenshot on wlroots")
+
     def test_something_answers_the_FileChooser_portal(self):
         """The wlroots backend implements ScreenCast and nothing else, so with it alone there is no
         FileChooser on the bus — measured, and it is what Folder Sync's "choose a folder" needs."""

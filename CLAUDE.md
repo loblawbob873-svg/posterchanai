@@ -1193,6 +1193,55 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
     (`looks_fetchable`/`is_safe_host`, `follow_redirects=False`).
   - **`fedi_normalize.py`** is extracted VERBATIM from the old bridge and is **proven** code —
     change it only with a very good reason; every bridge service depends on it.
+- **PosterChanOS** (`os/gentoo.sh` + `os/bin/` + `os/overlay/`): a Gentoo profile whose DESKTOP IS THE
+  CLIENT. sway execs `pc-shell-start`, which runs `desktop/main.js --shell`; the desktop itself is
+  `static/js/client/os.js` (windows, icons, taskbar, widgets, start menu) and `osshell.js` (the
+  machine's own tray) over the bridges in `desktop/*.js` (`wm`, `net`, `power`, `audio`, `hostfs`,
+  `localterm`, `screenshot`). Test machine: **192.168.0.154**, real hardware somebody is using.
+  **Iterate by swapping the asar, not by rebuilding the AppImage**: `bash desktop/build-www.sh`, pack
+  `*.js *.html package.json icon.png www/` + the production `node_modules` with
+  `node_modules/.bin/asar`, scp over `/opt/posterchan/resources/app.asar`, then restart THROUGH SWAY
+  — `swaymsg exec "env ELECTRON_OZONE_PLATFORM_HINT=auto APPDIR=/opt/posterchan
+  /opt/posterchan/AppRun --shell --remote-debugging-port=9222"`. An ssh session has no
+  `WAYLAND_DISPLAY`, so a shell launched from one falls back to X11 and exits instantly with
+  `Missing X server`, which looks exactly like the black-screen bug. Electron passes unknown switches
+  to Chromium, so CDP needs no code change; `grim` on the box is the other measurement channel and
+  the honest one — it captures native app surfaces, and it works when CDP does not.
+  **Every program the shell shells out to must be in `POSTERCHANOS_PACKAGES`**, audited from the code
+  by `tests/test_posterchanos_profile.py` — a missing one is not a crash, it is a bridge returning a
+  refusal, which reads as a control that does nothing. **`app-misc/brightnessctl` is NOT in the Gentoo
+  tree**: adding it breaks emerge on every fresh build, and the udev rule handing the backlight to
+  the `video` group is what makes the brightness slider work instead.
+  **THE TRAY IS ONE BUTTON IN THE BOTTOM-RIGHT**, the way Windows 11 groups network + sound + battery,
+  opening a Quick Settings flyout (Wi-Fi/Tor/Screenshot/Power tiles, the two sliders, an output-device
+  switcher and a per-app volume mixer). Sub-panels REPLACE the flyout's body with a back arrow —
+  stacked popovers in a corner have nowhere to go. The battery is DRAWN (sprite shell + a `<rect>`
+  sized from the reading), because a `<use>` takes no parameters and a fixed glyph would have to lie.
+  **Three bugs here were invisible to every existing test and are worth knowing as shapes:**
+  (1) a BACKTICK in a comment inside `sprite.js` closes the one template literal the whole SVG lives
+  in — the file throws at parse time, injects nothing, and EVERY icon in the client is blank with no
+  error; every existing sprite test passed because they read the file as text
+  (`tests/client/test_icon_sprite_loads.py` runs it now). (2) `osshell.js` reached for `window.PC`,
+  which **does not exist** — the client publishes `window.__PC` — so every toast went nowhere, the
+  wifi password prompt threw into a catch that reads a throw as "cancelled" (a secured network could
+  never be joined), and Restart/Shut down were dead buttons; the unit harness had defined
+  `globalThis.PC`, so *the fixture agreed with the bug and could not see it*. (3) **`wl-copy` never
+  exits and inherits this process's file descriptors** — one screenshot left it holding 95 of them,
+  13 sockets, including a LISTENING socket of the shell, so a restart could not rebind its own port.
+  Chromium's fds are not CLOEXEC, so this is general: short-lived children (grim, slurp, wpctl,
+  nmcli) are fine, daemons are not, and the local terminal's `script`/`bash` leak the same way.
+  Also: `openPop` mixed `getBoundingClientRect()` (scaled by `body{zoom}`) with `offsetWidth` and
+  `style.left` (not scaled), which put a corner flyout in the middle of the screen — os.js already
+  had `zf()`/`vwL()` for exactly this.
+  **`Ctrl+Enter` opens a terminal on THIS machine** (`PCTerm.openLocal`, which beats the remembered
+  session — it used to reattach over SSH to another host while the local PTY sat unused). It is a
+  real `script -qfc … bash` PTY, not `foot`. `Ctrl+F` opens the start menu's search. PrtSc / Shift+PrtSc
+  screenshot the screen or an area via `grim`/`slurp`; **`clipboard.writeImage` does not take the
+  Wayland selection**, and `readImage()` cannot prove it did (Chromium hands back its own cached
+  write), so the "copied" claim is verified with `wl-paste` or not made.
+  Files has a **"This Computer"** tab; `hostfiles.js` is handed the app's own `_fxBarHTML` /
+  `_fxColsHTML` / `_fxDetailsRow` / `_fxIcon` rather than inventing markup — it used to draw eleven
+  class names of which the stylesheet defined *none*.
 - **Native apps run WITHOUT an instance** (`desktop/`, `mobile/`): both BUNDLE the web client, and the
   desktop build (`desktop/build-www.sh` → `desktop/main.js`) can run with **no PosterChan server at all** —
   relays + a key. See `desktop/README.md`. Three things this changed, each a trap:

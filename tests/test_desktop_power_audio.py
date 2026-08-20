@@ -227,6 +227,66 @@ class Audio(unittest.TestCase):
         self.assertEqual(len(default), 1)
         self.assertEqual(default[0]["id"], 47)
 
+    # ── THE APP MIXER ───────────────────────────────────────────────────────────────────────────
+    #
+    # `wpctl status` output for one playing application, copied from the real machine rather than
+    # imagined — the port lines and the tab before `[active]` are exactly what it printed:
+    #
+    #      └─ Streams:
+    #             80. Chromium
+    #                  69. output_FR       > ALC257 Analog:playback_FR	[active]
+    #                  77. output_FL       > ALC257 Analog:playback_FL	[active]
+    REAL_STREAMS = (
+        "Audio\n ├─ Sinks:\n │  *   50. Speakers   [vol: 0.72]\n"
+        " ├─ Sources:\n │  *   52. Mic [vol: 1.00]\n"
+        " ├─ Filters:\n └─ Streams:\n"
+        "        80. Chromium\n"
+        "             69. output_FR       > ALC257 Analog:playback_FR\t[active]\n"
+        "             77. output_FL       > ALC257 Analog:playback_FL\t[active]\n"
+    )
+
+    def test_a_streams_ports_are_not_three_separate_applications(self):
+        """THE BUG THIS RULE EXISTS FOR, measured before the mixer was written. A stream's PORTS are
+        numbered rows in the same section and match the same regex as the stream itself, so a mixer
+        that takes every row draws "Chromium", "output_FR" and "output_FL" as three applications
+        with three sliders — two of which control a port and therefore nothing anybody can hear.
+
+        Indentation would separate them and is not safe to lean on: the tree is drawn with box
+        characters this parser has already stripped. A port is identified by what it IS — linked to
+        a device with `>`, and named for a channel."""
+        out = self.run_js("out.s = A.parseStatus(%s);" % json.dumps(self.REAL_STREAMS))
+        streams = out["s"]["streams"]
+        self.assertEqual([x["name"] for x in streams], ["Chromium"],
+                         "the stream's ports were listed as applications")
+        self.assertEqual(streams[0]["id"], 80)
+        # And the sinks are still read correctly with a Streams section present.
+        self.assertEqual([x["name"] for x in out["s"]["sinks"]], ["Speakers"])
+
+    def test_a_port_row_is_recognised_by_what_it_is(self):
+        out = self.run_js("""
+          out.port = A.isPortRow('output_FR       > ALC257 Analog:playback_FR');
+          out.chan = A.isPortRow('input_MONO');
+          out.app  = A.isPortRow('Firefox');
+          out.odd  = A.isPortRow('OBS Studio');
+        """)
+        self.assertIs(out["port"], True)
+        self.assertIs(out["chan"], True)
+        self.assertIs(out["app"], False, "an application was mistaken for a port")
+        self.assertIs(out["odd"], False)
+
+    def test_one_applications_volume_is_set_by_its_own_node_id(self):
+        """Measured on the machine: `wpctl set-volume 80 0.40` moved the browser and left every
+        other stream alone. A percentage, clamped by the same ceiling as the master — 50 means five
+        thousand percent to wpctl here too."""
+        self.run_js("await A.setStreamVolume(80, 40);")
+        self.assertIn("set-volume 80 0.400", self.argv())
+
+    def test_a_stream_id_is_validated_like_a_device_id(self):
+        out = self.run_js("await A.setStreamVolume('80; reboot', 40);")
+        self.assertIn("stream id", out.get("threw", ""))
+        out = self.run_js("await A.setStreamMuted('80; reboot', true);")
+        self.assertIn("stream id", out.get("threw", ""))
+
     def test_a_device_id_is_validated(self):
         out = self.run_js("await A.setDefault('47; reboot');")
         self.assertIn("device id", out.get("threw", ""))

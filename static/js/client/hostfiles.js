@@ -83,7 +83,7 @@
          + 'them back from any file manager on it.';
   }
 
-  const API = { available, keyOf, order, crumbs, pretty, deletePrompt, H };
+  const API = { available, keyOf, order, crumbs, pretty, deletePrompt, extOf, barCrumbs, H };
 
   /* ── the visible half ────────────────────────────────────────────────────────────────────────
    *
@@ -114,26 +114,87 @@
     return h.list(p || _path);
   }
 
+  /* THE EXTENSION, for the type column and the icon. A directory has none and must not be given
+   * one — `Documents` is not a `DOCUMENTS file`. */
+  function extOf(e){
+    if(!e || e.dir) return '';
+    const n = String(e.name || '');
+    const dot = n.lastIndexOf('.');
+    return dot > 0 ? n.slice(dot + 1).toLowerCase() : '';
+  }
+
+  /* THE CRUMBS THE SHARED TOOLBAR TAKES: `{label, to}` with an `h:` target, which is the prefix the
+   * Files screen's one crumb router resolves to this source. The trail is shortened from the LEFT
+   * when it is long, because the useful end of a path is the end — a crumb bar that wraps to three
+   * lines on `/home/user/Pictures/2026/August/raw` pushes the file list off the screen. */
+  function barCrumbs(p, home){
+    const rows = crumbs(p).map(c => ({ label: c.label, to: 'h:' + c.path }));
+    /* The home directory is one crumb reading `~`, not five reading `/ home npub1… `, which is the
+     * same reason `pretty()` exists. Everything above home stays reachable through it. */
+    const h = String(home || '');
+    if(h){
+      const hi = rows.findIndex(c => c.to === 'h:' + h);
+      if(hi > 0) return [{ label: '~', to: 'h:' + h }].concat(rows.slice(hi + 1));
+    }
+    if(rows.length > 6) return [rows[0], { label: '…', to: rows[rows.length - 5].to }]
+      .concat(rows.slice(rows.length - 4));
+    return rows;
+  }
+
+  /* ONE ROW OR ONE TILE, drawn by the FILES SCREEN'S OWN builders — `ui.row` is `_fxDetailsRow` and
+   * `ui.icon` is `_fxIcon`, the same two the drive uses. Nothing here invents a class name.
+   *
+   * That is the whole of this rewrite. The previous version drew `hf-bar`, `hf-crumbs`, `hf-grid`,
+   * `hf-row`, `hf-acts`, `fx-tiles`, `fx-tile`, `fx-ico`, `fx-nm`, `fx-sub` and an `fx-details`
+   * table — ELEVEN class names, and measured against client.css not one of them has a single rule.
+   * So this pane was unstyled HTML inside a styled explorer: a bare table, bare buttons, no grid.
+   * A file manager that looks like a broken web page is not a file manager anybody trusts with a
+   * delete button. */
   function rowsHTML(entries, ui){
     const u = ui || {};
     const fmt = u.fmtBytes || ((n) => String(n));
     const when = u.fmtDate || ((t) => t ? new Date(t).toLocaleString() : '');
+    const icon = u.icon || (() => '📎');
+    const typeName = u.typeName || ((e) => (e ? e.toUpperCase() + ' file' : 'File'));
+    const details = u.view === 'details';
     if(!entries.length) return '<div class="empty">This folder is empty.</div>';
-    if(u.view === 'details'){
-      return `<table class="fx-details"><tbody>` + entries.map(e =>
-        `<tr class="hf-row${_sel.has(e.path) ? ' sel' : ''}" data-p="${H(e.path)}" data-d="${e.dir ? '1' : ''}">
-           <td class="hf-n">${e.dir ? '📁' : (e.broken ? '⚠️' : '📄')} ${H(e.name)}${e.link ? ' ↗' : ''}</td>
-           <td class="hf-s">${e.dir ? '' : H(fmt(e.size))}</td>
-           <td class="hf-t">${H(when(e.mtime))}</td>
-         </tr>`).join('') + `</tbody></table>`;
-    }
-    return `<div class="fx-tiles">` + entries.map(e =>
-      `<button class="fx-tile hf-row${_sel.has(e.path) ? ' sel' : ''}" data-p="${H(e.path)}"
-               data-d="${e.dir ? '1' : ''}" title="${H(e.path)}">
-         <span class="fx-ico">${e.dir ? '📁' : (e.broken ? '⚠️' : '📄')}</span>
-         <span class="fx-nm">${H(e.name)}</span>
-         <span class="fx-sub">${e.dir ? 'folder' : H(fmt(e.size))}</span>
-       </button>`).join('') + `</div>`;
+
+    const cells = entries.map(e => {
+      const ext = extOf(e);
+      const sel = _sel.has(e.path);
+      /* A FOLDER IS NOT A FILE TYPE. It gets the folder glyph, no size and the word "Folder" —
+       * `_fxIcon` would answer 📎 for it, and a size column reading "0 B" beside a directory is a
+       * statement about the directory's contents that is not true. */
+      const ic = e.dir ? '📁' : (e.broken ? '⚠️' : icon(ext, e.mime || ''));
+      if(details) return (u.row || (() => ''))({
+        dir: e.dir, selected: sel, name: e.name + (e.link ? ' ↗' : ''), title: e.path,
+        icon: ic, size: e.dir ? '' : fmt(e.size), type: e.dir ? 'Folder' : typeName(ext),
+        when: when(e.mtime), box: '', acts: '',
+      });
+      /* TILES use the drive's own `.file-card` + `.file-icon` + `.meta` shape. The `data-p`/`data-d`
+       * attributes are this source's own and are what the handlers below select on — the drive keys
+       * its cards on a hash, and a path is not one. */
+      return `<div class="file-card${sel ? ' selected' : ''}${e.dir ? ' isdir' : ''}"
+           data-p="${H(e.path)}" data-d="${e.dir ? '1' : ''}" title="${H(e.path)}">
+        <div class="file-icon">${ic}<span>${H(e.dir ? 'folder' : (ext || ''))}</span></div>
+        <div class="meta"><span class="fname" title="${H(e.name)}">${H(e.name)}</span>
+          <span class="fc-acts">${e.dir ? '' : H(fmt(e.size))}</span></div></div>`;
+    }).join('');
+
+    return (details ? (u.cols ? u.cols(false) : '') : '') + cells;
+  }
+
+  /* THE ROWS A DETAILS VIEW DRAWS carry `data-p` too, and `_fxDetailsRow` has no slot for it — it
+   * is the drive's row and keys on a hash. Rather than widen that shared builder (which every other
+   * source would then carry an unused attribute for), the path is stamped on after the fact, in
+   * order: the rows are generated from the same array, one per entry. */
+  function stampPaths(grid, entries){
+    const rows = [...grid.querySelectorAll('.file-card')];
+    if(rows.length !== entries.length) return;      // a header or an empty state — leave it alone
+    entries.forEach((e, i) => {
+      rows[i].dataset.p = e.path;
+      if(e.dir) rows[i].dataset.d = '1';
+    });
   }
 
   /** Draw the whole source into `pane`. `ui` carries what belongs to the Files screen. */
@@ -151,29 +212,40 @@
       pane.innerHTML = `<div class="empty">Couldn’t read ${H(pretty(_path, _home))} — ${H(err)}</div>`;
       return;
     }
-    const rows = order(listing.entries, u.cmp && u.cmp(keyOf), { hidden: _hidden });
-    pane.innerHTML =
-      `<div class="hf-bar">
-         <button class="btn btn-ghost small hf-up"${listing.parent ? '' : ' disabled'}>↑ Up</button>
-         <div class="hf-crumbs">${crumbs(_path).map(c =>
-           `<button class="hf-crumb" data-p="${H(c.path)}">${H(c.label)}</button>`).join('<span>/</span>')}</div>
-         <span class="spacer"></span>
-         <button class="btn btn-ghost small hf-new">New folder</button>
-         <button class="btn btn-ghost small hf-hidden">${_hidden ? 'Hide dotfiles' : 'Show dotfiles'}</button>
-       </div>
-       <div class="hf-acts${_sel.size ? '' : ' hidden'}">
-         <span class="muted small">${_sel.size} selected</span>
-         <button class="btn btn-ghost small hf-rename"${_sel.size === 1 ? '' : ' disabled'}>Rename</button>
-         <button class="btn btn-ghost small hf-del">Move to trash</button>
-       </div>
-       <div class="hf-grid">${rowsHTML(rows, u)}</div>`;
+    const details = u.view === 'details';
+    /* THE SEARCH BOX IS THE SHARED ONE, so it has to filter something here or it is a control that
+     * looks live and does nothing on one tab out of three. It matches the NAME, like the drive's. */
+    const q = String((u.query && u.query()) || '').trim().toLowerCase();
+    let rows = order(listing.entries, u.cmp && u.cmp(keyOf), { hidden: _hidden });
+    if(q) rows = rows.filter(e => String(e.name || '').toLowerCase().includes(q));
+
+    const bar = u.bar ? u.bar(barCrumbs(_path, _home)) : '';
+    pane.innerHTML = bar
+      + `<div class="fx-actions">
+           <button class="btn btn-ghost small hf-up"${listing.parent ? '' : ' disabled'}>Up</button>
+           <button class="btn btn-ghost small hf-new">New folder</button>
+           <button class="btn btn-ghost small hf-hidden">${_hidden ? 'Hide dotfiles' : 'Show dotfiles'}</button>
+           <span class="spacer"></span>
+           ${_sel.size ? `<span class="muted small">${_sel.size} selected</span>
+             <button class="btn btn-ghost small hf-rename"${_sel.size === 1 ? '' : ' disabled'}>Rename</button>
+             <button class="btn btn-ghost small hf-del">Move to trash</button>` : ''}
+         </div>
+         <div class="files-grid${details ? ' details' : ''}" id="hf-grid">${
+           q && !rows.length
+             ? `<div class="empty">Nothing in ${H(pretty(_path, _home))} matches “${H(q)}”.</div>`
+             : rowsHTML(rows, u)}</div>`;
 
     const $ = (s) => pane.querySelector(s);
     const $$ = (s) => [...pane.querySelectorAll(s)];
     const again = () => render(pane, ui);
+    const grid = $('#hf-grid');
+    if(details && grid) stampPaths(grid, rows);
+    /* The shared toolbar's own controls — the crumbs, the search box, tiles-vs-details. Bound by the
+     * Files screen, because every one of them changes state that lives there. */
+    if(u.bindBar) u.bindBar();
+    if(details && u.bindCols && grid) u.bindCols(grid);
 
-    if(listing.parent) $('.hf-up').onclick = () => { enter(listing.parent); again(); };
-    $$('.hf-crumb').forEach(b => b.onclick = () => { enter(b.dataset.p); again(); });
+    if(listing.parent){ const up = $('.hf-up'); if(up) up.onclick = () => { enter(listing.parent); again(); }; }
     $('.hf-hidden').onclick = () => { _hidden = !_hidden; again(); };
     $('.hf-new').onclick = async () => {
       let name = '';
@@ -184,7 +256,7 @@
     };
 
     const byPath = new Map(rows.map(r => [r.path, r]));
-    $$('.hf-row').forEach(el => {
+    $$('#hf-grid .file-card[data-p]').forEach(el => {
       const p = el.dataset.p;
       el.onclick = (ev) => {
         /* A MODIFIER SELECTS, A PLAIN CLICK OPENS. On a folder "open" means walk into it; on a file
@@ -204,7 +276,6 @@
         if(_sel.has(p)) _sel.delete(p); else _sel.add(p);
         again();
       };
-      void byPath.get(p);
     });
 
     if(_sel.size){
@@ -236,7 +307,7 @@
     }
   }
 
-  Object.assign(API, { render, roots, read, enter, leave, at, state,
+  Object.assign(API, { render, rowsHTML, roots, read, enter, leave, at, state,
                        home: () => _home, selection: () => [..._sel] });
   root.PCHostFiles = API;
   if(typeof module !== 'undefined' && module.exports) module.exports = API;

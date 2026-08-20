@@ -309,6 +309,35 @@ class TheLauncherShowsWhatIsInstalled(unittest.TestCase):
         src = open(MOD, encoding="utf-8").read()
         self.assertIn("const APPS = []", src)
 
+    def test_the_client_api_is_reached_by_the_name_the_page_actually_uses(self):
+        """`window.PC` DOES NOT EXIST. app.js publishes `window.__PC`, and this module was written
+        against the short name — measured in the running shell on the test machine:
+
+            > typeof window.PC      -> "undefined"
+            > typeof window.__PC    -> "object"
+
+        Every consequence was silent. `toast()` was guarded `root.PC && …`, which is false, so every
+        refusal this file words so carefully went nowhere. The wifi join's `uiPrompt` THREW into a
+        catch that reads a throw as "the person cancelled", so a secured network could never be
+        joined — the whole of "network icon with no way to configure networking". The power menu's
+        `uiConfirm` threw into a catch that reads a throw as "they said no", so Restart and Shut
+        down were dead buttons.
+
+        And the unit tests passed the entire time, because the harness defines `globalThis.PC` — the
+        name the code was written against rather than the one the page has. That is the lesson this
+        guard encodes: a test fixture that agrees with the bug cannot see it. So the accessor takes
+        EITHER name, and no line of CODE may reach for the short one directly."""
+        src = open(MOD, encoding="utf-8").read()
+        code = re.sub(r"/\*.*?\*/", "", src, flags=re.S)      # the comment above explains it; keep it
+        code = re.sub(r"//[^\n]*", "", code)
+        # The accessor line itself is the ONE legitimate mention — it is the fallback.
+        code = code.replace("root.__PC || root.PC || {}", "«accessor»")
+        bad = [ln.strip() for ln in code.split("\n") if re.search(r"\broot\.PC\b", ln)]
+        self.assertEqual(bad, [], "osshell.js reaches for root.PC, which is undefined on the real "
+                                  "page — use APP(), which accepts __PC or PC: %r" % (bad,))
+        self.assertIn("root.__PC || root.PC", src,
+                      "the accessor must take __PC first and fall back to PC")
+
     def test_an_icon_that_is_not_in_the_sprite_renders_nothing(self):
         """The reason the three built-ins were invisible. `iconSvg` emits a `<use href="#i-NAME">`,
         and a sprite with no such symbol draws empty space — no error, no fallback, no clue. So any

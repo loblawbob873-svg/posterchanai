@@ -956,10 +956,29 @@ ipcMain.handle('pc:apps:list', (e) => {
   catch (err) { return { apps: [], why: String((err && err.message) || err) }; }
   const term = terminalPrefix();
   const apps = [];
+  const A = require('./apps.js');
+  /* THE ICON IS RESOLVED HERE, ONCE PER SCAN. `Icon=` is a theme name and the renderer lives on the
+   * app:// origin, which can read neither an icon theme nor a file:// path — so every scanned
+   * program drew as the same generic square ("start menu ... missing icons"). The lookup is a walk
+   * over icon directories and the answer is a data: URI, both of which only this side can produce.
+   *
+   * Cached by NAME across the loop: a desktop full of one toolkit's apps shares icons, and this is
+   * called every time the start menu is opened. */
+  const iconCache = new Map();
+  const uriFor = (n) => {
+    if (!n) return '';
+    if (!iconCache.has(n)) {
+      let u = '';
+      try { u = A.iconDataUri(n); } catch (_) { u = ''; }
+      iconCache.set(n, u);
+    }
+    return iconCache.get(n);
+  };
   for (const a of scanned.apps) {
     if (a.terminal && !term) continue;   // nothing could run it, so offering it is a dead button
     apps.push(Object.assign({}, a, {
       argv: a.terminal ? term.concat(a.argv) : a.argv,
+      iconUri: uriFor(a.icon),
     }));
   }
   /* `skipped` is carried, counted rather than listed: "why is Foo not in my menu" is a real
@@ -1094,11 +1113,54 @@ ipcMain.handle('pc:audio:streammute', (e, id, on) => { fsGuard(e); return audio.
 /* SCREENSHOTS. See screenshot.js for why this is grim and not capturePage() or desktopCapturer.
  * `available` is asked separately so a tray can hide a button that could only ever fail. */
 ipcMain.handle('pc:shot:available', (e) => { fsGuard(e); return require('./screenshot.js').available(); });
-ipcMain.handle('pc:shot:take', (e, opts) => {
+ipcMain.handle('pc:shot:take', async (e, opts) => {
   fsGuard(e);
   const o = opts || {};
-  return require('./screenshot.js').capture({ mode: String(o.mode || 'screen'),
-                                              geometry: o.geometry, copy: o.copy !== false });
+  const r = await require('./screenshot.js').capture({ mode: String(o.mode || 'screen'),
+                                                       geometry: o.geometry });
+  if (!r.ok || o.copy === false) return r;
+  /* THE CLIPBOARD, WITH ELECTRON'S OWN API RATHER THAN `wl-copy`.
+   *
+   * `wl-copy` does not exit — it forks a daemon that serves the clipboard offer until something
+   * else takes the selection, and that daemon inherits this process's OPEN FILE DESCRIPTORS.
+   * Measured on the test machine, one screenshot left a `wl-copy -t image/png` holding 95 of them,
+   * 13 sockets, INCLUDING a listening socket of the shell. Restarting the desktop then could not
+   * rebind its own port: the listener was still held by a clipboard process from a screenshot taken
+   * twenty minutes earlier, and everything connecting to it queued for ever against a socket
+   * nothing was accepting on. From the outside that is indistinguishable from a hung app.
+   *
+   * This writes the same clipboard through Chromium, in-process, with nothing to inherit.
+   *
+   * COPYING IS A BONUS, NEVER THE VERDICT: the picture is on disk either way, and failing the whole
+   * call would throw away a screenshot that was taken perfectly. */
+  let copied = false;
+  try {
+    const { nativeImage } = require('electron');
+    const img = nativeImage.createFromPath(r.path);
+    if (!img.isEmpty()) {
+      clipboard.writeImage(img);
+      /* CHECKED BY SOMEBODY ELSE, because the write can be accepted and do nothing.
+       *
+       * MEASURED on the test machine: `clipboard.writeImage()` returned without error and
+       * `wl-paste --list-types` in another client answered "Nothing is copied". `readImage()` is no
+       * use as a check either — Chromium hands back its own cached write, so the readback agrees
+       * with itself whether or not the compositor ever gave us the selection.
+       *
+       * Reporting a copy that did not happen is the exact failure this screen exists to avoid:
+       * somebody pastes a screenshot into a chat and posts whatever was on their clipboard before.
+       * So the claim is made by a real Wayland client or not at all, and when it is not the toast
+       * says "saved" and stops there — true, and still the useful half.
+       *
+       * On Windows and macOS there is no wl-paste and none of this applies; `writeImage` is simply
+       * how the clipboard works there, so the claim is taken at face value. */
+      if (process.platform === 'linux') {
+        copied = await require('./screenshot.js').clipboardHasImage();
+      } else {
+        copied = !clipboard.readImage().isEmpty();
+      }
+    }
+  } catch (err) { console.warn('[shot] clipboard:', (err && err.message) || err); }
+  return Object.assign({}, r, { copied });
 });
 
 ipcMain.handle('pc:net:available', (e) => { fsGuard(e); return net.available(); });

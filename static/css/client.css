@@ -7582,7 +7582,13 @@ html.os-on #music-player{display:none}
 html.os-on #music-player.mp,html.os-on #music-player.mp-mini{z-index:332}
 html.os-on #upload-badge.upbadge{z-index:333}
 
-.os-startmenu{position:absolute;inset-inline-start:50%;transform:translateX(-50%);bottom:56px;width:min(520px,70vw);max-height:60vh;
+/* WINDOWS 11 SIZES THIS MENU FOR A LIST, and so does this now. 520x60vh held about ten rows before
+   it ran out of room, and the row that ran out was inside a scroller nobody could tell was one —
+   reported as "start menu not scrollable". Wider and taller so the whole of a normal machine fits,
+   and `overscroll-behavior:contain` so a flick at the end of the list stops there instead of
+   scrolling the desktop behind it, which is what "not scrollable" feels like from the other side. */
+.os-startmenu{position:absolute;inset-inline-start:50%;transform:translateX(-50%);bottom:56px;
+  width:min(660px,86vw);max-height:min(74vh,620px);
   display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:14px;
   /* --panel is translucent by design (rgba .72), which over a wallpaper leaves the app list reading
      through it. Paint the panel tint over an OPAQUE base so the menu keeps its colour and stops
@@ -7591,12 +7597,23 @@ html.os-on #upload-badge.upbadge{z-index:333}
   backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
   border:1px solid var(--line);box-shadow:0 20px 60px rgba(0,0,0,.6);z-index:320}
 .os-search{font-size:14px}
-.os-applist{flex:1;min-height:0;overflow-y:auto;display:grid;
-  grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:4px}
+.os-applist{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:4px;align-content:start}
+/* A HEADING SPANS THE WHOLE ROW. Without this it is a grid ITEM like any other and lands in one
+   150px cell with apps beside it — "This computer" reading as a column header for one app. */
+.os-applist-h{grid-column:1/-1}
+/* The scroller says it is one. A list that is clearly cut off mid-row invites a scroll; a list that
+   ends flush with a panel edge looks finished. */
+.os-applist::-webkit-scrollbar{width:10px}
+.os-applist::-webkit-scrollbar-thumb{background:var(--line);border-radius:6px}
+.os-applist::-webkit-scrollbar-thumb:hover{background:var(--muted)}
 .os-app{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:9px;border:0;
   background:transparent;color:var(--text);cursor:pointer;text-align:start;font-size:13px;min-height:40px}
 .os-app:hover{background:rgba(255,255,255,.09)}
 .os-app .ic{width:17px;height:17px;color:var(--neon);flex:0 0 auto}
+/* A program's REAL icon, at the same box as the sprite glyph beside it. `object-fit:contain` keeps
+   a non-square icon from being stretched into a different logo. */
+.os-app-ic{width:18px;height:18px;flex:0 0 auto;object-fit:contain;image-rendering:auto}
 .os-app span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* The logo is the way in, so it has to look like a control rather than decoration. */
@@ -8174,6 +8191,17 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
   font-size:12px; padding:5px 10px; border-radius:7px; cursor:pointer;
 }
 .os-pop-btn:hover, .os-pop-btn.on{ border-color:var(--neon,#3ce8ff); background:rgba(60,232,255,.12); }
+/* The action row on "This Computer" — Up / New folder / dotfiles, and the selection actions when
+   there are any. Its own rule because it is the one control strip the drive has no equivalent of:
+   a Blossom blob has no parent directory and no dotfiles. Everything else that tab draws is the
+   drive's own markup (`.fx-bar`, `.fx-cols`, `.files-grid`, `.file-card`), which is the point —
+   the previous version invented eleven class names and the stylesheet defined none of them. */
+.fx-actions{
+  display:flex; align-items:center; gap:6px; flex-wrap:wrap;
+  padding:6px 2px 8px; border-bottom:1px solid var(--line); margin-bottom:8px;
+}
+.fx-actions .spacer{ flex:1; }
+
 /* ── The Windows 11 tray group, bottom-right ────────────────────────────────────────────────────
  *
  * Network, sound and battery are ONE button. It was six text chips reading `95% Tribble` `72%`

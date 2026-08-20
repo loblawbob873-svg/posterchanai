@@ -93,6 +93,30 @@ window.__ui = {
   },
   fmtBytes: (n) => n + ' B',
   fmtDate: (t) => String(t),
+  /* THE FILES SCREEN'S OWN EXPLORER PARTS, stubbed the way app.js hands them over — the toolbar,
+   * the column header, one details row and the type icon. The module used to draw its own markup
+   * and eleven class names of which client.css defined NONE, so the pane rendered as raw unstyled
+   * HTML inside a styled explorer. These stubs are deliberately minimal but carry the same class
+   * names the real ones emit, because those are what this check drives. */
+  bar: (crumbs) => '<div class="fx-bar"><nav class="fx-crumbs">' + crumbs.map(c =>
+        '<button class="fx-crumb" data-crumb="' + c.to + '">' + c.label + '</button>').join('')
+      + '</nav></div>',
+  cols: () => '<div class="fx-cols"></div>',
+  row: (o) => '<div class="file-card row' + (o.dir ? ' isdir' : '') + '">'
+      + '<span class="fx-ic">' + o.icon + '</span><span class="fname">' + o.name + '</span>'
+      + '<span class="fx-size">' + o.size + '</span><span class="fx-type">' + o.type + '</span></div>',
+  icon: () => '\u{1F4CE}',
+  typeName: (e) => (e ? e.toUpperCase() + ' file' : 'File'),
+  /* The crumb router lives in app.js and knows about every source; here it only has to reach this
+   * one, which is what the `h:` prefix names. */
+  bindBar: () => {
+    document.querySelectorAll('#pane .fx-crumb[data-crumb]').forEach(b => b.onclick = () => {
+      const to = b.dataset.crumb || '';
+      if (to.charAt(0) === 'h') { PCHostFiles.enter(to.slice(2)); window.__draw(); }
+    });
+  },
+  bindCols: () => {},
+  query: () => window.__query || '',
   toast: (m) => (window.__toasts = window.__toasts || []).push(m),
   prompt: async (msg, o) => { window.__prompted.push(msg); return window.__promptWith; },
   confirm: async (msg) => { window.__confirmed.push(msg); return window.__confirmWith !== false; },
@@ -108,9 +132,12 @@ DRIVE = r"""(async () => {
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const bad = (k, d) => out.problems.push({ k, d });
   const pane = document.getElementById('pane');
-  const rows = () => [...pane.querySelectorAll('.hf-row')].map(r => r.querySelector('.fx-nm').textContent.trim());
-  const row = (n) => [...pane.querySelectorAll('.hf-row')]
-                       .find(r => r.querySelector('.fx-nm').textContent.trim() === n);
+  /* THE APP'S OWN ROW, not this module's. `.file-card` + `.fname` is what the drive draws and what
+   * "This Computer" draws now — the point of the rewrite being that there is one of them. */
+  const cards = () => [...pane.querySelectorAll('#hf-grid .file-card[data-p]')];
+  const nameOf = (r) => (r.querySelector('.fname') || r).textContent.trim().replace(/ \u2197$/, '');
+  const rows = () => cards().map(nameOf);
+  const row = (n) => cards().find(r => nameOf(r) === n);
 
   PCHostFiles.enter('/home/u');
   await window.__draw(); await sleep(150);
@@ -129,8 +156,11 @@ DRIVE = r"""(async () => {
   pane.querySelector('.hf-hidden').click(); await sleep(200);
 
   /* ── the path is a row of buttons ──────────────────────────────────────────────────────────── */
-  out.crumbs = [...pane.querySelectorAll('.hf-crumb')].map(b => b.textContent.trim());
-  if (out.crumbs.length < 3 || out.crumbs[0] !== '/')
+  out.crumbs = [...pane.querySelectorAll('.fx-crumb')].map(b => b.textContent.trim());
+  /* `~` for the home directory, then the path below it — `/ home npub1fdtthaq… Documents` is four
+   * crumbs of which three never change and one is unreadable. Above home is still reachable
+   * through it. */
+  if (out.crumbs.length < 1 || !(out.crumbs[0] === '/' || out.crumbs[0] === '~'))
     bad('no-crumbs', 'the path is not navigable: ' + JSON.stringify(out.crumbs));
 
   /* ── walking in, and back out ──────────────────────────────────────────────────────────────── */
@@ -143,7 +173,7 @@ DRIVE = r"""(async () => {
     bad('wont-open', 'the parent button did not come back up');
   // …and by a crumb, which is the way back from three levels down.
   row('Documents').click(); await sleep(250);
-  [...pane.querySelectorAll('.hf-crumb')].find(b => b.textContent.trim() === 'u').click();
+  [...pane.querySelectorAll('.fx-crumb')].find(b => /^(u|~)$/.test(b.textContent.trim())).click();
   await sleep(250);
   if (!rows().includes('movie.mp4')) bad('no-crumbs', 'a path button did not navigate');
 

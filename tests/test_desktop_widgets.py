@@ -477,6 +477,77 @@ class WidgetPlacement(unittest.TestCase):
                     bad.append((a["id"], b["id"]))
         return bad
 
+    def spot(self, widgets, type_="clock", size="m", w=2494, h=1350):
+        """The default size is this machine's REAL layout box: a 1920x1080 panel under the desktop
+        scaling tier (body{zoom:.77}) lays out at 2494x1403 CSS px, less the taskbar. Measuring at
+        1920x1000 is measuring a screen nobody has, and it is why the first version of this test
+        passed against both rules."""
+        return _node("console.log(JSON.stringify(PCOS.__nextWidgetSpot(%s, %s, %s, %d, %d)))"
+                     % (json.dumps(widgets), json.dumps(type_), json.dumps(size), w, h))
+
+    def _grow(self, n, rule, w=2494, h=1350):
+        """Add `n` widgets one at a time, each placed by `rule`, and return where they ended up."""
+        rows = []
+        for i in range(n):
+            y = (min(1, i * 0.22) if rule == "count" else self.spot(rows, w=w, h=h)["y"])
+            rows.append({"id": "w%d" % i, "type": "clock", "x": 1, "y": y, "size": "m"})
+        return self.place(rows, w, h)
+
+    def test_widgets_do_not_open_with_growing_gaps_between_them(self):
+        """"widgets open in weird places".
+
+        The rule was `y = (how many you already have) x 0.22` — a fraction of the free height, so on
+        a big desk each step is much taller than a widget. MEASURED at this machine's real layout
+        size (2494x1350), adding six clock panels one at a time put them at
+
+            count rule:  5, 261, 517, 773, 1029, 1164
+            free slot :  10, 201, 392,  583,  774,  965
+
+        A widget is 176px tall plus a 10px gap, so the count rule leaves 70px of dead space after
+        the first, and 255px by the fifth — and then the sixth is CLAMPED to the bottom edge,
+        because 5 x 0.22 is already past 1. Every widget after the fifth asks for the bottom of the
+        screen no matter what is there.
+
+        The free-slot rule puts each one under the last, which is where a person would have put it.
+        """
+        rows = self._grow(6, "count")
+        gaps = [rows[i + 1]["y"] - (rows[i]["y"] + rows[i]["h"]) for i in range(len(rows) - 1)]
+        self.assertTrue(any(g > 40 for g in gaps),
+                        "the count rule stopped leaving gaps — has it been changed? %r" % (gaps,))
+
+        rows = self._grow(6, "free")
+        gaps = [rows[i + 1]["y"] - (rows[i]["y"] + rows[i]["h"]) for i in range(len(rows) - 1)]
+        self.assertEqual(self._overlaps(rows), [], "widgets overlap")
+        for g in gaps:
+            self.assertLessEqual(g, 20, "a new widget opened well below the last one: %r" % (gaps,))
+            self.assertGreaterEqual(g, 0, "widgets are touching or overlapping: %r" % (gaps,))
+
+    def test_nothing_piles_up_on_the_bottom_edge(self):
+        """The other half of the same rule: past the fifth widget `n * 0.22` exceeds 1 and clamps,
+        so the sixth, seventh and eighth all ask for the very bottom of the desk."""
+        want = [min(1, i * 0.22) for i in range(8)]
+        self.assertEqual(want[5:], [1, 1, 1], "the count rule no longer clamps — re-check this test")
+        rows = self._grow(8, "free")
+        ys = [r["y"] for r in rows]
+        self.assertEqual(len(set(ys)), len(ys), "two widgets were given the same position: %r" % (ys,))
+        self.assertEqual(self._overlaps(rows), [])
+
+    def test_it_fills_a_gap_left_by_a_removed_widget(self):
+        """Appending after the last one for ever leaves a hole in the middle of the column that
+        nothing ever uses — the same "weird place" complaint from the other direction."""
+        rows = [{"id": "top", "type": "clock", "x": 1, "y": 0, "size": "m"},
+                {"id": "far", "type": "clock", "x": 1, "y": 0.95, "size": "m"}]
+        spot = self.spot(rows)
+        self.assertLess(spot["y"], 0.5, "the gap between the two was skipped")
+
+    def test_a_full_column_is_left_to_placeWidgets(self):
+        """On a short desk the column really does fill up. Then the honest answer is the bottom, and
+        the overflow rule — which already knows how to start a column — takes it from there."""
+        rows = [{"id": "w%d" % i, "type": "clock", "x": 1, "y": i / 9.0, "size": "m"}
+                for i in range(9)]
+        spot = self.spot(rows, w=1280, h=700)
+        self.assertEqual(spot["y"], 1)
+
     def _stack(self, n=4, size="m"):
         # Exactly what addWidget produces: down the right-hand edge in 0.22 steps.
         return [{"id": f"w{i}", "type": "crypto", "x": 1, "y": min(1, i * 0.22), "size": size, "cfg": {}}

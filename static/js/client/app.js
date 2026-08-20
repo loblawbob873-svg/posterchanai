@@ -16720,6 +16720,7 @@
     const feed=$('#feed');
     feed.innerHTML=`<div class="files-tabs">
         <button class="ftab${_filesTab==='public'?' active':''}" data-ft="public"><svg class="ic b-ic" aria-hidden="true"><use href="#i-flower"></use></svg>My Files</button>
+        ${_hostFs()?`<button class="ftab${_filesTab==='computer'?' active':''}" data-ft="computer"><svg class="ic b-ic" aria-hidden="true"><use href="#i-monitor"></use></svg>This Computer</button>`:''}
         ${_standalone()?'':`<button class="ftab${_filesTab==='ai'?' active':''}" data-ft="ai"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg>AI Chat</button>`}
         ${IS_ADMIN?`<button class="ftab${_filesTab==='admin'?' active':''}" data-ft="admin"><svg class="ic b-ic" aria-hidden="true"><use href="#i-shield"></use></svg>Admin</button>`:''}
       </div><div id="files-pane"></div>`;
@@ -16728,14 +16729,21 @@
      * wrong for pressing the top-level tab, which reads as "take me back to the start". */
     $$('.ftab',feed).forEach(b=> b.onclick=()=>{
       _filesAdminPk=null;
-      if(b.dataset.ft==='public'){ _syncRoot=''; _syncPath=''; _filesFolder=null; }
+      if(b.dataset.ft==='public'){ _syncRoot=''; _syncPath=''; _filesFolder=null; _hostOn=false; }
+      /* THE COMPUTER IS A TAB, not a chip buried in a sidebar — "add a Tab at the top for This
+       * Computer". Pressing it goes through the same opener the sidebar chip and the home tile use,
+       * so all three land in the same place on the same directory. */
+      if(b.dataset.ft==='computer'){ _filesTab='computer'; _openHostFiles(); return; }
       _filesTab=b.dataset.ft; renderBlossom(); });
     const pane=$('#files-pane',feed);
     // A remembered tab can name one that is no longer drawn (the AI tab, with no server) — the same
     // reason switchView re-checks a view the nav has stopped offering.
     if(_standalone() && _filesTab==='ai') _filesTab='public';
+    // A remembered "This Computer" on a build with no filesystem names a tab that is not drawn.
+    if(_filesTab==='computer' && !_hostFs()){ _filesTab='public'; _hostOn=false; }
     if(_filesTab==='admin') return renderBlossomAdmin(pane);
     if(_filesTab==='ai') return renderAiFiles(pane);
+    if(_filesTab==='computer') return _renderHostRoot(pane);
     return renderPublicFiles(pane);
   }
   // Admin tab: per-user storage overview. Tap a row → review that user's files; tap avatar/name → profile.
@@ -17599,10 +17607,17 @@
     $$('.fx-vw', pane).forEach(b => b.onclick = () => { ClientSettings.set('filesView', b.dataset.view); renderBlossom(); });
     $$('.fx-crumb[data-crumb]', pane).forEach(b => b.onclick = () => {
       const to = b.dataset.crumb || '';
-      if(to.charAt(0) === 's'){ const rest = to.slice(2); const cut = rest.indexOf('/');
+      if(to.charAt(0) === 'h'){
+        /* `h:<abs path>` — THIS COMPUTER. The host source shares this toolbar, so it has to share
+         * its crumb router; a second one is how two breadcrumb trails start disagreeing about what
+         * "up" means. */
+        const H3 = _hostFs(); if(H3) H3.enter(to.slice(2));
+        _hostOn = true; _filesTab = 'computer';
+      }
+      else if(to.charAt(0) === 's'){ const rest = to.slice(2); const cut = rest.indexOf('/');
         _syncRoot = cut < 0 ? rest : rest.slice(0, cut); _syncPath = cut < 0 ? '' : rest.slice(cut+1);
         _syncSel.clear(); _syncSelOn = false; }
-      else { _syncRoot = ''; _syncPath = ''; _filesFolder = to.slice(2); }
+      else { _syncRoot = ''; _syncPath = ''; _filesFolder = to.slice(2); _hostOn = false; }
       renderBlossom();
     });
   }
@@ -17651,7 +17666,7 @@
    * same place, and two copies of "where does this start" is how they end up starting somewhere
    * different. */
   function _openHostFiles(){
-    _syncRoot=''; _syncPath=''; _filesFolder=null; _hostOn=true;
+    _syncRoot=''; _syncPath=''; _filesFolder=null; _hostOn=true; _filesTab='computer';
     const H2 = _hostFs();
     /* HOME on a fresh entry only. Walking into a folder and back out must not throw you back to
      * your home directory, so the path is kept in the module between visits. */
@@ -17659,7 +17674,7 @@
       H2.roots().then(rs => {
         const home = (rs || []).find(x => x.kind === 'home') || (rs || [])[0];
         H2.enter(home ? home.path : '/');
-        if(VIEW==='blossom' && _filesTab==='public' && _hostOn) renderBlossom();
+        if(VIEW==='blossom' && _filesTab==='computer') renderBlossom();
       }, () => {});
     }
     renderBlossom();
@@ -19014,11 +19029,31 @@
       + '<div class="fx-side">' + _fxSideHTML() + '</div>'
       + '<div class="fx-main"><div id="host-pane"><div class="spinner"></div></div></div></div>';
     _fxBindSide(pane);
+    /* THE APP'S OWN EXPLORER PARTS, HANDED OVER — not described, not re-implemented.
+     *
+     * The module used to draw its own `hf-bar`, `hf-crumbs`, `fx-tiles` and an `fx-details` table,
+     * and MEASURED against the stylesheet not one of those class names exists: eleven classes, zero
+     * rules between them. So this pane rendered as raw unstyled HTML — a bare table and bare
+     * buttons — inside an explorer shell where every other source is a proper file grid. Reported,
+     * fairly, as "the Local files implementation is complete ass and looks ugly".
+     *
+     * The fix is not a second stylesheet. It is passing in the four things that actually draw a
+     * file list here — the toolbar, the sortable column header, one details row, and the type icon
+     * — so the machine's disk is drawn by the same code as the drive and cannot look different
+     * from it again. */
     await H2.render($('#host-pane', pane), {
       view: _fxView(),
       cmp: (keyOf) => _fxCompare(keyOf),
       fmtBytes: _fmtBytes,
-      fmtDate: (t) => t ? new Date(t).toLocaleString() : '',
+      fmtDate: _fxWhen,
+      bar: _fxBarHTML,
+      cols: _fxColsHTML,
+      row: _fxDetailsRow,
+      icon: _fxIcon,
+      typeName: _fxType,
+      bindBar: () => _fxBindBar(pane),
+      bindCols: _fxBindCols,
+      query: () => _filesQ,
       toast, prompt: uiPrompt, confirm: uiConfirm,
     });
   }

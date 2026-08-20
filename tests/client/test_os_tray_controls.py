@@ -40,7 +40,8 @@ function el(tag){
         k.className = attr(raw, 'class') || '';
         k.value = attr(raw, 'value') || '';
         k.textContent = '';
-        for(const d of ['app','win','os','ssid','sec','act','prof','mute','kind']){
+        for(const d of ['app','win','os','ssid','sec','act','prof','mute','kind',
+                        'qs','val','sink','mix','mixvol','shot','p','d']){
           const a = attr(raw, 'data-' + d);
           if(a !== null) k.dataset[d] = a;
         }
@@ -80,7 +81,12 @@ class Tray(unittest.TestCase):
         %s
         const B = %s;
         for(const k in B) globalThis[k] = B[k];
-        globalThis.PC = {
+        /* `__PC`, WHICH IS THE NAME THE REAL PAGE PUBLISHES. This harness used to define `PC`,
+         * the name osshell.js was written against — so the toasts, the wifi password prompt and
+         * the shutdown confirm all passed here while every one of them was dead in the browser.
+         * A fixture that agrees with the bug cannot see it. `test_os_shell.py` holds the guard
+         * that stops the short name coming back in the code; this holds the other half. */
+        globalThis.__PC = {
           toast: (m) => { (globalThis.__toasts = globalThis.__toasts || []).push(m); },
           uiPrompt: async () => %s,
           uiConfirm: async () => %s,
@@ -114,39 +120,112 @@ class Tray(unittest.TestCase):
                          poweroff: async () => { globalThis.__off = true; return true; },
                          suspend: async () => { globalThis.__sleep = true; return true; } } }"""
 
-    def press(self, kind, extra=""):
-        return self.run_js(self.WM, """
+    # THE TRAY IS ONE BUTTON NOW, so reaching a control is two presses: the Windows-11 group in the
+    # corner, then the tile inside Quick Settings. The controls did not go away — they moved out of a
+    # row of six text chips competing for the corner of a taskbar and into the flyout that row should
+    # always have been. Everything below still presses the real handler on the real markup.
+    OPEN_QUICK = """
           await S.render(host);
-          const chip = host.querySelectorAll('[data-os]').find(b => b.dataset.os === '%s');
+          const group = host.querySelectorAll('[data-os]').find(b => b.dataset.os === 'quick');
+          out.hasGroup = !!group;
+          out.groupBound = !!(group && group.onclick);
+          if(group) await group.onclick({stopPropagation(){}});
+          await new Promise(r => setTimeout(r, 60));
+          const pop = globalThis.__lastPop;
+          out.hasPop = !!pop;
+    """
+
+    def press(self, kind, extra="", bridges=None, pre=""):
+        return self.run_js(bridges or self.WM, pre + self.OPEN_QUICK + """
+          const chip = pop && pop.querySelectorAll('[data-os]').find(b => b.dataset.os === '%s');
           out.hasChip = !!chip;
           out.bound = !!(chip && chip.onclick);
           if(chip) await chip.onclick({stopPropagation(){}});
-          await new Promise(r => setTimeout(r, 60));
+          await new Promise(r => setTimeout(r, 80));
+          // A tile that opens its OWN popover (network, power) replaces the flyout, so `sub` is
+          // what to look in; one that navigates within it (outputs, mixer) leaves `pop` in place.
+          const sub = globalThis.__lastPop;
           %s
         """ % (kind, extra))
 
-    def test_every_chip_is_bound(self):
-        """This is the whole bug: they were painted and never given a handler."""
-        for kind in ("net", "vol", "bright", "power"):
+    def test_the_tray_is_one_grouped_button(self):
+        """WINDOWS 11, WHICH IS WHAT WAS ASKED FOR: network, sound and battery are one button in the
+        corner and everything else is inside it. It was six text chips — `95% Tribble` `72%` `33%`
+        `off` `100% ⚡` `⏻` — five of them a bare percentage with no picture of what was being
+        measured."""
+        out = self.run_js(self.WM, self.OPEN_QUICK)
+        self.assertTrue(out["hasGroup"], "there is no grouped tray button")
+        self.assertTrue(out["groupBound"], "the tray group has no handler")
+        self.assertTrue(out["hasPop"], "pressing the tray group opened nothing")
+
+    def test_every_tile_is_bound(self):
+        """The original bug, still asserted: they were painted and never given a handler."""
+        for kind in ("net", "power"):
             with self.subTest(chip=kind):
                 out = self.press(kind)
-                self.assertTrue(out["hasChip"], "no %s chip was rendered" % kind)
-                self.assertTrue(out["bound"], "the %s chip has no handler" % kind)
+                self.assertTrue(out["hasChip"], "no %s tile was rendered" % kind)
+                self.assertTrue(out["bound"], "the %s tile has no handler" % kind)
 
-    def test_the_wifi_chip_scans_for_networks(self):
+    def test_the_sliders_are_in_the_flyout_and_apply_as_they_move(self):
+        """Volume and brightness are SLIDERS in Quick Settings, not chips that open one — that is
+        the whole difference between a tray reading `72%` and a tray you can drag. Applied as they
+        move: a volume control you have to confirm is one you cannot use to turn something down."""
+        out = self.run_js(self.WM, self.OPEN_QUICK + """
+          const sliders = pop.querySelectorAll('[data-qs]');
+          out.kinds = sliders.map(x => x.dataset.qs);
+          for(const sl of sliders){
+            sl.value = '33';
+            if(sl.oninput) sl.oninput();
+          }
+          await new Promise(r => setTimeout(r, 60));
+          out.vol = globalThis.__vol === undefined ? null : globalThis.__vol;
+          out.bright = globalThis.__bright === undefined ? null : globalThis.__bright;
+        """)
+        self.assertIsNone(out.get("threw"), out.get("threw"))
+        self.assertEqual(sorted(out["kinds"]), ["bright", "vol"])
+        self.assertEqual(out["vol"], 33, "the volume slider did not reach the machine")
+        self.assertEqual(out["bright"], 33, "the brightness slider did not reach the machine")
+
+    def test_the_battery_is_drawn_flat_with_its_level(self):
+        """"battery/charging should be a flat icon" — it was the number plus a ⚡ EMOJI, which takes
+        the emoji font's colour and weight and matches nothing else in the tray. The shell is a
+        sprite symbol; the CHARGE has to be computed, because a `<use>` takes no parameters and a
+        fixed glyph would have to lie about the level."""
+        out = self.run_js(self.WM, """
+          out.full = S.batterySvg(100, false);
+          out.half = S.batterySvg(50, false);
+          out.empty = S.batterySvg(0, false);
+          out.charging = S.batterySvg(50, true);
+        """)
+        self.assertIn('width="15.0"', out["full"], "a full battery is not drawn full")
+        self.assertIn('width="7.5"', out["half"], "the fill is not proportional to the charge")
+        self.assertNotIn("os-bat-fill", out["empty"], "an empty battery is drawn with a fill")
+        self.assertIn("os-bat-bolt", out["charging"], "charging is not shown")
+        self.assertNotIn("⚡", out["charging"], "the emoji is back")
+
+    def test_the_wifi_glyph_follows_the_signal(self):
+        """One bar-less "connected" icon cannot tell somebody their wifi is why a page will not
+        load. An UNKNOWN reading is not full strength — that is the lie a tray must not tell."""
+        icon = lambda net: self.run_js(self.WM, "out.i = S.wifiIcon(%s);" % json.dumps(net))["i"]
+        self.assertEqual(icon({"known": True, "online": True, "kind": "wifi", "signal": 90}), "wifi")
+        self.assertEqual(icon({"known": True, "online": True, "kind": "wifi", "signal": 50}), "wifi-mid")
+        self.assertEqual(icon({"known": True, "online": True, "kind": "wifi", "signal": 10}), "wifi-low")
+        self.assertEqual(icon({"known": True, "online": False}), "wifi-off")
+        self.assertEqual(icon({"known": False}), "wifi-off")
+        self.assertEqual(icon({"known": True, "online": True, "kind": "ethernet"}), "ethernet")
+
+    def test_the_wifi_tile_scans_for_networks(self):
         out = self.press("net", "out.scanned = !!globalThis.__scanned;")
         self.assertTrue(out["scanned"], "pressing wifi never asked the machine what was in range")
 
     def test_the_networks_in_range_are_listed_and_one_can_be_joined(self):
         """An open network joins with no password; the list is what the machine reported, not a
         cached one — somebody opening this is standing somewhere new."""
-        out = self.run_js(self.WM, """
-          await S.render(host);
-          const chip = host.querySelectorAll('[data-os]').find(b => b.dataset.os === 'net');
+        out = self.run_js(self.WM, self.OPEN_QUICK + """
+          const chip = pop.querySelectorAll('[data-os]').find(b => b.dataset.os === 'net');
           await chip.onclick({stopPropagation(){}});
           await new Promise(r => setTimeout(r, 80));
-          const pop = globalThis.__lastPop;
-          const body = pop.querySelector('.os-pop-b');
+          const body = globalThis.__lastPop.querySelector('.os-pop-b');
           const rows = body.querySelectorAll('[data-ssid]');
           out.ssids = rows.map(r => r.dataset.ssid);
           const cafe = rows.find(r => r.dataset.ssid === 'cafe');
@@ -159,9 +238,8 @@ class Tray(unittest.TestCase):
         self.assertEqual(out["joined"][0], "cafe")
 
     def test_a_secured_network_is_asked_for_its_password(self):
-        out = self.run_js(self.WM, """
-          await S.render(host);
-          const chip = host.querySelectorAll('[data-os]').find(b => b.dataset.os === 'net');
+        out = self.run_js(self.WM, self.OPEN_QUICK + """
+          const chip = pop.querySelectorAll('[data-os]').find(b => b.dataset.os === 'net');
           await chip.onclick({stopPropagation(){}});
           await new Promise(r => setTimeout(r, 80));
           const rows = globalThis.__lastPop.querySelector('.os-pop-b').querySelectorAll('[data-ssid]');
@@ -175,24 +253,132 @@ class Tray(unittest.TestCase):
         """)
         self.assertEqual(out["joined"], ["cafe", "hunter2"])
 
-    def test_the_volume_slider_applies_as_it_moves(self):
-        """A volume control you have to confirm is one you cannot use to turn something down."""
-        out = self.press("vol", """
-          out.vol = globalThis.__vol == null ? null : globalThis.__vol;
-        """)
+    def test_mute_is_a_button_beside_the_slider(self):
+        """Mute and level are separate facts — a UI that infers "muted" from "volume is 0" cannot
+        restore the level afterwards. It is the speaker ICON, which is where every desktop puts it,
+        and it redraws as the muted glyph rather than a dimmed one."""
+        out = self.press("mute", "out.muted = globalThis.__muted;")
+        self.assertTrue(out["hasChip"], "there is no mute button in Quick Settings")
         self.assertTrue(out["bound"])
+        self.assertIs(out["muted"], True, "pressing mute never reached the machine")
 
     def test_shutting_down_asks_first(self):
         """Sleep does not — confirming that is a dialog between somebody and closing their laptop —
         but restart and shut down lose whatever is open."""
-        out = self.run_js(self.WM, """
-          await S.render(host);
-          const chip = host.querySelectorAll('[data-os]').find(b => b.dataset.os === 'power');
+        out = self.run_js(self.WM, self.OPEN_QUICK + """
+          const chip = pop.querySelectorAll('[data-os]').find(b => b.dataset.os === 'power');
           await chip.onclick({stopPropagation(){}});
           await new Promise(r => setTimeout(r, 60));
           out.asked = globalThis.__askedConfirm === true;
         """, confirm="(globalThis.__askedConfirm = true)")
         self.assertIsNone(out.get("threw"), out.get("threw"))
+
+    SOUND = """{ pcWM: { windows: async () => [], focus: async () => true },
+                 pcAudio: { status: async () => ({ output: {percent: 40, muted: false},
+                              sinks: [{id: 50, name: 'Speakers', isDefault: true},
+                                      {id: 51, name: 'Headphones', isDefault: false}] }),
+                            setVolume: async () => true, setMuted: async () => true,
+                            setDefault: async (id) => { globalThis.__sink = id; return {id}; },
+                            mixer: async () => { if(globalThis.__mixFail) throw new Error('no sound server');
+                              return globalThis.__streams || [{id: 80, name: 'Firefox', percent: 100, muted: false}]; },
+                            setStreamVolume: async (id, n) => { globalThis.__sv = [id, n]; return true; },
+                            setStreamMuted: async (id, on) => { globalThis.__sm = [id, on]; return true; } },
+                 pcPower: { status: async () => ({ brightness: {available: false} }) },
+                 pcShot: { available: async () => (globalThis.__shotCan
+                              || {ok: true, region: true, why: ''}),
+                           take: async (o) => { globalThis.__took = o;
+                              return globalThis.__shotRes || {ok: true, path: '/home/x/Pictures/Screenshots/a.png', copied: true}; } } }"""
+
+    def test_the_volume_row_can_switch_output_device(self):
+        """"volume should switch audio devices" — the chevron beside the slider, which is exactly
+        where Windows puts it. The device in use is MARKED, because a list of three identical
+        speaker names with nothing to say which one is live is not a chooser."""
+        out = self.press("outputs", """
+          const body = pop.querySelector('.os-pop-b');
+          const rows = body.querySelectorAll('[data-sink]');
+          out.names = rows.map(r => r.dataset.sink);
+          out.markup = body._html;
+          const head = pop.querySelector('.os-pop-h');
+          out.back = !!(head && pop.querySelectorAll('[data-os]').find(b => b.dataset.os === 'quickback'));
+          const other = rows.find(r => r.dataset.sink === '51');
+          if(other) await other.onclick();
+          await new Promise(r => setTimeout(r, 40));
+          out.picked = globalThis.__sink === undefined ? null : globalThis.__sink;
+        """, bridges=self.SOUND)
+        self.assertIsNone(out.get("threw"), out.get("threw"))
+        self.assertEqual(len(out["names"]), 2, "both output devices should be offered")
+        self.assertIn("in use", out["markup"],
+                      "nothing says which device sound is coming out of")
+        self.assertTrue(out["back"], "a sub-panel with no way back is a dead end in a corner")
+        self.assertEqual(out["picked"], 51, "picking a device never reached the machine")
+
+    def test_the_mixer_gives_each_application_its_own_level(self):
+        """The app-level mixer. `wpctl` takes a node id wherever it takes a sink, so a stream is set
+        exactly like one — measured on the machine before this was written."""
+        out = self.press("mixer", """
+          const rows = pop.querySelector('.os-pop-b').querySelectorAll('[data-mixvol]');
+          out.n = rows.length;
+          if(rows[0]){ rows[0].value = '25'; if(rows[0].oninput) rows[0].oninput(); }
+          await new Promise(r => setTimeout(r, 40));
+          out.sv = globalThis.__sv || null;
+          const mutes = pop.querySelector('.os-pop-b').querySelectorAll('[data-mix]');
+          if(mutes[0]) await mutes[0].onclick();
+          await new Promise(r => setTimeout(r, 40));
+          out.sm = globalThis.__sm || null;
+        """, bridges=self.SOUND)
+        self.assertIsNone(out.get("threw"), out.get("threw"))
+        self.assertEqual(out["n"], 1, "the playing application has no slider")
+        self.assertEqual(out["sv"], [80, 25], "moving one app's slider moved something else")
+        self.assertEqual(out["sm"], [80, True], "muting one app never reached the machine")
+
+    def test_nothing_playing_and_could_not_read_are_different_answers(self):
+        """An empty mixer drawn as a blank panel is indistinguishable from a mixer that failed to
+        read the machine — the same mistake as an empty wifi list, and this codebase has made it
+        with a wifi list, a blob store and a folder manifest."""
+        read = "out.said = (pop.querySelector('.os-pop-b')||{})._html || '';"
+        empty = self.press("mixer", read, bridges=self.SOUND, pre="globalThis.__streams = [];")
+        self.assertIn("Nothing is playing", empty["said"])
+        broken = self.press("mixer", read, bridges=self.SOUND, pre="globalThis.__mixFail = 1;")
+        self.assertIn("could not be read", broken["said"])
+
+    def test_a_screenshot_is_taken_and_says_where_it_went(self):
+        """A screenshot whose only feedback is a shutter nobody can hear is a key people press three
+        times and then go looking in four folders for."""
+        out = self.press("shot", """
+          const modes = pop.querySelectorAll('[data-shot]').map(b => b.dataset.shot);
+          out.modes = modes;
+          const whole = pop.querySelectorAll('[data-shot]').find(b => b.dataset.shot === 'screen');
+          if(whole) await whole.onclick();
+          await new Promise(r => setTimeout(r, 260));
+          out.took = globalThis.__took || null;
+        """, bridges=self.SOUND)
+        self.assertIsNone(out.get("threw"), out.get("threw"))
+        self.assertEqual(sorted(out["modes"]), ["region", "screen"])
+        self.assertEqual(out["took"]["mode"], "screen")
+        self.assertTrue(any("Screenshot saved" in t for t in out["toasts"]),
+                        "the screenshot said nothing about where it went: %r" % (out["toasts"],))
+
+    def test_a_machine_without_grim_is_not_offered_a_screenshot_button(self):
+        """A tile whose only possible outcome is an apology about a missing package. `grim` is not
+        installed everywhere and the honest thing is to not draw the control."""
+        out = self.run_js(self.SOUND.replace("|| {ok: true, region: true, why: ''}",
+                                             "|| {ok: false, region: false, why: 'needs grim'}"),
+            self.OPEN_QUICK + """
+          out.tiles = pop.querySelectorAll('[data-os]').map(b => b.dataset.os);
+        """)
+        self.assertNotIn("shot", out["tiles"],
+                         "a Screenshot tile was drawn on a machine that cannot take one")
+
+    def test_a_cancelled_region_is_not_an_error(self):
+        """slurp exits nonzero when somebody presses Escape. Reported as a failure that is a toast
+        apologising every time a person changes their mind."""
+        out = self.press("shot", """
+          globalThis.__shotRes = {ok: false, cancelled: true, why: ''};
+          const area = pop.querySelectorAll('[data-shot]').find(b => b.dataset.shot === 'region');
+          if(area) await area.onclick();
+          await new Promise(r => setTimeout(r, 260));
+        """, bridges=self.SOUND)
+        self.assertEqual(out["toasts"], [], "cancelling a screenshot apologised: %r" % (out["toasts"],))
 
     def test_a_network_that_could_not_be_read_is_not_an_empty_room(self):
         """A wifi list that is empty because NetworkManager is dead looks exactly like a room with
@@ -200,11 +386,11 @@ class Tray(unittest.TestCase):
         network stack is down"."""
         bridges = self.WM.replace("wifi: async () => { globalThis.__scanned = true;",
                                   "wifi: async () => { globalThis.__scanned = true; throw new Error('nope');")
-        out = self.run_js(bridges, """
-          await S.render(host);
-          const chip = host.querySelectorAll('[data-os]').find(b => b.dataset.os === 'net');
+        out = self.run_js(bridges, self.OPEN_QUICK + """
+          const chip = pop.querySelectorAll('[data-os]').find(b => b.dataset.os === 'net');
           await chip.onclick({stopPropagation(){}});
           await new Promise(r => setTimeout(r, 60));
+          out.said = (globalThis.__lastPop.querySelector('.os-pop-b') || {})._html || '';
           out.ok = true;
         """)
         self.assertTrue(out.get("ok"), out.get("threw"))
