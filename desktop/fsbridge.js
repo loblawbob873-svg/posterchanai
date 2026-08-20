@@ -456,6 +456,23 @@ async function move(id, from, to){
 /* Delete = move into .pc-trash/<date>/, inside the same root so it is one atomic rename. A name
  * already in today's trash gets a counter rather than clobbering — the trash is the safety net, and
  * a safety net that overwrites itself is not one. */
+/* REMOVE, not "move somewhere else". The trash is one place now — on the server, holding every
+ * deleted file for the account with the address it can be restored from — so a per-device
+ * .pc-trash is a second copy of the same idea that nobody can see the whole of. It was also the
+ * thing people actually experienced as the failure: "phone already has 109 files in trash wtf",
+ * a tablet with 19, another with 226, and no single list that answered "what did I delete".
+ *
+ * Safe only because the executor has already confirmed the store holds these bytes — it will not
+ * call this otherwise. Nothing here re-checks that, deliberately: two half-implementations of one
+ * rule is how the rule ends up meaning different things in different places. */
+async function remove(id, rel){
+  const src = await resolveIn(id, rel);
+  await fsp.rm(src, { force: true });
+  // The directory the file just left may now be empty, and so may its parents. See pruneEmptyDirs.
+  await pruneEmptyDirs(id, path.dirname(src));
+  return true;
+}
+
 async function trash(id, rel, when){
   const src = await resolveIn(id, rel);
   const d = new Date(when || Date.now());
@@ -726,7 +743,7 @@ function removeRoot(id){
 }
 
 module.exports = { init, list, addRoot, removeRoot, resolveIn, scan, sha256,
-                   readPart, writePart, writeCommit, confirmGone, listTrash,
+                   readPart, writePart, writeCommit, confirmGone, listTrash, remove,
                    read, write, move, trash, emptyTrash, purgeTrash, trashStat, hashPart, hashFile, discardPart, partSize, sweepParts, watch, unwatch, IGNORE,
                    /* Whether THIS filesystem folds case (Windows/macOS: yes; Linux: no) — the
                     * engine refuses to write colliding twins on a folding disk. And the platform,

@@ -86,6 +86,13 @@ public final class NativeSweep {
         public final List<String> reseeding = new ArrayList<String>();
         public final List<String> staleChecksum = new ArrayList<String>();
         public final List<String> badHere = new ArrayList<String>();
+        /* KEPT RATHER THAN DELETED, and the two reasons are apart on purpose. `keptUnstored` is a
+         * tombstone with no address: the bytes were never stored, so there is nothing to restore
+         * from and nothing to confirm. `keptUnconfirmed` is the store saying no, or not answering —
+         * the moment, not the file. Neither is silent: a deletion that did not happen looks exactly
+         * like one that did unless somebody says so. */
+        public final List<String> keptUnstored = new ArrayList<String>();
+        public final List<String> keptUnconfirmed = new ArrayList<String>();
         public final List<Map<String, Object>> failed = new ArrayList<Map<String, Object>>();
         public int unchanged, excluded, deferred, alreadyStored, checkpoints, repaired;
         public boolean hashed = false;
@@ -107,6 +114,8 @@ public final class NativeSweep {
             if (!reseeding.isEmpty()) m.put("reseeding", (long) reseeding.size());
             if (!staleChecksum.isEmpty()) m.put("staleChecksum", (long) staleChecksum.size());
             if (!badHere.isEmpty()) m.put("badHere", (long) badHere.size());
+            if (!keptUnstored.isEmpty()) m.put("keptUnstored", (long) keptUnstored.size());
+            if (!keptUnconfirmed.isEmpty()) m.put("keptUnconfirmed", (long) keptUnconfirmed.size());
             m.put("failed", failed.size());
             m.put("unchanged", (long) unchanged);
             m.put("deferred", (long) deferred);
@@ -392,14 +401,31 @@ public final class NativeSweep {
          * never reached: a sweep is interrupted, restarts its transfer loops from the top, and the
          * deletions sit there across sweep after sweep. A local delete is a rename into .pc-trash —
          * instant, no network — so there is no reason for it to wait behind a 40 GB upload. */
+        /* DELETIONS, AND THE ONE RULE THAT MAKES THEM SAFE — mirrored from the web executor.
+         *
+         * A deletion applies automatically now, with no floor and no dialog, and the local copy is
+         * REMOVED rather than moved into a per-device .pc-trash. That is defensible only because of
+         * the check below: this device never removes its copy until the STORE IS CONFIRMED TO HOLD
+         * THOSE BYTES. The trash is one place, on the server, holding every deleted file for the
+         * account with the address it can be restored from — so a wrong deletion costs a restore,
+         * never a file.
+         *
+         * It matters more here than anywhere else, because nobody is watching a background sweep.
+         * "Could not ask" and "the store says no" are both KEEP, and they are reported apart: one
+         * is a fact about the file, the other is a fact about the moment. */
         int ti = 0;
-        for (Map<String, Object> t : plan.trash) {
+        for (Map<String, Object> t : plan.remove) {
             if (stop != null && stop.stopping()) { j.flush(); return; }
             String path = Json.str(t.get("path"), "");
-            progress(f.key, "to trash", path, ++ti, plan.trash.size());
+            progress(f.key, "deleting", path, ++ti, plan.remove.size());
+            Map<String, Object> entry = Json.obj(t.get("entry"));
+            String addr = SyncDiff.addressOf(entry);
+            if (addr.isEmpty()) { rep.keptUnstored.add(path); continue; }
+            Boolean held;
+            try { held = net.hasBlob(addr.split(",")[0]); } catch (Exception e) { held = null; }
+            if (!Boolean.TRUE.equals(held)) { rep.keptUnconfirmed.add(path); continue; }
             try {
-                fs.trash(path, now);
-                Map<String, Object> entry = Json.obj(t.get("entry"));
+                fs.remove(path);
                 /* Applying THEIR tombstone: journal the record as read — nothing to publish. */
                 j.applied(path, entry, null, false);
                 rep.trashed.add(path);

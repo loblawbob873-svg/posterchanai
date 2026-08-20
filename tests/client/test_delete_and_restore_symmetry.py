@@ -70,34 +70,45 @@ class FloorSymmetryTests(unittest.TestCase):
           const v = S.check(p, { state: w.state });
           const a = S.apply(p, v, []);                 // an automatic sweep confirms nothing
           process.stdout.write(JSON.stringify({
-            planTrash: p.trash.length, planSend: p.send.length,
+            planTrash: p.remove.length, planSend: p.send.length,
             resurrect: p.send.filter(x => x.resurrect).length,
             kinds: v.map(x => x.kind),
-            doesTrash: a.trash.length,
+            doesTrash: a.remove.length,
             doesSend: a.send.length }));
         """ % (json.dumps(opts),))
 
-    # ---- the deleting direction, which is the one that ran silently -------------------------
+    # ---- the deleting direction, which is no longer counted at all ---------------------------
 
-    def test_a_stale_tombstone_wave_is_not_applied_unattended(self):
-        """The laptop and the tablet, each holding all 59: 59 trashes against 1,000 kept files."""
+    def test_the_tombstone_wave_now_simply_applies(self):
+        """SAME FOLDER, OPPOSITE ANSWER, AND THAT IS THE FIX.
+
+        The floors are gone. They were approximating "can this deletion be undone", and that is now
+        answered directly by the executor: the local copy goes only once the STORE HAS CONFIRMED it
+        still holds those bytes, and the bytes stay there in one account-wide trash on the server.
+
+        So the engine plans all 59 and nothing suppresses them — which is right, because a deletion
+        that has been proved recoverable is not a risk, and treating it as one is what produced the
+        dialogs people learned to click through. What used to make this dangerous was never the
+        number; it was that nobody had checked whether the files could come back.
+        """
         out = self._sweep_plan(holds=True, applied=False)
-        self.assertEqual(out["planTrash"], 59, "setup: the engine should plan 59 trashes")
-        self.assertIn("massTrash", out["kinds"],
-                      "59 deletions on a 1,000-file folder passed every guard and ran silently")
-        self.assertEqual(out["doesTrash"], 0, "an unattended sweep still moved 59 files to trash")
+        self.assertEqual(out["planTrash"], 59, "setup: the engine should plan 59 deletions")
+        self.assertNotIn("massTrash", out["kinds"], "a count-based deletion guard came back")
+        self.assertEqual(out["doesTrash"], 59, "something is still suppressing deletions by count")
 
     def test_the_deep_scan_takes_the_same_answer(self):
-        """With hashes the restored copies compare equal to the tombstones' csum, so the desktop
-        plans to trash its own restored backup. Same wave, same floor."""
+        """With hashes the restored copies compare equal to the tombstones' csum, so this device
+        agrees the files were deleted. Same wave, same answer — and the same store check stands
+        between it and any actual removal."""
         out = self._sweep_plan(holds=True, applied=False, hash=True)
         self.assertEqual(out["planTrash"], 59)
-        self.assertIn("massTrash", out["kinds"])
-        self.assertEqual(out["doesTrash"], 0)
+        self.assertNotIn("massTrash", out["kinds"])
+        self.assertEqual(out["doesTrash"], 59)
 
     def test_an_ordinary_handful_of_deletions_still_just_happens(self):
-        """The floor must not turn every deletion into a dialog — below it, nothing is questioned."""
+        """It always did. What changed is that a large one does too, once it has been checked."""
         out = self._run("""
+
           const state = {}, disk = {}, index = {};
           for(let i = 0; i < 500; i++){ const p = 'a' + i, c = 'c' + i;
             state[p] = { v:1, by:'x', size:1, mtime:1, csum:c, sha:'b' + c };
@@ -111,72 +122,12 @@ class FloorSymmetryTests(unittest.TestCase):
                          local:{ size:1, mtime:1, csum:'z' + i } }; }
           const p = S.plan({ state, disk, index, device:'me', now:9000 });
           const v = S.check(p, { state });
-          process.stdout.write(JSON.stringify({ planTrash: p.trash.length,
-            kinds: v.map(x => x.kind), doesTrash: S.apply(p, v, []).trash.length }));
+          process.stdout.write(JSON.stringify({ planTrash: p.remove.length,
+            kinds: v.map(x => x.kind), doesTrash: S.apply(p, v, []).remove.length }));
         """)
         self.assertEqual(out["planTrash"], 19)
-        self.assertEqual(out["kinds"], [], "19 deletions must not need a person — the floor is 20")
+        self.assertEqual(out["kinds"], [], "an ordinary handful of deletions raised a verdict")
         self.assertEqual(out["doesTrash"], 19)
-
-    def test_confirming_it_carries_it_out(self):
-        """A refusal is a question, not a veto: the answer has to be able to be yes."""
-        out = self._run("""
-          const w = world({ holds:true, applied:false });
-          const p = S.plan({ state:w.state, disk:w.disk, index:w.index, device:'me', now:9000 });
-          const v = S.check(p, { state: w.state });
-          const a = S.apply(p, v, ['massTrash']);      // the person said yes
-          process.stdout.write(JSON.stringify({ doesTrash: a.trash.length }));
-        """)
-        self.assertEqual(out["doesTrash"], 59)
-
-    def test_a_refusal_suppresses_one_bucket_and_never_the_sweep(self):
-        """The other half of the contacts lesson: a guard that aborts everything is the same bug
-        with its sign flipped."""
-        out = self._run("""
-          const w = world({ holds:true, applied:false });
-          w.disk['docs/new.txt'] = { size:5, mtime:7000 };          // an ordinary new file
-          const p = S.plan({ state:w.state, disk:w.disk, index:w.index, device:'me', now:9000 });
-          const v = S.check(p, { state: w.state });
-          const a = S.apply(p, v, []);
-          process.stdout.write(JSON.stringify({ doesTrash: a.trash.length,
-            uploadsAnyway: a.send.filter(x => !x.resurrect).map(x => x.path) }));
-        """)
-        self.assertEqual(out["doesTrash"], 0)
-        self.assertEqual(out["uploadsAnyway"], ["docs/new.txt"],
-                         "the refused deletion also stopped an unrelated upload")
-
-    # ---- the two floors are one number ------------------------------------------------------
-
-    def test_both_directions_stop_at_the_same_count(self):
-        """The whole bug in one assertion: whichever way a bulk change points, it needs the same
-        evidence. Before this, deleting needed 101 and undoing needed 20."""
-        out = self._run("""
-          const mk = (n, kind) => {           // kind: 'trash' | 'resurrect'
-            const state = {}, disk = {}, index = {};
-            for(let i = 0; i < 3000; i++){ const p = 'q' + i, c = 'c' + i;
-              state[p] = { v:1, by:'x', size:1, mtime:1, csum:c, sha:'b' + c };
-              disk[p] = { size:1, mtime:1 };
-              index[p] = { v:1, by:'x', size:1, mtime:1, csum:c, sha:'b' + c,
-                           local:{ size:1, mtime:1, csum:c } }; }
-            for(let i = 0; i < n; i++){ const p = 'm' + i;
-              state[p] = { v:2, by:'x', deletedAt:5, csum:'z' + i, sha:'bz' + i };
-              disk[p] = { size:1, mtime: kind === 'trash' ? 1 : 9999 };
-              index[p] = { v:1, by:'x', size:1, mtime:1, csum:'z' + i, sha:'bz' + i,
-                           local:{ size:1, mtime:1, csum:'z' + i } }; }
-            const p = S.plan({ state, disk, index, device:'me', now:9000 });
-            return S.check(p, { state }).map(x => x.kind);
-          };
-          const at = (kind, want) => { let lo = 0;
-            for(let n = 1; n <= 40; n++) if(mk(n, kind).indexOf(want) >= 0){ lo = n; break; }
-            return lo; };
-          process.stdout.write(JSON.stringify({
-            trashAt: at('trash', 'massTrash'), resurrectAt: at('resurrect', 'massResurrect') }));
-        """)
-        self.assertEqual(out["trashAt"], out["resurrectAt"],
-                         "the floors are different, which is how the asymmetry got in")
-        self.assertEqual(out["trashAt"], 20)
-
-    # ---- the way out ------------------------------------------------------------------------
 
     def test_a_named_resend_is_not_an_inference_and_is_not_floored(self):
         """Pressing "put them back everywhere" names the paths. The engine flags a `resurrect` send
@@ -222,15 +173,22 @@ class FloorSymmetryTests(unittest.TestCase):
                          "the guard swept the user's own explicit restore out of the plan")
         self.assertEqual(out["published"], 59)
 
-    def test_the_person_is_asked_once_per_kind_not_once_per_rule(self):
-        """Two rules raise `massTrash` and both fire on exactly the sweep that matters most. Asked
-        per verdict that is the same dialog twice about the same files, which is how somebody learns
-        to click through the one that counts — and one Yes has always covered both, because
-        `apply()` keys on `kind`."""
+    def test_a_verified_deletion_asks_nothing_at_all(self):
+        """THE DIALOG IS GONE, AND ITS ABSENCE IS THE POINT.
+
+        There used to be a question here — two rules could raise it, and it was carefully arranged
+        so a person was asked once rather than twice. That was solving the wrong problem. A dialog
+        that fires on ordinary work is a dialog people learn to confirm, and after four days of them
+        the answer to "delete 122 files?" was yes; those were business receipts.
+
+        Now nothing asks, because nothing is guessing: the executor has already established, file by
+        file, that the store still holds the bytes and the deletion can be undone from one
+        account-wide trash. 59 deletions against 30 survivors — the shape that used to raise BOTH
+        the ratio and the floor — simply applies.
+        """
         out = self._run("""
           const X = require(%s);
           (async () => {
-          // 59 trashes and only 30 survivors: the ratio AND the floor both speak.
           const state = {}, disk = {}, index = {};
           for(let i = 0; i < 30; i++){ const p = 'k' + i, c = 'c' + i;
             state[p] = { v:1, by:'x', size:1, mtime:1, csum:c, sha:'b' + c };
@@ -249,7 +207,7 @@ class FloorSymmetryTests(unittest.TestCase):
               for(const p of all) files[p] = disk[p];
               return { files, done: off + all.length >= Object.keys(disk).length };
             },
-            trash: async (id, p) => '.pc-trash/' + p,
+            remove: async (id, p) => { delete disk[p]; return true; },
             confirmGone: async () => ({ gone:false, parentAlive:true }),
           };
           const io = {
@@ -257,15 +215,16 @@ class FloorSymmetryTests(unittest.TestCase):
             state: async () => ({ state: JSON.parse(JSON.stringify(state)), flagged:{} }),
             saveIndex: async () => {},
             putState: async (k, recs) => ({ ok: recs.map(r => r.path), stale:[], failed:[] }),
+            hasBlob: async () => true,          // the store confirms it can give them back
           };
           const rep = await X.sweep(fs, io, { id:'f', key:'k', device:'me', now:9000, manual:true,
             confirm: async (v) => { kinds.push(v.kind + ':' + (v.rule || '')); return true; } });
           process.stdout.write(JSON.stringify({ asked: kinds, trashed: (rep.trashed||[]).length }));
           })().catch(e => { console.error(e && e.stack || e); process.exit(1); });
         """ % (json.dumps(EXEC),))
-        self.assertEqual(out["asked"], ["massTrash:shortList"],
-                         "the same question was asked more than once, or with the milder wording")
-        self.assertEqual(out["trashed"], 59, "one Yes must cover both rules")
+        self.assertEqual(out["asked"], [],
+                         "a verified deletion still stopped to ask: " + repr(out["asked"]))
+        self.assertEqual(out["trashed"], 59, "it applied %r of 59 verified deletions" % out["trashed"])
 
     # ---- restore from trash must not be undone by the sweep that follows it ------------------
 
@@ -280,17 +239,16 @@ class FloorSymmetryTests(unittest.TestCase):
         deleted version" and trashes the lot again.
 
         `resend` is the way to say it outright — and it dropped a named path from settle, fetch and
-        keepBoth while leaving `trash` alone, so a sweep could be told "send this file" and move it
-        to .pc-trash in the same pass. Both halves are asserted: the path leaves the trash list, and
-        it is actually sent."""
+        keepBoth while leaving the deletion list alone, so a sweep could be told "send this file"
+        and delete it in the same pass. Both halves are asserted: the path leaves the deletion list,
+        and it is actually sent."""
         out = self._run("""
           const X = require(%s);
           (async () => {
           const paths = [];
           const state = {}, disk = {}, index = {};
-          for(let i = 0; i < 5; i++){        // BELOW the floor on purpose: past it the
-            const p = 'restored/f' + i + '.docx', c = 'k' + i;   // mass guard answers first
-                                                                 // and this would be measuring that
+          for(let i = 0; i < 5; i++){
+            const p = 'restored/f' + i + '.docx', c = 'k' + i;
             paths.push(p);
             // The folder says deleted, at a version this device never applied…
             state[p] = { v:9, by:'other', deletedAt:5000, size:20, mtime:2000, csum:c, sha:'blob-' + c };
@@ -307,7 +265,7 @@ class FloorSymmetryTests(unittest.TestCase):
             },
             read: async (id, p) => new Uint8Array(disk[p].size),
             hashFile: async (id, p) => disk[p].csum,
-            trash: async (id, p) => { trashed.push(p); return '.pc-trash/' + p; },
+            remove: async (id, p) => { trashed.push(p); delete disk[p]; return true; },
             confirmGone: async () => ({ gone:false, parentAlive:true }),
           };
           const io = {
@@ -315,6 +273,7 @@ class FloorSymmetryTests(unittest.TestCase):
             state: async () => ({ state: JSON.parse(JSON.stringify(state)), flagged:{} }),
             saveIndex: async () => {},
             hashBytes: async () => 'h',
+            hasBlob: async () => true,        // the store can give them back, so a delete may run
             putBlob: async () => ({ sha:'fresh' }),
             putState: async (k, recs) => { for(const r of recs) sent.push(r.path);
               return { ok: recs.map(r => r.path), stale:[], failed:[] }; },
@@ -323,7 +282,9 @@ class FloorSymmetryTests(unittest.TestCase):
           const before = await X.sweep(fs, io, { id:'f', key:'k', device:'me', now:9000 });
           const undone = trashed.length;
           trashed.length = 0; sent.length = 0;
-          // Naming them is the whole difference.
+          // Put them back again — which is literally what somebody does, and is exactly as silent
+          // the second time. Naming them is the whole difference.
+          for(const p of paths) disk[p] = { size:20, mtime:7777, csum: 'k' + paths.indexOf(p) };
           const after = await X.sweep(fs, io, { id:'f', key:'k', device:'me', now:9000,
                                                manual:true, resend: paths });
           process.stdout.write(JSON.stringify({
@@ -443,10 +404,12 @@ class FloorSymmetryTests(unittest.TestCase):
                          "a confirmation got past it — this one must not be confirmable")
 
     def test_a_device_that_still_holds_something_keeps_its_voice(self):
-        """The fatal rule is `keep === 0`, not a ratio, deliberately: a device holding real files has
-        a real opinion about them, and the proportional rule already covers 'removes more than it
-        keeps'. Widening this would stop legitimate deletions propagating at all — the guard that
-        stops everything is the same bug with its sign flipped."""
+        """The one surviving rule is `keep === 0`, and it is not a count: a device that can see NONE
+        of the files it knows about has lost sight of the folder — a revoked grant, an unmounted
+        volume, a folder picked at the wrong path. A device holding real files has a real opinion
+        about them and is simply believed. Widening this would stop legitimate deletions
+        propagating at all, and a guard that stops everything is the same bug with its sign
+        flipped."""
         out = self._run("""
           const state = {}, disk = {}, index = {};
           for(let i = 0; i < 107; i++){ const p = 'gone' + i, c = 'c' + i;
@@ -466,8 +429,11 @@ class FloorSymmetryTests(unittest.TestCase):
             confirmable: S.apply(p, v, ['massTombstone']).tombstone.length }));
         """)
         self.assertEqual(out["fatal"], 0, "a device holding files was refused outright")
-        self.assertTrue(out["asks"], "…but it must still be asked")
-        self.assertEqual(out["confirmable"], 107, "and a yes must still carry it out")
+        self.assertFalse(out["asks"],
+                         "a device that can still see its folder was questioned about deleting "
+                         "from it — the counting guards are gone, and only the lost-folder rule "
+                         "(keep === 0) survives")
+        self.assertEqual(out["confirmable"], 107, "and the deletions must simply travel")
 
     # ---- a tombstone that names nothing is a deletion nobody can undo ------------------------
 
@@ -510,24 +476,44 @@ class FloorSymmetryTests(unittest.TestCase):
 
     # ---- and the proof that each rule can fail ----------------------------------------------
 
-    def test_z_the_old_rules_fail(self):
-        """Re-run the pre-fix guard over the reported world. If this passes, the check above is
-        measuring nothing."""
+    def test_z_the_guards_could_never_have_caught_this(self):
+        """WHY THE NUMBERS WERE REPLACED RATHER THAN TUNED.
+
+        Re-run every guard that ever existed over the folder as it was reported, and watch each of
+        them wave it through or make it worse:
+
+          - the RATIO (more removed than kept) never fires — 59 deletions arrive beside 1,000
+            untouched files, which is what every real folder looks like;
+          - the CAP of 100 never fires, because 59 is less than 100;
+          - the FLOOR of 20 fires, but on BOTH sides — so the device holding the only good copies is
+            refused permission to put them back, while the devices with nothing to lose are merely
+            asked, and after four days of dialogs the answer to a dialog is yes.
+
+        There is no number that separates "59 files somebody deleted" from "59 files a device is
+        about to lose", because the difference is not in the count. It is in whether the bytes can
+        come back, which is a question with an actual answer — and asking it is what replaced all
+        of this.
+        """
         out = self._run("""
           const w = world({ holds:true, applied:false });
           const p = S.plan({ state:w.state, disk:w.disk, index:w.index, device:'me', now:9000 });
-          // The rules exactly as they were: a ratio, and an absolute cap of 100.
           const settled = p.settle.filter(s => s.why === 'same content both sides').length;
           const keep = p.unchanged - p.settledGone + p.fetch.length + p.send.length
                      + p.keepBoth.length + settled;
-          const old = (p.trash.length >= 20 && p.trash.length > keep) || p.trash.length > 100;
-          const res = p.send.filter(s => s.resurrect).length >= 20;
-          process.stdout.write(JSON.stringify({ oldWouldAsk: old, oldWouldRefuseTheUndo: res,
-                                                trash: p.trash.length, keep }));
+          process.stdout.write(JSON.stringify({
+            remove: p.remove.length, keep,
+            ratioWouldFire: p.remove.length >= 20 && p.remove.length > keep,
+            capWouldFire: p.remove.length > 100,
+            floorWouldFire: p.remove.length >= 20,
+            floorWouldAlsoRefuseTheUndo: p.send.filter(s => s.resurrect).length >= 20 }));
         """)
-        self.assertFalse(out["oldWouldAsk"],
-                         "the old rules already caught this, so the fix is not the fix")
-        self.assertEqual(out["trash"], 59)
+        self.assertEqual(out["remove"], 59, "setup: the reported wave is 59 deletions")
+        self.assertGreater(out["keep"], 900, "setup: beside a folder nobody touched")
+        self.assertFalse(out["ratioWouldFire"],
+                         "the proportional rule would have caught it, so it was not the problem")
+        self.assertFalse(out["capWouldFire"], "nor the cap of 100")
+        self.assertTrue(out["floorWouldFire"],
+                        "the floor is the only one that spoke — by asking, on every device")
 
 
 class RestoreSaysWhatHappened(unittest.TestCase):

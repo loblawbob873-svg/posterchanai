@@ -3385,6 +3385,27 @@
        * policy: these files are already gone from the other devices, so this copy is the last one.
        * That is the sentence that belongs in front of an irreversible act — not a retention window,
        * which is what somebody pressing a button called "Empty trash" is least interested in. */
+      /* WHAT TO DO WITH WHAT THE OLD ENGINE LEFT BEHIND. Put back, or delete — and put back is
+       * offered first and by name, because these are the files somebody has spent five days trying
+       * to get back. Restoring routes through `restoreTrash`, which finishes by sweeping with
+       * `resend` for exactly the paths it put back: a silent restore is re-derived by the next
+       * sweep as "this copy is the deleted version" and trashed again, which is the loop that made
+       * "restore from trash" undo itself 172 times. */
+      const _doOldTrash = async () => {
+        let n = 0;
+        try{ const st = FS().trashStat ? await FS().trashStat(id) : null; n = (st && st.files) || 0; }
+        catch(_){ n = 0; }
+        if(!n){ PC.toast('nothing left in this folder\u2019s old local trash'); paint(); return; }
+        const pick = await PC.uiConfirm(
+          n + ' file' + (n === 1 ? '' : 's') + ' from an older version of Folder Sync are still '
+          + 'sitting in this folder\u2019s .pc-trash on this device.\n\nDeletions do not go there '
+          + 'any more \u2014 the trash is one place now, on your account \u2014 so these are the '
+          + 'last of the old ones.\n\nPut them back into the folder, on every device?',
+          { ok: 'Put them back', cancel: 'Leave them' });
+        if(pick) return restoreTrash(id);
+        PC.toast('left alone \u2014 “Empty trash” in this menu deletes them for good');
+      };
+
       const _doEmptyTrash = async () => {
         let stat = null;
         try{ stat = FS().trashStat ? await FS().trashStat(id) : null; }catch(_){}
@@ -3497,7 +3518,14 @@
        * that offers Pause on a paused folder, or Background details on a desktop, is a row that
        * teaches people not to read it. Every entry calls the SAME function the card would have. */
       { const more = card.querySelector('.sync-more');
-        if(more) more.onclick = () => {
+        if(more) more.onclick = async () => {
+          /* Asked when the menu OPENS, not on every paint: it is one stat, and it decides whether a
+           * row appears at all. Unknown counts as none — a row offering to rescue nothing is worse
+           * than no row, and the folders that have one are exactly the folders that were synced
+           * under the old engine. */
+          let _oldTrash = 0;
+          try{ const st = FS() && FS().trashStat ? await FS().trashStat(id) : null;
+               _oldTrash = (st && st.files) || 0; }catch(_){ _oldTrash = 0; }
           /* PLAIN WORDS. `openMenuPopover` renders each label through `enc()` — markup in a label
              comes out as literal angle brackets — so a sprite cannot go in one without changing a
              component every other menu in the app shares. Emoji would render, which is exactly
@@ -3506,7 +3534,22 @@
           if(!prefs(get()).paused) items.push(['pause', 'Pause syncing']);
           items.push(['check', 'Check files']);
           items.push(['tidy', 'Tidy conflict copies']);
-          items.push(['trash', 'Empty trash']);
+          /* THE OLD LOCAL TRASH, OFFERED ONLY WHERE ONE STILL EXISTS.
+           *
+           * Deletions do not go into a `.pc-trash` any more — the trash is one place, on the
+           * server, and a deletion removes the local file once the store has confirmed it can give
+           * the bytes back. But the folders that were synced under the old engine still HAVE those
+           * directories, holding real files: a tablet with 226 in it, a phone with 110, a laptop
+           * with 19. Dropping the menu entry would strand every one of them somewhere only a file
+           * manager can reach, which is the app sending somebody around itself.
+           *
+           * So the row survives exactly as long as there is something in it, and it now offers the
+           * useful direction FIRST. Putting them back goes through `resend`, which is a person
+           * naming paths — the only thing that outranks a tombstone. */
+          if(_oldTrash > 0){
+            items.push(['oldtrash', 'Old local trash (' + _oldTrash + ')']);
+            items.push(['trash', 'Empty old local trash']);
+          }
           items.push(['mine', 'Mirror this Device']);
             if(FS() && FS().tickStats) items.push(['bg', 'Background sync']);
           const pick = (a) => {
@@ -3514,6 +3557,7 @@
             if(a === 'pause') return _doPause();
             if(a === 'check') return _doCheck();
             if(a === 'tidy') return _doTidy();
+            if(a === 'oldtrash') return _doOldTrash();
             if(a === 'trash') return _doEmptyTrash();
             if(a === 'mine') return _doAuthoritative();
             if(a === 'bg') return _doBg();

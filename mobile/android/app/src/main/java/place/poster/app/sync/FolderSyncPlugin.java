@@ -965,7 +965,6 @@ public class FolderSyncPlugin extends Plugin {
     });
   }
 
-  @PluginMethod
   /* Delete NAMED files from .pc-trash, and nothing else.
    *
    * emptyTrash removes whole DAYS, which is all "reclaim the space" ever needed. The reconcile needs
@@ -977,6 +976,49 @@ public class FolderSyncPlugin extends Plugin {
    * The path is re-checked against the trash prefix HERE and not trusted from the caller. This is
    * the one call whose entire purpose is deleting, and a plugin must not let a caller that has gone
    * wrong name a path outside .pc-trash. */
+  /* DELETE A SYNCED FILE OUTRIGHT.
+   *
+   * The trash is ONE place now — on the server, holding every deleted file for the account with the
+   * address it can be restored from — so a per-device .pc-trash is a second copy of the same idea
+   * that nobody can see the whole of. It is also the thing people actually experienced as the
+   * failure: "phone already has 109 files in trash wtf", a tablet with 19, another with 226, and no
+   * single list anywhere that answered "what did I delete".
+   *
+   * `purgeTrash` cannot do this — it refuses any path outside .pc-trash, correctly, because it was
+   * written for the trash. This is the ordinary-file counterpart.
+   *
+   * SAFE ONLY BECAUSE THE CALLER HAS ALREADY CONFIRMED THE STORE HOLDS THESE BYTES. The executor
+   * asks Blossom before it calls this and keeps the file otherwise. Nothing here re-checks that,
+   * deliberately: two half-implementations of one rule is how the rule ends up meaning different
+   * things on different platforms. What this DOES refuse is a path inside the trash, so a caller
+   * that has confused the two operations cannot quietly destroy the very copies the migration is
+   * about to offer back.
+   *
+   * "Already gone" is success, not failure: a sweep that ran twice, or a person who deleted the
+   * file in a file manager first, is not an error to report. */
+  @PluginMethod
+  public void removeFile(PluginCall call) {
+    final String id = call.getString("id", "");
+    final String rel = call.getString("rel", "");
+    getBridge().execute(() -> {
+      try {
+        if (rel == null || rel.isEmpty() || rel.startsWith(SafFs.TRASH + "/")) {
+          call.reject("not a syncable path");
+          return;
+        }
+        SafFs f = fs(id);
+        String docId = f.resolve(rel, false);
+        JSObject ret = new JSObject();
+        if (docId == null) { ret.put("removed", true); ret.put("missing", true); call.resolve(ret); return; }
+        boolean ok = f.deleteDoc(docId);
+        ret.put("removed", ok);
+        ret.put("missing", false);
+        call.resolve(ret);
+      } catch (Exception e) { call.reject("delete failed: " + e.getMessage()); }
+    });
+  }
+
+  @PluginMethod
   public void purgeTrash(PluginCall call) {
     final String id = call.getString("id", "");
     final JSArray rels = call.getArray("rels");

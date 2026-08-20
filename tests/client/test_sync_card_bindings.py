@@ -38,9 +38,29 @@ class SyncCardBindings(unittest.TestCase):
                                       "markup, so bindCard throws and every control after them "
                                       "silently stops working")
 
-    def test_the_menu_offers_only_actions_that_exist(self):
+    def _menu(self):
+        """The menu builder, found by MATCHING BRACES rather than by taking a fixed slice.
+
+        It used to be `self.src[i:i + 1800]`, and a comment explaining a new row pushed the handler
+        past the end — so the test reported "the menu offers 'check' and nothing handles it", about
+        a row that had been handled for months. A guard that fails when somebody writes a paragraph
+        is a guard people learn to edit rather than believe.
+        """
         i = self.src.index("const more = card.querySelector('.sync-more')")
-        block = self.src[i:i + 1800]
+        j = self.src.index("{", self.src.index("more.onclick", i))
+        depth, k = 0, j
+        while k < len(self.src):
+            if self.src[k] == "{":
+                depth += 1
+            elif self.src[k] == "}":
+                depth -= 1
+                if depth == 0:
+                    return self.src[i:k + 1]
+            k += 1
+        raise AssertionError("the menu builder's braces do not close — re-read this test")
+
+    def test_the_menu_offers_only_actions_that_exist(self):
+        block = self._menu()
         offered = set(re.findall(r"items\.push\(\['([a-z]+)'", block)) \
             | set(re.findall(r"\[\['([a-z]+)'", block))
         self.assertTrue(offered, "the menu builder changed shape — re-read this test")
@@ -49,8 +69,7 @@ class SyncCardBindings(unittest.TestCase):
                           "the menu offers '%s' and nothing handles it — a dead menu row" % a)
 
     def test_every_menu_action_calls_a_function_that_is_defined(self):
-        i = self.src.index("const more = card.querySelector('.sync-more')")
-        block = self.src[i:i + 1800]
+        block = self._menu()
         for fn in sorted(set(re.findall(r"return (_do[A-Za-z]+)\(\)", block))):
             self.assertIn("const %s = " % fn, self.src,
                           "the menu calls %s(), which is not defined — the row throws on click" % fn)

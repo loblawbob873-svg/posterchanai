@@ -30,7 +30,7 @@ const J = (v, csum, extra) => Object.assign({ v, by: 'me', size: 10, mtime: 1000
 const plan = (state, disk, index, o) =>
   S.plan(Object.assign({ state, disk, index, device: 'me', now: 9000 }, o || {}));
 const only = (p, kind) => {
-  for(const k of ['fetch','send','trash','tombstone','keepBoth','settle'])
+  for(const k of ['fetch','send','remove','tombstone','keepBoth','settle'])
     if(k !== kind) ok(p[k].length === 0, 'nothing unexpected in ' + k + ' (wanted only ' + kind + ')');
   return p[kind];
 };
@@ -39,7 +39,7 @@ const only = (p, kind) => {
 
 { // Nothing anywhere: empty plan.
   const p = plan({}, {}, {});
-  ok(p.unchanged === 0 && p.fetch.length + p.send.length + p.trash.length === 0, 'empty world, empty plan');
+  ok(p.unchanged === 0 && p.fetch.length + p.send.length + p.remove.length === 0, 'empty world, empty plan');
 }
 { // New here: local file, no record, no journal → send.
   const p = plan({}, { a: D('x') }, {});
@@ -66,10 +66,16 @@ const only = (p, kind) => {
   const s = only(p, 'send');
   ok(s.length === 1 && s[0].v === 4 && s[0].why === 'changed here', 'changed here → send v+1');
 }
-{ // Deleted elsewhere: tombstone ahead, disk unchanged → trash (never delete in place).
+{ /* Deleted elsewhere: tombstone ahead, disk unchanged → REMOVE. Not "move to .pc-trash": the
+   * trash is one place now, on the server, and a second per-device copy of the same idea is what
+   * people actually experienced as the failure — a phone with 109 files in it, a tablet with 226,
+   * and no single list anywhere that answered "what did I delete". Safe because the executor
+   * confirms the store holds the bytes before it calls this. */
   const p = plan({ a: T(2) }, { a: D('x') }, { a: J(1, 'x') });
-  const t = only(p, 'trash');
-  ok(t.length === 1 && /pc-trash/.test(t[0].to), 'deleted elsewhere → move to .pc-trash');
+  const t = only(p, 'remove');
+  ok(t.length === 1, 'deleted elsewhere → remove');
+  ok(t[0].to === undefined, 'a deletion still names a destination — there is no local trash now');
+  ok(!!t[0].entry, 'the record travels with the deletion, or the executor cannot check the store');
 }
 { // Deleted here: journal knows it, disk lost it, record unchanged → tombstone at bumped version.
   const p = plan({ a: F(2, 'x') }, {}, { a: J(2, 'x') });
@@ -149,13 +155,13 @@ const only = (p, kind) => {
   ok(p.settle.filter(s => s.why === 'same content both sides').length === 10, 'dirty join: identical bytes settle');
   ok(p.keepBoth.length === 2, 'dirty join: EXACTLY the divergent pair conflicts, got ' + p.keepBoth.length);
   ok(p.fetch.length === 2 || p.keepBoth.length === 2, 'dirty join: divergence resolved as conflict, not overwrite');
-  ok(p.send.length === 0 && p.trash.length === 0 && p.tombstone.length === 0,
+  ok(p.send.length === 0 && p.remove.length === 0 && p.tombstone.length === 0,
      'dirty join: nothing uploaded, trashed or tombstoned');
 }
 
 { // A joining device's UNCHANGED copy of a deliberately deleted file obeys the deletion…
   const p1 = plan({ a: T(2, { csum: 'x' }) }, { a: D('x') }, {});
-  const t = only(p1, 'trash');
+  const t = only(p1, 'remove');
   ok(t.length === 1 && /the deleted version/.test(t[0].why), 'join with the deleted bytes → deletion applies');
   // …and an EDITED copy still wins over the delete.
   const p2 = plan({ a: T(2, { csum: 'x' }) }, { a: D('edited') }, {});
@@ -167,43 +173,73 @@ const only = (p, kind) => {
 }
 
 /* ---- guards ---------------------------------------------------------------------------------- */
+/* ---- THE DELETION GUARDS ARE GONE, AND THAT IS THE POINT --------------------------------------
+ *
+ * There used to be a floor, a ratio and a cap in each direction, and a dialog whenever one fired.
+ * Every one was added after a real loss and every one was locally correct. Together they were a
+ * system nobody could predict: the bands BETWEEN them were silent (59 stale tombstones against a
+ * 1,000-file folder passed the ratio AND a cap of 100 and ran with no verdict at all), they were
+ * asymmetric (the one device still holding good copies was the one the resurrect floor refused),
+ * and a dialog that fires often enough is a dialog people confirm — which is how "Mirror this
+ * Device" took 122 files off every machine.
+ *
+ * They were all approximating one question: CAN THIS DELETION BE UNDONE? That is now answered
+ * directly, per file, by the executor — the local copy goes only once the STORE IS CONFIRMED to
+ * hold those bytes, and the bytes stay there in one account-wide trash on the server. A number
+ * standing in for safety could not tell a deliberate bulk delete from a folder about to be lost.
+ * The measurement does not have to.
+ */
 {
-  // A short list is a delete order: 25 trashes against 3 kept files is refused.
+  // 25 deletions against 3 kept files — the shape that used to be refused outright.
   const state = {}, disk = {}, index = {};
   for(let i = 0; i < 25; i++){ const k = 't' + i;
     state[k] = T(2); disk[k] = D('c' + i); index[k] = J(1, 'c' + i); }
   for(let i = 0; i < 3; i++){ const k = 'k' + i;
     state[k] = F(1, 's' + i); disk[k] = D('s' + i); index[k] = J(1, 's' + i); }
   const p = plan(state, disk, index);
+  ok(p.remove.length === 25, 'setup: 25 planned deletions');
   const v = S.check(p, { state });
-  ok(v.some(x => x.kind === 'massTrash'), 'massTrash fires at 25 vs 3');
-  const applied = S.apply(p, v, []);
-  ok(applied.trash.length === 0, 'refused trash empties the trash list only');
-  ok(applied.fetch === p.fetch && applied.send.length === p.send.length, 'refusal never suppresses the sweep');
+  ok(v.every(x => x.kind !== 'massTrash'), 'a count-based deletion guard came back');
+  ok(S.apply(p, v, []).remove.length === 25,
+     'something is still suppressing deletions by the number of them');
 }
 {
-  // The absolute cap: 150 trashes on a 10,000-file folder passes the ratio and must still stop.
+  // 150 deletions on a 10,000-file folder: passes every ratio, and used to be caught by the floor.
   const state = {}, disk = {}, index = {};
   for(let i = 0; i < 10000; i++){ const k = 'u' + i;
     state[k] = F(1, 'c' + i); disk[k] = D('c' + i); index[k] = J(1, 'c' + i); }
   for(let i = 0; i < 150; i++){ const k = 'g' + i;
     state[k] = T(2); disk[k] = D('g' + i); index[k] = J(1, 'g' + i); }
   const p = plan(state, disk, index);
-  ok(p.trash.length === 150, 'setup: 150 planned trashes');
-  const v = S.check(p, { state });
-  ok(v.some(x => x.kind === 'massTrash'), 'a bulk delete fires on an unattended sweep');
-  ok(v.some(x => x.kind === 'massTrash' && x.rule === 'floor'),
-     'the ABSOLUTE floor is what catches this — 150 trashes against 10,000 kept passes every ratio');
-  ok(S.check(p, { state, allowMassTrash: true }).every(x => x.kind !== 'massTrash'),
-     'the deliberate confirm flow may pass the cap');
-  // …and the same cap pointing outwards.
+  ok(p.remove.length === 150, 'setup: 150 planned deletions');
+  ok(S.check(p, { state }).every(x => x.kind !== 'massTrash'), 'the deletion floor came back');
+}
+{
+  /* THE ONE RULE THAT SURVIVED, and it is not a count: a device that can see NONE of the files it
+   * knows about has lost sight of the folder — a revoked grant, an unmounted volume, a folder
+   * picked at the wrong path. That is a different statement from "somebody emptied it", there is no
+   * answer a person could give that makes it right, and the store cannot help: the question is not
+   * whether the bytes survive but whether this device is entitled to an opinion at all. */
   const state2 = {}, disk2 = {}, index2 = {};
-  for(let i = 0; i < 10000; i++){ const k = 'u' + i;
-    state2[k] = F(1, 'c' + i); disk2[k] = D('c' + i); index2[k] = J(1, 'c' + i); }
   for(let i = 0; i < 150; i++){ const k = 'g' + i; state2[k] = F(1, 'g' + i); index2[k] = J(1, 'g' + i); }
   const p2 = plan(state2, disk2, index2);
   ok(p2.tombstone.length === 150, 'setup: 150 planned tombstones');
-  ok(S.check(p2, { state: state2 }).some(x => x.kind === 'massTombstone'), 'tombstone cap fires');
+  const v2 = S.check(p2, { state: state2 });
+  const lost = v2.find(x => x.kind === 'massTombstone');
+  ok(!!lost && lost.rule === 'emptyDevice' && lost.fatal === true,
+     'a device that can see nothing is still allowed to delete the folder everywhere');
+  ok(S.apply(p2, v2, ['massTombstone']).tombstone.length === 0,
+     'the lost-folder rule is fatal and may not be confirmed away');
+
+  // …and a device that can still see SOME of its folder is simply believed.
+  const state3 = {}, disk3 = {}, index3 = {};
+  for(let i = 0; i < 40; i++){ const k = 'h' + i;
+    state3[k] = F(1, 'h' + i); disk3[k] = D('h' + i); index3[k] = J(1, 'h' + i); }
+  for(let i = 0; i < 150; i++){ const k = 'g' + i; state3[k] = F(1, 'g' + i); index3[k] = J(1, 'g' + i); }
+  const p3 = plan(state3, disk3, index3);
+  ok(p3.tombstone.length === 150, 'setup: 150 tombstones beside 40 live files');
+  ok(S.check(p3, { state: state3 }).every(x => x.kind !== 'massTombstone'),
+     'a device that can see its folder was still refused');
 }
 {
   // A restored backup republishes what others deleted — absolute floor, no ratio.
@@ -273,65 +309,6 @@ const only = (p, kind) => {
   const a = mk([...Array(50).keys()]);
   const b = mk([...Array(50).keys()].reverse());
   eq(a, b, 'the plan is independent of input order');
-}
-
-/* ---------------------------------------------------------------------------------------------
- * RECONCILE TRASH. "Restore from trash" put back everything the folder no longer held, which is
- * right for only half of what is in there — the other half is files every device agreed to delete,
- * and putting one back republishes it to all of them. The table proves each row instead, and the
- * ruling principle is the drive check's: NOTHING IS DELETED THAT CANNOT BE PROVED REDUNDANT.
- */
-{
-  const rows = (n) => Array.from({ length: n }, (_, i) => ({ at: '.pc-trash/d/f' + i, to: 'f' + i }));
-  const R1 = rows(1);
-  const run = (hashes, held, state) => S.trashPlan({ rows: R1, hashes, held, state });
-
-  // The two provable deletions.
-  eq(run({ '.pc-trash/d/f0': 'H', f0: 'H' }, { f0: true }, {}).purge.map(x => x.to), ['f0'],
-     'trash: the identical file is already back in the folder — the trash copy is redundant');
-  eq(run({ '.pc-trash/d/f0': 'H' }, {}, { f0: T(3, { csum: 'H' }) }).purge.map(x => x.to), ['f0'],
-     'trash: every device agreed to delete exactly these bytes');
-
-  // The restore.
-  eq(run({ '.pc-trash/d/f0': 'H' }, {}, { f0: F(3, 'H') }).restore.map(x => x.to), ['f0'],
-     'trash: alive on the other devices and missing here — put it back');
-
-  /* EVERY WAY OF NOT KNOWING, and each one is a KEEP. These are the cells that decide whether this
-   * feature is a tidy-up or a second way to lose files. */
-  const keeps = [
-    [{ '.pc-trash/d/f0': null }, {}, {}, 'the trashed copy could not be read'],
-    [{ '.pc-trash/d/f0': 'H' }, {}, {}, 'no record of the path at all'],
-    [{ '.pc-trash/d/f0': 'H' }, {}, { f0: T(3) }, 'a deletion that does not say which bytes it deleted'],
-    [{ '.pc-trash/d/f0': 'H' }, {}, { f0: T(3, { csum: 'OTHER' }) }, 'deleted, but these are different bytes'],
-    [{ '.pc-trash/d/f0': 'H', f0: null }, { f0: true }, {}, 'a file is back but could not be read to compare'],
-    [{ '.pc-trash/d/f0': 'H', f0: 'OTHER' }, { f0: true }, {}, 'the file in the folder differs — this is an older version'],
-    [{ '.pc-trash/d/f0': 'H' }, {}, { f0: F(3, 'OTHER') }, 'alive elsewhere with different bytes — syncing fetches it'],
-  ];
-  for(const [h, held, st, name] of keeps){
-    const p = run(h, held, st);
-    ok(p.purge.length === 0 && p.restore.length === 0 && p.keep.length === 1,
-       'trash keeps what it cannot prove: ' + name);
-    ok(!!(p.keep[0] && p.keep[0].why), 'trash says WHY it kept it: ' + name);
-  }
-
-  /* A HELD FILE IS ANSWERED BY `held`, NEVER BY A MISSING HASH. Read as one, an unreadable
-   * destination looks like a free slot and the restore overwrites the file that is really there. */
-  {
-    const p = run({ '.pc-trash/d/f0': 'H' }, { f0: true }, { f0: F(3, 'H') });
-    eq(p.restore.length, 0, 'trash: an occupied destination is never restored over');
-  }
-
-  // Mixed: the three outcomes are independent, and one unprovable file does not protect or condemn
-  // the rest — which is the whole reason the purge is per-file and not per-day.
-  {
-    const mixed = [{ at: '.pc-trash/d/a', to: 'a' }, { at: '.pc-trash/d/b', to: 'b' },
-                   { at: '.pc-trash/d/c', to: 'c' }];
-    const p = S.trashPlan({ rows: mixed,
-      hashes: { '.pc-trash/d/a': 'HA', '.pc-trash/d/b': 'HB', '.pc-trash/d/c': null },
-      held: {}, state: { a: T(2, { csum: 'HA' }), b: F(2, 'HB') } });
-    eq([p.purge.length, p.restore.length, p.keep.length], [1, 1, 1],
-       'trash: one unprovable row neither blocks nor joins the provable ones');
-  }
 }
 
 /* ---- HOW MANY TIMES A REPAIR HAS BEEN TRIED -----------------------------------------------------

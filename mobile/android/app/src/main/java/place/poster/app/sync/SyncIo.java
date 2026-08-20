@@ -35,6 +35,9 @@ public final class SyncIo {
         String hashFile(String rel);
         long[] commitPart(String rel, long when) throws Exception;
         String trash(String rel, long when) throws Exception;
+        /** Delete a synced file outright. The trash is one place now, and it is on the server —
+         *  see FolderSyncPlugin.removeFile. Called only after the store has confirmed the bytes. */
+        void remove(String rel) throws Exception;
         /** Positive proof for a deletion claim: {gone, parentAlive}. See SafFs.confirmGone. */
         boolean[] confirmGone(String rel);
     }
@@ -50,5 +53,19 @@ public final class SyncIo {
         byte[] getBlob(String sha) throws Exception;
         String putBlob(byte[] blob) throws Exception;
         boolean blobExists(String sha);
+        /* IS THE STORE HOLDING THESE BYTES? Three answers, not two.
+         *
+         * `blobExists` asks a DIFFERENT question — "may I skip this upload?" — and answers false
+         * for anything it is unsure about, which is right when the cost of being wrong is one
+         * redundant upload. Used to decide a DELETION that would be catastrophic: unsure would
+         * become "the store does not have it", and the file would be kept when it should go, or
+         * worse, the reverse if the polarity were ever flipped. It also answers false for a blob
+         * that is present but carries an expiry stamp, because re-uploading is what clears it.
+         *
+         * So this one is its own method with its own contract: TRUE the store has them, FALSE the
+         * store says it does not, NULL the store could not be asked. Only TRUE may delete a file.
+         * The same lesson the drive check learned the expensive way — "could not ask" reported as
+         * "missing" called 497 present files lost. */
+        Boolean hasBlob(String sha);
     }
 }

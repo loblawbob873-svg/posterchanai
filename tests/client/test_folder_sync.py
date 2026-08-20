@@ -80,7 +80,7 @@ class TestFolderSync(unittest.TestCase):
             "const E=require(%s);"
             "const p=E.plan({disk:%s, state:%s, index:%s, device:%s, now:%d});"
             "process.stdout.write(JSON.stringify({upload:p.send, download:p.fetch,"
-            " deleteLocal:p.trash, deleteRemote:p.tombstone, conflicts:p.keepBoth, notes:p.settle,"
+            " deleteLocal:p.remove, deleteRemote:p.tombstone, conflicts:p.keepBoth, notes:p.settle,"
             " unchanged:p.unchanged, excluded:p.excluded}));"
         ) % (json.dumps(MOD), json.dumps(ENGINE), json.dumps(local), json.dumps(state),
              json.dumps(index), json.dumps(device), now)
@@ -201,17 +201,28 @@ class TestFolderSync(unittest.TestCase):
 
     # ---- trash + bookkeeping ---------------------------------------------------------------
 
-    def test_local_deletions_go_to_a_dated_trash(self):
+    def test_a_deletion_names_no_local_destination(self):
+        """The trash is ONE place now, and it is on the server. A per-device `.pc-trash` was a
+        second copy of the same idea that nobody could see the whole of — a phone with 109 files in
+        it, a tablet with 226, and no single list anywhere that answered "what did I delete"."""
+        p = self.plan(local={"a.txt": f("A")}, remote={"a.txt": {"deletedAt": 2 * DAY}},
+                      base={"a.txt": f("A")})
+        self.assertEqual(self.paths(p, "deleteLocal"), ["a.txt"])
+        act = [x for x in p["deleteLocal"] if x["path"] == "a.txt"][0]
+        self.assertNotIn("to", act, "a deletion still names a local destination")
+        self.assertIn("entry", act,
+                      "the record must travel with the deletion, or the executor cannot ask the "
+                      "store whether the bytes are safe before removing the file")
+
+    def test_conflict_copies_still_get_a_readable_name(self):
         js = ("const S=require(%s);"
-              "process.stdout.write(JSON.stringify([S.trashPath('sub/a.txt', %d),"
+              "process.stdout.write(JSON.stringify(["
               " S.conflictPath('sub/a.txt','phone',%d), S.conflictPath('README','phone',%d)]));"
-              ) % (json.dumps(MOD), 5 * DAY, 5 * DAY, 5 * DAY)
+              ) % (json.dumps(MOD), 5 * DAY, 5 * DAY)
         out = json.loads(subprocess.run([NODE, "-e", js], capture_output=True, text=True,
                                         timeout=60).stdout)
-        self.assertTrue(out[0].startswith(".pc-trash/1970-01-06/"), out[0])
-        self.assertTrue(out[0].endswith("sub/a.txt"), out[0])
-        self.assertEqual(out[1], "sub/a (conflict from phone, 1970-01-06).txt")
-        self.assertEqual(out[2], "README (conflict from phone, 1970-01-06)",
+        self.assertEqual(out[0], "sub/a (conflict from phone, 1970-01-06).txt")
+        self.assertEqual(out[1], "README (conflict from phone, 1970-01-06)",
                          "a file with no extension must not grow a stray dot")
 
     def test_advance_makes_the_next_run_a_no_op(self):
@@ -485,7 +496,7 @@ class TestExclusions(unittest.TestCase):
               "const p=E.plan({disk:%s, state:st, index:%s,"
               " excludes:%s, device:'laptop', now:%d});"
               "process.stdout.write(JSON.stringify({upload:p.send, download:p.fetch,"
-              " deleteLocal:p.trash, deleteRemote:p.tombstone, conflicts:p.keepBoth,"
+              " deleteLocal:p.remove, deleteRemote:p.tombstone, conflicts:p.keepBoth,"
               " notes:p.settle, unchanged:p.unchanged, excluded:p.excluded}));"
               ) % (json.dumps(MOD), json.dumps(ENGINE), json.dumps(remote), json.dumps(local),
                    json.dumps(index), json.dumps(excludes), 5 * DAY)
@@ -545,111 +556,68 @@ class TestExclusions(unittest.TestCase):
 
 
 @unittest.skipIf(not NODE, "no node on this node")
-class TestMassDelete(unittest.TestCase):
-    """THE SHAPE OF THE ANSWER, which nothing above this ever looked at.
+class DeletionIsCheckedNotCounted(unittest.TestCase):
+    """THE GUARDS ARE GONE, AND THAT IS THE POINT.
 
-    Every case in TestFolderSync asserts the decision for ONE path, and every one of those decisions
-    is correct. That is not enough, and a real Pictures folder is what proved it: the shared manifest
-    held ~10k paths and every single one was a tombstone (`n=0` live on the server). A device that
-    still had the files re-added the folder, read "deleted elsewhere" for all 10k — correctly, per
-    path, by the rules above — and moved the entire folder into `.pc-trash` without asking.
+    There used to be a floor, a ratio and a cap in each direction, and a dialog whenever one fired.
+    Every one was added after a real loss and every one was locally correct. Together they were a
+    system nobody could predict:
 
-    The server's collapse guard could not catch it, because a mass LOCAL delete writes no manifest at
-    all: it only advances `base`. So the guard has to live here, and it is the phone book's rule —
-    refuse to delete more than you keep.
+      - the bands BETWEEN them were silent. 59 stale tombstones against a 1,000-file folder passed
+        the ratio AND a cap of 100, so two devices trashed all 59 with no verdict and no dialog;
+      - they were asymmetric. The one device still holding good copies was the one the resurrect
+        floor refused, so the standoff always resolved towards deleted;
+      - and a dialog that fires often enough is a dialog people confirm, which is how "Mirror this
+        Device" took 122 files off every machine after four days of them.
+
+    All of it was approximating one question — CAN THIS DELETION BE UNDONE? — which is now answered
+    directly, per file, by the executor: the local copy goes only once the STORE IS CONFIRMED to
+    hold those bytes, and the bytes stay there in one account-wide trash on the server. A number
+    standing in for safety cannot tell a deliberate bulk delete from a folder about to be lost.
+    The measurement does not have to.
     """
 
-    def mass(self, plan):
-        """The SHORT-LIST verdict — "this sweep removes more than it keeps" — and only that one.
-
-        Two rules raise `massTrash` now: this proportional one, and an absolute floor at FLOOR that
-        stops any bulk deletion an unattended sweep would otherwise apply (see
-        test_delete_and_restore_symmetry.py — 59 stale tombstones over a 1,000-file folder passed
-        every proportional test there was and emptied the same files off three devices in turn).
-        Filtering on `rule` keeps this class measuring what it was written to measure: the `keep`
-        accounting, which the floor does not exercise and which still has to be exactly right.
-        """
-        js = ("require(%s); const E=require(%s);"
-              "const c=%s;"
-              "const mk=(n,extra)=>Array.from({length:n},(_,i)=>Object.assign({path:'p'+i},extra||{}));"
-              "const plan={fetch:mk(c.download), send:mk(c.upload), trash:mk(c.deleteLocal),"
-              " tombstone:[], keepBoth:mk(c.conflicts), settle:mk(c.notes,{why:c.noteWhy}),"
-              " unchanged:c.unchanged, excluded:0};"
-              "const v=E.check(plan, {}).find(x=>x.kind==='massTrash'&&x.rule==='shortList')||null;"
-              "process.stdout.write(JSON.stringify(v));"
-              ) % (json.dumps(MOD), json.dumps(ENGINE), json.dumps(plan))
-        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60)
-        if r.returncode != 0:
-            raise AssertionError("node failed:\n" + r.stderr[-2000:])
+    def _verdicts(self, n_remove=0, n_tomb=0, unchanged=0):
+        js = ("""
+        require(%s);
+        const E = require(%s);
+        const plan = { fetch:[], send:[], keepBoth:[], settle:[],
+                       remove: Array.from({length:%d}, (_,i)=>({path:'r'+i})),
+                       tombstone: Array.from({length:%d}, (_,i)=>({path:'t'+i})),
+                       unchanged: %d, settledGone: 0, excluded: 0 };
+        process.stdout.write(JSON.stringify(E.check(plan, { state: {} })));
+        """) % (json.dumps(MOD), json.dumps(ENGINE), n_remove, n_tomb, unchanged)
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr[-800:])
         return json.loads(r.stdout)
 
-    def any_rule(self, plan):
-        """Whether the sweep would be stopped AT ALL — either rule, which is what a person on the
-        other end actually experiences."""
-        js = ("require(%s); const E=require(%s);"
-              "const c=%s;"
-              "const mk=(n,extra)=>Array.from({length:n},(_,i)=>Object.assign({path:'p'+i},extra||{}));"
-              "const plan={fetch:mk(c.download), send:mk(c.upload), trash:mk(c.deleteLocal),"
-              " tombstone:[], keepBoth:mk(c.conflicts), settle:mk(c.notes,{why:c.noteWhy}),"
-              " unchanged:c.unchanged, excluded:0};"
-              "process.stdout.write(JSON.stringify("
-              "  E.check(plan, {}).some(x=>x.kind==='massTrash')));"
-              ) % (json.dumps(MOD), json.dumps(ENGINE), json.dumps(plan))
-        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60)
-        if r.returncode != 0:
-            raise AssertionError("node failed:\n" + r.stderr[-2000:])
-        return json.loads(r.stdout)
+    def test_a_bulk_deletion_is_no_longer_refused_by_its_size(self):
+        for n in (20, 150, 5000):
+            with self.subTest(n=n):
+                v = self._verdicts(n_remove=n, unchanged=10)
+                self.assertEqual([x for x in v if x["kind"] == "massTrash"], [],
+                                 "a count-based deletion guard came back at n=%d" % n)
 
-    def plan_of(self, n_delete, keep=0, notes=0, note_why="same content both sides",
-                download=0, upload=0, conflicts=0):
-        return {"deleteLocal": n_delete, "unchanged": keep, "notes": notes, "noteWhy": note_why,
-                "download": download, "upload": upload, "conflicts": conflicts}
+    def test_nor_is_one_that_removes_more_than_it_keeps(self):
+        """The proportional rule is gone with the rest. It was the one that could not see a bulk
+        delete arriving beside thousands of unchanged files, which is every real folder."""
+        v = self._verdicts(n_remove=500, unchanged=1)
+        self.assertEqual([x for x in v if x["kind"] == "massTrash"], [], v)
 
-    def test_the_production_shape_is_refused(self):
-        """10k tombstones, nothing kept. The exact manifest that emptied a Pictures folder."""
-        m = self.mass(self.plan_of(10142))
-        self.assertIsNotNone(m, "a sweep that trashes the whole folder and keeps nothing was allowed")
-        self.assertEqual(m["n"], 10142)
-        self.assertEqual(m["keep"], 0)
+    def test_the_lost_folder_rule_survives_because_it_is_not_a_count(self):
+        """A device that can see NONE of the files it knows about has lost sight of the folder — a
+        revoked grant, an unmounted volume, a folder picked at the wrong path. That is a different
+        statement from "somebody emptied it", and the store cannot help with it: the question is not
+        whether the bytes survive but whether this device is entitled to an opinion at all."""
+        v = self._verdicts(n_tomb=150, unchanged=0)
+        lost = [x for x in v if x["kind"] == "massTombstone"]
+        self.assertTrue(lost, "a device seeing nothing may still delete the folder everywhere")
+        self.assertEqual(lost[0]["rule"], "emptyDevice")
+        self.assertTrue(lost[0]["fatal"], "the lost-folder rule can be confirmed away")
 
-    def test_deleting_a_few_files_is_never_questioned(self):
-        """The normal working of the feature. A confirmation on every 3-file delete is how people
-        learn to click through the one that matters."""
-        self.assertIsNone(self.mass(self.plan_of(3)))
-        self.assertIsNone(self.mass(self.plan_of(19)),
-                          "the floor is what keeps ordinary deletes silent")
-
-    def test_a_delete_smaller_than_what_survives_passes_the_ratio(self):
-        """Tidying 50 files out of a 5000-file folder is not a WIPE, and the proportional rule is
-        right not to call it one. It is still a bulk delete, so the absolute floor asks anyway —
-        that is the point of having both, and it is asserted just below."""
-        self.assertIsNone(self.mass(self.plan_of(50, keep=4950)))
-        self.assertTrue(self.any_rule(self.plan_of(50, keep=4950)),
-                        "50 unattended deletions on a big folder ran with nothing asked")
-
-    def test_kept_counts_every_way_a_file_survives(self):
-        """`unchanged` is not the only thing left standing when the sweep ends — a file being
-        downloaded, uploaded or kept as a conflict copy is still a file in the folder. Counting only
-        one of them would refuse an ordinary big first sync."""
-        self.assertIsNone(self.mass(self.plan_of(30, download=40)))
-        self.assertIsNone(self.mass(self.plan_of(30, notes=40)),
-                          "files both sides already agree on are kept files")
-        # …and the floor still speaks for all of them, because 30 is a bulk delete either way.
-        self.assertTrue(self.any_rule(self.plan_of(30, download=40)))
-
-    def test_deleted_on_both_is_not_a_kept_file(self):
-        """It has no bytes anywhere, so counting it would only make the guard quieter — and quieter
-        is the direction that lost the pictures."""
-        self.assertIsNotNone(self.mass(self.plan_of(30, notes=40, note_why="deleted on both")))
-
-    def test_the_ratio_boundary_is_exactly_more_than_you_keep(self):
-        """A boundary that drifts turns a silent guard into a noisy one or the other way about. This
-        is the ratio rule's own boundary; the floor's is asserted in
-        test_delete_and_restore_symmetry.py, and below FLOOR neither speaks."""
-        self.assertIsNone(self.mass(self.plan_of(25, keep=25)))
-        self.assertIsNotNone(self.mass(self.plan_of(26, keep=25)))
-        self.assertFalse(self.any_rule(self.plan_of(19, keep=19)),
-                         "19 deletions must stay silent — the floor is 20")
+    def test_and_a_device_that_can_still_see_its_folder_is_believed(self):
+        v = self._verdicts(n_tomb=150, unchanged=40)
+        self.assertEqual([x for x in v if x["kind"] == "massTombstone"], [], v)
 
 
 @unittest.skipIf(not NODE, "no node on this node")
@@ -780,46 +748,6 @@ class LostIsNotAStringCompare(unittest.TestCase):
         """
         r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=30)
         self.assertEqual(r.stdout, "true", r.stderr[-500:])
-
-
-class AbsoluteTrashCap(unittest.TestCase):
-    """"no way that i should have had deleted files, many!" — proportional guards wave hundreds of
-    tombstones through on a big folder (6,000 survivors allow 5,999 trashes). No UNATTENDED sweep
-    applies a BULK deletion; a deliberate mass delete passes allowMassTrash.
-
-    The number was 100 and is now FLOOR (20), the same figure that has always governed putting files
-    back. At 100, 59 stale tombstones over a 1,000-file folder still ran silently on three devices in
-    turn while the one device holding the files was refused by the resurrect floor — the guard
-    protecting the files was what guaranteed the deletions won. See
-    tests/client/test_delete_and_restore_symmetry.py."""
-
-    def _check(self, n_trash, allow=False):
-        js = """
-        const E = require(%s);
-        const plan = { fetch:[], send:[], keepBoth:[], settle:[], tombstone:[],
-                       trash: Array.from({length:%d}, (_,i)=>({path:'f'+i})),
-                       unchanged: 10000, settledGone: 0, excluded: 0 };
-        const out = E.check(plan, { state: {}%s });
-        process.stdout.write(JSON.stringify(out.filter(v=>v.kind==='massTrash').length));
-        """ % (json.dumps(os.path.join(REPO, "static", "js", "client", "syncstate.js")),
-               n_trash, ", allowMassTrash: true" if allow else "")
-        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=30)
-        self.assertEqual(r.returncode, 0, r.stderr[-800:])
-        return json.loads(r.stdout)
-
-    def test_hundreds_of_trashes_are_refused_even_with_thousands_surviving(self):
-        self.assertGreater(self._check(500), 0,
-                           "500 unattended deletions sailed past 10,000 survivors")
-
-    def test_a_deliberate_mass_delete_still_works(self):
-        self.assertEqual(self._check(500, allow=True), 0)
-
-    def test_an_ordinary_sweep_is_untouched(self):
-        """Below the floor, nothing is questioned — that is what keeps the dialog meaningful. The
-        number moved from 100 to 20 when the two directions were made symmetric: 59 unattended
-        deletions on a 1,000-file folder is what this guard was measured failing to catch."""
-        self.assertEqual(self._check(19), 0)
-        self.assertGreater(self._check(20), 0, "the floor is 20 and it must include 20")
 
 
 class FilesTrashSurface(unittest.TestCase):

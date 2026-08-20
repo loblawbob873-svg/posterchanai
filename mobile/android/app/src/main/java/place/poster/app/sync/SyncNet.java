@@ -115,6 +115,24 @@ public final class SyncNet implements SyncIo.Net {
         }
     }
 
+    /** See SyncIo.Net.hasBlob: TRUE there, FALSE gone, NULL could not ask. Only TRUE may delete. */
+    public Boolean hasBlob(String sha) {
+        HttpURLConnection c = null;
+        try {
+            c = open(mediaBase + "/" + sha, "HEAD", POST_TIMEOUT_MS);
+            int code = c.getResponseCode();
+            if (code >= 200 && code < 300) return Boolean.TRUE;
+            if (code == 404 || code == 410) return Boolean.FALSE;
+            /* Anything else is the STORE, not the blob: a rate limiter, a proxy, a gateway. Saying
+             * "gone" about one of those is how a bad minute becomes a deleted file. */
+            return null;
+        } catch (Exception e) {
+            return null;
+        } finally {
+            if (c != null) c.disconnect();
+        }
+    }
+
     public byte[] getBlob(String sha) throws IOException {
         HttpURLConnection c = open(mediaBase + "/" + sha, "GET", READ_TIMEOUT_MS);
         try {

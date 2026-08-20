@@ -135,6 +135,13 @@ function cloud(){
     get(h){ return blobs.get(h); },
     has(h){ return blobs.has(h); },
     corrupt(h){ blobs.set(h, Buffer.from('rubbish')); },
+    /* Take the ADDRESS off a record — a tombstone for a file whose bytes were never stored, or one
+     * written by an older build. There is then nothing to confirm and nothing to restore from. */
+    strip(path){
+      const r = recs[path];
+      if(!r) return;
+      for(const k of ['sha', 'chunks', 'cs', 'ps']) delete r.entry[k];
+    },
     forget(h){ blobs.delete(h); },
     wipe(){ blobs.clear(); for(const k in recs) delete recs[k]; },
   };
@@ -193,6 +200,14 @@ function device(name, sky, opts){
                                      return { size: disk[r].length, mtime: 2000 }; },
     move: async (id, from, to) => { st.moved.push(from + ' -> ' + to);
                                     disk[to] = disk[from]; delete disk[from]; },
+    /* REMOVE, not "move somewhere else". The trash is one place now and it is on the server, so a
+     * deletion here really deletes — which is only safe because the executor has already asked the
+     * store whether it still holds the bytes. `st.trashed` keeps its name: what it records is
+     * "files this sweep deleted locally", which is what every scenario below asserts about. */
+    remove: async (id, r) => {
+      if(!(r in disk)) return true;               // already gone is where it was going
+      st.trashed.push(r); delete disk[r]; return true;
+    },
     trash: async (id, r) => { st.trashed.push(r); delete disk[r]; return '.pc-trash/x/' + r; },
     /* Abandoned part files, collected by age. The real adapters delete them off the disk; this
      * records that it was ASKED, which is the half the executor is responsible for. */
@@ -613,6 +628,94 @@ scenario('a copy that fails its checksum is not fetched again for ever', async (
   const B3 = device('phone', sky, { disk: B2.disk, index: B2.st.index });
   const r3 = await B3.sweep({ skipFetch: r1.badFetch });
   t.eq(r3.downloaded.length, 1, 'a repaired copy was still blocked');
+});
+
+/* ---- THE ONE RULE THAT REPLACED EVERY FLOOR ----------------------------------------------------
+ *
+ * Deletion is automatic now: no floor, no ratio, no dialog, and the local copy is REMOVED rather
+ * than moved into a per-device .pc-trash that nobody could see the whole of. What makes that
+ * defensible is a single line in the executor — a device never removes its copy until the STORE IS
+ * CONFIRMED TO HOLD THOSE BYTES — plus one account-wide trash on the server holding every deleted
+ * file with the address it can be restored from.
+ *
+ * It is a better guard than the numbers it replaced because it is a MEASUREMENT rather than a guess
+ * about intent. "Twenty files is a lot" cannot tell a deliberate bulk delete from a folder about to
+ * be lost. "The store answered 200 for these exact bytes" is a fact about whether this can be
+ * undone, and it is the only fact that matters.
+ */
+scenario('a deletion waits for the store to confirm it still has the bytes', async (t) => {
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(6) });
+  await A.sweep();
+  const B = device('phone', sky, {});
+  await B.sweep();
+  const victim = Object.keys(A.disk)[0];
+  delete A.disk[victim];
+  await device('laptop', sky, { disk: A.disk, index: A.st.index }).sweep();
+
+  // The store cannot be asked — a rate limiter, a proxy, a dead socket. The file STAYS.
+  const B2 = device('phone', sky, { disk: B.disk, index: B.st.index });
+  B2.io.hasBlob = async () => null;
+  const r = await B2.sweep();
+  t.eq(r.trashed.length, 0, 'it deleted a file without being able to check the store');
+  t.ok(!!B2.disk[victim], 'the file is gone from a device that could not verify it was safe');
+  t.eq((r.keptUnconfirmed || []).length, 1, 'it kept the file and said nothing about why');
+  t.ok(/could not be asked/.test(r.keptUnconfirmed[0].why),
+       'it blamed the file rather than the moment: ' + JSON.stringify(r.keptUnconfirmed[0]));
+
+  // The store answers NO — the bytes are not there, so deleting this copy would be losing it.
+  const B3 = device('phone', sky, { disk: B.disk, index: B.st.index });
+  B3.io.hasBlob = async () => false;
+  const r3 = await B3.sweep();
+  t.eq(r3.trashed.length, 0, 'it deleted the last copy of a file the store does not have');
+  t.ok(/does not have these bytes/.test((r3.keptUnconfirmed || [{}])[0].why || ''),
+       'the two reasons for keeping a file are not told apart');
+
+  // And when the store says yes, the deletion simply happens — no dialog, no floor.
+  const B4 = device('phone', sky, { disk: B.disk, index: B.st.index });
+  const r4 = await B4.sweep();
+  t.eq(r4.trashed.length, 1, 'a confirmed deletion did not apply');
+  t.ok(!B4.disk[victim], 'the file is still here after a confirmed deletion');
+});
+
+scenario('a thousand deletions apply without asking, because every one of them was checked', async (t) => {
+  /* The old floor stopped at twenty and asked. It could not tell this from a folder about to be
+   * lost, so it asked about both — and a dialog that fires often enough is a dialog people confirm,
+   * which is how "Mirror this Device" took 122 files off every machine. Now the question is asked
+   * of the STORE, once per file, and it is not a matter of opinion. */
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(60) });
+  await A.sweep();
+  const B = device('phone', sky, {});
+  await B.sweep();
+  for(const p of Object.keys(A.disk).slice(0, 40)) delete A.disk[p];
+  await device('laptop', sky, { disk: A.disk, index: A.st.index }).sweep();
+  const B2 = device('phone', sky, { disk: B.disk, index: B.st.index });
+  let asked = 0;
+  const r = await B2.sweep({ confirm: () => { asked++; return true; } });
+  t.eq(asked, 0, 'it asked ' + asked + ' times about deletions it had already verified were safe');
+  t.eq(r.trashed.length, 40, 'it applied ' + r.trashed.length + ' of 40 verified deletions');
+  t.eq(Object.keys(B2.disk).length, 20, 'the phone holds ' + Object.keys(B2.disk).length + ' of 20');
+});
+
+scenario('a tombstone with no address never deletes anything', async (t) => {
+  /* The bytes were never stored — a file deleted before it ever finished uploading. There is
+   * nothing to confirm and nothing to restore from, so the record is the only trace of the intent
+   * and the local copy is the only copy of the file. Keep it, and say so. */
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(3) });
+  await A.sweep();
+  const B = device('phone', sky, {});
+  await B.sweep();
+  const victim = Object.keys(A.disk)[0];
+  delete A.disk[victim];
+  await device('laptop', sky, { disk: A.disk, index: A.st.index }).sweep();
+  sky.strip(victim);                       // the tombstone loses its address
+  const B2 = device('phone', sky, { disk: B.disk, index: B.st.index });
+  const r = await B2.sweep();
+  t.eq(r.trashed.length, 0, 'it deleted a file it could never have restored');
+  t.eq((r.keptUnstored || []).length, 1, 'it kept the file silently');
+  t.ok(!!B2.disk[victim], 'the only copy of the file is gone');
 });
 
 scenario('MIRROR PUBLISHES AND NEVER DELETES — the button that lost the receipts', async (t) => {

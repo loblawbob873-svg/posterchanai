@@ -62,7 +62,7 @@ public class Parity {
       Map<String, Object> res = new LinkedHashMap<String, Object>();
       res.put("fetch", names(p.fetch));
       res.put("send", names(p.send));
-      res.put("trash", names(p.trash));
+      res.put("remove", names(p.remove));
       res.put("tombstone", names(p.tombstone));
       res.put("keepBoth", names(p.keepBoth));
       res.put("settle", names(p.settle));
@@ -103,7 +103,7 @@ process.stdin.on('end', () => {
     const p = E.plan({ disk: c.disk || {}, state: c.state || {},
                        index: c.index || {}, device: 'me', now: 9000,
                        excludes: c.excludes || [] });
-    return { fetch: names(p.fetch), send: names(p.send), trash: names(p.trash),
+    return { fetch: names(p.fetch), send: names(p.send), remove: names(p.remove),
              tombstone: names(p.tombstone), keepBoth: names(p.keepBoth), settle: names(p.settle),
              unchanged: p.unchanged, excluded: p.excluded,
              verdicts: E.check(p, { state: c.state || {} }).map(v => v.kind) };
@@ -209,10 +209,10 @@ def test_the_generated_cases_actually_exercise_every_decision():
     _need("node")
     seen = set()
     for plan in _run_js(_cases()):
-        for k in ("fetch", "send", "trash", "tombstone", "keepBoth", "settle"):
+        for k in ("fetch", "send", "remove", "tombstone", "keepBoth", "settle"):
             if plan[k]:
                 seen.add(k)
         for v in plan["verdicts"]:
             seen.add(v)
-    for want in ("fetch", "send", "trash", "tombstone", "keepBoth", "settle"):
+    for want in ("fetch", "send", "remove", "tombstone", "keepBoth", "settle"):
         assert want in seen, "no generated case ever produced a %s — the parity test proves nothing" % want

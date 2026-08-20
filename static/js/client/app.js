@@ -18032,11 +18032,20 @@
        the honest number; the split between what this panel can undo and what it cannot belongs
        INSIDE, where it can be explained. */
     const total = rows.length + dead.length;
+    /* THE TRASH. Singular, and this is it.
+     *
+     * It used to be called "Deleted on every device" because it was one of TWO — the other being a
+     * `.pc-trash` directory inside every synced folder, on every device, holding a different set of
+     * files with no list anywhere that covered both. That is what people actually experienced as
+     * the failure: "phone already has 109 files in trash wtf", a tablet with 226, another with 19,
+     * and nothing that answered "what did I delete". The per-device trash is gone; a deletion now
+     * removes the local file, and only once the store has confirmed it can give the bytes back.
+     * So this list IS the trash, for the whole account, and it is named that. */
     return `<div class="fx-trash">
-      <button class="fx-trash-hd" id="fx-del-toggle"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Deleted on every device
+      <button class="fx-trash-hd" id="fx-del-toggle"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Trash
         <span class="fx-n">${total}</span><span class="chev">${_fxDelOpen?'\u25be':'\u25b8'}</span></button>
       <div class="fx-trash-body${_fxDelOpen?'':' hidden'}">
-        <div class="muted small">${rows.length} of ${total} can be undone from here \u2014 the folder marks them deleted and their bytes are still in the store, so restoring republishes them and every device brings them back.</div>
+        <div class="muted small">Everything deleted from your synced folders, on any device. ${rows.length} of ${total} can be put back from here \u2014 their bytes are still in the store, so restoring republishes them and every device brings the file back.</div>
         ${rows.slice(0, 50).map(p2 => `<div class="fx-trash-row"><span title="${enc(p2)}">${enc(p2.split('/').pop())}</span>
           <span class="muted small" title="${enc(p2)}">${enc(p2.split('/').slice(0,-1).join('/'))}</span>
           <button class="mini" data-undelete="${enc(p2)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Restore</button></div>`).join('')}

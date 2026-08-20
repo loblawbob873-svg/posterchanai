@@ -92,7 +92,7 @@ public final class SyncReconcile {
     public static final class Plan {
         public final List<Map<String, Object>> fetch = new ArrayList<Map<String, Object>>();
         public final List<Map<String, Object>> send = new ArrayList<Map<String, Object>>();
-        public final List<Map<String, Object>> trash = new ArrayList<Map<String, Object>>();
+        public final List<Map<String, Object>> remove = new ArrayList<Map<String, Object>>();
         public final List<Map<String, Object>> tombstone = new ArrayList<Map<String, Object>>();
         public final List<Map<String, Object>> keepBoth = new ArrayList<Map<String, Object>>();
         public final List<Map<String, Object>> settle = new ArrayList<Map<String, Object>>();
@@ -104,7 +104,7 @@ public final class SyncReconcile {
             Map<String, Object> m = new LinkedHashMap<String, Object>();
             m.put("fetch", fetch);
             m.put("send", send);
-            m.put("trash", trash);
+            m.put("remove", remove);
             m.put("tombstone", tombstone);
             m.put("keepBoth", keepBoth);
             m.put("settle", settle);
@@ -180,8 +180,8 @@ public final class SyncReconcile {
                             "from", str(R.get("by")),
                             "why", idx != null ? "changed elsewhere" : "new elsewhere"));
                 } else if (L != null) {
-                    plan.trash.add(act("path", path, "v", versionOf(R), "entry", R,
-                            "to", SyncDiff.trashPath(path, now), "why", "deleted elsewhere"));
+                    plan.remove.add(act("path", path, "v", versionOf(R), "entry", R,
+                            "why", "deleted elsewhere"));
                 } else {
                     plan.settle.add(act("path", path, "v", versionOf(R), "entry", R,
                             "why", "already gone here"));
@@ -226,8 +226,7 @@ public final class SyncReconcile {
                 String rc = R == null ? "" : str(R.get("csum"));
                 String lc = str(L.get("csum"));
                 if (!rc.isEmpty() && !lc.isEmpty() && rc.equals(lc)) {
-                    plan.trash.add(act("path", path, "v", versionOf(R), "entry", R,
-                            "to", SyncDiff.trashPath(path, now),
+                    plan.remove.add(act("path", path, "v", versionOf(R), "entry", R,
                             "why", "deleted elsewhere — this copy is the deleted version"));
                 } else {
                     plan.send.add(act("path", path, "v", bump(R, idx), "stat", L,
@@ -263,19 +262,12 @@ public final class SyncReconcile {
         // engine's comment — 50 live files beside 10,000 old deletions trashed all 50, guard silent).
         int keep = p.unchanged - p.settledGone + p.fetch.size() + p.send.size() + p.keepBoth.size() + settled;
 
-        if (p.trash.size() >= FLOOR && p.trash.size() > keep) {
-            out.add(act("kind", "massTrash", "rule", "shortList",
-                        "n", (long) p.trash.size(), "keep", (long) keep));
-        }
-        /* THE ABSOLUTE FLOOR, AND IT IS THE SAME NUMBER IN BOTH DIRECTIONS — see the JS engine's
-         * comment. Proportional is not enough on a big folder and nobody is watching: 59 stale
-         * tombstones against a 1,000-file folder passed the ratio AND a cap of 100, so this device
-         * trashed 59 files with no verdict, while the one device still holding them was refused by
-         * the resurrect floor at 20. The asymmetry always resolved towards deleted. */
-        if (p.trash.size() >= FLOOR) {
-            out.add(act("kind", "massTrash", "rule", "floor",
-                        "n", (long) p.trash.size(), "keep", (long) keep));
-        }
+        /* THE FLOORS AND RATIOS ARE GONE, IN BOTH DIRECTIONS — see the JS engine, which this
+         * mirrors decision for decision. They were approximating "can this deletion be undone",
+         * and that is now checked directly: the executor removes a local copy only once the STORE
+         * IS CONFIRMED TO HOLD THOSE BYTES, and the bytes stay there in one account-wide trash on
+         * the server. A number standing in for safety could not tell a deliberate bulk delete from
+         * a folder about to be lost; the measurement does not need to. */
         /* A DEVICE HOLDING NOTHING MAY NOT DELETE THE FOLDER — fatal, never offered. See the JS
          * engine. A scan that found NOTHING while the journal knows about hundreds of files is a
          * device that has lost sight of a folder, not one somebody emptied, and the native sweep
@@ -283,14 +275,6 @@ public final class SyncReconcile {
          * ever, while the page-side sweep puts a destructive default one tap away. */
         if (p.tombstone.size() >= FLOOR && keep == 0) {
             out.add(act("kind", "massTombstone", "rule", "emptyDevice", "fatal", Boolean.TRUE,
-                        "n", (long) p.tombstone.size(), "keep", (long) keep));
-        }
-        if (p.tombstone.size() >= FLOOR && p.tombstone.size() > keep) {
-            out.add(act("kind", "massTombstone", "rule", "shortList",
-                        "n", (long) p.tombstone.size(), "keep", (long) keep));
-        }
-        if (p.tombstone.size() >= FLOOR) {
-            out.add(act("kind", "massTombstone", "rule", "floor",
                         "n", (long) p.tombstone.size(), "keep", (long) keep));
         }
         int res = 0;
@@ -358,12 +342,11 @@ public final class SyncReconcile {
         out.unchanged = p.unchanged;
         out.settledGone = p.settledGone;
         out.excluded = p.excluded;
-        boolean noTrash = false, noTomb = false, noRes = false;
+        boolean noTomb = false, noRes = false;
         Set<String> blocked = new LinkedHashSet<String>();
         for (Map<String, Object> v : verdicts) {
             String k = str(v.get("kind"));
-            if ("massTrash".equals(k)) noTrash = true;
-            else if ("massTombstone".equals(k)) noTomb = true;
+            if ("massTombstone".equals(k)) noTomb = true;
             else if ("massResurrect".equals(k)) noRes = true;
             else if ("blocked".equals(k)) blocked.add(str(v.get("path")));
         }
@@ -374,7 +357,7 @@ public final class SyncReconcile {
             if (!blocked.contains(str(f.get("path")))) out.keepBoth.add(f);
         }
         out.settle.addAll(p.settle);
-        if (!noTrash) out.trash.addAll(p.trash);
+        out.remove.addAll(p.remove);   // no rule can suppress these any more — see check()
         if (!noTomb) out.tombstone.addAll(p.tombstone);
         for (Map<String, Object> s : p.send) {
             if (noRes && Boolean.TRUE.equals(s.get("resurrect"))) continue;

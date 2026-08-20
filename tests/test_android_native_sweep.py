@@ -107,6 +107,9 @@ class FakeFs implements SyncIo.Files {
         return new long[]{ disk.get(rel).length, 2000L };
     }
     public String trash(String rel, long when) { trashed.add(rel); disk.remove(rel); return ".pc-trash/" + rel; }
+    /* REMOVE, not "move somewhere else". The trash is one place now and it is on the server, so a
+     * deletion here really deletes — reached only after the store has confirmed the bytes. */
+    public void remove(String rel) { trashed.add(rel); disk.remove(rel); }
     /** {gone, parentAlive} — the same contract SafFs answers, and the same one the sweep refuses
      *  to publish a deletion without. */
     public boolean[] confirmGone(String rel) {
@@ -284,6 +287,13 @@ class FakeNet implements SyncIo.Net {
         return lie ? "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" : sha;
     }
     public boolean blobExists(String sha) { return blobs.containsKey(sha); }
+    /* THREE ANSWERS, NOT TWO — see SyncIo.Net.hasBlob. `unreachable` is what a scenario sets to say
+     * the store could not be asked at all, which must never be read as "the bytes are gone". */
+    boolean unreachable = false;
+    public Boolean hasBlob(String sha) {
+        if (unreachable) return null;
+        return blobs.containsKey(sha) ? Boolean.TRUE : Boolean.FALSE;
+    }
 }
 """
 
@@ -424,10 +434,16 @@ public class Drv {
       out.put("bare_tomb_has_csum", t2 != null && t2.get("csum") != null);
     }
 
-    // ---- A WAVE OF DELETIONS IS NOT APPLIED BY A SWEEP NOBODY IS WATCHING.
-    // The reported failure: stale tombstones passed every proportional guard and this sweep moved
-    // the files to trash on a phone with the screen off, while the device still holding them was
-    // refused. Published here the way another device would publish them.
+    /* ---- A WAVE OF DELETIONS IS APPLIED, BECAUSE EVERY ONE OF THEM WAS CHECKED.
+     *
+     * This used to be refused by an absolute floor, and the floor was the wrong instrument: 25
+     * tombstones against 300 survivors passes every proportional guard, so the floor was all that
+     * spoke — and it spoke on BOTH sides, refusing the device that still held the only copies while
+     * merely asking the ones with nothing to lose.
+     *
+     * A background sweep carries no person to ask, which is precisely why the question must not be
+     * a matter of opinion. It asks the STORE instead, once per file: only bytes it can give back
+     * are deleted from here. Published the way another device would publish them. */
     {
       FakeFs fsE = new FakeFs();
       Fake ctxE = new Fake();
@@ -448,10 +464,25 @@ public class Drv {
         t.put("csum", live.get("csum"));
         net.publish("Wave", mk, path, t, true);
       }
+      /* A SECOND DEVICE IN THE SAME SITUATION, captured BEFORE the deletions run — same folder,
+       * same 25 tombstones, but its store cannot be reached. */
+      FakeFs fsU = new FakeFs();
+      fsU.disk.putAll(fsE.disk);
       NativeSweep.Report r2 = sweep(ctxE, stE, fE, sec, false, net, mk, fsE);
       out.put("wave_trashed", r2.trashed.size());
       out.put("wave_refused", r2.refusedTrash);
       out.put("wave_files_left", fsE.disk.size());
+      /* …AND THE SAME WAVE WITH THE STORE UNREACHABLE CHANGES NOTHING ON DISK. Not one file, and
+       * not silently: a deletion that did not happen looks exactly like one that did. */
+      Fake ctxU = new Fake();
+      SyncStore stU = store(ctxU, "tablet-uuu");
+      SyncStore.Folder fU = folder("Wave", "tree://u");
+      NativeSweep.Report r3;
+      net.unreachable = true;
+      try { r3 = sweep(ctxU, stU, fU, sec, true, net, mk, fsU); }
+      finally { net.unreachable = false; }
+      out.put("wave_offline_trashed", r3.trashed.size());
+      out.put("wave_offline_kept", r3.keptUnconfirmed.size());
     }
 
     // ---- …AND BELOW THE FLOOR AN ORDINARY DELETION STILL JUST HAPPENS. A guard that stops
@@ -827,19 +858,34 @@ def test_a_tombstone_takes_the_address_from_whichever_side_still_has_one():
     assert r["bare_tomb_has_csum"] is True, r
 
 
-def test_a_wave_of_deletions_is_not_applied_by_a_sweep_nobody_is_watching():
-    """THE REPORTED FAILURE, on the device it was least visible from.
+def test_a_wave_of_deletions_is_applied_because_every_one_was_checked():
+    """THE REPORTED FAILURE, AND WHY THE FLOOR WAS THE WRONG INSTRUMENT.
 
-    25 stale tombstones against 300 surviving files passes every proportional guard there is, and
-    the native sweep carries no person to ask — so it moved 25 files into .pc-trash with the screen
-    off, and said so only in a report nobody reads. Now the absolute floor stops it, the sweep says
-    which bucket it refused, and the paths are deliberately NOT journalled, so a foreground sweep
-    proposes exactly this again and CAN ask."""
+    25 stale tombstones against 300 surviving files passes every proportional guard there is, so an
+    absolute floor was all that spoke — and it spoke on both sides, refusing the device that still
+    held the only copies while merely asking the ones with nothing to lose. A background sweep
+    carries no person to ask, which is exactly why the question must not be a matter of opinion.
+
+    It asks the store instead: these bytes are there, so the deletion can be undone from the one
+    trash on the server, so it applies.
+    """
     r = result()
     assert r["wave_uploaded"] == 325, r
-    assert r["wave_trashed"] == 0, "the phone trashed %d files unattended" % r["wave_trashed"]
-    assert r["wave_refused"] == "massTrash", r
-    assert r["wave_files_left"] == 325, r
+    assert r["wave_trashed"] == 25, "it applied %r of 25 verified deletions" % r["wave_trashed"]
+    assert not r["wave_refused"], "a count-based guard came back: %r" % r["wave_refused"]
+    assert r["wave_files_left"] == 300, r
+
+
+def test_and_the_same_wave_deletes_nothing_when_the_store_cannot_be_asked():
+    """The whole safety of an automatic deletion is that the bytes were confirmed recoverable
+    first. No answer is not an answer — a rate limiter, a dead socket, a phone that has just lost
+    its network is the most ordinary thing in the world on the device this runs on."""
+    r = result()
+    assert r["wave_offline_trashed"] == 0, (
+        "it deleted %r files it could not verify were recoverable" % r["wave_offline_trashed"])
+    assert r["wave_offline_kept"] == 25, (
+        "it kept the files but reported %r of them — a deletion that did not happen looks exactly "
+        "like one that did unless somebody says so" % r["wave_offline_kept"])
 
 
 def test_and_an_ordinary_deletion_still_just_happens():

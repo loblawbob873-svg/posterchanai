@@ -41,7 +41,7 @@
   const P = (root.PCFolderSync) || (typeof require === 'function' ? require('./foldersync.js') : null);
   if(!P) throw new Error('syncstate.js needs foldersync.js');
 
-  const { same, excluder, conflictPath, trashPath, MTIME_SLOP } = P;
+  const { same, excluder, conflictPath, MTIME_SLOP } = P;
 
   const num = (x) => (typeof x === 'number' && isFinite(x)) ? x : 0;
   const live = (e) => !!e && !e.deletedAt;
@@ -83,7 +83,7 @@
     const me = o.device || 'this device';
     const now = num(o.now);
 
-    const out = { fetch:[], send:[], trash:[], tombstone:[], keepBoth:[], settle:[],
+    const out = { fetch:[], send:[], remove:[], tombstone:[], keepBoth:[], settle:[],
                   unchanged:0, excluded:0, settledGone:0 };
     const isExcluded = excluder(o.excludes || []);
     const paths = new Set([...Object.keys(disk), ...Object.keys(state), ...Object.keys(index)]);
@@ -132,8 +132,7 @@
           out.fetch.push({ path, v: versionOf(R), entry: R, from: R.by,
                            why: idx ? 'changed elsewhere' : 'new elsewhere' });
         } else if(L){
-          out.trash.push({ path, v: versionOf(R), entry: R, to: trashPath(path, now),
-                           why: 'deleted elsewhere' });
+          out.remove.push({ path, v: versionOf(R), entry: R, why: 'deleted elsewhere' });
         } else {
           out.settle.push({ path, v: versionOf(R), entry: R, why: 'already gone here' });
         }
@@ -173,8 +172,8 @@
          * instead of resurrecting on every device that ever held the file. Only an actual edit
          * (different content, or content we cannot compare) wins over a delete. */
         if(R && R.csum && L.csum && L.csum === R.csum){
-          out.trash.push({ path, v: versionOf(R), entry: R, to: trashPath(path, now),
-                           why: 'deleted elsewhere — this copy is the deleted version' });
+          out.remove.push({ path, v: versionOf(R), entry: R,
+                            why: 'deleted elsewhere — this copy is the deleted version' });
         } else {
           out.send.push({ path, v: bump(R, idx), stat: L, resurrect: true,
                           why: 'deleted elsewhere but edited here — keeping the edit' });
@@ -194,17 +193,29 @@
    * Verbatim guards from the second engine, minus the per-device-view ones (there are no views to
    * be partial: a record set that could not be read throws before plan() runs). Advisory verdicts
    * except `fatal`, which nothing may override. */
-  const FLOOR = 20;
-  const MASS_CAP = 100;   // the SERVER's tombstone backstop, exported so one number is quoted
-                          // in both halves. It is no longer a rule here: everything between
-                          // FLOOR and it was the silent band (see check()).
+  /* ---- WHAT IS LEFT OF THE GUARDS, AND WHY SO LITTLE -------------------------------------------
+   *
+   * There used to be a floor, a ratio and a cap in each direction: no more than N deletions, never
+   * more than survives, never more than the server's backstop, and a dialog whenever any of them
+   * fired. Every one was added after a real loss and every one was locally correct. Together they
+   * were a system nobody could predict — including the person who wrote them, who kept finding the
+   * failures by measuring the relay afterwards. They also failed in the way guards fail: the bands
+   * BETWEEN them were silent, they were asymmetric (the device holding the only good copies was the
+   * one forbidden to act), and a dialog that fires often enough is a dialog people confirm.
+   *
+   * They are gone, because the thing they were approximating is now checked directly. A deletion
+   * removes the local copy only when the STORE IS CONFIRMED TO HOLD THOSE BYTES (see the executor),
+   * and the bytes stay there — one account-wide trash on the server, restorable to every device.
+   * So a wrong bulk deletion costs a restore, not a file, and a number no longer has to stand in
+   * for "is this safe".
+   *
+   * ONE RULE SURVIVES, and it is not a floor: a device that can see NONE of the files it knows
+   * about has lost sight of the folder — a revoked grant, an unmounted volume, a folder picked at
+   * the wrong path — and that is a different statement from "somebody emptied it". It is fatal
+   * rather than confirmable, because there is no answer a person could give that makes it right. */
+  const FLOOR = 20;       // kept only for the resurrect rule below and for the card's wording
+  const MASS_CAP = 100;   // the SERVER's own tombstone backstop, exported so one number is quoted
 
-  /* Two rules can raise the same `kind`, and they answer different questions: `shortList` is "this
-   * sweep would remove more than it keeps" (proportional, the phone-book rule) and `floor` is "this
-   * is a bulk change either way, and bulk changes need a person" (absolute, what a ratio cannot
-   * see). `apply()` and every caller key on `kind` alone — one dialog, one answer — but the tests
-   * and the card need to know WHICH rule spoke, or a change to one silently stops the other from
-   * being measured. */
   function check(plan, ctx){
     const c = ctx || {}, p = plan || {}, out = [];
 
@@ -213,32 +224,6 @@
     const keep = num(p.unchanged) - num(p.settledGone)
                + p.fetch.length + p.send.length + p.keepBoth.length + settled;
 
-    // A SHORT LIST IS A DELETE ORDER: never trash more than survives the sweep.
-    if(p.trash.length >= FLOOR && p.trash.length > keep){
-      out.push({ kind:'massTrash', rule:'shortList', n: p.trash.length, keep,
-                 why: 'this sweep would move ' + p.trash.length + ' files to the trash and keep ' + keep });
-    }
-    /* AND AN ABSOLUTE FLOOR, THE SAME ONE RESURRECTIONS HAVE HAD ALL ALONG — because the two
-     * directions were never symmetric and the asymmetry always resolved towards deleted.
-     *
-     * Measured against this file, on the folder it was reported from: 59 stale tombstones against a
-     * 1,000-file folder. Undoing them (59 sends, `resurrect`) tripped the floor at 20 and was
-     * REFUSED on every device, every sweep, for ever — "NOT republished — your other devices deleted
-     * these". Applying them (59 trashes) passed the ratio (59 < 1000 kept) and passed a cap of 100,
-     * so it ran SILENTLY, with no verdict and no dialog, on the laptop and then on the tablet. The
-     * guard built to protect the files is precisely what guaranteed the deletions won: the one
-     * device holding the copies was the only one forbidden to act.
-     *
-     * A ratio cannot see this for the same reason it cannot see a restored backup — a mass deletion
-     * arrives beside thousands of unchanged files, and 59 of 1,000 looks like nothing. So the floor
-     * is absolute and it is the same number in both directions: past FLOOR, neither putting files
-     * back nor taking them away happens without a person, and whichever way they answer, the folder
-     * converges instead of oscillating. A refusal still suppresses ONE BUCKET, never the sweep. */
-    if(!c.allowMassTrash && p.trash.length >= FLOOR){
-      out.push({ kind:'massTrash', rule:'floor', n: p.trash.length, keep,
-                 why: 'this sweep would move ' + p.trash.length + ' files to the trash — '
-                    + FLOOR + ' or more needs a deliberate delete, not an unattended sweep' });
-    }
     /* A DEVICE HOLDING NOTHING MAY NOT DELETE THE FOLDER. FATAL — never offered, never confirmable.
      *
      * Every other guard here asks. This one refuses, because there is no answer a person could give
@@ -262,19 +247,12 @@
                     + 'about — that is a folder it has lost sight of, not one you emptied, so it '
                     + 'will not tell your other devices to delete anything' });
     }
-    // The same question pointing outwards: this device telling every other one to delete.
-    if(p.tombstone.length >= FLOOR && p.tombstone.length > keep){
-      out.push({ kind:'massTombstone', rule:'shortList', n: p.tombstone.length, keep,
-                 why: 'this sweep would tell your other devices to delete ' + p.tombstone.length
-                      + ' files and keep ' + keep });
-    }
-    if(!c.allowMassTrash && p.tombstone.length >= FLOOR){
-      out.push({ kind:'massTombstone', rule:'floor', n: p.tombstone.length, keep,
-                 why: 'this sweep would tell your other devices to delete ' + p.tombstone.length
-                    + ' files — ' + FLOOR + ' or more needs a deliberate delete' });
-    }
     // An absolute floor on resurrections: a restored backup arrives beside thousands of ordinary
-    // uploads, so no ratio can see it. The trash rules above are now its mirror image.
+    // uploads, so no ratio can see it. This is the ONE remaining count-based rule, and it survives
+    // for a reason the deletion rules did not: putting files back is not made safe by the store
+    // holding a copy — the files are already safe — so there is nothing here for a direct check to
+    // replace it with, and republishing a whole restored backup over everybody's folders is a real
+    // event somebody should mean.
     const res = p.send.filter(s => s.resurrect).length;
     if(res >= FLOOR) out.push({ kind:'massResurrect', rule:'floor', n: res,
                                 why: 'this sweep would republish ' + res
@@ -331,73 +309,12 @@
     let out = Object.assign({}, plan);
     for(const v of verdicts || []){
       if(!v.fatal && ok.has(v.kind)) continue;
-      if(v.kind === 'massTrash') out.trash = [];
-      else if(v.kind === 'massTombstone') out.tombstone = [];
+      if(v.kind === 'massTombstone') out.tombstone = [];
       else if(v.kind === 'massResurrect') out.send = out.send.filter(s => !s.resurrect);
       else if(v.kind === 'blocked'){
         out.fetch = out.fetch.filter(f => f.path !== v.path);
         out.keepBoth = out.keepBoth.filter(f => f.path !== v.path);
       }
-    }
-    return out;
-  }
-
-  /* WHAT SHOULD HAPPEN TO EACH FILE SITTING IN .pc-trash.
-   *
-   * "Restore from trash" put back everything the folder no longer held, and that is only right for
-   * half of what is in there. The other half is files every device AGREED to delete — restoring one
-   * republishes it to all of them, which is the resurrection the delete guards exist to question,
-   * arrived at by pressing the rescue button. And the trash never emptied itself either, so the
-   * count only ever grew and the button kept offering to put back files somebody deliberately
-   * removed.
-   *
-   * So each row is CLASSIFIED, and the ruling principle is the one the drive check and the store
-   * scan already answer to: **nothing is deleted that cannot be proved redundant**. Three outcomes:
-   *
-   *   restore — the folder's record says this file is alive and this device has lost it.
-   *   purge   — proved redundant: the identical bytes are already back in the folder, or every
-   *             device agreed to delete exactly these bytes.
-   *   keep    — anything else, WITH THE REASON. An unreadable hash, a record that never arrived, a
-   *             deletion record that does not say which bytes it deleted, or bytes that differ from
-   *             both the folder and the record — every one of those is "I could not tell", and this
-   *             is the function where "I could not tell" must never become "throw it away".
-   *
-   * Pure: the caller does the reading and hashing and hands the answers in. `hashes` is keyed by the
-   * trash path AND the destination path; a missing key means the read failed, which is not the same
-   * as a file that is not there — `held` answers that separately. */
-  function trashPlan(o){
-    const rows = (o && o.rows) || [], hashes = (o && o.hashes) || {},
-          held = (o && o.held) || {}, recs = (o && o.state) || {};
-    const out = { restore: [], purge: [], keep: [] };
-    const keep = (r, why) => out.keep.push({ at: r.at, to: r.to, why });
-    for(const r of rows){
-      if(!r || !r.at || !r.to) continue;
-      const h = hashes[r.at];
-      if(!h){ keep(r, 'this device could not read the copy in the trash'); continue; }
-      if(held[r.to]){
-        const now = hashes[r.to];
-        if(!now) keep(r, 'a file is back in its place, but this device could not read it to compare');
-        else if(now === h) out.purge.push({ at: r.at, to: r.to,
-                                            why: 'the identical file is already back in your folder' });
-        else keep(r, 'the file in your folder has different contents — this trash copy is an older version');
-        continue;
-      }
-      const R = recs[r.to];
-      if(!R){ keep(r, 'no record of this path — there is nothing to check it against'); continue; }
-      if(R.deletedAt){
-        if(!R.csum) keep(r, 'the deletion does not record which bytes it deleted');
-        else if(R.csum === h) out.purge.push({ at: r.at, to: r.to,
-                                               why: 'every device agreed to delete exactly these bytes' });
-        else keep(r, 'deleted on your devices, but these are different bytes — an older version');
-        continue;
-      }
-      /* Alive elsewhere, and gone from this folder. Restore ONLY the bytes the record describes: a
-       * copy that differs is an old version, and putting it back would publish it over the current
-       * one — the rescue button minting the conflict. With no csum to compare there is nothing to
-       * contradict, so the record's word stands. */
-      if(!R.csum || R.csum === h) out.restore.push({ at: r.at, to: r.to,
-                                                     why: 'your other devices still have this file' });
-      else keep(r, 'your devices hold a different version — syncing will fetch it; this copy is older');
     }
     return out;
   }
@@ -446,7 +363,7 @@
   const repairExhausted = (v, manual) => !!(v && typeof v === 'object' && v.why === 'checksum'
                                             && (+v.rounds || 0) >= BAD_ROUNDS && !manual);
 
-  const API = { plan, check, apply, versionOf, bump, diskChanged, recordAhead, trashPlan,
+  const API = { plan, check, apply, versionOf, bump, diskChanged, recordAhead,
                 mergeBadFetch, repairExhausted, BAD_ROUNDS, FLOOR, MASS_CAP };
   root.PCSyncState = API;
   if(typeof module !== 'undefined' && module.exports) module.exports = API;

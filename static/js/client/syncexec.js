@@ -457,8 +457,8 @@
      * here. Nothing is lost by being wrong in this direction; the next ordinary sweep still settles
      * a real deletion, and it will ask first. */
     if(o.noDelete){
-      const _sent = plan.tombstone.length, _local = plan.trash.length;
-      plan = Object.assign({}, plan, { tombstone: [], trash: [] });
+      const _sent = plan.tombstone.length, _local = plan.remove.length;
+      plan = Object.assign({}, plan, { tombstone: [], remove: [] });
       if(_sent || _local) report.deletionsHeld = { remote: _sent, local: _local };
     }
     let _reclaim = [];
@@ -526,7 +526,7 @@
           settle: plan.settle.filter(x => !drop.has(x.path)),
           fetch: plan.fetch.filter(x => !drop.has(x.path)),
           keepBoth: plan.keepBoth.filter(x => !drop.has(x.path)),
-          trash: plan.trash.filter(x => !named.has(x.path)),
+          remove: plan.remove.filter(x => !named.has(x.path)),
         });
         if(extra.length) report.resent = extra.length;
         if(unflagged) report.restoring = unflagged;
@@ -678,22 +678,57 @@
     }
 
 
-    // Deletions first: they are a rename into .pc-trash, they cost nothing, and queued behind hours
-    // of transfer they are simply never reached.
+    /* ---- DELETIONS, AND THE ONE RULE THAT MAKES THEM SAFE -------------------------------------
+     *
+     * A deletion applies automatically now — no floor, no ratio, no dialog — and the local copy is
+     * REMOVED rather than moved into a per-device .pc-trash. That is only defensible because of the
+     * line below: **a device never removes its copy until the store is confirmed to hold those
+     * bytes.** The trash is one place, on the server, holding every deleted file for the account
+     * with the address it can be restored from; a wrong deletion therefore costs a restore, never a
+     * file.
+     *
+     * This replaces the floors and ratios rather than joining them, and it is a better guard than
+     * all of them because it is a MEASUREMENT rather than a number standing in for one. "Twenty
+     * files is a lot" is a guess about intent. "The store answered 200 for these exact bytes" is a
+     * fact about whether this delete can be undone. The old guards could not see the difference
+     * between a deliberate bulk delete and a folder about to be lost; this one does not need to.
+     *
+     * THE THREE ANSWERS ARE NOT TWO. The store saying no and the store not answering are different
+     * — a rate limiter, a dead socket, an unmounted disk — and both mean "do not delete", but only
+     * one of them is worth reporting as a problem with the file. Same rule the drive check learned:
+     * "could not ask" is never "missing".
+     *
+     * A tombstone with NO address is the case where the bytes were never stored (a file deleted
+     * before it ever uploaded). There is nothing to confirm and nothing to restore, so the record
+     * is the only copy of the intent and the local file stays. Reported, not silently skipped. */
     let ti = 0;
-    for(const t of plan.trash){
+    for(const t of plan.remove){
       if(stopping()) return await halt(report, journal);
-      step('to trash', t.path, ++ti, plan.trash.length);
+      step('deleting', t.path, ++ti, plan.remove.length);
+      const addr = addrOf(t.entry);
+      if(!addr){
+        (report.keptUnstored = report.keptUnstored || []).push(t.path);
+        continue;
+      }
+      let held = null;
+      try{ held = await io.hasBlob(addr.split(',')[0]); }catch(_){ held = null; }
+      if(held !== true){
+        /* Kept, and said out loud. Silence here is indistinguishable from a deletion that worked,
+         * and the next sweep would propose exactly this again with nobody any wiser. */
+        (report.keptUnconfirmed = report.keptUnconfirmed || []).push(
+          { path: t.path, why: held === false
+              ? 'the store does not have these bytes, so deleting this copy would be losing it'
+              : 'the store could not be asked whether it still has these bytes' });
+        continue;
+      }
       try{
-        const to = await fs.trash(o.id, t.path, now);
+        await fs.remove(o.id, t.path);
         record(t.path, Object.assign({}, t.entry), null);
-        /* NAME THE DEVICE THAT ASKED. A deletion below the floor is applied without a dialog, which
-         * is right — being asked about three files is how people learn to click through the
-         * question about three thousand. But then the only trace is N files in the trash and no way
-         * to tell whether you did it, another device did it, or something went wrong: reported as
+        /* NAME THE DEVICE THAT ASKED. Without it the only trace is that files are gone, and no way
+         * to tell whether you did it, another device did it, or something went wrong — reported as
          * "somehow tablet got 7 files in the trash magically". The record carries the device that
          * published the tombstone and when; both are free to report. */
-        report.trashed.push({ path: t.path, to,
+        report.trashed.push({ path: t.path,
                               by: (t.entry && t.entry.by) || '',
                               at: (t.entry && t.entry.deletedAt) || 0 });
       }catch(e){ failed(report, t.path, 'delete', e); }
@@ -1155,6 +1190,19 @@
    * refuse the repair for ever. */
   const idOf = (e) => (e && (e.sha || (e.chunks && e.chunks.length && e.chunks.join(','))
                              || e.csum)) || '';
+
+  /* WHERE THE BYTES ACTUALLY LIVE — and deliberately NOT idOf, whose last resort is the csum.
+   *
+   * The two are almost the same and the difference is a deleted file. `idOf` identifies a COPY, for
+   * the refusal registry, and falling back to the checksum there is right: it still names the thing
+   * that failed. This asks the STORE a question, and the store has never heard of a csum — a blob is
+   * addressed by the sha of its CIPHERTEXT. Asking about a plaintext hash gets a 404 about a blob
+   * that was never meant to exist, which reads as "the store does not have your file".
+   *
+   * Storage-only, so the answer means what it says. Matches SyncDiff.addressOf on the Android side,
+   * which has always been storage-only — and two halves of one rule that disagree about what they
+   * are asking is how the rule ends up meaning different things on different devices. */
+  const addrOf = (e) => (e && (e.sha || (e.chunks && e.chunks.length && e.chunks.join(',')))) || '';
 
   const strip = (e) => { const c = Object.assign({}, e); delete c.local; return c; };
 

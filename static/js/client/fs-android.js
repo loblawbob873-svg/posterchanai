@@ -174,6 +174,18 @@
      * agreed state — which is what stops the next sweep reading our own download as a local edit. */
     write: (id, rel, bytes, mtime) => P.write({ id, rel, b64: toB64(bytes), when: mtime || 0 }),
     move: (id, from, to) => P.move({ id, from, to }),
+    /* REMOVE, not "move somewhere else". The trash is one place now — on the server, holding every
+     * deleted file for the account — so a second per-device copy of the same idea is exactly what
+     * people experienced as the failure ("phone already has 109 files in trash wtf").
+     *
+     * `purgeTrash` is what does it: it takes named paths and deletes them, which is the operation
+     * this needs, and it is already on the phone. ABSENT on an older APK — and then this returns
+     * false rather than throwing, so the executor keeps the file and says the build cannot do it,
+     * which is the safe direction for a stale build. Never falls back to `trash`: a file quietly
+     * moved into a .pc-trash the new UI does not show is a file the person cannot find. */
+    remove: P.removeFile
+      ? (id, rel) => P.removeFile({ id, rel }).then(r => !!(r && r.removed), () => false)
+      : null,
     trash: (id, rel, when) => P.trash({ id, rel, when: when || 0 }).then(r => r.to),
     /* Download verification, and therefore also resume — syncrun skips BOTH when hashPart is
      * absent, so without these three the phone wrote every download unchecked and re-fetched from

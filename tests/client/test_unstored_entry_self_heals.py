@@ -34,11 +34,11 @@ class UnstoredEntryTests(unittest.TestCase):
             index: { 'clip.mp4': Object.assign({}, entry, { local:{ size:9, mtime:10, csum:'c1' } }) },
             state: { 'clip.mp4': entry } });
           process.stdout.write(JSON.stringify({
-            send: p.send.map(x=>x.path), trash: p.trash.length, why: (p.send[0]||{}).why||'' }));
+            send: p.send.map(x=>x.path), remove: p.remove.length, why: (p.send[0]||{}).why||'' }));
         """ % self.ENTRY)
         self.assertEqual(out["send"], ["clip.mp4"],
                          "the holder settles an address-less record as unchanged for ever")
-        self.assertEqual(out["trash"], 0)
+        self.assertEqual(out["remove"], 0)
         self.assertIn("names no storage", out["why"])
 
     def test_a_device_without_the_file_does_not_pretend_to(self):
@@ -46,10 +46,10 @@ class UnstoredEntryTests(unittest.TestCase):
           const entry = %s;
           const p = E.plan({ device:'laptop', disk:{}, index:{},
             state: { 'clip.mp4': entry } });
-          process.stdout.write(JSON.stringify({ send: p.send.length, trash: p.trash.length }));
+          process.stdout.write(JSON.stringify({ send: p.send.length, remove: p.remove.length }));
         """ % self.ENTRY)
         self.assertEqual(out["send"], 0)
-        self.assertEqual(out["trash"], 0, "an address-less record became a delete order")
+        self.assertEqual(out["remove"], 0, "an address-less record became a delete order")
 
     def test_a_stored_entry_is_untouched_by_the_rule(self):
         out = self._run("""

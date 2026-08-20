@@ -183,6 +183,9 @@ if (isOurPage) {
     writeCommit: (id, rel, mtime) =>
       ipcRenderer.invoke('pc:fs:write-commit', String(id || ''), String(rel || ''), mtime || 0),
     move: (id, from, to) => ipcRenderer.invoke('pc:fs:move', String(id || ''), String(from || ''), String(to || '')),
+    /* The trash is one place now — on the server — so a deletion here really is a deletion. Called
+     * only after the executor has confirmed the store holds the bytes. */
+    remove: (id, rel) => ipcRenderer.invoke('pc:fs:remove', String(id || ''), String(rel || '')),
     trash: (id, rel, when) => ipcRenderer.invoke('pc:fs:trash', String(id || ''), String(rel || ''), when || 0),
     emptyTrash: (id, days) => ipcRenderer.invoke('pc:fs:empty-trash', String(id || ''), days === 0 ? 0 : (days || 30)),
     trashStat: (id) => ipcRenderer.invoke('pc:fs:trash-stat', String(id || '')),

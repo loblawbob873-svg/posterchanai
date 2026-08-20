@@ -606,6 +606,25 @@ public final class SafFs implements SyncIo.Files {
      * tombstone for it, so the next sweep read it as a local edit and RE-UPLOADED it — resurrecting a
      * file another device had deleted, while reporting "1 to trash" both times.
      */
+    /* DELETE A SYNCED FILE OUTRIGHT. The trash is one place now — on the server, holding every
+     * deleted file for the account with the address it can be restored from — so a per-device
+     * .pc-trash is a second copy of the same idea that nobody can see the whole of, and it is what
+     * people actually experienced as the failure ("phone already has 109 files in trash wtf").
+     *
+     * A FAILED DELETE IS A FAILURE, for the same reason a failed trash was: answering "done" about
+     * a file still on disk makes the sweep agree a tombstone for it, and the next sweep reads it as
+     * a local edit and RE-UPLOADS it — resurrecting a file another device deleted while reporting
+     * success both times.
+     *
+     * Already gone is not a failure, though: a sweep that ran twice, or a file removed in a file
+     * manager first, has arrived where it was going. */
+    public void remove(String rel) throws Exception {
+        String docId = resolve(rel, false);
+        if (docId == null) return;
+        if (!deleteDoc(docId)) throw new java.io.IOException("could not delete " + rel);
+        pruneEmptyDirs(rel);
+    }
+
     public String trash(String rel, long when) throws Exception {
         String docId = resolve(rel, false);
         if (docId == null) throw new java.io.IOException("not found: " + rel);
