@@ -585,6 +585,19 @@ is no assertion for — whether an image ships the system widget picker, how man
 has — and the XML report carries only failures. `android_instrumented.sh` dumps logcat into the
 report artifact, so getting a fact off the device no longer means failing a test on purpose.
 
+**The HOME-role leg cannot run on the emulator, and says so rather than failing.** `pm enable
+<component>` prints *nothing* on the API-34 google_apis image — not a success line, not an error —
+the component stays out of the `MAIN`/`HOME` query, and `cmd package set-home-activity` then answers
+*"Error: Failed to set default home"*. The HOME key falls through to
+`com.android.settings/.FallbackHome`, which is the system saying "I have no home app I can use", not
+a launcher that beat ours; standing the stock launcher down changes nothing. Two rounds went into
+that before the check printed enough to answer it. It now asks the question directly — is our
+HomeActivity in the HOME query at all — and reports a **SKIP with its reason** when it is not, which
+is this repo's own rule for a check that could not run. Nothing is lost: the instrumented tests
+exercise the launcher hard on the same boot. Everything below it still runs, started with `am start`
+instead of the key, because the screenshots, the drawer swipe, the tablet resize and the wake-lock
+measurement need the launcher *on screen*, not the role.
+
 **Tablet mode is measured on the same emulator**, with no second AVD and no second boot:
 `android_device_checks.sh` runs `wm size 2560x1600` + `wm density 240` (a 1066dp short side, which
 Android reports as a large screen), presses HOME, screenshots the desktop and the drawer, scans for
