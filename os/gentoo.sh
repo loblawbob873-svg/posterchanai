@@ -649,9 +649,14 @@ posterchanShell() {
 	# Windows are PLACED by PosterChan over its IPC, so the compositor must not lay them out itself.
 	# A tiled window ignores position and size — the desktop would move things and nothing would
 	# happen, silently.
-	for_window [app_id="posterchan"] fullscreen enable, border none
-	for_window [app_id="^(?!posterchan).*"] floating enable
+	# EVERY client floats, then PosterChan is pinned fullscreen. The obvious way to write this — a
+	# negative lookahead excluding posterchan — is not obvious to sway: its criteria go through
+	# pcre2 with its own quoting, and a rule it cannot compile is a CONFIG ERROR at startup, not a
+	# rule that silently does nothing. Two plain rules say the same thing and cannot fail to parse,
+	# and a fullscreen window's floating state is invisible anyway.
+	for_window [app_id=".*"] floating enable
 	for_window [class=".*"] floating enable
+	for_window [app_id="posterchan"] fullscreen enable, border none, floating disable
 
 	# THE COMPOSITOR DRAWS NO CHROME, because PosterChan draws it. Left on, sway's own borders and
 	# title bars would sit on top of the PosterChan desktop — two window styles on one screen, and
@@ -661,14 +666,12 @@ posterchanShell() {
 	# os.js code that moves an HTML window. One style for Notes and for Firefox.
 	default_border none
 	default_floating_border none
-	titlebar_padding 0
 	gaps inner 0
 	gaps outer 0
 
 	# Nothing draws over the desktop uninvited — no compositor wallpaper, no status bar. PosterChan
 	# is the wallpaper and the taskbar.
 	output * bg #000000 solid_color
-	seat * hide_cursor 0
 
 	# The one binding that is not PosterChan's to take: a way out when the shell is not running.
 	bindsym $mod+Shift+e exec swaynag -t warning -m 'Exit PosterChanOS?' -B 'Yes' 'swaymsg exit'
@@ -838,8 +841,13 @@ accounts() {
 	gpasswd -a $USER video
 	gpasswd -a $USER lp
 	gpasswd -a $USER lpadmin
+	# THE INCLUDEDIR HAS TO SURVIVE. Writing /etc/sudoers wholesale drops the line that makes
+	# /etc/sudoers.d readable at all, so every drop-in rule is silently ignored — including the one
+	# that lets the shell provision an account for somebody signing in. Nothing reports it: sudoers.d
+	# files that are never read look exactly like sudoers.d files that are.
 	echo "$USER ALL=(ALL) NOPASSWD: ALL" >/etc/sudoers
 	echo "root ALL=(ALL) ALL" >>/etc/sudoers
+	echo "@includedir /etc/sudoers.d" >>/etc/sudoers
 	echo
 	echo -e "\033[1;33mSetting ROOT Password:\033[0m"
 	echo "root:$ROOT_PASSWORD" | chpasswd

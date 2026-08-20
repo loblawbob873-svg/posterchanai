@@ -822,6 +822,94 @@ ipcMain.handle('pc:tor:restart', async (e) => {
  * did not come from our own page.
  */
 const fsGuard = (e) => { if (!fromOurPage(e)) throw new Error('denied'); };
+
+/* ── THE COMPOSITOR AND THE NETWORK ────────────────────────────────────────────────────────────
+ *
+ * PosterChanOS runs PosterChan as the SHELL of a Wayland compositor: sway owns the screen, a
+ * browser and a Steam game are ordinary clients, and this app decides where they go. Both halves
+ * are tested modules (desktop/wm.js, desktop/net.js); this is the only place they reach the page.
+ *
+ * Same guard as the filesystem, for the same reason and more of it: `launch` starts a PROCESS and
+ * `connect` hands a wifi password to NetworkManager. Neither may be reachable from any page but our
+ * own. And both are ABSENT rather than broken off a compositor — `available()` answers no when
+ * SWAYSOCK is unset, so a desktop install that is not PosterChanOS simply has no window manager
+ * rather than a set of calls that throw. */
+let _wm = null;
+function wm() {
+  if (!_wm) { const { WM } = require('./wm.js'); _wm = new WM(); }
+  return _wm;
+}
+const net = require('./net.js');
+
+ipcMain.handle('pc:wm:available', (e) => { fsGuard(e); return wm().available(); });
+ipcMain.handle('pc:wm:windows', (e) => { fsGuard(e); return wm().windows(); });
+ipcMain.handle('pc:wm:focus', (e, id) => { fsGuard(e); return wm().focus(Number(id)); });
+ipcMain.handle('pc:wm:close', (e, id) => { fsGuard(e); return wm().close(Number(id)); });
+ipcMain.handle('pc:wm:place', (e, id, x, y, w, h) => {
+  fsGuard(e); return wm().place(Number(id), Number(x), Number(y), Number(w), Number(h));
+});
+ipcMain.handle('pc:wm:fullscreen', (e, id, on) => { fsGuard(e); return wm().fullscreen(Number(id), !!on); });
+/* Launch takes an ARGV ARRAY, never a command string. A string would have to be handed to a shell
+ * to be useful, and then a file name with a space in it is an injection. */
+ipcMain.handle('pc:wm:launch', async (e, argv, opts) => {
+  fsGuard(e);
+  const list = (Array.isArray(argv) ? argv : []).map(String).filter(Boolean);
+  if (!list.length) throw new Error('nothing to launch');
+  const started = wm().launch(list, opts || {});
+  /* The window is matched by PID and reported back, so the desktop can place what it just opened
+   * rather than guessing which of several windows appeared. Null when it never shows — an app that
+   * failed to start must not be reported as launched. */
+  const found = await wm().waitForWindow(started.pid, (opts && opts.waitMs) || 15000);
+  return { pid: started.pid, window: found };
+});
+/* Events, forwarded to the page. A shell that polls for its own window list is a shell that is
+ * always slightly wrong about what is on screen. */
+ipcMain.handle('pc:wm:subscribe', async (e) => {
+  fsGuard(e);
+  const w = wm();
+  if (w.__forwarding) return true;
+  w.__forwarding = true;
+  await w.subscribe(['window', 'workspace']);
+  for (const name of ['window', 'workspace']) {
+    w.on(name, (ev) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        try { win.webContents.send('pc:wm:event', { name, change: ev && ev.change }); } catch (_) {}
+      }
+    });
+  }
+  return true;
+});
+
+ipcMain.handle('pc:net:available', (e) => { fsGuard(e); return net.available(); });
+ipcMain.handle('pc:net:status', (e) => { fsGuard(e); return net.status(); });
+ipcMain.handle('pc:net:wifi', (e, rescan) => { fsGuard(e); return net.wifi(!!rescan); });
+ipcMain.handle('pc:net:connect', (e, ssid, password) => {
+  fsGuard(e); return net.connect(String(ssid || ''), password ? String(password) : '');
+});
+ipcMain.handle('pc:net:forget', (e, ssid) => { fsGuard(e); return net.forget(String(ssid || '')); });
+ipcMain.handle('pc:net:radio', (e, on) => { fsGuard(e); return net.radio(!!on); });
+
+/* Provisioning a Unix account for whoever signed in — the one privileged thing the shell asks for,
+ * and it is a fixed command with a validated argument (the script refuses anything that is not a
+ * well-formed npub, because it runs as root and its input comes from a login screen). */
+ipcMain.handle('pc:os:provision', (e, npub) => {
+  fsGuard(e);
+  const id = String(npub || '');
+  if (!/^npub1[023456789acdefghjklmnpqrstuvwxyz]{58}$/.test(id)) throw new Error('not an npub');
+  return new Promise((resolve) => {
+    const { execFile } = require('child_process');
+    execFile('sudo', ['-n', '/usr/local/bin/pc-provision-user', id], { timeout: 30000 },
+      (err, stdout, stderr) => {
+        if (err) return resolve({ ok: false, why: String(stderr || err.message || err).trim() });
+        const out = {};
+        for (const line of String(stdout).split('\n')) {
+          const i = line.indexOf('=');
+          if (i > 0) out[line.slice(0, i)] = line.slice(i + 1);
+        }
+        resolve(Object.assign({ ok: true }, out));
+      });
+  });
+});
 ipcMain.handle('pc:fs:list', (e) => { fsGuard(e); return fsbridge.list(); });
 ipcMain.handle('pc:fs:pick', async (e) => {
   fsGuard(e);

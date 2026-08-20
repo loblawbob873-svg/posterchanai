@@ -124,6 +124,15 @@ class PosterChanOSProfile(unittest.TestCase):
                             for l in rule),
                         f"the sudoers rule is broader than one command: {rule}")
 
+    def test_sudoers_drop_ins_are_actually_read(self):
+        """`accounts()` writes /etc/sudoers wholesale, which drops the line that makes
+        /etc/sudoers.d readable at all — so every drop-in rule is silently ignored, including the one
+        that lets the shell provision an account. Nothing reports it: a sudoers.d file that is never
+        read looks exactly like one that is."""
+        acc = self._fn("accounts")
+        self.assertIn("includedir /etc/sudoers.d", acc,
+                      "/etc/sudoers is rewritten without its includedir — sudoers.d is dead")
+
     def test_no_html_engine_can_be_built_from_source(self):
         """webkit-gtk and qtwebengine are among the longest builds in the tree, and the way you find
         out something pulled one is that an install which looked nearly finished sits on a single

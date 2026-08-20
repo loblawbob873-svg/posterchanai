@@ -77,6 +77,50 @@ if (isOurPage) {
    *
    * read() hands back a Uint8Array rather than the Buffer that crosses IPC: Buffer is a Node type,
    * and leaking one into the page gives it a prototype full of things the page should not have. */
+  /* The compositor, the network, and the one privileged call.
+   *
+   * PosterChanOS runs this app as the SHELL of a Wayland compositor: sway owns the screen, a
+   * browser and a Steam game are ordinary clients, and the page decides where they go. Absent
+   * rather than broken off a compositor — `available()` answers no when SWAYSOCK is unset, so a
+   * desktop install that is not PosterChanOS has no window manager rather than calls that throw. */
+  contextBridge.exposeInMainWorld('pcWM', {
+    available: () => ipcRenderer.invoke('pc:wm:available'),
+    windows: () => ipcRenderer.invoke('pc:wm:windows'),
+    focus: (id) => ipcRenderer.invoke('pc:wm:focus', Number(id)),
+    close: (id) => ipcRenderer.invoke('pc:wm:close', Number(id)),
+    place: (id, x, y, w, h) => ipcRenderer.invoke('pc:wm:place', Number(id), Number(x), Number(y),
+                                                  Number(w), Number(h)),
+    fullscreen: (id, on) => ipcRenderer.invoke('pc:wm:fullscreen', Number(id), !!on),
+    /* An ARGV ARRAY, never a command string — a string would have to reach a shell to be useful,
+     * and then a file name with a space in it is an injection. */
+    launch: (argv, opts) => ipcRenderer.invoke('pc:wm:launch', (argv || []).map(String), opts || {}),
+    subscribe: () => ipcRenderer.invoke('pc:wm:subscribe'),
+    /* Returns an unsubscribe function: a listener the page cannot remove leaks a closure per view
+     * change, and the desktop redraws its taskbar on every window event. */
+    onEvent: (fn) => {
+      const h = (_e, ev) => { try { fn(ev); } catch (_) {} };
+      ipcRenderer.on('pc:wm:event', h);
+      return () => ipcRenderer.removeListener('pc:wm:event', h);
+    },
+  });
+
+  contextBridge.exposeInMainWorld('pcNet', {
+    available: () => ipcRenderer.invoke('pc:net:available'),
+    status: () => ipcRenderer.invoke('pc:net:status'),
+    wifi: (rescan) => ipcRenderer.invoke('pc:net:wifi', !!rescan),
+    connect: (ssid, password) => ipcRenderer.invoke('pc:net:connect', String(ssid || ''),
+                                                    password == null ? '' : String(password)),
+    forget: (ssid) => ipcRenderer.invoke('pc:net:forget', String(ssid || '')),
+    radio: (on) => ipcRenderer.invoke('pc:net:radio', !!on),
+  });
+
+  contextBridge.exposeInMainWorld('pcOS', {
+    /* A Unix account and a private home for whoever just signed in. The main process re-checks the
+     * npub before it runs anything as root, and so does the script — the page is not trusted to
+     * have validated it. */
+    provision: (npub) => ipcRenderer.invoke('pc:os:provision', String(npub || '')),
+  });
+
   contextBridge.exposeInMainWorld('pcFs', {
     list: () => ipcRenderer.invoke('pc:fs:list'),
     pick: () => ipcRenderer.invoke('pc:fs:pick'),
