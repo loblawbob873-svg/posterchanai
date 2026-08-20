@@ -71,6 +71,15 @@ widget's own label, each row showing its size in cells. **An empty list says "no
 offers a widget"** — a different sentence from "the picker is missing", and telling those apart is
 the difference between this round of the bug and the last three.
 
+**"I want the calendar widget and weather widget!" was a report about this list, not about missing
+features.** Calendar and Music were already installed and declared, both sitting in the picker,
+scattered between Photos and System UI — and both called *"PosterChan"*, because neither receiver
+declared a label. Nobody could pick them out, so nobody believed they existed. The list is grouped by
+app with a heading per group and **ours come first**: this is PosterChan's own launcher and
+PosterChan's widgets were the ones nobody could find. Everything after them stays alphabetical, so
+nothing is hidden by the choice, and a heading is not selectable (`areAllItemsEnabled`/`isEnabled`)
+or tapping the word "Clock" silently adds whatever row happened to be under it.
+
 **A name is not enough to choose by** — *"widgets UI is terrible now. You have no idea which widget
 you are adding."* Each row draws the real thing: `previewImage`, then **`previewLayout`** (API 31+,
 which is what modern providers ship *instead* and which `loadPreviewImage` does not render — it is a
