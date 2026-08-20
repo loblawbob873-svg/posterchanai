@@ -870,7 +870,24 @@ ipcMain.handle('pc:wm:fullscreen', (e, id, on) => { fsGuard(e); return wm().full
  * to be useful, and then a file name with a space in it is an injection. */
 ipcMain.handle('pc:wm:launch', async (e, argv, opts) => {
   fsGuard(e);
-  const list = (Array.isArray(argv) ? argv : []).map(String).filter(Boolean);
+  /* CANDIDATES ARE RESOLVED HERE, because only this side can look at the filesystem. A launcher in
+   * the page cannot know that Gentoo installs firefox as /usr/bin/firefox-bin and not
+   * /usr/bin/firefox — and a hardcoded path that does not exist starts nothing, silently, which is
+   * indistinguishable from a broken launcher. `candidates` is a list of whole command lines; the
+   * first whose program exists wins. */
+  let list;
+  if (opts && opts.candidates && Array.isArray(argv)) {
+    const tried = [];
+    for (const cand of argv) {
+      const av = (Array.isArray(cand) ? cand : [cand]).map(String).filter(Boolean);
+      if (!av.length) continue;
+      tried.push(av[0]);
+      try { fs.accessSync(av[0], fs.constants.X_OK); list = av; break; } catch (_) {}
+    }
+    if (!list) return { pid: null, window: null, why: 'not installed (looked for ' + tried.join(', ') + ')' };
+  } else {
+    list = (Array.isArray(argv) ? argv : []).map(String).filter(Boolean);
+  }
   if (!list.length) throw new Error('nothing to launch');
   const started = wm().launch(list, opts || {});
   /* The window is matched by PID and reported back, so the desktop can place what it just opened

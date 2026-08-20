@@ -4676,6 +4676,14 @@
      * Deliberately a RETURN and not a `settings().set(KEY,false)`: the flag is shared with the tab
      * that opened this window, so turning it off here would exit desktop mode over there too. */
     try{ if(new URLSearchParams(location.search).get('popout') === '1') return; }catch(_){}
+    /* ON POSTERCHANOS THE DESKTOP IS NOT A PREFERENCE. This process is the shell of a compositor —
+     * there is no "windowed mode" to go back to and nothing else on the screen — so the remembered
+     * toggle is not consulted and neither is the size check: the machine is whatever size it is.
+     * Without this the OS boots to the ordinary single-column client, with no launcher, no taskbar
+     * and no way to start a browser, which is an operating system that can run one program. */
+    try{
+      if(window.PCOSShell && PCOSShell.available()){ enter(); return; }
+    }catch(_){}
     try{ if(settings().get(KEY, false) && fits()) enter(); }catch(_){}
   }
 

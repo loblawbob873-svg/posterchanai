@@ -66,7 +66,11 @@ class Render(unittest.TestCase):
     WM = """{ pcWM: {
         windows: async () => globalThis.__wins,
         focus: async (id) => { globalThis.__focus = id; return true; },
-        launch: async (argv) => { globalThis.__argv = argv;
+        launch: async (cands, opts) => {
+            /* The main process resolves CANDIDATE command lines against the filesystem — only it
+             * can. Here the first is taken, which is what a machine with the usual paths does. */
+            const argv = (opts && opts.candidates) ? cands[0] : cands;
+            globalThis.__argv = argv;
             globalThis.__wins = globalThis.__wins.concat([{id: 99, app: argv[0].split('/').pop(),
                                                            title: 'New window'}]);
             return { pid: 4, window: { id: 99 } }; },

@@ -706,13 +706,23 @@ posterchanShell() {
 	# brightnessctl is the usual answer and is NOT IN THE GENTOO TREE, so this is the answer: hand
 	# the file to the `video` group, which pc-provision-user already puts every account in.
 	mkdir -p /etc/udev/rules.d
+	# RUN+="chgrp/chmod", not GROUP=/MODE=. Those assignments apply to the DEVICE NODE in /dev, and
+	# a backlight has none — what needs relaxing is a sysfs ATTRIBUTE file, /sys/class/backlight/*/
+	# brightness, which udev will only touch by running something. Tried the tidy-looking way first
+	# and the file stayed root:root 0644 with the rule loaded and matching.
 	cat >/etc/udev/rules.d/90-posterchan-backlight.rules <<-'UDEV'
 	ACTION=="add", SUBSYSTEM=="backlight", RUN+="/bin/chgrp video /sys/class/backlight/%k/brightness"
 	ACTION=="add", SUBSYSTEM=="backlight", RUN+="/bin/chmod g+w /sys/class/backlight/%k/brightness"
-	# Keyboard backlights are the same problem with a different subsystem.
+	# Keyboard backlights are the same problem in a different subsystem.
 	ACTION=="add", SUBSYSTEM=="leds", KERNEL=="*kbd_backlight", RUN+="/bin/chgrp video /sys/class/leds/%k/brightness"
 	ACTION=="add", SUBSYSTEM=="leds", KERNEL=="*kbd_backlight", RUN+="/bin/chmod g+w /sys/class/leds/%k/brightness"
 	UDEV
+	# An `add` rule does not fire for hardware that is already present, so a rule installed after
+	# boot changes nothing until the next one. Triggered explicitly, or the first session after an
+	# install has a brightness key that does nothing and no way to tell why.
+	udevadm control --reload >/dev/null 2>&1
+	udevadm trigger --action=add --subsystem-match=backlight >/dev/null 2>&1
+	udevadm trigger --action=add --subsystem-match=leds >/dev/null 2>&1
 
 	mkdir -p /etc/sway
 	cat >/etc/sway/config <<-'SWAY'
@@ -734,11 +744,28 @@ posterchanShell() {
 	# Windows are PLACED by PosterChan over its IPC, so the compositor must not lay them out itself.
 	# A tiled window ignores position and size — the desktop would move things and nothing would
 	# happen, silently.
-	# NOTHING IS FLOATED BY THE COMPOSITOR. The shell is the first and usually only client, and a
-	# single window fills its workspace — so the desktop is full-screen without anything having to
-	# say so. Floating a window is PosterChan's decision, made when it PLACES one: wm.js `place()`
-	# sends `floating enable` and then the geometry. Catch-all float rules here fought that and lost
-	# in a way that was hard to see, for the WM_CLASS reason above.
+	# EVERYTHING FLOATS ABOVE THE SHELL, AND THE SHELL DOES NOT.
+	#
+	# Without these rules every app TILES — and tiling against a window that is fullscreen gives the
+	# newcomer zero space: Firefox launches, appears in the tree, and is 0x0. Nothing on screen, no
+	# error, a browser that "does not run".
+	#
+	# The exclusion is done by floating everything and then un-floating the shell, rather than by a
+	# negative lookahead, which sway's pcre2 criteria will not compile. It is ordered: later rules
+	# win. This failed once before, when the shell arrived through XWayland and set WM_CLASS AFTER
+	# mapping — the rules were evaluated against a window with no class and none matched. It comes up
+	# as a native Wayland client now (ELECTRON_OZONE_PLATFORM_HINT in the wrapper), so `app_id` is
+	# there at map time; the class line stays as the belt to that braces, and pc-shell-start forcing
+	# fullscreen is the third.
+	for_window [app_id=".*"] floating enable
+	for_window [class=".*"] floating enable
+	for_window [app_id="posterchan-desktop"] floating disable, border none
+	for_window [class="posterchan-desktop"] floating disable, border none
+
+	# A floating window with no geometry of its own gets something usable rather than whatever the
+	# client asked for, which for a browser is often a 200x200 stub until it finishes starting.
+	for_window [app_id="firefox"] resize set 1400 900, move position center
+	for_window [class="firefox"] resize set 1400 900, move position center
 
 	# THE COMPOSITOR DRAWS NO CHROME, because PosterChan draws it. Left on, sway's own borders and
 	# title bars would sit on top of the PosterChan desktop — two window styles on one screen, and

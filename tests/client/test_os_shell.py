@@ -76,7 +76,9 @@ class Shell(unittest.TestCase):
         bridges = """{ pcWM: {
             windows: async () => [],
             focus: async () => true,
-            launch: async (argv) => { globalThis.__argv = argv; return {pid: 5, window: {id: 11}}; },
+            launch: async (cands, opts) => {
+                globalThis.__argv = (opts && opts.candidates) ? cands[0] : cands;
+                return {pid: 5, window: {id: 11}}; },
         } }"""
         out = self.run_js("out.r = await S.launch('terminal'); out.argv = globalThis.__argv;", bridges)
         self.assertEqual(out["r"]["window"], 11)

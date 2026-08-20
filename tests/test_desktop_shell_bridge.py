@@ -49,6 +49,15 @@ class Bridge(unittest.TestCase):
                 missing.append(name)
         self.assertEqual(missing, [], f"handlers that do not check the sender: {missing}")
 
+    def test_candidate_paths_are_resolved_against_the_filesystem(self):
+        """Only this side can look. Gentoo installs firefox as /usr/bin/firefox-bin, not
+        /usr/bin/firefox — a launcher in the page cannot know that, and a hardcoded path that does
+        not exist starts nothing, silently, which is indistinguishable from a broken launcher."""
+        i = self.main.index("'pc:wm:launch'")
+        body = self.main[i:i + 1400]
+        self.assertIn("accessSync", body, "candidates are not checked for existence")
+        self.assertIn("not installed", body, "a program that is absent is not reported as absent")
+
     def test_launch_takes_an_argv_array_not_a_command_string(self):
         """A string would have to reach a shell to be useful, and then a file name with a space in
         it is an injection."""
@@ -75,7 +84,7 @@ class Bridge(unittest.TestCase):
 
     def test_a_launch_that_never_appears_is_not_reported_as_launched(self):
         i = self.main.index("'pc:wm:launch'")
-        body = self.main[i:i + 900]
+        body = self.main[i:i + 2200]
         self.assertIn("waitForWindow", body)
 
     def test_the_event_listener_can_be_removed(self):

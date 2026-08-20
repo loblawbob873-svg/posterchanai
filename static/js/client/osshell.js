@@ -30,10 +30,23 @@
    * "Browser" opens firefox, and a launcher that looks for a window named "browser" never finds the
    * one it just started. It is also why this is a field rather than the id: the two are different
    * facts and conflating them makes the already-open check silently never fire. */
+  /* CANDIDATE COMMAND LINES, NOT ONE PATH. Gentoo installs www-client/firefox-bin as
+   * `/usr/bin/firefox-bin` and `/opt/firefox/firefox`, and NOT as `/usr/bin/firefox` — so a
+   * launcher naming the obvious path starts nothing, silently, on the one machine it was written
+   * for. Each candidate is a WHOLE argv rather than a path plus shared arguments, because Steam is
+   * either a binary or `flatpak run com.valvesoftware.Steam` and those do not share a shape. The
+   * main process takes the first whose program exists, and says so when none does — which is the
+   * honest answer for Steam, an optional install on this profile.
+   *
+   * `match` is what the app's WINDOW is called, which is a different fact again: "Browser" opens
+   * firefox, and looking for a window named "browser" never finds the one it just started. */
   const APPS = [
-    { id: 'browser',  name: 'Browser',  match: 'firefox', argv: ['/usr/bin/firefox'],   icon: 'globe' },
-    { id: 'terminal', name: 'Terminal', match: 'foot',    argv: ['/usr/bin/foot'],      icon: 'terminal' },
-    { id: 'steam',    name: 'Steam',    match: 'steam',   argv: ['/usr/bin/steam'],     icon: 'gamepad' },
+    { id: 'browser',  name: 'Browser',  match: 'firefox', icon: 'globe', candidates: [
+        ['/usr/bin/firefox'], ['/usr/bin/firefox-bin'], ['/opt/firefox/firefox'] ] },
+    { id: 'terminal', name: 'Terminal', match: 'foot', icon: 'terminal', candidates: [
+        ['/usr/bin/foot'], ['/usr/bin/footclient'] ] },
+    { id: 'steam',    name: 'Steam',    match: 'steam', icon: 'gamepad', candidates: [
+        ['/usr/bin/steam'], ['/usr/bin/flatpak', 'run', 'com.valvesoftware.Steam'] ] },
   ];
 
   /* WHICH WINDOWS BELONG ON A TASKBAR. Not the shell's own window — it is the desktop, and a
@@ -75,7 +88,7 @@
     let open = null;
     try{ open = existingWindow(await wm.windows(), app); }catch(_){}
     if(open){ await wm.focus(open.id); return { focused: open.id }; }
-    const r = await wm.launch(app.argv, { waitMs: 20000 });
+    const r = await wm.launch(app.candidates, { waitMs: 20000, candidates: true });
     /* A launch that produced no window is REPORTED, not swallowed. The most common cause is the
      * program not being installed — Steam is optional here — and "nothing happened" is the least
      * useful thing a launcher can say. */
