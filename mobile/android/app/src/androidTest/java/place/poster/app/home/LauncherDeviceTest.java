@@ -272,6 +272,60 @@ public class LauncherDeviceTest {
     }
 
     @Test
+    public void onATabletTheGridIsWiderAndTheDockIsLonger() throws Exception {
+        // "the launcher needs to work on tablet mode too", measured on the device rather than in
+        // arithmetic. `wm size` + `wm density` reshape the running system: 2560x1600 at 240dpi has a
+        // short side of 1066dp, which Android reports as a large screen, and the launcher takes the
+        // tablet path through the same configuration change a real rotation delivers.
+        //
+        // IT LIVES HERE RATHER THAN IN android_device_checks.sh because that script cannot enable
+        // the home component on this image at all (`pm enable` prints nothing, `set-home-activity`
+        // refuses), so its whole launcher section skips. An instrumented test enables it from INSIDE
+        // the app, which does work — so this is the only place the tablet layout can be exercised on
+        // a device at all.
+        HomeRoles.enableLauncherComponent(ctx, true);
+        // Phone first, as a control: the same code on the same boot must answer 4.
+        int phoneCols = readCols();
+        assertEquals("the phone grid is not four columns", 4, phoneCols);
+        try {
+            shell("wm size 2560x1600");
+            shell("wm density 240");
+            Thread.sleep(2500);
+            int sw = ctx.getResources().getConfiguration().smallestScreenWidthDp;
+            assertTrue("the resize did not take: smallestScreenWidthDp is still " + sw, sw >= 600);
+            int cols = readCols();
+            assertTrue("a tablet still draws a phone's grid: " + cols + " columns", cols > 4);
+            assertEquals("HomeMetrics and the live configuration disagree",
+                    HomeMetrics.deskCols(sw), cols);
+            assertTrue("the dock is still a phone's five slots",
+                    HomeMetrics.dockMax(ctx.getResources().getConfiguration().screenWidthDp, sw) > 5);
+        } finally {
+            // UNCONDITIONALLY. A device left resized poisons every test after it on this boot.
+            shell("wm size reset");
+            shell("wm density reset");
+            Thread.sleep(2500);
+        }
+        assertEquals("the phone grid did not come back", 4, readCols());
+    }
+
+    /** Launch the home screen and read the column count it actually laid out with. */
+    private int readCols() {
+        final int[] out = new int[]{ -1 };
+        ActivityScenario<HomeActivity> s = ActivityScenario.launch(HomeActivity.class);
+        try {
+            s.onActivity(a -> {
+                android.view.ViewGroup host =
+                        (android.view.ViewGroup) a.findViewById(place.poster.app.R.id.pc_home_desk);
+                DeskView d = (DeskView) host.getChildAt(0);
+                out[0] = d.cols();
+            });
+        } finally {
+            s.close();
+        }
+        return out[0];
+    }
+
+    @Test
     public void theHomeScreenHoldsNoWakeLockWhenItIsNotOnScreen() throws Exception {
         // BATTERY, MEASURED RATHER THAN INTENDED. With the HOME role this process is resident for
         // the life of the battery, so a wake lock taken here is a wake lock held for ever. Read off
