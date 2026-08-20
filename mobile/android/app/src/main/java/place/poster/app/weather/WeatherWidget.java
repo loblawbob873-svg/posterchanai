@@ -7,6 +7,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
+import android.os.Bundle;
 import android.view.View;
 import android.widget.RemoteViews;
 
@@ -41,7 +42,7 @@ public class WeatherWidget extends AppWidgetProvider {
 
     @Override
     public void onUpdate(Context ctx, AppWidgetManager mgr, int[] ids) {
-        for (int id : ids) mgr.updateAppWidget(id, build(ctx));
+        for (int id : ids) mgr.updateAppWidget(id, build(ctx, mgr, id));
         refreshInBackground(ctx);
     }
 
@@ -63,7 +64,7 @@ public class WeatherWidget extends AppWidgetProvider {
             ComponentName me = new ComponentName(ctx, WeatherWidget.class);
             int[] ids = mgr.getAppWidgetIds(me);
             if (ids == null) return;
-            for (int id : ids) mgr.updateAppWidget(id, build(ctx));
+            for (int id : ids) mgr.updateAppWidget(id, build(ctx, mgr, id));
         } catch (Throwable ignored) { }
     }
 
@@ -91,8 +92,58 @@ public class WeatherWidget extends AppWidgetProvider {
         } catch (Throwable ignored) { }
     }
 
-    static RemoteViews build(Context ctx) {
+    /**
+     * ALSO CALLED WHEN A WIDGET IS RESIZED, so every instance is drawn for the box it is actually in.
+     * Kept for callers that have no manager or id to hand.
+     */
+    static RemoteViews build(Context ctx) { return build(ctx, null, 0); }
+
+    @Override
+    public void onAppWidgetOptionsChanged(Context ctx, AppWidgetManager mgr, int id, Bundle opts) {
+        super.onAppWidgetOptionsChanged(ctx, mgr, id, opts);
+        // A RESIZE IS A REDRAW. Without this the widget keeps whatever proportions it was built with
+        // and only catches up on the next hourly tick — so dragging it taller leaves the bands this
+        // whole change is about, for an hour.
+        try { mgr.updateAppWidget(id, build(ctx, mgr, id)); } catch (Throwable ignored) { }
+    }
+
+    /**
+     * THE CARD FILLS ITS BOX; THE CONTENT DID NOT.
+     *
+     * "weather widget still has so much wasted space on top and bottom." The root is match_parent
+     * with `gravity="center_vertical"`, so the background covers whatever the launcher gives it and
+     * a fixed 46dp icon beside four short lines sits in the middle of it. At one cell that is snug;
+     * at two it is a small blob with a band of empty card above and below, and nothing in a static
+     * layout can know which it is — RemoteViews are inflated in the launcher's process with no
+     * measure pass we ever see.
+     *
+     * So the size is ASKED FOR. `OPTION_APPWIDGET_MIN_HEIGHT` is what the launcher told the provider
+     * (HomeActivity.onResized sets it, in dp), and the icon and the padding are scaled to it: a tall
+     * widget gets a big glyph and looks deliberate instead of half-empty, a short one is unchanged.
+     * `setViewLayoutHeight` is API 31, so below that it simply keeps the layout's own 46dp — an old
+     * phone gets exactly what it got before rather than something broken.
+     */
+    static RemoteViews build(Context ctx, AppWidgetManager mgr, int id) {
         RemoteViews v = new RemoteViews(ctx.getPackageName(), R.layout.widget_weather);
+        int boxDp = 0;
+        try {
+            if (mgr != null && id != 0) {
+                Bundle o = mgr.getAppWidgetOptions(id);
+                if (o != null) boxDp = o.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 0);
+            }
+        } catch (Throwable ignored) { }
+        if (boxDp > 0 && Build.VERSION.SDK_INT >= 31) {
+            // The card's own padding stays proportional so the glyph never touches the edge, and the
+            // icon takes what is left. Clamped at both ends: below ~40dp it is unreadable, and past
+            // ~120dp it stops looking like an icon and starts looking like a mistake.
+            int pad = boxDp >= 150 ? 14 : 10;
+            int side = boxDp - (pad * 2) - 6;
+            side = side < 40 ? 40 : (side > 120 ? 120 : side);
+            v.setViewLayoutWidth(R.id.ww_icon, side, android.util.TypedValue.COMPLEX_UNIT_DIP);
+            v.setViewLayoutHeight(R.id.ww_icon, side, android.util.TypedValue.COMPLEX_UNIT_DIP);
+            int padPx = (int) (pad * ctx.getResources().getDisplayMetrics().density);
+            v.setViewPadding(R.id.ww_body, padPx, padPx, padPx, padPx);
+        }
         boolean place = WeatherStore.hasPlace(ctx), server = WeatherStore.hasServer(ctx);
         Double temp = WeatherStore.temp(ctx);
         long at = WeatherStore.at(ctx);

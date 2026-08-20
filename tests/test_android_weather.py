@@ -216,3 +216,67 @@ class WeatherRules(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheCardFillsItsBox(unittest.TestCase):
+    """"weather widget still has so much wasted space on top and bottom!"
+
+    The root is `match_parent` with `gravity="center_vertical"`, so the background covers whatever
+    the launcher gives it while a fixed 46dp icon beside four short lines sits in the middle. At one
+    cell that is snug; at two it is a small blob with a band of empty card above and below — and
+    nothing in a static layout can tell the two apart, because RemoteViews are inflated in the
+    LAUNCHER's process and there is no measure pass this app ever sees.
+
+    So the size is asked for rather than assumed. `OPTION_APPWIDGET_MIN_HEIGHT` is what the launcher
+    told the provider (HomeActivity.onResized writes it, in dp), and the icon and padding scale to
+    it. Two things have to be true for that to work at all, and both are easy to lose in a later
+    edit: the builder has to RECEIVE an id (a RemoteViews built once for every instance cannot know
+    any instance's size), and a RESIZE has to redraw (otherwise dragging it taller leaves the bands
+    until the next hourly tick).
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        # ROOT is a plain string in this file, not a Path.
+        cls.src = open(os.path.join(
+            ROOT, "mobile", "android", "app", "src", "main", "java", "place", "poster", "app",
+            "weather", "WeatherWidget.java")).read()
+
+    def test_the_builder_is_told_which_widget_it_is_drawing(self):
+        self.assertIn("build(Context ctx, AppWidgetManager mgr, int id)", self.src,
+                      "one RemoteViews is built for every instance, so no instance's size is known")
+        self.assertIn("OPTION_APPWIDGET_MIN_HEIGHT", self.src,
+                      "the widget never asks how tall its box is")
+
+    def test_every_redraw_passes_the_id_through(self):
+        """A single `build(ctx)` left anywhere in an update loop is an instance drawn at the default
+        proportions while its neighbours scale — which reads as the bug coming back at random."""
+        import re as _re
+        loops = [l.strip() for l in self.src.splitlines()
+                 if "updateAppWidget(" in l]
+        self.assertTrue(loops, "nothing updates the widget")
+        for l in loops:
+            with self.subTest(line=l):
+                self.assertIn("build(ctx, mgr, id)", l,
+                              "this redraw cannot know the widget's size: %s" % l)
+
+    def test_a_resize_redraws_at_once(self):
+        self.assertIn("onAppWidgetOptionsChanged", self.src,
+                      "dragging the widget taller leaves it drawn for its old box until the next "
+                      "hourly tick")
+
+    def test_it_degrades_rather_than_breaking_on_older_android(self):
+        """`setViewLayoutHeight` is API 31. Below that the layout's own 46dp must stand — an old
+        phone should get exactly what it got before, not something half-applied."""
+        self.assertIn("Build.VERSION.SDK_INT >= 31", self.src)
+        i = self.src.index("Build.VERSION.SDK_INT >= 31")
+        self.assertIn("setViewLayoutHeight", self.src[i:i + 900],
+                      "the API-31 guard does not actually cover the API-31 call")
+
+    def test_the_icon_is_clamped_at_both_ends(self):
+        """Unclamped, a tall widget grows a glyph the size of the card and a short one shrinks it to
+        nothing — both worse than the fixed size this replaces."""
+        i = self.src.index("setViewLayoutWidth")
+        before = self.src[max(0, i - 600):i]
+        self.assertIn("< 40", before)
+        self.assertIn("> 120", before)

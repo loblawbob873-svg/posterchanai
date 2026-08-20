@@ -13,7 +13,7 @@
     android:orientation="horizontal"
     android:gravity="center_vertical"
     android:background="@drawable/widget_bg"
-    android:padding="12dp">
+    android:padding="10dp">
 
     <ImageView
         android:id="@+id/ww_icon"
