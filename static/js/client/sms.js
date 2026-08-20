@@ -164,7 +164,9 @@
           + ' (isSmsCapable=' + d.capability.isSmsCapable
           + ' feature.telephony=' + d.capability.featureTelephony
           + ' feature.messaging=' + d.capability.featureMessaging
-          + ' sdk=' + d.capability.sdk + ')'
+          + ' sdk=' + d.capability.sdk
+          + ' roleAvailable=' + d.capability.roleAvailable
+          + ' canBeSms=' + d.capability.canBeSms + ')'
         : 'not reported by this build'),
       'last read: ' + (d.refused ? 'refused' : (d.read >= 0 ? d.read + ' found' : 'not attempted')),
       missing.length ? 'MISSING COMPONENTS: ' + missing.join(', ')

@@ -263,6 +263,20 @@ public class SmsPlugin extends Plugin {
                            android.content.pm.PackageManager.FEATURE_TELEPHONY_MESSAGING));
         } catch (Throwable ignored) { }
         cap.put("sdk", android.os.Build.VERSION.SDK_INT);
+        /* WHETHER THE MODERN ASK IS EVEN AVAILABLE. `requestSms` prefers
+         * `RoleManager.createRequestRoleIntent(ROLE_SMS)` and falls back to the legacy
+         * ACTION_CHANGE_DEFAULT picker; which one it takes is decided by `isRoleAvailable`, and if
+         * the role is not available the modern intent is never built and the legacy picker may find
+         * nothing to offer. That is the shape of "can't check the setting box" with no message: an
+         * ask that starts an activity which finishes immediately. Reported so the next reading says
+         * which path was taken instead of me inferring it. */
+        try {
+            cap.put("roleAvailable", android.os.Build.VERSION.SDK_INT >= 29
+                    && ((android.app.role.RoleManager) ctx.getSystemService(Context.ROLE_SERVICE))
+                           .isRoleAvailable(android.app.role.RoleManager.ROLE_SMS));
+        } catch (Throwable t) { cap.put("roleAvailable", "threw"); }
+        // And whether this build could hold it at all, by the platform's own four-component rule.
+        cap.put("canBeSms", place.poster.app.home.HomeRoles.canBeSms(ctx));
         o.put("capability", cap);
         call.resolve(o);
     }

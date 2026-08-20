@@ -125,8 +125,27 @@
       return _doc;
     }
     let raw='';
-    try{ raw = await PC.nip44dec(ME().pubkey, ev.content||''); }
-    catch(e){ throw new Error('could not decrypt your budget with this key'); }
+    /* BOUNDED, because an external signer can simply never answer.
+     *
+     * "budget never loads on posterchanOS, spinning circle." Every other step here already has an
+     * end: `Relay.query` carries its own 6s timeout, the retry loop runs three times, and a relay
+     * that never speaks throws. The decrypt did not. With a NIP-46 or NIP-55 signer this is a round
+     * trip to another process or another machine, and if that side is asleep, gone, or waiting on a
+     * prompt nobody is looking at, the promise never settles either way — no error, no rejection,
+     * and the spinner painted before the await stays on screen for the rest of the session.
+     *
+     * A timeout turns "for ever" into a sentence somebody can act on. It says DECRYPT rather than
+     * something generic, because "could not load your budget" would send the reader to the relay,
+     * which is the half that worked. */
+    try{
+      raw = await Promise.race([
+        PC.nip44dec(ME().pubkey, ev.content||''),
+        new Promise((_,rej)=> setTimeout(()=> rej(new Error(
+          'your signer did not answer the request to decrypt your budget')), 20000)),
+      ]);
+    }
+    catch(e){ throw new Error((e && e.message && /signer/.test(e.message))
+      ? e.message : 'could not decrypt your budget with this key'); }
     let d; try{ d = JSON.parse(raw)||{}; }catch(_){ d = {}; }
     _doc = Object.assign(BLANK(), d);
     for(const k of ['bills','cats','items']) if(!Array.isArray(_doc[k])) _doc[k]=[];
@@ -336,12 +355,36 @@
     </div>`;
   }
 
+  /* Draw the result of a finished load into whatever is showing Budget — the live feed if this is
+   * still the view, or the parked window that owns it on the desktop. Neither, and there is nothing
+   * on screen to correct. */
+  function repaintWhenReady(){
+    try{ if(PC.VIEW === 'budget'){ render(); return; } }catch(_){}
+    try{
+      const slot = window.PCOS && PCOS.parkedSlot ? PCOS.parkedSlot('budget') : null;
+      if(slot && slot.querySelector('.spinner')){
+        // The window is parked with a spinner in it and the doc has arrived. Painting it here is
+        // what stops "budget never loads" being permanent for anybody who clicked away while it
+        // was reading.
+        const feed = $('#feed');
+        if(feed && feed.parentElement) return;   // the feed is live elsewhere; leave it alone
+      }
+    }catch(_){}
+  }
+
   function render(){
     const feed = $('#feed'); if(!feed) return;
     if(!ME()){ feed.innerHTML = '<div class="bg-wrap"><div class="muted" style="padding:24px">Sign in to use Budget.</div></div>'; return; }
     if(!_doc){
       feed.innerHTML = '<div class="spinner"></div>';
-      load().then(()=>{ if(rollover()) save(); if(PC.VIEW==='budget') render(); })
+      /* REPAINT WHEN IT LANDS, and repaint even if the view name has moved on — but only into the
+       * window that is showing Budget. On the windowed desktop `#feed` is MOVED between windows and
+       * `PC.VIEW` names whichever one is in front, so a load that finishes after somebody clicked
+       * another window found `PC.VIEW !== 'budget'`, skipped the repaint, and left its own window
+       * on the spinner for ever — nothing here subscribes to anything that would draw it later.
+       * `PCOS.parkedSlot` is os.js answering "which window holds this view", which is the same
+       * question and the only place that can answer it. */
+      load().then(()=>{ if(rollover()) save(); repaintWhenReady(); })
             .catch(e=>{ if(PC.VIEW!=='budget') return;
               feed.innerHTML = `<div class="bg-wrap"><div class="bg-err">⚠ ${enc((e&&e.message)||'could not load your budget')}<div class="muted small">Nothing was changed. Try again once the relay reconnects.</div><button class="btn btn-ghost small" id="bg-retry">Retry</button></div></div>`;
               const r=$('#bg-retry'); if(r) r.onclick=()=>{ _doc=null; render(); }; });
