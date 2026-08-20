@@ -91,6 +91,10 @@ function flatten(node, out, ws){
       fullscreen: !!node.fullscreen_mode,
       floating: node.type === 'floating_con',
       xwayland: !node.app_id && !!(p.class || node.window),
+      /* PARKED IN THE SCRATCHPAD — which is where `hide` puts a window, so it is also how the shell
+       * can tell that something it believes is on screen is not. sway models the scratchpad as a
+       * workspace, so this is a fact already in the tree; nothing extra is asked for it. */
+      stashed: here === '__i3_scratch',
       rect: node.rect || null,
     });
   }

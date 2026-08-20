@@ -1566,6 +1566,18 @@
         const live = new Set(list.map(x => Number(x.id)));
         for(const w of nativeWins()) if(!live.has(Number(w.native))) closeWin(w);
         if(!nativeWins().length) return;
+        /* WHAT WE REMEMBER SENDING IS NOT WHAT THE COMPOSITOR DID. `_natSent` is a record of intent,
+         * kept so an unchanged rectangle is not re-sent sixty times a second — but read as truth it
+         * can disagree with sway for ever, and there is no clock that resolves it. Firefox was left
+         * parked in the scratchpad with its frame drawn over an empty hole: a black window that came
+         * back only when it was dragged, because dragging is one of the few things that syncs.
+         * Whatever caused the divergence — a `show` that failed, a keybinding, a crash mid-place —
+         * the answer is the same: sway is the authority, so a window it has parked is recorded as
+         * hidden and the placement pass below shows it again. Self-healing beats correct-by-argument
+         * for state split across two processes. */
+        for(const x of list){
+          if(x && x.stashed) _natSent.set(Number(x.id), 'hidden');
+        }
       }
       const scale = NAT().scaleFrom(_natShell && _natShell.rect,
                                     document.documentElement.clientWidth,
@@ -1581,20 +1593,29 @@
       const plan = NAT().stashPlan(items, htmls);
       const stash = new Set(plan.stash);
       for(const it of items){
+        /* RECORDED AFTER THE CALL, NEVER BEFORE. Each of these used to write what it was about to
+         * do and then do it inside a catch that swallows — so a refused `show` left the shell
+         * believing the window was placed, and since the rectangle then never "changed", it was
+         * never shown again. A latch set before the attempt it describes; the same shape that has
+         * bitten this codebase before. Failure now leaves the memory alone (hidden stays hidden, so
+         * the next pass retries the show) or clears it (so the next pass re-places). */
         if(stash.has(it.native)){
           if(_natSent.get(it.native) !== 'hidden'){
-            _natSent.set(it.native, 'hidden');
-            try{ await pcWM.hide(it.native); }catch(_){}
+            try{ await pcWM.hide(it.native); _natSent.set(it.native, 'hidden'); }catch(_){}
           }
           continue;
         }
         const rect = NAT().mapRect(_bodyRect(it.w), scale);
         if(!rect) continue;                     // measured with no area — leave it where it is
         const was = _natSent.get(it.native);
-        if(was === 'hidden'){ try{ await pcWM.show(it.native); }catch(_){} }
+        if(was === 'hidden'){
+          // Left as 'hidden' on failure ON PURPOSE: that is what makes the next pass try again.
+          try{ await pcWM.show(it.native); }catch(_){ continue; }
+        }
         if(was === 'hidden' || NAT().changed(was, rect)){
-          _natSent.set(it.native, rect);
-          try{ await pcWM.place(it.native, rect.x, rect.y, rect.w, rect.h); }catch(_){}
+          try{ await pcWM.place(it.native, rect.x, rect.y, rect.w, rect.h);
+               _natSent.set(it.native, rect); }
+          catch(_){ _natSent.delete(it.native); }
         }
       }
     }catch(_){ }
