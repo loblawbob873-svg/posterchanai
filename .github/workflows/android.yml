@@ -21,11 +21,24 @@ on:
       - '.github/workflows/android.yml'
   workflow_dispatch:
 
-# One build per branch at a time, newest wins — a burst of pushes otherwise starves the
-# free runners and the stragglers fail on missing artifacts.
+# ONE BUILD PER BRANCH AT A TIME, AND THE ONE THAT IS RUNNING FINISHES.
+#
+# `cancel-in-progress: true` was here to stop a burst of pushes starving the free runners, and it
+# did — by making the APK for the fix somebody was waiting on the one that never got built. Every
+# push cancels the build before it, so in a busy hour the ONLY commit that produces an installable
+# artifact is whichever one happened to be last, and it is nearly never the interesting one.
+#
+# That is not hypothetical. The commit that fixed the launcher icons (fc0dd762, "the icons were
+# packed arc flags") was cancelled by the next push, and the newest APK on the release stayed at a
+# commit from BEFORE the fix — so the fix was verified on a real device, shipped to both remotes,
+# and reported by its owner as still broken, because the build they installed could not contain it.
+# Two more rounds were spent on that.
+#
+# So a queued push now WAITS instead of killing what is running. The runner cost is a few extra
+# minutes; the cost of the other setting is a person judging a build that predates the work.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: write
