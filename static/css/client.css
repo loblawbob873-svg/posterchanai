@@ -1679,7 +1679,7 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .ptr-ind.ready{color:#04222a;background:linear-gradient(135deg,#0bb6cf,var(--cyan));border-color:transparent}
 .ptr-ind.spin{animation:ptr-spin .6s linear infinite}
 @keyframes ptr-spin{to{transform:translateX(-50%) translateY(8px) rotate(360deg)}}
-.feed.feed-dm,.feed.feed-ai,.feed.feed-chat,.feed.feed-translate{padding:0;overflow:hidden}
+.feed.feed-dm,.feed.feed-ai,.feed.feed-chat,.feed.feed-translate,.feed.feed-texts{padding:0;overflow:hidden}
 /* NIP-28 public chat room — full-height, internally-scrolling message list + sticky compose */
 .chatroom{display:flex;flex-direction:column;min-height:0;height:100%}
 .chatroom-head{display:flex;align-items:center;gap:10px;padding:10px 12px 8px;flex:0 0 auto;border-bottom:1px solid var(--line)}
@@ -8234,3 +8234,45 @@ html.osfr-on body > .app, html.osfr-on #os-root{ visibility:hidden; }
    the muted colour, so "Tor: off" is a state and not a warning. */
 .os-chip.os-off{ opacity:.62; }
 .os-chip.on{ color:var(--neon,#3ce8ff); }
+
+/* ============================ Texts (the phone's messages, archived) =========================
+   The web half of the phone shell. The screens on the HANDSET are native Android — that is what
+   makes a text arrive when the WebView is dead — so this is the reading-and-answering surface for
+   every other device, and it is built out of the same tokens as the rest of the client rather than
+   trying to imitate the native one. */
+.sms-wrap{display:flex;flex-direction:column;height:100%;min-height:0;gap:var(--s3)}
+.sms-head{display:flex;gap:var(--s2);align-items:center;flex:none}
+.sms-head .input{flex:1;min-width:0}
+.sms-title{font-size:1.05rem;font-weight:600;color:var(--text)}
+.sms-threads{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:var(--s2)}
+.sms-thread{display:flex;gap:var(--s3);align-items:center;width:100%;text-align:left;
+  padding:var(--s3);border:1px solid var(--line);border-radius:var(--r);background:var(--panel);
+  color:var(--text);cursor:pointer}
+.sms-thread:hover{border-color:rgba(var(--accent-rgb),.5)}
+/* The avatar is a hue derived from the name, exactly like the native list's — same person, same
+   colour, whichever screen you are looking at. */
+.sms-av{flex:none;width:40px;height:40px;border-radius:999px;display:flex;align-items:center;
+  justify-content:center;font-weight:700;font-size:.8rem;color:#fff;
+  background:linear-gradient(135deg,rgba(var(--accent-rgb),.85),rgba(var(--accent2-rgb),.85))}
+.sms-body{flex:1;min-width:0}
+.sms-row1{display:flex;gap:var(--s2);align-items:baseline}
+.sms-who{flex:1;min-width:0;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sms-when{flex:none;font-size:.72rem}
+.sms-snip{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.82rem}
+.sms-msgs{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:var(--s2);
+  padding:var(--s2) 0}
+.sms-msg{display:flex;flex-direction:column;max-width:78%}
+.sms-msg.me{align-self:flex-end;align-items:flex-end}
+.sms-msg.them{align-self:flex-start;align-items:flex-start}
+.sms-bub{padding:var(--s2) var(--s3);border-radius:var(--r);border:1px solid var(--line);
+  background:var(--panel2);white-space:pre-wrap;word-break:break-word}
+.sms-msg.me .sms-bub{background:rgba(var(--accent-rgb),.16);border-color:rgba(var(--accent-rgb),.5)}
+.sms-meta{font-size:.68rem;margin-top:2px}
+.sms-compose{display:flex;gap:var(--s2);align-items:center;flex:none}
+.sms-compose .input{flex:1;min-width:0}
+
+/* Texts is full-height like Messages: the thread list and the conversation scroll inside themselves,
+   so #feed must stop being the timeline's scroll container or the compose box scrolls away with the
+   conversation. */
+.feed.feed-texts{display:flex;flex-direction:column;min-height:0}
+.feed.feed-texts>.sms-wrap{flex:1 1 auto;min-height:0;height:auto;padding:var(--s3)}

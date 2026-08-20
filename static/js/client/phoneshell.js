@@ -82,8 +82,10 @@
           <label class="set-stay" style="margin-top:12px"><input type="checkbox" id="ps-sms"${st.isDefaultSms?' checked':''}>
             Messages (SMS &amp; MMS)</label>
           <div class="muted small" id="ps-sms-note">Texts stay in the phone's own message store, so
-            nothing else on the phone loses them. <strong>MMS (picture messages) is not supported
-            yet</strong> — if you receive many, keep your current app.</div>
+            nothing else on the phone loses them, and an encrypted copy of each one goes to your relay
+            so you can read and answer them from <a href="#" id="ps-texts">Texts</a> on any of your
+            devices. <strong>MMS (picture messages) is not supported yet</strong> — if you receive
+            many of them, keep your current app.</div>
 
           <label class="set-stay" style="margin-top:12px"><input type="checkbox" id="ps-dialer"${st.isDefaultDialer?' checked':''}>
             Phone (calls over the mobile network)</label>
@@ -143,6 +145,8 @@
             '. Install another launcher first, or change it in Android Settings → Default apps.');
       } else { msg(''); }
     }, 'enableLauncher');
+
+    { const t = $('#ps-texts'); if(t) t.onclick = (e) => { e.preventDefault(); PC.switchView('texts'); }; }
 
     wire('#ps-sms', async () => {
       msg('Android has no way for an app to give up the messages role by itself — ' +

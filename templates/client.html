@@ -258,6 +258,9 @@
             <button class="nav-item nav-golive hidden" id="nav-golive"><svg class="ic"><use href="#i-live"></use></svg><span>Go Live</span></button>
             {% if not nostr_only %}<button class="nav-item" data-view="translate"><svg class="ic"><use href="#i-translate"></use></svg><span>Live Translate</span></button>{% endif %}
             <button class="nav-item" data-view="notes"><svg class="ic"><use href="#i-note"></use></svg><span>Notes</span></button>
+            <!-- The phone's text messages, archived encrypted so they can be read and answered from
+                 any device. Not gated on an instance: it is relay-only, like Notes. -->
+            <button class="nav-item" data-view="texts"><svg class="ic"><use href="#i-chat"></use></svg><span>Texts</span></button>
             <button class="nav-item" data-view="vault"><svg class="ic"><use href="#i-key"></use></svg><span>Passwords</span></button>
             <button class="nav-item" data-view="drafts"><svg class="ic"><use href="#i-draft"></use></svg><span>Drafts<i id="draft-badge" class="badge hidden"></i></span></button>
             <button class="nav-item" data-view="meme"><svg class="ic"><use href="#i-tv"></use></svg><span>Meme Builder</span></button>
@@ -421,6 +424,7 @@
 <script src="/static/js/client/vcard.js?v={{ ver }}"></script>
 <script src="/static/js/client/contacts.js?v={{ ver }}"></script>
   <script src="/static/js/client/phoneshell.js?v={{ ver }}"></script>
+  <script src="/static/js/client/sms.js?v={{ ver }}"></script>
 <script src="/static/js/client/os.js?v={{ ver }}"></script>
 <script src="/static/js/client/markets.js?v={{ ver }}"></script>
 <script src="/static/js/client/budget.js?v={{ ver }}"></script>

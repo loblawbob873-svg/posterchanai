@@ -88,8 +88,16 @@
     // message — the gift wraps are still on the relay — it loses the CACHE, so every message is
     // decrypted through the signer again: 800 round trips to a phone, which is the exact cost that
     // key exists to remove.
+    // `pcai:sms` (and `pcai:smsout`) — the phone's text messages, archived across devices. Same
+    // reason as every entry above and a sharper consequence: the phone's own provider is
+    // authoritative, so evicting the archive here does not lose a message on the phone — it loses it
+    // on the LAPTOP, which has no other copy. Reading the global feed for a few minutes would empty
+    // a year of somebody's texts off every device that is not the phone, silently. `smsout` is a
+    // send another device asked for and has not been told about yet; evicting one drops a message
+    // that was typed and never sent.
     for (const t of ev.tags || []) if (t && t[0] === 'd' && typeof t[1] === 'string' &&
         (t[1].startsWith('pcai:note') || t[1].startsWith('pcai:pw') ||
+         t[1].startsWith('pcai:sms') ||
          t[1].startsWith('pcai:playlist') || t[1] === 'pcai:budget' ||
          t[1] === 'pcai:desktop' || t[1] === 'pcai:agent-tasks' ||
          t[1] === 'pcai:dmkey' || t[1] === 'pcai:dmcache')) return true;

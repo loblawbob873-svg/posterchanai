@@ -365,6 +365,8 @@ public class HomeActivity extends Activity {
             labels.add(getString(R.string.home_app_info)); acts.add(0);
             labels.add(getString(R.string.home_uninstall)); acts.add(1);
         }
+        boolean isPinned = AppShelf.pinned(prefs.order(), e.key());
+        labels.add(getString(isPinned ? R.string.home_unpin : R.string.home_pin)); acts.add(5);
         // AppShelf rule 1: an essential tile is never hideable, so it is never offered.
         if (!e.essential) { labels.add(getString(R.string.home_hide)); acts.add(2); }
         labels.add(getString(R.string.home_apps)); acts.add(4);
@@ -377,6 +379,13 @@ public class HomeActivity extends Activity {
                     case 2: prefs.setHidden(AppShelf.hide(prefs.hidden(), e)); redraw(); break;
                     case 3: showHidden(); break;
                     case 4: pickOurApps(); break;
+                    case 5:
+                        prefs.setOrder(AppShelf.pinned(prefs.order(), e.key())
+                                ? AppShelf.unpin(prefs.order(), e.key())
+                                : AppShelf.pin(prefs.order(), e.key()));
+                        redraw();
+                        if (grid != null) grid.smoothScrollToPosition(0);
+                        break;
                 }
             }
         });

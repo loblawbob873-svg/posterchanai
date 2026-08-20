@@ -61,11 +61,20 @@ public class LauncherDeviceTest {
     }
 
     @Test
-    public void theHomeComponentShipsDisabled() {
+    public void theHomeComponentShipsDisabled() throws Exception {
         // OPT-IN, MEASURED. A CATEGORY_HOME activity makes Android offer this app in "Select a Home
         // app" from the moment it is installed; shipping the component disabled is what makes the
-        // opt-in true rather than nearly true. A fresh install has never enabled it.
-        assertFalse("the launcher must not be offered until somebody asks for it", wasEnabled);
+        // opt-in true rather than nearly true.
+        //
+        // Read from the INSTALLED MANIFEST (MATCH_DISABLED_COMPONENTS is what makes a disabled
+        // component visible to the query at all), never from the component's current state:
+        // scripts/android_device_checks.sh runs first on the same boot and switches it on to press
+        // HOME, so a state check here would fail for a reason that has nothing to do with the rule.
+        android.content.pm.ActivityInfo info = ctx.getPackageManager().getActivityInfo(
+                new ComponentName(ctx, HomeActivity.class),
+                android.content.pm.PackageManager.MATCH_DISABLED_COMPONENTS);
+        assertNotNull("the launcher is not installed at all", info);
+        assertFalse("the launcher must not be offered until somebody asks for it", info.enabled);
     }
 
     @Test

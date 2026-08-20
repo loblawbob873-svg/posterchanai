@@ -62,6 +62,9 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(place.poster.app.scan.QrScanPlugin.class);
         // The opt-in home screen, and the mirror of the client's theme into the native screens.
         registerPlugin(place.poster.app.home.HomePlugin.class);
+        // Reading, sending and archiving the phone's own text messages. The provider stays
+        // authoritative; this is the window the client publishes the encrypted archive from.
+        registerPlugin(place.poster.app.sms.SmsPlugin.class);
         if (isSend(getIntent())) shareNonce++;   // cold-started BY a share
         super.onCreate(savedInstanceState);
         allowMediaWithoutAGesture();

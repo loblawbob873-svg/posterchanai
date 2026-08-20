@@ -188,26 +188,30 @@ public final class AppShelf {
     }
 
     /**
-     * The order to persist after a drag. Everything currently on the grid, in its drawn order —
-     * NOT just the tile that moved. A partial order is what makes an icon "move back on its own":
-     * anything absent falls to the alphabetical tail on the next draw.
+     * PIN A TILE TO THE FRONT. The saved `order` is a short list of keys that lead; everything else
+     * follows alphabetically, so pinning is simply "put this key first".
+     *
+     * Deliberately NOT a full drag-and-drop arrangement. A launcher grid that can be reordered by
+     * dragging needs the tile under the finger to move, the rest to reflow, and an autoscroll at the
+     * edges — a lot of gesture code between somebody's finger and their home screen, on the one
+     * screen in this app that has no fallback. Pinning is the ninety per cent of it that is a menu
+     * item, and the saved order it writes is the same list a drag would eventually write.
      */
-    public static List<String> orderOf(List<Entry> drawn) {
+    public static List<String> pin(List<String> order, String key) {
         List<String> out = new ArrayList<String>();
-        if (drawn != null) for (Entry e : drawn) if (e != null) out.add(e.key());
+        if (key != null && !key.isEmpty()) out.add(key);
+        if (order != null) for (String k : order) if (k != null && !k.equals(key)) out.add(k);
         return out;
     }
 
-    /**
-     * Move the tile at `from` to `to` within a drawn order. Returns the new key order. Out-of-range
-     * indices return the input unchanged rather than throwing — a drag that ends off the grid is an
-     * ordinary gesture, not an error.
-     */
-    public static List<String> reorder(List<String> keys, int from, int to) {
-        List<String> out = new ArrayList<String>(keys == null ? new ArrayList<String>() : keys);
-        if (from < 0 || to < 0 || from >= out.size() || to >= out.size() || from == to) return out;
-        out.add(to, out.remove(from));
+    public static List<String> unpin(List<String> order, String key) {
+        List<String> out = new ArrayList<String>();
+        if (order != null) for (String k : order) if (k != null && !k.equals(key)) out.add(k);
         return out;
+    }
+
+    public static boolean pinned(List<String> order, String key) {
+        return order != null && key != null && order.contains(key);
     }
 
     /**

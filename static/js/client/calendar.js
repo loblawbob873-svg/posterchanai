@@ -1033,6 +1033,13 @@
               // `p` = already finished. The widget dims those rather than dropping them: a day whose
               // entries disappear as it goes on reads as a calendar losing things.
               p: !o.allDay && o.start < now,
+              /* `w` = who it is with, as the calendar wrote them (mailto:/tel:/bare address).
+                 The home-screen widget ignores this; the phone's dialer and messages app read it to
+                 put "you have a meeting with them at 3" beside a caller, matching against the
+                 phone's OWN address book rather than against anything decrypted out here. Capped,
+                 because a fifty-person invitation would otherwise ride into a SharedPreferences blob
+                 fifty times over. */
+              w: (o.who || []).slice(0, 12),
             });
           }
         }

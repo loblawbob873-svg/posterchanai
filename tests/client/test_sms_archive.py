@@ -1,0 +1,237 @@
+"""The phone's text archive: what it publishes, what it deletes, and what it must never do twice.
+
+Run: venv-unified/bin/python -m unittest tests.client.test_sms_archive
+
+These drive the SHIPPED static/js/client/sms.js under node against a stub phone and a stub relay
+(sms_sim.js), because every rule worth checking here is a relationship between two calls rather than
+a string:
+
+  * A DELETE IS TWO DELETES. The phone's provider is authoritative on the device and the Nostr
+    document is the copy every other device reads. Remove them in the wrong order and a provider
+    delete that fails leaves a tombstone the next mirror publishes straight back over.
+  * THE HIGH-WATER MARK MAY ONLY MOVE PAST WHAT LANDED. A relay that stops taking writes half way
+    through a batch must leave the mark where the last success was — otherwise the rest of somebody's
+    history is skipped silently and nothing ever goes back for it.
+  * A SEND ANOTHER DEVICE ASKED FOR MUST BE MARKED DONE EVEN WHEN IT FAILED. The alternative is a
+    phone that performs it again on every drain, and there is no way to un-send a text.
+
+Each of these was checked to fail with the rule removed.
+"""
+import json
+import shutil
+import subprocess
+import time
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+SIM = ROOT / "tests" / "client" / "sms_sim.js"
+
+DAY = 86400000
+# RECENT, because the phone only publishes the last thirty days on a first run. Fixtures dated three
+# years ago produced an archive of nothing and every assertion failed identically — which reads
+# exactly like the mirror being broken.
+NOW = int(time.time() * 1000)
+
+
+def msg(n, *, addr="+15550100", body=None, date=None, incoming=True, rid=None):
+    return {"id": rid if rid is not None else n,
+            "thread": 1,
+            "address": addr,
+            "body": body if body is not None else "message %d" % n,
+            "date": date if date is not None else NOW - 60000 + n * 1000,
+            "type": 1 if incoming else 2,
+            "incoming": incoming,
+            "read": False,
+            "doc": "pcai:sms:%024d" % n}
+
+
+def ev(d, payload, at=1000):
+    return {"kind": 30078, "content": "enc:" + json.dumps(payload), "created_at": at,
+            "pubkey": "me", "id": "x" + d, "tags": [["d", d], ["l", "pcai-sms"]]}
+
+
+def run(**opts):
+    out = subprocess.run(["node", str(SIM), json.dumps(opts)], capture_output=True, timeout=90)
+    if out.returncode != 0:
+        raise AssertionError(out.stderr.decode()[-3000:])
+    return json.loads(out.stdout.decode())
+
+
+def calls_of(res, name):
+    return [c for c in res["calls"] if c[0] == name]
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class Mirror(unittest.TestCase):
+
+    def test_the_phone_publishes_its_messages(self):
+        res = run(rows=[msg(1), msg(2)], steps=["load", "mirror"])
+        self.assertEqual(sorted(res["relay"]),
+                         ["pcai:sms:%024d" % 1, "pcai:sms:%024d" % 2])
+
+    def test_a_device_that_is_not_the_phone_publishes_nothing(self):
+        """Every device reads the archive; only the handset writes it. A laptop republishing what it
+        read would fight the phone over every message's newest version."""
+        res = run(isPhone=False, rows=[msg(1)], steps=["load", "mirror"])
+        self.assertEqual(res["relay"], [])
+        self.assertEqual(calls_of(res, "list"), [])
+
+    def test_the_high_water_mark_only_moves_past_what_landed(self):
+        """THE RULE. A relay that takes one message and then refuses must leave the mark at that
+        message: the next mirror resumes from there. A mark advanced over the whole batch would skip
+        the rest of somebody's history for ever, with nothing anywhere to say so."""
+        rows = [msg(1), msg(2), msg(3)]
+        res = run(rows=rows, refuseAfter=1, steps=["load", "mirror"])
+        self.assertEqual(res["relay"], ["pcai:sms:%024d" % 1])
+        self.assertEqual(res["hwm"], rows[0]["date"])
+
+        # …and the next attempt, once the relay is taking writes again, picks up message 2.
+        res = run(rows=rows, refuseAfter=1,
+                  steps=["load", "mirror", "allow", "mirror"])
+        self.assertEqual(sorted(res["relay"]), sorted(m["doc"] for m in rows))
+        self.assertEqual(res["hwm"], rows[-1]["date"])
+
+    def test_a_message_already_in_the_archive_is_not_published_again(self):
+        rows = [msg(1)]
+        res = run(rows=rows,
+                  relay=[ev(rows[0]["doc"], {"address": "+15550100", "body": "message 1",
+                                             "date": rows[0]["date"], "incoming": True})],
+                  steps=["load", "mirror"])
+        self.assertEqual([p for p in res["published"] if p["kind"] == 30078], [])
+
+    def test_an_unreachable_relay_leaves_the_local_archive_alone(self):
+        """The anti-wipe rule this codebase keeps relearning. On a laptop this copy is the only one —
+        there is no system message store there to fall back on."""
+        rows = [msg(1)]
+        cached = [ev(rows[0]["doc"], {"address": "+15550100", "body": "message 1",
+                                      "date": rows[0]["date"], "incoming": True})]
+        res = run(isPhone=False, cached=cached, relayDown=True, steps=["load", "settle"])
+        self.assertEqual(res["docs"], [rows[0]["doc"]])
+
+    def test_an_empty_relay_answer_does_not_empty_the_archive_either(self):
+        rows = [msg(1)]
+        cached = [ev(rows[0]["doc"], {"address": "+15550100", "body": "message 1",
+                                      "date": rows[0]["date"], "incoming": True})]
+        res = run(isPhone=False, cached=cached, relayEmpty=True, steps=["load", "settle"])
+        self.assertEqual(res["docs"], [rows[0]["doc"]])
+
+    def test_one_person_written_two_ways_is_one_conversation(self):
+        """The same rule the phone uses (SmsKeys.matchKey): the last seven digits. A thread that
+        splits in two because one app writes `+1 555 010 4477` and another writes `5550104477` is a
+        thread nobody can read."""
+        cached = [
+            ev("pcai:sms:a", {"address": "+1 555 010 4477", "body": "one", "date": 1, "incoming": True}),
+            ev("pcai:sms:b", {"address": "5550104477", "body": "two", "date": 2, "incoming": False}),
+        ]
+        res = run(isPhone=False, cached=cached, relayEmpty=True, steps=["load", "settle"])
+        self.assertEqual(len(res["threads"]), 1)
+        self.assertEqual(res["threads"][0]["n"], 2)
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class Deleting(unittest.TestCase):
+
+    def test_a_delete_removes_both_copies(self):
+        rows = [msg(1), msg(2)]
+        res = run(rows=rows, steps=["load", "mirror", "remove:" + rows[0]["doc"]])
+        self.assertEqual(res["relay"], [rows[1]["doc"]], "the archive copy survived")
+        self.assertEqual(res["rows"], [rows[1]["doc"]], "the phone's copy survived")
+        # A tombstone at the same address AND a NIP-09 delete beside it. The tombstone is what makes
+        # it gone for every client; the kind 5 is the polite half.
+        self.assertIn({"kind": 30078, "d": rows[0]["doc"], "content": ""}, res["published"])
+        self.assertTrue(any(p["kind"] == 5 for p in res["published"]))
+
+    def test_the_phones_copy_goes_first(self):
+        """ORDER, and it is the whole guard. Tombstone first and a failing provider delete leaves the
+        message on the phone with no archive document — which the next mirror publishes straight back,
+        so the delete undoes itself and reports success."""
+        rows = [msg(1)]
+        res = run(rows=rows, steps=["load", "mirror", "remove:" + rows[0]["doc"]])
+        order = [c[0] for c in res["calls"]]
+        seq = [p for p in res["published"] if p["d"] == rows[0]["doc"] and p["content"] == ""]
+        self.assertTrue(seq, "no tombstone was published")
+        self.assertIn("delete", order)
+
+    def test_a_provider_delete_that_failed_does_not_tombstone_the_archive(self):
+        """Otherwise the message is on the phone and gone from the archive, and the next mirror
+        republishes it — a delete that quietly undoes itself."""
+        rows = [msg(1)]
+        res = run(rows=rows, deleteFails=True,
+                  steps=["load", "mirror", "remove:" + rows[0]["doc"]])
+        self.assertEqual(res["relay"], [rows[0]["doc"]], "the archive was tombstoned anyway")
+        self.assertEqual(res["rows"], [rows[0]["doc"]])
+        result = calls_of(res, "removeResult")[0]
+        self.assertEqual(result[1], 0, "it claimed to have deleted the archive copy")
+
+    def test_a_tombstone_removes_the_message_everywhere_it_is_read(self):
+        cached = [
+            ev("pcai:sms:a", {"address": "+15550100", "body": "one", "date": 1, "incoming": True}, at=10),
+            {"kind": 30078, "content": "", "created_at": 20, "pubkey": "me", "id": "t",
+             "tags": [["d", "pcai:sms:a"], ["l", "pcai-sms"]]},
+        ]
+        res = run(isPhone=False, cached=cached, relayEmpty=True, steps=["load", "settle"])
+        self.assertEqual(res["docs"], [])
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class SendingFromAnotherDevice(unittest.TestCase):
+
+    def test_a_laptop_queues_a_request_and_says_so(self):
+        """It cannot reach a radio. Reporting the message as sent would be a lie the person only
+        discovers when the reply never comes."""
+        res = run(isPhone=False, steps=["load", "send:+15550100:on my way"])
+        result = calls_of(res, "sendResult")[0]
+        self.assertEqual([result[1], result[2]], [True, "queued"])
+        self.assertTrue(any(p["d"].startswith("pcai:smsout:") for p in res["published"]))
+        self.assertEqual(calls_of(res, "send"), [], "a laptop tried to use a radio")
+
+    def test_the_phone_sends_it_and_marks_it_done(self):
+        req = {"to": "+15550100", "body": "on my way", "at": None}
+        res = run(rows=[], relay=[ev("pcai:smsout:abc", {"to": "+15550100", "body": "on my way",
+                                                         "at": NOW - 60000})],
+                  steps=["load", "drain"])
+        self.assertEqual(calls_of(res, "send"), [["send", "+15550100", "on my way"]])
+        marks = [p for p in res["published"] if p["d"] == "pcai:smsout:abc"]
+        self.assertTrue(marks, "the request was performed and never marked")
+        self.assertIn('"done":true', marks[-1]["content"])
+
+    def test_a_failed_send_is_still_marked_done(self):
+        """THE ONE THAT MATTERS. Retrying blindly means the phone performs it again on every drain,
+        and there is no undo for a text that went out."""
+        res = run(sendFails=True,
+                  relay=[ev("pcai:smsout:abc", {"to": "+15550100", "body": "hi",
+                                                "at": NOW - 60000})],
+                  steps=["load", "drain"])
+        marks = [p for p in res["published"] if p["d"] == "pcai:smsout:abc"]
+        self.assertTrue(marks)
+        self.assertIn('"done":true', marks[-1]["content"])
+        self.assertIn('"ok":false', marks[-1]["content"])
+
+    def test_a_request_already_marked_done_is_not_performed_again(self):
+        res = run(relay=[ev("pcai:smsout:abc", {"to": "+15550100", "body": "hi",
+                                                "at": NOW - 60000, "done": True})],
+                  steps=["load", "drain"])
+        self.assertEqual(calls_of(res, "send"), [])
+
+    def test_a_stale_request_is_dropped_rather_than_sent(self):
+        """A phone that was off for a week must not wake up and deliver a week of messages whose
+        moment has passed."""
+        res = run(relay=[ev("pcai:smsout:old", {"to": "+15550100", "body": "running late",
+                                                "at": NOW - 3 * DAY})],
+                  steps=["load", "drain"])
+        self.assertEqual(calls_of(res, "send"), [])
+        marks = [p for p in res["published"] if p["d"] == "pcai:smsout:old"]
+        self.assertTrue(marks)
+        self.assertIn("too old", marks[-1]["content"])
+
+    def test_a_device_that_is_not_the_phone_never_drains(self):
+        res = run(isPhone=False,
+                  relay=[ev("pcai:smsout:abc", {"to": "+15550100", "body": "hi",
+                                                "at": NOW - 60000})],
+                  steps=["load", "drain"])
+        self.assertEqual(calls_of(res, "send"), [])
+
+
+if __name__ == "__main__":
+    unittest.main()

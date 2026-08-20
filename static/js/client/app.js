@@ -380,13 +380,22 @@
     for(const it of _NAV_REQUIRED){
       try{
         if(document.querySelector('.nav-item[data-view="' + it.view + '"]')) continue;
-        const host = document.querySelector(it.into);
+        /* Two ways to place a healed row, because not every nav item lives in a sub-list. `into` is a
+           container to append to; `after` names an existing row to sit beside, which is how a
+           TOP-LEVEL item is added — querySelector(null) throws, so a missing host used to mean the
+           row was silently never created. */
+        let host = null, before = null;
+        if(it.into){ host = document.querySelector(it.into); }
+        else if(it.after){
+          const sib = document.querySelector('.nav-item[data-view="' + it.after + '"]');
+          if(sib){ host = sib.parentNode; before = sib.nextSibling; }
+        }
         if(!host) continue;
         const b = document.createElement('button');
-        b.className = 'nav-item sub';
+        b.className = it.into ? 'nav-item sub' : 'nav-item';
         b.dataset.view = it.view;
         b.innerHTML = '<svg class="ic"><use href="' + it.icon + '"></use></svg><span>' + enc(it.label) + '</span>';
-        host.appendChild(b);
+        if(before) host.insertBefore(b, before); else host.appendChild(b);
       }catch(_){}
     }
   }
@@ -3110,7 +3119,7 @@
       compose({ text: lines.join('\n\n') });
       return true;
     }
-    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','markets','streams','communities','calls','settings','translate','news','websearch','terminal','calendar','contacts']);
+    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','markets','streams','communities','calls','settings','translate','news','websearch','terminal','calendar','contacts','texts','notes']);
     if(view && VALID.has(view)){ _clean(); switchView(view); return true; }
     return false;
   }
@@ -4771,7 +4780,12 @@
   // default order, which looks like a layout that was never saved rather than one that was dropped.
   const _CARRY_D = [/^pcai:note:/, /^pcai:notefolder:/, /^pcai:pw:/, /^pcai:pwfolder:/,
                     /^pcai:pwkey$/, /^pcai:budget$/, /^pcai:playlist:/, /^pcai:desktop$/,
-                    /^pcai:agent-tasks$/, /^pcai:dmkey$/, /^pcai:dmcache$/];
+                    /^pcai:agent-tasks$/, /^pcai:dmkey$/, /^pcai:dmcache$/,
+                    /* The phone's text-message archive. Carried for the same reason as Notes, and
+                       for one more: on every device that is not the phone this IS the only copy —
+                       the system message store that is authoritative on the handset does not exist
+                       on a laptop. A relay change without this leaves the archive behind. */
+                    /^pcai:sms:/, /^pcai:smsout:/];
   let _carrying = false;
 
   function _isCarryDoc(ev){
@@ -5819,7 +5833,7 @@
       _notifScrollTop = true; }
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     _syncRightbar();
-    $('#view-title').textContent = { home:'Home', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', shorts:'Shorts 🎬', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', shorts:'Shorts 🎬', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     // "New post" is a fixed sidebar button now, so it needs no per-view toggling — it never appears in a
     // view header again. (The ▦ media toggle moved into the timeline's tab row.)
     { const tl = (v==='home'||v==='global'||v==='trending');   // the three views that carry the .tl-tabs header
@@ -5864,6 +5878,11 @@
     // own scrolling regions, so it must not sit inside the timeline's scroll container either.
     feed.classList.toggle('feed-dm', VIEW==='messages' || VIEW==='mail');
     feed.classList.toggle('feed-ai', VIEW==='ai');         // full-height chat layout (msgs scroll inside)
+    // Texts is a thread list and a conversation, both of which scroll INSIDE themselves — the same
+    // shape Messages has. Without the modifier #feed stays the timeline's scroll container and the
+    // compose box scrolls away with the conversation. (And it must be TOGGLED, never added: a
+    // leftover feed-* class is what makes the next view refuse to scroll.)
+    feed.classList.toggle('feed-texts', VIEW==='texts');
     feed.classList.toggle('feed-translate', VIEW==='translate');   // full-height Live Translate layout
     feed.classList.toggle('feed-meme', VIEW==='meme');     // full-height Meme Builder (stage + one pane)
     feed.classList.toggle('feed-admin', VIEW==='admin');   // full-height admin iframe
@@ -5936,6 +5955,12 @@
     if (VIEW==='stats'){ if(window.PCStats) return window.PCStats.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='budget'){ if(window.PCBudget) return window.PCBudget.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='notes'){ if(window.PCNotes) return window.PCNotes.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
+    /* Texts goes through the late loader rather than the usual `if(window.PCSms)` guard, because a
+       bundle whose shell predates sms.js would otherwise show a spinner that never resolves — the
+       module IS in the bundle (build-www.sh copies every client .js) and only the <script> tag is
+       missing. Same reason as _NAV_REQUIRED, one layer down. */
+    if (VIEW==='texts'){ const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>';
+                         _withSms(m => { if(VIEW==='texts') m.render(); }); return; }
     if (VIEW==='sync'){ if(window.PCSync) return window.PCSync.paint(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='vault'){ if(window.PCVault) return window.PCVault.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='xdc'){ if(window.PCWebxdc && PCWebxdc.gallery) return PCWebxdc.gallery(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
@@ -13869,7 +13894,7 @@
     // and it was buried in Discover → Streams where nobody found it. Mirrors the desktop sidebar item.
     // Icons come from the shared sprite via ICO() — the same glyphs the desktop sidebar uses, so the
     // phone and desktop navs never drift apart (and they take the theme's colour, unlike emoji).
-    const items=[['ai','ai','PosterChan AI'],['mail','mail','Email'],['websearch','search','Web Search'],['terminal','terminal','Terminal'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['__music','music','Music'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['repos','git','Git'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__bug','bug','Report a Bug'],['__accounts','user','Switch account'],['settings','gear','Settings'],
+    const items=[['ai','ai','PosterChan AI'],['mail','mail','Email'],['websearch','search','Web Search'],['terminal','terminal','Terminal'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['texts','chat','Texts'],['__music','music','Music'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['repos','git','Git'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__bug','bug','Report a Bug'],['__accounts','user','Switch account'],['settings','gear','Settings'],
       // Same button, same rule as the sidebar's: a guest is offered a way IN, not a second way out.
       (GUEST ? ['__login','user','Log in'] : ['logout','logout','Logout'])]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai')
@@ -27339,19 +27364,21 @@
    * rows _NAV_REQUIRED exists for, and the same answer: heal it at runtime rather than trusting the
    * shell. Loaded once, on demand, and a failure leaves the settings card empty rather than throwing
    * inside a render that has bindings after it. */
-  let _psLoad = null;
-  function _withPhoneShell(fn){
-    if(window.PCPhone) { try{ fn(window.PCPhone); }catch(_){} return; }
-    if(!_psLoad){
-      _psLoad = new Promise(res => {
+  const _lateLoad = {};
+  function _withModule(file, global, fn){
+    if(window[global]) { try{ fn(window[global]); }catch(_){} return; }
+    if(!_lateLoad[file]){
+      _lateLoad[file] = new Promise(res => {
         const el = document.createElement('script');
-        el.src = '/static/js/client/phoneshell.js';
+        el.src = '/static/js/client/' + file;
         el.onload = () => res(true); el.onerror = () => res(false);
         (document.head || document.documentElement).appendChild(el);
       });
     }
-    _psLoad.then(() => { if(window.PCPhone){ try{ fn(window.PCPhone); }catch(_){} } });
+    _lateLoad[file].then(() => { if(window[global]){ try{ fn(window[global]); }catch(_){} } });
   }
+  const _withPhoneShell = fn => _withModule('phoneshell.js', 'PCPhone', fn);
+  const _withSms = fn => _withModule('sms.js', 'PCSms', fn);
   /* Load it once anyway, late, so the theme mirror and the home-screen landing work on a bundle whose
      shell carries no <script> tag for it. After `load` and behind a delay ON PURPOSE: outside the
      boot path, because this app has already broken its own APK once with a speculative guard inside
@@ -32238,6 +32265,13 @@
        shell (the APK's WebView and the desktop's app:// origin both refuse it), so a module that
        calls it directly has a copy button that silently does nothing on two of three platforms. */
     copyValue,
+    /* THE ONE PLACE AN OS NOTIFICATION IS RAISED, for the sub-modules. It is not a convenience: it
+       carries the permission check, the click-to-focus, the icon, AND the fact that Android's WebView
+       does not implement the Notifications API at all — `new Notification(...)` there is silence, not
+       an error, so a module calling the browser API directly draws nothing on the packaged app and
+       nothing says so. sms.js needs it: on a laptop the relay subscription is the ONLY way a text
+       arriving on the phone is ever heard about. */
+    osNotify,
     /* The ⋯ menu, for the sub-modules. It was already passed INTO the git.js factory, which is easy
      * to mistake for an export list — and has been mistaken for one before, producing a
      * `_fmtBytes is not a function` on the confirmation of an irreversible action, where a throw

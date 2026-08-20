@@ -311,10 +311,23 @@
           if(e) exdates.push(dayKey(e.date));
         }
       }
+      /* WHO THE EVENT IS WITH — the ATTENDEE and ORGANIZER identifiers, verbatim.
+       *
+       * Carried, not interpreted: `mailto:a@b`, `tel:+15550100`, or a bare address, exactly as the
+       * calendar that made the event wrote it. It exists so the phone's dialer and messages app can
+       * say "you have a meeting with them at 3" beside a caller's name, and the matching happens
+       * there, against the phone's own address book. Nothing in the calendar UI reads it. */
+      const who = [];
+      for(const p of props(c)){
+        if(p.name !== 'ATTENDEE' && p.name !== 'ORGANIZER') continue;
+        const v = String(p.value || '').trim();
+        if(v && who.indexOf(v) < 0) who.push(v);
+      }
       return {
         component: nameOf(c),
         start: dt ? dt.date : null,
         allDay: dt ? dt.allDay : false,
+        who,
         title: unescape_((first(c, 'SUMMARY') || {}).value) || '(no title)',
         location: unescape_((first(c, 'LOCATION') || {}).value) || '',
         notes: unescape_((first(c, 'DESCRIPTION') || {}).value) || '',
@@ -340,6 +353,7 @@
     const base = {
       uid: res.uid, cal: res.cal, component: res.component,
       title: m.title, location: m.location, notes: m.notes, allDay: m.allDay,
+      who: m.who || [],
     };
     const moved = new Map();          // dayKey of the ORIGINAL slot -> the edited occurrence
     for(const o of res.overrides || []){

@@ -119,6 +119,188 @@
             </intent-filter>
         </activity>
 
+        <!-- MESSAGES (opt-in). Android requires ALL FOUR of the components below before this app
+             may even be OFFERED as the default SMS app; a role that cannot be granted is a feature
+             that silently does not exist, so each one is here for that reason as well as its own.
+
+             The two receivers are exported and guarded by SIGNATURE permissions the platform alone
+             holds (BROADCAST_SMS, BROADCAST_WAP_PUSH) — that is what stops any other app on the
+             phone injecting a text message into somebody's inbox.
+
+             SMS_DELIVER goes to the default app ONLY, and it is that app's job to write the message
+             into the system store. Nothing else does it. See SmsDeliverReceiver: if it drops a
+             message, the message does not exist anywhere on the phone.
+
+             MMS IS RECEIVED AND NOT FETCHED, and it says so out loud (MmsDeliverReceiver). The
+             receiver has to exist for the role; pretending to handle a picture message would be
+             worse than admitting it. The opt-in screen warns before the role is taken. -->
+        <receiver
+            android:name=".sms.SmsDeliverReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.SMS_DELIVER" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".sms.MmsDeliverReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_WAP_PUSH">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.WAP_PUSH_DELIVER" />
+                <data android:mimeType="application/vnd.wap.mms-message" />
+            </intent-filter>
+        </receiver>
+
+        <!-- A reply typed into the notification shade, a conversation marked read from it, and the
+             radio answering that a send worked. Not exported: every one of these is our own
+             PendingIntent or our own broadcast. -->
+        <receiver
+            android:name=".sms.SmsActionReceiver"
+            android:exported="false" />
+
+        <!-- "Reject the call with a text". The least visible of the four requirements and the one
+             whose absence is worst: the dialer tells the person their reply was sent. -->
+        <service
+            android:name=".sms.RespondService"
+            android:exported="true"
+            android:permission="android.permission.SEND_RESPOND_VIA_MESSAGE">
+            <intent-filter>
+                <action android:name="android.intent.action.RESPOND_VIA_MESSAGE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="sms" />
+                <data android:scheme="smsto" />
+                <data android:scheme="mms" />
+                <data android:scheme="mmsto" />
+            </intent-filter>
+        </service>
+
+        <!-- "Text this number", asked by a web page, a contact card or a share sheet. -->
+        <activity
+            android:name=".sms.SendToActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:excludeFromRecents="true"
+            android:label="@string/sms_title">
+            <intent-filter>
+                <action android:name="android.intent.action.SENDTO" />
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="sms" />
+                <data android:scheme="smsto" />
+                <data android:scheme="mms" />
+                <data android:scheme="mmsto" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+
+        <!-- The conversation list. MAIN + APP_MESSAGING (and NOT LAUNCHER) is what makes Android
+             treat this as the phone's messaging app without adding a second icon beside PosterChan's
+             own — the launcher's Messages tile and the role picker both reach it this way. -->
+        <activity
+            android:name=".sms.ThreadListActivity"
+            android:exported="true"
+            android:theme="@style/PcAppTheme"
+            android:label="@string/sms_title"
+            android:launchMode="singleTop"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|locale|density|fontScale">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.APP_MESSAGING" />
+            </intent-filter>
+        </activity>
+
+        <!-- One conversation. singleTop + adjustResize: a notification tapped while the thread is
+             already open must not stack a second copy of it, and the compose box must sit above the
+             keyboard rather than under it. -->
+        <activity
+            android:name=".sms.ThreadActivity"
+            android:exported="false"
+            android:theme="@style/PcAppTheme"
+            android:launchMode="singleTop"
+            android:windowSoftInputMode="adjustResize"
+            android:parentActivityName=".sms.ThreadListActivity"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|locale|density|fontScale" />
+
+        <!-- PHONE (opt-in). Calls over the MOBILE NETWORK — deliberately not the same thing as
+             PosterChan's own Calls screen, which is a call over the internet to another Nostr user.
+             Everything in this package is prefixed `TEL_` / `pcai_cell_` because both live in the
+             same process and a shared action or channel would let one tear down the other.
+
+             The InCallService is the phone's call UI. BIND_INCALL_SERVICE is held by the platform
+             alone, which is what makes exported=true safe; IN_CALL_SERVICE_UI is what tells telecom
+             this app draws the screen rather than merely watching. Without RINGING=true the platform
+             keeps its own ringer for incoming calls and ours is never asked. -->
+        <service
+            android:name=".phone.PcInCallService"
+            android:exported="true"
+            android:permission="android.permission.BIND_INCALL_SERVICE">
+            <meta-data android:name="android.telecom.IN_CALL_SERVICE_UI" android:value="true" />
+            <meta-data android:name="android.telecom.IN_CALL_SERVICE_RINGING" android:value="true" />
+            <intent-filter>
+                <action android:name="android.telecom.InCallService" />
+            </intent-filter>
+        </service>
+
+        <!-- The call screen. showOnLockScreen + turnScreenOn in the manifest AS WELL as the flags and
+             the API 27 methods the activity sets: a ringing phone whose screen stays dark is a
+             missed call, and which of the three a given OEM honours is not something to guess at.
+             excludeFromRecents, because a finished call must not sit in the task switcher. -->
+        <activity
+            android:name=".phone.InCallActivity"
+            android:exported="false"
+            android:theme="@style/PcAppTheme"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:showOnLockScreen="true"
+            android:turnScreenOn="true"
+            android:showWhenLocked="true"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|locale|density|fontScale" />
+
+        <!-- ACTION_DIAL, with and without a `tel:`, is what Android requires before it will offer
+             this app as the default phone app. ACTION_VIEW on `tel:` is what makes a phone number in
+             a web page or an email open here. -->
+        <activity
+            android:name=".phone.DialerActivity"
+            android:exported="true"
+            android:theme="@style/PcAppTheme"
+            android:label="@string/tel_title"
+            android:launchMode="singleTop"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|locale|density|fontScale">
+            <intent-filter>
+                <action android:name="android.intent.action.DIAL" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.DIAL" />
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="tel" />
+            </intent-filter>
+            <!-- MAIN + APP_CALCULATOR-style category, and NOT LAUNCHER: it makes Android treat this
+                 as the phone app without putting a second icon beside PosterChan's own. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- Answer, decline and hang up from the notification — the buttons that matter when the
+             screen is locked or the phone is on a dashboard. Not exported: our own PendingIntents. -->
+        <receiver
+            android:name=".phone.InCallReceiver"
+            android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -432,6 +614,14 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.HOME" />
         </intent>
+        <!-- Whatever else on this phone answers ACTION_DIAL. The dialer hands a GSM service code
+             (*#06#, *21*…#) to the platform's own dialer so it can intercept and display the result,
+             and falls back to it when telecom refuses a call. Android 11+ hides the package list, so
+             without this the query comes back empty and both paths silently do nothing. -->
+        <intent>
+            <action android:name="android.intent.action.DIAL" />
+            <data android:scheme="tel" />
+        </intent>
     </queries>
 
     <!-- Permissions: networking, camera + mic (getUserMedia / attach a photo), media read for attaching
@@ -493,7 +683,36 @@
          It is a NORMAL permission — granted at install, no prompt, no runtime request. -->
     <uses-permission android:name="android.permission.WRITE_SYNC_SETTINGS" />
 
+    <!-- MESSAGES. Requested at runtime like any dangerous permission, and only ever asked for when
+         somebody turns the feature on — the app is perfectly usable without ever granting them.
+         RECEIVE_MMS and RECEIVE_WAP_PUSH are declared because Android requires the WAP_PUSH receiver
+         for the role; see MmsDeliverReceiver for what this app does and does not do with one.
+         These are Play-restricted permissions. This app is not on Play (Zapstore + GitHub Releases,
+         assembleRelease, no .aab), which is the same reason REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+         above is allowed here. -->
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.RECEIVE_MMS" />
+    <uses-permission android:name="android.permission.RECEIVE_WAP_PUSH" />
+
+    <!-- PHONE. Asked for at runtime, and only when somebody turns the feature on.
+         CALL_PHONE is requested at the moment the green button is pressed rather than on the way in,
+         because that is the one request a person can connect to something they just did.
+         ANSWER_PHONE_CALLS is NOT declared: an InCallService may answer a call it was handed without
+         it, and asking for a permission the app does not need is how a phone app earns a reputation.
+         READ_CALL_LOG/WRITE_CALL_LOG are the recents list — the phone's OWN log, which every other
+         app on the phone reads too. -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <uses-permission android:name="android.permission.WRITE_CALL_LOG" />
+
     <!-- required="false" so tablets / camera-less devices can still install and run. -->
+    <!-- required="false" throughout, so a tablet or a Wi-Fi-only device can still install: the
+         messages and phone features simply are not offered there. Declaring telephony as required
+         would remove this app from every device without a radio. -->
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />

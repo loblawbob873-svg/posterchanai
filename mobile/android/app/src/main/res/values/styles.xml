@@ -25,6 +25,17 @@
         <item name="android:windowOptOutEdgeToEdgeEnforcement" tools:targetApi="35">true</item>
     </style>
 
+    <!-- THE NATIVE SCREENS' THEME (messages, phone). Solid, unlike PcHomeTheme, which shows the
+         wallpaper through because a home screen must. Everything else about it is the same: a
+         PLATFORM parent rather than Theme.AppCompat, because these activities are plain
+         android.app.Activity on purpose — they exist to keep working when the WebView does not, so
+         they depend on as little of this app as possible. Colours come from PcTheme at runtime,
+         which is why nothing is set here. -->
+    <style name="PcAppTheme" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
+
     <!-- One event line in the calendar widget. A STYLE rather than four copies of the same eight
          attributes: RemoteViews cannot set text appearance at runtime on older platforms, so the
          rows have to be identical by construction. -->

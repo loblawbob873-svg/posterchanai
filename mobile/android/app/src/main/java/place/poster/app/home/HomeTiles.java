@@ -139,9 +139,4 @@ public final class HomeTiles {
         }
         return out;
     }
-
-    /** True for the tiles that hand off to the app's WebView rather than to a native screen. */
-    public static boolean opensTheApp(String view) {
-        return view != null && !view.isEmpty() && !view.startsWith("_");
-    }
 }

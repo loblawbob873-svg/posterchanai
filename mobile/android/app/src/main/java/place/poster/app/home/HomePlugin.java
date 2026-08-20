@@ -43,6 +43,11 @@ public class HomePlugin extends Plugin {
         // phone with no home screen at all must be able to say so before it is flipped, not after.
         o.put("anotherHome", new AppRepo(getContext()).anotherHomeExists());
         o.put("theme", PcThemeStore.slug(getContext()));
+        /* Whether the person ever ASKED for the launcher, as opposed to whether they currently hold
+           the role. The two differ when another app has since been made the home screen, and the
+           settings screen needs to tell those apart: "you turned this on and something else took it"
+           is a different sentence from "you never turned it on". */
+        o.put("optedIn", new LauncherPrefs(getContext()).optedIn());
         call.resolve(o);
     }
 

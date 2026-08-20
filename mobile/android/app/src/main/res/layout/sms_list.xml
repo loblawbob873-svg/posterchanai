@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The conversation list. Native, and drawn from the phone's own message store — a text has to be
+     readable when the WebView is not running, which is most of the time. Colours are applied at
+     runtime from the active PcTheme palette; nothing here hardcodes a theme. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/pc_sms_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:fitsSystemWindows="true">
+
+    <LinearLayout
+        android:id="@+id/pc_sms_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingLeft="16dp"
+        android:paddingRight="8dp"
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp">
+
+        <TextView
+            android:id="@+id/pc_sms_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/sms_title"
+            android:textSize="21sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.04" />
+
+        <ImageView
+            android:id="@+id/pc_sms_search_btn"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:padding="10dp"
+            android:contentDescription="@string/sms_search" />
+
+        <ImageView
+            android:id="@+id/pc_sms_new"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:padding="10dp"
+            android:layout_marginLeft="4dp"
+            android:contentDescription="@string/sms_new" />
+    </LinearLayout>
+
+    <EditText
+        android:id="@+id/pc_sms_search"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginLeft="12dp"
+        android:layout_marginRight="12dp"
+        android:layout_marginBottom="8dp"
+        android:visibility="gone"
+        android:hint="@string/sms_search"
+        android:inputType="text"
+        android:singleLine="true"
+        android:importantForAutofill="no" />
+
+    <TextView
+        android:id="@+id/pc_sms_notice"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginLeft="12dp"
+        android:layout_marginRight="12dp"
+        android:layout_marginBottom="8dp"
+        android:padding="12dp"
+        android:textSize="13sp"
+        android:visibility="gone" />
+
+    <ListView
+        android:id="@+id/pc_sms_threads"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:divider="@null"
+        android:dividerHeight="0dp"
+        android:paddingLeft="8dp"
+        android:paddingRight="8dp"
+        android:clipToPadding="false"
+        android:scrollbarStyle="outsideOverlay" />
+
+    <TextView
+        android:id="@+id/pc_sms_empty"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:padding="28dp"
+        android:visibility="gone"
+        android:text="@string/sms_empty" />
+</LinearLayout>

@@ -11,6 +11,7 @@ it is a phone somebody cannot use.
 """
 import glob
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -107,9 +108,12 @@ public class Harness {
     say("hide-essential", AppShelf.hide(new HashSet<String>(), ess));
     say("hide-plain", AppShelf.hide(new HashSet<String>(), plain).contains(plain.key()));
 
-    // 9. reorder is out-of-range safe.
+    // 9. Pinning: the key leads, it is never duplicated, and unpinning puts it back in the crowd.
     List<String> k = new ArrayList<String>(Arrays.asList("a", "b", "c"));
-    say("reorder", AppShelf.reorder(k, 2, 0) + " " + AppShelf.reorder(k, 9, 0) + " " + AppShelf.reorder(k, -1, 1));
+    say("pin", AppShelf.pin(k, "c") + " " + AppShelf.pin(AppShelf.pin(k, "c"), "c")
+             + " " + AppShelf.unpin(AppShelf.pin(k, "c"), "c")
+             + " " + AppShelf.pinned(k, "b") + " " + AppShelf.pinned(k, "z"));
+    say("pin-empty", AppShelf.pin(null, "a") + " " + AppShelf.unpin(null, "a"));
 
     // 10. defaultHidden never hides the essential tile, and never hides a default-on tile.
     say("seed", new TreeSet<String>(HomeTiles.defaultHidden()));
@@ -204,8 +208,14 @@ class Launcher(unittest.TestCase):
         self.assertEqual(self.out["hide-essential"], "[]")
         self.assertEqual(self.out["hide-plain"], "true")
 
-    def test_reorder_never_throws_on_a_drag_that_ended_off_the_grid(self):
-        self.assertEqual(self.out["reorder"], "[c, a, b] [a, b, c] [a, b, c]")
+    def test_pinning_puts_a_tile_first_and_never_twice(self):
+        """The saved order is a short list of keys that LEAD; everything else follows
+        alphabetically. Pinning the same tile twice must not put it in the list twice, or the
+        arrangement grows every time somebody presses the menu item."""
+        self.assertEqual(self.out["pin"], "[c, a, b] [c, a, b] [a, b] true false")
+
+    def test_pinning_an_unarranged_home_screen_is_not_an_error(self):
+        self.assertEqual(self.out["pin-empty"], "[a] []")
 
     def test_the_first_run_seed_never_hides_the_essential_tile(self):
         seed = self.out["seed"]
@@ -271,6 +281,15 @@ class LauncherSources(unittest.TestCase):
         self.assertIn('android:enabled="false"', block)
         self.assertIn("android.intent.category.HOME", block)
         self.assertIn("android.intent.category.DEFAULT", block)
+
+    def test_the_native_tiles_point_at_classes_that_exist(self):
+        """The Phone and Messages tiles start a native screen BY NAME, so this file compiles whether
+        or not those halves are in the build. The cost of that is that a typo is a toast instead of a
+        screen — with the tile drawing perfectly."""
+        src = open(os.path.join(HOME, "HomeActivity.java")).read()
+        for cls in re.findall(r'startNative\("([^"]+)"\)', src):
+            path = os.path.join(JAVA, *cls.split(".")) + ".java"
+            self.assertTrue(os.path.exists(path), cls + " does not exist")
 
     def test_the_launcher_can_see_other_home_apps(self):
         """Android 11+ hides the package list. Without a MAIN/HOME <queries> entry,

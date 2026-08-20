@@ -69,8 +69,18 @@ class IconSprite(unittest.TestCase):
         targets.append(strings)
         # The emoji planes, plus the dingbats/arrows/misc-symbols blocks that carry the glyphs a
         # button is most often labelled with by accident: ▶ ‖ ☎ ✕ →.
-        bad = re.compile("[\U0001F000-\U0001FAFF\u2190-\u27BF\u2B00-\u2BFF\u2600-\u26FF"
-                         "\u2000-\u2BFF\uFE0F]")
+        # The blocks a button gets labelled from by accident: the emoji planes, arrows, geometric
+        # shapes, misc technical, and dingbats.
+        #
+        # NOT general punctuation, and NOT currency. The first version of this took everything from
+        # U+2000 to U+2BFF and fired on the `€` in SmsKeys' GSM 7-bit alphabet — a character-SET
+        # table that never reaches a screen. The file was not exempted, because the rule is real:
+        # the whole reason this app has an icon sprite is that emoji are the wrong weight beside UI
+        # type, render differently on every platform, and cannot inherit a colour or a state. The
+        # regex was narrowed instead, and the WHOLE of that table (Latin-1 supplement, Greek
+        # capitals, U+20AC) is outside it rather than only the character that happened to fire.
+        bad = re.compile("[\U0001F000-\U0001FAFF\u2190-\u21FF\u2300-\u23FF"
+                         "\u25A0-\u25FF\u2600-\u27BF\u2B00-\u2BFF\uFE0F]")
         # STRING LITERALS AND RESOURCES ONLY. Prose may say whatever it likes — an arrow in a comment
         # explaining a data flow is not a button label, and a check that cannot tell them apart is a
         # check people delete.

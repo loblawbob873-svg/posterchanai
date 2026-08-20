@@ -1,0 +1,280 @@
+package place.poster.app.sms;
+
+import android.app.AlertDialog;
+import android.content.Intent;
+import android.database.ContentObserver;
+import android.net.Uri;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.provider.Telephony;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.text.format.DateUtils;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.AdapterView;
+import android.widget.BaseAdapter;
+import android.widget.EditText;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.ListView;
+import android.widget.TextView;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+
+import place.poster.app.R;
+import place.poster.app.ui.PcActivity;
+import place.poster.app.ui.Skin;
+
+/**
+ * EVERY CONVERSATION ON THIS PHONE.
+ *
+ * Read straight from the system message store, which is authoritative on the device — so this screen
+ * shows the same threads every other app on the phone shows, including the ones that arrived before
+ * PosterChan was installed.
+ *
+ * NO POLLING. The list refreshes on a ContentObserver over `content://sms`, registered while the
+ * screen is on and gone the moment it is not. With the HOME role this process is resident for the
+ * life of the battery; a five-second refresh here would be a five-second refresh for ever.
+ */
+public class ThreadListActivity extends PcActivity {
+
+    private ListView list;
+    private EditText search;
+    private TextView empty, notice, title;
+    private Threads adapter;
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private ContentObserver watcher;
+    private List<SmsStore.Thread> all = new ArrayList<SmsStore.Thread>();
+
+    @Override
+    protected void onCreate(Bundle saved) {
+        super.onCreate(saved);
+        setContentView(R.layout.sms_list);
+        list = (ListView) findViewById(R.id.pc_sms_threads);
+        search = (EditText) findViewById(R.id.pc_sms_search);
+        empty = (TextView) findViewById(R.id.pc_sms_empty);
+        notice = (TextView) findViewById(R.id.pc_sms_notice);
+        title = (TextView) findViewById(R.id.pc_sms_title);
+
+        adapter = new Threads();
+        list.setAdapter(adapter);
+        list.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+            @Override public void onItemClick(AdapterView<?> p, View v, int i, long id) {
+                SmsStore.Thread t = adapter.at(i);
+                if (t == null) return;
+                startActivity(new Intent(ThreadListActivity.this, ThreadActivity.class)
+                        .putExtra(ThreadActivity.EXTRA_THREAD, t.id)
+                        .putExtra(ThreadActivity.EXTRA_ADDRESS, t.address));
+            }
+        });
+        list.setOnItemLongClickListener(new AdapterView.OnItemLongClickListener() {
+            @Override public boolean onItemLongClick(AdapterView<?> p, View v, int i, long id) {
+                final SmsStore.Thread t = adapter.at(i);
+                if (t == null) return true;
+                confirmDeleteThread(t);
+                return true;
+            }
+        });
+
+        findViewById(R.id.pc_sms_new).setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { compose(); }
+        });
+        findViewById(R.id.pc_sms_search_btn).setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                boolean showing = search.getVisibility() == View.VISIBLE;
+                search.setVisibility(showing ? View.GONE : View.VISIBLE);
+                if (showing) { search.setText(""); }
+                else search.requestFocus();
+            }
+        });
+        search.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void afterTextChanged(Editable e) { draw(); }
+        });
+
+        applySkin();
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        applySkin();
+        reload();
+        // THE ONLY REFRESH TRIGGER. See the class comment: a timer here would run for ever.
+        watcher = new ContentObserver(main) {
+            @Override public void onChange(boolean self) { reload(); }
+            @Override public void onChange(boolean self, Uri uri) { reload(); }
+        };
+        try {
+            getContentResolver().registerContentObserver(Telephony.Sms.CONTENT_URI, true, watcher);
+        } catch (Throwable ignored) { watcher = null; }
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        if (watcher != null) {
+            try { getContentResolver().unregisterContentObserver(watcher); } catch (Throwable ignored) { }
+            watcher = null;
+        }
+    }
+
+    @Override protected void onThemeChanged() { applySkin(); }
+
+    private void applySkin() {
+        paintPage(R.id.pc_sms_root);
+        title.setTextColor(pal.text);
+        Skin.glow(title, pal);
+        icon(R.id.pc_sms_search_btn, R.drawable.ic_pc_search, pal.muted);
+        icon(R.id.pc_sms_new, R.drawable.ic_pc_plus, pal.accent);
+        findViewById(R.id.pc_sms_new).setBackground(Skin.pill(this, pal, Skin.alpha(pal.accent, 0.16), true));
+        search.setBackground(Skin.panel(this, pal));
+        search.setTextColor(pal.text);
+        search.setHintTextColor(pal.muted);
+        int p = dp(10);
+        search.setPadding(p, p, p, p);
+        empty.setTextColor(pal.muted);
+        notice.setBackground(Skin.ghost(this, pal, pal.amber, false));
+        notice.setTextColor(pal.text);
+        if (adapter != null) adapter.notifyDataSetChanged();
+    }
+
+    private void reload() {
+        new Thread(new Runnable() {
+            @Override public void run() {
+                final List<SmsStore.Thread> found = SmsStore.threads(ThreadListActivity.this, 800);
+                main.post(new Runnable() {
+                    @Override public void run() { all = found; draw(); }
+                });
+            }
+        }, "pc-sms-threads").start();
+    }
+
+    private void draw() {
+        String q = search.getText().toString().trim().toLowerCase(Locale.ROOT);
+        List<SmsStore.Thread> rows = new ArrayList<SmsStore.Thread>();
+        for (SmsStore.Thread t : all) {
+            if (q.isEmpty()
+                    || t.label.toLowerCase(Locale.ROOT).contains(q)
+                    || t.address.toLowerCase(Locale.ROOT).contains(q)
+                    || t.snippet.toLowerCase(Locale.ROOT).contains(q)) {
+                rows.add(t);
+            }
+        }
+        adapter.set(rows);
+        empty.setVisibility(rows.isEmpty() ? View.VISIBLE : View.GONE);
+
+        // SAY WHY IT IS EMPTY. "PosterChan can read your texts but is not the messages app" and "you
+        // have no texts" look identical, and the first one is fixable in two taps.
+        boolean isDefault = HasRole.sms(this);
+        notice.setVisibility(isDefault ? View.GONE : View.VISIBLE);
+        if (!isDefault) notice.setText(R.string.sms_not_default);
+    }
+
+    private void compose() {
+        final EditText input = new EditText(this);
+        input.setHint(R.string.sms_number_hint);
+        input.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
+        input.setTextColor(pal.text);
+        input.setHintTextColor(pal.muted);
+        int p = dp(14);
+        input.setPadding(p, p, p, p);
+        LinearLayout box = new LinearLayout(this);
+        box.setPadding(dp(16), dp(8), dp(16), 0);
+        box.addView(input);
+        try {
+            new AlertDialog.Builder(this)
+                .setTitle(R.string.sms_to)
+                .setView(box)
+                .setPositiveButton(android.R.string.ok, new android.content.DialogInterface.OnClickListener() {
+                    @Override public void onClick(android.content.DialogInterface d, int w) {
+                        String to = input.getText().toString().trim();
+                        if (to.isEmpty()) return;
+                        startActivity(new Intent(ThreadListActivity.this, ThreadActivity.class)
+                                .putExtra(ThreadActivity.EXTRA_ADDRESS, to)
+                                .putExtra(ThreadActivity.EXTRA_THREAD,
+                                          SmsStore.threadIdFor(ThreadListActivity.this, to)));
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+        } catch (Throwable ignored) { }
+    }
+
+    private void confirmDeleteThread(final SmsStore.Thread t) {
+        try {
+            new AlertDialog.Builder(this)
+                .setTitle(PhoneBook.label(this, t.address))
+                .setMessage(R.string.sms_delete_thread)
+                .setPositiveButton(android.R.string.ok, new android.content.DialogInterface.OnClickListener() {
+                    @Override public void onClick(android.content.DialogInterface d, int w) {
+                        int n = SmsStore.deleteThread(ThreadListActivity.this, t.id);
+                        SmsNotifier.clear(ThreadListActivity.this, t.id);
+                        // THIS PHONE ONLY, and it says so. The archive on the person's other devices
+                        // is a separate copy with a separate delete, done from the app's Texts screen
+                        // — claiming both here would be a claim this code cannot keep.
+                        say(getString(R.string.sms_deleted_here) + " (" + n + ")");
+                        reload();
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+        } catch (Throwable ignored) { }
+    }
+
+    private final class Threads extends BaseAdapter {
+        private List<SmsStore.Thread> rows = new ArrayList<SmsStore.Thread>();
+
+        void set(List<SmsStore.Thread> r) { rows = r; notifyDataSetChanged(); }
+        SmsStore.Thread at(int i) { return i >= 0 && i < rows.size() ? rows.get(i) : null; }
+
+        @Override public int getCount() { return rows.size(); }
+        @Override public Object getItem(int i) { return at(i); }
+        @Override public long getItemId(int i) { return i; }
+
+        @Override
+        public View getView(int i, View reuse, ViewGroup parent) {
+            View v = reuse;
+            if (v == null) v = LayoutInflater.from(ThreadListActivity.this)
+                    .inflate(R.layout.sms_row, parent, false);
+            SmsStore.Thread t = at(i);
+            TextView av = (TextView) v.findViewById(R.id.pc_row_avatar);
+            TextView name = (TextView) v.findViewById(R.id.pc_row_name);
+            TextView snip = (TextView) v.findViewById(R.id.pc_row_snippet);
+            TextView when = (TextView) v.findViewById(R.id.pc_row_when);
+            TextView un = (TextView) v.findViewById(R.id.pc_row_unread);
+            View card = v.findViewById(R.id.pc_row_card);
+            if (t == null) return v;
+
+            // Already resolved, on the thread that read the provider — see SmsStore.Thread.label.
+            String label = t.label.isEmpty() ? t.address : t.label;
+            card.setBackground(Skin.panel(ThreadListActivity.this, pal));
+            av.setBackground(Skin.avatar(ThreadListActivity.this, pal, label));
+            av.setText(initials(label));
+            name.setText(label);
+            name.setTextColor(pal.text);
+            snip.setText(t.snippet);
+            snip.setTextColor(t.unread > 0 ? pal.text : pal.muted);
+            when.setText(t.date > 0
+                    ? DateUtils.getRelativeTimeSpanString(t.date, System.currentTimeMillis(),
+                            DateUtils.MINUTE_IN_MILLIS).toString()
+                    : "");
+            when.setTextColor(pal.muted);
+            if (t.unread > 0) {
+                un.setVisibility(View.VISIBLE);
+                un.setText(String.valueOf(t.unread));
+                un.setTextColor(pal.onAccent());
+                un.setBackground(Skin.pill(ThreadListActivity.this, pal, pal.accent, true));
+            } else {
+                un.setVisibility(View.GONE);
+            }
+            return v;
+        }
+    }
+}

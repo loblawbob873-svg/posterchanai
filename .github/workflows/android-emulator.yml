@@ -153,3 +153,15 @@ jobs:
             /tmp/pc-logcat*.txt
             /tmp/pc-device-*.txt
           if-no-files-found: ignore
+
+      # SCREENSHOTS OF THE NATIVE SCREENS. The launcher, the messages app and the dialer are drawn by
+      # Android rather than by the WebView, so none of the browser-driven checks in this repo can see
+      # them and nobody on the build side has a device to look at. "Make it look good" is a real
+      # requirement and this is the only way to judge it from the actual pixels.
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screens
+          path: /tmp/pc-shot-*.png
+          if-no-files-found: ignore

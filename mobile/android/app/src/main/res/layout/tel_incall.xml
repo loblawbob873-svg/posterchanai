@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The in-call screen. Native, themed at runtime from the active PcTheme palette, and with no
+     WebView anywhere near it: a call must not be able to end because a browser engine ran out of
+     memory. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/pc_ic_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fitsSystemWindows="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:paddingLeft="24dp"
+        android:paddingRight="24dp">
+
+        <View android:layout_width="0dp" android:layout_height="0dp" android:layout_weight="0.7" />
+
+        <TextView
+            android:id="@+id/pc_ic_avatar"
+            android:layout_width="96dp"
+            android:layout_height="96dp"
+            android:gravity="center"
+            android:textSize="32sp"
+            android:textStyle="bold"
+            android:textColor="#FFFFFF" />
+
+        <TextView
+            android:id="@+id/pc_ic_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:gravity="center"
+            android:maxLines="2"
+            android:ellipsize="end"
+            android:textSize="26sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/pc_ic_number"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:gravity="center"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/pc_ic_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:gravity="center"
+            android:textSize="15sp"
+            android:letterSpacing="0.08" />
+
+        <!-- Calendar context, from the calendar the client has already decrypted. Hidden unless
+             there is a real event with this person: a row that is always there and usually empty is
+             a row people stop reading. -->
+        <TextView
+            android:id="@+id/pc_ic_context"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:padding="10dp"
+            android:textSize="12sp"
+            android:visibility="gone" />
+
+        <View android:layout_width="0dp" android:layout_height="0dp" android:layout_weight="1" />
+
+        <!-- The keypad, for a phone tree. Only reachable once the call is up: DTMF sent while a call
+             is still dialing is swallowed by the network with the keypad drawing every press. -->
+        <LinearLayout
+            android:id="@+id/pc_ic_pad"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone" />
+
+        <LinearLayout
+            android:id="@+id/pc_ic_controls"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:layout_marginBottom="18dp">
+
+            <ImageView android:id="@+id/pc_ic_mute" android:layout_width="60dp"
+                android:layout_height="60dp" android:padding="17dp" android:layout_margin="10dp"
+                android:contentDescription="@string/tel_mute" />
+            <ImageView android:id="@+id/pc_ic_keypad" android:layout_width="60dp"
+                android:layout_height="60dp" android:padding="17dp" android:layout_margin="10dp"
+                android:contentDescription="@string/tel_keypad" />
+            <ImageView android:id="@+id/pc_ic_speaker" android:layout_width="60dp"
+                android:layout_height="60dp" android:padding="17dp" android:layout_margin="10dp"
+                android:contentDescription="@string/tel_speaker" />
+            <ImageView android:id="@+id/pc_ic_hold" android:layout_width="60dp"
+                android:layout_height="60dp" android:padding="17dp" android:layout_margin="10dp"
+                android:contentDescription="@string/tel_hold" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:layout_marginBottom="44dp">
+
+            <ImageView android:id="@+id/pc_ic_answer" android:layout_width="76dp"
+                android:layout_height="76dp" android:padding="20dp" android:layout_margin="18dp"
+                android:visibility="gone" android:contentDescription="@string/tel_answer" />
+            <ImageView android:id="@+id/pc_ic_end" android:layout_width="76dp"
+                android:layout_height="76dp" android:padding="20dp" android:layout_margin="18dp"
+                android:contentDescription="@string/tel_hang_up" />
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>

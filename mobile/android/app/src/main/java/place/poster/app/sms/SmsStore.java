@@ -46,6 +46,12 @@ public final class SmsStore {
         public long date;
         public int unread;
         public int count;
+        /**
+         * The contact's name, or the number. RESOLVED ON THE BACKGROUND THREAD that built this list
+         * (see `threads`), never in a draw: PhoneLookup is a cross-process query and a list screen
+         * asks for one per row per repaint — on every keystroke in the search box.
+         */
+        public String label = "";
     }
 
     private SmsStore() { }
@@ -60,6 +66,11 @@ public final class SmsStore {
      * else's phone.
      */
     public static List<Thread> threads(Context ctx, int limit) {
+        return threads(ctx, limit, true);
+    }
+
+    /** @param withNames resolve each conversation's contact name here. Always true off the UI thread. */
+    public static List<Thread> threads(Context ctx, int limit, boolean withNames) {
         Map<Long, Thread> byThread = new LinkedHashMap<Long, Thread>();
         for (SmsMsg m : recent(ctx, Math.max(limit, 200))) {
             Thread t = byThread.get(m.threadId);
@@ -75,7 +86,9 @@ public final class SmsStore {
             if (m.incoming() && !m.read) t.unread++;
             if (t.address.isEmpty()) t.address = m.address;
         }
-        return new ArrayList<Thread>(byThread.values());
+        List<Thread> out = new ArrayList<Thread>(byThread.values());
+        if (withNames) for (Thread t : out) t.label = PhoneBook.label(ctx, t.address);
+        return out;
     }
 
     /** The newest messages, newest first, across all conversations. */

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/pc_rc_card"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:layout_marginTop="3dp"
+    android:layout_marginBottom="3dp"
+    android:padding="11dp">
+
+    <ImageView android:id="@+id/pc_rc_kind" android:layout_width="22dp"
+        android:layout_height="22dp" android:layout_marginRight="12dp"
+        android:contentDescription="@null" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView android:id="@+id/pc_rc_who" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:maxLines="1" android:ellipsize="end"
+            android:textSize="15sp" />
+        <TextView android:id="@+id/pc_rc_when" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:maxLines="1" android:textSize="12sp" />
+    </LinearLayout>
+
+    <ImageView android:id="@+id/pc_rc_call" android:layout_width="40dp"
+        android:layout_height="40dp" android:padding="10dp"
+        android:contentDescription="@string/tel_call" />
+</LinearLayout>

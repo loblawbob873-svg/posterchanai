@@ -9,7 +9,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v1409';
+const CACHE = 'pc-nostr-v1410';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 // Content-addressed blobs fetched by JS rather than by an element: the ENCRYPTED DRIVE — Notes
 // attachments, music tracks, an offloaded note body, the files index. They land in their OWN cache,
@@ -79,6 +79,7 @@ const SHELL = [
   '/static/js/client/vcard.js',
   '/static/js/client/contacts.js',
   '/static/js/client/phoneshell.js',
+  '/static/js/client/sms.js',
   '/static/js/client/os.js',
   '/static/js/client/stats.js',
   '/static/js/client/git.js',

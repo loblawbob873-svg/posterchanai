@@ -55,10 +55,21 @@ public final class SmsKeys {
      * five-digit shortcode would otherwise be the same conversation.
      */
     public static boolean sameNumber(String a, String b) {
-        String x = digits(normalize(a)), y = digits(normalize(b));
-        if (x.isEmpty() || y.isEmpty()) return x.equals(y);
-        if (x.length() < 7 || y.length() < 7) return x.equals(y);
-        return x.substring(x.length() - 7).equals(y.substring(y.length() - 7));
+        return matchKey(a).equals(matchKey(b));
+    }
+
+    /**
+     * The comparable form of a number: its last SEVEN digits, or the whole thing when it is shorter.
+     *
+     * ONE definition, used by `sameNumber`, by `threadKey` and — the load-bearing one — by `docId`.
+     * A message's archive address has to survive the same number being written differently: the
+     * network delivers `+15550104477`, the phone book holds `(555) 010-4477`, and a provider that
+     * hands back either would otherwise mint two documents for one message and archive it twice.
+     */
+    public static String matchKey(String raw) {
+        String d = digits(normalize(raw));
+        if (d.isEmpty()) return normalize(raw);
+        return d.length() < 7 ? d : d.substring(d.length() - 7);
     }
 
     private static String digits(String s) {
@@ -78,7 +89,7 @@ public final class SmsKeys {
         List<String> norm = new ArrayList<String>();
         if (addresses != null) {
             for (String a : addresses) {
-                String n = normalize(a);
+                String n = matchKey(a);
                 if (!n.isEmpty() && !norm.contains(n)) norm.add(n);
             }
         }
@@ -107,7 +118,7 @@ public final class SmsKeys {
      * timestamp — so the id is built from seconds and the two copies still agree.
      */
     public static String docId(String address, long dateMs, String body, boolean incoming) {
-        String canon = normalize(address) + "\n" + (dateMs / 1000L) + "\n"
+        String canon = matchKey(address) + "\n" + (dateMs / 1000L) + "\n"
                 + (incoming ? "in" : "out") + "\n" + (body == null ? "" : body);
         return "pcai:sms:" + sha256(canon).substring(0, 24);
     }
@@ -117,7 +128,7 @@ public final class SmsKeys {
 
     /** A send asked for by another device: `pcai:smsout:<24 hex>` of who, what and when it was asked. */
     public static String outboxId(String address, String body, long askedMs) {
-        return "pcai:smsout:" + sha256(normalize(address) + "\n" + askedMs + "\n"
+        return "pcai:smsout:" + sha256(matchKey(address) + "\n" + askedMs + "\n"
                 + (body == null ? "" : body)).substring(0, 24);
     }
 
@@ -163,6 +174,16 @@ public final class SmsKeys {
         boolean unicode = false;
         for (int i = 0; i < body.length(); i++) {
             char c = body.charAt(i);
+            /* THE GSM 7-BIT ALPHABET, and why a currency sign and a row of Greek capitals appear
+             * in a Java source in this app. These are not text and never reach a screen: they are
+             * the non-ASCII characters a carrier can still send at 160 per message. Anything outside
+             * them forces the whole message to UCS-2 at 70, which is what this counter exists to
+             * tell somebody BEFORE they send a three-part text.
+             *
+             * (tests/test_android_icon_sprite.py forbids emoji in the native screens, and its regex
+             * is deliberately narrowed to the symbol blocks so it does not read this table as a row
+             * of icons — it fired on the `€` once and the guard was widened rather than the file
+             * exempted, because the rule it enforces is a real one.) */
             if (c > 0x7F && "£¥èéùìòÇØøÅåΔΦΓΛΩΠΨΣΘΞÆæßÉÄÖÑÜ§¿äöñüà€".indexOf(c) < 0) { unicode = true; break; }
         }
         int single = unicode ? 70 : 160, multi = unicode ? 67 : 153;

@@ -121,7 +121,7 @@ def write_r(dest_dir, package="place.poster.app"):
 def _framework_free_stubs(out_dir):
     """tests/androidstubs with `android/` and `place/` REMOVED.
 
-    Those two subtrees exist for the stub-only compiles, and here they are actively harmful: javac
+    Those subtrees exist for the stub-only compiles, and here they are actively harmful: javac
     prefers a source on the -sourcepath over a class on the -classpath, so a one-method stub of
     `android.content.Intent` SHADOWS the real android.jar and every genuine API call fails to
     resolve. The same goes for the placeholder `place.poster.app.*` sources, which would shadow the
@@ -132,7 +132,9 @@ def _framework_free_stubs(out_dir):
     if os.path.isdir(dst):
         shutil.rmtree(dst)
     shutil.copytree(STUBS, dst)
-    for gone in ("android", "place"):
+    # `org` too: android.jar carries the real org.json, and the stub of it here is a two-method
+    # skeleton that shadows it — which reads as "JSONArray has no optString(int, String)".
+    for gone in ("android", "place", "org"):
         shutil.rmtree(os.path.join(dst, gone), ignore_errors=True)
     return dst
 
@@ -163,6 +165,16 @@ def compile_sources(sources, out_dir, extra_sourcepath=(), shims=None):
             f.write(body)
     sp = os.pathsep.join([gen, shim_dir, _framework_free_stubs(out_dir), JAVA]
                          + list(extra_sourcepath))
+    # NOTHING IS SHARED BETWEEN CONCURRENT RUNS. The generated R, the shims, the copied stubs and
+    # the class output all live under the caller's own temp directory — this was checked with four
+    # copies of the compile test running at once, because a test that fails when the machine is busy
+    # is one people learn to re-run rather than believe, and this repo has already paid for a test
+    # nobody believed.
+    #
+    # The ONE thing that genuinely breaks it is the source tree being EDITED while it runs: javac
+    # reads mobile/android/.../java and res/ live, so a half-written file is a compile error that
+    # has nothing to do with the test. If this fails during a full run and passes alone, that is
+    # what happened.
     return subprocess.run(
         # `--release` would pin us to the JDK's own platform classes, which is the opposite of what
         # is wanted: the point is to compile against ANDROID's java.*, not the desktop JVM's. So
