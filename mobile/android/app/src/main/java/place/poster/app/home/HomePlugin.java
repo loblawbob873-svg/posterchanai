@@ -83,6 +83,17 @@ public class HomePlugin extends Plugin {
            that is not wired up. Reported as "sms does nothing when checked". The switch reads this
            and explains, rather than offering a request that cannot succeed. */
         o.put("smsCapable", HomeRoles.canBeSms(getContext()));
+        /* WHICH PART IS MISSING, not just that one is. "it is impossible to check Messages in User
+           Settings -> Phone, nothing happend" — and the switch's answer for the not-capable case was
+           "update the app and try again", which is advice nobody can act on and which is wrong
+           whenever the build is already current. Android demands four components before it will
+           offer the SMS role; naming the absent one turns a dead switch into something reportable. */
+        JSObject parts = new JSObject();
+        parts.put("smsDeliver", HomeRoles.hasSmsDeliver(getContext()));
+        parts.put("mmsDeliver", HomeRoles.hasMmsDeliver(getContext()));
+        parts.put("sendTo", HomeRoles.hasSendTo(getContext()));
+        parts.put("respondViaMessage", HomeRoles.hasRespondService(getContext()));
+        o.put("smsParts", parts);
         o.put("dialerCapable", HomeRoles.canBeDialer(getContext()));
         call.resolve(o);
     }

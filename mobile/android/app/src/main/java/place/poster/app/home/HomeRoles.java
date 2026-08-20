@@ -128,8 +128,40 @@ public final class HomeRoles {
      * they cover the receiver half and the service half.
      */
     public static boolean canBeSms(Context ctx) {
-        return resolvesBroadcast(ctx, "android.provider.Telephony.SMS_DELIVER")
-            && resolvesService(ctx, "android.intent.action.RESPOND_VIA_MESSAGE");
+        return hasSmsDeliver(ctx) && hasRespondService(ctx);
+    }
+
+    /* THE FOUR PARTS ANDROID DEMANDS, ASKED SEPARATELY.
+     *
+     * "it is impossible to check Messages in User Settings -> Phone, nothing happend" — and the
+     * switch's answer for the not-capable case was "update the app and try again", which nobody can
+     * act on and which is simply wrong when the build is already current. `canBeSms` collapses the
+     * question to a boolean; these say WHICH one is absent, so a dead switch becomes something a
+     * person can report and somebody can fix. Two of them are what the role actually turns on
+     * (canBeSms above, unchanged); all four are reported. */
+    public static boolean hasSmsDeliver(Context ctx) {
+        return resolvesBroadcast(ctx, "android.provider.Telephony.SMS_DELIVER");
+    }
+
+    public static boolean hasMmsDeliver(Context ctx) {
+        return resolvesBroadcast(ctx, "android.provider.Telephony.WAP_PUSH_DELIVER");
+    }
+
+    public static boolean hasRespondService(Context ctx) {
+        return resolvesService(ctx, "android.intent.action.RESPOND_VIA_MESSAGE");
+    }
+
+    public static boolean hasSendTo(Context ctx) {
+        try {
+            android.content.Intent i = new android.content.Intent(
+                    android.content.Intent.ACTION_SENDTO, android.net.Uri.parse("smsto:+15550100"));
+            for (android.content.pm.ResolveInfo r
+                    : ctx.getPackageManager().queryIntentActivities(i, 0)) {
+                if (r.activityInfo != null
+                        && ctx.getPackageName().equals(r.activityInfo.packageName)) return true;
+            }
+        } catch (Throwable ignored) { }
+        return false;
     }
 
     /** Likewise for the dialer: an InCallService that draws the UI, and an ACTION_DIAL activity. */

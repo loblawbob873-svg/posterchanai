@@ -158,8 +158,18 @@
         if(!P){ box.checked = !want; msg('this build has no phone-shell support'); return; }
         if(want && capable === false){
           box.checked = false;
-          msg('This build of PosterChan cannot be your ' + what + ' — it is missing the parts '
-            + 'Android requires for that. Update the app and try again.');
+          /* NAME THE MISSING PART. "it is impossible to check Messages in User Settings -> Phone,
+           * nothing happend" — this branch's old answer was "update the app and try again", which
+           * is advice nobody can act on and is wrong whenever the build is already current. Android
+           * demands four components before it will offer the SMS role; `status` reports each one,
+           * so the switch can say which is absent instead of shrugging. */
+          const parts = (st && st.smsParts) || null;
+          const gone = parts ? Object.keys(parts).filter(k => !parts[k]) : [];
+          msg('Android will not offer PosterChan as your ' + what + ': '
+            + (gone.length ? 'this build is missing ' + gone.join(', ')
+                           : 'it does not qualify on this phone')
+            + '. Press \u201cWhy isn\u2019t this working?\u201d in Texts for the full reading.');
+          const b = $('#ps-defaults'); if(b) b.hidden = false;
           return;
         }
         try{
@@ -176,7 +186,12 @@
           after = await refresh();
         }
         if(want && after && !after[holds]){
-          msg('Android did not hand over the ' + what + ' role.');
+          /* SAID LOUDLY, because "nothing happened" is what this looked like. Android refuses a role
+           * by starting the request activity and finishing it immediately with RESULT_CANCELED — no
+           * dialog, no error, nothing in any log — which from here is indistinguishable from a
+           * switch that is not wired up. */
+          msg('Android did not hand over the ' + what + ' role — it refused, or the dialog was '
+            + 'dismissed. Use the button below, which always works.');
           const b = $('#ps-defaults');
           if(b) b.hidden = false;
         } else { msg(''); const b = $('#ps-defaults'); if(b) b.hidden = true; }

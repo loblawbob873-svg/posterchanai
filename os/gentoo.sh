@@ -1403,12 +1403,7 @@ tweaks() {
 	elif [[ $choice = 3 ]]; then
 		compile-kernel
 	elif [[ $choice = 4 ]]; then
-		rm -f gentoo.sh
-		rm -f repos.conf
-		rm -f gentoobinhost.conf
-		rm -f /tmp/latest-stage3-amd64-desktop-systemd.txt
-		#wget https://git.poster.place/verita84/arch/raw/branch/main/gentoo.sh
-		scp verita84@nas.lan:~/configs/scripts/gentoo.sh .
+		upgradeSelf
 	elif [[ $choice = 5 ]]; then
 		fixSound
 	elif [[ $choice = 7 ]]; then
@@ -1443,6 +1438,74 @@ tweaks() {
 #
 # THE WORK DIRECTORY EXCLUDES ITSELF. Squashing `/` while writing the squashfs into `/` is a loop
 # that fills the disk, and it is the first thing anyone gets wrong here.
+# ===============================================================================================
+# UPDATE THIS SCRIPT FROM WHERE IT IS ACTUALLY MAINTAINED.
+#
+# "livecd error: same as fucking last time i said it!" — and the fix had been written, committed,
+# pushed and deployed twice. It never arrived, because this menu entry pulled from
+# `nas.lan:~/configs/scripts/gentoo.sh` over scp: a private path, on one machine, that nothing
+# updates when the repository does. So "Upgrade gentoo.sh" faithfully reinstalled the same old copy
+# every time, and every fix since this script moved into the repo has been invisible to anybody who
+# used it. That is worse than having no updater, because it looks like one.
+#
+# The public mirror is fetched instead. No ssh, no key, no one host that has to be up — and it is
+# the same file the repository holds, which is the whole point.
+#
+# NOTHING IS REPLACED UNTIL THE DOWNLOAD IS PROVEN. A truncated or 404 body written over the running
+# script is a person left with no installer at all, on a machine they may be part-way through
+# installing. It lands in a temp file, is checked for size, for a shebang and for `bash -n`, and only
+# then moves into place — and the old one is kept beside it either way.
+# ===============================================================================================
+upgradeSelf() {
+	local URL TMP HERE
+	URL="https://raw.githubusercontent.com/loblawbob873-svg/posterchanai/main/os/gentoo.sh"
+	HERE="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null)"
+	[[ -z "$HERE" ]] && HERE="$PWD/gentoo.sh"
+	TMP="$(mktemp /tmp/gentoo.sh.XXXXXX)" || { echo "cannot write to /tmp"; read -p "Press enter key to Continue"; return; }
+	echo
+	echo -e "${COLOR_YELLOW}Fetching $URL${COLOR_RESET}"
+	if ! curl -fsSL --retry 2 --max-time 60 -o "$TMP" "$URL"; then
+		rm -f "$TMP"
+		echo -e "${COLOR_YELLOW}Could not download it — the copy you have is untouched.${COLOR_RESET}"
+		read -p "Press enter key to Continue"
+		return
+	fi
+	# Proven before it is trusted: a 404 page and a half-written file both arrive as "success".
+	if [[ ! -s "$TMP" ]] || ! head -1 "$TMP" | grep -q '^#!' || ! bash -n "$TMP" 2>/dev/null; then
+		rm -f "$TMP"
+		echo -e "${COLOR_YELLOW}What came back is not a working script — nothing was replaced.${COLOR_RESET}"
+		read -p "Press enter key to Continue"
+		return
+	fi
+	cp -f "$HERE" "$HERE.old" 2>/dev/null
+	if ! install -m 755 "$TMP" "$HERE"; then
+		rm -f "$TMP"
+		echo -e "${COLOR_YELLOW}Could not write $HERE — try it as root.${COLOR_RESET}"
+		read -p "Press enter key to Continue"
+		return
+	fi
+	rm -f "$TMP"
+	# THE COPY ON $PATH TOO, when there is one. `gentoo.sh` is installed to /usr/bin on these
+	# machines and run by name, so updating only the file in the current directory updates the copy
+	# nobody runs — which is this bug wearing a different hat.
+	local ONPATH
+	ONPATH="$(command -v gentoo.sh 2>/dev/null)"
+	if [[ -n "$ONPATH" && "$ONPATH" != "$HERE" ]]; then
+		if install -m 755 "$HERE" "$ONPATH" 2>/dev/null; then
+			echo -e "${COLOR_YELLOW}Also updated $ONPATH${COLOR_RESET}"
+		else
+			echo -e "${COLOR_YELLOW}Could not update $ONPATH (needs root) — run it from $HERE.${COLOR_RESET}"
+		fi
+	fi
+	rm -f repos.conf gentoobinhost.conf /tmp/latest-stage3-amd64-desktop-systemd.txt
+	echo
+	echo -e "${COLOR_YELLOW}Updated: $HERE${COLOR_RESET}"
+	echo -e "${COLOR_YELLOW}The previous copy is at $HERE.old${COLOR_RESET}"
+	echo -e "${COLOR_YELLOW}Start it again to run the new one.${COLOR_RESET}"
+	read -p "Press enter key to Continue"
+	exit 0
+}
+
 liveCD() {
 	clear
 	echo

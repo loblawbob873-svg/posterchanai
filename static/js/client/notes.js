@@ -557,6 +557,20 @@
   // Build the DOM from whatever is in _lib right now. Pure render — no I/O, so it is safe to call
   // from a background refresh or a live event.
   function _paint(){
+    /* PAINT ONLY IF THIS IS STILL THE SCREEN. `#feed` is ONE element shared by every view, and on
+     * the windowed desktop it is MOVED between windows — so a painter that resolves it late paints
+     * into whichever window happens to be holding it.
+     *
+     * That is not theoretical: `render()` awaits `load()` before the first paint, and a library that
+     * has to be fetched takes long enough to open something else. Reported as "launched notes and
+     * nothing happened in the notes window, then I launched terminal and see notes" — the notes
+     * window was drawn before its content arrived, and the content arrived after `#feed` had been
+     * moved into the terminal's.
+     *
+     * The guard is the same one term.js has had all along (`PC.VIEW !== 'terminal'`), and it belongs
+     * in _paint rather than only in render because the live subscription and the background refresh
+     * both call it, minutes later, from a screen nobody is looking at any more. */
+    if(!PC || PC.VIEW !== 'notes') return;
     const feed = $('#feed');
     if(!feed || !_lib) return;
     const notes = visibleNotes();
