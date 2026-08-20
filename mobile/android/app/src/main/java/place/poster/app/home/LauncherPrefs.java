@@ -30,6 +30,8 @@ public final class LauncherPrefs {
     private static final String K_SEEDED = "seeded";
     private static final String K_DESK = "desk";
     private static final String K_DOCK = "dock";
+    private static final String K_ADOPTED = "adopted";
+    private static final String K_ADOPT_SEEDED = "adopt_seeded";
 
     private final SharedPreferences sp;
 
@@ -93,6 +95,36 @@ public final class LauncherPrefs {
         // shape this device has not been in yet — still finds a desktop.
         sp.edit().putString(K_DESK + "." + geometry, v).putString(K_DESK, v).apply();
     }
+
+    /**
+     * EVERY TILE THIS LAUNCHER HAS EVER OFFERED A PLACE TO.
+     *
+     * The desktop is seeded ONCE, which is right — re-seeding would put back every icon somebody had
+     * just removed. The cost is that a tile which becomes available LATER lands nowhere at all on an
+     * install that already exists, for ever, and that is not hypothetical: Messages and Phone were
+     * withheld from the catalogue until the app held the SMS / dialer role, so an install that was
+     * seeded before that gate was lifted has them on neither the desktop nor the dock, and nothing
+     * will ever put them there. Reported as "posterchan is the default messaging app but still no
+     * desktop / app icon ... for text".
+     *
+     * "Not on the desktop" cannot answer this on its own, because REMOVING an icon does not hide it
+     * — a removal and a tile that was never offered look identical. So this is a separate record of
+     * what has been OFFERED, and it only ever grows. A tile in here is never placed again, whatever
+     * the person did with it afterwards; a tile not in here has never had a chance, and gets one.
+     */
+    public Set<String> adopted() {
+        return new LinkedHashSet<String>(split(sp.getString(K_ADOPTED, "")));
+    }
+
+    public void setAdopted(Set<String> keys) {
+        sp.edit().putString(K_ADOPTED, join(new ArrayList<String>(
+                keys == null ? new LinkedHashSet<String>() : keys))).apply();
+    }
+
+    /** Whether the record above has been initialised on this install. See HomeActivity.adoptTiles. */
+    public boolean adoptSeeded() { return sp.getBoolean(K_ADOPT_SEEDED, false); }
+
+    public void setAdoptSeeded(boolean v) { sp.edit().putBoolean(K_ADOPT_SEEDED, v).apply(); }
 
     /** The dock — the toolbar of main icons that stays put while the desktop scrolls. */
     public List<String> dock() { return split(sp.getString(K_DOCK, "")); }

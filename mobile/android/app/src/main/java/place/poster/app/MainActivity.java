@@ -323,6 +323,13 @@ public class MainActivity extends BridgeActivity {
         setIntent(intent);
         if (isSend(intent)) shareNonce++;   // a genuinely new share → new nonce
         super.onNewIntent(intent);
+        // AND TELL THE PAGE A PRESS LANDED. A home-screen tile, a drawer alias or the music widget
+        // parks its request in a static (LaunchView / LaunchPress) and starts this activity; the
+        // client used to find out only when `visibilitychange` fired, which on Android arrives late
+        // or is coalesced away. This is the moment it actually happened, from the Activity, which is
+        // the half Android never freezes. No payload — the client still consumes the parked request
+        // itself, so there is one consumer and no second path to disagree with it.
+        try { place.poster.app.home.HomePlugin.announceLaunchView(); } catch (Throwable ignored) { }
     }
 
     /* THE CONTROLLER'S WAY IN, and the reason it needs one: a webxdc game driven by a Bluetooth pad

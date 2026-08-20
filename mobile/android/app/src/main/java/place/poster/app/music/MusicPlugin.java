@@ -223,14 +223,24 @@ public class MusicPlugin extends Plugin {
   public void consumeLaunchAction(PluginCall call) {
     JSObject ret = new JSObject();
     String action = null;
+    // THE PARKED PRESS IS READ FIRST AND THE INTENT EXTRA SECOND. They cover disjoint halves: a warm
+    // start is the case where the extra is dropped (a singleTask activity handed a launcher-shaped
+    // intent is brought back as it was), a cold start is the case where there is no process to have
+    // parked anything. Whichever answers wins, and BOTH are cleared either way — leaving one behind
+    // is how a widget tap restarts the music on a later resume.
+    try {
+      String parked = LaunchPress.take(System.currentTimeMillis());
+      if (!parked.isEmpty()) action = parked;
+    } catch (Throwable ignored) {}
     try {
       Intent i = getActivity() == null ? null : getActivity().getIntent();
       if (i != null) {
-        action = i.getStringExtra(EXTRA_LAUNCH_ACTION);
+        String v = i.getStringExtra(EXTRA_LAUNCH_ACTION);
         long at = i.getLongExtra(EXTRA_LAUNCH_AT, 0);
-        if (action != null) { i.removeExtra(EXTRA_LAUNCH_ACTION); i.removeExtra(EXTRA_LAUNCH_AT); }
+        if (v != null) { i.removeExtra(EXTRA_LAUNCH_ACTION); i.removeExtra(EXTRA_LAUNCH_AT); }
         // Stale = never performed. A press parked in an intent is a press the user has moved on from.
-        if (action != null && at > 0 && System.currentTimeMillis() - at > LAUNCH_MAX_AGE_MS) action = null;
+        if (v != null && at > 0 && System.currentTimeMillis() - at > LAUNCH_MAX_AGE_MS) v = null;
+        if (action == null && v != null) action = v;
       }
     } catch (Exception ignored) {}
     ret.put("action", action == null ? "" : action);

@@ -45,6 +45,14 @@
     let v = '';
     try{ v = ((await P.consumeLaunchView()) || {}).view || ''; }catch(_){ return ''; }
     if(!v) return '';
+    /* THE PLAYER IS NOT A VIEW. app.js's own More menu spells it `__music` and opens it with
+     * `openMusic()`; `switchView('__music')` would fall through to the default screen, which is
+     * exactly what "clicking play on music widget opens up default posterchan app page instead of
+     * music" looked like from the other end. One name, used by both. */
+    if(v === '__music'){
+      try{ if(typeof PC.openMusic === 'function'){ PC.openMusic(); return v; } }catch(_){}
+      return '';
+    }
     try{ PC.switchView(v); }catch(_){}
     return v;
   }
@@ -255,11 +263,31 @@
     };
     setTimeout(land, 600);
 
-    // A tile pressed while the app is ALREADY running arrives through onNewIntent, with no page load
-    // to hang the read off. This is that read.
+    /* A TILE PRESSED WHILE THE APP IS ALREADY RUNNING HAS NO PAGE LOAD TO HANG THE READ OFF, and
+     * THREE things are listened to rather than one — because the obvious one is the unreliable one.
+     *
+     * `visibilitychange` is the page's own signal and on Android it arrives late or is coalesced
+     * away entirely; that is measured, and it is the same lesson that cost the timeline a release
+     * (see `_animOff` / `_tlForeground` in CLAUDE.md — the class was armed and released from
+     * visibilitychange alone and the resume path drew inside the gap). Capacitor's `resume` fires
+     * from the ACTIVITY, which Android never freezes, so it arrives when the WebView's own event
+     * does not. And the native `launchView` event is pushed by `MainActivity.onNewIntent` itself,
+     * which is the moment the press actually lands.
+     *
+     * Listening to all three costs nothing: `LaunchView.take()` CONSUMES, so whichever fires first
+     * performs the navigation and every later one reads "" and does nothing. */
+    const again = () => { if(document.querySelector('#feed')) consumeLaunchView(); };
     document.addEventListener('visibilitychange', () => {
-      if(document.visibilityState === 'visible' && document.querySelector('#feed')) consumeLaunchView();
+      if(document.visibilityState === 'visible') again();
     });
+    try{
+      const A = PC.capPlugin ? PC.capPlugin('App', 'addListener') : null;
+      if(A && A.addListener) A.addListener('resume', again);
+    }catch(_){}
+    try{
+      const H = plug('addListener');
+      if(H && H.addListener) H.addListener('launchView', again);
+    }catch(_){}
   }
   init();
 

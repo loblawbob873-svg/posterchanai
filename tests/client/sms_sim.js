@@ -32,10 +32,32 @@ const notified = [];
 let rows = (opt.rows || []).slice();
 const isPhone = () => opt.isPhone !== false;
 
+// READ_SMS is a RUNTIME grant and is not implied by the SMS role — two switches, and the app used
+// to conflate them. `canRead` starts false unless the option says otherwise, which is the state
+// every real phone is in the first time somebody opens Texts.
+// Default: a handset that is the default SMS app has been granted it (that is the ordinary,
+// working state every archive test below is about). `canRead:false` is the state a real phone is in
+// the FIRST time somebody opens Texts, which is what the permission tests exercise.
+let canRead = opt.canRead === undefined ? isPhone() : opt.canRead === true;
+
 const PLUGIN = {
-  async status(){ return { isDefault: isPhone(), unread: 0, mms: false }; },
+  async status(){
+    calls.push(['status', isPhone(), canRead]);
+    // AN OLDER APK HAS NO `canRead` AND NO `ensureRead`. Absent is "it never asked", and on those
+    // builds reading was gated on the role — so the role is the honest answer to give, and the
+    // client must not read `undefined` as "not allowed" and hide a working screen behind a button
+    // that cannot exist.
+    if(opt.oldApk) return { isDefault: isPhone(), unread: 0, mms: false };
+    return { isDefault: isPhone(), canRead, unread: 0, mms: false };
+  },
   async list(a){
     calls.push(['list', a && a.since || 0]);
+    // THE PROVIDER REFUSES WITHOUT READ_SMS, and `SmsStore.query` turns that refusal into an empty
+    // list — which is exactly what a phone with no texts returns. That indistinguishability IS the
+    // bug, so the stub reproduces it rather than handing the client rows it could never have had.
+    // An older APK had no permission concept and gated reading on the role; it behaves that way.
+    const allowed = opt.oldApk ? isPhone() : canRead;
+    if(!allowed) return { messages: [] };
     const since = (a && a.since) || 0;
     return { messages: rows.filter(r => r.date > since).sort((x, y) => x.date - y.date) };
   },
@@ -59,6 +81,12 @@ const PLUGIN = {
   async markRead(){ return { marked: 0 }; },
   async deleteThread(){ return { deleted: 0 }; },
   async nameFor(){ return { name: '' }; },
+};
+
+if(!opt.oldApk) PLUGIN.ensureRead = async function(){
+  calls.push(['ensureRead']);
+  if(opt.grantOnAsk) canRead = true;
+  return { granted: canRead };
 };
 
 /* ---- the stub relay -------------------------------------------------------------------------- */
@@ -146,6 +174,11 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
     else if(step.slice(0, 7) === 'remove:'){
       const r = await S.remove(step.slice(7).split(','));
       calls.push(['removeResult', r.archive, r.phone]);
+    }
+    else if(step === 'render'){ await S.render(); }
+    else if(step === 'why'){
+      const w = await S.emptyWhy();
+      calls.push(['why', w.fix || '', w.why]);
     }
     else if(step === 'settle'){ await new Promise(r => setTimeout(r, 20)); }
   }

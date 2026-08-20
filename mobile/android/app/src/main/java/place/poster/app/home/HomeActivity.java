@@ -368,6 +368,10 @@ public class HomeActivity extends Activity implements DeskView.Host {
                         installed = found;
                         if (firstRun) seedHome();
                         redrawAll();
+                        // AFTER redrawAll, because it needs `ourTiles` — which is what THIS build
+                        // actually offers and can launch — and it changes the desktop, which then
+                        // has to be drawn again.
+                        adoptTiles();
                         warmFirstScreen();
                     }
                 });
@@ -394,6 +398,56 @@ public class HomeActivity extends Activity implements DeskView.Host {
             if (AppShelf.byKey(ourTiles, key) != null) d.add(key);
         }
         prefs.setDock(d);
+    }
+
+    /**
+     * A TILE THAT BECAME AVAILABLE AFTER THIS PHONE WAS SET UP GETS A PLACE, ONCE.
+     *
+     * `seedHome` runs on the FIRST RUN and never again, which is what stops a removed icon coming
+     * back — and it means an install that already exists never sees a tile added later. Messages and
+     * Phone were withheld from `HomeTiles.ours` until the app held the SMS / dialer role, so an
+     * install seeded before that gate was lifted has them on neither the desktop nor the dock, with
+     * nothing that will ever put them there: "posterchan is the default messaging app but still no
+     * desktop / app icon ... for text".
+     *
+     * IT MUST NOT RE-ADD SOMETHING SOMEBODY DELETED, and that is the whole difficulty: removing an
+     * icon from the desktop does not hide it, so a removal leaves no trace and is indistinguishable
+     * from a tile that was never offered. So the record is kept explicitly (`prefs.adopted`) and only
+     * ever grows — placed once, remembered for ever, whatever happens to the icon afterwards.
+     *
+     * The baseline for an install that predates the record is DELIBERATELY GENEROUS: everything the
+     * catalogue already had counts as offered, except Phone and Messages, whose absence has a written
+     * cause. A looser baseline would re-place icons people had removed on purpose.
+     */
+    private void adoptTiles() {
+        try {
+            java.util.Set<String> offered = prefs.adopted();
+            if (!prefs.adoptSeeded()) {
+                offered.addAll(HomeTiles.alreadyOffered());
+                prefs.setAdopted(offered);
+                prefs.setAdoptSeeded(true);
+            }
+            List<String> want = HomeTiles.unadopted(ourTiles, offered, prefs.hidden(),
+                                                    prefs.desk(geom), prefs.dock());
+            if (want.isEmpty()) return;
+            int cols = deskCols(), rows = deskRows();
+            List<Desk.Item> items = Desk.parse(prefs.desk(HomeMetrics.geometry(cols, rows)));
+            boolean any = false;
+            for (String key : want) {
+                // THE DESKTOP, NOT THE DOCK. The dock is capped and already full on a phone somebody
+                // has arranged, so joining it means pushing one of their choices out — a fix that
+                // takes something away is not one. A desktop that has no room simply does not get
+                // the icon; it is still in the drawer, which is where it was already reachable.
+                if (Desk.add(items, new Desk.Item(key, 0, 0, 1, 1), cols, rows)) any = true;
+                offered.add(key);
+            }
+            prefs.setAdopted(offered);
+            if (!any) return;
+            prefs.setDesk(HomeMetrics.geometry(cols, rows), Desk.serialize(items));
+            redrawDesk();
+        } catch (Throwable t) {
+            Log.w(TAG, "home: could not place a newly available tile", t);
+        }
     }
 
     /** The device's short side in dp — the same number in both orientations. See HomeMetrics. */
@@ -452,11 +506,14 @@ public class HomeActivity extends Activity implements DeskView.Host {
     private void redrawDesk() {
         int cols = deskCols(), rows = deskRows();
         geom = HomeMetrics.geometry(cols, rows);
-        List<Desk.Item> items = Desk.parse(prefs.desk(geom));
-        // NOTHING IS DROPPED FOR NOT FITTING — a rotation or a different phone re-places it. See
-        // Desk.fit; the alternative silently deletes what somebody arranged.
-        List<Desk.Item> overflow = Desk.fit(items, cols, rows);
-        // An item whose app is gone (uninstalled) is removed here, and a widget's id given back.
+        String stored = prefs.desk(geom);
+        List<Desk.Item> items = Desk.parse(stored);
+
+        // THE DEAD ARE REMOVED BEFORE THE LIVING ARE FITTED. An item whose app is gone (uninstalled)
+        // or whose widget id no longer binds still occupies cells, and fitting around a corpse is
+        // how a widget that would have fitted gets pushed into overflow. A widget's id is given back
+        // here — that is the one place a release is safe, because the system has already said the
+        // id binds to nothing.
         List<Desk.Item> live = new ArrayList<Desk.Item>();
         for (Desk.Item it : items) {
             if (it.isWidget()) {
@@ -466,7 +523,37 @@ public class HomeActivity extends Activity implements DeskView.Host {
             }
             live.add(it);
         }
-        if (live.size() != items.size() || !overflow.isEmpty()) prefs.setDesk(geom, Desk.serialize(live));
+
+        // NOTHING IS DROPPED FOR NOT FITTING — and until now that promise was only kept by Desk,
+        // not by this method. `Desk.fit` hands back what it could not place and the old code simply
+        // did not carry it forward, then SAVED the shortened arrangement: on a phone grid (4 columns
+        // against a tablet's 5-7) a widget that no longer had room was deleted from the desktop,
+        // permanently, with its id still bound to a widget nobody could see and nothing said. That
+        // is the "widgets look great on tablet" half of "widgets need support to fit on mobile phone
+        // screen".
+        //
+        // So an overflowed item is offered a smaller shape first — down to the floor the provider
+        // itself declares, never below it — and anything that still has nowhere to go is KEPT IN
+        // THE SAVED ARRANGEMENT rather than erased. It is off the screen for this draw and back on
+        // the next grid that can hold it, which is what a rotation, a fold or an uninstall provides.
+        int cellW = 0, cellH = 0;
+        View deskHost = findViewById(R.id.pc_home_desk);
+        if (deskHost != null) {
+            cellW = deskHost.getWidth() / Math.max(1, cols);
+            cellH = deskHost.getHeight() / Math.max(1, rows);
+        }
+        List<Desk.Item> stranded = new ArrayList<Desk.Item>();
+        for (Desk.Item it : Desk.fit(live, cols, rows)) {
+            if (Desk.addShrinking(live, it, minCells(it, cols, cellW, true),
+                                  minCells(it, rows, cellH, false), cols, rows)) continue;
+            stranded.add(it);
+        }
+        List<Desk.Item> saved = new ArrayList<Desk.Item>(live);
+        saved.addAll(stranded);
+        // Compared as text rather than by counting: `fit` can shrink a span without dropping
+        // anything, and a size change that is not written down comes back on the next draw.
+        String after = Desk.serialize(saved);
+        if (!after.equals(stored)) prefs.setDesk(geom, after);
         desk.setGrid(cols, rows);
         desk.setItems(live);
         // An empty desktop says how to fill it; a full one goes back to the swipe hint.
@@ -509,19 +596,35 @@ public class HomeActivity extends Activity implements DeskView.Host {
     @Override public void onChanged() { prefs.setDesk(geom, Desk.serialize(desk.items())); }
 
     @Override public int minSpanX(Desk.Item item) {
-        if (!item.isWidget()) return 1;
-        AppWidgetProviderInfo i = widgets.infoOf(item.widgetId());
-        if (i == null) return 1;
-        int dp = i.minResizeWidth > 0 ? i.minResizeWidth : i.minWidth;
-        return Math.min(desk.cols(), Widgets.spanFor(dp, cellDp(desk.cellW())));
+        return minCells(item, desk.cols(), desk.cellW(), true);
     }
 
     @Override public int minSpanY(Desk.Item item) {
-        if (!item.isWidget()) return 1;
+        return minCells(item, desk.rows(), desk.cellH(), false);
+    }
+
+    /**
+     * THE FEWEST CELLS THIS ITEM MAY OCCUPY, on a grid that is not necessarily the one the DeskView
+     * is currently showing.
+     *
+     * The grid is passed in rather than read off `desk`, because `redrawDesk` needs this answer for
+     * the grid it is ABOUT to apply — reading `desk.cols()` there returns the previous shape, which
+     * on the one draw that matters (a rotation, a fold, the first draw after an update) is the wrong
+     * screen. An unmeasured cell (`cellPx <= 0`, the very first layout pass) yields 1 rather than a
+     * number derived from a zero, so an item is never shrunk on the strength of a measurement that
+     * has not happened.
+     *
+     * `minResizeWidth`/`minResizeHeight` are the provider's own floor and are preferred over
+     * `minWidth`/`minHeight`: a resizable widget declaring both is saying "this is what I asked for,
+     * and this is the smallest I can still draw".
+     */
+    private int minCells(Desk.Item item, int gridSpan, int cellPx, boolean wide) {
+        if (item == null || !item.isWidget() || cellPx <= 0) return 1;
         AppWidgetProviderInfo i = widgets.infoOf(item.widgetId());
         if (i == null) return 1;
-        int dp = i.minResizeHeight > 0 ? i.minResizeHeight : i.minHeight;
-        return Math.min(desk.rows(), Widgets.spanFor(dp, cellDp(desk.cellH())));
+        int dp = wide ? (i.minResizeWidth > 0 ? i.minResizeWidth : i.minWidth)
+                      : (i.minResizeHeight > 0 ? i.minResizeHeight : i.minHeight);
+        return Math.min(Math.max(1, gridSpan), Widgets.spanFor(dp, cellDp(cellPx)));
     }
 
     @Override public boolean resizable(Desk.Item item) {
@@ -1067,18 +1170,29 @@ public class HomeActivity extends Activity implements DeskView.Host {
         placeWidget(id);
     }
 
-    /** A bound, configured widget onto the grid — or its id straight back if there is no room. */
+    /**
+     * A bound, configured widget onto the grid — at the biggest size that fits, and its id straight
+     * back only when even the smallest shape it will draw at has nowhere to go.
+     *
+     * IT USED TO ASK ONCE. `Desk.add` at the size the provider asked for, and on a refusal the id was
+     * released and the person told the desktop was full. On a tablet (5-7 columns, 6-8 rows) that is
+     * nearly always a true statement; on a phone (4 columns, 3-6 rows) the same widget asking for the
+     * same rectangle is refused by a desktop with eight icons on it. See Desk.addShrinking.
+     */
     private void placeWidget(int id) {
         AppWidgetProviderInfo info = widgets.infoOf(id);
+        int cols = desk.cols(), rows = desk.rows();
         int sx = 1, sy = 1;
         if (info != null) {
-            sx = Math.min(desk.cols(), Widgets.spanFor(info.minWidth, cellDp(desk.cellW())));
-            sy = Math.min(desk.rows(), Widgets.spanFor(info.minHeight, cellDp(desk.cellH())));
+            sx = Math.min(cols, Widgets.spanFor(info.minWidth, cellDp(desk.cellW())));
+            sy = Math.min(rows, Widgets.spanFor(info.minHeight, cellDp(desk.cellH())));
         }
         List<Desk.Item> items = new ArrayList<Desk.Item>(desk.items());
         Desk.Item it = new Desk.Item(Desk.widgetKey(id), 0, 0, sx, sy);
-        if (!Desk.add(items, it, desk.cols(), desk.rows())) {
-            // No room: give the id straight back rather than keeping a widget nobody can see.
+        if (!Desk.addShrinking(items, it, minCells(it, cols, desk.cellW(), true),
+                               minCells(it, rows, desk.cellH(), false), cols, rows)) {
+            // No room at ANY size it will accept: give the id straight back rather than keeping a
+            // widget nobody can see.
             widgets.release(id);
             toast(getString(R.string.home_desktop_full));
             return;

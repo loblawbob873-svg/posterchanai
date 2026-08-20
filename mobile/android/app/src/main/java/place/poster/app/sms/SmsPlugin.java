@@ -76,11 +76,60 @@ public class SmsPlugin extends Plugin {
         p.notifyListeners("smsSent", o);
     }
 
+    /**
+     * WHETHER ANDROID WILL ACTUALLY LET US READ THIS PHONE'S MESSAGES.
+     *
+     * A DANGEROUS PERMISSION IS NOT GRANTED BY BEING DECLARED, and being the default SMS app does not
+     * grant it either — those are two separate switches and only one of them is ever offered by
+     * Android on its own. The `@CapacitorPlugin(permissions = ...)` block above says which
+     * permissions this plugin's "sms" alias covers; it does not ask for them. Nothing did. So every
+     * read below was refused by the provider, `SmsStore.query` turned the refusal into an empty
+     * list, and the Texts screen said "No messages on this phone" over a full inbox — reported as
+     * "i see 0 of my sms messages in Text", and then "still missing a nice sms app on android".
+     */
+    private boolean mayRead() {
+        try {
+            return getPermissionState("sms") == com.getcapacitor.PermissionState.GRANTED
+                || getContext().checkSelfPermission(android.Manifest.permission.READ_SMS)
+                   == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
+     * ASK FOR IT, from the screen that needs it.
+     *
+     * At the moment the person opens Texts, with the explanation already beside it — the same rule
+     * as the contacts switch and the music notification, and the difference between a prompt that is
+     * granted and one that is dismissed on reflex. A refusal is not an error: it resolves
+     * `granted:false` and the screen says what is missing and offers the ask again.
+     */
+    @PluginMethod
+    public void ensureRead(PluginCall call) {
+        if (mayRead()) { finishEnsure(call); return; }
+        requestPermissionForAlias("sms", call, "smsPermission");
+    }
+
+    @com.getcapacitor.annotation.PermissionCallback
+    private void smsPermission(PluginCall call) { finishEnsure(call); }
+
+    private void finishEnsure(PluginCall call) {
+        JSObject o = new JSObject();
+        o.put("granted", mayRead());
+        call.resolve(o);
+    }
+
     @PluginMethod
     public void status(PluginCall call) {
         Context ctx = getContext();
         JSObject o = new JSObject();
         o.put("isDefault", HasRole.sms(ctx));
+        // THREE KINDS OF EMPTY, AND THEY ARE NOT THE SAME SENTENCE — the same distinction the native
+        // ThreadListActivity draws. "you have no texts", "I am not allowed to read them" and "I can
+        // read them but I am not the app that receives them" all rendered as one sentence, and the
+        // middle one is the only one a tap can fix.
+        o.put("canRead", mayRead());
         o.put("unread", SmsStore.unreadCount(ctx));
         // MMS IS NOT SUPPORTED and the client must be able to say so on the screen where somebody is
         // deciding whether to hand this app their messages. Reported rather than assumed, so the day

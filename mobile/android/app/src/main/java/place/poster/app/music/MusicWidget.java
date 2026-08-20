@@ -72,9 +72,21 @@ public class MusicWidget extends AppWidgetProvider {
     try { ctx.startActivity(launch(ctx, "play")); } catch (Exception ignored) {}
   }
 
+  /**
+   * NOT DRESSED AS A LAUNCHER PRESS. This used to set ACTION_MAIN and add CATEGORY_LAUNCHER, on the
+   * reasoning that a widget tap should carry a launcher intent. That is the exact intent the home
+   * screen sends, and delivered to an activity declared singleTask it means "bring this app back the
+   * way I left it" — extras and all discarded. Reported as "clicking play on music widget opens up
+   * default posterchan app page instead of music": the app came forward on the last screen and the
+   * press was never seen. The component is explicit, so those two decorations only ever cost the
+   * payload. Same bug and same fix as the launcher's own tiles (see place.poster.app.home.LaunchView).
+   *
+   * The PendingIntent is built once and reused, so `System.currentTimeMillis()` here is the time the
+   * WIDGET WAS DRAWN, not the time it was tapped — which is why the parked press below carries its
+   * own stamp and is preferred over this one.
+   */
   private static Intent launch(Context ctx, String what) {
     return new Intent(ctx, MainActivity.class)
-        .setAction(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         .putExtra(MusicPlugin.EXTRA_LAUNCH_ACTION, what)
         .putExtra(MusicPlugin.EXTRA_LAUNCH_AT, System.currentTimeMillis())
         .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);

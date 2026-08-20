@@ -424,8 +424,17 @@ public class MusicService extends Service {
     revived++;
     final long before = lastWebAt;
     try {
+      // PARKED BEFORE THE START, and NOT dressed as a launcher press. See LaunchPress: an
+      // ACTION_MAIN + CATEGORY_LAUNCHER intent at a singleTask activity is discarded on a warm
+      // start, extras and all, and this is the path taken when the player is not answering — i.e.
+      // precisely when the press must survive.
+      LaunchPress.request(action, System.currentTimeMillis());
+      // AND WHERE TO LAND. Dragging the app to the foreground to perform a music press and putting
+      // the person on whatever screen they left is the other half of "opens up default posterchan
+      // app page instead of music". `__music` is the client's own name for the player (app.js's
+      // More menu uses the same string), not a view slug.
+      place.poster.app.home.LaunchView.request("__music", System.currentTimeMillis());
       startActivity(new Intent(this, MainActivity.class)
-          .setAction(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
           .putExtra(MusicPlugin.EXTRA_LAUNCH_ACTION, action)
           .putExtra(MusicPlugin.EXTRA_LAUNCH_AT, System.currentTimeMillis())
           .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP));

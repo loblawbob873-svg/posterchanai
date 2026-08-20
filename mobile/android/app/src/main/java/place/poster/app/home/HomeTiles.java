@@ -2,6 +2,7 @@ package place.poster.app.home;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -123,6 +124,74 @@ public final class HomeTiles {
     }
 
     public static boolean isEssential(String view) { return VIEW_SETTINGS.equals(view); }
+
+    /**
+     * TILES NOBODY HAS EVER HAD THE CHANCE TO DECIDE ABOUT.
+     *
+     * The home screen is seeded once and never again, which is what stops a removed icon coming
+     * back. It also means a tile that becomes available LATER — a gate lifted, a screen added to the
+     * catalogue — lands nowhere on an install that already exists. Messages and Phone were withheld
+     * until the app held the SMS / dialer role, so an older install has them on neither surface and
+     * nothing will ever put them there: "posterchan is the default messaging app but still no
+     * desktop / app icon ... for text".
+     *
+     * A DECISION IS A RECORD, NOT AN ABSENCE. Removing an icon from the desktop does not hide it, so
+     * "not on the desktop" cannot tell a removal from a tile that was never offered. `offered` is
+     * that record (LauncherPrefs.adopted) and it only grows. Everything else here is belt: a tile
+     * already on the desk, in the dock, or hidden has plainly been dealt with whatever the record
+     * says.
+     *
+     * Order is the catalogue's, so two tiles arriving together land in a predictable order rather
+     * than whichever the set iterated first.
+     */
+    public static List<String> unadopted(List<AppShelf.Entry> ours, Set<String> offered,
+                                         Set<String> hidden, String deskSerialized,
+                                         List<String> dock) {
+        Set<String> known = new HashSet<String>();
+        if (offered != null) known.addAll(offered);
+        if (hidden != null) known.addAll(hidden);
+        if (dock != null) known.addAll(dock);
+        if (deskSerialized != null) {
+            for (String line : deskSerialized.split("\n")) {
+                int bar = line.indexOf('|');
+                String key = bar < 0 ? line.trim() : line.substring(0, bar).trim();
+                if (!key.isEmpty()) known.add(key);
+            }
+        }
+        List<String> out = new ArrayList<String>();
+        if (ours == null) return out;
+        Set<String> have = new HashSet<String>();
+        for (AppShelf.Entry e : ours) have.add(e.key());
+        for (Tile t : CATALOGUE) {
+            String key = "pc:" + t.view;
+            // ESSENTIAL IS NEVER PLACED. "Phone settings" is the way back and lives in the long-press
+            // menu; putting it on somebody's desktop uninvited is not a fix for anything.
+            if (isEssential(t.view)) continue;
+            if (!have.contains(key)) continue;      // not offered in THIS build, or does not resolve
+            if (known.contains(key)) continue;
+            out.add(key);
+        }
+        return out;
+    }
+
+    /**
+     * THE ONE-TIME BASELINE for an install that predates the record above: everything the catalogue
+     * already had is treated as offered, EXCEPT the two tiles that provably could not have been.
+     *
+     * Anything looser would re-place icons somebody had deliberately removed, which is the failure
+     * this whole mechanism exists to avoid — and a removal leaves no trace, so there is no way to
+     * tell one from a tile that was never offered. Phone and Messages are the exception because the
+     * reason they are missing is written down: `ours()` withheld them until the app held the role,
+     * and `seedHome` skips them from the desktop on purpose.
+     */
+    public static Set<String> alreadyOffered() {
+        Set<String> out = new LinkedHashSet<String>();
+        for (Tile t : CATALOGUE) {
+            if (VIEW_PHONE.equals(t.view) || VIEW_TEXTS.equals(t.view)) continue;
+            out.add("pc:" + t.view);
+        }
+        return out;
+    }
 
     /** The native class a tile opens, or "" when it opens the app or the phone's own Settings. */
     public static String nativeTarget(String view) {

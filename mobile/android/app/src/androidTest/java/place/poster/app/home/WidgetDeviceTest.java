@@ -342,20 +342,44 @@ public class WidgetDeviceTest {
                 Desk.add(items, it, 4, 5);
                 d.setGrid(4, 5);
                 d.setItems(items);
-                // Laid out by hand: it is never attached to a window, so nothing else can repaint
-                // it, and cellW()/cellH() need a real size.
-                int w = 800, h = 1000;
-                d.measure(android.view.View.MeasureSpec.makeMeasureSpec(
-                              w, android.view.View.MeasureSpec.EXACTLY),
-                          android.view.View.MeasureSpec.makeMeasureSpec(
-                              h, android.view.View.MeasureSpec.EXACTLY));
-                d.layout(0, 0, w, h);
-                clickable[0] = hasClickable(d);
+                // IT IS ADDED TO THE WINDOW, and that is the whole difference between this test and
+                // the previous version of it, which measured NOTHING and reported a product bug.
+                //
+                // `View.postDelayed` on a view with no AttachInfo does not post: it parks the
+                // Runnable in the run queue that `dispatchAttachedToWindow` drains. DeskView arms
+                // its long press with exactly that call, so on a hand-laid-out, never-attached view
+                // the 400ms runnable never runs — at any delay, on any device. The last run said
+                // `lifted=false host.onLongPress=null clickableContent=true`, which is the shape of
+                // "the timer never fired" and was read as "the press never reached the desktop".
+                //
+                // Added with `addContentView` rather than into the launcher's own desk holder, so
+                // HomeActivity's redraw (which finds R.id.pc_home_desk and calls setItems, clearing
+                // `editing`) cannot arrive mid-gesture — the artefact the previous version was
+                // written to escape. This one is attached AND out of that path.
+                a.addContentView(d, new android.widget.FrameLayout.LayoutParams(800, 1000));
                 deskOut[0] = d;
             });
 
             final DeskView desk = deskOut[0];
             assertNotNull("no desk", desk);
+
+            // Wait for the attach and the layout the window will give it — measured, not slept at.
+            boolean ready = false;
+            for (int i = 0; i < 50 && !ready; i++) {
+                final boolean[] ok = new boolean[]{ false };
+                InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                    ok[0] = desk.isAttachedToWindow() && desk.getWidth() > 0 && desk.getHeight() > 0;
+                    if (ok[0]) clickable[0] = hasClickable(desk);
+                });
+                ready = ok[0];
+                if (!ready) Thread.sleep(100);
+            }
+            // SAID SEPARATELY. A view that never attached cannot arm a long press, so reporting that
+            // as "the press did not reach the desktop" is a test failure wearing a product bug's
+            // clothes — which is exactly what happened for two runs.
+            assertTrue("the DeskView under test never attached to a window, so its postDelayed"
+                    + " long-press could not fire — this measures nothing about the product",
+                    ready);
             Log.i(TAG, "widget probe: clickable widget content present = " + clickable[0]);
 
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
@@ -388,6 +412,165 @@ public class WidgetDeviceTest {
         android.view.ViewGroup g = (android.view.ViewGroup) v;
         for (int i = 0; i < g.getChildCount(); i++) if (hasClickable(g.getChildAt(i))) return true;
         return false;
+    }
+
+    // ------------------------------------------------------------------ a phone, not a tablet
+
+    /** A real phone: 1080x2340 at 440dpi is a short side of 393dp, which is the phone path. */
+    private void asAPhone() throws Exception {
+        shell("wm size 1080x2340");
+        shell("wm density 440");
+        Thread.sleep(2500);
+    }
+
+    private void asItWas() throws Exception {
+        // UNCONDITIONALLY, in a finally. A device left resized poisons every test after it on this
+        // boot — the same rule the tablet case had to learn.
+        shell("wm size reset");
+        shell("wm density reset");
+        Thread.sleep(2500);
+    }
+
+    /** cols, rows, cellW px, cellH px — read off the launcher's own DeskView, not computed. */
+    private int[] deskShape() {
+        final int[] out = new int[]{ -1, -1, -1, -1 };
+        HomeRoles.enableLauncherComponent(ctx, true);
+        ActivityScenario<HomeActivity> s = ActivityScenario.launch(HomeActivity.class);
+        try {
+            s.onActivity(a -> {
+                android.view.ViewGroup h =
+                        (android.view.ViewGroup) a.findViewById(place.poster.app.R.id.pc_home_desk);
+                DeskView d = (DeskView) h.getChildAt(0);
+                out[0] = d.cols(); out[1] = d.rows(); out[2] = d.cellW(); out[3] = d.cellH();
+            });
+        } finally {
+            s.close();
+        }
+        return out;
+    }
+
+    @Test
+    public void onAPhoneOurOwnWidgetsGetAtLeastTheSizeTheyASKEDFOR() throws Exception {
+        // "widgets need support to fit on mobile phone screen" / "widgets look great on tablet".
+        //
+        // That is one sentence twice: the tablet grid is 5-7 columns by 6-8 rows and a phone's is 4
+        // by 3-6, so the same widget asking for the same rectangle finds room on one and not the
+        // other — and the tablet is the only size that was ever measured on a device. This is the
+        // phone half, same technique (`wm size` + `wm density` reshape the running system), so the
+        // launcher takes the phone path through the configuration change a real rotation delivers.
+        //
+        // WHAT IS ASSERTED IS OUR OWN THREE, and what is LOGGED is every provider on the image. A
+        // third-party widget demanding more than a phone grid can give is a fact about that widget;
+        // ours failing to fit on a phone is a fact about us.
+        HomeRoles.enableLauncherComponent(ctx, true);
+        asAPhone();
+        try {
+            int sw = ctx.getResources().getConfiguration().smallestScreenWidthDp;
+            assertTrue("the resize did not take: smallestScreenWidthDp is " + sw, sw < 600);
+            int[] g = deskShape();
+            assertEquals("a phone did not get the phone grid", 4, g[0]);
+            assertTrue("no rows were measured: " + g[1], g[1] >= 3);
+            assertTrue("the desk was never laid out: cell " + g[2] + "x" + g[3], g[2] > 0 && g[3] > 0);
+
+            float density = ctx.getResources().getDisplayMetrics().density;
+            int cellWdp = Math.max(1, (int) (g[2] / density));
+            int cellHdp = Math.max(1, (int) (g[3] / density));
+            Log.i(TAG, "phone widgets: sw=" + sw + "dp grid=" + g[0] + "x" + g[1]
+                    + " cell=" + cellWdp + "x" + cellHdp + "dp");
+
+            String mine = ctx.getPackageName();
+            List<String> tooBig = new ArrayList<String>();
+            int ours = 0;
+            for (Widgets.Choice c : widgets.providers(90, 90)) {
+                AppWidgetProviderInfo i = c.info;
+                int wantX = Math.min(g[0], Widgets.spanFor(i.minWidth, cellWdp));
+                int wantY = Math.min(g[1], Widgets.spanFor(i.minHeight, cellHdp));
+                int floorW = i.minResizeWidth > 0 ? i.minResizeWidth : i.minWidth;
+                int floorH = i.minResizeHeight > 0 ? i.minResizeHeight : i.minHeight;
+                boolean fits = wantX * cellWdp >= floorW && wantY * cellHdp >= floorH;
+                boolean isOurs = mine.equals(i.provider.getPackageName());
+                Log.i(TAG, "phone widgets: " + (isOurs ? "OURS " : "     ")
+                        + i.provider.flattenToShortString()
+                        + " min=" + i.minWidth + "x" + i.minHeight + "dp"
+                        + " floor=" + floorW + "x" + floorH + "dp"
+                        + " -> " + wantX + "x" + wantY + " cells = "
+                        + (wantX * cellWdp) + "x" + (wantY * cellHdp) + "dp"
+                        + (fits ? "" : "  DOES NOT FIT"));
+                if (!isOurs) continue;
+                ours++;
+                if (!fits) tooBig.add(i.provider.getShortClassName() + " needs "
+                        + floorW + "x" + floorH + "dp, a phone cell gives it "
+                        + (wantX * cellWdp) + "x" + (wantY * cellHdp));
+            }
+            assertTrue("none of our own widget providers was listed at all", ours > 0);
+            assertTrue("one of OUR widgets cannot be drawn at the size a phone grid gives it: "
+                    + tooBig, tooBig.isEmpty());
+        } finally {
+            asItWas();
+        }
+        assertEquals("the phone grid did not come back", 4, deskShape()[0]);
+    }
+
+    @Test
+    public void onAPhoneAWidgetWithNoRoomIsKEPTRatherThanDeleted() throws Exception {
+        // THE THING THAT MAKES "IT DOES NOT FIT" UNRECOVERABLE. `Desk.fit` hands back what it could
+        // not place and `redrawDesk` used not to carry it forward — it saved the SHORTENED
+        // arrangement, so a widget that lost its room on a smaller grid was deleted from the desktop
+        // for good, with its id still bound to a widget nobody could see and nothing said. A phone
+        // grid is where a desktop runs out of room, which is why this is measured at phone size.
+        shell("appwidget grantbind --package " + ctx.getPackageName() + " --user 0");
+        List<Widgets.Choice> rows = widgets.providers(90, 90);
+        Widgets.Choice pick = null;
+        for (Widgets.Choice c : rows) if (c.info.configure == null) { pick = c; break; }
+        assertNotNull("nothing addable without a person", pick);
+
+        HomeRoles.enableLauncherComponent(ctx, true);
+        asAPhone();
+        LauncherPrefs prefs = new LauncherPrefs(ctx);
+        String geom = "";
+        String before = "";
+        try {
+            int[] g = deskShape();
+            assertEquals("a phone did not get the phone grid", 4, g[0]);
+            geom = HomeMetrics.geometry(g[0], g[1]);
+            before = prefs.desk(geom);
+
+            final int[] made = new int[]{ -1 };
+            ActivityScenario<HomeActivity> mk = ActivityScenario.launch(HomeActivity.class);
+            final Widgets.Choice chosen = pick;
+            try { mk.onActivity(a -> made[0] = widgets.add(a, chosen)); } finally { mk.close(); }
+            assertTrue("the widget was not bound", made[0] >= 0);
+            allocated.add(made[0]);
+
+            // EVERY CELL TAKEN by tiles that really resolve (so the uninstalled-app sweep cannot
+            // remove them), plus the widget with nowhere to go.
+            List<Desk.Item> items = new ArrayList<Desk.Item>();
+            HomeTiles.Tile[] cat = HomeTiles.catalogue();
+            int n = 0;
+            for (int r = 0; r < g[1]; r++) {
+                for (int c = 0; c < g[0] && n < cat.length; c++) {
+                    items.add(new Desk.Item("pc:" + cat[n++].view, c, r, 1, 1));
+                }
+            }
+            assertTrue("the catalogue is too short to fill a phone desktop", n >= g[0] * g[1]);
+            items.add(new Desk.Item(Desk.widgetKey(made[0]), 0, 0, 2, 2));
+            prefs.setDesk(geom, Desk.serialize(items));
+
+            // Draw it — this is redrawDesk running for real on the arrangement above.
+            ActivityScenario<HomeActivity> s = ActivityScenario.launch(HomeActivity.class);
+            try { Thread.sleep(800); } finally { s.close(); }
+
+            String saved = prefs.desk(geom);
+            Log.i(TAG, "phone widgets: full-desk redraw kept -> " + saved.replace('\n', ' '));
+            assertTrue("a widget with no room was DELETED from the saved desktop — it cannot be got"
+                    + " back and its id is still bound to a widget nobody can see. saved=" + saved,
+                    saved.contains(Desk.widgetKey(made[0])));
+            assertNotNull("the widget id was released while the item was still on the desktop",
+                    widgets.infoOf(made[0]));
+        } finally {
+            if (!geom.isEmpty()) prefs.setDesk(geom, before);
+            asItWas();
+        }
     }
 
     @Test

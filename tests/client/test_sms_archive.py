@@ -235,3 +235,65 @@ class SendingFromAnotherDevice(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class Permission(unittest.TestCase):
+    """READING SOMEBODY'S TEXTS NEEDS READ_SMS, AND NOTHING EVER ASKED FOR IT.
+
+    "still missing a nice sms app on android", after "i see 0 of my sms messages in Text".
+
+    A dangerous permission is not granted by being declared in a manifest, and it is not granted by
+    holding the default-SMS role either — those are two separate switches, and Android offers only
+    the second one on its own. `SmsPlugin`'s `@CapacitorPlugin(permissions = ...)` block names the
+    permissions its "sms" alias covers; it does not request them, and no call anywhere did. So every
+    provider read was refused, `SmsStore.query` turned the refusal into an empty list, and the Texts
+    screen said "No messages on this phone" over a full inbox.
+
+    Underneath that sat the same circularity the Messages tile had: reading was gated on `isPhone()`,
+    the default-SMS ROLE. A person trying the app out can be allowed to read their texts long before
+    they hand over their messaging — and the screen told them the opposite in a sentence that was
+    simply untrue.
+
+    Each assertion below was checked to fail with its rule removed.
+    """
+
+    def test_a_phone_that_has_not_been_asked_says_so_and_offers_the_ask(self):
+        """The one kind of empty a tap can fix is the one that was never named. Three kinds of empty
+        were one sentence; the permission is the only one the person reading it can do anything
+        about, so it comes first and it comes with a button."""
+        res = run(rows=[msg(1)], canRead=False, steps=["load", "why"])
+        why = calls_of(res, "why")[0]
+        self.assertEqual(why[1], "perm", why)
+        self.assertIn("allowed to read", why[2])
+
+    def test_the_ask_actually_happens_and_the_messages_arrive(self):
+        """The whole bug in one line: with the grant, the phone's own inbox is read and shown."""
+        res = run(rows=[msg(1), msg(2)], canRead=False, grantOnAsk=True, steps=["render", "settle"])
+        self.assertTrue(calls_of(res, "ensureRead"), res["calls"])
+        self.assertEqual(sorted(res["docs"]),
+                         ["pcai:sms:%024d" % 1, "pcai:sms:%024d" % 2])
+
+    def test_reading_is_not_gated_on_being_the_default_sms_app(self):
+        """A phone that may READ shows its messages whether or not it RECEIVES them. Publishing the
+        archive and performing another device's send still need the role, because only the default
+        SMS app may write the provider — so nothing is published here."""
+        res = run(rows=[msg(1)], isPhone=False, canRead=True, steps=["render", "settle"])
+        self.assertEqual(res["docs"], ["pcai:sms:%024d" % 1])
+        self.assertEqual(res["relay"], [])
+
+    def test_a_refusal_is_not_retried_into_a_wall(self):
+        """Declining leaves the screen saying what is missing rather than an empty list — and the
+        messages stay unread, which is the honest outcome."""
+        res = run(rows=[msg(1)], canRead=False, grantOnAsk=False, steps=["render", "settle", "why"])
+        self.assertTrue(calls_of(res, "ensureRead"), res["calls"])
+        self.assertEqual(res["docs"], [])
+        self.assertEqual(calls_of(res, "why")[0][1], "perm")
+
+    def test_an_older_apk_is_not_locked_out_by_a_method_it_does_not_have(self):
+        """`status` with no `canRead` is a build from before this existed, where reading was gated on
+        the role. Reading `undefined` as "not allowed" would hide a working screen behind a button
+        that cannot do anything, on every APK already installed."""
+        res = run(rows=[msg(1)], oldApk=True, steps=["render", "settle"])
+        self.assertEqual(res["docs"], ["pcai:sms:%024d" % 1])
+        self.assertEqual(calls_of(res, "ensureRead"), [])

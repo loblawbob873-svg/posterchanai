@@ -65,9 +65,38 @@
    * can be handed to another app in Settings while this page is open, and a cached "yes" is how an
    * app ends up reporting a message as sent that nothing sent. */
   async function isPhone(){
+    return !!(await phoneState()).isDefault;
+  }
+
+  /* WHAT THIS DEVICE IS ALLOWED TO DO WITH THE PHONE'S MESSAGES — asked in one call, because the two
+   * answers are separate switches and were being conflated into one.
+   *
+   *  * `isDefault` — this app RECEIVES and SENDS. Only the default SMS app may write the provider.
+   *  * `canRead`   — this app may READ. That is READ_SMS, a runtime permission, and it is neither
+   *                  implied by the role nor granted by being declared in the manifest.
+   *
+   * Reading used to be gated on the ROLE, which is the same circularity that hid the Messages tile
+   * behind the SMS role: a person trying the app out can be allowed to read their texts long before
+   * they hand over their messaging, and telling them "PosterChan is not the default SMS app, so
+   * Android will not let it read your messages" was simply untrue. */
+  async function phoneState(){
     const P = plug('status');
-    if(!P) return false;
-    try{ return !!((await P.status()) || {}).isDefault; }catch(_){ return false; }
+    if(!P) return { isDefault:false, canRead:false, present:false };
+    try{
+      const st = (await P.status()) || {};
+      // An older APK's `status` has no `canRead`. Absent is "it never asked", and on those builds
+      // reading was gated on the role — so the role is the honest answer to give.
+      return { isDefault: !!st.isDefault, present: true,
+               canRead: st.canRead === undefined ? !!st.isDefault : !!st.canRead };
+    }catch(_){ return { isDefault:false, canRead:false, present:true }; }
+  }
+
+  /* ASK ANDROID FOR PERMISSION TO READ. Resolves whether it was granted; a refusal is an answer, not
+   * an error. Older APKs have no `ensureRead` method at all, and there the honest result is "no". */
+  async function ensureRead(){
+    const P = plug('ensureRead');
+    if(!P || !P.ensureRead) return (await phoneState()).canRead;
+    try{ return !!((await P.ensureRead()) || {}).granted; }catch(_){ return false; }
   }
 
   /* WHY IS THIS EMPTY? Four different answers that look identical on screen, and the difference is
@@ -84,9 +113,16 @@
     if(!plug('status'))
       return { why: 'A phone publishes your messages here — this device has no SIM to read. Open '
                   + 'PosterChan on your Android phone and set it as the default SMS app.', phone: false };
-    if(!(await isPhone()))
-      return { why: 'PosterChan is not the default SMS app on this phone, so Android will not let '
-                  + 'it read your messages. Set it in Settings → Apps → Default apps → SMS.',
+    const st = await phoneState();
+    /* THE PERMISSION COMES FIRST, because it is the only one of these a tap can fix and because it
+     * is the one that was never named. Reading needs READ_SMS and nothing else; the role decides
+     * whether messages ARRIVE here, which is a different sentence and a different screen. */
+    if(!st.canRead)
+      return { why: 'PosterChan has not been allowed to read this phone\u2019s messages yet.',
+               phone: true, fix: 'perm' };
+    if(!st.isDefault && !S.msgs.size)
+      return { why: 'PosterChan is not the default SMS app on this phone, so new messages arrive in '
+                  + 'whichever app is. Set it in Settings \u2192 Apps \u2192 Default apps \u2192 SMS.',
                phone: true, fix: 'role' };
     let mark = 0;
     try{ mark = Number(localStorage.getItem(HWM()) || 0) || 0; }catch(_){ }
@@ -566,6 +602,11 @@
              + (S.emptyFix === 'mirror'
                  ? '<div style="margin-top:14px"><button class="btn btn-neon small" id="sms-now">'
                    + 'Copy my messages across</button></div>' : '')
+             /* THE ONE A TAP CAN FIX GETS A BUTTON. Saying "not allowed" and leaving the person to
+              * find it in Android's settings is most of the way to saying nothing. */
+             + (S.emptyFix === 'perm'
+                 ? '<div style="margin-top:14px"><button class="btn btn-neon small" id="sms-allow">'
+                   + 'Allow PosterChan to read them</button></div>' : '')
              + '</div>')}
         </div>
       </div>`;
@@ -574,6 +615,24 @@
     if(q) q.oninput = () => { S.q = q.value; paint(); q.focus(); };
     const nw = PC.$('#sms-new');
     if(nw) nw.onclick = composeNew;
+    const allow = PC.$('#sms-allow');
+    if(allow) allow.onclick = async () => {
+      allow.disabled = true;
+      const ok = await ensureRead();
+      if(!ok){
+        // A REFUSAL IS SAID OUT LOUD. A button that does nothing when pressed reads as a broken app,
+        // and Android stops showing its dialog after two refusals — at which point the only way
+        // through is the app's own settings page, which is what this then says.
+        S.emptyWhy = 'Android is not offering the prompt any more. Open Settings \u2192 Apps \u2192 '
+                   + 'PosterChan \u2192 Permissions \u2192 SMS and allow it there.';
+        S.emptyFix = '';
+        paint();
+        return;
+      }
+      S.emptyWhy = ''; S.emptyFix = '';
+      await loadFromPhone();
+      paint();
+    };
     feed.querySelectorAll('.sms-thread').forEach(b => {
       b.onclick = () => { S.open = b.dataset.k; paint(); };
     });
@@ -585,11 +644,17 @@
   async function noteWhere(){
     const el = PC.$('#sms-note');
     if(!el) return;
-    if(await isPhone()){
+    const st = await phoneState();
+    if(st.isDefault){
       el.textContent = 'This phone. Messages are stored in the phone’s own message app as well, '
         + 'so nothing else on the phone loses them.';
       // NOT mirror() — this runs on every repaint, and a repaint happens on every keystroke in the
       // search box. Publishing is driven by render() and by the app coming to the foreground.
+    } else if(st.canRead){
+      // READING WITHOUT THE ROLE IS AN ORDINARY STATE, not a broken one — it is what trying the app
+      // out looks like, and the screen used to describe it as somebody else's phone.
+      el.textContent = 'Your phone’s messages, read from the phone itself. New ones still arrive '
+        + 'in whichever app is the default — make PosterChan the default to send from here.';
     } else {
       el.textContent = 'An encrypted copy of your phone’s messages. Sending from here asks your '
         + 'phone to send it, so your phone has to be reachable.';
@@ -695,11 +760,27 @@
     // per keystroke.
     /* THE PHONE READS ITS OWN MESSAGES FIRST, and does not wait for the relay to hear about them.
      * Publishing is a separate, slower thing that serves the OTHER devices. */
-    if(await isPhone()){
-      await load();
-      loadFromPhone().then(() => { if(!S.msgs.size) paint(); }, () => {});
-      mirror(); drainOutbox();
+    /* READING AND PUBLISHING ARE TWO DIFFERENT PERMISSIONS AND TWO DIFFERENT JOBS.
+     *
+     * Reading this phone's own inbox needs READ_SMS. Publishing the archive and performing another
+     * device's send need the ROLE, because only the default SMS app may write the provider. Both
+     * used to hang off `isPhone()`, so a phone that had not been made the default showed an empty
+     * Texts screen with a sentence blaming the role — while the actual blocker was a permission
+     * nothing had ever asked for. */
+    const st = await phoneState();
+    if(st.present && !st.canRead){
+      // ASKED ONCE PER VISIT, from the screen that needs it, and only when there is nothing to show
+      // — a person reading their messages is not interrupted by a dialog about reading them.
+      if(await ensureRead()){
+        S.emptyWhy = ''; S.emptyFix = '';
+        st.canRead = true;
+      }
     }
+    if(st.canRead){
+      await load();
+      loadFromPhone().then(() => { if(!S.msgs.size) paint(); else paint(); }, () => {});
+    }
+    if(st.isDefault){ mirror(); drainOutbox(); }
   }
 
   function init(){
@@ -719,6 +800,7 @@
   }
   init();
 
-  window.PCSms = { render, mirror, importAll, loadFromPhone, emptyWhy, drainOutbox, send, remove, load,
+  window.PCSms = { render, mirror, importAll, loadFromPhone, emptyWhy, ensureRead, phoneState,
+                   drainOutbox, send, remove, load,
                    _state: () => S, _key: key, _outboxId: outboxId };
 })();

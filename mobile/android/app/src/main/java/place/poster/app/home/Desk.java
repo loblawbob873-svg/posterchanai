@@ -103,6 +103,67 @@ public final class Desk {
         return true;
     }
 
+    /**
+     * PUT A WIDGET DOWN AT THE BIGGEST SIZE THAT ACTUALLY FITS THIS SCREEN, and only refuse when
+     * even the smallest it is willing to draw at has nowhere to go.
+     *
+     * `add` asks one question — does the size the PROVIDER asked for fit? — and a phone is where
+     * that question starts answering no. Reported as "widgets need support to fit on mobile phone
+     * screen", against a launcher that "looks great on tablet", which is the same sentence twice: a
+     * tablet grid is 5-7 columns by 6-8 rows and a phone's is 4 by 3-6, so the same widget asking
+     * for the same rectangle finds room on one and not on the other. One `add`, one refusal, and
+     * the widget was released and the person told the desktop was full — on a desktop with eight
+     * icons on it.
+     *
+     * A provider states its own floor (`minResizeWidth`/`minResizeHeight`), which is the whole point
+     * of resizing: it is saying which smaller shapes it can still draw. So the search walks from
+     * what it asked for down to what it will accept, LARGEST AREA FIRST so nothing is shrunk further
+     * than it had to be, and ties go to the shape closest to the one requested — a 4x1 clock stays a
+     * strip rather than becoming a 2x2 square with the same number of cells.
+     *
+     * Refusal still leaves `it` at the size it was handed, so a caller that reports "no room" is
+     * reporting about the widget the person actually chose.
+     *
+     * @param minX the fewest columns this item may occupy; clamped into 1..it.spanX.
+     * @param minY likewise for rows.
+     */
+    public static boolean addShrinking(List<Item> items, Item it, int minX, int minY,
+                                       int cols, int rows) {
+        if (it == null) return false;
+        final int wasC = it.col, wasR = it.row;
+        final int wantX = Math.max(1, it.spanX), wantY = Math.max(1, it.spanY);
+        final int loX = Math.max(1, Math.min(wantX, minX));
+        final int loY = Math.max(1, Math.min(wantY, minY));
+        List<int[]> sizes = new ArrayList<int[]>();
+        for (int sx = loX; sx <= wantX; sx++) {
+            for (int sy = loY; sy <= wantY; sy++) sizes.add(new int[]{ sx, sy });
+        }
+        Collections.sort(sizes, new Comparator<int[]>() {
+            @Override public int compare(int[] a, int[] b) {
+                int area = (b[0] * b[1]) - (a[0] * a[1]);
+                if (area != 0) return area;
+                // Closest to the requested shape, measured in cells lost on each side. Deterministic
+                // all the way down, because an arrangement that differs between two identical draws
+                // is a launcher that moves things on its own.
+                int da = (wantX - a[0]) * (wantX - a[0]) + (wantY - a[1]) * (wantY - a[1]);
+                int db = (wantX - b[0]) * (wantX - b[0]) + (wantY - b[1]) * (wantY - b[1]);
+                if (da != db) return da - db;
+                return a[0] != b[0] ? b[0] - a[0] : b[1] - a[1];
+            }
+        });
+        for (int[] s : sizes) {
+            it.spanX = s[0]; it.spanY = s[1];
+            if (place(items, it, cols, rows)) { items.add(it); return true; }
+        }
+        // A REFUSAL PUTS IT BACK EXACTLY AS IT ARRIVED — size and position. `place` walks the grid by
+        // mutating col/row, so without this the caller's item comes back at whatever cell the last
+        // hopeless probe happened to reach, and the message it prints is about a widget that never
+        // existed.
+        it.col = wasC; it.row = wasR;
+        it.spanX = wantX; it.spanY = wantY;
+        return false;
+    }
+
     /** Move an item, if the target is clear. Refused moves leave it exactly where it was. */
     public static boolean moveTo(List<Item> items, Item it, int col, int row, int cols, int rows) {
         int wasC = it.col, wasR = it.row;

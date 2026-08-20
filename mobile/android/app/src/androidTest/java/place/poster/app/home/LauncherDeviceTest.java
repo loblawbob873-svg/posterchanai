@@ -325,6 +325,88 @@ public class LauncherDeviceTest {
         return out[0];
     }
 
+    // ------------------------------------------------------------------ tiles added after setup
+
+    /**
+     * A TILE THAT BECAME AVAILABLE AFTER THIS PHONE WAS SET UP REACHES THE HOME SCREEN.
+     *
+     * "posterchan is the default messaging app but still no desktop / app icon ... for text".
+     *
+     * `seedHome` runs on the FIRST RUN and never again — which is what stops a removed icon coming
+     * back, and which means Messages and Phone, withheld from the catalogue until the app held the
+     * SMS / dialer role, land nowhere at all on an install that predates that gate being lifted.
+     * Driven against the real activity because the thing under test is a decision made during a
+     * draw, from stored preferences, on a grid whose size the device decides.
+     */
+    @Test
+    public void aTileThatBecameAvailableLaterReachesTheDesktop() throws Exception {
+        HomeRoles.enableLauncherComponent(ctx, true);
+        android.content.SharedPreferences sp =
+                ctx.getSharedPreferences("pc_home", Context.MODE_PRIVATE);
+        java.util.Map<String, ?> before = new java.util.HashMap<String, Object>(sp.getAll());
+        try {
+            // AN INSTALL THAT ALREADY EXISTED: seeded long ago, with a desktop and a dock that were
+            // built while Messages was still gated out, and no record of what had been offered.
+            sp.edit().clear()
+              .putBoolean("seeded", true)
+              .putString("desk", "pc:notes|0|0|1|1")
+              .putString("dock", "pc:app")
+              .putString("hidden", "")
+              .apply();
+
+            java.util.List<String> keys = deskKeysAfterADraw();
+            assertTrue("Messages never reached the desktop of an install that predates it: " + keys,
+                    keys.contains("pc:" + HomeTiles.VIEW_TEXTS));
+            assertTrue("the desktop it already had was thrown away: " + keys,
+                    keys.contains("pc:notes"));
+
+            // AND ONLY ONCE. Removing an icon does not hide it, so if the record of what has been
+            // offered were not kept, every launch would put it back — the failure this mechanism
+            // exists to avoid, and the one that would be reported as "the icon I deleted keeps
+            // coming back".
+            LauncherPrefs prefs = new LauncherPrefs(ctx);
+            java.util.List<Desk.Item> items = Desk.parse(prefs.desk());
+            java.util.List<Desk.Item> kept = new java.util.ArrayList<Desk.Item>();
+            for (Desk.Item it : items) if (!it.key.equals("pc:" + HomeTiles.VIEW_TEXTS)) kept.add(it);
+            assertEquals("nothing was removed, so the second half proves nothing",
+                    items.size() - 1, kept.size());
+            // WRITTEN TO EVERY GEOMETRY KEY, not just the legacy one. `redrawDesk` reads
+            // `desk.<cols>x<rows>`, so removing the icon from the legacy key alone would leave it
+            // exactly where it was and this half would prove nothing.
+            android.content.SharedPreferences.Editor ed = sp.edit();
+            for (String k : sp.getAll().keySet()) if (k.startsWith("desk")) ed.remove(k);
+            ed.apply();
+            prefs.setDesk(Desk.serialize(kept));
+            java.util.List<String> after = deskKeysAfterADraw();
+            assertFalse("a tile the person removed was put back: " + after,
+                    after.contains("pc:" + HomeTiles.VIEW_TEXTS));
+        } finally {
+            android.content.SharedPreferences.Editor e = sp.edit().clear();
+            for (java.util.Map.Entry<String, ?> row : before.entrySet()) {
+                Object v = row.getValue();
+                if (v instanceof String) e.putString(row.getKey(), (String) v);
+                else if (v instanceof Boolean) e.putBoolean(row.getKey(), (Boolean) v);
+                else if (v instanceof Integer) e.putInt(row.getKey(), (Integer) v);
+                else if (v instanceof Long) e.putLong(row.getKey(), (Long) v);
+            }
+            e.apply();
+        }
+    }
+
+    /** Draw the home screen and read back what ended up on the desktop. */
+    private java.util.List<String> deskKeysAfterADraw() throws Exception {
+        ActivityScenario<HomeActivity> s = ActivityScenario.launch(HomeActivity.class);
+        try {
+            // The adoption runs after the app scan comes back off its own thread.
+            Thread.sleep(1500);
+        } finally {
+            s.close();
+        }
+        java.util.List<String> out = new java.util.ArrayList<String>();
+        for (Desk.Item it : Desk.parse(new LauncherPrefs(ctx).desk())) out.add(it.key);
+        return out;
+    }
+
     @Test
     public void theHomeScreenHoldsNoWakeLockWhenItIsNotOnScreen() throws Exception {
         // BATTERY, MEASURED RATHER THAN INTENDED. With the HOME role this process is resident for

@@ -171,6 +171,46 @@ class ARefusalIsNotAnEmptyInbox(unittest.TestCase):
         self.assertIn('name="sms_empty"', x)
 
 
+class TheWebViewScreenAsksToo(unittest.TestCase):
+    """THE SAME BUG ON THE OTHER HALF, AND IT OUTLIVED THE FIRST FIX.
+
+    "still missing a nice sms app on android".
+
+    The native ThreadListActivity was taught to request READ_SMS; the in-app Texts view — which is
+    the screen almost everybody actually opens, because it does not need this app to be the phone's
+    launcher — was not. The commit that fixed the native side said in as many words that "SmsPlugin
+    requests it for the WebView", and it did not: `@CapacitorPlugin(permissions = ...)` names the
+    permissions an alias covers, and asking is `requestPermissionForAlias`, which nothing called.
+
+    So a person who made PosterChan their SMS app still saw an empty Texts screen, under a sentence
+    blaming a role they had already granted.
+    """
+
+    def test_the_plugin_declares_the_permission_and_also_asks_for_it(self):
+        src = strip_comments((SMS / "SmsPlugin.java").read_text())
+        self.assertIn("android.permission.READ_SMS", src)
+        self.assertIn('requestPermissionForAlias("sms"', src,
+                      "SmsPlugin declares the sms permission alias and never requests it — a "
+                      "dangerous permission is not granted by being declared")
+        self.assertIn("@com.getcapacitor.annotation.PermissionCallback", src,
+                      "a request with no callback resolves nothing and the caller waits for ever")
+
+    def test_the_client_can_tell_the_two_switches_apart(self):
+        """`isDefault` is whether messages ARRIVE here; `canRead` is whether we may look. They are
+        separate grants and were reported as one, which is how reading ended up gated on the role."""
+        body = method(strip_comments((SMS / "SmsPlugin.java").read_text()), "public void status")
+        self.assertIn('o.put("canRead"', body)
+        self.assertIn('o.put("isDefault"', body)
+
+    def test_the_texts_view_asks_before_it_reports_an_empty_inbox(self):
+        js = (ROOT / "static/js/client/sms.js").read_text()
+        self.assertIn("ensureRead", js,
+                      "the Texts view never asks for permission, so the provider refuses and the "
+                      "empty list is drawn as 'No messages on this phone'")
+        self.assertIn("fix: 'perm'", js,
+                      "the one kind of empty a tap can fix is not named")
+
+
 class TheDrawerStillHidesOurOwnPackage(unittest.TestCase):
     """The filter that made the tiles load-bearing. If this ever goes away the catalogue tile and the
     alias would BOTH be listed — one app, two Messages entries."""

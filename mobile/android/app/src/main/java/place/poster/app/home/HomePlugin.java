@@ -30,6 +30,35 @@ import place.poster.app.ui.PcThemeStore;
 @CapacitorPlugin(name = "HomeScreen")
 public class HomePlugin extends Plugin {
 
+    /**
+     * THE SIGNAL THAT CANNOT BE COALESCED AWAY.
+     *
+     * A tile pressed while the app is already running has no page load to hang the read off, so the
+     * client listened for `visibilitychange` — which on Android arrives late or not at all, and a
+     * landing that arrives late is a person looking at the wrong screen. This is pushed from
+     * `MainActivity.onNewIntent`, i.e. the moment the press actually lands, from the Activity, which
+     * Android never freezes.
+     *
+     * STATIC for the same reason SmsPlugin's `live` is: the caller is not the plugin and frequently
+     * runs when there is no plugin instance at all. It carries NO payload — the client still calls
+     * `consumeLaunchView`, so there is exactly one consumer of the parked request and no second path
+     * that could disagree with it.
+     */
+    private static volatile HomePlugin live;
+
+    @Override
+    public void load() { live = this; }
+
+    @Override
+    protected void handleOnDestroy() { if (live == this) live = null; }
+
+    /** Tell the page there may be a launch request to read. Safe to call when nothing is listening. */
+    public static void announceLaunchView() {
+        HomePlugin p = live;
+        if (p == null) return;
+        try { p.notifyListeners("launchView", new JSObject()); } catch (Throwable ignored) { }
+    }
+
     @PluginMethod
     public void status(PluginCall call) {
         JSObject o = new JSObject();

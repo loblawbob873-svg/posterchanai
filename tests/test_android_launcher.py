@@ -158,6 +158,70 @@ public class Harness {
     say("desk-full", Desk.add(full, new Desk.Item("one-too-many", 0, 0, 1, 1), 2, 2)
                    + " " + full.size());
 
+    // 14b. A WIDGET THAT DOES NOT FIT IS OFFERED A SMALLER SHAPE BEFORE IT IS REFUSED.
+    //      A tablet grid is 5-7 x 6-8 and a phone's is 4 x 3-6, so the same widget asking for the
+    //      same rectangle finds room on one and not the other. `add` asks once; `addShrinking`
+    //      walks down to the floor the provider declares.
+    List<Desk.Item> tight = new ArrayList<Desk.Item>();
+    for (int i = 0; i < 4; i++) Desk.add(tight, new Desk.Item("i" + i, 0, 0, 1, 1), 4, 2);
+    Desk.Item wide = new Desk.Item("widget:31", 0, 0, 4, 2);
+    say("shrink-add", Desk.add(new ArrayList<Desk.Item>(tight),
+            new Desk.Item("widget:31", 0, 0, 4, 2), 4, 2));
+    say("shrink-fits", Desk.addShrinking(tight, wide, 1, 1, 4, 2) + " " + wide);
+    // The floor is obeyed: a widget that will not draw below 2x1 is refused rather than squeezed.
+    List<Desk.Item> tight2 = new ArrayList<Desk.Item>();
+    for (int i = 0; i < 7; i++) Desk.add(tight2, new Desk.Item("j" + i, 0, 0, 1, 1), 4, 2);
+    Desk.Item floored = new Desk.Item("widget:32", 0, 0, 4, 2);
+    say("shrink-floor", Desk.addShrinking(tight2, floored, 2, 1, 4, 2) + " " + floored
+                      + " " + tight2.size());
+    // Largest area first, and the shape closest to the one asked for wins a tie: a 4x1 strip that
+    // has to lose a column stays a strip.
+    List<Desk.Item> strip = new ArrayList<Desk.Item>();
+    Desk.add(strip, new Desk.Item("k0", 3, 0, 1, 1), 4, 4);
+    Desk.Item clock = new Desk.Item("widget:33", 0, 0, 4, 1);
+    say("shrink-shape", Desk.addShrinking(strip, clock, 1, 1, 4, 4) + " " + clock);
+    // Nothing is shrunk that did not have to be.
+    List<Desk.Item> roomy = new ArrayList<Desk.Item>();
+    Desk.Item big2 = new Desk.Item("widget:34", 0, 0, 3, 2);
+    say("shrink-none", Desk.addShrinking(roomy, big2, 1, 1, 4, 4) + " " + big2);
+    // A refusal leaves the item at the size the person actually chose, so the message is about that.
+    List<Desk.Item> none = new ArrayList<Desk.Item>();
+    Desk.add(none, new Desk.Item("z", 0, 0, 1, 1), 1, 1);
+    Desk.Item nope = new Desk.Item("widget:35", 0, 0, 2, 2);
+    say("shrink-refused", Desk.addShrinking(none, nope, 1, 1, 1, 1) + " " + nope
+                        + " " + none.size());
+
+    // 14c. A TILE THAT BECAME AVAILABLE LATER GETS A PLACE, ONCE — and never a second time.
+    //      "posterchan is the default messaging app but still no desktop / app icon ... for text":
+    //      the desktop is seeded once, so a tile added to the catalogue (or un-gated) afterwards
+    //      lands nowhere on an install that already exists, for ever.
+    Set<String> nothingOffered = new LinkedHashSet<String>();
+    say("adopt-fresh", HomeTiles.unadopted(ours, nothingOffered, null, "", null).size()
+                     + " " + HomeTiles.unadopted(ours, nothingOffered, null, "", null).contains("pc:_texts"));
+    // THE RULE THAT MATTERS: a tile already offered is never placed again, whatever became of it.
+    // Removing an icon does not hide it, so without this record a removal is re-added every launch.
+    Set<String> offeredTexts = new LinkedHashSet<String>();
+    offeredTexts.add("pc:_texts");
+    say("adopt-remembered", HomeTiles.unadopted(ours, offeredTexts, null, "", null).contains("pc:_texts"));
+    // Already on the desktop, in the dock, or hidden — all plainly dealt with.
+    say("adopt-on-desk", HomeTiles.unadopted(ours, nothingOffered, null,
+            "pc:_texts|0|0|1|1\npc:notes|1|0|1|1", null).contains("pc:_texts"));
+    say("adopt-in-dock", HomeTiles.unadopted(ours, nothingOffered, null, "",
+            Arrays.asList("pc:_texts")).contains("pc:_texts"));
+    Set<String> hidTexts = new LinkedHashSet<String>();
+    hidTexts.add("pc:_texts");
+    say("adopt-hidden", HomeTiles.unadopted(ours, nothingOffered, hidTexts, "", null).contains("pc:_texts"));
+    // The way back is never placed uninvited, and a tile this build cannot launch is not offered.
+    say("adopt-essential", HomeTiles.unadopted(ours, nothingOffered, null, "", null).contains("pc:_settings"));
+    say("adopt-absent", HomeTiles.unadopted(new ArrayList<AppShelf.Entry>(), nothingOffered,
+            null, "", null).size());
+    // THE ONE-TIME BASELINE. Everything the catalogue already had counts as offered, except the two
+    // whose absence has a written cause — anything looser re-places icons people removed on purpose.
+    Set<String> base = HomeTiles.alreadyOffered();
+    say("adopt-baseline", base.contains("pc:_texts") + " " + base.contains("pc:_phone")
+                        + " " + base.contains("pc:notes") + " " + base.contains("pc:chess"));
+    say("adopt-after-baseline", HomeTiles.unadopted(ours, HomeTiles.alreadyOffered(), null, "", null));
+
     // 15. A SMALLER GRID RE-PLACES; IT NEVER DROPS.
     List<Desk.Item> big = new ArrayList<Desk.Item>();
     big.add(new Desk.Item("x", 3, 3, 1, 1));
@@ -499,6 +563,69 @@ class Launcher(unittest.TestCase):
         that feels broken, and they cannot tell whether it was them or the app."""
         self.assertEqual(self.out["desk-resize-out"], "false widget:7@2,2 2x2")
         self.assertEqual(self.out["desk-resize-ok"], "true widget:7@2,2 2x2")
+
+    def test_a_tile_that_became_available_later_gets_a_place(self):
+        """"posterchan is the default messaging app but still no desktop / app icon ... for text".
+
+        The desktop is seeded on the FIRST RUN and never again — which is what stops a removed icon
+        coming back, and which means a tile added to the catalogue afterwards, or un-gated afterwards
+        (Messages and Phone were withheld until the app held the SMS / dialer role), lands nowhere at
+        all on an install that already exists."""
+        n, has = self.out["adopt-fresh"].split()
+        self.assertGreater(int(n), 0)
+        self.assertEqual(has, "true")
+
+    def test_it_never_re_adds_something_that_was_removed(self):
+        """THE RULE THE WHOLE MECHANISM EXISTS FOR. Removing an icon from the desktop does not hide
+        it, so a removal leaves no trace and looks exactly like a tile that was never offered. The
+        record of what has been OFFERED is what tells them apart, and it only ever grows."""
+        self.assertEqual(self.out["adopt-remembered"], "false")
+
+    def test_a_tile_already_somewhere_is_left_alone(self):
+        for k in ("adopt-on-desk", "adopt-in-dock", "adopt-hidden"):
+            self.assertEqual(self.out[k], "false", k)
+
+    def test_the_way_back_is_never_placed_uninvited(self):
+        """"Phone settings" lives in the long-press menu and is essential; putting it on somebody's
+        desktop is not a fix for anything. A tile this build cannot offer is not placed either."""
+        self.assertEqual(self.out["adopt-essential"], "false")
+        self.assertEqual(self.out["adopt-absent"], "0")
+
+    def test_the_baseline_only_forgives_the_two_with_a_written_cause(self):
+        """An install that predates the record has no way to say which absences were choices. So
+        everything the catalogue already had counts as offered, except Phone and Messages — whose
+        absence is explained by `ours()` having withheld them. Anything looser re-places icons
+        somebody deleted."""
+        self.assertEqual(self.out["adopt-baseline"], "false false true true")
+        self.assertEqual(self.out["adopt-after-baseline"], "[pc:_phone, pc:_texts]")
+
+    def test_a_widget_that_does_not_fit_is_offered_a_smaller_shape(self):
+        """"widgets need support to fit on mobile phone screen", against a launcher that "looks
+        great on tablet" — the same sentence twice. A tablet grid is 5-7 columns by 6-8 rows and a
+        phone's is 4 by 3-6, so the same widget asking for the same rectangle finds room on one and
+        not the other. `Desk.add` asked once and the caller released the widget id and said the
+        desktop was full; this walks down to the floor the provider declares.
+
+        Verified to fail without `addShrinking`: `desk-add` on the same crowded grid is `false`."""
+        self.assertEqual(self.out["shrink-add"], "false")
+        self.assertTrue(self.out["shrink-fits"].startswith("true "), self.out["shrink-fits"])
+
+    def test_a_widget_is_never_squeezed_below_what_it_says_it_can_draw(self):
+        """minResizeWidth/minResizeHeight are the provider saying which smaller shapes it can still
+        draw. Below that a widget is not small, it is broken — so it is refused instead, and the
+        refusal leaves it at the size the person chose so the message is about that widget."""
+        self.assertTrue(self.out["shrink-floor"].startswith("false "), self.out["shrink-floor"])
+        self.assertIn("widget:32@0,0 4x2", self.out["shrink-floor"])
+        self.assertTrue(self.out["shrink-floor"].endswith(" 7"), self.out["shrink-floor"])
+        self.assertTrue(self.out["shrink-refused"].startswith("false widget:35@0,0 2x2 1"),
+                        self.out["shrink-refused"])
+
+    def test_a_shrunk_widget_keeps_the_shape_it_asked_for(self):
+        """Largest area first, ties to the shape nearest the request: a 4x1 clock that has to lose a
+        column stays a 3x1 strip rather than becoming a 2x2 square with the same cell count. And a
+        widget with room is not shrunk at all."""
+        self.assertEqual(self.out["shrink-shape"], "true widget:33@0,1 4x1")
+        self.assertEqual(self.out["shrink-none"], "true widget:34@0,0 3x2")
 
     def test_a_full_desktop_says_so(self):
         """Silently swallowing the app is how somebody taps "add to home" four times and then
