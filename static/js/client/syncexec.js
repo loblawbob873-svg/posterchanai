@@ -1319,13 +1319,44 @@
      * "windows app running out of memory while syncing" is that death. When the heap is already
      * past ~1.5 GB the lanes drop to one; recovered, they resume. Costs nothing when memory is
      * fine, and a slower sweep beats a dead window every time it comes up. */
-    const _fat = () => { try{ const m = performance && performance.memory;
-        return !!(m && m.usedJSHeapSize > 1.5 * 1024 * 1024 * 1024); }catch(_){ return false; } };
+    /* Bytes THIS SWEEP has in flight, and what each transfer costs while it runs. Shared by both
+     * lane sets below — see the note on the guard. */
+    let inflight = 0;
+    const sizeOf = (x) => ((x.stat && x.stat.size) || (x.entry && x.entry.size) || 0) * BIG_COST;
+
+    /* THE MEMORY GUARD MEASURED THE WRONG POOL, AND THAT IS WHY IT NEVER FIRED.
+     *
+     * `performance.memory.usedJSHeapSize` counts the JAVASCRIPT HEAP. The allocations that kill this
+     * sweep are ArrayBuffers — a file's plaintext, its ciphertext and the request body — and in V8
+     * those are EXTERNAL memory, backed by the array-buffer allocator and not counted there at all.
+     * So the probe read "plenty of room" while hundreds of megabytes of buffers piled up, and the
+     * renderer died with a small, reassuring number in the crash report. Reported twice as "windows
+     * app ran out of memory doing a fresh sync"; the first fix guessed a size threshold
+     * (PARALLEL_MAX) and the second added telemetry that could not see the thing it was measuring.
+     *
+     * So COUNT THE BYTES WE OURSELVES PUT IN FLIGHT. It is the one number that is knowable exactly:
+     * every transfer declares its size before it starts and gives it back in a `finally`. No
+     * sampling, no privacy-quantised counter, and nothing to be wrong about across platforms.
+     *
+     * BIG_COST = 3 because each transfer holds the plaintext, the ciphertext and the body at once.
+     * The big lane already worked this way and was never the failure; the small lanes had no byte
+     * budget whatever — four lanes of "small" files is bounded, but the bound was never stated, and
+     * an unstated bound is one nothing can hold. Both draw on ONE budget now, because both are
+     * spending the same memory. */
+    const _fat = () => inflight > BIG_BUDGET;
     const lane = async (id) => {
       while(next < small.length && !stopping()){
-        if(id > 0 && _fat()){ await new Promise(r => setTimeout(r, 400)); continue; }
-        const item = small[next++];
-        await run(item, ++done, n);
+        const item = small[next];
+        const cost = sizeOf(item);
+        // The first lane always proceeds: a budget that can stall every lane is a hung sweep.
+        if(id > 0 && inflight > 0 && inflight + cost > BIG_BUDGET){
+          await new Promise(r => setTimeout(r, 40));
+          continue;
+        }
+        next++;
+        inflight += cost;
+        try{ await run(item, ++done, n); }
+        finally{ inflight -= cost; }
         await journal.maybe();
       }
     };
@@ -1352,8 +1383,7 @@
      * the stall windows into competition for no gain — the link is already saturated by one. */
     const huge = big.filter(x => !!(x.entry && x.entry.chunks && x.entry.chunks.length));
     const wide = big.filter(x => !(x.entry && x.entry.chunks && x.entry.chunks.length));
-    let bnext = 0, inflight = 0;
-    const sizeOf = (x) => ((x.stat && x.stat.size) || (x.entry && x.entry.size) || 0) * BIG_COST;
+    let bnext = 0;
     const blane = async (id) => {
       while(bnext < wide.length && !stopping()){
         if(id > 0 && _fat()){ await new Promise(r => setTimeout(r, 400)); continue; }

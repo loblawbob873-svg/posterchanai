@@ -482,6 +482,27 @@ finalizeInstall() {
 	# session (autologin into sway, which starts PosterChan) goes in instead.
 	if [[ "$POSTERCHANOS" = *y* ]]; then
 		touch $TARGET/etc/posterchanos
+		# THE MACHINE CALLS ITSELF WHAT IT IS. Without this the installed system answers "Gentoo"
+		# to everything that asks — the login banner, hostnamectl, neofetch, the bootloader entry,
+		# every crash report — on an operating system whose whole point is that it is PosterChanOS.
+		# The branding was already right in every string a person reads INSIDE the shell, which is
+		# exactly why the gap was easy to miss: it is only visible from outside it.
+		#
+		# `ID` is lowercase because the spec says so (os-release IDs are lowercase, no spaces), and
+		# `ID_LIKE=gentoo` is load-bearing: it is how portage tooling, bug reporters and anything
+		# reading os-release keep treating this as the Gentoo it actually is. `NAME`/`PRETTY_NAME`
+		# are the display strings, and those get the real capitalisation.
+		cat >$TARGET/etc/os-release <<-'OSREL'
+			NAME="PosterChanOS"
+			PRETTY_NAME="PosterChanOS"
+			ID=posterchanos
+			ID_LIKE=gentoo
+			ANSI_COLOR="1;36"
+			HOME_URL="https://poster.place/"
+		OSREL
+		# Gentoo ships os-release as a symlink into /usr/lib; the heredoc above would otherwise
+		# rewrite the file it points at, so the distro's own copy stays intact underneath.
+		ln -sf ../etc/os-release $TARGET/usr/lib/os-release 2>/dev/null || true
 		cp -f gentoo.sh $TARGET/usr/bin/gentoo.sh
 		chroot $TARGET /usr/bin/bash /usr/bin/gentoo.sh posterchan-shell
 		plymouthTheme
