@@ -60,9 +60,7 @@ VIDEO_CARDS="intel amdgpu radeon radeonsi"
 #
 #PACKAGE CONFIGURATION
 BASE_PACKAGES="net-print/cups-filters net-misc/networkmanager net-fs/sshfs app-shells/starship dev-util/sh sys-boot/plymouth sys-power/acpid app-arch/zip dev-python/virtualenv sys-apps/flatpak sys-power/powertop app-shells/bash-completion sys-power/cpupower media-libs/gexiv2 mail-mta/postfix app-admin/sysstat sys-apps/smartmontools net-fs/nfs-utils net-firewall/nftables dev-python/pip sys-fs/inotify-tools net-analyzer/nmap app-misc/screen app-portage/gentoolkit sys-fs/dosfstools app-admin/sudo sys-apps/systemd app-eselect/eselect-repository dev-vcs/git sys-block/parted sys-process/btop net-vpn/wireguard-tools app-editors/neovim app-misc/fastfetch sys-fs/btrfs-progs net-print/cups sys-firmware/seabios-bin sys-firmware/edk2-bin app-emulation/libvirt app-emulation/qemu"
-DESKTOP_APPS=" media-sound/elisa kde-apps/kcalc media-video/obs-studio media-video/vlc kde-apps/kdenlive app-editors/vscodium kde-apps/dolphin kde-apps/konsole firefox-bin net-im/telegram-desktop-bin media-fonts/noto media-fonts/noto-emoji app-emulation/virt-manager net-wireless/bluez sys-power/power-profiles-daemon kde-plasma/discover media-fonts/fontawesome kde-plasma/plasma-meta "
 SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 nls pam readline server ssl system zlib zstd uuid" "dev-build/meson test test-full" "dev-qt/qtwebengine bindist" "media-sound/sox -opus" "media-video/vlc -opus -theora -vpx" "dev-qt/qtpositioning geoclue" "media-libs/libvpx postproc" "dev-python/pillow webp" "gui-libs/gtk colord sysprof" "media-libs/freetype harfbuzz" "dev-lang/php gmp sodium sysvipc calendar bcmath exif bzip2 intl ctype curl fileinfo filter gd iconv ssl posix session simplexml xmlreader xmlwriter zip zlib postgres png opcache jit cli fpm zip pdo" "net-im/synapse postgres" "net-p2p/qbittorrent webui" "app-crypt/certbot certbot-nginx" "acct-user/git gitea" "app-admin/vaultwarden web postgres" "media-gfx/imagemagick -postscript" "media-gfx/imagemagick -postscript dev-libs/jemalloc statsv" "media-libs/libsdl2 -kms -pipewire" "media-video/obs-studio pipewire wayland" "media-video/pipewire sound-server" "gui-wm/sway X" "mail-mta/postfix sasl")
-FLATPAK_PACKAGES="com.valvesoftware.Steam com.vscodium.codium org.kde.konsole com.brave.Browser org.mozilla.Thunderbird net.cozic.joplin_desktop io.github.martchus.syncthingtray im.riot.Riot org.telegram.desktop org.kde.krita org.remmina.Remmina org.onlyoffice.desktopeditors org.kde.kdenlive org.kde.kcalc com.obsproject.Studio com.bitwarden.desktop org.vinegarhq.Sober org.videolan.VLC org.kde.dolphin"
 #
 # ── PosterChanOS ────────────────────────────────────────────────────────────────────────────────
 # The shell is the PosterChan desktop itself, so there is no second desktop environment to install.
@@ -100,18 +98,18 @@ sys-apps/xdg-desktop-portal gui-libs/xdg-desktop-portal-wlr sys-apps/xdg-desktop
 media-video/obs-studio \
 sec-keys/openpgp-keys-gentoo-release dev-vcs/git"
 
-# The profile has to survive a CHROOT. buildGentoo copies this script into the target and runs it
-# there for the package step, and an environment variable does not cross that boundary — so the
-# choice is a FILE, written into the target once, and read here on every invocation. Without it the
-# chroot run silently rebuilds the KDE package list and installs a second desktop.
-POSTERCHANOS="${POSTERCHANOS:-n}"
-[ -f /etc/posterchanos ] && POSTERCHANOS="y"
-
-PACKAGES="$BASE_PACKAGES $DESKTOP_APPS"
-if [[ "$POSTERCHANOS" = *y* ]]; then
-	PACKAGES="$BASE_PACKAGES $POSTERCHANOS_PACKAGES"
-	FLATPAK_PACKAGES=""
-fi
+# THIS SCRIPT BUILDS POSTERCHANOS. THERE IS NO SECOND PROFILE.
+#
+# It used to build two — PosterChanOS, and a KDE Plasma desktop (`kde-plasma/plasma-meta` plus
+# dolphin, konsole, kdenlive, kcalc, discover and a flatpak app list) — chosen by a variable that
+# EIGHT separate places branched on. Every one of those was a chance for the two halves to disagree,
+# and they did: a chroot does not inherit an environment, so the choice had to become a FILE after a
+# chroot run silently rebuilt the KDE list and installed an entire second desktop on the profile
+# whose whole point is not having one.
+#
+# That is fragmentation with nothing on the other side of it. `/etc/posterchanos` is still written,
+# because an installed system should be able to say what it is, but nothing branches on it.
+PACKAGES="$BASE_PACKAGES $POSTERCHANOS_PACKAGES"
 TMPFS_SIZE="32G"
 CPU_TYPE="x86-64-v3"
 BUILD_SERVER="n"
@@ -162,26 +160,24 @@ gentooRepo() {
 	# THE POSTERCHANOS OVERLAY: how an installed machine gets a newer desktop and session without
 	# being reinstalled. A git repo rather than a directory of files, because that is the only shape
 	# portage can sync over plain https.
-	if [[ "$POSTERCHANOS" = *y* ]]; then
-		{
-			echo "[posterchan]"
-			echo "location = /var/db/repos/posterchan"
-			echo "sync-type = git"
-			echo "sync-uri = https://gentoo.poster.place/posterchan-overlay.git"
-			echo "auto-sync = yes"
-			echo "priority = 100"
-			# BOTH depths, and they are different options. `clone-depth` governs the FIRST clone
-			# and `sync-depth` the updates after it — setting only the second leaves portage
-			# running `git clone --depth 1`, which a dumb HTTP transport cannot do: "fatal: dumb
-			# http transport does not support shallow capabilities". The repo directory is then
-			# left empty and every emerge behaves as though the overlay has no packages in it,
-			# with the failure buried in a sync log nobody reads. (Read out of portage's own
-			# git.py rather than guessed — the names are not symmetrical.) The overlay is a few
-			# hundred kilobytes; full clones cost nothing here.
-			echo "clone-depth = 0"
-			echo "sync-depth = 0"
-		} >$TARGET/etc/portage/repos.conf/posterchan.conf
-	fi
+	{
+		echo "[posterchan]"
+		echo "location = /var/db/repos/posterchan"
+		echo "sync-type = git"
+		echo "sync-uri = https://gentoo.poster.place/posterchan-overlay.git"
+		echo "auto-sync = yes"
+		echo "priority = 100"
+		# BOTH depths, and they are different options. `clone-depth` governs the FIRST clone
+		# and `sync-depth` the updates after it — setting only the second leaves portage
+		# running `git clone --depth 1`, which a dumb HTTP transport cannot do: "fatal: dumb
+		# http transport does not support shallow capabilities". The repo directory is then
+		# left empty and every emerge behaves as though the overlay has no packages in it,
+		# with the failure buried in a sync log nobody reads. (Read out of portage's own
+		# git.py rather than guessed — the names are not symmetrical.) The overlay is a few
+		# hundred kilobytes; full clones cost nothing here.
+		echo "clone-depth = 0"
+		echo "sync-depth = 0"
+	} >$TARGET/etc/portage/repos.conf/posterchan.conf
 
 	mkdir -p $TARGET/etc/portage/binrepos.conf
 	echo "[binhost]" >$TARGET/etc/portage/binrepos.conf/gentoobinhost.conf
@@ -399,11 +395,7 @@ configurePortage() {
 	# and pulls Plasma into @world no matter what PACKAGES says, which is how a "minimal" build was
 	# caught emerging kde-frameworks/breeze-icons. PosterChanOS takes the plain desktop profile: the
 	# desktop USE defaults (which sway, pipewire and OBS all want) without a desktop environment.
-	if [[ "$POSTERCHANOS" = *y* ]]; then
-		GENTOO_PROFILE=$(chroot $TARGET /usr/bin/eselect profile list | grep -i 'desktop' | grep -vi 'plasma\|gnome' | grep systemd | grep -i stable | head -1 | cut -d '[' -f2 | cut -d ']' -f1)
-	else
-		GENTOO_PROFILE=$(chroot $TARGET /usr/bin/eselect profile list | grep -i 'plasma' | grep systemd | grep -i stable | head -1 | cut -d '[' -f2 | cut -d ']' -f1)
-	fi
+	GENTOO_PROFILE=$(chroot $TARGET /usr/bin/eselect profile list | grep -i 'desktop' | grep -vi 'plasma\|gnome' | grep systemd | grep -i stable | head -1 | cut -d '[' -f2 | cut -d ']' -f1)
 	chroot $TARGET /usr/bin/eselect profile set $GENTOO_PROFILE
 
 	mkdir -p $TARGET/etc/portage/package.license
@@ -460,7 +452,7 @@ buildGentoo() {
 	# chroot, where an environment variable does not reach — so without this the chroot rebuilds the
 	# default list and installs the whole KDE desktop, hours of it, on the profile whose entire point
 	# is not having one. finalizeInstall writes the marker too; by then it is far too late.
-	if [[ "$POSTERCHANOS" = *y* ]]; then touch $TARGET/etc/posterchanos; fi
+	touch $TARGET/etc/posterchanos
 	cp -f gentoo.sh $TARGET/usr/bin/gentoo.sh
 	chroot $TARGET /usr/bin/bash /usr/bin/gentoo.sh install-packages
 	echo
@@ -480,35 +472,31 @@ finalizeInstall() {
 	# that was never installed fails the whole finalize step — and on the profile whose entire point
 	# is that the shell IS the desktop, there is nothing for a login screen to launch. The shell
 	# session (autologin into sway, which starts PosterChan) goes in instead.
-	if [[ "$POSTERCHANOS" = *y* ]]; then
-		touch $TARGET/etc/posterchanos
-		# THE MACHINE CALLS ITSELF WHAT IT IS. Without this the installed system answers "Gentoo"
-		# to everything that asks — the login banner, hostnamectl, neofetch, the bootloader entry,
-		# every crash report — on an operating system whose whole point is that it is PosterChanOS.
-		# The branding was already right in every string a person reads INSIDE the shell, which is
-		# exactly why the gap was easy to miss: it is only visible from outside it.
-		#
-		# `ID` is lowercase because the spec says so (os-release IDs are lowercase, no spaces), and
-		# `ID_LIKE=gentoo` is load-bearing: it is how portage tooling, bug reporters and anything
-		# reading os-release keep treating this as the Gentoo it actually is. `NAME`/`PRETTY_NAME`
-		# are the display strings, and those get the real capitalisation.
-		cat >$TARGET/etc/os-release <<-'OSREL'
-			NAME="PosterChanOS"
-			PRETTY_NAME="PosterChanOS"
-			ID=posterchanos
-			ID_LIKE=gentoo
-			ANSI_COLOR="1;36"
-			HOME_URL="https://poster.place/"
-		OSREL
-		# Gentoo ships os-release as a symlink into /usr/lib; the heredoc above would otherwise
-		# rewrite the file it points at, so the distro's own copy stays intact underneath.
-		ln -sf ../etc/os-release $TARGET/usr/lib/os-release 2>/dev/null || true
-		cp -f gentoo.sh $TARGET/usr/bin/gentoo.sh
-		chroot $TARGET /usr/bin/bash /usr/bin/gentoo.sh posterchan-shell
-		plymouthTheme
-	else
-		chroot $TARGET /usr/bin/systemctl enable sddm
-	fi
+	touch $TARGET/etc/posterchanos
+	# THE MACHINE CALLS ITSELF WHAT IT IS. Without this the installed system answers "Gentoo"
+	# to everything that asks — the login banner, hostnamectl, neofetch, the bootloader entry,
+	# every crash report — on an operating system whose whole point is that it is PosterChanOS.
+	# The branding was already right in every string a person reads INSIDE the shell, which is
+	# exactly why the gap was easy to miss: it is only visible from outside it.
+	#
+	# `ID` is lowercase because the spec says so (os-release IDs are lowercase, no spaces), and
+	# `ID_LIKE=gentoo` is load-bearing: it is how portage tooling, bug reporters and anything
+	# reading os-release keep treating this as the Gentoo it actually is. `NAME`/`PRETTY_NAME`
+	# are the display strings, and those get the real capitalisation.
+	cat >$TARGET/etc/os-release <<-'OSREL'
+		NAME="PosterChanOS"
+		PRETTY_NAME="PosterChanOS"
+		ID=posterchanos
+		ID_LIKE=gentoo
+		ANSI_COLOR="1;36"
+		HOME_URL="https://poster.place/"
+	OSREL
+	# Gentoo ships os-release as a symlink into /usr/lib; the heredoc above would otherwise
+	# rewrite the file it points at, so the distro's own copy stays intact underneath.
+	ln -sf ../etc/os-release $TARGET/usr/lib/os-release 2>/dev/null || true
+	cp -f gentoo.sh $TARGET/usr/bin/gentoo.sh
+	chroot $TARGET /usr/bin/bash /usr/bin/gentoo.sh posterchan-shell
+	plymouthTheme
 	chmod +x $TARGET/usr/bin/gentoo.sh
 	chmod +x $TARGET/setup.sh
 	cp -f /tmp/disk $TARGET/etc/disk
@@ -560,9 +548,12 @@ installPackages() {
 	fi
 }
 
+# Flathub is added, and nothing is installed from it. The list this used to carry was the KDE
+# desktop's — konsole, dolphin, kcalc, kdenlive, Brava, Thunderbird — and PosterChanOS supplies its
+# own equivalents. The remote stays because Steam is installed through it (see the steam function),
+# and because it is the sane place for a person to get an app this OS does not ship.
 installFlatpaks() {
 	/usr/bin/flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-	/usr/bin/flatpak install -y $FLATPAK_PACKAGES
 }
 
 btrfsTweaks() {
@@ -932,7 +923,7 @@ posterchanShell() {
 	#
 	# Success is checked by looking for the FILES, not by trusting emerge's exit code — a package
 	# that installs nothing useful exits 0.
-	if [[ "$POSTERCHANOS" = *y* ]] && [ -f "${TARGET}/etc/portage/repos.conf/posterchan.conf" ]; then
+	if [ -f "${TARGET}/etc/portage/repos.conf/posterchan.conf" ]; then
 		echo -e "\033[1;33mSyncing the PosterChanOS overlay\033[0m"
 		if _in 'emerge --sync posterchan' >/dev/null 2>&1; then
 			_in 'emerge -uDN --autounmask-write app-misc/posterchanos-shell' >/dev/null 2>&1
@@ -1079,20 +1070,11 @@ installSteam() {
 	#
 	# gamescope is emerged natively either way: it is 64-bit only, small, and it is what lets a game
 	# have the screen to itself under the compositor.
-	if [[ "$POSTERCHANOS" = *y* ]]; then
-		emerge -uDN sys-apps/flatpak gui-wm/gamescope --autounmask-write
-		etc-update -q --automode -5
-		emerge -uDN sys-apps/flatpak gui-wm/gamescope
-		/usr/bin/flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-		/usr/bin/flatpak install -y com.valvesoftware.Steam
-		return 0
-	fi
-	eselect repository enable steam-overlay
-	emerge --sync steam-overlay
-	emerge -uDN games-util/steam-launcher app-emulation/wine-vanilla gui-wm/gamescope --autounmask-write
+	emerge -uDN sys-apps/flatpak gui-wm/gamescope --autounmask-write
 	etc-update -q --automode -5
-	emerge -uDN @world
-	emerge -uDN games-util/steam-launcher app-emulation/wine-vanilla gui-wm/gamescope
+	emerge -uDN sys-apps/flatpak gui-wm/gamescope
+	/usr/bin/flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+	/usr/bin/flatpak install -y com.valvesoftware.Steam
 }
 
 locale() {
@@ -1132,74 +1114,31 @@ accounts() {
 	# the hard way: sudo refused a sudoers file it had been handed at the wrong mode, root was
 	# locked, and the only way back into a freshly installed machine was editing the kernel command
 	# line at the boot menu. A recovery path is not a weakness when the alternative is a brick.
-	if [[ "$POSTERCHANOS" = *y* ]]; then
-		SHELL_USER="posterchan"
-		echo -e "\033[1;33mCreating the shell session account: $SHELL_USER\033[0m"
-		id -u "$SHELL_USER" >/dev/null 2>&1 || \
-			useradd -m -d /home/$SHELL_USER -s /bin/bash -c "PosterChan shell" $SHELL_USER
-		# No password: this account is entered by autologin and must not be a way IN from anywhere
-		# else — not ssh, not a login prompt, not su.
-		passwd -l $SHELL_USER >/dev/null 2>&1
-		for g in audio video input netdev render; do
-			getent group "$g" >/dev/null 2>&1 && gpasswd -a $SHELL_USER "$g" >/dev/null 2>&1
-		done
-		# One command, not ALL. The shell provisions accounts; it is not an administrator.
-		mkdir -p /etc/sudoers.d
-		printf '%s\n' \
-			"# The shell provisions a Unix account for whoever signs in. This one command, nothing else." \
-			"$SHELL_USER ALL=(root) NOPASSWD: /usr/local/bin/pc-provision-user" \
-			> /etc/sudoers.d/posterchan-provision
-		chmod 0440 /etc/sudoers.d/posterchan-provision
-		echo "root:$ROOT_PASSWORD" | chpasswd
-		grep -q '^@includedir /etc/sudoers.d' /etc/sudoers 2>/dev/null || \
-			echo "@includedir /etc/sudoers.d" >>/etc/sudoers
-		chown root:root /etc/sudoers && chmod 0440 /etc/sudoers
-		if command -v visudo >/dev/null 2>&1; then
-			visudo -c >/dev/null 2>&1 || echo -e "\033[1;31m  ✗ /etc/sudoers is not valid — sudo will refuse everything\033[0m"
-		fi
-		/usr/bin/hostnamectl set-hostname "${ROOT_NAME:-posterchanos}" 2>/dev/null
-		return 0
-	fi
-
-	echo
-	echo -e "\033[1;33mSet Password for $USER\033[0m"
-	useradd -m -d /home/$USER -s /bin/bash $USER
-	echo "$USER:$USER_PASSWORD" | chpasswd
-	gpasswd -a $USER wheel
-	gpasswd -a $USER network
-	gpasswd -a $USER video
-	gpasswd -a $USER libvirt
-	gpasswd -a $USER netdev
-	gpasswd -a $USER adm
-	gpasswd -a $USER video
-	gpasswd -a $USER lp
-	gpasswd -a $USER lpadmin
-	# THE INCLUDEDIR HAS TO SURVIVE. Writing /etc/sudoers wholesale drops the line that makes
-	# /etc/sudoers.d readable at all, so every drop-in rule is silently ignored — including the one
-	# that lets the shell provision an account for somebody signing in. Nothing reports it: sudoers.d
-	# files that are never read look exactly like sudoers.d files that are.
-	echo "$USER ALL=(ALL) NOPASSWD: ALL" >/etc/sudoers
-	echo "root ALL=(ALL) ALL" >>/etc/sudoers
-	echo "@includedir /etc/sudoers.d" >>/etc/sudoers
-	# SUDO REFUSES TO RUN AT ALL IF THIS FILE IS NOT 0440 root:root, and `echo >` CREATES it with
-	# the default umask when it does not already exist — which is what happens whenever this runs
-	# before app-admin/sudo is installed. The result is a machine with no working sudo and, since
-	# root is locked two lines below, no way in at all except editing the kernel command line.
-	# Measured on a real install: 0644, and "sudo: no valid sudoers sources found, quitting".
-	chown root:root /etc/sudoers
-	chmod 0440 /etc/sudoers
-	# ...and say so if it is still not valid, rather than discovering it after the reboot.
+	SHELL_USER="posterchan"
+	echo -e "\033[1;33mCreating the shell session account: $SHELL_USER\033[0m"
+	id -u "$SHELL_USER" >/dev/null 2>&1 || \
+		useradd -m -d /home/$SHELL_USER -s /bin/bash -c "PosterChan shell" $SHELL_USER
+	# No password: this account is entered by autologin and must not be a way IN from anywhere
+	# else — not ssh, not a login prompt, not su.
+	passwd -l $SHELL_USER >/dev/null 2>&1
+	for g in audio video input netdev render; do
+		getent group "$g" >/dev/null 2>&1 && gpasswd -a $SHELL_USER "$g" >/dev/null 2>&1
+	done
+	# One command, not ALL. The shell provisions accounts; it is not an administrator.
+	mkdir -p /etc/sudoers.d
+	printf '%s\n' \
+		"# The shell provisions a Unix account for whoever signs in. This one command, nothing else." \
+		"$SHELL_USER ALL=(root) NOPASSWD: /usr/local/bin/pc-provision-user" \
+		> /etc/sudoers.d/posterchan-provision
+	chmod 0440 /etc/sudoers.d/posterchan-provision
+	echo "root:$ROOT_PASSWORD" | chpasswd
+	grep -q '^@includedir /etc/sudoers.d' /etc/sudoers 2>/dev/null || \
+		echo "@includedir /etc/sudoers.d" >>/etc/sudoers
+	chown root:root /etc/sudoers && chmod 0440 /etc/sudoers
 	if command -v visudo >/dev/null 2>&1; then
 		visudo -c >/dev/null 2>&1 || echo -e "\033[1;31m  ✗ /etc/sudoers is not valid — sudo will refuse everything\033[0m"
 	fi
-	echo
-	echo -e "\033[1;33mSetting ROOT Password:\033[0m"
-	echo "root:$ROOT_PASSWORD" | chpasswd
-	echo -e "\033[1;33mDisabling ROOT Account:\033[0m"
-	/usr/bin/passwd -dl root
-	/usr/bin/hostnamectl set-hostname $ROOT_NAME
-	sed -i 's/#Storage=persistent/Storage=volatile/i' /etc/systemd/journald.conf
-	sed -i 's/#ForwardToSyslog=no/ForwardToSyslog=no/i' /etc/systemd/journald.conf
+	/usr/bin/hostnamectl set-hostname "${ROOT_NAME:-posterchanos}" 2>/dev/null
 }
 
 btrfs-tweaks() {

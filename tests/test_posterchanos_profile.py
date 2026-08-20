@@ -128,26 +128,25 @@ class PosterChanOSProfile(unittest.TestCase):
     def test_the_profile_replaces_the_desktop_apps_rather_than_adding_to_them(self):
         """Appending would install the minimal stack ON TOP of Plasma — twice the desktop and none of
         the saving, which is exactly the mistake that looks like it worked."""
-        m = re.search(r'if \[\[ "\$POSTERCHANOS" = \*y\* \]\]; then\s*\n\s*'
-                      r'PACKAGES="([^"]*)"', self.src)
-        self.assertTrue(m, "the profile switch moved")
-        self.assertNotIn("DESKTOP_APPS", m.group(1),
-                         "the KDE app list is still installed under PosterChanOS")
+        m = re.search(r'^PACKAGES="([^"]*)"', self.src, re.M)
+        self.assertTrue(m, "PACKAGES moved — re-read this test")
+        self.assertEqual(m.group(1), "$BASE_PACKAGES $POSTERCHANOS_PACKAGES")
 
     def test_flatpak_is_not_used_by_this_profile(self):
         """Its only real customer was Steam, which portage builds natively — and a flatpak runtime is
-        a second copy of most of a graphics stack."""
-        m = re.search(r'if \[\[ "\$POSTERCHANOS" = \*y\* \]\];.*?\nfi', self.src, re.S)
-        self.assertTrue(m)
-        self.assertIn('FLATPAK_PACKAGES=""', m.group(0))
+        a second copy of most of a graphics stack. The list it used to carry was the KDE desktop's —
+        konsole, dolphin, kcalc, kdenlive — and this OS supplies its own equivalents."""
+        self.assertNotIn("FLATPAK_PACKAGES", self.src, "the flatpak app list came back")
+        fp = self._fn("installFlatpaks")
+        self.assertIn("remote-add", fp, "flathub should still be available to a person")
+        self.assertNotIn("flatpak install", fp, "the installer installs flatpak apps again")
 
     def test_nobody_is_baked_into_the_image(self):
         """Accounts are made when somebody signs in with a key, so a named human in the installer is
         wrong twice over: it is not their machine, and it is the account every copy of the image
         would share. What must exist is a session to run the shell in BEFORE anyone has signed in."""
         acc = self._fn("accounts")
-        i = acc.index("$POSTERCHANOS")
-        pcos = acc[i:acc.index("return 0", i)]
+        pcos = "\n".join(l for l in acc.splitlines() if not l.lstrip().startswith("#"))
         self.assertIn('SHELL_USER="posterchan"', pcos)
         self.assertNotIn("$USER", pcos, "the PosterChanOS branch still creates a named account")
 
@@ -155,24 +154,24 @@ class PosterChanOSProfile(unittest.TestCase):
         """It is reached by autologin and must not be a way IN from anywhere else — not ssh, not a
         login prompt, not su."""
         acc = self._fn("accounts")
-        i = acc.index("$POSTERCHANOS")
-        self.assertIn("passwd -l $SHELL_USER", acc[i:acc.index("return 0", i)])
+        self.assertIn("passwd -l $SHELL_USER", acc)
 
     def test_root_keeps_a_password_on_this_profile(self):
         """The default path locks root, which is defensible when one named human has NOPASSWD sudo
         and catastrophic here, where nobody does. Measured the hard way: sudo refused a sudoers file
         it had been handed at the wrong mode, root was locked, and the only way back into a freshly
         installed machine was editing the kernel command line at the boot menu."""
+        # CODE ONLY. The comment above this function explains WHY root keeps a password by quoting
+        # the very command that would lock it, and an assertion that reads prose fails on an
+        # explanation of itself.
         acc = self._fn("accounts")
-        i = acc.index("$POSTERCHANOS")
-        pcos = acc[i:acc.index("return 0", i)]
-        self.assertIn('echo "root:$ROOT_PASSWORD" | chpasswd', pcos)
-        self.assertNotIn("passwd -dl root", pcos, "root is locked with nobody able to sudo")
+        code = "\n".join(l for l in acc.splitlines() if not l.lstrip().startswith("#"))
+        self.assertIn('echo "root:$ROOT_PASSWORD" | chpasswd', code)
+        self.assertNotIn("passwd -dl root", code, "root is locked with nobody able to sudo")
 
     def test_the_session_account_is_not_an_administrator(self):
         acc = self._fn("accounts")
-        i = acc.index("$POSTERCHANOS")
-        pcos = acc[i:acc.index("return 0", i)]
+        pcos = "\n".join(l for l in acc.splitlines() if not l.lstrip().startswith("#"))
         self.assertNotIn("NOPASSWD: ALL", pcos, "the shell account was given blanket sudo")
         self.assertIn("NOPASSWD: /usr/local/bin/pc-provision-user", pcos)
 
@@ -208,10 +207,14 @@ class PosterChanOSProfile(unittest.TestCase):
         acc = self._fn("accounts")
         self.assertIn("chmod 0440 /etc/sudoers", acc, "sudo will refuse the file it just wrote")
         self.assertIn("chown root:root /etc/sudoers", acc)
-        # The COMMAND, not the phrase — the PosterChanOS branch mentions it in prose to explain why
-        # it does not do it, and a test that matches prose is a test about the comments.
-        self.assertLess(acc.index("chmod 0440 /etc/sudoers"), acc.index("/usr/bin/passwd -dl root"),
-                        "sudoers is fixed after root is locked — if it fails there is no way back")
+        # This used to assert that sudoers was fixed BEFORE root was locked, because a failure
+        # between the two left no way into the machine. Root is never locked now — the profile that
+        # did it is gone — so the stronger statement is available: the command is not there at all.
+        # Code only; the comment above the function names it to explain why it is absent.
+        code = "\n".join(l for l in acc.splitlines() if not l.lstrip().startswith("#"))
+        self.assertNotIn("passwd -dl root", code,
+                         "root is locked on a profile where nobody has sudo — the only way back "
+                         "into the machine is editing the kernel command line at the boot menu")
 
     def test_sound_is_enabled_for_users_that_do_not_exist_yet(self):
         """Gentoo ships the PipeWire user services disabled, and the usual fix is `systemctl --user`,
@@ -470,13 +473,13 @@ class PosterChanOSProfile(unittest.TestCase):
         turns on the KDE USE flags system-wide — it pulls Plasma into @world whatever PACKAGES says.
         A "minimal" build was caught emerging kde-frameworks/breeze-icons because of this line, and
         nothing in the package list could have prevented it."""
-        i = self.src.index("GENTOO_PROFILE=")
-        block = self.src[max(0, i - 700):i + 700]
-        self.assertIn("POSTERCHANOS", block,
-                      "the profile is picked without consulting PosterChanOS — it gets Plasma")
-        pcos = [ln for ln in block.splitlines()
-                if "GENTOO_PROFILE=" in ln and "-vi 'plasma" in ln]
-        self.assertTrue(pcos, "the PosterChanOS branch does not exclude the plasma profile")
+        picks = [ln for ln in self.src.splitlines() if "GENTOO_PROFILE=$(" in ln]
+        self.assertTrue(picks, "the profile is no longer chosen here — re-read this test")
+        for ln in picks:
+            with self.subTest(line=ln.strip()[:60]):
+                self.assertIn("-vi 'plasma", ln,
+                              "this profile line does not exclude plasma, so KDE arrives through "
+                              "the USE flags whatever the package list says")
 
     def test_steam_is_opt_in_and_not_in_the_base_profile(self):
         """Steam is a separate step and always was. Its tooling belongs with it: gamescope is a
@@ -492,7 +495,9 @@ class PosterChanOSProfile(unittest.TestCase):
         # a program that ships its own runtime.
         self.assertIn("com.valvesoftware.Steam", steam,
                       "PosterChanOS builds Steam natively — that is the 32-bit stack from source")
-        self.assertIn("$POSTERCHANOS", steam, "the flatpak path is not gated on the profile")
+        self.assertNotIn("games-util/steam-launcher", steam,
+                         "the native 32-bit Steam path came back — ABI_X86=32 through the whole "
+                         "graphics stack, built twice, for a program that ships its own runtime")
 
     def test_every_package_name_has_a_category(self):
         """`games-util/gamescope` does not exist — it is `gui-wm/gamescope` — and emerge refuses the
@@ -519,13 +524,30 @@ class PosterChanOSProfile(unittest.TestCase):
         for arg in ('"$1" = "download"', '"$1" = "build"', '"$1" = "install"'):
             self.assertIn(arg, self.src, f"no unattended entry point for {arg}")
 
-    def test_the_default_profile_is_unchanged(self):
-        """This is somebody's working installer for their own machines. PosterChanOS is opt-in, and a
-        plain run must still build exactly what it built before."""
-        self.assertIn('PACKAGES="$BASE_PACKAGES $DESKTOP_APPS"', self.src)
-        self.assertIn('POSTERCHANOS="${POSTERCHANOS:-n}"', self.src)
-        self.assertIn("/etc/posterchanos", self.src,
-                      "the profile cannot survive the chroot the package step runs in")
+    def test_there_is_only_one_profile(self):
+        """"that file should be focused on PosterChanOS only, we don't need fragmentation."
+
+        It used to build two, chosen by a variable EIGHT places branched on — and every one of those
+        was a chance for the halves to disagree. They did: a chroot inherits no environment, so the
+        choice had to become a file after a chroot run silently rebuilt the KDE list and installed a
+        whole second desktop on the profile whose point is not having one."""
+        self.assertNotIn("DESKTOP_APPS", self.src, "the KDE desktop list came back")
+        self.assertNotIn('POSTERCHANOS="${POSTERCHANOS:-n}"', self.src,
+                         "the profile switch came back — there is nothing on the other side of it")
+        self.assertNotIn('"$POSTERCHANOS" = *y*', self.src, "a branch on the removed profile survives")
+        self.assertIn('PACKAGES="$BASE_PACKAGES $POSTERCHANOS_PACKAGES"', self.src)
+
+    def test_the_machine_still_says_what_it_is(self):
+        """`/etc/posterchanos` outlives the branching it used to drive: nothing reads it to decide
+        any more, but an installed system should still be able to identify itself."""
+        self.assertIn("touch $TARGET/etc/posterchanos", self.src)
+
+    def test_no_kde_package_is_installed_anywhere(self):
+        code = "\n".join(l for l in self.src.splitlines() if not l.lstrip().startswith("#"))
+        for pkg in ("kde-plasma/plasma-meta", "kde-apps/dolphin", "kde-apps/konsole",
+                    "kde-apps/kdenlive", "kde-plasma/discover"):
+            with self.subTest(pkg=pkg):
+                self.assertNotIn(pkg, code)
 
 
 if __name__ == "__main__":
