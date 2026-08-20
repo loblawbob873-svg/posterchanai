@@ -4052,7 +4052,10 @@
     // all, so treat "missing" as enabled rather than hiding the button on every node until they restart.
     // Shown only when the NODE streams and THIS account may. _aiAuth carries can_stream from the
     // session; it's absent on an older backend, so treat missing as allowed and let the server refuse.
-    { const gl=$('#nav-golive'); if(gl && CFG.stream_enabled!==false){ gl.classList.remove('hidden'); gl.onclick=_goLive; } }
+    /* `!_standalone()` as well as the setting: with no instance there is no ingest to publish to, so
+       the entry could only ever reach the "couldn't reach the server" toast. An action that cannot
+       work is worse than an absent one — it reads as broken rather than as not-for-this-install. */
+    { const gl=$('#nav-golive'); if(gl && CFG.stream_enabled!==false && !_standalone()){ gl.classList.remove('hidden'); gl.onclick=_goLive; } }
     // Deliberately NOT hidden for accounts without permission — Blossom and AI both keep the feature
     // visible and turn the refusal into a request, and you cannot ask for access to a button you can't
     // see. _goLive() explains and offers to DM the admin.
@@ -32700,6 +32703,13 @@
     accountCount: () => { try{ return Session.accounts().length; }catch(_){ return 0; } },
     openThread,                                               // → a post window from the notification centre
     goLive: _goLive,                                          // → the desktop's Go Live launcher entry
+    /* WHETHER THERE IS A SERVER BEHIND ANY OF THIS. The desktop's launcher builds its own list of
+       extras — Music, Go Live — that are ACTIONS rather than views, so `_viewNeedsInstance` never
+       sees them and `applyInstanceGating` cannot hide them. Go Live is entirely server-backed (the
+       RTMP/WHIP ingest lives on the instance), so with no instance it is an entry that can only
+       fail. Exposed as the predicate rather than the answer, because the instance can be set and
+       cleared while the app is running. */
+    standalone: _standalone,
     /* The desktop's notification centre renders the SAME rows the Notifications view does, through
      * the same notifHtml, so the two can never drift apart in appearance or in what counts as a
      * notification (notifList is the gate that decides that — see the comment on it). */

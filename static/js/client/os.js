@@ -828,8 +828,13 @@
       act: () => openDoc('music', 'Music', 'i-music',
                          () => { try{ PC().renderMusicApp && PC().renderMusicApp(); }catch(_){} }),
       when: () => !!(me() && PC().renderMusicApp) },
+    /* NOT ON A DESKTOP WITH NO INSTANCE. Go Live is entirely server-backed — the RTMP/WHIP ingest
+     * lives on the instance — so on a standalone bundle it can only reach "couldn't reach the
+     * server". Reported as "I tried to go Live on PosterChanOS nothing happened", which is what a
+     * button that cannot work looks like from the outside. `standalone` is a predicate, not a
+     * constant: an instance can be set while the app is running, and this list is rebuilt. */
     { view: '__golive', label: 'Go Live', icon: '#i-live', act: () => PC().goLive && PC().goLive(),
-      when: () => !!(me() && PC().goLive) },
+      when: () => !!(me() && PC().goLive && !(PC().standalone && PC().standalone())) },
   ];
 
   /* The start button wears the instance's own logo — the same image the sidebar brand shows, read
