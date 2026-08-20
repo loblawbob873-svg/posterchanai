@@ -723,29 +723,61 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   lost record + held file → re-publish ("restoring it from this copy"); address-less record + held
   file → re-send; a JOINING device's unchanged copy OBEYS a tombstone whose csum matches (no more
   resurrect-on-join) while an edited copy still wins; thin journal (<half the folder) forces a hashed
-  scan (dirty join: identical bytes settle, EXACTLY the divergent files conflict); guards
-  (massTrash, massTombstone, massResurrect — **one absolute FLOOR of 20 in every direction**, plus
-  the "shorter than what survives" ratio, plus file/folder `blocked` fatal) and a refusal suppresses
-  ONE BUCKET, never the sweep.
-  **THE GUARDS WERE ASYMMETRIC AND THAT IS WHY THE FOLDER KEPT CONVERGING ON DELETED.** Trash had a
-  ratio and a cap of 100; resurrect had an absolute floor of 20 — and between 20 and 100 is a silent
-  band a wave of stale tombstones crosses without a word. Measured on the reported folder: **59 stale
-  tombstones over 1,000 files**. The laptop trashed all 59, then the tablet trashed all 59, each with
-  no verdict, no dialog and nothing on the card (59 < 1000 kept, 59 < 100). The DESKTOP, which had
-  just had every one of them restored from a NAS backup and was the only device able to fix it, was
-  refused by the resurrect floor and could only print "NOT republished — your other devices deleted
-  these", every sweep, for ever. **The guard written to protect the files is what guaranteed the
-  deletions won.** A ratio cannot see a bulk delete for the same reason it cannot see a restored
-  backup: it arrives beside thousands of unchanged files. So the floor is absolute and identical
-  both ways, and `check()` verdicts now carry `rule` (`shortList` vs `floor`) because two rules
-  raising one `kind` means editing one silently stops the other being measured. The cost is
-  deliberate: an explicit 20+ delete is confirmed once where it is made and once per device as it
-  applies — do NOT "fix" that by exempting deliberate deletes, which is the same hole with a flag on
-  it. The way OUT of a standoff is the card's **"Put N files back everywhere"**, which sends those
-  paths through `resend`; the executor STRIPS `resurrect` from a path somebody named, because a name
-  is a person answering the question the floor exists to ask, not another inference from a timestamp.
-  Left flagged, `apply()` swept the user's own explicit restore back out of the plan and the button
-  did nothing. `tests/client/test_delete_and_restore_symmetry.py`.
+  scan (dirty join: identical bytes settle, EXACTLY the divergent files conflict).
+  **DELETION IS CHECKED, NOT COUNTED — and the floors, ratios and caps are GONE (2026-08-20).**
+  There used to be a guard in each direction (massTrash/massTombstone/massResurrect, an absolute
+  floor of 20 plus a "shorter than what survives" ratio plus a cap of 100) and a dialog whenever one
+  fired. Each was added after a real loss and each was locally correct. Together they were a system
+  nobody could predict: the bands BETWEEN them were silent (**59 stale tombstones over a 1,000-file
+  folder** passed the ratio AND the cap, so a laptop trashed all 59 and then a tablet did, with no
+  verdict and no dialog), they were ASYMMETRIC (the desktop, freshly restored from a NAS backup and
+  the only device able to fix it, was refused by the resurrect floor and could only print "NOT
+  republished — your other devices deleted these", every sweep, for ever), and a dialog that fires on
+  ordinary work is a dialog people confirm — which is how **"Mirror this Device" took 122 files off
+  every machine**, business receipts among them.
+  Every one of them was approximating **can this deletion be undone?**, which is now answered
+  directly, per file: **a device never removes its local copy until `io.hasBlob` confirms the store
+  still holds those bytes.** Three answers, not two — TRUE deletes, FALSE keeps (`keptUnconfirmed`),
+  and NULL ("could not ask": a rate limiter, a dead socket, an unmounted disk) keeps too, because
+  "could not ask" is never "missing". A tombstone with no address keeps as well (`keptUnstored`):
+  the bytes were never stored, so there is nothing to confirm and nothing to restore from. Ask with
+  a STORAGE address only — `addrOf`, never `idOf`, whose last resort is the plaintext `csum` the
+  store has never heard of; that fallback would 404 about a blob that was never meant to exist.
+  There is no number that separates "59 files somebody deleted" from "59 files a device is about to
+  lose", because the difference is not in the count.
+  **ONE RULE SURVIVED, and it is not a count**: a device that can see NONE of the files it knows
+  about has lost sight of the folder — a revoked grant, an unmounted volume, a folder picked at the
+  wrong path. `massTombstone` / `emptyDevice`, FATAL, never confirmable, because the store cannot
+  help with it: the question is not whether the bytes survive but whether this device is entitled to
+  an opinion. The resurrect floor also stays, deliberately asymmetric now: putting files back is not
+  made safe by the store holding a copy (they are already safe), so nothing direct can replace it.
+  **THE TRASH IS ONE PLACE, ON THE SERVER.** The per-device `.pc-trash` is gone, and it was what
+  people actually experienced as the failure — a phone with 109 files in it, a tablet with 226,
+  another with 19, and no list anywhere that answered "what did I delete". The tombstoned records
+  ARE the trash: account-wide, carrying the addresses their files can be restored from, with the
+  bytes in Blossom where they always were (measured at the cutover: 98,040 kept blobs, 155.9 GB, 14
+  carrying any expiry). Files → **Trash** lists them; Restore republishes live and every device
+  brings the file back. `plan.trash` is `plan.remove` (no `to:` — there is no destination), and
+  `fs.remove()` is a real delete: `fsbridge.remove`, `SafFs.remove`, and Android's
+  `FolderSyncPlugin.removeFile` (`purgeTrash` refuses anything outside `.pc-trash`, correctly, so it
+  could not be reused). **An older APK has no `remove` at all** — the executor then keeps every file
+  and reports `cannotDelete` ONCE, not a failure per path. A folder that still HAS a `.pc-trash` is
+  offered its contents back through the card's ⋯ menu (via `resend`, so the next sweep cannot
+  re-derive them as deletions), never stranded.
+  **MIRROR THIS DEVICE PUBLISHES AND NEVER DELETES.** Its dialog always promised "Nothing here is
+  deleted and nothing is overwritten" while it ran an ORDINARY sweep with resends added — and an
+  ordinary sweep publishes a tombstone for every file the folder knows about that this device lacks.
+  True locally, false everywhere else. The device most likely to be mirroring is somebody restoring
+  from a backup, i.e. the device most likely to be MISSING files, so the promise was broken in the
+  one situation the button exists for. `noDelete` drops both deletion buckets and the sweep says how
+  many it held back. It does not ASK, either: a person who has just read "nothing is deleted" and is
+  then asked "delete 122 files?" is being made to arbitrate between two things the app said in the
+  same breath.
+  **THE WAY OUT OF A STANDOFF** is still the card's "Put N files back everywhere" → `resend`; the
+  executor STRIPS `resurrect` from a path somebody named, because a name is a person answering the
+  question the floor exists to ask, not another inference from a timestamp. Left flagged, `apply()`
+  swept the user's own explicit restore back out of the plan and the button did nothing.
+  `tests/client/test_delete_and_restore_symmetry.py`.
   **A TOMBSTONE'S ADDRESS IS MERGED FROM `state` AND `index`, NEVER PICKED.** Both executors read
   `index[p] || state[p]` — "prefer what we applied" — so a journal entry that had lost its address (a
   struck CAS write, an era change, an older build) SHADOWED a record that still had one and the
@@ -755,18 +787,19 @@ drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for
   absent csum always reads as an edit, so it republishes for ever and trips the resurrect floor for
   ever. NativeSweep read `index` ALONE, which is worse on the device most likely to have a cleared
   journal.
-  **RESTORE FROM TRASH UNDID ITSELF, and reported success every round** ("it clears then goes right
-  back to restore 172 from trash"). Putting a file back was a SILENT act: bytes returned to the disk
-  and nothing else changed, so the next sweep re-derived the intent from versions and timestamps —
-  and it derives the opposite, because the restored bytes ARE the bytes the tombstone describes.
-  Wherever the journal entry is missing (struck by a lost CAS, cleared by an era change) a hashed
-  scan reads "deleted elsewhere — this copy is the deleted version" and trashes the lot again. Two
-  fixes: `restoreTrash` now finishes by sweeping with `resend: <the paths it put back>` (inside the
-  function, so Files and the card cannot drift), and **`resend` takes those paths out of `plan.trash`
-  as well** — it dropped them from settle/fetch/keepBoth and left `trash` alone, so a sweep could be
-  told "send this file" and move it to `.pc-trash` in the same pass. `scripts/check_sync_full.py`
-  drives the whole round trip against a real server (the vdisk has a real trash + `listTrash` now);
-  pre-fix it reports `{"trashed": 1}, trash=['.pc-trash/x/dir0/f0.bin']`.
+  **A SILENT RESTORE IS RE-DERIVED AS A DELETION — the rule that outlives the per-device trash.**
+  Reported as "it clears then goes right back to restore 172 from trash": putting a file back was a
+  SILENT act, so the next sweep re-derived the intent from versions and timestamps, and it derives
+  the OPPOSITE — the restored bytes ARE the bytes the tombstone describes. Wherever the journal entry
+  is missing (struck by a lost CAS, cleared by an era change) a hashed scan reads "deleted elsewhere
+  — this copy is the deleted version" and removes them again. So **a restore must SAY so**:
+  `restoreTrash` finishes by sweeping with `resend: <the paths it put back>` (inside the function, so
+  Files and the card cannot drift), and `resend` takes those paths out of `plan.remove` as well as
+  settle/fetch/keepBoth — it left the deletion bucket alone, so a sweep could be told "send this
+  file" and delete it in the same pass. **This is exactly why an rsync from a backup must not be
+  followed by an ordinary sweep**: the bytes come back, nothing states the intent, and the folder
+  reads them as the deleted version. Use "Put N files back everywhere", which is a person naming
+  paths. `scripts/check_sync_full.py` drives the round trip against a real server.
   **DEEP CHECK AND VERIFY ARE ONE BUTTON** ("Check files"). Both re-read and re-hashed every file —
   the entire expensive half was identical — and differed only in what they did with the answer: the
   "check"-sounding one SYNCED it (publishing whatever the bytes now are), the other only reported.
