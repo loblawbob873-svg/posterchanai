@@ -257,6 +257,9 @@ public class HomeActivity extends Activity implements DeskView.Host {
     @Override
     protected void onStart() {
         super.onStart();
+        // WE ARE THE RESTING STATE OF THE PHONE NOW. Folder sync reads this to keep a due sweep from
+        // starting in the half-second before somebody taps an icon — see LauncherState.
+        LauncherState.homeShown(System.currentTimeMillis());
         repo.watch(new AppRepo.Changed() {
             @Override public void onPackagesChanged() {
                 main.removeCallbacks(reloadSoon);
@@ -279,6 +282,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
     @Override
     protected void onStop() {
         super.onStop();
+        LauncherState.homeHidden();
         repo.stopWatching();
         MusicService.setWatcher(null);
         widgets.stop();

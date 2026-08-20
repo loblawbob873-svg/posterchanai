@@ -434,7 +434,24 @@ public class FolderSyncPlugin extends Plugin {
     super.handleOnPause();
   }
 
-  /** Give the folders to the engine that can still run, and start it. */
+  /**
+   * Give the folders to the engine that can still run, and start it.
+   *
+   * THE CLAIMS ARE ALWAYS HANDED BACK; only the STARTING is conditional. Those are separate
+   * concerns and merging them would strand a folder claimed by a page that is no longer running.
+   *
+   * WHY THE START WAITS WHEN WE ARE THE LAUNCHER. `LauncherState` cannot answer here: pressing HOME
+   * runs MainActivity.onPause BEFORE HomeActivity.onStart, so at this exact moment nothing yet knows
+   * the home screen is what is coming up. What is knowable is that the screen is still ON — which,
+   * on a phone where we hold the home role, means the person is right there, most likely one tap
+   * from opening something. Starting a sweep into that takes the folder's claim moments before they
+   * might open PosterChan, and a page refused its claim can only say "syncing in the background".
+   *
+   * Nothing is lost by waiting: this start was only ever an optimisation over the alarm, which
+   * arrives shortly and by then CAN see where they went — at our home screen it defers, in another
+   * app it proceeds immediately. And the case this path exists for is untouched, because a screen
+   * going OFF also runs onPause, is not interactive, and starts the sweep exactly as before.
+   */
   private void handOver() {
     synchronized (pageClaims) {
       if (!pageClaims.isEmpty()) {
@@ -444,8 +461,30 @@ public class FolderSyncPlugin extends Plugin {
     }
     Context ctx = getContext();
     if (ctx == null) return;
+    if (leavingIntoOurOwnLauncher(ctx)) return;
     if (!NativeRunner.eligible(ctx)) return;      // nothing due, no key, or already sweeping
     if (!SyncService.start(ctx)) SyncWork.start(ctx);
+  }
+
+  /**
+   * Screen still on, and this app is the home screen — so HOME is the likely destination.
+   *
+   * "Are we the home screen" is answered by LauncherState, which knows because our own HomeActivity
+   * has run, rather than by HomeRoles.isDefaultHome. Asking properly would be more precise and costs
+   * the compile floor: importing the launcher package from here drags HomeRoles, HomeActivity,
+   * DeskView and MainActivity into test_android_sync_compiles' javac over `sync` alone, which went
+   * to thirty-three errors on that one import.
+   */
+  private static boolean leavingIntoOurOwnLauncher(Context ctx) {
+    try {
+      android.os.PowerManager pm =
+          (android.os.PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
+      return pm != null && place.poster.app.home.LauncherState.deferHandover(pm.isInteractive());
+    } catch (Throwable t) {
+      // Unknowable means sweep as before. This is an optimisation; failing it closed would stop a
+      // phone whose power state cannot be read from ever syncing on pause.
+      return false;
+    }
   }
 
   @Override

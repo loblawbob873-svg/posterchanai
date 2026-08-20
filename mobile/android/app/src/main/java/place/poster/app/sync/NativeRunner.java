@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 
 import place.poster.app.signer.SignerKey;
+import place.poster.app.home.LauncherState;
 
 /**
  * The thing the alarm actually calls: decide whether this phone can sweep on its own, and if so, do
@@ -90,6 +91,23 @@ public final class NativeRunner {
             return null;
         }
 
+        /* AND OUR OWN HOME SCREEN IS NOT "the app is closed" EITHER.
+         *
+         * As the launcher, MainActivity pausing means somebody pressed HOME — the resting state of
+         * the phone, dozens of times an hour, every one of them with the screen on and a finger on
+         * the glass. Starting a sweep there takes the folder's claim moments before they open
+         * PosterChan, and a page refused its claim can only say "syncing in the background". The
+         * comment above calls that a hang the user caused by opening the app; as a launcher it stops
+         * being a coincidence and becomes the ordinary way the app is opened.
+         *
+         * The window is seconds long in real use, so the cost of standing down is one missed alarm,
+         * and LauncherState bounds it so a phone parked awake on its home screen is late rather than
+         * never. Screen OFF at the home screen does NOT defer — that is the best time to sync. */
+        if (LauncherState.deferSweep(interactive(app), System.currentTimeMillis())) {
+            lastWhy = "you are on the home screen — syncing waits until the phone is idle";
+            return null;
+        }
+
         Plan p = new Plan();
         Map<String, Object> state = deviceState(app);
         for (SyncStore.Folder f : store.folders()) {
@@ -122,6 +140,18 @@ public final class NativeRunner {
     }
 
     /** @return true when a sweep would run right now — asked before a foreground service is started. */
+    /** Whether the display is on. Its own method so LauncherState can stay off-device testable. */
+    private static boolean interactive(Context ctx) {
+        try {
+            PowerManager pm = (PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
+            return pm != null && pm.isInteractive();
+        } catch (Throwable t) {
+            // Unknowable is treated as NOT interactive: the deferral is an optimisation, and failing
+            // it closed would mean a phone whose power state cannot be read never syncs.
+            return false;
+        }
+    }
+
     public static boolean eligible(Context ctx) {
         if (running) { lastWhy = "a native sweep is already running"; return false; }
         return plan(ctx) != null;
