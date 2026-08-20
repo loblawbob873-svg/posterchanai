@@ -181,26 +181,63 @@ public class LauncherDeviceTest {
         // with setColorFilter, inflates fine, reports a size, and paints no pixels. The only question
         // that separates the two is whether anything is on the canvas — so this draws each one and
         // counts.
-        for (HomeTiles.Tile t : HomeTiles.catalogue()) {
+        HomeTiles.Tile[] all = HomeTiles.catalogue();
+        // EVERY TILE, AND THE COUNT IS ASSERTED. A catalogue that shrank would quietly reduce this
+        // audit to a sample of itself while still reporting a pass.
+        assertTrue("the catalogue has shrunk to " + all.length + " — this audit is meant to cover"
+                + " every tile on the home screen", all.length >= 40);
+        // AT THE SIZES IT IS ACTUALLY DRAWN AT, not one comfortable one. A stroked vector can carry
+        // a width that rounds to nothing at a small bound and looks perfect at a large one, which is
+        // the same class of bug as the packed arc flags: fine everywhere it is easy to look.
+        int[] sizes = { 32, 48, 96 };
+        for (HomeTiles.Tile t : all) {
             int res = TileIcons.of(t.icon);
             assertTrue("no drawable for tile " + t.view + " (" + t.icon + ")", res != 0);
-            android.graphics.drawable.Drawable d =
-                    place.poster.app.ui.Skin.icon(ctx, res, 0xFFFFFFFF);
-            assertNotNull("could not load " + t.icon, d);
-            int size = 96;
-            android.graphics.Bitmap bmp = android.graphics.Bitmap.createBitmap(
-                    size, size, android.graphics.Bitmap.Config.ARGB_8888);
-            android.graphics.Canvas canvas = new android.graphics.Canvas(bmp);
-            d.setBounds(0, 0, size, size);
-            d.draw(canvas);
-            int lit = 0;
-            for (int x = 0; x < size; x += 2) {
-                for (int y = 0; y < size; y += 2) {
+            for (int size : sizes) {
+                android.graphics.drawable.Drawable d =
+                        place.poster.app.ui.Skin.icon(ctx, res, 0xFFFFFFFF);
+                assertNotNull("could not load " + t.icon, d);
+                android.graphics.Bitmap bmp = android.graphics.Bitmap.createBitmap(
+                        size, size, android.graphics.Bitmap.Config.ARGB_8888);
+                android.graphics.Canvas canvas = new android.graphics.Canvas(bmp);
+                d.setBounds(0, 0, size, size);
+                d.draw(canvas);
+                int lit = 0;
+                for (int x = 0; x < size; x += 2) {
+                    for (int y = 0; y < size; y += 2) {
+                        if (android.graphics.Color.alpha(bmp.getPixel(x, y)) > 24) lit++;
+                    }
+                }
+                bmp.recycle();
+                assertTrue(t.icon + " drew nothing at " + size + "px — an empty circle on the home"
+                        + " screen", lit > 2);
+            }
+        }
+    }
+
+    @Test
+    public void everyTileIconDrawsInEveryThemesAccent() {
+        // THE SECOND CAUSE, IF THERE IS ONE. The bug before the arc flags was a vector carrying a
+        // baked android:tint that was then tinted AGAIN at runtime: it inflated, reported a size,
+        // and painted nothing. That interaction depends on the colour, so an audit in one colour can
+        // pass while a palette somebody actually uses draws blanks. Nine accents, every tile.
+        for (String slug : PcTheme.SLUGS) {
+            PcTheme.Palette pal = PcTheme.of(slug);
+            for (HomeTiles.Tile t : HomeTiles.catalogue()) {
+                android.graphics.drawable.Drawable d =
+                        place.poster.app.ui.Skin.icon(ctx, TileIcons.of(t.icon), pal.accent);
+                assertNotNull(slug + ": could not load " + t.icon, d);
+                android.graphics.Bitmap bmp = android.graphics.Bitmap.createBitmap(
+                        48, 48, android.graphics.Bitmap.Config.ARGB_8888);
+                d.setBounds(0, 0, 48, 48);
+                d.draw(new android.graphics.Canvas(bmp));
+                int lit = 0;
+                for (int x = 0; x < 48; x += 2) for (int y = 0; y < 48; y += 2) {
                     if (android.graphics.Color.alpha(bmp.getPixel(x, y)) > 24) lit++;
                 }
+                bmp.recycle();
+                assertTrue(slug + ": " + t.icon + " drew nothing in this palette's accent", lit > 2);
             }
-            bmp.recycle();
-            assertTrue(t.icon + " drew nothing — an empty circle on the home screen", lit > 8);
         }
     }
 
