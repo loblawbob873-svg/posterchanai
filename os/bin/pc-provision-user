@@ -1,0 +1,77 @@
+#!/bin/bash
+# Give a Nostr identity a Unix account and a home directory of its own.
+#
+# PosterChanOS logs in with a KEY, and home directories and permissions are a Unix idea — so
+# somebody signing in for the first time needs an account created for them before they have anywhere
+# to put anything. This is that step, and it is the only privileged thing the shell asks for.
+#
+# THE NAME MAPPING IS THE WHOLE PROBLEM. An npub is 63 characters of bech32; a Linux user name is at
+# most 32 and may not start with a digit. Truncating is not enough on its own — two different keys
+# can share a prefix, and handing one person another person's account is the exact failure this
+# exists to prevent. So the name carries a HASH of the full key, not a slice of it: `pc-` plus 16 hex
+# characters of sha256(npub). Collisions are then a cryptographic question rather than a naming one,
+# and the same key always resolves to the same account on every machine.
+#
+# Everything here is IDEMPOTENT. It is run on every login, not only the first, because "was this
+# account already made" is a question the caller should not have to remember the answer to — and a
+# half-made account (user exists, home does not, after a full disk or a pulled plug) is repaired
+# rather than treated as done.
+set -u
+
+die() { echo "pc-provision-user: $*" >&2; exit 1; }
+
+NPUB="${1:-}"
+[ -n "$NPUB" ] || die "usage: pc-provision-user <npub>"
+
+# Refuse anything that is not a bech32 npub. This runs as root and its argument comes from a login
+# screen; a name built from unvalidated input is how a shell metacharacter becomes a root command.
+case "$NPUB" in
+  npub1*) ;;
+  *) die "not an npub: refusing" ;;
+esac
+echo "$NPUB" | grep -qE '^npub1[023456789acdefghjklmnpqrstuvwxyz]{58}$' || die "malformed npub: refusing"
+
+HASH=$(printf '%s' "$NPUB" | sha256sum | cut -c1-16)
+USERNAME="pc-${HASH}"
+# /home in production. Overridable ONLY so the tests can exercise the real script without writing
+# into the machine they run on — a script that can only be tested by creating actual users on the
+# developer's box is a script that does not get tested.
+HOME_ROOT="${PC_HOME_ROOT:-/home}"
+HOME_DIR="${HOME_ROOT}/${USERNAME}"
+
+# A name we generated must never land on an account somebody else already has — a system account, or
+# one made by hand. `pc-` plus 16 hex is ours by construction, but checking costs nothing and the
+# failure it prevents is handing one person another person's files.
+if id -u "$USERNAME" >/dev/null 2>&1; then
+  EXISTING_HOME=$(getent passwd "$USERNAME" | cut -d: -f6)
+  [ "$EXISTING_HOME" = "$HOME_DIR" ] || die "$USERNAME exists with home $EXISTING_HOME — refusing"
+else
+  useradd --create-home --home-dir "$HOME_DIR" --shell /bin/bash \
+          --comment "PosterChan ${NPUB}" "$USERNAME" \
+    || die "could not create $USERNAME"
+fi
+
+# THE HOME IS 0700, and it is set every time rather than only at creation. `useradd` honours
+# /etc/login.defs, which on most systems is 0755 — so every user's files would be readable by every
+# other user on the machine, which is precisely what having separate accounts was for.
+mkdir -p "$HOME_DIR"
+chown "$USERNAME:$USERNAME" "$HOME_DIR"
+chmod 0700 "$HOME_DIR"
+
+# The groups a desktop session needs to be usable at all: audio and video for playback and the GPU,
+# input for the compositor's devices, netdev so NetworkManager will take instructions. NOT wheel —
+# signing in with a key is not the same as being trusted with root, and a machine anyone may log
+# into must not hand every visitor sudo.
+for g in audio video input netdev render; do
+  getent group "$g" >/dev/null 2>&1 && gpasswd -a "$USERNAME" "$g" >/dev/null 2>&1
+done
+
+# The identity, recorded where the session can read it back without asking the user again.
+printf '%s\n' "$NPUB" > "$HOME_DIR/.posterchan-npub"
+chown "$USERNAME:$USERNAME" "$HOME_DIR/.posterchan-npub"
+chmod 0600 "$HOME_DIR/.posterchan-npub"
+
+# What the caller needs, on stdout, in a form a shell can read without parsing prose.
+echo "user=$USERNAME"
+echo "home=$HOME_DIR"
+echo "uid=$(id -u "$USERNAME")"

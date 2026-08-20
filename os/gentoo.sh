@@ -713,7 +713,10 @@ posterchanShell() {
 	fi
 	if [ -s "$APPIMG" ]; then
 		[ "${TARGET:-/}" = "/" ] || cp -f "$APPIMG" ${TARGET}/tmp/PosterChan.AppImage
-		_in 'cd /opt && rm -rf posterchan squashfs-root \
+		# `mkdir -p /opt` first: a stage3 does not guarantee it, and `cd` into a directory that is not
+		# there fails the whole && chain — which showed up as "the AppImage did not extract" about an
+		# extraction that had never been attempted.
+		_in 'mkdir -p /opt && cd /opt && rm -rf posterchan squashfs-root \
 			&& chmod +x /tmp/PosterChan.AppImage \
 			&& /tmp/PosterChan.AppImage --appimage-extract >/dev/null 2>&1 \
 			&& mv squashfs-root posterchan \
@@ -726,6 +729,28 @@ posterchanShell() {
 		fi
 	else
 		echo -e "\033[1;31m  ✗ could not download the PosterChan desktop — sway will start with no shell\033[0m"
+	fi
+
+	# ANYONE MAY SIGN IN, so an account has to exist before they have anywhere to put anything.
+	# PosterChanOS logs in with a KEY; home directories and permissions are a Unix idea, and this is
+	# what joins the two. It is the ONLY privileged thing the shell asks for, and it is limited to
+	# exactly that one command — signing in with a key is not the same as being trusted with root,
+	# and a machine anyone may log into must not hand every visitor sudo.
+	if [ -f "$(dirname "$0")/bin/pc-provision-user" ]; then
+		cp -f "$(dirname "$0")/bin/pc-provision-user" ${TARGET}/usr/local/bin/pc-provision-user
+	elif [ -f /tmp/bin/pc-provision-user ]; then
+		cp -f /tmp/bin/pc-provision-user ${TARGET}/usr/local/bin/pc-provision-user
+	fi
+	if [ -f "${TARGET}/usr/local/bin/pc-provision-user" ]; then
+		chmod 0755 ${TARGET}/usr/local/bin/pc-provision-user
+		mkdir -p ${TARGET}/etc/sudoers.d
+		printf '%%s\n' \
+			"# The shell provisions a Unix account for whoever signs in. This one command, nothing else." \
+			"$USER ALL=(root) NOPASSWD: /usr/local/bin/pc-provision-user" \
+			> ${TARGET}/etc/sudoers.d/posterchan-provision
+		chmod 0440 ${TARGET}/etc/sudoers.d/posterchan-provision
+	else
+		echo -e "\033[1;31m  ✗ pc-provision-user not shipped — nobody but $USER can sign in\033[0m"
 	fi
 
 	# Autologin straight into the shell. A display manager is another package, another theme and

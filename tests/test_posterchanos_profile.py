@@ -23,6 +23,24 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertTrue(m, "the profile's package list moved — re-point this test")
         self.pkgs = set(m.group(1).replace("\\\n", " ").split())
 
+    def _fn(self, name):
+        """The whole shell function, by brace matching.
+
+        Every one of these checks used a fixed-size window into the file, and every time the
+        function grew past it a test failed for a reason that had nothing to do with what it checks.
+        A test that fails for the wrong reason teaches people to edit the test."""
+        i = self.src.index(name + "() {")
+        depth, k = 0, self.src.index("{", i)
+        while k < len(self.src):
+            if self.src[k] == "{":
+                depth += 1
+            elif self.src[k] == "}":
+                depth -= 1
+                if depth == 0:
+                    return self.src[i:k + 1]
+            k += 1
+        raise AssertionError(f"{name}: unbalanced braces")
+
     def test_the_script_is_valid_shell(self):
         r = subprocess.run(["bash", "-n", SH], capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr[-800:])
@@ -92,13 +110,26 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertTrue(m)
         self.assertIn('FLATPAK_PACKAGES=""', m.group(0))
 
+    def test_anyone_can_be_given_an_account_but_not_root(self):
+        """Anyone may sign in, so an account must exist before they have anywhere to put anything.
+        The sudoers rule is limited to that ONE command: signing in with a key is not the same as
+        being trusted with root, and a machine anyone may log into must not hand every visitor
+        sudo."""
+        body = self._fn("posterchanShell")
+        self.assertIn("pc-provision-user", body, "nothing provisions an account for a new identity")
+        self.assertIn("sudoers.d", body, "the shell cannot create an account it is not allowed to")
+        rule = [l for l in body.splitlines() if "NOPASSWD" in l]
+        self.assertTrue(rule, "no sudoers rule")
+        self.assertTrue(all("pc-provision-user" in l and "ALL=(root) NOPASSWD: /usr/local/bin/" in l
+                            for l in rule),
+                        f"the sudoers rule is broader than one command: {rule}")
+
     def test_no_html_engine_can_be_built_from_source(self):
         """webkit-gtk and qtwebengine are among the longest builds in the tree, and the way you find
         out something pulled one is that an install which looked nearly finished sits on a single
         package all night. A mask turns that into an error at dependency-resolution time, naming
         whatever asked for it. The browser here is firefox-BIN, which is prebuilt."""
-        i = self.src.index("posterchanShell() {")
-        body = self.src[i:i + 6500]
+        body = self._fn("posterchanShell")
         self.assertIn("package.mask", body, "nothing stops a dependency pulling an HTML engine")
         for heavy in ("net-libs/webkit-gtk", "dev-qt/qtwebengine", "www-client/chromium"):
             self.assertIn(heavy, body, f"{heavy} is not masked")
@@ -107,8 +138,7 @@ class PosterChanOSProfile(unittest.TestCase):
         """sway's config execs `posterchan`. Nothing else in this installer puts it on the disk, so
         without this step the machine boots into an empty compositor with no way to do anything —
         the most convincing possible imitation of a broken install."""
-        i = self.src.index("posterchanShell() {")
-        body = self.src[i:i + 6500]
+        body = self._fn("posterchanShell")
         self.assertIn("AppImage", body, "the desktop is never installed")
         self.assertIn("/usr/local/bin/posterchan", body, "nothing provides the `posterchan` command")
         self.assertIn("appimage-extract", body,
@@ -166,8 +196,7 @@ class PosterChanOSProfile(unittest.TestCase):
         for game in ("steam", "gamescope", "wine"):
             self.assertFalse([p for p in self.pkgs if game in p],
                              f"{game} is in the always-installed profile")
-        i = self.src.index("installSteam() {")
-        steam = self.src[i:i + 2200]
+        steam = self._fn("installSteam")
         self.assertIn("gamescope", steam, "gamescope is not installed with Steam")
         # ...and it must not drag a multilib world rebuild in with it. Native steam-launcher pulls
         # ABI_X86=32 through the whole graphics stack — every library built twice, hours of it, for
@@ -189,8 +218,7 @@ class PosterChanOSProfile(unittest.TestCase):
         """emerge is all-or-nothing for a set, and nothing checked its exit — buildGentoo carried
         straight on to finalizeInstall. The retry names what failed, which is the difference between
         "the desktop is missing" and "these two names are wrong"."""
-        i = self.src.index("installPackages() {")
-        body = self.src[i:i + 2400]
+        body = self._fn("installPackages")
         self.assertIn("FAILED_PKGS", body, "a failed package set is still silent")
         self.assertIn("for pkg in $PACKAGES", body, "there is no per-package retry")
         self.assertIn("return 1", body, "the failure is not reported to the caller")
