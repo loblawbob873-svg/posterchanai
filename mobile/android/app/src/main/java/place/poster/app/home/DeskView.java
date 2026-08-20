@@ -194,6 +194,10 @@ public class DeskView extends ViewGroup {
     // ---------------------------------------------------------------- gestures
 
     private Runnable pending;
+    /** The item whose menu is owed at lift-off, if the finger never moved. See beginTouch. */
+    private Desk.Item menuFor;
+    /** Whether the owed menu is the wallpaper's rather than an item's. */
+    private boolean menuEmpty;
     /** True once a long press has fired: from then on this view takes the gesture off its child. */
     private boolean stealing;
     /** Whether the DOWN bookkeeping has already run for this gesture (intercept sees it first). */
@@ -236,6 +240,14 @@ public class DeskView extends ViewGroup {
                 begun = false;
                 boolean was = stealing;
                 stealing = false;
+                // THE OWED MENU IS FLUSHED HERE TOO, and it has to be. Once a long press has fired
+                // `stealing` is true, so this intercept returns true for the UP — and an event that
+                // causes an interception is delivered to the child as ACTION_CANCEL and never
+                // reaches this view's own onTouchEvent. That is only ever the case when a CHILD
+                // consumed the DOWN, which is exactly a widget: the one item whose menu holds the
+                // only Remove there is. Both sites clear the fields, so it cannot fire twice.
+                if (e.getActionMasked() == MotionEvent.ACTION_UP) flushMenu();
+                else { menuFor = null; menuEmpty = false; }
                 return was;
             default:
                 return stealing;
@@ -270,9 +282,19 @@ public class DeskView extends ViewGroup {
                 // FROM HERE THE GESTURE IS OURS. The child gets an ACTION_CANCEL from the framework
                 // the moment the next event is intercepted, so a widget's button does not also fire.
                 stealing = true;
-                if (hit == null) { if (host != null) host.onLongPressEmpty(); return; }
-                lift(hit);
-                if (host != null) host.onLongPress(hit);
+                // THE MENU IS NOT OPENED YET, and that is the fix for "moving a app is hard when
+                // that window pop hides where you want to put the app".
+                //
+                // A long press means two things at once here — LIFT THIS, so it can be dragged, and
+                // OFFER ITS MENU — and the menu is a dialog that covers the desktop. Opening it the
+                // instant the press fires put a panel over the very cells the person was dragging
+                // towards, while the item was already lifted and following their finger underneath
+                // it. So the lift happens now and the menu is DEFERRED to the lift-off, and only if
+                // the finger never went anywhere. That is what every launcher does, and it is the
+                // difference between "long press to move" and "long press to be interrupted".
+                menuFor = hit;
+                menuEmpty = (hit == null);
+                if (hit != null) lift(hit);
             }
         };
         postDelayed(pending, 400);
@@ -302,9 +324,15 @@ public class DeskView extends ViewGroup {
                 float dx = x - lastX, dy = y - lastY;
                 if (Math.abs(dx) > Skin.dp(getContext(), 8) || Math.abs(dy) > Skin.dp(getContext(), 8)) {
                     cancelPending();
+                    // A finger that has travelled is not asking for a menu — on empty space that is
+                    // a swipe, and on an item it is a move.
+                    menuFor = null; menuEmpty = false;
                 }
                 if (resizing && editing != null) { resizeTo(x, y); return true; }
                 if (editing != null && !dragging && hits(editing, x, y)) {
+                    // MOVING IS ANSWERING. Once the item is under way the menu would only be in the
+                    // way of where it is going.
+                    menuFor = null; menuEmpty = false;
                     dragging = true;
                     grabDx = (int) x - editing.col * cw;
                     grabDy = (int) y - editing.row * ch;
@@ -347,6 +375,11 @@ public class DeskView extends ViewGroup {
                 swiping = false;
                 if (resizing) { resizing = false; commitResize(); return true; }
                 if (dragging && editing != null) { drop(x, y); return true; }
+                // THE MENU A LONG PRESS OWED, opened now that the finger is off and it is plain the
+                // person was not dragging. CANCEL does not count: an ACTION_CANCEL is the framework
+                // taking the gesture away, not somebody letting go.
+                if (e.getActionMasked() == MotionEvent.ACTION_UP && flushMenu()) return true;
+                menuFor = null; menuEmpty = false;
                 if (wasTap) {
                     Desk.Item hit = Desk.at(items, (int) (x / cw), (int) (y / ch));
                     // A tap while something is lifted PUTS IT DOWN rather than opening whatever was
@@ -362,6 +395,17 @@ public class DeskView extends ViewGroup {
 
     private void releaseVel() {
         if (vel != null) { vel.recycle(); vel = null; }
+    }
+
+    /** Open the menu a long press owed, if it is still owed. True when one was opened. */
+    private boolean flushMenu() {
+        Desk.Item owed = menuFor;
+        boolean empty = menuEmpty;
+        menuFor = null; menuEmpty = false;
+        if (host == null) return false;
+        if (owed != null) { host.onLongPress(owed); return true; }
+        if (empty) { host.onLongPressEmpty(); return true; }
+        return false;
     }
 
     private void cancelPending() {

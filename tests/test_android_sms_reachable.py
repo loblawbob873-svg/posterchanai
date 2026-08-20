@@ -211,6 +211,79 @@ class TheWebViewScreenAsksToo(unittest.TestCase):
                       "the one kind of empty a tap can fix is not named")
 
 
+class ThePhoneCanSayWhatItMeasured(unittest.TestCase):
+    """"posterchan still not working as default Messenger app despite being set as default
+    messenger" — four rounds, no device here, and from the build side the failure REPORTS SUCCESS:
+    the role is set, the screen draws, nothing throws.
+
+    So the screen prints what was ASKED and what came BACK. The same answer as the music panel's
+    counters and the /logs board's measured rows: a report that cannot be reproduced is answered by
+    making the phone say what it saw, not by another round of guessing.
+    """
+
+    def setUp(self):
+        self.src = strip_comments((SMS / "SmsPlugin.java").read_text())
+
+    def test_the_plugin_reports_every_leg(self):
+        body = method(self.src, "public void diagnose")
+        for k in ("defaultPackage", "roleHeld", "canRead", "components", "read", "refused"):
+            self.assertIn(k, body, "diagnose() does not report %s" % k)
+
+    def test_it_checks_all_four_components_android_demands(self):
+        """An app missing one never appears in the role picker, and a role "granted" to it does
+        nothing — which is indistinguishable from a role that was granted and is not working."""
+        body = method(self.src, "public void diagnose")
+        for k in ("smsDeliver", "mmsDeliver", "sendTo", "respondViaMessage"):
+            self.assertIn(k, body, k)
+
+    def test_the_screen_can_show_it(self):
+        js = (ROOT / "static/js/client/sms.js").read_text()
+        self.assertIn("diagnose", js, "nothing in the client ever asks for it")
+        self.assertIn("sms-why", js, "there is no way for a person to see it")
+        for k in ("roleHeld", "canRead", "refused"):
+            self.assertIn(k, js, "the panel drops %s" % k)
+
+
+class ANewTextCanActuallyBeANNOUNCED(unittest.TestCase):
+    """"make sure notifications work on new text messages" ... "otherwise useless".
+
+    On Android 13+ POST_NOTIFICATIONS is a runtime grant and `NotificationManager.notify` does
+    NOTHING without it — no error, no log, the message correctly stored and the screen correctly
+    drawn. Music, screen sharing and push each declare AND request it for their own flows; the
+    messages half declared nothing and asked nobody, so a person who had never opened the player and
+    never turned push on had never been asked, and every incoming text arrived in silence.
+
+    Its own alias, not folded in with the SMS three: being unable to READ texts and being unable to
+    ANNOUNCE one are different failures with different fixes, and a refusal of one must not be
+    readable as a refusal of the other.
+    """
+
+    def setUp(self):
+        self.src = strip_comments((SMS / "SmsPlugin.java").read_text())
+
+    def test_the_plugin_declares_it_separately(self):
+        self.assertIn("POST_NOTIFICATIONS", self.src,
+                      "the messages plugin never declares the permission its notifications need")
+        self.assertIn('alias = "notify"', self.src,
+                      "POST_NOTIFICATIONS shares an alias with the SMS permissions, so a refusal of "
+                      "one reads as a refusal of the other")
+
+    def test_it_asks_for_it(self):
+        body = method(self.src, "public void ensureNotify")
+        self.assertIn('requestPermissionForAlias("notify"', body,
+                      "declaring it grants nothing — a dangerous permission has to be requested")
+
+    def test_a_muted_channel_counts_as_no(self):
+        """Android granting it and the person switching it off are both "no notifications", and the
+        screen must not report success for the second."""
+        self.assertIn("areNotificationsEnabled", method(self.src, "private boolean mayNotify"))
+
+    def test_the_client_asks_and_reports(self):
+        js = (ROOT / "static/js/client/sms.js").read_text()
+        self.assertIn("ensureNotify", js, "nothing in the client ever asks")
+        self.assertIn("canNotify", js, "the panel cannot say whether a text can be announced")
+
+
 class TheDrawerStillHidesOurOwnPackage(unittest.TestCase):
     """The filter that made the tiles load-bearing. If this ever goes away the catalogue tile and the
     alias would BOTH be listed — one app, two Messages entries."""

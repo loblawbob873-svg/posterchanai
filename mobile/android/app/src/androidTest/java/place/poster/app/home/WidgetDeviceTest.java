@@ -390,16 +390,30 @@ public class WidgetDeviceTest {
             });
             Thread.sleep(800);                       // past the 400ms long-press
 
+            // THE LIFT COMES FIRST AND THE MENU COMES ON LIFT-OFF, and that order is the fix for
+            // "moving a app is hard when that window pop hides where you want to put the app": the
+            // menu is a dialog over the desktop, and opening it the instant the press fires covered
+            // the cells the item was being dragged towards.
             final boolean[] lifted = new boolean[]{ false };
             InstrumentationRegistry.getInstrumentation().runOnMainSync(
                     () -> lifted[0] = desk.editingItem() != null);
+            assertTrue("the widget was not lifted, so it could not be dragged"
+                    + " (clickableContent=" + clickable[0] + ")", lifted[0]);
+            assertTrue("the menu opened while the finger was still down, over the desktop the item"
+                    + " is being dragged across", pressed[0] == null);
+
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                long t = android.os.SystemClock.uptimeMillis();
+                desk.dispatchTouchEvent(android.view.MotionEvent.obtain(
+                        t, t, android.view.MotionEvent.ACTION_UP,
+                        desk.cellW() / 2f, desk.cellH() / 2f, 0));
+            });
 
             Log.i(TAG, "widget probe: long press -> lifted=" + lifted[0]
                     + " host.onLongPress=" + pressed[0] + " clickableContent=" + clickable[0]);
             assertNotNull("a long press on a placed widget never reached the desktop — its Remove,"
                     + " Resize and drag are all unreachable (clickableContent=" + clickable[0] + ")",
                     pressed[0]);
-            assertTrue("the widget was not lifted, so it could not be dragged", lifted[0]);
             assertEquals("a different item was pressed", made[0], pressed[0].widgetId());
         } finally {
             s.close();

@@ -94,6 +94,7 @@
                defaultPkg: String(st.defaultPackage || ''),
                pkg: String(st.package || ''),
                roleHeld: !!st.roleHeld,
+               canNotify: st.canNotify === undefined ? true : !!st.canNotify,
                telephony: st.telephony === undefined ? true : !!st.telephony };
     }catch(_){ return { isDefault:false, canRead:false, present:true, defaultPkg:'', pkg:'',
                         telephony:true }; }
@@ -130,12 +131,53 @@
          + 'whichever app is. Set it in Settings \u2192 Apps \u2192 Default apps \u2192 SMS.';
   }
 
+  /* WHAT THIS PHONE MEASURED, in one line, for the reports that cannot be answered from here.
+   *
+   * "posterchan still not working as default Messenger app despite being set as default messenger"
+   * cost four rounds because from the build side the failure REPORTS SUCCESS: the role is set, the
+   * screen draws, nothing throws. So the screen prints what was asked and what came back — the two
+   * role tables, the permission, the four components Android demands before it will even offer the
+   * role, and what the provider actually returned. It is the same reason the music panel prints its
+   * counters and the /logs board measures rather than retells. */
+  async function details(){
+    const P = plug('diagnose');
+    if(!P || !P.diagnose) return null;
+    try{ return await P.diagnose(); }catch(_){ return null; }
+  }
+
+  function detailLine(d){
+    if(!d) return '';
+    const c = d.components || {};
+    const missing = ['smsDeliver','mmsDeliver','sendTo','respondViaMessage'].filter(k => !c[k]);
+    return [
+      'this app: ' + (d.package || '?'),
+      'message store names: ' + (d.defaultPkg || d.defaultPackage || '(nothing)'),
+      'SMS role held: ' + (d.roleHeld ? 'yes' : 'no'),
+      'may read messages: ' + (d.canRead ? 'yes' : 'no'),
+      'may show notifications: ' + (d.canNotify ? 'yes' : 'NO — new texts arrive in silence'),
+      'last read: ' + (d.refused ? 'refused' : (d.read >= 0 ? d.read + ' found' : 'not attempted')),
+      missing.length ? 'MISSING COMPONENTS: ' + missing.join(', ')
+                     : 'all four SMS components installed',
+    ].join(' \u00b7 ');
+  }
+
   /* ASK ANDROID FOR PERMISSION TO READ. Resolves whether it was granted; a refusal is an answer, not
    * an error. Older APKs have no `ensureRead` method at all, and there the honest result is "no". */
   async function ensureRead(){
     const P = plug('ensureRead');
     if(!P || !P.ensureRead) return (await phoneState()).canRead;
     try{ return !!((await P.ensureRead()) || {}).granted; }catch(_){ return false; }
+  }
+
+  /* ASK TO BE ALLOWED TO ANNOUNCE A NEW TEXT. "make sure notifications work on new text messages
+   * ... otherwise useless" — on Android 13+ POST_NOTIFICATIONS is a runtime grant and `notify()`
+   * does nothing without it. Music and push each ask for their own flows, so somebody who used
+   * neither had never been asked and every text arrived in silence. Asked once per visit, after the
+   * read permission, and never on a device that has no messages plugin at all. */
+  async function ensureNotify(){
+    const P = plug('ensureNotify');
+    if(!P || !P.ensureNotify) return false;
+    try{ return !!((await P.ensureNotify()) || {}).granted; }catch(_){ return false; }
   }
 
   /* WHY IS THIS EMPTY? Four different answers that look identical on screen, and the difference is
@@ -636,6 +678,8 @@
           <button class="btn btn-neon small" id="sms-new">${ICO('plus','b-ic')}New</button>
         </div>
         <div class="muted small" id="sms-note"></div>
+        <div class="muted small" style="margin-top:6px">
+          <button class="btn small" id="sms-why">Why isn\u2019t this working?</button></div>
         <div class="sms-threads">${rows.map(t => {
           const last = t.msgs[t.msgs.length-1] || {};
           const who = last.name || t.address || '';
@@ -667,6 +711,14 @@
     if(q) q.oninput = () => { S.q = q.value; paint(); q.focus(); };
     const nw = PC.$('#sms-new');
     if(nw) nw.onclick = composeNew;
+    const dbg = PC.$('#sms-why');
+    if(dbg) dbg.onclick = async () => {
+      dbg.disabled = true;
+      const d = await details();
+      const el = PC.$('#sms-note');
+      if(el) el.textContent = d ? detailLine(d)
+                                : 'This build cannot report it — it is older than this screen.';
+    };
     const allow = PC.$('#sms-allow');
     if(allow) allow.onclick = async () => {
       allow.disabled = true;
@@ -828,6 +880,9 @@
         st.canRead = true;
       }
     }
+    // AND TO BE ABLE TO SAY ONE ARRIVED. Only on a device that receives texts — asking a laptop for
+    // notification permission about somebody else's phone is a prompt with nothing behind it.
+    if(st.present && st.isDefault && !st.canNotify) await ensureNotify();
     if(st.canRead){
       await load();
       loadFromPhone().then(() => { if(!S.msgs.size) paint(); else paint(); }, () => {});
