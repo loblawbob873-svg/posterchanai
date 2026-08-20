@@ -310,3 +310,19 @@ def test_a_service_the_routers_import_always_restarts_the_app():
         "these are imported by app/routers/ but do not restart the app: %s. A router import means the "
         "APP runs this code; leaving it off the targets deploys a fix to a process that never serves "
         "it." % missing)
+
+
+def test_the_overlay_is_published_when_its_inputs_change():
+    """The overlay is how an INSTALLED machine gets a newer desktop — `emerge -u` against
+    gentoo.poster.place. An overlay that only updates when somebody remembers to run a script is
+    permanently a few versions behind the code it packages, and nothing about that is visible from
+    either end: the deploy succeeds, the machines are simply old."""
+    src = open(SYNC, encoding="utf-8").read()
+    assert "publish_overlay.sh" in src, "sync.sh never publishes the overlay"
+    i = src.index("publish_overlay.sh")
+    guard = src[max(0, i - 400):i]
+    assert "os/(overlay|bin|plymouth)" in guard, (
+        "the overlay is published on every deploy — a forced push each time makes every installed "
+        "machine re-sync a repo whose contents are identical")
+    assert "WARN" in src[i:i + 200], (
+        "a failed publish is silent; the deploy would report success with the overlay stale")

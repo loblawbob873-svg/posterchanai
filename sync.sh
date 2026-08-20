@@ -121,6 +121,20 @@ git push github master:main || echo "[sync] WARN: github push (Android APK build
 ssh router.lan "cd /srv/posterchanai && sudo git fetch origin && sudo git reset --hard origin/master" \
     || echo "[sync] WARN: router.lan static git pull failed"
 
+# Publish the PosterChanOS overlay whenever anything in it changed. This is how an INSTALLED
+# machine gets a newer desktop or session — `emerge -u` against
+# https://gentoo.poster.place/posterchan-overlay.git — so an overlay that only updates when somebody
+# remembers to run a script is one that is permanently a few versions behind the code it packages.
+#
+# Only on a change: the publish force-pushes a fresh commit, and doing that on every deploy would
+# make every installed machine re-sync a repo whose contents are identical.
+if git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -qE '^os/(overlay|bin|plymouth)/'; then
+    echo "[sync] overlay inputs changed — publishing"
+    ./scripts/publish_overlay.sh || echo "[sync] WARN: overlay publish failed (machines keep the last one)"
+else
+    echo "[sync] overlay unchanged"
+fi
+
 # Wait for any active GPU inference to finish before restarting.
 # Uses flock -n to test the same lock file the service uses.
 _wait_gpu_free() {

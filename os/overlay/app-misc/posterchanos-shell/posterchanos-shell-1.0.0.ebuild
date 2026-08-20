@@ -9,15 +9,18 @@ S="${WORKDIR}"
 
 LICENSE="GPL-3"
 SLOT="0"
-KEYWORDS="~amd64"
+# STABLE, not ~amd64. The convention of starting a new ebuild in testing exists so a
+# distribution can stage third-party software — but this overlay IS the release channel
+# for these packages, and publishing one is what shipping it means. Keyworded ~amd64 they
+# are masked on every stable install, which is every PosterChanOS machine, and the error
+# a person sees is "all ebuilds have been masked" about software their own OS ships.
+KEYWORDS="amd64"
 
 # Everything the session needs to be a desktop rather than a compositor with one window in it.
 RDEPEND="
 	app-misc/posterchan-desktop
 	gui-wm/sway
 	gui-apps/foot
-	app-misc/brightnessctl
-	media-sound/playerctl
 	sys-apps/xdg-desktop-portal
 	gui-libs/xdg-desktop-portal-wlr
 	sys-boot/plymouth

@@ -36,7 +36,12 @@ ssh "$NAS" "mkdir -p $DEST && cd $DEST && (git rev-parse --git-dir >/dev/null 2>
 git push -q --force "ssh://$NAS$DEST" main
 # Dumb HTTP needs this, and it is the step whose absence looks like a working publish: the files are
 # all there, the URL returns 200 for the directory, and `emerge --sync` says the repo is empty.
-ssh "$NAS" "cd $DEST && git update-server-info && git config core.sharedRepository group && chmod -R a+rX ."
+# HEAD MUST NAME THE BRANCH WE PUSH. `git init --bare` points HEAD at refs/heads/master; pushing
+# `main` leaves HEAD dangling, and a clone then succeeds, reports "remote HEAD refers to nonexistent
+# ref", and produces an EMPTY working tree. `git ls-remote` shows the branch perfectly the whole
+# time, so the repo looks published from every angle except the one that matters.
+ssh "$NAS" "cd $DEST && git symbolic-ref HEAD refs/heads/main && git update-server-info \
+    && git config core.sharedRepository group && chmod -R a+rX ."
 
 echo "[overlay] published"
 echo "[overlay]   sync-uri = $URL"

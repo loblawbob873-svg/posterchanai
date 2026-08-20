@@ -90,7 +90,6 @@ POSTERCHANOS_PACKAGES="gui-wm/sway x11-base/xwayland gui-apps/foot gui-apps/wl-c
 media-video/pipewire media-video/wireplumber gui-libs/gtk media-fonts/noto media-fonts/noto-emoji \
 www-client/firefox-bin \
 sys-apps/xdg-desktop-portal gui-libs/xdg-desktop-portal-wlr media-video/obs-studio \
-app-misc/brightnessctl sys-power/power-profiles-daemon media-sound/playerctl \
 sec-keys/openpgp-keys-gentoo-release dev-vcs/git"
 
 # The profile has to survive a CHROOT. buildGentoo copies this script into the target and runs it
@@ -162,6 +161,16 @@ gentooRepo() {
 			echo "sync-uri = https://gentoo.poster.place/posterchan-overlay.git"
 			echo "auto-sync = yes"
 			echo "priority = 100"
+			# BOTH depths, and they are different options. `clone-depth` governs the FIRST clone
+			# and `sync-depth` the updates after it — setting only the second leaves portage
+			# running `git clone --depth 1`, which a dumb HTTP transport cannot do: "fatal: dumb
+			# http transport does not support shallow capabilities". The repo directory is then
+			# left empty and every emerge behaves as though the overlay has no packages in it,
+			# with the failure buried in a sync log nobody reads. (Read out of portage's own
+			# git.py rather than guessed — the names are not symmetrical.) The overlay is a few
+			# hundred kilobytes; full clones cost nothing here.
+			echo "clone-depth = 0"
+			echo "sync-depth = 0"
 		} >$TARGET/etc/portage/repos.conf/posterchan.conf
 	fi
 
@@ -692,6 +701,19 @@ posterchanShell() {
 	systemctl --global disable pulseaudio.socket pulseaudio.service >/dev/null 2>&1
 	systemctl --global enable pipewire.socket pipewire-pulse.socket wireplumber.service >/dev/null 2>&1
 
+	# THE BACKLIGHT, WRITABLE WITHOUT ROOT. /sys/class/backlight/*/brightness is root-owned, so a
+	# session can read the brightness and not change it — a slider that moves and does nothing.
+	# brightnessctl is the usual answer and is NOT IN THE GENTOO TREE, so this is the answer: hand
+	# the file to the `video` group, which pc-provision-user already puts every account in.
+	mkdir -p /etc/udev/rules.d
+	cat >/etc/udev/rules.d/90-posterchan-backlight.rules <<-'UDEV'
+	ACTION=="add", SUBSYSTEM=="backlight", RUN+="/bin/chgrp video /sys/class/backlight/%k/brightness"
+	ACTION=="add", SUBSYSTEM=="backlight", RUN+="/bin/chmod g+w /sys/class/backlight/%k/brightness"
+	# Keyboard backlights are the same problem with a different subsystem.
+	ACTION=="add", SUBSYSTEM=="leds", KERNEL=="*kbd_backlight", RUN+="/bin/chgrp video /sys/class/leds/%k/brightness"
+	ACTION=="add", SUBSYSTEM=="leds", KERNEL=="*kbd_backlight", RUN+="/bin/chmod g+w /sys/class/leds/%k/brightness"
+	UDEV
+
 	mkdir -p /etc/sway
 	cat >/etc/sway/config <<-'SWAY'
 	# PosterChanOS — the shell owns the screen; PosterChan decides what goes where.
@@ -748,11 +770,12 @@ posterchanShell() {
 	bindsym --locked XF86MonBrightnessDown exec /usr/local/bin/pc-key brightness-down
 
 	# Playback keys go to the PAGE, not to a system tool: what is playing is the client's music
-	# library, which no external player can see — the tracks are encrypted blobs only it can decrypt.
-	# playerctl speaks MPRIS, which the client already publishes through mediaSession.
-	bindsym --locked XF86AudioPlay exec playerctl play-pause
-	bindsym --locked XF86AudioNext exec playerctl next
-	bindsym --locked XF86AudioPrev exec playerctl previous
+	# library, which no external player can see — the tracks are encrypted blobs only it can
+	# decrypt. pc-key reaches it over MPRIS with `busctl`, which systemd already ships, rather than
+	# pulling in playerctl to do the same thing.
+	bindsym --locked XF86AudioPlay exec /usr/local/bin/pc-key play-pause
+	bindsym --locked XF86AudioNext exec /usr/local/bin/pc-key next
+	bindsym --locked XF86AudioPrev exec /usr/local/bin/pc-key previous
 
 	bindsym $mod+Shift+e exec swaynag -t warning -m 'Exit PosterChanOS?' -B 'Yes' 'swaymsg exit'
 	bindsym $mod+Return exec foot
@@ -768,6 +791,31 @@ posterchanShell() {
 	mkdir -p /etc/xdg/xdg-desktop-portal
 	printf '[preferred]\ndefault=wlr;gtk\norg.freedesktop.impl.portal.ScreenCast=wlr\norg.freedesktop.impl.portal.Screenshot=wlr\n' \
 		>/etc/xdg/xdg-desktop-portal/sway-portals.conf
+
+	# FROM THE OVERLAY IF IT IS REACHABLE, BY HAND IF IT IS NOT.
+	#
+	# The overlay is how an installed machine gets a newer desktop later, so an install that came
+	# from it is an install that can be UPDATED — `emerge -u app-misc/posterchan-desktop` instead of
+	# somebody re-running an installer. The manual path below stays as the fallback, because a first
+	# install is exactly when the overlay might not be reachable yet: no network, a mirror being
+	# rebuilt, a machine being provisioned before the repo was published.
+	#
+	# Success is checked by looking for the FILES, not by trusting emerge's exit code — a package
+	# that installs nothing useful exits 0.
+	if [[ "$POSTERCHANOS" = *y* ]] && [ -f "${TARGET}/etc/portage/repos.conf/posterchan.conf" ]; then
+		echo -e "\033[1;33mSyncing the PosterChanOS overlay\033[0m"
+		if _in 'emerge --sync posterchan' >/dev/null 2>&1; then
+			_in 'emerge -uDN --autounmask-write app-misc/posterchanos-shell' >/dev/null 2>&1
+			_in 'etc-update -q --automode -5' >/dev/null 2>&1
+			_in 'emerge -uDN app-misc/posterchanos-shell' >/dev/null 2>&1 || true
+		else
+			echo -e "\033[1;33m  the overlay is not reachable — installing the shell directly\033[0m"
+		fi
+		if [ -x "${TARGET}/usr/local/bin/posterchan" ] && [ -d "${TARGET}/opt/posterchan" ]; then
+			echo -e "\033[1;32m  ✓ installed from the overlay\033[0m"
+			return 0
+		fi
+	fi
 
 	# THE SHELL ITSELF. sway's config execs `posterchan`, and nothing else here installs it — so
 	# without this the machine boots into an empty compositor with no way to do anything, which is

@@ -12,7 +12,12 @@ S="${WORKDIR}"
 
 LICENSE="GPL-3"
 SLOT="0"
-KEYWORDS="~amd64"
+# STABLE, not ~amd64. The convention of starting a new ebuild in testing exists so a
+# distribution can stage third-party software — but this overlay IS the release channel
+# for these packages, and publishing one is what shipping it means. Keyworded ~amd64 they
+# are masked on every stable install, which is every PosterChanOS machine, and the error
+# a person sees is "all ebuilds have been masked" about software their own OS ships.
+KEYWORDS="amd64"
 RESTRICT="mirror strip"
 
 # EXTRACTED AT BUILD TIME, NOT RUN AS AN APPIMAGE. An AppImage needs FUSE at runtime, which a minimal

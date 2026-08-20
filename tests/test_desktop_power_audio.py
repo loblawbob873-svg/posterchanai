@@ -104,10 +104,53 @@ class Power(unittest.TestCase):
         if not out.get("ok"):          # this box may genuinely have swap
             self.assertIn("swap", out.get("threw", ""))
 
-    def test_a_profile_name_is_validated(self):
-        """It reaches a command line."""
-        out = self.run_js("await P.setProfile('balanced; rm -rf /');")
-        self.assertIn("not a profile", out.get("threw", ""))
+    def profile_choices(self, choices, active):
+        d = os.path.join(self.sys, "firmware", "acpi")
+        os.makedirs(d, exist_ok=True)
+        open(os.path.join(d, "platform_profile_choices"), "w").write(choices)
+        open(os.path.join(d, "platform_profile"), "w").write(active)
+        return os.path.join(d, "platform_profile")
+
+    def test_profiles_come_from_the_kernel_not_a_daemon(self):
+        """power-profiles-daemon is a wrapper around this file. Reading it directly is one less
+        package to install on a machine somebody else runs."""
+        self.profile_choices("low-power balanced performance", "balanced")
+        p = self.run_js("out.p = P.profiles();")["p"]
+        self.assertTrue(p["available"])
+        self.assertEqual(p["kind"], "platform")
+        self.assertEqual(p["list"], ["low-power", "balanced", "performance"])
+        self.assertEqual(p["active"], "balanced")
+
+    def test_a_profile_is_validated_against_what_this_machine_offers(self):
+        """The kernel rejects an unknown value with EINVAL, which arrives as an unhelpful write
+        error. Checking first means the message names the profiles that exist."""
+        self.profile_choices("low-power balanced performance", "balanced")
+        out = self.run_js("await P.setProfile('turbo');")
+        self.assertIn("low-power", out.get("threw", ""), out)
+
+    def test_setting_a_profile_writes_the_file(self):
+        f = self.profile_choices("low-power balanced performance", "balanced")
+        self.run_js("await P.setProfile('performance');")
+        self.assertEqual(open(f).read().strip(), "performance")
+
+    def test_a_machine_with_no_profiles_says_so(self):
+        out = self.run_js("await P.setProfile('balanced');")
+        self.assertIn("no power profiles", out.get("threw", ""))
+
+    def test_a_governor_is_set_on_every_cpu(self):
+        """A machine running one core at performance and eleven at powersave is in neither
+        profile."""
+        for i in range(3):
+            d = os.path.join(self.sys, "devices", "system", "cpu", f"cpu{i}", "cpufreq")
+            os.makedirs(d, exist_ok=True)
+            open(os.path.join(d, "scaling_governor"), "w").write("powersave")
+            if i == 0:
+                open(os.path.join(d, "scaling_available_governors"), "w").write("performance powersave")
+        self.run_js("await P.setProfile('performance');")
+        for i in range(3):
+            f = os.path.join(self.sys, "devices", "system", "cpu", f"cpu{i}", "cpufreq",
+                             "scaling_governor")
+            self.assertEqual(open(f).read().strip(), "performance", f"cpu{i} was left behind")
 
 
 @unittest.skipIf(not NODE, "no node on this node")

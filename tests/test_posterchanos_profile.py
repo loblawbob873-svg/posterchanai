@@ -194,11 +194,23 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertNotIn("systemctl --user enable", body,
                          "a per-user enable cannot reach an account that does not exist yet")
 
-    def test_the_power_and_audio_tools_are_installed(self):
-        """A desktop that cannot dim its screen is not a desktop. brightnessctl is the fallback when
-        sysfs is root-owned, and power-profiles-daemon is the standard profile interface."""
-        for pkg in ("app-misc/brightnessctl", "sys-power/power-profiles-daemon"):
-            self.assertIn(pkg, self.pkgs, f"{pkg} missing — the power panel has nothing behind it")
+    def test_power_and_media_need_no_extra_packages(self):
+        """Every one of these was a package I added and then removed once I looked at what the
+        kernel already exposes: brightness is /sys/class/backlight (and brightnessctl is not even in
+        the Gentoo tree), power profiles are /sys/firmware/acpi/platform_profile with cpufreq
+        governors behind them, and MPRIS is reachable with busctl, which systemd already ships.
+        Fewer packages on a machine somebody else runs is worth more than the abstractions."""
+        for gone in ("brightnessctl", "power-profiles-daemon", "playerctl"):
+            self.assertFalse([p for p in self.pkgs if gone in p],
+                             f"{gone} is back in the profile — check whether it is really needed")
+
+    def test_the_backlight_is_writable_without_root(self):
+        """sysfs is root-owned, so a session can read the brightness and not change it — a slider
+        that moves and does nothing. The udev rule hands it to the `video` group, which
+        pc-provision-user already puts every account in."""
+        body = self._fn("posterchanShell")
+        self.assertIn("SUBSYSTEM==\"backlight\"", body, "the backlight is root-only")
+        self.assertIn("chgrp video", body)
 
     def test_no_html_engine_can_be_built_from_source(self):
         """webkit-gtk and qtwebengine are among the longest builds in the tree, and the way you find
@@ -209,6 +221,45 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertIn("package.mask", body, "nothing stops a dependency pulling an HTML engine")
         for heavy in ("net-libs/webkit-gtk", "dev-qt/qtwebengine", "www-client/chromium"):
             self.assertIn(heavy, body, f"{heavy} is not masked")
+
+    def test_the_overlay_is_registered_and_preferred(self):
+        """An install that came from the overlay is one that can be UPDATED — `emerge -u
+        app-misc/posterchan-desktop` instead of somebody re-running an installer."""
+        repo = self._fn("gentooRepo")
+        self.assertIn("[posterchan]", repo, "the overlay is never registered")
+        self.assertIn("posterchan-overlay.git", repo)
+        self.assertIn("sync-type = git", repo, "portage cannot sync a directory over https")
+        body = self._fn("posterchanShell")
+        self.assertIn("emerge --sync posterchan", body, "the overlay is registered but never used")
+        self.assertIn("posterchanos-shell", body)
+
+    def test_the_manual_path_survives_as_a_fallback(self):
+        """A first install is exactly when the overlay might not be reachable: no network yet, a
+        mirror being rebuilt, a machine provisioned before the repo was published."""
+        body = self._fn("posterchanShell")
+        self.assertIn("not reachable", body, "an unreachable overlay leaves no way to install")
+        self.assertIn("AppImage", body, "the direct install was removed with the overlay added")
+
+    def test_overlay_success_is_checked_by_looking_not_by_exit_code(self):
+        """A package that installs nothing useful exits 0."""
+        body = self._fn("posterchanShell")
+        i = body.index("emerge --sync posterchan")
+        self.assertIn('-x "${TARGET}/usr/local/bin/posterchan"', body[i:i + 1200],
+                      "the overlay install is trusted rather than verified")
+
+    def test_emerge_sync_works_off_this_lan(self):
+        """rsync://gentoo-repo.lan resolves on exactly one network. An OS other people run cannot be
+        pointed at a .lan name, and the way they find out is that the machine can never update."""
+        repo = self._fn("gentooRepo")
+        # ONLY the PosterChanOS arm — the else branch keeps the LAN rsync for the default profile,
+        # which is somebody's own machines on their own network and is correct there.
+        i = repo.index("$POSTERCHANOS")
+        pcos = repo[i:repo.index("else", i)]
+        self.assertIn("sync-type = webrsync", pcos)
+        self.assertIn("https://gentoo.poster.place", pcos)
+        self.assertNotIn(".lan", pcos, "PosterChanOS still syncs from a LAN-only host")
+        self.assertIn("sync-webrsync-verify-signature = true", pcos,
+                      "a package tree fetched over HTTP from somebody's server, unverified")
 
     def test_the_shell_itself_is_installed(self):
         """sway's config execs `posterchan`. Nothing else in this installer puts it on the disk, so

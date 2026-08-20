@@ -102,24 +102,62 @@ function battery() {
            charging: /charging|full/i.test(status) && !/discharging/i.test(status) };
 }
 
-/* POWER PROFILES. power-profiles-daemon is the standard interface and may not be installed; cpupower
- * governors are the fallback and need root. Absent both, the feature is absent — reported, not
- * thrown, so the UI can leave the control out instead of showing one that always fails. */
-async function profiles() {
-  try {
-    const out = await run('powerprofilesctl', ['list']);
-    const list = [...String(out).matchAll(/^\s*\*?\s*([a-z-]+):/gm)].map((m) => m[1]);
-    let active = '';
-    try { active = (await run('powerprofilesctl', ['get'])).trim(); } catch (_) {}
-    if (list.length) return { available: true, list, active };
-  } catch (_) {}
-  return { available: false, list: [], active: '' };
+/* POWER PROFILES, FROM THE KERNEL — no daemon, no package.
+ *
+ * power-profiles-daemon is the usual answer and it is a wrapper: the firmware's own notion of a
+ * profile is `/sys/firmware/acpi/platform_profile`, with its permitted values next to it in
+ * `platform_profile_choices`. Reading those directly is fewer moving parts and one less thing to
+ * install, which on a machine somebody else runs is worth more than the abstraction.
+ *
+ * NOTE: if power-profiles-daemon is ever installed it takes OWNERSHIP of that file, and writing to
+ * it behind the daemon's back produces a profile the daemon does not know it is in. This profile
+ * deliberately does not install it.
+ *
+ * The cpufreq governor is the fallback for hardware with no ACPI platform profile — a desktop, or
+ * an older laptop. It is a coarser control and it is the one every machine has. */
+const PLATFORM = path.join(SYS, 'firmware', 'acpi', 'platform_profile');
+const CPUFREQ = path.join(SYS, 'devices', 'system', 'cpu', 'cpu0', 'cpufreq');
+
+function profiles() {
+  const choices = readStr(PLATFORM + '_choices');
+  if (choices) {
+    return { available: true, kind: 'platform', list: choices.split(/\s+/).filter(Boolean),
+             active: readStr(PLATFORM) };
+  }
+  const avail = readStr(path.join(CPUFREQ, 'scaling_available_governors'));
+  if (avail) {
+    return { available: true, kind: 'governor', list: avail.split(/\s+/).filter(Boolean),
+             active: readStr(path.join(CPUFREQ, 'scaling_governor')) };
+  }
+  return { available: false, kind: '', list: [], active: '' };
 }
+
 async function setProfile(name) {
   const n = String(name || '');
-  if (!/^[a-z-]+$/.test(n)) throw new Error('not a profile name');
-  await run('powerprofilesctl', ['set', n]);
-  return { active: n };
+  const p = profiles();
+  /* VALIDATED AGAINST WHAT THIS MACHINE ACTUALLY OFFERS, not against a pattern. The kernel rejects
+   * an unknown value with EINVAL, which arrives here as an unhelpful write error; checking the list
+   * first means the message names the profiles that exist. */
+  if (!p.available) throw new Error('this machine has no power profiles');
+  if (!p.list.includes(n)) throw new Error('no such profile — this machine has: ' + p.list.join(', '));
+  const target = p.kind === 'platform' ? PLATFORM : path.join(CPUFREQ, 'scaling_governor');
+  try {
+    fs.writeFileSync(target, n);
+  } catch (_) {
+    throw new Error('cannot write ' + target + ' — the session needs a udev rule for it');
+  }
+  /* A GOVERNOR IS PER-CPU. Writing cpu0 changes cpu0, and a machine running one core at
+   * `performance` and eleven at `powersave` is not in either profile. */
+  if (p.kind === 'governor') {
+    let cpus = [];
+    try { cpus = fs.readdirSync(path.join(SYS, 'devices', 'system', 'cpu')); } catch (_) {}
+    for (const c of cpus) {
+      if (!/^cpu\d+$/.test(c)) continue;
+      try { fs.writeFileSync(path.join(SYS, 'devices', 'system', 'cpu', c, 'cpufreq', 'scaling_governor'), n); }
+      catch (_) {}
+    }
+  }
+  return { active: n, kind: p.kind };
 }
 
 /* SLEEP AND HIBERNATE go through systemd, which asks polkit, which normally allows a LOCAL ACTIVE
