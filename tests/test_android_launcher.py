@@ -64,7 +64,7 @@ public class Harness {
     phone.add(app("com.android.chrome", "Chrome"));
     phone.add(app("org.thoughtcrime.securesms", "Signal"));
     phone.add(app("com.zebra.app", "Zebra"));
-    List<AppShelf.Entry> ours = HomeTiles.ours(true, true);
+    List<AppShelf.Entry> ours = HomeTiles.ours();
 
     // 1. The essential tile survives every filter there is.
     Set<String> hideEverything = new HashSet<String>();
@@ -119,8 +119,8 @@ public class Harness {
     // 10. defaultHidden never hides the essential tile, and never hides a default-on tile.
     say("seed", new TreeSet<String>(HomeTiles.defaultHidden()));
 
-    // 11. The dialer/messages tiles are only offered when the role is actually held.
-    say("no-roles", keys(AppShelf.arrange(new ArrayList<AppShelf.Entry>(), HomeTiles.ours(false, false), null, null, "")));
+    // 11. Phone and Messages are offered whether or not we hold the role. See the test.
+    say("no-roles", keys(AppShelf.arrange(new ArrayList<AppShelf.Entry>(), HomeTiles.ours(), null, null, "")));
 
     // 12. An empty phone (the package query failed) still leaves a way to Settings.
     say("no-apps", keys(AppShelf.arrange(new ArrayList<AppShelf.Entry>(), ours, null, null, "")));
@@ -291,11 +291,22 @@ class Launcher(unittest.TestCase):
         self.assertNotIn("pc:global", seed)      # a default-on tile
         self.assertIn("pc:chess", seed)          # a catalogue tile that starts hidden
 
-    def test_phone_and_messages_are_only_offered_once_the_role_is_held(self):
-        """Offered before that they are two tiles that open an empty call log."""
+    def test_phone_and_messages_are_offered_before_we_hold_the_role(self):
+        """This assertion used to say the OPPOSITE, and the opposite was a dead end.
+
+        Withholding the two tiles until the app was the default dialer / default SMS app reads as
+        careful — a tile opening an empty call log is worse than no tile. But `AppRepo.installed()`
+        skips our own package, so our `.sms.Messages` and `.phone.Phone` launcher aliases are not in
+        the drawer either, and this list was the ONLY way to reach either screen from our home
+        screen. The role is normally granted by opening the app and being asked, so the app that
+        asks was behind the role it was asking for. Reported as "still no SMS app".
+
+        The premise was also wrong. Neither screen is empty without its role: both read the system
+        providers, and both draw a notice saying they are not the default and what to do about it.
+        """
         rows = self.out["no-roles"]
-        self.assertNotIn("pc:_phone", rows)
-        self.assertNotIn("pc:_texts", rows)
+        self.assertIn("pc:_texts", rows)
+        self.assertIn("pc:_phone", rows)
         self.assertIn("pc:_settings", rows)
 
     def test_a_phone_with_no_readable_app_list_still_reaches_settings(self):

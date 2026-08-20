@@ -118,10 +118,22 @@ public final class SmsStore {
         return newest;
     }
 
+    /**
+     * Whether the LAST read was refused rather than answered empty.
+     *
+     * Not a count and not a cached list — just the distinction the caller cannot otherwise make.
+     * Every read sets it, so it always describes the read that just happened.
+     */
+    private static volatile boolean refused = false;
+
+    /** True when the last query could not be performed at all (no READ_SMS, provider missing). */
+    public static boolean refused() { return refused; }
+
     private static List<SmsMsg> query(Context ctx, String where, String[] args,
                                       String order, int limit) {
         List<SmsMsg> out = new ArrayList<SmsMsg>();
         if (ctx == null) return out;
+        refused = false;
         Cursor c = null;
         try {
             // LIMIT rides on the sort order, which is how it is done against a SQLite-backed
@@ -133,6 +145,11 @@ public final class SmsStore {
             try {
                 c = ctx.getContentResolver().query(Telephony.Sms.CONTENT_URI, COLS, where, args, order);
             } catch (Throwable t2) {
+                // COULD NOT ASK IS NOT NOTHING THERE. Swallowing this returned an empty list, and an
+                // empty list is exactly what a phone with no texts returns — so a missing READ_SMS
+                // grant drew the same screen as an empty inbox, which is how "i see 0 of my sms
+                // messages in Text" survived. The screen asks `refused()` and says which.
+                refused = true;
                 Log.w(TAG, "sms: could not read the message store", t2);
                 return out;
             }

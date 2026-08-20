@@ -132,16 +132,26 @@ public final class HomeTiles {
     }
 
     /**
-     * @param dialer whether the native Phone screen should be offered — it is only useful once this
-     *               app actually holds the dialer role, and offered before that it is a tile that
-     *               opens an empty call log.
-     * @param sms    likewise for the native Messages screen.
+     * PHONE AND MESSAGES ARE OFFERED WHETHER OR NOT WE HOLD THE ROLE, and that is a reversal.
+     *
+     * They used to be hidden until this app was the default dialer / default SMS app, on the
+     * reasoning that a tile opening an empty call log is worse than no tile. The reasoning was
+     * sound and the result was a DEAD END, reported as "still no SMS app": our own launcher aliases
+     * are filtered out of the drawer by AppRepo (it skips our own package, so PosterChan is not
+     * listed forty times), so this list was the only way to reach either screen — and it withheld
+     * them until a role that is normally granted by opening the app and being asked. There was no
+     * path from our home screen to the messages app at all, on the launcher this feature exists for.
+     *
+     * The premise was wrong too, not just the consequence. Neither screen is empty without its role:
+     * both read the system providers with READ_SMS / READ_CALL_LOG, both draw an amber notice
+     * saying they are not the default and how to change it, and being able to READ somebody's texts
+     * while not being the app that RECEIVES them is the ordinary state of an SMS app somebody is
+     * trying out. The screens answer the question this filter was guessing at, on screen, in a
+     * sentence — see ThreadListActivity.draw and DialerActivity.
      */
-    public static List<AppShelf.Entry> ours(boolean dialer, boolean sms) {
+    public static List<AppShelf.Entry> ours() {
         List<AppShelf.Entry> out = new ArrayList<AppShelf.Entry>();
         for (Tile t : CATALOGUE) {
-            if (VIEW_PHONE.equals(t.view) && !dialer) continue;
-            if (VIEW_TEXTS.equals(t.view) && !sms) continue;
             out.add(AppShelf.Entry.ours(t.view, t.label, isEssential(t.view)));
         }
         return out;

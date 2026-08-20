@@ -92,7 +92,7 @@ public class LauncherDeviceTest {
     public void thereIsAWayToSettingsEvenWithNothingInstalled() {
         // The escape hatch, checked against the real arrangement rather than against a fixture.
         List<AppShelf.Entry> rows = AppShelf.arrange(
-                new java.util.ArrayList<AppShelf.Entry>(), HomeTiles.ours(false, false),
+                new java.util.ArrayList<AppShelf.Entry>(), HomeTiles.ours(),
                 null, null, "");
         boolean found = false;
         for (AppShelf.Entry e : rows) if (HomeTiles.VIEW_SETTINGS.equals(e.view)) found = true;

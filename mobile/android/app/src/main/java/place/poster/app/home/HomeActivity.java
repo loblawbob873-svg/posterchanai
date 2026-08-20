@@ -303,8 +303,9 @@ public class HomeActivity extends Activity implements DeskView.Host {
      * (an older APK, a stripped variant, a class that moved) simply is not offered.
      */
     private void refreshRoles() {
-        List<AppShelf.Entry> offered = HomeTiles.ours(
-                HomeRoles.isDefaultDialer(this), HomeRoles.isDefaultSms(this));
+        // NOT filtered by whether we hold the dialer/SMS role any more — see HomeTiles.ours. The
+        // only question left is whether the screen exists in THIS build, which is `canLaunch`.
+        List<AppShelf.Entry> offered = HomeTiles.ours();
         List<AppShelf.Entry> live = new ArrayList<AppShelf.Entry>();
         for (AppShelf.Entry e : offered) if (canLaunch(e)) live.add(e);
         ourTiles = live;
@@ -871,8 +872,10 @@ public class HomeActivity extends Activity implements DeskView.Host {
         final List<HomeTiles.Tile> rows = new ArrayList<HomeTiles.Tile>();
         for (HomeTiles.Tile t : cat) {
             if (HomeTiles.isEssential(t.view)) continue;
-            if (HomeTiles.VIEW_PHONE.equals(t.view) && !HomeRoles.isDefaultDialer(this)) continue;
-            if (HomeTiles.VIEW_TEXTS.equals(t.view) && !HomeRoles.isDefaultSms(this)) continue;
+            // The same reversal as HomeTiles.ours, and it mattered more here: this checklist is
+            // where somebody turns a hidden screen back ON, so gating it meant Messages could not be
+            // un-hidden without already being the default SMS app — the exact circularity behind
+            // "still no SMS app".
             rows.add(t);
         }
         Set<String> hidden = prefs.hidden();

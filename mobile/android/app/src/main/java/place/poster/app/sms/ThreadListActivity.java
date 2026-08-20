@@ -101,10 +101,49 @@ public class ThreadListActivity extends PcActivity {
         applySkin();
     }
 
+    /**
+     * NOTHING EVER ASKED FOR READ_SMS, and this is the screen that needs it.
+     *
+     * The permission is declared in the manifest, but a dangerous permission is not granted by
+     * being declared — it has to be requested at runtime on Android 6 and later, which is every
+     * phone this runs on. `SmsPlugin` requests it for the WebView side; the NATIVE screen had no
+     * such path, so the provider query was refused, `SmsStore.query` swallowed the refusal into an
+     * empty list, and the screen drew "No messages yet" over a phone full of texts. Reported as
+     * "i see 0 of my sms messages in Text".
+     *
+     * Asked from onStart rather than onCreate so that a person who declined once and later changed
+     * their mind in system settings is picked up on the next visit without reinstalling.
+     */
+    private static final int ASK_READ_SMS = 4711;
+
+    private boolean mayReadTexts() {
+        if (android.os.Build.VERSION.SDK_INT < 23) return true;
+        try {
+            return checkSelfPermission(android.Manifest.permission.READ_SMS)
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int code, String[] perms, int[] granted) {
+        super.onRequestPermissionsResult(code, perms, granted);
+        // Redrawn either way: a REFUSAL has to change the screen too, or declining looks exactly
+        // like an empty inbox — the same confusion this whole change is about.
+        if (code == ASK_READ_SMS) reload();
+    }
+
     @Override
     protected void onStart() {
         super.onStart();
         applySkin();
+        if (!mayReadTexts()) {
+            try {
+                requestPermissions(new String[]{ android.Manifest.permission.READ_SMS },
+                                   ASK_READ_SMS);
+            } catch (Throwable ignored) { }
+        }
         reload();
         // THE ONLY REFRESH TRIGGER. See the class comment: a timer here would run for ever.
         watcher = new ContentObserver(main) {
@@ -151,12 +190,17 @@ public class ThreadListActivity extends PcActivity {
         if (adapter != null) adapter.notifyDataSetChanged();
     }
 
+    /** Whether the last read was REFUSED rather than answered empty. See draw(). */
+    private boolean unreadable = false;
+
     private void reload() {
         new Thread(new Runnable() {
             @Override public void run() {
                 final List<SmsStore.Thread> found = SmsStore.threads(ThreadListActivity.this, 800);
+                // Read on this thread, immediately after the query, because it describes THAT read.
+                final boolean refused = SmsStore.refused();
                 main.post(new Runnable() {
-                    @Override public void run() { all = found; draw(); }
+                    @Override public void run() { all = found; unreadable = refused; draw(); }
                 });
             }
         }, "pc-sms-threads").start();
@@ -176,11 +220,24 @@ public class ThreadListActivity extends PcActivity {
         adapter.set(rows);
         empty.setVisibility(rows.isEmpty() ? View.VISIBLE : View.GONE);
 
+        // THREE KINDS OF EMPTY, AND THEY ARE NOT THE SAME SENTENCE. "you have no texts", "you have
+        // texts and I was refused permission to read them", and "I can read them but I am not the
+        // app that receives them" all drew "No messages yet" over a full inbox. The refusal is the
+        // one that matters most, because it is the one the person can fix and the one that made a
+        // working screen look broken.
+        boolean cannotRead = unreadable || !mayReadTexts();
+        empty.setText(cannotRead ? R.string.sms_no_permission : R.string.sms_empty);
+
         // SAY WHY IT IS EMPTY. "PosterChan can read your texts but is not the messages app" and "you
         // have no texts" look identical, and the first one is fixable in two taps.
         boolean isDefault = HasRole.sms(this);
-        notice.setVisibility(isDefault ? View.GONE : View.VISIBLE);
-        if (!isDefault) notice.setText(R.string.sms_not_default);
+        if (cannotRead) {
+            notice.setVisibility(View.VISIBLE);
+            notice.setText(R.string.sms_no_permission);
+        } else {
+            notice.setVisibility(isDefault ? View.GONE : View.VISIBLE);
+            if (!isDefault) notice.setText(R.string.sms_not_default);
+        }
     }
 
     private void compose() {
