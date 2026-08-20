@@ -1663,7 +1663,10 @@
      * a window nobody can reach — it is floating above a desktop that has forgotten it. */
     if(w.native != null){
       _natSent.delete(w.native);
-      try{ pcWM.close(w.native); }catch(_){}
+      /* The `.catch` is not decoration. This is a PROMISE, so a `try` around the call catches only
+       * a synchronous throw — a rejection sails past it to the client's unhandledrejection handler,
+       * which puts "action failed" on screen. Reported exactly that way, on closing firefox. */
+      try{ Promise.resolve(pcWM.close(w.native)).catch(() => {}); }catch(_){}
     }
     if(realFeed && realFeed.parentElement === w.body) releaseFeed();
     w.el.remove();
@@ -4772,6 +4775,24 @@
         /* `watch` settles for itself whether a compositor actually answers, and returns a no-op
          * when none does — so this costs one question on a Windows desktop and draws nothing. */
         PCOSShell.setViewOpener((view) => openApp(view));
+        /* The start menu, a tray popover and every modal are painted by this page and a native app
+         * floats above all of them — so opening one has to be able to put the app away. */
+        _watchOverlays();
+        /* THE SUPER KEY OPENS THE START MENU, and it has to work when something else has the
+         * keyboard — which is most of the time, since you press it to leave whatever you are in.
+         * A key handler in this page cannot see that press at all: the compositor gave the keyboard
+         * to firefox. So sway is bound to `swaymsg -t send_tick pc:start` on Super release and this
+         * is what receives it. The in-page handler further down covers the other half — the press
+         * made while the desktop itself is focused — because a tick needs a binding installed on
+         * the machine and the desktop must not be dependent on one being there. */
+        try{
+          _tickOff = pcWM.onEvent((ev) => {
+            if(!ev || ev.name !== 'tick') return;
+            const p = String(ev.payload || '');
+            if(p === 'pc:start') toggleStart();
+            else if(p === 'pc:start:close') toggleStart(false);
+          });
+        }catch(_){}
         PCOSShell.watch(() => { adoptAll(); drawBar(); }).then(off => {
           _shellOff = off;
           if(PCOSShell.available()) drawBar();   // the tray can only be painted once the answer is in
@@ -4839,6 +4860,9 @@
     // The shell's watcher holds a compositor subscription and a 30s timer. Left running it redraws
     // markup that is no longer in the document, for the rest of the session.
     if(_shellOff){ try{ _shellOff(); }catch(_){} _shellOff = null; }
+    // Same reason: it watches `#os-root`, which is about to be removed from the document.
+    if(_natObs){ try{ _natObs.disconnect(); }catch(_){} _natObs = null; }
+    if(_tickOff){ try{ _tickOff(); }catch(_){} _tickOff = null; }
     clearInterval(_clock); _clock = null;
     clearInterval(mailT); mailT = 0; mailSeen = null;
     // The pool outlives the desktop — leaving this subscribed keeps a watcher calling drawBar()
@@ -4993,6 +5017,32 @@
     try{ if(settings().get(KEY, false) && fits()) enter(); }catch(_){}
   }
 
+  /* A BARE SUPER PRESS OPENS THE START MENU — the other half of the tick above, for the press made
+   * while the desktop itself has the keyboard.
+   *
+   * On RELEASE, and only if nothing happened in between: Super is also the prefix of every window
+   * shortcut here (Super+Left snaps, Super+Down minimises), so acting on the press would flash the
+   * start menu open at the start of every one of them. `_superClean` is set by the keydown and
+   * cleared by any other key or any pointer press, which is exactly how Windows and GNOME decide
+   * the same question. */
+  let _superClean = false;
+  document.addEventListener('keydown', (e) => {
+    if(e.key === 'Meta'){ if(!e.repeat) _superClean = true; return; }
+    _superClean = false;
+  }, true);
+  document.addEventListener('pointerdown', () => { _superClean = false; }, true);
+  document.addEventListener('keyup', (e) => {
+    if(e.key !== 'Meta') return;
+    const clean = _superClean;
+    _superClean = false;
+    /* Only where this IS the desktop. Everywhere else Super belongs to the real operating system,
+     * and on a machine where it does not reach us this costs nothing anyway. */
+    if(!clean || !on) return;
+    try{ if(!window.PCOSShell || !PCOSShell.available()) return; }catch(_){ return; }
+    e.preventDefault();
+    toggleStart();
+  }, true);
+
   // Win+Arrow. Meta, not Ctrl: Ctrl+Arrow is caret navigation inside every text box on this desktop.
   document.addEventListener('keydown', (e) => {
     if(!on || !e.metaKey || e.altKey || e.ctrlKey) return;
@@ -5050,7 +5100,7 @@
   /* Released on exit. A watcher left running after the desktop closes keeps a compositor
    * subscription and a 30s timer alive for the rest of the session, redrawing markup that is no
    * longer in the document. */
-  let _shellOff = null;
+  let _shellOff = null, _tickOff = null;
 
   window.PCOS = { enter, exit, suspend, toggle, restore, refresh, isOn: () => on, openDoc, focusDoc, routeView, snapTo, osToast,
                   // app.js calls this when the player's state changes — the Now-playing widget has

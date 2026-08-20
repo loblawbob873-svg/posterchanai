@@ -206,8 +206,15 @@
         ? 'muted' : H(s.volume.percent) + '%'}</button>`);
     if(s.brightness.known)
       bits.push(`<button class="os-chip" data-os="bright" title="Brightness">${H(s.brightness.percent)}%</button>`);
+    /* THE BATTERY IS A BUTTON, and it opens the POWER popover — the one that carries the profiles.
+     * It was a `<span>`: a reading, with the thing you actually want to change from it (balanced /
+     * power-saver / performance) hidden behind a separate ⏻ two chips along. Asked for as "clicking
+     * on battery should let me change power mode", which is where everybody looks for it, because a
+     * battery percentage and how fast it is being spent are one subject. */
     if(s.battery.known && s.battery.present)
-      bits.push(`<span class="os-chip" title="Battery">${H(s.battery.percent)}%${s.battery.charging ? ' ⚡' : ''}</span>`);
+      bits.push(`<button class="os-chip" data-os="power" title="Battery and power mode">`
+        + `${H(s.battery.percent)}%${s.battery.charging ? ' ⚡' : ''}</button>`);
+    /* Kept beside it, and it is the ONLY one on a desktop with no battery — which is most of them. */
     bits.push(`<button class="os-chip" data-os="power" title="Power">⏻</button>`);
     return `<div class="os-panel">${bits.join('')}</div>`;
   }

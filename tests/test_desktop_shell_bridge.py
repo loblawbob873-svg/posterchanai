@@ -132,6 +132,58 @@ class Bridge(unittest.TestCase):
         self.assertIn("pc:wm:available", self.main)
         self.assertIn("available:", self.pre)
 
+    def test_the_compositor_can_talk_BACK_to_the_shell(self):
+        """A sway binding can only run a command — it cannot call into this app. So anything the
+        keyboard has to reach the desktop with goes out as a `tick`, which sway broadcasts to every
+        IPC subscriber. That is what makes the Super key open the start menu while FIREFOX has the
+        keyboard, and that is the only case that matters: a key handler in the page fires only when
+        the page is focused, and you press Super to leave whatever you are in.
+
+        Subscribing to `tick` is not enough on its own — the PAYLOAD is the message, and forwarding
+        the event without it delivers a knock with nobody at the door."""
+        self.assertIn("'tick'", self.main,
+                      "the shell does not subscribe to tick, so no key binding can reach it")
+        m = re.search(r"send\('pc:wm:event',\s*\{([^}]*)\}", self.main, re.S)
+        self.assertTrue(m, "the wm event forward could not be found")
+        self.assertIn("payload", m.group(1),
+                      "a tick is forwarded without its payload — every binding looks the same")
+
+    def test_windows_and_mac_get_a_REJECTION_not_an_empty_window_list(self):
+        """THE ONE LINK THAT MAKES THE WINDOWS GUARD HOLD, and it is a single word wide.
+
+        `PCOSShell.detect()` decides whether this machine is PosterChanOS with
+        `Array.isArray(await pcWM.windows())` — and an EMPTY ARRAY IS AN ARRAY. So if the bridge
+        answered a machine with no compositor by resolving `[]` ("no windows"), the shell would
+        declare itself present on Windows and macOS and paint its wifi, volume, brightness and power
+        tray onto somebody's ordinary desktop app. Asked for directly: "make sure the windows and
+        mac versions don't have the PosterChanOS toolbars you made like for wifi, power".
+
+        Windows and macOS never set SWAYSOCK or I3SOCK, so this is the case they take. It is RUN,
+        with the environment cleared, rather than read: the difference between rejecting and
+        resolving empty is invisible in the source and total on screen.
+        """
+        wm = os.path.join(ROOT, "desktop", "wm.js")
+        src = (
+            "const { WM } = require(%r);\n"
+            "const w = new WM('');\n"
+            "w.windows().then(\n"
+            "  v => { console.log('RESOLVED ' + JSON.stringify(v)); },\n"
+            "  e => { console.log('REJECTED ' + String(e && e.message)); });\n" % wm)
+        env = dict(os.environ)
+        env.pop("SWAYSOCK", None)
+        env.pop("I3SOCK", None)
+        r = subprocess.run(["node", "-e", src], capture_output=True, text=True,
+                           timeout=60, env=env)
+        self.assertEqual(r.returncode, 0, r.stderr[-600:])
+        self.assertTrue(r.stdout.startswith("REJECTED"),
+                        "a machine with no compositor answered %r — detect() reads that as an "
+                        "array and the OS shell draws itself on Windows" % r.stdout.strip())
+        # And `available()` says so without a round trip, which is what the page asks first.
+        r2 = subprocess.run(
+            ["node", "-e", "const {WM}=require(%r); console.log(String(new WM('').available()));" % wm],
+            capture_output=True, text=True, timeout=60, env=env)
+        self.assertEqual(r2.stdout.strip(), "false", r2.stderr[-400:])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -807,6 +807,19 @@ posterchanShell() {
 	bindsym $mod+Shift+e exec swaynag -t warning -m 'Exit PosterChanOS?' -B 'Yes' 'swaymsg exit'
 	bindsym $mod+Return exec foot
 
+	# THE SUPER KEY OPENS THE START MENU — from anywhere, including out of a full-screen browser.
+	#
+	# The shell has its own handler for this key, and it can only ever fire when the SHELL has the
+	# keyboard. That is the wrong half: you press Super to leave whatever you are in, so the
+	# keyboard almost always belongs to firefox or a game at that moment, and the desktop never sees
+	# the key at all. A binding can only run a command, never call into us — so it broadcasts a
+	# TICK, which sway delivers to every IPC subscriber, and the shell is one.
+	#
+	# --release, because a binding on the press swallows it: sway would then never deliver Super as
+	# the modifier of $mod+Return, and every other shortcut on this machine would stop working.
+	# --no-repeat so holding it does not open and close the menu at the key repeat rate.
+	bindsym --release --no-repeat $mod exec swaymsg -t send_tick pc:start
+
 	# A game gets the screen to itself and nothing above it.
 	for_window [class="^steam_app_.*"] fullscreen enable, inhibit_idle fullscreen
 	SWAY

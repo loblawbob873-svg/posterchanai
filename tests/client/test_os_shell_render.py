@@ -172,6 +172,24 @@ class Render(unittest.TestCase):
         for want in ("Tribble", "35%", "60%", "80%"):
             self.assertIn(want, out["html"], f"the panel does not show {want}")
 
+    def test_the_battery_opens_the_power_menu_rather_than_only_reporting(self):
+        """A reading you cannot act on is the shape of control this shell keeps getting wrong: the
+        battery was a `<span>`, and the power profiles — the thing you want when you look at a
+        battery — were behind a separate ⏻ two chips along. Asked for as "clicking on battery
+        should let me change power mode"."""
+        # The fake DOM above only collects `<button …>` elements, so a chip appearing here at all
+        # is the assertion that it is pressable — a `<span>` is parsed into nothing.
+        out = self.run_js(self.WM, """
+          globalThis.__wins = [];
+          await S.render(host);
+          const pw = host.querySelectorAll('[data-os]').filter(b => b.dataset.os === 'power');
+          out.battery = pw.some(b => /80%/.test(b.text));
+          out.bound = pw.length > 0 && pw.every(b => typeof b.onclick === 'function');
+        """)
+        self.assertTrue(out["battery"],
+                        "the battery is not a button that opens the power menu")
+        self.assertTrue(out["bound"], "a power chip is painted but nothing is wired to it")
+
     def test_a_subsystem_it_could_not_read_is_marked_not_faked(self):
         bridges = self.WM.replace(
             "pcNet: { status: async () => ({ online: true, kind: 'wifi', name: 'Tribble', signal: 71 }) }",

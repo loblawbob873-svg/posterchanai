@@ -3869,6 +3869,17 @@
           });
         }).catch(()=>{});
     }catch(_){}
+    /* FIRST RUN. A machine nobody has set up yet is asked for its wifi, an instance, Tor and a key
+     * before it is shown a desktop — in that order, for the reasons in osfirstrun.js. It settles
+     * for itself whether anything is still unanswered and whether this is even an operating system,
+     * so this call costs one question everywhere else and draws nothing.
+     *
+     * Called HERE, on every boot, rather than once behind a "have we run" flag: the state is read
+     * from the world each time, so a machine that loses its instance or is signed out is asked
+     * again — which is the honest behaviour — and a flag would be one more thing to go stale. */
+    try{
+      if(window.PCFirstRunUI) PCFirstRunUI.boot().catch(()=>{});
+    }catch(_){}
     /* Opened by "🗔 Open in a window": the same client, drawn without the sidebar, nav and rightbar
      * it has no room for. A class rather than a separate page, because the whole point is that this
      * IS the ordinary stream view — nothing here is a second implementation to fall behind. */
@@ -32249,6 +32260,13 @@
     // 'app://posterchan/api/websearch/page…'". fetch() is rewritten by the bundle's shim; an iframe
     // src is not, so anything that builds a URL for the browser to navigate must go through here.
     apiBase: _instanceBase,
+    /* THE FIRST-RUN WIZARD'S TWO HAND-OFFS, and they are hand-offs rather than copies on purpose.
+     * PosterChanOS asks a new machine for an instance and a key before it will show a desktop, and
+     * a wizard carrying its OWN instance setter and its OWN sign-in form is two more copies of the
+     * two screens that matter most — the ones nobody looks at again after the first boot, and
+     * therefore the ones that rot. These are the same calls Settings and the auth gate make. */
+    setInstance: _setInstanceFromAuth,
+    showAuth,
     // NIP-44 decrypt with the current signer (any login type) — games use it to read their own
     // encrypted hole cards from a public game-state doc.
     nip44dec: (peer, ct) => (signer && signer.nip44dec) ? signer.nip44dec(peer, ct) : Promise.reject(new Error('no nip44')),

@@ -204,6 +204,29 @@ class PosterChanOSProfile(unittest.TestCase):
             self.assertFalse([p for p in self.pkgs if gone in p],
                              f"{gone} is back in the profile — check whether it is really needed")
 
+    def test_the_super_key_reaches_the_shell_from_inside_another_app(self):
+        """A start menu you cannot open while a browser is focused is not one, and that is exactly
+        the machine state you press Super in. The shell's own key handler cannot see the press —
+        the compositor gave the keyboard to firefox — so sway broadcasts a tick instead.
+
+        `--release` is the load-bearing flag: a binding on the PRESS swallows Super, and every
+        `$mod+…` shortcut on the machine stops working. Both copies of the config are checked,
+        because the installer writes one and the overlay package ships the other, and a binding in
+        only one of them works on exactly half the installs."""
+        overlay = os.path.join(ROOT, "os", "overlay", "app-misc", "posterchanos-shell",
+                               "files", "sway.config")
+        texts = {"os/gentoo.sh": self.src}
+        if os.path.exists(overlay):
+            texts["overlay sway.config"] = open(overlay, encoding="utf-8").read()
+        for where, text in texts.items():
+            line = [ln for ln in text.splitlines()
+                    if "send_tick" in ln and "pc:start" in ln]
+            self.assertTrue(line, f"{where} has no Super binding — the start menu cannot be "
+                                  f"opened from inside another app")
+            self.assertIn("--release", line[0],
+                          f"{where} binds Super on the PRESS, which swallows it and breaks "
+                          f"every $mod+key shortcut")
+
     def test_the_backlight_is_writable_without_root(self):
         """sysfs is root-owned, so a session can read the brightness and not change it — a slider
         that moves and does nothing. The udev rule hands it to the `video` group, which

@@ -160,7 +160,21 @@ class WM {
   /* Addressing a window by id is `[con_id=N]`, and it is the only stable handle: a title changes as
    * a page loads and an app_id is shared by every window of an app. */
   focus(id){ return this.command('[con_id=' + Number(id) + '] focus'); }
-  close(id){ return this.command('[con_id=' + Number(id) + '] kill'); }
+  /* A WINDOW THAT IS ALREADY GONE SATISFIES A REQUEST TO CLOSE IT.
+   *
+   * sway answers `No matching node` for a con_id it no longer has, and `command` turns that into a
+   * throw — correctly, since a silent refusal is worse. But this call is made from BOTH ways a
+   * frame closes: the ✕, and the desktop noticing the APP closed itself, which is exactly the case
+   * where the id is stale by the time we ask. The rejection reached the renderer, where nothing was
+   * awaiting it, and the client's unhandledrejection handler put "action failed" on screen every
+   * time somebody quit firefox from its own menu. The postcondition holds, so this is success. */
+  async close(id){
+    try{ return await this.command('[con_id=' + Number(id) + '] kill'); }
+    catch(e){
+      if(/no matching node/i.test(String((e && e.message) || ''))) return [];
+      throw e;
+    }
+  }
   fullscreen(id, on){ return this.command('[con_id=' + Number(id) + '] fullscreen '
                                           + (on === false ? 'disable' : 'enable')); }
   floating(id, on){ return this.command('[con_id=' + Number(id) + '] floating '

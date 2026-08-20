@@ -935,11 +935,20 @@ ipcMain.handle('pc:wm:subscribe', async (e) => {
   const w = wm();
   if (w.__forwarding) return true;
   w.__forwarding = true;
-  await w.subscribe(['window', 'workspace']);
-  for (const name of ['window', 'workspace']) {
+  /* `tick` is how the COMPOSITOR talks to this shell, and it is the only channel there is.
+   *
+   * A key binding in sway can only run a command — it cannot call into us — so a binding that has
+   * to reach the desktop runs `swaymsg -t send_tick <payload>`, which sway broadcasts to every
+   * subscriber. That is what makes the Super key open the start menu even while FIREFOX has the
+   * keyboard, which is the case that matters: a key handler in this page only ever fires when this
+   * page is focused, and the moment you want a start menu is usually the moment something else is. */
+  const NAMES = ['window', 'workspace', 'tick'];
+  await w.subscribe(NAMES);
+  for (const name of NAMES) {
     w.on(name, (ev) => {
       for (const win of BrowserWindow.getAllWindows()) {
-        try { win.webContents.send('pc:wm:event', { name, change: ev && ev.change }); } catch (_) {}
+        try { win.webContents.send('pc:wm:event',
+                { name, change: ev && ev.change, payload: ev && ev.payload }); } catch (_) {}
       }
     });
   }
@@ -1065,6 +1074,7 @@ ipcMain.handle('pc:fs:write', (e, id, rel, bytes, mtime) => {
   fsGuard(e); return fsbridge.write(String(id || ''), String(rel || ''), bytes, mtime);
 });
 ipcMain.handle('pc:fs:move', (e, id, from, to) => { fsGuard(e); return fsbridge.move(String(id || ''), String(from || ''), String(to || '')); });
+ipcMain.handle('pc:fs:remove', (e, id, rel) => { fsGuard(e); return fsbridge.remove(String(id || ''), String(rel || '')); });
 ipcMain.handle('pc:fs:trash', (e, id, rel, when) => { fsGuard(e); return fsbridge.trash(String(id || ''), String(rel || ''), when); });
 ipcMain.handle('pc:fs:empty-trash', (e, id, days) => { fsGuard(e); return fsbridge.emptyTrash(String(id || ''), days); });
 ipcMain.handle('pc:fs:trash-stat', (e, id) => { fsGuard(e); return fsbridge.trashStat(String(id || '')); });

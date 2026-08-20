@@ -8181,3 +8181,35 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
   display:flex; align-items:center; justify-content:center; height:100%;
   color:var(--muted,#7a8699); font-size:12px; letter-spacing:.04em;
 }
+
+/* ── PosterChanOS first run ─────────────────────────────────────────────────────────────────────
+ *
+ * Above everything, including the desktop (z-index 300) and its popovers (340): this is the screen
+ * a machine shows before it will show anything else, so there is nothing legitimate to be behind.
+ * `osfr-on` hides the classic client underneath rather than letting it paint through the card. */
+.osfr{ position:fixed; inset:0; z-index:400; display:flex; align-items:center; justify-content:center;
+       background:radial-gradient(1200px 800px at 50% -10%, rgba(60,232,255,.08), transparent 60%), #05070c;
+       padding:24px; overflow:auto; }
+html.osfr-on body > .app, html.osfr-on #os-root{ visibility:hidden; }
+.osfr-card{ width:min(560px, 100%); border-radius:16px; padding:26px 26px 20px; }
+.osfr-dots{ display:flex; gap:7px; justify-content:center; margin-bottom:18px; }
+.osfr-dot{ width:7px; height:7px; border-radius:50%; background:var(--border,#2a3446); }
+.osfr-dot.done{ background:var(--neon,#3ce8ff); opacity:.45; }
+.osfr-dot.on{ background:var(--neon,#3ce8ff); box-shadow:0 0 10px var(--neon,#3ce8ff); }
+.osfr-h{ margin:0 0 8px; font-size:23px; line-height:1.2; }
+.osfr-sub{ margin:0 0 18px; color:var(--muted,#7a8699); font-size:14px; line-height:1.5; }
+.osfr-body{ min-height:56px; }
+.osfr-input{ width:100%; }
+/* Bounded and scrollable: a laptop in a block of flats sees thirty networks, and a list that grows
+   the card past the screen puts the buttons under the bottom edge with no way to reach them. */
+.osfr-list{ max-height:42vh; overflow-y:auto; display:flex; flex-direction:column; gap:4px; }
+.osfr-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%;
+           padding:9px 11px; border-radius:9px; border:1px solid transparent; background:transparent;
+           color:inherit; font:inherit; text-align:start; cursor:pointer; }
+.osfr-row:hover{ background:rgba(60,232,255,.10); border-color:var(--neon,#3ce8ff); }
+.osfr-row.on{ background:rgba(60,232,255,.16); }
+.osfr-row[disabled]{ opacity:.5; cursor:default; }
+.osfr-nm{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.osfr-sig{ color:var(--muted,#7a8699); font-size:12px; flex:none; }
+.osfr-none,.osfr-note{ color:var(--muted,#7a8699); font-size:13px; line-height:1.5; padding:6px 2px; }
+.osfr-foot{ display:flex; gap:10px; justify-content:flex-end; margin-top:20px; flex-wrap:wrap; }
