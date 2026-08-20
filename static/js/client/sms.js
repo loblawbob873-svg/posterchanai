@@ -268,6 +268,27 @@
    * `(555) 010-4477` and `5550104477` by three different apps, and a thread that splits into three
    * is a thread nobody can read. A short code — fewer than seven digits — must match exactly, or
    * every five-digit sender becomes one conversation. */
+  /* WHO A NUMBER IS, asked of the address book when the message did not say.
+   *
+   * On the phone the archive carries a name: the handset resolved it against its own Contacts app
+   * before publishing. In the WEB app there is no handset, so a thread published without one showed
+   * a bare number while the same person sat in Contacts on the next screen — "I see contacts
+   * correctly in contacts but not Texts".
+   *
+   * The message's own name still wins. It was resolved by the device that received the text, at the
+   * time, which is better evidence than an address book that may have been edited since — and it is
+   * what makes an unknown number stay unknown rather than acquiring a name from a near-miss. */
+  function whoIs(nameFromMsg, address){
+    const n = String(nameFromMsg || '').trim();
+    if(n) return n;
+    try{
+      const c = window.PCContacts;
+      const found = c && c.nameFor ? c.nameFor(address) : '';
+      if(found) return found;
+    }catch(_){ }
+    return String(address || '');
+  }
+
   function key(addr){
     /* SmsKeys.matchKey, in JavaScript. It is the same rule in two languages on purpose and
        tests/test_android_sms.py runs them against each other, because it decides the address a
@@ -353,7 +374,7 @@
       // The message's own timestamp against the floor, NOT "have I notified recently" — the latter
       // suppresses the second message of a conversation, which is the one people are waiting for.
       if((m.date || 0) < S.since) return;
-      const who = m.name || m.address || 'a message';
+      const who = whoIs(m.name, m.address) || 'a message';
       // Through the app's ONE notification path — it knows that Android's WebView implements the
       // Notifications API by doing nothing, and routes to the native builder there instead.
       if(PC.osNotify) PC.osNotify(who, m.body || '', { tag:'sms' });
@@ -782,7 +803,7 @@
           <button class="btn small" id="sms-why">Why isn\u2019t this working?</button></div>
         <div class="sms-threads">${rows.map(t => {
           const last = t.msgs[t.msgs.length-1] || {};
-          const who = last.name || t.address || '';
+          const who = whoIs(last.name, t.address);
           return `<button class="sms-thread" data-k="${enc(t.key)}">
             <div class="sms-av">${enc(initials(who))}</div>
             <div class="sms-body">
@@ -921,7 +942,7 @@
   function paintThread(feed, enc){
     const t = S.threads.find(x => x.key === S.open);
     if(!t){ S.open = ''; return paint(); }
-    const who = (t.msgs[t.msgs.length-1] || {}).name || t.address;
+    const who = whoIs((t.msgs[t.msgs.length-1] || {}).name, t.address);
     feed.innerHTML = `
       <div class="sms-wrap">
         <div class="sms-head">

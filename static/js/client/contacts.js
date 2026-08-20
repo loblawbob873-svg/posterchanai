@@ -1172,7 +1172,56 @@
     }
 
     // ---- entry -------------------------------------------------------------------------------
+    /* A NUMBER'S NAME, FOR ANY SCREEN THAT HAS A NUMBER AND NO NAME.
+     *
+     * Texts is the caller. On the phone the archive carries a name because the handset resolved it
+     * against its own Contacts app before publishing; in the WEB app there is no handset, so a
+     * thread published without one showed a bare number — "I see contacts correctly in contacts but
+     * not Texts", with the address book right there on the next screen.
+     *
+     * MATCHED ON THE LAST SEVEN DIGITS, which is `key()` in sms.js and `SmsKeys.matchKey` in Java.
+     * Three copies of one rule is not ideal and the alternative is worse: a shared module between
+     * two features that otherwise do not know about each other. tests/client/test_sms_names_come_
+     * from_contacts.py runs this one against sms.js's so they cannot drift.
+     *
+     * Built from whatever this device already has — the cache counts. Somebody who has never opened
+     * Contacts in this session still has their address book in localStorage, and a name is worth
+     * showing from it; nothing here writes, so a stale index costs a stale label and nothing else. */
+    let _telIdx = null, _telSig = '';
+    function _numKey(addr){
+      const digits = String(addr || '').replace(/[^0-9]/g, '');
+      if(!digits) return String(addr || '').replace(/[^0-9+]/g, '');
+      return digits.length < 7 ? digits : digits.slice(-7);
+    }
+    function _buildTelIndex(){
+      const sig = S.book + '|' + S.rev + '|' + Object.keys(S.cards || {}).length;
+      if(_telIdx && _telSig === sig) return _telIdx;
+      const idx = new Map();
+      for(const book of Object.keys(S.cards || {})){
+        for(const rec of (S.cards[book] || [])){
+          let c = null;
+          try{ c = V().parse(rec.ics || ''); }catch(_){ continue; }
+          const nm = (c && (c.fn || V().sortKey(c))) || '';
+          if(!nm) continue;
+          for(const t of (c.tels || [])){
+            const k = _numKey(t && t.value);
+            if(k && !idx.has(k)) idx.set(k, nm);   // first card wins, so a repaint is stable
+          }
+        }
+      }
+      _telIdx = idx; _telSig = sig;
+      return idx;
+    }
+
     window.PCContacts = {
+      /** The name for a phone number, or '' — never the number back, so the caller decides. */
+      nameFor(number){
+        try{
+          if(!S.ready && !Object.keys(S.cards || {}).length) _loadCache();
+          const k = _numKey(number);
+          return (k && _buildTelIndex().get(k)) || '';
+        }catch(_){ return ''; }
+      },
       render(){
         paint();
         /* A FAILED LOAD IS NOT A VERDICT. `ready` was set on the way out of load() whatever
