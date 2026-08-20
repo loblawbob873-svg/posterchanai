@@ -841,6 +841,19 @@
     return src || '/static/posterchan-relay.png';
   }
 
+  /* A SCANNED PROGRAM'S OWN PICTURE, when the machine could find one. `iconUri` is a data: URI the
+   * main process resolved from the entry's `Icon=` theme name — see apps.js. Anything without one
+   * falls back to the sprite, which is what every one of them used to get: five identical grey
+   * squares for Firefox, OBS, mupdf, qemu and btop. */
+  function appIcon(a){
+    const u = a && a.iconUri ? String(a.iconUri) : '';
+    /* `data:` ONLY. This string came from a file on the disk by way of the bridge, and an <img src>
+     * is one of the few places a stray value turns into a request — an http(s) one from the app://
+     * origin would be a menu that phones out because somebody's .desktop file said so. */
+    if(u.slice(0, 5) === 'data:') return `<img class="os-app-ic" src="${enc(u)}" alt="" loading="lazy">`;
+    return iconSvg((a && a.icon) || 'grid');
+  }
+
   /* The sidebar's own <use href> values carry the '#', but every hand-written call site here passes
    * a bare id — and `<use href="i-wot">` resolves to NOTHING and draws nothing, with no error. That
    * is why the start-menu stat icons and the Post/Profile/Search window-title icons were blank. Take
@@ -1764,6 +1777,17 @@
                w: w.el.offsetWidth, h: w.el.offsetHeight };
   }
 
+  /* MOVING THE FRAME IS NOT MOVING THE WINDOW. For a native window the frame is ours and the app is
+   * a real compositor surface floating over the hole in it, so the two only stay together because
+   * `nsync` tells sway where the hole went. Every other path that changes geometry says so — focus,
+   * the end of a drag or resize, adopting, minimising — and these two did not.
+   *
+   * Maximise therefore moved our chrome to fill the screen and left the app at its old size, and
+   * restoring moved the chrome back while the app stayed FULL SCREEN, sitting over the frame it was
+   * supposed to be inside. What that looks like is the border going missing: "maximizing and
+   * unmaximizing removes the border". The border is drawn, and an application-sized surface is
+   * parked on top of it. It was hidden this long because a manual resize ends in a gesture, which
+   * does sync — only the maximise BUTTON, which is a click, went unreported. */
   function snapTo(w, z){
     const css = rectOf(z);
     if(!css) return;
@@ -1774,6 +1798,7 @@
     w.el.classList.add('snapped');
     Object.assign(w.el.style, css);
     focusWin(w);
+    if(nativeWins().length) nsync();
   }
 
   function unsnap(w){
@@ -1782,6 +1807,7 @@
     w.el.classList.remove('maximised', 'snapped');
     Object.assign(w.el.style, { left: w.rect.x + 'px', top: w.rect.y + 'px',
                                 width: w.rect.w + 'px', height: w.rect.h + 'px' });
+    if(nativeWins().length) nsync();
   }
 
   function toggleMax(w){
@@ -3511,6 +3537,37 @@
     window.addEventListener('blur', up);
   }
 
+  /* WHERE A NEW WIDGET SHOULD GO, as a FRACTION, given what is already there.
+   *
+   * Runs the real layout (`placeWidgets`) over the existing widgets, then walks down the right-hand
+   * edge looking for the first gap the new one fits in; falls back to the bottom-right when the
+   * column is full, and lets `placeWidgets` do its own overflow from there. Everything is in the
+   * same layout pixels the desk is measured in, and the answer is converted back to a fraction
+   * because that is what survives a change of screen.
+   *
+   * DOM-free on purpose — `deskW`/`deskH` are passed in — so tests/test_desktop_widgets.py can run
+   * it at a tablet size and a monitor size and see that the answers differ correctly. */
+  function nextWidgetSpot(rows, type, size, deskW, deskH){
+    const dw = deskW || (desk ? desk.clientWidth : 1280);
+    const dh = deskH || (desk ? desk.clientHeight : 800);
+    const box = wgtBox(size || 'm', dw, dh, WIDGETS[type]);
+    const maxX = Math.max(0, dw - box.w - WGT_GAP), maxY = Math.max(0, dh - box.h - WGT_GAP);
+    const placed = placeWidgets(rows || [], dw, dh);
+    const x = maxX;                                   // the right-hand edge, where widgets live here
+    const clashes = (y) => placed.some(o =>
+      x < o.x + o.w + WGT_GAP && x + box.w + WGT_GAP > o.x &&
+      y < o.y + o.h + WGT_GAP && y + box.h + WGT_GAP > o.y);
+    const top = Math.round(WGT_GAP / 2);
+    /* Candidate tops: the very top, then just under the bottom of everything already placed. That
+     * is the set of positions a person would consider, and it closes gaps left by a removed widget
+     * instead of always appending to the end. */
+    const cands = [top].concat(placed.map(o => o.y + o.h + WGT_GAP))
+                       .filter(y => y <= maxY)
+                       .sort((a, b) => a - b);
+    for(const y of cands) if(!clashes(y)) return { x: 1, y: maxY > 0 ? Math.min(1, y / maxY) : 0 };
+    return { x: 1, y: 1 };                            // column full — placeWidgets starts a new one
+  }
+
   function addWidget(type){
     if(!WIDGETS[type]) return Promise.resolve(false);
     return _apply((doc) => {
@@ -3519,11 +3576,21 @@
         try{ PC().toast('that is as many widgets as the desktop takes'); }catch(_){}
         return false;
       }
-      // Down the right-hand side, out of the icons' way, stepping so a second widget does not land
-      // exactly on the first.
-      const n = doc.widgets.length;
+      /* THE FIRST FREE SLOT DOWN THE RIGHT-HAND SIDE, not a guess from the count.
+       *
+       * It used to be `y: n * 0.22` — the number of widgets you already had, times a fixed step. On
+       * a monitor that is four clear panels; the fifth asks for 0.88 and the sixth for 1.0, which is
+       * the bottom of the screen whether or not the space above it is empty. Combined with
+       * `placeWidgets` pushing anything that clashes into a NEW COLUMN TO THE LEFT, a new widget
+       * lands in the middle of the desktop with clear space beside it. Reported as "widgets open in
+       * weird places".
+       *
+       * `nextWidgetSpot` asks where the thing would actually FIT instead, using the same arithmetic
+       * that draws them, so the answer is the slot a person would have picked: under the last one,
+       * against the same edge. Pure, and tested at real tablet and monitor sizes. */
+      const spot = nextWidgetSpot(doc.widgets, type, 'm');
       doc.widgets.push({ id: type + '-' + Math.random().toString(36).slice(2, 8), type,
-                         x: 1, y: Math.min(1, n * 0.22), size: 'm', cfg: {} });
+                         x: spot.x, y: spot.y, size: 'm', cfg: {} });
     }).then(ok => { if(ok) drawWidgets(); return ok; });
   }
   function removeWidget(id){
@@ -4685,7 +4752,7 @@
           if(nat.length) natives = `<div class="os-applist-h">This computer</div>`
             + nat.map(a => `<button class="os-app" data-app="${enc(a.id)}"${
                  a.comment ? ` title="${enc(a.comment)}"` : ''}>
-                 ${iconSvg(a.icon || 'grid')}<span>${enc(a.name)}</span></button>`).join('');
+                 ${appIcon(a)}<span>${enc(a.name)}</span></button>`).join('');
         }
       }catch(_){ natives = ''; }
       $('#os-applist', menu).innerHTML = nrow + (list.length
@@ -4693,6 +4760,32 @@
              ${iconSvg(a.icon)}<span>${enc(a.label)}</span></button>`).join('')
         : (q || natives ? '' : '<div class="muted small" style="padding:10px">Nothing matches that.</div>'))
         + natives;
+      /* RIGHT-CLICK IN THE START MENU PUTS IT ON THE DESKTOP — "right-click should offer
+       * add-to-desktop". Until now the only way back for an icon you had hidden was the desktop's
+       * own right-click menu, which lists them by name and only shows twelve; the place people
+       * actually look is the menu entry itself.
+       *
+       * It is offered on OUR views, which are what the layout document is made of. A native program
+       * is not a view — the document holds decisions ABOUT the sidebar, and inventing a second kind
+       * of entry for it is a change to the arrangement format, not a menu item. That is said rather
+       * than silently doing nothing on half the list. */
+      $$('.os-app', menu).forEach(b => b.oncontextmenu = (ev) => {
+        ev.preventDefault(); ev.stopPropagation();
+        const view = b.dataset.view;
+        if(!view){
+          showCtx(ev.clientX, ev.clientY,
+            [{ label: 'Only PosterChan’s own screens can go on the desktop', run: () => {} }]);
+          return;
+        }
+        const lay = layout();
+        const shown = lay.items.some(a => a.view === view);
+        const label = (apps().find(a => a.view === view) || {}).label || view;
+        showCtx(ev.clientX, ev.clientY, shown
+          ? [{ label: 'Already on the desktop', run: () => { toggleStart(false); openApp(view); } },
+             { sep: true },
+             { label: 'Hide ' + label + ' from the desktop', run: () => { hideItem(view); toggleStart(false); } }]
+          : [{ label: 'Add ' + label + ' to the desktop', run: () => { showItem(view); toggleStart(false); } }]);
+      });
       $$('.os-app', menu).forEach(b => b.onclick = () => {
         if(b.dataset.find) return searchNostr(q);
         /* A native app is STARTED, which takes as long as it takes — the menu closes first so the
@@ -5004,6 +5097,68 @@
       const f = wins.find(w => w.el.classList.contains('focused'));
       if(f){ e.preventDefault(); closeWin(f); }
     }
+
+    /* PRINT SCREEN. Windows takes the whole screen with PrtSc and picks an area with Shift+PrtSc
+     * (Win+Shift+S), and those are the two things anybody wants. Nothing else on this desktop uses
+     * the key, and a browser tab never sees it at all — so there is no binding to lose.
+     *
+     * `keyCode` is checked as well as `key` because a compositor that has already grabbed the key
+     * can deliver it with no `key` name at all. */
+    if(e.key === 'PrintScreen' || e.keyCode === 44){
+      e.preventDefault();
+      shoot(e.shiftKey ? 'region' : 'screen');
+      return;
+    }
+
+    /* TYPING IS NOT A SHORTCUT. Every binding below is a plain letter with a modifier, and a text
+     * field is where those letters are supposed to land — Ctrl+F in the terminal, in a note, in the
+     * composer belongs to whatever is focused, not to the desktop. */
+    const t = e.target;
+    const typing = !!(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || '')));
+
+    /* CTRL+ENTER OPENS A TERMINAL ON THIS COMPUTER — sway's own $mod+Return, spelled for a desktop
+     * whose Super key already opens the start menu. It names the machine (see PCTerm.openLocal), so
+     * it cannot land you in an SSH session on another one. */
+    if(e.ctrlKey && !e.altKey && !e.metaKey && (e.key === 'Enter' || e.key === 'NumpadEnter')){
+      e.preventDefault();
+      openTerminalHere();
+      return;
+    }
+
+    /* CTRL+F FINDS THINGS — reported simply as "Ctrl+F does nothing", which it did: nothing on this
+     * desktop was listening for it. It opens the start menu with the caret in its search box, which
+     * is the one box that searches BOTH this machine's programs and the app's own screens, and is
+     * what Windows' own Search does. Not taken while somebody is typing. */
+    if(e.ctrlKey && !e.altKey && !e.metaKey && (e.key === 'f' || e.key === 'F') && !typing){
+      e.preventDefault();
+      toggleStart(true);
+      const q = $('#os-q', root); if(q) q.focus();
+      return;
+    }
+  }
+
+  /* A TERMINAL ON THIS MACHINE, from the keyboard or the menu. Opened as a WINDOW like every other
+   * screen — there is no second terminal implementation and no `foot`; `PCTerm.openLocal` is what
+   * makes it a shell here rather than a reattach to whatever this device last SSH'd into. */
+  function openTerminalHere(){
+    let local = false;
+    try{ local = !!(window.PCTerm && PCTerm.openLocal && PCTerm.openLocal()); }catch(_){ local = false; }
+    /* NO LOCAL PTY IS SAID OUT LOUD. Off PosterChanOS — a browser tab, the Windows app — there is no
+     * bridge to a shell, and opening the SSH terminal on a keystroke that promised a local one is
+     * how somebody ends up typing into the wrong computer. */
+    if(!local){
+      try{ PC().toast('there is no shell on this machine — the Terminal opens SSH hosts'); }catch(_){}
+    }
+    openApp('terminal');
+  }
+
+  /* Take one, and say where it went. The desktop's half is deliberately thin: PCOSShell.takeShot
+   * owns the modes, the refusals and the toast, so the tray tile and this key cannot drift. */
+  function shoot(mode){
+    try{
+      if(window.PCOSShell && PCOSShell.takeShot) PCOSShell.takeShot(mode);
+      else PC().toast('screenshots are not available here');
+    }catch(_){ try{ PC().toast('screenshots are not available here'); }catch(__){} }
   }
 
   function toggle(){ on ? exit() : enter(); }
@@ -5162,6 +5317,7 @@
                   __calDayLabel: (d, now) => _calDayLabel(d, now),
                   __calOccurrences: (items, a, b) => _calOccurrences(items, a, b),
                   __placeWidgets: (l, w, h) => placeWidgets(l, w, h),
+                  __nextWidgetSpot: (rows, type, size, w, h) => nextWidgetSpot(rows, type, size, w, h),
                   /* The three newest panels' decisions, DOM-free for the same reason as the rest: a
                    * clock that is an hour out in a zone with a half-hour offset, a ticker that runs
                    * off the end of a three-item feed, a counter row that drops a zero — each one is
