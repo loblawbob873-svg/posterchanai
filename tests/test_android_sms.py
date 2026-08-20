@@ -95,6 +95,12 @@ require(process.argv[2]);
   const S = global.window.PCSms;
   const out = {
     outbox: await S._outboxId('+1 555 010 4477', 'on my way', 1700000000000),
+    // The archive's address for one message. The JS half started composing sent messages when the
+    // app is not the default SMS app, so it now has to agree with SmsKeys.docId or the same text
+    // is filed at two addresses and appears twice in the thread the moment the role is granted.
+    doc: await S._docId('+15550104477', 1700000000123, 'hello', true),
+    doc_ms: await S._docId('(555) 010-4477', 1700000000999, 'hello', true),
+    doc_out: await S._docId('+15550104477', 1700000000123, 'hello', false),
     key_full: S._key('+1 (555) 010-4477'),
     key_other: S._key('5550104477'),
     key_short: S._key('22000'),
@@ -102,6 +108,17 @@ require(process.argv[2]);
   console.log(JSON.stringify(out));
 })();
 """
+
+
+def _run_node():
+    """The shipped sms.js under node, returning what its rule functions answered."""
+    with tempfile.TemporaryDirectory() as tmp:
+        h = os.path.join(tmp, "h.js")
+        with open(h, "w") as f:
+            f.write(NODE_HARNESS)
+        r = subprocess.run([NODE, h, SMSJS], capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr[-3000:]
+    return json.loads(r.stdout.strip().splitlines()[-1])
 
 
 @unittest.skipIf(not JAVAC or not JAVARUN, "no JDK on this node")
@@ -157,6 +174,20 @@ class SmsRules(unittest.TestCase):
         self.assertEqual(self.out["doc-second"], "false", "a second apart is not the same message")
         self.assertTrue(re.fullmatch(r"pcai:sms:[0-9a-f]{24}", self.out["doc-shape"]),
                         self.out["doc-shape"])
+
+    @unittest.skipIf(not NODE, "no node on this node")
+    def test_the_javascript_files_a_message_at_the_same_address(self):
+        """The client composes sent messages itself when the app is not the default SMS app — there
+        is no provider row to read one back from. If its id rule differs from SmsKeys.docId by so
+        much as a separator, the same text is filed twice and appears twice in the thread the moment
+        the role is granted and the provider copy is published.
+
+        Milliseconds inside one second are the same message; the direction is part of identity."""
+        js = _run_node()
+        self.assertEqual(js["doc"], self.out["doc-shape"],
+                         "sms.js and SmsKeys.docId disagree about a message's address")
+        self.assertEqual(js["doc_ms"], js["doc"], "a rounded timestamp made a second document")
+        self.assertNotEqual(js["doc_out"], js["doc"], "direction is not part of the identity")
 
     def test_a_multipart_message_is_stored_whole(self):
         """Getting this wrong stores a long text as its first 160 characters and discards the rest,

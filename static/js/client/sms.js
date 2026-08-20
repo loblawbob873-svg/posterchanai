@@ -595,8 +595,24 @@
            * that must never be invented is a message nobody received. */
           const at = Date.now();
           try{
-            const doc = await outboxId(to, body, at);
-            S.msgs.set(doc, { doc, address: to, body, date: at, incoming: false, name: '' });
+            /* THE ARCHIVE'S OWN ID, not `outboxId` — that is the `pcai:smsout:` namespace for a
+             * send REQUEST another device performs, and filing a sent message there would put it
+             * in front of the drain as a job to do. This is `pcai:sms:`, the same address the
+             * phone's own publisher would give it, so if the role is granted later and the message
+             * is read back out of the provider it lands on the SAME document instead of appearing
+             * twice. */
+            const doc = await docIdFor(to, at, body, false);
+            const m = { doc, address: to, body, date: at, incoming: false, name: '' };
+            /* PUBLISHED, not just remembered. `mirror` republishes from the phone's message store
+             * and without the role there is no row there to find — so an in-memory copy is gone on
+             * the next load, and the message that was genuinely sent vanishes from the thread it
+             * was sent in. Reported as "my new sent message not showing" and "my messages in dad
+             * thread are not appearing": they were sent, shown once, and lost on reload.
+             *
+             * It goes in the archive even if the publish fails — the text really was sent, and the
+             * thread should say so on this device whatever the relay did. */
+            try{ await publishOne(m); }catch(_){ }
+            S.msgs.set(doc, m);
             rebuild();
           }catch(_){ }
           return { ok:true, where:'phone', stored:false };
@@ -623,6 +639,19 @@
   async function outboxId(address, body, askedMs){
     const canon = key(address) + '\n' + askedMs + '\n' + (body || '');
     return D_OUT + (await sha256hex(canon)).slice(0, 24);
+  }
+
+  /* THE ARCHIVE'S ADDRESS FOR ONE MESSAGE — `SmsKeys.docId` in JavaScript.
+   *
+   * Same canonical string in both languages or the two halves file the same message at two
+   * addresses, and it appears twice in every thread. SECOND-resolution time, deliberately: the
+   * provider stores milliseconds, a Nostr event stores seconds, and a message re-read from a
+   * restored backup can come back rounded — built from seconds, the two copies still agree.
+   * tests/test_android_sms.py runs this against the Java. */
+  async function docIdFor(address, dateMs, body, incoming){
+    const canon = key(address) + '\n' + Math.floor(dateMs / 1000) + '\n'
+                + (incoming ? 'in' : 'out') + '\n' + (body || '');
+    return D_MSG + (await sha256hex(canon)).slice(0, 24);
   }
 
   async function sha256hex(s){
@@ -1098,5 +1127,5 @@
 
   window.PCSms = { render, mirror, importAll, loadFromPhone, emptyWhy, ensureRead, phoneState,
                    drainOutbox, send, remove, load,
-                   _state: () => S, _key: key, _outboxId: outboxId };
+                   _state: () => S, _key: key, _outboxId: outboxId, _docId: docIdFor };
 })();
