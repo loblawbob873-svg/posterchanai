@@ -132,10 +132,13 @@ def _framework_free_stubs(out_dir):
     if os.path.isdir(dst):
         shutil.rmtree(dst)
     shutil.copytree(STUBS, dst)
-    # `org` too: android.jar carries the real org.json, and the stub of it here is a two-method
-    # skeleton that shadows it — which reads as "JSONArray has no optString(int, String)".
-    for gone in ("android", "place", "org"):
+    for gone in ("android", "place"):
         shutil.rmtree(os.path.join(dst, gone), ignore_errors=True)
+    # `org/json` ONLY, not all of `org`: android.jar carries the real org.json and the stub here is a
+    # two-method skeleton that shadows it ("JSONArray has no optString(int, String)"). But org/junit
+    # is NOT in android.jar, and removing the whole tree took it with it — which made every
+    # instrumented test fail to resolve `assertTrue` and looked exactly like the tests being wrong.
+    shutil.rmtree(os.path.join(dst, "org", "json"), ignore_errors=True)
     return dst
 
 
@@ -181,7 +184,14 @@ def compile_sources(sources, out_dir, extra_sourcepath=(), shims=None):
         # -source/-target with an explicit -bootclasspath, and the "bootstrap class path not set"
         # warning that comes with it is suppressed rather than fixed — it is telling us we are doing
         # deliberately the thing we came here to do.
-        [javac, "-nowarn", "-Xlint:-options", "-source", "8", "-target", "8",
-         "-bootclasspath", jar, "-classpath", jar,
+        # android.jar on the CLASSPATH, not the bootclasspath.
+        #
+        # -bootclasspath replaces java.* entirely with Android's copy, and that copy has no usable
+        # java.lang.invoke.LambdaMetafactory — so any source containing a LAMBDA fails with "Unable
+        # to find method metafactory", which reads as the code being wrong rather than the compiler
+        # being mis-configured. On the classpath, android.* still comes from the real SDK (which is
+        # the whole point) and java.* comes from the JDK.
+        [javac, "-nowarn", "-Xlint:-options", "-source", "11", "-target", "11",
+         "-classpath", jar,
          "-d", os.path.join(out_dir, "classes"), "-sourcepath", sp] + list(sources),
         capture_output=True, text=True, timeout=600)

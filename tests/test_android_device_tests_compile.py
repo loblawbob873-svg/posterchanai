@@ -1,0 +1,83 @@
+"""THE DEVICE TESTS MUST COMPILE, and until now nothing checked that they did.
+
+This is `tests/test_android_sync_compiles.py`'s lesson applied to the one place it had not been: a
+test that cannot compile is a test that does not exist, only quieter — and these are the tests that
+exist BECAUSE static checking cannot see a launcher, a role or a widget.
+
+It has already happened. `LauncherDeviceTest` was missing a single import, so
+`compileDebugAndroidTestJavaWithJavac` failed and every instrumented test on the device was skipped.
+That was invisible from here for two reasons at once: nothing local compiled androidTest, and the
+emulator workflow was itself broken in a way that meant `connectedDebugAndroidTest` had never run.
+Two silent failures stacked, and the visible symptom was a red job with a green-looking log.
+
+Compiled against the real android.jar (tests/androidcompile.py) plus small stubs for JUnit and
+androidx.test — the frameworks are not on this box, and their absence must not be the reason the
+check does not run.
+"""
+import glob
+import os
+import shutil
+import sys
+import tempfile
+import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import androidcompile as ac  # noqa: E402
+
+ANDROID_TEST = os.path.join(ac.ROOT, "mobile", "android", "app", "src", "androidTest", "java")
+
+
+@unittest.skipIf(not shutil.which("javac"), "no javac on this node")
+@unittest.skipIf(ac.android_jar() is None, "no android.jar on this node")
+@unittest.skipIf(not os.path.isdir(ANDROID_TEST), "no androidTest sources here")
+class DeviceTestsCompile(unittest.TestCase):
+
+    def _sources(self):
+        return sorted(glob.glob(os.path.join(ANDROID_TEST, "**", "*.java"), recursive=True))
+
+    def test_every_instrumented_test_compiles(self):
+        src = self._sources()
+        self.assertTrue(src, "no androidTest sources — the path moved and this stopped checking")
+        # The app's own sources come along, because these tests call into them and a signature that
+        # moved is exactly the drift this is here to catch.
+        app = []
+        for pkg in ("home", "ui", "sms", "phone"):
+            app += glob.glob(os.path.join(ac.JAVA, "place", "poster", "app", pkg, "*.java"))
+        shims = {
+            # MusicService needs androidx.media, which is not on this box; the launcher only uses
+            # these four members of it. NOT compile-checked here — CI's assembleDebug is.
+            "place/poster/app/music/MusicService.java": """
+package place.poster.app.music;
+public class MusicService {
+  public static final String ACTION_TOGGLE = "x";
+  public interface Watcher { void onNowPlaying(String t, String a, boolean p); }
+  public static void setWatcher(Watcher w) { }
+  public static String nowTitle() { return ""; }
+  public static String nowArtist() { return ""; }
+  public static boolean nowPlaying() { return false; }
+}
+""",
+            "place/poster/app/music/MusicWidget.java": """
+package place.poster.app.music;
+public class MusicWidget extends android.content.BroadcastReceiver {
+  @Override public void onReceive(android.content.Context c, android.content.Intent i) { }
+}
+""",
+            "place/poster/app/MainActivity.java":
+                "package place.poster.app;\npublic class MainActivity extends android.app.Activity { }\n",
+        }
+        with tempfile.TemporaryDirectory() as out:
+            r = ac.compile_sources(sorted(set(src + app)), out, shims=shims)
+        self.assertEqual(r.returncode, 0,
+                         (r.stdout[-2000:] + "\n" + r.stderr[-6000:]).strip())
+
+    def test_the_tests_that_matter_are_among_them(self):
+        """Named, because these are the ones that can see what nothing here can: the launcher on a
+        real home screen, the SMS role, and whether an icon actually paints pixels."""
+        names = {os.path.basename(p) for p in self._sources()}
+        for f in ("LauncherDeviceTest.java", "SmsDeviceTest.java", "DialerDeviceTest.java"):
+            self.assertIn(f, names)
+
+
+if __name__ == "__main__":
+    unittest.main()
