@@ -16,6 +16,7 @@ both asserted here.
    rebuilt it ~150 times, discarding and re-creating every <video> mid-fetch. The right rail
    (loadNotifs) renders the same rows again, so on a tablet each video existed twice over.
 """
+import re
 import unittest
 from pathlib import Path
 
@@ -108,3 +109,64 @@ class VideoLazyMount(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OneVideoAtATime(unittest.TestCase):
+    """"if I'm scrolling and two posts have videos, they both play audio. Only 1 should play at a
+    time. Also, if I scroll past the video, the audio should stop."
+
+    Two reports, one cause. Nothing ever paused a second video when a first was playing, and
+    `unmount` deliberately refused to touch a playing one — the comment on that line read "audio
+    keeps going off-screen", which was a choice and is the bug.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = APP.read_text()
+
+    def test_starting_one_video_pauses_the_others(self):
+        m = re.search(r"document\.addEventListener\('play',([\s\S]{0,600}?)\}, true\);", self.src)
+        self.assertIsNotNone(m, "nothing pauses the other videos when one starts")
+        body = m.group(1)
+        self.assertIn("querySelectorAll('video')", body,
+                      "it only pauses videos this module mounted — a second surface still doubles up")
+        self.assertIn("pause()", body)
+
+    def test_it_listens_in_the_capture_phase_because_play_does_not_bubble(self):
+        """A `play` listener on the document without `true` never fires, and the failure is silent:
+        the handler is registered, the code looks right, and two videos still play."""
+        m = re.search(r"document\.addEventListener\('play',[\s\S]{0,600}?\}, (true|false)\);", self.src)
+        self.assertIsNotNone(m)
+        self.assertEqual(m.group(1), "true")
+
+    def test_scrolling_past_a_playing_video_stops_it(self):
+        """`unmount` used to return early for anything playing, which is precisely how audio kept
+        running from a post far off the screen."""
+        # Brace-matched, not a fixed window: a slice long enough today is a test that breaks the
+        # next time somebody writes a paragraph, which is how a guard stops being believed.
+        i = self.src.index("function unmount(el, force){")
+        j = self.src.index("{", i)
+        depth, k = 0, j
+        while k < len(self.src):
+            if self.src[k] == "{":
+                depth += 1
+            elif self.src[k] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            k += 1
+        body = self.src[i:k + 1]
+        self.assertNotIn("if(!el.paused && !el.ended) return;", body,
+                         "a playing video is again exempt from unmount, so its audio outlives the "
+                         "viewport")
+        self.assertIn("pause()", body, "unmount no longer pauses what it is about to free")
+
+    def test_fullscreen_and_picture_in_picture_are_exempt(self):
+        """Not cosmetic. A fullscreen video's element is still laid out where it was in the feed, so
+        the observer reports it off-screen the moment anything scrolls underneath — pausing what
+        somebody is watching full-screen would be a worse bug than the one being fixed."""
+        m = re.search(r"const _exempt = el => \{([\s\S]{0,500}?)\n    \};", self.src)
+        self.assertIsNotNone(m, "nothing exempts fullscreen/PiP from the scroll-past rule")
+        body = m.group(1)
+        self.assertIn("pictureInPictureElement", body)
+        self.assertIn("fullscreenElement", body)

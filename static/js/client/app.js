@@ -11485,9 +11485,46 @@
     const _url = el => el.dataset.vsrc || '';
     const _dist = el => { const r=el.getBoundingClientRect(); const c=(innerHeight||800)/2; return Math.abs(r.top+r.height/2-c); };
     const _painted = el => el.readyState >= 2;               // HAVE_CURRENT_DATA — a frame exists
+    /* ONE VIDEO AT A TIME, AND IT STOPS WHEN YOU SCROLL PAST IT.
+     *
+     * Two reports, one cause: "if I'm scrolling and two posts have videos, they both play audio" and
+     * "if I scroll past the video, the audio should stop". Nothing ever paused a second video when a
+     * first was playing, and `unmount` deliberately refused to touch a playing one — the comment on
+     * that line said "audio keeps going off-screen", which was a choice and is the bug.
+     *
+     * `play` does NOT bubble, so this listens in the CAPTURE phase on the document: that reaches
+     * every video on every surface (timeline, thread, profile, search, notifications, community,
+     * bookmarks…) including ones this module never mounted, without a dozen render paths having to
+     * remember to opt in. Same reasoning as `add()` watching the whole document.
+     *
+     * FULLSCREEN AND PICTURE-IN-PICTURE ARE EXEMPT FROM THE SCROLL RULE, and that exemption is not
+     * cosmetic: a fullscreen video's element is still laid out where it was in the feed, so the
+     * observer reports it as off-screen the moment anything scrolls underneath — and pausing what
+     * somebody is watching full-screen because a background list moved would be a far worse bug than
+     * the one being fixed. */
+    const _playing = el => el && !el.paused && !el.ended;
+    const _exempt = el => {
+      try{ if(document.pictureInPictureElement === el) return true; }catch(_){}
+      try{ if(document.fullscreenElement && document.fullscreenElement.contains(el)) return true; }catch(_){}
+      try{ if(el.webkitDisplayingFullscreen) return true; }catch(_){}   // iOS has its own idea
+      return false;
+    };
+    document.addEventListener('play', (e) => {
+      const el = e.target;
+      if(!el || el.tagName !== 'VIDEO') return;
+      document.querySelectorAll('video').forEach(v => {
+        if(v !== el && _playing(v)) { try{ v.pause(); }catch(_){} }
+      });
+    }, true);
+
     function unmount(el, force){
       if(!el.dataset.vmount) return;
-      if(!el.paused && !el.ended) return;                         // playing → leave it alone (audio keeps going off-screen)
+      /* A PLAYING VIDEO IS PAUSED FIRST, then freed like any other. It used to be left alone
+       * entirely, which is what kept audio running from a post scrolled far off the screen. */
+      if(_playing(el)){
+        if(_exempt(el)) return;
+        try{ el.pause(); }catch(_){}
+      }
       if(!force && el.isConnected && !_painted(el)){
         const waited = Date.now() - (+el.dataset.vmt || 0);
         if(waited < FIRST_FRAME_GRACE){
