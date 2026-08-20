@@ -3860,16 +3860,23 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 @media (min-width:821px) and (max-width:1920px){ body{ zoom:.77; --zf:.77 } .app{ height:calc(100dvh / .77) } .main{ height:100% } }
 @media (min-width:821px) and (max-width:1600px){ body{ zoom:.72; --zf:.72 } .app{ height:calc(100dvh / .72) } .main{ height:100% } }
 @media (min-width:821px) and (max-width:1366px){ body{ zoom:.67; --zf:.67 } .app{ height:calc(100dvh / .67) } .main{ height:100% } }
-/* 4K / very large screens: native 1.0 (no shrink). */
-@media (min-width:1921px){ body{ zoom:1 } .app{ height:100dvh } .main{ height:100% } }
+/* 4K / very large screens: native 1.0 (no shrink).
+   `--zf` IS SET HERE, and forgetting it is what cut the top off the desktop on Windows.
+   These rules only override `zoom`; the variable kept whatever an earlier tier set, so a screen
+   matching both got `zoom:1` with `--zf:.72` — and every container sized `calc(100dvh / var(--zf))`
+   then computed 139% of the viewport. The desktop (.os-root, line ~6037) is one of them, so it grew
+   taller than the window and its top went off screen; resizing narrow enough to leave this tier made
+   the two agree again, which is exactly how it was reported: "i have to resize the entire windows
+   app to see the desktop normally". `zoom` and `--zf` are one fact and must be written together. */
+@media (min-width:1921px){ body{ zoom:1; --zf:1 } .app{ height:100dvh } .main{ height:100% } }
 /* OS display scaling shrinks a screen's CSS width, so a high-DPI DESKTOP panel (e.g. 1868px CSS at
    devicePixelRatio 1.25 = Windows 125%) lands in the laptop-shrink tiers above and renders everything
    tiny. Key off device-pixel-ratio: give these screens native scale. A genuine ~1.0-dPR laptop reports
    a true small width AND low dPR, so it still gets the shrink tiers. Placed AFTER them to win the cascade.
    MUST be gated to real MOUSE desktops (hover + fine pointer): a high-DPI TOUCH tablet (Galaxy Tab) is also
    ≥1400px at dPR≥1.2, and native desktop scale is far too big on it — those stay in the shrink tiers. */
-@media (min-width:1400px) and (min-resolution:1.2dppx) and (hover:hover) and (pointer:fine){ body{ zoom:1 } .app{ height:100dvh } .main{ height:100% } }
-@media (min-width:1400px) and (-webkit-min-device-pixel-ratio:1.2) and (hover:hover) and (pointer:fine){ body{ zoom:1 } .app{ height:100dvh } .main{ height:100% } }
+@media (min-width:1400px) and (min-resolution:1.2dppx) and (hover:hover) and (pointer:fine){ body{ zoom:1; --zf:1 } .app{ height:100dvh } .main{ height:100% } }
+@media (min-width:1400px) and (-webkit-min-device-pixel-ratio:1.2) and (hover:hover) and (pointer:fine){ body{ zoom:1; --zf:1 } .app{ height:100dvh } .main{ height:100% } }
 /* Feed post cards are intrinsically sized for a big 4K panel (avatar 52px, body 18.5px), so at laptop
    widths they still read oversized next to the now well-scaled rails — even under the zoom above. Trim
    the post card itself here only. 4K (>1920) keeps the full size; mobile (≤820) has its own block. */
