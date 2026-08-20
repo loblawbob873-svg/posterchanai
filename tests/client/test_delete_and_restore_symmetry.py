@@ -1274,3 +1274,46 @@ class OneFileHasOneSpellingOnEveryPlatform(unittest.TestCase):
         st = '{"a.txt":{"v":1,"by":"a","csum":"H","sha":"s","size":5,"mtime":1000}}'
         out = self._sweep([], state=st)
         self.assertEqual(out["clash"], [], "a banner on every sweep is a banner nobody reads")
+
+
+class TheTransferBudgetFitsTheDevice(unittest.TestCase):
+    """A desktop and a tablet run the same code and are not the same machine.
+
+    Big transfers are bounded by BYTES rather than by a file count, which is what lets photographs
+    overlap while a 100 MB video still goes alone. But the number itself was measured on a desktop,
+    and a tablet's WebView is killed at a fraction of a desktop's ceiling — and killed by being
+    RECREATED, which from the inside is the sweep ceasing to exist mid-file. Reported as "the tablet
+    reloaded the screen again during sync"."""
+
+    def setUp(self):
+        with open(os.path.join(CLIENT, "syncexec.js"), encoding="utf-8") as fh:
+            self.src = fh.read()
+
+    def _budget(self, limit_js):
+        js = """
+        globalThis.performance = { memory: %s };
+        require(%s); require(%s);
+        process.stdout.write(String(require(%s).__budget || ''));
+        """ % (limit_js, json.dumps(FOLDERSYNC), json.dumps(EXEC), json.dumps(EXEC))
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr[-600:])
+        return r.stdout.strip()
+
+    def test_it_reads_the_runtime_ceiling_rather_than_a_fixed_number(self):
+        self.assertIn("jsHeapSizeLimit", self.src,
+                      "the budget is a desktop number applied to every device")
+
+    def test_a_device_with_no_performance_memory_keeps_the_measured_desktop_figure(self):
+        """performance.memory is Chromium-only. Absent, the safe answer is the value this was
+        actually measured at, not zero and not unbounded."""
+        i = self.src.index("const BIG_BUDGET")
+        block = self.src[i:i + 700]
+        self.assertIn("return DESK", block)
+        self.assertIn("catch", block, "a throw reading performance.memory must not kill the sweep")
+
+    def test_there_is_a_floor(self):
+        """Scaled down without one, a device reporting a small ceiling would get a budget under a
+        single file's cost — and then nothing would ever be allowed to start except by the
+        nothing-in-flight escape, which is the serial behaviour all over again."""
+        i = self.src.index("const BIG_BUDGET")
+        self.assertIn("FLOOR", self.src[i:i + 700])

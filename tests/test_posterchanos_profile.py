@@ -92,6 +92,29 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertTrue(m)
         self.assertIn('FLATPAK_PACKAGES=""', m.group(0))
 
+    def test_no_html_engine_can_be_built_from_source(self):
+        """webkit-gtk and qtwebengine are among the longest builds in the tree, and the way you find
+        out something pulled one is that an install which looked nearly finished sits on a single
+        package all night. A mask turns that into an error at dependency-resolution time, naming
+        whatever asked for it. The browser here is firefox-BIN, which is prebuilt."""
+        i = self.src.index("posterchanShell() {")
+        body = self.src[i:i + 6500]
+        self.assertIn("package.mask", body, "nothing stops a dependency pulling an HTML engine")
+        for heavy in ("net-libs/webkit-gtk", "dev-qt/qtwebengine", "www-client/chromium"):
+            self.assertIn(heavy, body, f"{heavy} is not masked")
+
+    def test_the_shell_itself_is_installed(self):
+        """sway's config execs `posterchan`. Nothing else in this installer puts it on the disk, so
+        without this step the machine boots into an empty compositor with no way to do anything —
+        the most convincing possible imitation of a broken install."""
+        i = self.src.index("posterchanShell() {")
+        body = self.src[i:i + 6500]
+        self.assertIn("AppImage", body, "the desktop is never installed")
+        self.assertIn("/usr/local/bin/posterchan", body, "nothing provides the `posterchan` command")
+        self.assertIn("appimage-extract", body,
+                      "an AppImage run as one needs FUSE, which a minimal profile does not have")
+        self.assertIn("no shell", body, "a failed install is silent — sway starts with nothing")
+
     def test_the_shell_is_started_and_windows_are_placeable(self):
         """A TILED window ignores position and size — PosterChan would move things and nothing would
         happen, silently. The desktop places windows, so they have to be floating."""

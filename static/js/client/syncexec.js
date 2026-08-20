@@ -55,7 +55,21 @@
    * is the guarantee the Windows OOM scenario encodes — so a 12 MB TIFF still goes alone, exactly as
    * before, while 6 MB photographs go two at a time and 3 MB ones four. The multiplier is what a
    * transfer really costs: plaintext, ciphertext and a request body, all live at once. */
-  const BIG_BUDGET = 36 * 1024 * 1024;
+  /* ...AND IT IS SCALED TO THE HEAP THIS DEVICE ACTUALLY HAS. A desktop and a tablet run the same
+   * code and are not the same machine: a tablet's WebView is killed at a fraction of a desktop's
+   * ceiling, and it is killed by being RECREATED — "the tablet reloaded the screen again during
+   * sync", which from the inside is the sweep simply ceasing to exist. `jsHeapSizeLimit` is what the
+   * runtime will actually allow, so the budget is a small fraction of it rather than a number picked
+   * on a desktop. Unknown (no performance.memory outside Chromium) keeps the desktop figure, which
+   * is the value this was measured at. */
+  const BIG_BUDGET = (() => {
+    const FLOOR = 8 * 1024 * 1024, DESK = 36 * 1024 * 1024;
+    try{
+      const lim = performance && performance.memory && performance.memory.jsHeapSizeLimit;
+      if(!lim) return DESK;
+      return Math.max(FLOOR, Math.min(DESK, Math.floor(lim / 16)));
+    }catch(_){ return DESK; }
+  })();
   const BIG_COST = 3;
   const BIG_LANES = 6;              // an upper bound on lanes; the budget is what actually decides
   const SAVE_EVERY = 200;          // files between journal writes (each write publishes first)

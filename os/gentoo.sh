@@ -621,6 +621,21 @@ posterchanShell() {
 	# app, fullscreen on the background layer. Everything else the person opens — a browser, a game,
 	# a terminal — is an ordinary client that PosterChan places over its own desktop through the IPC.
 	echo -e "\033[1;33m◆ POSTERCHAN SHELL ◆\033[0m"
+
+	# NOTHING HERE MAY PULL WEBKIT — masked so a future dependency FAILS rather than costing hours.
+	# webkit-gtk is one of the longest builds in the tree, and the way you find out you need it is
+	# that an install which looked nearly finished sits on one package all night. A mask turns that
+	# into an error at dependency-resolution time, with the name of whatever asked for it. The
+	# browser here is firefox-BIN, which is prebuilt and pulls none of this.
+	mkdir -p ${TARGET}/etc/portage/package.mask
+	cat >${TARGET}/etc/portage/package.mask/posterchanos <<-'MASK'
+	# PosterChanOS: no HTML engine may be built from source on this profile.
+	net-libs/webkit-gtk
+	net-libs/webkit-gtk-6
+	www-client/chromium
+	dev-qt/qtwebengine
+	MASK
+
 	mkdir -p /etc/sway
 	cat >/etc/sway/config <<-'SWAY'
 	# PosterChanOS — the shell owns the screen; PosterChan decides what goes where.
@@ -670,6 +685,48 @@ posterchanShell() {
 	mkdir -p /etc/xdg/xdg-desktop-portal
 	printf '[preferred]\ndefault=wlr;gtk\norg.freedesktop.impl.portal.ScreenCast=wlr\norg.freedesktop.impl.portal.Screenshot=wlr\n' \
 		>/etc/xdg/xdg-desktop-portal/sway-portals.conf
+
+	# THE SHELL ITSELF. sway's config execs `posterchan`, and nothing else here installs it — so
+	# without this the machine boots into an empty compositor with no way to do anything, which is
+	# the most convincing possible imitation of a broken install.
+	#
+	# The AppImage is EXTRACTED rather than run as one. An AppImage needs FUSE at runtime, and FUSE
+	# is exactly the sort of thing a minimal profile does not have; extracting once at install time
+	# needs it never, and turns the shell into an ordinary directory of files that starts in the
+	# time it takes to exec.
+	echo -e "\033[1;33mInstalling the PosterChan desktop\033[0m"
+	APPIMG="/tmp/PosterChan.AppImage"
+	mkdir -p ${TARGET}/tmp 2>/dev/null
+	if [ ! -f "$APPIMG" ]; then
+		curl -sSfL --retry 3 --connect-timeout 20 -o "$APPIMG" \
+			https://github.com/loblawbob873-svg/posterchanai/releases/download/desktop-latest/PosterChan.AppImage \
+			|| curl -sSfL --retry 2 -o "$APPIMG" https://poster.place/desktop/PosterChan.AppImage || true
+	fi
+	# RUN IT WHERE THE FILES ARE. This function is called BOTH ways — from the installer on the live
+	# system with TARGET pointing at the new root, and from inside the chroot during finalize, where
+	# TARGET is empty and the new root is simply `/`. A bare `chroot $TARGET` is a broken command in
+	# the second case, and one that would have failed silently at the end of an hour-long install.
+	if [ -z "$TARGET" ] || [ "$TARGET" = "/" ]; then
+		_in() { /bin/bash -c "$1"; }
+	else
+		_in() { chroot "$TARGET" /bin/bash -c "$1"; }
+	fi
+	if [ -s "$APPIMG" ]; then
+		[ "${TARGET:-/}" = "/" ] || cp -f "$APPIMG" ${TARGET}/tmp/PosterChan.AppImage
+		_in 'cd /opt && rm -rf posterchan squashfs-root \
+			&& chmod +x /tmp/PosterChan.AppImage \
+			&& /tmp/PosterChan.AppImage --appimage-extract >/dev/null 2>&1 \
+			&& mv squashfs-root posterchan \
+			&& ln -sf /opt/posterchan/AppRun /usr/local/bin/posterchan \
+			&& rm -f /tmp/PosterChan.AppImage'
+		if [ -e "${TARGET}/usr/local/bin/posterchan" ]; then
+			echo -e "\033[1;32m  ✓ /usr/local/bin/posterchan\033[0m"
+		else
+			echo -e "\033[1;31m  ✗ the AppImage did not extract — sway will start with no shell\033[0m"
+		fi
+	else
+		echo -e "\033[1;31m  ✗ could not download the PosterChan desktop — sway will start with no shell\033[0m"
+	fi
 
 	# Autologin straight into the shell. A display manager is another package, another theme and
 	# another thing between the power button and the desktop.
