@@ -125,10 +125,15 @@ public class WidgetDeviceTest {
         assertTrue("the widget manager listed no providers at all on this image — with the system"
                 + " picker gone this list IS the picker, so an empty one is an empty screen",
                 rows.size() > 0);
-        // Sorted by app then by widget, because that is the order somebody scans in.
-        for (int i = 1; i < rows.size(); i++) {
-            String prev = rows.get(i - 1).appLabel, cur = rows.get(i).appLabel;
-            assertTrue("the list is not in app order: " + prev + " before " + cur,
+        // Sorted by app then by widget, because that is the order somebody scans in — EXCEPT for
+        // our own block, which is deliberately first (Widgets.providers). This assertion predated
+        // that change and duly failed with "PosterChan before Calendar", which is the sort working.
+        int i = 0;
+        while (i < rows.size()
+               && ctx.getPackageName().equals(rows.get(i).provider().getPackageName())) i++;
+        for (int j = i + 1; j < rows.size(); j++) {
+            String prev = rows.get(j - 1).appLabel, cur = rows.get(j).appLabel;
+            assertTrue("the list is not in app order after our own block: " + prev + " before " + cur,
                     prev.compareToIgnoreCase(cur) <= 0);
         }
     }
@@ -313,30 +318,57 @@ public class WidgetDeviceTest {
 
             final DeskView desk = deskOut[0];
             assertNotNull("no desk", desk);
-            // THE PREMISE, ASSERTED: the widget really does put a clickable view under the finger.
-            final boolean[] clickable = new boolean[]{ false };
-            InstrumentationRegistry.getInstrumentation().runOnMainSync(
-                    () -> clickable[0] = hasClickable(desk));
-            // (Not fatal if a provider ships no clickable content — the guard below is the point.)
-            Log.i(TAG, "widget probe: clickable widget content present = " + clickable[0]);
 
+            // THE ITEM IS PUT BACK IN THE SAME MAIN-THREAD BLOCK AS THE PRESS, and that is not
+            // belt-and-braces: the activity redraws its own desktop from stored preferences after
+            // layout (HomeActivity.resizeSoon), so anything set from a previous `onActivity` block
+            // can be replaced before the finger arrives. Left as a race, this test says "the long
+            // press did not reach the desktop" when what actually happened is that the widget was
+            // no longer on it — two completely different bugs behind one message.
+            final String[] why = new String[]{ "" };
             final boolean[] lifted = new boolean[]{ false };
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                java.util.List<Desk.Item> items = new java.util.ArrayList<Desk.Item>();
+                Desk.Item it = new Desk.Item(Desk.widgetKey(made[0]), 0, 0, 2, 2);
+                Desk.add(items, it, 4, 5);
+                desk.setGrid(4, 5);
+                desk.setItems(items);
+                why[0] = "cell(0,0) holds " + Desk.at(desk.items(), 0, 0)
+                       + " clickableContent=" + hasClickable(desk);
                 long t = android.os.SystemClock.uptimeMillis();
                 float x = desk.cellW() / 2f, y = desk.cellH() / 2f;
                 desk.dispatchTouchEvent(android.view.MotionEvent.obtain(
                         t, t, android.view.MotionEvent.ACTION_DOWN, x, y, 0));
             });
+            Log.i(TAG, "widget probe: before the press, " + why[0]);
+            // THE PREMISE: a widget really does put a clickable view under the finger, which is the
+            // whole reason the DOWN had to be watched in onInterceptTouchEvent.
             Thread.sleep(700);                       // past the 400ms long-press
+
+            // READ IT BEFORE THE MOVE AS WELL AS AFTER. The long press LIFTS and then opens a menu,
+            // and a dialog taking the window makes the framework deliver ACTION_CANCEL to the view
+            // underneath — which legitimately puts the item down again. Sampling only after the move
+            // would call that "the press never reached the desktop", which is the opposite of what
+            // happened.
+            final boolean[] liftedEarly = new boolean[]{ false };
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(
+                    () -> liftedEarly[0] = desk.editingItem() != null);
             InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
                 long t = android.os.SystemClock.uptimeMillis();
                 float x = desk.cellW() / 2f, y = desk.cellH() / 2f;
                 desk.dispatchTouchEvent(android.view.MotionEvent.obtain(
                         t, t, android.view.MotionEvent.ACTION_MOVE, x, y + 4, 0));
                 lifted[0] = desk.editingItem() != null;
+                // Said separately, because "the widget was not there" and "the press did not arm"
+                // need different fixes and used to share one message.
+                why[0] = why[0] + " | after: editing=" + desk.editingItem()
+                       + " onDesk=" + Desk.at(desk.items(), 0, 0);
             });
+            Log.i(TAG, "widget probe: long press -> early=" + liftedEarly[0]
+                    + " afterMove=" + lifted[0] + " " + why[0]);
             assertTrue("a long press on a placed widget never reached the desktop — its Remove,"
-                    + " Resize and drag are all unreachable", lifted[0]);
+                    + " Resize and drag are all unreachable. " + why[0],
+                    liftedEarly[0] || lifted[0]);
         } finally {
             s.close();
         }
