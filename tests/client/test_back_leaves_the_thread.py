@@ -149,3 +149,46 @@ class EveryRouteOutOfTheFeedRemembers(unittest.TestCase):
         blk = self.src[i:i + 700]
         self.assertIn("delete _tlScrollMemo[v]", blk)
         self.assertIn("f.scrollTop = 0", blk)
+
+
+class CommentingDoesNotThrowYouToTheTop(unittest.TestCase):
+    """"when I comment on a post it scrolls me back to the top."
+
+    Posting a reply does not redraw the thread directly — the reply comes back through the relay and
+    something upstream repaints — and every repaint began with `feed.innerHTML = spinner`, which is
+    scrollTop 0. From the reader's side that is the app throwing them to the top of a conversation at
+    the exact moment they take part in it.
+
+    Same rule the timeline needed: only ARRIVING somewhere starts at the top.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = APP.read_text()
+
+    def test_a_repaint_of_the_same_thread_keeps_the_offset(self):
+        i = self.src.index("async function renderThread(id, hints){")
+        blk = self.src[i:i + 2200]
+        self.assertIn("const _same = (renderThread._tok === id && VIEW === 'thread');", blk,
+                      "renderThread cannot tell a repaint from an arrival")
+        self.assertIn("_keepTop", blk)
+
+    def test_arriving_at_a_thread_still_starts_at_the_top(self):
+        """The fix must not become 'never reset', or opening a post drops you at whatever offset the
+        previous one happened to have — one scroll container is shared by every view."""
+        i = self.src.index("async function renderThread(id, hints){")
+        blk = self.src[i:i + 2200]
+        self.assertIn("if(_keepTop > 0)", blk,
+                      "the restore is unconditional, so a freshly opened post inherits an offset")
+
+    def test_it_does_not_re_save_the_feed_position_on_a_repaint(self):
+        """`_rememberTlScroll` reads #feed, and during a thread repaint #feed holds the THREAD. Left
+        unguarded it would overwrite the timeline's remembered offset with a position in a post."""
+        i = self.src.index("async function renderThread(id, hints){")
+        blk = self.src[i:i + 2200]
+        self.assertIn("if(!_same) _rememberTlScroll();", blk)
+
+    def test_the_restore_waits_for_layout(self):
+        i = self.src.index("async function renderThread(id, hints){")
+        blk = self.src[i:i + 2200]
+        self.assertIn("setTimeout(", blk[blk.index("if(_keepTop > 0)"):])

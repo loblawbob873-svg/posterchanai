@@ -29160,11 +29160,36 @@
     hydrate(feed); _bindThreadBack(feed);
   }
   async function renderThread(id, hints){
+    /* RE-RENDERING THE THREAD YOU ARE ALREADY READING MUST NOT MOVE YOU.
+     *
+     * "when I comment on a post it scrolls me back to the top." Posting a reply does not redraw the
+     * thread itself — the reply comes back through the relay and something upstream repaints — and
+     * every repaint began with `feed.innerHTML = spinner`, which is scrollTop 0. From the reader's
+     * side that is the app throwing them to the top of a conversation the moment they take part in
+     * it, which is the worst possible moment for it to happen.
+     *
+     * Same rule the timeline needed: only ARRIVING somewhere starts at the top. `renderThread._tok`
+     * already records which thread is on screen, so "am I redrawing the same one" is free. */
+    const _same = (renderThread._tok === id && VIEW === 'thread');
+    let _keepTop = 0;
+    if(_same){ try{ const f=$('#feed'); _keepTop = (f && f.scrollTop) || 0; }catch(_){ } }
     renderThread._tok = id;   // guards the async expansion below against a newer thread opening mid-flight
-    _rememberTlScroll();          // opening a post is leaving the feed — see _rememberTlScroll
+    if(!_same) _rememberTlScroll();   // opening a post is leaving the feed — see _rememberTlScroll
     VIEW='thread'; _hidePill(); _clearNav(); $('#view-title').textContent='Thread';
     const feed=_feedScrollable();   // scrollable view — clear the chat/AI overflow:hidden (see _feedScrollable)
     feed.innerHTML='<div class="spinner"></div>';
+    /* Put them back once the replies have been laid out. Deferred for the reason the timeline's
+     * restore is: scrollTop cannot exceed a height that does not exist yet, and set against an
+     * unmeasured feed it clamps near the top — which is the bug, arrived at by a different route. */
+    if(_keepTop > 0){
+      const _want = _keepTop;
+      setTimeout(() => {
+        try{
+          const f = $('#feed');
+          if(f && VIEW === 'thread' && renderThread._tok === id && f.scrollTop < 4) f.scrollTop = _want;
+        }catch(_){ }
+      }, 0);
+    }
     /* WHAT WE ALREADY HOLD GOES UP BEFORE ANY SOCKET IS WAITED ON.
      *
      * This is above `await Relay.ready()` on purpose, and the reason is the exact case that gets
