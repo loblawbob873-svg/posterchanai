@@ -89,6 +89,10 @@ public final class Widgets {
             // that nothing will ever reclaim.
             if (id >= 0) release(id);
             Log.w(TAG, "home: no widget picker on this phone", t);
+            // AND IT SAYS SO. A control that does nothing and says nothing is the recurring shape in
+            // this feature — the dead tile, the role switch that unchecked itself — and it always
+            // reads as a broken app rather than as an Android refusal.
+            say(a, "no picker");
         }
     }
 
@@ -132,6 +136,7 @@ public final class Widgets {
         } catch (Throwable t) {
             release(id);
             Log.w(TAG, "home: could not ask to bind a widget", t);
+            say(a, "refused");
         }
     }
 
@@ -152,6 +157,18 @@ public final class Widgets {
             return id;
         }
         return -1;
+    }
+
+    /** Say it on screen. BIND_APPWIDGET is signature-level, so a refusal here is normal and silent. */
+    private void say(Activity a, String which) {
+        if (a == null) return;
+        try {
+            android.widget.Toast.makeText(a,
+                    "no picker".equals(which)
+                        ? place.poster.app.R.string.home_no_widget_picker
+                        : place.poster.app.R.string.home_widget_refused,
+                    android.widget.Toast.LENGTH_LONG).show();
+        } catch (Throwable ignored) { }
     }
 
     public AppWidgetProviderInfo infoOf(int id) {

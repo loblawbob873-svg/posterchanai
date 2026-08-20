@@ -188,28 +188,32 @@ public final class AppShelf {
     }
 
     /**
-     * THE DOCK — the toolbar of main icons along the bottom.
+     * THE DOCK — the toolbar of main icons along the bottom. EXACTLY what the person put there.
      *
-     * ITS LAST SLOT IS ALWAYS THE ESSENTIAL TILE, appended if the person's own list does not carry
-     * it. The dock is the one part of a home screen that is visible on every page and never scrolls
-     * away, which makes it the right place for the way back to the phone's own Settings — and the
-     * only place that stays reachable when the desktop has been arranged into something broken.
+     * It used to force the essential "Phone settings" tile into the last slot on the theory that the
+     * dock, being always on screen, was the right place for the way back. Reported as "the dock has
+     * a posterchan icon that loads settings and is a waste of space" and "cant remove it" — and both
+     * halves of that are fair. The dock is the most expensive real estate on the phone; a slot
+     * nobody chose is a slot taken from an app they use, and a fixed item in the one row that is
+     * always visible is the worst possible place for something unremovable.
+     *
+     * THE WAY BACK DID NOT GO AWAY, IT MOVED. "Phone settings" is still unhideable in the DRAWER
+     * (AppShelf.arrange keeps every essential entry through every filter) and it is in the
+     * long-press menu on the wallpaper. Two routes that cost no dock space and need no stored state
+     * to work — which is what made the dock slot look load-bearing in the first place.
      *
      * Unknown keys (an app that was uninstalled) are skipped rather than drawn as gaps, and the
      * result is capped so a long saved list cannot squeeze the icons to nothing.
      */
     public static List<Entry> dock(List<Entry> all, List<String> keys, int max) {
         List<Entry> out = new ArrayList<Entry>();
-        Entry essential = null;
-        for (Entry e : all == null ? new ArrayList<Entry>() : all) if (e.essential) essential = e;
         if (keys != null) {
             for (String k : keys) {
-                if (out.size() >= Math.max(1, max) - (essential == null ? 0 : 1)) break;
+                if (out.size() >= Math.max(1, max)) break;
                 Entry e = byKey(all, k);
                 if (e != null && !out.contains(e)) out.add(e);
             }
         }
-        if (essential != null && !out.contains(essential)) out.add(essential);
         return out;
     }
 

@@ -284,18 +284,60 @@ class Launcher(unittest.TestCase):
 
     # ---------------------------------------------------------------- the dock
 
-    def test_the_dock_always_ends_with_the_way_back(self):
-        """The dock is the one part of a home screen that never scrolls away, which makes it the
-        right place for the route to the phone's own Settings — and the only place that stays
-        reachable when the desktop has been arranged into something broken."""
-        self.assertTrue(self.out["dock"].rstrip("]").endswith("pc:_settings"), self.out["dock"])
-        self.assertTrue(self.out["dock-empty"].endswith("[pc:_settings]"), self.out["dock-empty"])
+    def test_the_dock_is_exactly_what_you_put_there(self):
+        """It used to force "Phone settings" into the last slot. Reported as "the dock has a
+        posterchan icon that loads settings and is a waste of space" and "cant remove it" — both fair:
+        the dock is the most expensive space on the phone, and an unremovable item in the one row
+        that is always visible is the worst place for something nobody chose."""
+        self.assertNotIn("pc:_settings", self.out["dock"], "the dock still forces a slot")
+        self.assertEqual(self.out["dock-empty"], "[]", "an empty dock is not empty")
+
+    def test_the_way_back_did_not_go_away_it_moved(self):
+        """Freeing the dock slot must not cost the escape hatch. "Phone settings" survives every
+        filter in the drawer, and the wallpaper long-press menu offers it too — two routes that need
+        no stored state and no dock space."""
+        self.assertIn("pc:_settings", self.out["hide-all"], "the drawer can lose it")
+        home = _code(open(os.path.join(HOME, "HomeActivity.java")).read())
+        i = home.index("private void homeMenu()")
+        menu = home[i:home.index("\n    }", i)]
+        self.assertIn("home_phone_settings", menu, "the long-press menu has no route to Settings")
+        self.assertIn("Settings.ACTION_SETTINGS", menu)
+
+    def test_every_dock_item_can_be_removed(self):
+        home = _code(open(os.path.join(HOME, "HomeActivity.java")).read())
+        i = home.index("private void dockMenu(")
+        body = home[i:home.index("\n    }", i)]
+        self.assertNotIn("e.essential", body, "some dock item still refuses to be removed")
 
     def test_an_uninstalled_app_leaves_no_gap_in_the_dock(self):
-        self.assertEqual(self.out["dock-gone"], "[pc:_settings]")
+        self.assertEqual(self.out["dock-gone"], "[]")
 
     def test_the_dock_is_capped_so_the_icons_stay_a_usable_size(self):
         self.assertEqual(self.out["dock-cap"], "3")
+
+    def test_the_dock_and_the_drawer_are_not_flat_black(self):
+        """Both were `--bg`, which on the flagship theme is #0a0a0f — "the black dock looks too
+        plain" and "the app drawer is also black and unstylish". The client has translucency, a
+        hairline and a bloom; the phone shell was inheriting none of it."""
+        home = _code(open(os.path.join(HOME, "HomeActivity.java")).read())
+        self.assertIn("Skin.glass(this, pal", home, "the dock is not a glass surface")
+        i = home.index("if (drawer != null)")
+        seg = home[i:i + 500]
+        self.assertNotIn("0.97", seg, "the drawer is still all but opaque")
+        skin = open(os.path.join(ROOT, "mobile/android/app/src/main/java/place/poster/app/ui/Skin.java"),
+                    encoding="utf-8").read()
+        self.assertIn("public static Drawable glass(", skin)
+
+    def test_widgets_are_reachable_from_more_than_a_wallpaper_long_press(self):
+        """"no widgets can be added to posterchan launcher home screen" — the flow existed, behind a
+        long press on the wallpaper, which is not somewhere anybody looks first."""
+        home = _code(open(os.path.join(HOME, "HomeActivity.java")).read())
+        self.assertGreaterEqual(home.count("widgets.pick("), 3,
+                                "there is still only one way to reach the widget picker")
+        # …and a refusal is said out loud. BIND_APPWIDGET is signature-level, so being refused is
+        # normal — and silent, which reads as a broken app.
+        w = _code(open(os.path.join(HOME, "Widgets.java")).read())
+        self.assertIn("Toast.makeText", w, "a refused widget bind says nothing")
 
     # ---------------------------------------------------------------- the desktop
 

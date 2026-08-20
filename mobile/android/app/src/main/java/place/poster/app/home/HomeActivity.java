@@ -165,7 +165,14 @@ public class HomeActivity extends Activity implements DeskView.Host {
         // A SCRIM, not a paint: the window declares windowShowWallpaper and this keeps the wallpaper
         // visible through the theme instead of replacing it.
         if (root != null) root.setBackground(Skin.page(pal, 0.42));
-        if (drawer != null) drawer.setBackground(Skin.page(pal, 0.97));
+        // THE DRAWER IS GLASS, NOT A BLACK RECTANGLE. `page(…, 0.97)` is very nearly the flagship's
+        // --bg, which is #0a0a0f — "the app drawer is also black and unstylish", fairly. The
+        // wallpaper shows through it now, with the same lit edge the bars carry.
+        if (drawer != null) {
+            drawer.setBackground(Skin.page(pal, 0.72));
+            View head = findViewById(R.id.pc_home_search);
+            if (head != null) head.setBackground(Skin.glass(this, pal, 0.55, true));
+        }
         if (search != null) {
             search.setBackground(Skin.panel(this, pal));
             search.setTextColor(pal.text);
@@ -181,7 +188,13 @@ public class HomeActivity extends Activity implements DeskView.Host {
         if (nowRow != null) nowRow.setBackground(Skin.panel(this, pal));
         if (nowText != null) { nowText.setTextColor(pal.text); Skin.glow(nowText, pal); }
         if (nowToggle != null) nowToggle.setBackground(Skin.pill(this, pal, Skin.alpha(pal.accent, 0.18), true));
-        if (dock != null) dock.setBackground(Skin.panel(this, pal));
+        // THE DOCK IS A GLASS PILL. It was a flat panel over the wallpaper, which on the dark
+        // palettes is a black bar — "the black dock looks too plain, make it stylish".
+        if (dock != null) {
+            dock.setBackground(Skin.glass(this, pal, 0.42, true));
+            int dp = Skin.dp(this, 10);
+            dock.setPadding(dp, dp, dp, dp);
+        }
         if (adapter != null) adapter.notifyDataSetChanged();
     }
 
@@ -390,7 +403,8 @@ public class HomeActivity extends Activity implements DeskView.Host {
         if (live.size() != items.size() || !overflow.isEmpty()) prefs.setDesk(Desk.serialize(live));
         desk.setGrid(cols, rows);
         desk.setItems(live);
-        if (hint != null) hint.setVisibility(live.isEmpty() ? View.VISIBLE : View.VISIBLE);
+        // An empty desktop says how to fill it; a full one goes back to the swipe hint.
+        if (hint != null) hint.setText(live.isEmpty() ? R.string.home_empty_hint : R.string.home_swipe_hint);
     }
 
     @Override
@@ -632,6 +646,9 @@ public class HomeActivity extends Activity implements DeskView.Host {
         labels.add(getString(R.string.home_unhide));
         labels.add(getString(R.string.home_wallpaper));
         labels.add(getString(R.string.home_settings));
+        // THE WAY BACK, with no dock slot spent on it. Always here, needs no stored state, and works
+        // however the dock and the desktop have been arranged.
+        labels.add(getString(R.string.home_phone_settings));
         show(getString(R.string.app_name), labels, new Pick() {
             @Override public void pick(int w) {
                 switch (w) {
@@ -640,6 +657,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
                     case 2: showHidden(); break;
                     case 3: fire(new Intent(Intent.ACTION_SET_WALLPAPER)); break;
                     case 4: openApp("settings"); break;
+                    case 5: fire(new Intent(Settings.ACTION_SETTINGS)); break;
                 }
             }
         });
@@ -678,6 +696,10 @@ public class HomeActivity extends Activity implements DeskView.Host {
         final List<Integer> acts = new ArrayList<Integer>();
         labels.add(getString(R.string.home_add_to_home)); acts.add(0);
         labels.add(getString(R.string.home_add_to_dock)); acts.add(1);
+        // WIDGETS ARE FINDABLE FROM HERE TOO — "no widgets can be added to posterchan launcher home
+        // screen". The flow existed, behind a long press on the wallpaper, which is not somewhere
+        // anybody looks first.
+        labels.add(getString(R.string.home_add_widget)); acts.add(6);
         if (!e.isOurs()) {
             labels.add(getString(R.string.home_app_info)); acts.add(2);
             labels.add(getString(R.string.home_uninstall)); acts.add(3);
@@ -693,13 +715,14 @@ public class HomeActivity extends Activity implements DeskView.Host {
                     case 3: if (!repo.uninstall(e)) toast(getString(R.string.home_no_uninstaller)); break;
                     case 4: prefs.setHidden(AppShelf.hide(prefs.hidden(), e)); redrawDrawer(); break;
                     case 5: pickOurApps(); break;
+                    case 6: closeDrawer(); widgets.pick(HomeActivity.this); break;
                 }
             }
         });
     }
 
+    /** EVERY dock item can be removed, including the ones seeded on the first run. */
     private void dockMenu(final AppShelf.Entry e) {
-        if (e.essential) { toast(getString(R.string.home_cannot_open)); return; }
         List<String> labels = new ArrayList<String>();
         labels.add(getString(R.string.home_remove_from_dock));
         labels.add(getString(R.string.home_add_to_home));

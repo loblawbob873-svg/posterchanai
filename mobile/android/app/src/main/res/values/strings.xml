@@ -34,6 +34,10 @@
     <string name="home_already_there">It is already on your home screen</string>
     <string name="home_wallpaper">Change wallpaper</string>
     <string name="home_settings">PosterChan settings</string>
+    <string name="home_phone_settings">Phone settings</string>
+    <string name="home_empty_hint">Long-press the wallpaper to add apps and widgets</string>
+    <string name="home_no_widget_picker">This phone has no widget picker</string>
+    <string name="home_widget_refused">Android would not let the widget be added</string>
     <string name="home_cannot_open">That app would not open</string>
     <string name="home_no_uninstaller">This app cannot be uninstalled on this phone</string>
     <!-- Messages (the opt-in SMS app). -->

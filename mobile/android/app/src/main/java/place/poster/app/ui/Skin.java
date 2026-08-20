@@ -346,6 +346,63 @@ public final class Skin {
         if (p.neon) t.setShadowLayer(dp(t.getContext(), 6), 0, 0, alpha(p.accent, 0.45));
     }
 
+    /**
+     * A GLASS SURFACE over the wallpaper — the dock, and the drawer behind it.
+     *
+     * Both were a flat black rectangle, which is what `--bg` is on the flagship theme and reads as
+     * "unstyled" rather than as dark: "the black dock looks too plain" and "the app drawer is also
+     * black and unstylish". The client has a real identity — translucency, a hairline, a bloom — and
+     * the phone shell was inheriting none of it.
+     *
+     * So: the panel tint at partial alpha so the wallpaper shows through, a hairline in the accent,
+     * and on a theme that glows a bloom along the lit edge. Rounded to the theme's own radius, which
+     * keeps Windows 98 square because square is what that theme is.
+     */
+    public static Drawable glass(final Context c, final PcTheme.Palette p,
+                                 final double opacity, final boolean edgeTop) {
+        final float r = dp(c, Math.max(0, p.radiusDp + 6));
+        return new Drawable() {
+            private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
+            private final Paint line = new Paint(Paint.ANTI_ALIAS_FLAG);
+            @Override public void draw(Canvas canvas) {
+                Rect b = getBounds();
+                if (b.width() <= 0 || b.height() <= 0) return;
+                // A vertical lift, so the surface reads as glass rather than as a painted slab.
+                fill.setShader(new LinearGradient(0, b.top, 0, b.bottom,
+                        scale(opaque(p.panel2, p.bg), opacity + 0.06),
+                        scale(opaque(p.panel, p.bg), opacity), Shader.TileMode.CLAMP));
+                canvas.drawRoundRect(b.left, b.top, b.right, b.bottom, r, r, fill);
+                fill.setShader(null);
+                if (p.neon) {
+                    // The bloom along the lit edge. Concentric strokes rather than a BlurMaskFilter,
+                    // which needs a software layer under hardware acceleration and draws nothing
+                    // without one.
+                    line.setStyle(Paint.Style.STROKE);
+                    for (int i = 5; i >= 1; i--) {
+                        line.setStrokeWidth(dp(c, 1.5f) * i);
+                        line.setColor(alpha(p.accent, 0.05 * (1.0 / i)));
+                        canvas.drawRoundRect(b.left, b.top, b.right, b.bottom, r, r, line);
+                    }
+                }
+                line.setStyle(Paint.Style.STROKE);
+                line.setStrokeWidth(Math.max(1, dp(c, 1)));
+                line.setColor(p.neon ? alpha(p.accent, 0.42) : p.line);
+                canvas.drawRoundRect(b.left, b.top, b.right, b.bottom, r, r, line);
+                // The lit hairline along one edge — top for a drawer, top for a dock, so the eye
+                // reads it as a surface that has come up from below.
+                if (p.neon) {
+                    float y = edgeTop ? b.top + dp(c, 1) : b.bottom - dp(c, 1);
+                    line.setStrokeWidth(dp(c, 1.5f));
+                    line.setColor(alpha(p.accent, 0.8));
+                    canvas.drawLine(b.left + r, y, b.right - r, y, line);
+                }
+            }
+            @Override public void setAlpha(int a) { }
+            @Override public void setColorFilter(ColorFilter cf) { }
+            @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
+        };
+    }
+
     /** A 1px divider in the theme's line colour, for a list. */
     public static Drawable divider(Context c, PcTheme.Palette p) {
         GradientDrawable g = new GradientDrawable();
