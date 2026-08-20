@@ -65,8 +65,28 @@
     return { step: null, blocked: false, state: st, done: true };
   }
 
-  /** Is there anything left to ask at all? Used to decide whether to show the wizard on boot. */
+  /** Is there anything left to ask at all? */
   const firstRunNeeded = (world) => !nextStep(world).done;
+
+  /* WHETHER TO TAKE THE SCREEN AT BOOT, WHICH IS A DIFFERENT QUESTION FROM WHETHER ANYTHING IS
+   * UNANSWERED — and using the second one for the first is how a setup wizard seizes a machine
+   * somebody was already using.
+   *
+   * Tor is optional, an instance is optional, and this client runs perfectly well signed out; so
+   * on a machine that already has a desktop, every remaining step is a question, not an obstacle,
+   * and a question is not a reason to stand in front of somebody's computer. Worse, the flow would
+   * then walk them to the sign-in step — which is deliberately not skippable — and a machine that
+   * was working as a guest a minute ago would refuse to show its desktop without a key.
+   *
+   * A machine is UNUSABLE, and worth interrupting for, in exactly two cases: it has no way to reach
+   * the network, or nothing about it has ever been decided — no instance, no key. That second one
+   * is a computer out of a box, which is what this wizard is for. Everything else is offered from
+   * Settings, where a question belongs. */
+  function machineUnusable(world){
+    const st = stepState(world);
+    if(st.network !== 'done') return true;
+    return st.instance !== 'done' && st.signin !== 'done';
+  }
 
   /* WHAT A STEP MAY BE SKIPPED WITH. Deliberately per-step rather than a general "skip" button:
    * the instance and Tor are genuine choices, the network is not one you can decline your way past,
@@ -91,7 +111,8 @@
       ((b.active ? 1 : 0) - (a.active ? 1 : 0)) || ((b.signal || 0) - (a.signal || 0)));
   }
 
-  const API = { STEPS, stepState, nextStep, firstRunNeeded, canSkip, networksForPicker };
+  const API = { STEPS, stepState, nextStep, firstRunNeeded, machineUnusable, canSkip,
+                networksForPicker };
   root.PCFirstRun = API;
   if(typeof module !== 'undefined' && module.exports) module.exports = API;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

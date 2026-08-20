@@ -302,7 +302,10 @@
     try{
       if(!SHELL() || !(await SHELL().detect())) return false;
       const world = await readWorld();
-      if(!FR().firstRunNeeded(world)) return false;
+      /* `machineUnusable`, NOT `firstRunNeeded` — see osfirstrun.js. An unanswered question is not
+       * a reason to stand in front of a computer somebody is already using, and walking them to the
+       * sign-in step would refuse a desktop that worked as a guest a minute earlier. */
+      if(!FR().machineUnusable(world)) return false;
       await run();
       return true;
     }catch(_){ return false; }

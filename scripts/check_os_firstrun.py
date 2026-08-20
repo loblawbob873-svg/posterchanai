@@ -188,6 +188,22 @@ DRIVE = r"""(async () => {
     bad('no-wizard', 'the machine never made an account for the key that signed in');
   if (!out.entered) bad('no-wizard', 'the wizard finished without showing the desktop');
 
+  /* ── and it must not seize a machine that already works ─────────────────────────────────────── */
+  try { localStorage.clear(); } catch (_) {}
+  window.__instance = 'https://example.invalid';     // set up, signed out, Tor never answered
+  window.ME = null; window.GUEST = true;
+  window.__net.online = true;
+  out.workingMachine = { needed: await window.PCFirstRunUI.needed(),
+                         seized: await window.PCFirstRunUI.boot() };
+  await sleep(300);
+  if (out.workingMachine.seized || card())
+    bad('seizes-a-working-machine', 'a machine with a network and an instance was taken over to '
+                                  + 'ask an optional question — and the flow would then demand a '
+                                  + 'key before showing a desktop that worked as a guest');
+  if (!out.workingMachine.needed)
+    bad('step-not-answered', 'Tor was never answered and the machine claims nothing is outstanding');
+  window.__instance = '';
+
   /* ── and it must never appear where this is not the operating system ────────────────────────── */
   try { localStorage.clear(); } catch (_) {}
   window.__compositor = false;
@@ -271,7 +287,8 @@ async def drive(url):
                 return 1
             out = r["result"].get("value") or {}
             for k in ("first", "blocked", "ssids", "joined", "afterJoin", "afterSkip",
-                      "handedOff", "provisioned", "entered", "stillUp", "windows"):
+                      "handedOff", "provisioned", "entered", "stillUp", "workingMachine",
+                      "windows"):
                 if k in out:
                     print(f"  {k}: {json.dumps(out[k])}")
             problems = out.get("problems") or []

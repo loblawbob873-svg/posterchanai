@@ -30,6 +30,41 @@ class FirstRun(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr[-600:])
         return json.loads(r.stdout)
 
+    def js(self, body):
+        src = ("const F = require(%s);\nconst out = {};\n%s\n"
+               "process.stdout.write(JSON.stringify(out));" % (json.dumps(MOD), body))
+        r = subprocess.run([NODE, "-e", src], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr[-600:])
+        return json.loads(r.stdout)
+
+    def test_a_machine_already_in_use_is_not_seized_to_ask_a_question(self):
+        """`firstRunNeeded` answers "is anything unanswered", and using that to decide whether to
+        take the screen at boot is how a setup wizard stands in front of a computer somebody was
+        already using. Tor is optional, an instance is optional, and this client runs signed out —
+        so on a working machine every remaining step is a question, not an obstacle. Worse, the flow
+        would walk them to the sign-in step, which is deliberately NOT skippable, and a desktop that
+        worked as a guest a minute earlier would refuse to appear without a key."""
+        world = {"online": True, "instance": "https://poster.place", "pubkey": ""}
+        out = self.js("out.needed = F.firstRunNeeded(%s); out.seize = F.machineUnusable(%s);"
+                      % (json.dumps(world), json.dumps(world)))
+        self.assertTrue(out["needed"], "Tor was never answered, so something IS unanswered")
+        self.assertFalse(out["seize"],
+                         "a machine with a network and an instance was seized to ask about Tor")
+
+    def test_a_computer_out_of_a_box_IS_worth_interrupting(self):
+        """Nothing decided — no instance, no key — is what this wizard exists for."""
+        out = self.js("out.a = F.machineUnusable({online: true});"
+                      "out.b = F.machineUnusable({online: false});"
+                      "out.c = F.machineUnusable({netReadable: false});")
+        self.assertTrue(out["a"], "a machine with nothing set up was left to fend for itself")
+        self.assertTrue(out["b"], "a machine with no network was not offered one")
+        self.assertTrue(out["c"], "a machine whose network could not be read was not stopped")
+
+    def test_a_signed_in_machine_with_no_instance_is_usable(self):
+        """"No instance" is a supported way to run this client, so a key alone is enough."""
+        out = self.js("out.s = F.machineUnusable({online: true, pubkey: 'npub1x'});")
+        self.assertFalse(out["s"])
+
     def test_a_fresh_machine_is_asked_for_the_network_first(self):
         """Everything after it needs one."""
         self.assertEqual(self.ask({})["step"], "network")
