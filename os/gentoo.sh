@@ -691,10 +691,16 @@ posterchanShell() {
 	# into an error at dependency-resolution time, with the name of whatever asked for it. The
 	# browser here is firefox-BIN, which is prebuilt and pulls none of this.
 	mkdir -p ${TARGET}/etc/portage/package.mask
+	# A BARE atom masks EVERY version and slot of a package, which is what is wanted here — and it
+	# is also why `net-libs/webkit-gtk-6` was wrong. There is no such package: the GTK4/soup3 webkit
+	# is a SLOT of net-libs/webkit-gtk. Portage reads the trailing `-6` as a VERSION, a versioned
+	# atom is invalid without an operator, and the result was `Invalid atom in
+	# /etc/portage/package.mask/posterchanos: net-libs/webkit-gtk-6` printed by every portage command
+	# on the machine — while the line masked nothing at all. The line above it already covers slot 6.
 	cat >${TARGET}/etc/portage/package.mask/posterchanos <<-'MASK'
 	# PosterChanOS: no HTML engine may be built from source on this profile.
+	# Bare atoms on purpose: each masks every version AND every slot of its package.
 	net-libs/webkit-gtk
-	net-libs/webkit-gtk-6
 	www-client/chromium
 	dev-qt/qtwebengine
 	MASK

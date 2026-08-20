@@ -264,6 +264,34 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertIn("systemd-tmpfiles --create", self.src,
                       "the grant is written but never applied, so it does nothing until a reboot")
 
+    def test_every_masked_atom_is_one_portage_can_actually_parse(self):
+        """`net-libs/webkit-gtk-6` is not a package — the GTK4/soup3 webkit is a SLOT of
+        net-libs/webkit-gtk. Portage reads the trailing `-6` as a VERSION, a versioned atom is
+        invalid without an operator, and the line masked NOTHING while printing `Invalid atom in
+        /etc/portage/package.mask/posterchanos` on every portage command on the machine. Found by
+        running a real `emerge --sync`, not by reading the file.
+
+        The failure is the worst shape a guard can have: the mask exists, it looks right, it is
+        installed, and the thing it forbids would have built anyway. "Avoid webkit entirely" was
+        being enforced by three lines of which one was decoration."""
+        start = self.src.index("<<-'MASK'") + len("<<-'MASK'")
+        block = self.src[start:self.src.index("MASK", start)]
+        atoms = [ln.strip() for ln in block.splitlines()
+                 if ln.strip() and not ln.strip().startswith("#")]
+        self.assertTrue(atoms, "the mask block could not be read")
+        for atom in atoms:
+            self.assertRegex(atom, r"^[<>=~!]*[a-z0-9][a-z0-9+._-]*/[A-Za-z0-9+._-]+$",
+                             f"{atom!r} is not an atom portage can parse")
+            if atom[0].isalpha():
+                # A BARE atom must not look versioned: portage splits on the last hyphen and reads
+                # a leading digit as a version, which is exactly how webkit-gtk-6 got through review.
+                tail = atom.rsplit("-", 1)[-1]
+                self.assertFalse(tail[:1].isdigit(),
+                                 f"{atom!r} reads as a versioned atom with no operator — portage "
+                                 f"rejects the line and it masks nothing")
+        self.assertIn("net-libs/webkit-gtk", atoms,
+                      "nothing stops webkit being built from source on this profile")
+
     def test_the_super_key_reaches_the_shell_from_inside_another_app(self):
         """A start menu you cannot open while a browser is focused is not one, and that is exactly
         the machine state you press Super in. The shell's own key handler cannot see the press —

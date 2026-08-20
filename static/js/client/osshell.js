@@ -123,12 +123,22 @@
    * there, and a menu with it twice under two names is a menu somebody stops trusting. Matched on
    * the WINDOW name, which is the only thing the two lists agree about. */
   function mergedApps(builtins, machine){
-    const claimed = new Set((builtins || []).map(a => String(a.match || a.id || '').toLowerCase())
-                                            .filter(Boolean));
+    const claimed = [...new Set((builtins || []).map(a => String(a.match || a.id || '').toLowerCase())
+                                                .filter(Boolean))];
+    /* THE SAME PROGRAM UNDER TWO NAMES, and an exact match does not find it. Measured on the test
+     * laptop: the built-in Browser matches `firefox`, and Gentoo's entry is `firefox-bin.desktop`
+     * whose program is `firefox-bin` — so an `===` comparison saw two different apps and the menu
+     * offered "Browser" and "Mozilla Firefox (bin)", which start the same browser.
+     *
+     * A PREFIX AT A SEPARATOR, not `includes`. `firefox-bin` and `firefox.real` are firefox;
+     * `steamlink` is not steam, and a containment test would swallow it — silently, since the
+     * symptom is a program that is installed and simply never appears. */
+    const sameApp = (m, want) => m === want
+      || m.startsWith(want + '-') || m.startsWith(want + '.') || m.startsWith(want + '_');
     const out = (builtins || []).filter(a => !a.hidden).slice();
     for(const a of (machine || [])){
       const m = String(a.match || '').toLowerCase();
-      if(m && claimed.has(m)) continue;
+      if(m && claimed.some(w => sameApp(m, w) || sameApp(w, m))) continue;
       /* …and by NAME too, since a built-in's `match` is the binary and an entry's Name is what a
        * person reads: two rows both reading "Steam" is the same problem by a different route. */
       if(out.some(b => String(b.name || '').toLowerCase() === String(a.name || '').toLowerCase())) continue;

@@ -92,18 +92,28 @@ class Shell(unittest.TestCase):
         self.assertIn("btop", out["a"])
 
     def test_a_program_the_shell_already_names_is_not_offered_twice(self):
-        """firefox is "Browser" in the built-in list and `firefox-bin.desktop` in the scan. A menu
-        with it twice, under two names, is a menu somebody stops trusting."""
+        """MEASURED ON THE TEST LAPTOP, and an exact match does not catch it. The built-in Browser
+        matches `firefox`; Gentoo ships `firefox-bin.desktop`, whose program is `firefox-bin`. An
+        `===` comparison saw two different apps and the menu offered "Browser" AND "Mozilla Firefox
+        (bin)" — one program, two rows, both starting the same browser.
+
+        A prefix AT A SEPARATOR rather than `includes`, because `steamlink` is not `steam` and a
+        containment test would swallow it — silently, since the symptom of that is a program that is
+        installed and simply never appears in the menu."""
         bridges = """{ pcWM: { windows: async () => [], focus: async () => true },
                        pcApps: { list: async () => ({ apps: [
-                         { id: 'firefox-bin', name: 'Firefox', match: 'firefox',
+                         { id: 'firefox-bin', name: 'Mozilla Firefox (bin)', match: 'firefox-bin',
                            argv: ['/usr/bin/firefox-bin'] },
-                         { id: 'steam', name: 'Steam', match: 'steam', argv: ['/usr/bin/steam'] } ] }) } }"""
+                         { id: 'steam', name: 'Steam', match: 'steam', argv: ['/usr/bin/steam'] },
+                         { id: 'steamlink', name: 'Steam Link', match: 'steamlink',
+                           argv: ['/usr/bin/steamlink'] } ] }) } }"""
         out = self.run_js("out.a = (await S.allApps()).map(x => x.name);", bridges)
-        self.assertEqual(len([n for n in out["a"] if n.lower() in ("browser", "firefox")]), 1,
+        self.assertEqual(len([n for n in out["a"] if "firefox" in n.lower() or n == "Browser"]), 1,
                          "firefox is in the launcher twice: " + repr(out["a"]))
         self.assertEqual(len([n for n in out["a"] if n == "Steam"]), 1,
                          "Steam is in the launcher twice: " + repr(out["a"]))
+        self.assertIn("Steam Link", out["a"],
+                      "a different program was swallowed by the deduplication: " + repr(out["a"]))
 
     def test_a_machine_app_is_launched_with_its_OWN_argv(self):
         """A built-in names several possible command lines because it cannot know how this
