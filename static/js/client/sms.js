@@ -444,10 +444,19 @@
   async function loadFromPhone(onProgress){
     const P = plug('list');
     if(!P) return { loaded: 0 };
-    let total = 0, since = 0, quiet = 0;
+    let total = 0, since = 0, quiet = 0, refused = false;
     for(let page = 0; page < 400 && quiet < 2; page++){
       let rows = [];
-      try{ rows = ((await P.list({ since, limit: 500 })) || {}).messages || []; }
+      try{
+        const answer = (await P.list({ since, limit: 500 })) || {};
+        rows = answer.messages || [];
+        /* REFUSED IS NOT EMPTY, and this is the read the Texts screen is built on. The plugin
+         * returns `[]` for a phone with no texts and for a provider that would not let us look;
+         * without this the caller cannot tell, so it reported "no messages" over a full inbox and
+         * offered nothing to do about it. Sticky across pages: a refusal on ANY page means the
+         * sweep is incomplete, and the count that comes back is not the phone's real total. */
+        if(answer.refused) refused = true;
+      }
       catch(_){ break; }
       let n = 0, top = since;
       for(const r of rows){
@@ -463,7 +472,7 @@
       if(top <= since) break;            // the provider has nothing newer — we are at the end
       since = top;
     }
-    return { loaded: total };
+    return { loaded: total, refused: refused };
   }
 
   /* BRING IN EVERYTHING — the history behind the first pass's 30-day window.
@@ -784,7 +793,16 @@
         return;
       }
       S.emptyWhy = ''; S.emptyFix = '';
-      await loadFromPhone();
+      /* GRANTED AND STILL REFUSED IS ITS OWN STATE. `ensureRead` answering yes means Android said
+       * yes; the PROVIDER can still refuse — a work profile, an OEM permission manager, a phone
+       * where the messages app is locked down. Reporting "no messages" there sends somebody to look
+       * for texts that are being withheld. */
+      const r = await loadFromPhone();
+      if(r && r.refused){
+        S.emptyWhy = 'This phone allowed the permission but its message store still would not '
+                   + 'answer. Open “Why isn\u2019t this working?” below for what it reported.';
+        S.emptyFix = '';
+      }
       paint();
     };
     feed.querySelectorAll('.sms-thread').forEach(b => {

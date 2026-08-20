@@ -304,7 +304,19 @@ public class SmsPlugin extends Plugin {
         return false;
     }
 
-    /** The newest messages, or everything after a timestamp — what the archive publishes. */
+    /**
+     * The newest messages, or everything after a timestamp — what the archive publishes.
+     *
+     * `refused` RIDES WITH EVERY READ, and it is the whole difference between the two ways this
+     * screen can be empty. Without it the caller gets `[]` for "this phone has no texts" AND for
+     * "the provider would not let me look", which is how "i see 0 of my sms messages in Text" drew
+     * an empty list over a full inbox and offered nothing to do about it. `diagnose` could already
+     * report this; the READ path could not, so the only surface that showed it was a panel nobody
+     * opens until they have already decided the app is broken.
+     *
+     * Read immediately after the query, on this thread, because it describes the read that just
+     * happened — a later read would overwrite it.
+     */
     @PluginMethod
     public void list(PluginCall call) {
         long since = call.getLong("since", 0L);
@@ -312,15 +324,19 @@ public class SmsPlugin extends Plugin {
         List<SmsMsg> rows = since > 0
                 ? SmsStore.since(getContext(), since, limit)
                 : SmsStore.recent(getContext(), limit);
+        boolean refused = SmsStore.refused();
         JSObject o = new JSObject();
         o.put("messages", toJson(rows));
+        o.put("refused", refused);
         call.resolve(o);
     }
 
     @PluginMethod
     public void threads(PluginCall call) {
         JSONArray arr = new JSONArray();
-        for (SmsStore.Thread t : SmsStore.threads(getContext(), call.getInt("limit", 500))) {
+        List<SmsStore.Thread> found = SmsStore.threads(getContext(), call.getInt("limit", 500));
+        boolean refused = SmsStore.refused();          // see list(): describes the read just made
+        for (SmsStore.Thread t : found) {
             JSObject o = new JSObject();
             o.put("id", t.id);
             o.put("address", t.address);
@@ -332,6 +348,7 @@ public class SmsPlugin extends Plugin {
         }
         JSObject out = new JSObject();
         out.put("threads", arr);
+        out.put("refused", refused);
         call.resolve(out);
     }
 

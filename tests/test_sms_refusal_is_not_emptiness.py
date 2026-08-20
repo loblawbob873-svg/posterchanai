@@ -1,0 +1,99 @@
+""""No messages" and "I was not allowed to look" are different answers, on every surface.
+
+    "i see 0 of my sms messages in Text"
+
+`SmsStore.query` catches a SecurityException and returns an empty list, which is exactly what a phone
+with no texts returns. `SmsStore.refused()` exists to tell them apart — and it was surfaced only in
+`diagnose`, a panel nobody opens until they have already decided the app is broken. The READ path the
+Texts screen is actually built on could not report it, so an empty list was drawn over a full inbox
+with nothing to do about it.
+
+This is the same rule as the drive check and the folder-sync deletion guard, in a third place: "the
+store said no" and "the store could not be asked" are different, and only one of them is the user's
+problem to fix.
+"""
+import re
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+PLUGIN = ROOT / "mobile/android/app/src/main/java/place/poster/app/sms/SmsPlugin.java"
+STORE = ROOT / "mobile/android/app/src/main/java/place/poster/app/sms/SmsStore.java"
+SMS_JS = ROOT / "static/js/client/sms.js"
+
+
+def method(src, decl):
+    i = src.index(decl)
+    j = src.index("{", i)
+    depth, k = 0, j
+    while True:
+        if src[k] == "{":
+            depth += 1
+        elif src[k] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[i:k + 1]
+        k += 1
+
+
+class TheStoreCanStillTellThemApart(unittest.TestCase):
+    def setUp(self):
+        self.src = STORE.read_text()
+
+    def test_it_reports_a_refusal(self):
+        self.assertIn("public static boolean refused()", self.src)
+
+    def test_every_read_resets_it(self):
+        """A flag only ever set to true latches: one refusal and the screen blames permissions for
+        the rest of the session."""
+        body = method(self.src, "private static List<SmsMsg> query")
+        self.assertIn("refused = false;", body)
+        self.assertLess(body.index("refused = false;"), body.index("refused = true;"))
+
+
+class EveryReadCarriesIt(unittest.TestCase):
+    """Not just `diagnose` — the methods the screen is built on."""
+
+    def setUp(self):
+        self.src = PLUGIN.read_text()
+
+    def test_list_reports_it(self):
+        self.assertIn('o.put("refused"', method(self.src, "public void list("))
+
+    def test_threads_reports_it(self):
+        self.assertIn('put("refused"', method(self.src, "public void threads("))
+
+    def test_it_is_read_beside_its_own_query(self):
+        """`refused` describes the LAST read; sampled later, another read could have overwritten it."""
+        body = method(self.src, "public void threads(")
+        self.assertLess(body.index("SmsStore.refused()"), body.index('out.put("threads"'),
+                        "the refusal is sampled after the rows are serialised")
+
+
+class TheScreenSaysWhichKindOfEmpty(unittest.TestCase):
+    def setUp(self):
+        self.src = SMS_JS.read_text()
+
+    def test_the_loader_carries_it_out(self):
+        body = self.src[self.src.index("async function loadFromPhone"):]
+        body = body[:body.index("\n  }")]
+        self.assertIn("answer.refused", body)
+        self.assertIn("refused: refused", body)
+
+    def test_a_refusal_on_any_page_counts(self):
+        """A sweep that was refused part-way returns a count that is not the phone's real total."""
+        body = self.src[self.src.index("async function loadFromPhone"):]
+        body = body[:body.index("\n  }")]
+        self.assertNotIn("refused = false;", body.split("for(let page")[1],
+                         "the flag is cleared inside the paging loop, so only the last page counts")
+
+    def test_granted_but_still_refused_is_its_own_message(self):
+        """Android saying yes does not make the provider answer — a work profile or an OEM
+        permission manager can still refuse."""
+        i = self.src.index("const r = await loadFromPhone()")
+        self.assertIn("r.refused", self.src[i:i + 600])
+        self.assertIn("emptyWhy", self.src[i:i + 600])
+
+
+if __name__ == "__main__":
+    unittest.main()
