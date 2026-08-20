@@ -78,6 +78,63 @@ class Shell(unittest.TestCase):
         self.assertLessEqual(len(rows[0]["label"]), 48)
         self.assertTrue(rows[0]["label"].endswith("…"))
 
+    def test_the_machines_own_apps_join_the_launcher(self):
+        """"Should be able to manage/open any game/app under PosterChan Desktop." The built-in list
+        is three entries; everything else installed on the machine comes from the .desktop scan."""
+        bridges = """{ pcWM: { windows: async () => [], focus: async () => true },
+                       pcApps: { list: async () => ({ apps: [
+                         { id: 'btop', name: 'btop', match: 'btop', argv: ['/usr/bin/foot','-e','/usr/bin/btop'], group: 'System' },
+                         { id: 'org.qbittorrent.qBittorrent', name: 'qBittorrent',
+                           match: 'qbittorrent', argv: ['/usr/bin/qbittorrent'], group: 'Internet' } ] }) } }"""
+        out = self.run_js("out.a = (await S.allApps()).map(x => x.name);", bridges)
+        self.assertIn("Browser", out["a"], "the built-ins were lost")
+        self.assertIn("qBittorrent", out["a"], "an installed program is missing from the launcher")
+        self.assertIn("btop", out["a"])
+
+    def test_a_program_the_shell_already_names_is_not_offered_twice(self):
+        """firefox is "Browser" in the built-in list and `firefox-bin.desktop` in the scan. A menu
+        with it twice, under two names, is a menu somebody stops trusting."""
+        bridges = """{ pcWM: { windows: async () => [], focus: async () => true },
+                       pcApps: { list: async () => ({ apps: [
+                         { id: 'firefox-bin', name: 'Firefox', match: 'firefox',
+                           argv: ['/usr/bin/firefox-bin'] },
+                         { id: 'steam', name: 'Steam', match: 'steam', argv: ['/usr/bin/steam'] } ] }) } }"""
+        out = self.run_js("out.a = (await S.allApps()).map(x => x.name);", bridges)
+        self.assertEqual(len([n for n in out["a"] if n.lower() in ("browser", "firefox")]), 1,
+                         "firefox is in the launcher twice: " + repr(out["a"]))
+        self.assertEqual(len([n for n in out["a"] if n == "Steam"]), 1,
+                         "Steam is in the launcher twice: " + repr(out["a"]))
+
+    def test_a_machine_app_is_launched_with_its_OWN_argv(self):
+        """A built-in names several possible command lines because it cannot know how this
+        distribution installed the program; a scanned entry already carries the one argv its
+        .desktop file names. Passed as a candidate LIST, the launcher would try to exec its first
+        word as a whole command line."""
+        bridges = """{ pcWM: { windows: async () => [],
+                               focus: async () => true,
+                               launch: async (argv, opts) => { globalThis.__argv = argv;
+                                                               globalThis.__opts = opts;
+                                                               return { pid: 7, window: { id: 3 } }; } },
+                       pcApps: { list: async () => ({ apps: [
+                         { id: 'btop', name: 'btop', match: 'btop',
+                           argv: ['/usr/bin/foot', '-e', '/usr/bin/btop'] } ] }) } }"""
+        out = self.run_js("""
+          await S.allApps();
+          out.r = await S.launch('app:btop');
+          out.argv = globalThis.__argv;
+          out.candidates = !!(globalThis.__opts && globalThis.__opts.candidates);
+        """, bridges)
+        self.assertEqual(out["argv"], ["/usr/bin/foot", "-e", "/usr/bin/btop"])
+        self.assertFalse(out["candidates"],
+                         "a resolved argv was passed as a list of candidate command lines")
+
+    def test_no_scan_bridge_means_the_built_ins_and_nothing_broken(self):
+        """A browser tab, the APK, and the desktop app on Windows have no pcApps at all."""
+        bridges = "{ pcWM: { windows: async () => [], focus: async () => true } }"
+        out = self.run_js("out.m = await S.machineApps(); out.a = (await S.allApps()).length;", bridges)
+        self.assertEqual(out["m"], [])
+        self.assertEqual(out["a"], 3)
+
     def test_launching_something_already_open_focuses_it(self):
         """A second browser window is almost never what "Browser" meant."""
         bridges = """{ pcWM: {

@@ -928,6 +928,45 @@ ipcMain.handle('pc:wm:launch', async (e, argv, opts) => {
   if (settled.why) return { pid: null, window: null, why: settled.why };
   return { pid: started.pid, window: settled.window };
 });
+/* EVERY APP INSTALLED ON THIS MACHINE, for the start menu — "should be able to manage/open any
+ * game/app under PosterChan Desktop".
+ *
+ * The scan and the spec's filtering live in apps.js and are tested there. This is the wiring, plus
+ * the one decision only this side can make: a `Terminal=true` entry (`btop`, `nvim`, an installer
+ * script) has no window of its own and must be run INSIDE a terminal, or clicking it starts a
+ * process with no stdout attached to anything and nothing at all appears. Which terminal exists is
+ * a question about this disk, so it is answered here rather than by a page guessing at a path.
+ *
+ * Deliberately NOT PosterChan's own terminal: that is a PTY the page draws, and handing it an argv
+ * to run instead of a login shell is a second contract on a screen that already resumes sessions.
+ * `foot` is on this profile and is what $mod+Return already opens. */
+const TERMINALS = [['/usr/bin/foot', '-e'], ['/usr/local/bin/foot', '-e'],
+                   ['/usr/bin/xterm', '-e'], ['/usr/bin/alacritty', '-e']];
+function terminalPrefix() {
+  for (const t of TERMINALS) {
+    try { fs.accessSync(t[0], fs.constants.X_OK); return t; } catch (_) {}
+  }
+  return null;
+}
+
+ipcMain.handle('pc:apps:list', (e) => {
+  fsGuard(e);
+  let scanned = { apps: [], skipped: [], dirs: [] };
+  try { scanned = require('./apps.js').scan(); }
+  catch (err) { return { apps: [], why: String((err && err.message) || err) }; }
+  const term = terminalPrefix();
+  const apps = [];
+  for (const a of scanned.apps) {
+    if (a.terminal && !term) continue;   // nothing could run it, so offering it is a dead button
+    apps.push(Object.assign({}, a, {
+      argv: a.terminal ? term.concat(a.argv) : a.argv,
+    }));
+  }
+  /* `skipped` is carried, counted rather than listed: "why is Foo not in my menu" is a real
+   * question and the honest answer is in the entry's own file (NoDisplay, NotShowIn, TryExec). */
+  return { apps, skipped: scanned.skipped.length, dirs: scanned.dirs, terminal: !!term };
+});
+
 /* Events, forwarded to the page. A shell that polls for its own window list is a shell that is
  * always slightly wrong about what is on screen. */
 ipcMain.handle('pc:wm:subscribe', async (e) => {

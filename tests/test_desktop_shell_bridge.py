@@ -132,6 +132,34 @@ class Bridge(unittest.TestCase):
         self.assertIn("pc:wm:available", self.main)
         self.assertIn("available:", self.pre)
 
+    def test_the_app_scan_is_wired_and_starts_nothing_itself(self):
+        """The scan LISTS what is installed; starting one goes through `pcWM.launch`, which is the
+        guarded path the built-in entries already use. Two ways to start a process is one more than
+        anything needs, and the second is the one that gets the guard wrong."""
+        self.assertIn("pc:apps:list", self.main, "nothing lists the machine's applications")
+        self.assertIn("pcApps", self.pre, "the scan is not exposed to the page")
+        # Guarded like everything else that reads this disk.
+        m = re.search(r"ipcMain\.handle\('pc:apps:list'.*?\n\}\);", self.main, re.S)
+        self.assertTrue(m, "the handler could not be found")
+        self.assertIn("fsGuard(e)", m.group(0),
+                      "the app scan is reachable from any page — it reads this machine's disk")
+        # …and it must not grow a launcher of its own.
+        self.assertNotIn("spawn(", m.group(0),
+                         "the app list starts processes itself instead of going through pcWM.launch")
+
+    def test_a_terminal_app_is_run_INSIDE_a_terminal(self):
+        """`Terminal=true` (btop, nvim, an installer script) means the program has no window of its
+        own. Started directly it is a process with its output attached to nothing, and nothing at
+        all appears on screen — which reads as a launcher that does not work."""
+        self.assertIn("terminalPrefix", self.main,
+                      "a Terminal=true entry would be started with no terminal around it")
+        m = re.search(r"ipcMain\.handle\('pc:apps:list'.*?\n\}\);", self.main, re.S)
+        self.assertIn("a.terminal", m.group(0))
+        # An entry nothing on this machine could run must not be offered — a dead button is worse
+        # than an absence, because it looks like the program is broken rather than missing.
+        self.assertIn("if (a.terminal && !term) continue", m.group(0),
+                      "a terminal app is offered on a machine with no terminal to run it in")
+
     def test_the_compositor_can_talk_BACK_to_the_shell(self):
         """A sway binding can only run a command — it cannot call into this app. So anything the
         keyboard has to reach the desktop with goes out as a `tick`, which sway broadcasts to every

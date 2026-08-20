@@ -4675,11 +4675,17 @@
       let natives = '';
       try{
         if(window.PCOSShell && PCOSShell.available()){
-          const nat = PCOSShell.APPS.filter(a => !a.hidden)
-            .filter(a => !q || a.name.toLowerCase().includes(q.toLowerCase()));
+          /* EVERY PROGRAM INSTALLED HERE, not the three built into the shell. `_machineApps` is
+           * filled once by the scan below and read synchronously on every keystroke — a start menu
+           * repaints as you type, and awaiting a scan of every .desktop file on the machine per
+           * keystroke is a menu that stutters and reorders itself under the cursor. */
+          const nat = (_machineApps || PCOSShell.APPS.filter(a => !a.hidden))
+            .filter(a => !q || a.name.toLowerCase().includes(q.toLowerCase())
+                            || String(a.comment || '').toLowerCase().includes(q.toLowerCase()));
           if(nat.length) natives = `<div class="os-applist-h">This computer</div>`
-            + nat.map(a => `<button class="os-app" data-app="${enc(a.id)}">
-                 ${iconSvg(a.icon)}<span>${enc(a.name)}</span></button>`).join('');
+            + nat.map(a => `<button class="os-app" data-app="${enc(a.id)}"${
+                 a.comment ? ` title="${enc(a.comment)}"` : ''}>
+                 ${iconSvg(a.icon || 'window')}<span>${enc(a.name)}</span></button>`).join('');
         }
       }catch(_){ natives = ''; }
       $('#os-applist', menu).innerHTML = nrow + (list.length
@@ -4704,6 +4710,19 @@
       });
     };
     paint('');
+    /* The scan runs ONCE per menu opening and repaints when it answers. Not awaited before the first
+     * paint: the menu must appear the instant it is asked for, and the client's own screens — which
+     * are what most people came for — are already in the list above. */
+    try{
+      if(window.PCOSShell && PCOSShell.available()){
+        PCOSShell.allApps().then(list => {
+          const q = ($('#os-q', menu) || {}).value || '';
+          if(!menu.isConnected) return;
+          _machineApps = list;
+          paint(q);
+        }, () => {});
+      }
+    }catch(_){}
     /* The community counters USED to hang off the bottom of this menu — they live in the sidebar,
      * which the desktop hides, and the start menu was the only surface that existed at the time.
      * They have moved to the network flyout (netStatsHtml), where they belong: every one of them is
@@ -5101,6 +5120,10 @@
    * subscription and a 30s timer alive for the rest of the session, redrawing markup that is no
    * longer in the document. */
   let _shellOff = null, _tickOff = null;
+  /* What the machine has installed, as the start menu last read it. Kept for the life of the
+   * desktop rather than per menu opening: a scan parses every .desktop file on the disk and
+   * programs are not installed while somebody is holding the menu open. */
+  let _machineApps = null;
 
   window.PCOS = { enter, exit, suspend, toggle, restore, refresh, isOn: () => on, openDoc, focusDoc, routeView, snapTo, osToast,
                   // app.js calls this when the player's state changes — the Now-playing widget has

@@ -133,7 +133,8 @@ window.pcWM = {
     window.__wm.wins = window.__wm.wins.filter(v => Number(v.id) !== Number(id));
     return Promise.resolve([]);
   },
-  launch: () => Promise.resolve({ pid: 0, window: null }),
+  launch: (argv, opts) => { window.__lastArgv = argv; window.__lastOpts = opts;
+                            return Promise.resolve({ pid: 0, window: null }); },
   subscribe: () => Promise.resolve(),
   /* A REAL SUBSCRIPTION, so the reconcile is reached the way it is reached in the app — off a
    * compositor event — rather than through a hook that only a test calls. A window changing its
@@ -152,6 +153,14 @@ window.pcPower = { status: () => Promise.resolve({ battery: { present: true, per
 window.pcAudio = { status: () => Promise.resolve({ output: { percent: 40, muted: false } }),
                    setVolume: () => Promise.resolve({ ok: true }) };
 window.pcOS    = { provision: () => Promise.resolve({ ok: true }) };
+/* The machine's installed programs, as the scan answers. Two entries the built-in list does NOT
+ * already name, plus one it does — the launcher must show the first two and not offer firefox
+ * twice under two names. */
+window.pcApps  = { list: () => Promise.resolve({ apps: [
+  { id: 'btop', name: 'btop', match: 'btop', argv: ['/usr/bin/foot', '-e', '/usr/bin/btop'], group: 'System' },
+  { id: 'org.qbittorrent.qBittorrent', name: 'qBittorrent', match: 'qbittorrent',
+    argv: ['/usr/bin/qbittorrent'], group: 'Internet' },
+  { id: 'firefox-bin', name: 'Firefox', match: 'firefox', argv: ['/usr/bin/firefox-bin'] } ] }) };
 </script>
 <script src="/static/js/client/osfirstrun.js"></script>
 <script src="/static/js/client/osshell.js"></script>
@@ -263,6 +272,29 @@ DRIVE = r"""(async () => {
       bad('overlay-buried', 'the app was not brought back when the overlay closed');
   }
 
+  /* ── the start menu lists what is installed on this machine ────────────────────────────────── */
+  {
+    const list = await window.PCOSShell.allApps();
+    const names = list.map(a => a.name);
+    out.launcher = names;
+    if (!names.includes('qBittorrent') || !names.includes('btop'))
+      bad('installed-apps-missing', 'the launcher does not offer programs installed on this '
+                                  + 'machine: ' + JSON.stringify(names));
+    const fx = names.filter(n => /^(browser|firefox)$/i.test(n));
+    if (fx.length !== 1)
+      bad('app-listed-twice', 'firefox is in the launcher as ' + JSON.stringify(fx)
+                            + ' — the built-in and the scanned entry are the same program');
+    // …and it is startable with the argv its own .desktop file named.
+    window.__wm.calls.length = 0;
+    const before = window.__wm.wins.length;
+    await window.PCOSShell.launch('app:btop').catch(() => {});
+    out.launchedArgv = window.__lastArgv || null;
+    if (!out.launchedArgv || out.launchedArgv[0] !== '/usr/bin/foot')
+      bad('installed-apps-missing', 'starting an installed program did not use its own argv: '
+                                  + JSON.stringify(out.launchedArgv));
+    void before;
+  }
+
   /* ── a window that clears its title is not a window that has closed ────────────────────────── */
   {
     const w = window.__wm.wins.find(v => v.app === 'firefox');
@@ -344,12 +376,12 @@ async def drive(url):
             out = r["result"].get("value") or {}
 
             for k in ("drag", "blurs", "calls", "resize", "placed", "hiddenForOverlay",
-                      "shownAfterOverlay", "titleClearedKilled"):
+                      "shownAfterOverlay", "launcher", "launchedArgv", "titleClearedKilled"):
                 if k in out:
                     print(f"  {k}: {json.dumps(out[k])}")
             problems = out.get("problems") or []
             if not problems:
-                print("PASS  a Linux app is framed, dragged, resized, covered and not killed")
+                print("PASS  a Linux app is framed, dragged, resized, covered, listed and not killed")
                 return 0
             for p in problems:
                 print(f"FAIL  {p['k']}: {p['d']}")

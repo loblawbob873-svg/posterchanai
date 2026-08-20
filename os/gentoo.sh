@@ -133,29 +133,30 @@ gentooRepo() {
 	mkdir -p $TARGET/etc/portage/repos.conf/
 	echo -e "\033[1;36m◆ CONFIGURING REPOS ◆\033[0m"
 
-	# `emerge --sync` MUST WORK ON A MACHINE THAT IS NOT ON THIS LAN.
+	# `emerge --sync` MUST WORK ON A MACHINE THAT IS NOT ON THIS LAN — EVERY MACHINE, NOT JUST THE OS.
 	#
-	# The default here syncs from rsync://gentoo-repo.lan, which resolves for exactly one network —
-	# so a PosterChanOS install anywhere else has a broken --sync from first boot, and the way you
-	# find out is that the machine can never update. An OS somebody else runs cannot be pointed at a
-	# .lan name.
+	# This used to write rsync://gentoo-repo.lan, which resolves on exactly one network. Anywhere
+	# else that is a broken --sync from first boot, and the way somebody finds out is that their
+	# machine can never update — no error at install time, nothing in any log, just a computer that
+	# quietly stops being able to receive a fix.
+	#
+	# The PosterChanOS arm was moved to webrsync first and the OTHER arm was left on the .lan name,
+	# on the reasoning that the plain-server profile is "somebody's own machines on their own
+	# network". That reasoning is wrong the moment anybody else installs a server, which is the
+	# entire point of shipping an installer — and the two arms fail in the same silent way. There is
+	# one URI now and it works from anywhere, including from this LAN.
 	#
 	# webrsync fetches a SIGNED SNAPSHOT TARBALL over https, which the public mirror already carries
 	# (gentoo.poster.place/snapshots/portage-latest.tar.xz, with its .gpgsig) — the same endpoint the
-	# binhost above already uses, so this needs no new infrastructure. The signature is upstream
+	# binhost below already uses, so this needs no new infrastructure. The signature is upstream
 	# Gentoo's, mirrored verbatim, and verifying it is what makes fetching a tree over HTTP from
 	# somebody's server acceptable at all.
 	{
 		echo "[gentoo]"
 		echo "location = /var/db/repos/gentoo"
-		if [[ "$POSTERCHANOS" = *y* ]]; then
-			echo "sync-type = webrsync"
-			echo "sync-uri = https://gentoo.poster.place"
-			echo "sync-webrsync-verify-signature = true"
-		else
-			echo "sync-type = rsync"
-			echo "sync-uri = rsync://gentoo-repo.lan/gentoo-portage"
-		fi
+		echo "sync-type = webrsync"
+		echo "sync-uri = https://gentoo.poster.place"
+		echo "sync-webrsync-verify-signature = true"
 	} >$TARGET/etc/portage/repos.conf/gentoo-mirror.conf
 
 	# THE POSTERCHANOS OVERLAY: how an installed machine gets a newer desktop and session without

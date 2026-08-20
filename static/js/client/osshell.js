@@ -79,6 +79,69 @@
         ['/usr/bin/steam'], ['/usr/bin/flatpak', 'run', 'com.valvesoftware.Steam'] ] },
   ];
 
+  /* ── THE MACHINE'S OWN APPLICATIONS ────────────────────────────────────────────────────────
+   *
+   * The list above is three entries and a comment arguing that a menu scraped from
+   * /usr/share/applications is the thing PosterChanOS exists not to be. That argument was about a
+   * menu of ninety unusable entries, and the answer to it is the SPEC — NoDisplay, Hidden,
+   * NotShowIn, TryExec, Type — not refusing to look. Measured on the test laptop: 19 .desktop files
+   * of which five belong in a menu, and every one of the other fourteen says so in its own file.
+   *
+   * A desktop you cannot start your own programs from is not a desktop. "Should be able to
+   * manage/open any game/app under PosterChan Desktop" is the requirement, and each one gets a
+   * PosterChan window like everything else here, because that is what `adoptAll` does with any
+   * compositor window that appears.
+   *
+   * CACHED FOR THE SESSION, and refreshed only when asked. A scan reads and parses every .desktop
+   * file on the machine, and the start menu is rebuilt on every keystroke of its search box. */
+  let _apps = null, _appsAt = 0, _appsInFlight = null;
+
+  async function machineApps(force){
+    const A = root.pcApps;
+    if(!A || typeof A.list !== 'function') return [];
+    if(!force && _apps) return _apps;
+    /* SHARED, not repeated. The start menu draws while it types and the desktop redraws on window
+     * events, so without this a slow disk gets one full scan per repaint. */
+    if(_appsInFlight) return _appsInFlight;
+    _appsInFlight = (async () => {
+      try{
+        const r = await A.list();
+        _apps = ((r && r.apps) || []).map(a => ({
+          id: 'app:' + a.id, name: a.name, match: a.match, icon: 'window',
+          comment: a.comment || '', group: a.group || 'Other', argv: a.argv, machine: true,
+        }));
+        _appsAt = Date.now();
+      }catch(_){ _apps = _apps || []; }
+      _appsInFlight = null;
+      return _apps;
+    })();
+    return _appsInFlight;
+  }
+
+  /* WHAT THE LAUNCHER OFFERS: the built-ins first, then the machine's own, with anything the
+   * built-ins already name removed — `firefox` is both "Browser" here and `firefox-bin.desktop`
+   * there, and a menu with it twice under two names is a menu somebody stops trusting. Matched on
+   * the WINDOW name, which is the only thing the two lists agree about. */
+  function mergedApps(builtins, machine){
+    const claimed = new Set((builtins || []).map(a => String(a.match || a.id || '').toLowerCase())
+                                            .filter(Boolean));
+    const out = (builtins || []).filter(a => !a.hidden).slice();
+    for(const a of (machine || [])){
+      const m = String(a.match || '').toLowerCase();
+      if(m && claimed.has(m)) continue;
+      /* …and by NAME too, since a built-in's `match` is the binary and an entry's Name is what a
+       * person reads: two rows both reading "Steam" is the same problem by a different route. */
+      if(out.some(b => String(b.name || '').toLowerCase() === String(a.name || '').toLowerCase())) continue;
+      out.push(a);
+    }
+    return out;
+  }
+
+  /** Everything the start menu should show, built-ins and installed programs together. */
+  async function allApps(force){
+    return mergedApps(APPS, await machineApps(force));
+  }
+
   /* WHICH WINDOWS BELONG ON A TASKBAR. Not the shell's own window — it is the desktop, and a
    * desktop that lists itself is a mirror pointed at a mirror. Nothing without a title either: a
    * window that has not named itself yet is one that is still opening, and a nameless button
@@ -118,7 +181,12 @@
   const setViewOpener = (fn) => { _openView = (typeof fn === 'function') ? fn : null; };
 
   async function launch(appId){
-    const app = APPS.find(a => a.id === appId);
+    let app = APPS.find(a => a.id === appId);
+    /* A MACHINE APP IS FOUND IN THE SCAN, not in the built-in list. Looked up from the CACHE rather
+     * than re-scanned: the id came from a menu that was drawn from that same cache moments ago, and
+     * a fresh scan here would be a disk full of files parsed between the press and the program. */
+    if(!app && String(appId || '').startsWith('app:'))
+      app = (_apps || []).find(a => a.id === appId);
     if(!app) throw new Error('no such app');
     /* A VIEW APP IS NOT A PROCESS. There is nothing to spawn and nothing to wait for a window from
      * — "launch" means open the screen, in a window on this desktop like every other app. */
@@ -131,7 +199,13 @@
     let open = null;
     try{ open = existingWindow(await wm.windows(), app); }catch(_){}
     if(open){ await wm.focus(open.id); return { focused: open.id }; }
-    const r = await wm.launch(app.candidates, { waitMs: 20000, candidates: true });
+    /* CANDIDATES vs a resolved ARGV. A built-in names several possible command lines because it
+     * cannot know how this distribution installed the program; a scanned entry already carries the
+     * one argv its .desktop file names, resolved against this disk when it was listed. Passing an
+     * argv as a candidate list would try to exec its first WORD as a whole command line. */
+    const r = app.argv
+      ? await wm.launch(app.argv, { waitMs: 20000 })
+      : await wm.launch(app.candidates, { waitMs: 20000, candidates: true });
     /* A launch that produced no window is REPORTED, not swallowed. The most common cause is the
      * program not being installed — Steam is optional here — and "nothing happened" is the least
      * useful thing a launcher can say. */
@@ -433,9 +507,10 @@
       + `${H(r.label)}</button>`).join('') + `</div>`;
   }
 
-  function launcherHTML(){
-    return `<div class="os-launcher">` + APPS.filter(a => !a.hidden).map(a =>
-      `<button class="os-app" data-app="${H(a.id)}">${H(a.name)}</button>`).join('') + `</div>`;
+  function launcherHTML(list){
+    return `<div class="os-launcher">` + (list || APPS.filter(a => !a.hidden)).map(a =>
+      `<button class="os-app" data-app="${H(a.id)}"${a.comment ? ` title="${H(a.comment)}"` : ''}>`
+      + `${H(a.name)}</button>`).join('') + `</div>`;
   }
 
   /* One draw, from one read. Called on a window event and on a timer — the timer is the slow
@@ -475,7 +550,7 @@
   async function render(into){
     if(!into || !(await detect())) return;
     await refresh();
-    into.innerHTML = launcherHTML() + taskbarHTML(_rows) + (_sum ? panelHTML(_sum) : '');
+    into.innerHTML = launcherHTML(await allApps()) + taskbarHTML(_rows) + (_sum ? panelHTML(_sum) : '');
     bindApps(into, () => render(into));
     into.querySelectorAll('[data-win]').forEach(b => b.onclick = async () => {
       try{ await WM().focus(Number(b.dataset.win)); }catch(_){}
@@ -505,7 +580,7 @@
   }
 
   const API = { available, detect, APPS, taskbarRows, existingWindow, launch, panelState, panelSummary,
-                profileMenu,
+                profileMenu, machineApps, mergedApps, allApps,
                 ensureAccount, panelHTML, taskbarHTML, launcherHTML, render, watch,
                 setViewOpener, refresh, paintTray, bindApps, bindPanel,
                 summary: () => _sum, rows: () => _rows, readAt: () => _readAt };

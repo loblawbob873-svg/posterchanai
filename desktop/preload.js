@@ -155,6 +155,13 @@ if (isOurPage) {
     },
   });
 
+  /* THE MACHINE'S OWN APPLICATIONS, for the start menu. Read-only: this lists what is installed and
+   * nothing else — starting one goes through `pcWM.launch`, which is the same guarded path the
+   * built-in entries already use, so there is one place a process can be started from. */
+  contextBridge.exposeInMainWorld('pcApps', {
+    list: () => ipcRenderer.invoke('pc:apps:list'),
+  });
+
   contextBridge.exposeInMainWorld('pcOS', {
     /* A Unix account and a private home for whoever just signed in. The main process re-checks the
      * npub before it runs anything as root, and so does the script — the page is not trusted to

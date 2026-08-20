@@ -330,19 +330,31 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertIn('-x "${TARGET}/usr/local/bin/posterchan"', body[i:i + 1200],
                       "the overlay install is trusted rather than verified")
 
-    def test_emerge_sync_works_off_this_lan(self):
-        """rsync://gentoo-repo.lan resolves on exactly one network. An OS other people run cannot be
-        pointed at a .lan name, and the way they find out is that the machine can never update."""
+    def test_emerge_sync_works_off_this_lan_on_EVERY_profile(self):
+        """rsync://gentoo-repo.lan resolves on exactly one network. Anywhere else that is a broken
+        --sync from first boot, and the way somebody finds out is that their machine can never
+        update — no error at install time, nothing in any log.
+
+        EVERY arm, not just PosterChanOS. The OS arm was moved to webrsync first and the plain
+        server arm was left on the .lan name, on the reasoning that a server profile is "somebody's
+        own machines on their own network". That is wrong the moment anybody else installs a server,
+        which is the entire point of shipping an installer, and both arms fail identically and
+        silently. So this asserts on the WHOLE function: no .lan may appear in the repo config at
+        all."""
         repo = self._fn("gentooRepo")
-        # ONLY the PosterChanOS arm — the else branch keeps the LAN rsync for the default profile,
-        # which is somebody's own machines on their own network and is correct there.
-        i = repo.index("$POSTERCHANOS")
-        pcos = repo[i:repo.index("else", i)]
-        self.assertIn("sync-type = webrsync", pcos)
-        self.assertIn("https://gentoo.poster.place", pcos)
-        self.assertNotIn(".lan", pcos, "PosterChanOS still syncs from a LAN-only host")
-        self.assertIn("sync-webrsync-verify-signature = true", pcos,
+        cfg = repo[repo.index("[gentoo]"):]
+        self.assertIn("sync-type = webrsync", cfg)
+        self.assertIn("https://gentoo.poster.place", cfg)
+        self.assertIn("sync-webrsync-verify-signature = true", cfg,
                       "a package tree fetched over HTTP from somebody's server, unverified")
+        # The comment above it is allowed to say the words; a written CONFIG LINE is not.
+        for line in repo.splitlines():
+            bare = line.strip()
+            if bare.startswith("#") or not bare:
+                continue
+            self.assertNotIn(".lan", bare,
+                             "the installer still writes a LAN-only host into portage's config: "
+                             + bare.strip())
 
     def test_the_shell_itself_is_installed(self):
         """sway's config execs `posterchan`. Nothing else in this installer puts it on the disk, so
