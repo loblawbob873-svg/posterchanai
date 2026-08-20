@@ -102,7 +102,13 @@ every menu hanging off it — Remove from home, Resize, Add a widget — was unr
 of item that most needs them. That is `247a1be8`'s shape exactly: a child that eats the gesture is
 invisible in the parent's code. The DOWN is watched in `onInterceptTouchEvent` now, and the gesture
 is only **stolen** once the long press has actually fired, so a short tap still reaches the widget's
-own buttons. The menu is titled with the widget's own name, too — a menu about an existing widget
+own buttons.
+
+**`setItems` had called `v.setClickable(false)` on the child since `66c7f2ec`, and that could never
+have worked** — it clears the flag on the `AppWidgetHostView` *itself*, while the views that consume
+the touch are its RemoteViews *descendants*. The device probe prints `clickableContent=true` for a
+widget whose host view is not clickable, which is the whole bug in one line. A fix aimed one level
+too high looks correct in the diff and changes nothing on the phone. The menu is titled with the widget's own name, too — a menu about an existing widget
 headed "Add a widget" reads as the wrong menu.
 
 Three things after that are easy to get half right and each fails silently: `BIND_APPWIDGET` is
