@@ -1271,6 +1271,7 @@ tweaks() {
 	echo -e "\033[1;36m[3] Compile the Kernel\033[0m"
 	echo -e "\033[1;36m[4] Upgrade gentoo.sh\033[0m"
 	echo -e "\033[1;36m[5] Fix Audio\033[0m"
+	echo -e "\033[1;36m[6] Build a LiveCD from this OS\033[0m"
 	echo
 	read -p 'Your Choice: ' choice
 	if [[ $choice = 1 ]]; then
@@ -1302,9 +1303,230 @@ tweaks() {
 		scp verita84@nas.lan:~/configs/scripts/gentoo.sh .
 	elif [[ $choice = 5 ]]; then
 		fixSound
+	elif [[ $choice = 6 ]]; then
+		liveCD
+		tweaks
 	else
 		tweaks
 	fi
+}
+
+# ===============================================================================================
+# TURN THE RUNNING SYSTEM INTO A LIVE CD.
+#
+# Not an installer image and not a backup: a bootable ISO of THIS machine, exactly as it is now,
+# that boots to the same desktop on any other machine and writes nothing to its disk.
+#
+# HOW IT WORKS, because the three pieces have to agree or it boots to a dracut shell:
+#
+#   1. mksquashfs packs `/` into LiveOS/squashfs.img on the ISO;
+#   2. a FRESH dracut initramfs is built with `dmsquash-live` and `--no-hostonly` — the installed
+#      one is deliberately host-only and unlocks THIS machine's LUKS volume, which is precisely
+#      wrong on somebody else's hardware;
+#   3. grub-mkrescue wraps it in a hybrid ISO that boots on BIOS and UEFI alike.
+#
+# THE SWAPFILE IS EXCLUDED, AND SO IS ITS FSTAB LINE. Those are two separate things and leaving
+# either one in is its own failure. The FILE is gigabytes of nothing, which is the difference
+# between an ISO that fits on a stick and one that does not. The fstab ENTRY is worse: the live
+# system would try to swapon a file that is not there, and on a systemd box a failed swap unit at
+# boot is a delay and a red line on a machine whose whole job is to boot cleanly for a stranger.
+# `/etc/fstab` is rewritten inside the image with mksquashfs's pseudo-file feature, so nothing on
+# the running system is touched to do it.
+#
+# THE WORK DIRECTORY EXCLUDES ITSELF. Squashing `/` while writing the squashfs into `/` is a loop
+# that fills the disk, and it is the first thing anyone gets wrong here.
+liveCD() {
+	clear
+	echo
+	echo -e "${COLOR_CYAN}═══════════════════════════════════════════════════════${COLOR_RESET}"
+	echo -e "${COLOR_BOLD}  ⚡ BUILD A LIVE CD FROM THIS RUNNING SYSTEM ⚡${COLOR_RESET}"
+	echo -e "${COLOR_CYAN}═══════════════════════════════════════════════════════${COLOR_RESET}"
+	echo
+
+	if [[ $EUID -ne 0 ]]; then
+		echo -e "${COLOR_YELLOW}This has to run as root — it reads every file on the disk.${COLOR_RESET}"
+		read -p "Press enter key to Continue"
+		return
+	fi
+
+	# ---------------------------------------------------------------- tools
+	# mksquashfs packs the filesystem, xorriso (libisoburn) writes the ISO, and grub-mkrescue needs
+	# mtools + dosfstools to build the little FAT image that makes it UEFI-bootable. A missing
+	# mtools is the classic one: grub-mkrescue then produces an ISO that boots on BIOS and is
+	# invisible to every UEFI machine, with only a warning to say so.
+	local NEED=""
+	command -v mksquashfs >/dev/null 2>&1 || NEED="$NEED sys-fs/squashfs-tools"
+	command -v xorriso >/dev/null 2>&1 || NEED="$NEED dev-libs/libisoburn"
+	command -v mformat >/dev/null 2>&1 || NEED="$NEED sys-fs/mtools"
+	command -v mkfs.vfat >/dev/null 2>&1 || NEED="$NEED sys-fs/dosfstools"
+	command -v dracut >/dev/null 2>&1 || NEED="$NEED sys-kernel/dracut"
+	command -v grub-mkrescue >/dev/null 2>&1 || NEED="$NEED sys-boot/grub"
+	if [[ -n "$NEED" ]]; then
+		echo -e "${COLOR_YELLOW}Installing what this needs:${COLOR_RESET}$NEED"
+		echo
+		if ! /usr/bin/emerge -n $NEED; then
+			echo
+			echo -e "${COLOR_YELLOW}Could not install:$NEED — stopping rather than building half an ISO.${COLOR_RESET}"
+			read -p "Press enter key to Continue"
+			return
+		fi
+	fi
+
+	# ---------------------------------------------------------------- where
+	local OUTDIR ISO WORK LABEL
+	read -p 'Write the ISO where? ' -e -i "/var/tmp/livecd" OUTDIR
+	mkdir -p "$OUTDIR" || { echo "cannot write to $OUTDIR"; read -p "Press enter key to Continue"; return; }
+	LABEL="PCLIVE"
+	ISO="$OUTDIR/posterchan-live-$(date +%Y%m%d).iso"
+	WORK="$OUTDIR/work"
+	rm -rf "$WORK"
+	mkdir -p "$WORK/iso/LiveOS" "$WORK/iso/boot/grub"
+
+	local KEEP_HOME
+	read -p 'Include /home in the image? ' -e -i "n" KEEP_HOME
+
+	# ---------------------------------------------------------------- what to leave out
+	#
+	# EVERY SWAPFILE, found rather than assumed. It is usually /swapfile, and on this installer it
+	# is whatever hibernation() made — so the list is built from what the kernel says is in use
+	# (/proc/swaps) AND from fstab, because a swapfile that is configured but not currently on is
+	# still gigabytes of nothing in the image.
+	local SWAPFILES=""
+	if [[ -r /proc/swaps ]]; then
+		SWAPFILES="$(awk 'NR>1 && $2=="file" {print $1}' /proc/swaps)"
+	fi
+	SWAPFILES="$SWAPFILES $(awk '!/^[[:space:]]*#/ && $3=="swap" && $1 ~ /^\// {print $1}' /etc/fstab 2>/dev/null)"
+
+	local EXCLUDES=(
+		proc sys dev run tmp mnt media lost+found
+		var/tmp var/cache/distfiles var/cache/binpkgs var/lib/portage/distfiles
+		var/log/journal .snapshots
+		boot efi
+		etc/fstab etc/machine-id etc/crypttab
+	)
+	# THE WORK DIRECTORY EXCLUDES ITSELF — see the header. Stored relative, because mksquashfs's
+	# -e paths are relative to the source root.
+	EXCLUDES+=("${OUTDIR#/}")
+	[[ "$KEEP_HOME" = *n* ]] && EXCLUDES+=(home)
+	local f
+	for f in $SWAPFILES; do
+		[[ -n "$f" ]] && EXCLUDES+=("${f#/}")
+	done
+
+	echo
+	echo -e "${COLOR_MAGENTA}◆ LEAVING OUT ◆${COLOR_RESET}"
+	printf '    %s\n' "${EXCLUDES[@]}"
+	echo
+
+	# ---------------------------------------------------------------- the live /etc/fstab
+	#
+	# Written into the image, never over the real one. A live system mounts its root from the ISO,
+	# so every line here would be wrong on another machine — and the swap line would fail loudly.
+	# What is left is the handful of pseudo-filesystems, which cost nothing and keep anything that
+	# reads fstab happy.
+	local LIVEFSTAB="$WORK/fstab.live"
+	cat >"$LIVEFSTAB" <<'FSTAB'
+# Live image — the root filesystem comes from the ISO, so nothing is mounted from a disk here.
+# The swap entry from the machine this was built on is deliberately absent: its swapfile is not in
+# this image, and a swapon that cannot find its file is a failed unit on every boot.
+tmpfs /tmp tmpfs defaults,nosuid,nodev 0 0
+FSTAB
+
+	local PSEUDO="$WORK/pseudo"
+	{
+		echo "etc/fstab f 644 0 0 cat $LIVEFSTAB"
+		# An EMPTY machine-id, not a copy of this machine's. systemd treats empty as "first boot"
+		# and generates a fresh one; a duplicated id gives every live boot the same identity, which
+		# breaks journald, DHCP leases and systemd-boot's own /boot layout.
+		echo "etc/machine-id f 444 0 0 echo -n"
+	} >"$PSEUDO"
+
+	# ---------------------------------------------------------------- squash it
+	echo -e "${COLOR_YELLOW}Packing the filesystem — this is the slow part.${COLOR_RESET}"
+	echo
+	local EXARGS=()
+	for f in "${EXCLUDES[@]}"; do EXARGS+=(-e "$f"); done
+	if ! mksquashfs / "$WORK/iso/LiveOS/squashfs.img" \
+		-comp zstd -Xcompression-level 15 -noappend -no-progress \
+		-pf "$PSEUDO" "${EXARGS[@]}"; then
+		echo
+		echo -e "${COLOR_YELLOW}mksquashfs failed — nothing was written.${COLOR_RESET}"
+		read -p "Press enter key to Continue"
+		return
+	fi
+
+	# ---------------------------------------------------------------- kernel + a live initramfs
+	local KVER KERNEL
+	KVER="$(uname -r)"
+	KERNEL="$(find /boot -name "vmlinuz-$KVER*" -o -name "linux-$KVER*" 2>/dev/null | head -1)"
+	[[ -z "$KERNEL" ]] && KERNEL="$(find /boot -name 'vmlinuz*' 2>/dev/null | sort | tail -1)"
+	if [[ -z "$KERNEL" ]]; then
+		echo -e "${COLOR_YELLOW}No kernel found under /boot — cannot build a bootable ISO.${COLOR_RESET}"
+		read -p "Press enter key to Continue"
+		return
+	fi
+	cp -f "$KERNEL" "$WORK/iso/boot/vmlinuz"
+
+	echo
+	echo -e "${COLOR_YELLOW}Building a live initramfs (not the host-only one).${COLOR_RESET}"
+	echo
+	# --no-hostonly is the load-bearing flag. The installed initramfs is built for THIS machine and
+	# carries only its drivers, plus the LUKS unlock for its disk; booted on somebody else's laptop
+	# it finds no root and drops to an emergency shell. This one carries every driver dracut has.
+	if ! dracut --force --no-hostonly --nolvmconf --nomdadmconf \
+		--add "dmsquash-live" --omit "crypt crypt-gpg crypt-loop" \
+		--kver "$KVER" "$WORK/iso/boot/initramfs.img"; then
+		echo
+		echo -e "${COLOR_YELLOW}dracut failed — the ISO would not boot, so nothing was written.${COLOR_RESET}"
+		read -p "Press enter key to Continue"
+		return
+	fi
+
+	# ---------------------------------------------------------------- boot menu
+	#
+	# `root=live:CDLABEL=…` is how dmsquash-live finds the medium, so the label here and the one
+	# passed to grub-mkrescue below MUST match — a mismatch boots to a dracut shell with no clue
+	# as to why.
+	cat >"$WORK/iso/boot/grub/grub.cfg" <<GRUB
+set default=0
+set timeout=5
+insmod all_video
+menuentry "PosterChan Live" {
+    linux /boot/vmlinuz root=live:CDLABEL=$LABEL rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img quiet
+    initrd /boot/initramfs.img
+}
+menuentry "PosterChan Live (verbose)" {
+    linux /boot/vmlinuz root=live:CDLABEL=$LABEL rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img rd.debug
+    initrd /boot/initramfs.img
+}
+menuentry "PosterChan Live (copy to RAM)" {
+    linux /boot/vmlinuz root=live:CDLABEL=$LABEL rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img rd.live.ram=1 quiet
+    initrd /boot/initramfs.img
+}
+GRUB
+
+	# ---------------------------------------------------------------- the ISO
+	echo
+	echo -e "${COLOR_YELLOW}Writing $ISO${COLOR_RESET}"
+	echo
+	if ! grub-mkrescue -o "$ISO" "$WORK/iso" -- -volid "$LABEL"; then
+		echo
+		echo -e "${COLOR_YELLOW}grub-mkrescue failed — no ISO was written.${COLOR_RESET}"
+		read -p "Press enter key to Continue"
+		return
+	fi
+
+	rm -rf "$WORK"
+	echo
+	echo -e "${COLOR_GREEN}◆ DONE ◆${COLOR_RESET}"
+	echo -e "    $ISO  ($(du -h "$ISO" | cut -f1))"
+	echo
+	echo -e "${COLOR_CYAN}Write it to a USB stick with:${COLOR_RESET}"
+	echo -e "    dd if=$ISO of=/dev/sdX bs=4M status=progress oflag=sync"
+	echo
+	echo -e "${COLOR_YELLOW}It is a hybrid image: the same file boots on BIOS and on UEFI.${COLOR_RESET}"
+	echo
+	read -p "Press enter key to Continue"
 }
 
 download-setup() {
