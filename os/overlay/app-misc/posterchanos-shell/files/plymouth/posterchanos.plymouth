@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=PosterChanOS
+Description=PosterChanOS boot splash
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/posterchanos
+ScriptFile=/usr/share/plymouth/themes/posterchanos/posterchanos.script

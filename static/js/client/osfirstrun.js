@@ -1,0 +1,97 @@
+/* What PosterChanOS asks for on first boot, and in what order.
+ *
+ * The order is not cosmetic. A fresh install has NO NETWORK, so every later step fails in a way
+ * that looks like the step itself is broken: the instance picker cannot reach anything, Tor cannot
+ * bootstrap, and a remote signer cannot be contacted. Ask for wifi first and each subsequent screen
+ * is answerable; ask for it fourth and somebody is typing an instance URL at a machine with no
+ * radio, being told the instance is down.
+ *
+ * A STEP IS SKIPPED WHEN IT IS ALREADY SATISFIED, NEVER WHEN IT IS MERELY DIFFICULT. Ethernet
+ * plugged in means the network step has nothing to ask; an instance already configured means the
+ * picker has nothing to ask. But "the wifi scan failed" is not "the network is fine" — an
+ * unanswerable step stops the flow and says so, because carrying on produces four screens of
+ * failures whose real cause was two screens ago.
+ *
+ * AND IT IS RESUMABLE. Somebody who closes the laptop half way through must come back to the step
+ * they were on, not to the beginning and not to a half-configured machine. State is derived from
+ * the WORLD each time — is there a route, is there an instance, is there a key — rather than from a
+ * "which step were we on" counter, which is the thing that goes stale when somebody fixes something
+ * outside the wizard.
+ *
+ * DOM-free: tests/client/test_os_firstrun.py runs this file under node.
+ */
+(function(root){
+  'use strict';
+
+  const STEPS = ['network', 'instance', 'tor', 'signin', 'account'];
+
+  /** What each step needs before it can be considered answered. */
+  function stepState(world){
+    const w = world || {};
+    const out = {};
+
+    /* NETWORK. Satisfied by ANY route out, not by wifi specifically — a machine on ethernet has
+     * nothing to ask, and asking anyway is the wizard being pleased with itself. */
+    out.network = w.online === true ? 'done'
+                : w.netReadable === false ? 'blocked'      // NetworkManager could not be asked
+                : 'todo';
+
+    /* INSTANCE. A PosterChan node to talk to, or the deliberate choice to run without one — the
+     * client works relay-only, and "no instance" is an answer rather than an omission. */
+    out.instance = (w.instance || w.instanceSkipped) ? 'done' : 'todo';
+
+    /* TOR is OPTIONAL and always has been. It is offered, and a person who says no has answered
+     * it — which is why this is not `w.tor === true`. */
+    out.tor = (w.torChosen === true || w.torSkipped === true) ? 'done' : 'todo';
+
+    out.signin = w.pubkey ? 'done' : 'todo';
+
+    /* THE ACCOUNT is not something a person answers, it is something the machine does once it
+     * knows who they are — and it cannot be attempted before that. */
+    out.account = !w.pubkey ? 'todo'
+                : w.homeReady === true ? 'done'
+                : w.provisionFailed ? 'blocked'
+                : 'todo';
+    return out;
+  }
+
+  /* THE STEP TO SHOW. The first that is not done — except that a BLOCKED step wins outright, even
+   * if a later one is still todo: continuing past something that could not be answered is how a
+   * wizard ends up reporting four unrelated failures whose cause was the first one. */
+  function nextStep(world){
+    const st = stepState(world);
+    for(const s of STEPS) if(st[s] === 'blocked') return { step: s, blocked: true, state: st };
+    for(const s of STEPS) if(st[s] !== 'done') return { step: s, blocked: false, state: st };
+    return { step: null, blocked: false, state: st, done: true };
+  }
+
+  /** Is there anything left to ask at all? Used to decide whether to show the wizard on boot. */
+  const firstRunNeeded = (world) => !nextStep(world).done;
+
+  /* WHAT A STEP MAY BE SKIPPED WITH. Deliberately per-step rather than a general "skip" button:
+   * the instance and Tor are genuine choices, the network is not one you can decline your way past,
+   * and an account is not a question. */
+  const SKIPPABLE = { instance: true, tor: true, network: false, signin: false, account: false };
+  const canSkip = (step) => SKIPPABLE[step] === true;
+
+  /* DEDUPED BY SSID, STRONGEST KEPT — the same rule the network module applies, repeated here
+   * because the wizard also renders a list and two lists of the same networks that disagree about
+   * their order is worse than either. */
+  function networksForPicker(list){
+    const best = new Map();
+    for(const n of (list || [])){
+      if(!n || !n.ssid) continue;
+      const had = best.get(n.ssid);
+      if(!had || n.active || (n.signal || 0) > (had.signal || 0)) best.set(n.ssid, n);
+    }
+    /* COERCED, because a row from a scan may simply not carry `active` — and `undefined - undefined`
+     * is NaN, which a comparator treats as "no opinion". The list then comes back in whatever order
+     * the map happened to hold, with the network you are CONNECTED TO somewhere in the middle. */
+    return [...best.values()].sort((a, b) =>
+      ((b.active ? 1 : 0) - (a.active ? 1 : 0)) || ((b.signal || 0) - (a.signal || 0)));
+  }
+
+  const API = { STEPS, stepState, nextStep, firstRunNeeded, canSkip, networksForPicker };
+  root.PCFirstRun = API;
+  if(typeof module !== 'undefined' && module.exports) module.exports = API;
+})(typeof globalThis !== 'undefined' ? globalThis : this);

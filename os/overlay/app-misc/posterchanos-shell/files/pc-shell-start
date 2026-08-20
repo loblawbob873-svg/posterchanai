@@ -1,0 +1,29 @@
+#!/bin/sh
+# Start the PosterChan shell and make it the desktop, once its window really exists.
+#
+# `for_window` cannot be relied on for this window. An X11 client sets WM_CLASS AFTER it maps, so
+# sway evaluates criteria against a window that has no class yet: every rule looks right in the file
+# and none of them match, and the shell ends up floating at 1280x860 in the middle of the screen.
+# Electron picks X11 unless it is told otherwise, and whether it is told depends on flags surviving
+# a wrapper and an AppRun.
+#
+# So the window is found FIRST and pinned second — the same order wm.js uses for anything it
+# launches, and for the same reason: an app that has not appeared cannot be placed.
+[ -n "$SWAYSOCK" ] || SWAYSOCK=$(ls /run/user/$(id -u)/sway-ipc.*.sock 2>/dev/null | head -1)
+export SWAYSOCK
+
+/usr/local/bin/posterchan --shell &
+
+# Up to 60s: an Electron cold start on a slow disk is not a failure. Polling rather than
+# subscribing, because this must work before anything else in the session is up.
+i=0
+while [ $i -lt 120 ]; do
+  if swaymsg -t get_tree 2>/dev/null | grep -q 'posterchan-desktop'; then
+    swaymsg '[class="posterchan-desktop"] fullscreen enable' >/dev/null 2>&1
+    swaymsg '[app_id="posterchan-desktop"] fullscreen enable' >/dev/null 2>&1
+    exit 0
+  fi
+  i=$((i + 1))
+  sleep 0.5
+done
+exit 0

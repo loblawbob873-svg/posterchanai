@@ -979,6 +979,16 @@
           }
           const entry = await send(fs, io, o, u, me,
                                    (pc) => step('uploading', u.path + ' ' + pc + '%', i, n), stopping);
+          /* SAY WHEN NOTHING WAS SENT. A record published without a whole-file checksum has nothing
+           * for the settle-by-content shortcut to compare against, so it reaches the upload path and
+           * is then skipped by the store's own dedup — the bytes are already there. Measured on a
+           * phone: 120 probes, one actual upload, and a progress line reading "uploading" for all of
+           * it. That is a person watching what looks like their whole folder being re-sent over a
+           * radio, and asking, reasonably, why sync is still broken.
+           *
+           * It corrects itself — this send records a checksum, so the same file settles silently
+           * next sweep — but only if somebody leaves it running long enough to find out. */
+          if(entry && entry.existed) step('already stored', u.path, i, n);
           record(u.path, entry, { size: u.stat.size, mtime: u.stat.mtime, csum: entry.csum }, true);
           report.uploaded.push(u.path);
           /* COUNTED SEPARATELY, because it is not an ordinary upload: it puts back a file another

@@ -89,7 +89,9 @@ FLATPAK_PACKAGES="com.valvesoftware.Steam com.vscodium.codium org.kde.konsole co
 POSTERCHANOS_PACKAGES="gui-wm/sway x11-base/xwayland gui-apps/foot gui-apps/wl-clipboard \
 media-video/pipewire media-video/wireplumber gui-libs/gtk media-fonts/noto media-fonts/noto-emoji \
 www-client/firefox-bin \
-sys-apps/xdg-desktop-portal gui-libs/xdg-desktop-portal-wlr media-video/obs-studio"
+sys-apps/xdg-desktop-portal gui-libs/xdg-desktop-portal-wlr media-video/obs-studio \
+app-misc/brightnessctl sys-power/power-profiles-daemon media-sound/playerctl \
+sec-keys/openpgp-keys-gentoo-release dev-vcs/git"
 
 # The profile has to survive a CHROOT. buildGentoo copies this script into the target and runs it
 # there for the package step, and an environment variable does not cross that boundary — so the
@@ -124,10 +126,44 @@ gentooRepo() {
 	mkdir -p $TARGET/etc/portage/repos.conf/
 	echo -e "\033[1;36m◆ CONFIGURING REPOS ◆\033[0m"
 
-	echo "[gentoo]" >$TARGET/etc/portage/repos.conf/gentoo-mirror.conf
-	echo "location = /var/db/repos/gentoo" >>$TARGET/etc/portage/repos.conf/gentoo-mirror.conf
-	echo "sync-type = rsync" >>$TARGET/etc/portage/repos.conf/gentoo-mirror.conf
-	echo "sync-uri = rsync://gentoo-repo.lan/gentoo-portage" >>$TARGET/etc/portage/repos.conf/gentoo-mirror.conf
+	# `emerge --sync` MUST WORK ON A MACHINE THAT IS NOT ON THIS LAN.
+	#
+	# The default here syncs from rsync://gentoo-repo.lan, which resolves for exactly one network —
+	# so a PosterChanOS install anywhere else has a broken --sync from first boot, and the way you
+	# find out is that the machine can never update. An OS somebody else runs cannot be pointed at a
+	# .lan name.
+	#
+	# webrsync fetches a SIGNED SNAPSHOT TARBALL over https, which the public mirror already carries
+	# (gentoo.poster.place/snapshots/portage-latest.tar.xz, with its .gpgsig) — the same endpoint the
+	# binhost above already uses, so this needs no new infrastructure. The signature is upstream
+	# Gentoo's, mirrored verbatim, and verifying it is what makes fetching a tree over HTTP from
+	# somebody's server acceptable at all.
+	{
+		echo "[gentoo]"
+		echo "location = /var/db/repos/gentoo"
+		if [[ "$POSTERCHANOS" = *y* ]]; then
+			echo "sync-type = webrsync"
+			echo "sync-uri = https://gentoo.poster.place"
+			echo "sync-webrsync-verify-signature = true"
+		else
+			echo "sync-type = rsync"
+			echo "sync-uri = rsync://gentoo-repo.lan/gentoo-portage"
+		fi
+	} >$TARGET/etc/portage/repos.conf/gentoo-mirror.conf
+
+	# THE POSTERCHANOS OVERLAY: how an installed machine gets a newer desktop and session without
+	# being reinstalled. A git repo rather than a directory of files, because that is the only shape
+	# portage can sync over plain https.
+	if [[ "$POSTERCHANOS" = *y* ]]; then
+		{
+			echo "[posterchan]"
+			echo "location = /var/db/repos/posterchan"
+			echo "sync-type = git"
+			echo "sync-uri = https://gentoo.poster.place/posterchan-overlay.git"
+			echo "auto-sync = yes"
+			echo "priority = 100"
+		} >$TARGET/etc/portage/repos.conf/posterchan.conf
+	fi
 
 	mkdir -p $TARGET/etc/portage/binrepos.conf
 	echo "[binhost]" >$TARGET/etc/portage/binrepos.conf/gentoobinhost.conf
@@ -135,7 +171,9 @@ gentooRepo() {
 	echo "sync-type = webrsync" >>$TARGET/etc/portage/binrepos.conf/gentoobinhost.conf
 	echo "sync-uri = https://gentoo.poster.place/releases/amd64/binpackages/23.0/x86-64/" >>$TARGET/etc/portage/binrepos.conf/gentoobinhost.conf
 
-	echo "GENTOO_MIRRORS=\"http://gentoo.poster.place\"" >>$TARGET/etc/portage/make.conf
+	# https, not http: this is fetched by machines that are not on a trusted network, and a plain
+	# http mirror is one anybody in the path can rewrite.
+	echo "GENTOO_MIRRORS=\"https://gentoo.poster.place\"" >>$TARGET/etc/portage/make.conf
 }
 
 snapshots() {
@@ -643,6 +681,17 @@ posterchanShell() {
 	dev-qt/qtwebengine
 	MASK
 
+	# SOUND, ENABLED FOR EVERY USER — INCLUDING ONES THAT DO NOT EXIST YET.
+	#
+	# Gentoo ships the PipeWire user services disabled, and `fixSound` turns them on with
+	# `systemctl --user`, which acts on the account running it and nothing else. That is fine on a
+	# machine with one named human and wrong here: accounts are created when somebody signs in with
+	# a key, long after the installer has finished, and each would come up silent with no obvious
+	# reason why. `--global` writes the enablement into /etc/systemd/user, where every session that
+	# has ever been or will be created picks it up.
+	systemctl --global disable pulseaudio.socket pulseaudio.service >/dev/null 2>&1
+	systemctl --global enable pipewire.socket pipewire-pulse.socket wireplumber.service >/dev/null 2>&1
+
 	mkdir -p /etc/sway
 	cat >/etc/sway/config <<-'SWAY'
 	# PosterChanOS — the shell owns the screen; PosterChan decides what goes where.
@@ -685,6 +734,26 @@ posterchanShell() {
 	output * bg #000000 solid_color
 
 	# The one binding that is not PosterChan's to take: a way out when the shell is not running.
+	# THE LAPTOP'S OWN KEYS. A desktop that ignores the volume and brightness keys on the keyboard
+	# in front of you is not one — and these have to obey the same limits as the on-screen controls,
+	# which is why they go through pc-key rather than calling wpctl with different numbers.
+	#
+	# --locked so they work with the screen locked (volume and brightness are not secrets), and
+	# --no-repeat is deliberately NOT set: holding a key should ramp.
+	bindsym --locked XF86AudioRaiseVolume  exec /usr/local/bin/pc-key volume-up
+	bindsym --locked XF86AudioLowerVolume  exec /usr/local/bin/pc-key volume-down
+	bindsym --locked XF86AudioMute         exec /usr/local/bin/pc-key mute
+	bindsym --locked XF86AudioMicMute      exec /usr/local/bin/pc-key mic-mute
+	bindsym --locked XF86MonBrightnessUp   exec /usr/local/bin/pc-key brightness-up
+	bindsym --locked XF86MonBrightnessDown exec /usr/local/bin/pc-key brightness-down
+
+	# Playback keys go to the PAGE, not to a system tool: what is playing is the client's music
+	# library, which no external player can see — the tracks are encrypted blobs only it can decrypt.
+	# playerctl speaks MPRIS, which the client already publishes through mediaSession.
+	bindsym --locked XF86AudioPlay exec playerctl play-pause
+	bindsym --locked XF86AudioNext exec playerctl next
+	bindsym --locked XF86AudioPrev exec playerctl previous
+
 	bindsym $mod+Shift+e exec swaynag -t warning -m 'Exit PosterChanOS?' -B 'Yes' 'swaymsg exit'
 	bindsym $mod+Return exec foot
 
@@ -776,7 +845,7 @@ posterchanShell() {
 	# what joins the two. It is the ONLY privileged thing the shell asks for, and it is limited to
 	# exactly that one command — signing in with a key is not the same as being trusted with root,
 	# and a machine anyone may log into must not hand every visitor sudo.
-	for helper in pc-provision-user pc-shell-start; do
+	for helper in pc-provision-user pc-shell-start pc-key; do
 		if [ -f "$(dirname "$0")/bin/$helper" ]; then
 			cp -f "$(dirname "$0")/bin/$helper" ${TARGET}/usr/local/bin/$helper
 		elif [ -f /tmp/bin/$helper ]; then

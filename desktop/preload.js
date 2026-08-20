@@ -114,6 +114,26 @@ if (isOurPage) {
     radio: (on) => ipcRenderer.invoke('pc:net:radio', !!on),
   });
 
+  contextBridge.exposeInMainWorld('pcPower', {
+    status: () => ipcRenderer.invoke('pc:power:status'),
+    /* A PERCENTAGE, and the main process clamps it — it can never reach 0, because on most panels
+     * 0 is off rather than dim and somebody who cannot see the screen cannot undo it. */
+    setBrightness: (pct) => ipcRenderer.invoke('pc:power:brightness', Number(pct)),
+    setProfile: (name) => ipcRenderer.invoke('pc:power:profile', String(name || '')),
+    suspend: () => ipcRenderer.invoke('pc:power:suspend'),
+    hibernate: () => ipcRenderer.invoke('pc:power:hibernate'),
+    poweroff: () => ipcRenderer.invoke('pc:power:poweroff'),
+    reboot: () => ipcRenderer.invoke('pc:power:reboot'),
+  });
+
+  contextBridge.exposeInMainWorld('pcAudio', {
+    status: () => ipcRenderer.invoke('pc:audio:status'),
+    /* Also a percentage. wpctl wants a fraction, and 50 means five thousand percent to it. */
+    setVolume: (pct, which) => ipcRenderer.invoke('pc:audio:volume', Number(pct), which || 'sink'),
+    setMuted: (on, which) => ipcRenderer.invoke('pc:audio:mute', !!on, which || 'sink'),
+    setDefault: (id) => ipcRenderer.invoke('pc:audio:default', Number(id)),
+  });
+
   contextBridge.exposeInMainWorld('pcOS', {
     /* A Unix account and a private home for whoever just signed in. The main process re-checks the
      * npub before it runs anything as root, and so does the script — the page is not trusted to

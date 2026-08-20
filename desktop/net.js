@@ -95,7 +95,11 @@ async function wifi(rescan){
     const had = best.get(ssid);
     if(!had || row.signal > had.signal || row.active) best.set(ssid, had && had.active ? had : row);
   }
-  return [...best.values()].sort((a, b) => (b.active - a.active) || (b.signal - a.signal));
+  /* Coerced. `active` is always set here by construction, so this is not a live bug — but the same
+   * comparator written against rows that lack the field returns NaN, which sorts as "no opinion",
+   * and the network you are CONNECTED TO ends up somewhere in the middle of the list. */
+  return [...best.values()].sort((a, b) =>
+    ((b.active ? 1 : 0) - (a.active ? 1 : 0)) || ((b.signal || 0) - (a.signal || 0)));
 }
 
 /** Saved connections, so a known network can be joined without asking for the password again. */

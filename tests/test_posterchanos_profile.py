@@ -182,6 +182,24 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertLess(acc.index("chmod 0440 /etc/sudoers"), acc.index("/usr/bin/passwd -dl root"),
                         "sudoers is fixed after root is locked — if it fails there is no way back")
 
+    def test_sound_is_enabled_for_users_that_do_not_exist_yet(self):
+        """Gentoo ships the PipeWire user services disabled, and the usual fix is `systemctl --user`,
+        which acts on the account running it and nothing else. Accounts here are created when
+        somebody signs in with a key — long after the installer has finished — so each would come up
+        silent with no obvious reason why. `--global` writes it where every future session sees it."""
+        body = self._fn("posterchanShell")
+        self.assertIn("systemctl --global enable", body, "sound is enabled per-user, or not at all")
+        self.assertIn("wireplumber.service", body)
+        self.assertIn("pipewire-pulse.socket", body)
+        self.assertNotIn("systemctl --user enable", body,
+                         "a per-user enable cannot reach an account that does not exist yet")
+
+    def test_the_power_and_audio_tools_are_installed(self):
+        """A desktop that cannot dim its screen is not a desktop. brightnessctl is the fallback when
+        sysfs is root-owned, and power-profiles-daemon is the standard profile interface."""
+        for pkg in ("app-misc/brightnessctl", "sys-power/power-profiles-daemon"):
+            self.assertIn(pkg, self.pkgs, f"{pkg} missing — the power panel has nothing behind it")
+
     def test_no_html_engine_can_be_built_from_source(self):
         """webkit-gtk and qtwebengine are among the longest builds in the tree, and the way you find
         out something pulled one is that an install which looked nearly finished sits on a single

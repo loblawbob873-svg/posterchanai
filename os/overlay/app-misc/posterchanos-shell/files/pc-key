@@ -1,0 +1,62 @@
+#!/bin/sh
+# The laptop's media and brightness keys.
+#
+# These have to obey the SAME limits as the on-screen controls, or the slider and the key disagree
+# about what "maximum" means — and the one that is wrong is whichever the person used last. The
+# numbers below are pinned to desktop/audio.js and desktop/power.js by
+# tests/test_pc_key_limits.py, which fails if either side moves.
+#
+# Why a shell script and not the Node modules: this runs from a compositor keybinding, several times
+# a second while a key is held, on a machine where the shell may not even be started yet. Spawning
+# an Electron process per keypress is not a thing to do; both sides drive the same underlying tools
+# (wpctl, sysfs) and the test is what keeps them saying the same thing.
+set -u
+
+VOL_STEP=5
+VOL_MAX=1.5          # matches audio.js MAX — above this is distortion with a volume number on it
+BRIGHT_STEP=5
+BRIGHT_MIN=1         # matches power.js MIN_PERCENT — 0 is OFF on most panels, not dim
+
+SINK='@DEFAULT_AUDIO_SINK@'
+SOURCE='@DEFAULT_AUDIO_SOURCE@'
+
+# The panel the brightness module would pick: a real driver over the ACPI shim, which on many
+# laptops accepts writes and changes nothing.
+find_panel() {
+    for d in /sys/class/backlight/*; do
+        [ -d "$d" ] || continue
+        case "$(basename "$d")" in acpi*) acpi="$d"; continue ;; esac
+        echo "$d"; return 0
+    done
+    [ -n "${acpi:-}" ] && echo "$acpi"
+}
+
+bright_step() {
+    p=$(find_panel) || exit 0
+    [ -n "$p" ] || exit 0
+    max=$(cat "$p/max_brightness" 2>/dev/null) || exit 0
+    cur=$(cat "$p/brightness" 2>/dev/null) || exit 0
+    pct=$(( cur * 100 / max ))
+    new=$(( pct + $1 ))
+    [ "$new" -lt "$BRIGHT_MIN" ] && new=$BRIGHT_MIN
+    [ "$new" -gt 100 ] && new=100
+    raw=$(( new * max / 100 ))
+    [ "$raw" -lt 1 ] && raw=1
+    # brightnessctl first: sysfs is root-owned unless a udev rule says otherwise, and that rule is
+    # exactly the thing a fresh install has not got.
+    brightnessctl set "${new}%" >/dev/null 2>&1 || echo "$raw" > "$p/brightness" 2>/dev/null
+}
+
+case "${1:-}" in
+    volume-up)    wpctl set-volume -l "$VOL_MAX" "$SINK" "${VOL_STEP}%+" ;;
+    volume-down)  wpctl set-volume "$SINK" "${VOL_STEP}%-" ;;
+    # TOGGLE is right HERE and wrong in the UI: a key press has no state of its own to disagree
+    # with, whereas a button that toggles blind fights whatever else changed the mute.
+    mute)         wpctl set-mute "$SINK" toggle ;;
+    mic-mute)     wpctl set-mute "$SOURCE" toggle ;;
+    brightness-up)   bright_step "$BRIGHT_STEP" ;;
+    brightness-down) bright_step "-$BRIGHT_STEP" ;;
+    *) echo "usage: pc-key volume-up|volume-down|mute|mic-mute|brightness-up|brightness-down" >&2
+       exit 2 ;;
+esac
+exit 0

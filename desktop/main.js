@@ -880,6 +880,28 @@ ipcMain.handle('pc:wm:subscribe', async (e) => {
   return true;
 });
 
+/* Power, brightness, battery, sleep — and the mixer. Same guard as everything else: `setBrightness`
+ * writes to sysfs and `poweroff` ends the session, so neither may be reachable from any page but
+ * ours. Each answers "absent" for hardware that is not there rather than throwing, because a tower
+ * has no battery and no backlight and neither is a fault to report. */
+const power = require('./power.js');
+const audio = require('./audio.js');
+
+ipcMain.handle('pc:power:status', (e) => { fsGuard(e); return power.status(); });
+ipcMain.handle('pc:power:brightness', (e, pct) => { fsGuard(e); return power.setBrightness(pct); });
+ipcMain.handle('pc:power:profile', (e, name) => { fsGuard(e); return power.setProfile(name); });
+/* The four that END things are separate handlers rather than one with a verb argument: a single
+ * `pc:power:do(action)` is one typo away from a page asking to power off when it meant to sleep. */
+ipcMain.handle('pc:power:suspend', (e) => { fsGuard(e); return power.suspend(); });
+ipcMain.handle('pc:power:hibernate', (e) => { fsGuard(e); return power.hibernate(); });
+ipcMain.handle('pc:power:poweroff', (e) => { fsGuard(e); return power.poweroff(); });
+ipcMain.handle('pc:power:reboot', (e) => { fsGuard(e); return power.reboot(); });
+
+ipcMain.handle('pc:audio:status', (e) => { fsGuard(e); return audio.status(); });
+ipcMain.handle('pc:audio:volume', (e, pct, which) => { fsGuard(e); return audio.setVolume(pct, which); });
+ipcMain.handle('pc:audio:mute', (e, on, which) => { fsGuard(e); return audio.setMuted(!!on, which); });
+ipcMain.handle('pc:audio:default', (e, id) => { fsGuard(e); return audio.setDefault(id); });
+
 ipcMain.handle('pc:net:available', (e) => { fsGuard(e); return net.available(); });
 ipcMain.handle('pc:net:status', (e) => { fsGuard(e); return net.status(); });
 ipcMain.handle('pc:net:wifi', (e, rescan) => { fsGuard(e); return net.wifi(!!rescan); });

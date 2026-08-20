@@ -1,0 +1,80 @@
+# PosterChanOS boot splash.
+#
+# A script theme rather than two-step or spinner, for one reason: this boot asks for a LUKS
+# passphrase, and the password dialog is the part a stock theme gets wrong on a dark background —
+# it inherits colours that leave the prompt invisible, and a person is then typing a disk password
+# at a screen that looks frozen. Everything here is drawn explicitly.
+
+Window.SetBackgroundTopColor(0.039, 0.039, 0.059);      # --bg  #0a0a0f
+Window.SetBackgroundBottomColor(0.039, 0.039, 0.059);
+
+logo.image = Image("logo.png");
+logo.sprite = Sprite(logo.image);
+logo.x = Window.GetX() + (Window.GetWidth()  - logo.image.GetWidth())  / 2;
+logo.y = Window.GetY() + (Window.GetHeight() * 0.34);
+logo.sprite.SetPosition(logo.x, logo.y, 1);
+
+# ── the spinner ────────────────────────────────────────────────────────────────────────────────
+for (i = 0; i < 36; i++)
+    spin.images[i] = Image("progress-" + i + ".png");
+
+spin.sprite = Sprite();
+spin.x = Window.GetX() + (Window.GetWidth()  - spin.images[0].GetWidth()) / 2;
+spin.y = Window.GetY() + (Window.GetHeight() * 0.62);
+spin.sprite.SetPosition(spin.x, spin.y, 1);
+spin.i = 0;
+
+fun refresh () {
+    # Held still while a password is being asked for: a spinner beside a prompt reads as "working,
+    # do not type", which is the opposite of what the screen wants.
+    if (global.asking_for_password) return;
+    spin.i = (spin.i + 1) % 36;
+    spin.sprite.SetImage(spin.images[Math.Int(spin.i / 2) * 2]);
+}
+Plymouth.SetRefreshFunction(refresh);
+
+# ── the password prompt ────────────────────────────────────────────────────────────────────────
+# Drawn as text rather than left to the theme's defaults, so it is legible on this background and
+# says which disk it wants. The bullets are counted rather than echoed.
+fun display_password (prompt, bullets) {
+    global.asking_for_password = 1;
+    spin.sprite.SetOpacity(0);
+
+    ask.image = Image.Text(prompt, 0.85, 0.93, 1.0);
+    ask.sprite = Sprite(ask.image);
+    ask.sprite.SetPosition(Window.GetX() + (Window.GetWidth() - ask.image.GetWidth()) / 2,
+                           Window.GetY() + (Window.GetHeight() * 0.60), 2);
+    global.ask = ask;
+
+    dots = "";
+    for (i = 0; i < bullets; i++) dots += "•";
+    dot.image = Image.Text(dots, 0.24, 0.91, 1.0);
+    dot.sprite = Sprite(dot.image);
+    dot.sprite.SetPosition(Window.GetX() + (Window.GetWidth() - dot.image.GetWidth()) / 2,
+                           Window.GetY() + (Window.GetHeight() * 0.66), 2);
+    global.dot = dot;
+}
+Plymouth.SetDisplayPasswordFunction(display_password);
+
+fun display_normal () {
+    global.asking_for_password = 0;
+    if (global.ask) { global.ask.sprite = NULL; global.ask = NULL; }
+    if (global.dot) { global.dot.sprite = NULL; global.dot = NULL; }
+    spin.sprite.SetOpacity(1);
+}
+Plymouth.SetDisplayNormalFunction(display_normal);
+
+# ── messages ───────────────────────────────────────────────────────────────────────────────────
+# fsck progress and the like. One line, low on the screen, dim — present when it matters and not
+# competing with the mark when it does not.
+fun message (text) {
+    msg.image = Image.Text(text, 0.45, 0.50, 0.60);
+    msg.sprite = Sprite(msg.image);
+    msg.sprite.SetPosition(Window.GetX() + (Window.GetWidth() - msg.image.GetWidth()) / 2,
+                           Window.GetY() + (Window.GetHeight() * 0.86), 2);
+    global.msg = msg;
+}
+Plymouth.SetMessageFunction(message);
+
+fun quit () { spin.sprite.SetOpacity(0); }
+Plymouth.SetQuitFunction(quit);

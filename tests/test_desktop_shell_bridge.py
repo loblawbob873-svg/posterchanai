@@ -33,7 +33,7 @@ class Bridge(unittest.TestCase):
         """The gap this test exists to close: two tested modules that nothing invoked."""
         self.assertIn("./wm.js", self.main)
         self.assertIn("./net.js", self.main)
-        for surface in ("pcWM", "pcNet", "pcOS"):
+        for surface in ("pcWM", "pcNet", "pcOS", "pcPower", "pcAudio"):
             self.assertIn(surface, self.pre, f"{surface} is not exposed to the page")
 
     def test_every_privileged_handler_checks_the_sender(self):
@@ -41,7 +41,7 @@ class Bridge(unittest.TestCase):
         from any page but our own is a remote code execution, and the check is one call — which is
         exactly the kind of thing that gets left off one handler out of twelve."""
         missing = []
-        for m in re.finditer(r"ipcMain\.handle\('(pc:(?:wm|net|os):[a-z]+)'\s*,\s*(async\s*)?\("
+        for m in re.finditer(r"ipcMain\.handle\('(pc:(?:wm|net|os|power|audio):[a-z]+)'\s*,\s*(async\s*)?\("
                              r"[^)]*\)\s*=>\s*\{?([^\n]*)", self.main):
             name, body = m.group(1), m.group(3)
             tail = self.main[m.end():m.end() + 400]
@@ -84,6 +84,19 @@ class Bridge(unittest.TestCase):
         i = self.pre.index("onEvent:")
         body = self.pre[i:i + 400]
         self.assertIn("removeListener", body)
+
+    def test_ending_the_session_is_four_handlers_not_one_verb(self):
+        """A single `pc:power:do(action)` is one typo away from a page asking to power off when it
+        meant to sleep. Four names cannot be mistyped into each other."""
+        for verb in ("suspend", "hibernate", "poweroff", "reboot"):
+            self.assertIn(f"'pc:power:{verb}'", self.main, f"{verb} has no handler of its own")
+        # The HANDLER, not the phrase — the comment above it explains why a verb argument would be
+        # wrong, and a test that matches prose is a test about the comments.
+        self.assertNotIn("ipcMain.handle('pc:power:do'", self.main)
+
+    def test_the_modules_are_required_not_reimplemented(self):
+        for mod in ("./power.js", "./audio.js"):
+            self.assertIn(mod, self.main, f"{mod} is tested and not called")
 
     def test_it_is_absent_rather_than_broken_without_a_compositor(self):
         """A desktop install that is not PosterChanOS has no sway. The page must be able to ask,
