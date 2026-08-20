@@ -701,6 +701,14 @@
      * A tombstone with NO address is the case where the bytes were never stored (a file deleted
      * before it ever uploaded). There is nothing to confirm and nothing to restore, so the record
      * is the only copy of the intent and the local file stays. Reported, not silently skipped. */
+    /* A BUILD THAT CANNOT DELETE SAYS SO ONCE, not once per file. The Android half needs a plugin
+     * method that ships with the APK, so a phone on an older build has no `remove` at all — and
+     * without this that is a failure logged against every deleted path, which reads as the sync
+     * being broken rather than as one build being behind. The files are kept either way. */
+    if(plan.remove.length && typeof fs.remove !== 'function'){
+      report.cannotDelete = plan.remove.length;
+      plan = Object.assign({}, plan, { remove: [] });
+    }
     let ti = 0;
     for(const t of plan.remove){
       if(stopping()) return await halt(report, journal);

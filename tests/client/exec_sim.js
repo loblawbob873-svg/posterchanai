@@ -643,6 +643,26 @@ scenario('a copy that fails its checksum is not fetched again for ever', async (
  * be lost. "The store answered 200 for these exact bytes" is a fact about whether this can be
  * undone, and it is the only fact that matters.
  */
+scenario('a build with no delete of its own keeps the files and says so once', async (t) => {
+  /* The Android half needs a plugin method that ships with the APK, so a phone on an older build
+   * has no `remove` at all. Without a check that is one failure logged per deleted path — 300 of
+   * them, reading as the sync being broken rather than as one build being behind. */
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(8) });
+  await A.sweep();
+  const B = device('phone', sky, {});
+  await B.sweep();
+  for(const p of Object.keys(A.disk).slice(0, 5)) delete A.disk[p];
+  await device('laptop', sky, { disk: A.disk, index: A.st.index }).sweep();
+
+  const B2 = device('phone', sky, { disk: B.disk, index: B.st.index });
+  delete B2.fs.remove;                       // an older build
+  const r = await B2.sweep();
+  t.eq(r.failed.length, 0, 'it logged ' + r.failed.length + ' failures for a build limitation');
+  t.eq(r.cannotDelete, 5, 'it did not say how many deletions it could not carry out');
+  t.eq(Object.keys(B2.disk).length, 8, 'files went missing on a build that cannot delete');
+});
+
 scenario('a deletion waits for the store to confirm it still has the bytes', async (t) => {
   const sky = cloud();
   const A = device('laptop', sky, { disk: photos(6) });
