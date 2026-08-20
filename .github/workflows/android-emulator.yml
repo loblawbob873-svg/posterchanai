@@ -1,0 +1,155 @@
+name: Android emulator checks
+
+# THE THING THAT SHOULD HAVE EXISTED BEFORE ANY OF THIS WAS WRITTEN.
+#
+# Everything native in this app has been guarded by matching TEXT in a Java source, because there is
+# no device in the loop: the dev box has no KVM (its firmware has SVM switched off) and the Gradle
+# daemon will not stay up on it. That is how three background-sync bugs shipped in one day through a
+# fully green test suite — every string the tests looked for was present and the LOGIC around it was
+# wrong, and each round cost an APK build and a person's evening to discover.
+#
+# GitHub's Linux runners have KVM. So the emulator lives here: a real Android system, booted, with the
+# real APK installed, driven by adb, with logcat captured. It can do the three things no amount of
+# static checking can:
+#
+#   * CRASH. Install, launch, exercise, and fail the job on a FATAL EXCEPTION with the stack trace in
+#     the log — instead of a user reporting "it keeps crashing" and me guessing at causes.
+#   * DOZE. `dumpsys deviceidle force-idle` puts the system into real Doze, which is the exact state
+#     background sync exists for and the one state that cannot be simulated in a unit test. The
+#     "unreadable network reads as offline" bug lived precisely here.
+#   * THE LIFECYCLE. Screen off, app backgrounded, process frozen — driven for real, not mocked.
+#
+# It runs on the same triggers as the APK build, plus workflow_dispatch so it can be pointed at a
+# branch while a fix is being written rather than after it ships.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'mobile/**'
+      - 'static/js/client/**'
+      - '.github/workflows/android-emulator.yml'
+  pull_request:
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/android-emulator.yml'
+  workflow_dispatch:
+    inputs:
+      api_level:
+        description: 'Android API level to boot'
+        required: false
+        default: '34'
+
+jobs:
+  emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # KVM is present on these runners but not world-accessible by default; the emulator needs it,
+      # and without it the boot takes tens of minutes and then times out. This udev rule is the
+      # documented fix and is what makes the whole job viable.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Capacitor deps
+        working-directory: mobile
+        run: npm ci
+
+      - name: Build web bundle (www)
+        working-directory: mobile
+        env:
+          PC_APP_BUILD: ${{ github.run_number }}
+        run: bash build-www.sh
+
+      - name: Capacitor sync
+        working-directory: mobile
+        run: npx cap sync android
+
+      # DEBUG, not release: it needs no signing secret, installs over adb, and is the same Java.
+      - name: Build debug APK
+        working-directory: mobile/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --console=plain
+
+      # Cached so the AVD snapshot is not rebuilt on every run — a cold boot is most of the wall clock.
+      - name: AVD cache
+        uses: actions/cache@v4
+        id: avd-cache
+        with:
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: avd-${{ github.event.inputs.api_level || '34' }}
+
+      - name: Create AVD and snapshot
+        if: steps.avd-cache.outputs.cache-hit != 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ github.event.inputs.api_level || '34' }}
+          target: google_apis
+          arch: x86_64
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: false
+          script: echo "AVD snapshot created"
+
+      - name: Run the device checks
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ github.event.inputs.api_level || '34' }}
+          target: google_apis
+          arch: x86_64
+          force-avd-creation: false
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          # TWO KINDS OF CHECK ON ONE BOOT, because booting the AVD is most of the wall clock.
+          #
+          # `android_device_checks.sh` drives the LIFECYCLE — install, launch, home, screen off, real
+          # Doze via `dumpsys deviceidle force-idle`, wake — and fails on a crash, an ANR or a
+          # foreground-service violation. Nothing else in this repo can see any of that.
+          #
+          # `connectedDebugAndroidTest` runs INSTRUMENTED tests, which is what a launcher, an SMS
+          # app and a dialer need: those live behind system roles and providers (`RoleManager`,
+          # `Telephony.Sms`, `CallLog`, `InCallService`) that do not exist off a device, so a javac
+          # test cannot reach them and a text-matching test proves nothing about them.
+          #
+          # SKIPPED, LOUDLY, WHEN THERE ARE NONE. A gradle task with no sources exits 0, which is
+          # indistinguishable from a green run — and this repo has already shipped a whole rewrite
+          # behind a test file that could not compile. If there are no androidTest sources the step
+          # says so as a run annotation instead of printing a tick.
+          script: |
+            bash scripts/android_device_checks.sh
+            if find mobile/android/app/src/androidTest -name '*.java' -o -name '*.kt' 2>/dev/null | grep -q .; then
+              (cd mobile/android && ./gradlew connectedDebugAndroidTest --console=plain)
+            else
+              echo "::warning title=No instrumented tests::The emulator booted and the lifecycle checks ran, but mobile/android/app/src/androidTest has no sources — nothing was tested ON the device."
+            fi
+
+      - name: Upload logcat
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logcat
+          path: |
+            /tmp/pc-logcat*.txt
+            /tmp/pc-device-*.txt
+          if-no-files-found: ignore
