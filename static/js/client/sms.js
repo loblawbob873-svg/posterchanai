@@ -155,6 +155,17 @@
       'SMS role held: ' + (d.roleHeld ? 'yes' : 'no'),
       'may read messages: ' + (d.canRead ? 'yes' : 'no'),
       'may show notifications: ' + (d.canNotify ? 'yes' : 'NO — new texts arrive in silence'),
+      /* ALL THREE CAPABILITY SIGNALS, because "can this device do SMS" has now been answered wrongly
+       * twice — first with no check at all, then with FEATURE_TELEPHONY, which is true on Wi-Fi-only
+       * tablets that ship the telephony stack and have no radio. A single boolean cannot say which
+       * one lied. */
+      'sms capable: ' + (d.capability
+        ? (d.capability.smsCapable ? 'yes' : 'no')
+          + ' (isSmsCapable=' + d.capability.isSmsCapable
+          + ' feature.telephony=' + d.capability.featureTelephony
+          + ' feature.messaging=' + d.capability.featureMessaging
+          + ' sdk=' + d.capability.sdk + ')'
+        : 'not reported by this build'),
       'last read: ' + (d.refused ? 'refused' : (d.read >= 0 ? d.read + ' found' : 'not attempted')),
       missing.length ? 'MISSING COMPONENTS: ' + missing.join(', ')
                      : 'all four SMS components installed',

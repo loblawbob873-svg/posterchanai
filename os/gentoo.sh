@@ -1666,12 +1666,32 @@ liveCD() {
 	# ---------------------------------------------------------------- where
 	#
 	# WHERE IT LANDS IS DECIDED HERE AND SAID OUT LOUD, because an answer that quietly becomes
-	# somewhere else costs the whole build. "the iso is saving to ~": an empty answer, or a relative
-	# one, resolves against whatever directory the script was started from — usually the home
-	# directory of whoever ran it — and a multi-gigabyte image plus its work tree lands on the
-	# partition least able to take it, silently.
+	# somewhere else costs the whole build. "the iso is saving to ~" was that: `read -e -i` pre-fills
+	# only on a real terminal, so an empty or relative answer resolved against whatever directory the
+	# script was started from and a multi-gigabyte image landed there without anybody choosing it.
+	#
+	# The home directory is now the DEFAULT, deliberately — "make the default dir for livecd your
+	# homedir" — which is a different thing from ending up there by accident. It is printed before
+	# anything slow starts, with the free space beside it.
 	local OUTDIR ISO WORK LABEL DEFOUT
-	DEFOUT="/var/tmp/livecd"
+	# THE DEFAULT IS THE HOME DIRECTORY OF WHOEVER ASKED, which is where somebody looks for a file
+	# they just made. It used to be /var/tmp/livecd — a fine place for a build tree and a strange
+	# place to go hunting for an ISO.
+	#
+	# `$HOME` is the wrong question when this runs under sudo: it is root's. `$SUDO_USER` names the
+	# person who actually typed the command, and their home is what they mean by "my home directory".
+	# Falls back to /var/tmp/livecd when neither can be written to, because a default that cannot be
+	# used is not a default.
+	DEFOUT=""
+	if [[ -n "${SUDO_USER:-}" ]]; then
+		DEFOUT="$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)"
+	fi
+	[[ -z "$DEFOUT" ]] && DEFOUT="$HOME"
+	if [[ -z "$DEFOUT" || ! -d "$DEFOUT" || ! -w "$DEFOUT" ]]; then
+		DEFOUT="/var/tmp/livecd"
+	else
+		DEFOUT="${DEFOUT%/}/livecd"
+	fi
 	read -p 'Write the ISO where? ' -e -i "$DEFOUT" OUTDIR
 	# An empty answer is the default, not the current directory. `read -e -i` pre-fills only on a
 	# real terminal; anywhere else it hands back "".

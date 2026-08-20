@@ -318,3 +318,33 @@ class TheZstdProbeAsksByDoing(unittest.TestCase):
         self.assertNotIn("-help 2>&1 | grep -qw zstd", body,
                          "the help-text probe is still here")
         self.assertIn("_pc_mksquashfs_zstd", body)
+
+
+class TheDefaultIsTheHomeDirectory(unittest.TestCase):
+    """"make the default dir for livecd your homedir."
+
+    It was /var/tmp/livecd — a fine place for a build tree and a strange place to go hunting for an
+    ISO you just made. `$HOME` alone is the wrong question, because this runs under sudo and `$HOME`
+    is then root's; `$SUDO_USER` names the person who actually typed the command.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.body = _fn("liveCD")
+
+    def test_it_defaults_under_the_invoking_users_home(self):
+        self.assertIn("SUDO_USER", self.body,
+                      "under sudo the default would be /root, which is nobody's home directory")
+        self.assertIn("getent passwd", self.body)
+
+    def test_it_still_has_somewhere_to_go_when_that_cannot_be_written(self):
+        """A default that cannot be used is not a default."""
+        self.assertIn("/var/tmp/livecd", self.body)
+        self.assertIn("-w", self.body)
+
+    def test_the_destination_is_printed_before_anything_slow(self):
+        """Ending up in the home directory by accident was the ORIGINAL bug; choosing it is fine, and
+        the difference is whether it is said out loud first."""
+        i = self.body.index("ISO:  $ISO")
+        j = self.body.index("mksquashfs / ")
+        self.assertLess(i, j, "the destination is announced after the filesystem is packed")

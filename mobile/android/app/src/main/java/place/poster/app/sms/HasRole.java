@@ -36,6 +36,44 @@ final class HasRole {
         } catch (Throwable t) { return false; }
     }
 
+    /**
+     * CAN THIS DEVICE DO SMS AT ALL — and `FEATURE_TELEPHONY` is NOT that question.
+     *
+     * "Still Android has not named a messages app for this phone yet", again, on a build that
+     * already checked for telephony. `hasSystemFeature(FEATURE_TELEPHONY)` is true on plenty of
+     * Wi-Fi-only tablets: they ship the telephony stack, they simply have no radio to send a message
+     * with. So the check passed, the no-SIM branch was skipped, and the screen went back to telling
+     * a tablet to go and choose a messages app.
+     *
+     * `TelephonyManager.isSmsCapable()` is the question actually being asked — the platform's own
+     * "this device can send and receive text messages" — and it is what a Wi-Fi tablet answers false
+     * to. `FEATURE_TELEPHONY_MESSAGING` (API 31) says the same thing a different way and is checked
+     * beside it, because an OEM that gets one wrong rarely gets both wrong. FEATURE_TELEPHONY stays
+     * only as the last resort for API levels that have neither.
+     *
+     * Three signals, all reported by SmsPlugin.diagnose, so the next time this is wrong the phone
+     * can say WHICH of them lied instead of me guessing at it a third time.
+     */
+    static boolean smsCapable(Context ctx) {
+        try {
+            android.telephony.TelephonyManager tm = (android.telephony.TelephonyManager)
+                    ctx.getSystemService(Context.TELEPHONY_SERVICE);
+            if (tm != null && tm.isSmsCapable()) return true;
+        } catch (Throwable ignored) { }
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 31
+                    && ctx.getPackageManager().hasSystemFeature(
+                           android.content.pm.PackageManager.FEATURE_TELEPHONY_MESSAGING)) return true;
+            // Below 31 there is nothing better than the coarse feature flag; above it, a device that
+            // said no to BOTH of the precise questions is taken at its word rather than being
+            // overruled by the flag that is true on every tablet.
+            if (android.os.Build.VERSION.SDK_INT < 31
+                    && ctx.getPackageManager().hasSystemFeature(
+                           android.content.pm.PackageManager.FEATURE_TELEPHONY)) return true;
+        } catch (Throwable ignored) { }
+        return false;
+    }
+
     /** The RoleManager half, on its own, so the screen can show a disagreement rather than hide it. */
     static boolean roleHeld(Context ctx) {
         try {

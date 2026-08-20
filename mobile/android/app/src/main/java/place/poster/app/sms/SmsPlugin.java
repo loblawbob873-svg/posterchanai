@@ -191,12 +191,7 @@ public class SmsPlugin extends Plugin {
         o.put("canNotify", mayNotify());
         // A TABLET IS NOT AN SMS APP THAT LOST AN ARGUMENT. With no telephony there is no default
         // messages app to be, and telling somebody to set one in Settings is advice they cannot take.
-        boolean tel = false;
-        try {
-            tel = ctx.getPackageManager().hasSystemFeature(
-                    android.content.pm.PackageManager.FEATURE_TELEPHONY);
-        } catch (Throwable ignored) { }
-        o.put("telephony", tel);
+        o.put("telephony", HasRole.smsCapable(ctx));
         // THREE KINDS OF EMPTY, AND THEY ARE NOT THE SAME SENTENCE — the same distinction the native
         // ThreadListActivity draws. "you have no texts", "I am not allowed to read them" and "I can
         // read them but I am not the app that receives them" all rendered as one sentence, and the
@@ -250,6 +245,25 @@ public class SmsPlugin extends Plugin {
         try { seen = SmsStore.recent(ctx, 5).size(); } catch (Throwable ignored) { }
         o.put("read", seen);
         o.put("refused", SmsStore.refused());
+        // ALL THREE SIGNALS, RAW. "can this device do SMS" has been answered wrongly twice now, and
+        // a single boolean cannot say which of them lied. Reported separately so the next report
+        // settles it instead of starting another round.
+        JSObject cap = new JSObject();
+        cap.put("smsCapable", HasRole.smsCapable(ctx));
+        try {
+            android.telephony.TelephonyManager tm = (android.telephony.TelephonyManager)
+                    ctx.getSystemService(Context.TELEPHONY_SERVICE);
+            cap.put("isSmsCapable", tm != null && tm.isSmsCapable());
+        } catch (Throwable t) { cap.put("isSmsCapable", "threw"); }
+        try {
+            cap.put("featureTelephony", ctx.getPackageManager().hasSystemFeature(
+                    android.content.pm.PackageManager.FEATURE_TELEPHONY));
+            cap.put("featureMessaging", android.os.Build.VERSION.SDK_INT >= 31
+                    && ctx.getPackageManager().hasSystemFeature(
+                           android.content.pm.PackageManager.FEATURE_TELEPHONY_MESSAGING));
+        } catch (Throwable ignored) { }
+        cap.put("sdk", android.os.Build.VERSION.SDK_INT);
+        o.put("capability", cap);
         call.resolve(o);
     }
 

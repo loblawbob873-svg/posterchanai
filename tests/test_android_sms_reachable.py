@@ -331,12 +331,38 @@ class TheNativeScreenNamesWhatAndroidNamed(unittest.TestCase):
         Asked FIRST, because the telephony check is what explains the null the other branches would
         otherwise misread."""
         body = method(self.src, "private String whyNotDefault")
-        self.assertIn("FEATURE_TELEPHONY", body,
+        self.assertIn("smsCapable", body,
                       "the screen cannot tell a tablet from a phone with no default set")
         self.assertIn("sms_no_sim", body)
-        self.assertLess(body.index("FEATURE_TELEPHONY"), body.index("sms_default_none"),
+        self.assertLess(body.index("smsCapable"), body.index("sms_default_none"),
                         "the no-default branch is reached before the no-SIM one, so a tablet still "
                         "gets told to choose a messages app")
+
+    def test_it_asks_whether_the_device_can_do_sms_not_whether_it_has_telephony(self):
+        """"Still Android has not named a messages app for this phone yet", AGAIN, on a build that
+        already checked for telephony. `hasSystemFeature(FEATURE_TELEPHONY)` is true on Wi-Fi-only
+        tablets — they ship the telephony stack and have no radio — so the check passed, the no-SIM
+        branch was skipped, and a tablet was told to choose a messages app for the second time.
+
+        `TelephonyManager.isSmsCapable()` is the question actually being asked. The coarse feature
+        flag survives only as the fallback for API levels with nothing better."""
+        cap = method(strip_comments((SMS / "HasRole.java").read_text()), "static boolean smsCapable")
+        self.assertIn("isSmsCapable", cap,
+                      "it still asks whether the device has telephony rather than whether it can "
+                      "send a text")
+        self.assertIn("FEATURE_TELEPHONY_MESSAGING", cap)
+        self.assertLess(cap.index("isSmsCapable"), cap.index("FEATURE_TELEPHONY_MESSAGING"),
+                        "the precise question must be asked before the coarse one")
+
+    def test_the_panel_can_say_which_signal_lied(self):
+        """Twice wrong on one boolean is twice too many: the three are reported separately so the
+        next report settles it instead of starting another round."""
+        # diagnose() lives in SmsPlugin; self.src on this class is ThreadListActivity.
+        body = method(strip_comments((SMS / "SmsPlugin.java").read_text()), "public void diagnose")
+        for k in ("isSmsCapable", "featureTelephony", "featureMessaging"):
+            self.assertIn(k, body, "diagnose() does not report %s" % k)
+        js = (ROOT / "static/js/client/sms.js").read_text()
+        self.assertIn("isSmsCapable=", js, "the panel never prints them")
 
     def test_the_screen_uses_it(self):
         body = method(self.src, "private void draw")

@@ -259,12 +259,7 @@ public class ThreadListActivity extends PcActivity {
          * is worse than none: it reads as the app being broken rather than as the device being what
          * it is. Asked FIRST, because it explains the null the two branches below would otherwise
          * misread. */
-        boolean tel = false;
-        try {
-            tel = getPackageManager().hasSystemFeature(
-                    android.content.pm.PackageManager.FEATURE_TELEPHONY);
-        } catch (Throwable ignored) { }
-        if (!tel) return getString(R.string.sms_no_sim);
+        if (!HasRole.smsCapable(this)) return getString(R.string.sms_no_sim);
         if (cur == null || cur.isEmpty()) return getString(R.string.sms_default_none);
         if (role) return getString(R.string.sms_role_split, cur);
         return getString(R.string.sms_default_is, cur);
