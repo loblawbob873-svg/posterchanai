@@ -158,6 +158,20 @@ if (isOurPage) {
   /* THE MACHINE'S OWN APPLICATIONS, for the start menu. Read-only: this lists what is installed and
    * nothing else — starting one goes through `pcWM.launch`, which is the same guarded path the
    * built-in entries already use, so there is one place a process can be started from. */
+  /* THE COMPUTER'S OWN FILES, so the Files screen can browse the disk it is running on as well as
+   * the encrypted drive and a synced folder. Absent everywhere else, which is how the client
+   * feature-detects it — a browser tab has no filesystem at all. */
+  contextBridge.exposeInMainWorld('pcHost', {
+    list: (dir) => ipcRenderer.invoke('pc:host:list', String(dir || '')),
+    roots: () => ipcRenderer.invoke('pc:host:roots'),
+    mkdir: (dir, name) => ipcRenderer.invoke('pc:host:mkdir', String(dir || ''), String(name || '')),
+    rename: (from, to) => ipcRenderer.invoke('pc:host:rename', String(from || ''), String(to || '')),
+    trash: (target) => ipcRenderer.invoke('pc:host:trash', String(target || '')),
+    read: (target, max) => ipcRenderer.invoke('pc:host:read', String(target || ''), Number(max) || 0)
+      .then((b) => new Uint8Array(b)),
+    open: (target) => ipcRenderer.invoke('pc:host:open', String(target || '')),
+  });
+
   contextBridge.exposeInMainWorld('pcApps', {
     list: () => ipcRenderer.invoke('pc:apps:list'),
   });

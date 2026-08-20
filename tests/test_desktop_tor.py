@@ -22,6 +22,7 @@ Every assertion here is a way the feature would appear to work while doing nothi
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import textwrap
@@ -337,6 +338,54 @@ def test_countries_are_offered_with_any_available(tmp_path):
     assert d["n"] >= 20, f"too few exit countries offered: {d['n']}"
     assert len(d["first"]) == 2 and len(d["first"][0]) == 2, d
     assert d["avail"] is True, "the bundled binary was not found — tor.available() gates the whole panel"
+
+
+def test_tor_is_opt_in_but_its_exit_country_is_pre_answered():
+    """TWO SEPARATE DECISIONS, and only one of them has a right answer to pick for somebody.
+
+    Forcing every byte through Tor is not a privacy feature, it is a choice taken on a person's
+    behalf: it is slower, many sites refuse it outright, and a machine that suddenly cannot reach
+    half the web with no explanation is a broken machine. `enabled` is therefore left alone and the
+    first-run wizard asks.
+
+    The COUNTRY is different. With no ExitNodes line tor exits wherever it likes, so the moment the
+    switch IS flipped the circuit is built somewhere nobody chose — and there is nothing on screen
+    to say so, because "any" and "the one you picked" look identical. Pre-answering it costs
+    nothing and is overridden by the first country anybody selects.
+
+    POSTERCHANOS ONLY. `--shell` means this process is the operating system; pre-setting a country
+    on somebody's Windows install is a preference they never asked for."""
+    src = open(os.path.join(ROOT, "desktop", "main.js"), encoding="utf-8").read()
+    m = re.search(r"const torDefault = ([^;]+);", src)
+    assert m, "nothing decides what tor does on a machine that has never been asked"
+    default = m.group(1)
+    assert "SHELL_MODE" in default, "the tor default is applied off PosterChanOS too"
+    assert "enabled: false" in default, \
+        "Tor is forced on — that is a decision taken on the user's behalf, not a privacy feature"
+    assert "country: 'us'" in default, "the exit country is left as 'anywhere'"
+    # A DEFAULT, never an override: a saved choice has to win, or the switch cannot be turned off.
+    assert re.search(r"tor\.init\(cfg\.tor \|\| torDefault\)", src), \
+        "the default overrides a saved choice instead of filling in for its absence"
+
+
+def test_the_gentoo_side_is_not_routed_through_tor():
+    """The worry that prompted all of this: "i was just worried about the gentoo OS side."
+
+    It is unaffected, and the reason is structural rather than careful. Electron's proxy is set on a
+    SESSION — it applies to what this app's own pages fetch and to nothing else on the machine.
+    `emerge`, `emerge --sync`, the binhost and the overlay are separate processes with their own
+    sockets, so a package tree still syncs at full speed over https with Tor on. Nothing here sets
+    an environment variable, writes /etc/environment, or installs a transparent proxy — and this
+    test exists so that nobody adds one thinking it would be an improvement."""
+    src = open(os.path.join(ROOT, "desktop", "main.js"), encoding="utf-8").read()
+    assert "setProxy" in src, "the proxy is not applied to a session at all"
+    for forbidden in ("http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY", "/etc/environment"):
+        assert forbidden not in src, (
+            f"{forbidden} is set — that leaks this app's proxy into every process on the machine, "
+            f"including portage")
+    gentoo = open(os.path.join(ROOT, "os", "gentoo.sh"), encoding="utf-8").read()
+    assert "TransPort" not in gentoo and "transparent proxy" not in gentoo.lower(), \
+        "the OS installs a transparent Tor proxy, which would put emerge --sync through Tor"
 
 
 def test_the_window_does_not_throttle_a_live_stream():

@@ -8229,3 +8229,8 @@ html.osfr-on body > .app, html.osfr-on #os-root{ visibility:hidden; }
                overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .tty-hist-from{ color:var(--muted,#7a8699); font-size:11px; flex:none; }
 .tty-hist-none{ color:var(--muted,#7a8699); font-size:13px; padding:8px; line-height:1.5; }
+
+/* A tray chip that is OFF reads as off rather than as broken — the same weight as the others, in
+   the muted colour, so "Tor: off" is a state and not a warning. */
+.os-chip.os-off{ opacity:.62; }
+.os-chip.on{ color:var(--neon,#3ce8ff); }

@@ -189,9 +189,14 @@
     };
   }
 
-  /* TOR is OPTIONAL and always has been. Offered, and a person who says no has ANSWERED it — which
-   * is why both buttons write, and only one of them turns anything on. */
-  function stepTor(){
+  /* TOR IS ON BY DEFAULT ON POSTERCHANOS, so this screen CONFIRMS rather than offers.
+   *
+   * The machine already booted through it — main.js starts it before the window loads anything —
+   * so a card reading "Turn Tor on" would be asking for something that has already happened, and
+   * pressing it would do nothing visible. Asking anyway is still right: it is the one decision here
+   * that changes how every byte leaves the machine, and a person who did not choose it should be
+   * told, once, in a place where they can decline. Both buttons WRITE; only one changes anything. */
+  async function stepTor(){
     const have = !!(SHELLB() && SHELLB().tor);
     if(!have){
       /* Nothing to ask on a build with no bundled tor: recording the skip is the honest thing, and
@@ -199,27 +204,55 @@
       set(KEY_TOR, 'off');
       return run();
     }
-    const card = shell('tor', 'Route this computer through Tor?',
-      'Everything this machine sends would go over the Tor network. It is slower, some sites refuse '
-      + 'it, and it can be turned on or off later in Settings.',
-      `<div class="osfr-note" id="osfr-tor-note"></div>`,
-      `<button class="btn btn-ghost" data-fr="no">Not now</button>
-       <button class="btn btn-neon" data-fr="yes">Turn Tor on</button>`);
-    card.querySelector('[data-fr="no"]').onclick = () => { set(KEY_TOR, 'off'); run(); };
-    card.querySelector('[data-fr="yes"]').onclick = async () => {
-      const note = card.querySelector('#osfr-tor-note');
-      note.textContent = 'Starting Tor…';
+    let st = null;
+    try{ st = await SHELLB().tor.status(); }catch(_){ st = null; }
+    const on = !!(st && st.enabled);
+    const where = (st && st.countryName) || ((st && st.country) ? String(st.country).toUpperCase() : '');
+    const card = shell('tor',
+      on ? 'This computer is using Tor' : 'Route this computer through Tor?',
+      on ? ('Everything it sends goes over the Tor network' + (where ? ', leaving through ' + where : '')
+            + '. It is slower and some sites refuse it, so you can turn it off — here, or later in '
+            + 'Settings.')
+         : ('Everything this machine sends would go over the Tor network. It is slower, some sites '
+            + 'refuse it, and it can be turned on or off later in Settings.'),
+      `<div class="osfr-note" id="osfr-tor-note">${on && st && st.bootstrapped < 100
+          ? H('Building a circuit… ' + (st.bootstrapped || 0) + '%') : ''}</div>`,
+      on ? `<button class="btn btn-ghost" data-fr="off">Turn Tor off</button>
+            <button class="btn btn-neon" data-fr="keep">Keep using Tor</button>`
+         : `<button class="btn btn-ghost" data-fr="no">Not now</button>
+            <button class="btn btn-neon" data-fr="yes">Turn Tor on</button>`);
+    const note = card.querySelector('#osfr-tor-note');
+    const watch = () => {
       try{
         SHELLB().tor.onStatus((s) => {
           if(!s || !note.isConnected) return;
           note.textContent = s.bootstrapped >= 100 ? 'Tor is up.'
                            : 'Building a circuit… ' + (s.bootstrapped || 0) + '%';
         });
-        await SHELLB().tor.set({ enabled: true });
-      }catch(e){ note.textContent = String((e && e.message) || e); return; }
+      }catch(_){}
+    };
+    const b = (k) => card.querySelector('[data-fr="' + k + '"]');
+    if(b('keep')) b('keep').onclick = () => { set(KEY_TOR, 'on'); run(); };
+    if(b('off')) b('off').onclick = async () => {
+      note.textContent = 'Turning Tor off…';
+      try{ await SHELLB().tor.set({ enabled: false }); }
+      catch(e){ note.textContent = String((e && e.message) || e); return; }
+      set(KEY_TOR, 'off');
+      run();
+    };
+    if(b('no')) b('no').onclick = () => { set(KEY_TOR, 'off'); run(); };
+    if(b('yes')) b('yes').onclick = async () => {
+      note.textContent = 'Starting Tor…';
+      watch();
+      /* THE COUNTRY GOES WITH THE SWITCH. Turning Tor on with no exit country here and setting one
+       * later means a first circuit built somewhere nobody chose — and on this profile the answer
+       * is already US, so it is sent in the same call rather than in a second one. */
+      try{ await SHELLB().tor.set({ enabled: true, country: 'us' }); }
+      catch(e){ note.textContent = String((e && e.message) || e); return; }
       set(KEY_TOR, 'on');
       run();
     };
+    if(on) watch();
   }
 
   /* SIGN IN. Handed straight to the client's own gate — the one every other sign-in on this machine

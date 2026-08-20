@@ -88,7 +88,15 @@ class Render(unittest.TestCase):
                                                     list: ['low-power', 'balanced', 'performance'],
                                                     active: 'balanced' },
                                         canHibernate: true }) },
-      pcAudio: { status: async () => ({ output: { percent: 35, muted: false } }) } }"""
+      pcAudio: { status: async () => ({ output: { percent: 35, muted: false } }) },
+      /* Tor as pcShell exposes it. Present here because a tray chip that cannot be tested is a
+         tray chip that silently stops working — and because ABSENT and OFF are different states
+         this has to be able to tell apart. */
+      pcShell: { tor: { status: async () => ({ enabled: globalThis.__torOn !== false,
+                                               bootstrapped: 100, country: 'us',
+                                               countryName: 'United States' }),
+                        set: async (o) => { globalThis.__torSet = o; return { enabled: !!o.enabled }; },
+                        onStatus: () => {}, newCircuit: async () => true } } }"""
 
     def test_pressing_browser_launches_firefox(self):
         """The thing that was asked for: a launcher button that actually starts a program."""
@@ -204,6 +212,39 @@ class Render(unittest.TestCase):
         self.assertEqual(out["asArray"], {"list": ["a", "b"], "active": "b"})
         self.assertEqual(out["none"]["list"], [])
         self.assertEqual(out["missing"]["list"], [])
+
+    def test_tor_is_one_press_away_in_the_tray(self):
+        """On PosterChanOS this is the switch that decides how every byte leaves the machine, and it
+        lived in a menu bar the shell hides and a tray icon sway does not draw — so on the one
+        platform where it matters most it was the hardest control here to reach. "If it's easy for
+        them to turn on on PosterChanOS, then that's good"."""
+        out = self.run_js(self.WM, """
+          globalThis.__wins = [];
+          await S.render(host);
+          const tor = host.querySelectorAll('[data-os]').filter(b => b.dataset.os === 'tor');
+          out.chip = tor.length;
+          out.bound = tor.length === 1 && typeof tor[0].onclick === 'function';
+          out.sum = S.panelSummary(await S.panelState()).tor;
+        """)
+        self.assertEqual(out["chip"], 1, "there is no Tor control in the tray")
+        self.assertTrue(out["bound"], "the Tor chip is painted but nothing is wired to it")
+        self.assertTrue(out["sum"]["present"])
+        self.assertEqual(out["sum"]["country"], "us",
+                         "the exit country is not carried, so the tray cannot say where it leaves")
+
+    def test_a_build_with_no_tor_shows_no_tor_chip(self):
+        """ABSENT is not OFF. A build with nothing to switch must not draw a control that can never
+        turn anything on — the same rule the network chip follows for an unreadable NetworkManager,
+        by the opposite route."""
+        bridges = self.WM.replace("pcShell: { tor:", "pcShellUnused: { tor:")
+        out = self.run_js(bridges, """
+          globalThis.__wins = [];
+          await S.render(host);
+          out.chip = host.querySelectorAll('[data-os]').filter(b => b.dataset.os === 'tor').length;
+          out.sum = S.panelSummary(await S.panelState()).tor;
+        """)
+        self.assertEqual(out["chip"], 0, "a Tor chip was drawn on a build with no Tor")
+        self.assertFalse(out["sum"]["present"])
 
     def test_the_battery_opens_the_power_menu_rather_than_only_reporting(self):
         """A reading you cannot act on is the shape of control this shell keeps getting wrong: the

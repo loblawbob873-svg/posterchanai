@@ -967,6 +967,46 @@ ipcMain.handle('pc:apps:list', (e) => {
   return { apps, skipped: scanned.skipped.length, dirs: scanned.dirs, terminal: !!term };
 });
 
+/* THE COMPUTER'S OWN FILES. See hostfs.js for what limits this and why it is not a path allowlist.
+ *
+ * The same `fsGuard` as everything else, and for the boundary it actually enforces: our own page
+ * rather than some other page. Every one of these THROWS rather than returning an empty answer,
+ * because "I could not read that directory" and "that directory is empty" are different facts and
+ * a file manager that confuses them shows somebody an empty folder full of their files. */
+let _hostfs = null;
+const hostfs = () => (_hostfs || (_hostfs = require('./hostfs.js')));
+
+ipcMain.handle('pc:host:list', (e, dir) => { fsGuard(e); return hostfs().list(String(dir || '')); });
+ipcMain.handle('pc:host:roots', (e) => { fsGuard(e); return hostfs().roots(); });
+ipcMain.handle('pc:host:mkdir', (e, dir, name) => {
+  fsGuard(e); return hostfs().mkdir(String(dir || ''), String(name || ''));
+});
+ipcMain.handle('pc:host:rename', (e, from, to) => {
+  fsGuard(e); return hostfs().rename(String(from || ''), String(to || ''));
+});
+ipcMain.handle('pc:host:trash', (e, target) => { fsGuard(e); return hostfs().trash(String(target || '')); });
+ipcMain.handle('pc:host:read', (e, target, max) => {
+  fsGuard(e);
+  const p = hostfs().clean(String(target || ''));
+  if (!p) throw new Error('not a path');
+  const cap = Math.min(Number(max) || 64 * 1024 * 1024, 256 * 1024 * 1024);
+  /* BOUNDED, and the bound is checked before the read rather than after. This crosses an IPC
+   * boundary into a renderer's heap; a disk image read whole is the renderer dying, which on this
+   * machine is the desktop disappearing. */
+  const st = fs.statSync(p);
+  if (st.size > cap) throw new Error('that file is too big to open here (' + st.size + ' bytes)');
+  return fs.readFileSync(p);
+});
+ipcMain.handle('pc:host:open', async (e, target) => {
+  fsGuard(e);
+  const r = hostfs().open(String(target || ''));
+  /* RACED against the failure, the same way `pc:wm:launch` is: spawn reports a missing program
+   * asynchronously, so returning immediately turns "nothing on this machine opens that" into a
+   * click that silently does nothing. */
+  const why = await Promise.race([r.failed, new Promise((res) => setTimeout(() => res(''), 700))]);
+  return why ? { ok: false, why } : { ok: true, pid: r.pid };
+});
+
 /* Events, forwarded to the page. A shell that polls for its own window list is a shell that is
  * always slightly wrong about what is on screen. */
 ipcMain.handle('pc:wm:subscribe', async (e) => {
@@ -1202,7 +1242,25 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
     tor.setOnChange(pushTorStatus);
     // Before the window: with Tor on, applyProxy() must have run before anything can request a byte,
     // and loadApp() (called by createWindow) is what waits for the circuit.
-    await tor.init(cfg.tor || {});
+    /* TOR IS OFF UNTIL SOMEBODY TURNS IT ON — but when they do, it exits through the US.
+     *
+     * Forcing every byte through Tor is not a privacy feature, it is a decision taken on somebody's
+     * behalf: it is slower, a lot of sites refuse it outright, and a machine that is suddenly
+     * unable to reach half the web with no explanation is a broken machine. So `enabled` is left
+     * alone and the first-run wizard asks.
+     *
+     * The COUNTRY is a different question and it has a right answer here: an exit country of "any"
+     * is what tor does with no ExitNodes line at all, so the moment the switch IS flipped — from
+     * the wizard, from Settings, from the tray — the circuit is built somewhere nobody chose. This
+     * pre-answers it, and is overridden the instant anybody picks a country of their own, because
+     * `cfg.tor` is written by every path that touches either setting.
+     *
+     * It needs the geoip database the bundle already ships (tor.js note 1) or `ExitNodes {us}` is
+     * decoration; `StrictNodes 1` goes with it, which tor.js already pairs. PosterChanOS only:
+     * `--shell` means this process is the operating system, and pre-setting a country on somebody
+     * else's Windows install is a preference they did not ask for. */
+    const torDefault = SHELL_MODE ? { enabled: false, country: 'us' } : {};
+    await tor.init(cfg.tor || torDefault);
     await applyProxy();
     wireDownloads();
     wirePermissions();

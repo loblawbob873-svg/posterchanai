@@ -80,6 +80,14 @@
     if(slug==='cyberpunk') document.documentElement.removeAttribute('data-theme');   // cyberpunk = bare :root
     else document.documentElement.setAttribute('data-theme', slug);
     if(persist!==false){ try{ localStorage.setItem('pc_theme', slug); }catch(_){} }   // no-flash re-apply next load
+    /* MIRROR IT INTO THE APK'S NATIVE SCREENS. The launcher, the dialer and the SMS app are drawn by
+       Android, not by this page — that is what makes them survive a dead WebView renderer — and the
+       cost is that they cannot read localStorage or this stylesheet. All nine palettes are
+       transcribed into place.poster.app.ui.PcTheme; this is the one line that tells them which one is
+       in force. A no-op in a browser, and a PREVIEW mirrors too (persist===false) on purpose: the
+       preview is what somebody is looking at, and a home screen that stayed on the old theme while
+       the picker showed the new one would read as the preview not working. */
+    try{ if(window.PCPhone && PCPhone.mirrorTheme) PCPhone.mirrorTheme(slug); }catch(_){}
   }
   // Sync the account/Nostr theme on login — it's authoritative and follows you across devices. The
   // cached pc_theme already painted pre-load, so this only corrects an out-of-date device. Safe to
@@ -17406,6 +17414,13 @@
    * The one thing that IS different from a device-side change: a delete here happens without looking
    * at the files, so the confirmations name the count, and the server's collapse guard still stands
    * behind it. Downloads decrypt in the browser, like every other encrypted file here. */
+  /* THE MACHINE'S OWN DISK — a THIRD source beside the drive and a synced folder, and on
+   * PosterChanOS the one people reach for first. Everything about it lives in hostfiles.js; this
+   * flag is all the Files screen needs to know, so a file manager cannot drift into this renderer.
+   * Absent everywhere the bridge is (a browser tab has no filesystem), which is what `available()`
+   * answers — so the chip is simply not drawn rather than drawn and broken. */
+  let _hostOn = false;
+  const _hostFs = () => (window.PCHostFiles && PCHostFiles.available()) ? PCHostFiles : null;
   let _syncRoot = '';                 // the pair key being browsed ('' = the drive, not a synced folder)
   let _syncPath = '';                 // subdirectory inside it ('' = its root)
   /* The engine's own name for the trash, in the scope that RENDERS it. app.js is several closures,
@@ -18007,7 +18022,15 @@
         ${folders.map(f=>`<button class="folder-chip${(!_syncRoot&&_filesFolder===f)?' active':''}" data-folder="${enc(f)}">${f==='Music'?'🎵':(FilesIdx.isEncFolder(f)?'🔒':'📁')} ${enc(f)}</button>`).join('')}
         <button class="folder-chip newfolder" id="bl-newfolder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New folder</button>
         ${(!_syncRoot && _filesFolder && _filesFolder!=='Music') ? `<button class="folder-chip delfolder" id="bl-delfolder" title="Delete this folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete “${enc(_filesFolder)}”</button>` : ''}
-      </div>` + _fxSyncedHTML() + _fxDeletedHTML();
+      </div>` + _fxHostHTML() + _fxSyncedHTML() + _fxDeletedHTML();
+  }
+  /* "This computer", beside the drive's folders and the synced ones — one tree, three sources,
+   * which is the whole reason they share a screen instead of having three. */
+  function _fxHostHTML(){
+    if(!_hostFs()) return '';
+    return `<div class="fx-side-h">This computer</div>
+      <button class="folder-chip${_hostOn ? ' active' : ''}" data-host="1"
+              title="Browse this machine's own files">💻 Files on this computer</button>`;
   }
   /* \u267b DELETED ON EVERY DEVICE — the account-wide undo, beside the per-device trash. Entries
    * the record marks deleted BUT whose address was retained (executors keep sha/chunks on
@@ -18714,15 +18737,47 @@
       + '</div>';
     { const cb = $('.fx-check', pane); if(cb) cb.onclick = () => driveCheck(cb); }
     $$('.fx-home-tile[data-folder]', pane).forEach(b => b.onclick = () => {
-      _syncRoot=''; _syncPath=''; _filesFolder=b.dataset.folder; renderBlossom(); });
+      _syncRoot=''; _syncPath=''; _hostOn=false; _filesFolder=b.dataset.folder; renderBlossom(); });
     $$('.fx-home-tile[data-synckey]', pane).forEach(b => b.onclick = () => {
-      _syncRoot=b.dataset.synckey; _syncPath=''; renderBlossom(); });
+      _syncRoot=b.dataset.synckey; _syncPath=''; _hostOn=false; renderBlossom(); });
+    $$('.folder-chip[data-host]', r).forEach(b=> b.onclick=()=>{
+      _syncRoot=''; _syncPath=''; _filesFolder=null; _hostOn=true;
+      /* Start at HOME, not wherever the last visit ended, only when this is a fresh entry — walking
+       * into a folder and back out must not reset you to your home directory. */
+      const H2 = _hostFs();
+      if(H2 && !H2.at()) H2.roots().then(rs => {
+        const home = (rs || []).find(x => x.kind === 'home') || rs[0];
+        H2.enter(home ? home.path : '/');
+        if(VIEW==='blossom' && _filesTab==='public' && _hostOn) renderBlossom();
+      });
+      renderBlossom(); });
     // The synced list arrives after first paint on a cold visit; repaint when it does, or the shelf
     // stays missing until the user navigates away and back.
     if(!Array.isArray(_syncPairs)){
       _ensureSyncPairs().then(()=>{ if(VIEW==='blossom' && _filesTab==='public' && _filesFolder===null && !_syncRoot) renderBlossom(); })
                         .catch(()=>{});
     }
+  }
+
+  /* The machine's own disk. The module draws it; this hands it the things that belong to the Files
+   * screen — the sort comparator, the view mode, the byte formatter and the app's own prompts — so
+   * a folder on this disk is sorted and shaped exactly like a folder on the drive. */
+  async function _renderHostRoot(pane){
+    const H2 = _hostFs();
+    if(!H2){ _hostOn = false; return renderBlossom(); }
+    /* The SAME shell every other source uses — `.fx-explorer` with a sidebar and a main pane. A
+     * second layout here is how one screen ends up looking like two. */
+    pane.innerHTML = '<div class="fx-explorer">'
+      + '<div class="fx-side">' + _fxSideHTML() + '</div>'
+      + '<div class="fx-main"><div id="host-pane"><div class="spinner"></div></div></div></div>';
+    _fxBindSide(pane);
+    await H2.render($('#host-pane', pane), {
+      view: _fxView(),
+      cmp: (keyOf) => _fxCompare(keyOf),
+      fmtBytes: _fmtBytes,
+      fmtDate: (t) => t ? new Date(t).toLocaleString() : '',
+      toast, prompt: uiPrompt, confirm: uiConfirm,
+    });
   }
 
   async function renderPublicFiles(pane){
@@ -18735,6 +18790,7 @@
     /* A synced folder is a different SOURCE, not a different folder of the drive: its list comes from
      * the sync manifest, not from Blossom's /list. Branch BEFORE the upload probe and the listing —
      * neither is anything to do with it, and both are a round trip. */
+    if(_hostOn) return _renderHostRoot(pane);
     if(_syncRoot) return _renderSyncedRoot(pane);
     pane.innerHTML='<div class="spinner"></div>';
     // Anything that throws below leaves this spinner on screen forever unless it is caught, and
@@ -27257,6 +27313,34 @@
     for(let i=0;i<raw.length;i++) arr[i]=raw.charCodeAt(i);
     return arr;
   }
+  /* A BUNDLE CAN SHIP AN OLDER SHELL THAN ITS SCRIPTS, and this is the module that would suffer.
+   *
+   * mobile/build-www.sh copies every client .js file but takes index.html from the LIVE site, so an
+   * APK built in the same minute as a deploy can carry phoneshell.js with no <script> tag pointing at
+   * it. The symptom would be the phone-shell switches simply not existing on exactly the build that
+   * introduced them — indistinguishable from the feature not shipping. Same shape as the missing nav
+   * rows _NAV_REQUIRED exists for, and the same answer: heal it at runtime rather than trusting the
+   * shell. Loaded once, on demand, and a failure leaves the settings card empty rather than throwing
+   * inside a render that has bindings after it. */
+  let _psLoad = null;
+  function _withPhoneShell(fn){
+    if(window.PCPhone) { try{ fn(window.PCPhone); }catch(_){} return; }
+    if(!_psLoad){
+      _psLoad = new Promise(res => {
+        const el = document.createElement('script');
+        el.src = '/static/js/client/phoneshell.js';
+        el.onload = () => res(true); el.onerror = () => res(false);
+        (document.head || document.documentElement).appendChild(el);
+      });
+    }
+    _psLoad.then(() => { if(window.PCPhone){ try{ fn(window.PCPhone); }catch(_){} } });
+  }
+  /* Load it once anyway, late, so the theme mirror and the home-screen landing work on a bundle whose
+     shell carries no <script> tag for it. After `load` and behind a delay ON PURPOSE: outside the
+     boot path, because this app has already broken its own APK once with a speculative guard inside
+     it (see the _viewChosen note in CLAUDE.md). */
+  window.addEventListener('load', () => setTimeout(() => _withPhoneShell(() => {}), 3000));
+
   /* "Stay connected" — the persistent-notification fallback (StayAwakeService).
    *
    * ONLY OFFERED ON THE PACKAGED APP, because it is the only build that can do it: a browser cannot
@@ -27804,11 +27888,15 @@
           </div>
         </div>
       </section>
+      <!-- The phone-shell switches (home screen / messages / phone). Rendered by phoneshell.js and
+           EMPTY off the packaged app — a permanently greyed row of switches reads as broken. -->
+      <div id="phone-shell"></div>
       <div id="user-settings"></div>
     </div>`;
 
     _wirePushToggle();
     _wireStayConnected();
+    { const ps=$('#phone-shell'); if(ps) _withPhoneShell(m => m.renderSettings(ps)); }
     { const sq=$('#set-scan-qr'); if(sq) sq.onclick=()=>openQrScanner(); }
     _renderSignerApps();
     _renderNip55();

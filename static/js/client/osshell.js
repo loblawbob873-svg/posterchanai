@@ -233,6 +233,11 @@
     if(NET()) jobs.push(NET().status().then(s => { out.net = s; }, () => { out.net = null; }));
     if(POWER()) jobs.push(POWER().status().then(s => { out.power = s; }, () => { out.power = null; }));
     if(AUDIO()) jobs.push(AUDIO().status().then(s => { out.audio = s; }, () => { out.audio = null; }));
+    /* TOR, when this build has it. On PosterChanOS it is the switch that decides how every byte
+     * leaves the machine, and it lived in a menu bar the shell hides and a tray icon sway does not
+     * draw — so on the one platform where it matters most it was the hardest thing here to reach. */
+    const sh = root.pcShell;
+    if(sh && sh.tor) jobs.push(sh.tor.status().then(s => { out.tor = s; }, () => { out.tor = null; }));
     await Promise.all(jobs);
     return out;
   }
@@ -256,7 +261,13 @@
     const bright = !s.power || !s.power.brightness || !s.power.brightness.available
                  ? { known: false }
                  : { known: true, percent: s.power.brightness.percent };
-    return { net, battery: bat, volume: vol, brightness: bright,
+    /* ABSENT is not OFF. A build with no bundled tor has nothing to switch, and drawing an "off"
+     * chip there is a control that can never turn anything on. */
+    const tor = !s.tor ? { present: false }
+              : { present: true, on: !!s.tor.enabled,
+                  bootstrapped: Number(s.tor.bootstrapped || 0),
+                  country: s.tor.country || '', countryName: s.tor.countryName || '' };
+    return { net, battery: bat, volume: vol, brightness: bright, tor,
              canHibernate: !!(s.power && s.power.canHibernate) };
   }
 
@@ -310,6 +321,12 @@
         ? 'muted' : H(s.volume.percent) + '%'}</button>`);
     if(s.brightness.known)
       bits.push(`<button class="os-chip" data-os="bright" title="Brightness">${H(s.brightness.percent)}%</button>`);
+    if(s.tor && s.tor.present)
+      /* The BOOTSTRAP PERCENTAGE while it is coming up, because "on" and "on and actually usable"
+       * are minutes apart on a slow circuit and the difference is every page failing to load. */
+      bits.push(`<button class="os-chip${s.tor.on ? ' on' : ' os-off'}" data-os="tor"
+          title="${s.tor.on ? 'Tor is on' : 'Tor is off'}">🧅${s.tor.on
+            ? (s.tor.bootstrapped >= 100 ? '' : ' ' + H(s.tor.bootstrapped) + '%') : ' off'}</button>`);
     /* THE BATTERY IS A BUTTON, and it opens the POWER popover — the one that carries the profiles.
      * It was a `<span>`: a reading, with the thing you actually want to change from it (balanced /
      * power-saver / performance) hidden behind a separate ⏻ two chips along. Asked for as "clicking
@@ -449,6 +466,55 @@
     sliderPop(anchor, 'Brightness', _sum.brightness.percent, '', (n) => p.setBrightness(n));
   }
 
+  /* TOR. One press to turn it on or off, and it says what that means — because it is the one
+   * control here whose effect is invisible until something stops working. The exit country is
+   * shown rather than offered: a full country picker belongs in Settings, and this is the tray. */
+  async function torPop(anchor){
+    const sh = root.pcShell;
+    if(!sh || !sh.tor) return;
+    let st = null;
+    try{ st = await sh.tor.status(); }catch(_){ st = null; }
+    if(!st){
+      openPop(anchor, `<div class="os-pop-h">Tor</div>
+        <div class="os-pop-none">Tor could not be read on this machine.</div>`);
+      return;
+    }
+    const on = !!st.enabled;
+    const where = st.countryName || (st.country ? String(st.country).toUpperCase() : 'anywhere');
+    const d = openPop(anchor, `<div class="os-pop-h">Tor</div>
+      <div class="os-pop-b">
+        <div class="os-pop-none" id="os-tor-note">${on
+          ? (st.bootstrapped >= 100
+             ? H('On — everything this computer sends leaves through ' + where + '.')
+             : H('Building a circuit… ' + (st.bootstrapped || 0) + '%'))
+          : H('Off. Turning it on routes this app through the Tor network, exiting in '
+              + where + '. It is slower and some sites refuse it.')}</div>
+      </div>
+      <div class="os-pop-b os-pop-acts">
+        <button class="os-pop-row" data-tor="${on ? 'off' : 'on'}">${on ? 'Turn Tor off' : 'Turn Tor on'}</button>
+        ${on ? `<button class="os-pop-row" data-tor="new">New circuit</button>` : ''}
+      </div>`);
+    const note = d.querySelector('#os-tor-note');
+    d.querySelectorAll('[data-tor]').forEach(b => b.onclick = async () => {
+      const act = b.dataset.tor;
+      if(act === 'new'){
+        try{ await sh.tor.newCircuit(); toast('new Tor circuit'); }
+        catch(e){ toast(String((e && e.message) || e)); }
+        closePop(); return;
+      }
+      /* NOT CLOSED FIRST. Turning Tor on reloads the page — the client's relay sockets have to be
+       * re-opened through the new route — so this popover is about to be destroyed anyway, and the
+       * useful thing in the seconds before that is the bootstrap number. */
+      note.textContent = act === 'on' ? 'Starting Tor…' : 'Turning Tor off…';
+      try{ sh.tor.onStatus((s2) => { if(s2 && note.isConnected && s2.enabled)
+        note.textContent = s2.bootstrapped >= 100 ? 'Tor is up.'
+                         : 'Building a circuit… ' + (s2.bootstrapped || 0) + '%'; }); }catch(_){}
+      try{ await sh.tor.set({ enabled: act === 'on' }); }
+      catch(e){ note.textContent = String((e && e.message) || e); return; }
+      refresh();
+    });
+  }
+
   /* POWER. Suspend, hibernate, restart, shut down — and the profile, which is the one people
    * actually change day to day. Hibernate is offered only where it can work: a machine with no swap
    * cannot, and an entry that always fails is worse than one that is not there. */
@@ -505,6 +571,7 @@
       if(kind === 'net') netPop(b).then(() => done(_pop));
       else if(kind === 'vol') volPop(b).then(() => done(_pop));
       else if(kind === 'bright') brightPop(b).then(() => done(_pop));
+      else if(kind === 'tor') torPop(b).then(() => done(_pop));
       else if(kind === 'power') powerPop(b).then(() => done(_pop));
       setTimeout(() => done(_pop), 0);
     });
