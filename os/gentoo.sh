@@ -28,6 +28,34 @@ _pc_tty_restore() {
 }
 trap _pc_tty_restore EXIT INT TERM
 
+# ===============================================================================================
+# CAN THIS mksquashfs ACTUALLY WRITE A ZSTD IMAGE? Asked by DOING it.
+#
+# "i already recompiled with zstd and now your version tried to recompile something and then says
+# it rebuilt and still has no zstd."
+#
+# The old probe was `mksquashfs -help | grep -qw zstd`, and it is wrong on any current
+# squashfs-tools: 4.6 turned `-help` into a short summary and moved the compressor list behind
+# `-help-all` / `-help-comp`. So on a machine that had ALREADY been rebuilt with the flag the probe
+# found nothing, rebuilt it again for no reason, ran the identical probe, found nothing again, and
+# announced that the rebuild had failed. Every part of that was the probe.
+#
+# Parsing help text is guessing at an interface that is allowed to change. Compressing one file is
+# not: it either produces an image or it does not, on every version there has ever been, in a few
+# milliseconds. Anything printed goes to the log rather than the screen — a probe is not news.
+# ===============================================================================================
+_pc_mksquashfs_zstd() {
+	command -v mksquashfs >/dev/null 2>&1 || return 1
+	local T O rc
+	T="$(mktemp -d 2>/dev/null)" || return 1
+	O="$(mktemp -u 2>/dev/null)" || { rm -rf "$T"; return 1; }
+	echo probe >"$T/probe" 2>/dev/null
+	mksquashfs "$T" "$O" -comp zstd -no-progress -quiet >>"${LOG:-/dev/null}" 2>&1
+	rc=$?
+	rm -rf "$T" "$O" 2>/dev/null
+	return $rc
+}
+
 ########################
 # What this script is:
 #
@@ -1613,7 +1641,7 @@ liveCD() {
 	#
 	# Asked here, of the real binary, and repaired with --newuse rather than assumed. It is the
 	# cheapest possible question and it comes before anything expensive.
-	if ! mksquashfs -help 2>&1 | grep -qw zstd; then
+	if ! _pc_mksquashfs_zstd; then
 		echo -e "${COLOR_YELLOW}mksquashfs on this system cannot compress with zstd — rebuilding it${COLOR_RESET}"
 		echo -e "${COLOR_YELLOW}with the flag, which is what the live image and its initramfs need.${COLOR_RESET}"
 		echo
@@ -1627,8 +1655,10 @@ liveCD() {
 			_lcd_fail "Could not rebuild squashfs-tools with zstd — stopping."
 			return
 		fi
-		if ! mksquashfs -help 2>&1 | grep -qw zstd; then
-			_lcd_fail "It rebuilt and still has no zstd. Check USE for sys-fs/squashfs-tools."
+		if ! _pc_mksquashfs_zstd; then
+			{ echo "post-rebuild zstd trial still fails; mksquashfs -version:";
+			  mksquashfs -version 2>&1 | head -3; } >>"$LOG" 2>/dev/null
+			_lcd_fail "It rebuilt and mksquashfs still cannot write a zstd image. The trial output is in the log."
 			return
 		fi
 	fi

@@ -21,6 +21,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -258,3 +259,62 @@ class TheTerminalIsGivenBack(unittest.TestCase):
         body = _fn("_pc_tty_restore")
         self.assertIn("-t 0", body, "it does not check there is a terminal")
         self.assertIn("2>/dev/null", body, "it can print an error on the way out")
+
+
+class TheZstdProbeAsksByDoing(unittest.TestCase):
+    """"i already recompiled with zstd and now your version tried to recompile something and then
+    says it rebuilt and still has no zstd."
+
+    The probe was `mksquashfs -help | grep -qw zstd`, and that is wrong on any current
+    squashfs-tools: 4.6 turned `-help` into a short summary and moved the compressor list behind
+    `-help-all` / `-help-comp`. On a machine that had ALREADY been rebuilt with the flag it found
+    nothing, rebuilt for no reason, ran the identical probe, found nothing again, and announced the
+    rebuild had failed. Every part of that was the probe.
+
+    Parsing help text is guessing at an interface that is allowed to change. Compressing one file is
+    not. This RUNS the shipped function against two stub tools — one that writes a zstd image while
+    printing 4.6-style help that never mentions compressors, and one that refuses zstd — because a
+    test that also read the help text would agree with the bug.
+    """
+
+    GOOD = ('#!/bin/bash\n'
+            'if [[ "$1" == "-help" ]]; then echo "SYNTAX: mksquashfs source dest [options]";'
+            ' echo "Run mksquashfs -help-all for full help"; exit 0; fi\n'
+            ': > "$2"; exit 0\n')
+    BAD = ('#!/bin/bash\n'
+           'if [[ "$1" == "-help" ]]; then echo "SYNTAX: mksquashfs source dest [options]"; exit 0; fi\n'
+           'for a in "$@"; do if [[ "$a" == "zstd" ]]; then'
+           ' echo "Compressor \\"zstd\\" is not supported!" >&2; exit 1; fi; done\n'
+           ': > "$2"; exit 0\n')
+
+    def _ask(self, stub):
+        import os as _os
+        import stat as _stat
+        fn = _fn("_pc_mksquashfs_zstd")
+        with tempfile.TemporaryDirectory() as d:
+            tool = os.path.join(d, "mksquashfs")
+            with open(tool, "w") as fh:
+                fh.write(stub)
+            _os.chmod(tool, _os.stat(tool).st_mode | _stat.S_IEXEC)
+            env = dict(_os.environ, PATH=d + os.pathsep + _os.environ.get("PATH", ""))
+            script = "_pc_mksquashfs_zstd() {\n%s\n}\nLOG=/dev/null\n_pc_mksquashfs_zstd\n" % (
+                fn.split("{", 1)[1].rsplit("}", 1)[0])
+            r = subprocess.run(["bash", "-c", script], env=env, capture_output=True)
+            return r.returncode == 0
+
+    def test_a_tool_that_can_write_zstd_is_recognised(self):
+        """Even though its `-help` never mentions a compressor — which is the 4.6+ shape, and the
+        exact case that was misread as a failed rebuild."""
+        self.assertTrue(self._ask(self.GOOD),
+                        "a working zstd tool is reported as broken, so the build rebuilds it for "
+                        "ever and never gets past the check")
+
+    def test_a_tool_that_cannot_is_not(self):
+        self.assertFalse(self._ask(self.BAD))
+
+    def test_nothing_reads_the_help_text_any_more(self):
+        """The old probe left in place beside the new one would still be the thing that decides."""
+        body = _fn("liveCD")
+        self.assertNotIn("-help 2>&1 | grep -qw zstd", body,
+                         "the help-text probe is still here")
+        self.assertIn("_pc_mksquashfs_zstd", body)
