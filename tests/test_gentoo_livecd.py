@@ -403,3 +403,59 @@ class TheLiveInitramfsStartsFromNothing(unittest.TestCase):
         call = self.body[i:i + 600]
         self.assertIn('tee -a "$LOG"', call)
         self.assertIn("PIPESTATUS", self.body[i:i + 900])
+
+
+class ChangingTheDiskPassword(unittest.TestCase):
+    """"add menu option/function in tools part of gentoo.sh to change Luks disk password."
+
+    `cryptsetup luksChangeKey` on the slot the old password opens — no reformat, no re-encrypt, no
+    reboot. The data is encrypted with a master key that never changes and a LUKS password only
+    unlocks that key, so this is a header write of a few kilobytes and is instant on a full disk.
+
+    The failure mode here is not an error message, it is a machine that will not boot, so what is
+    checked before anything is written matters more than the change itself.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.body = _fn("changeDiskPassword")
+
+    def test_it_is_reachable_from_the_tools_menu(self):
+        tweaks = _fn("tweaks")
+        self.assertIn("changeDiskPassword", tweaks, "a function nothing calls is a feature nobody has")
+        entries = [l for l in tweaks.splitlines() if "encryption password" in l and "echo" in l]
+        self.assertTrue(entries, "no menu line offers it")
+        self.assertTrue(re.search(r"\[\d\]", entries[0]), "no number to type: %s" % entries[0])
+
+    def test_it_refuses_anything_that_is_not_luks(self):
+        """Detection guesses the layout from /etc/disk and picks the second partition. On a machine
+        partitioned differently that is somebody's data, and a LUKS header written over it is
+        unrecoverable."""
+        self.assertIn("cryptsetup isLuks", self.body,
+                      "it would write a header over whatever detection happened to name")
+
+    def test_the_old_password_is_checked_before_it_matters(self):
+        """--test-passphrase opens nothing and writes nothing; it answers whether the password has a
+        slot, so a typo is reported as a typo rather than as a cryptsetup exit code."""
+        self.assertIn("--test-passphrase", self.body)
+        self.assertLess(self.body.index("--test-passphrase"), self.body.index("luksChangeKey"))
+
+    def test_the_new_one_is_typed_twice_and_is_not_empty(self):
+        """There is no "forgot password" for this."""
+        self.assertEqual(self.body.count("read -rsp"), 3,
+                         "expected the old password and the new one twice")
+        self.assertIn('"$NEW1" != "$NEW2"', self.body)
+        self.assertIn('-z "$NEW1"', self.body)
+
+    def test_nothing_is_echoed(self):
+        """`read -s`, so it never reaches the screen, the environment or a file."""
+        for line in self.body.splitlines():
+            if "read -" in line and ("password" in line.lower() or "OLD" in line or "NEW" in line):
+                with self.subTest(line=line.strip()):
+                    self.assertIn("-rsp", line, "a password is read without -s: %s" % line.strip())
+
+    def test_the_hands_free_keyfile_is_mentioned(self):
+        """The keyfile is a SEPARATE slot and is deliberately untouched — the machine goes on booting
+        without a prompt and the typed password changes. "I changed my disk password and it still
+        boots without asking" is otherwise a reasonable thing to be alarmed by."""
+        self.assertIn("keyfile", self.body)
