@@ -850,6 +850,31 @@
                                     + 'it again from the device that has it' });
           return;
         }
+        /* THREE COPIES THAT ALL FAIL THE SAME CHECK ARE A STATEMENT ABOUT THE SENDER.
+         *
+         * The ordinary refusal is keyed on the copy's ADDRESS, so a re-upload lifts it — which is
+         * right when the re-sent bytes are good, and a trap when they are not. A device whose hash
+         * of its own file is wrong agrees with itself: asked to verify, it finds no fault, re-sends
+         * the same bytes, and the fresh address clears every other device's memory. Download, fail,
+         * flag, re-send, download, with nothing anywhere able to stop it. Measured on a
+         * multi-gigabyte .jex: sixteen rounds in ninety minutes, and it could not have terminated.
+         *
+         * So after three distinct copies have each failed the same checksum, this device stops
+         * asking and NAMES THE PROBLEM — which is the sending device, not the file. It stops
+         * flagging too: the flag is a request for a repair, and asking a fourth time for the same
+         * repair is the loop. Cleared as soon as any copy verifies. */
+        /* A PERSON PRESSING "Sync now" IS ALLOWED THROUGH, the same way the ordinary refusal lets
+         * them through: this bounds a loop that runs by itself, and somebody who has just gone and
+         * fixed the other device is answering the very question the count exists to ask. */
+        if(E.repairExhausted && E.repairExhausted(skipFetch[d.path], o.manual)){
+          report.unfetchable = report.unfetchable || [];
+          report.unfetchable.push({ path: d.path, why: 'three separate copies of this file have each '
+                                    + 'failed their checksum, so the fault is with the device sending '
+                                    + 'it, not the bytes — run “Check files” on the device that has '
+                                    + 'this file' });
+          (report.abandoned = report.abandoned || []).push(d.path);
+          return;
+        }
         const badId = skipId(skipFetch[d.path], false, d.entry);
         if(badId && badId === idOf(d.entry)){
           report.unfetchable = report.unfetchable || [];

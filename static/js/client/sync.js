@@ -202,11 +202,39 @@
   function _badFetch(key){
     try{ return JSON.parse(localStorage.getItem(_BADF + key) || '{}') || {}; }catch(_){ return {}; }
   }
+  /* A REPAIR THAT KEEPS PRODUCING THE SAME FAILURE IS NOT A REPAIR, and until this counted, that
+   * cost gigabytes in a loop with no end.
+   *
+   * The refusal is keyed on the copy's ADDRESS, so a fresh upload lifts it by itself — which is
+   * exactly right when the re-sent bytes are good, and a trap when they are not. A device whose own
+   * checksum of its own file is wrong AGREES WITH ITSELF: asked to verify its copy against its
+   * journal it finds no fault, re-sends the same bytes, and the new address lifts every other
+   * device's memory of the old one. Download, fail, flag, re-send, download. Measured on one
+   * multi-gigabyte .jex: sixteen rounds in ninety minutes, 1.14 GB re-fetched, and it could not have
+   * stopped on its own. (The wrong hash was `read(buf) > 0` treating a pipe's legal zero-length read
+   * as end of file — but the SHAPE outlives that bug, and this is the part that bounds it.)
+   *
+   * So the ROUNDS are counted, across addresses, per path. Three distinct copies that each fail the
+   * same checksum is not bad luck about bytes; it is a statement about whoever keeps sending them,
+   * and the fetch guard stops asking and says so. Cleared the moment a copy finally verifies, since
+   * the count is about a repair in progress and not about the file. */
   function _rememberBadFetch(key, add){
     try{
       const cur = _badFetch(key);
+      /* The counting is the ENGINE's — it is a decision, and it is run against generated states
+       * next door rather than only through a browser. */
+      const next = (S_ENGINE && S_ENGINE.mergeBadFetch)
+        ? S_ENGINE.mergeBadFetch(cur, add || {}) : Object.assign({}, cur, add || {});
+      if(JSON.stringify(next) !== JSON.stringify(cur))
+        localStorage.setItem(_BADF + key, JSON.stringify(next));
+    }catch(_){}
+  }
+  /** Forget a path's failures — it finally arrived, so the repair is over. */
+  function _clearBadFetch(key, paths){
+    try{
+      const cur = _badFetch(key);
       let changed = false;
-      for(const p in (add || {})) if(cur[p] !== add[p]){ cur[p] = add[p]; changed = true; }
+      for(const p of (paths || [])) if(p in cur){ delete cur[p]; changed = true; }
       if(changed) localStorage.setItem(_BADF + key, JSON.stringify(cur));
     }catch(_){}
   }
@@ -1864,6 +1892,11 @@
           },
         }));
         if(!o.dryRun){
+          /* A FILE THAT FINALLY ARRIVED ENDS ITS REPAIR. Left in place the round count only ever
+           * climbs, so a path that failed twice years ago would be one bad copy away from being
+           * abandoned — the counter has to be about a repair in progress, not a permanent record of
+           * a file's history. */
+          if(rep && (rep.downloaded || []).length) _clearBadFetch(keyOf(f), rep.downloaded);
           if(rep && rep.badFetch){
             _rememberBadFetch(keyOf(f), rep.badFetch);
             /* THE OTHER HALF OF THE CHECKSUM REPAIR: the refusal is this device's memory, and the

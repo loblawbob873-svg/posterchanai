@@ -114,7 +114,7 @@ public final class SyncReconcile {
         }
     }
 
-    private static Map<String, Object> act(Object... kv) {
+    static Map<String, Object> act(Object... kv) {
         Map<String, Object> m = new LinkedHashMap<String, Object>();
         for (int i = 0; i + 1 < kv.length; i += 2) m.put(String.valueOf(kv[i]), kv[i + 1]);
         return m;

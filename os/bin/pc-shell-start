@@ -41,8 +41,18 @@ fi
 i=0
 while [ $i -lt 120 ]; do
   if swaymsg -t get_tree 2>/dev/null | grep -q 'posterchan-desktop'; then
-    swaymsg '[class="posterchan-desktop"] fullscreen enable' >/dev/null 2>&1
-    swaymsg '[app_id="posterchan-desktop"] fullscreen enable' >/dev/null 2>&1
+    # TILED, NOT FULLSCREEN — and the difference is whether anything else can be seen.
+    #
+    # A fullscreen window in sway covers the whole workspace INCLUDING floating windows, so with the
+    # shell fullscreen a terminal opens, exists, reports its geometry, and is `visible: false`.
+    # Nothing on screen, no error, and no way to get a terminal on the machine. Being the only TILED
+    # window fills the screen just the same and lets everything float above it, which is what the
+    # desktop is for.
+    for sel in '[app_id="posterchan-desktop"]' '[class="posterchan-desktop"]'; do
+      swaymsg "$sel fullscreen disable" >/dev/null 2>&1
+      swaymsg "$sel floating disable" >/dev/null 2>&1
+      swaymsg "$sel border none" >/dev/null 2>&1
+    done
     exit 0
   fi
   i=$((i + 1))

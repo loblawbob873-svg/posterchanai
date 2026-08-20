@@ -165,6 +165,20 @@ class WM {
                                           + (on === false ? 'disable' : 'enable')); }
   floating(id, on){ return this.command('[con_id=' + Number(id) + '] floating '
                                         + (on === false ? 'disable' : 'enable')); }
+  /* STASHED, NOT MINIMISED — the compositor has no such state, and this is what it has instead.
+   *
+   * A native window ALWAYS floats above the shell's own surface: the shell is a tiled window in the
+   * compositor and firefox is a floating one, and no z-order this page can express reaches across
+   * that boundary. So an HTML window dragged over a native one goes UNDER it, and minimising a
+   * native window by hiding our frame leaves the app itself sitting on the desktop with no title
+   * bar. The scratchpad is a real hiding place: the window keeps running, keeps its size, and comes
+   * back where it was.
+   *
+   * `move scratchpad` on a window already there is harmless, and `scratchpad show` cycles when
+   * several are hidden — so both are addressed by con_id, never by the bare command. */
+  hide(id){ return this.command('[con_id=' + Number(id) + '] move scratchpad'); }
+  show(id){ return this.command('[con_id=' + Number(id) + '] scratchpad show'); }
+
   /* Placement only means anything for a FLOATING window — a tiled one is positioned by the layout,
    * and moving it is silently a no-op. A desktop that places windows makes them floating first. */
   async place(id, x, y, w, h){
@@ -216,8 +230,19 @@ class WM {
       detached: true, stdio: 'ignore', cwd: o.cwd || undefined,
       env: Object.assign({}, process.env, o.env || {}),
     });
+    /* AN 'error' EVENT WITH NO LISTENER IS RE-THROWN, and in the main process that is a modal
+     * JavaScript error dialog sitting on top of the desktop. It is how a missing binary presented
+     * itself: "Firefox ENOENT javascript error" instead of "Firefox is not installed". spawn reports
+     * ENOENT asynchronously — after it has returned — so no try/catch around this call can see it,
+     * and the listener is the only thing that can. */
+    let onFail = null;
+    const failed = new Promise((res) => { onFail = res; });
+    child.on('error', (e) => onFail(
+      e && e.code === 'ENOENT' ? argv[0] + ' is not installed'
+      : e && e.code === 'EACCES' ? argv[0] + ' is not executable'
+      : String((e && e.message) || e)));
     child.unref();
-    return { pid: child.pid };
+    return { pid: child.pid, failed };
   }
 
   /** The window belonging to `pid` (or a child of it), once it exists. Null if it never appears. */

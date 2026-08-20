@@ -1,0 +1,102 @@
+/* A LINUX APP INSIDE A POSTERCHAN WINDOW.
+ *
+ * Firefox on this desktop must not look like firefox ON TOP OF this desktop. It gets a PosterChan
+ * window — our title bar, our buttons, our taskbar entry, dragged and resized like every other
+ * window here — and the real surface is kept exactly over that window's body by the compositor.
+ * There is no reparenting and there is no compositing trick: the frame is HTML, the app is a real
+ * Wayland surface, and this file is the arithmetic that keeps the two in the same place.
+ *
+ * THE THREE THINGS THAT MAKE THAT ARITHMETIC NON-OBVIOUS, each of which puts the window somewhere
+ * wrong rather than failing:
+ *
+ *   1. THE PAGE IS NOT MEASURED IN THE COMPOSITOR'S PIXELS. The client scales itself with
+ *      `body{zoom}` by viewport, and the display has its own scale factor. So a CSS pixel here is
+ *      some other number of pixels out there, and it is not devicePixelRatio — it is both of those
+ *      multiplied. It is not guessed: the shell's OWN window is a rectangle we can measure in both
+ *      coordinate systems at once, and their ratio is the conversion. Measured, never assumed.
+ *
+ *   2. THE SHELL IS NOT AT THE ORIGIN. On a laptop with an external display the output the desktop
+ *      is on starts at x=1920, and a window placed at "100" lands on the other screen.
+ *
+ *   3. A NATIVE WINDOW IS ALWAYS ABOVE THE SHELL. Ours is a tiled compositor window and firefox is
+ *      a floating one; nothing this page can express reaches across that. So an HTML window that
+ *      overlaps a native one is DRAWN UNDERNEATH IT — the compose modal, the start menu, a settings
+ *      window, all of them behind a browser that is merely still open. The only cure the compositor
+ *      offers is to put the native window away while something of ours needs the space, which is
+ *      what `stashPlan` decides.
+ *
+ * DOM-free on purpose: tests/test_os_native_windows.py runs this file under node.
+ */
+(function(root){
+  'use strict';
+
+  /* The conversion between this page's pixels and the compositor's, derived from the one rectangle
+   * both can see: the shell's own window. Null when it cannot be measured — and a null is returned
+   * rather than a 1, because placing a window with the wrong scale is worse than not placing it. */
+  function scaleFrom(shellRect, cssW, cssH){
+    if(!shellRect || !(shellRect.width > 0) || !(shellRect.height > 0)) return null;
+    if(!(cssW > 0) || !(cssH > 0)) return null;
+    return { x: shellRect.width / cssW, y: shellRect.height / cssH,
+             ox: shellRect.x || 0, oy: shellRect.y || 0 };
+  }
+
+  /** Where the compositor must put a surface so it fills `body`, a rectangle in page pixels. */
+  function mapRect(body, scale){
+    if(!body || !scale) return null;
+    const x = Math.round(scale.ox + body.left * scale.x);
+    const y = Math.round(scale.oy + body.top * scale.y);
+    const w = Math.round(body.width * scale.x);
+    const h = Math.round(body.height * scale.y);
+    /* A window with no area is not a placement — it is a window that has been minimised, parked or
+     * measured while its container was display:none, and sending it makes the app redraw itself at
+     * 1x1 and forget its layout. The caller stashes instead. */
+    if(w < 8 || h < 8) return null;
+    return { x, y, w, h };
+  }
+
+  const overlaps = (a, b) => !!(a && b)
+    && a.left < b.left + b.width && b.left < a.left + a.width
+    && a.top < b.top + b.height && b.top < a.top + a.height;
+
+  /* WHICH NATIVE WINDOWS MUST GO AWAY RIGHT NOW.
+   *
+   * A native surface cannot be put behind one of ours, so anything of ours that needs the same
+   * pixels can only be seen if the native window is stashed. That is a judgement with a cost either
+   * way — stash too eagerly and a browser vanishes whenever a notification lands near it; stash too
+   * little and the person is typing into a window they cannot see.
+   *
+   * The rule: a native window is stashed while it is MINIMISED, while its own frame is not on
+   * screen, or while an HTML window that is ABOVE IT IN OUR OWN STACKING ORDER covers any part of
+   * it. Nothing else — a window merely being focused elsewhere is not a reason, or clicking the
+   * desktop would blank a video.
+   */
+  function stashPlan(items, htmlWins){
+    const stash = [], show = [];
+    for(const it of (items || [])){
+      if(!it || it.native == null) continue;
+      let hide = !!it.minimised || !it.rect || !(it.rect.width > 0) || !(it.rect.height > 0);
+      if(!hide){
+        for(const h of (htmlWins || [])){
+          if(!h || h.minimised || !h.rect) continue;
+          if(!(h.z > it.z)) continue;               // only what is genuinely in front of it
+          if(overlaps(h.rect, it.rect)){ hide = true; break; }
+        }
+      }
+      (hide ? stash : show).push(it.native);
+    }
+    return { stash, show };
+  }
+
+  /* Only what CHANGED. Every one of these is a round trip to the compositor and a reconfigure the
+   * app must handle; re-sending an identical rectangle sixty times a second is how a browser is
+   * made to relayout continuously while somebody drags a window that is not even theirs. */
+  function changed(prev, next){
+    if(!next) return false;
+    if(!prev) return true;
+    return prev.x !== next.x || prev.y !== next.y || prev.w !== next.w || prev.h !== next.h;
+  }
+
+  const API = { scaleFrom, mapRect, overlaps, stashPlan, changed };
+  root.PCOSNative = API;
+  if(typeof module !== 'undefined' && module.exports) module.exports = API;
+})(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -8109,24 +8109,75 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
    the desktop; everywhere else the markup is never emitted, so none of this applies.
    Fixed to the screen edges rather than laid out in the page: the desktop underneath scrolls and
    these must not go with it. */
-.os-launcher, .os-taskbar, .os-panel{
-  position:fixed; z-index:70; display:flex; gap:6px; align-items:center;
-  background:var(--panel2,rgba(26,26,42,.85)); border:1px solid var(--border,#333);
-  border-radius:10px; padding:6px 8px; backdrop-filter:blur(8px);
-}
-.os-launcher{ left:12px; bottom:12px; }
-/* Above the desktop (z 300) — these are the shell's own furniture, not windows on it. */
-#os-shell .os-launcher, #os-shell .os-taskbar, #os-shell .os-panel{ z-index:310; }
-.os-taskbar{ left:50%; transform:translateX(-50%); bottom:12px; max-width:60vw; overflow-x:auto; }
-.os-panel{ right:12px; bottom:12px; }
+/* THE SHELL ADDS NO BARS OF ITS OWN.
+   It used to: a launcher fixed bottom-left, a window list bottom-centre and a system panel
+   bottom-right, floating at z-index 310 over a desktop that already has a taskbar with a start
+   menu, a task list and a tray. Two of everything, none of it matching, all of it over the content
+   — "a bar that gets in the way", "an ugly bar for wifi", "not even looks part of the desktop".
+   The apps went into the start menu, the machine's windows into the same taskbar as ours, and the
+   readings below into the same tray as the clock. `.os-launcher` and `.os-taskbar` are still
+   emitted by `render()` for a standalone host (and by the tests, which click them), so they are
+   still laid out — as an ordinary inline row, never as furniture nailed to the screen. */
+.os-launcher, .os-taskbar, .os-panel{ display:flex; gap:6px; align-items:center; min-width:0; }
+.os-sys{ display:flex; gap:2px; align-items:center; min-width:0; }
 .os-app, .os-task, .os-chip{
   background:none; border:1px solid transparent; color:var(--fg,#d6e2ff);
   font:inherit; font-size:13px; padding:4px 10px; border-radius:7px; cursor:pointer;
   white-space:nowrap;
 }
+/* In the tray a chip is a tray button: the same height and weight as the relay light and the bell
+   beside it, so the row reads as one row rather than as something bolted onto the end of it. */
+.os-sys .os-chip{ font-size:12px; padding:3px 7px; opacity:.92; }
+.os-sys .os-chip:hover{ opacity:1; }
 .os-app:hover, .os-task:hover, .os-chip:hover{ border-color:var(--neon,#3ce8ff); }
 .os-task.on{ background:rgba(60,232,255,.14); border-color:var(--neon,#3ce8ff); }
 /* A reading that could not be taken is DIM and marked, never a plausible default — a full-strength
    wifi icon on a machine whose NetworkManager is dead is a lie that costs somebody an hour. */
 .os-chip.os-unknown{ color:var(--muted,#7a8699); font-style:italic; }
-@media (max-width:900px){ .os-taskbar{ max-width:44vw; } }
+@media (max-width:900px){ .os-sys .os-chip{ padding:3px 5px; } }
+
+/* The tray popovers: network, volume, brightness, power. Above the desktop and its windows, since
+   they are opened FROM the taskbar, which is above both. */
+.os-pop{
+  position:fixed; z-index:340; min-width:230px; max-width:320px;
+  background:var(--panel2,rgba(20,20,34,.97)); border:1px solid var(--border,#333);
+  border-radius:12px; box-shadow:0 18px 44px rgba(0,0,0,.55); overflow:hidden;
+  backdrop-filter:blur(10px); font-size:13px;
+}
+.os-pop-h{ padding:9px 12px 7px; font-weight:600; border-bottom:1px solid var(--border,#333); }
+.os-pop-b{ padding:8px; display:flex; flex-direction:column; gap:2px; max-height:44vh; overflow-y:auto; }
+.os-pop-b.os-pop-profs{ flex-direction:row; flex-wrap:wrap; gap:6px; }
+.os-pop-row{
+  display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%;
+  background:none; border:1px solid transparent; color:var(--fg,#d6e2ff); font:inherit;
+  padding:7px 9px; border-radius:8px; cursor:pointer; text-align:left;
+}
+.os-pop-row:hover{ background:rgba(60,232,255,.10); border-color:var(--neon,#3ce8ff); }
+.os-pop-row.on{ background:rgba(60,232,255,.16); }
+.os-pop-row.os-pop-danger:hover{ background:rgba(255,80,80,.16); border-color:#ff6b6b; }
+.os-pop-nm{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.os-pop-sig{ color:var(--muted,#7a8699); font-size:12px; flex:none; }
+.os-pop-none{ padding:10px; color:var(--muted,#7a8699); }
+.os-pop-b .os-pop-range{ flex:1; min-width:0; }
+.os-pop-b:has(.os-pop-range){ flex-direction:row; align-items:center; gap:10px; padding:12px; }
+.os-pop-val{ flex:none; min-width:44px; text-align:right; color:var(--muted,#7a8699); }
+.os-pop-f{ padding:0 8px 8px; }
+.os-pop-btn{
+  background:none; border:1px solid var(--border,#333); color:var(--fg,#d6e2ff); font:inherit;
+  font-size:12px; padding:5px 10px; border-radius:7px; cursor:pointer;
+}
+.os-pop-btn:hover, .os-pop-btn.on{ border-color:var(--neon,#3ce8ff); background:rgba(60,232,255,.12); }
+.os-applist-h{
+  padding:10px 12px 4px; font-size:11px; letter-spacing:.08em; text-transform:uppercase;
+  color:var(--muted,#7a8699);
+}
+
+/* A LINUX APP IN A POSTERCHAN WINDOW. The body is a HOLE — the app is a real compositor surface
+   held over exactly that rectangle, so anything drawn here would be underneath it and invisible.
+   What it does show is what is on screen while the window is being dragged, when the surface is
+   stashed and only the frame moves. */
+.osw-native .osw-body{ background:#05050c; }
+.osw-nat-note{
+  display:flex; align-items:center; justify-content:center; height:100%;
+  color:var(--muted,#7a8699); font-size:12px; letter-spacing:.04em;
+}

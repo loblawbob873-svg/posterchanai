@@ -240,6 +240,28 @@ function wirePlainUserAgent() {
   } catch (_) {}
 }
 
+/* NATIVE WAYLAND WHEN THERE IS A WAYLAND SESSION — decided HERE, in code we ship, rather than by an
+ * environment variable a wrapper is trusted to export.
+ *
+ * Electron defaults to the X11 backend, and a minimal Wayland compositor need not have XWayland at
+ * all. PosterChanOS's does not. What that looks like is not a degraded window or a warning: the app
+ * prints `Missing X server or $DISPLAY` and EXITS, the compositor execs the shell, the shell quits,
+ * and the machine sits on a black screen with nothing on it and nothing in any log the person can
+ * reach. On the box that IS the desktop that is a brick, not a bug.
+ *
+ * `auto` is the whole point of the hint: Wayland when WAYLAND_DISPLAY names a session, X11
+ * otherwise — so this is also correct on an ordinary X11 desktop, where it changes nothing. It is
+ * ALSO what makes the compositor able to place the window at all: an X11 client sets WM_CLASS after
+ * it maps, so sway matches its rules against a window with no class yet and the shell floats in the
+ * middle of the screen instead of being the desktop. A Wayland client has its app_id from the start.
+ *
+ * The wrapper still exports ELECTRON_OZONE_PLATFORM_HINT; this is the half that cannot be lost
+ * between a .desktop file, an AppRun and a shell script. */
+function wireOzonePlatform() {
+  if (process.platform !== 'linux') return;
+  app.commandLine.appendSwitch('ozone-platform-hint', 'auto');
+}
+
 // Wayland has no X11-style screen grab: capture goes through the xdg-desktop-portal/PipeWire path,
 // which Chromium only takes when this feature is on. Harmless no-op if the feature name ever changes.
 function wireWaylandCapture() {
@@ -865,6 +887,8 @@ ipcMain.handle('pc:wm:close', (e, id) => { fsGuard(e); return wm().close(Number(
 ipcMain.handle('pc:wm:place', (e, id, x, y, w, h) => {
   fsGuard(e); return wm().place(Number(id), Number(x), Number(y), Number(w), Number(h));
 });
+ipcMain.handle('pc:wm:hide', (e, id) => { fsGuard(e); return wm().hide(Number(id)); });
+ipcMain.handle('pc:wm:show', (e, id) => { fsGuard(e); return wm().show(Number(id)); });
 ipcMain.handle('pc:wm:fullscreen', (e, id, on) => { fsGuard(e); return wm().fullscreen(Number(id), !!on); });
 /* Launch takes an ARGV ARRAY, never a command string. A string would have to be handed to a shell
  * to be useful, and then a file name with a space in it is an injection. */
@@ -892,9 +916,17 @@ ipcMain.handle('pc:wm:launch', async (e, argv, opts) => {
   const started = wm().launch(list, opts || {});
   /* The window is matched by PID and reported back, so the desktop can place what it just opened
    * rather than guessing which of several windows appeared. Null when it never shows — an app that
-   * failed to start must not be reported as launched. */
-  const found = await wm().waitForWindow(started.pid, (opts && opts.waitMs) || 15000);
-  return { pid: started.pid, window: found };
+   * failed to start must not be reported as launched.
+   *
+   * RACED AGAINST THE FAILURE, because spawn reports a missing program asynchronously: waiting only
+   * for a window turns "not installed" into fifteen seconds of a launcher that appears to do
+   * nothing, and then a null that says no more than a timeout would. */
+  const settled = await Promise.race([
+    wm().waitForWindow(started.pid, (opts && opts.waitMs) || 15000).then((w) => ({ window: w })),
+    (started.failed || new Promise(() => {})).then((why) => ({ why })),
+  ]);
+  if (settled.why) return { pid: null, window: null, why: settled.why };
+  return { pid: started.pid, window: settled.window };
 });
 /* Events, forwarded to the page. A shell that polls for its own window list is a shell that is
  * always slightly wrong about what is on screen. */
@@ -930,6 +962,35 @@ ipcMain.handle('pc:power:suspend', (e) => { fsGuard(e); return power.suspend(); 
 ipcMain.handle('pc:power:hibernate', (e) => { fsGuard(e); return power.hibernate(); });
 ipcMain.handle('pc:power:poweroff', (e) => { fsGuard(e); return power.poweroff(); });
 ipcMain.handle('pc:power:reboot', (e) => { fsGuard(e); return power.reboot(); });
+
+/* THE LOCAL TERMINAL. The client's terminal view already speaks a resumable protocol over SSH; on
+ * PosterChanOS the machine IS the node, and going out over the network to reach one's own computer
+ * is absurd — worse, PosterChanOS can run with no PosterChan server at all, and then there is
+ * nothing to SSH to. desktop/localterm.js gives it a PTY through `script`, needing no native
+ * module in an app that ships as one AppImage. */
+const localterm = require('./localterm.js');
+
+ipcMain.handle('pc:term:start', (e, opts) => { fsGuard(e); return localterm.start(opts || {}); });
+ipcMain.handle('pc:term:write', (e, id, d) => { fsGuard(e); return localterm.write(String(id), d); });
+ipcMain.handle('pc:term:resize', (e, id, c, r) => { fsGuard(e); return localterm.resize(String(id), c, r); });
+ipcMain.handle('pc:term:backlog', (e, id, since) => { fsGuard(e); return localterm.backlog(String(id), since); });
+ipcMain.handle('pc:term:close', (e, id) => { fsGuard(e); return localterm.close(String(id)); });
+ipcMain.handle('pc:term:list', (e) => { fsGuard(e); return localterm.list(); });
+/* Output is PUSHED to every window rather than polled: a terminal that updates on a timer is one
+ * you can watch your own keystrokes arrive late in. */
+ipcMain.handle('pc:term:attach', (e, id) => {
+  fsGuard(e);
+  const sid = String(id);
+  localterm.subscribe(sid, (ev) => {
+    for (const w of BrowserWindow.getAllWindows()) {
+      try { w.webContents.send('pc:term:data', Object.assign({ id: sid }, ev)); } catch (_) {}
+    }
+  });
+  return true;
+});
+/* Every shell dies with the app. A session outliving the desktop is a process nobody can reach and
+ * nothing will ever reap. */
+app.on('will-quit', () => { try { localterm.closeAll(); } catch (_) {} });
 
 ipcMain.handle('pc:audio:status', (e) => { fsGuard(e); return audio.status(); });
 ipcMain.handle('pc:audio:volume', (e, pct, which) => { fsGuard(e); return audio.setVolume(pct, which); });
@@ -1081,6 +1142,7 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
     },
   });
   wireInsecureContent();
+  wireOzonePlatform();
   wireWaylandCapture();
   wirePlainUserAgent();
   // A second launch now happens routinely — autostart puts one copy up at login and the user then

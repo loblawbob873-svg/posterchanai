@@ -78,6 +78,14 @@ public final class NativeSweep {
         public final List<String> removedRemote = new ArrayList<String>();
         /** Deletion claims held back for lack of positive proof — the card says how many and why. */
         public final List<String> unconfirmedAbsent = new ArrayList<String>();
+        /* THE REPAIR OF A FLAGGED RECORD, in three answers. `reseeding` is what went back up;
+         * `staleChecksum` is the subset where the bytes were fine and the published checksum was
+         * the thing that was wrong; `badHere` is where this device's own copy disagreed with both
+         * and nothing was sent. Reported rather than counted, because "which files" is the only
+         * useful form of this. */
+        public final List<String> reseeding = new ArrayList<String>();
+        public final List<String> staleChecksum = new ArrayList<String>();
+        public final List<String> badHere = new ArrayList<String>();
         public final List<Map<String, Object>> failed = new ArrayList<Map<String, Object>>();
         public int unchanged, excluded, deferred, alreadyStored, checkpoints, repaired;
         public boolean hashed = false;
@@ -96,6 +104,9 @@ public final class NativeSweep {
             m.put("trashed", trashed.size());
             m.put("removedRemote", removedRemote.size());
             m.put("unconfirmedAbsent", unconfirmedAbsent.size());
+            if (!reseeding.isEmpty()) m.put("reseeding", (long) reseeding.size());
+            if (!staleChecksum.isEmpty()) m.put("staleChecksum", (long) staleChecksum.size());
+            if (!badHere.isEmpty()) m.put("badHere", (long) badHere.size());
             m.put("failed", failed.size());
             m.put("unchanged", (long) unchanged);
             m.put("deferred", (long) deferred);
@@ -332,6 +343,7 @@ public final class NativeSweep {
         }
 
         SyncReconcile.Plan planned = SyncReconcile.plan(local, state, index, f.excludes, device, now);
+        heal(planned, state, local, fs, device, rep);
         List<Map<String, Object>> verdicts = SyncReconcile.check(planned, state);
         /* NOBODY IS WATCHING, SO A REFUSAL IS THE ANSWER — and it suppresses one bucket, never the
          * sweep. The refused paths are deliberately NOT journalled, so the next sweep proposes
@@ -461,7 +473,10 @@ public final class NativeSweep {
                  * such path here — a background sweep does no repairs by name — and if one is ever
                  * added it needs the same exemption. */
                 Map<String, Object> R = state.get(path);
-                if (R != null && R.get("deletedAt") == null) {
+                /* A NAMED REPAIR IS EXEMPT FROM THE SHORTCUT. Its whole purpose is to re-send bytes
+                 * whose stored copy is unusable while the record still certifies them — "the store
+                 * already holds these bytes" is exactly the claim in dispute. */
+                if (R != null && R.get("deletedAt") == null && !Json.bool(u.get("resend"), false)) {
                     String was = Json.str(R.get("csum"), "");
                     String is = was.isEmpty() ? null : fs.hashFile(path);
                     if (is != null && is.equals(was)) {
@@ -733,6 +748,75 @@ public final class NativeSweep {
         return entry;
     }
 
+    /**
+     * A FLAGGED RECORD, ANSWERED BY WHOEVER STILL HOLDS THE FILE.
+     *
+     * Another device downloaded these bytes, hashed them, and got something other than the record's
+     * checksum. It cannot fix that — it has no good copy — so it writes the flag and the repair
+     * belongs here. The web executor has always done this; the background sweep never did, because
+     * the envelope's flag was not even carried into the record, so a file uploaded from a phone
+     * could only ever be repaired by somebody opening the app.
+     *
+     * THREE READINGS, and getting the middle one wrong is what strands a file for ever:
+     *
+     *   - our copy hashes to the record's checksum → the record is right and the STORE's copy is
+     *     torn. Re-send: fresh ciphertext, fresh address, and every device's memory of the bad one
+     *     lifts by itself.
+     *
+     *   - our copy hashes to something else, and it is the SAME something the downloader measured
+     *     → two independent devices agree about the content and the CHECKSUM is the odd one out.
+     *     That is not hypothetical: this app's own digest stopped at a zero-length read and
+     *     published the hash of a prefix, so after the fix the holder hashes its own perfectly good
+     *     file, disagrees with the number it published, and — on the naive rule — declares its file
+     *     bad. The fix would have made the symptom permanent. Re-send under a real checksum.
+     *
+     *   - our copy hashes to something else again → the two copies really are different and this
+     *     one is not evidence about anything. Say so, send nothing.
+     *
+     * An OLD flag carries no measured hash (just the address), and stays conservative.
+     */
+    private static void heal(SyncReconcile.Plan plan, Map<String, Map<String, Object>> state,
+                             Map<String, Map<String, Object>> local, SyncIo.Files fs, String device,
+                             Report rep) {
+        Set<String> planned = new LinkedHashSet<String>();
+        for (Map<String, Object> u : plan.send) planned.add(Json.str(u.get("path"), ""));
+        for (Map.Entry<String, Map<String, Object>> e : state.entrySet()) {
+            String path = e.getKey();
+            Map<String, Object> R = e.getValue();
+            String flag = Json.str(R.get("bad"), "");
+            if (flag.isEmpty() || R.get("deletedAt") != null) continue;
+            if (planned.contains(path)) continue;          // already going up for its own reasons
+            Map<String, Object> L = local.get(path);
+            if (L == null) continue;                       // we do not hold it; not ours to repair
+            /* The flag names the copy that failed. One naming a DIFFERENT copy from the record's
+             * current one has already been answered — somebody re-sent — and repairing again would
+             * be the loop the flag exists to end. */
+            int bar = flag.indexOf('|');
+            String flagged = bar < 0 ? flag : flag.substring(0, bar);
+            String saw = bar < 0 ? "" : flag.substring(bar + 1);
+            if (!flagged.isEmpty() && !flagged.equals(SyncDiff.addressOf(R))) continue;
+            String mine;
+            try { mine = fs.hashFile(path); } catch (Exception ex) { mine = null; }
+            if (mine == null || mine.isEmpty()) continue;  // could not read it — never a verdict
+            String was = Json.str(R.get("csum"), "");
+            if (!was.isEmpty() && !mine.equals(was)) {
+                if (saw.isEmpty() || !saw.equals(mine)) {
+                    rep.badHere.add(path);
+                    continue;
+                }
+                rep.staleChecksum.add(path);
+            }
+            Map<String, Object> stat = new LinkedHashMap<String, Object>(L);
+            stat.put("csum", mine);
+            /* `resend` is what makes the upload actually happen: the send loop skips anything whose
+             * bytes the store already holds, and for a repair that shortcut is the bug. */
+            plan.send.add(SyncReconcile.act("path", path, "v", SyncReconcile.bump(R, null),
+                    "stat", stat, "resend", Boolean.TRUE,
+                    "why", "another device could not verify this copy — sending it again"));
+            rep.reseeding.add(path);
+        }
+    }
+
     // ------------------------------------------------------------------------ the record set
 
     /** The decrypted record set for a pair, plus the era it belongs to. */
@@ -813,6 +897,14 @@ public final class NativeSweep {
                 }
                 // The ENVELOPE is authoritative for version and device — it is what the CAS judged.
                 e.put("v", Json.num(row.get("v"), 0));
+                /* AND FOR THE FLAG, which this half used to drop on the floor. `bad` is another
+                 * device saying "the copy in the store fails its checksum", and it is addressed to
+                 * whoever still holds the file — which, for anything uploaded from a phone, is this
+                 * device. Never carried across, the background sweep could not repair anything: the
+                 * flag sat on the record, the file stayed unfetchable everywhere, and only opening
+                 * the app could fix it. */
+                String flag = Json.str(row.get("bad"), "");
+                if (!flag.isEmpty()) e.put("bad", flag);
                 String by = Json.str(row.get("by"), "");
                 if (!by.isEmpty()) e.put("by", by);
                 if (Json.num(row.get("t"), 0) != 0 && Json.num(e.get("deletedAt"), 0) == 0) {

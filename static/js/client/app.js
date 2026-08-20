@@ -3847,6 +3847,28 @@
       if(!GUEST && ME && ME.mode === 'local') Nip46Signer.resume().catch(()=>{});
     }catch(_){}
     try{ _signerBatteryCheck(); }catch(_){}
+    /* ON POSTERCHANOS, SIGNING IN IS ALSO GETTING A UNIX ACCOUNT.
+     *
+     * Anybody can sign in to this machine with a Nostr key, and the moment they do they need a home
+     * directory of their own, owned by them and readable by nobody else — a desktop where the person
+     * who just logged in writes into somebody else's home is not multi-user, it is one account with
+     * several names on it. Derived from the npub, so the same identity lands in the same home on
+     * every PosterChanOS machine and nothing has to be typed.
+     *
+     * Idempotent, so it runs on every sign-in rather than on some "first" one nothing can define,
+     * and fire-and-forget: it is a no-op everywhere except an OS, it must never hold up the app, and
+     * a machine that refuses is a machine the person can still use as a client. It reports its own
+     * failure rather than throwing (see ensureAccount) — a silent refusal here is a person whose
+     * files quietly go somewhere they do not own. */
+    try{
+      if(!GUEST && ME && ME.npub && window.PCOSShell)
+        PCOSShell.detect().then(yes => {
+          if(!yes) return;
+          return PCOSShell.ensureAccount(ME.npub).then(r => {
+            if(r && r.ok === false && r.why) console.warn('[os] no account for this identity:', r.why);
+          });
+        }).catch(()=>{});
+    }catch(_){}
     /* Opened by "🗔 Open in a window": the same client, drawn without the sidebar, nav and rightbar
      * it has no room for. A class rather than a separate page, because the whole point is that this
      * IS the ordinary stream view — nothing here is a second implementation to fall behind. */
@@ -24072,10 +24094,30 @@
      * hamburger menu isn't showing", "copying the npub does nothing"), none of which names a cause.
      *
      * So it says so instead. The block is deliberately NOT re-indented inside the try — the change
-     * here is the guard, and a reformat would bury it in the diff. */
+     * here is the guard, and a reformat would bury it in the diff.
+     *
+     * BUT A GUARD IS NOT INDEPENDENCE, and that distinction is why "copying the npub does nothing"
+     * came back. One try around a straight run stops the exception escaping; it does NOT run the
+     * statements after the throw. `hydrate` is by far the largest thing in here — every avatar,
+     * every name, every verification badge on the page — so it is also the likeliest to throw, and
+     * everything below it died with it while the message said only that something had. The small
+     * bindings underneath do not depend on it or on each other: a Copy button, a tip button, a tab
+     * row. Each one now stands on its own, so the page loses exactly what actually broke. */
+    const _bind = (what, fn) => {
+      try{ fn(); }
+      catch(e){
+        try{ console.error('[profile] ' + what + ' did not bind', e); }catch(_){}
+        (_profBroke = _profBroke || []).push(what + ': ' + String((e && e.message) || e).slice(0, 90));
+      }
+    };
+    let _profBroke = null;
+    _bind('the avatars and names', () => hydrate(feed));
+    _bind('the verified badge', () => decorateVerified($('#prof-vchk'), pk, p.nip05));
+    /* COPY NPUB IS BOUND EARLY AND ON ITS OWN. It is one line, it can only fail if the element is
+     * missing, and it is the single most reported casualty of everything above it. */
+    _bind('Copy npub', () => { const cn=$('#copy-npub');
+                               if(cn) cn.onclick=()=> copyValue(npub, 'npub copied', 'Their npub:'); });
     try{
-    hydrate(feed);
-    decorateVerified($('#prof-vchk'), pk, p.nip05);
     $$('.prof-tab',feed).forEach(t=> t.onclick=async()=>{ $$('.prof-tab',feed).forEach(x=>x.classList.toggle('active',x===t)); const tab=t.dataset.tab; _prof.tab=tab; fillList(tab); hydrate(feed);
       if(tab==='streams') _wireProfStreamClicks();
       // Articles (kind-30023) aren't part of the initial note load — lazy-fetch them once on first open.
@@ -24091,7 +24133,6 @@
             for(const e of ext) Store.saveEvent(e); } }catch(_){}
         if(VIEW==='profile' && _prof.pk===pk && _prof.tab==='streams'){ fillList('streams'); hydrate(feed); _wireProfStreamClicks(); } }
     });
-    { const cn=$('#copy-npub'); if(cn) cn.onclick=()=> copyValue(npub, 'npub copied', 'Their npub:'); }
     /* BACKFILL FOR A REPLY-HEAVY AUTHOR — AFTER the render, never before it.
      *
      * The Posts tab excludes replies (`!isReply`) while the timeline includes them, so an author
@@ -24161,10 +24202,13 @@
     { const mn=$('#prof-menu'); if(mn)mn.onclick=()=>openProfileMenu(pk, mn); }   // ☰ on own + others' profiles
     }catch(e){
       try{ console.error('[profile] the page stopped binding partway', e); }catch(_){}
+      (_profBroke = _profBroke || []).push(String((e&&e.message)||e).slice(0, 140));
+    }
+    if(_profBroke && _profBroke.length){
       const head=$('.pbody',feed);
       if(head) head.insertAdjacentHTML('beforeend',
         '<div class="muted small">⚠ part of this profile didn’t load — '
-        + enc(String((e&&e.message)||e).slice(0,140)) + '</div>');
+        + enc(_profBroke.join(' · ').slice(0, 220)) + '</div>');
     }
     /* …and when that header came out of the CACHE, go and check it — the same two reads the cold path
      * makes before painting, made after. A rename or a new avatar has to land without a reload, which

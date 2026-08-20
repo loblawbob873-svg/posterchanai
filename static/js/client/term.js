@@ -28,6 +28,14 @@
  * running; the other is the only thing that ends a session, since nothing here expires.
  *
  * The socket speaks the frames documented in app/routers/ssh_term.py.
+ *
+ * AND ON POSTERCHANOS THERE IS NO SOCKET AT ALL. The machine IS the node: going out over a
+ * WebSocket, through SSH, back to the computer you are sitting at, to get a shell on it, is absurd
+ * — and PosterChanOS runs with no PosterChan server, so there is nothing to SSH to. The desktop
+ * hands us a real PTY instead (desktop/localterm.js), and it speaks the SAME frames the server
+ * does: `out`, `ready`, `end`, `err`. So everything below — the reconnect, the detach, the key bar,
+ * the cursor, the session strip — is shared, and the two transports cannot drift apart. `link` is
+ * whichever one is in use.
  */
 (function(){
   function init(){
@@ -36,7 +44,15 @@
     const { $, $$, enc, toast, authFetch } = PC;
 
     const XT = () => window.Terminal;              // xterm's global, once its <script> has run
-    let term = null, fit = null, ws = null, host = null, ro = null;
+    /* The desktop's local PTY, when PosterChan IS the desktop. Absent everywhere else, and then
+     * every line that mentions it is unreachable rather than broken. */
+    const LOCAL = () => window.pcTerm || null;
+    const LOCAL_HOST = { name: 'local', label: 'this computer', keyed: true, local: true };
+    const isLocal = (h) => String(h || '') === 'local';
+    const localSid = (id) => 'local:' + id;
+    const isLocalSid = (x) => /^local:/.test(String(x || ''));
+
+    let term = null, fit = null, ws = null, link = null, host = null, ro = null;
     let hosts = [], connected = false, ctrl = false, mounted = null;
     let sid = '', cursor = 0, retry = 0, retryT = null, want = false, live = [];
     // Set on `ready`, fires once the socket has HELD. Only then does a reconnect count as
@@ -97,7 +113,21 @@
       s.className = 'tty-state' + (cls ? ' ' + cls : '');
     }
 
+    /* THIS MACHINE FIRST, when there is one. On PosterChanOS it is the only host anybody wants, and
+     * it is the one the server cannot offer — a node's SSH host list is other computers. */
+    function _withLocal(list){
+      const rest = (list || []).filter(h => h && h.name !== 'local');
+      return LOCAL() ? [LOCAL_HOST].concat(rest) : rest;
+    }
+
     async function loadHosts(){
+      /* WITH NO SERVER THERE IS STILL A TERMINAL. PosterChanOS runs with no instance configured, and
+       * every line below this asks a server something. Answering "the SSH terminal is switched off"
+       * on the machine whose own shell is sitting right there would be absurd — so the local host
+       * stands on its own, and the server's list is added to it if there is a server. */
+      if(!(window.__PC_API_BASE__ === undefined ? true : window.__PC_API_BASE__) && LOCAL()){
+        hosts = _withLocal([]); return true;
+      }
       try{
         // The bundled apps authenticate with a BEARER, not a cookie (they are cross-origin to the
         // instance), and that token is minted lazily. Without this the first visit to the Terminal
@@ -105,15 +135,24 @@
         // screen. It is a no-op once the session exists.
         try{ await PC.ensureAiSession(); }catch(_){}
         const r = await authFetch('/api/ssh/hosts');
-        if(r.status === 403){ hosts = []; _state('the SSH terminal is switched off, or you are not on its list', 'err'); return false; }
+        if(r.status === 403){
+          hosts = _withLocal([]);
+          if(!hosts.length){ _state('the SSH terminal is switched off, or you are not on its list', 'err'); return false; }
+          return true;
+        }
         const d = await r.json();
-        hosts = (d && d.hosts) || [];
-        if(d && d.available === false){
+        hosts = _withLocal((d && d.hosts) || []);
+        if(d && d.available === false && !LOCAL()){
           _state('this node has no SSH library installed — run install.sh', 'err');
           return false;
         }
         return true;
-      }catch(_){ _state('could not reach the server', 'err'); return false; }
+      }catch(_){
+        /* A node that cannot be reached is not a machine without a shell. */
+        hosts = _withLocal([]);
+        if(hosts.length) return true;
+        _state('could not reach the server', 'err'); return false;
+      }
     }
 
     function _mountTerm(){
@@ -170,7 +209,19 @@
       }, 80);
     }
 
-    function _send(o){ try{ if(ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }catch(_){} }
+    /* ONE WAY OUT, whichever transport is carrying it. Everything in this file that talks to a
+     * shell goes through here — the key bar, the catcher, the resize, detach and close — so adding
+     * the local PTY did not mean auditing thirty call sites for "is this a socket". */
+    function _send(o){ try{ if(link && link.send) link.send(o); }catch(_){} }
+
+    /* Tear the current transport down without it reporting itself as a drop. Attaching to another
+     * session while one is connected is reachable from the strip, and leaving the old one alive
+     * means its close lands in the NEW session's state a moment later — reported as a terminal that
+     * connects and then immediately says it is reconnecting. */
+    function _unlink(){
+      if(link){ try{ link.close(); }catch(_){} link = null; }
+      ws = null;
+    }
 
     function _wsUrl(){
       const base = (window.__PC_API_BASE__ || location.origin).replace(/^http/, 'ws').replace(/\/+$/, '');
@@ -183,9 +234,10 @@
       const h = hosts.find(x => x.name === host);
       if(!h){ _state('pick a host', 'err'); return; }
       // Only ask when the host has no key on the server. Asking anyway would train people to type a
-      // password into a box that did not need one.
+      // password into a box that did not need one — and this machine's own shell never needs one:
+      // you are already logged in to it, which is how you are looking at this.
       let password = '';
-      if(!h.keyed){
+      if(!h.keyed && !h.local){
         password = await PC.uiPrompt(`Password for ${h.label}`, { password: true, ok: 'Connect' });
         if(password === null) return;
       }
@@ -213,14 +265,17 @@
        * up on the phone) the size it is about to be told is the one thing that must not be skipped as
        * "unchanged". The open frame carries cols/rows, and the `ready` handler re-fits behind it. */
       _sentSize = '';
-      // TEAR DOWN ANY EXISTING SOCKET FIRST. Attaching to another session from the strip is reachable
-      // while one is already connected, and leaving the old socket alive means its `onclose` fires
-      // into the NEW session's state a moment later — reported as a terminal that connects and then
-      // immediately says it is reconnecting. Nulling onclose first is what makes this a detach rather
-      // than a drop.
-      if(ws){ try{ ws.onclose = null; ws.onmessage = null; ws.close(); }catch(_){} ws = null; }
+      // TEAR DOWN ANY EXISTING TRANSPORT FIRST. Attaching to another session from the strip is
+      // reachable while one is already connected, and leaving the old one alive means its close
+      // lands in the NEW session's state a moment later — reported as a terminal that connects and
+      // then immediately says it is reconnecting.
+      _unlink();
       if(retryT){ clearTimeout(retryT); retryT = null; }
       connected = false;
+      /* THIS MACHINE'S OWN SHELL takes the local path and never opens a socket. Decided from the
+       * frame rather than from `host`, because a reattach carries only the session id — and a local
+       * session id says which transport it belongs to, which is exactly what it is for. */
+      if(isLocal(frame.host) || isLocalSid(frame.resume)) return _openLocal(frame);
       (async () => {
         try{ await PC.ensureAiSession(); }catch(_){}   // the socket's token
         if(!term && !_mountTerm()){ _state('the terminal could not start', 'err'); want = false; return; }
@@ -238,6 +293,83 @@
         };
         ws.onmessage = (ev) => {
           let m; try{ m = JSON.parse(ev.data); }catch(_){ return; }
+          _frame(m);
+        };
+        link = {
+          kind: 'ws',
+          send(o){ try{ if(ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }catch(_){} },
+          close(){ if(ws){ try{ ws.onclose = null; ws.onmessage = null; ws.close(); }catch(_){} } },
+        };
+        ws.onclose = () => _drop();
+        ws.onerror = () => {};             // onclose follows and is where the retry lives
+      })();
+    }
+
+    /* THE LOCAL PTY. A shell on THIS machine, through the desktop bridge — no socket, no server, no
+     * SSH. It emits the server's own frames into `_frame`, so nothing downstream knows the
+     * difference, and the session survives this page being reloaded exactly the way a server-side
+     * one does: the PTY lives in the desktop process, and `backlog` is what a fresh page redraws
+     * from. That matters more here than over SSH, because the WebView holding this page is the half
+     * Android and Chromium take away under memory pressure. */
+    function _openLocal(frame){
+      const T = LOCAL();
+      if(!T){ _frame({ t: 'err', m: 'this build has no shell of its own' }); return; }
+      let id = String(frame.resume || '').replace(/^local:/, '');
+      let stop = null, gone = false;
+      link = {
+        kind: 'local',
+        send(o){
+          if(gone || !id) return;
+          if(o.t === 'in') T.write(id, o.d);
+          else if(o.t === 'size') T.resize(id, o.cols, o.rows);
+          /* `detach` deliberately does nothing here — that is its whole meaning. The shell lives in
+           * the desktop process, so leaving the screen must leave it running, and `close` is the
+           * only thing that ends it. Identical to the server side. */
+          else if(o.t === 'close'){ gone = true; T.close(id); }
+        },
+        close(){ gone = true; if(stop){ try{ stop(); }catch(_){} stop = null; } },
+      };
+      (async () => {
+        if(!term && !_mountTerm()){ _state('the terminal could not start', 'err'); want = false; return; }
+        if(!want) return;
+        _state(frame.resume ? 'reattaching…' : 'starting a shell…');
+        try{
+          let b = null;
+          if(id){
+            b = await T.backlog(id, Number(cursor) || 0);
+            /* A remembered id can name a shell that died while the app was shut. Saying so is the
+             * difference between "your work is gone" and a silent new shell in the same window
+             * pretending to be the old one. */
+            if(!b) id = '';
+          }
+          if(!id){
+            const s0 = await T.start({ cols: (term && term.cols) || 80, rows: (term && term.rows) || 24 });
+            id = String(s0 && s0.id || '');
+            if(!id) throw new Error('the shell would not start');
+            b = null;
+          }
+          if(gone) return;
+          stop = T.onData((ev) => { if(String(ev.id) === id) _frame(ev); });
+          await T.attach(id);
+          _frame({ t: 'ready', sid: localSid(id), host: 'local', resumed: !!b });
+          if(b){
+            /* Redraw what was missed, and say so when the gap is bigger than what is still kept —
+             * a fragment presented as the whole history is how scrollback loses its middle. */
+            if(b.truncated) term.write('\r\n\x1b[90m— earlier output is no longer kept —\x1b[0m\r\n');
+            if(b.d) _frame({ t: 'out', d: b.d, seq: b.seq });
+            if(!b.alive) _frame({ t: 'end', m: 'that shell has exited' });
+          }
+        }catch(e){
+          _frame({ t: 'err', m: String((e && e.message) || e) });
+        }
+      })();
+    }
+
+    /* WHAT A SHELL SAID, from either transport. The local PTY emits the same four things the server
+     * does, so this is the only place that has to understand them. */
+    function _frame(m){
+      if(!m) return;
+      if(!term) return;
           if(m.t === 'out'){
             term.write(m.d);
             // The CURSOR is what a reconnect resumes from, so it advances only for bytes that reached
@@ -289,16 +421,12 @@
             try{ term.write('\r\n\x1b[33m' + why + '\x1b[0m\r\n'); }catch(_){}
             _drop(); _sessions();
           }
-        };
-        ws.onclose = () => _drop();
-        ws.onerror = () => {};             // onclose follows and is where the retry lives
-      })();
     }
 
     /* THE SOCKET WENT AWAY. The shell did not — that is the whole point — so this reconnects rather
      * than reporting a disconnection, as long as we still have a session id to reattach to. */
     function _drop(){
-      if(ws){ try{ ws.onclose = null; ws.close(); }catch(_){} ws = null; }
+      _unlink();
       // The socket is gone, so it never held: cancelling this is what lets `retry` keep climbing.
       if(provenT){ clearTimeout(provenT); provenT = null; }
       connected = false;
@@ -334,7 +462,7 @@
       want = false;
       if(retryT){ clearTimeout(retryT); retryT = null; }
       if(provenT){ clearTimeout(provenT); provenT = null; }
-      if(ws){ try{ ws.onclose = null; ws.close(); }catch(_){} ws = null; }
+      _unlink();
       connected = false; _chrome(false);
     }
 
@@ -355,7 +483,14 @@
       const ok = await PC.uiConfirm('End this session? Anything running in it is stopped.',
                                     { ok: 'Kill', danger: true });
       if(!ok) return;
-      if(target === sid && ws){ _send({ t: 'close' }); }
+      if(isLocalSid(target)){
+        /* No server to ask: the shell is a process in the desktop, and this is the only thing that
+         * ends it. Ending the one we are attached to goes through the link so the session's own
+         * teardown runs; any other is ended by id. */
+        if(target === sid && link) _send({ t: 'close' });
+        else { try{ LOCAL() && LOCAL().close(String(target).replace(/^local:/, '')); }catch(_){} }
+      }
+      else if(target === sid && link){ _send({ t: 'close' }); }
       else {
         try{ await authFetch('/api/ssh/sessions/kill', { method: 'POST',
              headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sid: target }) }); }
@@ -369,10 +504,20 @@
      * session alive and unreachable, since the id lives in one browser's localStorage. */
     async function _sessions(){
       const box = $('#tty-sessions'); if(!box) return;
+      live = [];
+      /* THIS MACHINE'S OWN SHELLS. They are listed the same way and for the same reason: a reload,
+       * or closing the window, leaves one running with nothing pointing at it. */
+      if(LOCAL()){
+        try{
+          const mine = await LOCAL().list();
+          for(const x of (mine || []))
+            live.push({ sid: localSid(x.id), host: 'local', age: Math.round((x.idle || 0)), alive: x.alive });
+        }catch(_){}
+      }
       try{
         const r = await authFetch('/api/ssh/sessions');
-        live = ((await r.json()) || {}).sessions || [];
-      }catch(_){ live = []; }
+        live = live.concat(((await r.json()) || {}).sessions || []);
+      }catch(_){}
       const others = live.filter(x => x.sid !== sid || !connected);
       box.hidden = !others.length;
       if(!others.length){ box.innerHTML = ''; return; }
@@ -498,6 +643,14 @@
           attach(prev, s0 && s0.host);
         }else if(prev){
           _remember('');           // it is gone; do not offer to reattach to nothing
+        }else if(LOCAL() && hosts.length && hosts[0].local){
+          /* OPENING THE TERMINAL ON THIS MACHINE GIVES YOU A SHELL. There is no host to choose
+           * between, no password to type and nothing to authorise — every one of those steps exists
+           * for a shell on somebody ELSE'S computer. Making the person press Connect to reach their
+           * own machine is the sort of ceremony that makes a desktop feel like a web page.
+           * Deliberately only when there is nothing to reattach to and no other host is listed. */
+          if($('#tty-host')) $('#tty-host').value = 'local';
+          connect();
         }
       }
       // xterm is a separate <script>; if it has not run yet the screen would be a blank box with no

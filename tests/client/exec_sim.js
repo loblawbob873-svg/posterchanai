@@ -17,6 +17,7 @@ const path = require('path');
 require(path.join(__dirname, '..', '..', 'static', 'js', 'client', 'foldersync.js'));
 require(path.join(__dirname, '..', '..', 'static', 'js', 'client', 'syncstate.js'));
 const EXEC = require(path.join(__dirname, '..', '..', 'static', 'js', 'client', 'syncexec.js'));
+const E = globalThis.PCSyncState;      // the engine, for the decisions a scenario has to make itself
 
 const MB = 1024 * 1024;
 const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
@@ -612,6 +613,48 @@ scenario('a copy that fails its checksum is not fetched again for ever', async (
   const B3 = device('phone', sky, { disk: B2.disk, index: B2.st.index });
   const r3 = await B3.sweep({ skipFetch: r1.badFetch });
   t.eq(r3.downloaded.length, 1, 'a repaired copy was still blocked');
+});
+
+scenario('a repair that has failed three separate copies is stopped, and names the sender', async (t) => {
+  /* THE LOOP THIS ENDS, measured in production: a device whose hash of its OWN file was wrong
+   * (`read(buf) > 0` treating a pipe's legal zero-length read as end of file) agreed with itself.
+   * Asked to verify its copy it found no fault, re-sent the same bytes, and the fresh storage
+   * address cleared every other device's memory of the last one. Download, fail, flag, re-send,
+   * download: sixteen rounds in ninety minutes on one multi-gigabyte .jex, 1.14 GB re-fetched, and
+   * nothing in the design could have ended it — the refusal is keyed on the ADDRESS precisely so
+   * that a repair lifts it. So the ROUNDS are what stops this, and they must survive the address
+   * changing every time, which is the one thing an address-keyed memory cannot notice. */
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(3) });
+  await A.sweep();
+  const victim = Object.keys(sky.folder())[0];
+  const B = device('phone', sky, {});
+  // Three distinct copies have already each failed the same checksum — the state the client
+  // persists, built by the engine's own counter rather than by hand.
+  let bad = {};
+  for(const id of ['address-one', 'address-two', 'address-three'])
+    bad = E.mergeBadFetch(bad, { [victim]: { id, why: 'checksum', v: 0 } });
+  t.eq(bad[victim].rounds, 3, 'three failed copies were counted as ' + bad[victim].rounds);
+  const r = await B.sweep({ skipFetch: bad });
+  t.eq((r.abandoned || []).length, 1, 'it went back for a fourth copy: the loop is still unbounded');
+  t.eq(r.downloaded.length, 2, 'it stopped fetching the other files too (' + r.downloaded.length + ' of 2)');
+  const said = (r.unfetchable || []).find(u => u.path === victim);
+  t.ok(!!said && /device sending it/.test(said.why),
+       'it gave up without naming the sender as the fault: ' + JSON.stringify(said));
+});
+
+scenario('a person pressing Sync now is still allowed to try', async (t) => {
+  // The count bounds a loop that runs BY ITSELF. Somebody who has just gone and fixed the other
+  // device is answering the very question it exists to ask.
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(3) });
+  await A.sweep();
+  const victim = Object.keys(sky.folder())[0];
+  const B = device('phone', sky, {});
+  const spent = { [victim]: { id: 'some-old-address', why: 'checksum', rounds: 9 } };
+  const r = await B.sweep({ skipFetch: spent, manual: true });
+  t.eq((r.abandoned || []).length, 0, 'a manual sweep was refused by the automatic loop guard');
+  t.eq(r.downloaded.length, 3, 'the manual sweep fetched ' + r.downloaded.length + ' of 3');
 });
 
 scenario('the preview and the sweep agree about what is outstanding', async (t) => {

@@ -402,7 +402,52 @@
     return out;
   }
 
-  const API = { plan, check, apply, versionOf, bump, diskChanged, recordAhead, trashPlan, FLOOR, MASS_CAP };
+  /* HOW MANY TIMES A REPAIR HAS BEEN TRIED, and it is a decision rather than bookkeeping — which is
+   * why it lives here with the rest of them.
+   *
+   * A refused copy is remembered by its STORAGE ADDRESS, so a fresh upload lifts the refusal by
+   * itself. That is right when the re-sent bytes are good and a trap when they are not: a device
+   * whose checksum of its own file is wrong agrees with itself, finds no fault on being asked to
+   * verify, re-sends the same bytes under a new address, and clears every other device's memory of
+   * the last one. Download, fail, flag, re-send, download — measured at sixteen rounds in ninety
+   * minutes on one multi-gigabyte file, with nothing in the design able to end it.
+   *
+   * So the ROUNDS are counted across addresses. A NEW address failing the same checksum is round
+   * n+1; anything else starts again at one, because it is a different kind of failure and says
+   * nothing about the last. Three rounds is a statement about the sender, not the bytes.
+   *
+   * Both shapes are in the wild — an older build stored a bare address string — and a string is
+   * simply round one, so an upgrade cannot read as an exhausted repair. */
+  const BAD_ROUNDS = 3;
+  function mergeBadFetch(cur, add){
+    const out = Object.assign({}, cur || {});
+    for(const p in (add || {})){
+      const was = out[p], now = add[p];
+      if(was === now) continue;
+      const wasId = (was && typeof was === 'object') ? was.id : was;
+      const nowId = (now && typeof now === 'object') ? now.id : now;
+      /* Three cases, and the middle one is the one that is easy to get wrong. A NEW address failing
+       * the same way is the next round. The SAME address failing again is the same round — it is one
+       * copy, re-read — and resetting the count there would let a device that fails twice per sweep
+       * hold the counter at one for ever. A different KIND of failure starts again: bytes the store
+       * has lost say nothing about anybody's checksum, and counting them together would abandon a
+       * file over a media server having one bad minute. */
+      const bothChecksum = !!(now && now.why === 'checksum'
+                              && (!was || typeof was !== 'object' || was.why === 'checksum'));
+      const had = (was && typeof was === 'object' && +was.rounds) || (was ? 1 : 0);
+      const rounds = !bothChecksum ? 1
+                   : !wasId ? 1
+                   : (wasId === nowId ? Math.max(1, had) : had + 1);
+      out[p] = (now && typeof now === 'object') ? Object.assign({}, now, { rounds }) : now;
+    }
+    return out;
+  }
+  /** Has this path exhausted its repair? Never for a person who pressed the button themselves. */
+  const repairExhausted = (v, manual) => !!(v && typeof v === 'object' && v.why === 'checksum'
+                                            && (+v.rounds || 0) >= BAD_ROUNDS && !manual);
+
+  const API = { plan, check, apply, versionOf, bump, diskChanged, recordAhead, trashPlan,
+                mergeBadFetch, repairExhausted, BAD_ROUNDS, FLOOR, MASS_CAP };
   root.PCSyncState = API;
   if(typeof module !== 'undefined' && module.exports) module.exports = API;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

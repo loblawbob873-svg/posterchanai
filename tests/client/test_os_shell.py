@@ -36,6 +36,24 @@ class Shell(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr[-800:])
         return json.loads(r.stdout)
 
+    def test_a_bridge_that_cannot_reach_a_compositor_is_still_absent(self):
+        """THE WINDOWS BUG. The desktop app's preload exposes pcWM on every platform — it cannot
+        know what it is running on top of — so "the bridge exists" answered yes on Windows and the
+        OS shell drew itself there: a launcher for programs that are not installed, a taskbar of
+        compositor windows that cannot exist, a tray reporting a machine nothing had asked. The
+        honest question is whether a compositor ANSWERS, and only a real call settles it."""
+        bridges = """{ pcWM: { windows: async () => { throw new Error('no compositor socket'); },
+                               focus: async () => true } }"""
+        out = self.run_js("out.d = await S.detect(); out.a = S.available();", bridges)
+        self.assertFalse(out["d"])
+        self.assertFalse(out["a"])
+
+    def test_a_compositor_that_answers_is_present(self):
+        bridges = "{ pcWM: { windows: async () => [], focus: async () => true } }"
+        out = self.run_js("out.d = await S.detect(); out.a = S.available();", bridges)
+        self.assertTrue(out["d"])
+        self.assertTrue(out["a"])
+
     def test_it_is_absent_off_a_compositor(self):
         """A browser tab has no pcWM, and every other entry point must simply not use this."""
         self.assertFalse(self.run_js("out.a = S.available();")["a"])
@@ -80,9 +98,32 @@ class Shell(unittest.TestCase):
                 globalThis.__argv = (opts && opts.candidates) ? cands[0] : cands;
                 return {pid: 5, window: {id: 11}}; },
         } }"""
-        out = self.run_js("out.r = await S.launch('terminal'); out.argv = globalThis.__argv;", bridges)
+        out = self.run_js("out.r = await S.launch('browser'); out.argv = globalThis.__argv;", bridges)
         self.assertEqual(out["r"]["window"], 11)
-        self.assertIn("foot", out["argv"][0])
+        self.assertIn("firefox", out["argv"][0])
+
+    def test_the_terminal_is_ours_and_starts_no_process(self):
+        """The Terminal opens PosterChan's own — a PTY on this machine through the desktop bridge,
+        with its history as ephemeral Nostr events. Launching `foot` here would spawn somebody
+        else's emulator and throw all of that away."""
+        bridges = """{ pcWM: {
+            windows: async () => [], focus: async () => true,
+            launch: async (c) => { globalThis.__argv = c; return {pid: 5, window: {id: 11}}; },
+        } }"""
+        out = self.run_js("S.setViewOpener(v => { globalThis.__view = v; });"
+                          "out.r = await S.launch('terminal');"
+                          "out.view = globalThis.__view; out.argv = globalThis.__argv || null;",
+                          bridges)
+        self.assertEqual(out["view"], "terminal")
+        self.assertEqual(out["r"]["view"], "terminal")
+        self.assertIsNone(out["argv"], "it spawned a process for a screen of our own")
+
+    def test_a_view_app_on_a_desktop_that_cannot_open_it_says_so(self):
+        """Rather than throwing, or reporting a launch that did not happen."""
+        bridges = """{ pcWM: { windows: async () => [], focus: async () => true,
+                               launch: async () => ({pid: 1, window: {id: 2}}) } }"""
+        out = self.run_js("S.setViewOpener(null); out.r = await S.launch('terminal');", bridges)
+        self.assertIn("Terminal", out["r"]["why"])
 
     def test_a_launch_that_opens_nothing_says_so(self):
         """Usually the program is not installed — Steam is optional here — and "nothing happened"

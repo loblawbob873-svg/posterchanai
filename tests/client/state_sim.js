@@ -334,6 +334,51 @@ const only = (p, kind) => {
   }
 }
 
+/* ---- HOW MANY TIMES A REPAIR HAS BEEN TRIED -----------------------------------------------------
+ *
+ * The refusal that stops a bad copy being fetched twice is keyed on its STORAGE ADDRESS, so that a
+ * genuine repair — new bytes, new ciphertext, new address — lifts it without anybody asking. That is
+ * exactly right, and it is also the hole: a device whose checksum of its own file is wrong agrees
+ * with itself, re-sends the same content under a new address, and clears every other device's
+ * memory. Sixteen rounds in ninety minutes on one file, measured, with nothing able to end it.
+ * These are the rules that count the rounds THROUGH the address changing. */
+{
+  const bad = (id, why) => ({ [P]: { id, why: why || 'checksum', v: 1 } });
+  const P = 'DCIM/img0.jpg';
+
+  let m = S.mergeBadFetch({}, bad('a1'));
+  eq(m[P].rounds, 1, 'repair: the first failure is not round one');
+
+  m = S.mergeBadFetch(m, bad('a2'));
+  eq(m[P].rounds, 2, 'repair: a DIFFERENT copy failing the same way did not count as another round');
+
+  m = S.mergeBadFetch(m, bad('a2'));
+  eq(m[P].rounds, 2, 'repair: the same copy failing twice was counted as two separate copies');
+
+  eq(S.repairExhausted(m[P], false), false, 'repair: gave up after two copies');
+  m = S.mergeBadFetch(m, bad('a3'));
+  eq(S.repairExhausted(m[P], false), true, 'repair: three failed copies did not exhaust it');
+
+  // A PERSON PRESSING THE BUTTON is answering the very question the count exists to ask.
+  eq(S.repairExhausted(m[P], true), false, 'repair: a manual sweep was refused by the automatic guard');
+
+  // A DIFFERENT KIND OF FAILURE SAYS NOTHING ABOUT THE LAST ONE. Bytes the store has lost are not
+  // evidence about anybody's checksum, and counting them together would abandon a file over a media
+  // server having one bad minute.
+  let g = S.mergeBadFetch({}, bad('a1'));
+  g = S.mergeBadFetch(g, bad('a2'));
+  g = S.mergeBadFetch(g, bad('a3', 'gone'));
+  eq(g[P].rounds, 1, 'repair: a 404 inherited a checksum failure\u2019s round count');
+  eq(S.repairExhausted(g[P], false), false, 'repair: a 404 was treated as an exhausted repair');
+
+  // AN UPGRADE IS NOT AN EXHAUSTED REPAIR. Older builds stored a bare address string here; read as
+  // a round count that would abandon files on the first failure after an update.
+  const old = S.mergeBadFetch({ [P]: 'an-old-bare-address' }, bad('a2'));
+  eq(old[P].rounds, 2, 'repair: an older build\u2019s memory did not count as one round');
+  eq(S.repairExhausted('an-old-bare-address', false), false,
+     'repair: an older build\u2019s bare string read as an exhausted repair');
+}
+
 console.log(failures ? ('state_sim: ' + failures + ' of ' + checks + ' checks FAILED')
                      : ('state_sim: all ' + checks + ' checks passed'));
 process.exit(failures ? 1 : 0);

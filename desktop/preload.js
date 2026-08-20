@@ -90,6 +90,10 @@ if (isOurPage) {
     close: (id) => ipcRenderer.invoke('pc:wm:close', Number(id)),
     place: (id, x, y, w, h) => ipcRenderer.invoke('pc:wm:place', Number(id), Number(x), Number(y),
                                                   Number(w), Number(h)),
+    /* Minimise, as the compositor can express it: the window is moved to the scratchpad, keeps
+     * running, and comes back where it was. */
+    hide: (id) => ipcRenderer.invoke('pc:wm:hide', Number(id)),
+    show: (id) => ipcRenderer.invoke('pc:wm:show', Number(id)),
     fullscreen: (id, on) => ipcRenderer.invoke('pc:wm:fullscreen', Number(id), !!on),
     /* An ARGV ARRAY, never a command string — a string would have to reach a shell to be useful,
      * and then a file name with a space in it is an injection. */
@@ -132,6 +136,23 @@ if (isOurPage) {
     setVolume: (pct, which) => ipcRenderer.invoke('pc:audio:volume', Number(pct), which || 'sink'),
     setMuted: (on, which) => ipcRenderer.invoke('pc:audio:mute', !!on, which || 'sink'),
     setDefault: (id) => ipcRenderer.invoke('pc:audio:default', Number(id)),
+  });
+
+  contextBridge.exposeInMainWorld('pcTerm', {
+    start: (opts) => ipcRenderer.invoke('pc:term:start', opts || {}),
+    write: (id, d) => ipcRenderer.invoke('pc:term:write', String(id), String(d == null ? '' : d)),
+    resize: (id, c, r) => ipcRenderer.invoke('pc:term:resize', String(id), Number(c), Number(r)),
+    /* What a reloaded page redraws from. The WebView is recreated under memory pressure and on a
+     * crash, and a terminal that comes back blank is one nobody trusts with a long command. */
+    backlog: (id, since) => ipcRenderer.invoke('pc:term:backlog', String(id), Number(since) || 0),
+    close: (id) => ipcRenderer.invoke('pc:term:close', String(id)),
+    list: () => ipcRenderer.invoke('pc:term:list'),
+    attach: (id) => ipcRenderer.invoke('pc:term:attach', String(id)),
+    onData: (fn) => {
+      const h = (_e, ev) => { try { fn(ev); } catch (_) {} };
+      ipcRenderer.on('pc:term:data', h);
+      return () => ipcRenderer.removeListener('pc:term:data', h);
+    },
   });
 
   contextBridge.exposeInMainWorld('pcOS', {

@@ -111,15 +111,22 @@ class Render(unittest.TestCase):
         self.assertIsNone(out["argv"], "it launched a second browser instead of focusing the first")
         self.assertEqual(out["focus"], 99)
 
-    def test_a_regular_app_launches_too(self):
+    def test_pressing_terminal_opens_ours_rather_than_spawning_one(self):
+        """The Terminal on this desktop is PosterChan's own — a PTY on this machine, with its
+        history as ephemeral Nostr events. `foot` is still on the machine and still bound to
+        $mod+Return, deliberately: it is the escape hatch for when the shell itself is what has
+        gone wrong, which is exactly when a terminal drawn BY the shell cannot help you."""
         out = self.run_js(self.WM, """
           globalThis.__wins = [];
+          S.setViewOpener(v => { globalThis.__view = v; });
           await S.render(host);
           const btn = host.querySelectorAll('[data-app]').find(b => b.dataset.app === 'terminal');
           await btn.onclick();
-          out.argv = globalThis.__argv;
+          out.view = globalThis.__view || null;
+          out.argv = globalThis.__argv || null;
         """)
-        self.assertEqual(out["argv"], ["/usr/bin/foot"])
+        self.assertEqual(out["view"], "terminal")
+        self.assertIsNone(out["argv"], "it spawned somebody else's terminal emulator")
 
     def test_an_app_that_opens_nothing_tells_the_person(self):
         """Steam is optional on this profile; a button that silently does nothing is the worst

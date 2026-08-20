@@ -280,15 +280,39 @@ class PosterChanOSProfile(unittest.TestCase):
         wm.js uses for anything it launches."""
         self.assertIn("pc-shell-start", self.src, "the shell is started without pinning its window")
         cfg = self._fn("posterchanShell")
-        self.assertNotIn('for_window [app_id=".*"] floating enable', cfg,
-                         "a catch-all float rule fights the launcher and wins silently")
+        # The catch-all float rule IS wanted — see test_everything_else_floats_above_it — but the
+        # shell must be excluded by a later rule, or it floats at 1280x860 in the middle of the
+        # screen. Both halves, or neither works.
+        self.assertIn('for_window [app_id=".*"] floating enable', cfg)
+        i = cfg.index('for_window [app_id=".*"] floating enable')
+        self.assertIn('for_window [app_id="posterchan-desktop"] floating disable', cfg[i:],
+                      "the shell is floated by the catch-all and never un-floated — later rules win, "
+                      "so the exclusion has to come after")
+
+    def test_the_shell_is_tiled_and_never_fullscreen(self):
+        """A fullscreen window in sway covers the whole workspace INCLUDING floating windows. With
+        the shell fullscreen a terminal opens, exists, reports its geometry and is `visible: false` —
+        nothing on screen, no error, and no way to get a terminal on the machine. Being the only
+        TILED window fills the screen just the same and lets everything float above it, which is what
+        the desktop is for."""
+        p = os.path.join(ROOT, "os", "bin", "pc-shell-start")
+        body = open(p, encoding="utf-8").read()
+        self.assertIn("fullscreen disable", body, "the shell pins itself fullscreen")
+        self.assertNotIn("fullscreen enable", body)
+        self.assertIn("floating disable", body, "the shell must be the tiled one")
+
+    def test_everything_else_floats_above_it(self):
+        """Without the float rules every app TILES, and tiling against the shell gives the newcomer
+        zero space: Firefox launches, appears in the tree, and is 0x0."""
+        cfg = self._fn("posterchanShell")
+        self.assertIn('for_window [app_id=".*"] floating enable', cfg)
+        self.assertIn('for_window [app_id="posterchan-desktop"] floating disable', cfg)
 
     def test_the_launcher_waits_for_the_window_before_pinning_it(self):
         p = os.path.join(ROOT, "os", "bin", "pc-shell-start")
         self.assertTrue(os.path.exists(p), "the launcher is not shipped")
         body = open(p, encoding="utf-8").read()
         self.assertIn("get_tree", body, "it pins whatever is there rather than waiting for ours")
-        self.assertIn("fullscreen enable", body)
         for spelling in ('class="posterchan-desktop"', 'app_id="posterchan-desktop"'):
             self.assertIn(spelling, body,
                           "only one of app_id/class is handled — the other silently does nothing")

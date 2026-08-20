@@ -1063,6 +1063,12 @@
     wins.forEach(x => x.el.classList.toggle('focused', x === w));
     w.el.style.zIndex = String(nextZ());
     if(w.min){ w.min = false; w.el.classList.remove('minimised'); }
+    /* FOCUS IS TWO THINGS FOR A NATIVE WINDOW: our stacking order changed, so what has to be
+     * stashed changed with it — and the keyboard belongs to the app now, which only the compositor
+     * can arrange. Clicking a browser's title bar and then typing into the desktop underneath is
+     * exactly the sort of thing that makes a shell feel like a costume. */
+    if(w.native != null){ try{ pcWM.focus(w.native); }catch(_){} }
+    if(nativeWins().length) nsync();
     if(!w.noFeed) claimFeed(w);   // a folder owns its own contents and must never take the feed
     drawBar();
     // Re-render the feature into ITS window. Cheap for these modules — they hold their own state
@@ -1404,6 +1410,138 @@
     wireIcons(w.slot, f);
   }
 
+  /* ── LINUX APPS AS POSTERCHAN WINDOWS ───────────────────────────────────────────────────────
+   *
+   * Firefox on PosterChanOS gets one of OUR windows — our title bar, our buttons, our taskbar entry,
+   * dragged and resized like everything else here — and the real Wayland surface is held exactly
+   * over that window's body by the compositor. The window object is an ordinary one with `native`
+   * set to the compositor's con_id; everything that already works on a window (focus, minimise,
+   * close, maximise, the taskbar, the layouts menu) therefore works on firefox for free.
+   *
+   * The arithmetic is in osnative.js and is tested there. This is the driver: measure, decide, send
+   * only what changed. */
+  const NAT = () => window.PCOSNative;
+  let _natShell = null, _natShellAt = 0, _natSent = new Map(), _natBusy = false, _natAgain = false;
+
+  const nativeWins = () => wins.filter(w => w.native != null);
+  /* Held off screen for the length of a drag or a resize, and put back where the frame ended up. */
+  function _natGesture(w, on){
+    if(!w || w.native == null) return;
+    w.gesturing = !!on;
+    nsync();
+  }
+  const _zOf = (w) => Number(w.el && w.el.style.zIndex) || 0;
+  function _frameRect(w){
+    try{ const r = w.el.getBoundingClientRect();
+         return { left: r.left, top: r.top, width: r.width, height: r.height }; }
+    catch(_){ return null; }
+  }
+  function _bodyRect(w){
+    try{ const r = (w.body || w.el).getBoundingClientRect();
+         return { left: r.left, top: r.top, width: r.width, height: r.height }; }
+    catch(_){ return null; }
+  }
+
+  /* One sync pass. Serialised rather than queued: while a drag is in flight this is called on every
+   * frame, and letting two overlap means the compositor is sent the second-to-last position last. */
+  async function nsync(){
+    if(!NAT() || !window.pcWM || !nativeWins().length) return;
+    if(_natBusy){ _natAgain = true; return; }
+    _natBusy = true;
+    try{
+      /* The shell's own window is what converts this page's pixels into the compositor's. Re-read
+       * rarely: it changes when a display does, not when a window moves. */
+      const now = Date.now();
+      if(!_natShell || now - _natShellAt > 4000){
+        const list = await pcWM.windows();
+        _natShell = list.find(x => /^posterchan(-desktop)?$/.test(String(x.app || ''))) || null;
+        _natShellAt = now;
+        /* A native window the compositor no longer has is one the app closed by itself — from its
+         * own File menu, or by crashing. Our frame has to go with it, or the desktop keeps a window
+         * for something that is not running. */
+        const live = new Set(list.map(x => Number(x.id)));
+        for(const w of nativeWins()) if(!live.has(Number(w.native))) closeWin(w);
+        if(!nativeWins().length) return;
+      }
+      const scale = NAT().scaleFrom(_natShell && _natShell.rect,
+                                    document.documentElement.clientWidth,
+                                    document.documentElement.clientHeight);
+      if(!scale) return;
+
+      const items = nativeWins().map(w => ({ native: w.native, z: _zOf(w),
+                                             minimised: !!(w.min || w.gesturing),
+                                             rect: _frameRect(w), w }));
+      const htmls = wins.filter(w => w.native == null)
+                        .map(w => ({ z: _zOf(w), minimised: !!w.min, rect: _frameRect(w) }));
+      const plan = NAT().stashPlan(items, htmls);
+      const stash = new Set(plan.stash);
+      for(const it of items){
+        if(stash.has(it.native)){
+          if(_natSent.get(it.native) !== 'hidden'){
+            _natSent.set(it.native, 'hidden');
+            try{ await pcWM.hide(it.native); }catch(_){}
+          }
+          continue;
+        }
+        const rect = NAT().mapRect(_bodyRect(it.w), scale);
+        if(!rect) continue;                     // measured with no area — leave it where it is
+        const was = _natSent.get(it.native);
+        if(was === 'hidden'){ try{ await pcWM.show(it.native); }catch(_){} }
+        if(was === 'hidden' || NAT().changed(was, rect)){
+          _natSent.set(it.native, rect);
+          try{ await pcWM.place(it.native, rect.x, rect.y, rect.w, rect.h); }catch(_){}
+        }
+      }
+    }catch(_){ }
+    finally{
+      _natBusy = false;
+      if(_natAgain){ _natAgain = false; nsync(); }
+    }
+  }
+
+  /* Adopt a compositor window into a PosterChan window. Called when one appears, whether the
+   * launcher started it or the app opened a second window of its own. */
+  function adoptNative(nw){
+    if(!nw || nw.id == null) return null;
+    const view = 'native:' + nw.id;
+    const existing = wins.find(w => w.view === view);
+    if(existing){ focusWin(existing); return existing; }
+    /* `noFeed` — it owns its contents in the most literal way available: they are not in this
+     * document at all. Handing it the shared #feed would blank whichever window was using it. */
+    const w = openApp(view, nw.title || nw.app || 'App', 'i-window', null, true);
+    if(!w) return null;
+    w.native = Number(nw.id);
+    w.el.classList.add('osw-native');
+    /* THE BODY IS A HOLE. There is nothing to draw in it — the app is a real surface floating over
+     * that rectangle — and anything painted there would be underneath the app and invisible, so it
+     * says what it is instead, which is what shows while the window is being moved. */
+    if(w.slot) w.slot.innerHTML = '<div class="osw-nat-note">' + enc(nw.app || 'application') + '</div>';
+    nsync();
+    return w;
+  }
+
+  /* Whatever the compositor has that we have not framed yet. */
+  async function adoptAll(){
+    if(!window.pcWM || !window.PCOSShell || !PCOSShell.available()) return;
+    let list = [];
+    try{ list = await pcWM.windows(); }catch(_){ return; }
+    let rows = [];
+    try{ rows = PCOSShell.taskbarRows(list); }catch(_){ rows = []; }
+    const want = new Set(rows.map(r => Number(r.id)));
+    for(const r of rows) if(!wins.find(w => w.native === Number(r.id))) adoptNative(r);
+    for(const w of nativeWins()) if(!want.has(Number(w.native))) closeWin(w);
+    /* A title is the page a browser is showing and it changes constantly; the frame follows it, the
+     * same way it would for one of our own documents. */
+    for(const w of nativeWins()){
+      const r = rows.find(x => Number(x.id) === w.native);
+      if(r && r.title && r.title !== w.title){
+        w.title = r.title;
+        const t = $('.osw-title', w.el); if(t) t.textContent = r.title;
+      }
+    }
+    nsync();
+  }
+
   function closeWin(w){
     const i = wins.indexOf(w);
     if(i < 0) return;
@@ -1419,6 +1557,12 @@
      * purpose: the Terminal above is the same need answered by name, and a second hardcoded view
      * would make it a pattern of exceptions rather than a hook. */
     if(typeof w.onClose === 'function'){ try{ w.onClose(); }catch(e){ console.warn('window onClose', e); } }
+    /* Closing the frame closes the APP. A frame that vanished and left firefox running would leave
+     * a window nobody can reach — it is floating above a desktop that has forgotten it. */
+    if(w.native != null){
+      _natSent.delete(w.native);
+      try{ pcWM.close(w.native); }catch(_){}
+    }
     if(realFeed && realFeed.parentElement === w.body) releaseFeed();
     w.el.remove();
     if(wasMusic){
@@ -1436,6 +1580,10 @@
   function minimise(w){
     w.min = true;
     w.el.classList.add('minimised');
+    /* A minimised native window is STASHED in the compositor's scratchpad. Hiding only our frame
+     * would leave the app itself on screen with no title bar — a browser nobody can move, close or
+     * identify. */
+    if(nativeWins().length) nsync();
     if(realFeed && realFeed.parentElement === w.body) releaseFeed(true);   // it is coming back
     const next = wins.filter(x => !x.min).pop();
     if(next) focusWin(next); else drawBar();
@@ -1532,6 +1680,7 @@
   }
 
   function toggleMax(w){
+    if(w && w.native != null) setTimeout(nsync, 0);   // the frame moves; the surface follows it
     if(w.max || w.snap) unsnap(w); else snapTo(w, 'max');
     focusWin(w);
   }
@@ -1578,6 +1727,13 @@
     let ox = parseInt(w.el.style.left, 10), oy = parseInt(w.el.style.top, 10);
     let curX = ox, curY = oy, zone = '', raf = 0;
     hideLayouts();
+    /* A NATIVE WINDOW CANNOT FOLLOW A TRANSFORM. The gesture moves our frame on the compositor with
+     * a transform per frame and writes left/top once on release — but the app is a separate surface
+     * that only moves when it is TOLD to, so following the drag would mean a placement, a
+     * reconfigure and a full relayout of a browser on every animation frame. It is put away for the
+     * length of the gesture instead and placed once at the end, which is what the frame's own
+     * placeholder is for. */
+    _natGesture(w, true);
     /* A drag must not be able to outlive the button. Three ways it could, all of which end with the
      * window glued to the cursor because `up` never ran:
      *   - the browser starts its OWN drag of the title text/icon, which stops sending pointer events
@@ -1632,6 +1788,7 @@
       w.el.style.top = Math.round(curY) + 'px';
       hideGhost();
       if(zone) snapTo(w, zone);
+      _natGesture(w, false);
     };
     document.addEventListener('pointermove', move);
     document.addEventListener('pointerup', up);
@@ -1651,6 +1808,7 @@
     // animation frame instead of once per pointer event — a touchscreen fires far more of those.
     const k = zf();
     let nw = ow, nh = oh, raf = 0;
+    _natGesture(w, true);                        // see startDrag — the surface is placed once, at the end
     const paint = () => { raf = 0; w.el.style.width = nw + 'px'; w.el.style.height = nh + 'px'; };
     const move = (e) => {
       nw = Math.max(420, ow + (e.clientX - sx) / k);
@@ -1663,7 +1821,8 @@
                        document.removeEventListener('pointerup', up);
                        document.removeEventListener('pointercancel', up);
                        window.removeEventListener('blur', up);
-                       if(raf){ cancelAnimationFrame(raf); paint(); } };
+                       if(raf){ cancelAnimationFrame(raf); paint(); }
+                       _natGesture(w, false); };
     document.addEventListener('pointermove', move);
     document.addEventListener('pointerup', up);
     document.addEventListener('pointercancel', up);
@@ -3806,6 +3965,7 @@
                   data-id="${w.id}" title="${enc(w.title)}">
             ${iconSvg(w.icon)}<span>${enc(w.title)}</span></button>`).join('')}</div>
        <div class="os-tray">
+         <div class="os-sys" id="os-shell"></div>
          <button class="os-net net-${netNow.level}${netOpen ? ' on' : ''}" id="os-net"
                  title="${enc(NET_LABEL[netNow.level] + ' — ' + netSummary(netNow))}"
                  aria-label="${enc('Nostr connection: ' + netSummary(netNow))}">
@@ -3816,6 +3976,13 @@
          <button class="os-clock${notiOpen ? ' on' : ''}" id="os-clock" title="Notifications">
            <b>${enc(clock)}</b><span>${enc(date)}</span></button>
        </div>`;
+    /* THE MACHINE'S OWN TRAY — wifi, volume, brightness, battery, power — beside the app's relay
+     * light and clock, in the SAME tray, because to the person using it they are the same kind of
+     * thing. Painted from the last reading rather than re-polled: this bar is rebuilt on every
+     * window focus and on the clock tick, and four subprocesses per rebuild is a laptop's battery.
+     * `PCOSShell.watch` is what re-reads, and it redraws this bar when it has. */
+    try{ if(window.PCOSShell && PCOSShell.available()) PCOSShell.paintTray($('#os-shell', bar)); }
+    catch(_){}
     $('#os-start', bar).onclick = (e) => { e.stopPropagation(); toggleStart(); };
     /* There is deliberately no New post button here. One was added when posting appeared impossible
      * on the desktop — but the real cause was the compose MODAL rendering behind it (see the
@@ -4395,12 +4562,39 @@
       const nrow = q ? `<button class="os-app os-app-find" data-find="1">
              <svg class="ic" aria-hidden="true"><use href="#i-search"></use></svg>
              <span>Search Nostr for “${enc(q)}”</span></button>` : '';
+      /* THE MACHINE'S OWN PROGRAMS, in the same menu as the app's screens — because on this
+       * machine they are the same thing to the person using them. This is where the launcher went:
+       * it was a floating bar of three buttons sitting over the desktop, which is a second start
+       * menu with worse manners. Filtered by the same search box, under a heading, so "firefox"
+       * finds Browser without anybody needing to know which half of the desktop it belongs to. */
+      let natives = '';
+      try{
+        if(window.PCOSShell && PCOSShell.available()){
+          const nat = PCOSShell.APPS.filter(a => !a.hidden)
+            .filter(a => !q || a.name.toLowerCase().includes(q.toLowerCase()));
+          if(nat.length) natives = `<div class="os-applist-h">This computer</div>`
+            + nat.map(a => `<button class="os-app" data-app="${enc(a.id)}">
+                 ${iconSvg(a.icon)}<span>${enc(a.name)}</span></button>`).join('');
+        }
+      }catch(_){ natives = ''; }
       $('#os-applist', menu).innerHTML = nrow + (list.length
         ? list.map(a => `<button class="os-app" data-view="${enc(a.view)}">
              ${iconSvg(a.icon)}<span>${enc(a.label)}</span></button>`).join('')
-        : (q ? '' : '<div class="muted small" style="padding:10px">Nothing matches that.</div>'));
+        : (q || natives ? '' : '<div class="muted small" style="padding:10px">Nothing matches that.</div>'))
+        + natives;
       $$('.os-app', menu).forEach(b => b.onclick = () => {
         if(b.dataset.find) return searchNostr(q);
+        /* A native app is STARTED, which takes as long as it takes — the menu closes first so the
+         * desktop is not frozen behind a menu while firefox loads, and the launch reports itself. */
+        if(b.dataset.app){
+          toggleStart(false);
+          try{
+            PCOSShell.launch(b.dataset.app).then(
+              (r) => { if(r && r.why) PC().toast(r.why); },
+              (e) => PC().toast(String((e && e.message) || e)));
+          }catch(e){ PC().toast(String((e && e.message) || e)); }
+          return;
+        }
         toggleStart(false); openApp(b.dataset.view);
       });
     };
@@ -4459,17 +4653,27 @@
     root.className = 'os-root';
     root.innerHTML = '<div class="os-desk" id="os-desk"></div><div class="os-bar" id="os-bar"></div>';
     document.body.appendChild(root);
-    /* THE POSTERCHANOS SHELL, when this machine IS the desktop. A launcher, a taskbar of real
-     * compositor windows and the system panel — mounted here rather than inside `.os-desk` so the
-     * icon grid can be scrolled and rearranged underneath without taking them with it. Absent
-     * everywhere else: `PCOSShell.available()` is false without the bridges, and `watch` returns a
-     * no-op, so a browser tab and the APK are unaffected by any of it. */
+    /* THE POSTERCHANOS SHELL, when this machine IS the desktop.
+     *
+     * IT ADDS NO FURNITURE OF ITS OWN. It used to mount three floating bars — a launcher bottom
+     * left, a window list bottom centre, a system panel bottom right — over a desktop that already
+     * has a taskbar with a start menu, a task list and a tray. Two of everything, none of it
+     * matching, all of it in the way: "a bar that gets in the way", "an ugly bar for wifi", "not
+     * even looks part of the desktop". Every one of those things now goes into the desktop's OWN
+     * furniture — the apps into the start menu, the machine's windows into the same taskbar as
+     * ours, the network and volume into the same tray as the clock.
+     *
+     * Absent everywhere else: `PCOSShell.available()` is false without the bridges, so a browser
+     * tab and the APK are unaffected by any of it. */
     try{
-      if(window.PCOSShell && PCOSShell.available()){
-        const shellHost = document.createElement('div');
-        shellHost.id = 'os-shell';
-        root.appendChild(shellHost);
-        PCOSShell.watch(shellHost).then(off => { _shellOff = off; }, () => {});
+      if(window.PCOSShell){
+        /* `watch` settles for itself whether a compositor actually answers, and returns a no-op
+         * when none does — so this costs one question on a Windows desktop and draws nothing. */
+        PCOSShell.setViewOpener((view) => openApp(view));
+        PCOSShell.watch(() => { adoptAll(); drawBar(); }).then(off => {
+          _shellOff = off;
+          if(PCOSShell.available()) drawBar();   // the tray can only be painted once the answer is in
+        }, () => {});
       }
     }catch(_){}
     document.body.classList.add('os-on');

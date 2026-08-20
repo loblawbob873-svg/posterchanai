@@ -73,6 +73,21 @@ public final class SyncDiff {
     }
 
     /** An entry that names actual bytes. A `deletedAt` of 0 is live, as it is in JS. */
+    /** Where a record's bytes live — the same identity the web half writes into a flag: the blob's
+     *  address for a whole file, the chunk list for a big one. NEVER the checksum: a holder's
+     *  re-send keeps the checksum and changes the address, so a checksum key would refuse the very
+     *  repair it is waiting for. */
+    public static String addressOf(Map<String, Object> e) {
+        if (e == null) return "";
+        List<Object> cl = chunks(e);
+        if (cl != null && !cl.isEmpty()) {
+            StringBuilder sb = new StringBuilder();
+            for (Object c : cl) { if (sb.length() > 0) sb.append(','); sb.append(String.valueOf(c)); }
+            return sb.toString();
+        }
+        return text(e, "sha");
+    }
+
     public static boolean live(Map<String, Object> e) { return e != null && deletedAt(e) == 0; }
 
     public static boolean gone(Map<String, Object> e) { return e == null || deletedAt(e) != 0; }

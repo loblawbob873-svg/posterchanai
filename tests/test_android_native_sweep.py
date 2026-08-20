@@ -227,6 +227,26 @@ class FakeNet implements SyncIo.Net {
     }
 
     /** What the folder says about one path right now, decrypted — for assertions only. */
+    /** Re-seal a record's entry — how a scenario stages a checksum that was published WRONG. */
+    void write(String pair, byte[] mk, String path, Map<String, Object> entry) {
+        Map<String, Object> row = pair(pair).get(NativeSweep.pathD(path));
+        if (row == null) return;
+        try {
+            Map<String, Object> e = new LinkedHashMap<String, Object>(entry);
+            e.put("path", path);
+            e.remove("v"); e.remove("t");
+            byte[] raw = SyncCrypto.encrypt(mk, SyncCrypto.utf8(Json.write(e)));
+            row.put("ct", "a1:" + java.util.Base64.getEncoder().encodeToString(raw));
+            row.put("mt", ++clock);
+        } catch (Exception ex) { }
+    }
+    /** What a downloader writes when the store's bytes hash to something else: the failing copy's
+     *  address, and — newer clients — the hash it actually measured. */
+    void flag(String pair, String path, String value) {
+        Map<String, Object> row = pair(pair).get(NativeSweep.pathD(path));
+        if (row != null) { row.put("bad", value); row.put("mt", ++clock); }
+    }
+
     Map<String, Object> read(String pair, byte[] mk, String path) {
         Map<String, Object> row = pair(pair).get(NativeSweep.pathD(path));
         if (row == null) return null;
@@ -539,6 +559,71 @@ public class Drv {
     out.put("B4_downloaded", repB4.downloaded.size());
     out.put("B4_held", repB4.heldAlready);
 
+    /* These run LAST: they deliberately publish a wrong checksum, and a folder in
+     * that state is not what the counts above are about. */
+    /* ---- A FLAGGED RECORD IS REPAIRED BY THE BACKGROUND SWEEP, not only by opening the app.
+     *
+     * The situation this exists for, exactly as it happened: this app's own digest stopped at a
+     * zero-length read and published the hash of a PREFIX. Every other device then downloaded the
+     * file correctly, hashed it, disagreed with the record, and refused it — for ever, since the
+     * only device able to repair it is the one that uploaded it, and its background sweep did not
+     * even carry the flag out of the envelope. Measured on one multi-gigabyte .jex: sixteen
+     * download rounds in ninety minutes, 1.14 GB re-fetched, no possible end.
+     *
+     * Note which way the repair has to go. After the digest is fixed the holder hashes its own
+     * perfectly good file and STILL disagrees with what it published — so the naive rule ("my file
+     * does not match what I published, so my file is bad") makes the symptom permanent. What
+     * decides it is that the downloader's measured hash and ours are the same: two independent
+     * readings agree about the content, and the checksum is the odd one out. */
+    {
+      String victim = "DCIM/img7.jpg";
+      String truth = SyncCrypto.sha256hex(fsA.disk.get(victim));
+      Map<String, Object> rec = net.read("Pictures", mk, victim);
+      String addr = SyncDiff.addressOf(rec);
+      out.put("H_truth_matches_record", truth.equals(Json.str(rec.get("csum"), "")));
+      // Publish a WRONG checksum, as the broken digest did, and flag it the way a downloader does.
+      Map<String, Object> broken = new LinkedHashMap<String, Object>(rec);
+      broken.put("csum", "00" + truth.substring(2));
+      net.write("Pictures", mk, victim, broken);
+      net.flag("Pictures", victim, addr + "|" + truth);
+      NativeSweep.Report repH = sweep(ctxA, stA, fA, sec, false, net, mk, fsA);
+      out.put("H_reseeded", repH.reseeding.size());
+      out.put("H_stale", repH.staleChecksum.size());
+      out.put("H_badhere", repH.badHere.size());
+      out.put("H_uploaded", repH.uploaded.size());
+      Map<String, Object> after = net.read("Pictures", mk, victim);
+      out.put("H_csum_now_true", truth.equals(Json.str(after.get("csum"), "")));
+      /* THE ADDRESS DOES NOT CHANGE HERE, AND IT MUST NOT BE ASKED TO. The seal is convergent —
+       * the IV is derived from the content — so identical bytes always land at the same address,
+       * which is what makes the blob store dedupe. In this repair the bytes were never the problem,
+       * so there are no new bytes and no new address. What lifts every other device's refusal is
+       * the VERSION moving past the one their failure was recorded at. */
+      out.put("H_version_moved", Json.num(after.get("v"), 0) > Json.num(rec.get("v"), 0));
+      out.put("H_flag_cleared", net.pair("Pictures").get(NativeSweep.pathD(victim)).get("bad") == null);
+      // …and a second sweep does not do it again: the flag names a copy that no longer exists.
+      NativeSweep.Report repH2 = sweep(ctxA, stA, fA, sec, false, net, mk, fsA);
+      out.put("H2_reseeded", repH2.reseeding.size());
+      out.put("H2_uploaded", repH2.uploaded.size());
+    }
+
+    /* ---- AND A DEVICE WHOSE OWN COPY REALLY IS DIFFERENT RE-SEEDS NOTHING. Two readings that
+     * disagree with the checksum AND with each other say nothing about the content; spreading this
+     * copy would be spreading damage. */
+    {
+      String victim = "DCIM/img8.jpg";
+      Map<String, Object> rec = net.read("Pictures", mk, victim);
+      // The record says one thing, the downloader measured another, and OUR copy is a third: three
+      // readings, no two of which agree. Nothing here is evidence about the content.
+      Map<String, Object> odd = new LinkedHashMap<String, Object>(rec);
+      odd.put("csum", SyncCrypto.sha256hex(body(4241, 700)));
+      net.write("Pictures", mk, victim, odd);
+      net.flag("Pictures", victim, SyncDiff.addressOf(rec) + "|" + SyncCrypto.sha256hex(body(4242, 700)));
+      NativeSweep.Report repX = sweep(ctxA, stA, fA, sec, false, net, mk, fsA);
+      out.put("X_reseeded", repX.reseeding.size());
+      out.put("X_badhere", repX.badHere.size());
+      out.put("X_uploaded", repX.uploaded.size());
+    }
+
     System.out.println(Json.write(out));
   }
 }
@@ -799,3 +884,55 @@ def test_the_loser_of_a_compare_and_swap_is_struck_from_the_journal():
     assert r["race_journal_kept"] is False, (
         "the phone kept believing a write the server refused: %r" % r)
     assert r["race_failed"] == 0, "a lost CAS is not a failure — it resolves next sweep: %r" % r
+
+
+def test_the_background_sweep_repairs_a_flagged_record():
+    """THE .jex LOOP, ENDED AT ITS SOURCE.
+
+    This app's own digest stopped at a zero-length read and published the hash of a PREFIX. Every
+    other device downloaded the file correctly, hashed it, disagreed with the record and refused
+    it — for ever, because the only device that could repair it is the one that uploaded it, and
+    the background sweep did not even carry the flag out of the envelope. Measured on one
+    multi-gigabyte file: sixteen download rounds in ninety minutes, 1.14 GB re-fetched, with no
+    possible end.
+    """
+    r = result()
+    assert r["H_truth_matches_record"] is True, (
+        "the scenario did not start from a correctly published file: %r" % r)
+    assert r["H_reseeded"] == 1, "the flagged record was not repaired: %r" % r
+    assert r["H_uploaded"] == 1, "it reported a repair without sending anything: %r" % r
+    assert r["H_csum_now_true"] is True, (
+        "it re-sent without correcting the checksum, so every device still refuses it: %r" % r)
+    assert r["H_version_moved"] is True, (
+        "the record's version did not move, so no other device's refusal can lift — and the seal "
+        "is convergent, so identical bytes cannot supply a new address to lift it instead: %r" % r)
+    assert r["H_flag_cleared"] is True, (
+        "the flag survived the repair, so the next sweep repairs it again, for ever: %r" % r)
+
+
+def test_it_is_the_checksum_that_was_wrong_not_the_file():
+    """The direction matters. After the digest is fixed the holder hashes its own perfectly good
+    file and STILL disagrees with what it published — so "my file does not match what I published,
+    so my file is bad" makes the symptom permanent. What decides it is that the downloader's
+    measured hash and ours agree: two independent readings of the content against one recorded
+    number, and the number is the odd one out."""
+    r = result()
+    assert r["H_stale"] == 1, "it did not recognise its own published checksum as the wrong one: %r" % r
+    assert r["H_badhere"] == 0, "it condemned its own good copy: %r" % r
+
+
+def test_a_repaired_record_is_not_repaired_again_every_sweep():
+    """The flag names the copy that failed. Once a different copy is stored the flag has been
+    answered, and repairing again is the loop the flag exists to end."""
+    r = result()
+    assert r["H2_reseeded"] == 0, r
+    assert r["H2_uploaded"] == 0, r
+
+
+def test_a_device_whose_own_copy_really_is_different_re_seeds_nothing():
+    """Two readings that disagree with the checksum AND with each other say nothing about the
+    content. Spreading this copy would be spreading damage."""
+    r = result()
+    assert r["X_reseeded"] == 0, "it re-seeded a copy nothing agrees with: %r" % r
+    assert r["X_uploaded"] == 0, r
+    assert r["X_badhere"] == 1, "it said nothing about a copy it refused to send: %r" % r
