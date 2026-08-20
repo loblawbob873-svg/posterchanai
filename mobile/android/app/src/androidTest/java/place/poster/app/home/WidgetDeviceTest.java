@@ -287,15 +287,27 @@ public class WidgetDeviceTest {
         // desktop, and an AppWidgetHostView's RemoteViews children are CLICKABLE — they consume the
         // DOWN, so DeskView was never told a finger had gone down on a widget and the long press was
         // never armed. Moving and resizing died with it.
+        //
+        // `setItems` already did `v.setClickable(false)` on the host view (66c7f2ec) and that could
+        // never have worked: it clears the flag on the AppWidgetHostView ITSELF, while the views
+        // that consume the touch are the RemoteViews DESCENDANTS inside it. The probe below prints
+        // `clickableContent=true` on a widget whose host view is not clickable, which is the whole
+        // bug in one line.
+        //
+        // DRIVEN AGAINST A DESKVIEW OF OUR OWN, not the live launcher's. Two earlier runs failed
+        // here with the widget missing from cell (0,0) and the item put down — because
+        // HomeActivity redraws its desktop from stored preferences after layout, and `setItems`
+        // clears `editing`. That is the activity doing its job, arriving mid-gesture; it is not the
+        // thing under test, and it made a passing product look like a broken one.
         shell("appwidget grantbind --package " + ctx.getPackageName() + " --user 0");
         java.util.List<Widgets.Choice> rows = widgets.providers(90, 90);
         Widgets.Choice pick = null;
         for (Widgets.Choice c : rows) if (c.info.configure == null) { pick = c; break; }
         assertNotNull("nothing addable without a person", pick);
 
-        HomeRoles.enableLauncherComponent(ctx, true);
         final Widgets.Choice chosen = pick;
         final int[] made = new int[]{ -1 };
+        HomeRoles.enableLauncherComponent(ctx, true);
         ActivityScenario<HomeActivity> s = ActivityScenario.launch(HomeActivity.class);
         try {
             s.onActivity(a -> made[0] = widgets.add(a, chosen));
@@ -303,72 +315,68 @@ public class WidgetDeviceTest {
             allocated.add(made[0]);
 
             final DeskView[] deskOut = new DeskView[1];
+            final Desk.Item[] pressed = new Desk.Item[1];
+            final boolean[] clickable = new boolean[]{ false };
+
             s.onActivity(a -> {
-                // Put it on the grid the way the launcher does, then hand the view to the desk.
+                final int id = made[0];
+                DeskView d = new DeskView(a);
+                d.bind(new DeskView.Host() {
+                    @Override public android.view.View viewFor(Desk.Item item) { return widgets.view(a, id); }
+                    @Override public void onOpen(Desk.Item item) { }
+                    // THE ACTUAL CLAIM: the press reaches the host, which is what draws the menu
+                    // that has Remove in it. Recorded rather than shown, so no dialog takes the
+                    // window and delivers ACTION_CANCEL underneath mid-test.
+                    @Override public void onLongPress(Desk.Item item) { pressed[0] = item; }
+                    @Override public void onLongPressEmpty() { }
+                    @Override public void onSwipeUp() { }
+                    @Override public void onChanged() { }
+                    @Override public int minSpanX(Desk.Item item) { return 1; }
+                    @Override public int minSpanY(Desk.Item item) { return 1; }
+                    @Override public boolean resizable(Desk.Item item) { return false; }
+                    @Override public void onResized(Desk.Item item, int cw, int ch) { }
+                }, place.poster.app.ui.PcTheme.of("cyberpunk"));
+
                 java.util.List<Desk.Item> items = new java.util.ArrayList<Desk.Item>();
-                Desk.Item it = new Desk.Item(Desk.widgetKey(made[0]), 0, 0, 2, 2);
+                Desk.Item it = new Desk.Item(Desk.widgetKey(id), 0, 0, 2, 2);
                 Desk.add(items, it, 4, 5);
-                DeskView d = (DeskView) ((android.view.ViewGroup)
-                        a.findViewById(place.poster.app.R.id.pc_home_desk)).getChildAt(0);
                 d.setGrid(4, 5);
                 d.setItems(items);
+                // Laid out by hand: it is never attached to a window, so nothing else can repaint
+                // it, and cellW()/cellH() need a real size.
+                int w = 800, h = 1000;
+                d.measure(android.view.View.MeasureSpec.makeMeasureSpec(
+                              w, android.view.View.MeasureSpec.EXACTLY),
+                          android.view.View.MeasureSpec.makeMeasureSpec(
+                              h, android.view.View.MeasureSpec.EXACTLY));
+                d.layout(0, 0, w, h);
+                clickable[0] = hasClickable(d);
                 deskOut[0] = d;
             });
-            Thread.sleep(600);                       // let it lay out and the host build its view
 
             final DeskView desk = deskOut[0];
             assertNotNull("no desk", desk);
+            Log.i(TAG, "widget probe: clickable widget content present = " + clickable[0]);
 
-            // THE ITEM IS PUT BACK IN THE SAME MAIN-THREAD BLOCK AS THE PRESS, and that is not
-            // belt-and-braces: the activity redraws its own desktop from stored preferences after
-            // layout (HomeActivity.resizeSoon), so anything set from a previous `onActivity` block
-            // can be replaced before the finger arrives. Left as a race, this test says "the long
-            // press did not reach the desktop" when what actually happened is that the widget was
-            // no longer on it — two completely different bugs behind one message.
-            final String[] why = new String[]{ "" };
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                long t = android.os.SystemClock.uptimeMillis();
+                desk.dispatchTouchEvent(android.view.MotionEvent.obtain(
+                        t, t, android.view.MotionEvent.ACTION_DOWN,
+                        desk.cellW() / 2f, desk.cellH() / 2f, 0));
+            });
+            Thread.sleep(800);                       // past the 400ms long-press
+
             final boolean[] lifted = new boolean[]{ false };
-            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
-                java.util.List<Desk.Item> items = new java.util.ArrayList<Desk.Item>();
-                Desk.Item it = new Desk.Item(Desk.widgetKey(made[0]), 0, 0, 2, 2);
-                Desk.add(items, it, 4, 5);
-                desk.setGrid(4, 5);
-                desk.setItems(items);
-                why[0] = "cell(0,0) holds " + Desk.at(desk.items(), 0, 0)
-                       + " clickableContent=" + hasClickable(desk);
-                long t = android.os.SystemClock.uptimeMillis();
-                float x = desk.cellW() / 2f, y = desk.cellH() / 2f;
-                desk.dispatchTouchEvent(android.view.MotionEvent.obtain(
-                        t, t, android.view.MotionEvent.ACTION_DOWN, x, y, 0));
-            });
-            Log.i(TAG, "widget probe: before the press, " + why[0]);
-            // THE PREMISE: a widget really does put a clickable view under the finger, which is the
-            // whole reason the DOWN had to be watched in onInterceptTouchEvent.
-            Thread.sleep(700);                       // past the 400ms long-press
-
-            // READ IT BEFORE THE MOVE AS WELL AS AFTER. The long press LIFTS and then opens a menu,
-            // and a dialog taking the window makes the framework deliver ACTION_CANCEL to the view
-            // underneath — which legitimately puts the item down again. Sampling only after the move
-            // would call that "the press never reached the desktop", which is the opposite of what
-            // happened.
-            final boolean[] liftedEarly = new boolean[]{ false };
             InstrumentationRegistry.getInstrumentation().runOnMainSync(
-                    () -> liftedEarly[0] = desk.editingItem() != null);
-            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
-                long t = android.os.SystemClock.uptimeMillis();
-                float x = desk.cellW() / 2f, y = desk.cellH() / 2f;
-                desk.dispatchTouchEvent(android.view.MotionEvent.obtain(
-                        t, t, android.view.MotionEvent.ACTION_MOVE, x, y + 4, 0));
-                lifted[0] = desk.editingItem() != null;
-                // Said separately, because "the widget was not there" and "the press did not arm"
-                // need different fixes and used to share one message.
-                why[0] = why[0] + " | after: editing=" + desk.editingItem()
-                       + " onDesk=" + Desk.at(desk.items(), 0, 0);
-            });
-            Log.i(TAG, "widget probe: long press -> early=" + liftedEarly[0]
-                    + " afterMove=" + lifted[0] + " " + why[0]);
-            assertTrue("a long press on a placed widget never reached the desktop — its Remove,"
-                    + " Resize and drag are all unreachable. " + why[0],
-                    liftedEarly[0] || lifted[0]);
+                    () -> lifted[0] = desk.editingItem() != null);
+
+            Log.i(TAG, "widget probe: long press -> lifted=" + lifted[0]
+                    + " host.onLongPress=" + pressed[0] + " clickableContent=" + clickable[0]);
+            assertNotNull("a long press on a placed widget never reached the desktop — its Remove,"
+                    + " Resize and drag are all unreachable (clickableContent=" + clickable[0] + ")",
+                    pressed[0]);
+            assertTrue("the widget was not lifted, so it could not be dragged", lifted[0]);
+            assertEquals("a different item was pressed", made[0], pressed[0].widgetId());
         } finally {
             s.close();
         }
