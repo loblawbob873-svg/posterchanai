@@ -90,6 +90,7 @@
     <string name="tel_nothing_to_call">Type a number first</string>
     <string name="tel_recent_empty">No recent calls</string>
     <string name="tel_search">Search contacts and calls</string>
+    <string name="tel_tab_keypad">Keypad</string>
     <string name="tel_tab_recent">Recents</string>
     <string name="tel_tab_contacts">Contacts</string>
     <string name="tel_tab_voicemail">Voicemail</string>

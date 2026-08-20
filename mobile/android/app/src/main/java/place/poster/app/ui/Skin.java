@@ -246,6 +246,9 @@ public final class Skin {
         try {
             Drawable d = androidx.core.content.ContextCompat.getDrawable(c, res);
             if (d == null) return null;
+            // colour 0 means LEAVE IT ALONE — the app's own launcher icon is already coloured, and
+            // tinting it would produce a solid silhouette.
+            if (color == 0) return d;
             d = androidx.core.graphics.drawable.DrawableCompat.wrap(d.mutate());
             androidx.core.graphics.drawable.DrawableCompat.setTint(d, color);
             return d;

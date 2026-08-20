@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- GENERATED from static/js/client/sprite.js #i-<path d="M20.4 12.2c0 3.9-3.7 7.1-8.2 7.1a9.8 9.8 0 01-2.6-.35L4.6 20.6l1.3-3.5a6.8 6.8 0 01-2.3-4.9c0-3.9 3.7-7.1 8.2-7.1s8.6 3.2 8.6 7.1z"/> by scripts/gen_android_app_icons.py.
+     Do not edit. The glyph is scaled into the 72dp safe zone of the 108 adaptive grid;
+     anything outside it is cropped away by the launcher mask. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <group android:scaleX="1.833333" android:scaleY="1.833333"
+        android:translateX="32.0000" android:translateY="32.0000">
+        <path android:fillColor="#00000000" android:strokeColor="#3CE8FF"
+            android:strokeWidth="1.7" android:strokeLineCap="round"
+            android:strokeLineJoin="round" android:pathData="M20.4 12.2c0 3.9-3.7 7.1-8.2 7.1a9.8 9.8 0 01-2.6-.35L4.6 20.6l1.3-3.5a6.8 6.8 0 01-2.3-4.9c0-3.9 3.7-7.1 8.2-7.1s8.6 3.2 8.6 7.1z" />
+    </group>
+</vector>

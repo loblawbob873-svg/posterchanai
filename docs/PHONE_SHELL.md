@@ -373,3 +373,68 @@ genuine SDK instead of hand-written stubs. It found three real bugs on its first
   narrower and needs no such permission: an incoming text raises a notification on your other devices
   because its archive document arrives there.
 * **Group MMS threads** — a group conversation needs MMS, which is the first item on this list.
+
+---
+
+## Messages and Phone are apps, not just handlers
+
+Only `MainActivity` carried a `MAIN`/`LAUNCHER` filter, so Messages and Phone could be *routed* to as
+the phone's default handlers and appeared in no drawer at all — PosterChan's own or the stock one.
+From the person's side they did not exist: *"my point is that there is no phone app/icon for it!"*
+
+Both now have an **`activity-alias`** with `MAIN`/`LAUNCHER`, its own label and its own icon. An alias
+rather than a second filter on the activity, deliberately: `ROLE_SMS` is granted only to an app
+declaring exactly four components, one of which is `SendToActivity`'s `SENDTO` filter, and every
+future edit to that block would then be one slip from Android silently refusing to offer the app as
+default. The alias leaves the routing filters untouched, and it is the shape this manifest already
+uses for `ShareToAi`.
+
+They appear in **every** launcher, which matters because the HOME role is opt-in and most people will
+keep their existing home screen. The icons are generated from the same sprite
+(`scripts/gen_android_app_icons.py`) — a handset and a speech bubble, so a drawer shows three
+different things rather than the PosterChan mark three times. Adaptive for Android 8+, with legacy
+rasters per density because minSdk is 23 and an adaptive icon alone does not resolve on 23-25.
+
+## A tile that cannot launch is never drawn
+
+Reported from the dock: *"there is some P icon on the dock that says this app would not open, useless
+does nothing"* — two failures stacked on the one row that is always on screen. Three rules now:
+
+* **`canLaunch` is asked of the package manager** (`resolveActivity`) before a tile is offered, so a
+  screen that is in the catalogue but not in *this* build simply is not there. Absent, not greyed,
+  not erroring on tap.
+* **The dock is seeded from the filtered list**, never from raw ids, so the first thing a new person
+  sees cannot be a dead button.
+* **Our own tiles never fall back to a letter.** Every PosterChan screen has a real sprite glyph, so a
+  letter is not a fallback but a bug in disguise — it hides which tile failed. A glyph that will not
+  resolve falls back to the app's own launcher icon and says so in the log. The initial-letter
+  fallback stays where it belongs: a third-party app whose icon the package manager would not give us.
+
+## Swipe up for all apps
+
+The drawer opens by swiping up from the home surface and the button is off the dock — what every
+Android launcher has done since Pixel dropped it, and a dock slot back for an app somebody uses.
+
+The gesture is measured against `ViewConfiguration`'s slop and fling velocity rather than a hand-picked
+pixel count, which would feel wrong at a different density; it is only ever considered while nothing
+is lifted and nothing is being dragged, so a long-press-drag always wins; and it closes three ways —
+**Back**, a **swipe down** (only while the grid is already at the top, or flicking back up through a
+long list would close it under your finger) and **Home**.
+
+## The keypad is a whole tab
+
+*"The Phone app should be an entire tab that looks like a nice dialer, glow keys when pressing."*
+Keypad is the first tab and the one you land on; on it the list is gone and the pad gets the screen,
+sized from the display rather than a constant — a fixed dp that suits a tall phone clips the bottom
+row on a short one, and a bottom row you cannot reach is a dialpad with nine keys.
+
+**Every key lights up under your finger** (`KeyGlow`): a bloom outside the rim, a bright ring and a lit
+interior, all in the palette's accent, drawn with concentric strokes rather than a `BlurMaskFilter`
+(which needs a software layer under hardware acceleration and silently draws nothing without one).
+The digit lights with it, on the way *down* — a glow that arrives when you let go is a glow nobody
+sees. On the light palettes it degrades to a firm flat colour change, because a bloom behind dark text
+destroys it.
+
+Two things that make a stateful Drawable actually work, both silent when wrong: it must declare
+`isStateful()` **and** return `true` from `onStateChange` to ask for the redraw, and the view must be
+`clickable` or the background never hears about the press at all.

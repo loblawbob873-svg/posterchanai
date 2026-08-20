@@ -17,6 +17,7 @@ import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.AdapterView;
@@ -186,6 +187,31 @@ public class HomeActivity extends Activity implements DeskView.Host {
 
     private Drawable tinted(int res, int color) { return Skin.icon(this, res, color); }
 
+    /**
+     * THE GLYPH FOR ONE OF OUR OWN TILES — and never a letter.
+     *
+     * Every PosterChan screen has a real icon, transcribed from the client's own sprite, so a letter
+     * here would not be a fallback: it would be a bug wearing a disguise. Reported as "the icons are
+     * mostly letters for posterchan apps on launcher, ugly", and the letter is worse than ugly —
+     * it hides which tile failed and why.
+     *
+     * So a glyph that will not resolve falls back to the APP'S OWN LAUNCHER ICON, which is in every
+     * build and always draws, and says so in the log with the tile's name. The initial-letter
+     * fallback stays where it belongs: a third-party app whose icon the package manager would not
+     * give us.
+     */
+    private Drawable ourGlyph(AppShelf.Entry e) {
+        HomeTiles.Tile t = HomeTiles.tile(e.view);
+        Drawable d = tinted(t == null ? 0 : TileIcons.of(t.icon), pal.accent);
+        if (d != null) return d;
+        Log.w(TAG, "home: no glyph for tile '" + e.view + "' (icon '"
+                + (t == null ? "?" : t.icon) + "') — falling back to the app icon");
+        Drawable app = Skin.icon(this, R.mipmap.ic_launcher, 0);
+        if (app != null) return app;
+        try { return getResources().getDrawable(R.mipmap.ic_launcher); }
+        catch (Throwable ignored) { return Skin.letter(this, pal, e.label); }
+    }
+
     // ---------------------------------------------------------------- lifecycle
 
     @Override
@@ -221,8 +247,42 @@ public class HomeActivity extends Activity implements DeskView.Host {
 
     private final Runnable reloadSoon = new Runnable() { @Override public void run() { reload(false); } };
 
+    /**
+     * WHICH OF OUR TILES ARE REAL — asked of the package manager, not assumed from the catalogue.
+     *
+     * A TILE THAT CANNOT LAUNCH MUST NOT BE DRAWN. Not greyed, not showing an error when tapped:
+     * absent. That was reported from the dock — "there is some P icon on the dock that says this app
+     * would not open, useless does nothing" — which is the worst version of it, because the dock is
+     * the one row that is always on screen and it was seeded before anything checked.
+     *
+     * The check is `resolveActivity`, so a screen that is in the catalogue but not in THIS build
+     * (an older APK, a stripped variant, a class that moved) simply is not offered.
+     */
     private void refreshRoles() {
-        ourTiles = HomeTiles.ours(HomeRoles.isDefaultDialer(this), HomeRoles.isDefaultSms(this));
+        List<AppShelf.Entry> offered = HomeTiles.ours(
+                HomeRoles.isDefaultDialer(this), HomeRoles.isDefaultSms(this));
+        List<AppShelf.Entry> live = new ArrayList<AppShelf.Entry>();
+        for (AppShelf.Entry e : offered) if (canLaunch(e)) live.add(e);
+        ourTiles = live;
+    }
+
+    /** Would tapping this tile actually open something? */
+    private boolean canLaunch(AppShelf.Entry e) {
+        if (e == null) return false;
+        if (!e.isOurs()) return true;                       // a phone app the package manager listed
+        if (HomeTiles.VIEW_SETTINGS.equals(e.view)) {
+            return resolves(new Intent(Settings.ACTION_SETTINGS));
+        }
+        String cls = HomeTiles.nativeTarget(e.view);
+        if (!cls.isEmpty()) {
+            return resolves(new Intent().setClassName(getPackageName(), cls));
+        }
+        return resolves(new Intent(this, MainActivity.class));
+    }
+
+    private boolean resolves(Intent i) {
+        try { return getPackageManager().resolveActivity(i, 0) != null; }
+        catch (Throwable t) { return false; }
     }
 
     /** HOME while already home: close the drawer, put down anything lifted, go back to the top. */
@@ -280,10 +340,14 @@ public class HomeActivity extends Activity implements DeskView.Host {
             Desk.add(items, new Desk.Item("pc:" + t.view, 0, 0, 1, 1), cols, rows);
         }
         prefs.setDesk(Desk.serialize(items));
+        // THE DOCK IS NEVER SEEDED WITH SOMETHING UNVERIFIED. `ourTiles` has already been filtered
+        // to what resolves, so seeding from it means the very first thing a new person sees cannot
+        // be a dead button — which is exactly what was reported.
         List<String> d = new ArrayList<String>();
-        d.add("pc:" + HomeTiles.VIEW_PHONE);
-        d.add("pc:" + HomeTiles.VIEW_TEXTS);
-        d.add("pc:" + HomeTiles.VIEW_APP);
+        for (String view : new String[]{ HomeTiles.VIEW_PHONE, HomeTiles.VIEW_TEXTS, HomeTiles.VIEW_APP }) {
+            String key = "pc:" + view;
+            if (AppShelf.byKey(ourTiles, key) != null) d.add(key);
+        }
         prefs.setDock(d);
     }
 
@@ -355,6 +419,13 @@ public class HomeActivity extends Activity implements DeskView.Host {
 
     @Override public void onLongPressEmpty() { homeMenu(); }
 
+    /**
+     * SWIPE UP FOR ALL APPS — the gesture every Android launcher has had since the button went away,
+     * and the reason there is no drawer button on the dock any more. A button for it reads as a
+     * launcher that has not caught up, and it costs a dock slot that belongs to an app somebody uses.
+     */
+    @Override public void onSwipeUp() { openDrawer(); }
+
     @Override public void onChanged() { prefs.setDesk(Desk.serialize(desk.items())); }
 
     @Override public int minSpanX(Desk.Item item) {
@@ -398,19 +469,10 @@ public class HomeActivity extends Activity implements DeskView.Host {
         dock.removeAllViews();
         List<AppShelf.Entry> row = AppShelf.dock(everything, prefs.dock(), DOCK_MAX);
         for (final AppShelf.Entry e : row) dock.addView(dockIcon(e));
-        // ALL APPS is last and is not part of the saved list: the drawer must be reachable however
-        // the dock has been arranged, including when it has been emptied.
-        ImageView all = new ImageView(this);
-        all.setImageDrawable(tinted(R.drawable.ic_pc_grid, pal.text));
-        all.setBackground(Skin.pill(this, pal, Skin.alpha(pal.text, 0.12), true));
-        all.setContentDescription(getString(R.string.home_all_apps));
-        int p = Skin.dp(this, 12);
-        all.setPadding(p, p, p, p);
-        all.setLayoutParams(dockParams());
-        all.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { openDrawer(); }
-        });
-        dock.addView(all);
+        // NO ALL-APPS BUTTON. The drawer opens by swiping up from the home surface (DeskView), which
+        // is what every Android launcher has done since Pixel dropped the button and what people's
+        // hands already expect. Taking it off gives the slot back to an app somebody actually uses,
+        // which is the point of a dock.
     }
 
     private LinearLayout.LayoutParams dockParams() {
@@ -426,9 +488,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
         v.setLayoutParams(dockParams());
         v.setContentDescription(e.label);
         if (e.isOurs()) {
-            HomeTiles.Tile t = HomeTiles.tile(e.view);
-            Drawable d = tinted(t == null ? 0 : TileIcons.of(t.icon), pal.accent);
-            v.setImageDrawable(d != null ? d : Skin.letter(this, pal, e.label));
+            v.setImageDrawable(ourGlyph(e));
             v.setBackground(Skin.pill(this, pal, Skin.alpha(pal.accent, 0.16), true));
             int p = Skin.dp(this, 12);
             v.setPadding(p, p, p, p);
@@ -453,7 +513,38 @@ public class HomeActivity extends Activity implements DeskView.Host {
         drawer.setVisibility(View.VISIBLE);
         drawer.setAlpha(0f);
         drawer.animate().alpha(1f).setDuration(140).start();
+        wireDrawerDismiss();
         redrawDrawer();
+    }
+
+    /**
+     * A DRAWER YOU CAN ONLY LEAVE ONE WAY is the same complaint in reverse, so there are three:
+     * BACK, a swipe DOWN, and pressing HOME. The swipe only counts while the grid is already at the
+     * top — otherwise flicking back up through a long app list would close it under your finger.
+     */
+    private void wireDrawerDismiss() {
+        final android.view.GestureDetector g = new android.view.GestureDetector(this,
+            new android.view.GestureDetector.SimpleOnGestureListener() {
+                @Override public boolean onFling(android.view.MotionEvent a, android.view.MotionEvent b,
+                                                 float vx, float vy) {
+                    if (a == null || b == null) return false;
+                    if (vy <= ViewConfiguration.get(HomeActivity.this).getScaledMinimumFlingVelocity()) return false;
+                    if (b.getY() - a.getY() < ViewConfiguration.get(HomeActivity.this).getScaledTouchSlop() * 6) return false;
+                    if (grid.getFirstVisiblePosition() != 0) return false;
+                    View top = grid.getChildAt(0);
+                    if (top != null && top.getTop() < 0) return false;
+                    closeDrawer();
+                    return true;
+                }
+            });
+        View.OnTouchListener t = new View.OnTouchListener() {
+            @Override public boolean onTouch(View v, android.view.MotionEvent e) {
+                g.onTouchEvent(e);
+                return false;                     // never consume — the list still scrolls
+            }
+        };
+        drawer.setOnTouchListener(t);
+        grid.setOnTouchListener(t);
     }
 
     private void closeDrawer() {
@@ -807,12 +898,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
         label.setTextColor(pal.text);
         Skin.legible(label, pal);
         if (e.isOurs()) {
-            HomeTiles.Tile t = HomeTiles.tile(e.view);
-            Drawable d = tinted(t == null ? 0 : TileIcons.of(t.icon), pal.accent);
-            // NEVER BLANK. A coloured circle with nothing in it is indistinguishable from a broken
-            // launcher — which is exactly how this was reported — so a glyph that did not resolve
-            // falls back to the app's initial rather than to an absence.
-            icon.setImageDrawable(d != null ? d : Skin.letter(this, pal, e.label));
+            icon.setImageDrawable(ourGlyph(e));
             icon.setBackground(Skin.pill(this, pal, Skin.alpha(pal.accent, 0.14), true));
             int p = Skin.dp(this, 9);
             icon.setPadding(p, p, p, p);

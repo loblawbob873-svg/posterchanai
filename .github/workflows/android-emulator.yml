@@ -136,13 +136,13 @@ jobs:
           # indistinguishable from a green run — and this repo has already shipped a whole rewrite
           # behind a test file that could not compile. If there are no androidTest sources the step
           # says so as a run annotation instead of printing a tick.
-          script: |
-            bash scripts/android_device_checks.sh
-            if find mobile/android/app/src/androidTest -name '*.java' -o -name '*.kt' 2>/dev/null | grep -q .; then
-              (cd mobile/android && ./gradlew connectedDebugAndroidTest --console=plain)
-            else
-              echo "::warning title=No instrumented tests::The emulator booted and the lifecycle checks ran, but mobile/android/app/src/androidTest has no sources — nothing was tested ON the device."
-            fi
+          # ONE `bash` INVOCATION, and that is not style. The runner hands this block to `sh`, and
+          # `sh` on this image is dash — which parsed the multi-line `if … fi` that used to be here
+          # as `Syntax error: end of file unexpected`, failed the step, and MEANT THE INSTRUMENTED
+          # TESTS NEVER RAN ONCE. Every emulator run since they were written was red for that reason
+          # and green on everything it did manage to do, which is the worst possible combination:
+          # the job that exists to catch what static checks cannot was itself never running.
+          script: bash scripts/android_device_checks.sh && bash scripts/android_instrumented.sh
 
       - name: Upload logcat
         if: always()
@@ -158,6 +158,16 @@ jobs:
       # Android rather than by the WebView, so none of the browser-driven checks in this repo can see
       # them and nobody on the build side has a device to look at. "Make it look good" is a real
       # requirement and this is the only way to judge it from the actual pixels.
+      # THE INSTRUMENTED TEST REPORT. Per-test failures are legible nowhere else — a red
+      # `connectedDebugAndroidTest` says only "there were failing tests".
+      - name: Upload instrumented test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: androidTest-report
+          path: /tmp/pc-androidtest
+          if-no-files-found: ignore
+
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4

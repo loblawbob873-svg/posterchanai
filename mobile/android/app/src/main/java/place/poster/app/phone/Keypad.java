@@ -3,6 +3,7 @@ package place.poster.app.phone;
 import android.content.Context;
 import android.graphics.Typeface;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -13,14 +14,15 @@ import place.poster.app.ui.Skin;
 /**
  * THE TWELVE KEYS, built in code rather than in XML.
  *
- * Not a stylistic choice: the same pad appears on the dialer and, at a different size and in a
- * different palette, on the in-call screen for a phone tree. Two XML copies of a 4x3 grid is two
- * places for a key to go missing, and neither would be caught by anything — a keypad with eleven
- * keys looks fine until somebody needs the twelfth.
+ * Not a stylistic choice: the same pad appears full-screen on the dialer's Keypad tab and small on
+ * the in-call screen for a phone tree. Two XML copies of a 4x3 grid is two places for a key to go
+ * missing, and neither would be caught by anything — a keypad with eleven keys looks fine until
+ * somebody needs the twelfth.
  *
- * Every key is themed from the palette, so all nine of the client's themes get a keypad rather than
- * a stock grey one, and the sub-labels (ABC, DEF) are drawn at the muted colour the rest of the app
- * uses for secondary text.
+ * EVERY KEY LIGHTS UP WHEN PRESSED (KeyGlow). The dialpad is the surface people judge a phone by,
+ * and a press that produces nothing but a grey ripple is what makes a hand-rolled dialer feel cheap.
+ * The digit lights with it on a theme that glows, and both degrade to a flat colour change on the
+ * light palettes, where a halo behind dark text destroys it.
  */
 public final class Keypad {
 
@@ -34,8 +36,8 @@ public final class Keypad {
     private Keypad() { }
 
     /**
-     * Fill `host` with the pad. `size` is the key diameter in dp — the dialer's is large, the in-call
-     * one is small enough to leave the caller's name visible above it.
+     * Fill `host` with the pad. `size` is the key diameter in dp — the dialer's tab is large enough
+     * to be hit without looking, the in-call one small enough to leave the caller's name visible.
      */
     public static void build(final Context ctx, LinearLayout host, PcTheme.Palette pal,
                              int size, final Press press) {
@@ -83,34 +85,64 @@ public final class Keypad {
         }
     }
 
-    private static View key(final Context ctx, PcTheme.Palette pal, int size,
+    private static View key(final Context ctx, final PcTheme.Palette pal, int size,
                             final String digit, String sub, final Press press) {
-        LinearLayout cell = new LinearLayout(ctx);
+        final LinearLayout cell = new LinearLayout(ctx);
         cell.setOrientation(LinearLayout.VERTICAL);
         cell.setGravity(Gravity.CENTER);
-        cell.setBackground(Skin.pill(ctx, pal, Skin.alpha(pal.accent, 0.10), true));
+        final KeyGlow glow = new KeyGlow(ctx, pal);
+        cell.setBackground(glow);
+        // A background only ever sees a press if the view says it is clickable — without this the
+        // Drawable's state never changes and the key never lights, with nothing to say why.
+        cell.setClickable(true);
         int px = Skin.dp(ctx, size);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(px, px);
-        int m = Skin.dp(ctx, 7);
+        int m = Skin.dp(ctx, size >= 70 ? 9 : 7);
         lp.setMargins(m, m, m, m);
         cell.setLayoutParams(lp);
 
-        TextView t = new TextView(ctx);
+        final TextView t = new TextView(ctx);
         t.setText(digit);
-        t.setTextSize(size >= 64 ? 26 : 21);
+        t.setTextSize(size >= 70 ? 30 : (size >= 60 ? 26 : 21));
         t.setTypeface(Typeface.DEFAULT_BOLD);
         t.setTextColor(pal.text);
         t.setGravity(Gravity.CENTER);
         cell.addView(t);
 
+        TextView s = null;
         if (!sub.isEmpty()) {
-            TextView s = new TextView(ctx);
+            s = new TextView(ctx);
             s.setText(sub);
-            s.setTextSize(size >= 64 ? 9 : 8);
+            s.setTextSize(size >= 70 ? 10 : (size >= 60 ? 9 : 8));
             s.setTextColor(pal.muted);
             s.setGravity(Gravity.CENTER);
+            try { s.setLetterSpacing(0.12f); } catch (Throwable ignored) { }
             cell.addView(s);
         }
+
+        // THE DIGIT LIGHTS WITH THE KEY. The background redraws itself on a state change; a TextView
+        // does not, so the press is observed here and the colour set directly. Touch rather than
+        // click, because the light has to arrive on the way DOWN — a glow that appears when you let
+        // go is a glow nobody sees.
+        final TextView sub2 = s;
+        cell.setOnTouchListener(new View.OnTouchListener() {
+            @Override public boolean onTouch(View v, MotionEvent e) {
+                switch (e.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        t.setTextColor(pal.neon ? pal.accent : pal.onAccent());
+                        if (pal.neon) t.setShadowLayer(Skin.dp(ctx, 12), 0, 0, pal.accent);
+                        if (sub2 != null) sub2.setTextColor(pal.neon ? pal.accent : pal.onAccent());
+                        break;
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL:
+                        t.setTextColor(pal.text);
+                        t.setShadowLayer(0, 0, 0, 0);
+                        if (sub2 != null) sub2.setTextColor(pal.muted);
+                        break;
+                }
+                return false;                // never consume: the click still has to happen
+            }
+        });
 
         cell.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {

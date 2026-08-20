@@ -124,6 +124,13 @@ public final class HomeTiles {
 
     public static boolean isEssential(String view) { return VIEW_SETTINGS.equals(view); }
 
+    /** The native class a tile opens, or "" when it opens the app or the phone's own Settings. */
+    public static String nativeTarget(String view) {
+        if (VIEW_PHONE.equals(view)) return "place.poster.app.phone.DialerActivity";
+        if (VIEW_TEXTS.equals(view)) return "place.poster.app.sms.ThreadListActivity";
+        return "";
+    }
+
     /**
      * @param dialer whether the native Phone screen should be offered — it is only useful once this
      *               app actually holds the dialer role, and offered before that it is a tile that

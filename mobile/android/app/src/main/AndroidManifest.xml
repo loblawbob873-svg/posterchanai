@@ -218,6 +218,47 @@
             </intent-filter>
         </activity>
 
+        <!-- MESSAGES AS AN APP, not just as a handler.
+             ACTIVITY-ALIAS rather than a second filter on ThreadListActivity itself, and that choice
+             is load-bearing: ROLE_SMS is granted only to an app declaring EXACTLY four components,
+             and one of them is that activity's SENDTO filter. Adding a LAUNCHER filter to it would
+             work, but every future edit to that block is then one slip away from Android silently
+             refusing to offer the app as default — the failure that starts the request activity and
+             finishes it RESULT_CANCELED with no dialog and no log. An alias leaves the routing
+             filters untouched and is the shape this manifest already uses for `.ShareToAi`.
+
+             It appears in EVERY launcher, not just ours: the HOME role is opt-in and most people will
+             keep their existing home screen, where "Messages" has to be an ordinary app. Its own
+             label and its own glyph, because three drawer entries all showing the PosterChan mark is
+             the same complaint as the letter tiles — the app is there and looks like it is not. -->
+        <activity-alias
+            android:name=".sms.Messages"
+            android:targetActivity=".sms.ThreadListActivity"
+            android:label="@string/sms_title"
+            android:icon="@mipmap/ic_launcher_messages"
+            android:roundIcon="@mipmap/ic_launcher_messages"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- Phone, for the same reasons. Its glyph is the handset, so a drawer shows a dialer, a
+             speech bubble and the app mark — three different things to somebody scanning it. -->
+        <activity-alias
+            android:name=".phone.Phone"
+            android:targetActivity=".phone.DialerActivity"
+            android:label="@string/tel_title"
+            android:icon="@mipmap/ic_launcher_phone"
+            android:roundIcon="@mipmap/ic_launcher_phone"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
         <!-- One conversation. singleTop + adjustResize: a notification tapped while the thread is
              already open must not stack a second copy of it, and the compose box must sit above the
              keyboard rather than under it. -->

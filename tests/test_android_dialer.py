@@ -241,7 +241,7 @@ class DialerRole(unittest.TestCase):
         """Without IN_CALL_SERVICE_UI telecom treats this as an observer and keeps its own call
         screen; without RINGING it keeps its own ringer. Either way ours is never asked, and there is
         nothing to say so."""
-        i = self.man.index(".phone.PcInCallService")
+        i = self.man.index('android:name=".phone.PcInCallService"')
         block = self.man[i:i + 1000]
         self.assertIn("android.telecom.IN_CALL_SERVICE_UI", block)
         self.assertIn("android.telecom.IN_CALL_SERVICE_RINGING", block)
@@ -251,13 +251,13 @@ class DialerRole(unittest.TestCase):
     def test_the_dialer_answers_action_dial_with_and_without_a_number(self):
         """Both filters, because Android requires both before it will offer this app as the default
         phone app — and an app that is not offered has a switch that appears to do nothing."""
-        i = self.man.index(".phone.DialerActivity")
+        i = self.man.index('android:name=".phone.DialerActivity"')
         block = self.man[i:i + 2200]
         self.assertEqual(block.count("android.intent.action.DIAL"), 2)
         self.assertIn('android:scheme="tel"', block)
 
     def test_the_call_screen_shows_over_the_lock_screen(self):
-        i = self.man.index(".phone.InCallActivity")
+        i = self.man.index('android:name=".phone.InCallActivity"')
         block = self.man[i:i + 900]
         self.assertIn("showOnLockScreen", block)
         self.assertIn("turnScreenOn", block)
@@ -334,6 +334,50 @@ class DialerRole(unittest.TestCase):
         twice — which in a contact list reads as duplicate contacts rather than as two numbers."""
         src = open(os.path.join(PHONE, "ContactList.java"), encoding="utf-8").read()
         self.assertIn("seen.add(id)", src)
+
+    def test_the_keypad_is_a_whole_tab(self):
+        """"The Phone app should be an entire tab that looks like a nice dialer." A dialpad squeezed
+        into a strip under a list is the thing that was wrong; on its own tab it gets the screen, and
+        it is gone entirely on the other three so the list gets the room."""
+        src = open(os.path.join(PHONE, "DialerActivity.java"), encoding="utf-8").read()
+        code = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
+        self.assertIn("TAB_KEYPAD = 0", code, "the keypad is not a tab, or is not the one you land on")
+        self.assertIn("padWrap.setVisibility", code)
+        self.assertIn("list.setVisibility(onPad ? View.GONE", code, "the list still shares the screen")
+        # Sized from the screen, not a constant: a fixed dp that suits a tall phone clips the bottom
+        # row on a short one, and a bottom row you cannot reach is a dialpad with nine keys.
+        self.assertIn("keySizeDp()", code)
+        self.assertIn("getDisplayMetrics", code)
+
+    def test_every_key_lights_up_when_pressed(self):
+        """The dialpad is the surface people judge a phone by, and a press that produces nothing but
+        a grey ripple is what makes a hand-rolled dialer feel cheap."""
+        glow = open(os.path.join(PHONE, "KeyGlow.java"), encoding="utf-8").read()
+        code = re.sub(r"/\*.*?\*/", " ", glow, flags=re.S)
+        # A Drawable only ever hears about a press if it says it is stateful AND returns true from
+        # onStateChange to ask for a redraw. Return false and the key never lights, silently.
+        self.assertIn("public boolean isStateful() { return true; }", code)
+        i = code.index("onStateChange")
+        self.assertIn("invalidateSelf()", code[i:i + 400])
+        self.assertIn("return true;", code[i:i + 400])
+        # …and the view must be clickable or the background never sees the state at all.
+        pad = re.sub(r"/\*.*?\*/", " ", open(os.path.join(PHONE, "Keypad.java"), encoding="utf-8").read(), flags=re.S)
+        self.assertIn("cell.setClickable(true)", pad)
+        self.assertIn("new KeyGlow(", pad)
+        # The glow degrades on the light palettes, where a bloom behind dark text destroys it.
+        self.assertIn("pal.neon", code)
+
+    def test_the_phone_app_has_a_launcher_icon_of_its_own(self):
+        """"my point is that there is no phone app/icon for it!" — routing is not an app. Without a
+        MAIN/LAUNCHER filter there is nothing to tap in ANY launcher, ours or the stock one."""
+        i = self.man.index('android:name=".phone.Phone"')
+        block = self.man[i:i + 900]
+        self.assertIn("android.intent.category.LAUNCHER", block)
+        self.assertIn("ic_launcher_phone", block, "it shows the PosterChan mark rather than a dialer")
+        self.assertIn('android:targetActivity=".phone.DialerActivity"', block)
+        # The alias is ADDITIONAL — the routing filters that the dialer role requires are untouched.
+        j = self.man.index('android:name=".phone.DialerActivity"')
+        self.assertEqual(self.man[j:j + 2200].count("android.intent.action.DIAL"), 2)
 
     def test_nothing_in_the_dialer_holds_a_wake_lock(self):
         """The call screen keeps the screen on with a WINDOW flag, which is scoped to the activity and

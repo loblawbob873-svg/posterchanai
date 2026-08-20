@@ -5,6 +5,8 @@ import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.view.MotionEvent;
+import android.view.VelocityTracker;
+import android.view.ViewConfiguration;
 import android.view.View;
 import android.view.ViewGroup;
 
@@ -42,6 +44,8 @@ public class DeskView extends ViewGroup {
         void onLongPress(Desk.Item item);
         /** A long press on empty space — the launcher's own menu. */
         void onLongPressEmpty();
+        /** Swiped up from the home surface: open the app drawer. */
+        void onSwipeUp();
         /** Save: the arrangement changed. */
         void onChanged();
         /** The smallest this item may be, in cells. Icons are 1x1; a widget states its own. */
@@ -64,6 +68,18 @@ public class DeskView extends ViewGroup {
     private int grabDx, grabDy, resizeEdge;
     private float lastX, lastY;
     private final Rect tmp = new Rect();
+    /* THE SWIPE-UP THAT OPENS THE DRAWER.
+     *
+     * Measured against ViewConfiguration rather than a hand-picked pixel count: slop and fling
+     * velocity are density- and platform-derived, and a number tuned on one phone feels wrong on
+     * every other. It also has to LOSE cleanly to the two gestures that share this surface — a long
+     * press that becomes a drag, and a resize — so it is only ever considered while nothing is
+     * lifted and nothing is being dragged. */
+    private VelocityTracker vel;
+    private final int slop = ViewConfiguration.get(getContext()).getScaledTouchSlop();
+    private final int flingMin = ViewConfiguration.get(getContext()).getScaledMinimumFlingVelocity();
+    private float downX, downY;
+    private boolean swiping;
     private final Paint grid = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint frame = new Paint(Paint.ANTI_ALIAS_FLAG);
 
@@ -182,6 +198,10 @@ public class DeskView extends ViewGroup {
         switch (e.getActionMasked()) {
             case MotionEvent.ACTION_DOWN: {
                 lastX = x; lastY = y;
+                downX = x; downY = y; swiping = false;
+                if (vel != null) vel.recycle();
+                vel = VelocityTracker.obtain();
+                vel.addMovement(e);
                 resizeEdge = editing == null ? EDGE_NONE : edgeAt(x, y);
                 if (resizeEdge != EDGE_NONE) { resizing = true; return true; }
                 final int c = (int) (x / cw), r = (int) (y / ch);
@@ -200,6 +220,16 @@ public class DeskView extends ViewGroup {
                 return true;
             }
             case MotionEvent.ACTION_MOVE: {
+                if (vel != null) vel.addMovement(e);
+                // A swipe is only ever on the table while nothing is lifted and nothing is being
+                // dragged — a drag has to win, or moving an icon upward would open the drawer.
+                if (editing == null && !dragging && !resizing) {
+                    float sx = x - downX, sy = y - downY;
+                    if (Math.abs(sy) > slop * 2 && Math.abs(sy) > Math.abs(sx) * 1.5f) {
+                        swiping = true;
+                        cancelPending();
+                    }
+                }
                 float dx = x - lastX, dy = y - lastY;
                 if (Math.abs(dx) > Skin.dp(getContext(), 8) || Math.abs(dy) > Skin.dp(getContext(), 8)) {
                     cancelPending();
@@ -225,6 +255,21 @@ public class DeskView extends ViewGroup {
             case MotionEvent.ACTION_CANCEL: {
                 boolean wasTap = pending != null;
                 cancelPending();
+                if (swiping && e.getActionMasked() == MotionEvent.ACTION_UP) {
+                    float vy = 0;
+                    if (vel != null) { vel.addMovement(e); vel.computeCurrentVelocity(1000); vy = vel.getYVelocity(); }
+                    releaseVel();
+                    swiping = false;
+                    // Up, and either far enough or fast enough. Both, because a slow deliberate drag
+                    // and a quick flick are the same intention and people do each.
+                    if (y - downY < -slop * 6 || vy < -flingMin) {
+                        if (host != null) host.onSwipeUp();
+                        return true;
+                    }
+                    return true;
+                }
+                releaseVel();
+                swiping = false;
                 if (resizing) { resizing = false; commitResize(); return true; }
                 if (dragging && editing != null) { drop(x, y); return true; }
                 if (wasTap) {
@@ -238,6 +283,10 @@ public class DeskView extends ViewGroup {
             }
         }
         return super.onTouchEvent(e);
+    }
+
+    private void releaseVel() {
+        if (vel != null) { vel.recycle(); vel = null; }
     }
 
     private void cancelPending() {

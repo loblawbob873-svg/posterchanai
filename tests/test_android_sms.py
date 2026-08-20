@@ -216,26 +216,26 @@ class SmsRole(unittest.TestCase):
 
     def test_the_sms_deliver_receiver(self):
         self.assertIn("android.provider.Telephony.SMS_DELIVER", self.man)
-        i = self.man.index(".sms.SmsDeliverReceiver")
+        i = self.man.index('android:name=".sms.SmsDeliverReceiver"')
         self.assertIn("android.permission.BROADCAST_SMS", self.man[i:i + 500])
         self.assertIn('android:exported="true"', self.man[i:i + 500])
 
     def test_the_wap_push_receiver_for_mms(self):
         self.assertIn("android.provider.Telephony.WAP_PUSH_DELIVER", self.man)
-        i = self.man.index(".sms.MmsDeliverReceiver")
+        i = self.man.index('android:name=".sms.MmsDeliverReceiver"')
         block = self.man[i:i + 600]
         self.assertIn("android.permission.BROADCAST_WAP_PUSH", block)
         self.assertIn("application/vnd.wap.mms-message", block)
 
     def test_the_sendto_activity_answers_all_four_schemes(self):
-        i = self.man.index(".sms.SendToActivity")
+        i = self.man.index('android:name=".sms.SendToActivity"')
         block = self.man[i:i + 1200]
         self.assertIn("android.intent.action.SENDTO", block)
         for scheme in ("sms", "smsto", "mms", "mmsto"):
             self.assertIn('android:scheme="%s"' % scheme, block)
 
     def test_the_respond_via_message_service(self):
-        i = self.man.index(".sms.RespondService")
+        i = self.man.index('android:name=".sms.RespondService"')
         block = self.man[i:i + 900]
         self.assertIn("android.intent.action.RESPOND_VIA_MESSAGE", block)
         self.assertIn("android.permission.SEND_RESPOND_VIA_MESSAGE", block)
@@ -245,7 +245,7 @@ class SmsRole(unittest.TestCase):
         Without them on the receiver, any app on the phone could inject a text message into
         somebody's inbox — and it would land in the system store looking exactly like a real one."""
         for cls in (".sms.SmsDeliverReceiver", ".sms.MmsDeliverReceiver"):
-            i = self.man.index(cls)
+            i = self.man.index('android:name="%s"' % cls)
             block = self.man[i:i + 500]
             self.assertRegex(block, r'android:permission="android\.permission\.BROADCAST_(SMS|WAP_PUSH)"')
 
@@ -291,6 +291,40 @@ class SmsRole(unittest.TestCase):
         self.assertIn("smsCapable", js, "the switch cannot tell whether the role is even possible")
         self.assertIn("openDefaultApps", js, "there is no route when the role dialog does not take")
         self.assertIn("visibilitychange", js, "coming back from Android's own screen changes nothing")
+
+    def test_messages_has_a_launcher_icon_of_its_own(self):
+        """Routing is not an app: without a MAIN/LAUNCHER filter Messages appears in no drawer at
+        all, ours or the stock one, and from the person's side it does not exist. It is an
+        activity-alias so the four components ROLE_SMS requires are left exactly as they are."""
+        i = self.man.index('android:name=".sms.Messages"')
+        block = self.man[i:i + 900]
+        self.assertIn("android.intent.category.LAUNCHER", block)
+        self.assertIn("ic_launcher_messages", block, "it shows the PosterChan mark, not a bubble")
+        self.assertIn('android:targetActivity=".sms.ThreadListActivity"', block)
+        # And the SENDTO filter — one of the four — is still on the activity itself.
+        j = self.man.index('android:name=".sms.SendToActivity"')
+        self.assertIn("android.intent.action.SENDTO", self.man[j:j + 1200])
+
+    def test_the_two_app_icons_are_not_the_same_picture(self):
+        """Three drawer entries all showing the PosterChan mark is the letter-tile complaint again:
+        the app is there and looks like it is not."""
+        self.assertNotEqual(
+            open(os.path.join(ROOT, "mobile/android/app/src/main/res/drawable/ic_app_messages_fg.xml"),
+                 encoding="utf-8").read(),
+            open(os.path.join(ROOT, "mobile/android/app/src/main/res/drawable/ic_app_phone_fg.xml"),
+                 encoding="utf-8").read())
+
+    def test_the_app_icons_resolve_on_every_android_this_supports(self):
+        """minSdk is 23. An adaptive icon alone is an unresolvable resource on 23-25 — the legacy
+        raster in each density folder is what makes the icon exist there at all."""
+        for name in ("messages", "phone"):
+            for dens in ("mdpi", "hdpi", "xhdpi", "xxhdpi", "xxxhdpi"):
+                p = os.path.join(ROOT, "mobile/android/app/src/main/res",
+                                 "mipmap-" + dens, "ic_launcher_%s.png" % name)
+                self.assertTrue(os.path.exists(p), "missing " + p)
+            p = os.path.join(ROOT, "mobile/android/app/src/main/res/mipmap-anydpi-v26",
+                             "ic_launcher_%s.xml" % name)
+            self.assertTrue(os.path.exists(p), "missing the adaptive icon for " + name)
 
     def test_telephony_is_not_a_required_feature(self):
         """Declaring it required removes this app from every tablet and Wi-Fi-only device."""

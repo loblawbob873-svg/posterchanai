@@ -59,6 +59,9 @@
         android:layout_marginRight="12dp"
         android:layout_marginBottom="6dp">
 
+        <TextView android:id="@+id/pc_dl_t_pad" android:layout_width="0dp"
+            android:layout_height="wrap_content" android:layout_weight="1" android:gravity="center"
+            android:paddingTop="9dp" android:paddingBottom="9dp" android:text="@string/tel_tab_keypad" />
         <TextView android:id="@+id/pc_dl_t_recent" android:layout_width="0dp"
             android:layout_height="wrap_content" android:layout_weight="1" android:gravity="center"
             android:paddingTop="9dp" android:paddingBottom="9dp" android:text="@string/tel_tab_recent" />
@@ -94,20 +97,7 @@
         android:stackFromBottom="false"
         android:scrollbarStyle="outsideOverlay" />
 
-    <TextView
-        android:id="@+id/pc_dl_number"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center"
-        android:paddingTop="10dp"
-        android:paddingBottom="10dp"
-        android:paddingLeft="24dp"
-        android:paddingRight="24dp"
-        android:maxLines="1"
-        android:ellipsize="start"
-        android:textSize="30sp"
-        android:textIsSelectable="true" />
-
+    <!-- The empty state for the three LIST tabs. -->
     <TextView
         android:id="@+id/pc_dl_empty"
         android:layout_width="match_parent"
@@ -116,13 +106,37 @@
         android:padding="22dp"
         android:visibility="gone" />
 
+    <!-- THE KEYPAD TAB. Weighted, so on its own tab it takes the whole screen — a dialpad squeezed
+         into a strip under a list is what "should be an entire tab that looks like a nice dialer"
+         was about. Hidden entirely on the other three tabs, where the list wants the room. -->
     <LinearLayout
-        android:id="@+id/pc_dl_pad"
+        android:id="@+id/pc_dl_padwrap"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="0dp"
+        android:layout_weight="1"
         android:orientation="vertical"
-        android:paddingLeft="20dp"
-        android:paddingRight="20dp" />
+        android:gravity="center">
+
+        <TextView
+            android:id="@+id/pc_dl_number"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:paddingTop="8dp"
+            android:paddingBottom="14dp"
+            android:paddingLeft="24dp"
+            android:paddingRight="24dp"
+            android:maxLines="1"
+            android:ellipsize="start"
+            android:textSize="34sp"
+            android:textIsSelectable="true" />
+
+        <LinearLayout
+            android:id="@+id/pc_dl_pad"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+    </LinearLayout>
 
     <LinearLayout
         android:layout_width="match_parent"

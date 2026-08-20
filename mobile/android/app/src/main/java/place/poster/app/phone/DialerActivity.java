@@ -56,17 +56,18 @@ import place.poster.app.ui.Skin;
 public class DialerActivity extends PcActivity {
 
     private static final int REQ_PERMS = 4401;
-    private static final int TAB_RECENT = 0, TAB_CONTACTS = 1, TAB_VOICEMAIL = 2;
+    /* KEYPAD FIRST, and it is the default. A phone app opens on the thing you came to do. */
+    private static final int TAB_KEYPAD = 0, TAB_RECENT = 1, TAB_CONTACTS = 2, TAB_VOICEMAIL = 3;
 
-    private TextView numberView, notice, empty, tRecent, tContacts, tVm;
+    private TextView numberView, notice, empty, tPad, tRecent, tContacts, tVm;
+    private LinearLayout padWrap;
     private ListView list;
     private EditText search;
     private LinearLayout pad;
     private ImageView callBtn, backBtn, padToggle;
     private Rows adapter;
     private String typed = "";
-    private int tab = TAB_RECENT;
-    private boolean padOpen = true;
+    private int tab = TAB_KEYPAD;
     private final Handler main = new Handler(Looper.getMainLooper());
 
     /** One row of the list, whichever tab produced it. */
@@ -91,6 +92,8 @@ public class DialerActivity extends PcActivity {
         callBtn = (ImageView) findViewById(R.id.pc_dl_call);
         backBtn = (ImageView) findViewById(R.id.pc_dl_back);
         padToggle = (ImageView) findViewById(R.id.pc_dl_padtoggle);
+        padWrap = (LinearLayout) findViewById(R.id.pc_dl_padwrap);
+        tPad = (TextView) findViewById(R.id.pc_dl_t_pad);
         tRecent = (TextView) findViewById(R.id.pc_dl_t_recent);
         tContacts = (TextView) findViewById(R.id.pc_dl_t_contacts);
         tVm = (TextView) findViewById(R.id.pc_dl_t_vm);
@@ -125,7 +128,7 @@ public class DialerActivity extends PcActivity {
             @Override public boolean onLongClick(View v) { typed = ""; drawNumber(); reload(); return true; }
         });
         padToggle.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { padOpen = !padOpen; applySkin(); }
+            @Override public void onClick(View v) { tab = TAB_KEYPAD; applySkin(); reload(); }
         });
         findViewById(R.id.pc_dl_texts).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
@@ -147,6 +150,7 @@ public class DialerActivity extends PcActivity {
             @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
             @Override public void afterTextChanged(Editable e) { reload(); }
         });
+        tPad.setOnClickListener(tabClick(TAB_KEYPAD));
         tRecent.setOnClickListener(tabClick(TAB_RECENT));
         tContacts.setOnClickListener(tabClick(TAB_CONTACTS));
         tVm.setOnClickListener(tabClick(TAB_VOICEMAIL));
@@ -216,18 +220,26 @@ public class DialerActivity extends PcActivity {
         // because a bloom behind dark text on a light background destroys it.
         View bar = findViewById(R.id.pc_dl_tabs);
         if (bar != null) bar.setBackground(Skin.bar(this, pal, false));
+        paintTab(tPad, tab == TAB_KEYPAD);
         paintTab(tRecent, tab == TAB_RECENT);
         paintTab(tContacts, tab == TAB_CONTACTS);
         paintTab(tVm, tab == TAB_VOICEMAIL);
 
+        /* THE KEYPAD IS A WHOLE TAB, not a strip under a list. On its own tab it gets the screen and
+         * the keys are sized from it; on the other three it is gone entirely and the list gets the
+         * room. A dialpad squeezed under a list is what "should be an entire tab that looks like a
+         * nice dialer" was about. */
+        boolean onPad = tab == TAB_KEYPAD;
+        padWrap.setVisibility(onPad ? View.VISIBLE : View.GONE);
+        list.setVisibility(onPad ? View.GONE : View.VISIBLE);
+        padToggle.setVisibility(onPad ? View.INVISIBLE : View.VISIBLE);
+
         callBtn.setBackground(Skin.pill(this, pal, pal.green, true));
         callBtn.setImageDrawable(tint(R.drawable.ic_pc_call, 0xFF0B1A10));
         backBtn.setImageDrawable(tint(R.drawable.ic_pc_close, pal.muted));
-        padToggle.setImageDrawable(tint(R.drawable.ic_pc_grid, padOpen ? pal.accent : pal.muted));
-        padToggle.setBackground(Skin.pill(this, pal, Skin.alpha(pal.accent, padOpen ? 0.16 : 0.08), true));
-        pad.setVisibility(padOpen ? View.VISIBLE : View.GONE);
-        numberView.setVisibility(padOpen || !typed.isEmpty() ? View.VISIBLE : View.GONE);
-        Keypad.build(this, pad, pal, 62, new Keypad.Press() {
+        padToggle.setImageDrawable(tint(R.drawable.ic_pc_grid, pal.accent));
+        padToggle.setBackground(Skin.pill(this, pal, Skin.alpha(pal.accent, 0.16), true));
+        Keypad.build(this, pad, pal, keySizeDp(), new Keypad.Press() {
             @Override public void onKey(char digit) { typed = Dial.press(typed, digit); drawNumber(); reload(); }
         });
         Keypad.onLongPress(pad, '1', new Runnable() {
@@ -237,6 +249,21 @@ public class DialerActivity extends PcActivity {
         });
         drawNumber();
         if (adapter != null) adapter.notifyDataSetChanged();
+    }
+
+    /**
+     * How big a key should be, from the screen rather than from a constant. Three columns plus their
+     * margins have to fit the width, and four rows plus the number and the call button have to fit
+     * the height — a fixed dp that is generous on a tall phone clips the bottom row on a short one,
+     * and a bottom row you cannot reach is a dialpad with nine keys.
+     */
+    private int keySizeDp() {
+        android.util.DisplayMetrics m = getResources().getDisplayMetrics();
+        int wdp = (int) (m.widthPixels / m.density);
+        int hdp = (int) (m.heightPixels / m.density);
+        int byWidth = (wdp - 40) / 3 - 18;
+        int byHeight = (hdp - 300) / 4 - 18;
+        return Math.max(52, Math.min(88, Math.min(byWidth, byHeight)));
     }
 
     private void paintTab(TextView t, boolean on) {

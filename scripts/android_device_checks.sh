@@ -124,18 +124,23 @@ PREV_HOME=$(adb shell cmd role get-role-holders android.app.role.HOME 2>/dev/nul
 
 say "the launcher: take the HOME role"
 adb shell pm enable "$HOME_ACT" >/dev/null 2>&1
-if adb shell cmd role add-role-holder android.app.role.HOME $PKG >/dev/null 2>&1; then
-  sleep 2
-  HOLDER=$(adb shell cmd role get-role-holders android.app.role.HOME 2>/dev/null | tr -d '\r')
-  case "$HOLDER" in
-    *$PKG*) ok "PosterChan is the home screen ($HOLDER)" ;;
-    *)      echo "    (could not take the HOME role on this image: '$HOLDER' — skipping the launcher checks)"
-            HOLDER="" ;;
-  esac
-else
-  echo "    (no 'cmd role' on this image — skipping the launcher checks)"
-  HOLDER=""
-fi
+# TWO WAYS IN, because `cmd role` is not on every image and the first version SKIPPED THE WHOLE
+# LAUNCHER CHECK when it was missing — which is what happened on every run: "(no 'cmd role' on this
+# image)" and then nothing about the launcher was ever exercised. `cmd package set-home-activity` is
+# the older, more widely present route and is what actually works on the API-34 google_apis image.
+adb shell cmd package set-home-activity "$HOME_ACT" >/dev/null 2>&1
+adb shell cmd role add-role-holder android.app.role.HOME $PKG >/dev/null 2>&1
+sleep 2
+HOLDER=$(adb shell cmd shortcut get-default-launcher 2>/dev/null | tr -d '\r')
+[ -z "$HOLDER" ] && HOLDER=$(adb shell cmd role get-role-holders android.app.role.HOME 2>/dev/null | tr -d '\r')
+# The authority is what actually RESOLVES for an Intent, not what a command printed.
+RESOLVED=$(adb shell 'cmd package resolve-activity -c android.intent.category.HOME -a android.intent.action.MAIN' 2>/dev/null | grep -m1 packageName | tr -d '\r')
+echo "    holder: ${HOLDER:-<none>}   resolves: ${RESOLVED:-<none>}"
+case "$HOLDER$RESOLVED" in
+  *$PKG*) ok "PosterChan is the home screen" ;;
+  *)      fail "could not take the HOME role on this image — the launcher was NOT exercised"
+          HOLDER="" ;;
+esac
 
 if [ -n "$HOLDER" ]; then
   adb logcat -c
@@ -195,6 +200,21 @@ if [ -n "$HOLDER" ]; then
   # PICTURES, because "make it look good" is the one requirement nothing here can check and nobody
   # on this side of the build has a device to look at. These land in the run's artifacts, so a
   # judgement about the design is made from the actual pixels rather than from a description of them.
+  # THREE APPS IN THE DRAWER, asserted rather than eyeballed. Only MainActivity used to carry a
+  # MAIN/LAUNCHER filter, so Messages and Phone could be ROUTED to as the phone's default handlers
+  # and appeared in no launcher at all — ours or the stock one. "my point is that there is no phone
+  # app/icon for it!" was exactly right: routing is not an app.
+  say "the apps that appear in a launcher"
+  LAUNCHABLE=$(adb shell "cmd package query-activities -a android.intent.action.MAIN -c android.intent.category.LAUNCHER 2>/dev/null | grep -c $PKG" | tr -d '\r')
+  echo "    launcher entries for $PKG: ${LAUNCHABLE:-0}"
+  adb shell "cmd package query-activities -a android.intent.action.MAIN -c android.intent.category.LAUNCHER 2>/dev/null" \
+    | grep -o "$PKG/[A-Za-z0-9_.]*" | sort -u | sed 's/^/      /'
+  if [ "${LAUNCHABLE:-0}" -ge 3 ]; then
+    ok "PosterChan, Messages and Phone are all launchable"
+  else
+    fail "fewer than three launcher entries — Messages or Phone has no icon in any drawer"
+  fi
+
   say "what it looks like"
   shot() {  # $1 = name
     adb exec-out screencap -p > "$OUT/pc-shot-$1.png" 2>/dev/null
@@ -210,7 +230,39 @@ if [ -n "$HOLDER" ]; then
   adb shell am start -a android.intent.action.DIAL -n $PKG/$PKG.phone.DialerActivity >/dev/null 2>&1
   sleep 4
   shot dialer
+
+  # A KEY MID-PRESS. The glow is a state, so it only exists while a finger is down — a screenshot
+  # taken after the tap shows the idle key and proves nothing. `input swipe` with a long duration and
+  # no movement IS a held press; backgrounding it and capturing partway through is the only way to
+  # photograph it.
+  W=$(adb shell wm size | grep -o '[0-9]*x[0-9]*' | head -1 | cut -dx -f1 | tr -d '\r')
+  H=$(adb shell wm size | grep -o '[0-9]*x[0-9]*' | head -1 | cut -dx -f2 | tr -d '\r')
+  if [ -n "${W:-}" ] && [ -n "${H:-}" ]; then
+    KX=$((W / 2)); KY=$((H * 62 / 100))
+    (adb shell input swipe $KX $KY $KX $KY 1500 >/dev/null 2>&1 &)
+    sleep 1
+    shot dialer-key-pressed
+    sleep 1
+  fi
   crash_scan screens
+
+  # THE DRAWER, MID-SWIPE. It opens by swiping up from the home surface now — the button is off the
+  # dock — so this is both the picture and the only end-to-end proof the gesture works at all.
+  adb shell input keyevent KEYCODE_HOME
+  sleep 2
+  if [ -n "${W:-}" ] && [ -n "${H:-}" ]; then
+    (adb shell input swipe $((W / 2)) $((H * 80 / 100)) $((W / 2)) $((H * 25 / 100)) 500 >/dev/null 2>&1 &)
+    sleep 0.4
+    shot drawer-mid-swipe
+    sleep 1.2
+    shot drawer
+    TOP=$(adb shell dumpsys activity activities 2>/dev/null | grep -m1 -E 'mResumedActivity|topResumedActivity' | tr -d '\r')
+    case "$TOP" in
+      *HomeActivity*) ok "the swipe stayed on the home screen (drawer is a layer, not an activity)" ;;
+      *) echo "    resumed after swipe: $TOP" ;;
+    esac
+  fi
+  crash_scan drawer
   adb shell input keyevent KEYCODE_HOME
   sleep 2
 

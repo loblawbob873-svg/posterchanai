@@ -394,6 +394,57 @@ class LauncherSources(unittest.TestCase):
             path = os.path.join(JAVA, *cls.split(".")) + ".java"
             self.assertTrue(os.path.exists(path), cls + " does not exist")
 
+    def test_a_tile_that_cannot_launch_is_never_drawn_or_docked(self):
+        """REPORTED FROM THE DOCK: "there is some P icon on the dock that says this app would not
+        open, useless does nothing". Two failures stacked — no icon, and nothing behind it — on the
+        one row that is always on screen.
+
+        A tile that cannot launch must be ABSENT: not greyed, not showing an error when tapped. And
+        the dock must never be seeded from a list of ids that nothing verified, or the very first
+        thing somebody sees is a dead button."""
+        src = _code(open(os.path.join(HOME, "HomeActivity.java")).read())
+        self.assertIn("private boolean canLaunch(", src)
+        self.assertIn("resolveActivity(", src, "nothing asks whether the target exists")
+        # refreshRoles filters the offered tiles through it…
+        i = src.index("private void refreshRoles()")
+        self.assertIn("canLaunch(", src[i:i + 700], "the tile list is not filtered")
+        # …and the dock is seeded from that filtered list, not from raw ids.
+        j = src.index("private void seedHome()")
+        seed = src[j:j + 1200]
+        self.assertIn("AppShelf.byKey(ourTiles", seed, "the dock is seeded unverified")
+
+    def test_our_own_tiles_never_fall_back_to_a_letter(self):
+        """Every PosterChan screen has a real icon transcribed from the client's sprite, so a letter
+        there is not a fallback — it is a bug wearing a disguise, and it hides which tile failed.
+        Reported as "the icons are mostly letters for posterchan apps on launcher, ugly"."""
+        src = _code(open(os.path.join(HOME, "HomeActivity.java")).read())
+        i = src.index("private Drawable ourGlyph(")
+        body = src[i:src.index("\n    }", i)]
+        self.assertIn("R.mipmap.ic_launcher", body, "our tiles have no dependable fallback")
+        self.assertIn("Log.w(", body, "a missing glyph is silent")
+        # The letter is the LAST resort inside ourGlyph and is used nowhere else for our tiles.
+        for where in ("bindCell", "dockIcon"):
+            k = src.index("private View " + where) if ("private View " + where) in src else src.index(where)
+            seg = src[k:k + 1400]
+            self.assertNotIn("Skin.letter", seg, where + " still letters one of our tiles")
+
+    def test_the_drawer_opens_by_swiping_up_and_has_no_dock_button(self):
+        """What every Android launcher has done since Pixel dropped the button. A button for it reads
+        as a launcher that has not caught up, and it costs a dock slot that belongs to a real app."""
+        home = _code(open(os.path.join(HOME, "HomeActivity.java")).read())
+        desk = _code(open(os.path.join(HOME, "DeskView.java")).read())
+        self.assertIn("onSwipeUp", desk, "the desktop has no swipe")
+        self.assertIn("public void onSwipeUp()", home)
+        self.assertNotIn("home_all_apps", home, "the dock still carries a drawer button")
+        # Thresholds from the platform, never hand-picked pixels — density differs per phone.
+        self.assertIn("getScaledTouchSlop", desk)
+        self.assertIn("getScaledMinimumFlingVelocity", desk)
+        # And it must lose to a drag, or moving an icon upward opens the drawer.
+        self.assertIn("editing == null && !dragging", desk)
+        # Down closes it, symmetrically, and so does Back.
+        self.assertIn("closeDrawer()", home)
+        self.assertIn("onFling", home, "there is no swipe-down dismiss")
+
     def test_the_launcher_can_see_other_home_apps(self):
         """Android 11+ hides the package list. Without a MAIN/HOME <queries> entry,
         HomeRoles.releaseHome always answers 'there is no other home screen' and the launcher can
