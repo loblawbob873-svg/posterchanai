@@ -1463,6 +1463,23 @@ liveCD() {
 	local KEEP_HOME
 	read -p 'Include /home in the image? ' -e -i "n" KEEP_HOME
 
+	# ---------------------------------------------------------------- whose machine is this
+	#
+	# AN ISO OF YOUR MACHINE IS A COPY OF YOUR MACHINE, and that is fine for a rescue disc and wrong
+	# for a disc you hand somebody. Left alone it carries your account, your password hash, your ssh
+	# HOST keys, your saved wifi passwords and your shell history — and it autologins as you, on a
+	# stranger's hardware, with your name on the screen.
+	#
+	# "laptop needs to reflect a new os install and not have verita84 configured at all". So the
+	# default is CLEAN: every account above uid 1000 is dropped, the secrets below are left out of
+	# the image entirely, and a passwordless `live` account is written in to autologin instead. The
+	# installer on the disc then makes the real account on the machine it installs to.
+	#
+	# Answering `n` keeps everything — which is the right answer for a rescue disc of your own
+	# machine, and the wrong one for anything you publish. It says so rather than assuming.
+	local CLEAN
+	read -p "Clean out this machine's accounts and secrets (n = personal rescue disc)? " -e -i "y" CLEAN
+
 	# ---------------------------------------------------------------- what to leave out
 	#
 	# EVERY SWAPFILE, found rather than assumed. It is usually /swapfile, and on this installer it
@@ -1485,7 +1502,11 @@ liveCD() {
 	# THE WORK DIRECTORY EXCLUDES ITSELF — see the header. Stored relative, because mksquashfs's
 	# -e paths are relative to the source root.
 	EXCLUDES+=("${OUTDIR#/}")
-	[[ "$KEEP_HOME" = *n* ]] && EXCLUDES+=(home)
+	# A CLEAN IMAGE HAS NOBODY'S HOME IN IT, whatever was answered above. The two questions can be
+	# answered in contradiction — strip the accounts, keep the home directories — and honouring both
+	# literally would ship somebody's files under a user that no longer exists to own them, readable
+	# by uid 1000, which is `live`.
+	[[ "$KEEP_HOME" = *n* || "$CLEAN" = *y* ]] && EXCLUDES+=(home)
 	local f
 	for f in $SWAPFILES; do
 		[[ -n "$f" ]] && EXCLUDES+=("${f#/}")
@@ -1510,6 +1531,55 @@ liveCD() {
 tmpfs /tmp tmpfs defaults,nosuid,nodev 0 0
 FSTAB
 
+	# ---------------------------------------------------------------- strip the operator
+	#
+	# TWO MECHANISMS, BECAUSE THEY DO DIFFERENT THINGS. `-e` leaves a path OUT of the image, which is
+	# how a secret stops existing; a pseudo-file REPLACES one, which is how /etc/passwd can lose an
+	# account without losing root and the system users everything else depends on. Getting these the
+	# wrong way round gives either an image that still holds the secret or one that will not boot.
+	if [[ "$CLEAN" = *y* ]]; then
+		# Host identity. ssh host keys are the sharp one: every machine installed from this ISO would
+		# present the SAME host key, so they are indistinguishable to anything that checks, and a
+		# stolen copy impersonates all of them.
+		local F
+		for F in /etc/ssh/ssh_host_*; do [[ -e "$F" ]] && EXCLUDES+=("${F#/}"); done
+		# Saved networks, in each of the three places something might keep them.
+		for F in /etc/NetworkManager/system-connections /var/lib/iwd /etc/wpa_supplicant; do
+			[[ -e "$F" ]] && EXCLUDES+=("${F#/}")
+		done
+		# Root's home, the logs and the account databases' backups (passwd- and shadow- hold exactly
+		# what the rewritten ones are dropping, which is a good way to undo this work by accident).
+		for F in /root /var/log /etc/passwd- /etc/shadow- /etc/group- /etc/gshadow-; do
+			[[ -e "$F" ]] && EXCLUDES+=("${F#/}")
+		done
+
+		# The account files, rewritten. Everything below uid 1000 stays — root and the system users
+		# are what makes a Linux system work — and every real person is dropped, replaced by one
+		# passwordless `live`.
+		awk -F: '$3 < 1000 || $3 >= 65534' /etc/passwd  >"$WORK/passwd"
+		echo 'live:x:1000:1000:Live session:/home/live:/bin/bash' >>"$WORK/passwd"
+		awk -F: '$3 < 1000 || $3 >= 65534' /etc/group   >"$WORK/group"
+		echo 'live:x:1000:' >>"$WORK/group"
+		# EMPTY password field, not a hash and not `!`. Empty is "no password"; `!` is "locked", and
+		# a locked account cannot autologin — which would be a live disc that boots to a prompt
+		# nobody has the answer to.
+		awk -F: 'NR==FNR { if ($3 >= 1000 && $3 < 65534) drop[$1]; next } !($1 in drop)' \
+			/etc/passwd /etc/shadow >"$WORK/shadow" 2>/dev/null || cp /etc/shadow "$WORK/shadow"
+		echo 'live::20000:0:99999:7:::' >>"$WORK/shadow"
+		# The groups that decide whether a desktop can use the hardware. Taken from what THIS machine
+		# actually has rather than a guessed list, because a live user outside `video`/`input` gets a
+		# desktop with no screen and no keyboard.
+		local G
+		for G in wheel video input audio render seat plugdev users; do
+			grep -q "^$G:" /etc/group && sed -i "s/^\($G:[^:]*:[^:]*:\)\(.*\)$/\1\2,live/; s/,live,live/,live/; s/:,live$/:live/" "$WORK/group"
+		done
+		# Autologin as the live user. Same file the installed system uses, rewritten rather than
+		# removed — deleting it gives a login prompt for an account with no password set.
+		mkdir -p "$WORK/gettyd"
+		printf '[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin live --noclear %%I $TERM\n' \
+			>"$WORK/gettyd/override.conf"
+	fi
+
 	local PSEUDO="$WORK/pseudo"
 	{
 		echo "etc/fstab f 644 0 0 cat $LIVEFSTAB"
@@ -1517,7 +1587,67 @@ FSTAB
 		# and generates a fresh one; a duplicated id gives every live boot the same identity, which
 		# breaks journald, DHCP leases and systemd-boot's own /boot layout.
 		echo "etc/machine-id f 444 0 0 echo -n"
+
+		if [[ "$CLEAN" = *y* ]]; then
+			echo "etc/passwd f 644 0 0 cat $WORK/passwd"
+			echo "etc/group f 644 0 0 cat $WORK/group"
+			echo "etc/shadow f 640 0 0 cat $WORK/shadow"
+			echo "home d 755 0 0"
+			echo "home/live d 755 1000 1000"
+			echo "etc/systemd/system/getty@tty1.service.d d 755 0 0"
+			echo "etc/systemd/system/getty@tty1.service.d/override.conf f 644 0 0 cat $WORK/gettyd/override.conf"
+			# A hostname that is not yours. `posterchanos` is what an unconfigured install should
+			# call itself, and it is what the installer changes.
+			echo "etc/hostname f 644 0 0 echo posterchanos"
+		fi
+
+		# ---------------------------------------------------------------- the installer
+		#
+		# THE ISO CARRIES THE INSTALLER, or it is a demo disc.
+		#
+		# This builds a LIVE image of a running machine, and a live image with no way to install is
+		# a thing you can look at and not a thing you can adopt. The installer is THIS script, so
+		# the ISO gets a copy of the directory it was run from — gentoo.sh plus bin/ and plymouth/,
+		# which it reads with `$(dirname "$0")` and half-works without.
+		#
+		# Injected as pseudo-files rather than copied into `/` first, for the reason the fstab
+		# rewrite is: building an ISO must not modify the machine being imaged. And it must not come
+		# from /home either — that is EXCLUDED by default, so an installer living in somebody's home
+		# directory is precisely the file that would not be on the disc.
+		local IHERE ISRC
+		IHERE="$(cd "$(dirname "$0")" && pwd)"
+		if [[ -f "$IHERE/gentoo.sh" ]]; then
+			echo "usr/local/share/posterchanos d 755 0 0"
+			while IFS= read -r ISRC; do
+				local REL="${ISRC#$IHERE/}"
+				if [[ -d "$ISRC" ]]; then
+					echo "usr/local/share/posterchanos/$REL d 755 0 0"
+				else
+					# 755 across the board: gentoo.sh must be executable, and the helpers in bin/ are
+					# copied to /usr/local/bin by the install itself, which expects them to run.
+					echo "usr/local/share/posterchanos/$REL f 755 0 0 cat \"$ISRC\""
+				fi
+			done < <(find "$IHERE" -mindepth 1 \( -type f -o -type d \) | sort)
+
+			# AND A WAY TO FIND IT. A terminal command nobody is told about is not a way to install
+			# an operating system. The desktop's start menu lists every .desktop file on the machine
+			# (see `_machineApps`), so an entry here puts "Install PosterChanOS" in the menu of the
+			# live session with no extra wiring — the same list Firefox and the rest come from.
+			echo "usr/share/applications d 755 0 0"
+			echo "usr/share/applications/posterchanos-install.desktop f 644 0 0 cat $WORK/install.desktop"
+		fi
 	} >"$PSEUDO"
+
+	cat >"$WORK/install.desktop" <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=Install PosterChanOS
+Comment=Install this system onto a disk
+Icon=drive-harddisk
+Exec=foot -T "Install PosterChanOS" -e sh -c 'if [ "$(id -u)" = 0 ]; then /usr/local/share/posterchanos/gentoo.sh; else sudo /usr/local/share/posterchanos/gentoo.sh; fi'
+Terminal=false
+Categories=System;
+DESKTOP
 
 	# ---------------------------------------------------------------- squash it
 	echo -e "${COLOR_YELLOW}Packing the filesystem — this is the slow part.${COLOR_RESET}"
