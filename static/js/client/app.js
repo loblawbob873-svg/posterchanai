@@ -23402,14 +23402,21 @@
       pane.innerHTML=`<div class="mail-read-hd"><button class="mini mail-back" id="mail-back" title="Back">←</button>
           <div class="mr-meta"><div class="mr-subj">${enc(latest.subject||'(no subject)')}</div>
             ${thread.length>1?`<div class="muted small">${thread.length} messages</div>`:''}</div></div>
+        <!-- SPRITE ICONS, NOT EMOJI. This row was a filing-cabinet, a wastebasket and an arrow — glyphs from
+             the font, on a screen that has an icon set precisely so the UI does not depend on one.
+             A platform without the emoji font (a minimal Gentoo install, a WebView) draws them as
+             nothing at all, which is how it was reported: "i open email app and none of the bottom
+             buttons have icons". The arrows fared no better: ↩↩ is two characters pretending to be
+             a symbol. Every name here is defined in sprite.js — an icon that is not renders as
+             blank space with no error, which is the same bug one layer down. -->
         <div class="mail-actions">
-          <button class="btn btn-cyan small" data-act="reply">↩ Reply</button>
-          <button class="btn small" data-act="replyall">↩↩ Reply all</button>
-          <button class="btn small" data-act="forward">↪ Forward</button>
-          <button class="btn small" data-act="ai" title="Summarize, draft a reply, or add this email to your budget">✨ AI ▾</button>
-          <button class="btn small" data-act="unread">● Unread</button>
-          <button class="btn small" data-act="move">🗄 Move ▾</button>
-          <button class="btn btn-red small" data-act="delete">🗑 Delete</button>
+          <button class="btn btn-cyan small" data-act="reply"><svg class="ic b-ic" aria-hidden="true"><use href="#i-reply"></use></svg>Reply</button>
+          <button class="btn small" data-act="replyall"><svg class="ic b-ic" aria-hidden="true"><use href="#i-repost"></use></svg>Reply all</button>
+          <button class="btn small" data-act="forward"><svg class="ic b-ic" aria-hidden="true"><use href="#i-share"></use></svg>Forward</button>
+          <button class="btn small" data-act="ai" title="Summarize, draft a reply, or add this email to your budget"><svg class="ic b-ic" aria-hidden="true"><use href="#i-wand"></use></svg>AI ▾</button>
+          <button class="btn small" data-act="unread"><svg class="ic b-ic" aria-hidden="true"><use href="#i-eye"></use></svg>Unread</button>
+          <button class="btn small" data-act="move"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Move ▾</button>
+          <button class="btn btn-red small" data-act="delete"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>
         </div>
         <div class="mail-thread">${thread.map((m,i)=>this._msgBlock(m, folder, acct, i===thread.length-1 || String(m.uid)===String(seedUid))).join('')}</div>`;
       $('#mail-back',pane).onclick=()=>{ pane.classList.remove('has-open'); this.openUid=null; this.drawList(); };
