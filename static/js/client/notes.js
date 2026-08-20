@@ -71,6 +71,9 @@
       sleep(){ unwatch(); },
       // Called on reconnect — flush anything written while offline.
       flush: flushPending,
+      /* Exposed so the absorb table can be run against real event batches — a deleted note coming
+       * back is a data bug, and it is decided entirely here. See test_notes_deletion_sticks.py. */
+      _absorb,
       // For the offline bar / nav badge: how many writes are still queued.
       pendingCount: () => pending().length,
       /* Read ONE note, if this session happens to have the library loaded.
@@ -195,7 +198,7 @@
   }
 
   async function _loadCache(){
-    const lib = { notes:new Map(), folders:new Map() };
+    const lib = { notes:new Map(), folders:new Map(), gone:new Map() };
     let cached = [];
     try{ cached = Store().query([FILTER()]) || []; }catch(_){ cached = []; }
     // Progressive: repaint every 60 decrypts so a big library fills in visibly instead of holding
@@ -270,10 +273,30 @@
       const into = isNote ? lib.notes : lib.folders;
       const have = into.get(id);
       if(have && have._at >= ev.created_at) continue;
-      // A deletion is an empty content — a tombstone. Addressable events can't be un-published, and
-      // a relay that never honours the kind-5 keeps serving the last real version forever, so the
-      // tombstone IS the delete as far as any client is concerned.
-      if(!ev.content){ into.delete(id); continue; }
+      /* A DELETED NOTE CAME BACK, AND `into.delete(id)` IS WHY.
+       *
+       * A deletion is an empty content — a tombstone. Addressable events cannot be un-published and
+       * a relay that never honours the kind-5 keeps serving the last real version for ever, so the
+       * tombstone IS the delete as far as any client is concerned. But DELETING the entry threw away
+       * the only thing that could refuse the older copy: the guard above protects what is still in
+       * the map, and after a delete there is nothing there to protect it.
+       *
+       * That is not a rare race with a lagging relay — it happens inside a SINGLE batch. Events are
+       * sorted newest-first, so the tombstone is applied first (deleting nothing), and the real note
+       * that follows finds `have` undefined and is put straight back. The Store keeps both events,
+       * so this repeated on every single load: the note was deleted, and it was there again.
+       *
+       * So the tombstone is REMEMBERED, with its timestamp, and nothing older than it may land.
+       * Kept in its own map rather than as a marker inside `notes` — fourteen places read that map,
+       * and one that forgot to skip a marker would render a ghost note. It needs no persistence of
+       * its own: the tombstone event is in the Store and is re-absorbed on every load, which is
+       * exactly what made this bug repeat and is now what makes the memory rebuild itself.
+       *
+       * A genuine RESTORE still wins, because it is a newer event than the tombstone. */
+      if(!lib.gone) lib.gone = new Map();
+      const gkey = (isNote ? 'n:' : 'f:') + id;
+      if((lib.gone.get(gkey) || 0) >= ev.created_at) continue;
+      if(!ev.content){ into.delete(id); lib.gone.set(gkey, ev.created_at); continue; }
       let obj = null;
       try{ obj = JSON.parse(await PC.nip44dec(ME().pubkey, ev.content)); }
       catch(_){ continue; }   // not ours / not decryptable with this key — skip, never drop

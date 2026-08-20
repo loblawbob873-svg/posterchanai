@@ -2793,7 +2793,7 @@
   // read location.pathname and open the right view, and push the canonical URL as you navigate so
   // every profile/post is linkable + back/forward works.
   let _routing = false;
-  function _navUrl(path){
+  function _navUrl(path, replace){
     if(_routing) return;                       // don't re-push while we're decoding the current URL
     // Nor while a desktop window repaints itself on focus. Clicking between two windows is not
     // navigation, and pushing an entry for it made the back button walk window focus instead of
@@ -2805,7 +2805,21 @@
     // URL stays in-scope; _entityFromPath already strips the /client prefix when decoding.
     const inClient = location.pathname === '/client' || location.pathname.startsWith('/client/');
     const target = inClient ? ('/client' + (path === '/' ? '' : path)) : path;
-    try{ if(location.pathname !== target){ history.pushState({}, '', target); _navPushed++; } }catch(_){}
+    try{
+      if(location.pathname === target) return;
+      /* REPLACE, DO NOT STACK, when one post leads to another.
+       *
+       * "click post, make a comment, click the back button on my phone and it takes me back to some
+       * other random post instead of my home feed." Every thread opened pushed an entry, so a chain
+       * — the post, its root, an ancestor, the reply just written — became a chain of back presses
+       * through posts nobody asked to revisit. Back should leave the thread, not walk it.
+       *
+       * So a thread reached FROM the timeline pushes once, and everything after that replaces: the
+       * address bar stays honest (it always names what is on screen, so a share or a reload is
+       * right) while there is only ever ONE entry to come back through. */
+      if(replace){ history.replaceState({}, '', target); return; }
+      history.pushState({}, '', target); _navPushed++;
+    }catch(_){}
   }
   // Shareable web link for a NIP-19 entity (npub/note/nevent/naddr) → poster.place/<entity>.
   function _webLink(entity){ return _serverOrigin() + '/' + entity; }
@@ -5789,6 +5803,11 @@
     }catch(_){}
   }
 
+  /* One remembered offset per timeline tab. Not persisted: it answers "put me back where I was a
+   * moment ago", and a scroll position from a previous session is a position in a feed that no
+   * longer exists. */
+  const _tlScrollMemo = Object.create(null);
+
   function switchView(v, quiet){
     /* Leaving the screen stops the narration. The chip is fixed to the viewport, so without this it
        outlives the post it belongs to and offers to stop something the reader can no longer see. */
@@ -5834,6 +5853,21 @@
     // A keyboard selection belongs to the feed we are leaving; and if the cursor was parked in the nav
     // rail, opening a view is exactly the moment to hand it back to the content.
     try{ _selectNote(null); _vimPane='feed'; }catch(_){ }
+    /* WHERE YOU WERE IN THE TIMELINE, KEPT — "ideally it would also keep me where in the timeline
+     * I was". #feed is ONE scroll container shared by every view, so opening a post and coming back
+     * did not merely lose the offset: the timeline was re-rendered from the top with no memory that
+     * there had been an offset at all. Remembered per timeline tab, because Home, Nostrverse and
+     * Trending are three different reading positions and restoring one into another is worse than
+     * restoring nothing.
+     *
+     * Saved on the way OUT, while the old view's nodes are still on screen and its scrollTop is
+     * still real — after `VIEW = v` there is nothing left to measure. */
+    try{
+      if(_TL_TABS.indexOf(VIEW) >= 0 && VIEW !== v){
+        const f = $('#feed');
+        if(f && f.scrollTop > 0) _tlScrollMemo[VIEW] = f.scrollTop;
+      }
+    }catch(_){ }
     _navUrl('/');   // top-level views aren't entity URLs — reset the address bar to the root
     VIEW = v;
     if(v==='notifications'){ _notifShown = 25;   // fresh entry → collapse pagination back to one page
@@ -6168,6 +6202,27 @@
     const fn = _tlFilter(view);
     if(reset){ _tl = { oldest:0, loading:false, done:false, pages:0, eosed:false }; _resetLive(); _liveSince = Math.floor(Date.now()/1000); }
     _drawTimeline(false);
+    /* PUT THEM BACK WHERE THEY WERE. The offset was saved by switchView on the way out; this is the
+     * first moment the cards exist to scroll to.
+     *
+     * Consumed once, deliberately — `delete` before the frame, not after. The live re-renders that
+     * fire as relay events arrive come back through here, and an offset that survived would yank a
+     * reader back up the feed every time somebody posted. It answers "return me to where I was",
+     * once, and then the scroll belongs to the person again.
+     *
+     * Deferred a frame because scrollTop cannot exceed a height that has not been laid out yet: set
+     * synchronously against a feed the browser has not measured, it clamps to whatever fits and the
+     * restore silently lands near the top. */
+    try{
+      const want = _tlScrollMemo[view];
+      if(want > 0){
+        delete _tlScrollMemo[view];
+        requestAnimationFrame(() => {
+          const f = $('#feed');
+          if(f && VIEW === view && f.scrollTop < 4) f.scrollTop = want;
+        });
+      }
+    }catch(_){ }
     if (subs[view]) Relay.close(subs[view]);
     /* The FIRST post that arrives for a timeline nobody can see is the one that closes it.
      *
@@ -6188,7 +6243,18 @@
        * parked window is the question that was meant, and it is true in both arrangements. */
       if ((VIEW===view || _parkedSlot(view)) && ev.kind!==5 && _TL_KINDS.includes(ev.kind) && _tl.eosed && ev.created_at >= _liveSince-120) _bufferLive(ev, fn, view); } };
     // Draw ONLY on the first EOSE. The relay re-EOSEs on reconnect; redrawing then wipes the feed.
-    const markEosed = ()=>{ if(VIEW===view && !_tl.eosed){ _tl.eosed=true; _drawTimeline(false); } };
+    /* AN EOSE IS NOT A NAVIGATION, so it must not move the reader.
+     *
+     * This redrew with preserveScroll=false — resetting #feed to the top — and EOSE arrives at every
+     * moment somebody is mid-feed: after publishing a post (the composer re-subscribes), after a
+     * relay reconnects, after returning to a backgrounded tab. Reported as "I can scroll down, make
+     * a post, and then it resets me at the top, there are several other scenarios where this happens
+     * too, but it'd be hard to purposefully find them" — and they are hard to find on purpose
+     * precisely because the trigger is a relay's end-of-stream, not anything the person did.
+     *
+     * Only a fresh ENTRY to a timeline starts at the top (renderTimeline), and only a deliberate
+     * change of what is shown does (the media toggle). Everything else redraws where they are. */
+    const markEosed = ()=>{ if(VIEW===view && !_tl.eosed){ _tl.eosed=true; _drawTimeline(true); } };
     // Re-entrancy token: a slow async negSync that resolves AFTER the user re-navigated (or re-rendered)
     // must not install — and leak — a subscription for a superseded render. setSub closes such orphans.
     const myGen = ++_tlGen;
@@ -29022,7 +29088,10 @@
         finally{ openThread._osIn = 0; }
       }
     }
-    try{ _navUrl('/'+NT().nip19.neventEncode(hints.length?{ id, relays:hints }:{ id })); }catch(_){ try{ _navUrl('/'+NT().nip19.noteEncode(id)); }catch(__){} }
+    // Already in a thread → this is a step WITHIN it, not a new destination. See _navUrl.
+    const _rep = (VIEW === 'thread');
+    try{ _navUrl('/'+NT().nip19.neventEncode(hints.length?{ id, relays:hints }:{ id }), _rep); }
+    catch(_){ try{ _navUrl('/'+NT().nip19.noteEncode(id), _rep); }catch(__){} }
     renderThread(id, hints);
   }
   /* THE THREAD'S FIRST PAINT — the post you tapped, on screen before the conversation is resolved.
