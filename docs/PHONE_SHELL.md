@@ -50,20 +50,51 @@ reported as *"missing traditional home desktop view"*. There are three layers no
 **Widgets are real `AppWidgetHost` widgets**, picked from **our own list** and resized by dragging
 the frame's edges.
 
-**The list is ours because nothing on a modern Android answers `ACTION_APPWIDGET_PICK`.** That
-activity belonged to the era when a system dialog owned "Add to Home screen"; every launcher since
-has drawn its own. The first version fired that intent as step 1, so `startActivityForResult` threw
-`ActivityNotFoundException`, the catch freed the widget id and showed "this phone has no widget
-picker", and *every* route into the flow ended there — which is why "no widgets can be added to
+**The list is ours, because handing step 1 to `ACTION_APPWIDGET_PICK` is not a route a third-party
+launcher can rely on.** The first version fired that intent, and the catch that was meant to explain
+an exotic failure was on the *only* path: it freed the widget id and showed "this phone has no widget
+picker", so every route into the flow ended there — which is why "no widgets can be added to
 posterchan launcher home screen" survived a round of fixes that included making the flow findable
 from three menus. All three led to the same dead end. **Nothing about that is visible from a source
-file**: an intent nobody answers and a person cancelling a dialog land two lines apart.
-`Widgets.systemPickerExists()` is kept only so a device test can state the fact as a measurement.
+file**: an intent that cannot be started and a person cancelling a dialog land two lines apart.
+
+**A theory this device refuted, recorded rather than repeated.** The tidy explanation was that
+nothing answers that intent any more. The emulator says otherwise — `systemPicker=true` on API 34 —
+so that explanation is wrong, at least on that image, and the device test now *prints* what the
+activity is (package, exported, permission) instead of asserting a story about it. Resolving and
+being startable by us are different questions. What does not depend on the answer is our own list:
+every launcher builds one, it works whether or not an image has a picker, and it is the only version
+of this flow that can show a preview or say "no app on this phone offers a widget".
 
 `providers()` builds the list from `getInstalledProviders()`, sorted by owning app then by the
 widget's own label, each row showing its size in cells. **An empty list says "no app on this phone
 offers a widget"** — a different sentence from "the picker is missing", and telling those apart is
 the difference between this round of the bug and the last three.
+
+**A name is not enough to choose by** — *"widgets UI is terrible now. You have no idea which widget
+you are adding."* Each row draws the real thing: `previewImage`, then **`previewLayout`** (API 31+,
+which is what modern providers ship *instead* and which `loadPreviewImage` does not render — it is a
+layout id in the *provider's* resources, so it is inflated against that package's own
+`CONTEXT_RESTRICTED` context and drawn to a bitmap), then the provider's icon, then the app's. The
+owning app is on the row too, because "Clock" from three apps is three identical rows otherwise.
+
+**Our own widgets were the worst offenders and it was our bug, not the picker's.** A widget's label
+is its *receiver's* label; neither of ours declared one, so `loadLabel` fell back to the
+*application* label and the list read `PosterChan / PosterChan 2x2` and `PosterChan / PosterChan
+3x1` while every other app read `Clock / Analog`. That was found in the emulator's provider dump, not
+guessed, and a device test now asserts Calendar, Music and Weather are three distinct names.
+
+**A placed widget could not be long-pressed, so it could not be removed** — reported as *"no way to
+remove widgets"*, and it was the same reason one could not be moved or resized. An icon cell is an
+inert `View`, so its touches fall through to `DeskView`. An `AppWidgetHostView` is not: its
+RemoteViews children carry PendingIntents, so they are **clickable and consume the DOWN**, and
+`DeskView` was never told a finger had gone down on a widget. The long press was never armed and
+every menu hanging off it — Remove from home, Resize, Add a widget — was unreachable on the one kind
+of item that most needs them. That is `247a1be8`'s shape exactly: a child that eats the gesture is
+invisible in the parent's code. The DOWN is watched in `onInterceptTouchEvent` now, and the gesture
+is only **stolen** once the long press has actually fired, so a short tap still reaches the widget's
+own buttons. The menu is titled with the widget's own name, too — a menu about an existing widget
+headed "Add a widget" reads as the wrong menu.
 
 Three things after that are easy to get half right and each fails silently: `BIND_APPWIDGET` is
 signature-level so a third-party launcher must ask via `ACTION_APPWIDGET_BIND` (skip it and the
@@ -558,3 +589,54 @@ report artifact, so getting a fact off the device no longer means failing a test
 `android_device_checks.sh` runs `wm size 2560x1600` + `wm density 240` (a 1066dp short side, which
 Android reports as a large screen), presses HOME, screenshots the desktop and the drawer, scans for
 a crash, and resets unconditionally — a device left resized would poison every check after it.
+
+---
+
+## The weather widget, and what leaves the phone
+
+*"i want the calendar widget and weather widget!"* The calendar widget already existed
+(`calendar.CalendarWidget`); it was unreachable because the picker was dead. Weather is new
+(`place.poster.app.weather/`), and the only interesting question about it is where the numbers come
+from.
+
+**It asks this user's own PosterChan instance — `<base>/api/weather` — and nothing else.** No third
+party is contacted from the phone. The node was already proxying Open-Meteo for the desktop's weather
+widget (`app/services/weather_service.py`) precisely so that a reader's IP and coordinates never
+reach an upstream, and it caches on the coordinate **rounded to about a kilometre**, so what the
+forecast service sees is one server and a grid square. This widget adds no new destination to the app.
+
+**There is no location permission anywhere in the feature.** The place is *typed* and looked up
+through the same node's `/api/weather/geocode`, so the phone's own location is never read and the
+widget never has to ask for it. A permission prompt for a home-screen widget is a bad bargain, and a
+place somebody chose beats a fix from a cold GPS. The picker is the widget's own **configuration
+activity**, which the system starts the moment the widget is placed — a widget that lands blank with
+no way to fix itself is the classic grey box — and a tap on an unconfigured one opens it again.
+
+**It never goes blank and it never lies.** A failed fetch writes nothing, so what is on screen is the
+last real reading with its age beside it once that age is worth mentioning; a fresh reading carries
+no timestamp, because a timestamp on every reading trains people to ignore the one that matters. A
+reading that arrived without a temperature draws an em dash — `0°` is a real temperature and would be
+a confident lie in exactly the weather somebody is checking before choosing a coat. And the three
+empty states are three different sentences: **"Tap to set your location"**, "weather needs your
+PosterChan server", "no forecast yet — tap to try again". One "unavailable" sends people looking in
+the wrong place.
+
+**It is the one widget here that polls**, and that is worth stating because nothing else in this
+feature does. The calendar is pushed a month ahead and the music widget is pushed on every change, so
+both are `updatePeriodMillis="0"`. A forecast is the one thing that genuinely goes stale on its own,
+so this asks for an hourly tick — clamped by the platform to a 30-minute minimum and batched with
+other wake-ups — and a tap refreshes immediately, which is what makes an hour rather than a minute
+acceptable. The fetch runs on a plain background thread, never on the broadcast's main thread: a
+receiver that blocks is an ANR drawn on somebody else's home screen.
+
+The instance URL is the one thing the widget cannot work out for itself — the launcher's process has
+no session and one bundle serves every instance — so `WeatherPlugin.sync` mirrors it across from the
+client exactly as `PcThemePlugin` mirrors the theme. **An empty base is a real answer**, not a failure
+to send one: it is the "no server" state above.
+
+The display rules are pure (`weather.Weather`) and `tests/test_android_weather.py` runs them under
+javac, including that the words match the client's own `_wxDesc` grouping — the desktop widget and the
+phone widget describing the same sky differently is the kind of difference nobody reports and everybody
+notices. The condition glyphs are hand-written (`ic_wx_*`), and a test asserts **not one of them
+contains an arc**: packed arc flags are what made 26 of 63 generated icons fail to inflate, and these
+are the only vectors here that no generator checks.
