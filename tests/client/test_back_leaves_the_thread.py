@@ -60,14 +60,29 @@ class BackLeavesTheThread(unittest.TestCase):
         offset that survived would yank a reader back up the feed every time somebody posted."""
         blk = self.src[self.src.index("const want = _tlScrollMemo[view];"):][:600]
         self.assertIn("delete _tlScrollMemo[view]", blk)
-        self.assertLess(blk.index("delete _tlScrollMemo[view]"), blk.index("requestAnimationFrame"),
-                        "the memo is cleared after the frame, so a re-render in between restores twice")
+        self.assertLess(blk.index("delete _tlScrollMemo[view]"), blk.index("_putScroll"),
+                        "the memo is cleared after the restore starts, so a re-render in between "
+                        "restores twice")
 
-    def test_the_restore_waits_for_layout(self):
-        """scrollTop cannot exceed a height that has not been laid out yet — set synchronously it
-        clamps to whatever fits and the restore silently lands near the top."""
-        blk = self.src[self.src.index("const want = _tlScrollMemo[view];"):][:600]
-        self.assertIn("requestAnimationFrame", blk)
+    def test_the_restore_retries_until_it_takes(self):
+        """ONE FRAME IS NOT ENOUGH ON EVERY ENGINE. `scrollTop = want` against a feed that has not
+        been laid out clamps to whatever fits — near the top, which is the bug. Chromium had usually
+        laid out by the next animation frame; Firefox had not, and the reply repaint kept landing at
+        the top after everything else was fixed."""
+        blk = self.src[self.src.index("const want = _tlScrollMemo[view];"):][:400]
+        self.assertIn("_putScroll", blk)
+        put = self.src[self.src.index("function _putScroll(want, ok){"):][:1400]
+        self.assertIn("setTimeout(put", put, "it gives up after a single attempt")
+        self.assertIn("scrollHeight > f.clientHeight", put,
+                      "it writes the offset before the content is tall enough to hold it")
+
+    def test_the_retry_stops_when_the_reader_takes_over(self):
+        """A loop that keeps forcing a position would fight somebody scrolling. Their own scroll ends
+        it, and so does leaving the view."""
+        put = self.src[self.src.index("function _putScroll(want, ok){"):][:1400]
+        self.assertIn("ok && !ok()", put, "it restores into a view the reader has already left")
+        self.assertIn("Math.abs(f.scrollTop - last) > 2", put,
+                      "it fights the reader for the scrollbar")
 
     def test_each_timeline_tab_keeps_its_own_place(self):
         """Home, Nostrverse and Trending are three different reading positions; restoring one into
@@ -198,10 +213,11 @@ class CommentingDoesNotThrowYouToTheTop(unittest.TestCase):
         blk = self.src[i:i + 2200]
         self.assertIn("if(!_same) _rememberTlScroll();", blk)
 
-    def test_the_restore_waits_for_layout(self):
+    def test_the_restore_retries_rather_than_writing_once(self):
+        """Same lesson as the timeline's: one frame is enough in Chromium and is not in Firefox."""
         i = self.src.index("async function renderThread(id, hints){")
-        blk = self.src[i:i + 2200]
-        self.assertIn("setTimeout(", blk[blk.index("if(_keepTop > 0)"):])
+        blk = self.src[i:i + 2600]
+        self.assertIn("_putScroll(_keepTop", blk)
 
 
 class RepaintingTheCurrentTimelineKeepsThePlace(unittest.TestCase):

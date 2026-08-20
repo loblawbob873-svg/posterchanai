@@ -5831,6 +5831,41 @@
    *
    * Must run BEFORE VIEW changes and while the old view's nodes are still on screen; afterwards
    * there is nothing left to measure. */
+  /* PUT THE READER BACK, AND KEEP TRYING UNTIL IT TAKES.
+   *
+   * `scrollTop = want` against a feed that has not been laid out yet clamps to whatever fits, which
+   * is near the top — the very bug this exists to fix, arrived at by a different route. One
+   * animation frame is enough in Chromium and is NOT enough in Firefox, where the reply repaint was
+   * still landing at the top after everything else was fixed: "firefox is still bringing me to top
+   * when i reply to a post on timeline".
+   *
+   * So it retries until the content is tall enough to hold the offset, or until it has waited long
+   * enough that the answer is no. `ok()` is re-asked every attempt because the reader may have moved
+   * on — restoring a position into a view they have since left is worse than not restoring at all.
+   * Nothing is retried once it LANDS, and a scroll the person makes themselves ends it (see the
+   * `<= 2` check: their own scroll makes the read-back differ, and that is their decision).
+   *
+   * os.js has carried the same loop for the windowed desktop since it learned this; this is that
+   * lesson, in the classic client. */
+  function _putScroll(want, ok){
+    if(!(want > 0)) return;
+    let tries = 0, last = -1;
+    const put = () => {
+      if(++tries > 40) return;
+      let f = null;
+      try{ f = $('#feed'); }catch(_){ f = null; }
+      if(!f || (ok && !ok())) return;                       // they moved on; leave them alone
+      if(last >= 0 && Math.abs(f.scrollTop - last) > 2) return;   // they scrolled — it is theirs now
+      if(f.scrollHeight > f.clientHeight){
+        f.scrollTop = want;
+        if(Math.abs(f.scrollTop - want) <= 2) return;        // landed, or clamped at the bottom
+      }
+      last = f.scrollTop;
+      setTimeout(put, 25);
+    };
+    put();
+  }
+
   function _rememberTlScroll(){
     try{
       if(_TL_TABS.indexOf(VIEW) < 0) return;
@@ -6258,10 +6293,7 @@
       const want = _tlScrollMemo[view];
       if(want > 0){
         delete _tlScrollMemo[view];
-        requestAnimationFrame(() => {
-          const f = $('#feed');
-          if(f && VIEW === view && f.scrollTop < 4) f.scrollTop = want;
-        });
+        _putScroll(want, () => VIEW === view);
       }
     }catch(_){ }
     if (subs[view]) Relay.close(subs[view]);
@@ -29196,15 +29228,7 @@
     /* Put them back once the replies have been laid out. Deferred for the reason the timeline's
      * restore is: scrollTop cannot exceed a height that does not exist yet, and set against an
      * unmeasured feed it clamps near the top — which is the bug, arrived at by a different route. */
-    if(_keepTop > 0){
-      const _want = _keepTop;
-      setTimeout(() => {
-        try{
-          const f = $('#feed');
-          if(f && VIEW === 'thread' && renderThread._tok === id && f.scrollTop < 4) f.scrollTop = _want;
-        }catch(_){ }
-      }, 0);
-    }
+    if(_keepTop > 0) _putScroll(_keepTop, () => VIEW === 'thread' && renderThread._tok === id);
     /* WHAT WE ALREADY HOLD GOES UP BEFORE ANY SOCKET IS WAITED ON.
      *
      * This is above `await Relay.ready()` on purpose, and the reason is the exact case that gets
