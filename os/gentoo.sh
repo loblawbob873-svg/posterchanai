@@ -75,7 +75,10 @@ ROOT_PARTITION_SIZE="30GB"
 FEATURES="-pid-sandbox getbinpkg -binpkg-request-signature"
 EMERGE_DEFAULT_OPTS="--jobs 5 --getbinpkg "
 #USEFLAG CONFIGURATION
-USE_FLAGS=" flatpak dracut -webp -ladspa npm introspection lame systemd-boot dist-kernel luks cryptsetup kernel-install boot opus theora vpx kernel-install systemd firmware btrfs networkmanager"
+# zstd is GLOBAL, not per-package: the live CD build compresses its squashfs with it and
+# dracut needs to be able to read that back, so a kernel/initramfs built without the flag
+# fails at "zstd is not supported" — after the whole image has been built.
+USE_FLAGS=" flatpak dracut -webp -ladspa npm introspection lame systemd-boot dist-kernel luks cryptsetup kernel-install boot opus theora vpx kernel-install systemd firmware btrfs networkmanager zstd"
 VIDEO_CARDS="intel amdgpu radeon radeonsi"
 #
 #PACKAGE CONFIGURATION
@@ -1466,12 +1469,44 @@ liveCD() {
 	command -v mkfs.vfat >/dev/null 2>&1 || NEED="$NEED sys-fs/dosfstools"
 	command -v dracut >/dev/null 2>&1 || NEED="$NEED sys-kernel/dracut"
 	command -v grub-mkrescue >/dev/null 2>&1 || NEED="$NEED sys-boot/grub"
+	command -v zstd >/dev/null 2>&1 || NEED="$NEED app-arch/zstd"
 	if [[ -n "$NEED" ]]; then
 		echo -e "${COLOR_YELLOW}Installing what this needs:${COLOR_RESET}$NEED"
 		echo
 		if ! /usr/bin/emerge -n $NEED; then
 			echo
 			echo -e "${COLOR_YELLOW}Could not install:$NEED — stopping rather than building half an ISO.${COLOR_RESET}"
+			read -p "Press enter key to Continue"
+			return
+		fi
+	fi
+
+	# ---------------------------------------------------------------- can it compress?
+	# "make live cd fails with zstd is not supported", after every slow step had already run.
+	#
+	# `-comp zstd` below is not optional — the initramfs and the kernel both read the image back
+	# with it — and squashfs-tools only speaks it when it was BUILT with the zstd USE flag. Having
+	# the flag in make.conf does not rebuild a copy that is already installed, so the tool sits
+	# there, present and missing exactly one compressor, and says so only when it is handed the
+	# whole filesystem to pack.
+	#
+	# Asked here, of the real binary, and repaired with --newuse rather than assumed. It is the
+	# cheapest possible question and it comes before anything expensive.
+	if ! mksquashfs -help 2>&1 | grep -qw zstd; then
+		echo -e "${COLOR_YELLOW}mksquashfs on this system cannot compress with zstd — rebuilding it${COLOR_RESET}"
+		echo -e "${COLOR_YELLOW}with the flag, which is what the live image and its initramfs need.${COLOR_RESET}"
+		echo
+		mkdir -p /etc/portage/package.use
+		echo "sys-fs/squashfs-tools zstd lzma lzo xz" >/etc/portage/package.use/livecd-squashfs
+		if ! /usr/bin/emerge -n --newuse sys-fs/squashfs-tools; then
+			echo
+			echo -e "${COLOR_YELLOW}Could not rebuild squashfs-tools with zstd — stopping.${COLOR_RESET}"
+			read -p "Press enter key to Continue"
+			return
+		fi
+		if ! mksquashfs -help 2>&1 | grep -qw zstd; then
+			echo
+			echo -e "${COLOR_YELLOW}It rebuilt and still has no zstd. Check USE for sys-fs/squashfs-tools.${COLOR_RESET}"
 			read -p "Press enter key to Continue"
 			return
 		fi
