@@ -425,7 +425,25 @@ function createWindow() {
     // an app in a window.
     autoHideMenuBar: SHELL_MODE,
     frame: !SHELL_MODE,
-    ...(SHELL_MODE ? { fullscreen: true, kiosk: false, resizable: false, movable: false } : {}),
+    /* NOT `fullscreen: true`, AND THAT IS THE WHOLE POINT OF THIS LINE.
+     *
+     * A compositor fullscreen window covers its entire workspace INCLUDING every floating window on
+     * it — so with the shell fullscreen, a native app launches, exists, reports its geometry, and is
+     * `visible: false`. Which is to say: the desktop's one job, hosting other programs, cannot work
+     * while it asks for this. Measured — opening a screenshot gave mupdf a window at 35,20 1849x1040
+     * with `visible:false` behind a shell at `fullscreen_mode: 1`, drawn as an empty frame:
+     * "clicking on a screenshot file loads black screen with spinning circle", and very likely the
+     * same cause as "firefox is now a black screen window".
+     *
+     * `pc-shell-start` already knew this — it runs `fullscreen disable` on the shell right after the
+     * window appears, and says why in a comment. That made it a RACE that this flag can win, and one
+     * nothing reports when it does. The shell fills the screen by being TILED, which is what
+     * `floating disable` there arranges, and a tiled window has floating windows above it, which is
+     * exactly the stacking a desktop needs.
+     *
+     * `maximize` rather than nothing, so a compositor that does not pin the window for us still gets
+     * a shell filling the display instead of a 1280x860 box in the middle. */
+    ...(SHELL_MODE ? { kiosk: false, resizable: false, movable: false } : {}),
     icon: path.join(__dirname, 'icon.png'),
     // Started by the login item: come up HIDDEN rather than showing and then hiding, which is a
     // window flashing on screen at every boot — the thing that makes people turn autostart off.
@@ -487,6 +505,12 @@ function createWindow() {
   const focusPage = () => { if (win && !win.isDestroyed()) win.webContents.focus(); };
   win.webContents.on('did-finish-load', focusPage);
   win.on('focus', focusPage);
+  /* FILLS THE SCREEN WITHOUT BEING FULLSCREEN. See the SHELL_MODE block in the options above: the
+   * compositor's fullscreen state hides every floating window on the workspace, which is every app
+   * this desktop exists to host. Maximising is the state that means "as big as the screen" without
+   * claiming exclusive use of it, and on PosterChanOS `pc-shell-start` tiles the window anyway — so
+   * this is the fallback for a compositor that does not, not the normal path. */
+  if (SHELL_MODE) { try { win.maximize(); } catch (_) {} }
   win.once('ready-to-show', focusPage);
 
   // Right-click menu. Electron ships NO default context menu, so `spellcheck: true` above only ever drew

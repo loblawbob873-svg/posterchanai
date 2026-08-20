@@ -1578,6 +1578,20 @@
         for(const x of list){
           if(x && x.stashed) _natSent.set(Number(x.id), 'hidden');
         }
+        /* AND THE SHELL MUST NOT BE FULLSCREEN WHILE IT IS HOSTING ANYTHING.
+         *
+         * A compositor fullscreen window covers its whole workspace INCLUDING the floating windows
+         * on it, so with the shell fullscreen every native app is `visible:false` — present, placed,
+         * correctly sized, and behind us. The frame draws over nothing and reads as a black window,
+         * which is what "clicking on a screenshot file loads black screen with spinning circle" was.
+         *
+         * The window is no longer CREATED fullscreen, so this is the second line of defence rather
+         * than the fix: F11, a stray keybinding, or a compositor restoring a remembered state can
+         * all put it back, and none of them would say so. Asked only when something is actually
+         * being hosted — a desktop with no native windows is welcome to be fullscreen. */
+        if(_natShell && _natShell.fullscreen && nativeWins().length){
+          try{ await pcWM.fullscreen(_natShell.id, false); _natShell.fullscreen = false; }catch(_){}
+        }
       }
       const scale = NAT().scaleFrom(_natShell && _natShell.rect,
                                     document.documentElement.clientWidth,
