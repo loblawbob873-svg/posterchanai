@@ -78,8 +78,15 @@ class Render(unittest.TestCase):
         onEvent: () => () => {},
       },
       pcNet: { status: async () => ({ online: true, kind: 'wifi', name: 'Tribble', signal: 71 }) },
+      /* THE SHAPE desktop/power.js ACTUALLY RETURNS, `profiles` included. It was omitted here, and
+         a stub that omits a field can never catch the panel reading it wrong: `profiles` is an
+         OBJECT and the panel treated it as an array, so a real laptop offering
+         low-power/balanced/performance showed no power modes at all and nothing threw. */
       pcPower: { status: async () => ({ battery: {present: true, percent: 80, charging: false},
                                         brightness: {available: true, percent: 60},
+                                        profiles: { available: true, kind: 'platform',
+                                                    list: ['low-power', 'balanced', 'performance'],
+                                                    active: 'balanced' },
                                         canHibernate: true }) },
       pcAudio: { status: async () => ({ output: { percent: 35, muted: false } }) } }"""
 
@@ -171,6 +178,32 @@ class Render(unittest.TestCase):
         """)
         for want in ("Tribble", "35%", "60%", "80%"):
             self.assertIn(want, out["html"], f"the panel does not show {want}")
+
+    def test_the_profiles_are_read_as_the_bridge_returns_them(self):
+        """`power.js` answers `profiles: { available, kind, list, active }` and the panel read it as
+        an ARRAY. An object has no `.length`, so the profile row was never drawn and the machine
+        offered no power modes at all — measured on a laptop whose kernel was reporting
+        `low-power balanced performance` the whole time. Nothing threw; the reading was right and
+        the panel could not show it.
+
+        Driven through `profileMenu`, which is why that is a function rather than two lines inside
+        the popover: the failure is a `.length` on the wrong kind of value, and it draws an empty
+        row perfectly."""
+        out = self.run_js(self.WM, """
+          const st = await globalThis.pcPower.status();
+          out.real = S.profileMenu(st);
+          // The obvious-but-wrong shape a future bridge might answer with must still work.
+          out.asArray = S.profileMenu({ profiles: ['a', 'b'], profile: 'b' });
+          // And a machine with none must offer none rather than a row of dead buttons.
+          out.none = S.profileMenu({ profiles: { available: false, list: [], active: '' } });
+          out.missing = S.profileMenu({});
+        """)
+        self.assertEqual(out["real"]["list"], ["low-power", "balanced", "performance"],
+                         "the machine's real power modes were not read out of the bridge's answer")
+        self.assertEqual(out["real"]["active"], "balanced", "the profile in use was not read")
+        self.assertEqual(out["asArray"], {"list": ["a", "b"], "active": "b"})
+        self.assertEqual(out["none"]["list"], [])
+        self.assertEqual(out["missing"]["list"], [])
 
     def test_the_battery_opens_the_power_menu_rather_than_only_reporting(self):
         """A reading you cannot act on is the shape of control this shell keeps getting wrong: the

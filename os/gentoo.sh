@@ -724,6 +724,30 @@ posterchanShell() {
 	udevadm trigger --action=add --subsystem-match=backlight >/dev/null 2>&1
 	udevadm trigger --action=add --subsystem-match=leds >/dev/null 2>&1
 
+	# THE POWER MODE, WRITABLE WITHOUT ROOT — the same problem as the backlight, one directory over.
+	# /sys/firmware/acpi/platform_profile is root:root 0644, so the panel can READ that this machine
+	# offers low-power/balanced/performance and cannot select one: a row of buttons that report an
+	# error. power-profiles-daemon is the usual answer and it is a daemon, a package, and a polkit
+	# policy to replace three lines.
+	#
+	# NOT a udev rule: /sys/firmware/acpi is not a device and no `add` event is ever emitted for it,
+	# so there is nothing for a rule to match. tmpfiles runs on every boot regardless, which is also
+	# what makes it right for a file the kernel recreates.
+	#
+	# `video`, the group pc-provision-user already puts every account in — the same grant as the
+	# brightness, and for the same reason: it is a comfort setting on the machine in front of you,
+	# not a privilege. The cpufreq governor is the fallback path power.js takes on hardware with no
+	# ACPI profile, and it needs the same treatment per policy.
+	mkdir -p /etc/tmpfiles.d
+	cat >/etc/tmpfiles.d/posterchan-power.conf <<-'TMPF'
+	z /sys/firmware/acpi/platform_profile 0664 root video -
+	z /sys/devices/system/cpu/cpufreq/policy*/scaling_governor 0664 root video -
+	z /sys/devices/system/cpu/cpufreq/policy*/energy_performance_preference 0664 root video -
+	TMPF
+	# Applied now as well as at every boot, or the first session after an install has power buttons
+	# that do nothing and nothing to say why — the same trap as the un-triggered udev rule above.
+	systemd-tmpfiles --create /etc/tmpfiles.d/posterchan-power.conf >/dev/null 2>&1
+
 	mkdir -p /etc/sway
 	cat >/etc/sway/config <<-'SWAY'
 	# PosterChanOS — the shell owns the screen; PosterChan decides what goes where.

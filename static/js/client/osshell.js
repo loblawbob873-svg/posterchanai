@@ -176,6 +176,26 @@
              canHibernate: !!(s.power && s.power.canHibernate) };
   }
 
+  /* THE POWER MODES THIS MACHINE OFFERS, out of whatever `power.js` answered.
+   *
+   * They are an OBJECT — `{ available, kind, list, active }` — and the panel read them as an ARRAY.
+   * An object has no `.length`, so the profile row was never drawn and a laptop whose kernel was
+   * reporting `low-power balanced performance` the whole time offered no power modes at all.
+   * Nothing threw: the reading was right and the panel could not show it. Reported as "clicking on
+   * battery should let me change power mode".
+   *
+   * Pure, and here rather than inside the popover, because that is the only way this can be tested
+   * — the failure is a `.length` on the wrong kind of value, which draws an empty row perfectly.
+   * The array branch is kept because "a list of profiles" is what the name says and a future bridge
+   * answering the obvious thing must not silently draw nothing again. */
+  function profileMenu(status){
+    const pf = status && status.profiles;
+    if(Array.isArray(pf)) return { list: pf, active: (status && status.profile) || '' };
+    if(pf && Array.isArray(pf.list) && pf.available !== false)
+      return { list: pf.list, active: pf.active || '' };
+    return { list: [], active: '' };
+  }
+
   /** Provision the Unix account for whoever just signed in. Idempotent; safe on every sign-in. */
   async function ensureAccount(npub){
     const os = OS(); if(!os) return { ok: false, why: 'not PosterChanOS' };
@@ -352,8 +372,8 @@
     const p = POWER(); if(!p) return;
     let st = null;
     try{ st = await p.status(); }catch(_){ st = null; }
-    const profs = (st && st.profiles) || [];
-    const cur = (st && st.profile) || '';
+    const pm = profileMenu(st);
+    const profs = pm.list, cur = pm.active;
     const canHib = !!(st && st.canHibernate);
     const d = openPop(anchor, `<div class="os-pop-h">Power</div>
       ${profs.length ? `<div class="os-pop-b os-pop-profs">${profs.map(x =>
@@ -485,6 +505,7 @@
   }
 
   const API = { available, detect, APPS, taskbarRows, existingWindow, launch, panelState, panelSummary,
+                profileMenu,
                 ensureAccount, panelHTML, taskbarHTML, launcherHTML, render, watch,
                 setViewOpener, refresh, paintTray, bindApps, bindPanel,
                 summary: () => _sum, rows: () => _rows, readAt: () => _readAt };

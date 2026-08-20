@@ -204,6 +204,25 @@ class PosterChanOSProfile(unittest.TestCase):
             self.assertFalse([p for p in self.pkgs if gone in p],
                              f"{gone} is back in the profile — check whether it is really needed")
 
+    def test_the_power_mode_can_be_CHANGED_and_not_only_read(self):
+        """A control that reports a reading and refuses to change it is worse than no control: it
+        looks like the feature is there. /sys/firmware/acpi/platform_profile is root:root 0644, so
+        the panel could read that a laptop offers low-power/balanced/performance and select none of
+        them.
+
+        NOT a udev rule, and that is the point of the test: /sys/firmware/acpi is not a device and
+        emits no `add` event, so a rule matching it never fires and the file stays root-only with
+        the rule loaded and correct — which is exactly how the backlight version of this was got
+        wrong once already. tmpfiles runs every boot regardless."""
+        self.assertIn("platform_profile", self.src,
+                      "nothing grants the power-mode file, so no profile can ever be selected")
+        self.assertIn("tmpfiles", self.src,
+                      "the power-mode grant is not tmpfiles — a udev rule cannot match sysfs paths "
+                      "that emit no device event")
+        # Applied at install time too, or the first session after an install has dead buttons.
+        self.assertIn("systemd-tmpfiles --create", self.src,
+                      "the grant is written but never applied, so it does nothing until a reboot")
+
     def test_the_super_key_reaches_the_shell_from_inside_another_app(self):
         """A start menu you cannot open while a browser is focused is not one, and that is exactly
         the machine state you press Super in. The shell's own key handler cannot see the press —
