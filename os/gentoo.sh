@@ -1513,14 +1513,55 @@ liveCD() {
 	fi
 
 	# ---------------------------------------------------------------- where
-	local OUTDIR ISO WORK LABEL
-	read -p 'Write the ISO where? ' -e -i "/var/tmp/livecd" OUTDIR
+	#
+	# WHERE IT LANDS IS DECIDED HERE AND SAID OUT LOUD, because an answer that quietly becomes
+	# somewhere else costs the whole build. "the iso is saving to ~": an empty answer, or a relative
+	# one, resolves against whatever directory the script was started from — usually the home
+	# directory of whoever ran it — and a multi-gigabyte image plus its work tree lands on the
+	# partition least able to take it, silently.
+	local OUTDIR ISO WORK LABEL DEFOUT LOG
+	DEFOUT="/var/tmp/livecd"
+	read -p 'Write the ISO where? ' -e -i "$DEFOUT" OUTDIR
+	# An empty answer is the default, not the current directory. `read -e -i` pre-fills only on a
+	# real terminal; anywhere else it hands back "".
+	OUTDIR="${OUTDIR:-$DEFOUT}"
+	OUTDIR="${OUTDIR/#\~/$HOME}"                 # ~ is not expanded by read
+	if [[ "$OUTDIR" != /* ]]; then
+		echo -e "${COLOR_YELLOW}'$OUTDIR' is a relative path — it would land under $PWD.${COLOR_RESET}"
+		echo -e "${COLOR_YELLOW}Give a full path starting with /, or press enter for $DEFOUT.${COLOR_RESET}"
+		read -p 'Write the ISO where? ' -e -i "$DEFOUT" OUTDIR
+		OUTDIR="${OUTDIR:-$DEFOUT}"
+		OUTDIR="${OUTDIR/#\~/$HOME}"
+		[[ "$OUTDIR" != /* ]] && { echo "still not a full path — stopping."; read -p "Press enter key to Continue"; return; }
+	fi
+	OUTDIR="${OUTDIR%/}"
 	mkdir -p "$OUTDIR" || { echo "cannot write to $OUTDIR"; read -p "Press enter key to Continue"; return; }
 	LABEL="PCLIVE"
 	ISO="$OUTDIR/posterchan-live-$(date +%Y%m%d).iso"
 	WORK="$OUTDIR/work"
+	# SAID BEFORE THE SLOW PART, with the room there is. The image and its work tree are several
+	# gigabytes and the build discovers a full disk at the very end, after packing everything.
+	local FREE
+	FREE="$(df -BG --output=avail "$OUTDIR" 2>/dev/null | tail -1 | tr -dc '0-9')"
+	echo
+	echo -e "${COLOR_YELLOW}ISO:  $ISO${COLOR_RESET}"
+	echo -e "${COLOR_YELLOW}Work: $WORK${COLOR_RESET}"
+	[[ -n "$FREE" ]] && echo -e "${COLOR_YELLOW}Free here: ${FREE}G${COLOR_RESET}"
+	if [[ -n "$FREE" && "$FREE" -lt 12 ]]; then
+		echo -e "${COLOR_YELLOW}That is not much room for a squashfs plus an ISO of it.${COLOR_RESET}"
+		local GOON
+		read -p 'Carry on anyway? ' -e -i "n" GOON
+		[[ "${GOON,,}" == y* ]] || { read -p "Press enter key to Continue"; return; }
+	fi
 	rm -rf "$WORK"
 	mkdir -p "$WORK/iso/LiveOS" "$WORK/iso/boot/grub"
+	# A TRANSCRIPT, because "i tried to make iso again but no work" is not something anybody can act
+	# on and the build is far too long to ask somebody to sit through twice. Every step below appends
+	# a line; the failure paths already print, and this is where those prints end up when the screen
+	# has scrolled or the terminal has been closed.
+	LOG="$OUTDIR/build.log"
+	{ echo; echo "=== $(date) ==="; echo "iso=$ISO work=$WORK free=${FREE:-?}G kernel-to-find=$(uname -r)"; } >>"$LOG" 2>/dev/null
+	echo -e "${COLOR_YELLOW}Log:  $LOG${COLOR_RESET}"
 
 	local KEEP_HOME
 	read -p 'Include /home in the image? ' -e -i "n" KEEP_HOME
@@ -1720,7 +1761,8 @@ DESKTOP
 		-comp zstd -Xcompression-level 15 -noappend -no-progress \
 		-pf "$PSEUDO" "${EXARGS[@]}"; then
 		echo
-		echo -e "${COLOR_YELLOW}mksquashfs failed — nothing was written.${COLOR_RESET}"
+		echo "mksquashfs FAILED" >>"$LOG" 2>/dev/null
+		echo -e "${COLOR_YELLOW}mksquashfs failed — nothing was written. See $LOG${COLOR_RESET}"
 		read -p "Press enter key to Continue"
 		return
 	fi
@@ -1766,6 +1808,7 @@ DESKTOP
 		return
 	fi
 	echo -e "${COLOR_YELLOW}Kernel: $KERNEL${COLOR_RESET}"
+	echo "kernel=$KERNEL" >>"$LOG" 2>/dev/null
 	cp -f "$KERNEL" "$WORK/iso/boot/vmlinuz"
 
 	echo
@@ -1778,7 +1821,8 @@ DESKTOP
 		--add "dmsquash-live" --omit "crypt crypt-gpg crypt-loop" \
 		--kver "$KVER" "$WORK/iso/boot/initramfs.img"; then
 		echo
-		echo -e "${COLOR_YELLOW}dracut failed — the ISO would not boot, so nothing was written.${COLOR_RESET}"
+		echo "dracut FAILED (kver=$KVER)" >>"$LOG" 2>/dev/null
+		echo -e "${COLOR_YELLOW}dracut failed — the ISO would not boot, so nothing was written. See $LOG${COLOR_RESET}"
 		read -p "Press enter key to Continue"
 		return
 	fi
@@ -1810,9 +1854,10 @@ GRUB
 	echo
 	echo -e "${COLOR_YELLOW}Writing $ISO${COLOR_RESET}"
 	echo
-	if ! grub-mkrescue -o "$ISO" "$WORK/iso" -- -volid "$LABEL"; then
+	if ! grub-mkrescue -o "$ISO" "$WORK/iso" -- -volid "$LABEL" 2>&1 | tee -a "$LOG"; then
 		echo
-		echo -e "${COLOR_YELLOW}grub-mkrescue failed — no ISO was written.${COLOR_RESET}"
+		echo "grub-mkrescue FAILED" >>"$LOG" 2>/dev/null
+		echo -e "${COLOR_YELLOW}grub-mkrescue failed — no ISO was written. See $LOG${COLOR_RESET}"
 		read -p "Press enter key to Continue"
 		return
 	fi
