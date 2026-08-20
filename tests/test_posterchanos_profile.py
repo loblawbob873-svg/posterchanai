@@ -133,6 +133,18 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertIn("includedir /etc/sudoers.d", acc,
                       "/etc/sudoers is rewritten without its includedir — sudoers.d is dead")
 
+    def test_sudoers_is_left_with_the_mode_sudo_demands(self):
+        """sudo refuses to run AT ALL unless /etc/sudoers is 0440 root:root, and `echo >` creates it
+        with the default umask when the file does not already exist — which is exactly what happens
+        when this runs before app-admin/sudo is installed. Root is locked two lines later, so the
+        result is a machine with no way in except editing the kernel command line. Measured on a real
+        install: mode 0644, "sudo: no valid sudoers sources found, quitting"."""
+        acc = self._fn("accounts")
+        self.assertIn("chmod 0440 /etc/sudoers", acc, "sudo will refuse the file it just wrote")
+        self.assertIn("chown root:root /etc/sudoers", acc)
+        self.assertLess(acc.index("chmod 0440 /etc/sudoers"), acc.index("passwd -dl root"),
+                        "sudoers is fixed after root is locked — if it fails there is no way back")
+
     def test_no_html_engine_can_be_built_from_source(self):
         """webkit-gtk and qtwebengine are among the longest builds in the tree, and the way you find
         out something pulled one is that an install which looked nearly finished sits on a single

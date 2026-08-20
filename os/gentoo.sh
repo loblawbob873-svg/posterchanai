@@ -848,6 +848,17 @@ accounts() {
 	echo "$USER ALL=(ALL) NOPASSWD: ALL" >/etc/sudoers
 	echo "root ALL=(ALL) ALL" >>/etc/sudoers
 	echo "@includedir /etc/sudoers.d" >>/etc/sudoers
+	# SUDO REFUSES TO RUN AT ALL IF THIS FILE IS NOT 0440 root:root, and `echo >` CREATES it with
+	# the default umask when it does not already exist — which is what happens whenever this runs
+	# before app-admin/sudo is installed. The result is a machine with no working sudo and, since
+	# root is locked two lines below, no way in at all except editing the kernel command line.
+	# Measured on a real install: 0644, and "sudo: no valid sudoers sources found, quitting".
+	chown root:root /etc/sudoers
+	chmod 0440 /etc/sudoers
+	# ...and say so if it is still not valid, rather than discovering it after the reboot.
+	if command -v visudo >/dev/null 2>&1; then
+		visudo -c >/dev/null 2>&1 || echo -e "\033[1;31m  ✗ /etc/sudoers is not valid — sudo will refuse everything\033[0m"
+	fi
 	echo
 	echo -e "\033[1;33mSetting ROOT Password:\033[0m"
 	echo "root:$ROOT_PASSWORD" | chpasswd
