@@ -703,7 +703,23 @@ public class HomeActivity extends Activity implements DeskView.Host {
         // written to clean up after. WidgetDeviceTest prints both families side by side so the next
         // person reads a number instead of guessing.
         int cells = Math.max(1, declared / cellPx);
-        return Math.max(minCells(item, grid, cellPx, wide), Math.min(grid, cells));
+        int lo = minCells(item, grid, cellPx, wide);
+        /* NEVER THE WHOLE WIDTH OF A PHONE, and that rule belongs to the GRID rather than to any
+         * number a provider can write down.
+         *
+         * A ceiling in dp means two different things on a 4-column phone and a 6-column tablet: set
+         * it small enough that a phone cannot be filled and a tablet has almost no room to adjust
+         * ("on tablet, impossible to adjust right"); set it large enough for a tablet and the phone
+         * is back to a card across every column, which is where this started. So the provider's
+         * ceiling is generous and the phone's own narrowness supplies the limit — one column is kept
+         * free, so the widget is always visibly a card on a page rather than a band.
+         *
+         * WIDTH ONLY. A tall widget is an ordinary thing to want and nothing was ever reported about
+         * one. And never below the floor: a grid so narrow that `grid - 1` falls under the smallest
+         * shape the provider will draw must yield to the provider, or the widget is pinned — which
+         * is its own bug, reported the day this ceiling was introduced. */
+        if (wide && grid <= 4) cells = Math.min(cells, grid - 1);
+        return Math.max(lo, Math.min(grid, Math.max(1, cells)));
     }
 
     private int minCells(Desk.Item item, int gridSpan, int cellPx, boolean wide) {

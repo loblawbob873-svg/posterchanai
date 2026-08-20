@@ -252,6 +252,19 @@ public class ThreadListActivity extends PcActivity {
         try { cur = android.provider.Telephony.Sms.getDefaultSmsPackage(this); }
         catch (Throwable ignored) { }
         boolean role = HasRole.roleHeld(this);
+        /* NO SIM IS NOT "NOBODY HAS SET ONE". `getDefaultSmsPackage` returns null on a device with
+         * no telephony, and this screen then told a tablet to go and choose a messages app —
+         * reported, after the panel was added, as "Still Android has not named a messages app for
+         * this phone yet." A tablet cannot be a messages app at all, and advice somebody cannot take
+         * is worse than none: it reads as the app being broken rather than as the device being what
+         * it is. Asked FIRST, because it explains the null the two branches below would otherwise
+         * misread. */
+        boolean tel = false;
+        try {
+            tel = getPackageManager().hasSystemFeature(
+                    android.content.pm.PackageManager.FEATURE_TELEPHONY);
+        } catch (Throwable ignored) { }
+        if (!tel) return getString(R.string.sms_no_sim);
         if (cur == null || cur.isEmpty()) return getString(R.string.sms_default_none);
         if (role) return getString(R.string.sms_role_split, cur);
         return getString(R.string.sms_default_is, cur);

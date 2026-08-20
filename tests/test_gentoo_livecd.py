@@ -213,3 +213,48 @@ class TheFailureCanActuallyBeREAD(unittest.TestCase):
             if "| tee" in after:
                 self.assertIn("PIPESTATUS", after,
                               "%s is teed and its real exit status is never read" % cmd)
+
+
+class TheTerminalIsGivenBack(unittest.TestCase):
+    """"after leaving gentoo.sh, terminal is messed up again. adding extra characters as I type."
+
+    The script drives the terminal hard and never gave any of it back. `read -e` turns on readline,
+    which enables BRACKETED PASTE and application cursor keys; `clear` and the colour codes do their
+    own work. Bash restores what IT set when a normal interactive shell exits — but a script quit
+    part-way, exited from inside a menu branch, or killed while a `read` is pending leaves those
+    modes switched on in the terminal it was running in. What is left is a tty that echoes paste
+    markers and duplicates what you type, which is what "adding extra characters" is.
+
+    `stty sane` cannot do this alone: bracketed paste and application cursor keys are the EMULATOR's
+    state, not the line discipline's, and stty knows nothing about either.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = open(SH).read()
+
+    def test_something_restores_the_tty(self):
+        self.assertIn("stty sane", self.src,
+                      "nothing restores echo or canonical mode when the script ends")
+
+    def test_the_emulator_modes_are_switched_off_too(self):
+        """2004 is bracketed paste — the one that duplicates typed input in an emulator that is left
+        holding it."""
+        self.assertIn("?2004l", self.src, "bracketed paste is never switched back off")
+        self.assertIn("?1l", self.src, "application cursor keys are never switched back off")
+
+    def test_it_runs_however_the_script_ends(self):
+        """Falling off the end is the case that already worked. The ones that did not are an `exit`
+        from a menu branch and a Ctrl-C during a `read`."""
+        line = [l for l in self.src.splitlines() if l.strip().startswith("trap ")]
+        self.assertTrue(line, "there is no trap at all")
+        t = line[0]
+        for sig in ("EXIT", "INT", "TERM"):
+            self.assertIn(sig, t, "the restore does not run on %s: %s" % (sig, t))
+
+    def test_it_cannot_itself_become_the_failure(self):
+        """With no terminal — a pipe, a cron job — there is nothing to restore, and a restore that
+        errors on the way out would be a new failure mode bolted to every exit path."""
+        body = _fn("_pc_tty_restore")
+        self.assertIn("-t 0", body, "it does not check there is a terminal")
+        self.assertIn("2>/dev/null", body, "it can print an error on the way out")

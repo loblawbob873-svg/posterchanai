@@ -144,6 +144,30 @@ public class WeatherWidget extends AppWidgetProvider {
             int padPx = (int) (pad * ctx.getResources().getDisplayMetrics().density);
             v.setViewPadding(R.id.ww_body, padPx, padPx, padPx, padPx);
         }
+        /* THE LINES ARE SIZED TO THE BOX TOO, and this half is why the card was clipping.
+         *
+         * "city name gets cut off slightly on bottom on mobile." Four lines at fixed sizes —
+         * 28sp + 12sp + 11sp + 11sp — plus padding come to a little MORE than one phone cell, and a
+         * LinearLayout does not shrink to fit: the last child is simply cut off by the parent's
+         * bounds. It was over by a few dp, which is exactly why it read as "slightly".
+         *
+         * Two things, in this order. The forecast range is DROPPED when there is no room for four
+         * lines, because a high/low is the least of them and half a line of it is worse than none.
+         * Then the temperature — much the largest and the only one with real slack — is scaled to
+         * what is left. Below API 31 nothing above has run, so nothing here may assume the icon
+         * shrank; the numbers stand on their own.
+         *
+         * setTextViewTextSize is API 16, so unlike the icon this part reaches every phone. */
+        if (boxDp > 0) {
+            boolean roomForFour = boxDp >= 110;
+            v.setViewVisibility(R.id.ww_range, roomForFour ? View.VISIBLE : View.GONE);
+            float temp = boxDp >= 150 ? 34f : (boxDp >= 110 ? 28f : 22f);
+            float small = boxDp >= 110 ? 12f : 11f;
+            v.setTextViewTextSize(R.id.ww_temp, android.util.TypedValue.COMPLEX_UNIT_SP, temp);
+            v.setTextViewTextSize(R.id.ww_desc, android.util.TypedValue.COMPLEX_UNIT_SP, small);
+            v.setTextViewTextSize(R.id.ww_place, android.util.TypedValue.COMPLEX_UNIT_SP,
+                                  small - 1f);
+        }
         boolean place = WeatherStore.hasPlace(ctx), server = WeatherStore.hasServer(ctx);
         Double temp = WeatherStore.temp(ctx);
         long at = WeatherStore.at(ctx);

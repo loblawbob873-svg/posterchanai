@@ -83,6 +83,10 @@
          it cannot contradict the verdict and it turns "you are wrong" into something checkable. -->
     <string name="sms_default_is">Android says this phone\'s messages app is %1$s, not PosterChan, so texts are delivered there. Set it in Settings \u2192 Apps \u2192 Default apps \u2192 SMS.</string>
     <string name="sms_role_split">Android has given PosterChan the messages role, but its message store still lists %1$s as the messages app, so texts are delivered there. Setting the default again in Settings \u2192 Apps \u2192 Default apps \u2192 SMS usually moves it.</string>
+    <!-- A device with no cellular radio cannot be a messages app, and `getDefaultSmsPackage` returns
+         null on one — which the "nobody has set a default" branch below would otherwise report as
+         something the person should go and fix. It shows what the phone publishes instead. -->
+    <string name="sms_no_sim">This device has no SIM, so it cannot be the messages app. It shows the texts your phone publishes to your relay.</string>
     <string name="sms_default_none">Android has not named a messages app for this phone yet. Set PosterChan in Settings \u2192 Apps \u2192 Default apps \u2192 SMS.</string>
     <string name="sms_failed">Not sent</string>
     <string name="sms_sending">Sending</string>

@@ -321,6 +321,23 @@ class TheNativeScreenNamesWhatAndroidNamed(unittest.TestCase):
             row = [l for l in x.splitlines() if 'name="%s"' % k in l][0]
             self.assertIn("%1$s", row, "%s names no package, so it says nothing new" % k)
 
+    def test_a_device_with_no_sim_is_not_told_to_pick_a_messages_app(self):
+        """"Still Android has not named a messages app for this phone yet." — the panel worked and
+        the sentence was wrong. `getDefaultSmsPackage` returns null on a device with NO TELEPHONY,
+        and this screen read that as "nobody has set a default" and told a tablet to go and set one.
+        A tablet cannot be a messages app at all, and advice somebody cannot take reads as the app
+        being broken rather than the device being what it is.
+
+        Asked FIRST, because the telephony check is what explains the null the other branches would
+        otherwise misread."""
+        body = method(self.src, "private String whyNotDefault")
+        self.assertIn("FEATURE_TELEPHONY", body,
+                      "the screen cannot tell a tablet from a phone with no default set")
+        self.assertIn("sms_no_sim", body)
+        self.assertLess(body.index("FEATURE_TELEPHONY"), body.index("sms_default_none"),
+                        "the no-default branch is reached before the no-SIM one, so a tablet still "
+                        "gets told to choose a messages app")
+
     def test_the_screen_uses_it(self):
         body = method(self.src, "private void draw")
         self.assertIn("whyNotDefault()", body)

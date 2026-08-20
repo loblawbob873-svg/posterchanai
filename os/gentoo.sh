@@ -1,4 +1,33 @@
 #!/usr/bin/bash
+
+# ===============================================================================================
+# PUT THE TERMINAL BACK ON THE WAY OUT.
+#
+# "after leaving gentoo.sh, terminal is messed up again. adding extra characters as I type."
+#
+# This script drives the terminal hard and never gave any of it back. `read -e` turns on readline,
+# which enables BRACKETED PASTE (`ESC[?2004h`) and application cursor keys; `clear` and the colour
+# codes do their own work. Bash restores what IT set when a normal interactive shell exits — but a
+# script that is quit part-way, that exits from inside a menu branch, or that is killed while a
+# `read` is pending leaves those modes switched on in the terminal it was running in. What is left
+# behind is a tty that echoes paste markers and duplicates what you type, which is exactly what
+# "adding extra characters" is.
+#
+# `stty sane` restores echo, canonical mode and the control characters; the two escape sequences
+# switch bracketed paste and application cursor keys off explicitly, because `stty` knows nothing
+# about either — they are the EMULATOR's state, not the line discipline's.
+#
+# On EXIT, so it runs however the script ends: falling off the end, an `exit` from a menu branch, or
+# Ctrl-C. Guarded and silenced, because this must never itself become the thing that fails — if
+# there is no terminal (a pipe, a cron job) there is nothing to restore and nothing to say about it.
+# ===============================================================================================
+_pc_tty_restore() {
+	[[ -t 0 ]] || return 0
+	stty sane 2>/dev/null
+	printf '\033[?2004l\033[?1l\033>' 2>/dev/null
+}
+trap _pc_tty_restore EXIT INT TERM
+
 ########################
 # What this script is:
 #
