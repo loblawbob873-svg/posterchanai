@@ -953,7 +953,18 @@
     if(st.present && st.isDefault && !st.canNotify) await ensureNotify();
     if(st.canRead){
       await load();
-      loadFromPhone().then(() => { if(!S.msgs.size) paint(); else paint(); }, () => {});
+      /* THE RESULT IS READ HERE TOO, not only on the Allow button. This is the ORDINARY path — the
+       * one taken every time somebody opens Texts with the permission already granted — and
+       * discarding the answer meant a provider refusal was silent on the one route almost everybody
+       * takes. The button path had the message; the path to it did not. */
+      loadFromPhone().then((r) => {
+        if(r && r.refused && !S.msgs.size){
+          S.emptyWhy = 'This phone allowed the permission but its message store still would not '
+                     + 'answer. Open \u201cWhy isn\u2019t this working?\u201d below for what it reported.';
+          S.emptyFix = '';
+        }
+        paint();
+      }, () => {});
     }
     // PUBLISHING needs to read; PERFORMING A SEND another device asked for needs the role, because
     // only the default SMS app may write the provider. Two jobs, two gates.

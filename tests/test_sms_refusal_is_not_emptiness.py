@@ -87,6 +87,22 @@ class TheScreenSaysWhichKindOfEmpty(unittest.TestCase):
         self.assertNotIn("refused = false;", body.split("for(let page")[1],
                          "the flag is cleared inside the paging loop, so only the last page counts")
 
+    def test_the_ordinary_entry_path_reads_it_too(self):
+        """The route almost everybody takes — opening Texts with the permission already granted —
+        discarded `loadFromPhone`'s answer entirely. The Allow button had the message; the path to it
+        did not, so the refusal was silent for anyone who had granted the permission elsewhere."""
+        i = self.src.index("await load();")
+        seg = self.src[i:i + 900]
+        self.assertIn("loadFromPhone().then((r)", seg,
+                      "the entry path throws away the loader's result")
+        self.assertIn("r.refused", seg)
+
+    def test_it_does_not_overwrite_a_screen_that_has_messages(self):
+        """A refusal on a later page of a sweep that already found messages must not blank the
+        explanation over a list somebody is reading."""
+        i = self.src.index("loadFromPhone().then((r)")
+        self.assertIn("!S.msgs.size", self.src[i:i + 400])
+
     def test_granted_but_still_refused_is_its_own_message(self):
         """Android saying yes does not make the provider answer — a work profile or an OEM
         permission manager can still refuse."""
