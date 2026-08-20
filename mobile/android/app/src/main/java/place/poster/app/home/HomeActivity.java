@@ -556,6 +556,21 @@ public class HomeActivity extends Activity implements DeskView.Host {
         if (!after.equals(stored)) prefs.setDesk(geom, after);
         desk.setGrid(cols, rows);
         desk.setItems(live);
+        // EVERY WIDGET IS TOLD ITS SIZE AGAIN, not only the one that was just added or dragged.
+        //
+        // A provider that is not told draws the layout for its old size inside the new hole — the
+        // "too wide and I can't see the text for the city name" shape. `onResized` used to run only
+        // at placement and after a drag-resize, so a rotation, a fold, a different launcher grid or
+        // simply a build that changed how spans are computed left every existing widget rendering
+        // for a box it no longer has. Posted, because cellW()/cellH() are zero until the desk has
+        // been laid out and a size derived from zero is worse than no size at all.
+        final List<Desk.Item> told = new ArrayList<Desk.Item>(live);
+        desk.post(new Runnable() {
+            @Override public void run() {
+                if (desk.getWidth() <= 0 || desk.getHeight() <= 0) return;
+                for (Desk.Item it : told) if (it.isWidget()) onResized(it, desk.cellW(), desk.cellH());
+            }
+        });
         // An empty desktop says how to fill it; a full one goes back to the swipe hint.
         if (hint != null) hint.setText(live.isEmpty() ? R.string.home_empty_hint : R.string.home_swipe_hint);
     }

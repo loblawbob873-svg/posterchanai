@@ -420,6 +420,107 @@ public class WidgetDeviceTest {
         }
     }
 
+    @Test
+    public void aPlacedWidgetCanBeRESIZED() throws Exception {
+        // "weather widget is too wide and i can't see the text for the city name, can't resize it
+        // or nothing." The second half is a gesture that could never reach this view.
+        //
+        // `beginTouch` grabs a resize handle and returns BEFORE it arms a long press, so nothing
+        // sets `stealing` — and the intercept used to return false for that DOWN, which left the
+        // gesture with the widget's own RemoteViews. They consume it, so every MOVE went to them
+        // and `resizeTo` was never called. An ICON is an inert view and its DOWN falls through to
+        // onTouchEvent, so resizing worked on everything EXCEPT the one kind of item that has
+        // handles.
+        shell("appwidget grantbind --package " + ctx.getPackageName() + " --user 0");
+        List<Widgets.Choice> rows = widgets.providers(200, 200);
+        Widgets.Choice pick = null;
+        for (Widgets.Choice c : rows) if (c.info.configure == null) { pick = c; break; }
+        assertNotNull("nothing addable without a person", pick);
+
+        final Widgets.Choice chosen = pick;
+        final int[] made = new int[]{ -1 };
+        HomeRoles.enableLauncherComponent(ctx, true);
+        ActivityScenario<HomeActivity> s = ActivityScenario.launch(HomeActivity.class);
+        try {
+            s.onActivity(a -> made[0] = widgets.add(a, chosen));
+            assertTrue("could not place a widget to resize", made[0] >= 0);
+            allocated.add(made[0]);
+
+            final DeskView[] deskOut = new DeskView[1];
+            s.onActivity(a -> {
+                final int id = made[0];
+                DeskView d = new DeskView(a);
+                d.bind(new DeskView.Host() {
+                    @Override public android.view.View viewFor(Desk.Item item) { return widgets.view(a, id); }
+                    @Override public void onOpen(Desk.Item item) { }
+                    @Override public void onLongPress(Desk.Item item) { }
+                    @Override public void onLongPressEmpty() { }
+                    @Override public void onSwipeUp() { }
+                    @Override public void onChanged() { }
+                    @Override public int minSpanX(Desk.Item item) { return 1; }
+                    @Override public int minSpanY(Desk.Item item) { return 1; }
+                    @Override public boolean resizable(Desk.Item item) { return true; }
+                    @Override public void onResized(Desk.Item item, int cw, int ch) { }
+                }, place.poster.app.ui.PcTheme.of("cyberpunk"));
+                java.util.List<Desk.Item> items = new java.util.ArrayList<Desk.Item>();
+                Desk.add(items, new Desk.Item(Desk.widgetKey(id), 0, 0, 2, 2), 4, 5);
+                d.setGrid(4, 5);
+                d.setItems(items);
+                // ATTACHED. `View.postDelayed` on a view with no AttachInfo parks the Runnable until
+                // it is attached, so the long press that lifts the item would never fire.
+                a.addContentView(d, new android.widget.FrameLayout.LayoutParams(800, 1000));
+                deskOut[0] = d;
+            });
+            final DeskView desk = deskOut[0];
+            assertNotNull("no desk", desk);
+            boolean ready = false;
+            for (int i = 0; i < 50 && !ready; i++) {
+                final boolean[] ok = new boolean[]{ false };
+                InstrumentationRegistry.getInstrumentation().runOnMainSync(
+                        () -> ok[0] = desk.isAttachedToWindow() && desk.getWidth() > 0);
+                ready = ok[0];
+                if (!ready) Thread.sleep(100);
+            }
+            assertTrue("the DeskView never attached, so nothing here measures the product", ready);
+
+            // Lift it — a resize is only offered on an item that is already in edit mode.
+            touch(desk, android.view.MotionEvent.ACTION_DOWN, 0.5f, 0.5f);
+            Thread.sleep(800);
+            touch(desk, android.view.MotionEvent.ACTION_UP, 0.5f, 0.5f);
+            final boolean[] lifted = new boolean[]{ false };
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(
+                    () -> lifted[0] = desk.editingItem() != null);
+            assertTrue("the widget was never lifted, so its handles were never drawn", lifted[0]);
+
+            // Now drag the RIGHT handle one cell out.
+            touch(desk, android.view.MotionEvent.ACTION_DOWN, 2.0f, 1.0f);
+            touch(desk, android.view.MotionEvent.ACTION_MOVE, 2.6f, 1.0f);
+            touch(desk, android.view.MotionEvent.ACTION_MOVE, 3.0f, 1.0f);
+            touch(desk, android.view.MotionEvent.ACTION_UP, 3.0f, 1.0f);
+
+            final int[] span = new int[]{ -1 };
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                Desk.Item it = Desk.at(desk.items(), 0, 0);
+                span[0] = it == null ? -1 : it.spanX;
+            });
+            Log.i(TAG, "widget probe: resize right edge -> spanX=" + span[0]);
+            assertEquals("dragging a placed widget's resize handle changed nothing — the gesture"
+                    + " never reached the desktop, so a widget can be placed and never adjusted",
+                    3, span[0]);
+        } finally {
+            s.close();
+        }
+    }
+
+    /** One touch event at a point given in CELLS, dispatched on the main thread. */
+    private void touch(final DeskView d, final int action, final float cx, final float cy) {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            long t = android.os.SystemClock.uptimeMillis();
+            d.dispatchTouchEvent(android.view.MotionEvent.obtain(
+                    t, t, action, d.cellW() * cx, d.cellH() * cy, 0));
+        });
+    }
+
     private static boolean hasClickable(android.view.View v) {
         if (v.isClickable()) return true;
         if (!(v instanceof android.view.ViewGroup)) return false;

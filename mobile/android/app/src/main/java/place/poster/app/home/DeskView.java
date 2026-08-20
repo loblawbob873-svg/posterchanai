@@ -228,6 +228,16 @@ public class DeskView extends ViewGroup {
             case MotionEvent.ACTION_DOWN:
                 stealing = false;
                 beginTouch(e, x, y);
+                // A RESIZE HANDLE IS TAKEN IMMEDIATELY, and without this a WIDGET could not be
+                // resized at all — reported as "can't resize it or nothing".
+                //
+                // `beginTouch` grabs the handle and returns before it arms a long press, so nothing
+                // ever sets `stealing`; returning false here left the gesture with the widget's own
+                // RemoteViews, which consume it, and every MOVE went to them instead of to
+                // `resizeTo`. An ICON is an inert view, so its DOWN fell through to onTouchEvent and
+                // resizing worked — which is why this looked fine everywhere except on the one kind
+                // of item that has resize handles in the first place.
+                if (resizing) { stealing = true; return true; }
                 return false;                       // let the child have its tap
             case MotionEvent.ACTION_MOVE:
                 if (!stealing && (Math.abs(x - downX) > slop || Math.abs(y - downY) > slop)) {
