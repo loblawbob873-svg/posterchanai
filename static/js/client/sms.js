@@ -70,6 +70,34 @@
     try{ return !!((await P.status()) || {}).isDefault; }catch(_){ return false; }
   }
 
+  /* WHY IS THIS EMPTY? Four different answers that look identical on screen, and the difference is
+   * the whole of what somebody needs to know.
+   *
+   * "0 of my sms messages in Text" is the report, and an empty list cannot tell you whether nothing
+   * has been published yet, this device cannot publish, the phone is not the default SMS app, or
+   * you genuinely have no messages. Naming it is the same rule the drive check paid for the hard
+   * way: "could not ask" is never "there is nothing there".
+   *
+   * Deliberately about THIS device: a laptop is not broken for being unable to read a SIM, and
+   * telling it to "set yourself as the default SMS app" would be nonsense. */
+  async function emptyWhy(){
+    if(!plug('status'))
+      return { why: 'A phone publishes your messages here — this device has no SIM to read. Open '
+                  + 'PosterChan on your Android phone and set it as the default SMS app.', phone: false };
+    if(!(await isPhone()))
+      return { why: 'PosterChan is not the default SMS app on this phone, so Android will not let '
+                  + 'it read your messages. Set it in Settings → Apps → Default apps → SMS.',
+               phone: true, fix: 'role' };
+    let mark = 0;
+    try{ mark = Number(localStorage.getItem(HWM()) || 0) || 0; }catch(_){ }
+    if(!mark)
+      return { why: 'Nothing has been copied across yet. The first pass reaches back '
+                  + FIRST_RUN_DAYS + ' days.', phone: true, fix: 'mirror' };
+    /* On the phone the provider is read directly, so an empty list here really is an empty inbox.
+     * The 30-day window bounds what is PUBLISHED to other devices, and says nothing about this one. */
+    return { why: 'No messages on this phone.', phone: true };
+  }
+
   // ---------------------------------------------------------------- the archive
 
   async function absorb(evs){
@@ -255,6 +283,98 @@
     return { published:n };
   }
 
+  /* ON THE PHONE, THE PHONE IS THE SOURCE. This is what an SMS app is.
+   *
+   * "all sms apps mirror what the phone has, why are we different" — and the answer was that this
+   * one had the relationship backwards. Display was driven by the Nostr archive, so the phone showed
+   * only what it had already PUBLISHED: a thirty-day window on a device holding years, with the rest
+   * sitting in the provider a few centimetres away. Nobody's Messages app behaves like that.
+   *
+   * The archive is a TRANSPORT, and only a transport: it exists to get messages to the devices that
+   * cannot read a SIM. What the phone shows comes from `Telephony.Sms`, all of it, straight away —
+   * paged so a decade of history does not arrive as one allocation, and merged by doc id so a
+   * message already known from the relay is not duplicated.
+   *
+   * Reading is not publishing. This fills the list; `mirror()` still decides, separately and on its
+   * own schedule, what goes to the other devices — which is why a phone with no network still shows
+   * every message it has. */
+  async function loadFromPhone(onProgress){
+    const P = plug('list');
+    if(!P) return { loaded: 0 };
+    let total = 0, since = 0, quiet = 0;
+    for(let page = 0; page < 400 && quiet < 2; page++){
+      let rows = [];
+      try{ rows = ((await P.list({ since, limit: 500 })) || {}).messages || []; }
+      catch(_){ break; }
+      let n = 0, top = since;
+      for(const r of rows){
+        if(!r || !r.doc) continue;
+        if(r.date > top) top = r.date;
+        if(S.msgs.has(r.doc)) continue;
+        S.msgs.set(r.doc, { doc: r.doc, address: r.address, body: r.body, date: r.date,
+                            incoming: !!r.incoming, name: r.name || '' });
+        n++; total++;
+      }
+      quiet = n ? 0 : quiet + 1;
+      if(n){ rebuild(); if(onProgress) try{ onProgress(total); }catch(_){ } }
+      if(top <= since) break;            // the provider has nothing newer — we are at the end
+      since = top;
+    }
+    return { loaded: total };
+  }
+
+  /* BRING IN EVERYTHING — the history behind the first pass's 30-day window.
+   *
+   * `mirror()` is bounded on purpose: a first sweep on a phone with a decade of SMS would publish
+   * tens of thousands of events in one go, on a radio, on a battery. But the bound is invisible from
+   * the outside — "I have years of texts and I can see a month" reads as broken — so the way past it
+   * is a deliberate action with a count, rather than a bigger default nobody chose.
+   *
+   * Walks BACKWARDS in batches from the oldest message it has, because `list({since})` answers
+   * forwards: each round asks for everything after a point far enough back to be sure of overlap,
+   * and stops when a round publishes nothing new. Overlap is free — `S.msgs.has(doc)` skips a
+   * message already held — and a gap is not, which is why the window steps rather than paginating on
+   * a cursor the phone would have to keep.
+   *
+   * It does NOT move the high-water mark. That mark means "everything after this is published", and
+   * back-filling old messages says nothing about the recent end; moving it would skip whatever
+   * arrived while this ran. */
+  async function importAll(onProgress){
+    const P = plug('list');
+    if(!P) return { published: 0, why: 'this device has no SMS plugin' };
+    if(!(await isPhone())) return { published: 0, why: 'this phone is not the default SMS app' };
+    const DAY = 86400000;
+    let total = 0, quiet = 0;
+    // Oldest we already hold — the back-fill starts from there and reaches further each round.
+    let edge = Date.now();
+    for(const m of S.msgs.values()) if(m && m.date && m.date < edge) edge = m.date;
+    for(let round = 0; round < 400 && quiet < 2; round++){
+      const from = Math.max(0, edge - 90 * DAY);
+      let rows = [];
+      try{ rows = ((await P.list({ since: from, limit: 400 })) || {}).messages || []; }
+      catch(_){ return { published: total, why: 'could not read the phone' }; }
+      let n = 0, oldest = edge;
+      for(const r of rows){
+        if(!r || !r.doc || S.msgs.has(r.doc)) continue;
+        const m = { doc: r.doc, address: r.address, body: r.body, date: r.date,
+                    incoming: !!r.incoming, name: r.name || '' };
+        let ok = false;
+        try{ ok = await publishOne(m); }catch(_){ ok = false; }
+        // The relay stopped taking them. Stop where we are and report — the next run resumes,
+        // because nothing here depends on a mark that has already moved past this point.
+        if(!ok) return { published: total, why: 'the relay stopped accepting messages' };
+        S.msgs.set(m.doc, m);
+        n++; total++;
+        if(m.date && m.date < oldest) oldest = m.date;
+      }
+      quiet = n ? 0 : quiet + 1;
+      if(n){ rebuild(); if(onProgress) try{ onProgress(total); }catch(_){ } }
+      if(from === 0) break;                  // reached the beginning of time; nothing older exists
+      edge = Math.min(oldest, from);
+    }
+    return { published: total };
+  }
+
   // ---------------------------------------------------------------- sending
 
   /* SENDING FROM A LAPTOP.
@@ -438,7 +558,15 @@
                 <span class="sms-when muted">${enc(when(last.date))}</span></div>
               <div class="sms-snip muted">${enc(String(last.body||'').slice(0,90))}</div>
             </div></button>`;
-        }).join('') || '<div class="muted" style="padding:24px;text-align:center">No messages here yet</div>'}
+        }).join('') || ('<div class="sms-empty muted" style="padding:24px;text-align:center">'
+             + enc(S.emptyWhy || 'No messages here yet')
+             + (S.emptyFix === 'deep'
+                 ? '<div style="margin-top:14px"><button class="btn btn-neon small" id="sms-deep">'
+                   + 'Bring in everything</button></div>' : '')
+             + (S.emptyFix === 'mirror'
+                 ? '<div style="margin-top:14px"><button class="btn btn-neon small" id="sms-now">'
+                   + 'Copy my messages across</button></div>' : '')
+             + '</div>')}
         </div>
       </div>`;
 
@@ -554,10 +682,24 @@
     load();
     watch();
     paint();
+    /* WHY IT IS EMPTY, asked once per visit and never on a keystroke — `emptyWhy` calls the plugin,
+     * and paint() runs on every character typed in the search box. Painted again once the answer is
+     * in, so the empty list is only briefly the useless kind. */
+    if(!S.msgs.size){
+      try{ const e = await emptyWhy(); S.emptyWhy = e.why; S.emptyFix = e.fix || ''; }
+      catch(_){ S.emptyWhy = ''; S.emptyFix = ''; }
+      if(!S.msgs.size) paint();
+    }
     // The publish and the drain belong HERE and on foreground, not in paint(): paint runs on every
     // keystroke in the search box, and a mirror per keystroke is a provider read and a relay write
     // per keystroke.
-    if(await isPhone()){ await load(); mirror(); drainOutbox(); }
+    /* THE PHONE READS ITS OWN MESSAGES FIRST, and does not wait for the relay to hear about them.
+     * Publishing is a separate, slower thing that serves the OTHER devices. */
+    if(await isPhone()){
+      await load();
+      loadFromPhone().then(() => { if(!S.msgs.size) paint(); }, () => {});
+      mirror(); drainOutbox();
+    }
   }
 
   function init(){
@@ -577,6 +719,6 @@
   }
   init();
 
-  window.PCSms = { render, mirror, drainOutbox, send, remove, load,
+  window.PCSms = { render, mirror, importAll, loadFromPhone, emptyWhy, drainOutbox, send, remove, load,
                    _state: () => S, _key: key, _outboxId: outboxId };
 })();
