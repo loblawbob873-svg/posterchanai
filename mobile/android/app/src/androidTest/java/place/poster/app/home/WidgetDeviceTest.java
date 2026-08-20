@@ -512,6 +512,57 @@ public class WidgetDeviceTest {
         }
     }
 
+    @Test
+    public void aPlacedWidgetCanBeREMOVED() throws Exception {
+        // "i can't remove widgets". Remove matched the desktop by OBJECT IDENTITY, and this activity
+        // rebuilds `desk.items()` from stored preferences on every redraw — including the one it
+        // runs after its own layout. So the item the menu was opened about is routinely no longer
+        // the object on the desk, `List.remove(Object)` matches nothing, and the menu closes exactly
+        // as if it had worked.
+        //
+        // Driven with a DELIBERATELY STALE item: same key, different object, which is precisely what
+        // a redraw between the long press and the tap leaves behind.
+        shell("appwidget grantbind --package " + ctx.getPackageName() + " --user 0");
+        List<Widgets.Choice> rows = widgets.providers(200, 200);
+        Widgets.Choice pick = null;
+        for (Widgets.Choice c : rows) if (c.info.configure == null) { pick = c; break; }
+        assertNotNull("nothing addable without a person", pick);
+
+        HomeRoles.enableLauncherComponent(ctx, true);
+        LauncherPrefs prefs = new LauncherPrefs(ctx);
+        final Widgets.Choice chosen = pick;
+        final int[] made = new int[]{ -1 };
+        final String[] after = new String[]{ "" };
+        ActivityScenario<HomeActivity> s = ActivityScenario.launch(HomeActivity.class);
+        try {
+            Thread.sleep(1200);
+            s.onActivity(a -> made[0] = widgets.add(a, chosen));
+            assertTrue("the widget was not bound", made[0] >= 0);
+            allocated.add(made[0]);
+            s.onActivity(a -> a.placeWidget(made[0]));
+            Thread.sleep(400);
+
+            final String[] before = new String[]{ "" };
+            s.onActivity(a -> before[0] = Desk.serialize(a.deskItemsForTest()));
+            assertTrue("the widget was not on the desktop to begin with, so removing it proves"
+                    + " nothing: " + before[0], before[0].contains(Desk.widgetKey(made[0])));
+
+            s.onActivity(a -> {
+                // A fresh object with the same key — never the one the desk is holding.
+                a.removeFromDesk(new Desk.Item(Desk.widgetKey(made[0]), 0, 0, 1, 1));
+                after[0] = Desk.serialize(a.deskItemsForTest());
+            });
+        } finally {
+            s.close();
+        }
+        Log.i(TAG, "widget probe: after remove the desktop is " + after[0].replace('\n', ' '));
+        assertFalse("Remove left the widget on the home screen — it matched by object identity and"
+                + " the desk had already been rebuilt. desktop=" + after[0],
+                after[0].contains(Desk.widgetKey(made[0])));
+        assertFalse("it did not survive a redraw either",
+                prefs.desk().contains(Desk.widgetKey(made[0])));
+    }
+
     /** One touch event at a point given in CELLS, dispatched on the main thread. */
     private void touch(final DeskView d, final int action, final float cx, final float cy) {
         InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {

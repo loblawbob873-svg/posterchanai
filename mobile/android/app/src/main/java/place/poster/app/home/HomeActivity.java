@@ -969,9 +969,20 @@ public class HomeActivity extends Activity implements DeskView.Host {
         redrawDesk();
     }
 
-    private void removeFromDesk(Desk.Item item) {
+    // Package-private so the device test can hand it a STALE item — an object with the right key
+    // that is not the one on the desk — which is the shape the redraw actually produces.
+    void removeFromDesk(Desk.Item item) {
+        if (item == null) return;
+        // BY KEY, NEVER BY OBJECT IDENTITY. `desk.items()` is rebuilt from stored preferences by
+        // every `setItems`, and this activity redraws its own desktop after layout — so the item the
+        // menu was opened about is frequently no longer the object on the desk by the time somebody
+        // taps Remove. `List.remove(Object)` then matches nothing, removes nothing, and Remove does
+        // nothing at all, silently, with the menu closing exactly as if it had worked: "i can't
+        // remove widgets".
         List<Desk.Item> items = new ArrayList<Desk.Item>(desk.items());
-        items.remove(item);
+        for (java.util.Iterator<Desk.Item> it = items.iterator(); it.hasNext(); ) {
+            if (item.key.equals(it.next().key)) it.remove();
+        }
         // A widget removed from the desktop must give its id back, or it is a row in the system's
         // own table that nothing will ever reclaim.
         if (item.isWidget()) widgets.release(item.widgetId());

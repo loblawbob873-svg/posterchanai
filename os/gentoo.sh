@@ -1726,15 +1726,46 @@ DESKTOP
 	fi
 
 	# ---------------------------------------------------------------- kernel + a live initramfs
+	#
+	# WHERE THE KERNEL IS DEPENDS ON HOW IT WAS INSTALLED, and this script installs it the way that
+	# does NOT put it where the old search looked. `systemd-boot` + `kernel-install` (both in this
+	# installer's own USE flags) use the Boot Loader Spec layout:
+	#
+	#     /boot/<machine-id>/<kernel-version>/linux
+	#     /boot/<machine-id>/<kernel-version>/initrd
+	#
+	# There is no `/boot/vmlinuz-*` anywhere on such a system, so `find /boot -name 'vmlinuz*'`
+	# returned nothing and the build stopped with "No kernel found under /boot — cannot build a
+	# bootable ISO", after packing the entire filesystem. Reported exactly that way.
+	#
+	# Both layouts are searched, newest last so `tail -1` prefers it, and the RUNNING version wins
+	# when it is present — the squashfs was made from this filesystem, so its modules are the ones
+	# under /lib/modules and a different kernel would boot without them.
 	local KVER KERNEL
 	KVER="$(uname -r)"
-	KERNEL="$(find /boot -name "vmlinuz-$KVER*" -o -name "linux-$KVER*" 2>/dev/null | head -1)"
-	[[ -z "$KERNEL" ]] && KERNEL="$(find /boot -name 'vmlinuz*' 2>/dev/null | sort | tail -1)"
+	KERNEL=""
+	# 1. Boot Loader Spec, this exact kernel.
+	KERNEL="$(ls -1 /boot/*/"$KVER"/linux 2>/dev/null | head -1)"
+	# 2. The classic layout, this exact kernel.
+	[[ -z "$KERNEL" ]] && KERNEL="$(ls -1 /boot/vmlinuz-"$KVER"* /boot/linux-"$KVER"* 2>/dev/null | head -1)"
+	# 3. Where a Gentoo dist-kernel also keeps a copy.
+	[[ -z "$KERNEL" && -f "/lib/modules/$KVER/vmlinuz" ]] && KERNEL="/lib/modules/$KVER/vmlinuz"
+	[[ -z "$KERNEL" && -f "/usr/lib/modules/$KVER/vmlinuz" ]] && KERNEL="/usr/lib/modules/$KVER/vmlinuz"
+	# 4. ANY kernel, newest — and say so, because booting the live image on a kernel whose modules
+	#    are not in the image is a different failure and the person should know which one they have.
+	if [[ -z "$KERNEL" ]]; then
+		KERNEL="$(ls -1 /boot/*/*/linux /boot/vmlinuz* /boot/linux-* 2>/dev/null | sort -V | tail -1)"
+		[[ -n "$KERNEL" ]] && echo -e "${COLOR_YELLOW}The running kernel ($KVER) is not under /boot; using $KERNEL instead.${COLOR_RESET}"
+	fi
 	if [[ -z "$KERNEL" ]]; then
 		echo -e "${COLOR_YELLOW}No kernel found under /boot — cannot build a bootable ISO.${COLOR_RESET}"
+		echo -e "${COLOR_YELLOW}Looked for /boot/<machine-id>/$KVER/linux, /boot/vmlinuz-$KVER*,${COLOR_RESET}"
+		echo -e "${COLOR_YELLOW}/lib/modules/$KVER/vmlinuz. What is actually there:${COLOR_RESET}"
+		ls -1 /boot 2>/dev/null | head -20
 		read -p "Press enter key to Continue"
 		return
 	fi
+	echo -e "${COLOR_YELLOW}Kernel: $KERNEL${COLOR_RESET}"
 	cp -f "$KERNEL" "$WORK/iso/boot/vmlinuz"
 
 	echo
