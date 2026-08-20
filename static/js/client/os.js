@@ -1067,7 +1067,7 @@
      * stashed changed with it — and the keyboard belongs to the app now, which only the compositor
      * can arrange. Clicking a browser's title bar and then typing into the desktop underneath is
      * exactly the sort of thing that makes a shell feel like a costume. */
-    if(w.native != null){ try{ pcWM.focus(w.native); }catch(_){} }
+    if(w.native != null && !_natFocusHold){ try{ pcWM.focus(w.native); }catch(_){} }
     if(nativeWins().length) nsync();
     if(!w.noFeed) claimFeed(w);   // a folder owns its own contents and must never take the feed
     drawBar();
@@ -1285,7 +1285,12 @@
      * card under the cursor carries its own handler and the click does what it says — no replaying
      * the intent across a re-render, and deliberately no synthetic second click, which would double
      * every action now that the real one lands. */
-    el.addEventListener('pointerdown', () => {
+    /* CAPTURE, so this runs BEFORE the title bar's own handler — which is exactly why the focus
+     * hold has to be armed here rather than there. `el` is an ancestor of `.osw-bar`, so the
+     * capture phase reaches this listener first and it would hand a native app the keyboard (and
+     * blur us, and end the drag) a moment before the drag had begun. */
+    el.addEventListener('pointerdown', (e) => {
+      if(_gesturePress(e)) _natFocusHold = true;
       if(!el.classList.contains('focused')) focusWin(w);
     }, true);
 
@@ -1424,11 +1429,44 @@
   let _natShell = null, _natShellAt = 0, _natSent = new Map(), _natBusy = false, _natAgain = false;
 
   const nativeWins = () => wins.filter(w => w.native != null);
+
+  /* A PRESS THAT BEGINS A GESTURE MUST NOT HAND THE KEYBOARD TO A NATIVE APP — and this is why a
+   * native window could not be moved at all.
+   *
+   * `pcWM.focus(id)` moves compositor focus to firefox, and the compositor takes it from US to do
+   * that: measured on the real machine, `document.hasFocus()` goes true → false and a `blur` event
+   * arrives 1ms later. `startDrag` and `startResize` both treat `blur` as the end of the gesture —
+   * rightly, since alt-tabbing away mid-drag must not leave a window glued to the cursor. So
+   * pressing a native window's title bar focused the app, blurred this window, and ended the drag
+   * on its FIRST pointermove: measured, a 200px gesture moved the window 25px and stopped, every
+   * time. Reported as "firefox can't be moved".
+   *
+   * The hold is released, and the keyboard handed over, when the gesture ENDS — which is also the
+   * moment the surface comes back out of the scratchpad, so the app gets focus exactly when it is
+   * on screen to receive it. */
+  let _natFocusHold = false;
+  const _gesturePress = (e) => {
+    try{
+      return !!(e.target.closest('.osw-grip')
+                || (e.target.closest('.osw-bar') && !e.target.closest('.osw-b')));
+    }catch(_){ return false; }
+  };
+
   /* Held off screen for the length of a drag or a resize, and put back where the frame ended up. */
   function _natGesture(w, on){
+    /* Cleared for EVERY window, not just a native one: the hold is armed by the press, and the
+     * press does not know yet whether the frame it landed on wraps an app. Left set after dragging
+     * one of our own windows, no native window would ever take the keyboard again. */
+    if(!on) _natFocusHold = false;
     if(!w || w.native == null) return;
     w.gesturing = !!on;
-    nsync();
+    const done = nsync();
+    if(on) return;
+    /* The app has the keyboard again now that it is back on screen. After the sync, not before:
+     * focusing a window that is still in the scratchpad brings it back wherever the compositor
+     * feels like putting it, and the placement then has to move it a second time. */
+    try{ Promise.resolve(done).then(() => { try{ pcWM.focus(w.native); }catch(_){} }, () => {}); }
+    catch(_){}
   }
   const _zOf = (w) => Number(w.el && w.el.style.zIndex) || 0;
   function _frameRect(w){
@@ -1440,6 +1478,59 @@
     try{ const r = (w.body || w.el).getBoundingClientRect();
          return { left: r.left, top: r.top, width: r.width, height: r.height }; }
     catch(_){ return null; }
+  }
+
+  /* THE DESKTOP'S OWN OVERLAYS ARE NOT WINDOWS, AND A NATIVE SURFACE IS ABOVE EVERY ONE OF THEM.
+   *
+   * `stashPlan` was fed the WINDOW list, so a native app was put away only when one of our windows
+   * covered it. The start menu is not a window. Neither is the notification panel, the network
+   * panel, a tray popover, a modal or a confirm — they are painted by this page, and this page is a
+   * tiled compositor window that firefox floats above. So the start menu opened, drew, took the
+   * keyboard and was INVISIBLE behind a browser: reported as "start menu does not go over firefox".
+   *
+   * They go through the same arithmetic as a window, at a z above every window, so an overlay that
+   * covers an app puts it away for as long as it is open — and one that does not, does not. The
+   * ones inside `#os-root` are found STRUCTURALLY (everything that is not the desktop or the
+   * taskbar) so a menu added later is covered without being registered here; the two that live on
+   * `<body>` are named, because body holds the whole classic client as well. */
+  const _OVERLAYS_ON_BODY = '.os-pop, #modal-root > *, .uiconfirm-bg';
+  function overlayRects(){
+    const out = [];
+    const add = (el) => {
+      let r = null;
+      try{ r = el.getBoundingClientRect(); }catch(_){ return; }
+      if(!r || !(r.width > 0) || !(r.height > 0)) return;
+      /* Above EVERYTHING of ours — an overlay is not in the window stacking order at all, and
+       * comparing it against a window's z-index would be inventing an answer. */
+      out.push({ z: Number.MAX_SAFE_INTEGER, minimised: false,
+                 rect: { left: r.left, top: r.top, width: r.width, height: r.height } });
+    };
+    try{
+      for(const el of (root ? root.children : []))
+        if(el !== desk && el !== bar) add(el);
+      for(const el of document.querySelectorAll(_OVERLAYS_ON_BODY)) add(el);
+    }catch(_){}
+    return out;
+  }
+
+  /* An overlay opening is not a window event and not a focus change, so nothing above would ever
+   * re-run the plan for it. Watched rather than wired into each of `toggleStart`/`toggleNoti`/
+   * `toggleNet`/`openPop`/every modal: that list is exactly the thing that goes stale, and the
+   * symptom of a missing entry is a menu that is invisible on one machine and fine everywhere
+   * else. Childless when nothing native is open, so it costs nothing on an ordinary desktop. */
+  let _natObs = null;
+  function _watchOverlays(){
+    if(_natObs || typeof MutationObserver !== 'function') return;
+    let t = 0;
+    const kick = () => {
+      if(t) return;
+      t = setTimeout(() => { t = 0; if(nativeWins().length) nsync(); }, 30);
+    };
+    _natObs = new MutationObserver(kick);
+    try{
+      if(root) _natObs.observe(root, { childList: true });
+      _natObs.observe(document.body, { childList: true });
+    }catch(_){}
   }
 
   /* One sync pass. Serialised rather than queued: while a drag is in flight this is called on every
@@ -1472,7 +1563,8 @@
                                              minimised: !!(w.min || w.gesturing),
                                              rect: _frameRect(w), w }));
       const htmls = wins.filter(w => w.native == null)
-                        .map(w => ({ z: _zOf(w), minimised: !!w.min, rect: _frameRect(w) }));
+                        .map(w => ({ z: _zOf(w), minimised: !!w.min, rect: _frameRect(w) }))
+                        .concat(overlayRects());
       const plan = NAT().stashPlan(items, htmls);
       const stash = new Set(plan.stash);
       for(const it of items){
@@ -1527,9 +1619,19 @@
     try{ list = await pcWM.windows(); }catch(_){ return; }
     let rows = [];
     try{ rows = PCOSShell.taskbarRows(list); }catch(_){ rows = []; }
-    const want = new Set(rows.map(r => Number(r.id)));
     for(const r of rows) if(!wins.find(w => w.native === Number(r.id))) adoptNative(r);
-    for(const w of nativeWins()) if(!want.has(Number(w.native))) closeWin(w);
+    /* WHAT TO ADOPT AND WHAT IS STILL ALIVE ARE DIFFERENT QUESTIONS, and answering both with
+     * `taskbarRows` is how an app gets KILLED.
+     *
+     * `taskbarRows` drops a window with no title, deliberately — a nameless button that renames
+     * itself a second later is worse than one that arrives late. But `closeWin` on a native frame
+     * closes the APP, so using the same list to decide what is gone means a window that has not
+     * named itself yet, or has momentarily cleared its title, is destroyed: nothing on screen,
+     * nothing in any log, and a browser that "just closed itself".
+     *
+     * Existence is the compositor's list, exactly as `nsync` reads it. */
+    const live = new Set(list.map(x => Number(x.id)));
+    for(const w of nativeWins()) if(!live.has(Number(w.native))) closeWin(w);
     /* A title is the page a browser is showing and it changes constantly; the frame follows it, the
      * same way it would for one of our own documents. */
     for(const w of nativeWins()){

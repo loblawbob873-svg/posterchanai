@@ -615,6 +615,74 @@ scenario('a copy that fails its checksum is not fetched again for ever', async (
   t.eq(r3.downloaded.length, 1, 'a repaired copy was still blocked');
 });
 
+scenario('MIRROR PUBLISHES AND NEVER DELETES — the button that lost the receipts', async (t) => {
+  /* WHAT HAPPENED, on a real account, to real business receipts and photographs.
+   *
+   * "Mirror this Device" tells you in its own dialog: "Nothing here is deleted and nothing is
+   * overwritten." What it ran was an ORDINARY sweep with resends added — and an ordinary sweep
+   * publishes a tombstone for every file the folder has a record of that this device does not have.
+   * True locally, where nothing is trashed. False everywhere else, where every absence on the
+   * mirroring device became a deletion on all the others.
+   *
+   * The device most likely to be mirroring is somebody restoring from a backup, which is exactly
+   * the device most likely to be MISSING files. So the promise was broken in the one situation the
+   * button exists for: rsync from a NAS, press Mirror, and 32 then 88 then 122 deletions go out.
+   *
+   * A publishing sweep has no deletion in it. This asserts that structurally, both directions. */
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(40) });
+  await A.sweep();
+  const B = device('desktop', sky, { disk: photos(40) });
+  await B.sweep();
+
+  /* The desktop's copy comes back from a backup INCOMPLETE — the whole situation somebody presses
+   * Mirror in. TEN missing, deliberately UNDER the twenty-file floor: the mass-delete guard would
+   * otherwise catch this and hide what Mirror itself does. Under the floor there is no guard, no
+   * dialog and no record of it having happened — which is the quieter half of what went wrong. */
+  const partial = {};
+  const names = Object.keys(B.disk);
+  for(const p of names.slice(0, 30)) partial[p] = B.disk[p];
+  const M = device('desktop', sky, { disk: partial, index: B.st.index });
+
+  const r = await M.sweep({ manual: true, resendAll: true, noDelete: true });
+  t.eq(r.removedRemote.length, 0,
+       'Mirror told the other devices to delete ' + r.removedRemote.length + ' files');
+  t.eq(r.trashed.length, 0, 'Mirror trashed files on the device being mirrored FROM');
+  t.ok(!!r.deletionsHeld, 'it deleted nothing but did not say that it had held anything back');
+  t.eq(r.deletionsHeld.remote, 10, 'it held back ' + r.deletionsHeld.remote + ' of the 10 absences');
+
+  // …and the other device still has all 40: nothing was taken from it.
+  const C = device('laptop', sky, { disk: A.disk, index: A.st.index });
+  const r2 = await C.sweep();
+  t.eq(r2.trashed.length, 0, 'the other device trashed ' + r2.trashed.length + ' files after a mirror');
+  t.eq(Object.keys(C.disk).length, 40, 'the other device is down to ' + Object.keys(C.disk).length + ' of 40');
+
+  /* AND IT MUST NOT EVEN ASK, however many are missing. A person who has just read "nothing is
+   * deleted" and is then asked "delete 122 files?" is being asked to arbitrate between two things
+   * the app said in the same breath — and on the real account, after four days of dialogs, the
+   * answer was yes. So the guard is not the safety here; not planning the deletion is. */
+  const few = {};
+  for(const p of names.slice(0, 5)) few[p] = B.disk[p];
+  const M2 = device('desktop', sky, { disk: few, index: B.st.index });
+  let asked = 0;
+  const r3 = await M2.sweep({ manual: true, resendAll: true, noDelete: true,
+                              confirm: () => { asked++; return true; } });
+  t.eq(asked, 0, 'Mirror asked ' + asked + ' times whether to delete, having just promised it would not');
+  t.eq(r3.removedRemote.length, 0, 'Mirror deleted ' + r3.removedRemote.length + ' files when confirmed');
+});
+
+scenario('and an ordinary sweep still settles a real deletion', async (t) => {
+  // The fix must not turn deletion off in general — only in the sweep whose meaning is "publish".
+  const sky = cloud();
+  const A = device('laptop', sky, { disk: photos(6) });
+  await A.sweep();
+  const victim = Object.keys(A.disk)[0];
+  delete A.disk[victim];
+  const A2 = device('laptop', sky, { disk: A.disk, index: A.st.index });
+  const r = await A2.sweep();
+  t.eq(r.removedRemote.length, 1, 'an ordinary sweep stopped publishing deletions altogether');
+});
+
 scenario('a repair that has failed three separate copies is stopped, and names the sender', async (t) => {
   /* THE LOOP THIS ENDS, measured in production: a device whose hash of its OWN file was wrong
    * (`read(buf) > 0` treating a pipe's legal zero-length read as end of file) agreed with itself.

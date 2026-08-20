@@ -439,6 +439,28 @@
      * instead of re-encrypting and re-uploading everything. Named paths, so the resurrect floor
      * does not question a list the person chose, and (see below) they are taken out of the trash
      * list as well, because a path somebody asked to publish is not a deletion candidate. */
+    /* A PUBLISHING SWEEP DELETES NOTHING, ANYWHERE. `noDelete` is what makes that structural
+     * rather than a promise.
+     *
+     * "Mirror this Device" says, in the dialog somebody reads before pressing it: "Nothing here is
+     * deleted and nothing is overwritten." What it ran was an ORDINARY sweep with resends added —
+     * and an ordinary sweep publishes a tombstone for every file the folder has a record of and
+     * this device does not have. So the sentence was true locally, where nothing is trashed, and
+     * false everywhere else, where every absence on the mirroring device became a deletion on all
+     * the others. Measured on a real account: a desktop was rsynced from a backup, Mirror was
+     * pressed, and 32, then 88, then 122 deletions went out — business receipts and photographs.
+     *
+     * The button's meaning is "publish what I have", which has no deletion in it at all. A device
+     * that is missing files is exactly the device whose absences are worth least, and it is the one
+     * most likely to be mirroring in the first place — somebody restoring from a backup. So both
+     * deletion buckets are dropped: the tombstones it would send out, and the trash it would apply
+     * here. Nothing is lost by being wrong in this direction; the next ordinary sweep still settles
+     * a real deletion, and it will ask first. */
+    if(o.noDelete){
+      const _sent = plan.tombstone.length, _local = plan.trash.length;
+      plan = Object.assign({}, plan, { tombstone: [], trash: [] });
+      if(_sent || _local) report.deletionsHeld = { remote: _sent, local: _local };
+    }
     let _reclaim = [];
     if(o.resendAll && !o.dryRun){
       for(const p in disk){

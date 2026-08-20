@@ -3427,11 +3427,17 @@
         if(!await PC.uiConfirm('Mirror \u201c' + keyOf(f) + '\u201d from THIS device?\n\nEvery file '
              + 'here that the folder thinks was deleted, or has no record at all, is published again '
              + 'from this copy. Your other devices bring those files back on their next sync.\n\n'
-             + 'Nothing here is deleted and nothing is overwritten \u2014 files the folder already '
-             + 'agrees about are left alone. Do this on the device whose copy you trust; if that is '
-             + 'not this one, cancel.', { ok: 'Mirror this device' })) return;
+             + 'THIS SWEEP DELETES NOTHING, on this device or any other \u2014 it only adds. A file '
+             + 'missing from this device is left alone rather than removed everywhere else, because '
+             + 'a device that is missing files is the one whose absences are worth least.\n\nDo '
+             + 'this on the device whose copy you trust; if that is not this one, cancel.',
+             { ok: 'Mirror this device' })) return;
         setStatus(f.id, 'mirroring this device\u2019s copy\u2026', null, true);
-        await swept(f, { manual: true, resendAll: true });
+        /* `noDelete` IS WHAT MAKES THE SENTENCE ABOVE TRUE. It used to run an ordinary sweep with
+         * resends added, and an ordinary sweep publishes a tombstone for every file the folder
+         * knows about that this device lacks — so the dialog promised no deletions while the sweep
+         * sent them to every other device. On a desktop restored from a backup that is 122 files. */
+        await swept(f, { manual: true, resendAll: true, noDelete: true });
         paint();
       };
       const _doBg = async () => {
