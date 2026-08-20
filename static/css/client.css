@@ -896,7 +896,7 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .more-stats .call-ico{width:12px;height:12px;color:var(--neon,#0ff)}
 /* media-server destination choice (Settings → Media): stacked radio cards. */
 .media-modes{display:flex;flex-direction:column;gap:8px;margin:12px 0 4px}
-.media-mode{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border:1px solid var(--border,rgba(255,255,255,.14));border-radius:10px;cursor:pointer;transition:border-color .15s,background .15s}
+.media-mode{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border:1px solid var(--line));border-radius:10px;cursor:pointer;transition:border-color .15s,background .15s}
 .media-mode:hover{border-color:var(--neon)}
 .media-mode:has(input:checked){border-color:var(--neon);background:color-mix(in srgb, var(--neon) 12%, transparent)}
 .media-mode input{margin-top:4px;flex:none;accent-color:var(--neon)}
@@ -4729,10 +4729,10 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
    confirms, so the wrong camera can never be broadcast before they can change it. */
 .gl-src{margin:10px 0 4px}
 .gl-opt{display:flex;align-items:center;gap:10px;padding:10px 12px;margin:6px 0;border-radius:9px;
-  border:1px solid var(--border,#2a2c48);cursor:pointer;font-size:15px}
+  border:1px solid var(--line);cursor:pointer;font-size:15px}
 .gl-opt:hover{border-color:var(--neon,#6ee7ff)}
 .gl-opt input{margin:0;flex:none;width:16px;height:16px}   /* flex:none — the radio must never squash */
-.gl-sub{margin:2px 0 6px 22px;padding-inline-start:10px;border-inline-start:2px solid var(--border,#2a2c48)}
+.gl-sub{margin:2px 0 6px 22px;padding-inline-start:10px;border-inline-start:2px solid var(--line)}
 .gl-actions .btn[disabled]{opacity:.45;cursor:not-allowed}
 /* The Go Live entry while its sheet is being fetched. Opening it is two round trips, and an entry that
    looks untouched for the length of them is one you click again — which used to stack a second sheet. */
@@ -5414,7 +5414,7 @@ svg.mb-e{margin-inline-end:0}
 /* Collapsible inspector groups. A video layer's panel is ~20 controls; three named groups make it four
    rows plus whatever you opened, and the open/closed state is remembered across repaints (_sec). */
 .mb-sec{border:1px solid var(--line);border-radius:var(--r);background:var(--panel2)}
-.mb-sec>summary{padding:10px 12px;font-size:13px;font-weight:600;color:var(--fg);cursor:pointer;
+.mb-sec>summary{padding:10px 12px;font-size:13px;font-weight:600;color:var(--text);cursor:pointer;
   list-style:none;user-select:none}
 .mb-sec>summary::-webkit-details-marker{display:none}
 .mb-sec>summary::after{content:'▾';float:inline-end;color:var(--muted);font-size:11px;transition:transform .15s}
@@ -5430,7 +5430,7 @@ svg.mb-e{margin-inline-end:0}
   font-family:inherit;color:var(--muted);background:var(--panel2);border:1px solid var(--line);border-radius:9px}
 .mb-szb b{font-size:13px;font-weight:700}
 .mb-szb i{font-style:normal;font-size:11px;opacity:.75}
-.mb-szb:hover{color:var(--fg);border-color:var(--neon)}
+.mb-szb:hover{color:var(--text);border-color:var(--neon)}
 .mb-szb.on{color:var(--cyan);border-color:rgba(var(--accent-rgb),.55);background:rgba(var(--accent-rgb),.18)}
 .mb-bgrow{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted)}
 .mb-bgrow input[type=color]{flex:0 0 auto;width:46px;height:36px;padding:2px;background:var(--panel2);
@@ -5526,7 +5526,7 @@ svg.mb-e{margin-inline-end:0}
 .mb-align{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
 .mb-ab{height:34px;line-height:1;padding:0;font-size:15px;cursor:pointer;color:var(--muted);
   background:var(--panel2);border:1px solid var(--line);border-radius:7px}
-.mb-ab:hover{color:var(--fg);border-color:var(--neon)}
+.mb-ab:hover{color:var(--text);border-color:var(--neon)}
 /* The timeline is the scroll PORT; .mb-tlinner is the content, and the ruler and playhead are inside it so
    they stay glued to the lanes when a phone scrolls the timeline sideways. */
 /* overflow-x at EVERY width, not just on a phone: the timeline zoom makes the content wider than the port
@@ -5575,7 +5575,7 @@ svg.mb-e{margin-inline-end:0}
 .mb-zoom b{min-width:44px;text-align:center;font-size:12px;color:var(--cyan)}
 .mb-zb{width:30px;height:28px;line-height:1;padding:0;font-size:15px;cursor:pointer;color:var(--muted);
   background:var(--panel2);border:1px solid var(--line);border-radius:7px}
-.mb-zb:hover{color:var(--fg);border-color:var(--neon)}
+.mb-zb:hover{color:var(--text);border-color:var(--neon)}
 /* (The export-format dropdown used to sit beside Render. It is a once-per-project setting and it was the
    85px that pushed ➕ More and undo/redo off a 390px phone's toolbar, so it lives in ⚙︎ Canvas now.) */
 /* Voice-over recorder: a big elapsed clock and a pulsing dot, so it is obvious the mic is live. */
@@ -5619,7 +5619,7 @@ svg.mb-e{margin-inline-end:0}
 .mb-tile img,.mb-tile video{width:100%;height:100%;object-fit:cover;display:block}
 /* Text and music have no frame to show, so their tile is the type icon on the same panel the picture
    tiles sit on — same box, same border, so the column still lines up. */
-.mb-tile-gl{color:var(--fg)}
+.mb-tile-gl{color:var(--text)}
 .mb-tile-gl svg.ic{width:17px;height:17px}
 /* Theme vars only — a hardcoded rgba() here would be invisible or garish in the light themes. */
 .mb-tile-aud{color:var(--cyan)}
@@ -5810,12 +5810,12 @@ img.mb-resvid{width:auto;height:auto;max-width:100%;margin:0 auto;display:block;
 .rawev-meta{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;align-items:baseline;
   margin:10px 0 12px;font-size:13px}
 .rawev-meta>span{color:var(--muted);text-transform:uppercase;font-size:11px;letter-spacing:.6px}
-.rawev-meta>b{min-width:0;font-weight:600;color:var(--fg);overflow-wrap:anywhere}
+.rawev-meta>b{min-width:0;font-weight:600;color:var(--text);overflow-wrap:anywhere}
 .rawev-meta>b>i{font-style:normal;font-weight:400;color:var(--muted)}
 .rawev-mono{font-family:var(--mono);font-size:12px;font-weight:400}
 .rawev-json{max-height:52vh;overflow:auto;overscroll-behavior:contain;margin:0;padding:12px;
   background:var(--panel2);border:1px solid var(--line);border-radius:var(--r);
-  font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--fg);
+  font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--text);
   white-space:pre-wrap;overflow-wrap:anywhere;tab-size:2}
 /* Four tokens, four different HUES — --neon and --cyan are the same colour on the flagship theme, so
    keys and strings in those two were indistinguishable. Every theme defines all of these, tuned to its
@@ -5922,7 +5922,7 @@ img.mb-resvid{width:auto;height:auto;max-width:100%;margin:0 auto;display:block;
 .vs-list{display:flex;flex-direction:column;gap:8px;margin:8px 0}
 .vs-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .vs-pick{flex:0 0 auto;min-height:38px;padding:6px 12px;border-radius:9px;cursor:pointer;
-  background:var(--panel2);border:1px solid var(--line);color:var(--fg);font:inherit}
+  background:var(--panel2);border:1px solid var(--line);color:var(--text);font:inherit}
 .vs-pick.on{border-color:var(--neon);box-shadow:0 0 0 1px var(--neon);color:var(--neon)}
 .vs-prev{flex:1 1 180px;min-width:0;height:34px}
 .vs-del{flex:0 0 auto}
@@ -5956,7 +5956,7 @@ img.mb-resvid{width:auto;height:auto;max-width:100%;margin:0 auto;display:block;
 .vs-keep:disabled{opacity:.5}
 /* "Speaking as X" — the studio's answer to "which voice will it use?". A border highlight alone is
    invisible when there is only ONE voice, because it is selected from the moment the sheet opens. */
-.vs-active{margin:10px 0 2px;font-size:13px;color:var(--fg)}
+.vs-active{margin:10px 0 2px;font-size:13px;color:var(--text)}
 .vs-active b{color:var(--neon)}
 /* The three ways to add a voice. flex:1 so they FILL the row as equal, properly-sized targets rather
    than three shrink-wrapped pills with dead space after them; they wrap to two lines on a narrow
@@ -6098,7 +6098,7 @@ body.is-offline .needs-net{ opacity:.45; pointer-events:none; filter:saturate(.4
    360px: the pitch takes the first row and the two controls sit together on the second. */
 .pv-exttip{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
   margin:10px 14px 2px;padding:9px 11px;border:1px solid var(--line);border-radius:10px;
-  background:rgba(var(--accent-rgb),.07);font-size:12.5px;color:var(--fg)}
+  background:rgba(var(--accent-rgb),.07);font-size:12.5px;color:var(--text)}
 .pv-exttip svg.ic{width:15px;height:15px;flex:none;color:var(--neon)}
 .pv-exttip-t{flex:1 1 190px;min-width:0;line-height:1.4}
 .pv-exttip-get{flex:none;padding:4px 11px;border:1px solid var(--neon);border-radius:999px;
@@ -6106,7 +6106,7 @@ body.is-offline .needs-net{ opacity:.45; pointer-events:none; filter:saturate(.4
 .pv-exttip-get:hover{background:rgba(var(--accent-rgb),.18)}
 .pv-exttip-x{flex:none;width:24px;height:24px;line-height:1;border:0;border-radius:6px;cursor:pointer;
   background:transparent;color:var(--muted);font-size:13px}
-.pv-exttip-x:hover{background:rgba(var(--accent-rgb),.14);color:var(--fg)}
+.pv-exttip-x:hover{background:rgba(var(--accent-rgb),.14);color:var(--text)}
 /* Destructive, and on its OWN row: three across a 190px column truncates every label, which is the
    mistake this sidebar already made once. Muted until hover — it sits one tap from buttons people
    press routinely, so it must not invite the reach. */
@@ -6605,10 +6605,10 @@ body.os-on #os-root{pointer-events:auto}
   color:var(--muted)}
 .tty-sess{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;padding:3px 4px 3px 9px;
   border:1px solid var(--line);border-radius:999px;background:var(--panel)}
-.tty-sess b{font-size:12px;font-weight:600;color:var(--fg)}
+.tty-sess b{font-size:12px;font-weight:600;color:var(--text)}
 .tty-sess i{font-size:10.5px;font-style:normal;color:var(--muted)}
 .tty-sess button{font-size:11px;padding:3px 9px;border-radius:999px;cursor:pointer;
-  border:1px solid var(--line);background:transparent;color:var(--fg)}
+  border:1px solid var(--line);background:transparent;color:var(--text)}
 .tty-sess button:hover{border-color:var(--accent);color:var(--accent)}
 .tty-kill,.tty-sess button.tty-kill{color:#ff6b8b;border-color:rgba(255,107,139,.4)}
 .tty-kill:hover,.tty-sess button.tty-kill:hover{border-color:#ff6b8b;color:#ff6b8b}
@@ -8095,7 +8095,7 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
 @media (min-width:700px){ .shorts-grid{grid-template-columns:repeat(3,1fr)} }
 @media (min-width:1100px){ .shorts-grid{grid-template-columns:repeat(4,1fr)} }
 .short-tile{position:relative;aspect-ratio:9/16;border-radius:12px;overflow:hidden;cursor:pointer;
-  background:#000;border:1px solid var(--border,#2a2a33)}
+  background:#000;border:1px solid var(--line)}
 .short-tile img{width:100%;height:100%;object-fit:cover;display:block}
 .short-tile-blank{display:flex;align-items:center;justify-content:center;height:100%;font-size:34px}
 .short-dur{position:absolute;top:6px;right:6px;background:rgba(0,0,0,.65);color:#fff;
@@ -8159,8 +8159,18 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
    still laid out — as an ordinary inline row, never as furniture nailed to the screen. */
 .os-launcher, .os-taskbar, .os-panel{ display:flex; gap:6px; align-items:center; min-width:0; }
 .os-sys{ display:flex; gap:2px; align-items:center; min-width:0; }
-.os-app, .os-task, .os-chip{
-  background:none; border:1px solid transparent; color:var(--fg,#d6e2ff);
+/* SCOPED TO THE SHELL'S OWN CONTAINERS, and that scoping is the whole of a bug reported as "the
+   start menu is blank". `.os-app` is ALSO the desktop start menu's row (styled far above, at
+   .os-startmenu / .os-applist) and `.os-task` is ALSO the desktop taskbar's window button — the
+   shell reused two class names that were already taken. Being later in the file with equal
+   specificity, this block won every property it shared with them: the row padding, and, until the
+   line above was fixed, the COLOUR — a hard-coded #d6e2ff read through `var(--fg, …)`, a custom
+   property this stylesheet has never defined. Measured on the five light themes, that put the app
+   labels at 1.14-1.40:1 against their own panel (Cherry Blossom 1.22, Professional 1.21, Windows 98
+   1.40, Windows XP 1.14, Anime Girl 1.17) — pale blue on near-white, which is a start menu that
+   opens, is full of apps, and reads as empty. */
+.os-launcher .os-app, .os-taskbar .os-task, .os-chip{
+  background:none; border:1px solid transparent; color:var(--text);
   font:inherit; font-size:13px; padding:4px 10px; border-radius:7px; cursor:pointer;
   white-space:nowrap;
 }
@@ -8168,8 +8178,8 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
    beside it, so the row reads as one row rather than as something bolted onto the end of it. */
 .os-sys .os-chip{ font-size:12px; padding:3px 7px; opacity:.92; }
 .os-sys .os-chip:hover{ opacity:1; }
-.os-app:hover, .os-task:hover, .os-chip:hover{ border-color:var(--neon,#3ce8ff); }
-.os-task.on{ background:rgba(60,232,255,.14); border-color:var(--neon,#3ce8ff); }
+.os-launcher .os-app:hover, .os-taskbar .os-task:hover, .os-chip:hover{ border-color:var(--neon); }
+.os-taskbar .os-task.on{ background:color-mix(in srgb, var(--neon) 14%, transparent); border-color:var(--neon); }
 /* A reading that could not be taken is DIM and marked, never a plausible default — a full-strength
    wifi icon on a machine whose NetworkManager is dead is a lie that costs somebody an hour. */
 .os-chip.os-unknown{ color:var(--muted,#7a8699); font-style:italic; }
@@ -8179,16 +8189,16 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
    they are opened FROM the taskbar, which is above both. */
 .os-pop{
   position:fixed; z-index:340; min-width:230px; max-width:320px;
-  background:var(--panel2,rgba(20,20,34,.97)); border:1px solid var(--border,#333);
+  background:var(--panel2,rgba(20,20,34,.97)); border:1px solid var(--line);
   border-radius:12px; box-shadow:0 18px 44px rgba(0,0,0,.55); overflow:hidden;
   backdrop-filter:blur(10px); font-size:13px;
 }
-.os-pop-h{ padding:9px 12px 7px; font-weight:600; border-bottom:1px solid var(--border,#333); }
+.os-pop-h{ padding:9px 12px 7px; font-weight:600; border-bottom:1px solid var(--line); }
 .os-pop-b{ padding:8px; display:flex; flex-direction:column; gap:2px; max-height:44vh; overflow-y:auto; }
 .os-pop-b.os-pop-profs{ flex-direction:row; flex-wrap:wrap; gap:6px; }
 .os-pop-row{
   display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%;
-  background:none; border:1px solid transparent; color:var(--fg,#d6e2ff); font:inherit;
+  background:none; border:1px solid transparent; color:var(--text); font:inherit;
   padding:7px 9px; border-radius:8px; cursor:pointer; text-align:left;
 }
 .os-pop-row:hover{ background:rgba(60,232,255,.10); border-color:var(--neon,#3ce8ff); }
@@ -8202,7 +8212,7 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
 .os-pop-val{ flex:none; min-width:44px; text-align:right; color:var(--muted,#7a8699); }
 .os-pop-f{ padding:0 8px 8px; }
 .os-pop-btn{
-  background:none; border:1px solid var(--border,#333); color:var(--fg,#d6e2ff); font:inherit;
+  background:none; border:1px solid var(--line); color:var(--text); font:inherit;
   font-size:12px; padding:5px 10px; border-radius:7px; cursor:pointer;
 }
 .os-pop-btn:hover, .os-pop-btn.on{ border-color:var(--neon,#3ce8ff); background:rgba(60,232,255,.12); }
@@ -8241,6 +8251,22 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
    A tile grid over sliders, the way Windows lays it out — a tile is a state you toggle and a slider
    is a value you drag, and mixing them into one list makes both harder to hit. */
 .os-pop-quick{ width:340px; max-width:calc(100vw - 16px); }
+/* THE POWER FLYOUT IS THE VOLUME FLYOUT'S TWIN. Two chips at the same end of the same taskbar drew
+   two different panels — one 340px and anchored to its right edge, one a generic 230-320px box laid
+   out from the chip's left, which walks it across the screen. Reported as "power button menu is
+   garbage, it opens up top-left", then "make it function like the volume section". Same width and
+   alignment come from `os-pop-quick`; these are the rows, sized for a pointer rather than for a
+   list, because every entry here loses whatever is on screen and none of them should be a small
+   target beside the one that shuts the machine down. */
+.os-pop-power .os-pop-h{ display:flex; align-items:center; gap:8px; padding:12px 14px 10px; font-size:14px; }
+.os-pop-power .os-pop-h .ic{ width:18px; height:18px; flex:none; }
+.os-pop-power-acts{ padding:10px; gap:6px; }
+.os-pop-power-acts .os-pop-row{
+  display:flex; align-items:center; gap:12px;
+  padding:12px 14px; border-radius:10px; font-size:14px;
+}
+.os-pop-power-acts .os-pop-row .ic{ width:18px; height:18px; flex:none; opacity:.85; }
+.os-pop-power-acts .os-pop-row.os-pop-danger .ic{ color:#ff6b6b; opacity:1; }
 .os-qs{ padding:10px; display:flex; flex-direction:column; gap:10px; }
 .os-qs-tiles{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
 .os-qs-tile{
@@ -8323,7 +8349,7 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
 html.osfr-on body > .app, html.osfr-on #os-root{ visibility:hidden; }
 .osfr-card{ width:min(560px, 100%); border-radius:16px; padding:26px 26px 20px; }
 .osfr-dots{ display:flex; gap:7px; justify-content:center; margin-bottom:18px; }
-.osfr-dot{ width:7px; height:7px; border-radius:50%; background:var(--border,#2a3446); }
+.osfr-dot{ width:7px; height:7px; border-radius:50%; background:var(--line); }
 .osfr-dot.done{ background:var(--neon,#3ce8ff); opacity:.45; }
 .osfr-dot.on{ background:var(--neon,#3ce8ff); box-shadow:0 0 10px var(--neon,#3ce8ff); }
 .osfr-h{ margin:0 0 8px; font-size:23px; line-height:1.2; }
@@ -8348,7 +8374,7 @@ html.osfr-on body > .app, html.osfr-on #os-root{ visibility:hidden; }
  * A PANEL, not ↑: the shell owns ↑ and knows its own history far better than we do. What it cannot
  * know is what you ran on your other computer, and that is all this offers. */
 .tty-hist{ max-height:38vh; overflow-y:auto; display:flex; flex-direction:column; gap:2px;
-           padding:6px; border-block-end:1px solid var(--border,#2a3446);
+           padding:6px; border-block-end:1px solid var(--line);
            background:rgba(0,0,0,.35); }
 .tty-hist-row{ display:flex; align-items:baseline; justify-content:space-between; gap:12px;
                width:100%; padding:6px 9px; border-radius:7px; border:1px solid transparent;

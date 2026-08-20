@@ -722,15 +722,33 @@
     const pm = profileMenu(st);
     const profs = pm.list, cur = pm.active;
     const canHib = !!(st && st.canHibernate);
-    const d = openPop(anchor, `<div class="os-pop-h">Power</div>
+    /* THE SAME PANEL AS THE VOLUME ONE, and that is the whole of the fix.
+     *
+     * "power button menu is garbage! it's a menu that opens up top-left. make it nice, centered,
+     * big!" — then "maybe power button just needs to be improved to function like the volume
+     * section", "consistent UI experience and clean".
+     *
+     * It was already an `openPop`, so the machinery was shared; what was not shared were the two
+     * arguments that make the quick panel look like a panel. Without `align:'end'` it was laid out
+     * from the chip's LEFT edge, which for a chip at the right-hand end of the taskbar walks the
+     * flyout across the screen; and without `os-pop-quick` it fell back to the generic 230-320px
+     * box while the volume flyout beside it is a fixed 340. Two chips, one taskbar, two different
+     * panels — which is exactly what "garbage" was describing.
+     *
+     * Same width, same alignment, same rows with an icon and a label, so the tray reads as one
+     * thing however you got into it. */
+    const row = (act, icon, label, cls) =>
+      `<button class="os-pop-row${cls ? ' ' + cls : ''}" data-act="${act}">`
+      + `${ICO(icon)}<span class="os-pop-nm">${label}</span></button>`;
+    const d = openPop(anchor, `<div class="os-pop-h">${ICO('power')}Power</div>
       ${profs.length ? `<div class="os-pop-b os-pop-profs">${profs.map(x =>
         `<button class="os-pop-btn${x === cur ? ' on' : ''}" data-prof="${H(x)}">${H(x)}</button>`).join('')}</div>` : ''}
-      <div class="os-pop-b os-pop-acts">
-        <button class="os-pop-row" data-act="suspend">Sleep</button>
-        ${canHib ? `<button class="os-pop-row" data-act="hibernate">Hibernate</button>` : ''}
-        <button class="os-pop-row" data-act="reboot">Restart</button>
-        <button class="os-pop-row os-pop-danger" data-act="poweroff">Shut down</button>
-      </div>`);
+      <div class="os-pop-b os-pop-acts os-pop-power-acts">
+        ${row('suspend', 'clock', 'Sleep')}
+        ${canHib ? row('hibernate', 'battery', 'Hibernate') : ''}
+        ${row('reboot', 'refresh', 'Restart')}
+        ${row('poweroff', 'power', 'Shut down', 'os-pop-danger')}
+      </div>`, { align: 'end', cls: 'os-pop-quick os-pop-power' });
     d.querySelectorAll('[data-prof]').forEach(b => b.onclick = async () => {
       try{ await p.setProfile(b.dataset.prof); toast('power profile: ' + b.dataset.prof); }
       catch(e){ toast(String((e && e.message) || e)); }
@@ -928,6 +946,18 @@
   async function takeShot(mode){
     const sh = root.pcShot;
     if(!sh || typeof sh.take !== 'function'){ toast('screenshots are not available here'); return null; }
+    /* CHOOSING AN AREA IS THE DEFAULT NOW (Print picks a rectangle, Shift+Print takes the screen),
+     * so this is the path a bare keypress takes — and it must not be the path that does nothing.
+     * Region needs `slurp`, which is a separate package; without it the old code would have sent
+     * `mode:'region'` to a helper that cannot do it, on the key somebody presses most. Falling back
+     * to the whole screen and SAYING so is the only answer that still produces a screenshot. */
+    if(mode === 'region'){
+      const can = await shotAvailable();
+      if(can && can.ok && !can.region){
+        toast('Choosing an area needs slurp (gui-apps/slurp) — took the whole screen instead');
+        mode = 'screen';
+      }
+    }
     closePop();
     await new Promise(r => setTimeout(r, 180));
     let res = null;
@@ -942,17 +972,18 @@
     return res;
   }
 
-  /* The screenshot tile OFFERS THE MODES rather than assuming one. Windows' own keys do the same
-   * (PrtSc takes the screen, Win+Shift+S picks an area) and which one somebody wants cannot be
-   * guessed from a press. */
+  /* The screenshot tile OFFERS THE MODES rather than assuming one — but it offers them in the order
+   * the keyboard does. Print picks a rectangle and Shift+Print takes the screen, so "Choose an
+   * area" leads here too; a menu whose first row is the one the key does NOT do teaches the wrong
+   * thing about the key. */
   function shotPanel(){
     const d = _pop; if(!d) return;
     const can = _shotCan || { ok: true, region: false };
     d.innerHTML = `<div class="os-pop-h"><button class="os-pop-back" data-os="quickback"
         aria-label="Back">${ICO('chevron-left')}</button>Screenshot</div>
       <div class="os-pop-b os-pop-acts">
-        <button class="os-pop-row" data-shot="screen">Whole screen</button>
         ${can.region ? `<button class="os-pop-row" data-shot="region">Choose an area…</button>` : ''}
+        <button class="os-pop-row" data-shot="screen">Whole screen</button>
       </div>${can.region ? ''
         : `<div class="os-pop-none">Choosing an area needs slurp (gui-apps/slurp), which is not installed.</div>`}`;
     bindPanel(d);

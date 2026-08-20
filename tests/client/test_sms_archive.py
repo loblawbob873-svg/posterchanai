@@ -344,3 +344,44 @@ class PublishingIsNotTheRole(unittest.TestCase):
         why = calls_of(res, "why")[0][2]
         self.assertIn("messages role", why)
         self.assertIn("com.samsung.android.messaging", why)
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class TheRoleCanBeAskedForFromTheScreenThatNeedsIt(unittest.TestCase):
+    """"posterchan still not working as default Messenger app despite being set as default
+    messenger" — three times, against a screen whose only advice was to go and do it again in
+    Android's own settings.
+
+    `fix: 'role'` printed a sentence and offered NOTHING. Every other kind of empty on this screen
+    has a button; this one, the one people were actually hitting, had none. Android's role dialog is
+    one plugin call away and this is the screen somebody is standing on when they want it.
+
+    It was also gated on the list being EMPTY, so the people reporting it — who can see their texts
+    and cannot receive new ones — were the exact set the offer never reached.
+    """
+
+    def test_a_phone_that_is_not_the_default_is_offered_the_dialog(self):
+        res = run(rows=[msg(1)], isPhone=False, canRead=True,
+                  defaultPkg="com.samsung.android.messaging", steps=["load", "why"])
+        self.assertEqual(calls_of(res, "why")[0][1], "role")
+
+    def test_it_is_offered_even_when_there_are_messages_on_screen(self):
+        """THE RULE THE REPORT TURNS ON. Being able to READ texts and being the app that RECEIVES
+        them are different states, and somebody in the first one has a full screen of messages."""
+        # `render` is what actually reads the phone's own inbox, so the screen really is holding
+        # messages when the question is asked. Without it S.msgs is empty either way and the test
+        # cannot tell the gate from its absence — it passed against the bug.
+        res = run(rows=[msg(1), msg(2), msg(3)], isPhone=False, canRead=True,
+                  defaultPkg="com.google.android.apps.messaging",
+                  steps=["render", "settle", "why"])
+        self.assertEqual(len(res["docs"]), 3, "the screen is not holding any messages: %s" % res)
+        self.assertEqual(calls_of(res, "why")[0][1], "role")
+
+    def test_the_button_exists_and_names_the_right_plugin(self):
+        js = (ROOT / "static/js/client/sms.js").read_text()
+        self.assertIn("sms-role", js, "there is no button to ask for the role")
+        self.assertIn("'HomeScreen', 'requestSms'", js,
+                      "the role dialog belongs to the home-screen plugin; asking the Sms plugin "
+                      "returns a proxy that answers every name and then rejects")
+        self.assertIn("openDefaultApps", js,
+                      "no way through on an OEM build that suppresses the role dialog")

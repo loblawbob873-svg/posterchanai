@@ -201,7 +201,7 @@
     if(!st.canRead)
       return { why: 'PosterChan has not been allowed to read this phone\u2019s messages yet.',
                phone: true, fix: 'perm' };
-    if(!st.isDefault && !S.msgs.size)
+    if(!st.isDefault)
       return { why: roleLine(st), phone: true, fix: 'role' };
     let mark = 0;
     try{ mark = Number(localStorage.getItem(HWM()) || 0) || 0; }catch(_){ }
@@ -703,6 +703,16 @@
              + (S.emptyFix === 'perm'
                  ? '<div style="margin-top:14px"><button class="btn btn-neon small" id="sms-allow">'
                    + 'Allow PosterChan to read them</button></div>' : '')
+             /* AND SO DOES THE ROLE. `fix:'role'` printed a sentence and offered nothing —
+              * "PosterChan still not working as default Messenger app despite being set as
+              * default messenger" came back three times against a screen whose only advice was to
+              * go and do it again in Android's own settings. Android's role dialog is one call
+              * away and this is the screen somebody is standing on when they want it. */
+             + (S.emptyFix === 'role'
+                 ? '<div style="margin-top:14px"><button class="btn btn-neon small" id="sms-role">'
+                   + 'Make PosterChan my messages app</button>'
+                   + '<button class="btn small" id="sms-defaults" style="margin-left:8px">'
+                   + 'Open Android\u2019s Default apps</button></div>' : '')
              + '</div>')}
         </div>
       </div>`;
@@ -718,6 +728,33 @@
       const el = PC.$('#sms-note');
       if(el) el.textContent = d ? detailLine(d)
                                 : 'This build cannot report it — it is older than this screen.';
+    };
+    const role = PC.$('#sms-role');
+    if(role) role.onclick = async () => {
+      // THE HOME-SCREEN PLUGIN, not the Sms one. The role dialog belongs to the shell half
+      // (HomePlugin.requestSms is what the settings card's switch calls), and asking the Sms plugin
+      // for it gets a proxy that answers every name and then rejects — which looks like a button
+      // that does nothing, on the screen this button exists to stop doing nothing.
+      const P = PC.capPlugin ? PC.capPlugin('HomeScreen', 'requestSms') : null;
+      if(!P || !P.requestSms){ S.emptyWhy = 'This build cannot ask for it — update the app.'; paint(); return; }
+      role.disabled = true;
+      let held = false;
+      try{ held = !!((await P.requestSms()) || {}).isDefault; }catch(_){ held = false; }
+      /* RE-ASKED AFTERWARDS RATHER THAN BELIEVED. Android refuses a role the app cannot hold by
+       * starting the request activity and finishing it immediately — no dialog, no error, nothing
+       * in any log — which is indistinguishable from somebody declining. The state is what decides
+       * what to say, and when it did not move the person is sent to the one screen that always
+       * works. */
+      const st2 = await phoneState();
+      if(st2.isDefault || held){ S.emptyWhy = ''; S.emptyFix = ''; await loadFromPhone(); paint(); return; }
+      S.emptyWhy = roleLine(st2) + ' Android did not change it just now, so use the button below.';
+      S.emptyFix = 'role';
+      paint();
+    };
+    const defs = PC.$('#sms-defaults');
+    if(defs) defs.onclick = () => {
+      const P = PC.capPlugin ? PC.capPlugin('HomeScreen', 'openDefaultApps') : null;
+      try{ if(P && P.openDefaultApps) P.openDefaultApps(); }catch(_){}
     };
     const allow = PC.$('#sms-allow');
     if(allow) allow.onclick = async () => {
