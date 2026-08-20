@@ -70,6 +70,37 @@ class PosterChanOSProfile(unittest.TestCase):
                     "media-video/pipewire", "media-video/obs-studio"):
             self.assertIn(pkg, self.pkgs, f"{pkg} missing — screen recording dies at record time")
 
+    def test_the_session_environment_reaches_systemd_or_there_is_no_screen_capture(self):
+        """THE ONE THAT MADE OBS LIST NOTHING, with every package correctly installed.
+
+        xdg-desktop-portal is a SYSTEMD USER SERVICE. It does not inherit the sway session's
+        environment — it inherits `systemd --user`'s, which is empty of it — so it comes up with no
+        XDG_CURRENT_DESKTOP, matches neither `sway-portals.conf` nor `UseIn=…;sway;…` in wlr.portal,
+        loads no backend, and exposes no ScreenCast interface at all. Measured on the test laptop:
+        `No such interface "org.freedesktop.portal.ScreenCast"` with xdg-desktop-portal-wlr
+        installed, pipewire running and OBS 32 ready. It reads as an OBS problem and is not one; the
+        desktop app's own file dialog fails identically in the same breath.
+
+        Both calls are asserted, because they fill DIFFERENT environments and a session with one of
+        them works for half the things that need it: `import-environment` is systemd's user manager
+        (which starts the portal), `dbus-update-activation-environment` is the D-Bus activation
+        environment (which starts anything D-Bus launches directly)."""
+        for where, text in self._sway_configs().items():
+            self.assertIn("systemctl --user import-environment", text,
+                          f"{where}: the session environment never reaches systemd, so the portal "
+                          f"loads no backend and screen capture does not exist")
+            self.assertIn("dbus-update-activation-environment", text,
+                          f"{where}: the D-Bus activation environment is never filled in")
+            self.assertIn("XDG_CURRENT_DESKTOP", text,
+                          f"{where}: the desktop NAME is what selects the portal backend, and it "
+                          f"is not among the variables being carried over")
+
+    def test_something_answers_the_FileChooser_portal(self):
+        """The wlroots backend implements ScreenCast and nothing else, so with it alone there is no
+        FileChooser on the bus — measured, and it is what Folder Sync's "choose a folder" needs."""
+        self.assertIn("xdg-desktop-portal-gtk", self.src,
+                      "no portal backend provides FileChooser, so no file dialog can open")
+
     def test_obs_is_built_with_pipewire(self):
         """An OBS without the flag builds, installs, runs, and has no PipeWire capture source in it.
         Nothing about that looks like a packaging mistake from the desktop."""
@@ -203,6 +234,16 @@ class PosterChanOSProfile(unittest.TestCase):
         for gone in ("brightnessctl", "power-profiles-daemon", "playerctl"):
             self.assertFalse([p for p in self.pkgs if gone in p],
                              f"{gone} is back in the profile — check whether it is really needed")
+
+    def _sway_configs(self):
+        """Both copies: the installer writes one and the overlay package ships the other, and a
+        line in only one of them works on exactly half the installs."""
+        out = {"os/gentoo.sh": self.src}
+        overlay = os.path.join(ROOT, "os", "overlay", "app-misc", "posterchanos-shell",
+                               "files", "sway.config")
+        if os.path.exists(overlay):
+            out["overlay sway.config"] = open(overlay, encoding="utf-8").read()
+        return out
 
     def test_the_power_mode_can_be_CHANGED_and_not_only_read(self):
         """A control that reports a reading and refuses to change it is worse than no control: it

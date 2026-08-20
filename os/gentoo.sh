@@ -86,10 +86,18 @@ FLATPAK_PACKAGES="com.valvesoftware.Steam com.vscodium.codium org.kde.konsole co
 # (there is no generic one; the front end alone answers "no such capture" and OBS shows a screen
 # capture source that lists nothing), and OBS built with the pipewire USE flag. Missing any one of
 # them fails at the moment somebody presses record, which is the worst possible moment to find out.
+#
+# AND A FOURTH, for a portal a recorder never touches: the wlroots backend implements ScreenCast and
+# NOTHING ELSE, so with it alone there is no FileChooser interface on the bus at all. Measured: the
+# desktop app's own log carries `No such interface "org.freedesktop.portal.FileChooser"` and a
+# failure to read the portal version, which is Folder Sync's "choose a folder" having nowhere to
+# ask. `xdg-desktop-portal-gtk` is the backend that answers it — GTK, which sway's own stack pulls
+# in regardless, and emphatically not webkit.
 POSTERCHANOS_PACKAGES="gui-wm/sway x11-base/xwayland gui-apps/foot gui-apps/wl-clipboard \
 media-video/pipewire media-video/wireplumber gui-libs/gtk media-fonts/noto media-fonts/noto-emoji \
 www-client/firefox-bin \
-sys-apps/xdg-desktop-portal gui-libs/xdg-desktop-portal-wlr media-video/obs-studio \
+sys-apps/xdg-desktop-portal gui-libs/xdg-desktop-portal-wlr sys-apps/xdg-desktop-portal-gtk \
+media-video/obs-studio \
 sec-keys/openpgp-keys-gentoo-release dev-vcs/git"
 
 # The profile has to survive a CHROOT. buildGentoo copies this script into the target and runs it
@@ -763,6 +771,36 @@ posterchanShell() {
 	# whether it is told depends on a flag surviving a wrapper and an AppRun. pc-shell-start finds
 	# the window FIRST and pins it second — the same order wm.js uses for anything it launches, and
 	# for the same reason: an app that has not appeared cannot be placed.
+	# THE SESSION'S ENVIRONMENT HAS TO REACH SYSTEMD, OR SCREEN RECORDING DOES NOT EXIST.
+	#
+	# xdg-desktop-portal is a SYSTEMD USER SERVICE, D-Bus-activated. It does not inherit this
+	# session's environment — it inherits `systemd --user`'s, which is empty of it — so it starts
+	# with no XDG_CURRENT_DESKTOP and no WAYLAND_DISPLAY. It then has no desktop name to match, so
+	# `sway-portals.conf` selects nothing and `UseIn=…;sway;…` in wlr.portal matches nothing, so the
+	# wlroots backend is never loaded and the portal exposes NO ScreenCast interface at all.
+	#
+	# Measured, exactly that way: `org.freedesktop.DBus.Error.InvalidArgs: No such interface
+	# "org.freedesktop.portal.ScreenCast"`, on a machine with xdg-desktop-portal-wlr installed,
+	# pipewire running, a correct portals.conf and OBS 32 ready to go. OBS shows a screen-capture
+	# source that can list nothing, which reads as an OBS problem and is not one. The desktop app's
+	# own file dialog fails the same way, for the same reason, in the same breath — "No such
+	# interface org.freedesktop.portal.FileChooser" is in the shell's log.
+	#
+	# BOTH lines, and they are not the same line twice: `import-environment` fills in systemd's user
+	# manager (which is what starts the portal), `dbus-update-activation-environment` fills in the
+	# D-Bus activation environment (which is what starts anything D-Bus launches directly). A
+	# session with one and not the other works for half the things that need it.
+	#
+	# FIRST in this file, before anything that could activate a portal — the shell below opens a
+	# file dialog and asks about screen capture, and a portal started with the wrong environment
+	# keeps it for the life of the session.
+	exec_always --no-startup-id systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE SWAYSOCK
+	exec_always --no-startup-id dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE SWAYSOCK
+	# …and a portal that was already up holds the OLD environment, so it is restarted rather than
+	# left to answer "no such capture" for the rest of the session. Failure is ignored on purpose:
+	# on a machine where these units are not installed there is nothing to restart and nothing wrong.
+	exec_always --no-startup-id systemctl --user try-restart xdg-desktop-portal xdg-desktop-portal-wlr
+
 	exec_always --no-startup-id /usr/local/bin/pc-shell-start
 
 	# Windows are PLACED by PosterChan over its IPC, so the compositor must not lay them out itself.
