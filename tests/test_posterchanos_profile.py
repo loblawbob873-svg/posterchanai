@@ -166,11 +166,26 @@ class PosterChanOSProfile(unittest.TestCase):
                       "an AppImage run as one needs FUSE, which a minimal profile does not have")
         self.assertIn("no shell", body, "a failed install is silent — sway starts with nothing")
 
-    def test_the_shell_is_started_and_windows_are_placeable(self):
-        """A TILED window ignores position and size — PosterChan would move things and nothing would
-        happen, silently. The desktop places windows, so they have to be floating."""
-        self.assertIn("posterchan --shell", self.src)
-        self.assertIn("floating enable", self.src)
+    def test_the_shell_is_started_through_the_launcher(self):
+        """`for_window` cannot be relied on for this window: an X11 client sets WM_CLASS AFTER it
+        maps, so sway evaluates criteria against a window with no class yet — every rule looks right
+        in the file, none of them match, and the shell floats at 1280x860 in the middle of the
+        screen. The launcher finds the window first and pins it second, which is the same order
+        wm.js uses for anything it launches."""
+        self.assertIn("pc-shell-start", self.src, "the shell is started without pinning its window")
+        cfg = self._fn("posterchanShell")
+        self.assertNotIn('for_window [app_id=".*"] floating enable', cfg,
+                         "a catch-all float rule fights the launcher and wins silently")
+
+    def test_the_launcher_waits_for_the_window_before_pinning_it(self):
+        p = os.path.join(ROOT, "os", "bin", "pc-shell-start")
+        self.assertTrue(os.path.exists(p), "the launcher is not shipped")
+        body = open(p, encoding="utf-8").read()
+        self.assertIn("get_tree", body, "it pins whatever is there rather than waiting for ours")
+        self.assertIn("fullscreen enable", body)
+        for spelling in ('class="posterchan-desktop"', 'app_id="posterchan-desktop"'):
+            self.assertIn(spelling, body,
+                          "only one of app_id/class is handled — the other silently does nothing")
 
     def test_the_compositor_draws_no_chrome(self):
         """PosterChan draws the window frame, so sway must not draw one too. Left on, its borders and

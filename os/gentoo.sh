@@ -644,19 +644,23 @@ posterchanShell() {
 	# The desktop itself. Not a layer-shell surface: Electron cannot make one, and a fullscreen
 	# window at the bottom of the stack is the same thing from the person's side, with the whole
 	# client working unmodified in a browser and the APK as well.
-	exec_always --no-startup-id posterchan --shell
+	# STARTED BY A LAUNCHER, NOT DIRECTLY, because `for_window` cannot be relied on for this window.
+	# An X11 client sets WM_CLASS AFTER it maps, so sway evaluates criteria against a window with no
+	# class yet: every rule looks right in the file and none of them match, and the shell ends up
+	# floating at 1280x860 in the middle of the screen. Electron picks X11 unless told otherwise, and
+	# whether it is told depends on a flag surviving a wrapper and an AppRun. pc-shell-start finds
+	# the window FIRST and pins it second — the same order wm.js uses for anything it launches, and
+	# for the same reason: an app that has not appeared cannot be placed.
+	exec_always --no-startup-id /usr/local/bin/pc-shell-start
 
 	# Windows are PLACED by PosterChan over its IPC, so the compositor must not lay them out itself.
 	# A tiled window ignores position and size — the desktop would move things and nothing would
 	# happen, silently.
-	# EVERY client floats, then PosterChan is pinned fullscreen. The obvious way to write this — a
-	# negative lookahead excluding posterchan — is not obvious to sway: its criteria go through
-	# pcre2 with its own quoting, and a rule it cannot compile is a CONFIG ERROR at startup, not a
-	# rule that silently does nothing. Two plain rules say the same thing and cannot fail to parse,
-	# and a fullscreen window's floating state is invisible anyway.
-	for_window [app_id=".*"] floating enable
-	for_window [class=".*"] floating enable
-	for_window [app_id="posterchan"] fullscreen enable, border none, floating disable
+	# NOTHING IS FLOATED BY THE COMPOSITOR. The shell is the first and usually only client, and a
+	# single window fills its workspace — so the desktop is full-screen without anything having to
+	# say so. Floating a window is PosterChan's decision, made when it PLACES one: wm.js `place()`
+	# sends `floating enable` and then the geometry. Catch-all float rules here fought that and lost
+	# in a way that was hard to see, for the WM_CLASS reason above.
 
 	# THE COMPOSITOR DRAWS NO CHROME, because PosterChan draws it. Left on, sway's own borders and
 	# title bars would sit on top of the PosterChan desktop — two window styles on one screen, and
@@ -723,8 +727,34 @@ posterchanShell() {
 			&& chmod +x /tmp/PosterChan.AppImage \
 			&& /tmp/PosterChan.AppImage --appimage-extract >/dev/null 2>&1 \
 			&& mv squashfs-root posterchan \
-			&& ln -sf /opt/posterchan/AppRun /usr/local/bin/posterchan \
+			&& chmod -R a+rX /opt/posterchan \
+			&& chown root:root /opt/posterchan/chrome-sandbox \
+			&& chmod 4755 /opt/posterchan/chrome-sandbox \
 			&& rm -f /tmp/PosterChan.AppImage'
+		# A WRAPPER, NOT A SYMLINK. `AppRun` finds the binary through $APPDIR, and $APPDIR is set by
+		# the AppImage RUNTIME — which is exactly the thing extracting removes. Symlinked into
+		# /usr/local/bin it resolves to an empty string and the shell dies with
+		# "/posterchan-desktop: No such file or directory", pointing at a path that was never real.
+		#
+		# chrome-sandbox above is the other half: Electron refuses to start unless it is setuid
+		# root, and extraction cannot preserve a bit the archive was not allowed to carry. The
+		# alternative is --no-sandbox, which turns off the renderer sandbox on a machine strangers
+		# log into — not a trade worth making to save one chmod.
+		# `rm -f` FIRST. /usr/local/bin/posterchan may already be a SYMLINK to AppRun from an earlier
+		# install, and writing to a symlink writes THROUGH it — which replaced AppRun with a script
+		# that execs itself, an infinite loop of /bin/sh processes and no window. Redirection follows
+		# symlinks; only unlinking does not.
+		_in 'rm -f /usr/local/bin/posterchan'
+		_in 'printf "%s\n" "#!/bin/sh" \
+			"# The extracted AppImage has no runtime to set APPDIR, and AppRun needs it." \
+			"export APPDIR=/opt/posterchan" \
+			"exec \"\$APPDIR/AppRun\" \"\$@\"" > /usr/local/bin/posterchan \
+			&& chmod 0755 /usr/local/bin/posterchan'
+		# READABLE BY THE PEOPLE WHO HAVE TO RUN IT. `--appimage-extract` inherits the umask of
+		# whatever shell ran it, and an install running as root under a 0077 umask produces
+		# /opt/posterchan at mode 0700 — root-only, on the one directory every session must exec
+		# from. Measured on the first real boot: "Permission denied" from the shell the compositor
+		# was configured to start, with the binary sitting there perfectly intact.
 		if [ -e "${TARGET}/usr/local/bin/posterchan" ]; then
 			echo -e "\033[1;32m  ✓ /usr/local/bin/posterchan\033[0m"
 		else
@@ -739,15 +769,20 @@ posterchanShell() {
 	# what joins the two. It is the ONLY privileged thing the shell asks for, and it is limited to
 	# exactly that one command — signing in with a key is not the same as being trusted with root,
 	# and a machine anyone may log into must not hand every visitor sudo.
-	if [ -f "$(dirname "$0")/bin/pc-provision-user" ]; then
-		cp -f "$(dirname "$0")/bin/pc-provision-user" ${TARGET}/usr/local/bin/pc-provision-user
-	elif [ -f /tmp/bin/pc-provision-user ]; then
-		cp -f /tmp/bin/pc-provision-user ${TARGET}/usr/local/bin/pc-provision-user
-	fi
+	for helper in pc-provision-user pc-shell-start; do
+		if [ -f "$(dirname "$0")/bin/$helper" ]; then
+			cp -f "$(dirname "$0")/bin/$helper" ${TARGET}/usr/local/bin/$helper
+		elif [ -f /tmp/bin/$helper ]; then
+			cp -f /tmp/bin/$helper ${TARGET}/usr/local/bin/$helper
+		fi
+		[ -f "${TARGET}/usr/local/bin/$helper" ] && chmod 0755 ${TARGET}/usr/local/bin/$helper
+	done
+	[ -f "${TARGET}/usr/local/bin/pc-shell-start" ] || \
+		echo -e "\033[1;31m  ✗ pc-shell-start not shipped — the desktop will not be full screen\033[0m"
 	if [ -f "${TARGET}/usr/local/bin/pc-provision-user" ]; then
 		chmod 0755 ${TARGET}/usr/local/bin/pc-provision-user
 		mkdir -p ${TARGET}/etc/sudoers.d
-		printf '%%s\n' \
+		printf '%s\n' \
 			"# The shell provisions a Unix account for whoever signs in. This one command, nothing else." \
 			"$USER ALL=(root) NOPASSWD: /usr/local/bin/pc-provision-user" \
 			> ${TARGET}/etc/sudoers.d/posterchan-provision
@@ -1278,7 +1313,16 @@ elif [ "$1" = "steam" ]; then
 elif [ "$1" = "install-packages" ]; then
 	installPackages
 elif [ "$1" = "posterchan-shell" ]; then
+	# Called from INSIDE the chroot during finalize, where the new root is `/` and TARGET must not
+	# point anywhere else. The script assigns TARGET='/tmp/install' at load, so it is cleared here.
+	export TARGET=/
 	posterchanShell
+elif [ "$1" = "shell" ]; then
+	# The same thing on a machine that is already running — after an etc-update has replaced the
+	# sway config with the package default, which is what `emerge` does to a file portage owns.
+	export TARGET=/
+	posterchanShell
+	plymouthTheme
 elif [ "$1" = "splash" ]; then
 	export TARGET=/
 	plymouthTheme

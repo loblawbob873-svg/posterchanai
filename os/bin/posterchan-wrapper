@@ -1,0 +1,10 @@
+#!/bin/sh
+# The extracted AppImage has no runtime to set APPDIR, and AppRun needs it.
+export APPDIR=/opt/posterchan
+# NATIVE WAYLAND, as the documented environment variable rather than a flag: a flag has to survive
+# AppRun's argument handling, and this cannot be dropped. It matters beyond tidiness — an X11 window
+# sets WM_CLASS AFTER it maps, so the compositor evaluates its rules against a window that has no
+# class yet, none of them match, and the shell floats in the middle of the screen instead of being
+# the desktop.
+export ELECTRON_OZONE_PLATFORM_HINT=auto
+exec "$APPDIR/AppRun" "$@"
