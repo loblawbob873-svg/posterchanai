@@ -1047,7 +1047,12 @@
     await transfers(plan.send, o, stopping, journal, LANES,
       (u) => (u.stat && u.stat.size || 0) > PARALLEL_MAX,
       async (u, i, n) => {
-        step('uploading', u.path, i, n);
+        /* A SEND CANDIDATE IS NOT YET AN UPLOAD. On Android, downloaded files are routinely
+         * restamped or rewritten by the provider; the guards below hash those candidates and
+         * settle them without publishing a byte. Calling this phase `uploading` before those
+         * guards ran made a safe first join look as though it was sending the freshly downloaded
+         * folder back upstream. Only `send()` may announce uploading, once it actually begins. */
+        step('checking local file', u.path, i, n);
         try{
           /* BYTES THE STORE ALREADY HOLDS ARE NOT UPLOADED AGAIN — the send side's half of
            * adopt-by-content, and it was missing for the whole life of this engine.
