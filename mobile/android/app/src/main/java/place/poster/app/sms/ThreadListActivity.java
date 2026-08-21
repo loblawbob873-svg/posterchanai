@@ -77,6 +77,7 @@ public class ThreadListActivity extends PcActivity {
                 if (t == null) return;
                 startActivity(new Intent(ThreadListActivity.this, ThreadActivity.class)
                         .putExtra(ThreadActivity.EXTRA_THREAD, t.id)
+                        .putExtra(ThreadActivity.EXTRA_THREADS, t.ids)
                         .putExtra(ThreadActivity.EXTRA_ADDRESS, t.address));
             }
         });
@@ -388,7 +389,7 @@ public class ThreadListActivity extends PcActivity {
                 .setMessage(R.string.sms_delete_thread)
                 .setPositiveButton(android.R.string.ok, new android.content.DialogInterface.OnClickListener() {
                     @Override public void onClick(android.content.DialogInterface d, int w) {
-                        int n = SmsStore.deleteThread(ThreadListActivity.this, t.id);
+                        int n = SmsStore.deleteThread(ThreadListActivity.this, t.ids);
                         SmsNotifier.clear(ThreadListActivity.this, t.id);
                         // THIS PHONE ONLY, and it says so. The archive on the person's other devices
                         // is a separate copy with a separate delete, done from the app's Texts screen

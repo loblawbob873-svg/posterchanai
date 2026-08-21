@@ -51,9 +51,21 @@ import place.poster.app.ui.Skin;
 public class ThreadActivity extends PcActivity {
 
     public static final String EXTRA_THREAD = "thread";
+    /**
+     * EVERY thread id this conversation covers. One person can own more than one (SmsStore.fold),
+     * and reading only EXTRA_THREAD is what showed a conversation with your own replies missing.
+     */
+    public static final String EXTRA_THREADS = "threads";
     public static final String EXTRA_ADDRESS = "address";
 
     private long threadId;
+    private long[] threadIds = new long[0];
+
+    /** The conversation's thread ids, falling back to the single one it was opened with. */
+    private long[] ids() {
+        if (threadIds.length > 0) return threadIds;
+        return threadId > 0 ? new long[]{ threadId } : new long[0];
+    }
     private String address = "";
     private ListView list;
     private EditText input;
@@ -137,6 +149,13 @@ public class ThreadActivity extends PcActivity {
         if (a != null && !a.isEmpty()) address = a;
         if (t > 0) threadId = t;
         else if (!address.isEmpty()) threadId = SmsStore.threadIdFor(this, address);
+        long[] many = i.getLongArrayExtra(EXTRA_THREADS);
+        // Opened from our own list, which already grouped the conversation. Opened from anywhere
+        // else -- an `sms:` link, a share sheet, a notification -- there is only an address, so the
+        // grouping is done here rather than trusting one id to be the whole conversation.
+        if (many != null && many.length > 0) threadIds = many;
+        else if (!address.isEmpty()) threadIds = SmsStore.idsFor(this, address, threadId);
+        else if (threadId > 0) threadIds = new long[]{ threadId };
     }
 
     @Override
@@ -153,7 +172,7 @@ public class ThreadActivity extends PcActivity {
         } catch (Throwable ignored) { watcher = null; }
         // Opening a conversation IS reading it — in the provider, so every other app on the phone
         // agrees, and in the shade, so the notification goes.
-        SmsStore.markRead(this, threadId);
+        SmsStore.markRead(this, ids());
         SmsNotifier.clear(this, threadId);
     }
 
@@ -272,7 +291,7 @@ public class ThreadActivity extends PcActivity {
                 .setItems(new CharSequence[]{ getString(R.string.sms_delete_thread) },
                     new android.content.DialogInterface.OnClickListener() {
                         @Override public void onClick(android.content.DialogInterface d, int w) {
-                            int n = SmsStore.deleteThread(ThreadActivity.this, threadId);
+                            int n = SmsStore.deleteThread(ThreadActivity.this, ids());
                             SmsNotifier.clear(ThreadActivity.this, threadId);
                             say(getString(R.string.sms_deleted_here) + " (" + n + ")");
                             finish();

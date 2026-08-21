@@ -52,6 +52,11 @@ public final class SmsStore {
          * asks for one per row per repaint — on every keystroke in the search box.
          */
         public String label = "";
+        /**
+         * EVERY PLATFORM THREAD ID THIS ONE CONVERSATION IS SPREAD ACROSS. Almost always one. See
+         * `fold` for why it can be more, and why reading only `id` loses half a conversation.
+         */
+        public long[] ids = new long[0];
     }
 
     private SmsStore() { }
@@ -80,25 +85,83 @@ public final class SmsStore {
      * Messages — a second copy of this fold is a thread list where picture messages have the wrong
      * snippet on one screen and the right one on the other.
      */
+    /**
+     * THE CONVERSATION LIST — GROUPED BY PERSON, NOT BY THE PLATFORM'S THREAD ID.
+     *
+     * A thread id is not an identity. Android assigns one from its canonical-addresses table, and
+     * the same person reached two ways — "+15551234567" received, "5551234567" dialled — can be
+     * given TWO of them. When that happens, grouping by thread id splits one conversation in half
+     * and the halves are usually split by DIRECTION, because the incoming format is the carrier's
+     * and the outgoing one is whatever dialled it. That is exactly what a phone showed here: two
+     * "Mom" rows, and a thread with the other person's messages and none of your own.
+     *
+     * So the key is the person (SmsKeys.matchKey, the last seven digits — the platform's own rule),
+     * and every thread id seen under that key is kept in `ids`, because reading the conversation
+     * means reading all of them.
+     *
+     * GROUPS ARE THE EXCEPTION AND STAY ON THEIR OWN THREAD ID. A group picture message carries a
+     * single address like any other (MmsStore.fillAddresses picks one participant), so keying it by
+     * that number would fold a conversation several people can read into one member's private
+     * thread. `people` is what tells them apart.
+     */
     static List<Thread> fold(Context ctx, List<SmsMsg> rows, boolean withNames) {
-        Map<Long, Thread> byThread = new LinkedHashMap<Long, Thread>();
+        Map<String, Thread> byPerson = new LinkedHashMap<String, Thread>();
+        Map<String, java.util.LinkedHashSet<Long>> ids =
+                new LinkedHashMap<String, java.util.LinkedHashSet<Long>>();
         for (SmsMsg m : rows) {
-            Thread t = byThread.get(m.threadId);
+            String k = groupKey(m);
+            Thread t = byPerson.get(k);
             if (t == null) {
                 t = new Thread();
+                // Rows arrive newest first, so the first one seen carries the conversation's own
+                // newest thread id — which is the one a REPLY should join.
                 t.id = m.threadId;
                 t.address = m.address;
                 t.snippet = m.body;
                 t.date = m.date;
-                byThread.put(m.threadId, t);
+                byPerson.put(k, t);
+                ids.put(k, new java.util.LinkedHashSet<Long>());
             }
+            ids.get(k).add(m.threadId);
             t.count++;
             if (m.incoming() && !m.read) t.unread++;
             if (t.address.isEmpty()) t.address = m.address;
         }
-        List<Thread> out = new ArrayList<Thread>(byThread.values());
+        List<Thread> out = new ArrayList<Thread>(byPerson.values());
+        for (Map.Entry<String, Thread> e : byPerson.entrySet()) {
+            java.util.LinkedHashSet<Long> set = ids.get(e.getKey());
+            long[] a = new long[set.size()];
+            int i = 0;
+            for (Long v : set) a[i++] = v;
+            e.getValue().ids = a;
+        }
         if (withNames) for (Thread t : out) t.label = PhoneBook.label(ctx, t.address);
         return out;
+    }
+
+    /** Which conversation a message belongs to. See fold. */
+    private static String groupKey(SmsMsg m) {
+        if (m.people > 1) return "t:" + m.threadId;
+        String k = m.address == null ? "" : SmsKeys.matchKey(m.address);
+        // No usable number (a provider that filed none) can only be identified by its thread id.
+        return k.isEmpty() ? "t:" + m.threadId : "p:" + k;
+    }
+
+    /**
+     * EVERY thread id belonging to one person, for a conversation opened from OUTSIDE our own list
+     * -- an `sms:` link, a share sheet, a notification -- where all we are handed is a number.
+     *
+     * It folds the store rather than asking the platform, because the platform is the thing that
+     * split the person in two: `threadIdFor` answers with the id for ONE spelling of the number,
+     * which is the id whose half of the conversation you can already see.
+     */
+    public static long[] idsFor(Context ctx, String address, long fallback) {
+        try {
+            for (Thread t : Messages.threads(ctx, 500, false)) {
+                if (SmsKeys.sameNumber(t.address, address)) return t.ids;
+            }
+        } catch (Throwable ignored) { }
+        return fallback > 0 ? new long[]{ fallback } : new long[0];
     }
 
     /** The newest messages, newest first, across all conversations. */
@@ -108,10 +171,34 @@ public final class SmsStore {
 
     /** One conversation, oldest first — the order a thread is read in. */
     public static List<SmsMsg> thread(Context ctx, long threadId, int limit) {
-        List<SmsMsg> newest = query(ctx, Telephony.Sms.THREAD_ID + "=?",
-                new String[]{ String.valueOf(threadId) }, "date DESC", limit);
+        return thread(ctx, new long[]{ threadId }, limit);
+    }
+
+    /**
+     * One conversation, oldest first, across EVERY thread id it is spread over — see fold for why
+     * one person can own more than one. Reading a single id is what left a conversation showing the
+     * other person's messages and none of your own.
+     */
+    public static List<SmsMsg> thread(Context ctx, long[] threadIds, int limit) {
+        if (threadIds == null || threadIds.length == 0) return new ArrayList<SmsMsg>();
+        List<SmsMsg> newest = query(ctx, Telephony.Sms.THREAD_ID + " IN (" + marks(threadIds.length) + ")",
+                args(threadIds), "date DESC", limit);
         java.util.Collections.reverse(newest);
         return newest;
+    }
+
+    /** `?,?,?` for an IN clause. Shared with MmsStore, which reads the same ids from its own table. */
+    static String marks(int n) {
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < n; i++) { if (i > 0) b.append(','); b.append('?'); }
+        return b.toString();
+    }
+
+    /** Thread ids as selection arguments, to match `marks`. */
+    static String[] args(long[] ids) {
+        String[] a = new String[ids.length];
+        for (int i = 0; i < ids.length; i++) a[i] = String.valueOf(ids[i]);
+        return a;
     }
 
     /**
@@ -249,13 +336,23 @@ public final class SmsStore {
 
     /** Mark a whole conversation read + seen — what opening it means. */
     public static int markRead(Context ctx, long threadId) {
+        return markRead(ctx, new long[]{ threadId });
+    }
+
+    /**
+     * Across every thread id the conversation covers -- one person can own more than one (fold), and
+     * marking only the id you opened leaves the other half unread, i.e. a badge nothing can clear.
+     */
+    public static int markRead(Context ctx, long[] threadIds) {
+        if (threadIds == null || threadIds.length == 0) return 0;
         try {
             ContentValues v = new ContentValues();
             v.put(Telephony.Sms.READ, 1);
             v.put(Telephony.Sms.SEEN, 1);
             return ctx.getContentResolver().update(Telephony.Sms.CONTENT_URI, v,
-                    Telephony.Sms.THREAD_ID + "=? AND " + Telephony.Sms.READ + "=0",
-                    new String[]{ String.valueOf(threadId) });
+                    Telephony.Sms.THREAD_ID + " IN (" + marks(threadIds.length) + ") AND "
+                            + Telephony.Sms.READ + "=0",
+                    args(threadIds));
         } catch (Throwable t) { return 0; }
     }
 
@@ -281,9 +378,16 @@ public final class SmsStore {
 
     /** Delete a whole conversation. */
     public static int deleteThread(Context ctx, long threadId) {
+        return deleteThread(ctx, new long[]{ threadId });
+    }
+
+    /** Every thread id the conversation covers, or "delete" leaves half of it on the phone. */
+    public static int deleteThread(Context ctx, long[] threadIds) {
+        if (threadIds == null || threadIds.length == 0) return 0;
         try {
             return ctx.getContentResolver().delete(Telephony.Sms.CONTENT_URI,
-                    Telephony.Sms.THREAD_ID + "=?", new String[]{ String.valueOf(threadId) });
+                    Telephony.Sms.THREAD_ID + " IN (" + marks(threadIds.length) + ")",
+                    args(threadIds));
         } catch (Throwable t) { return 0; }
     }
 

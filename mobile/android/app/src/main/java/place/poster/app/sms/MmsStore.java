@@ -98,8 +98,14 @@ public final class MmsStore {
     }
 
     public static List<SmsMsg> thread(Context ctx, long threadId, int limit) {
-        return query(ctx, Telephony.Mms.THREAD_ID + "=?",
-                     new String[]{ String.valueOf(threadId) }, limit);
+        return thread(ctx, new long[]{ threadId }, limit);
+    }
+
+    /** One conversation, which can span several of the platform's thread ids. See SmsStore.thread. */
+    public static List<SmsMsg> thread(Context ctx, long[] threadIds, int limit) {
+        if (threadIds == null || threadIds.length == 0) return new ArrayList<SmsMsg>();
+        return query(ctx, Telephony.Mms.THREAD_ID + " IN (" + SmsStore.marks(threadIds.length) + ")",
+                     SmsStore.args(threadIds), limit);
     }
 
     private static List<SmsMsg> query(Context ctx, String where, String[] args, int limit) {
@@ -312,9 +318,11 @@ public final class MmsStore {
                         null, null, null);
                 if (c == null) continue;
                 String from = "", to = "", any = "";
+                java.util.HashSet<String> people = new java.util.HashSet<String>();
                 while (c.moveToNext()) {
                     String a = str(c, 0);
                     if (a.isEmpty() || SELF.equals(a)) continue;
+                    people.add(SmsKeys.matchKey(a));
                     int type = 0;
                     try { type = c.getInt(1); } catch (Throwable ignored) { }
                     if (type == ADDR_FROM && from.isEmpty()) from = a;
@@ -325,6 +333,7 @@ public final class MmsStore {
                 // provider that files no type at all — a number with no direction still puts the
                 // message in the right conversation, which is what the screen is for.
                 m.address = firstNonEmpty(m.incoming() ? from : to, m.incoming() ? any : any, from);
+                if (!people.isEmpty()) m.people = people.size();
             } catch (Throwable t) {
                 Log.w(TAG, "mms: could not read a message's addresses", t);
             } finally {

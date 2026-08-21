@@ -58,8 +58,17 @@ public final class Messages {
 
     /** One conversation, oldest first — the order a thread is read in. */
     public static List<SmsMsg> thread(Context ctx, long threadId, int limit) {
-        List<SmsMsg> out = merge(SmsStore.thread(ctx, threadId, limit),
-                                 MmsStore.thread(ctx, threadId, limit), limit);
+        return thread(ctx, new long[]{ threadId }, limit);
+    }
+
+    /**
+     * One conversation across every thread id it is spread over — see SmsStore.fold. Both halves
+     * are read with the SAME id set: a person split into two thread ids is split in the picture
+     * table too, so passing one id there would drop pictures the same way it dropped texts.
+     */
+    public static List<SmsMsg> thread(Context ctx, long[] threadIds, int limit) {
+        List<SmsMsg> out = merge(SmsStore.thread(ctx, threadIds, limit),
+                                 MmsStore.thread(ctx, threadIds, limit), limit);
         Collections.reverse(out);
         return out;
     }

@@ -24,6 +24,15 @@ public final class SmsMsg {
      * be read is still a picture message and must not be redrawn as a text.
      */
     public boolean mms;
+    /**
+     * HOW MANY PEOPLE ARE IN THIS CONVERSATION, which is the only thing that separates a group
+     * picture message from a one-to-one one: both carry a single `address` (see MmsStore's
+     * fillAddresses), so without this a group thread would fold into one member's private thread
+     * and put messages other people can see into a conversation that looks private. Plain SMS is
+     * always 1. Unknown counts as 1, since an MMS whose address table could not be read is far more
+     * often a normal message than a group.
+     */
+    public int people = 1;
 
     /**
      * What was attached. Metadata only — the bytes are fetched one at a time, when something is
