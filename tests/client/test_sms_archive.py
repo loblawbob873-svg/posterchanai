@@ -246,8 +246,13 @@ class SendingFromAnotherDevice(unittest.TestCase):
         self.assertTrue(marks)
         self.assertIn("too old", marks[-1]["content"])
 
-    def test_a_device_that_is_not_the_phone_never_drains(self):
-        res = run(isPhone=False,
+    def test_a_device_with_no_radio_never_drains(self):
+        """`telephony=False` is what makes this a laptop. It used to say `isPhone=False`, which
+        means "does not hold the SMS role" — a different thing, and true of plenty of phones,
+        including one where Android granted the role but the message store's default-app row still
+        names another app. Performing a send needs a RADIO; gated on the role, a laptop's request
+        sat unperformed on a handset perfectly able to send it."""
+        res = run(isPhone=False, telephony=False,
                   relay=[ev("pcai:smsout:abc", {"to": "+15550100", "body": "hi",
                                                 "at": NOW - 60000})],
                   steps=["load", "drain"])

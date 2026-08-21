@@ -525,7 +525,20 @@
   async function importAll(onProgress){
     const P = plug('list');
     if(!P) return { published: 0, why: 'this device has no SMS plugin' };
-    if(!(await isPhone())) return { published: 0, why: 'this phone is not the default SMS app' };
+    /* READING THE HISTORY NEEDS READ_SMS, NOT THE ROLE — the same correction already made to
+     * `mirror` and to `send`, left behind in the one function that back-fills the past.
+     *
+     * Gated on being the default SMS app, this never ran once on a phone that had granted the
+     * permission and not (or not successfully) handed over its messaging. New messages still
+     * arrived, because `mirror` publishes from a high-water mark forward — so the archive grew and
+     * looked healthy while everything older than the day PosterChan was installed was simply never
+     * imported. Reported as "i still can't see texts I wrote in the past": the past was never
+     * fetched, and nothing on any screen said so.
+     *
+     * The role decides whether messages ARRIVE here and whether a send may be performed. Neither is
+     * reading a phone's own inbox. */
+    const stI = await phoneState();
+    if(!stI.canRead) return { published: 0, why: 'PosterChan cannot read this phone\u2019s messages' };
     const DAY = 86400000;
     let total = 0, quiet = 0;
     // Oldest we already hold — the back-fill starts from there and reaches further each round.
@@ -674,7 +687,16 @@
    * "my phone sent it twice, three days late" story, and there is no way to un-send a text. */
   const MAX_AGE_MS = 86400000;
   async function drainOutbox(){
-    if(!(await isPhone())) return 0;
+    /* PERFORMING A SEND NEEDS A RADIO, NOT THE ROLE. Same correction as `send`, `mirror` and
+     * `importAll`: SmsManager needs SEND_SMS, and the role only decides whether messages arrive and
+     * whether the phone's own store may be written. Gated on the role, a laptop's request sat
+     * unperformed on a handset perfectly able to send it — and the laptop's screen said "waiting
+     * for your phone" for ever, which is true and useless.
+     *
+     * A device with no radio still does nothing here, which is the rule that actually matters: it
+     * is what stops a laptop and a phone both answering the same request. */
+    const stD = await phoneState();
+    if(!stD.telephony) return 0;
     let evs = [];
     try{ evs = await Relay().query([Object.assign(FILTER(), { limit: 200 })]); }catch(_){ return 0; }
     let done = 0;
