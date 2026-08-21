@@ -80,12 +80,15 @@ class TheScreenSaysWhichKindOfEmpty(unittest.TestCase):
         self.assertIn("answer.refused", body)
         self.assertIn("refused: refused", body)
 
-    def test_a_refusal_on_any_page_counts(self):
-        """A sweep that was refused part-way returns a count that is not the phone's real total."""
+    def test_a_refusal_on_any_attempt_counts(self):
+        """The reader asks in growing steps; a refusal on any of them means the answer is not the
+        phone's real total. Cleared inside the loop, only the last attempt would count."""
         body = self.src[self.src.index("async function loadFromPhone"):]
         body = body[:body.index("\n  }")]
-        self.assertNotIn("refused = false;", body.split("for(let page")[1],
-                         "the flag is cleared inside the paging loop, so only the last page counts")
+        loop = body[body.index("for(let i = 0"):]
+        self.assertNotIn("refused = false", loop,
+                         "the flag is reset inside the loop, so only the last attempt counts")
+        self.assertIn("if(answer.refused) refused = true;", loop)
 
     def test_the_ordinary_entry_path_reads_it_too(self):
         """The route almost everybody takes — opening Texts with the permission already granted —

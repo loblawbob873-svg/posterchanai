@@ -476,37 +476,50 @@
    * Reading is not publishing. This fills the list; `mirror()` still decides, separately and on its
    * own schedule, what goes to the other devices — which is why a phone with no network still shows
    * every message it has. */
+  /* EVERY MESSAGE THIS PHONE HAS, for the screen. Not the archive, not the relay — the provider.
+   *
+   * It used to ask with `since: 0`, which the plugin answers with the NEWEST 500, then set `since`
+   * to the newest date it had just seen and ask for anything newer. There is nothing newer. Two
+   * empty rounds and it stopped. So the app read the most recent 500 messages and then walked
+   * FORWARD into an empty future, and everything older than that was never read at all — on a phone
+   * with years of history, most of it. Reported as "I SEE SOME OLD SMS BUT NOT ALL OF THEM" and
+   * "MOST MESSAGES I SENT ARE MISSING", and it has nothing to do with the relay: the messages were
+   * on the handset the whole time and the screen never asked for them.
+   *
+   * `since: 0` returns the newest N, so ONE call with a large N is the whole store. Asked in
+   * growing steps rather than at the ceiling every time: most phones are answered by the first,
+   * and a bigger ask is a superset of a smaller one, so a full answer is the signal to ask for
+   * more. The last step is a bound, not a target — a store larger than that is not going to be
+   * read into a web page, and stopping there is better than an unbounded transfer.
+   */
   async function loadFromPhone(onProgress){
     const P = plug('list');
     if(!P) return { loaded: 0 };
-    let total = 0, since = 0, quiet = 0, refused = false;
-    for(let page = 0; page < 400 && quiet < 2; page++){
-      let rows = [];
+    const STEPS = [1000, 10000, 50000];
+    let total = 0, refused = false, rows = [];
+    for(let i = 0; i < STEPS.length; i++){
       try{
-        const answer = (await P.list({ since, limit: 500 })) || {};
+        const answer = (await P.list({ since: 0, limit: STEPS[i] })) || {};
         rows = answer.messages || [];
-        /* REFUSED IS NOT EMPTY, and this is the read the Texts screen is built on. The plugin
-         * returns `[]` for a phone with no texts and for a provider that would not let us look;
-         * without this the caller cannot tell, so it reported "no messages" over a full inbox and
-         * offered nothing to do about it. Sticky across pages: a refusal on ANY page means the
-         * sweep is incomplete, and the count that comes back is not the phone's real total. */
+        /* REFUSED IS NOT EMPTY. The plugin returns `[]` for a phone with no texts and for a provider
+         * that would not let us look; without this the caller cannot tell, and the screen reported
+         * "no messages" over a full inbox with nothing to do about it. */
         if(answer.refused) refused = true;
-      }
-      catch(_){ break; }
-      let n = 0, top = since;
-      for(const r of rows){
-        if(!r || !r.doc) continue;
-        if(r.date > top) top = r.date;
-        if(S.msgs.has(r.doc)) continue;
-        S.msgs.set(r.doc, { doc: r.doc, address: r.address, body: r.body, date: r.date,
-                            incoming: !!r.incoming, name: r.name || '' });
-        n++; total++;
-      }
-      if(n) S.localRead = true;      // rows came out of THIS device's store — see noteWhere
-      quiet = n ? 0 : quiet + 1;
-      if(n){ rebuild(); if(onProgress) try{ onProgress(total); }catch(_){ } }
-      if(top <= since) break;            // the provider has nothing newer — we are at the end
-      since = top;
+      }catch(_){ break; }
+      // A short answer means the store is exhausted; a full one means there may be more behind it.
+      if(rows.length < STEPS[i]) break;
+    }
+    for(const r of rows){
+      if(!r || !r.doc) continue;
+      if(S.msgs.has(r.doc)) continue;
+      S.msgs.set(r.doc, { doc: r.doc, address: r.address, body: r.body, date: r.date,
+                          incoming: !!r.incoming, name: r.name || '' });
+      total++;
+    }
+    if(total){
+      S.localRead = true;          // rows came out of THIS device's store — see noteWhere
+      rebuild();
+      if(onProgress) try{ onProgress(total); }catch(_){ }
     }
     return { loaded: total, refused: refused };
   }
