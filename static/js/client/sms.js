@@ -41,6 +41,9 @@
     q: '',
     ready: false,
     localRead: false,    // this session read rows out of THIS phone's own message store
+    /* THE PICTURE-MESSAGE TABLE WOULD NOT ANSWER. A separate fact from `error`, because the texts
+       can be on screen and complete while every photo is missing — see loadFromPhone. */
+    mmsRefused: false,
     lastRead: null,      // rows the provider returned on the last read — see countLine
     loading: false,
     error: '',
@@ -184,6 +187,11 @@
           + ' canBeSms=' + d.capability.canBeSms + ')'
         : 'not reported by this build'),
       'last read: ' + (d.refused ? 'refused' : (d.read >= 0 ? d.read + ' found' : 'not attempted')),
+      /* WHICH HALF ANSWERED. The two provider tables are guarded separately on several OEM builds,
+       * so "all my photos are missing" and "I have no messages" are different reports with
+       * different fixes — and both look like a shorter list. */
+      'picture messages: ' + (S.mmsRefused ? 'the phone refused to hand them over'
+                            : (d.mms === false ? 'not read by this build' : 'read from this phone')),
       missing.length ? 'MISSING COMPONENTS: ' + missing.join(', ')
                      : 'all four SMS components installed',
     ].join(' \u00b7 ');
@@ -270,6 +278,12 @@
       catch(_){ continue; }                       // not ours, or not decryptable with this key
       if(!obj || typeof obj !== 'object') continue;
       obj.doc = d; obj._at = ev.created_at;
+      /* THE ARCHIVE NAMES ATTACHMENTS BUT DOES NOT CARRY THEM (see publishOne), so they arrive
+       * without the provider row ids this device would need to fetch them. Normalised to the same
+       * shape the phone's own read produces, with `id:0` meaning "not on this device" — the
+       * renderer then says "on your phone" instead of drawing a broken image. */
+      obj.parts = cleanParts(obj.att || obj.parts);
+      if(obj.att) delete obj.att;
       S.msgs.set(d, obj);
     }
     rebuild();
@@ -403,6 +417,19 @@
       address: m.address, body: m.body, date: m.date,
       incoming: !!m.incoming, name: m.name || '',
     };
+    /* WHAT WAS ATTACHED, WITHOUT THE BYTES — and saying so is the point.
+     *
+     * A laptop that knows a message carried two photos can say "2 photos, on your phone" instead of
+     * drawing an empty bubble, which is what "this message failed" looks like. What it must NOT do
+     * is claim to have them.
+     *
+     * The provider ROW ID is deliberately left behind: it is local to this handset, so carrying it
+     * across devices would be carrying a number that means something different on each of them —
+     * the same reason a message's archive address is derived from the message and never from its
+     * row. `type`/`name`/`bytes` ride in the PDU and mean the same everywhere. */
+    if(m.mms) body.mms = true;
+    if(m.parts && m.parts.length)
+      body.att = m.parts.map(p => ({ ct: p.ct, name: p.name, bytes: p.bytes }));
     const ct = await PC.nip44enc(ME().pubkey, JSON.stringify(body));
     const r = await PC.publish(KIND, ct, [['d', m.doc], ['l', L_TAG]], {quiet:true, noQueue:true});
     return !!(r && r.ok);
@@ -442,13 +469,9 @@
     for(const r of rows){
       if(!r || !r.doc) continue;
       if(S.msgs.has(r.doc)) { if(r.date > top) top = r.date; continue; }
-      const m = {
-        doc: r.doc, address: r.address, body: r.body, date: r.date,
-        incoming: !!r.incoming,
-        // The contact's name, resolved on the phone against the phone's OWN address book. Carried
-        // so a laptop — which has no phone book — can show a name instead of a number.
-        name: r.name || '',
-      };
+      // The contact's name is resolved on the phone against the phone's OWN address book and
+      // carried, so a laptop — which has no phone book — shows a name instead of a number.
+      const m = fromRow(r);
       let ok = false;
       try{ ok = await publishOne(m); }catch(_){ ok = false; }
       if(!ok) break;                 // the relay stopped taking them; the mark stays where it was
@@ -506,6 +529,12 @@
          * that would not let us look; without this the caller cannot tell, and the screen reported
          * "no messages" over a full inbox with nothing to do about it. */
         if(answer.refused) refused = true;
+        /* AND THE TWO TABLES REFUSE INDEPENDENTLY. Several OEM builds guard `content://mms`
+         * differently from `content://sms`, so a phone whose texts read perfectly can hand over no
+         * picture messages at all — and folded into the flag above that reads as "you have no
+         * messages", over a full inbox, which is the exact report this whole screen was rebuilt
+         * for. Kept apart so the note can say which half did not answer. */
+        if(answer.mmsRefused) S.mmsRefused = true;
       }catch(_){ break; }
       // A short answer means the store is exhausted; a full one means there may be more behind it.
       if(rows.length < STEPS[i]) break;
@@ -514,8 +543,7 @@
     for(const r of rows){
       if(!r || !r.doc) continue;
       if(S.msgs.has(r.doc)) continue;
-      S.msgs.set(r.doc, { doc: r.doc, address: r.address, body: r.body, date: r.date,
-                          incoming: !!r.incoming, name: r.name || '' });
+      S.msgs.set(r.doc, fromRow(r));
       total++;
     }
     if(total){
@@ -572,8 +600,7 @@
       let n = 0, oldest = edge;
       for(const r of rows){
         if(!r || !r.doc || S.msgs.has(r.doc)) continue;
-        const m = { doc: r.doc, address: r.address, body: r.body, date: r.date,
-                    incoming: !!r.incoming, name: r.name || '' };
+        const m = fromRow(r);
         let ok = false;
         try{ ok = await publishOne(m); }catch(_){ ok = false; }
         // The relay stopped taking them. Stop where we are and report — the next run resumes,
@@ -689,10 +716,56 @@
    * provider stores milliseconds, a Nostr event stores seconds, and a message re-read from a
    * restored backup can come back rounded — built from seconds, the two copies still agree.
    * tests/test_android_sms.py runs this against the Java. */
-  async function docIdFor(address, dateMs, body, incoming){
-    const canon = key(address) + '\n' + Math.floor(dateMs / 1000) + '\n'
-                + (incoming ? 'in' : 'out') + '\n' + (body || '');
+  async function docIdFor(address, dateMs, body, incoming, partsKey){
+    let canon = key(address) + '\n' + Math.floor(dateMs / 1000) + '\n'
+              + (incoming ? 'in' : 'out') + '\n' + (body || '');
+    /* THE ATTACHMENTS COUNT TOWARDS IDENTITY, and only when there are any.
+     *
+     * A picture message frequently has NO TEXT, and then who/when/direction/body is the identical
+     * string for two photos sent inside one second — filed at one address, the second replaces the
+     * first and one of the two is simply gone from every device that is not the handset.
+     *
+     * An EMPTY key must leave the string byte-identical to the four-argument form, or a text-only
+     * message read back through the MMS path is a second document for a message already archived
+     * and it appears twice in the thread. SmsKeys.docId does exactly this and
+     * tests/test_android_sms.py runs the two against each other. */
+    if(partsKey) canon = canon + '\n' + partsKey;
     return D_MSG + (await sha256hex(canon)).slice(0, 24);
+  }
+
+  /* One attachment's share of that identity — SmsKeys.partKey in JavaScript. Type, the name the
+   * SENDER's phone chose and the length: all three ride in the PDU, so they are the same on every
+   * device that received the message, unlike a provider row id. The separators are stripped out of
+   * the values or a filename containing a `;` shifts every field after it. */
+  function partKey(ct, name, bytes){
+    const f = v => String(v == null ? '' : v).replace(/[;:\r\n]/g, '_');
+    return f(ct) + ':' + f(name) + ':' + (bytes === undefined || bytes === null ? -1 : bytes);
+  }
+
+  /* IN THE ORDER THE MESSAGE CARRIES THEM, never sorted — `seq` is part of the message and two
+   * attachments of the same type and length swapping places is a different message. */
+  function partsKeyOf(parts){
+    return (parts || []).map(p => partKey(p.ct, p.name, p.bytes)).filter(Boolean).join(';');
+  }
+
+  /* One provider row as the archive holds it. ONE definition, because it is built in three places
+   * (the first mirror, the phone's own read, and the back-fill) and a field missing from one of
+   * them is a picture message that is a picture on one screen and a blank bubble on another. */
+  function fromRow(r){
+    return { doc: r.doc, address: r.address, body: r.body, date: r.date,
+             incoming: !!r.incoming, name: r.name || '',
+             // Carried rather than inferred from `parts` being non-empty: a picture message whose
+             // attachments could not be read is still a picture message.
+             mms: !!r.mms, parts: cleanParts(r.parts) };
+  }
+
+  /* WHAT THE PHONE SAID WAS ATTACHED, reduced to what the archive carries. The provider ROW IDS are
+   * kept for this device only — `id` is local to one handset, so it is never published (see
+   * publishOne), the same rule that keeps a restored backup from re-minting every document. */
+  function cleanParts(parts){
+    return (parts || []).map(p => ({ id: Number(p.id) || 0, ct: String(p.ct || ''),
+                                     name: String(p.name || ''),
+                                     bytes: p.bytes === undefined ? -1 : Number(p.bytes) }));
   }
 
   async function sha256hex(s){
@@ -784,10 +857,17 @@
       try{
         const rows = ((await L.list({ limit: 5000 })) || {}).messages || [];
         const want = new Set(docs);
-        const ids = [];
-        for(const r of rows) if(want.has(r.doc) && r.id) ids.push(r.id);
-        if(ids.length){
-          phone = (((await P.delete({ ids })) || {}).deleted) || 0;
+        const ids = [], mmsIds = [];
+        /* TWO PROVIDERS, TWO URIs. A picture message is a row in `content://mms` and deleting it
+         * through the SMS uri removes nothing AND reports nothing — which the guard below reads as
+         * a provider refusal, so the archive is (correctly) left alone and the delete quietly did
+         * not happen, every time, with the message still on screen. */
+        for(const r of rows){
+          if(!want.has(r.doc) || !r.id) continue;
+          (r.mms ? mmsIds : ids).push(r.id);
+        }
+        if(ids.length || mmsIds.length){
+          phone = (((await P.delete({ ids, mmsIds })) || {}).deleted) || 0;
           // Asked to remove rows and removed none: the provider refused. Leave the archive alone —
           // a half-delete that the next sync reverses is worse than one that plainly did not happen.
           if(!phone) refused = true;
@@ -807,6 +887,31 @@
     }
     rebuild();
     return { archive, phone };
+  }
+
+  /* ASK ANDROID FOR PERMISSION TO READ THIS PHONE'S MESSAGES, then actually read them.
+   *
+   * One implementation for both copies of the button — the empty state's and the one under the
+   * header. Two copies of a flow whose difficulty is what to say when Android stops offering the
+   * dialog is how one of them ends up saying nothing. */
+  async function askForRead(btn){
+    if(btn) btn.disabled = true;
+    const ok = await ensureRead();
+    if(!ok){
+      /* A REFUSAL IS SAID OUT LOUD. Android stops showing its dialog after two refusals, at which
+       * point the only way through is the app's own settings page — a button that silently does
+       * nothing reads as a broken app. */
+      S.emptyWhy = 'Android is not offering the prompt any more. Open Settings \u2192 Apps \u2192 '
+                 + 'PosterChan \u2192 Permissions \u2192 SMS and allow it there.';
+      S.emptyFix = '';
+      if(btn) btn.disabled = false;
+      paint();
+      return;
+    }
+    S.emptyWhy = ''; S.emptyFix = '';
+    await loadFromPhone();
+    if(btn) btn.disabled = false;
+    paint();
   }
 
   /* BRING IN THE HISTORY, saying how far it has got. It walks backwards in windows and can take a
@@ -884,6 +989,142 @@
     paint();
   }
 
+  // ---------------------------------------------------------------- attachments
+
+  /* PICTURE MESSAGES, DRAWN.
+   *
+   * The bytes live in the phone's own MMS part table and NOWHERE ELSE — until the archive learns to
+   * carry them, a photo can only be shown on the handset that received it. That is a fact the screen
+   * has to state rather than hide: a bubble with an attachment it cannot draw must say which of the
+   * four things happened, because "on your phone", "too large", "this phone refused" and "this build
+   * is too old" all render as the same broken image otherwise, and only some of them are fixable.
+   *
+   * Fetched ONE AT A TIME, when something is about to show it: a thread of forty photos handed
+   * through the Capacitor bridge as base64 in one reply is a hundred megabytes of string, and the
+   * WebView holds a copy on top of the blob.
+   */
+  const ATT = new Map();      // provider part id -> { url, ct } | { why }
+
+  function isImage(ct){ return /^image\//.test(String(ct || '')); }
+  function isVideo(ct){ return /^video\//.test(String(ct || '')); }
+  function isAudio(ct){ return /^audio\//.test(String(ct || '')); }
+
+  /* A human name for an attachment, for the snippet and for the bubble that cannot draw one.
+   * "Photo" beats "image/jpeg" everywhere a person is reading rather than debugging. */
+  function attLabel(p){
+    const ct = String((p && p.ct) || '');
+    if(isImage(ct)) return 'Photo';
+    if(isVideo(ct)) return 'Video';
+    if(isAudio(ct)) return 'Audio';
+    if(/vcard|x-vcard/i.test(ct)) return 'Contact card';
+    return (p && p.name) || ct || 'Attachment';
+  }
+
+  /* The one-line description of a message with no words in it. An empty snippet in the thread list
+   * reads as a conversation that has gone quiet, which is the opposite of what happened. */
+  function snippetOf(m){
+    const body = String((m && m.body) || '').slice(0, 90);
+    if(body) return body;
+    const parts = (m && m.parts) || [];
+    if(!parts.length) return '';
+    if(parts.length === 1) return attLabel(parts[0]);
+    return parts.length + ' attachments';
+  }
+
+  async function partData(p){
+    const id = Number(p && p.id) || 0;
+    /* NOT ON THIS DEVICE, and that is not a failure. The archive names what was attached and
+     * deliberately does not carry the bytes or the provider row id — a row id means something
+     * different on every phone. So a laptop knows there is a photo and knows where it is. */
+    if(!id) return { why: attLabel(p) + ' \u00b7 on your phone' };
+    if(ATT.has(id)) return ATT.get(id);
+    const P = plug('attachment');
+    if(!P || !P.attachment){
+      const r = { why: attLabel(p) + ' \u00b7 this app is too old to open it' };
+      ATT.set(id, r);
+      return r;
+    }
+    let a = null;
+    try{ a = await P.attachment({ part: id }); }catch(_){ a = null; }
+    let r;
+    if(a && a.data){
+      try{
+        const bin = atob(a.data);
+        const buf = new Uint8Array(bin.length);
+        for(let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+        const blob = new Blob([buf], { type: p.ct || 'application/octet-stream' });
+        r = { url: URL.createObjectURL(blob), blob, ct: p.ct || '' };
+      }catch(_){ r = { why: attLabel(p) + ' \u00b7 could not be decoded' }; }
+    } else if(a && a.tooBig){
+      // A REAL FILE THAT WILL NOT FIT THROUGH THE BRIDGE — still openable in the phone's gallery,
+      // which is worth saying, because it is a completely different situation from a refusal.
+      r = { why: attLabel(p) + ' \u00b7 too large to show here \u2014 open it in your gallery' };
+    } else {
+      r = { why: attLabel(p) + ' \u00b7 this phone would not hand it over' };
+    }
+    ATT.set(id, r);
+    return r;
+  }
+
+  /* The placeholder an attachment is drawn into. It carries everything the hydrate needs, because
+   * `paint()` rebuilds `#feed` wholesale on every keystroke and a closure over the message would be
+   * a closure over a dead node. */
+  function attHtml(p, enc, mi, pi){
+    return '<div class="sms-att" data-m="' + mi + '" data-p="' + pi + '">'
+         + '<span class="muted small">' + enc(attLabel(p)) + '\u2026</span></div>';
+  }
+
+  /* FILL THEM IN AFTER THE DRAW, one at a time, and never let one bad attachment cost the thread.
+   * `noteHtml`'s lesson, one screen over: an exception inside a list builder takes the list AND
+   * every binding made after it, which reads as three unrelated bugs. */
+  async function hydrateAtt(root, msgs){
+    const els = Array.from(root.querySelectorAll('.sms-att'));
+    for(const el of els){
+      const m = msgs[Number(el.dataset.m)];
+      if(!m) continue;
+      const p = (m.parts || [])[Number(el.dataset.p)] || null;
+      if(!p) continue;
+      let d = null;
+      try{ d = await partData(p); }catch(_){ d = { why: 'could not be read' }; }
+      if(!el.isConnected) return;              // the view moved on while we were reading
+      if(d && d.url) drawAtt(el, p, d);
+      else el.innerHTML = '<span class="muted small">' + PC.enc(String((d && d.why) || '')) + '</span>';
+    }
+  }
+
+  function drawAtt(el, p, d){
+    el.innerHTML = '';
+    if(isImage(p.ct)){
+      const img = document.createElement('img');
+      img.className = 'sms-att-img';
+      img.src = d.url;
+      img.alt = p.name || 'Photo';
+      // The app's own lightbox, so a photo in a text opens the way a photo in a post does.
+      img.onclick = () => { try{ PC.openLightbox(d.url, 'image'); }catch(_){ } };
+      el.appendChild(img);
+      return;
+    }
+    if(isVideo(p.ct) || isAudio(p.ct)){
+      const v = document.createElement(isVideo(p.ct) ? 'video' : 'audio');
+      v.className = 'sms-att-img';
+      v.controls = true;
+      v.src = d.url;
+      el.appendChild(v);
+      return;
+    }
+    const b = document.createElement('button');
+    b.className = 'btn small';
+    b.textContent = 'Save ' + attLabel(p);
+    /* PC.saveBlobAs, NEVER a bare `<a download>`. The APK's WebView ignores a programmatic download
+     * and the desktop's app:// origin refuses one, so an anchor is a button that silently does
+     * nothing on two of the three platforms this ships to. */
+    b.onclick = async () => {
+      try{ await PC.saveBlobAs(d.blob, p.name || ('attachment.' + (String(p.ct||'').split('/')[1] || 'bin'))); }
+      catch(_){ PC.toast('could not save that attachment'); }
+    };
+    el.appendChild(b);
+  }
+
   // ---------------------------------------------------------------- view
 
   function paint(){
@@ -897,7 +1138,7 @@
       if(!S.q) return true;
       const q = S.q.toLowerCase();
       return String(t.address||'').toLowerCase().includes(q)
-          || (t.msgs.some(m => String(m.body||'').toLowerCase().includes(q)))
+          || (t.msgs.some(m => snippetOf(m).toLowerCase().includes(q)))
           || String((t.msgs[t.msgs.length-1]||{}).name||'').toLowerCase().includes(q);
     });
 
@@ -924,6 +1165,17 @@
              which is exactly backwards: somebody with an empty screen has nothing to compare
              against, and somebody looking at a half-filled thread is the person who KNOWS history
              is missing. "MOST MESSAGES I SENT ARE MISSING! I SEEN 1 THREAD WITH A FEW REPLIES". -->
+        <!-- PERMISSION, WHERE IT CAN BE SEEN. "Allow PosterChan to read them" lived inside the
+             empty-state block, the one guarded by rows.join('') or the fallback, so it appeared
+             single thread on screen. With an archive published earlier, the list is never empty:
+             the screen showed a couple of hundred old messages, looked like it was working, and
+             the one control that would have let it read the phone was unreachable. That is where
+             "I SEE SOME OLD SMS BUT NOT ALL OF THEM" came from, and no amount of fixing the reader
+             helped, because the reader was never being run. -->
+        <div id="sms-perm" style="display:none;margin-top:8px">
+          <button class="btn btn-neon small" id="sms-allow2">Allow PosterChan to read my messages</button>
+          <span class="muted small" style="margin-left:8px">showing an older copy until then</span>
+        </div>
         <div id="sms-backfill" style="display:none;margin-top:8px">
           <button class="btn small" id="sms-deep2">Bring in older messages</button>
           <span class="muted small" id="sms-deep-note" style="margin-left:8px"></span>
@@ -938,7 +1190,9 @@
             <div class="sms-body">
               <div class="sms-row1"><span class="sms-who">${enc(who)}</span>
                 <span class="sms-when muted">${enc(when(last.date))}</span></div>
-              <div class="sms-snip muted">${enc(String(last.body||'').slice(0,90))}</div>
+              <!-- A PICTURE MESSAGE HAS NO WORDS, and an empty snippet reads as a conversation
+                   that has gone quiet — the opposite of what happened. -->
+              <div class="sms-snip muted">${enc(snippetOf(last))}</div>
             </div></button>`;
         }).join('') || ('<div class="sms-empty muted" style="padding:24px;text-align:center">'
              + enc(S.emptyWhy || 'No messages here yet')
@@ -978,6 +1232,7 @@
       const b = PC.$(id);
       if(b) b.onclick = () => runBackfill(b);
     }
+    { const ab = PC.$('#sms-allow2'); if(ab) ab.onclick = () => askForRead(ab); }
     { const db = PC.$('#sms-defaults2'); if(db) db.onclick = () => {
         const P = PC.capPlugin ? PC.capPlugin('HomeScreen', 'openDefaultApps') : null;
         try{ if(P && P.openDefaultApps) P.openDefaultApps(); }catch(_){}
@@ -1067,6 +1322,21 @@
     // history can come FROM.
     const bf = PC.$('#sms-backfill');
     if(bf) bf.style.display = st.canRead ? '' : 'none';
+    // The permission is the FIRST thing to fix: without it nothing else on this screen can reach
+    // the phone, and every other offer here is noise.
+    const pm = PC.$('#sms-perm');
+    if(pm) pm.style.display = (st.present && !st.canRead) ? '' : 'none';
+    /* THE PICTURE-MESSAGE TABLE WOULD NOT ANSWER, and this IS news — it goes above the emptying
+     * branch below for exactly that reason. A thread that silently lost its photos looks like a
+     * thread somebody sent fewer photos in: there is nothing on the screen to notice, and the
+     * texts beside them are complete and correct. Several OEM builds guard `content://mms`
+     * separately from `content://sms`, so this is a real state on a working phone. */
+    if(S.mmsRefused){
+      el.style.display = '';
+      el.textContent = 'This phone would not let PosterChan read your picture messages, so only '
+        + 'texts are shown here. The pictures are still on the phone.';
+      return;
+    }
     /* ON A PHONE THIS LINE SAYS NOTHING, because there is nothing to say.
      *
      * It began as an instruction about the role, shown to somebody who already held it. Replacing
@@ -1097,9 +1367,13 @@
           <button class="btn small" id="sms-back">${ICO('arrow-left','b-ic')}</button>
           <div class="sms-title">${enc(who)}</div>
         </div>
-        <div class="sms-msgs">${t.msgs.map(m => `
+        <div class="sms-msgs">${t.msgs.map((m, i) => `
           <div class="sms-msg ${m.incoming ? 'them' : 'me'}" data-doc="${enc(m.doc)}">
-            <div class="sms-bub">${enc(m.body||'')}</div>
+            <div class="sms-bub${(m.parts||[]).length ? ' has-att' : ''}">${(m.parts||[]).map((p, j) => attHtml(p, enc, i, j)).join('')}${
+              /* THE ATTACHMENTS COME FIRST AND THE CAPTION UNDER THEM, which is where every
+                 messages app puts it — and a bubble whose only content is an attachment must not
+                 also render an empty text node, or it collapses to a sliver. */
+              m.body ? '<div class="sms-txt">' + enc(m.body) + '</div>' : ''}</div>
             <div class="sms-meta muted">${enc(when(m.date))}</div>
           </div>`).join('')}</div>
         <div class="sms-compose">
@@ -1137,6 +1411,16 @@
     });
     const list = PC.$('.sms-msgs');
     if(list) list.scrollTop = list.scrollHeight;
+    /* THE PICTURES ARRIVE AFTER THE DRAW, and each one that lands pushes everything below it
+       down. A thread opens at its newest message (the line above), so re-pinning as they land is
+       what keeps it there instead of drifting backwards through the conversation as the photos
+       above resolve. Guarded on there BEING attachments, so an ordinary text thread does no work. */
+    if(t.msgs.some(m => (m.parts || []).length)){
+      hydrateAtt(feed, t.msgs).then(() => {
+        const l = PC.$('.sms-msgs');
+        if(l) l.scrollTop = l.scrollHeight;
+      }, () => {});
+    }
   }
 
   async function composeNew(){
