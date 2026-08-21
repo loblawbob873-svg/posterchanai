@@ -878,3 +878,110 @@ class TheTwoCOPIESOfEveryHelperAgree(unittest.TestCase):
         cfg = open(os.path.join(self.PKG, "files", "sway.config"), encoding="utf-8").read()
         self.assertIn("/usr/local/bin/pc-idle", cfg,
                       "the package's session never starts the idle watcher")
+
+
+class TheInstalledMachineHasAKernelWhereTheBootloaderLOOKS(unittest.TestCase):
+    """An install that finished and then booted to emergency mode, with root locked so there was no
+    shell to ask why.
+
+    THE CHAIN, END TO END. `bootloader()` derives the kernel version by listing
+    /boot/<machine-id> -- that is the Boot Loader Spec layout this profile uses, and it is where
+    everything downstream is built from. `liveISOinstall` tried to create it with `kernel-install`,
+    and kernel-install REFUSES TO RUN IN A CHROOT: systemd's `05-check-chroot.install` exits 1 when
+    dracut has no configured command line, and the target's own /etc/dracut.conf -- which came off
+    the ISO as a copy of the build machine's -- writes `kernel_cmdline+=`, while the plugin greps
+    for `^kernel_cmdline=`. So it exited 1 on every install, the `|| dracut` fallback wrote to
+    /boot/initramfs-$KVER.img (a path nothing reads), the listing came back empty, KERNEL_VERSION
+    was the empty string, and the loader entry named `/<machine-id>//linux`.
+
+    Refusing is CORRECT of it: the next plugin would have taken the boot options from /proc/cmdline,
+    which in a live session says `root=live:CDLABEL=... rd.live.image` -- a hard disk sent looking
+    for the USB stick it was installed from. So the layout is written directly instead, and the
+    version is never allowed to be empty.
+    """
+
+    def setUp(self):
+        self.src = open(SH, encoding="utf-8").read()
+
+    def _fn(self, name):
+        i = self.src.index(name + "() {")
+        depth, k = 0, self.src.index("{", i)
+        while k < len(self.src):
+            if self.src[k] == "{":
+                depth += 1
+            elif self.src[k] == "}":
+                depth -= 1
+                if depth == 0:
+                    return self.src[i:k + 1]
+            k += 1
+        raise AssertionError(f"{name}: unbalanced braces")
+
+    def test_the_installer_writes_the_layout_the_bootloader_reads(self):
+        fn = self._fn("liveISOinstall")
+        self.assertIn('sudo mkdir -p "$TARGET/boot/$MID/$KVER"', fn)
+        self.assertIn('"$TARGET/boot/$MID/$KVER/linux"', fn,
+                      "the kernel is not placed where bootloader() lists for it")
+        self.assertIn('"/boot/$MID/$KVER/initrd"', fn,
+                      "dracut writes somewhere the boot entry does not name")
+
+    def test_it_does_not_call_kernel_install_in_the_chroot(self):
+        """Kept as an assertion rather than a comment because it reads like an obvious improvement
+        to re-add, and it exits 1 without doing anything."""
+        self.assertNotIn("kernel-install add", self._fn("liveISOinstall"))
+
+    def test_the_initramfs_can_open_an_encrypted_root(self):
+        """This profile installs onto LUKS every time. Built inside a chroot, dracut's hostonly
+        detection is looking at the LIVE session's block devices, not the target's."""
+        fn = self._fn("liveISOinstall")
+        self.assertIn('DRACUT_ADD="crypt systemd-cryptsetup dm rootfs-block"', fn)
+        self.assertIn('--add "$DRACUT_ADD"', fn)
+
+    def test_root_can_log_in_even_if_every_later_step_fails(self):
+        """systemd's emergency shell refuses to start for a locked root, so the one tool for
+        diagnosing a boot failure is the thing that boot failure takes away. The ISO ships root
+        locked, correctly, and the rsync copies that onto the disk."""
+        fn = self._fn("liveISOinstall")
+        self.assertIn('echo "root:$ROOT_PASSWORD" | sudo chroot $TARGET /usr/sbin/chpasswd', fn)
+        # The CALL, not the comment above it that names the same function.
+        self.assertLess(fn.index("chpasswd"), fn.index("\n\tfinalizeInstall\n"),
+                        "root is unlocked only by the chain of steps that can fail")
+
+    def test_the_bootloader_never_builds_a_path_out_of_an_empty_version(self):
+        fn = self._fn("bootloader")
+        self.assertIn('if [ -z "$KERNEL_VERSION" ]; then', fn)
+        self.assertLess(fn.index('if [ -z "$KERNEL_VERSION" ]'), fn.index("LOADER_FILE="),
+                        "the loader entry path is built before the version is checked")
+
+    def test_the_module_cleanup_cannot_run_on_nothing(self):
+        """`ls | grep -Evi $KERNEL_VERSION | xargs rm -r` with an empty version passes NO pattern to
+        grep, which then reads the pipe as one."""
+        fn = self._fn("bootloader")
+        self.assertIn('grep -Evi "$KERNEL_VERSION" | xargs -r rm -r', fn)
+
+    def test_the_chroot_check_really_does_refuse_this_config(self):
+        """The measurement the fix rests on, re-run against the real plugin when the box has one:
+        the predicate reports "nothing configured" for a dracut.conf written with `kernel_cmdline+=`,
+        which is what this profile's own bootloader() writes."""
+        plugin = "/usr/lib/kernel/install.d/05-check-chroot.install"
+        if not os.path.exists(plugin):
+            self.skipTest("no systemd kernel-install plugins on this box")
+        import tempfile
+        body = open(plugin, encoding="utf-8").read()
+        m = re.search(r"^_test_dracut_cmdline\(\) \{.*?^\}", body, re.S | re.M)
+        self.assertTrue(m, "the plugin's predicate moved — re-point this test")
+        with tempfile.TemporaryDirectory() as d:
+            conf = os.path.join(d, "dracut.conf")
+            with open(conf, "w") as f:
+                f.write('add_dracutmodules+=" crypt systemd-cryptsetup dm rootfs-block "\n'
+                        'kernel_cmdline+=" root=UUID=x rw "\n')
+            script = (m.group(0)
+                      .replace("/etc/cmdline.d", os.path.join(d, "cmdline.d"))
+                      .replace("/etc/cmdline", os.path.join(d, "cmdline"))
+                      .replace("/etc/dracut.conf.d", os.path.join(d, "dracut.conf.d"))
+                      .replace("/etc/dracut.conf", conf)
+                      .replace("/usr/lib/dracut/dracut.conf.d", os.path.join(d, "none"))
+                      + '\nif _test_dracut_cmdline; then echo REFUSES; else echo PROCEEDS; fi\n')
+            r = subprocess.run(["sh", "-c", script], capture_output=True, text=True, timeout=30)
+        self.assertIn("REFUSES", r.stdout,
+                      "kernel-install would run in the chroot after all — if that is now true, the "
+                      "direct layout in liveISOinstall is still correct, but this reason is stale")

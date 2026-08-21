@@ -984,16 +984,42 @@ liveISOinstall() {
 			echo -e "${COLOR_YELLOW}  cryptsetup is not on the target — the initramfs cannot open${COLOR_RESET}"
 			echo -e "${COLOR_YELLOW}  an encrypted root and the machine will boot to emergency mode${COLOR_RESET}"
 		fi
-		DRACUT_ADD="crypt dm rootfs-block"
-		if [ -x "$TARGET/usr/bin/kernel-install" ] && [ -f "$TARGET/boot/vmlinuz" ]; then
-			sudo chroot $TARGET /usr/bin/kernel-install add "$KVER" /boot/vmlinuz \
-				|| sudo chroot $TARGET /usr/bin/dracut --force --add "$DRACUT_ADD" \
-					"/boot/initramfs-$KVER.img" "$KVER" \
-				|| echo -e "${COLOR_YELLOW}  could not build an initramfs — see the bootloader step${COLOR_RESET}"
-		else
+		DRACUT_ADD="crypt systemd-cryptsetup dm rootfs-block"
+		# KERNEL-INSTALL IS NOT USED HERE, AND THAT IS DELIBERATE: IT REFUSES TO RUN IN A CHROOT.
+		#
+		# `05-check-chroot.install` compares `/` against `/proc/1/root` and then, for a dracut
+		# initramfs with no configured command line, prints "Dracut would fallback to using
+		# /proc/cmdline, which is generally not what you want. Exiting..." and exits 1. Measured
+		# by running the plugin's own predicate against the file the target actually carries:
+		# /etc/dracut.conf comes off the ISO as a copy of the build machine's, where bootloader()
+		# writes `kernel_cmdline+=` -- and the plugin greps for `^kernel_cmdline=`, which that
+		# does not match. So the check sees nothing configured and the step exits 1, every time.
+		#
+		# It is RIGHT to refuse. `90-loaderentry.install` would have taken the boot options from
+		# /proc/cmdline, and in a live session that reads `root=live:CDLABEL=... rd.live.image` --
+		# a hard disk told to go looking for the USB stick it was installed from.
+		#
+		# What the old `|| dracut` fallback did instead was write an initramfs to
+		# /boot/initramfs-$KVER.img, which is a path the bootloader step never reads: it derives
+		# the kernel version by listing /boot/<machine-id>, finds nothing, and builds every path
+		# below it out of an empty string.
+		#
+		# The Boot Loader Spec layout is a documented directory shape, so it is written directly.
+		local MID
+		MID="$(sudo cat $TARGET/etc/machine-id 2>/dev/null)"
+		if [ -n "$MID" ] && [ -f "$TARGET/boot/vmlinuz" ]; then
+			sudo mkdir -p "$TARGET/boot/$MID/$KVER"
+			sudo cp -f "$TARGET/boot/vmlinuz" "$TARGET/boot/$MID/$KVER/linux"
 			sudo chroot $TARGET /usr/bin/dracut --force --add "$DRACUT_ADD" \
-				"/boot/initramfs-$KVER.img" "$KVER" \
-				|| echo -e "${COLOR_YELLOW}  could not build an initramfs — see the bootloader step${COLOR_RESET}"
+				"/boot/$MID/$KVER/initrd" "$KVER" \
+				|| echo -e "${COLOR_YELLOW}  dracut failed here — the bootloader step tries again${COLOR_RESET}"
+		fi
+		# SAID OUT LOUD EITHER WAY. Both halves fail silently, and the machine only mentions it at
+		# the next boot, in emergency mode, which is not where anybody can read a scrollback.
+		if [ -f "$TARGET/boot/$MID/$KVER/linux" ] && [ -f "$TARGET/boot/$MID/$KVER/initrd" ]; then
+			echo -e "${COLOR_CYAN}  kernel and initramfs are in /boot/$MID/$KVER${COLOR_RESET}"
+		else
+			echo -e "${COLOR_YELLOW}  /boot/$MID/$KVER is incomplete — this machine will not boot${COLOR_RESET}"
 		fi
 	else
 		echo -e "${COLOR_YELLOW}  no /lib/modules on the target — the bootloader step will have to${COLOR_RESET}"
@@ -2962,6 +2988,28 @@ bootloader() {
 		MACHINE_ID=$(cat /etc/machine-id)
 		KERNEL="kernel-$(ls /boot/$MACHINE_ID | grep gentoo | tail -1)"
 		KERNEL_VERSION=$(echo $KERNEL | cut -d '-' -f2-5)
+		# THE VERSION IS READ FROM A DIRECTORY, SO A MISSING DIRECTORY IS AN EMPTY VERSION -- and
+		# every line below then builds a path with a hole in it. The loader entry names
+		# `/<machine-id>//linux`, `mkdir -p /boot/$MACHINE_ID/$KERNEL_VERSION` makes a directory
+		# with no version in it, and the module cleanup runs `grep -Evi` with no pattern at all.
+		# The entry gets written, the install says it finished, and the machine boots into
+		# emergency mode -- which is where this was found, and it says nothing about a kernel.
+		#
+		# Rebuild the layout from what IS on the disk before giving up on it: /boot/vmlinuz is the
+		# kernel the live installer copies off the medium, and /usr/lib/modules names its version.
+		if [ -z "$KERNEL_VERSION" ]; then
+			KERNEL_VERSION="$(ls /usr/lib/modules 2>/dev/null | sort -V | tail -1)"
+			if [ -n "$KERNEL_VERSION" ] && [ -f /boot/vmlinuz ]; then
+				echo -e "\033[1;33mNo kernel under /boot/$MACHINE_ID — placing $KERNEL_VERSION there\033[0m"
+				mkdir -p "/boot/$MACHINE_ID/$KERNEL_VERSION"
+				cp -f /boot/vmlinuz "/boot/$MACHINE_ID/$KERNEL_VERSION/linux"
+				KERNEL="kernel-$KERNEL_VERSION"
+			else
+				echo -e "\033[1;31mNo kernel to boot: /boot/$MACHINE_ID is empty and there is no\033[0m"
+				echo -e "\033[1;31m/boot/vmlinuz. Not writing a boot entry that names one.\033[0m"
+				return 1
+			fi
+		fi
 		LOADER_FILE="/boot/loader/entries/$MACHINE_ID-$KERNEL_VERSION.conf"
 		PREVIOUS_LOADER_FILE="/boot/loader/entries/previous.conf"
 		OFFSET=$(btrfs inspect-internal map-swapfile /swap/swap -r)
@@ -2986,7 +3034,7 @@ bootloader() {
         echo -e "\033[1;33mDeleting old Kernel Modules\033[0m"
         echo
         cd /usr/lib/modules
-        ls /usr/lib/modules | grep -Evi $KERNEL_VERSION | xargs rm -r
+        ls /usr/lib/modules | grep -Evi "$KERNEL_VERSION" | xargs -r rm -r
 		dracut --regenerate-all -f
 		mkdir -p /boot/$MACHINE_ID/$KERNEL_VERSION
 		plymouth-set-default-theme solar
