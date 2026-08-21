@@ -2410,6 +2410,24 @@ FSTAB
 			[[ -e "$F" ]] && EXCLUDES+=("${F#/}")
 		done
 
+		# A release image is an operating system, not a backup of services that happened to run on
+		# the build host.  These trees contain databases, private application state, container layers,
+		# relay/media data and (in several cases) credentials.  They are both enormous and unsafe to
+		# publish.  Keep Portage/system state under /var, but remove known mutable service payloads.
+		for F in /var/www /var/intel \
+			/var/lib/containerd /var/lib/gitea /var/lib/postgresql \
+			/var/lib/posterchanai /var/lib/synapse /var/lib/pleroma \
+			/var/lib/redis /var/lib/radicale /var/lib/tor /var/lib/letsencrypt; do
+			[[ -e "$F" ]] && EXCLUDES+=("${F#/}")
+		done
+
+		# /opt is commonly where a builder accumulates SDKs and unrelated server applications.  The
+		# one payload a PosterChanOS image needs is /opt/posterchan; exclude every sibling explicitly
+		# so that directory remains available to the image self-check below.
+		for F in /opt/*; do
+			[[ -e "$F" && "$F" != /opt/posterchan ]] && EXCLUDES+=("${F#/}")
+		done
+
 		# The account files, rewritten. Everything below uid 1000 stays — root and the system users
 		# are what makes a Linux system work — and every real person is dropped, replaced by one
 	# console-only, password-locked `live`.
