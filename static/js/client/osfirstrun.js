@@ -83,6 +83,9 @@
    * is a computer out of a box, which is what this wizard is for. Everything else is offered from
    * Settings, where a question belongs. */
   function machineUnusable(world){
+    /* A root-created administrator is stronger evidence than browser session state. Once this
+     * machine has been claimed, a renderer startup race must never turn first-run back on. */
+    if(world && world.provisioned === true) return false;
     const st = stepState(world);
     if(st.network !== 'done') return true;
     /* A MACHINE NOBODY HAS SIGNED INTO YET IS NOT A USABLE MACHINE, whatever else is configured.

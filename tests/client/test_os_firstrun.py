@@ -78,6 +78,14 @@ class FirstRun(unittest.TestCase):
         out = self.js("out.seize = F.machineUnusable(%s);" % json.dumps(said_no))
         self.assertFalse(out["seize"], "somebody who chose to browse signed out is asked again")
 
+    def test_a_unix_admin_claim_outlives_renderer_session_state(self):
+        """Provisioning is OS state. A renderer that starts before Chromium restores its saved
+        session must not show first-run again on a machine whose administrator already exists."""
+        world = {"online": True, "instance": "https://poster.place", "pubkey": "",
+                 "everHadAccount": False, "provisioned": True}
+        out = self.js("out.seize = F.machineUnusable(%s);" % json.dumps(world))
+        self.assertFalse(out["seize"], "a claimed machine was welcomed again after reboot")
+
     def test_the_answer_can_be_given(self):
         """A rule nothing can satisfy is a wall. The sign-in step has to offer the way out that
         `signinSkipped` records, or the flag is unreachable."""

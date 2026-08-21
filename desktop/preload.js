@@ -201,6 +201,7 @@ if (isOurPage) {
      * npub before it runs anything as root, and so does the script — the page is not trusted to
      * have validated it. */
     provision: (npub) => ipcRenderer.invoke('pc:os:provision', String(npub || '')),
+    provisioned: () => ipcRenderer.invoke('pc:os:provisioned'),
   });
 
   contextBridge.exposeInMainWorld('pcFs', {

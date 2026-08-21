@@ -133,6 +133,12 @@
       }
     }catch(_){ w.everHadAccount = false; }
     w.signinSkipped = get(KEY_SIGNIN_SKIP) === '1';
+    /* The Unix administrator claim is the durable first-run answer. Session/localStorage can be
+     * late during Electron startup; the machine claim cannot, and once it exists Welcome must not
+     * seize the desktop again merely because the renderer has not resumed the account yet. */
+    w.provisioned = false;
+    try{ w.provisioned = !!(SHELL() && SHELL().provisioned && await SHELL().provisioned()); }
+    catch(_){ w.provisioned = false; }
     w.homeReady = _homeReady;
     w.provisionFailed = _provisionFailed;
     return w;

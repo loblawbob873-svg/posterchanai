@@ -320,6 +320,12 @@
     catch(e){ return { ok: false, why: String((e && e.message) || e) }; }
   }
 
+  /** Durable machine claim, independent of the renderer profile and its startup timing. */
+  async function provisioned(){
+    const os = OS(); if(!os || typeof os.provisioned !== 'function') return false;
+    try{ return !!(await os.provisioned()); }catch(_){ return false; }
+  }
+
   /* ── THE VISIBLE HALF ─────────────────────────────────────────────────────────────────────────
    *
    * Deliberately small. Everything above decides; this draws. It is also the only part that cannot
@@ -1157,7 +1163,7 @@
 
   const API = { available, detect, APPS, taskbarRows, existingWindow, launch, panelState, panelSummary,
                 profileMenu, machineApps, mergedApps, allApps, wifiIcon, volIcon, batterySvg,
-                ensureAccount, panelHTML, quickHTML, taskbarHTML, launcherHTML, render, watch,
+                ensureAccount, provisioned, panelHTML, quickHTML, taskbarHTML, launcherHTML, render, watch,
                 takeShot, shotAvailable, closePop,
                 setViewOpener, refresh, paintTray, bindApps, bindPanel,
                 summary: () => _sum, rows: () => _rows, readAt: () => _readAt };

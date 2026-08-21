@@ -1281,6 +1281,15 @@ ipcMain.handle('pc:os:provision', (e, npub) => {
       });
   });
 });
+/* Browser storage is not the authority for whether this MACHINE was provisioned. Chromium may
+ * restore the renderer before its session store, a profile may be repaired, and either used to
+ * resurrect the first-boot welcome after an administrator had already been created. The root
+ * helper's claim is durable OS state and is the one answer that survives every renderer restart. */
+ipcMain.handle('pc:os:provisioned', (e) => {
+  fsGuard(e);
+  try { return fs.statSync('/var/lib/posterchanos/admin-npub').size > 0; }
+  catch (_) { return false; }
+});
 ipcMain.handle('pc:fs:list', (e) => { fsGuard(e); return fsbridge.list(); });
 ipcMain.handle('pc:fs:pick', async (e) => {
   fsGuard(e);
