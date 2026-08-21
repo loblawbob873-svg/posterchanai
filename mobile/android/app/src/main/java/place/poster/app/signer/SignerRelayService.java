@@ -33,6 +33,7 @@ import okhttp3.WebSocketListener;
 
 import place.poster.app.MainActivity;
 import place.poster.app.R;
+import place.poster.app.sms.SmsOutbox;
 import place.poster.app.RunningNote;
 
 /**
@@ -151,6 +152,8 @@ public class SignerRelayService extends Service {
     private final Map<String, Long> lastRedial = new HashMap<>();
     private OkHttpClient http;
     private String subId;
+    /** The SMS outbox's own subscription id, so its events are told apart from signer traffic. */
+    private String smsSubId;
     private boolean stopping = false;
 
     @Override
@@ -372,6 +375,7 @@ public class SignerRelayService extends Service {
         final String me = SignerKey.pubkey(this);
         if (me == null) return;
         if (subId == null) subId = "ns" + Long.toHexString(System.nanoTime() & 0xffffffL);
+        if (smsSubId == null) smsSubId = "sms" + Long.toHexString(System.nanoTime() & 0xffffffL);
         Request req;
         try {
             req = new Request.Builder().url(url).build();
@@ -388,6 +392,21 @@ public class SignerRelayService extends Service {
                     f.put("#p", new JSONArray().put(me));
                     f.put("since", Nip46Core.since(System.currentTimeMillis() / 1000));
                     s.send(new JSONArray().put("REQ").put(subId).put(f).toString());
+                    /* AND THE SMS OUTBOX, on the socket that is already here.
+                     *
+                     * A text this phone was asked to send by another device is a document on the
+                     * same relay, and the drain for it lived only in the client's JavaScript --
+                     * which runs when the app is VISIBLE. So a request sat unperformed until
+                     * somebody opened PosterChan on the handset, which is not what "send from my
+                     * laptop" means. Reported as "it should not have to be visible".
+                     *
+                     * A second REQ rather than a second socket: this one is open, authenticated by
+                     * nothing (the relay carries both kinds for the same key), and already
+                     * redialled and watched for staleness by everything below. */
+                    try {
+                        s.send(new JSONArray().put("REQ").put(smsSubId)
+                                .put(SmsOutbox.filter(me)).toString());
+                    } catch (Throwable ignored2) { }
                 } catch (Throwable ignored) { }
                 handler.post(() -> { lastRx.put(url, System.currentTimeMillis());
                                      connected = socks.size(); note(); });
@@ -487,11 +506,30 @@ public class SignerRelayService extends Service {
     static final java.util.Map<String, String> perAppFp = new java.util.HashMap<>();    // pk -> last fingerprint
     static final java.util.Map<String, String> perAppMethod = new java.util.HashMap<>();
 
+    /* A SEND ASKED FOR BY ANOTHER DEVICE. Off the main thread, like every other piece of crypto
+     * here: this decrypts, hands the radio a message and signs a reply.
+     *
+     * SmsOutbox refuses while the app is on screen, because the client's own drain owns it then --
+     * two readers of one request with no agreement between them send somebody's text twice, and a
+     * sent text cannot be recalled. */
+    private void smsOutbox(String url, JSONObject ev) {
+        if (ev == null) return;
+        if (!SmsOutbox.isRequest(ev)) return;
+        pool.execute(() -> {
+            JSONObject done = SmsOutbox.perform(SignerRelayService.this, ev);
+            if (done == null) return;
+            WebSocket ws = socks.get(url);
+            if (ws != null) ws.send(new JSONArray().put("EVENT").put(done).toString());
+        });
+    }
+
     private void recv(String url, String raw) {
         JSONArray m;
         try { m = new JSONArray(raw); } catch (Throwable t) { return; }
         if (m.length() < 3 || !"EVENT".equals(m.optString(0, ""))) return;
-        if (!String.valueOf(subId).equals(m.optString(1, ""))) return;
+        String sub = m.optString(1, "");
+        if (String.valueOf(smsSubId).equals(sub)) { smsOutbox(url, m.optJSONObject(2)); return; }
+        if (!String.valueOf(subId).equals(sub)) return;
         JSONObject ev = m.optJSONObject(2);
         if (ev == null || ev.optInt("kind", 0) != 24133) return;
 
