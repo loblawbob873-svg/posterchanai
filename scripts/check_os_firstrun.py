@@ -189,19 +189,49 @@ DRIVE = r"""(async () => {
   if (!out.entered) bad('no-wizard', 'the wizard finished without showing the desktop');
 
   /* ── and it must not seize a machine that already works ─────────────────────────────────────── */
+  /* WHAT MAKES IT "ALREADY WORKING" IS THAT SOMEBODY HAS USED IT, and that is a thing to set up
+     rather than assume. `localStorage.clear()` above wipes the account switcher, which is precisely
+     the record of somebody having signed in here -- so without one of the two lines below this
+     scenario IS a machine nobody has ever touched, which is the live disc, which SHOULD be
+     welcomed. The two are told apart by `everHadAccount` (they signed in once) and
+     `signinSkipped` (they were asked and said not yet). */
   try { localStorage.clear(); } catch (_) {}
   window.__instance = 'https://example.invalid';     // set up, signed out, Tor never answered
   window.ME = null; window.GUEST = true;
   window.__net.online = true;
+  try { localStorage.setItem('pc_nostr_accounts',
+        JSON.stringify([{ pubkey: 'a'.repeat(64), npub: 'npub1someone' }])); } catch (_) {}
   out.workingMachine = { needed: await window.PCFirstRunUI.needed(),
                          seized: await window.PCFirstRunUI.boot() };
   await sleep(300);
   if (out.workingMachine.seized || card())
-    bad('seizes-a-working-machine', 'a machine with a network and an instance was taken over to '
-                                  + 'ask an optional question — and the flow would then demand a '
-                                  + 'key before showing a desktop that worked as a guest');
+    bad('seizes-a-working-machine', 'a machine with a network, an instance and a remembered '
+                                  + 'account was taken over to ask an optional question');
   if (!out.workingMachine.needed)
     bad('step-not-answered', 'Tor was never answered and the machine claims nothing is outstanding');
+
+  /* ── and a machine NOBODY has ever signed into IS worth interrupting ─────────────────────────── */
+  /* The live disc: DHCP, an instance baked into the image, and no key. The old rule called that
+     "usable" and never ran, so a fresh boot landed on a desktop with a sign-in prompt and no
+     explanation -- "it booted me to a desktop, but not logged in". */
+  try { localStorage.clear(); } catch (_) {}
+  window.ME = null; window.GUEST = true; window.__net.online = true;
+  out.freshMachine = { seized: await window.PCFirstRunUI.boot() };
+  await sleep(300);
+  if (!out.freshMachine.seized && !card())
+    bad('never-welcomes-a-new-machine', 'a machine nobody has ever signed into was handed a desktop '
+                                      + 'with no explanation instead of the welcome');
+  try { window.PCFirstRunUI.unmount(); } catch (_) {}
+
+  /* ── and once somebody says "not yet", it stops asking ───────────────────────────────────────── */
+  /* Without this the welcome nags the one person it can never help: `everHadAccount` stays false
+     for ever on a machine used deliberately signed out. */
+  try { localStorage.setItem('pc_fr_signin_skipped', '1'); } catch (_) {}
+  out.saidNotYet = { seized: await window.PCFirstRunUI.boot() };
+  await sleep(300);
+  if (out.saidNotYet.seized || card())
+    bad('asks-again-after-being-told-no', 'somebody chose to browse without an account and was '
+                                        + 'asked again on the next boot');
   window.__instance = '';
 
   /* ── and it must never appear where this is not the operating system ────────────────────────── */

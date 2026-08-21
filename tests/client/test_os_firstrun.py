@@ -67,6 +67,25 @@ class FirstRun(unittest.TestCase):
         out = self.js("out.seize = F.machineUnusable(%s);" % json.dumps(fresh))
         self.assertTrue(out["seize"], "a machine nobody has ever signed into was not welcomed")
 
+    def test_once_somebody_says_not_yet_it_stops_asking(self):
+        """THE NAG. `everHadAccount` stays false for ever on a machine used deliberately signed out,
+        so without a recorded answer the welcome would seize the screen on every boot of the one
+        person it can never help. `signinSkipped` is an ANSWER, the same shape as instanceSkipped
+        and torSkipped beside it -- not a "have we run the wizard" flag, which this module avoids on
+        purpose because those go stale."""
+        said_no = {"online": True, "instance": "https://poster.place", "pubkey": "",
+                   "everHadAccount": False, "signinSkipped": True}
+        out = self.js("out.seize = F.machineUnusable(%s);" % json.dumps(said_no))
+        self.assertFalse(out["seize"], "somebody who chose to browse signed out is asked again")
+
+    def test_the_answer_can_be_given(self):
+        """A rule nothing can satisfy is a wall. The sign-in step has to offer the way out that
+        `signinSkipped` records, or the flag is unreachable."""
+        ui = open(os.path.join(ROOT, "static", "js", "client", "osfirstrunui.js"),
+                  encoding="utf-8").read()
+        self.assertIn("KEY_SIGNIN_SKIP", ui)
+        self.assertIn('data-fr="later"', ui, "the sign-in step offers no way past")
+
     def test_a_computer_out_of_a_box_IS_worth_interrupting(self):
         """Nothing decided — no instance, no key — is what this wizard exists for."""
         out = self.js("out.a = F.machineUnusable({online: true});"

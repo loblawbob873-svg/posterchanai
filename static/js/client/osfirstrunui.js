@@ -33,6 +33,14 @@
    * machine on purpose: they are about THIS computer, not about the account. */
   const KEY_INSTANCE_SKIP = 'pc_fr_instance_skipped';
   const KEY_TOR = 'pc_fr_tor';                    // 'on' | 'off'
+  /* "I do not want a key yet", recorded the same way every other answer is.
+   *
+   * Not a "have we run the wizard" flag -- this module deliberately reads the world each boot
+   * rather than trusting one of those, because they go stale. This is an ANSWER, and it sits beside
+   * instanceSkipped and torSkipped which are the same shape. Without it, somebody who deliberately
+   * browses signed out is asked again on EVERY boot: `everHadAccount` stays false for ever, so the
+   * welcome would nag the one person it can never help. */
+  const KEY_SIGNIN_SKIP = 'pc_fr_signin_skipped';
   const get = (k) => { try{ return localStorage.getItem(k); }catch(_){ return null; } };
   const set = (k, v) => { try{ localStorage.setItem(k, v); }catch(_){} };
 
@@ -85,8 +93,23 @@
      * which survives signing out precisely so you can sign back in. It is the difference between a
      * machine nobody has set up yet and one whose owner signed out an hour ago, and only the first
      * of those should be walked through a welcome. */
-    try{ const S = root.Session; w.everHadAccount = !!(S && S.accounts && S.accounts().length); }
-    catch(_){ w.everHadAccount = false; }
+    /* THE LIST ITSELF, not only the accessor over it. `Session` is a module global published by
+     * store.js, and this runs early in startApp -- depending on another module having loaded first
+     * is a load-order assumption, and when it is wrong the answer is a silent FALSE: "nobody has
+     * ever signed into this machine", which seizes the screen of somebody who has. Read through
+     * Session when it is there, because that is where the shape is defined, and off the key it
+     * writes when it is not. */
+    w.everHadAccount = false;
+    try{
+      const S = root.Session;
+      if(S && S.accounts) w.everHadAccount = !!S.accounts().length;
+      else {
+        const raw = root.localStorage && root.localStorage.getItem('pc_nostr_accounts');
+        const list = raw ? JSON.parse(raw) : [];
+        w.everHadAccount = Array.isArray(list) && list.length > 0;
+      }
+    }catch(_){ w.everHadAccount = false; }
+    w.signinSkipped = get(KEY_SIGNIN_SKIP) === '1';
     w.homeReady = _homeReady;
     w.provisionFailed = _provisionFailed;
     return w;
@@ -289,7 +312,17 @@
       'PosterChanOS has no accounts of its own. Your Nostr key IS the account — sign in with the '
       + 'PosterChan Signer on your phone, or paste an nsec.',
       `<div class="osfr-note">Your computer gets its own private home folder, named for your key.</div>`,
-      `<button class="btn btn-neon" data-fr="in">Sign in</button>`);
+      `<button class="btn btn-neon" data-fr="in">Sign in</button>`
+      + `<button class="btn" data-fr="later">Browse without an account</button>`);
+    /* THE WAY OUT, and the reason a first boot may be interrupted at all. This client reads the
+     * public timeline signed out, so "no key yet" is a real way to use it -- and a welcome that
+     * seizes the only screen with no way past would be a wall across a machine somebody booted to
+     * look at. Recorded, so it is asked once rather than at every boot. */
+    card.querySelector('[data-fr="later"]').onclick = () => {
+      set(KEY_SIGNIN_SKIP, '1');
+      unmount();
+      try{ if(root.PCOS && root.PCOS.restore) root.PCOS.restore(); }catch(_){}
+    };
     card.querySelector('[data-fr="in"]').onclick = () => {
       /* The gate is a full-screen layer of its own and it hides the desktop; this must get out of
        * the way or it draws on top of the form it just opened. `run()` is re-entered by the sign-in

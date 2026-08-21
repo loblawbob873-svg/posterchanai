@@ -98,7 +98,11 @@
      * list rather than from a flag: that list survives signing out, exactly so somebody can sign
      * back in. Never signed in on this machine -> walk them through it. Signed out with accounts
      * remembered -> they know where the button is, do not nag. */
-    if(st.signin !== 'done' && !world.everHadAccount) return true;
+    /* ...unless they have said so. `signinSkipped` is an ANSWER, recorded like the instance and Tor
+     * ones beside it -- without it somebody who deliberately browses signed out is asked again on
+     * every boot, because `everHadAccount` stays false for ever. The welcome would then nag the one
+     * person it can never help. */
+    if(st.signin !== 'done' && !world.everHadAccount && !world.signinSkipped) return true;
     return st.instance !== 'done' && st.signin !== 'done';
   }
 
