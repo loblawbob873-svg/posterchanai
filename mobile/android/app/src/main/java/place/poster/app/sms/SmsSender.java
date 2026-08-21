@@ -47,6 +47,14 @@ public final class SmsSender {
      * in SmsActionReceiver, which is what moves the row from outbox to sent or failed.
      */
     public static Result send(Context ctx, String address, String body) {
+        return send(ctx, address, body, 0);
+    }
+
+    /**
+     * With the conversation's own thread id, so the reply lands IN it. See SmsStore.storeSent: asking
+     * the platform to resolve the address instead can mint a second thread for the same person.
+     */
+    public static Result send(Context ctx, String address, String body, long threadId) {
         Result r = new Result();
         if (address == null || address.trim().isEmpty()) { r.error = "no number"; return r; }
         if (body == null || body.isEmpty()) { r.error = "nothing to send"; return r; }
@@ -70,7 +78,8 @@ public final class SmsSender {
 
         long now = System.currentTimeMillis();
         r.row = mayWrite
-                ? SmsStore.storeSent(ctx, address, body, now, Telephony.Sms.MESSAGE_TYPE_OUTBOX)
+                ? SmsStore.storeSent(ctx, address, body, now, Telephony.Sms.MESSAGE_TYPE_OUTBOX,
+                                     threadId)
                 : null;
         r.stored = r.row != null;
 

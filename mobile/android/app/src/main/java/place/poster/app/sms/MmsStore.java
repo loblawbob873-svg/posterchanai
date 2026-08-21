@@ -332,15 +332,23 @@ public final class MmsStore {
                         null, null, null);
                 if (c == null) continue;
                 String from = "", to = "", any = "";
+                // ONLY THE `TO` ADDRESSES ARE COUNTED, and the phone's own number is among them on
+                // an incoming message. Counting every address instead made a perfectly ordinary
+                // one-to-one picture message look like a group of two -- sender plus me -- so it was
+                // held out of its own conversation and the person stayed split in two.
+                //
+                // The phone's own number cannot be reliably identified (`insert-address-token` is a
+                // convention, not a guarantee, and getLine1Number is usually empty), so it is not
+                // identified: `to` counts the recipients, which is 1 for a one-to-one message in
+                // BOTH directions -- me, or them -- and more only when somebody else is really there.
                 java.util.HashSet<String> people = new java.util.HashSet<String>();
                 while (c.moveToNext()) {
                     String a = str(c, 0);
                     if (a.isEmpty() || SELF.equals(a)) continue;
-                    people.add(SmsKeys.matchKey(a));
                     int type = 0;
                     try { type = c.getInt(1); } catch (Throwable ignored) { }
                     if (type == ADDR_FROM && from.isEmpty()) from = a;
-                    else if (type == ADDR_TO && to.isEmpty()) to = a;
+                    else if (type == ADDR_TO) { if (to.isEmpty()) to = a; people.add(SmsKeys.matchKey(a)); }
                     if (any.isEmpty()) any = a;
                 }
                 // Incoming takes FROM; outgoing takes the first TO. `any` is the fallback for a

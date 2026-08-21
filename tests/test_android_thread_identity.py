@@ -109,6 +109,78 @@ def _run():
     return dict(line.split("\t", 1) for line in r.stdout.splitlines() if "\t" in line)
 
 
+def _strip_comments(src):
+    """Code only. A rule asserted against a file that DESCRIBES the rule in a comment passes on the
+    strength of its own documentation, which has happened here four times."""
+    out = []
+    i = 0
+    while i < len(src):
+        if src.startswith("/*", i):
+            j = src.find("*/", i + 2)
+            i = len(src) if j < 0 else j + 2
+        elif src.startswith("//", i):
+            j = src.find("\n", i)
+            i = len(src) if j < 0 else j
+        else:
+            out.append(src[i])
+            i += 1
+    return "".join(out)
+
+
+def _method(src, signature):
+    """One method's body, by brace matching -- not `src.index(name)`, which anchors on the first
+    mention and can read a different method entirely."""
+    i = src.index(signature)
+    start = src.index("{", i)
+    depth = 0
+    for j in range(start, len(src)):
+        if src[j] == "{":
+            depth += 1
+        elif src[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[start:j + 1]
+    raise AssertionError("unbalanced braces after " + signature)
+
+
+@unittest.skipIf(not os.path.isdir(SMS), "no android sources here")
+class ReplyJoinsItsConversation(unittest.TestCase):
+    """THE SPLIT WAS BEING CREATED BY THIS APP, not merely displayed by it.
+
+    `Telephony.Threads.getOrCreateThreadId` resolves an address through the canonical-addresses
+    table, and the emphasis is on CREATE: handed a spelling that table has not seen -- "5551234567"
+    typed into a conversation the carrier delivers as "+15551234567" -- it mints a NEW thread rather
+    than finding the existing one. So every message sent after this app became the default landed in
+    a second thread, and a conversation showed replies up to the day the messaging app was switched
+    and nothing after it. Reported as "i see replies i made to my dad at jul 2, nothing after which
+    is today".
+    """
+
+    def test_a_stored_reply_prefers_the_conversations_own_thread_id(self):
+        src = _strip_comments(open(os.path.join(SMS, "SmsStore.java")).read())
+        body = _method(src, "public static Uri storeSent(Context ctx, String address, String body, "
+                            "long dateMs, int type,")
+        self.assertIn("threadId > 0 ? threadId : threadIdFor(ctx, address)", body,
+                      "a reply must join the conversation it was typed in, not resolve an address")
+
+    def test_the_conversation_screen_sends_with_its_thread_id(self):
+        src = _strip_comments(open(os.path.join(SMS, "ThreadActivity.java")).read())
+        self.assertIn("SmsSender.send(this, address, body, threadId)", src,
+                      "the screen knows which conversation this is; sending without it re-splits it")
+
+    def test_only_recipients_decide_whether_a_picture_message_is_a_group(self):
+        # Counting every address counted the phone's own number on an incoming message, so an
+        # ordinary one-to-one picture message looked like a group of two and was held out of its own
+        # conversation -- leaving the person split in exactly the way this all exists to fix.
+        src = _strip_comments(open(os.path.join(SMS, "MmsStore.java")).read())
+        body = _method(src, "private static void fillAddresses(Context ctx, List<SmsMsg> rows)")
+        self.assertIn("people.add(SmsKeys.matchKey(a))", body)
+        adds = [ln for ln in body.splitlines() if "people.add(" in ln]
+        self.assertEqual(len(adds), 1, "one place decides this")
+        self.assertIn("ADDR_TO", adds[0],
+                      "only TO addresses are counted; FROM is the other person, not a crowd")
+
+
 @unittest.skipIf(not JAVAC or not JAVARUN, "no JDK on this node")
 @unittest.skipIf(JAR is None, "no android.jar on this node")
 @unittest.skipIf(not os.path.isdir(SMS), "no android sources here")

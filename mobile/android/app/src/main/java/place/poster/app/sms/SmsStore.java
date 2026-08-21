@@ -303,6 +303,22 @@ public final class SmsStore {
 
     /** File a message we sent. Same rule as storeInbox: the phone's own store is the record. */
     public static Uri storeSent(Context ctx, String address, String body, long dateMs, int type) {
+        return storeSent(ctx, address, body, dateMs, type, 0);
+    }
+
+    /**
+     * A REPLY JOINS THE CONVERSATION IT WAS TYPED IN -- pass its thread id, and only fall back to
+     * asking the platform when there genuinely is not one (a brand-new conversation).
+     *
+     * `getOrCreateThreadId` resolves the address through the canonical-addresses table, and the
+     * emphasis is on CREATE: handed a spelling that table has not seen -- "5551234567" typed into a
+     * conversation the carrier delivers as "+15551234567" -- it does not find the existing thread,
+     * it MINTS A NEW ONE. So this app was creating the split it then had to display: every message
+     * sent since it became the default landed in a second thread, which is why a conversation showed
+     * replies up to the day the phone's messaging app was switched and nothing after it.
+     */
+    public static Uri storeSent(Context ctx, String address, String body, long dateMs, int type,
+                                long threadId) {
         ContentValues v = new ContentValues();
         v.put(Telephony.Sms.ADDRESS, address);
         v.put(Telephony.Sms.BODY, body);
@@ -310,7 +326,7 @@ public final class SmsStore {
         v.put(Telephony.Sms.READ, 1);
         v.put(Telephony.Sms.SEEN, 1);
         v.put(Telephony.Sms.TYPE, type);
-        v.put(Telephony.Sms.THREAD_ID, threadIdFor(ctx, address));
+        v.put(Telephony.Sms.THREAD_ID, threadId > 0 ? threadId : threadIdFor(ctx, address));
         try {
             return ctx.getContentResolver().insert(Telephony.Sms.CONTENT_URI, v);
         } catch (Throwable t) {

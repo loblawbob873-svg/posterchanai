@@ -269,7 +269,7 @@ public class ThreadActivity extends PcActivity {
         String body = input.getText().toString();
         if (body.trim().isEmpty()) return;
         if (address.isEmpty()) { say(getString(R.string.sms_not_default)); return; }
-        SmsSender.Result r = SmsSender.send(this, address, body);
+        SmsSender.Result r = SmsSender.send(this, address, body, threadId);
         if (!r.ok) { say(r.error.isEmpty() ? getString(R.string.sms_failed) : r.error); return; }
         // Cleared only once the row exists. If the send throws, what somebody typed is still there.
         input.setText("");
