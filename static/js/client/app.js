@@ -2836,10 +2836,66 @@
        * So a thread reached FROM the timeline pushes once, and everything after that replaces: the
        * address bar stays honest (it always names what is on screen, so a share or a reload is
        * right) while there is only ever ONE entry to come back through. */
-      if(replace){ history.replaceState({}, '', target); return; }
+      if(replace){ history.replaceState(_navState(VIEW), '', target); return; }
+      _stampHere();                       // remember the screen we are leaving before we leave it
       history.pushState({}, '', target); _navPushed++;
     }catch(_){}
   }
+  /* WHERE YOU WERE IS PART OF THE HISTORY ENTRY, not a side table.
+   *
+   * A post, a profile and a repo are addressable, so the path names them and a pop can rebuild them
+   * from the URL alone. NOTHING ELSE IS: Notifications, Git, Messages, Files, a repo's issue list —
+   * every screen that is not an entity shares one URL ("/"), and routeFromPath answers "/" with the
+   * timeline. So Back out of anything opened from one of them landed on Social no matter where the
+   * reader had actually been ("pressing back on a git issue brings you to social"), and the offset
+   * they were reading at was never in the entry either ("it should take you to the last place you
+   * were, WHERE you were").
+   *
+   * Inventing a URL for every view would put forty private paths in the address bar and in the PWA's
+   * scope. The screen rides in the entry's STATE instead, beside the feed offset — invisible, exact,
+   * and popped back by the handler in bindGlobalsOnce. */
+  function _navState(view){
+    let top = 0;
+    try{ const f = $('#feed'); top = (f && f.scrollTop) || 0; }catch(_){ }
+    return { pcv: view || null, top };
+  }
+  // Stamp the entry we are LEAVING. The empty url argument keeps the current one — this must never
+  // move the address bar, only annotate the entry that is already there.
+  function _stampHere(){ try{ history.replaceState(_navState(VIEW), ''); }catch(_){ } }
+  /* A TOP-LEVEL VIEW IS A HISTORY ENTRY NOW. It has no address of its own, so entries are told apart
+   * by their state rather than their path.
+   *
+   * Pushed only once the reader has touched something. Boot can switch the view two or three times
+   * before anybody has seen the screen — the landing view, applyInstanceGating, a late synced pref —
+   * and each of those as an entry is a back press that goes nowhere. `_userActed` asks whether a
+   * PERSON caused this, which is the actual question, and cannot be fooled by boot ordering the way
+   * a latch can (see the `_viewChosen` note above openThread). */
+  function _navView(v){
+    if(_routing) return;
+    try{ if(window.PCOS && PCOS.isRepainting && PCOS.isRepainting()) return; }catch(_){}
+    const inClient = location.pathname === '/client' || location.pathname.startsWith('/client/');
+    const target = inClient ? '/client' : '/';
+    try{
+      const here = history.state;
+      if(!_userActed || (here && here.pcv === v && location.pathname === target)){
+        history.replaceState({ pcv:v, top:0 }, '', target); return;
+      }
+      _stampHere();
+      history.pushState({ pcv:v, top:0 }, '', target); _navPushed++;
+    }catch(_){}
+  }
+  /* Put the reader back where the entry says they were. The path-named screens (a thread, a profile,
+   * a repo) rebuild asynchronously — a README is a round trip across the internet — so the budget is
+   * generous. It costs nothing: _putScroll stops the moment the reader scrolls or leaves. */
+  function _restoreNavScroll(st){
+    if(!st || !(st.top > 0)) return;
+    const v = st.pcv;
+    try{ if(_TL_TABS.indexOf(v) >= 0) _tlScrollMemo[v] = st.top; }catch(_){ }   // a timeline redraw restores it too
+    _putScroll(st.top, () => !v || VIEW === v, 160);
+  }
+  // "Has a person done anything yet?" — see _navView. Capture phase, so a handler that stops the
+  // event still sets it, and passive because it only ever writes this flag.
+  let _userActed = false;
   // Shareable web link for a NIP-19 entity (npub/note/nevent/naddr) → poster.place/<entity>.
   function _webLink(entity){ return _serverOrigin() + '/' + entity; }
   /* `?e=<bech32>` — the same deep link, carried as a query instead of a path segment.
@@ -4464,7 +4520,26 @@
             try{ const b=document.querySelector('#shorts-wrap .short-back'); if(b){ b.click(); return; } }catch(_){}
           }
           const mini=document.getElementById('mini-player'); if(mini && mini.classList.contains('on')){ try{ closeMini(); }catch(_){} return; }
-          if(typeof VIEW!=='undefined' && VIEW && VIEW!=='home'){ try{ history.back(); }catch(_){ switchView(_startTimeline()); } return; }
+          /* Walk the app's own history first — every screen is an entry now, so this is what makes
+           * Back mean "the last place I was" instead of "the timeline".
+           *
+           * `_navPushed` is what stops it walking off the end. With nothing pushed (a cold deep link,
+           * or a view reached before anybody touched anything) history.back() has no entry of ours to
+           * pop, and the old `VIEW!=='home'` test sent it there anyway — a Back that did nothing at
+           * all. The timeline is the floor, and it is `_startTimeline()`, never a hardcoded Home:
+           * "opening a post and clicking back always brings you back to the Home tab instead of
+           * obeying Timeline the app opens on". Only from there does the double-tap exit arm, so
+           * there is always a way out. */
+          if(typeof VIEW!=='undefined' && VIEW){
+            if(_navPushed>0){ try{ history.back(); return; }catch(_){ } }
+            /* The floor switch must NOT create an entry of its own, or Back can never leave the
+             * app: switchView pushes now, so the floor would push, the next Back would pop back to
+             * the screen underneath, and the one after that would land on the floor again — a loop
+             * with the double-tap exit permanently out of reach. `_routing` is exactly the word for
+             * "this navigation came from the history, do not add to it". */
+            let _home='home'; try{ _home=_startTimeline(); }catch(_){ }
+            if(VIEW!==_home){ _routing=true; try{ switchView(_home); } finally{ _routing=false; } return; }
+          }
           if(window.__pcBackArmed){ try{ _App.exitApp && _App.exitApp(); }catch(_){} return; }             // second tap at home → exit
           window.__pcBackArmed=true; try{ toast('press back again to exit'); }catch(_){}
           setTimeout(()=>{ window.__pcBackArmed=false; }, 2000);
@@ -4482,6 +4557,10 @@
   // popstate (the back button skipped a view) and the refresh timers (double work forever after).
   function bindGlobalsOnce(){
     if(window.__pcGlobalsBound) return; window.__pcGlobalsBound = true;
+    // See _navView: a view switch becomes a history entry only once somebody has touched the app.
+    ['pointerdown','keydown','touchstart'].forEach(t=>{
+      try{ document.addEventListener(t, ()=>{ _userActed = true; }, { capture:true, passive:true }); }catch(_){ }
+    });
     // mobile overflow sheet — delegated so the tap is caught even if the node is re-created
     document.addEventListener('click', e=>{ if(e.target.closest && e.target.closest('#btn-more-m')){ e.preventDefault(); moreMenu(); } });
     bindSearch();
@@ -4555,7 +4634,22 @@
       rb.addEventListener('keydown', e=>{ if(e.key!=='Enter' && e.key!==' ') return;
         if(e.target.closest('#rb-notif-head')){ e.preventDefault(); switchView('notifications'); } });
     }
-    window.addEventListener('popstate', ()=>{ _navPushed=Math.max(0,_navPushed-1); if(ME) routeFromPath(); });   // back/forward
+    /* BACK/FORWARD. The PATH WINS WHEN IT NAMES SOMETHING — a post, a profile, a repo are all
+     * addressable and routeFromPath rebuilds them from the URL. Only when the path is the bare root
+     * does the entry's state get to say which screen this was; without that, every such entry was
+     * answered with `_startTimeline()`, which is the whole "back on a git issue brings you to
+     * social" report. Either way the offset comes from the entry. */
+    window.addEventListener('popstate', (e)=>{
+      _navPushed=Math.max(0,_navPushed-1);
+      if(!ME && !GUEST) return;
+      const st = (e && e.state) || history.state;
+      if(!_entityFromPath() && st && st.pcv && st.pcv!=='thread' && st.pcv!=='profile'){
+        _routing = true;
+        try{ switchView(st.pcv); }catch(_){ }
+        finally{ _routing = false; }
+      } else routeFromPath();
+      _restoreNavScroll(st);
+    });
     everyVisible(refreshRightbar, 150000);   // routinely refresh trending + prepend new hot posts (rightbar only on home/global)
     // Re-fetch profiles for on-screen authors still showing as npub — as the relay backfills
     // profiles, already-displayed posts resolve to names/avatars without needing a re-render.
@@ -5940,11 +6034,12 @@
    *
    * os.js has carried the same loop for the windowed desktop since it learned this; this is that
    * lesson, in the classic client. */
-  function _putScroll(want, ok){
+  function _putScroll(want, ok, budget){
     if(!(want > 0)) return;
     let tries = 0, last = -1;
+    const cap = budget || 40;
     const put = () => {
-      if(++tries > 40) return;
+      if(++tries > cap) return;
       let f = null;
       try{ f = $('#feed'); }catch(_){ f = null; }
       if(!f || (ok && !ok())) return;                       // they moved on; leave them alone
@@ -6022,7 +6117,7 @@
      * Saved on the way OUT, while the old view's nodes are still on screen and its scrollTop is
      * still real — after `VIEW = v` there is nothing left to measure. */
     if(VIEW !== v) _rememberTlScroll();
-    _navUrl('/');   // top-level views aren't entity URLs — reset the address bar to the root
+    _navView(v);    // top-level views have no address of their own — the entry names them in its state
     VIEW = v;
     if(v==='notifications'){ _notifShown = 25;   // fresh entry → collapse pagination back to one page
       // ...and land at the TOP. #feed is one scroll container shared by every view, and nothing reset
@@ -11356,16 +11451,34 @@
       return `<article class="note" data-id="${(ev&&ev.id)||''}" data-pk="${(ev&&ev.pubkey)||''}"><div class="body"><div class="txt muted small">⚠ couldn't render this post${why?' — '+enc(why):''}</div></div></article>`;
     }
   }
+  /* THE ONE REPOST HEADER — built here so the three places that draw one cannot drift apart.
+   *
+   * TWO REPORTS, one line of markup. **"someone reposted"** was on EVERY repost in a measured feed
+   * (4 of 4): the name was baked in as escaped text, so when the reposter's kind-0 finally arrived
+   * `decorateProfiles` had nothing to patch — it fills `.name[data-prof]`, and this had neither.
+   * The placeholder is still 'someone', but it is a placeholder now rather than a verdict.
+   *
+   * And **the card showed only the original's timestamp** — "when a repost is displayed, only the
+   * time of the original post is shown, but that AND when it was reposted [should be]". A repost is
+   * two events with two times, and the one that decides where it sits in your feed is the repost's.
+   * The original's stays on the card below, where it belongs to the post it describes. */
+  function _repostTag(pk, ts){
+    const nm = enc((profOf(pk).name) || 'someone');
+    const when = ts ? `<span class="rt-when" title="${enc(new Date(ts*1000).toLocaleString())}">${enc(timeAgo(ts))}</span>` : '';
+    return `<div class="repost-tag">${RT_ICON} <span class="name" data-prof="${enc(pk)}">${nm}</span> reposted${when}</div>`;
+  }
   function _noteHtml(ev){
     if (ev.kind===6){  // repost
       let inner=null; try{ inner=JSON.parse(ev.content); }catch(_){}
       if(inner && inner.id) Store.saveEvent(inner);
       const origId=(ev.tags.find(t=>t[0]==='e')||[])[1];
       const orig = inner || Store.get(origId);
-      const rp = profOf(ev.pubkey); needProfile(ev.pubkey);
-      if(orig){ needProfile(orig.pubkey); return noteCard(orig, `<div class="repost-tag">${RT_ICON} ${enc(rp.name||'someone')} reposted</div>`); }
+      needProfile(ev.pubkey);
+      if(orig){ needProfile(orig.pubkey); return noteCard(orig, _repostTag(ev.pubkey, ev.created_at)); }
       needEvent(origId);   // fetch the original; flushEvents patches this placeholder in place
-      return `<article class="note" data-orig="${origId}" data-reposter="${enc(rp.name||'someone')}"><div class="body"><div class="repost-tag">${RT_ICON} ${enc(rp.name||'someone')} reposted</div><div class="muted small">loading post…</div></div></article>`;
+      // The reposter's pubkey and the repost's time ride on the placeholder, because patchLoaded
+      // rebuilds the header from it and has no other way back to the kind-6.
+      return `<article class="note" data-orig="${enc(origId||'')}" data-rtpk="${enc(ev.pubkey)}" data-rtts="${ev.created_at}"><div class="body">${_repostTag(ev.pubkey, ev.created_at)}<div class="muted small">loading post…</div></div></article>`;
     }
     /* A mini app posted as NIP-94 file metadata — which is how Ditto publishes them and how the
      * Half-Life port is published. Without this the client has NO renderer for kind 1063 at all: the
@@ -12169,7 +12282,7 @@
     // rendered a live broadcast as an ordinary post — the link "didn't point to the stream".
     if(kind===30023) openArticle(ev); else if(kind===30402) openListing(ev);
     else if(kind===30311) openStream(ev);
-    else if(kind===30617) openRepo(ev);   // a shared git repo (NIP-34) opens the repo view, not a thread
+    else if(kind===30617) openRepo(ev, { restore:_routing });   // a shared git repo (NIP-34) opens the repo view, not a thread — and a BACK press re-opens the tab it was left on
     else renderThread(ev.id);
   }
   function quoteHtml(ev){
@@ -12318,7 +12431,7 @@
   // re-render (that flashed the whole screen on the busy global feed).
   function patchLoaded(e){
     $$(`.note[data-orig="${e.id}"]`).forEach(el=>{
-      const div=document.createElement('div'); div.innerHTML=noteCard(e, `<div class="repost-tag">${RT_ICON} ${enc(el.dataset.reposter||'someone')} reposted</div>`);
+      const div=document.createElement('div'); div.innerHTML=noteCard(e, _repostTag(el.dataset.rtpk||'', +el.dataset.rtts||0));
       if(div.firstElementChild) el.replaceWith(div.firstElementChild);
     });
     $$(`[data-nctx="${e.id}"]`).forEach(el=>{   // notification context: fill the preview once the post lands
@@ -12465,7 +12578,7 @@
     $('#feed').addEventListener('click', async (e)=>{
       if(e.target.closest('.yt-embed')) return;  // YouTube facade → handled by the player loader; don't lightbox the thumb
       const mn=e.target.closest('.mention'); if(mn){ e.preventDefault(); const pk=safePk(mn.dataset.np); if(pk) renderProfileView(pk); return; }
-      const evl=e.target.closest('.evlink'); if(evl){ e.preventDefault(); renderThread(evl.dataset.ev); return; }
+      const evl=e.target.closest('.evlink'); if(evl){ e.preventDefault(); openThread(evl.dataset.ev); return; }
       const ht=e.target.closest('.hashtag'); if(ht){ e.preventDefault(); renderHashtag(ht.dataset.tag); return; }
       const po=e.target.closest('.poll-opt'); if(po && !po.disabled){ e.preventDefault(); votePoll(po.dataset.poll, po.dataset.opt); return; }
       const na=e.target.closest('.naddrlink'); if(na){ e.preventDefault(); openNaddr(na.dataset.pk, na.dataset.d, na.dataset.k); return; }
@@ -12543,7 +12656,15 @@
       // `art.dataset.id` guard: a .note-styled card with no event id must do NOTHING, not send the user
       // to a thread view that can only report the post missing. That error is indistinguishable from a
       // real relay problem, which is what made this look like data loss rather than a dead click.
-      if(!btn){ if(art && art.dataset.id && !hasSelection && !e.target.closest('a,video,audio,button,input,textarea,select,label,.mc-dots,.link-card')) renderThread(art.dataset.id); return; }
+      /* openThread, NEVER renderThread. renderThread swaps the view and pushes NOTHING, so tapping a
+       * post in the feed — the single commonest navigation in the app — left no history entry at all.
+       * Back then popped whatever entry happened to be underneath, which was the last post opened
+       * through a path that DID push (a notification, a quote card): "click post, make a comment,
+       * click the back button on my phone and it takes me back to some other random post instead of
+       * my home feed", exactly, and it stayed true through every fix aimed at the push/replace rule
+       * because this tap never reached that rule. openThread decides push-vs-replace and is the only
+       * way into a thread from a click. */
+      if(!btn){ if(art && art.dataset.id && !hasSelection && !e.target.closest('a,video,audio,button,input,textarea,select,label,.mc-dots,.link-card')) openThread(art.dataset.id); return; }
       if(!art) return;   // .act outside a note (article/stream view) binds its own handler
       const id=art.dataset.id; const pk=art.dataset.pk;
       const a=btn.dataset.a;
@@ -29685,7 +29806,7 @@
     const pk=safePk(q); if(pk){ return renderProfileView(pk); }
     // 1b. note/nevent (optionally nostr:-prefixed) -> open that note's thread
     if(/^(?:nostr:)?(?:note1|nevent1)[0-9a-z]{20,}$/i.test(q)){
-      try{ const d=NT().nip19.decode(q.replace(/^nostr:/i,'')); const id=d.type==='note'?d.data:(d.data&&d.data.id); if(id) return renderThread(id); }catch(_){}
+      try{ const d=NT().nip19.decode(q.replace(/^nostr:/i,'')); const id=d.type==='note'?d.data:(d.data&&d.data.id); if(id) return openThread(id); }catch(_){}
     }
     // 2. NIP-05 address (name@domain) -> resolve to a pubkey -> jump
     if(/^[\w.\-+]+@[\w.\-]+\.[a-z]{2,}$/i.test(q)){
@@ -31186,7 +31307,7 @@
         // A post opens its thread; anything else (a conversation, a notification) is just clicked — that
         // is what openDm and the notification row handler are already wired to.
         const tid = el.dataset.tid || (el.matches('article.note') ? el.dataset.id : '');
-        if(tid){ renderThread(tid); return; }
+        if(tid){ openThread(tid); return; }
         // A file card is a grid tile with no click handler of its own — the OPEN is its <a>, so Enter has
         // to press that or it looked like Enter did nothing in the file manager.
         if(el.matches('.file-card')){ const a=el.querySelector('a'); if(a){ a.click(); return; } }

@@ -30,7 +30,7 @@ class BackLeavesTheThread(unittest.TestCase):
 
     def test_nav_can_replace_as_well_as_push(self):
         self.assertRegex(self.src, r"function _navUrl\(path, replace\)")
-        self.assertIn("history.replaceState({}, '', target)", self.src)
+        self.assertIn("history.replaceState(_navState(VIEW), '', target)", self.src)
 
     def test_a_step_within_a_thread_replaces_rather_than_stacking(self):
         """The chain of back presses through posts is exactly this push."""
@@ -71,7 +71,7 @@ class BackLeavesTheThread(unittest.TestCase):
         the top after everything else was fixed."""
         blk = self.src[self.src.index("const want = _tlScrollMemo[view];"):][:400]
         self.assertIn("_putScroll", blk)
-        put = self.src[self.src.index("function _putScroll(want, ok){"):][:1400]
+        put = self.src[self.src.index("function _putScroll(want, ok, budget){"):][:1400]
         self.assertIn("setTimeout(put", put, "it gives up after a single attempt")
         self.assertIn("scrollHeight > f.clientHeight", put,
                       "it writes the offset before the content is tall enough to hold it")
@@ -79,7 +79,7 @@ class BackLeavesTheThread(unittest.TestCase):
     def test_the_retry_stops_when_the_reader_takes_over(self):
         """A loop that keeps forcing a position would fight somebody scrolling. Their own scroll ends
         it, and so does leaving the view."""
-        put = self.src[self.src.index("function _putScroll(want, ok){"):][:1400]
+        put = self.src[self.src.index("function _putScroll(want, ok, budget){"):][:1400]
         self.assertIn("ok && !ok()", put, "it restores into a view the reader has already left")
         self.assertIn("Math.abs(f.scrollTop - last) > 2", put,
                       "it fights the reader for the scrollbar")

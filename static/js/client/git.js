@@ -647,7 +647,15 @@ window.PCGitFactory = function(dep){
   async function _rvJson(route, params){
     try{ return await fetch(_rvUrl(route,params)).then(r=>r.json()); }catch(_){ return {ok:false}; }
   }
-  function openRepo(e){
+  /* Which tab each repo was last read on, keyed by its naddr.
+   *
+   * A repo's tabs are panels inside one view, not screens — putting each in the history would make
+   * Back out of an issue a walk through README/Files/Commits. But the tab IS where the reader was:
+   * an issue is opened from the Issues tab and nowhere else, so coming back to the README is coming
+   * back to a screen they never chose. Restored only on a BACK press (`opts.restore`), never when
+   * the repo is opened fresh from the list — arriving somewhere starts at its front page. */
+  const _rvTab = Object.create(null);
+  function openRepo(e, opts){
     if(!e) return;
     // Put the repo in history. It was never a history entry, so Back from an issue popped straight PAST
     // it to whatever came before — the "no way back from an issue" dead end. The naddr doubles as the
@@ -736,13 +744,20 @@ window.PCGitFactory = function(dep){
     { const ni=$('#rv-newissue',feed); if(ni) ni.onclick=()=>newRepoIssue(e); }
     // Tabs: swap the visible panel. README loads eagerly; issues/patches were already fetched below;
     // Files/Commits are lazy-loaded on first open (a git round-trip each).
+    const _naddr=_repoNaddr(e);
     $$('.rv-tab',feed).forEach(tb=> tb.onclick=()=>{
+      if(_naddr) _rvTab[_naddr]=tb.dataset.tab;   // where this reader is in this repo — see _rvTab
       $$('.rv-tab',feed).forEach(x=>x.classList.toggle('active',x===tb));
       $$('.rv-panel',feed).forEach(pn=> pn.hidden = pn.dataset.panel!==tb.dataset.tab);
       if(!_rv) return;
       if(tb.dataset.tab==='files' && !_rv.filesLoaded){ _rv.filesLoaded=true; _loadRepoFiles(feed, ''); }
       if(tb.dataset.tab==='commits' && !_rv.commitsLoaded){ _rv.commitsLoaded=true; _loadRepoCommits(feed); }
     });
+    // Back out of an issue lands here: re-press the tab it was left on, which also runs that tab's
+    // lazy loader (Files/Commits are a git round trip each and load on first open).
+    if(opts && opts.restore && _naddr && _rvTab[_naddr] && _rvTab[_naddr]!=='readme'){
+      const tb=$(`.rv-tab[data-tab="${_rvTab[_naddr]}"]`, feed); if(tb) tb.click();
+    }
     if(isGrasp) _rvLoadRefs(feed);
     // README — best-effort forge fetch; the server renders nothing, we render its markdown safely.
     (async()=>{
