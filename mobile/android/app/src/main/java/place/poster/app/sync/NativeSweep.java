@@ -560,6 +560,7 @@ public final class NativeSweep {
         }
 
         for (Map<String, Object> t : plan.tombstone) {
+            if (stop != null && stop.stopping()) { j.flush(); return; }
             String path = Json.str(t.get("path"), "");
             /* POSITIVE PROOF, mirroring the JS executor: a deletion is only announced when the
              * exact path is confirmed absent under a healthy parent. Every way a scan fails to
@@ -599,7 +600,8 @@ public final class NativeSweep {
         }
 
         j.flush();
-        if (rep.failed.isEmpty() && rep.error.isEmpty()) store.markBaselineComplete(f.key);
+        if ((stop == null || !stop.stopping()) && rep.failed.isEmpty() && rep.error.isEmpty())
+            store.markBaselineComplete(f.key);
     }
 
     /** What a file looked like on this disk when we applied something to it — the journal's own

@@ -1113,3 +1113,24 @@ def test_an_inflight_page_sweep_survives_the_android_handoff():
     assert tick.index("consumeContinuations(p.due)") < tick.index("running = true"), (
         "a handed-over manual sweep remains permanently exempt from scheduling policy"
     )
+
+
+def test_a_fresh_native_sync_cannot_publish_missing_files_as_deletions():
+    """The native engine needs the same durable first-sync boundary as the page engine.
+
+    Journal coverage is not proof that a baseline completed: an interrupted phone may have more
+    than half its records before Android storage is cleared or remounted. Until one whole sweep
+    ends cleanly, absences must fetch live records and never create remote tombstones.
+    """
+    store = _read(JAVA, "sync", "SyncStore.java")
+    sweep = _read(JAVA, "sync", "NativeSweep.java")
+    assert "baselineComplete(" in store and "markBaselineComplete(" in store
+    assert "final boolean joining = !store.baselineComplete(f.key);" in sweep
+    assert "planned.tombstone.clear()" in sweep
+    assert "store.markBaselineComplete(f.key)" in sweep
+    assert sweep.index("planned.tombstone.clear()") < sweep.index("for (Map<String, Object> t : plan.tombstone)"), (
+        "a joining phone can still reach the tombstone publisher"
+    )
+    assert "stop == null || !stop.stopping()" in sweep, (
+        "an interrupted native sweep can certify an incomplete first-sync baseline"
+    )

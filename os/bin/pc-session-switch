@@ -1,0 +1,82 @@
+#!/bin/bash
+# Switch PosterChanOS' tty1 graphical session to a Nostr identity's Unix account.
+set -eu
+
+die(){ echo "pc-session-switch: $*" >&2; exit 1; }
+STATE_ROOT=/var/lib/posterchanos
+GETTY=/etc/systemd/system/getty@tty1.service.d/override.conf
+LOCK="$STATE_ROOT/session.lock"
+mkdir -p "$STATE_ROOT" "$(dirname "$GETTY")"
+exec 9>"$LOCK"
+flock -x 9
+
+write_getty(){
+  local user="$1"
+  local tmp
+  tmp=$(mktemp "$(dirname "$GETTY")/.override.XXXXXX")
+  printf '[Unit]\nWants=NetworkManager.service\nAfter=NetworkManager.service\n[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin %s --noclear %%I $TERM\n' "$user" >"$tmp"
+  chmod 0644 "$tmp"
+  mv -f "$tmp" "$GETTY"
+}
+
+# Restart out of band: restarting getty kills this caller's entire graphical session. A transient
+# unit owns the timer and survives that teardown, while the IPC call has time to return success.
+restart_later(){
+  systemd-run --quiet --unit="posterchan-session-switch-$(date +%s%N)" \
+    --on-active=1s /usr/bin/systemctl restart getty@tty1.service >/dev/null
+}
+
+if [ "${1:-}" = "--greeter" ]; then
+  write_getty posterchan
+  restart_later
+  echo 'user=posterchan'
+  exit 0
+fi
+
+NPUB="${1:-}"
+echo "$NPUB" | grep -qE '^npub1[023456789acdefghjklmnpqrstuvwxyz]{58}$' || die 'malformed npub'
+OUT=$(/usr/local/bin/pc-provision-user "$NPUB") || exit $?
+USER_NAME=$(printf '%s\n' "$OUT" | sed -n 's/^user=//p' | head -1)
+HOME_DIR=$(printf '%s\n' "$OUT" | sed -n 's/^home=//p' | head -1)
+[ -n "$USER_NAME" ] && [ -d "$HOME_DIR" ] || die 'provisioner returned no account'
+echo "$USER_NAME" | grep -qE '^pc-[0-9a-f]{16}$' || die 'provisioner returned an unsafe user'
+[ "$HOME_DIR" = "/home/$USER_NAME" ] || die 'provisioner returned an unsafe home'
+[ ! -L "$HOME_DIR" ] && [ "$(stat -c %U "$HOME_DIR")" = "$USER_NAME" ] || die 'unsafe home ownership'
+
+# Every real identity gets the same shell entry point, but its own HOME and Chromium profile.
+[ ! -L "$HOME_DIR/.bash_profile" ] || die 'unsafe profile link'
+cat >"$HOME_DIR/.bash_profile" <<'PROFILE'
+[[ -f ~/.bashrc ]] && . ~/.bashrc
+if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
+  export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=sway MOZ_ENABLE_WAYLAND=1
+  exec sway
+fi
+PROFILE
+mkdir -p "$HOME_DIR/.config/sway"
+[ "$(realpath -m "$HOME_DIR/.config/sway")" = "$HOME_DIR/.config/sway" ] || die 'unsafe config path'
+[ ! -L "$HOME_DIR/.config/sway/config" ] || die 'unsafe sway config link'
+if [ -s /home/posterchan/.config/sway/config ]; then
+  cp -f /home/posterchan/.config/sway/config "$HOME_DIR/.config/sway/config"
+elif [ -s /etc/sway/config ]; then
+  cp -f /etc/sway/config "$HOME_DIR/.config/sway/config"
+else
+  die 'no PosterChanOS sway configuration installed'
+fi
+
+# Optional one-shot browser session for a newly-added identity. It is opaque data, never evaluated
+# by this root helper, bounded to keep stdin from becoming a disk-fill interface, and readable only
+# by the destination identity. The destination Electron main process consumes and unlinks it.
+BOOT="$HOME_DIR/.posterchan-session-bootstrap"
+umask 077
+[ ! -L "$BOOT" ] || die 'unsafe session handoff link'
+dd bs=65536 count=1 of="$BOOT" 2>/dev/null || die 'could not receive session handoff'
+[ "$(stat -c %s "$BOOT")" -le 65536 ] || { rm -f "$BOOT"; die 'session handoff too large'; }
+chown -R "$USER_NAME:$USER_NAME" "$HOME_DIR/.bash_profile" "$HOME_DIR/.config" "$BOOT"
+chmod 0700 "$HOME_DIR" "$HOME_DIR/.config" "$HOME_DIR/.config/sway"
+chmod 0600 "$HOME_DIR/.bash_profile" "$HOME_DIR/.config/sway/config" "$BOOT"
+
+write_getty "$USER_NAME"
+printf '%s\n' "$NPUB" >"$STATE_ROOT/current-npub"
+chmod 0600 "$STATE_ROOT/current-npub"
+restart_later
+printf '%s\n' "$OUT"

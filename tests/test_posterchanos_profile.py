@@ -267,9 +267,11 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertIn("sudoers.d", body, "the shell cannot create an account it is not allowed to")
         rule = [l for l in body.splitlines() if "NOPASSWD" in l]
         self.assertTrue(rule, "no sudoers rule")
-        self.assertTrue(all("pc-provision-user" in l and "ALL=(root) NOPASSWD: /usr/local/bin/" in l
-                            for l in rule),
-                        f"the sudoers rule is broader than one command: {rule}")
+        self.assertEqual(len(rule), 2, f"unexpected privileged helper rules: {rule}")
+        self.assertTrue(any("pc-provision-user" in l for l in rule), "provision helper is not allowed")
+        self.assertTrue(any("pc-session-switch" in l for l in rule), "session helper is not allowed")
+        self.assertTrue(all("ALL=(root) NOPASSWD: /usr/local/bin/" in l and "NOPASSWD: ALL" not in l
+                            for l in rule), f"a sudoers rule is broader than a fixed helper: {rule}")
 
     def test_sudoers_drop_ins_are_actually_read(self):
         """`accounts()` writes /etc/sudoers wholesale, which drops the line that makes

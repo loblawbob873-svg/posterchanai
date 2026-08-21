@@ -62,7 +62,7 @@ chmod 0700 "$HOME_DIR"
 # input for the compositor's devices, netdev so NetworkManager will take instructions. NOT wheel —
 # signing in with a key is not the same as being trusted with root, and a machine anyone may log
 # into must not hand every visitor sudo.
-for g in audio video input netdev render; do
+for g in audio video input netdev render posterchan; do
   getent group "$g" >/dev/null 2>&1 && gpasswd -a "$USERNAME" "$g" >/dev/null 2>&1
 done
 
