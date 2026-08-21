@@ -28,7 +28,14 @@ import place.poster.app.sms.PhoneBook;
  */
 public final class InCallNotifier {
 
-    public static final String CHANNEL_RINGING = "pcai_cell_incoming";
+    /* `_v2` BECAUSE A CHANNEL'S SETTINGS ARE FIXED ONCE IT EXISTS.
+     *
+     * Android lets an app create a channel and never change its defaults again -- only the person
+     * can, in Settings. The first version of this one had no explicit sound, which means the DEFAULT
+     * NOTIFICATION CHIME, and it was created that way on every phone that has run this build. Now
+     * that telecom plays the real ringtone again (see IN_CALL_SERVICE_RINGING in the manifest) that
+     * chime would sound OVER it. A new id is the only way to ship the corrected defaults. */
+    public static final String CHANNEL_RINGING = "pcai_cell_incoming_v2";
     public static final String CHANNEL_ONGOING = "pcai_cell_ongoing";
     /** Outside the ids the music service (4243), screen share (4242), calls (4711) and sync use. */
     private static final int ID = 0x5C40;
@@ -43,6 +50,13 @@ public final class InCallNotifier {
             NotificationChannel c = new NotificationChannel(CHANNEL_RINGING,
                     ctx.getString(R.string.tel_channel_ring), NotificationManager.IMPORTANCE_HIGH);
             c.setDescription(ctx.getString(R.string.tel_channel_ring_why));
+            /* SILENT, AND THAT IS NOT THE SAME AS QUIET. The platform rings an incoming call -- it
+             * uses the ringtone the owner chose, and it honours Do Not Disturb, the silent switch
+             * and any per-contact override. This notification is the UI for that call, not a second
+             * announcement of it: left with a sound it plays the default notification chime over
+             * the ringtone. Vibration stays, since that is the notification's own half and the
+             * platform's ringer vibrates on its own schedule. */
+            c.setSound(null, null);
             c.enableVibration(true);
             c.setBypassDnd(true);
             nm.createNotificationChannel(c);

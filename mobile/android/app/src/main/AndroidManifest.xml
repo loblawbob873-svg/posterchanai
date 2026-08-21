@@ -310,14 +310,27 @@
 
              The InCallService is the phone's call UI. BIND_INCALL_SERVICE is held by the platform
              alone, which is what makes exported=true safe; IN_CALL_SERVICE_UI is what tells telecom
-             this app draws the screen rather than merely watching. Without RINGING=true the platform
-             keeps its own ringer for incoming calls and ours is never asked. -->
+             this app draws the screen rather than merely watching.
+
+             RINGING IS FALSE, AND THAT IS THE FIX RATHER THAN THE OMISSION. It was true, on the
+             reasoning that the platform "keeps its own ringer and ours is never asked" -- which is
+             exactly right, and the trap: RINGING=true means THIS APP is responsible for playing the
+             ringtone, and no ringer was ever built. So telecom stayed silent because we told it to,
+             and an incoming call made no sound at all. Reported as "i just got a phone call but no
+             sound", which on a phone means a missed call.
+
+             Handing it back to the platform is not merely the quick answer, it is the better one: it
+             rings with the ringtone the OWNER chose, respects Do Not Disturb, the silent switch, the
+             per-contact override and the escalating-vibrate settings -- every one of which a
+             hand-rolled ringer has to reimplement and usually gets wrong. If a custom ringer is
+             wanted later, this flag is where it starts, and the thing to build first is the ringer,
+             not the claim. -->
         <service
             android:name=".phone.PcInCallService"
             android:exported="true"
             android:permission="android.permission.BIND_INCALL_SERVICE">
             <meta-data android:name="android.telecom.IN_CALL_SERVICE_UI" android:value="true" />
-            <meta-data android:name="android.telecom.IN_CALL_SERVICE_RINGING" android:value="true" />
+            <meta-data android:name="android.telecom.IN_CALL_SERVICE_RINGING" android:value="false" />
             <intent-filter>
                 <action android:name="android.telecom.InCallService" />
             </intent-filter>
