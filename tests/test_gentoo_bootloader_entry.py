@@ -160,13 +160,5 @@ class BootloaderWritesAnEntryThatNamesARealKernel(unittest.TestCase):
         self.assertNotIn("plymouth-set-default-theme solar", body)
 
 
-class BootSnapshotRunsWithRequiredPrivileges(unittest.TestCase):
-    def test_service_does_not_hardcode_the_iso_builders_account(self):
-        src = open(SH, encoding="utf-8").read()
-        body = _fn(src, "services")
-        self.assertNotIn("User=verita84", body)
-        self.assertNotIn("Group=verita84", body)
-
-
 if __name__ == "__main__":
     unittest.main()

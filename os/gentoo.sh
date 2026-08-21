@@ -126,7 +126,7 @@ REPO_CHOICE="local"
 #Overrided Swap File Size
 #SWAP_SIZE='1G'
 #
-SERVICES+=(sshd systemd-timesyncd libvirtd smartd cups NetworkManager boot-snapshot.timer)
+SERVICES+=(sshd systemd-timesyncd libvirtd smartd cups NetworkManager)
 MAKEOPTS="-j$(cat /proc/cpuinfo | grep -i processor | grep -vi 'model' | wc -l)"
 ROOT_PARTITION_SIZE="30GB"
 FEATURES="-pid-sandbox getbinpkg -binpkg-request-signature"
@@ -305,44 +305,6 @@ gentooRepo() {
 	# https, not http: this is fetched by machines that are not on a trusted network, and a plain
 	# http mirror is one anybody in the path can rewrite.
 	echo "GENTOO_MIRRORS=\"https://gentoo.poster.place\"" >>$TARGET/etc/portage/make.conf
-}
-
-snapshots() {
-	DATE=$(date +%Y-%m-%d-%H-%M)
-	YESTERDAY=$(date +%Y-%m-%d -d "5 days ago")
-	partitionDetection
-	echo
-	echo -e "\033[1;35m◆ CREATING SNAPSHOTS... ◆\033[0m"
-	echo
-	CURRENT_ROOT=$(cat /proc/cmdline | cut -d '@' -f2 | cut -d ' ' -f1)
-	if [[ "$CURRENT_ROOT" == *"snapshot"* ]]; then
-		echo -e "\033[1;33mAlready booted in Previous\033[0m"
-	else
-		echo -e "\033[1;33mRemoving Snapshots older than 5 days\033[0m"
-		# A glob with no matches is passed literally; btrfs then fails on a path named `snapshot-*`.
-		# Delete only directories that actually exist.
-		local OLD
-		for OLD in /.snapshots/snapshot-*; do
-			[ -d "$OLD" ] && sudo /usr/bin/btrfs subvolume delete "$OLD"
-		done
-		sudo rm -f /boot/loader/entries/snapshot-*
-		sudo /usr/bin/btrfs sub snapshot / /.snapshots/snapshot-$DATE
-		# `Current Entry:` has leading alignment spaces. `cut -d ' ' -f3` therefore returned the
-		# literal word `Entry:` and every boot snapshot unit failed after creating the snapshot.
-		BOOT_FILES=$(sudo bootctl status --no-pager | awk '$1=="Current" && $2=="Entry:" {print $3; exit}')
-		[ -n "$BOOT_FILES" ] && [ -f "/boot/loader/entries/$BOOT_FILES" ] || {
-			echo "Could not identify the current systemd-boot entry" >&2
-			return 1
-		}
-		sudo cp -f "/boot/loader/entries/$BOOT_FILES" "/boot/loader/entries/snapshot-$DATE.conf"
-		# /.snapshots is its own mounted Btrfs subvolume. Name its on-disk FSROOT, not the mountpoint:
-		# this install uses @snapshots, so `@.snapshots/...` can never be booted.
-		local SNAP_ROOT
-		SNAP_ROOT=$(findmnt -no FSROOT /.snapshots | sed 's#^/##')
-		[ -n "$SNAP_ROOT" ] || { echo "Could not identify the snapshots subvolume" >&2; return 1; }
-		sudo sed -i "s#subvol=@$ROOT_NAME#subvol=$SNAP_ROOT/snapshot-$DATE#g" \
-			"/boot/loader/entries/snapshot-$DATE.conf"
-	fi
 }
 
 partitionDetection() {
@@ -1175,22 +1137,6 @@ services() {
 	echo "ExecStart=/usr/sbin/powertop --auto-tune" >>/etc/systemd/system/powertop.service
 	echo "[Install]" >>/etc/systemd/system/powertop.service
 	echo "WantedBy=multi-user.target" >>/etc/systemd/system/powertop.service
-
-	echo "[Service]" > /etc/systemd/system/boot-snapshot.service
-	echo "ExecStart=/usr/bin/gentoo.sh snapshot" >> /etc/systemd/system/boot-snapshot.service
-	# Snapshots require root, and the first key-backed account deliberately has a generated name.
-	# Hardcoding the ISO builder's user made this unit fail with 217/USER on every installed machine.
-	echo "SyslogIdentifier=boot-snapshot"  >> /etc/systemd/system/boot-snapshot.service
-	echo "[Install]"  >> /etc/systemd/system/boot-snapshot.service
-	echo "WantedBy=default.target"  >> /etc/systemd/system/boot-snapshot.service
-
-    echo "[Unit]" > /etc/systemd/system/boot-snapshot.timer     
-	echo "Description=Boot Snapshots" >> /etc/systemd/system/boot-snapshot.timer
-	echo "[Timer]" >> /etc/systemd/system/boot-snapshot.timer
-	echo "OnBootSec=0" >> /etc/systemd/system/boot-snapshot.timer
-	echo "Unit=boot-snapshot.service" >> /etc/systemd/system/boot-snapshot.timer
-	echo "[Install]" >> /etc/systemd/system/boot-snapshot.timer
-	echo "WantedBy=default.target" >> /etc/systemd/system/boot-snapshot.timer
 
 	torService
 
@@ -3269,8 +3215,6 @@ elif [ "$1" = "hibernate" ]; then
 	hibernateSetup
 elif [ "$1" = "bootloader" ]; then
 	bootloader
-elif [ "$1" = "snapshot" ]; then
-	snapshots
 elif [ "$1" = "steam" ]; then
 	installSteam
 elif [ "$1" = "install-packages" ]; then
