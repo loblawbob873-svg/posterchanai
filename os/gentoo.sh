@@ -1991,7 +1991,8 @@ liveCD() {
 	else
 		DEFOUT="${DEFOUT%/}/livecd"
 	fi
-	read -p 'Write the ISO where? ' -e -i "$DEFOUT" OUTDIR
+	OUTDIR="${PC_ISO_OUT:-}"
+	[ -n "$OUTDIR" ] || read -p 'Write the ISO where? ' -e -i "$DEFOUT" OUTDIR
 	# An empty answer is the default, not the current directory. `read -e -i` pre-fills only on a
 	# real terminal; anywhere else it hands back "".
 	OUTDIR="${OUTDIR:-$DEFOUT}"
@@ -2033,7 +2034,8 @@ liveCD() {
 	echo -e "${COLOR_YELLOW}Log:  $LOG${COLOR_RESET}"
 
 	local KEEP_HOME
-	read -p 'Include /home in the image? ' -e -i "n" KEEP_HOME
+	KEEP_HOME="${PC_ISO_HOME:-}"
+	[ -n "$KEEP_HOME" ] || read -p 'Include /home in the image? ' -e -i "n" KEEP_HOME
 
 	# ---------------------------------------------------------------- whose machine is this
 	#
@@ -2049,8 +2051,18 @@ liveCD() {
 	#
 	# Answering `n` keeps everything — which is the right answer for a rescue disc of your own
 	# machine, and the wrong one for anything you publish. It says so rather than assuming.
+	# ANSWERABLE WITHOUT A KEYBOARD, and the DEFAULT WHEN UNANSWERED IS CLEAN.
+	#
+	# `read -e -i "y"` pre-fills only on a terminal. Driven from a script the pre-fill does not
+	# happen, so a blank line leaves CLEAN empty -- and `[[ "$CLEAN" = *y* ]]` on an empty string is
+	# FALSE, which is the personal-rescue-disc branch. An unattended build would have quietly
+	# produced an image carrying this machine's accounts, ssh host keys and saved wifi passwords,
+	# and nothing on screen would have said so. So the env var is read first and an EMPTY answer
+	# means clean, not the opposite.
 	local CLEAN
-	read -p "Clean out this machine's accounts and secrets (n = personal rescue disc)? " -e -i "y" CLEAN
+	CLEAN="${PC_ISO_CLEAN:-}"
+	[ -n "$CLEAN" ] || read -p "Clean out this machine's accounts and secrets (n = personal rescue disc)? " -e -i "y" CLEAN
+	[ -n "$CLEAN" ] || CLEAN=y
 
 	# ---------------------------------------------------------------- what to leave out
 	#
@@ -2909,6 +2921,10 @@ elif [ "$1" = "fstab" ]; then
 	setDevices
 	TARGET=/
 	fstab
+elif [ "$1" = "livecd" ]; then
+	# Scriptable: PC_ISO_OUT / PC_ISO_HOME / PC_ISO_CLEAN answer the three questions, and an
+	# unanswered PC_ISO_CLEAN means CLEAN -- see liveCD.
+	liveCD
 elif [ "$1" = "help" ]; then
 	show-help
 else

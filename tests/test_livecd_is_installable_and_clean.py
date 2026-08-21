@@ -480,3 +480,31 @@ class EveryReplacementActuallyReachesTheImage(unittest.TestCase):
         after = self.fn.split("did it actually work")[1]
         self.assertIn("_lcd_fail", after)
         self.assertIn("login prompt, not a desktop", after)
+
+
+class AnUnattendedBuildIsStillAScrubbedOne(unittest.TestCase):
+    """AN UNANSWERED "CLEAN?" MUST MEAN CLEAN.
+
+    `read -e -i "y"` pre-fills only on a terminal. Driven from a script the pre-fill does not happen,
+    so a blank line leaves CLEAN empty -- and `[[ "$CLEAN" = *y* ]]` on an empty string is FALSE,
+    which is the personal-rescue-disc branch. An unattended build would have quietly produced an
+    image carrying this machine's accounts, ssh host keys and saved wifi passwords, with nothing on
+    screen saying so.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = GENTOO.read_text()
+        i = cls.src.index("\nliveCD() {")
+        cls.fn = cls.src[i:cls.src.index("\n}", i)]
+
+    def test_an_empty_answer_is_clean(self):
+        self.assertIn('[ -n "$CLEAN" ] || CLEAN=y', self.fn,
+                      "a blank answer falls into the personal-rescue-disc branch")
+
+    def test_the_three_questions_can_be_answered_without_a_keyboard(self):
+        for var in ("PC_ISO_OUT", "PC_ISO_HOME", "PC_ISO_CLEAN"):
+            self.assertIn(var, self.fn, f"{var} cannot be set, so an unattended build must guess")
+
+    def test_there_is_a_way_in_that_is_not_the_menu(self):
+        self.assertIn('elif [ "$1" = "livecd" ]; then', self.src)
