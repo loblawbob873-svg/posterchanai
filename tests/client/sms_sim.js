@@ -67,7 +67,12 @@ const PLUGIN = {
     const allowed = opt.oldApk ? isPhone() : canRead;
     if(!allowed) return { messages: [] };
     const since = (a && a.since) || 0;
-    return { messages: rows.filter(r => r.date > since).sort((x, y) => x.date - y.date) };
+    // THE TWO PROVIDER TABLES REFUSE INDEPENDENTLY — several OEM builds guard `content://mms`
+    // differently from `content://sms`. Folded into `refused` an MMS-only refusal reads as "you
+    // have no messages", over a full inbox.
+    const out = { messages: rows.filter(r => r.date > since).sort((x, y) => x.date - y.date) };
+    if(opt.mmsRefused) out.mmsRefused = true;
+    return out;
   },
   async send(a){
     calls.push(['send', a.to, a.body]);
@@ -79,12 +84,28 @@ const PLUGIN = {
     return { ok:true, error:'', parts:1, row:'content://sms/' + m.id };
   },
   async delete(a){
-    calls.push(['delete', (a.ids || []).slice()]);
+    // BOTH LISTS, RECORDED SEPARATELY. A picture message lives at `content://mms/<id>` and a client
+    // that sends every id down the SMS path deletes nothing and reports nothing — which the client
+    // reads as a provider refusal, so the archive is left alone and the delete quietly did not
+    // happen. The transcript has to be able to show which list each id went into.
+    calls.push(['delete', (a.ids || []).slice(), (a.mmsIds || []).slice()]);
     if(opt.deleteFails) return { deleted: 0 };
-    const gone = new Set(a.ids || []);
+    const sms = new Set(a.ids || []), mms = new Set(a.mmsIds || []);
     const before = rows.length;
-    rows = rows.filter(r => !gone.has(r.id));
+    // The stub is the PROVIDER, so it enforces the provider's rule: an id offered down the wrong
+    // path removes nothing at all.
+    rows = rows.filter(r => !(r.mms ? mms.has(r.id) : sms.has(r.id)));
     return { deleted: before - rows.length };
+  },
+  /* ONE ATTACHMENT'S BYTES. Three answers, not two: the data, "too large for the bridge" (a real
+   * file somebody can still open in their gallery), and a refusal — rendered identically they are
+   * all a broken image and only some of them are fixable. */
+  async attachment(a){
+    calls.push(['attachment', a && a.part]);
+    const part = (opt.parts || {})[String(a && a.part)];
+    if(!part) return { data: '', tooBig: false };
+    if(part.tooBig) return { data: '', tooBig: true };
+    return { data: part.data || '', bytes: (part.data || '').length };
   },
   async markRead(){ return { marked: 0 }; },
   async deleteThread(){ return { deleted: 0 }; },
@@ -200,7 +221,12 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
     // older cached copy cannot walk over the hole and restore the message; what the person sees is
     // the set below.
     docs: Array.from(st.msgs.values()).filter(m => !m.gone).map(m => m.doc).sort(),
-    threads: st.threads.map(t => ({ key: t.key, n: t.msgs.length })),
+    threads: st.threads.map(t => ({ key: t.key, n: t.msgs.length,
+                                   // The order a thread is READ in, so a merge that interleaves
+                                   // wrongly is visible rather than merely counted.
+                                   order: t.msgs.map(m => m.doc),
+                                   parts: t.msgs.map(m => (m.parts || []).length) })),
+    mmsRefused: !!st.mmsRefused,
     hwm: Object.keys(global.localStorage._all)
               .filter(k => k.indexOf('pc_sms_hwm') === 0)
               .map(k => Number(global.localStorage._all[k]))[0] || 0,

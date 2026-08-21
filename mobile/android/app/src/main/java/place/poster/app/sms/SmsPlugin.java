@@ -198,10 +198,23 @@ public class SmsPlugin extends Plugin {
         // middle one is the only one a tap can fix.
         o.put("canRead", mayRead());
         o.put("unread", SmsStore.unreadCount(ctx));
-        // MMS IS NOT SUPPORTED and the client must be able to say so on the screen where somebody is
-        // deciding whether to hand this app their messages. Reported rather than assumed, so the day
-        // it IS supported nothing else has to change.
-        o.put("mms", false);
+        /* PICTURE MESSAGES, AND THE TWO HALVES OF THAT ARE NOT THE SAME ANSWER.
+         *
+         * `mms` — this build READS `content://mms`, so the history already on the phone (everything
+         * ever sent, and everything received while another app was the default) is on the screen.
+         * `mmsFetch` — whether an INCOMING picture message can be pulled off the carrier's MMSC,
+         * which is a different piece of work entirely and is still false (MmsDeliverReceiver says
+         * so out loud rather than filing a placeholder row).
+         *
+         * One boolean for both is what lets a screen promise the second while delivering the first.
+         * The client prints them separately, on the screen where somebody is deciding whether to
+         * hand this app their messages. */
+        o.put("mms", true);
+        o.put("mmsFetch", false);
+        /* `mmsRefused` IS DELIBERATELY NOT HERE. `MmsStore.refused()` describes THE LAST READ, and
+         * `status` performs none — reported from here it is whatever some earlier call left behind,
+         * which is a stale fact wearing a fresh one's clothes. It rides on `list` and `threads`,
+         * read on the same thread immediately after the query it describes. */
         call.resolve(o);
     }
 
@@ -227,6 +240,12 @@ public class SmsPlugin extends Plugin {
         o.put("roleHeld", HasRole.roleHeld(ctx));
         o.put("canRead", mayRead());
         o.put("canNotify", mayNotify());
+        // THE TWO HALVES OF "PICTURE MESSAGES", so a report can say which one is missing. Reading
+        // the phone's existing ones and FETCHING a new one off the carrier are different pieces of
+        // work, and an older build answers neither key — which the client reads as "this build
+        // cannot" rather than inventing a yes.
+        o.put("mms", true);
+        o.put("mmsFetch", false);
         android.content.pm.PackageManager pm = ctx.getPackageManager();
         JSObject parts = new JSObject();
         parts.put("smsDeliver", resolvesReceiver(pm, new Intent(Telephony.Sms.Intents.SMS_DELIVER_ACTION)));
@@ -321,21 +340,30 @@ public class SmsPlugin extends Plugin {
     public void list(PluginCall call) {
         long since = call.getLong("since", 0L);
         int limit = call.getInt("limit", 500);
+        /* BOTH PROVIDERS, INTERLEAVED — see Messages. A conversation is texts AND pictures and has
+         * always been read as one thing; two lists is not a smaller version of that, it is a thread
+         * with holes in it. */
         List<SmsMsg> rows = since > 0
-                ? SmsStore.since(getContext(), since, limit)
-                : SmsStore.recent(getContext(), limit);
+                ? Messages.since(getContext(), since, limit)
+                : Messages.recent(getContext(), limit);
+        // READ IMMEDIATELY AFTER, on this thread, and SEPARATELY — the two tables fail
+        // independently and folding them into one flag either blames a working half or hides a
+        // refusal. Whichever is read second would otherwise overwrite the other's answer.
         boolean refused = SmsStore.refused();
+        boolean mmsRefused = MmsStore.refused();
         JSObject o = new JSObject();
         o.put("messages", toJson(rows));
         o.put("refused", refused);
+        o.put("mmsRefused", mmsRefused);
         call.resolve(o);
     }
 
     @PluginMethod
     public void threads(PluginCall call) {
         JSONArray arr = new JSONArray();
-        List<SmsStore.Thread> found = SmsStore.threads(getContext(), call.getInt("limit", 500));
+        List<SmsStore.Thread> found = Messages.threads(getContext(), call.getInt("limit", 500), true);
         boolean refused = SmsStore.refused();          // see list(): describes the read just made
+        boolean mmsRefused = MmsStore.refused();
         for (SmsStore.Thread t : found) {
             JSObject o = new JSObject();
             o.put("id", t.id);
@@ -349,6 +377,7 @@ public class SmsPlugin extends Plugin {
         JSObject out = new JSObject();
         out.put("threads", arr);
         out.put("refused", refused);
+        out.put("mmsRefused", mmsRefused);
         call.resolve(out);
     }
 
@@ -356,7 +385,7 @@ public class SmsPlugin extends Plugin {
     public void thread(PluginCall call) {
         long id = call.getLong("id", 0L);
         JSObject o = new JSObject();
-        o.put("messages", toJson(SmsStore.thread(getContext(), id, call.getInt("limit", 500))));
+        o.put("messages", toJson(Messages.thread(getContext(), id, call.getInt("limit", 500))));
         call.resolve(o);
     }
 
@@ -394,17 +423,13 @@ public class SmsPlugin extends Plugin {
     /** Delete this phone's copies. The archive's copies are the client's half of the same delete. */
     @PluginMethod
     public void delete(PluginCall call) {
-        JSArray ids = call.getArray("ids");
-        long[] arr = new long[0];
-        try {
-            if (ids != null) {
-                List<Object> raw = ids.toList();
-                arr = new long[raw.size()];
-                for (int i = 0; i < raw.size(); i++) arr[i] = Long.parseLong(String.valueOf(raw.get(i)));
-            }
-        } catch (Throwable ignored) { }
+        long[] arr = ids(call.getArray("ids"));
+        long[] mms = ids(call.getArray("mmsIds"));
         JSObject o = new JSObject();
-        o.put("deleted", SmsStore.delete(getContext(), arr));
+        // TWO URIs, NOT ONE. A picture message is `content://mms/<id>`; handed to SmsStore it
+        // deletes nothing and REPORTS nothing, which the client reads as a provider refusal — so
+        // the message stays on the phone AND in the archive and the delete quietly did not happen.
+        o.put("deleted", SmsStore.delete(getContext(), arr) + MmsStore.delete(getContext(), mms));
         call.resolve(o);
     }
 
@@ -423,6 +448,54 @@ public class SmsPlugin extends Plugin {
         call.resolve(o);
     }
 
+    /**
+     * ONE ATTACHMENT'S BYTES, base64, fetched when something is about to show it.
+     *
+     * THE THREE ANSWERS ARE DIFFERENT SENTENCES and the caller gets to say which: `data` present is
+     * the picture; `tooBig` is an attachment that exists and will not fit through a JSON bridge;
+     * anything else is an attachment the provider would not hand over. Collapsed into "no data" the
+     * screen shows a broken image for all three, which is the drive-check rule again — "could not
+     * ask" is never "there is nothing there".
+     *
+     * The cap is on the RAW bytes. Base64 is a third larger again, and the WebView holds a copy of
+     * the string on top of that, so a generous-looking limit here is three times itself by the time
+     * anything is drawn.
+     */
+    private static final int MAX_ATTACHMENT = 12 * 1024 * 1024;
+
+    @PluginMethod
+    public void attachment(PluginCall call) {
+        long id = call.getLong("part", 0L);
+        int max = Math.min(call.getInt("max", MAX_ATTACHMENT), MAX_ATTACHMENT);
+        JSObject o = new JSObject();
+        o.put("part", id);
+        byte[] b = id > 0 ? MmsStore.partBytes(getContext(), id, max) : null;
+        if (b == null) {
+            o.put("data", "");
+            // WHICH KIND OF NOTHING. `partBytes` returns null both for "over the cap" and for "the
+            // provider refused", and only one of those is worth offering a way around.
+            o.put("tooBig", id > 0 && MmsStore.sizeOver(getContext(), id, max));
+            call.resolve(o);
+            return;
+        }
+        o.put("data", android.util.Base64.encodeToString(b, android.util.Base64.NO_WRAP));
+        o.put("bytes", b.length);
+        call.resolve(o);
+    }
+
+    /** Row ids out of a JS array, tolerating strings — a JS number over 2^53 arrives as one. */
+    private long[] ids(JSArray a) {
+        try {
+            if (a == null) return new long[0];
+            List<Object> raw = a.toList();
+            long[] out = new long[raw.size()];
+            for (int i = 0; i < raw.size(); i++) out[i] = Long.parseLong(String.valueOf(raw.get(i)));
+            return out;
+        } catch (Throwable ignored) {
+            return new long[0];
+        }
+    }
+
     private JSONArray toJson(List<SmsMsg> rows) {
         JSONArray arr = new JSONArray();
         for (SmsMsg m : rows) {
@@ -435,6 +508,20 @@ public class SmsPlugin extends Plugin {
             o.put("type", m.type);
             o.put("incoming", m.incoming());
             o.put("read", m.read);
+            o.put("mms", m.mms);
+            // WHAT WAS ATTACHED — metadata only. The bytes come one at a time from `attachment`,
+            // when something is actually about to show one: a thread of picture messages handed
+            // over as base64 in a single JSON reply is tens of megabytes through the bridge.
+            JSONArray parts = new JSONArray();
+            for (SmsPart p : m.parts) {
+                JSObject q = new JSObject();
+                q.put("id", p.id);
+                q.put("ct", p.ct);
+                q.put("name", p.name);
+                q.put("bytes", p.bytes);
+                parts.put(q);
+            }
+            o.put("parts", parts);
             // The archive's address for this message, computed HERE so the phone and every other
             // device derive it from the same rule rather than from two copies of it.
             o.put("doc", m.docId());

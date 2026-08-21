@@ -118,9 +118,75 @@ public final class SmsKeys {
      * timestamp — so the id is built from seconds and the two copies still agree.
      */
     public static String docId(String address, long dateMs, String body, boolean incoming) {
+        return docId(address, dateMs, body, incoming, "");
+    }
+
+    /**
+     * THE SAME ADDRESS, WITH THE ATTACHMENTS COUNTED IN — for a picture message.
+     *
+     * A picture message frequently has NO TEXT AT ALL, and then who/when/direction/body is the
+     * identical string for two photos sent inside one second. Filed at one address, the second
+     * replaces the first: an addressable event has exactly one newest version, so one of the two
+     * photos is simply gone from every device that is not the handset, silently, with the thread
+     * still looking complete.
+     *
+     * IT STAYS IN THE `pcai:sms:` NAMESPACE, and that is not cosmetic. Three auto-cleaners spare
+     * this history by PREFIX — the relay's expiration sweep, the paid-retention tier, and the
+     * client cache's newest-N eviction via `_isPinned` (store.js) and `_CARRY_D` (app.js). A
+     * `pcai:mms:` prefix would have matched none of them, and the failure is a year of somebody's
+     * pictures evicted from the one device that has no other copy, with nothing in any log.
+     *
+     * An EMPTY parts key must give byte-identical output to the four-argument form: a text-only
+     * message read back through the MMS path is the same message, and a second address for it is a
+     * duplicate in the thread. tests/test_android_sms.py checks exactly that.
+     */
+    public static String docId(String address, long dateMs, String body, boolean incoming,
+                               String partsKey) {
         String canon = matchKey(address) + "\n" + (dateMs / 1000L) + "\n"
                 + (incoming ? "in" : "out") + "\n" + (body == null ? "" : body);
+        if (partsKey != null && !partsKey.isEmpty()) canon = canon + "\n" + partsKey;
         return "pcai:sms:" + sha256(canon).substring(0, 24);
+    }
+
+    /**
+     * One attachment's share of that identity: type, the name the SENDER's phone chose, and length.
+     *
+     * All three ride in the PDU, so they are the same on every device that received the message —
+     * unlike the provider row id, which is local numbering and would mint a fresh address per phone.
+     * The separators are stripped out of the values, or a filename containing a `;` shifts every
+     * field after it and two different messages agree by accident.
+     */
+    public static String partKey(String ct, String name, long bytes) {
+        return field(ct) + ":" + field(name) + ":" + bytes;
+    }
+
+    private static String field(String s) {
+        if (s == null) return "";
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            b.append(c == ';' || c == ':' || c == '\n' || c == '\r' ? '_' : c);
+        }
+        return b.toString();
+    }
+
+    /**
+     * The attachments' share of a message's identity, IN THE ORDER THE MESSAGE CARRIES THEM.
+     *
+     * Not sorted: `seq` is part of the message (it is what the SMIL layout refers to), it is the
+     * same on every device, and two attachments of the same type and length swapping places is a
+     * different message. Empty keys are dropped rather than contributing a bare `::-1`.
+     */
+    public static String partsKey(List<String> keys) {
+        StringBuilder b = new StringBuilder();
+        if (keys != null) {
+            for (String k : keys) {
+                if (k == null || k.isEmpty()) continue;
+                if (b.length() > 0) b.append(';');
+                b.append(k);
+            }
+        }
+        return b.toString();
     }
 
     /** The tombstone for a deleted message keeps the SAME address — see the class comment. */

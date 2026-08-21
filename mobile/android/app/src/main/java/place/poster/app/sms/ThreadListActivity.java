@@ -204,14 +204,18 @@ public class ThreadListActivity extends PcActivity {
     private void reload() {
         new Thread(new Runnable() {
             @Override public void run() {
-                /* SMS ONLY, FOR NOW. This briefly called `Messages.threads` — the picture-message
-                 * reader — which is being written in another session and whose class is not
-                 * committed yet. I committed the CALL without the CALLEE and broke the release
-                 * build; the local compile check did not catch it because it compiles the working
-                 * TREE, where the file exists, while CI builds from git. Restored to the reader that
-                 * exists; the MMS work will land both halves together. */
+                /* BOTH PROVIDERS — see Messages. A conversation whose newest message is a picture
+                 * otherwise showed the last TEXT as its snippet, dated days early, and a thread
+                 * containing only pictures did not appear in this list at all.
+                 *
+                 * `Messages` LANDS IN THE SAME COMMIT AS THIS LINE. It briefly did not: the caller
+                 * was committed and the callee left untracked in the working tree, so 1.0.1360 died
+                 * at `cannot find symbol` while tests/test_android_shell_compiles.py passed —
+                 * it compiles the working TREE, where the file existed, and CI builds from git. A
+                 * compile check that can see uncommitted files cannot answer "will this commit
+                 * build". */
                 final List<SmsStore.Thread> found =
-                        SmsStore.threads(ThreadListActivity.this, 800);
+                        Messages.threads(ThreadListActivity.this, 800, true);
                 // Read on this thread, immediately after the query, because it describes THAT read.
                 final boolean refused = SmsStore.refused();
                 main.post(new Runnable() {

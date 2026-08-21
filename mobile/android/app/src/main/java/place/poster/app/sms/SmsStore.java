@@ -71,8 +71,18 @@ public final class SmsStore {
 
     /** @param withNames resolve each conversation's contact name here. Always true off the UI thread. */
     public static List<Thread> threads(Context ctx, int limit, boolean withNames) {
+        return fold(ctx, recent(ctx, Math.max(limit, 200)), withNames);
+    }
+
+    /**
+     * Fold a list of messages into conversations. TAKES THE MESSAGES rather than reading them, so
+     * the same rule serves the texts-only read above AND the merged texts-and-pictures read in
+     * Messages — a second copy of this fold is a thread list where picture messages have the wrong
+     * snippet on one screen and the right one on the other.
+     */
+    static List<Thread> fold(Context ctx, List<SmsMsg> rows, boolean withNames) {
         Map<Long, Thread> byThread = new LinkedHashMap<Long, Thread>();
-        for (SmsMsg m : recent(ctx, Math.max(limit, 200))) {
+        for (SmsMsg m : rows) {
             Thread t = byThread.get(m.threadId);
             if (t == null) {
                 t = new Thread();

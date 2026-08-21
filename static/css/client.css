@@ -8401,14 +8401,23 @@ html.osfr-on body > .app, html.osfr-on #os-root{ visibility:hidden; }
    The web half of the phone shell. The screens on the HANDSET are native Android — that is what
    makes a text arrive when the WebView is dead — so this is the reading-and-answering surface for
    every other device, and it is built out of the same tokens as the rest of the client rather than
-   trying to imitate the native one. */
-.sms-wrap{display:flex;flex-direction:column;height:100%;min-height:0;gap:var(--s3)}
-.sms-head{display:flex;gap:var(--s2);align-items:center;flex:none}
+   trying to imitate the native one.
+
+   THE SPACING IS LITERAL PIXELS ON THE 2px GRID, and it has to be. This block was written against
+   `var(--s1)`/`var(--s2)`/`var(--s3)`, which client.css DEFINES NOWHERE — 16 declarations, every one
+   of them invalid at computed-value time and therefore doing nothing at all. So every gap on the
+   Texts screen was 0 and every padded row was unpadded: the thread list ran together, the bubbles
+   touched, and the compose box sat flush against the conversation. Nothing appears in a console for
+   this, and it looks like a design choice. `--s*` is not a token of this stylesheet (the note in
+   :root says so: the grid is the invariant, the values are written out) — the same mistake `--fg`
+   and `--border` made in the OS shell block. */
+.sms-wrap{display:flex;flex-direction:column;height:100%;min-height:0;gap:12px}
+.sms-head{display:flex;gap:8px;align-items:center;flex:none}
 .sms-head .input{flex:1;min-width:0}
 .sms-title{font-size:1.05rem;font-weight:600;color:var(--text)}
-.sms-threads{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:var(--s2)}
-.sms-thread{display:flex;gap:var(--s3);align-items:center;width:100%;text-align:left;
-  padding:var(--s3);border:1px solid var(--line);border-radius:var(--r);background:var(--panel);
+.sms-threads{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:8px}
+.sms-thread{display:flex;gap:12px;align-items:center;width:100%;text-align:left;
+  padding:12px;border:1px solid var(--line);border-radius:var(--r);background:var(--panel);
   color:var(--text);cursor:pointer}
 .sms-thread:hover{border-color:rgba(var(--accent-rgb),.5)}
 /* The avatar is a hue derived from the name, exactly like the native list's — same person, same
@@ -8417,27 +8426,41 @@ html.osfr-on body > .app, html.osfr-on #os-root{ visibility:hidden; }
   justify-content:center;font-weight:700;font-size:.8rem;color:#fff;
   background:linear-gradient(135deg,rgba(var(--accent-rgb),.85),rgba(var(--accent2-rgb),.85))}
 .sms-body{flex:1;min-width:0}
-.sms-row1{display:flex;gap:var(--s2);align-items:baseline}
+.sms-row1{display:flex;gap:8px;align-items:baseline}
 .sms-who{flex:1;min-width:0;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sms-when{flex:none;font-size:.72rem}
 .sms-snip{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.82rem}
-.sms-msgs{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:var(--s2);
-  padding:var(--s2) 0}
+.sms-msgs{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:8px;
+  padding:8px 0}
 .sms-msg{display:flex;flex-direction:column;max-width:78%}
 .sms-msg.me{align-self:flex-end;align-items:flex-end}
 .sms-msg.them{align-self:flex-start;align-items:flex-start}
-.sms-bub{padding:var(--s2) var(--s3);border-radius:var(--r);border:1px solid var(--line);
+.sms-bub{padding:8px 12px;border-radius:var(--r);border:1px solid var(--line);
   background:var(--panel2);white-space:pre-wrap;word-break:break-word}
 .sms-msg.me .sms-bub{background:rgba(var(--accent-rgb),.16);border-color:rgba(var(--accent-rgb),.5)}
 .sms-meta{font-size:.68rem;margin-top:2px}
-.sms-compose{display:flex;gap:var(--s2);align-items:center;flex:none}
+/* PICTURE MESSAGES. The bubble's `white-space:pre-wrap` is for TEXT, and it puts a phantom line
+   between stacked attachments (the newlines in the template) — so the caption gets its own element
+   and the bubble's padding shrinks to a frame once there is a picture in it. */
+.sms-bub.has-att{padding:4px;white-space:normal}
+.sms-txt{white-space:pre-wrap;word-break:break-word;padding:4px 8px}
+.sms-att{display:block;margin:0;border-radius:calc(var(--r) - 2px);overflow:hidden}
+.sms-att+.sms-att{margin-top:4px}
+/* max-width, never a fixed one: a bubble is already capped at 78% of the thread and an MMS photo is
+   whatever the sender's camera produced. `height:auto` keeps the aspect ratio, and `display:block`
+   kills the inline-image descender gap that otherwise looks like a stray pixel row. */
+.sms-att-img{display:block;width:100%;max-width:320px;height:auto;border-radius:calc(var(--r) - 2px);
+  cursor:zoom-in;background:var(--panel)}
+video.sms-att-img,audio.sms-att-img{cursor:default}
+audio.sms-att-img{min-width:220px}
+.sms-compose{display:flex;gap:8px;align-items:center;flex:none}
 .sms-compose .input{flex:1;min-width:0}
 
 /* Texts is full-height like Messages: the thread list and the conversation scroll inside themselves,
    so #feed must stop being the timeline's scroll container or the compose box scrolls away with the
    conversation. */
 .feed.feed-texts{display:flex;flex-direction:column;min-height:0}
-.feed.feed-texts>.sms-wrap{flex:1 1 auto;min-height:0;height:auto;padding:var(--s3)}
+.feed.feed-texts>.sms-wrap{flex:1 1 auto;min-height:0;height:auto;padding:12px}
 
 /* Contacts, read from this device while the server cannot be reached. A NOTICE, not an error: the
    address book is on screen and only the refresh failed, so it sits above the list rather than

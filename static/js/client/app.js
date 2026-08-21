@@ -32605,6 +32605,13 @@
      * uses of the sub-modules' `PC` binding and skips comment lines by that marker, so a prose line
      * without one reads as code and fails the build.) */
     openMenuPopover,
+    /* HANDING A FILE TO THE PERSON, for the sub-modules — never a bare `<a download>`.
+     * The APK's WebView ignores a programmatic download and the desktop's `app://` origin refuses
+     * one, so a module that builds its own anchor has a Save button that silently does nothing on
+     * two of three platforms; this routes through Filesystem+Share in a shell and the anchor only
+     * on the web. sms.js needs it for a picture message's attachments, which are bytes the client
+     * holds and nothing else can fetch. */
+    saveBlobAs,
     ensureProfile: _ensureProfile, NT, compose, switchView,   // compose → News "Share as note"; switchView → nav
     /* The one pass that fills every `.name[data-prof]` (and avatars, nip05s, @mentions) once a kind-0
      * arrives. A sub-module that paints author names MUST be able to call it, or its names are frozen

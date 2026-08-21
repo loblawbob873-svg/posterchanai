@@ -277,7 +277,51 @@ here, each of which cost Notes a total silent loss before it was learned:
    and in `_CARRY_D` (app.js). On every device that is *not* the phone the archive is the only copy,
    so eviction there is not a cache miss — it is the messages being gone.
 
-### MMS is not supported, and it says so
+### Picture messages are READ; FETCHING a new one is still not supported
+
+Two different pieces of work wearing one word, and collapsing them is what lets a screen promise the
+second while delivering the first. `SmsPlugin.status` reports them separately — `mms` and `mmsFetch`.
+
+**Reading** (`MmsStore` + `Messages`): everything the phone already has — every picture message ever
+sent from it, and every one received while another app was the default messages app. This needs no
+role, no relay and no network, and it is the half somebody notices first.
+
+`content://mms` is a **different table** from `content://sms` and almost nothing carries over. It has
+its own columns, its own message-box constants, the sender in a second table (`/addr`), the content in
+a third (`/part`), and its `date` is in **seconds** where the SMS table's is in milliseconds. Read as
+milliseconds every picture is dated 1970 and sorts to the bottom of every thread; used the other way
+round in a `WHERE` clause, `since` matches nothing until the year 55000 and the archive silently never
+publishes a picture at all. The one thing the two providers share is `thread_id` — both write into the
+same `threads` table — which is why `Messages` is a sort and not a match. Three screens go through it
+(the WebView's Texts view, `ThreadListActivity`, `ThreadActivity`), because a conversation that
+interleaves on one and not on another is the same bug reported three times.
+
+**Identity gains the attachments.** A picture message frequently has no text, so `docId`'s
+who/when/direction/body is the identical string for two photos sent inside one second; filed at one
+address the second replaces the first and one of them is gone from every device that is not the
+handset. `SmsKeys.docId(..., partsKey)` appends the attachments' content type, the name the *sender's*
+phone chose and the length — all three ride in the PDU, so they mean the same on every device, unlike
+a provider row id. It stays in the **`pcai:sms:`** namespace on purpose: all three auto-cleaner
+exemptions above are keyed on that prefix, and `pcai:mms:` would have matched none of them. An empty
+parts key gives a byte-identical id to the four-argument form, so a text-only message read back
+through the MMS path is not a second document. `tests/test_android_mms.py` runs the Java and the
+JavaScript against each other.
+
+**The archive names attachments and does not carry them.** The bytes stay on the handset; the
+document records type/name/length so another device can say *"Photo · on your phone"* instead of
+drawing an empty bubble, which is what a message that FAILED looks like. Putting the bytes in Blossom
+is the next piece of work, not this one.
+
+**A delete is now two URIs as well as two copies.** A picture message is `content://mms/<id>`; handed
+to `SmsStore.delete` it removes nothing AND reports nothing, which the client correctly reads as a
+provider refusal — so the archive is left alone and the delete quietly did not happen.
+
+**The two tables refuse independently.** Several OEM builds guard the MMS tables differently from the
+SMS ones, so a phone whose texts read perfectly can hand over no pictures at all. `refused` and
+`mmsRefused` are separate answers and the screen says which — a thread that silently lost its photos
+looks exactly like a thread somebody sent fewer photos in.
+
+### Fetching an incoming MMS is still not supported, and it says so
 
 Android will not grant the SMS role without a `WAP_PUSH_DELIVER` receiver, so `MmsDeliverReceiver`
 exists. What it does not do is pretend. Retrieving an MMS means decoding a WSP-encoded
@@ -477,14 +521,17 @@ genuine SDK instead of hand-written stubs. It found three real bugs on its first
 
 ## What is deliberately not built
 
-* **MMS retrieval** — see above. The receiver exists because the role requires it; it says what it
-  cannot do rather than pretending.
+* **MMS retrieval** — see above. Existing picture messages are read and shown; *fetching* a newly
+  arrived one off the carrier's MMSC is not built. The receiver exists because the role requires it;
+  it says what it cannot do rather than pretending.
 * **Call-log mirroring to Nostr** — a second source of truth for something with no second use.
 * **Notification mirroring** — forwarding *every* app's notifications to other devices needs
   `BIND_NOTIFICATION_LISTENER_SERVICE`, which reads every notification on the phone. What is built is
   narrower and needs no such permission: an incoming text raises a notification on your other devices
   because its archive document arrives there.
-* **Group MMS threads** — a group conversation needs MMS, which is the first item on this list.
+* **Group MMS threads** — a group picture message is READ (it lands under its first recipient, which
+  is where the client's last-seven-digits grouping puts it), but there is no group *conversation*:
+  sending to several people at once needs MMS sending, which is the first item on this list.
 
 ---
 

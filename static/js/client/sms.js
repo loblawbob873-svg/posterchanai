@@ -100,6 +100,12 @@
                pkg: String(st.package || ''),
                roleHeld: !!st.roleHeld,
                canNotify: st.canNotify === undefined ? true : !!st.canNotify,
+               /* PICTURE MESSAGES, in two halves. `mms` — this build reads the phone's existing
+                * ones. `mmsFetch` — an INCOMING one can be pulled off the carrier's MMSC, which is
+                * a different piece of work and is still no. One boolean for both is what lets a
+                * screen promise the second while delivering the first. Absent on an older APK,
+                * where the honest answer to both is no. */
+               mms: !!st.mms, mmsFetch: !!st.mmsFetch,
                telephony: st.telephony === undefined ? true : !!st.telephony };
     }catch(_){ return { isDefault:false, canRead:false, present:true, defaultPkg:'', pkg:'',
                         telephony:true }; }
@@ -191,7 +197,9 @@
        * so "all my photos are missing" and "I have no messages" are different reports with
        * different fixes — and both look like a shorter list. */
       'picture messages: ' + (S.mmsRefused ? 'the phone refused to hand them over'
-                            : (d.mms === false ? 'not read by this build' : 'read from this phone')),
+                            : d.mms === undefined ? 'not read by this build'
+                            : (d.mms ? 'read from this phone' : 'not read by this build')
+                              + (d.mmsFetch ? ', fetched from the carrier' : ', never fetched from the carrier')),
       missing.length ? 'MISSING COMPONENTS: ' + missing.join(', ')
                      : 'all four SMS components installed',
     ].join(' \u00b7 ');
@@ -430,6 +438,7 @@
     if(m.mms) body.mms = true;
     if(m.parts && m.parts.length)
       body.att = m.parts.map(p => ({ ct: p.ct, name: p.name, bytes: p.bytes }));
+
     const ct = await PC.nip44enc(ME().pubkey, JSON.stringify(body));
     const r = await PC.publish(KIND, ct, [['d', m.doc], ['l', L_TAG]], {quiet:true, noQueue:true});
     return !!(r && r.ok);
@@ -521,6 +530,10 @@
     if(!P) return { loaded: 0 };
     const STEPS = [1000, 10000, 50000];
     let total = 0, refused = false, rows = [];
+    /* LOCAL, then assigned once at the end — it must describe THIS read. Latched on the state
+       object it could only ever go true, so a phone whose picture table failed once wore the
+       notice for the rest of the session with its photos on the screen underneath it. */
+    let mmsRef = false;
     for(let i = 0; i < STEPS.length; i++){
       try{
         const answer = (await P.list({ since: 0, limit: STEPS[i] })) || {};
@@ -534,7 +547,7 @@
          * picture messages at all — and folded into the flag above that reads as "you have no
          * messages", over a full inbox, which is the exact report this whole screen was rebuilt
          * for. Kept apart so the note can say which half did not answer. */
-        if(answer.mmsRefused) S.mmsRefused = true;
+        if(answer.mmsRefused) mmsRef = true;
       }catch(_){ break; }
       // A short answer means the store is exhausted; a full one means there may be more behind it.
       if(rows.length < STEPS[i]) break;
@@ -546,6 +559,7 @@
       S.msgs.set(r.doc, fromRow(r));
       total++;
     }
+    S.mmsRefused = mmsRef;
     if(total){
       S.localRead = true;          // rows came out of THIS device's store — see noteWhere
       rebuild();
@@ -1004,6 +1018,21 @@
    * WebView holds a copy on top of the blob.
    */
   const ATT = new Map();      // provider part id -> { url, ct } | { why }
+  /* A CEILING, because a decoded attachment is a live object URL and a Map is not a cache until
+   * something evicts from it. Scrolling a decade of picture messages would otherwise hold every
+   * photo ever drawn for the life of the page. Oldest-first, which for this map is insertion order
+   * and therefore the order they were opened in. */
+  const ATT_MAX = 120;
+
+  function attRemember(id, v){
+    ATT.set(id, v);
+    while(ATT.size > ATT_MAX){
+      const k = ATT.keys().next().value;
+      const old = ATT.get(k);
+      ATT.delete(k);
+      if(old && old.url) try{ URL.revokeObjectURL(old.url); }catch(_){ }
+    }
+  }
 
   function isImage(ct){ return /^image\//.test(String(ct || '')); }
   function isVideo(ct){ return /^video\//.test(String(ct || '')); }
@@ -1041,7 +1070,7 @@
     const P = plug('attachment');
     if(!P || !P.attachment){
       const r = { why: attLabel(p) + ' \u00b7 this app is too old to open it' };
-      ATT.set(id, r);
+      attRemember(id, r);
       return r;
     }
     let a = null;
@@ -1062,7 +1091,7 @@
     } else {
       r = { why: attLabel(p) + ' \u00b7 this phone would not hand it over' };
     }
-    ATT.set(id, r);
+    attRemember(id, r);
     return r;
   }
 
@@ -1530,5 +1559,9 @@
 
   window.PCSms = { render, mirror, importAll, loadFromPhone, emptyWhy, ensureRead, phoneState,
                    drainOutbox, send, remove, load,
-                   _state: () => S, _key: key, _outboxId: outboxId, _docId: docIdFor };
+                   _state: () => S, _key: key, _outboxId: outboxId, _docId: docIdFor,
+                   // The attachment identity rules, for tests/test_android_mms.py — which runs them
+                   // against SmsKeys.partKey/partsKey in Java, because a picture message filed at
+                   // two addresses appears twice in the thread.
+                   _partKey: partKey, _partsKey: partsKeyOf };
 })();

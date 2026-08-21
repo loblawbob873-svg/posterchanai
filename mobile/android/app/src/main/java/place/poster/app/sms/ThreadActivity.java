@@ -217,7 +217,10 @@ public class ThreadActivity extends PcActivity {
         final long id = threadId;
         new Thread(new Runnable() {
             @Override public void run() {
-                final List<SmsMsg> rows = SmsStore.thread(ThreadActivity.this, id, 500);
+                // BOTH PROVIDERS — see Messages. Texts and picture messages are one
+                // conversation and always have been; read from SmsStore alone this screen
+                // showed a thread with its pictures missing and no gap to say so.
+                final List<SmsMsg> rows = Messages.thread(ThreadActivity.this, id, 500);
                 main.post(new Runnable() {
                     @Override public void run() {
                         if (id != threadId) return;
@@ -294,12 +297,30 @@ public class ThreadActivity extends PcActivity {
                                 } catch (Throwable ignored) { }
                                 return;
                             }
-                            SmsStore.delete(ThreadActivity.this, new long[]{ m.id });
+                            // A PICTURE MESSAGE LIVES AT A DIFFERENT URI. Handed to SmsStore it
+                            // deletes nothing and says nothing, and the bubble comes straight back
+                            // on the reload below — a delete that silently did not happen.
+                            if (m.mms) MmsStore.delete(ThreadActivity.this, new long[]{ m.id });
+                            else SmsStore.delete(ThreadActivity.this, new long[]{ m.id });
                             say(getString(R.string.sms_deleted_here));
                             reload();
                         }
                     }).show();
         } catch (Throwable ignored) { }
+    }
+
+    /**
+     * What a bubble says. The body when there is one, and otherwise a plain description of what was
+     * attached — never an empty bubble, which is what "this message failed" looks like.
+     */
+    private String bubbleText(SmsMsg m) {
+        if (m.parts.isEmpty()) return m.body;
+        StringBuilder b = new StringBuilder(m.body);
+        for (SmsPart p : m.parts) {
+            if (b.length() > 0) b.append('\n');
+            b.append(getString(R.string.sms_attachment)).append("  ·  ").append(p.ct);
+        }
+        return b.toString();
     }
 
     private final class Msgs extends BaseAdapter {
@@ -324,7 +345,10 @@ public class ThreadActivity extends PcActivity {
             if (m == null) return v;
 
             boolean mine = !m.incoming();
-            text.setText(m.body);
+            // A PICTURE MESSAGE WITH NO CAPTION IS AN EMPTY BUBBLE, which reads as a message that
+            // failed rather than one this screen cannot draw. This screen labels attachments; the
+            // app's own Texts view shows them.
+            text.setText(bubbleText(m));
             text.setTextColor(pal.text);
             wrap.setBackground(Skin.bubble(ThreadActivity.this, pal, mine));
             // The bubble hugs its side and stops well short of the far edge, so a thread reads as a
