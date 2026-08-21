@@ -1767,10 +1767,17 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .note:hover{background:rgba(var(--accent-rgb),.06)}
 .note .av{width:52px;height:52px;border-radius:50%;object-fit:cover;flex-shrink:0;border:1px solid var(--line);background:#1a1230;cursor:pointer}
 .note .body{flex:1;min-width:0}
-.note .hd{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
-.note .name{font-weight:700;cursor:pointer;font-size:17px}
-.note .handle{color:var(--muted);font-size:15px}
-.note .time{color:var(--muted);font-size:17px;margin-inline-start:auto;cursor:pointer}
+/* EVERY CARD'S HEADER IS ONE LINE. It used to wrap, and a wrapped header is a different card: name
+   on top, handle and time dropped onto a second row 43px tall instead of 19px. Measured on one real
+   timeline at 390px, 11 of 63 posts drew the tall version — the same anatomy in two shapes, decided
+   by how long somebody's display name happens to be ("posts on the timeline need uniformity").
+   So: never wrap, and let the two flexible parts give way instead. The name truncates first (it is
+   the longest and the least load-bearing once the avatar is beside it), the handle after it, and the
+   time never shrinks — it is three characters and it is the one thing every card must line up. */
+.note .hd{display:flex;gap:8px;align-items:baseline;flex-wrap:nowrap;min-width:0}
+.note .name{font-weight:700;cursor:pointer;font-size:17px;min-width:0;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.note .handle{color:var(--muted);font-size:15px;min-width:0;flex:0 2 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.note .time{color:var(--muted);font-size:17px;margin-inline-start:auto;cursor:pointer;flex:none;white-space:nowrap}
 .note .time:hover{color:var(--cyan)}
 .note .pin-badge{font-size:15px;filter:drop-shadow(0 0 5px rgba(0,240,255,.6))}   /* marks YOUR pinned posts */
 .note .txt{margin:6px 0;line-height:1.6;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:anywhere;font-size:20px;
@@ -1893,7 +1900,13 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .media-grid img,.media-grid video{width:100%;height:auto;aspect-ratio:1/1;object-fit:cover;border-radius:8px;border:1px solid var(--line);background:#0d0a1a;cursor:pointer;display:block}
 .note .txt audio{width:100%;max-width:420px;margin-top:8px;display:block}
 .note .txt a.mention{color:var(--cyan);font-weight:600}
-.note .repost-tag{font-size:15px;color:var(--green);margin-bottom:4px}
+.note .repost-tag{font-size:15px;color:var(--green);margin-bottom:4px;display:flex;align-items:center;gap:6px;min-width:0}
+/* The reposter's name is a `.name[data-prof]` so decorateProfiles can fill it in when the kind-0
+   lands (it read "someone reposted" for ever before). It truncates rather than wrapping, for the
+   same reason the header above does not wrap. */
+.note .repost-tag .name{font-weight:600;color:inherit;cursor:pointer;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* WHEN it was reposted — the repost's own timestamp, beside the original's on the card below. */
+.note .repost-tag .rt-when{margin-inline-start:auto;color:var(--muted);font-size:13px;flex:none;white-space:nowrap}
 /* repost/boost glyph (SVG, themed via currentColor) — replaces the off-theme orange 🔁 emoji */
 /* The five note-action icons are sprite <use> now, not hand-drawn fill art, so they inherit
    svg.ic (20px, fill:none, stroke:currentColor) and match every other icon on the card — they used to
@@ -6614,22 +6627,39 @@ body.os-on #os-root{pointer-events:auto}
 .tty-kill:hover,.tty-sess button.tty-kill:hover{border-color:#ff6b8b;color:#ff6b8b}
 /* The emulator's own element. min-height:0 is load-bearing inside a flex column — without it the
    screen grows to its content and the fit addon never sees a bounded box. */
-/* THE TERMINAL LIVES AT 1:1, WHICH IS WHAT MAKES ITS SELECTION LAND WHERE YOU DRAGGED.
+/* THE TERMINAL IS MEASURED IN ONE SPACE, WHICH IS WHAT MAKES A HIGHLIGHT LAND WHERE YOU DRAGGED.
  *
- * Desktop scales the whole page with body{zoom:.67-.77}. Under `zoom`, `getBoundingClientRect()`
- * answers in VISUAL pixels -- what is on the glass -- while offsets and measured element sizes are
- * LAYOUT pixels. xterm hit-tests a click by measuring its own character cell and dividing a rect
- * offset by it, so those two units end up on either side of one division and the answer is out by
- * the zoom factor: the highlight lands a few lines from the pointer, further off the lower down the
- * screen you click. Reported as "terminal does not highlight the line I want, it is a few lines
- * above it". It is the same mixing of two pixel systems that put a corner flyout in the middle of
- * the screen (see openPop in os.js).
+ * Desktop scales the whole page with body{zoom:.67-.77}. xterm hit-tests a click by taking
+ * `clientY - getBoundingClientRect().top` -- both VISUAL pixels under zoom -- and dividing by the
+ * cell height it computed from the font, which is a LAYOUT pixel. Measured, at three tiers:
  *
- * Undoing the page zoom for this one element puts xterm in a space where both measurements agree,
- * and it is what a terminal wants anyway -- glyphs on the pixel grid rather than scaled. The font
- * size is the terminal's own setting, so nothing here decides how big the text is. */
-.tty-screen{flex:1;min-height:0;padding:6px 4px 2px 8px;overflow:hidden;position:relative;
-  zoom:calc(1 / var(--zf, 1))}
+ *     tier      zoom   rendered row   xterm's cell
+ *     1366      0.67      10.72px        16px
+ *     1600      0.72      11.52px        16px
+ *     1920      0.77      12.32px        16px
+ *     phone     1.00      16px           16px
+ *
+ * They agree at zoom 1 and diverge by exactly the zoom factor otherwise, so a click ten rows down
+ * is divided by 16 when each row occupies 10.72 and lands on row six. Reported twice -- "terminal
+ * does not highlight the line I want, it is a few lines above it", and again after the first
+ * attempt at this.
+ *
+ * THAT FIRST ATTEMPT PUT THE ZOOM ON `.tty-screen` ITSELF, and it shipped without being run. `zoom`
+ * scales an element's LAYOUT BOX as well as its rendering, so inside a `flex:1` parent the content
+ * was scaled into a box that had not grown: xterm fitted itself to one size while the visible area
+ * was another, which is the mismatch that makes a shell wrap in the wrong place and redraw over
+ * itself. The next thing reported was the terminal mangling input.
+ *
+ * So the flex item keeps its own box and an inner host is pinned inside it with `inset:0`, which
+ * resolves against that box before the zoom applies -- measured identical to spelling the width and
+ * height out with a calc, and one fewer thing to be off by a fraction of a pixel.
+ * `fontSize()` in term.js scales by the same factor, or every glyph would render 1/zf bigger and
+ * half as many rows would fit.
+ *
+ * Verified with scripts/check_terminal_selection.py, which measures rendered-row-height against
+ * xterm's own cell at every tier -- the two numbers in the table above. */
+.tty-screen{flex:1;min-height:0;padding:6px 4px 2px 8px;overflow:hidden;position:relative}
+.tty-fit{position:absolute;inset:0;zoom:calc(1 / var(--zf, 1))}
 .tty-screen .xterm{height:100%}
 /* xterm HARDCODES `background-color:#000` on its viewport and forces `overflow-y:scroll`. Against
    this app's #07040f that black box is a visible seam across the panel — the "weird horizontal

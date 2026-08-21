@@ -82,12 +82,32 @@
 
     // Character cell width scales with the screen: a fixed 14px leaves a phone with ~27 columns,
     // which is too narrow for `ls -l`, let alone anything that draws a box.
+    /* THE PAGE'S SCALE, WHICH THE TERMINAL DELIBERATELY DOES NOT SHARE. See `.tty-fit` in the
+     * stylesheet: the terminal host undoes `body{zoom}` so that xterm's hit-testing and its
+     * rendering are measured in one space. Undoing the zoom without undoing its EFFECT would render
+     * every glyph 1/zf bigger and fit half as many rows, so the font is scaled by the same factor
+     * the host removed. Measured: at 1366 the grid goes 42 -> 19 rows without this and 30 with it. */
+    function pageZoom(){
+      try{
+        const z = parseFloat(getComputedStyle(document.body).zoom);
+        return (z > 0 && z <= 1) ? z : 1;
+      }catch(_){ return 1; }
+    }
+
     function fontSize(){
       const w = Math.min(window.innerWidth, window.innerHeight * 1.6);
-      if(w < 420) return 10;
-      if(w < 700) return 11;
-      if(w < 1100) return 13;
-      return 14;
+      let px;
+      if(w < 420) px = 10;
+      else if(w < 700) px = 11;
+      else if(w < 1100) px = 13;
+      else px = 14;
+      /* FLOOR, NOT ROUND, and the difference is columns rather than taste. The host is shrunk by
+       * the page's zoom and the font is scaled by the same factor, so the column count should come
+       * out unchanged -- but rounding 13 x 0.67 = 8.7 UP to 9 makes every glyph 3% wider than
+       * proportional, and a phone-width box lost its thirtieth column: `ls -l` stops lining up.
+       * Rounding down cannot cost a column. 8px is the practical floor; below it xterm's glyph
+       * cache renders mush. */
+      return Math.max(8, Math.floor(px * pageZoom()));
     }
 
     /* ── SHELL HISTORY ─────────────────────────────────────────────────────────────────────────
@@ -223,7 +243,7 @@
         </div>
         <div class="tty-hist" id="tty-hist-panel" hidden></div>
         <div class="tty-sessions" id="tty-sessions" hidden></div>
-        <div class="tty-screen" id="tty-screen"></div>
+        <div class="tty-screen"><div class="tty-fit" id="tty-screen"></div></div>
         <div class="tty-keys" id="tty-keys" hidden>
           <button data-k="Escape">esc</button>
           <button data-k="Tab">tab</button>

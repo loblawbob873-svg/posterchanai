@@ -50,7 +50,14 @@ def _tiers():
     if not m:
         print("FAIL  could not find fontSize() in term.js — re-point this check")
         sys.exit(2)
-    return m.group(1)
+    # PAGEZOOM COMES WITH IT. fontSize multiplies by the page's scale, because the terminal host
+    # undoes body{zoom} and the font must be scaled by the same factor. Lifting only the tiers gave
+    # "pageZoom is not defined" -- and a check that cannot run is not a check that passes.
+    z = re.search(r"function pageZoom\(\)\{(.*?)\n    \}", src, re.S)
+    if not z:
+        print("FAIL  could not find pageZoom() in term.js — re-point this check")
+        sys.exit(2)
+    return "function pageZoom(){" + z.group(1) + "\n    }\n" + m.group(1)
 
 
 PAGE = """<!doctype html><meta charset="utf-8">
@@ -64,7 +71,7 @@ PAGE = """<!doctype html><meta charset="utf-8">
     <div class="tty-bar"><select class="input tty-host" id="tty-host"></select>
       <button class="btn btn-neon small" id="tty-go">Connect</button>
       <span class="tty-state" id="tty-state">connected</span></div>
-    <div class="tty-screen" id="tty-screen"></div>
+    <div class="tty-screen"><div class="tty-fit" id="tty-screen"></div></div>
     <div class="tty-keys" id="tty-keys"><button data-k="Escape">esc</button>
       <button data-k="Tab">tab</button><button data-k="ctrl">ctrl</button>
       <button data-k="ArrowUp">↑</button><button data-k="ArrowDown">↓</button>
