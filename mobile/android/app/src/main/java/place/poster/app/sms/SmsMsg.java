@@ -33,6 +33,12 @@ public final class SmsMsg {
      * often a normal message than a group.
      */
     public int people = 1;
+    /**
+     * A picture message the carrier has ANNOUNCED but the phone has not fetched. It has no text and
+     * no parts and never will until it is retrieved, so a bubble must say that rather than draw
+     * nothing. See MmsStore's PDU_NOTIFICATION_IND.
+     */
+    public boolean undownloaded;
 
     /**
      * What was attached. Metadata only — the bytes are fetched one at a time, when something is

@@ -73,7 +73,18 @@ public final class MmsStore {
     private static final String[] COLS = {
         Telephony.Mms._ID, Telephony.Mms.THREAD_ID, Telephony.Mms.DATE,
         Telephony.Mms.MESSAGE_BOX, Telephony.Mms.READ, Telephony.Mms.SUBJECT,
+        Telephony.Mms.MESSAGE_TYPE,
     };
+
+    /**
+     * PDU type 130 is a NOTIFICATION: the carrier saying a picture message exists, before the phone
+     * has fetched it. The row is real and carries a date and a sender, and it has no text and no
+     * parts, because there is nothing downloaded to have any. Read as an ordinary message it draws
+     * a BLANK BUBBLE -- which is what "this message failed" looks like -- and a conversation full of
+     * them (auto-download off, or off for roaming, or data was off that day) looks like the app lost
+     * the messages. Reported here as "my mom's messages are all empty bubbles".
+     */
+    private static final int PDU_NOTIFICATION_IND = 130;
 
     private MmsStore() { }
 
@@ -147,6 +158,9 @@ public final class MmsStore {
                 m.read = c.getInt(4) != 0;
                 String subject = str(c, 5);
                 if (!subject.isEmpty()) m.body = subject;
+                // A column an OEM table may not carry: absent, it reads as 0, which is not 130, so
+                // the message is treated as an ordinary one -- the same behaviour as before.
+                try { m.undownloaded = c.getInt(6) == PDU_NOTIFICATION_IND; } catch (Throwable ignored) { }
                 out.add(m);
             }
         } catch (Throwable t) {

@@ -106,6 +106,8 @@
     <!-- A picture message, on the NATIVE thread screen, which labels attachments rather
          than drawing them. An empty bubble reads as a message that failed. -->
     <string name="sms_attachment">Attachment</string>
+    <string name="sms_mms_pending">Picture message — not downloaded</string>
+    <string name="sms_no_content">(no content)</string>
     <string name="sms_deleted_here">Deleted from this phone</string>
     <string name="sms_deleted_both">Deleted here and from your archive</string>
     <string name="sms_call_no_dialer">Nothing on this phone can place a call</string>

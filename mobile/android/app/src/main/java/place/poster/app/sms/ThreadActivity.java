@@ -333,7 +333,12 @@ public class ThreadActivity extends PcActivity {
      * attached — never an empty bubble, which is what "this message failed" looks like.
      */
     private String bubbleText(SmsMsg m) {
-        if (m.parts.isEmpty()) return m.body;
+        if (m.parts.isEmpty()) {
+            if (!m.body.isEmpty()) return m.body;
+            // Nothing to show is still something to SAY. A blank bubble is indistinguishable from a
+            // message the app lost, and a thread of them reads as the app losing a conversation.
+            return getString(m.undownloaded ? R.string.sms_mms_pending : R.string.sms_no_content);
+        }
         StringBuilder b = new StringBuilder(m.body);
         for (SmsPart p : m.parts) {
             if (b.length() > 0) b.append('\n');
