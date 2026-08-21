@@ -6614,7 +6614,22 @@ body.os-on #os-root{pointer-events:auto}
 .tty-kill:hover,.tty-sess button.tty-kill:hover{border-color:#ff6b8b;color:#ff6b8b}
 /* The emulator's own element. min-height:0 is load-bearing inside a flex column — without it the
    screen grows to its content and the fit addon never sees a bounded box. */
-.tty-screen{flex:1;min-height:0;padding:6px 4px 2px 8px;overflow:hidden;position:relative}
+/* THE TERMINAL LIVES AT 1:1, WHICH IS WHAT MAKES ITS SELECTION LAND WHERE YOU DRAGGED.
+ *
+ * Desktop scales the whole page with body{zoom:.67-.77}. Under `zoom`, `getBoundingClientRect()`
+ * answers in VISUAL pixels -- what is on the glass -- while offsets and measured element sizes are
+ * LAYOUT pixels. xterm hit-tests a click by measuring its own character cell and dividing a rect
+ * offset by it, so those two units end up on either side of one division and the answer is out by
+ * the zoom factor: the highlight lands a few lines from the pointer, further off the lower down the
+ * screen you click. Reported as "terminal does not highlight the line I want, it is a few lines
+ * above it". It is the same mixing of two pixel systems that put a corner flyout in the middle of
+ * the screen (see openPop in os.js).
+ *
+ * Undoing the page zoom for this one element puts xterm in a space where both measurements agree,
+ * and it is what a terminal wants anyway -- glyphs on the pixel grid rather than scaled. The font
+ * size is the terminal's own setting, so nothing here decides how big the text is. */
+.tty-screen{flex:1;min-height:0;padding:6px 4px 2px 8px;overflow:hidden;position:relative;
+  zoom:calc(1 / var(--zf, 1))}
 .tty-screen .xterm{height:100%}
 /* xterm HARDCODES `background-color:#000` on its viewport and forces `overflow-y:scroll`. Against
    this app's #07040f that black box is a visible seam across the panel — the "weird horizontal

@@ -307,6 +307,43 @@
       }catch(_){ fit = null; }
       term.open(box);
       _fit();
+
+      /* HIGHLIGHT COPIES, RIGHT-CLICK PASTES -- the two things every terminal has done for thirty
+       * years and this one did not. Without them a command is copied out of a browser and retyped
+       * by hand.
+       *
+       * Copy through `pcClip.write` when the app offers it, because there is no working web
+       * clipboard here: `navigator.clipboard` is absent outside a secure context and
+       * execCommand('copy') is refused, which is the whole reason that bridge exists. The web build
+       * falls back to the client's own copyValue, which knows the same trick.
+       *
+       * NO TOAST ON COPY. It fires on every drag of the mouse, and a notification per selection is
+       * noise -- the selection highlighting IS the feedback. */
+      try{
+        term.onSelectionChange(() => {
+          let sel = '';
+          try{ sel = term.getSelection() || ''; }catch(_){ sel = ''; }
+          if(!sel) return;
+          try{ if(window.pcClip && window.pcClip.write) return void window.pcClip.write(sel); }catch(_){}
+          try{ PC && PC.copyValue && PC.copyValue(sel, '', ''); }catch(_){}
+        });
+      }catch(_){}
+
+      /* Paste on the RELEASE of the right button, and prevent the browser menu. `term.paste()` is
+       * xterm's own, which sends the text through the same path as typing -- including bracketed
+       * paste, so a shell that supports it does not execute a multi-line paste line by line. */
+      try{
+        box.addEventListener('contextmenu', async (e) => {
+          e.preventDefault();
+          let text = '';
+          try{ if(window.pcClipRead && window.pcClipRead.read) text = await window.pcClipRead.read(); }catch(_){}
+          if(!text){
+            try{ text = await navigator.clipboard.readText(); }catch(_){ text = ''; }
+          }
+          if(!text){ try{ PC && PC.toast && PC.toast('nothing to paste'); }catch(_){} return; }
+          try{ term.paste(text); }catch(_){}
+        });
+      }catch(_){}
       term.onData(d => { _histTyped(d); _send({ t: 'in', d }); });
       /* The PTY has to be told the size, and it has to be told the size that xterm actually chose —
        * a mismatch is what makes a shell wrap in the wrong place and redraw over itself. */

@@ -790,3 +790,49 @@ class TorIsUpFromTheFirstBoot(unittest.TestCase):
         self.assertIn("cat >/etc/tor/torrc", before,
                       "the torrc is not written whole, so re-running could append a second copy")
         self.assertNotIn(">>/etc/tor/torrc", self.src)
+
+
+class TheDisplayTurnsItselfOff(unittest.TestCase):
+    """TWO MINUTES BY DEFAULT, AND CHANGEABLE. A laptop whose screen never blanks is a laptop that
+    is warm and flat in the morning, and a timeout compiled into sway's config is one nobody can
+    change: that file belongs to portage and etc-update replaces it on upgrade."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = open(SH, encoding="utf-8").read()
+        cls.idle = open(os.path.join(ROOT, "os", "bin", "pc-idle"), encoding="utf-8").read()
+
+    def test_the_package_is_installed(self):
+        self.assertIn("gui-apps/swayidle", self.src,
+                      "the session runs swayidle but never installs it")
+
+    def test_the_session_starts_it(self):
+        self.assertIn("/usr/local/bin/pc-idle", self.src)
+
+    def test_it_ships_with_the_other_helpers(self):
+        i = self.src.index("for helper in")
+        self.assertIn("pc-idle", self.src[i:i + 200],
+                      "pc-idle is started but never copied onto the machine")
+
+    def test_two_minutes_is_the_default(self):
+        self.assertIn("DEFAULT=120", self.idle)
+
+    def test_the_timeout_is_read_from_a_file_not_baked_in(self):
+        self.assertIn("PC_IDLE_CONF", self.idle)
+        self.assertIn("set)", self.idle, "there is no way to change it")
+
+    def test_never_is_an_answer(self):
+        """Somebody watching a film should be able to say never, and it must leave no daemon
+        running that would blank the screen anyway."""
+        self.assertIn('[ "$SECS" -gt 0 ] || exit 0', self.idle)
+
+    def test_only_one_watcher_runs(self):
+        """`exec_always` re-runs this on every sway reload, and two swayidles fight over the same
+        screen -- one turning it off while the other turns it on."""
+        self.assertIn("pkill -x swayidle", self.idle)
+
+    def test_it_does_not_claim_a_dim_it_cannot_do(self):
+        """Dimming needs a backlight control, and the profile deliberately carries none
+        (brightnessctl is not in the Gentoo tree). A stage that calls something absent is a stage
+        that silently does nothing."""
+        self.assertNotIn("dpms on", self.idle)

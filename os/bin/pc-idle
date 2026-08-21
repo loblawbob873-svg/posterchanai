@@ -1,0 +1,58 @@
+#!/bin/sh
+# Turn the display off after a while, and let somebody change how long.
+#
+# WHY A SCRIPT AND NOT A LINE IN THE SWAY CONFIG. `swayidle -w timeout 120 …` in sway's config is
+# one number compiled into a file that portage owns: changing it means editing a config that
+# etc-update replaces on the next upgrade, and there is nowhere for a person to set it from. This
+# reads the number from a file anybody can write and restarts the daemon when it changes, so the
+# desktop can offer it as a control later without touching the session config again.
+#
+# NO DIM STAGE, and that is deliberate rather than an omission. Every laptop dims before it blanks,
+# and it is the right behaviour -- but dimming needs a backlight control, and the profile
+# deliberately does not carry one: app-misc/brightnessctl is not in the Gentoo tree, and the slider
+# in the tray works through a udev rule handing the backlight to the `video` group. Wiring a "dim"
+# stage that calls something absent would be a stage that silently does nothing, which is worse than
+# not claiming it.
+#
+# `-w` (wait) matters on the resume side: without it swayidle races the compositor and the screen
+# can come back before it has been told to, leaving a display that is on and reported off.
+set -eu
+
+CONF="${PC_IDLE_CONF:-/etc/posterchanos/idle}"
+DEFAULT=120                       # two minutes, which is what was asked for
+
+read_secs() {
+    s=""
+    [ -r "$CONF" ] && s="$(cat "$CONF" 2>/dev/null | tr -dc '0-9')"
+    [ -n "$s" ] || s="$DEFAULT"
+    # 0 means never, and is a real answer -- somebody watching a film should be able to say it.
+    [ "$s" -ge 0 ] 2>/dev/null || s="$DEFAULT"
+    echo "$s"
+}
+
+case "${1:-run}" in
+  set)
+      # `pc-idle set 300`, or `pc-idle set 0` for never.
+      n="$(echo "${2:-}" | tr -dc '0-9')"
+      [ -n "$n" ] || { echo "usage: pc-idle set <seconds>   (0 = never)" >&2; exit 2; }
+      mkdir -p "$(dirname "$CONF")"
+      echo "$n" >"$CONF"
+      # Restart the watcher so the new number takes effect now rather than at the next login.
+      pkill -x swayidle 2>/dev/null || true
+      [ "$n" -gt 0 ] && setsid "$0" run >/dev/null 2>&1 &
+      echo "display turns off after ${n}s"
+      ;;
+  get)
+      read_secs
+      ;;
+  run|*)
+      SECS="$(read_secs)"
+      [ "$SECS" -gt 0 ] || exit 0        # never: nothing to run, and no daemon left behind
+      # One instance. `exec_always` re-runs this on every sway reload, and two swayidles fight over
+      # the same screen -- one turning it off while the other turns it on.
+      pkill -x swayidle 2>/dev/null || true
+      exec swayidle -w \
+          timeout "$SECS" 'swaymsg "output * power off"' \
+          resume          'swaymsg "output * power on"'
+      ;;
+esac

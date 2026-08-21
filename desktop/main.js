@@ -1332,6 +1332,21 @@ ipcMain.handle('pc:clip:write', (e, text) => {
   clipboard.writeText(s);
   return true;
 });
+/* CLIPBOARD READ, and why this exists at all when write was deliberately alone.
+ *
+ * `pcClip.write` is exposed to any page the app loads, and its comment says the page can never READ
+ * the clipboard -- which was right for a bridge handed to an arbitrary instance. This one is not
+ * that: it is gated by `fromOurPage`, the same check every privileged control uses, and it exists
+ * for one thing -- right-click paste in the terminal. A terminal you cannot paste into is a
+ * terminal people copy commands out of a browser and retype by hand.
+ *
+ * Bounded, because a paste goes to a shell: 64KB is far more than any command line and far less
+ * than a channel worth abusing. */
+ipcMain.handle('pc:clip:read', (e) => {
+  if (!fromOurPage(e)) { console.warn('[clip] read denied'); return ''; }
+  try { return String(clipboard.readText() || '').slice(0, 65536); } catch (_) { return ''; }
+});
+
 // Screen picker: thumbnails as data URLs so the page stays a plain, network-free document.
 ipcMain.handle('pc:screen:list', () => pendingSources.map((s) => ({
   id: s.id,

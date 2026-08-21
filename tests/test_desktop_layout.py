@@ -409,3 +409,33 @@ class TheStartMenuTakesTyping(unittest.TestCase):
         after = self.src[i:i + 2500]
         self.assertIn("e.ctrlKey || e.altKey || e.metaKey) return", after,
                       "modifiers are swallowed, so Ctrl+F and the window bindings would break")
+
+
+class SigningInPutsYouBackOnTheDesktop(unittest.TestCase):
+    """THE GATE PROMISED IT AND NOTHING DELIVERED IT.
+
+    `showAuth` SUSPENDS the desktop to put the sign-in gate on screen -- the gate is a layer below
+    #os-root, so shown from inside the desktop it painted a perfectly good login form underneath the
+    icons -- and its comment says "signing in drops you back on the desktop you were using".
+
+    But `restore()` was only called once, during the config load at boot, before anybody has signed
+    in. So a resumed session got its desktop back and a fresh LOGIN did not: `startApp` called
+    `refresh()`, which only repaints a desktop that is already on. On PosterChanOS that is the whole
+    machine reverting to the single-column client -- "I get the classic mode after logging in, which
+    is not what we want on the OS".
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = (ROOT / "static" / "js" / "client" / "app.js").read_text(encoding="utf-8")
+
+    def test_startapp_restores_the_desktop_and_not_only_refreshes_it(self):
+        i = self.src.index("PCOS.refresh) PCOS.refresh();")
+        before = self.src[max(0, i - 700):i]
+        self.assertIn("PCOS.restore) PCOS.restore();", before,
+                      "a fresh login never asks the desktop to come back")
+
+    def test_the_gate_still_suspends_rather_than_exits(self):
+        """Suspend keeps the remembered preference; exit would turn the desktop off for good, so
+        signing in would land in classic mode permanently rather than for one session."""
+        self.assertIn("PCOS.suspend && PCOS.suspend()", self.src)

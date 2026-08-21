@@ -32,6 +32,13 @@ if (isOurPage) {
   let instanceSync = '';
   try { instanceSync = ipcRenderer.sendSync('pc:instance:sync') || ''; } catch (_) {}
 
+  /* READ is OUR PAGE'S ONLY -- see pcClip above, which is write-only on purpose and exposed to any
+   * page the app loads. Reading somebody's clipboard is a different power and it stays behind the
+   * same gate as the compositor and the network. */
+  contextBridge.exposeInMainWorld('pcClipRead', {
+    read: () => ipcRenderer.invoke('pc:clip:read'),
+  });
+
   contextBridge.exposeInMainWorld('pcShell', {
     instanceSync,
     getInstance: () => ipcRenderer.invoke('pc:instance:get'),

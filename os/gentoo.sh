@@ -208,7 +208,7 @@ www-client/firefox-bin \
 sys-apps/xdg-desktop-portal gui-libs/xdg-desktop-portal-wlr sys-apps/xdg-desktop-portal-gtk \
 media-video/obs-studio \
 sec-keys/openpgp-keys-gentoo-release dev-vcs/git \
-net-vpn/tor"
+net-vpn/tor gui-apps/swayidle"
 # net-misc/networkmanager (nmcli, the whole network tray), app-admin/sudo, sys-apps/systemd
 # (systemctl: sleep, reboot, power profiles) and sys-apps/util-linux (`script`, which IS the local
 # terminal's PTY — see desktop/localterm.js) come from BASE_PACKAGES / @system above. They are
@@ -232,7 +232,7 @@ CPU_TYPE="x86-64-v3"
 BUILD_SERVER="n"
 BUILD_SERVER_ADDRESS="nas.lan"
 BUILD_PATH="/raid/gentoo-desktop.lan"
-RSYNC_EXCLUDES=" --exclude=-/var/lib/containers --exclude=/var/lib/containerd --exclude=/var/lib/docker --exclude=/var/lib/flatpak --exclude=/home --exclude=/var/lib/pleroma/uploads --exclude=/var/lib/distfiles --exclude=/var/lib/owncloud --exclude=/etc/disk --exclude=/etc/mtab --exclude=/swap --exclude=@swap --exclude=/mnt --exclude=/snapshots --exclude=/backup --exclude=/raid --exclude=/var/tmp/* --exclude=/tmp/* --exclude=/var/lib/libvirt/* --exclude=/var/cache --exclude=/var/notmpfs --exclude=/var/lib/systemd/coredump/* --exclude=/var/cache/* --exclude=/.snapshots/* --exclude=/sys/* --exclude=/dev/* --exclude=/proc/*"
+RSYNC_EXCLUDES=" --exclude=-/var/lib/containers --exclude=/var/lib/containerd --exclude=/var/lib/docker --exclude=/var/lib/flatpak --exclude=/home --exclude=/var/lib/pleroma/uploads --exclude=/var/lib/distfiles --exclude=/var/lib/owncloud --exclude=/etc/disk --exclude=/etc/mtab --exclude=/swap --exclude=@swap --exclude=/mnt --exclude=/snapshots --exclude=/backup --exclude=/raid --exclude=/var/tmp/* --exclude=/tmp/* --exclude=/var/lib/libvirt/* --exclude=/var/cache --exclude=/var/notmpfs --exclude=/var/lib/systemd/coredump/* --exclude=/var/cache/* --exclude=/.snapshots/* --exclude=/sys/* --exclude=/dev/* --exclude=/proc/* --exclude=/run/*"
 #Add Masked Packages to the Array
 MASKED_PACKAGES+=(www-apps/jellyfin-bin app-admin/vaultwarden dev-util/nvidia-cuda-toolkit www-apps/radicale www-apps/vaultwarden-web www-apps/radicale net-misc/owncloud-client net-libs/libre-graph-api-cpp-qt-client media-video/obs-studio net-misc/sunshine dev-util/sh net-misc/moonlight app-admin/bitwarden-desktop-bin net-im/element-desktop-bin net-misc/nyx net-libs/stem sys-libs/libudev-compat dev-libs/nss dev-libs/libappindicator media-video/ffmpeg games-util/game-device-udev-rules games-util/steam-launcher net-im/telegram-desktop-bin)
 
@@ -782,7 +782,22 @@ nodatacowRewrite() {
 
 liveOSrestore() {
 	clear
-	SCRIPT=$(pwd)
+	# WHERE THIS SCRIPT IS, NOT WHERE SOMEBODY HAPPENED TO BE STANDING.
+	#
+	# This was `SCRIPT=$(pwd)`, which is only right when the installer was started by typing
+	# ./gentoo.sh in its own directory. On the live disc it is launched from the desktop entry --
+	# `foot -e sh -c /usr/local/share/posterchanos/gentoo.sh` -- whose working directory is the live
+	# user's home, so `$SCRIPT/gentoo.sh` named a file that was never there and the copy failed with
+	# "cp: cannot stat 'gentoo.sh'". Reported from exactly that path: installing the live system to
+	# a disk.
+	#
+	# PCOS_TREE already answers this at the top of the file, by looking where the script IS and then
+	# at the two places the ISO puts it. `$0` is the last resort for a bare script run from a shell
+	# with no tree around it.
+	# PCOS_TREE and nothing else: it already looks where the script IS before it looks anywhere
+	# else, so a second `$0` guess here would be the same question asked twice and answered
+	# differently -- which is what the resolver exists to prevent.
+	SCRIPT="$PCOS_TREE"
 	INSTALL_TYPE=$(mount | grep ' / ')
 	partitions
 	systemMounts
@@ -795,13 +810,45 @@ liveOSrestore() {
 		read -p 'BTRFS Backup Volume Name: ' -e -i "/raid/gentoo-desktop.lan" BUILD_PATH
 		sudo rsync -avz --delete --rsync-path='sudo rsync' -e ssh $USER@$BUILD_SERVER_ADDRESS:/$BUILD_PATH/ $RSYNC_EXCLUDES $TARGET/
 	else
-		sudo rsync -avz --delete --rsync-path='sudo rsync' / $RSYNC_EXCLUDES $TARGET/
-		sudo rsync -avz --delete --rsync-path='sudo rsync' /boot/ $TARGET/boot/
+		sudo rsync -aHAX --delete / $RSYNC_EXCLUDES $TARGET/
+		_rc=$?
+		sudo rsync -aHAX --delete /boot/ $TARGET/boot/ || _rc=$?
+	fi
+
+	# ---------------------------------------------------------------- did the copy actually happen
+	#
+	# EVERY LATER STEP ASSUMES A ROOT FILESYSTEM IS THERE, and none of them check. When the copy
+	# produced nothing the install carried on regardless and failed one step at a time, in a
+	# different place each run: "/tmp/install/etc/os-release: no such file", then a plymouth theme
+	# that could not be written, then a copy of the installer with nowhere to go. Three errors, one
+	# cause, and none of them naming it.
+	#
+	# On the live disc there is a specific way for this to happen quietly: $TARGET is /tmp/install,
+	# and /tmp on a live system is a tmpfs. If the partition was not mounted there, rsync writes into
+	# RAM until it runs out -- so a failed MOUNT looks like a failed COPY looks like a broken script.
+	if [ "${_rc:-0}" -ne 0 ] || [ ! -d "$TARGET/etc" ] || [ ! -d "$TARGET/usr" ]; then
+		echo
+		echo -e "${COLOR_YELLOW}The copy to $HARD_DISK did not complete — nothing was installed.${COLOR_RESET}"
+		if ! mountpoint -q "$TARGET" 2>/dev/null; then
+			echo -e "${COLOR_YELLOW}$TARGET is not a mount point, so this was writing into RAM.${COLOR_RESET}"
+			echo -e "${COLOR_YELLOW}The disk was never mounted — check the partitioning step.${COLOR_RESET}"
+		fi
+		echo -e "${COLOR_YELLOW}Stopping here rather than building half a system on it.${COLOR_RESET}"
+		read -p "Press enter key to Continue"
+		return 1
 	fi
 
 	fstab
-	cp -f $SCRIPT/gentoo.sh $TARGET/usr/bin/
-	cp -f /tmp/disk $TARGET/etc/
+	# THE INSTALLED SYSTEM CARRIES THE INSTALLER, and a missing copy is not worth failing an install
+	# over -- but it IS worth saying, because the machine then has no `gentoo.sh` to re-run and
+	# nothing else says so.
+	if [ -f "$SCRIPT/gentoo.sh" ]; then
+		cp -f "$SCRIPT/gentoo.sh" $TARGET/usr/bin/ 2>/dev/null \
+			|| echo -e "${COLOR_YELLOW}  could not copy the installer into the new system${COLOR_RESET}"
+	else
+		echo -e "${COLOR_YELLOW}  no gentoo.sh to copy — the installed system will not carry one${COLOR_RESET}"
+	fi
+	[ -f /tmp/disk ] && cp -f /tmp/disk $TARGET/etc/ 2>/dev/null
 
 	finalizeInstall
 	cd
@@ -1078,6 +1125,10 @@ posterchanShell() {
 	# on a machine where these units are not installed there is nothing to restart and nothing wrong.
 	exec_always --no-startup-id systemctl --user try-restart xdg-desktop-portal xdg-desktop-portal-wlr
 
+	# THE DISPLAY TURNS ITSELF OFF. Two minutes by default, and `pc-idle set <seconds>` changes it
+	# (0 = never) -- read from a file rather than compiled into this config, which portage owns and
+	# etc-update replaces on upgrade.
+	exec_always --no-startup-id /usr/local/bin/pc-idle
 	exec_always --no-startup-id /usr/local/bin/pc-shell-start
 
 	# Windows are PLACED by PosterChan over its IPC, so the compositor must not lay them out itself.
@@ -1350,7 +1401,7 @@ posterchanShell() {
 	# what joins the two. It is the ONLY privileged thing the shell asks for, and it is limited to
 	# exactly that one command — signing in with a key is not the same as being trusted with root,
 	# and a machine anyone may log into must not hand every visitor sudo.
-	for helper in pc-provision-user pc-shell-start pc-key update-posterchan; do
+	for helper in pc-provision-user pc-shell-start pc-key pc-idle update-posterchan; do
 		if [ -f "$PCOS_TREE/bin/$helper" ]; then
 			cp -f "$PCOS_TREE/bin/$helper" ${TARGET}/usr/local/bin/$helper
 		elif [ -f /tmp/bin/$helper ]; then

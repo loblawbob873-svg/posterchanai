@@ -4029,8 +4029,20 @@
     // the six login paths, because this is the one place they all arrive with both a session and a
     // pubkey; the name and picture are filled in by renderMe once the profile loads.
     if(!GUEST) try{ Session.remember(Session.load(), { pubkey: ME.pubkey, npub: ME.npub }); }catch(_){}
-    // A remembered desktop opens during boot, before this point — so tell it the identity has landed
-    // and let it rebuild the launcher. Without this the signed-in entries are missing for the session.
+    /* BACK TO THE DESKTOP, not just a redraw of one.
+     *
+     * `refresh()` only repaints a desktop that is ALREADY on, and `restore()` is called once during
+     * the config load at boot -- before anybody has signed in. So the boot path covers a session
+     * resumed from disk and nothing covers a LOGIN: showAuth suspends the desktop to put the gate
+     * on screen (the gate is a layer below #os-root, so it is unreadable otherwise), the person
+     * signs in, and the desktop it promised to drop them back on was never asked to come back. On
+     * PosterChanOS that is the whole machine reverting to the single-column client -- "I get the
+     * classic mode after logging in, which is not what we want on the OS".
+     *
+     * `restore()` before `refresh()`, and both: restore is a no-op when the desktop is already up
+     * (and on the OS it enters unconditionally), refresh is what rebuilds the launcher now that
+     * there is an identity. */
+    try{ if(window.PCOS && PCOS.restore) PCOS.restore(); }catch(_){}
     try{ if(window.PCOS && PCOS.refresh) PCOS.refresh(); }catch(_){}
     document.body.classList.toggle('guest', GUEST);
     /* ?next=/admin — where the server sent us to sign in from. /admin has no login page of its own
