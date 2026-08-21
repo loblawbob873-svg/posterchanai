@@ -48,6 +48,11 @@ class TheCommandExists(unittest.TestCase):
         self.assertIn('$(dirname "$SRC")/gentoo.sh', publish)
         self.assertIn('posterchanos-shell-${SHELL_VER}.ebuild', publish)
 
+    def test_privileged_helpers_land_where_the_desktop_and_sudoers_call_them(self):
+        ebuild = EBUILD.read_text()
+        self.assertIn("exeinto /usr/local/bin", ebuild)
+        self.assertIn('doexe "${FILESDIR}/${helper}"', ebuild)
+
 
 class ItUpdatesBothHalves(unittest.TestCase):
     @classmethod
