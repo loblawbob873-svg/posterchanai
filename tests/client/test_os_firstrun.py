@@ -183,6 +183,14 @@ class FirstRun(unittest.TestCase):
         self.assertEqual([x["ssid"] for x in rows], ["C", "B", "A"])
         self.assertEqual([x for x in rows if x["ssid"] == "A"][0]["signal"], 80)
 
+    def test_networkmanager_startup_is_retried_before_hardware_is_declared_missing(self):
+        ui = open(os.path.join(ROOT, "static", "js", "client", "osfirstrunui.js"),
+                  encoding="utf-8").read()
+        start = ui.index("async function readWorld()")
+        body = ui[start:ui.index("\n  }", start)]
+        self.assertIn("attempt < 12", body)
+        self.assertIn("setTimeout(resolve, 250)", body)
+
 
 if __name__ == "__main__":
     unittest.main()

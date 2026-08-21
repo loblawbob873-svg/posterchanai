@@ -1233,7 +1233,10 @@ posterchanShell() {
 	_configure_shell_session() {
 		local GETTY_DIR="${TARGET}/etc/systemd/system/getty@tty1.service.d"
 		mkdir -p "$GETTY_DIR" "${TARGET}/home/$SHELL_USER"
-		printf '[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin %s --noclear %%I $TERM\n' \
+		# The desktop asks NetworkManager on its first frame. multi-user services and getty otherwise
+		# start in parallel, so a fast SSD can launch the welcome screen before nmcli has a D-Bus
+		# service and falsely report that the computer has no network hardware.
+		printf '[Unit]\nWants=NetworkManager.service\nAfter=NetworkManager.service\n[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin %s --noclear %%I $TERM\n' \
 			"$SHELL_USER" >"$GETTY_DIR/override.conf"
 		cat >"${TARGET}/home/$SHELL_USER/.bash_profile" <<-'PROFILE'
 [[ -f ~/.bashrc ]] && . ~/.bashrc
@@ -2431,7 +2434,7 @@ FSTAB
 		# Autologin as the live user. Same file the installed system uses, rewritten rather than
 		# removed — deleting it gives a login prompt for an account with no password set.
 		mkdir -p "$WORK/gettyd"
-		printf '[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin live --noclear %%I $TERM\n' \
+		printf '[Unit]\nWants=NetworkManager.service\nAfter=NetworkManager.service\n[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin live --noclear %%I $TERM\n' \
 			>"$WORK/gettyd/override.conf"
 	fi
 
@@ -2646,6 +2649,12 @@ DESKTOP
 		# image built from an older release still passes.
 		echo "$LS" | grep -qxE "squashfs-root/opt/posterchan/(posterchan-desktop|AppRun)" \
 			|| MISSING="$MISSING /opt/posterchan"
+		# The welcome screen cannot configure wifi without the daemon, and launching getty before it
+		# is ready creates the exact same visible failure as omitting it.
+		echo "$LS" | grep -qx "squashfs-root/usr/lib/systemd/system/NetworkManager.service" \
+			|| MISSING="$MISSING NetworkManager.service"
+		echo "$LS" | grep -qx "squashfs-root/etc/systemd/system/multi-user.target.wants/NetworkManager.service" \
+			|| MISSING="$MISSING NetworkManager-enable"
 		if [[ -n "$MISSING" ]]; then
 			{ echo "image is missing:$MISSING"; echo "--- /home in the image ---";
 			  echo "$LS" | grep '^squashfs-root/home' | head -20; } >>"$LOG" 2>/dev/null
@@ -2659,14 +2668,17 @@ DESKTOP
 		# would have caught the ignored pseudo-files on the first build instead of the fourth ISO:
 		# `unsquashfs -cat` costs a few kilobytes and answers what actually got written.
 		if [[ "$CLEAN" = *y* ]]; then
-			local WHO PW
+			local WHO PW NET_ORDER
 			WHO="$(unsquashfs -cat "$WORK/iso/LiveOS/squashfs.img" \
 				etc/systemd/system/getty@tty1.service.d/override.conf 2>/dev/null \
 				| sed -n "s/.*--autologin \([^ ]*\).*/\1/p" | head -1)"
+			NET_ORDER="$(unsquashfs -cat "$WORK/iso/LiveOS/squashfs.img" \
+				etc/systemd/system/getty@tty1.service.d/override.conf 2>/dev/null \
+				| grep -c '^After=NetworkManager.service$')"
 			PW="$(unsquashfs -cat "$WORK/iso/LiveOS/squashfs.img" etc/passwd 2>/dev/null \
 				| grep -c "^$SESS_USER:")"
 			echo "image: autologin=$WHO passwd-has-$SESS_USER=$PW" >>"$LOG" 2>/dev/null
-			if [[ "$WHO" != "$SESS_USER" || "$PW" -lt 1 ]]; then
+			if [[ "$WHO" != "$SESS_USER" || "$PW" -lt 1 || "$NET_ORDER" -lt 1 ]]; then
 				_lcd_fail "The image would log in as '${WHO:-nobody}' and its /etc/passwd has ${PW} such account. That is a login prompt, not a desktop — the ISO was not made. (mksquashfs ignores a pseudo-file whose path exists in the source; see pseudoput.)"
 				return
 			fi

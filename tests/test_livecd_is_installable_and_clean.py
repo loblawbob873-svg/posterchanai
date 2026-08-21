@@ -100,6 +100,11 @@ class TheImageDoesNotCarryTheOperator(unittest.TestCase):
         """Removing the autologin gives a prompt for an account with no password set."""
         self.assertIn("--autologin live", self.fn)
 
+    def test_the_desktop_waits_for_networkmanager(self):
+        self.assertIn("After=NetworkManager.service", self.fn)
+        self.assertIn("Wants=NetworkManager.service", self.fn)
+        self.assertIn("NetworkManager-enable", self.fn)
+
     def test_the_live_user_can_become_root(self):
         """The password-locked console account still needs to run the installer as root."""
         self.assertIn("NOPASSWD", self.fn)

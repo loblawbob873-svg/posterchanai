@@ -70,8 +70,20 @@
     const net = NET();
     if(!net){ w.netReadable = false; }
     else{
-      try{ const s = await net.status(); w.online = !!(s && s.online); }
-      catch(_){ w.netReadable = false; }
+      /* The getty is ordered after NetworkManager on current PosterChanOS images, but older images
+       * and a manually-started desktop can still race D-Bus activation. A service that is starting
+       * is not missing hardware. Give it a short bounded readiness window before showing the fatal
+       * network screen. */
+      for(let attempt = 0; attempt < 12; attempt++){
+        try{
+          const s = await net.status();
+          w.online = !!(s && s.online);
+          break;
+        }catch(_){
+          if(attempt === 11) w.netReadable = false;
+          else await new Promise(resolve => setTimeout(resolve, 250));
+        }
+      }
     }
     try{ w.instance = !!(PC() && PC().apiBase && PC().apiBase()); }catch(_){ w.instance = false; }
     if(!w.instance){ try{ w.instance = !!(root.__PC_API_BASE__); }catch(_){} }
