@@ -28,34 +28,108 @@ command -v emerge >/dev/null 2>&1 || {
 	exit 1
 }
 
-# THE OVERLAY IS THE RELEASE CHANNEL, so a machine that has not synced cannot see a new build however
-# many times it emerges. Synced ALONE rather than with `emerge --sync`: the full Gentoo tree is a
-# large fetch that has nothing to do with updating this app, and making people wait for it is how a
-# one-command update becomes a thing nobody runs.
-echo "${CYA}Syncing the PosterChanOS overlay${OFF}"
-if ! emaint sync -r posterchan; then
-	echo "${YEL}Could not reach the overlay — trying the update with what is already here.${OFF}"
-fi
+# ---------------------------------------------------------------- how this machine got its desktop
+#
+# TWO WAYS, and asking which is the whole of this script's job.
+#
+# The overlay path (`emerge app-misc/posterchan-desktop`) is the tidy one, and on a machine where
+# those packages are actually installed it is what should run. But the INSTALLER does not use it:
+# gentoo.sh downloads the release and extracts it into /opt/posterchan directly, so on every machine
+# installed from the ISO portage has never heard of the desktop -- `qlist` lists nothing, and an
+# update built on `emerge -u` has nothing to update. It failed twice over on the first machine that
+# ran it: the overlay had no git remote to sync from ("overlay not found"), and the ebuild had no
+# Manifest, so the binary it did fetch was refused ("VERIFY FAILED! Insufficient data for checksum
+# verification").
+#
+# So: use portage where portage owns it, and otherwise do exactly what the installer did.
+have_pkgs="$(qlist -Iv app-misc/posterchan-desktop app-misc/posterchanos-shell 2>/dev/null | sort)"
 
-# WHAT IS INSTALLED NOW, so the end can say whether anything actually changed. "Updated" printed over
-# a no-op is the same lie as a progress bar that finishes without doing anything.
-before="$(qlist -Iv app-misc/posterchan-desktop app-misc/posterchanos-shell 2>/dev/null | sort)"
-
-echo "${CYA}Updating${OFF} $PKGS"
-if ! emerge -u --quiet-build=n $PKGS; then
+if [ -n "$have_pkgs" ]; then
+	echo "${CYA}Syncing the PosterChanOS overlay${OFF}"
+	if ! emaint sync -r posterchan; then
+		echo "${YEL}Could not reach the overlay — trying the update with what is already here.${OFF}"
+	fi
+	echo "${CYA}Updating${OFF} $PKGS"
+	if ! emerge -u --quiet-build=n $PKGS; then
+		echo
+		echo "${RED}The update failed. Nothing was replaced — the running desktop is untouched.${OFF}"
+		exit 1
+	fi
+	after="$(qlist -Iv app-misc/posterchan-desktop app-misc/posterchanos-shell 2>/dev/null | sort)"
 	echo
-	echo "${RED}The update failed. Nothing was replaced — the running desktop is untouched.${OFF}"
-	exit 1
-fi
+	if [ "$have_pkgs" = "$after" ]; then
+		echo "${GRN}Already up to date.${OFF}"
+		exit 0
+	fi
+	printf "${GRN}Now installed:${OFF}\n"; printf '  %s\n' $after
+else
+	# ------------------------------------------------------------ the release, straight into /opt
+	#
+	# THE OLD DESKTOP IS NOT TOUCHED UNTIL THE NEW ONE IS ON DISK AND HAS BEEN LOOKED AT. Downloaded,
+	# extracted and checked in a temp directory, then swapped by rename. An update that fails leaves
+	# the machine running exactly what it was running, which matters more here than anywhere else:
+	# this IS the desktop, and a half-replaced one is a black screen with no way back.
+	REL="${PC_DESKTOP_URL:-https://github.com/loblawbob873-svg/posterchanai/releases/download/desktop-latest/PosterChan.AppImage}"
+	TMP="$(mktemp -d /var/tmp/pc-update.XXXXXX)" || exit 1
+	trap 'rm -rf "$TMP"' EXIT
 
-after="$(qlist -Iv app-misc/posterchan-desktop app-misc/posterchanos-shell 2>/dev/null | sort)"
+	echo "${CYA}Downloading the current desktop${OFF}"
+	if ! curl -fL --progress-bar -o "$TMP/app.AppImage" "$REL"; then
+		echo "${RED}Could not download it. Nothing was changed.${OFF}"
+		exit 1
+	fi
+	chmod +x "$TMP/app.AppImage"
 
-echo
-if [ -n "$before" ] && [ "$before" = "$after" ]; then
-	echo "${GRN}Already up to date.${OFF}"
-	exit 0
+	# EXTRACTED, NEVER RUN AS AN APPIMAGE. It is a transport format here and nothing more: mounting
+	# one needs FUSE, which a minimal profile does not have, and the extracted tree is ordinary files
+	# that need nothing at all. This is the same thing the ebuild's src_unpack does.
+	echo "${CYA}Extracting${OFF}"
+	if ! ( cd "$TMP" && ./app.AppImage --appimage-extract >/dev/null 2>&1 ) \
+		|| [ ! -x "$TMP/squashfs-root/AppRun" ]; then
+		echo "${RED}The download did not extract — it is probably incomplete. Nothing was changed.${OFF}"
+		exit 1
+	fi
+
+	NEW="$TMP/squashfs-root"
+	chmod -R a+rX "$NEW"
+	chmod 0755 "$NEW/AppRun" 2>/dev/null || true
+	[ -f "$NEW/posterchan-desktop" ] && chmod 0755 "$NEW/posterchan-desktop"
+	# Electron will not start unless its sandbox helper is setuid root, and no archive can carry that
+	# bit. The alternative is --no-sandbox, i.e. turning the renderer sandbox off.
+	[ -f "$NEW/chrome-sandbox" ] && chown root:root "$NEW/chrome-sandbox" && chmod 4755 "$NEW/chrome-sandbox"
+
+	# IS IT ACTUALLY NEWER? Compared by the bytes of the launcher's own bundle rather than by a
+	# version string, because the rolling release re-uses one url and a machine that re-downloads the
+	# same build should say so instead of announcing an update nobody got.
+	if [ -f /opt/posterchan/resources/app.asar ] && [ -f "$NEW/resources/app.asar" ] \
+		&& cmp -s /opt/posterchan/resources/app.asar "$NEW/resources/app.asar"; then
+		echo "${GRN}Already up to date.${OFF}"
+		exit 0
+	fi
+
+	echo "${CYA}Installing${OFF}"
+	OLD="/opt/posterchan.old.$$"
+	mkdir -p /opt
+	if [ -d /opt/posterchan ]; then mv /opt/posterchan "$OLD" || exit 1; fi
+	if ! mv "$NEW" /opt/posterchan; then
+		# Put it back. A machine with no /opt/posterchan boots sway with nothing in it.
+		[ -d "$OLD" ] && mv "$OLD" /opt/posterchan
+		echo "${RED}Could not install it — the previous desktop was put back.${OFF}"
+		exit 1
+	fi
+	rm -rf "$OLD"
+
+	# The wrapper the session execs. AppRun finds the binary through $APPDIR, which the AppImage
+	# RUNTIME would have set — exactly the thing extracting removes.
+	cat >/usr/local/bin/posterchan <<-'WRAP'
+		#!/bin/sh
+		export APPDIR=/opt/posterchan
+		export ELECTRON_OZONE_PLATFORM_HINT=auto
+		exec "$APPDIR/AppRun" "$@"
+	WRAP
+	chmod 0755 /usr/local/bin/posterchan
+	echo "${GRN}Updated.${OFF}"
 fi
-[ -n "$after" ] && echo "${GRN}Now installed:${OFF}" && printf '  %s\n' $after
 
 # THE RESTART IS NOT DONE HERE, and that is deliberate. On PosterChanOS the shell IS the desktop:
 # restarting it closes every window, and doing that inside an update somebody ran while working is
