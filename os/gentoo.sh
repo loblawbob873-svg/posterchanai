@@ -1906,17 +1906,17 @@ liveCD() {
 	# answered in contradiction — strip the accounts, keep the home directories — and honouring both
 	# literally would ship somebody's files under a user that no longer exists to own them, readable
 	# by uid 1000, which is `live`.
-	# EXCLUDE THE HOMES, NOT /home ITSELF — and that distinction is the whole live image.
+	# EXCLUDE THE HOMES INDIVIDUALLY, NOT /home ITSELF.
 	#
-	# `-e home` removes the directory and everything the pseudo-file list tries to put back inside
-	# it: `home/live`, and the `.bash_profile` that starts the desktop. The image then has no
-	# /home/live at all, so the live user autologins with a home that does not exist. Bash finds no
-	# profile and gives a prompt — "booted to a terminal, no gui" — and when sway is started by hand
-	# the Electron shell has nowhere to write its profile and paints nothing: "sway loads a black
-	# screen". One missing directory, two symptoms that look unrelated.
+	# CORRECTION, MEASURED: an earlier version of this comment said `-e home` suppresses the
+	# pseudo-file entries written into it. That is FALSE. Run against squashfs-tools, `-e home`
+	# together with `home/live d` and `home/live/.bash_profile f` produces exactly what was asked
+	# for — the operator's files gone, the pseudo entries present. I asserted the opposite from a
+	# symptom and shipped a fix for it; the real cause was elsewhere (see SESS_USER below).
 	#
-	# Excluding each real home individually leaves /home itself in the image, so the pseudo entries
-	# land. There is nothing of anybody's in it: every directory under it is named here.
+	# Naming each home is kept anyway, because it is the clearer statement of intent — "these
+	# people's files are not in the image" rather than "the directory is gone and then partly put
+	# back" — and it leaves /home visibly in the tree, which is what the entries below write into.
 	if [[ "$KEEP_HOME" = *n* || "$CLEAN" = *y* ]]; then
 		local H
 		for H in /home/*; do
@@ -2016,6 +2016,36 @@ FSTAB
 			>"$WORK/gettyd/override.conf"
 	fi
 
+	# ---------------------------------------------------------------- who logs in, and their home
+	#
+	# WHOEVER AUTOLOGINS MUST HAVE A HOME IN THE IMAGE. Not "should" — the desktop does not start
+	# without one, twice over: `~/.bash_profile` is what execs sway, and Electron needs a writable
+	# HOME for its profile. Missing, the disc boots to a bash prompt, and typing `sway` by hand then
+	# gives a black screen with no shell on it. Reported as both, three rebuilds apart, and they are
+	# one fault.
+	#
+	# It was only ever arranged for the CLEAN path's `live` account. Answer `n` to the clean question
+	# and the autologin stays as the operator — whose home is excluded anyway, because that is a
+	# separate question with its own default. That combination produced an image where the person who
+	# logs in has no home at all, and nothing in the build says so.
+	#
+	# So it is computed here from what the answers actually were, and the entries below are emitted
+	# for that user whatever they were.
+	local SESS_USER SESS_UID SESS_GID
+	if [[ "$CLEAN" = *y* ]]; then
+		SESS_USER="live"; SESS_UID=1000; SESS_GID=1000
+	else
+		# The account this machine autologins now — read from the unit, not guessed, because it is
+		# the one the image will keep using.
+		SESS_USER="$(sed -n 's/.*--autologin \([^ ]*\).*/\1/p' \
+			/etc/systemd/system/getty@tty1.service.d/override.conf 2>/dev/null | head -1)"
+		[[ -z "$SESS_USER" ]] && SESS_USER="$(awk -F: '$3>=1000 && $3<65534 {print $1; exit}' /etc/passwd)"
+		SESS_UID="$(id -u "$SESS_USER" 2>/dev/null || echo 1000)"
+		SESS_GID="$(id -g "$SESS_USER" 2>/dev/null || echo 1000)"
+	fi
+	echo -e "${COLOR_YELLOW}Live session logs in as: $SESS_USER${COLOR_RESET}"
+	echo "session-user=$SESS_USER uid=$SESS_UID home-excluded=$([[ " ${EXCLUDES[*]} " == *" home/$SESS_USER "* ]] && echo yes || echo no)" >>"$LOG" 2>/dev/null
+
 	local PSEUDO="$WORK/pseudo"
 	{
 		echo "etc/fstab f 644 0 0 cat $LIVEFSTAB"
@@ -2029,7 +2059,6 @@ FSTAB
 			echo "etc/group f 644 0 0 cat $WORK/group"
 			echo "etc/shadow f 640 0 0 cat $WORK/shadow"
 			echo "home d 755 0 0"
-			echo "home/live d 755 1000 1000"
 			# AN EMPTY HOME IS A TERMINAL, NOT A DESKTOP.
 			#
 			# What starts the GUI is `~/.bash_profile` — the login shell on tty1 execs sway, which
@@ -2041,7 +2070,7 @@ FSTAB
 			#
 			# Written from the SAME heredoc the installer uses rather than a copy, so the live
 			# session and an installed one cannot drift apart.
-			echo "home/live/.bash_profile f 644 1000 1000 cat $WORK/live.bash_profile"
+
 			echo "etc/systemd/system/getty@tty1.service.d d 755 0 0"
 			echo "etc/systemd/system/getty@tty1.service.d/override.conf f 644 0 0 cat $WORK/gettyd/override.conf"
 			# A hostname that is not yours. `posterchanos` is what an unconfigured install should
@@ -2053,6 +2082,15 @@ FSTAB
 			echo "etc/sudoers.d d 750 0 0"
 			echo "etc/sudoers.d/live f 440 0 0 cat $WORK/sudoers.d/live"
 		fi
+
+		# ---------------------------------------------------------------- the session's home
+		#
+		# EMITTED WHATEVER THE ANSWERS WERE. See SESS_USER above: the person who autologins needs a
+		# home whether they are the clean image's `live` or this machine's own operator, and the two
+		# questions that can remove it are asked separately.
+		echo "home d 755 0 0"
+		echo "home/$SESS_USER d 755 $SESS_UID $SESS_GID"
+		echo "home/$SESS_USER/.bash_profile f 644 $SESS_UID $SESS_GID cat $WORK/live.bash_profile"
 
 		# ---------------------------------------------------------------- the installer
 		#
@@ -2123,6 +2161,34 @@ DESKTOP
 		echo
 		_lcd_fail "mksquashfs failed — nothing was written."
 		return
+	fi
+
+	# ---------------------------------------------------------------- did it actually work
+	#
+	# THE BUILD CHECKS ITS OWN OUTPUT, because three images in a row were written successfully and
+	# were unusable, and the build said "done" every time. Both failures were one missing file:
+	# without `~/.bash_profile` the autologin lands at a bash prompt ("booted to a terminal, no
+	# gui"), and sway started by hand then has nowhere for the Electron shell to write its profile
+	# ("sway loads a black screen"). An image that cannot start its desktop is not an image worth
+	# spending twenty more minutes turning into an ISO.
+	#
+	# unsquashfs -l is a listing, not an extraction: it costs a second and touches nothing.
+	if command -v unsquashfs >/dev/null 2>&1; then
+		local MISSING=""
+		local LS
+		LS="$(unsquashfs -l "$WORK/iso/LiveOS/squashfs.img" 2>/dev/null)"
+		echo "$LS" | grep -qx "squashfs-root/home/$SESS_USER" || MISSING="$MISSING /home/$SESS_USER"
+		echo "$LS" | grep -qx "squashfs-root/home/$SESS_USER/.bash_profile" \
+			|| MISSING="$MISSING /home/$SESS_USER/.bash_profile"
+		# The desktop itself. An image with a home and no app boots to an empty sway.
+		echo "$LS" | grep -qx "squashfs-root/opt/posterchan/AppRun" || MISSING="$MISSING /opt/posterchan"
+		if [[ -n "$MISSING" ]]; then
+			{ echo "image is missing:$MISSING"; echo "--- /home in the image ---";
+			  echo "$LS" | grep '^squashfs-root/home' | head -20; } >>"$LOG" 2>/dev/null
+			_lcd_fail "The image is missing:$MISSING — it would boot to a terminal, so it was not made into an ISO."
+			return
+		fi
+		echo -e "${COLOR_GREEN}Image checked: $SESS_USER has a home, a login profile and a desktop.${COLOR_RESET}"
 	fi
 
 	# ---------------------------------------------------------------- kernel + a live initramfs

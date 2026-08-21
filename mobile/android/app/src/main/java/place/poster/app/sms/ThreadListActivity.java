@@ -235,7 +235,18 @@ public class ThreadListActivity extends PcActivity {
             notice.setVisibility(View.VISIBLE);
             notice.setText(R.string.sms_no_permission);
         } else {
-            notice.setVisibility(isDefault ? View.GONE : View.VISIBLE);
+            /* IF THE MESSAGES ARE THERE, SAY NOTHING.
+             *
+             * This notice sat above somebody's texts telling them PosterChan was not their messages
+             * app on a phone where it was — `isDefault` reads the message store's default-app ROW,
+             * which Android does not keep in step with the ROLE on OEM builds. Replacing the verdict
+             * with a description of what the screen was showing was no better: a caption narrating
+             * the obvious, permanently.
+             *
+             * A phone that can read its own messages needs no line at all. What remains below is
+             * for the case where reading works and DELIVERY does not, which is worth one sentence —
+             * and only when there is actually something to name. */
+            notice.setVisibility(View.GONE);
             // NAME WHAT ANDROID NAMED. "1.0.1336 says PosterChan is not this phone's messages app
             // still!" — and a flat verdict gives the person nothing to argue with or act on. The
             // role and the message store's default-app row are two different tables on Android 10+,

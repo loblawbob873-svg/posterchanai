@@ -1038,28 +1038,24 @@
     // history can come FROM.
     const bf = PC.$('#sms-backfill');
     if(bf) bf.style.display = st.canRead ? '' : 'none';
-    if(!st.isDefault && S.localRead){
-      /* NO INSTRUCTION ABOUT THE ROLE. This line sits permanently above the thread list and told
-       * somebody who HAD made PosterChan their messages app to go and make it their messages app —
-       * because `isDefault` reads the message store's row, which Android does not always keep in
-       * step with the role it granted. It states what is on screen and stops; the role has its own
-       * control, which reports what Android said rather than what we assume. */
-      el.textContent = 'Your phone\u2019s messages, read from the phone itself.';
+    /* ON A PHONE THIS LINE SAYS NOTHING, because there is nothing to say.
+     *
+     * It began as an instruction about the role, shown to somebody who already held it. Replacing
+     * that with "showing this phone's messages, read from the phone itself" was worse: a caption
+     * describing the obvious, permanently, above somebody's messages. No messaging app narrates
+     * itself.
+     *
+     * The line exists for the one case that IS news — this device is not the phone, so these
+     * arrived over the relay and a send has to be performed by a handset that may be switched off.
+     * Everywhere else it is emptied and collapsed so it takes no room. */
+    if(S.localRead || st.canRead || st.isDefault){
+      el.textContent = '';
+      el.style.display = 'none';
       return;
     }
-    if(st.isDefault){
-      el.textContent = 'This phone. Messages are stored in the phone’s own message app as well, '
-        + 'so nothing else on the phone loses them.';
-      // NOT mirror() — this runs on every repaint, and a repaint happens on every keystroke in the
-      // search box. Publishing is driven by render() and by the app coming to the foreground.
-    } else if(st.canRead){
-      // READING WITHOUT THE ROLE IS AN ORDINARY STATE, not a broken one — it is what trying the app
-      // out looks like, and the screen used to describe it as somebody else's phone.
-      el.textContent = 'Your phone’s messages, read from the phone itself.';
-    } else {
-      el.textContent = 'An encrypted copy of your phone’s messages. Sending from here asks your '
-        + 'phone to send it, so your phone has to be reachable.';
-    }
+    el.style.display = '';
+    el.textContent = 'An encrypted copy of your phone\u2019s messages. Sending from here asks your '
+      + 'phone to send it, so your phone has to be reachable.';
   }
 
   function paintThread(feed, enc){
