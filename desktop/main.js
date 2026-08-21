@@ -16,7 +16,7 @@
  * routing off-site links to the real browser, the permission grants the client needs, and auto-update.
  */
 const { app, BrowserWindow, shell, session, Menu, clipboard, dialog, ipcMain, desktopCapturer,
-        systemPreferences, protocol, powerMonitor } = require('electron');
+        systemPreferences, protocol, powerMonitor, screen } = require('electron');
 const path = require('path');
 const fsbridge = require('./fsbridge');
 const fs = require('fs');
@@ -511,6 +511,38 @@ function createWindow() {
    * claiming exclusive use of it, and on PosterChanOS `pc-shell-start` tiles the window anyway — so
    * this is the fallback for a compositor that does not, not the normal path. */
   if (SHELL_MODE) { try { win.maximize(); } catch (_) {} }
+
+  /* AND AGAIN WHENEVER THE SCREEN CHANGES SHAPE, which on a live boot is always.
+   *
+   * `maximize()` above runs once, against whatever the display was at that instant. A machine
+   * booting from a USB stick brings the panel up at a firmware mode and sets the real one moments
+   * later; a virtual machine resizes its guest display after the guest has started. Either way the
+   * window keeps the size it was given and the compositor's background shows around it -- reported
+   * as "the login and welcome screen does not fit, black on right and bottom", which is the first
+   * screen anybody sees on the disc.
+   *
+   * sway tiles this window, and a tiled window follows its output on its own -- but `for_window`
+   * cannot be relied on for THIS window (see pc-shell-start), so on the boot where the rule has not
+   * matched yet it is floating, and a floating window keeps its geometry for ever. This does not
+   * depend on which of those happened.
+   *
+   * Re-maximising an already-maximised window at the right size is a no-op, so the cost of being
+   * wrong here is nothing. */
+  if (SHELL_MODE) {
+    const refit = () => {
+      try {
+        if (win.isDestroyed() || win.isMinimized()) return;
+        // unmaximize FIRST: a window still flagged maximized at a stale size ignores maximize().
+        if (win.isMaximized()) win.unmaximize();
+        win.maximize();
+      } catch (_) {}
+    };
+    for (const ev of ['display-metrics-changed', 'display-added', 'display-removed']) {
+      try { screen.on(ev, refit); } catch (_) {}
+    }
+    // The mode can also settle a moment after the window is first shown, with no event we can see.
+    win.once('ready-to-show', () => { setTimeout(refit, 1200); setTimeout(refit, 4000); });
+  }
   win.once('ready-to-show', focusPage);
 
   // Right-click menu. Electron ships NO default context menu, so `spellcheck: true` above only ever drew

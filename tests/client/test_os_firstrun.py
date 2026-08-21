@@ -197,3 +197,60 @@ class SignedInIsReadFromSomethingThatExists(unittest.TestCase):
         # if app.js ever DOES publish ME, the fallback below is fine either way.
         self.assertNotIn("window.ME =", app, "app.js now publishes ME — revisit the fallback")
         self.assertIn("root.ME", src, "the fallback for a build that does publish it is gone")
+
+
+@unittest.skipIf(not NODE, "no node on this node")
+class TheSignerHandshakeUsesOurRelay(unittest.TestCase):
+    """THE FIRST SCREEN OF THE DISC MUST NOT SEND SOMEBODY TO A STRANGER'S RELAY.
+
+    `_ncRelays` returns the instance's own relay whenever there is one, which is right. But
+    `CFG.relay_url` is empty until that instance's config has been FETCHED, which on a live disc is
+    exactly when its sign-in screen is showing -- so it fell through to nsec.app, damus and primal,
+    and the first thing the disc offered was a login carried by infrastructure we do not run, named
+    on the QR. Reported as "wtf is this shit? posterchan wants to be signed in through
+    relay.damus.io?" and "you want people to use damus that don't even work" -- which the code's own
+    comment already agreed with: measured, nsec.app answers 502 and the other two log "connection
+    interrupted".
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.APP = open(os.path.join(ROOT, "static", "js", "client", "app.js"),
+                       encoding="utf-8").read()
+
+    @staticmethod
+    def _code(src):
+        """Code only. This names relays the COMMENT also names, so matched against raw text every
+        index lands in prose -- a mistake with a history in this repo."""
+        out, i = [], 0
+        while i < len(src):
+            if src.startswith("/*", i):
+                j = src.find("*/", i + 2); i = len(src) if j < 0 else j + 2
+            elif src.startswith("//", i):
+                j = src.find("\n", i); i = len(src) if j < 0 else j
+            else:
+                out.append(src[i]); i += 1
+        return "".join(out)
+
+    def _fn(self):
+        i = self.APP.index("function _ncRelays()")
+        return self._code(self.APP[i:self.APP.index("\n  }\n", i)])
+
+    def test_no_stranger_relay_is_offered_at_all(self):
+        body = self._fn()
+        for stranger in ("relay.nsec.app", "relay.damus.io", "relay.primal.net"):
+            self.assertNotIn(stranger, body, f"{stranger} is still offered for a signer handshake")
+
+    def test_the_instance_relay_still_wins_outright(self):
+        """When there IS one it is the only answer -- a signer told to meet on a relay it cannot
+        reach fails as a three-minute silence with nothing to read."""
+        self.assertIn("if(own) return [own];", self._fn())
+
+    def test_there_is_still_a_fallback(self):
+        """A standalone build has to carry the handshake somewhere; ours is the set to use."""
+        self.assertIn("FALLBACK_RELAYS", self._fn())
+
+    def test_our_own_relay_heads_that_fallback(self):
+        i = self.APP.index("const FALLBACK_RELAYS")
+        self.assertIn("poster.place", self.APP[i:i + 120],
+                      "our own relay is no longer first in the fallback set")

@@ -3458,10 +3458,28 @@
   function _ncRelays(){
     const own=(CFG && CFG.relay_url) || '';
     if(own) return [own];
+    /* NO INSTANCE YET -- OUR OWN RELAYS, NOT STRANGERS'.
+     *
+     * This used to fall through to nsec.app, damus and primal, and the comment above already
+     * recorded what they are worth: measured from a user's console, nsec.app answers 502 and damus
+     * and primal both log "connection interrupted". So the fallback was three sockets to other
+     * people's infrastructure that do not carry the handshake anyway.
+     *
+     * It fires more often than it looks. `CFG.relay_url` is empty until the instance's config has
+     * been fetched, which on a live disc is exactly when its sign-in screen is on screen -- so the
+     * first thing the disc offered was a login through a relay we do not run, named on the QR.
+     * Reported as "wtf is this shit? posterchan wants to be signed in through relay.damus.io?" and
+     * "you want people to use damus that don't even work".
+     *
+     * FALLBACK_RELAYS is the hardcoded copy of our own set that `defaultRelays()` already uses for
+     * this case, and the user's own relays come first when they have enabled them. A build with
+     * neither is a build with nothing to carry a handshake, and saying so is better than pretending
+     * a relay that answers 502 will do it. */
     const mine=ClientSettings.get('relaysEnabled') ? userRelays() : [];
-    return [...new Set([...mine, 'wss://relay.nsec.app', 'wss://relay.damus.io',
-                        'wss://relay.primal.net'].filter(Boolean))];
+    const ours=(typeof FALLBACK_RELAYS !== 'undefined' ? FALLBACK_RELAYS : []);
+    return [...new Set([...mine, ...ours].filter(Boolean))];
   }
+
   async function loginAmberNostrConnect(){
     amberErr(''); const btn=$('#btn-amber-nc'); btn.disabled=true; btn.textContent='preparing…';
     try{
