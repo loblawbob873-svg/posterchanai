@@ -75,7 +75,15 @@
     <string name="sms_mms_title">Picture message</string>
     <string name="sms_mms_unsupported">Somebody sent you a picture message. PosterChan cannot download MMS yet — switch your messages app back to receive it.</string>
     <string name="sms_no_permission">PosterChan has not been allowed to read this phone\'s texts, so it cannot show them. Grant Messages permission in Android Settings \u2192 Apps \u2192 PosterChan \u2192 Permissions.</string>
-    <string name="sms_not_default">PosterChan is not this phone\'s messages app, so it can read your texts but not send or receive them. Turn it on in PosterChan under Settings.</string>
+    <!-- NO VERDICT. This said "PosterChan is not this phone's messages app" on a phone where it
+         HAD been made the messages app: `getDefaultSmsPackage` reads the message store's row, which
+         Android does not always keep in step with the role it granted. It states what it can see
+         and leaves the conclusion alone. -->
+    <!-- NO VERDICT. This said "PosterChan is not this phone's messages app" on a phone where
+         it HAD been made the messages app: getDefaultSmsPackage reads the message store's
+         row, which Android does not always keep in step with the role it granted. It states
+         what it can see and leaves the conclusion alone. -->
+    <string name="sms_not_default">Showing this phone\'s messages, read from the phone itself.</string>
     <!-- NAMED, not asserted. "1.0.1336 says PosterChan is not this phone's messages app still!" is
          unanswerable while the app only ever states a verdict: a role never granted, a role granted
          in another profile, and the two platform tables disagreeing all read identically. The

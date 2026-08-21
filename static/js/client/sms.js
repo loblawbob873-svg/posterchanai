@@ -136,8 +136,13 @@
      * The device-has-no-radio case is handled before this function is reached. What is left is a
      * phone that is not the default, which the line below already says — accurately, and without
      * claiming to know why. */
-    return 'PosterChan is not the default SMS app on this phone, so new messages arrive in '
-         + 'whichever app is. Set it in Settings \u2192 Apps \u2192 Default apps \u2192 SMS.';
+    /* NO VERDICT LEFT. This asserted "PosterChan is not the default SMS app on this phone" on the
+     * strength of `isDefault`, which reads the message store's default-app ROW — a different table
+     * from the ROLE Android granted, and OEM builds do not keep them in step. So it told somebody
+     * looking at the switch, ON, in Settings, that they had not done the thing they had done. Every
+     * branch above names what Android actually reported; when none applies there is nothing honest
+     * left to say. */
+    return '';
   }
 
   /* WHAT THIS PHONE MEASURED, in one line, for the reports that cannot be answered from here.
@@ -789,6 +794,29 @@
     return { archive, phone };
   }
 
+  /* BRING IN THE HISTORY, saying how far it has got. It walks backwards in windows and can take a
+   * while on a long history, and a button that looks dead for a minute is a button people press
+   * again. */
+  let _bfRunning = false;
+  async function runBackfill(btn){
+    if(_bfRunning) return;
+    _bfRunning = true;
+    const note = PC.$('#sms-deep-note');
+    if(btn) btn.disabled = true;
+    if(note) note.textContent = 'reading\u2026';
+    let r = null;
+    try{ r = await importAll((n) => { if(note) note.textContent = n + ' brought in\u2026'; }); }
+    catch(e){ r = { published: 0, why: String((e && e.message) || e) }; }
+    _bfRunning = false;
+    if(btn) btn.disabled = false;
+    if(note){
+      note.textContent = r && r.published
+        ? r.published + ' older message' + (r.published === 1 ? '' : 's') + ' brought in'
+        : (r && r.why) || 'nothing older found';
+    }
+    paint();
+  }
+
   /* ASK ANDROID FOR THE SMS ROLE. One implementation, two buttons — the empty state's and the one
    * in the header that is reachable once messages are on screen. They were about to be two copies,
    * and two copies of a flow whose whole difficulty is what to say when it silently fails is how
@@ -858,6 +886,14 @@
           <button class="btn btn-neon small" id="sms-role2">Make PosterChan my messages app</button>
           <button class="btn small" id="sms-defaults2" style="margin-left:8px">Android\u2019s Default apps</button>
         </div>
+        <!-- THE BACK-FILL, REACHABLE WITH MESSAGES ON SCREEN. It lived in the empty state only,
+             which is exactly backwards: somebody with an empty screen has nothing to compare
+             against, and somebody looking at a half-filled thread is the person who KNOWS history
+             is missing. "MOST MESSAGES I SENT ARE MISSING! I SEEN 1 THREAD WITH A FEW REPLIES". -->
+        <div id="sms-backfill" style="display:none;margin-top:8px">
+          <button class="btn small" id="sms-deep2">Bring in older messages</button>
+          <span class="muted small" id="sms-deep-note" style="margin-left:8px"></span>
+        </div>
         <div class="muted small" style="margin-top:6px">
           <button class="btn small" id="sms-why">Why isn\u2019t this working?</button></div>
         <div class="sms-threads">${rows.map(t => {
@@ -900,6 +936,14 @@
     /* Bound whether or not the bar is visible right now — `noteWhere` reveals it asynchronously,
        after this runs, and a button revealed with no handler is the dead-button bug one layer on. */
     { const rb = PC.$('#sms-role2'); if(rb) rb.onclick = () => askForRole(rb); }
+    /* `#sms-deep` HAD NO HANDLER AT ALL. It was drawn in the empty state and bound nowhere, so
+     * `importAll` — the only thing that fetches messages OLDER than the first sync — was defined,
+     * exported, and called by nothing. Every message anybody had was whatever `mirror` published
+     * from its high-water mark forward. Both ids are bound here so the empty-state copy works too. */
+    for(const id of ['#sms-deep', '#sms-deep2']){
+      const b = PC.$(id);
+      if(b) b.onclick = () => runBackfill(b);
+    }
     { const db = PC.$('#sms-defaults2'); if(db) db.onclick = () => {
         const P = PC.capPlugin ? PC.capPlugin('HomeScreen', 'openDefaultApps') : null;
         try{ if(P && P.openDefaultApps) P.openDefaultApps(); }catch(_){}
@@ -977,9 +1021,17 @@
      * with no radio is never offered it, and a phone that already IS the default is not asked again. */
     const bar = PC.$('#sms-rolebar');
     if(bar) bar.style.display = (st.present && !st.isDefault) ? '' : 'none';
+    // Offered on any device that can read this phone's own store — that is the only device the
+    // history can come FROM.
+    const bf = PC.$('#sms-backfill');
+    if(bf) bf.style.display = st.canRead ? '' : 'none';
     if(!st.isDefault && S.localRead){
-      el.textContent = 'Your phone\u2019s messages, read from the phone itself. New ones still '
-        + 'arrive in whichever app is the default \u2014 make PosterChan the default to send from here.';
+      /* NO INSTRUCTION ABOUT THE ROLE. This line sits permanently above the thread list and told
+       * somebody who HAD made PosterChan their messages app to go and make it their messages app —
+       * because `isDefault` reads the message store's row, which Android does not always keep in
+       * step with the role it granted. It states what is on screen and stops; the role has its own
+       * control, which reports what Android said rather than what we assume. */
+      el.textContent = 'Your phone\u2019s messages, read from the phone itself.';
       return;
     }
     if(st.isDefault){
@@ -990,8 +1042,7 @@
     } else if(st.canRead){
       // READING WITHOUT THE ROLE IS AN ORDINARY STATE, not a broken one — it is what trying the app
       // out looks like, and the screen used to describe it as somebody else's phone.
-      el.textContent = 'Your phone’s messages, read from the phone itself. New ones still arrive '
-        + 'in whichever app is the default — make PosterChan the default to send from here.';
+      el.textContent = 'Your phone’s messages, read from the phone itself.';
     } else {
       el.textContent = 'An encrypted copy of your phone’s messages. Sending from here asks your '
         + 'phone to send it, so your phone has to be reachable.';
