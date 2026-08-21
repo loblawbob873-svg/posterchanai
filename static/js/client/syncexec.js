@@ -968,8 +968,13 @@
           const st = await receive(fs, io, o, d.path, d.entry,
                                    (pc) => step('downloading', d.path + ' ' + pc + '%', i, n),
                                    undefined, stopping);
+          /* `dl` REMEMBERS THAT THESE BYTES CAME OFF THE FOLDER, and at which version. Nothing else
+           * can tell a file this device RECEIVED from one it wrote: both are just bytes with a
+           * timestamp afterwards. It is what the guard on the send side reads — see
+           * "A DEVICE THAT REWRITES WHAT IT DOWNLOADS". */
           record(d.path, Object.assign({}, d.entry), { size: st.size, mtime: st.mtime,
-                                                       csum: d.entry.csum });
+                                                       csum: d.entry.csum,
+                                                       dl: E.versionOf(d.entry) || 1 });
           report.downloaded.push(d.path);
         }catch(e){
           if(isStop(e)) return;               // the loop sees the latch and halts cleanly
@@ -1066,6 +1071,68 @@
               (report.settledByContent = report.settledByContent || []).push(u.path);
               return;
             }
+          }
+          /* A DEVICE THAT REWRITES WHAT IT DOWNLOADS MUST NOT PUBLISH THE REWRITE.
+           *
+           * This is the loop that breaks a healthy folder the moment a phone is added to it, and no
+           * single sweep in it is wrong. The phone fetches a file, something on the phone rewrites
+           * it — Android's media scanner and gallery apps rewrite JPEG metadata in place, which is
+           * why it is always the photos and never the documents — and the next sweep correctly
+           * reports "changed here" and publishes. Every other device then sees a version it has not
+           * got and fetches it; whichever of them holds different bytes publishes back. Measured on
+           * a real folder the day two Android devices were added to it: the same receipts at
+           * version SIX and version EIGHT within hours, and the desktop taking 107 files back in
+           * two sweeps.
+           *
+           * The signal is available and nothing was reading it: this device knows it DOWNLOADED
+           * that path (`local.dl`, written by the fetch), and it knows the folder has not moved
+           * since (the record is still at the version it downloaded). A file nobody has opened,
+           * that arrived from the folder and no longer matches it, was not edited here — it was
+           * rewritten here. Publishing it starts a round trip; refusing costs nothing, because the
+           * bytes on this device are untouched either way.
+           *
+           * So: keep the file, publish NOTHING, and NAME the path. A person who really does want
+           * this copy sent has the resend (`mustSend`), which is exempt above — that is somebody
+           * answering the question rather than an inference from a timestamp. */
+          const _idx = index[u.path];
+          if(!u.mustSend && _R && !_R.deletedAt && _idx && _idx.local && _idx.local.dl
+             && E.versionOf(_R) === _idx.local.dl){
+            report.rewrittenAfterDownload = report.rewrittenAfterDownload || [];
+            report.rewrittenAfterDownload.push(u.path);
+            report.ok = false;
+            record(u.path, _R, { size: u.stat.size, mtime: u.stat.mtime,
+                                 csum: (_idx.local || {}).csum, dl: _idx.local.dl }, false);
+            return;
+          }
+          /* NO EVIDENCE OF A DIFFERENCE IS NOT EVIDENCE OF ONE — and reading it as one is what makes
+           * ADDING A DEVICE break a healthy folder.
+           *
+           * `same(L, R)` compares content only when BOTH sides carry a checksum. A paged scan does
+           * not hash (it cannot, on 12,000 files), so where the RECORD has no checksum either there
+           * is nothing to compare and the decision falls through to size + mtime. On Android that
+           * comparison can only ever say "different": SAF has no writable last-modified, so every
+           * file this device received carries a timestamp no other device has ever seen. The device
+           * then publishes a file it cannot distinguish from the one already in the folder, every
+           * other device sees a new version and fetches it, and round it goes — the same files
+           * climbing a version at a time, for as long as anyone keeps syncing.
+           *
+           * So when the record cannot be compared by content and the SIZES agree, this device has
+           * no evidence of a difference and does not get to assert one: journal the record's own
+           * version against the file that is here, and publish NOTHING. It is the same shape as the
+           * checksum shortcut above and the same rule the drive check follows — "could not ask" is
+           * never "missing".
+           *
+           * THE TRADE, stated because it is real: an edit that changes a file without changing its
+           * length, to a record that carries no checksum, is not propagated from here. It is not
+           * lost — the file on this device is untouched — and the first record that DOES carry a
+           * checksum settles it for good. That is worth strictly less than a folder that cannot
+           * survive a phone being added to it. A `mustSend` (a resend the user asked for by name)
+           * is exempt, because that is a person answering the question rather than an inference. */
+          if(!u.mustSend && _R && !_R.deletedAt && !_R.csum
+             && typeof _R.size === 'number' && _R.size === u.stat.size){
+            record(u.path, _R, { size: u.stat.size, mtime: u.stat.mtime }, false);
+            (report.settledUncomparable = report.settledUncomparable || []).push(u.path);
+            return;
           }
           const entry = await send(fs, io, o, u, me,
                                    (pc) => step('uploading', u.path + ' ' + pc + '%', i, n), stopping);

@@ -361,6 +361,43 @@ scenario('a fresh pair: everything goes up, the other device gets every byte', a
   t.eq(B.st.trashed.length, 0, 'the joining device trashed something');
 });
 
+scenario('a device that rewrites what it downloads does not start a round trip', async (t) => {
+  /* THE REPORT: two Android devices added to a folder that had been clean for days, and the same
+   * receipts climbing to version SIX and EIGHT within hours. Android's media scanner rewrites JPEG
+   * metadata in place, so the phone's copy of a file it just downloaded really does hash
+   * differently — every sweep in the loop is individually correct, which is why nothing caught it. */
+  const sky = cloud();
+  const A = device('desktop', sky, { disk: photos(12) });
+  await A.sweep();
+
+  // The phone joins, fetches everything, and holds the same bytes.
+  const B = device('phone', sky, {});
+  const r1 = await B.sweep();
+  t.eq(r1.failed.length, 0, 'the join failed: ' + JSON.stringify(r1.failed.slice(0, 2)));
+  t.eq(identical(A.disk, B.disk), null, 'the phone did not end up with the desktop\'s files');
+
+  // …then the phone rewrites what it received, exactly as the media scanner does: same file, new
+  // bytes, new timestamp. Not an edit anybody made.
+  const victim = Object.keys(B.disk).sort()[0];
+  B.disk[victim] = Buffer.concat([B.disk[victim], Buffer.from('EXIF')]);
+
+  const B2 = device('phone', sky, { disk: B.disk, index: B.st.index,
+                                    mtimes: { [victim]: 987654 } });
+  const r2 = await B2.sweep();
+  t.eq(r2.uploaded.length, 0, 'the phone published ' + r2.uploaded.length
+       + ' file(s) it had rewritten after downloading — that is the round trip');
+  t.eq((r2.rewrittenAfterDownload || []).length, 1,
+       'the sweep did not NAME the path it held back');
+  t.eq(sky.recs[victim].v, 1, 'the record moved to v' + sky.recs[victim].v
+       + ' — every other device now has a version to react to');
+
+  // And the desktop, sweeping after it, has nothing to do: no fetch, no publish, no round trip.
+  const A2 = device('desktop', sky, { disk: A.disk, index: A.st.index });
+  const r3 = await A2.sweep();
+  t.eq(r3.uploaded.length, 0, 'the desktop republished after the phone was held back');
+  t.eq(r3.downloaded.length, 0, 'the desktop fetched the rewrite');
+});
+
 scenario('two hosts updating at the same time — neither loses the other\'s work', async (t) => {
   const sky = cloud();
   const A = device('laptop', sky, { disk: photos(40) });

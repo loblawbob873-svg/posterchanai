@@ -2692,6 +2692,14 @@
       + grp('Skipped', rep.skipped, a => a.path + ' — ' + a.why)
       + grp('Couldn\u2019t be compared \u2014 both copies left alone, retried next sync',
             rep.uncompared || [], a => a.path + ' \u2014 ' + a.why)
+      /* NAMED, because the alternative is a folder that quietly never settles. These are files this
+       * device downloaded and then changed without anyone touching them — on Android, the media
+       * scanner rewriting a photo's metadata in place. Publishing them is what makes the same files
+       * climb a version every sweep on every device. */
+      + grp('Rewritten on this device after downloading \u2014 NOT published, because sending them '
+            + 'starts a round trip. Your copy here is untouched; use Sync \u2192 \u22ef \u2192 '
+            + 'Mirror this Device if you really want this device\u2019s version to win',
+            rep.rewrittenAfterDownload || [], a => a)
       + grp('Conflicts kept', rep.conflicted, a => a.path + ' → ' + a.keptAs)
       + grp('Uploaded', rep.uploaded, a => a)
       + grp('Downloaded', rep.downloaded, a => a)

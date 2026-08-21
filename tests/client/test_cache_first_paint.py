@@ -103,8 +103,10 @@ def test_a_chat_message_is_not_painted_as_a_thread(thread):
 def test_back_works_during_the_wait(thread):
     """A spinner you cannot leave is the other half of the complaint. One binder for both paints, so
     the early screen cannot end up with a dead button."""
-    assert thread.count("_bindThreadBack(feed)") >= 1
-    binder = _fn("function _bindThreadBack(feed){")
+    # The binder takes the post's id now (desktop Back closes that post's WINDOW, which needs to
+    # know which one), so match the call rather than one frozen signature.
+    assert thread.count("_bindThreadBack(feed,") >= 1
+    binder = _fn("function _bindThreadBack(feed, id){")
     assert "history.back()" in binder and "_startTimeline()" in binder
     assert APP.count("function _bindThreadBack(") == 1, \
         "two copies of the Back binding is how one of them goes stale"
