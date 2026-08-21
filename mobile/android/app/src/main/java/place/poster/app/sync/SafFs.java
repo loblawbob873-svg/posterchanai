@@ -442,7 +442,8 @@ public final class SafFs implements SyncIo.Files {
                 try {
                     fin.getChannel().position(off);
                     int n;
-                    while (got < buf.length && (n = fin.read(buf, got, buf.length - got)) > 0) got += n;
+                    while (got < buf.length && (n = fin.read(buf, got, buf.length - got)) != -1)
+                        if (n > 0) got += n;
                 } finally { fin.close(); }
             } finally { pfd.close(); }
         } else {
@@ -456,7 +457,8 @@ public final class SafFs implements SyncIo.Files {
                     left -= sk;
                 }
                 int n;
-                while (got < buf.length && (n = in.read(buf, got, buf.length - got)) > 0) got += n;
+                while (got < buf.length && (n = in.read(buf, got, buf.length - got)) != -1)
+                    if (n > 0) got += n;
             } finally { try { in.close(); } catch (Exception ignored) { } }
         }
         if (got == buf.length) return buf;

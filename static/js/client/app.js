@@ -386,6 +386,7 @@
   const _NAV_REQUIRED = [
     { view:'sync', into:'#files-sub', icon:'#i-refresh', label:'Folder Sync' },
     { view:'xdc', into:'#games-sub', icon:'#i-gamepad', label:'Webxdc' },
+    { view:'signer', after:'settings', icon:'#i-key', label:'Signer' },
   ];
   function ensureNavItems(){
     for(const it of _NAV_REQUIRED){
@@ -3219,7 +3220,7 @@
       compose({ text: lines.join('\n\n') });
       return true;
     }
-    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','markets','streams','communities','calls','settings','translate','news','websearch','terminal','calendar','contacts','texts','notes']);
+    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','markets','streams','communities','calls','settings','signer','translate','news','websearch','terminal','calendar','contacts','texts','notes']);
     if(view && VALID.has(view)){ _clean(); switchView(view); return true; }
     return false;
   }
@@ -6128,6 +6129,7 @@
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     _syncRightbar();
     $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', shorts:'Shorts 🎬', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    if(v==='signer') $('#view-title').textContent = 'Signer';
     // "New post" is a fixed sidebar button now, so it needs no per-view toggling — it never appears in a
     // view header again. (The ▦ media toggle moved into the timeline's tab row.)
     { const tl = (v==='home'||v==='global'||v==='trending');   // the three views that carry the .tl-tabs header
@@ -6272,6 +6274,7 @@
     if (window.PCGames && window.PCGames[VIEW]) return window.PCGames[VIEW]();   // game modules (chess.js/ttt.js/hangman.js)
     if (VIEW==='blossom') return renderBlossom();
     if (VIEW==='settings') return renderSettings();
+    if (VIEW==='signer') return renderSigner();
     if (VIEW==='ai') return renderAI();
     if (VIEW==='translate') return renderTranslate();
     if (VIEW==='admin') return renderAdmin();
@@ -14328,6 +14331,10 @@
                    // sidebar on a phone, so a row hidden on the laptop that survived here would make
                    // the preference mean nothing on the device it declutters most.
                    && !_sheetOff(_navOffKeys, v));
+    if(!_sheetOff(_navOffKeys, 'signer')){
+      const at = Math.max(0, items.findIndex(x => x[0] === 'settings'));
+      items.splice(at, 0, ['signer','key','Signer']);
+    }
     /* The sheet follows the SAME order the sidebar does — it is the sidebar on a phone. Keys map
      * through _SHEET_NAV_KEY (the three sub-sheets), unknowns keep their default position. */
     { const ord = navOrderList();
@@ -28103,7 +28110,7 @@
    * only way to end one was to clear site data, which ends all of them. A signer that cannot say
    * what it is signing for is not one anybody should trust with a key. */
   function _renderSignerApps(){
-    const box = $('#set-signer-apps'); if(!box) return;
+    const box = $('#signer-apps'); if(!box) return;
     const apps = (window.Nip46Signer ? Nip46Signer.list() : (typeof Nip46Signer !== 'undefined' ? Nip46Signer.list() : []));
     if(ME.mode !== 'local'){ box.innerHTML = ''; return; }
     /* When the NATIVE service owns steady state, the page's own tally sees nothing — the phone's
@@ -28234,7 +28241,7 @@
    * not have a secret to hand over, and pretending otherwise would produce a signer that answers
    * every request with a failure. */
   async function _renderNip55(){
-    const box = $('#set-nip55'); if(!box) return;
+    const box = $('#signer-nip55'); if(!box) return;
     const P = _capPlugin('Signer', 'status');
     if(!P){ box.innerHTML=''; return; }                 // browser or desktop: nothing to register with
     if(ME.mode !== 'local'){
@@ -28377,6 +28384,29 @@
     };
   }
 
+  function renderSigner(){
+    const feed=$('#feed');
+    feed.innerHTML = `<div class="settings signer-app">
+      <section class="set-card">
+        <div class="set-head"><div><div class="set-title"><svg class="ic b-ic" aria-hidden="true"><use href="#i-key"></use></svg>Signer</div>
+          <div class="muted small">Use this device to sign in and approve actions in other Nostr apps. Your private key stays on this device.</div></div></div>
+        <div class="set-body">
+          <button class="btn btn-neon small" id="signer-scan-qr"${ME.mode === 'local' ? '' : ' disabled'}><svg class="ic b-ic" aria-hidden="true"><use href="#i-camera"></use></svg>Scan sign-in QR</button>
+          ${ME.mode === 'local' ? '' : `<div class="muted small" style="margin-top:8px">Sign in here with a local key first. This session keeps its key in ${ME.mode === 'nip07' ? 'a browser extension' : 'another signer'}, so this device cannot sign for another app.</div>`}
+          <div id="signer-apps" class="muted small" style="margin-top:12px"></div>
+        </div>
+      </section>
+      <section class="set-card">
+        <div class="set-head"><div><div class="set-title">Apps on this phone</div>
+          <div class="muted small">Let Android Nostr apps use PosterChan as their signer, like Amber.</div></div></div>
+        <div class="set-body"><div id="signer-nip55" class="muted small"></div></div>
+      </section>
+    </div>`;
+    { const sq=$('#signer-scan-qr'); if(sq) sq.onclick=()=>openQrScanner(); }
+    _renderSignerApps();
+    _renderNip55();
+  }
+
   function renderSettings(){
     const feed=$('#feed');
     feed.innerHTML = `<div class="settings">
@@ -28396,28 +28426,6 @@
           </div>
           <div class="muted small" id="set-sync-status">Pulls your posts back from other relays — and your notes, passwords, calendar and contacts from this server's private backup, if it has one.</div>
           <div class="muted small" id="set-del-notes-status"></div>
-        </div>
-      </section>
-      <section class="set-card">
-        <div class="set-head"><div>
-          <div class="set-title">Log in another device</div>
-          <div class="muted small">${ME.mode==='local'
-            ? 'On a computer, open this site → Sign in → “Open in Amber / scan QR”. Scan that QR here to log the computer in with your key — it never leaves this phone.'
-            : 'Available when you sign in on this device with your key (nsec). Extension / remote-signer sessions can’t sign for another device.'}</div>
-        </div></div>
-        <div class="set-body">
-          <!-- DISABLED rather than clickable-and-refusing. This device signs the other one in with
-               the key it holds, so it needs to hold one: an extension or a remote signer (Amber)
-               keeps the key somewhere this page cannot reach, and openQrScanner turned that into a
-               toast on click. The note above already said "available when you sign in with your
-               key" — but a live button that opens no camera reads as a broken scanner, and was
-               reported as one ("scanning QR code on firefox does nothing"). -->
-          <button class="btn btn-neon small" id="set-scan-qr"${ME.mode === 'local' ? '' : ' disabled'}><svg class="ic b-ic" aria-hidden="true"><use href="#i-camera"></use></svg>Scan QR code</button>
-          <div id="set-signer-apps" class="muted small" style="margin-top:8px"></div>
-          <div id="set-nip55" class="muted small" style="margin-top:10px"></div>
-          ${ME.mode === 'local' ? '' : `<div class="muted small" style="margin-top:6px">Not available in
-            this session — your key is in ${ME.mode === 'nip07' ? 'a browser extension' : 'your signer'},
-            so this device has nothing to sign the other one in with.</div>`}
         </div>
       </section>
       <section class="set-card">
@@ -28442,9 +28450,6 @@
 
     _wirePushToggle();
     _wireStayConnected();
-    { const sq=$('#set-scan-qr'); if(sq) sq.onclick=()=>openQrScanner(); }
-    _renderSignerApps();
-    _renderNip55();
     { const ab=$('#set-admin'); if(ab) ab.onclick=()=>switchView('admin'); }
     { const da=$('#set-del-account'); if(da) da.onclick=async()=>{
         if(!await uiConfirm('Permanently delete your account and all your AI chats + files on this server? This cannot be undone.')) return;

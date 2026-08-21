@@ -5414,7 +5414,8 @@
     /* CTRL+ENTER OPENS A TERMINAL ON THIS COMPUTER — sway's own $mod+Return, spelled for a desktop
      * whose Super key already opens the start menu. It names the machine (see PCTerm.openLocal), so
      * it cannot land you in an SSH session on another one. */
-    if(e.ctrlKey && !e.altKey && !e.metaKey && (e.key === 'Enter' || e.key === 'NumpadEnter')){
+    if(e.ctrlKey && !e.altKey && !e.metaKey && !typing && !e.defaultPrevented
+       && (e.key === 'Enter' || e.key === 'NumpadEnter')){
       e.preventDefault();
       openTerminalHere();
       return;

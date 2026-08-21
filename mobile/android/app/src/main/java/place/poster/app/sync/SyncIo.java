@@ -48,6 +48,10 @@ public final class SyncIo {
         Map<String, Object> state(String pair, Long era, Long since) throws Exception;
         Map<String, Object> putState(String pair, long era, java.util.List<Object> put,
                                      boolean confirmed) throws Exception;
+        /** Tell the holder that the stored bytes did not match the record's checksum. Optional for
+         *  test/legacy transports; the real Android transport publishes the evidence so a holder
+         *  can repair a stale checksum or re-send a damaged stored copy. */
+        default void flagState(String pair, long era, java.util.List<Object> flag) throws Exception { }
         Map<String, Object> manifest(String folder, Map<String, Object> doc, boolean force,
                                      String device) throws Exception;
         byte[] getBlob(String sha) throws Exception;

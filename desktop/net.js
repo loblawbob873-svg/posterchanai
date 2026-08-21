@@ -117,8 +117,12 @@ async function connect(ssid, password){
     await run(['connection', 'up', 'id', ssid], { timeout: 60000 });
     return { ssid, reused: true };
   }
-  const args = ['device', 'wifi', 'connect', ssid];
-  if(password) args.push('--ask');
+  /* `--ask` is a GLOBAL nmcli option and must precede the object. Appending it after the SSID
+   * makes nmcli parse it as an argument to `device wifi connect` and reject every secured network
+   * from the live USB. The secret still travels only over stdin, never through argv. */
+  const args = password
+    ? ['--ask', 'device', 'wifi', 'connect', ssid]
+    : ['device', 'wifi', 'connect', ssid];
   await run(args, { timeout: 60000, stdin: password ? password + '\n' : undefined });
   return { ssid, reused: false };
 }

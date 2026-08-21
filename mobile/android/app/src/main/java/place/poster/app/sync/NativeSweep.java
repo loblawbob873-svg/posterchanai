@@ -467,6 +467,19 @@ public final class NativeSweep {
                 long[] got = download(net, fs, mk, path, R, now);
                 j.applied(path, R, stat(got, Json.str(R.get("csum"), "")), false);
                 rep.downloaded.add(path);
+            } catch (ChecksumMismatch e) {
+                /* A checksum failure must reach whoever still holds the source bytes. The page
+                 * executor has always published this flag; the native executor only logged it, so
+                 * it downloaded the same multi-GB copy from scratch on every sweep forever. */
+                try {
+                    Map<String, Object> row = new LinkedHashMap<String, Object>();
+                    row.put("d", pathD(path));
+                    String addr = SyncDiff.addressOf(R);
+                    row.put("bad", addr + (e.got == null || e.got.isEmpty() ? "" : "|" + e.got));
+                    List<Object> flag = new ArrayList<Object>(); flag.add(row);
+                    net.flagState(f.key, st.era, flag);
+                } catch (Exception ignored) { }
+                fail(rep, path, "download", e);
             } catch (Exception e) { fail(rep, path, "download", e); }
             j.maybe();
         }
@@ -591,6 +604,14 @@ public final class NativeSweep {
      * alone and the part file is discarded rather than trashed: those are bytes we could not
      * confirm, and putting them in the safety net makes the net less trustworthy.
      */
+    private static final class ChecksumMismatch extends java.io.IOException {
+        final String got;
+        ChecksumMismatch(String got) {
+            super("checksum mismatch after download — refusing to write it");
+            this.got = got;
+        }
+    }
+
     private static long[] download(SyncIo.Net net, SyncIo.Files fs, byte[] mk, String path,
                                    Map<String, Object> R, long now) throws Exception {
         List<Object> chunks = R.get("chunks") instanceof List ? Json.arr(R.get("chunks")) : null;
@@ -606,9 +627,15 @@ public final class NativeSweep {
             long cs = Json.num(R.get("cs"), 0);
             if (!csum.isEmpty() && cs > 0) {
                 long have = fs.partSize(path);
-                if (have > 0 && have % cs == 0) {
+                if (have > 0) {
+                    /* Keep only complete chunks. An interrupted write normally stops inside a
+                     * chunk; requiring exact divisibility restarted multi-GB downloads from zero.
+                     * The next write begins at the preceding boundary and overwrites the tail. */
                     long whole = have / cs;
-                    if (whole < chunks.size()) { skip = (int) whole; off = have; }
+                    if (whole > 0 && whole < chunks.size()
+                            && (expect < 0 || whole * cs < expect)) {
+                        skip = (int) whole; off = whole * cs;
+                    }
                 }
             } else {
                 fs.discardPart(path);   // or it is resumed onto the moment a csum appears
@@ -642,7 +669,7 @@ public final class NativeSweep {
             String got = fs.hashPart(path);
             if (got != null && !got.equals(csum)) {
                 fs.discardPart(path);
-                throw new java.io.IOException("checksum mismatch after download — refusing to write it");
+                throw new ChecksumMismatch(got);
             }
         }
         return fs.commitPart(path, mtime);

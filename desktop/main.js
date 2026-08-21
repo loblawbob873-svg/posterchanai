@@ -443,7 +443,11 @@ function createWindow() {
      *
      * `maximize` rather than nothing, so a compositor that does not pin the window for us still gets
      * a shell filling the display instead of a 1280x860 box in the middle. */
-    ...(SHELL_MODE ? { kiosk: false, resizable: false, movable: false } : {}),
+    /* A tiled Wayland client MUST accept the compositor's configure size. With `resizable:false`,
+     * sway correctly allocated 1920x1080 but Electron kept submitting its requested 1280x860
+     * buffer, leaving black strips on the right and bottom. The shell is still immovable and Sway
+     * controls its geometry; resizable here means "honour the compositor", not user window chrome. */
+    ...(SHELL_MODE ? { kiosk: false, resizable: true, movable: false } : {}),
     icon: path.join(__dirname, 'icon.png'),
     // Started by the login item: come up HIDDEN rather than showing and then hiding, which is a
     // window flashing on screen at every boot — the thing that makes people turn autostart off.
@@ -1150,14 +1154,33 @@ ipcMain.handle('pc:term:close', (e, id) => { fsGuard(e); return localterm.close(
 ipcMain.handle('pc:term:list', (e) => { fsGuard(e); return localterm.list(); });
 /* Output is PUSHED to every window rather than polled: a terminal that updates on a timer is one
  * you can watch your own keystrokes arrive late in. */
+const localTermRenderers = new WeakMap(); // webContents -> Map(session id, unsubscribe)
 ipcMain.handle('pc:term:attach', (e, id) => {
   fsGuard(e);
   const sid = String(id);
-  localterm.subscribe(sid, (ev) => {
-    for (const w of BrowserWindow.getAllWindows()) {
-      try { w.webContents.send('pc:term:data', Object.assign({ id: sid }, ev)); } catch (_) {}
-    }
-  });
+  const wc = e.sender;
+  let links = localTermRenderers.get(wc);
+  if (!links) {
+    links = new Map();
+    localTermRenderers.set(wc, links);
+    /* A renderer owns its subscriptions. Without this cleanup, reopening the PosterChan window
+     * leaves callbacks aimed at a dead page attached to every PTY it ever viewed. */
+    wc.once('destroyed', () => {
+      for (const off of links.values()) { try { off(); } catch (_) {} }
+      links.clear();
+    });
+  }
+  /* IDEMPOTENT PER RENDERER AND SESSION. The session strip calls attach each time a tab is chosen;
+   * adding another callback on every visit duplicated every byte (including the shell's input
+   * echo), and broadcasting each callback to every BrowserWindow made separate terminals collide.
+   * One requesting renderer gets one stream for this PTY. */
+  if (!links.has(sid)) {
+    const off = localterm.subscribe(sid, (ev) => {
+      if (wc.isDestroyed()) return;
+      try { wc.send('pc:term:data', Object.assign({ id: sid }, ev)); } catch (_) {}
+    });
+    links.set(sid, off);
+  }
   return true;
 });
 /* Every shell dies with the app. A session outliving the desktop is a process nobody can reach and

@@ -371,13 +371,13 @@ decryptBoot() {
 	for i in 1 2 3 4 5 6; do
 		printf "$DISK_PASSWORD" | cryptsetup luksKillSlot $1 $i
 	done
-	dd if=/dev/urandom of=/boot/$KEYFILE bs=1024 count=4
+	dd if=/dev/urandom of=/boot/$KEYFILE bs=1024 count=4 || return 1
 	chown root:root /boot/$KEYFILE
 	chmod 0400 /boot/$KEYFILE
 	echo
 	echo -e "\033[1;33mAdding new key......\033[0m"
 	echo
-	printf "$DISK_PASSWORD" | cryptsetup luksAddKey $1 /boot/$KEYFILE
+	printf '%s' "$DISK_PASSWORD" | cryptsetup luksAddKey "$1" /boot/$KEYFILE || return 1
 	echo "install_items+=\" /boot/unlock.sh /boot/$KEYFILE \"" >>/etc/dracut.conf
 	echo "omit_drivers+=\" nouveau \"" >>/etc/dracut.conf
 
@@ -385,6 +385,7 @@ decryptBoot() {
 	echo "#!/bin/bash" >/boot/unlock.sh
 	echo "systemd-cryptsetup attach $(echo $ROOT_MAPPER_NAME | grep luks | cut -d '/' -f4)  UUID=$(/sbin/blkid -s UUID -o value ${BTRFS}) /boot/$KEYFILE " >>/boot/unlock.sh
 	chmod +x /boot/unlock.sh
+	return 0
 }
 
 autoLogin() {
@@ -581,6 +582,10 @@ buildGentoo() {
 }
 
 finalizeInstall() {
+	# A bootloader/initramfs failure is an INSTALL failure. setup.sh used to continue into accounts
+	# and services after bootloader() returned non-zero, so the menu reported completion and the
+	# first honest error appeared only after reboot at the maintenance prompt.
+	sed -i '1i set -e' $TARGET/setup.sh
 	echo 'bash /usr/bin/gentoo.sh bootloader' >>$TARGET/setup.sh
 	echo 'bash /usr/bin/gentoo.sh accounts' >>$TARGET/setup.sh
 	echo 'bash /usr/bin/gentoo.sh services' >>$TARGET/setup.sh
@@ -935,7 +940,11 @@ liveISOinstall() {
 	# exists. `/boot/*` is excluded above so this is the only thing that writes there, and the
 	# EFI partition mounted at $TARGET/boot is never a delete target.
 	echo -e "${COLOR_CYAN}Installing the kernel${COLOR_RESET}"
-	sudo rsync -aHAX --exclude='initramfs*' --exclude='initrd*' "$KSRC"/ $TARGET/boot/ || {
+	# The ISO is commonly mounted as HFS+/ISO9660. Neither filesystem can supply Linux ACLs or
+	# extended attributes, and rsync reports that as code 23 when -A/-X are requested even though
+	# these boot files do not need either. That made this step abort with an EMPTY ESP before fstab
+	# or the bootloader were written. Preserve the ordinary metadata and hard links only.
+	sudo rsync -aH --exclude='initramfs*' --exclude='initrd*' "$KSRC"/ $TARGET/boot/ || {
 		echo -e "${COLOR_YELLOW}The kernel did not copy — the disk would not boot.${COLOR_RESET}"
 		read -p "Press enter key to Continue"
 		return 1
@@ -2716,12 +2725,13 @@ DESKTOP
 	# entire "clean out this machine's accounts and secrets" pass a few dozen lines above.
 	#
 	# `--conf /dev/null --confdir` with an empty directory is dracut's own way to say "this build
-	# starts from nothing". Not `--omit systemd-cryptsetup` — that would silence the error and leave
-	# the keyfile.
+	# starts from nothing". systemd-cryptsetup is nevertheless auto-selected on this system, and it
+	# has a hard dependency on the crypt module deliberately omitted for a public live image. Omit
+	# both sides: the empty configuration is what keeps the host keyfile out.
 	mkdir -p "$WORK/dracut.conf.d"
 	dracut --force --no-hostonly --nolvmconf --nomdadmconf \
 		--conf /dev/null --confdir "$WORK/dracut.conf.d" \
-		--add "dmsquash-live" --omit "crypt crypt-gpg crypt-loop" \
+		--add "dmsquash-live" --omit "crypt crypt-gpg crypt-loop systemd-cryptsetup" \
 		--kver "$KVER" "$WORK/iso/boot/initramfs.img" 2>&1 | tee -a "$LOG"
 	# PIPESTATUS, not the pipeline's — `tee` succeeds whatever dracut did.
 	if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
@@ -3005,8 +3015,12 @@ bootloader() {
 		fi
 		mkdir -p /boot/loader/entries
 		MACHINE_ID=$(cat /etc/machine-id)
-		KERNEL="kernel-$(ls /boot/$MACHINE_ID | grep gentoo | tail -1)"
-		KERNEL_VERSION=$(echo $KERNEL | cut -d '-' -f2-5)
+		# The directory name already IS the complete kernel version. Splitting `kernel-$version`
+		# into a fixed number of dash-separated fields truncated versions such as
+		# 6.18.43-gentoo-dist-bin to 6.18.43-gentoo-dist, so the entry named files that did not exist.
+		KERNEL_VERSION="$(find "/boot/$MACHINE_ID" -mindepth 1 -maxdepth 1 -type d \
+			-printf '%f\n' 2>/dev/null | sort -V | tail -1)"
+		KERNEL="kernel-$KERNEL_VERSION"
 		# THE VERSION IS READ FROM A DIRECTORY, SO A MISSING DIRECTORY IS AN EMPTY VERSION -- and
 		# every line below then builds a path with a hole in it. The loader entry names
 		# `/<machine-id>//linux`, `mkdir -p /boot/$MACHINE_ID/$KERNEL_VERSION` makes a directory
@@ -3034,12 +3048,14 @@ bootloader() {
 		OFFSET=$(btrfs inspect-internal map-swapfile /swap/swap -r)
 		UUID=$(/usr/bin/findmnt -no UUID -T /swap/swap | head -1)
 
-		KERNEL_COMMAND_LINE="options quiet splash usbcore.quirks=0bda:8156,0bda:8153 rd.luks.key=/boot/keyfile.key mitigations=off resume=UUID=$UUID resume_offset=$OFFSET  root=UUID=$(/sbin/blkid -s UUID -o value $ROOT_MAPPER_NAME) rootflags=subvol=@$ROOT_NAME rw "
+		KERNEL_COMMAND_LINE="quiet splash usbcore.quirks=0bda:8156,0bda:8153 rd.luks.key=/boot/keyfile.key mitigations=off resume=UUID=$UUID resume_offset=$OFFSET root=UUID=$(/sbin/blkid -s UUID -o value $ROOT_MAPPER_NAME) rootflags=subvol=@$ROOT_NAME rw"
 		rm -f /etc/crypttab
 		echo >/etc/dracut.conf
 		mkdir -p /boot/$MACHINE_ID/$KERNEL_VERSION
 
-		KERNEL_COMMAND_LINE="$KERNEL_COMMAND_LINE: rd.luks.uuid=$(/sbin/blkid -s UUID -o value ${BTRFS})"
+	# This is another kernel argument, not punctuation on the preceding `rw`.  The old colon
+	# produced a literal `rw:` argument and left the encrypted volume discovery to accident.
+	KERNEL_COMMAND_LINE="$KERNEL_COMMAND_LINE rd.luks.uuid=luks-$(/sbin/blkid -s UUID -o value ${BTRFS})"
         dracut_modules=" crypt systemd-cryptsetup dm rootfs-block "
         echo "add_dracutmodules+=\" $dracut_modules \"" >> /etc/dracut.conf  
 		echo "kernel_cmdline+=\" $KERNEL_COMMAND_LINE \" " >>/etc/dracut.conf
@@ -3047,14 +3063,39 @@ bootloader() {
 		echo "$(echo $ROOT_MAPPER_NAME | sed 's/\/dev\/mapper\///') UUID=$(/sbin/blkid -s UUID -o value ${BTRFS})  none luks" >/etc/crypttab
 
 		if [ "$AUTO_DECRYPT" == "True" ]; then
-			decryptBoot "$BTRFS"
+			if ! decryptBoot "$BTRFS"; then
+				echo -e "\033[1;31mCould not install the encrypted-root keyfile.\033[0m"
+				return 1
+			fi
 		fi
 
         echo -e "\033[1;33mDeleting old Kernel Modules\033[0m"
         echo
         cd /usr/lib/modules
         ls /usr/lib/modules | grep -Evi "$KERNEL_VERSION" | xargs -r rm -r
-		dracut --regenerate-all -f
+		# REBUILD THE INITRD THE LOADER ACTUALLY USES. `--regenerate-all` writes the conventional
+		# /boot/initramfs-$KERNEL_VERSION.img, but the entry below boots the Boot Loader Spec path
+		# /boot/$MACHINE_ID/$KERNEL_VERSION/initrd.  liveISOinstall() had already put a preliminary
+		# initrd there before crypttab, the keyfile and the final kernel command line existed, so the
+		# regenerated encrypted-root image sat unused while systemd-boot loaded the old one and
+		# dropped into maintenance mode.
+		INITRD="/boot/$MACHINE_ID/$KERNEL_VERSION/initrd"
+		if ! dracut --force --add "$dracut_modules" "$INITRD" "$KERNEL_VERSION"; then
+			echo -e "\033[1;31mCould not build the encrypted-root initramfs at $INITRD.\033[0m"
+			return 1
+		fi
+		# Prove the automatic-unlock artifact, not some other initramfs, carries its LUKS recipe and
+		# key. Passphrase installs deliberately have no embedded keyfile; dracut's successful exit is
+		# their proof and also keeps this function testable with a stub initramfs.
+		if [ "$AUTO_DECRYPT" == "True" ]; then
+			if ! lsinitrd "$INITRD" 2>/dev/null | grep -q 'etc/crypttab' \
+				|| ! lsinitrd "$INITRD" 2>/dev/null | grep -q 'boot/keyfile.key' \
+				|| ! lsinitrd "$INITRD" 2>/dev/null | grep -q 'systemd-cryptsetup'; then
+				echo -e "\033[1;31m$INITRD is missing crypttab, the keyfile, or systemd-cryptsetup.\033[0m"
+				echo -e "\033[1;31mInstallation stopped instead of writing an unbootable entry.\033[0m"
+				return 1
+			fi
+		fi
 		mkdir -p /boot/$MACHINE_ID/$KERNEL_VERSION
 		plymouth-set-default-theme solar
 

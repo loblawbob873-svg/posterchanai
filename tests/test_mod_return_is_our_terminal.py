@@ -57,6 +57,14 @@ class ModReturnOpensOurs(unittest.TestCase):
         i = src.index("'pc:terminal'")
         self.assertNotIn("window.open", src[i:i + 160])
 
+    def test_ctrl_enter_does_not_steal_send_from_an_editor(self):
+        """The OS handler runs in capture, before a composer can consume Ctrl+Enter itself."""
+        src = OS_JS.read_text()
+        i = src.index("if(e.ctrlKey && !e.altKey && !e.metaKey")
+        guard = src[i:src.index("openTerminalHere();", i)]
+        self.assertIn("!typing", guard)
+        self.assertIn("!e.defaultPrevented", guard)
+
 
 class TheWayBackSurvives(unittest.TestCase):
     """A shell that will not start is the case a bare terminal exists for."""

@@ -333,6 +333,17 @@ public final class SyncNet implements SyncIo.Net {
         return statePost(pair, extra);
     }
 
+    /** Publish checksum-failure evidence on the record. Without this the native engine retries the
+     * same multi-gigabyte bad/stale copy every sweep and the device holding the source never learns
+     * that it must repair it. */
+    @Override
+    public void flagState(String pair, long era, List<Object> flag) throws IOException, EraChanged {
+        Map<String, Object> extra = new LinkedHashMap<String, Object>();
+        extra.put("era", era);
+        extra.put("flag", flag);
+        statePost(pair, extra);
+    }
+
     private Map<String, Object> statePost(String pair, Map<String, Object> extra)
             throws IOException, EraChanged {
         Map<String, Object> body = new LinkedHashMap<String, Object>();
