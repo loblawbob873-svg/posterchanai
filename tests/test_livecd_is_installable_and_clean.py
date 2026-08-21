@@ -598,7 +598,7 @@ class InstallingTheLiveImageIsItsOwnJob(unittest.TestCase):
         from). Run against an empty one, kernel-install has no directory to write into."""
         self.assertIn("systemd-machine-id-setup", self.code)
         self.assertLess(self.code.index("systemd-machine-id-setup"),
-                        self.code.index("kernel-install"),
+                        self.code.index('mkdir -p "$TARGET/boot/$MID/$KVER"'),
                         "the identity is minted after the kernel is installed against it")
 
     def test_a_real_initramfs_is_built_for_the_target(self):

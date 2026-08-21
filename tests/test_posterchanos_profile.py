@@ -672,6 +672,23 @@ class TheMachineCallsItselfPosterChanOS(unittest.TestCase):
         tool has heard of."""
         self.assertIn("ID_LIKE=gentoo", self.src)
 
+    def test_os_release_has_one_real_file_and_one_standard_link(self):
+        """Two compatibility symlinks pointing at each other make a complete root fail
+        systemd's switch-root OS-tree test."""
+        start = self.src.index("_pc_write_os_release() {")
+        body = self.src[start:self.src.index("\n}", start)]
+        self.assertIn('rm -f "$ROOT/etc/os-release" "$ROOT/usr/lib/os-release"', body)
+        self.assertIn('cat >"$ROOT/usr/lib/os-release"', body)
+        self.assertIn('ln -s ../usr/lib/os-release "$ROOT/etc/os-release"', body)
+        self.assertNotIn('ln -sf ../etc/os-release $TARGET/usr/lib/os-release', body)
+
+    def test_unreadable_os_identity_stops_before_root_is_locked(self):
+        start = self.src.index("finalizeInstall() {")
+        body = self.src[start:self.src.index("\n}", start)]
+        check = body.index("Installed root has no readable os-release")
+        lock = body.index("passwd -l root")
+        self.assertLess(check, lock)
+
     def test_the_machine_identifiers_are_left_alone(self):
         """These are NOT branding and must never be recapitalised: the chroot marker, the plymouth
         theme directory, the portage mask filename and the package atom. The atom in particular has
@@ -943,7 +960,7 @@ class TheInstalledMachineHasAKernelWhereTheBootloaderLOOKS(unittest.TestCase):
         fn = self._fn("liveISOinstall")
         self.assertIn('echo "root:$ROOT_PASSWORD" | sudo chroot $TARGET /usr/sbin/chpasswd', fn)
         # The CALL, not the comment above it that names the same function.
-        self.assertLess(fn.index("chpasswd"), fn.index("\n\tfinalizeInstall\n"),
+        self.assertLess(fn.index("chpasswd"), fn.index("\n\tfinalizeInstall || return 1\n"),
                         "root is unlocked only by the chain of steps that can fail")
 
     def test_the_bootloader_never_builds_a_path_out_of_an_empty_version(self):

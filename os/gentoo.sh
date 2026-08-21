@@ -581,6 +581,23 @@ buildGentoo() {
 	finalizeInstall
 }
 
+_pc_write_os_release() {
+	local ROOT="${1:-}"
+	[ -n "$ROOT" ] || return 1
+	rm -f "$ROOT/etc/os-release" "$ROOT/usr/lib/os-release"
+	mkdir -p "$ROOT/etc" "$ROOT/usr/lib"
+	cat >"$ROOT/usr/lib/os-release" <<-'OSREL'
+		NAME="PosterChanOS"
+		PRETTY_NAME="PosterChanOS"
+		ID=posterchanos
+		ID_LIKE=gentoo
+		ANSI_COLOR="1;36"
+		HOME_URL="https://poster.place/"
+	OSREL
+	ln -s ../usr/lib/os-release "$ROOT/etc/os-release"
+	[ -s "$ROOT/etc/os-release" ] && grep -q '^ID=posterchanos$' "$ROOT/etc/os-release"
+}
+
 finalizeInstall() {
 	# A bootloader/initramfs failure is an INSTALL failure. setup.sh used to continue into accounts
 	# and services after bootloader() returned non-zero, so the menu reported completion and the
@@ -606,17 +623,18 @@ finalizeInstall() {
 	# `ID_LIKE=gentoo` is load-bearing: it is how portage tooling, bug reporters and anything
 	# reading os-release keep treating this as the Gentoo it actually is. `NAME`/`PRETTY_NAME`
 	# are the display strings, and those get the real capitalisation.
-	cat >$TARGET/etc/os-release <<-'OSREL'
-		NAME="PosterChanOS"
-		PRETTY_NAME="PosterChanOS"
-		ID=posterchanos
-		ID_LIKE=gentoo
-		ANSI_COLOR="1;36"
-		HOME_URL="https://poster.place/"
-	OSREL
-	# Gentoo ships os-release as a symlink into /usr/lib; the heredoc above would otherwise
-	# rewrite the file it points at, so the distro's own copy stays intact underneath.
-	ln -sf ../etc/os-release $TARGET/usr/lib/os-release 2>/dev/null || true
+	# MAKE ONE REAL FILE BEFORE WRITING IT. Gentoo normally has /etc/os-release ->
+	# ../usr/lib/os-release. Writing through that link is fine until a LiveCD image happens to carry
+	# the inverse compatibility link too; then the two names form a loop and systemd refuses the
+	# otherwise complete root with “does not seem to be an OS tree”. Remove both ends first, write
+	# the canonical /usr file, and only then recreate the standard /etc link.
+	_pc_write_os_release "$TARGET"
+	# Test by FOLLOWING the exact path switch_root tests. A dangling or circular symlink is not an
+	# OS identity and must stop the install before root is locked and the live environment is gone.
+	if [ ! -s "$TARGET/etc/os-release" ] || ! grep -q '^ID=posterchanos$' "$TARGET/etc/os-release"; then
+		echo -e "\033[1;31mInstalled root has no readable os-release — refusing to lock root or report success.\033[0m"
+		return 1
+	fi
 	cp -f gentoo.sh $TARGET/usr/bin/gentoo.sh
 	plymouthTheme
 	chmod +x $TARGET/usr/bin/gentoo.sh
@@ -931,9 +949,15 @@ liveISOinstall() {
 	# The squashfs carries no target ESP state. /boot is excluded and the matching kernel/initramfs
 	# are installed separately below from the live medium.
 	echo -e "${COLOR_CYAN}Copying the system — this is the slow part.${COLOR_RESET}"
-	sudo rsync -aH --delete --info=progress2 \
+	sudo rsync -aH --one-file-system --info=progress2 \
 		--exclude=/boot/*** $RSYNC_EXCLUDES "$ROOTSRC/" $TARGET/
 	local RC=$?
+
+	# Older live images can carry the exact circular compatibility pair repaired in
+	# finalizeInstall(): /etc/os-release -> /usr/lib/os-release -> /etc/os-release. Normalize it
+	# before the OS-tree assertion so this installer can repair the disc it is currently running
+	# from instead of requiring a newer disc to install the newer disc.
+	_pc_write_os_release "$TARGET" || RC=1
 
 	# A directory is not an OS tree. Assert the same files systemd's switch-root requires, or stop
 	# while the live environment still exists and can explain the copy failure.
@@ -1092,7 +1116,7 @@ liveISOinstall() {
 	fi
 	[ -f /tmp/disk ] && sudo cp -f /tmp/disk $TARGET/etc/ 2>/dev/null
 
-	finalizeInstall
+	finalizeInstall || return 1
 	cd
 }
 
@@ -3121,6 +3145,13 @@ bootloader() {
 		# regenerated encrypted-root image sat unused while systemd-boot loaded the old one and
 		# dropped into maintenance mode.
 		INITRD="/boot/$MACHINE_ID/$KERNEL_VERSION/initrd"
+		# PLYMOUTH IS EMBEDDED IN THE INITRAMFS. Selecting the PosterChan theme after dracut means
+		# this boot still contains Gentoo's default and the new choice appears only after some later
+		# kernel rebuild. Choose it first, then build the image that systemd-boot actually names.
+		if ! plymouth-set-default-theme solar; then
+			echo -e "\033[1;31mCould not select the PosterChanOS boot splash.\033[0m"
+			return 1
+		fi
 		if ! dracut --force --add "$dracut_modules" "$INITRD" "$KERNEL_VERSION"; then
 			echo -e "\033[1;31mCould not build the encrypted-root initramfs at $INITRD.\033[0m"
 			return 1
@@ -3138,8 +3169,6 @@ bootloader() {
 			fi
 		fi
 		mkdir -p /boot/$MACHINE_ID/$KERNEL_VERSION
-		plymouth-set-default-theme solar
-
 		echo -e "\033[1;33mMachineID=$MACHINE_ID\033[0m"
 		echo -e "\033[1;33mKERNEL: $KERNEL\033[0m"
 		echo -e "\033[1;33mKERNEL_VERSION: $KERNEL_VERSION\033[0m"
