@@ -260,7 +260,17 @@ public class ThreadListActivity extends PcActivity {
          * it is. Asked FIRST, because it explains the null the two branches below would otherwise
          * misread. */
         if (!HasRole.smsCapable(this)) return getString(R.string.sms_no_sim);
-        if (cur == null || cur.isEmpty()) return getString(R.string.sms_default_none);
+        /* AN EMPTY `getDefaultSmsPackage` NO LONGER GETS ITS OWN SENTENCE.
+         *
+         * It returns null on a device with no telephony — handled above — and ALSO on a phone where
+         * the role simply has not been assigned. Two different states, one sentence, and it told
+         * somebody to go and set a default they had been trying to set all day. On a phone that
+         * cannot be given the role, being instructed to give it is the least useful thing the screen
+         * can say. What is left below is accurate without claiming to know why. */
+        /* Both remaining lines NAME the package Android reported, so neither can be used when there
+         * is nothing to name — `sms_default_is` would render "messages app is , not PosterChan".
+         * With no name, say the part that is true without it. */
+        if (cur == null || cur.isEmpty()) return getString(R.string.sms_not_default);
         if (role) return getString(R.string.sms_role_split, cur);
         return getString(R.string.sms_default_is, cur);
     }

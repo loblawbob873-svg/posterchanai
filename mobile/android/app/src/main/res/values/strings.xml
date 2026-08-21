@@ -87,7 +87,6 @@
          null on one — which the "nobody has set a default" branch below would otherwise report as
          something the person should go and fix. It shows what the phone publishes instead. -->
     <string name="sms_no_sim">This device has no SIM, so it cannot be the messages app. It shows the texts your phone publishes to your relay.</string>
-    <string name="sms_default_none">Android has not named a messages app for this phone yet. Set PosterChan in Settings \u2192 Apps \u2192 Default apps \u2192 SMS.</string>
     <string name="sms_failed">Not sent</string>
     <string name="sms_sending">Sending</string>
     <string name="sms_to">To</string>

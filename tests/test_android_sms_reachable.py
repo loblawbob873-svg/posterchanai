@@ -307,14 +307,27 @@ class TheNativeScreenNamesWhatAndroidNamed(unittest.TestCase):
                       "it cannot tell a role that was never granted from one the message store "
                       "disagrees with")
 
-    def test_the_three_answers_are_three_sentences(self):
+    def test_each_answer_is_its_own_sentence(self):
+        """`sms_default_none` was REMOVED on purpose — see the note in whyNotDefault. An empty
+        `getDefaultSmsPackage` means "no telephony" (answered above it) or "the role is unassigned",
+        and one sentence for both told somebody to go and set a default they had spent a day trying
+        to set. What is left says the true part without claiming to know why."""
         body = method(self.src, "private String whyNotDefault")
-        for k in ("sms_default_none", "sms_role_split", "sms_default_is"):
+        for k in ("sms_no_sim", "sms_not_default", "sms_role_split", "sms_default_is"):
             self.assertIn(k, body, k)
+        self.assertNotIn("sms_default_none", body)
+
+    def test_no_line_names_a_package_it_does_not_have(self):
+        """`sms_default_is` interpolates the package Android reported; reached with nothing to name
+        it renders "messages app is , not PosterChan"."""
+        body = method(self.src, "private String whyNotDefault")
+        i = body.index("sms_not_default")
+        j = body.index("sms_default_is")
+        self.assertLess(i, j, "the empty-name case is checked after a line that needs a name")
 
     def test_every_one_of_them_exists(self):
         x = (MAIN / "res/values/strings.xml").read_text()
-        for k in ("sms_default_none", "sms_role_split", "sms_default_is"):
+        for k in ("sms_no_sim", "sms_not_default", "sms_role_split", "sms_default_is"):
             self.assertIn('name="%s"' % k, x)
         # The two that name a package must have somewhere to put it.
         for k in ("sms_role_split", "sms_default_is"):
@@ -334,7 +347,7 @@ class TheNativeScreenNamesWhatAndroidNamed(unittest.TestCase):
         self.assertIn("smsCapable", body,
                       "the screen cannot tell a tablet from a phone with no default set")
         self.assertIn("sms_no_sim", body)
-        self.assertLess(body.index("smsCapable"), body.index("sms_default_none"),
+        self.assertLess(body.index("smsCapable"), body.index("sms_not_default"),
                         "the no-default branch is reached before the no-SIM one, so a tablet still "
                         "gets told to choose a messages app")
 

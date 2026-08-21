@@ -125,9 +125,17 @@
       return 'Android says this phone\u2019s messages app is ' + st.defaultPkg + ', not PosterChan, '
            + 'so new messages arrive there. Set it in Settings \u2192 Apps \u2192 Default apps '
            + '\u2192 SMS.';
-    if(!st.defaultPkg)
-      return 'Android has not named a messages app for this phone. Set PosterChan in Settings '
-           + '\u2192 Apps \u2192 Default apps \u2192 SMS.';
+    /* AN EMPTY `defaultPackage` USED TO GET ITS OWN SENTENCE, and it earned its removal.
+     *
+     * `getDefaultSmsPackage()` returns null on a device with no telephony — which is why a tablet
+     * was told to go and pick a messages app — and it ALSO returns null on phones where the role
+     * simply has not been assigned. Two very different states, one sentence, and the sentence
+     * instructed somebody to do a thing that in one case is impossible and in the other they had
+     * already done. It was on screen for a whole day of "the checkbox in settings never works".
+     *
+     * The device-has-no-radio case is handled before this function is reached. What is left is a
+     * phone that is not the default, which the line below already says — accurately, and without
+     * claiming to know why. */
     return 'PosterChan is not the default SMS app on this phone, so new messages arrive in '
          + 'whichever app is. Set it in Settings \u2192 Apps \u2192 Default apps \u2192 SMS.';
   }
