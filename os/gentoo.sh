@@ -854,6 +854,115 @@ liveOSrestore() {
 	cd
 }
 
+# ── INSTALL THE LIVE IMAGE ONTO A DISK ────────────────────────────────────────────────────────────
+#
+# A SEPARATE OPTION FROM "Backup/Restore Live OS", DELIBERATELY.
+#
+# `liveOSrestore` clones a RUNNING INSTALLED SYSTEM onto a disk, and it is good at that. Booted from
+# the ISO it is being asked to do a different job, and it fails in two ways that are not bugs in it:
+#
+#   * `rsync[sender] change_dir /boot failed: no such directory` -- a live boot has no populated
+#     /boot to copy FROM. The kernel came off the disc, not out of a mounted boot partition.
+#   * `delete_file: rmdir{boot} failed: device or resource busy` -- `--delete` then tries to remove
+#     $TARGET/boot, which is the EFI partition the installer has just mounted there.
+#
+# Both are the same misunderstanding: on a live medium the SOURCE of the system and the SOURCE of the
+# kernel are two different places. So this is its own path rather than a flag on that one, and
+# `liveOSrestore` is left exactly as it was.
+liveISOinstall() {
+	clear
+	echo -e "${COLOR_CYAN}═══════════════════════════════════════════════════════${COLOR_RESET}"
+	echo -e "${COLOR_BOLD}  ⚡ INSTALL THIS LIVE IMAGE ONTO A DISK ⚡${COLOR_RESET}"
+	echo -e "${COLOR_CYAN}═══════════════════════════════════════════════════════${COLOR_RESET}"
+	echo
+
+	# WHERE THE KERNEL IS, before anything is written. A live boot keeps the medium mounted, and
+	# which path depends on the initramfs: dracut's live modules use /run/initramfs/live, and a disc
+	# mounted by hand is anybody's guess. Found FIRST, because an install that copies 4GB and then
+	# discovers it has no kernel has wasted the only thing that is slow here.
+	local LIVEDIR=""
+	local d
+	for d in /run/initramfs/live /run/rootfsbase /mnt/cdrom /media/cdrom; do
+		[ -d "$d/boot" ] && { LIVEDIR="$d"; break; }
+	done
+	# The squashfs itself may carry /boot -- it is a copy of the machine the ISO was built on -- and
+	# that is the better source when it is there, because it is the kernel this userland was built
+	# against rather than the one the disc happens to boot with.
+	local KSRC=""
+	if [ -n "$(ls -A /boot 2>/dev/null)" ]; then KSRC="/boot"
+	elif [ -n "$LIVEDIR" ]; then KSRC="$LIVEDIR/boot"
+	fi
+	if [ -z "$KSRC" ]; then
+		echo -e "${COLOR_YELLOW}No kernel found on this live medium — looked in /boot and${COLOR_RESET}"
+		echo -e "${COLOR_YELLOW}/run/initramfs/live/boot. Nothing was written.${COLOR_RESET}"
+		read -p "Press enter key to Continue"
+		return 1
+	fi
+	echo -e "${COLOR_YELLOW}Kernel source: $KSRC${COLOR_RESET}"
+
+	setDevices
+	partitions
+	systemMounts
+
+	# ---------------------------------------------------------------- the system
+	#
+	# `--one-file-system` is what makes this safe on a live boot without listing every mount by hand:
+	# the squashfs, the overlay's upper directory, the mounted ISO and $TARGET itself are all on
+	# other filesystems, so none of them is followed. RSYNC_EXCLUDES still applies for the things
+	# that ARE on the root filesystem and should not travel.
+	#
+	# NO `--delete`. The target was just partitioned and is empty, so there is nothing to delete --
+	# and it is `--delete` that tries to remove $TARGET/boot out from under the EFI partition mounted
+	# on it.
+	echo -e "${COLOR_CYAN}Copying the system — this is the slow part.${COLOR_RESET}"
+	sudo rsync -aHAX --one-file-system --info=progress2 \
+		--exclude=/boot/* $RSYNC_EXCLUDES / $TARGET/
+	local RC=$?
+
+	if [ "$RC" -ne 0 ] || [ ! -d "$TARGET/etc" ] || [ ! -d "$TARGET/usr" ]; then
+		echo
+		echo -e "${COLOR_YELLOW}The copy did not complete — nothing was installed.${COLOR_RESET}"
+		if ! mountpoint -q "$TARGET" 2>/dev/null; then
+			echo -e "${COLOR_YELLOW}$TARGET is not a mount point, so this was writing into RAM.${COLOR_RESET}"
+		fi
+		read -p "Press enter key to Continue"
+		return 1
+	fi
+
+	# ---------------------------------------------------------------- the kernel
+	#
+	# Copied SEPARATELY and from wherever it actually lives, which is the whole reason this function
+	# exists. `/boot/*` is excluded above so this is the only thing that writes there, and the
+	# EFI partition mounted at $TARGET/boot is never a delete target.
+	echo -e "${COLOR_CYAN}Installing the kernel${COLOR_RESET}"
+	sudo rsync -aHAX "$KSRC"/ $TARGET/boot/ || {
+		echo -e "${COLOR_YELLOW}The kernel did not copy — the disk would not boot.${COLOR_RESET}"
+		read -p "Press enter key to Continue"
+		return 1
+	}
+
+	# THE LIVE SESSION'S OWN ACCOUNT DOES NOT BELONG ON AN INSTALL. `live` is passwordless and in
+	# wheel with NOPASSWD sudo, which is right for a disc anybody can pick up and wrong for a machine
+	# somebody keeps. accounts() (via finalizeInstall) creates the real user.
+	sudo sed -i '/^live:/d' $TARGET/etc/passwd $TARGET/etc/shadow $TARGET/etc/group 2>/dev/null
+	sudo rm -f $TARGET/etc/sudoers.d/live 2>/dev/null
+	sudo rm -rf $TARGET/home/live 2>/dev/null
+	# …and the autologin that names it, or the installed machine tries to log in an account that is
+	# no longer there — which is a login prompt, and the exact failure the ISO builder was fixed for.
+	sudo rm -f $TARGET/etc/systemd/system/getty@tty1.service.d/override.conf 2>/dev/null
+
+	fstab
+	if [ -f "$PCOS_TREE/gentoo.sh" ]; then
+		sudo cp -f "$PCOS_TREE/gentoo.sh" $TARGET/usr/bin/ 2>/dev/null || true
+	elif [ -f /usr/local/share/posterchanos/gentoo.sh ]; then
+		sudo cp -f /usr/local/share/posterchanos/gentoo.sh $TARGET/usr/bin/ 2>/dev/null || true
+	fi
+	[ -f /tmp/disk ] && sudo cp -f /tmp/disk $TARGET/etc/ 2>/dev/null
+
+	finalizeInstall
+	cd
+}
+
 backupOS() {
 	clear
 	echo
@@ -2626,6 +2735,7 @@ menu() {
 	echo -e "\033[1;35m═══════════════════════════════════════════════════════\033[0m"
 	echo
 	echo -e "\033[1;33m[6] ▶ Backup/Restore Live OS\033[0m"
+	echo -e "\033[1;36m[9] ▶ Install this Live image to a disk\033[0m"
 	echo -e "\033[1;32m[7] ▶ Backup OS to Build Server\033[0m"
 	echo -e "\033[1;36m[8] ▶ Tools and Tweaks\033[0m"
 	echo
@@ -2672,6 +2782,11 @@ menu() {
 	
 		liveOSrestore "$HARD_DISK" $ROOT_MAPPER_NAME "none" "none" "$ROOT_NAME"
 
+	elif [[ $choice = 9 ]]; then
+		clear
+		liveISOinstall
+		read -p "Press enter key to Continue"
+		menu
 	elif [[ $choice = 7 ]]; then
 		clear
 		backupOS
@@ -2921,6 +3036,8 @@ elif [ "$1" = "fstab" ]; then
 	setDevices
 	TARGET=/
 	fstab
+elif [ "$1" = "install-live" ]; then
+	liveISOinstall
 elif [ "$1" = "livecd" ]; then
 	# Scriptable: PC_ISO_OUT / PC_ISO_HOME / PC_ISO_CLEAN answer the three questions, and an
 	# unanswered PC_ISO_CLEAN means CLEAN -- see liveCD.

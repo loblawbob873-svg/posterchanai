@@ -508,3 +508,74 @@ class AnUnattendedBuildIsStillAScrubbedOne(unittest.TestCase):
 
     def test_there_is_a_way_in_that_is_not_the_menu(self):
         self.assertIn('elif [ "$1" = "livecd" ]; then', self.src)
+
+
+class InstallingTheLiveImageIsItsOwnJob(unittest.TestCase):
+    """A LIVE ISO IS NOT A RUNNING INSTALLED SYSTEM, and `liveOSrestore` assumes it is.
+
+    Booted from the disc that clone path fails two ways, neither of them a bug in it:
+
+        rsync[sender] change_dir /boot failed: no such directory
+        delete_file: rmdir{boot} failed: device or resource busy
+
+    The first is that a live boot has no populated /boot to copy FROM -- the kernel came off the
+    medium. The second is `--delete` trying to remove $TARGET/boot, which is the EFI partition the
+    installer just mounted there. Both are the same misunderstanding: on a live medium the source of
+    the SYSTEM and the source of the KERNEL are two different places.
+
+    So this is a separate option, and `liveOSrestore` keeps its own behaviour -- "I don't want to
+    break how we do liveRestore".
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = GENTOO.read_text()
+        i = cls.src.index("\nliveISOinstall() {")
+        cls.fn = cls.src[i:cls.src.index("\n}", i)]
+
+    def test_the_old_path_is_untouched(self):
+        i = self.src.index("\nliveOSrestore() {")
+        old = self.src[i:self.src.index("\n}", i)]
+        self.assertIn("rsync -aHAX --delete /boot/", old.replace("sudo ", ""),
+                      "liveOSrestore's own /boot step was changed — that is the clone path")
+
+    def test_the_kernel_is_looked_for_before_anything_is_written(self):
+        """An install that copies 4GB and THEN finds it has no kernel has wasted the only slow step."""
+        self.assertLess(self.fn.index("No kernel found"), self.fn.index("Copying the system"))
+
+    def test_it_looks_where_a_live_boot_actually_keeps_the_medium(self):
+        self.assertIn("/run/initramfs/live", self.fn)
+
+    def test_the_system_copy_never_deletes(self):
+        """`--delete` is what tries to remove $TARGET/boot out from under the mounted EFI
+        partition. The target was just partitioned, so there is nothing to delete anyway."""
+        body = self.fn[self.fn.index("Copying the system"):]
+        first = body[:body.index("RC=$?")]
+        self.assertNotIn("--delete", first)
+
+    def test_it_does_not_follow_the_live_mounts(self):
+        """--one-file-system is what keeps the squashfs, the overlay, the mounted ISO and $TARGET
+        itself out of the copy without listing every one of them by hand."""
+        self.assertIn("--one-file-system", self.fn)
+
+    def test_the_kernel_is_copied_separately(self):
+        self.assertIn("--exclude=/boot/*", self.fn)
+        self.assertIn('"$KSRC"/ $TARGET/boot/', self.fn)
+
+    def test_the_live_account_does_not_land_on_the_installed_machine(self):
+        """`live` is passwordless and in wheel with NOPASSWD sudo -- right for a disc anybody can
+        pick up, wrong for a machine somebody keeps."""
+        self.assertIn("/^live:/d", self.fn)
+        self.assertIn("sudoers.d/live", self.fn)
+
+    def test_the_autologin_naming_it_goes_too(self):
+        """An autologin naming an account that is no longer there is a login prompt -- the exact
+        failure the ISO builder was fixed for."""
+        self.assertIn("getty@tty1.service.d/override.conf", self.fn)
+
+    def test_the_copy_is_checked_before_the_install_continues(self):
+        self.assertIn("did not complete", self.fn)
+        self.assertIn("not a mount point", self.fn)
+
+    def test_there_is_a_way_in_that_is_not_the_menu(self):
+        self.assertIn('elif [ "$1" = "install-live" ]; then', self.src)
