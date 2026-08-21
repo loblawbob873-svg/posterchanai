@@ -584,7 +584,9 @@ def test_the_client_detaches_on_leaving_and_never_kills():
     body = js[i:i + 600]
     assert "_bye()" in body and "t: 'close'" not in body, (
         "unmount kills the session instead of detaching from it")
-    assert "localStorage" in js and "pc_tty_sid" in js, "the session id is not kept across a reload"
+    assert "sessionStorage" in js and "pc_tty_sid" in js, "the session id is not kept across a reload"
+    assert "localStorage.setItem(SKEY()" not in js, \
+        "terminal tabs share one session pointer and collide with each other's input"
     assert "visibilitychange" in js, "a phone waking up waits out the backoff"
     assert "resume: sid" in js, "the reconnect does not reattach"
 

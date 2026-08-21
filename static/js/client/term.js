@@ -21,7 +21,7 @@
  * A SESSION IS A TMUX SESSION. The PTY lives on the server, not in this tab: the socket dropping —
  * routine over Tor, and routine on a phone that locks — leaves the shell running, and coming back
  * reattaches to it and replays what was missed. So this file keeps the session id (per instance, in
- * localStorage), reconnects on its own with a backoff, and offers any shell the ACCOUNT still has
+ * sessionStorage), reconnects on its own with a backoff, and offers any shell the ACCOUNT still has
  * running when there is no id to hand — the case a reload or a second device leaves you in.
  *
  * Detach and Kill are therefore two different buttons and always will be. One leaves your build
@@ -75,14 +75,17 @@
     // having worked — see the ready handler.
     let provenT = null;
 
-    /* The session id is kept PER INSTANCE — sessions live in one node's process, so carrying an id
-     * from another instance can only ever produce a "that session is no longer running". */
+    /* The session id is kept PER BROWSER TAB AND INSTANCE. localStorage is shared by every tab:
+     * opening a second Terminal made it recall and attach to the first one's PTY, so both windows
+     * wrote into the same shell and each rendered the same echo (the reported "double typing").
+     * sessionStorage survives reloads but is isolated between tabs/windows, which is exactly the
+     * lifetime of this terminal view. Running shells remain discoverable through the session list. */
     const SKEY = () => 'pc_tty_sid:' + (window.__PC_API_BASE__ || location.origin);
     function _remember(id){
       sid = id || '';
-      try{ sid ? localStorage.setItem(SKEY(), sid) : localStorage.removeItem(SKEY()); }catch(_){}
+      try{ sid ? sessionStorage.setItem(SKEY(), sid) : sessionStorage.removeItem(SKEY()); }catch(_){}
     }
-    function _recall(){ try{ return localStorage.getItem(SKEY()) || ''; }catch(_){ return ''; } }
+    function _recall(){ try{ return sessionStorage.getItem(SKEY()) || ''; }catch(_){ return ''; } }
 
     // Character cell width scales with the screen: a fixed 14px leaves a phone with ~27 columns,
     // which is too narrow for `ls -l`, let alone anything that draws a box.

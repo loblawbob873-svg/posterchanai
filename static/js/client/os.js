@@ -5411,15 +5411,10 @@
     const t = e.target;
     const typing = !!(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || '')));
 
-    /* CTRL+ENTER OPENS A TERMINAL ON THIS COMPUTER — sway's own $mod+Return, spelled for a desktop
-     * whose Super key already opens the start menu. It names the machine (see PCTerm.openLocal), so
-     * it cannot land you in an SSH session on another one. */
-    if(e.ctrlKey && !e.altKey && !e.metaKey && !typing && !e.defaultPrevented
-       && (e.key === 'Enter' || e.key === 'NumpadEnter')){
-      e.preventDefault();
-      openTerminalHere();
-      return;
-    }
+    /* Ctrl+Enter belongs to composers and message boxes. This capture handler runs before their
+     * target handlers can call preventDefault(), and some editors report their inner surface as a
+     * plain DIV, so the old "not typing" guess opened Terminal instead of sending. PosterChanOS
+     * already has the unambiguous desktop convention, Super+Enter; Ctrl+Enter is left untouched. */
 
     /* CTRL+F IS NOT OURS TO TAKE.
      *
