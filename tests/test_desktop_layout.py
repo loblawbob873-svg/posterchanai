@@ -377,6 +377,30 @@ class TheStartMenuTakesTyping(unittest.TestCase):
         self.assertIn("e.key.length === 1", after,
                       "typing into a pointer-opened menu still goes nowhere")
 
+    def test_the_shell_takes_the_keyboard_before_the_menu_opens(self):
+        """OR YOUR TYPING GOES TO FIREFOX. Reported as "it only works if no other window is
+        focused": sway's binding fires on this page's behalf, but the compositor's keyboard focus is
+        still on whatever app had it. Opening the menu and focusing its search box is then a DOM
+        focus inside a window that is not receiving keys, and every character lands in the other
+        app -- which is worse than nothing, because it types into somebody's editor."""
+        i = self.src.index("if(p === 'pc:start')")
+        self.assertIn("_raiseShell()", self.src[i:i + 200],
+                      "the start tick opens the menu without taking the keyboard")
+
+    def test_our_window_is_found_by_asking_not_by_remembering(self):
+        """A shell that was restarted, or a second one, would hold a stale id -- and focusing a
+        window that no longer exists fails silently."""
+        i = self.src.index("async function _raiseShell()")
+        body = self.src[i:i + 700]
+        self.assertIn("wm.windows()", body, "the window id is remembered rather than asked for")
+        self.assertIn("posterchan", body)
+
+    def test_no_compositor_is_not_a_failure(self):
+        """In a browser tab the question is meaningless and the DOM already has the keys."""
+        i = self.src.index("async function _raiseShell()")
+        body = self.src[i:i + 700]
+        self.assertIn("return false", body)
+
     def test_the_keys_the_menu_needs_are_not_swallowed(self):
         """`length === 1` is the test for "a character" -- true for letters, digits and punctuation
         in every layout, false for Escape, Tab, the arrows and the F-keys. A keycode range would

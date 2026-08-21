@@ -4853,6 +4853,21 @@
     }, 20000);
   }
 
+  /* This page's OWN compositor window, so the keyboard can be brought to it. Returns false when
+   * there is no compositor (a browser tab, the Windows build), where the question is meaningless
+   * and the DOM already has the keys. */
+  async function _raiseShell(){
+    try{
+      const wm = window.pcWM;
+      if(!wm || typeof wm.windows !== 'function' || typeof wm.focus !== 'function') return false;
+      const list = await wm.windows();
+      const me = (list || []).find(w => /^posterchan(-desktop)?$/.test(String((w && w.app) || '')));
+      if(!me || me.id == null) return false;
+      await wm.focus(Number(me.id));
+      return true;
+    }catch(_){ return false; }
+  }
+
   function toggleStart(force){
     startOpen = (force === undefined) ? !startOpen : !!force;
     let menu = $('#os-startmenu', root);
@@ -5134,7 +5149,19 @@
           _tickOff = pcWM.onEvent((ev) => {
             if(!ev || ev.name !== 'tick') return;
             const p = String(ev.payload || '');
-            if(p === 'pc:start') toggleStart();
+            /* THE SHELL TAKES THE KEYBOARD FIRST, or the menu opens and your typing goes to
+             * FIREFOX. Reported exactly that way: "it only works if no other window is focused".
+             *
+             * sway's binding fires on this page's behalf, but the compositor's keyboard focus is
+             * still on whatever app had it -- a native window, floating above us. Opening the menu
+             * and focusing its search box is a DOM focus inside a window that is not receiving
+             * keys, so every character lands in the other app. That is worse than nothing: it types
+             * into somebody's editor.
+             *
+             * Found by asking the compositor which window is ours rather than remembering an id: a
+             * shell that was restarted, or a second one, would hold a stale number, and focusing a
+             * window that no longer exists fails silently. */
+            if(p === 'pc:start'){ _raiseShell().then(() => toggleStart(), () => toggleStart()); }
             else if(p === 'pc:start:close') toggleStart(false);
             /* PRINT SCREEN, through the same function the tray button calls. A screenshot taken by
              * the key and one taken from the tray must land in the same folder under the same
