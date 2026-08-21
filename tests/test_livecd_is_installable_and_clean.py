@@ -54,7 +54,7 @@ class TheBuilderShipsTheInstaller(unittest.TestCase):
         self.assertIn("cat ", seg)
 
     def test_the_installer_is_executable_in_the_image(self):
-        i = self.fn.index("usr/local/share/posterchanos/$REL f")
+        i = self.fn.index('"usr/local/share/posterchanos/$REL" f')
         self.assertIn("755", self.fn[i:i + 80])
 
     def test_there_is_a_way_to_find_it(self):
@@ -111,7 +111,7 @@ class TheImageDoesNotCarryTheOperator(unittest.TestCase):
     def test_the_sudoers_drop_in_has_the_mode_sudo_demands(self):
         """sudo refuses to run AT ALL if a sudoers file has a mode it dislikes — which would lock
         the disc out of root far more thoroughly than having no drop-in."""
-        i = self.fn.index("etc/sudoers.d/live f")
+        i = self.fn.index('"etc/sudoers.d/live" f')
         self.assertIn("440", self.fn[i:i + 60])
 
     def test_it_does_not_touch_the_real_sudoers(self):
@@ -134,7 +134,7 @@ class TheImageDoesNotCarryTheOperator(unittest.TestCase):
         self.assertIn("live::20000", self.fn)
 
     def test_the_hostname_is_not_this_machines(self):
-        self.assertIn("etc/hostname f 644 0 0 echo posterchanos", self.fn)
+        self.assertIn('pseudoput "etc/hostname" f 644 0 0 echo posterchanos', self.fn)
 
 
 class TheCloneToolIsStillThere(unittest.TestCase):
@@ -339,13 +339,27 @@ class TheLiveSessionActuallyStarts(unittest.TestCase):
                 self.assertIn(entry, self.fn)
 
     def test_those_entries_are_outside_the_clean_branch(self):
-        """Emitted for the operator too, not only for `live`."""
-        i = self.fn.index('home/$SESS_USER d 755')
-        # The nearest preceding `if [[ "$CLEAN"` must be closed before this point.
-        before = self.fn[:i]
-        self.assertEqual(before.count('if [[ "$CLEAN" = *y* ]]; then'),
-                         before.count("\n\t\tfi\n") + before.count("\n\tfi\n"),
-                         "the session-home entries sit inside an unclosed CLEAN branch")
+        """Emitted for the operator too, not only for `live`.
+
+        Counted by walking the shell's own if/fi depth rather than by counting substrings: the old
+        version compared a count of `if [[ "$CLEAN"` against a count of `fi` at two indents, which
+        moves whenever anything unrelated is added nearby and says nothing about nesting.
+        """
+        open_clean = 0
+        depth_of_clean = []
+        for line in self.fn.splitlines():
+            t = line.strip()
+            if t.startswith("if ") and t.endswith("then"):
+                open_clean += 1
+                if '"$CLEAN" = *y*' in t:
+                    depth_of_clean.append(open_clean)
+            elif t == "fi":
+                if depth_of_clean and depth_of_clean[-1] == open_clean:
+                    depth_of_clean.pop()
+                open_clean -= 1
+            elif "home/$SESS_USER d 755" in t:
+                self.assertFalse(depth_of_clean,
+                                 "the session-home entries sit inside an open CLEAN branch")
 
     def test_the_session_user_is_read_not_guessed(self):
         """On a personal rescue disc it is whoever this machine already autologins."""
@@ -410,3 +424,59 @@ class TheAccountRewriteActuallyWorks(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EveryReplacementActuallyReachesTheImage(unittest.TestCase):
+    """MKSQUASHFS IGNORES A PSEUDO-FILE WHOSE PATH ALREADY EXISTS IN THE SOURCE.
+
+    Measured against the real tool, not inferred:
+
+        Pseudo file "etc/passwd" exists in source filesystem "src/etc/passwd".
+        Ignoring, exclude it (-e/-ef) to override.
+
+    One line on stdout while packing a 45GB filesystem, and the image is written successfully with
+    the ORIGINAL file. Nine replacements were being dropped this way, and the 4.1GB ISO the laptop
+    built proves it: /home/live was there (a NEW path, because /home is excluded, so its pseudo
+    applied) while /etc/passwd carried no `live` at all and the getty override still autologged in
+    the operator. agetty then logs in an account the image does not have, which is a login prompt --
+    "posterchan live cd is totally shit ... booted to a terminal, no gui" -- and root stayed `!`,
+    which is "my root password 123456 don't even work".
+
+    The old self-check could not see any of it: it asked whether /home/<user>/.bash_profile existed,
+    and that one was new, so it passed on every build.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = GENTOO.read_text()
+        i = cls.src.index("\nliveCD() {")
+        cls.fn = cls.src[i:cls.src.index("\n}", i)]
+
+    def test_a_replacing_pseudo_file_goes_through_pseudoput(self):
+        # A bare `echo "etc/... f "` line is a replacement nothing excludes, i.e. one silently
+        # ignored at pack time.
+        bad = [ln.strip() for ln in self.fn.splitlines()
+               if re.match(r'^echo "(etc|usr|var)/\S+ f ', ln.strip())]
+        self.assertEqual(bad, [], "these replace an existing file and would be ignored: " + str(bad))
+
+    def test_every_recorded_path_is_excluded_from_the_source(self):
+        self.assertIn('PSEUDO_REPLACED+=', self.fn, "nothing records what is being replaced")
+        self.assertIn('for f in "${PSEUDO_REPLACED[@]}"; do EXARGS+=(-e "$f"); done', self.fn,
+                      "the replaced paths are not excluded, so mksquashfs keeps the originals")
+
+    def test_the_recording_happens_before_the_pack(self):
+        self.assertLess(self.fn.index("PSEUDO_REPLACED=()"),
+                        self.fn.index('mksquashfs / "$WORK/iso/LiveOS/squashfs.img"'))
+
+    def test_the_account_and_the_autologin_are_read_BACK_OUT_of_the_image(self):
+        """Existence is not contents. Every replaced file already existed, with the wrong contents,
+        so the only check that can catch this reads the packed image."""
+        self.assertIn("unsquashfs -cat", self.fn, "the image's contents are never read back")
+        for want in ("etc/systemd/system/getty@tty1.service.d/override.conf", "etc/passwd"):
+            self.assertIn(want, self.fn.split("did it actually work")[1],
+                          f"{want} is never verified after packing")
+
+    def test_it_refuses_to_build_an_iso_that_would_boot_to_a_prompt(self):
+        after = self.fn.split("did it actually work")[1]
+        self.assertIn("_lcd_fail", after)
+        self.assertIn("login prompt, not a desktop", after)

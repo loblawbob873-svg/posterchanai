@@ -2046,18 +2046,57 @@ FSTAB
 	echo -e "${COLOR_YELLOW}Live session logs in as: $SESS_USER${COLOR_RESET}"
 	echo "session-user=$SESS_USER uid=$SESS_UID home-excluded=$([[ " ${EXCLUDES[*]} " == *" home/$SESS_USER "* ]] && echo yes || echo no)" >>"$LOG" 2>/dev/null
 
+	# ---------------------------------------------------------------- a pseudo-file that REPLACES
+	#
+	# MKSQUASHFS SILENTLY IGNORES A PSEUDO-FILE WHOSE PATH ALREADY EXISTS IN THE SOURCE, and this
+	# build depended on nine of them. Measured, against the real tool:
+	#
+	#     Pseudo file "etc/passwd" exists in source filesystem "src/etc/passwd".
+	#     Ignoring, exclude it (-e/-ef) to override.
+	#
+	# One warning, on stdout, in the middle of packing a 45GB filesystem — and the image is written
+	# successfully with the ORIGINAL file. So every replacement this build makes was being dropped
+	# while the build reported success:
+	#
+	#   • /etc/passwd, /etc/group, /etc/shadow — the `live` account was never in the image. agetty
+	#     then autologs in a user that does not exist, which is a login prompt: "posterchan live cd
+	#     is totally shit ... booted to a terminal, no gui". Verified on the 4.1GB ISO the laptop
+	#     built: /home/live existed (that path is NEW, because /home is excluded, so ITS pseudo
+	#     applied) while /etc/passwd held no `live` at all.
+	#   • the getty override — the image autologins `verita84`, the operator, on a disc scrubbed of
+	#     that account. Both halves of one boot, disagreeing.
+	#   • /etc/shadow — root stayed `!`, locked. "my root password 123456 don't even work".
+	#   • /etc/fstab — THE LIVE IMAGE CARRIED THIS LAPTOP'S FSTAB, which mounts a LUKS root by UUID
+	#     that is not in the machine being booted.
+	#   • /etc/machine-id — every boot of every disc sharing one identity.
+	#
+	# The self-check could not see any of it: it asks whether /home/<user>/.bash_profile is there,
+	# and that one was NEW, so it passed on every build.
+	#
+	# `pseudoput` emits the line and remembers the path, and every remembered path is excluded from
+	# the source below. A directory is not recorded: a pseudo `d` on an existing directory is
+	# harmless (it keeps the real one), and excluding e.g. etc/sudoers.d would throw away the
+	# drop-ins the system needs to hold on to.
+	# EVERY file pseudo goes through this, not only the ones known to clash. Excluding a path that
+	# is not in the source costs nothing, while deciding case by case means asking "does this exist
+	# on the machine being imaged?" -- and two of these DO on a box that has run the installer
+	# before (/usr/local/share/posterchanos/gentoo.sh is the installer's own copy), which would
+	# quietly ship the OLD installer on a disc built to carry the new one.
+	PSEUDO_REPLACED=()
+	pseudoput() { PSEUDO_REPLACED+=("$1"); echo "$@"; }
+
 	local PSEUDO="$WORK/pseudo"
 	{
-		echo "etc/fstab f 644 0 0 cat $LIVEFSTAB"
+		pseudoput "etc/fstab" f 644 0 0 cat "$LIVEFSTAB"
 		# An EMPTY machine-id, not a copy of this machine's. systemd treats empty as "first boot"
 		# and generates a fresh one; a duplicated id gives every live boot the same identity, which
 		# breaks journald, DHCP leases and systemd-boot's own /boot layout.
-		echo "etc/machine-id f 444 0 0 echo -n"
+		pseudoput "etc/machine-id" f 444 0 0 echo -n
 
 		if [[ "$CLEAN" = *y* ]]; then
-			echo "etc/passwd f 644 0 0 cat $WORK/passwd"
-			echo "etc/group f 644 0 0 cat $WORK/group"
-			echo "etc/shadow f 640 0 0 cat $WORK/shadow"
+			pseudoput "etc/passwd" f 644 0 0 cat "$WORK/passwd"
+			pseudoput "etc/group" f 644 0 0 cat "$WORK/group"
+			pseudoput "etc/shadow" f 640 0 0 cat "$WORK/shadow"
 			echo "home d 755 0 0"
 			# AN EMPTY HOME IS A TERMINAL, NOT A DESKTOP.
 			#
@@ -2072,15 +2111,15 @@ FSTAB
 			# session and an installed one cannot drift apart.
 
 			echo "etc/systemd/system/getty@tty1.service.d d 755 0 0"
-			echo "etc/systemd/system/getty@tty1.service.d/override.conf f 644 0 0 cat $WORK/gettyd/override.conf"
+			pseudoput "etc/systemd/system/getty@tty1.service.d/override.conf" f 644 0 0 cat "$WORK/gettyd/override.conf"
 			# A hostname that is not yours. `posterchanos` is what an unconfigured install should
 			# call itself, and it is what the installer changes.
-			echo "etc/hostname f 644 0 0 echo posterchanos"
+			pseudoput "etc/hostname" f 644 0 0 echo posterchanos
 			# 0440, which is what sudo demands of a sudoers file — a mode it dislikes makes sudo
 			# refuse to run AT ALL, not merely ignore the file, which would lock the disc out of
 			# root far more thoroughly than having no drop-in.
 			echo "etc/sudoers.d d 750 0 0"
-			echo "etc/sudoers.d/live f 440 0 0 cat $WORK/sudoers.d/live"
+			pseudoput "etc/sudoers.d/live" f 440 0 0 cat "$WORK/sudoers.d/live"
 		fi
 
 		# ---------------------------------------------------------------- the session's home
@@ -2116,7 +2155,7 @@ FSTAB
 				else
 					# 755 across the board: gentoo.sh must be executable, and the helpers in bin/ are
 					# copied to /usr/local/bin by the install itself, which expects them to run.
-					echo "usr/local/share/posterchanos/$REL f 755 0 0 cat \"$ISRC\""
+					pseudoput "usr/local/share/posterchanos/$REL" f 755 0 0 "cat \"$ISRC\""
 				fi
 			done < <(find "$IHERE" -mindepth 1 \( -type f -o -type d \) | sort)
 
@@ -2125,7 +2164,7 @@ FSTAB
 			# (see `_machineApps`), so an entry here puts "Install PosterChanOS" in the menu of the
 			# live session with no extra wiring — the same list Firefox and the rest come from.
 			echo "usr/share/applications d 755 0 0"
-			echo "usr/share/applications/posterchanos-install.desktop f 644 0 0 cat $WORK/install.desktop"
+			pseudoput "usr/share/applications/posterchanos-install.desktop" f 644 0 0 cat "$WORK/install.desktop"
 		fi
 	} >"$PSEUDO"
 
@@ -2155,6 +2194,8 @@ DESKTOP
 	echo
 	local EXARGS=()
 	for f in "${EXCLUDES[@]}"; do EXARGS+=(-e "$f"); done
+	# The source copy of anything a pseudo-file replaces, or the pseudo is ignored. See pseudoput.
+	for f in "${PSEUDO_REPLACED[@]}"; do EXARGS+=(-e "$f"); done
 	if ! mksquashfs / "$WORK/iso/LiveOS/squashfs.img" \
 		-comp zstd -Xcompression-level 15 -noappend -no-progress \
 		-pf "$PSEUDO" "${EXARGS[@]}"; then
@@ -2188,7 +2229,26 @@ DESKTOP
 			_lcd_fail "The image is missing:$MISSING — it would boot to a terminal, so it was not made into an ISO."
 			return
 		fi
-		echo -e "${COLOR_GREEN}Image checked: $SESS_USER has a home, a login profile and a desktop.${COLOR_RESET}"
+		# ---------------------------------------------------------- did the REPLACEMENTS land
+		#
+		# The listing above only proves a path exists, and every replaced file already existed --
+		# with the WRONG contents. So these are read back OUT of the image. It is the check that
+		# would have caught the ignored pseudo-files on the first build instead of the fourth ISO:
+		# `unsquashfs -cat` costs a few kilobytes and answers what actually got written.
+		if [[ "$CLEAN" = *y* ]]; then
+			local WHO PW
+			WHO="$(unsquashfs -cat "$WORK/iso/LiveOS/squashfs.img" \
+				etc/systemd/system/getty@tty1.service.d/override.conf 2>/dev/null \
+				| sed -n "s/.*--autologin \([^ ]*\).*/\1/p" | head -1)"
+			PW="$(unsquashfs -cat "$WORK/iso/LiveOS/squashfs.img" etc/passwd 2>/dev/null \
+				| grep -c "^$SESS_USER:")"
+			echo "image: autologin=$WHO passwd-has-$SESS_USER=$PW" >>"$LOG" 2>/dev/null
+			if [[ "$WHO" != "$SESS_USER" || "$PW" -lt 1 ]]; then
+				_lcd_fail "The image would log in as '${WHO:-nobody}' and its /etc/passwd has ${PW} such account. That is a login prompt, not a desktop — the ISO was not made. (mksquashfs ignores a pseudo-file whose path exists in the source; see pseudoput.)"
+				return
+			fi
+		fi
+		echo -e "${COLOR_GREEN}Image checked: $SESS_USER has a home, a login profile, an account and a desktop.${COLOR_RESET}"
 	fi
 
 	# ---------------------------------------------------------------- kernel + a live initramfs
