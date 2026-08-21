@@ -46,6 +46,14 @@ class MailActionsUseTheSprite(unittest.TestCase):
             with self.subTest(action=act):
                 self.assertIn("#i-", body, "the %s button has no icon" % act)
 
+    def test_open_message_actions_are_icon_only_but_accessible(self):
+        buttons = re.findall(r'(<button[^>]*data-act="([a-z]+)"[^>]*>)(.*?)</button>', self.row, re.S)
+        for opening, act, body in buttons:
+            with self.subTest(action=act):
+                self.assertIn("icon-only", opening)
+                self.assertRegex(opening, r'aria-label="[^"]+"')
+                self.assertEqual(re.sub(r'<[^>]+>', '', body).strip(), '')
+
     def test_every_icon_it_names_is_defined(self):
         """An icon named but not in the sprite renders as blank space with no error — which is
         indistinguishable from the bug this test exists for."""

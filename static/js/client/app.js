@@ -23780,13 +23780,13 @@
              a symbol. Every name here is defined in sprite.js — an icon that is not renders as
              blank space with no error, which is the same bug one layer down. -->
         <div class="mail-actions">
-          <button class="btn btn-cyan small" data-act="reply"><svg class="ic b-ic" aria-hidden="true"><use href="#i-reply"></use></svg>Reply</button>
-          <button class="btn small" data-act="replyall"><svg class="ic b-ic" aria-hidden="true"><use href="#i-repost"></use></svg>Reply all</button>
-          <button class="btn small" data-act="forward"><svg class="ic b-ic" aria-hidden="true"><use href="#i-share"></use></svg>Forward</button>
-          <button class="btn small" data-act="ai" title="Summarize, draft a reply, or add this email to your budget"><svg class="ic b-ic" aria-hidden="true"><use href="#i-wand"></use></svg>AI ▾</button>
-          <button class="btn small" data-act="unread"><svg class="ic b-ic" aria-hidden="true"><use href="#i-eye"></use></svg>Unread</button>
-          <button class="btn small" data-act="move"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Move ▾</button>
-          <button class="btn btn-red small" data-act="delete"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>
+          <button class="btn btn-cyan small icon-only" data-act="reply" title="Reply" aria-label="Reply"><svg class="ic b-ic" aria-hidden="true"><use href="#i-reply"></use></svg></button>
+          <button class="btn small icon-only" data-act="replyall" title="Reply all" aria-label="Reply all"><svg class="ic b-ic" aria-hidden="true"><use href="#i-repost"></use></svg></button>
+          <button class="btn small icon-only" data-act="forward" title="Forward" aria-label="Forward"><svg class="ic b-ic" aria-hidden="true"><use href="#i-share"></use></svg></button>
+          <button class="btn small icon-only" data-act="ai" title="AI tools" aria-label="AI tools"><svg class="ic b-ic" aria-hidden="true"><use href="#i-wand"></use></svg></button>
+          <button class="btn small icon-only" data-act="unread" title="Mark unread" aria-label="Mark unread"><svg class="ic b-ic" aria-hidden="true"><use href="#i-eye"></use></svg></button>
+          <button class="btn small icon-only" data-act="move" title="Move" aria-label="Move"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg></button>
+          <button class="btn btn-red small icon-only" data-act="delete" title="Delete" aria-label="Delete"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg></button>
         </div>
         <div class="mail-thread">${thread.map((m,i)=>this._msgBlock(m, folder, acct, i===thread.length-1 || String(m.uid)===String(seedUid))).join('')}</div>`;
       $('#mail-back',pane).onclick=()=>{ pane.classList.remove('has-open'); this.openUid=null; this.drawList(); };
