@@ -911,20 +911,27 @@ liveISOinstall() {
 
 	# ---------------------------------------------------------------- the system
 	#
-	# `--one-file-system` is what makes this safe on a live boot without listing every mount by hand:
-	# the squashfs, the overlay's upper directory, the mounted ISO and $TARGET itself are all on
-	# other filesystems, so none of them is followed. RSYNC_EXCLUDES still applies for the things
-	# that ARE on the root filesystem and should not travel.
-	#
-	# NO `--delete`. The target was just partitioned and is empty, so there is nothing to delete --
-	# and it is `--delete` that tries to remove $TARGET/boot out from under the EFI partition mounted
-	# on it.
+	# COPY THE SQUASHFS, NOT THE LIVE OVERLAY. liveOSrestore() correctly copies `/` when `/` is an
+	# installed OS. On a LiveCD it is an overlay assembled for this boot; the complete immutable OS
+	# tree is the mounted squashfs at /run/rootfsbase. Copying the overlay made the result depend on
+	# its mount topology and produced a target with directory stubs but no usable systemd OS tree.
+	local ROOTSRC="/run/rootfsbase"
+	if [ ! -s "$ROOTSRC/usr/lib/systemd/systemd" ]; then
+		echo -e "${COLOR_YELLOW}The LiveCD squashfs is not mounted at $ROOTSRC.${COLOR_RESET}"
+		echo -e "${COLOR_YELLOW}Refusing to copy the transient overlay as an installed OS.${COLOR_RESET}"
+		return 1
+	fi
+	# The squashfs carries no target ESP state. /boot is excluded and the matching kernel/initramfs
+	# are installed separately below from the live medium.
 	echo -e "${COLOR_CYAN}Copying the system — this is the slow part.${COLOR_RESET}"
-	sudo rsync -aHAX --one-file-system --info=progress2 \
-		--exclude=/boot/* $RSYNC_EXCLUDES / $TARGET/
+	sudo rsync -aH --delete --info=progress2 \
+		--exclude=/boot/*** $RSYNC_EXCLUDES "$ROOTSRC/" $TARGET/
 	local RC=$?
 
-	if [ "$RC" -ne 0 ] || [ ! -d "$TARGET/etc" ] || [ ! -d "$TARGET/usr" ]; then
+	# A directory is not an OS tree. Assert the same files systemd's switch-root requires, or stop
+	# while the live environment still exists and can explain the copy failure.
+	if [ "$RC" -ne 0 ] || [ ! -s "$TARGET/etc/os-release" -a ! -s "$TARGET/usr/lib/os-release" ] \
+		|| [ ! -x "$TARGET/usr/lib/systemd/systemd" ]; then
 		echo
 		echo -e "${COLOR_YELLOW}The copy did not complete — nothing was installed.${COLOR_RESET}"
 		if ! mountpoint -q "$TARGET" 2>/dev/null; then
