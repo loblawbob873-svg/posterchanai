@@ -41,6 +41,7 @@
     q: '',
     ready: false,
     localRead: false,    // this session read rows out of THIS phone's own message store
+    lastRead: null,      // rows the provider returned on the last read — see countLine
     loading: false,
     error: '',
     scroll: 0,
@@ -509,6 +510,7 @@
       // A short answer means the store is exhausted; a full one means there may be more behind it.
       if(rows.length < STEPS[i]) break;
     }
+    S.lastRead = rows.length;      // what the PROVIDER returned, before any of our filtering
     for(const r of rows){
       if(!r || !r.doc) continue;
       if(S.msgs.has(r.doc)) continue;
@@ -830,6 +832,25 @@
     paint();
   }
 
+  /* WHAT THIS SCREEN IS ACTUALLY HOLDING, in numbers.
+   *
+   * "WHERE ARE MY MESSAGES!" cannot be answered from here: every link in the chain reads correctly
+   * in the source, and the only thing that would settle it is what the phone measured. So the panel
+   * says how many rows came back from the provider on the last read, how many documents the screen
+   * is holding, how many of them are outgoing, and how many threads that makes. A missing history
+   * and a missing DIRECTION look identical on screen and are different bugs. */
+  function countLine(){
+    let out = 0, gone = 0;
+    for(const m of S.msgs.values()){
+      if(m && m.gone){ gone++; continue; }
+      if(m && !m.incoming) out++;
+    }
+    return 'last read: ' + (S.lastRead == null ? 'not attempted' : S.lastRead + ' from the phone')
+         + ' \u00b7 holding: ' + (S.msgs.size - gone)
+         + ' (' + out + ' sent, ' + (S.msgs.size - gone - out) + ' received)'
+         + ' \u00b7 threads: ' + S.threads.length;
+  }
+
   /* ASK ANDROID FOR THE SMS ROLE. One implementation, two buttons — the empty state's and the one
    * in the header that is reachable once messages are on screen. They were about to be two copies,
    * and two copies of a flow whose whole difficulty is what to say when it silently fails is how
@@ -970,8 +991,16 @@
       dbg.disabled = true;
       const d = await details();
       const el = PC.$('#sms-note');
-      if(el) el.textContent = d ? detailLine(d)
-                                : 'This build cannot report it — it is older than this screen.';
+      /* SHOWN, not written into a collapsed element. `noteWhere` hides this line on a phone — there
+       * is nothing worth captioning there — and the diagnostic used the same element, so pressing
+       * the button printed the answer into `display:none`. A diagnostic that cannot be read is
+       * worse than none: it looks like the button does nothing, on the screen somebody opened
+       * because nothing was working. */
+      if(el){
+        el.style.display = '';
+        el.textContent = (d ? detailLine(d) : 'This build cannot report it — it is older than this screen.')
+                       + ' \u00b7 ' + countLine();
+      }
     };
     const role = PC.$('#sms-role');
     if(role) role.onclick = () => askForRole(role);
