@@ -356,8 +356,13 @@ class TheStartMenuTakesTyping(unittest.TestCase):
     """PRESS SUPER, TYPE, AND IT SEARCHES.
 
     Opening the menu left the caret on the desktop, so typing "fire" to reach Firefox typed into
-    nothing at all. Ctrl+F focused the box -- that binding exists precisely because this did not --
-    but nobody presses Super and then Ctrl+F.
+    nothing at all.
+
+    The earlier answer was to bind Ctrl+F to "open the start menu with the caret in its search box",
+    and that was the wrong answer to the right observation: Ctrl+F means FIND IN THE THING I AM
+    LOOKING AT, everywhere, and a desktop that turns it into a launcher takes it away from every app
+    that would have used it. It is left alone now, and the Super key -- which every desktop uses for
+    this -- both opens the menu and takes the keyboard.
     """
 
     @classmethod
@@ -439,3 +444,28 @@ class SigningInPutsYouBackOnTheDesktop(unittest.TestCase):
         """Suspend keeps the remembered preference; exit would turn the desktop off for good, so
         signing in would land in classic mode permanently rather than for one session."""
         self.assertIn("PCOS.suspend && PCOS.suspend()", self.src)
+
+
+class CtrlFBelongsToWhateverHasFocus(unittest.TestCase):
+    """A DESKTOP MUST NOT TAKE A KEY EVERY APP USES.
+
+    Ctrl+F opened the start menu, added when it did nothing here. Reported as "ctrl + f on desktop
+    mode is launching the start menu? that is terrible, ctrl f should be original behavior" -- and
+    that is right: the launcher already has the key every desktop gives it, and Super both opens the
+    menu and takes the keyboard so typing reaches its search.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = OS_JS.read_text(encoding="utf-8")
+
+    def test_the_desktop_does_not_bind_ctrl_f(self):
+        for line in self.src.splitlines():
+            t = line.strip()
+            if t.startswith("//") or t.startswith("*") or t.startswith("/*"):
+                continue
+            if "ctrlKey" in t and ("'f'" in t or "'F'" in t):
+                self.fail("the desktop still takes Ctrl+F: " + t)
+
+    def test_super_is_still_the_way_in(self):
+        self.assertIn("pc:start", self.src, "nothing opens the start menu from the keyboard")

@@ -5401,16 +5401,17 @@
       return;
     }
 
-    /* CTRL+F FINDS THINGS — reported simply as "Ctrl+F does nothing", which it did: nothing on this
-     * desktop was listening for it. It opens the start menu with the caret in its search box, which
-     * is the one box that searches BOTH this machine's programs and the app's own screens, and is
-     * what Windows' own Search does. Not taken while somebody is typing. */
-    if(e.ctrlKey && !e.altKey && !e.metaKey && (e.key === 'f' || e.key === 'F') && !typing){
-      e.preventDefault();
-      toggleStart(true);
-      const q = $('#os-q', root); if(q) q.focus();
-      return;
-    }
+    /* CTRL+F IS NOT OURS TO TAKE.
+     *
+     * It used to open the start menu with the caret in its search box, added when Ctrl+F did
+     * nothing on this desktop. That was the wrong answer to the right observation: Ctrl+F means
+     * FIND IN THE THING I AM LOOKING AT, everywhere, and a desktop that turns it into a launcher
+     * takes it away from every app that would have used it -- reported as "ctrl + f on desktop mode
+     * is launching the start menu? that is terrible, ctrl f should be original behavior".
+     *
+     * The start menu already has a key of its own, which is the one every desktop uses for it: the
+     * Super key, which opens it AND takes the keyboard so typing goes into its search. So Ctrl+F is
+     * left alone and reaches whatever has focus. */
   }
 
   /* A TERMINAL ON THIS MACHINE, from the keyboard or the menu. Opened as a WINDOW like every other
