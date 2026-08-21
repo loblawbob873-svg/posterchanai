@@ -366,5 +366,23 @@ class MmsProvider(unittest.TestCase):
         self.assertIn("function attLabel", js)
 
 
+class MmsAttachmentsTravelAcrossClients(unittest.TestCase):
+    """A provider row id is phone-local; an encrypted Blossom hash is portable."""
+
+    def test_archive_uses_the_encrypted_mms_folder(self):
+        js = open(SMSJS, encoding="utf-8").read()
+        self.assertIn("uploadEncFile", js)
+        self.assertIn("'MMS'", js)
+        self.assertIn("body.att.push", js)
+
+    def test_remote_clients_decrypt_the_attachment_hash(self):
+        js = open(SMSJS, encoding="utf-8").read()
+        self.assertIn("PC.encFileUrl(sha", js)
+
+    def test_failed_upload_does_not_advance_past_a_hollow_message(self):
+        js = open(SMSJS, encoding="utf-8").read()
+        self.assertIn("throw new Error((d && d.why)", js)
+
+
 if __name__ == "__main__":
     unittest.main()

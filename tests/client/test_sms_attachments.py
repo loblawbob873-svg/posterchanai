@@ -104,6 +104,7 @@ class TheArchive(unittest.TestCase):
         self.assertEqual(len(body.get("att") or []), 1)
         att = body["att"][0]
         self.assertEqual(att["ct"], "image/jpeg")
+        self.assertRegex(att["sha"], r"^[0-9a-f]{64}$")
         self.assertNotIn("id", att, "the handset's provider row id was published")
 
     def test_an_ordinary_text_gains_nothing(self):

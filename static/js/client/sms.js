@@ -163,48 +163,6 @@
    * role tables, the permission, the four components Android demands before it will even offer the
    * role, and what the provider actually returned. It is the same reason the music panel prints its
    * counters and the /logs board measures rather than retells. */
-  async function details(){
-    const P = plug('diagnose');
-    if(!P || !P.diagnose) return null;
-    try{ return await P.diagnose(); }catch(_){ return null; }
-  }
-
-  function detailLine(d){
-    if(!d) return '';
-    const c = d.components || {};
-    const missing = ['smsDeliver','mmsDeliver','sendTo','respondViaMessage'].filter(k => !c[k]);
-    return [
-      'this app: ' + (d.package || '?'),
-      'message store names: ' + (d.defaultPkg || d.defaultPackage || '(nothing)'),
-      'SMS role held: ' + (d.roleHeld ? 'yes' : 'no'),
-      'may read messages: ' + (d.canRead ? 'yes' : 'no'),
-      'may show notifications: ' + (d.canNotify ? 'yes' : 'NO — new texts arrive in silence'),
-      /* ALL THREE CAPABILITY SIGNALS, because "can this device do SMS" has now been answered wrongly
-       * twice — first with no check at all, then with FEATURE_TELEPHONY, which is true on Wi-Fi-only
-       * tablets that ship the telephony stack and have no radio. A single boolean cannot say which
-       * one lied. */
-      'sms capable: ' + (d.capability
-        ? (d.capability.smsCapable ? 'yes' : 'no')
-          + ' (isSmsCapable=' + d.capability.isSmsCapable
-          + ' feature.telephony=' + d.capability.featureTelephony
-          + ' feature.messaging=' + d.capability.featureMessaging
-          + ' sdk=' + d.capability.sdk
-          + ' roleAvailable=' + d.capability.roleAvailable
-          + ' canBeSms=' + d.capability.canBeSms + ')'
-        : 'not reported by this build'),
-      'last read: ' + (d.refused ? 'refused' : (d.read >= 0 ? d.read + ' found' : 'not attempted')),
-      /* WHICH HALF ANSWERED. The two provider tables are guarded separately on several OEM builds,
-       * so "all my photos are missing" and "I have no messages" are different reports with
-       * different fixes — and both look like a shorter list. */
-      'picture messages: ' + (S.mmsRefused ? 'the phone refused to hand them over'
-                            : d.mms === undefined ? 'not read by this build'
-                            : (d.mms ? 'read from this phone' : 'not read by this build')
-                              + (d.mmsFetch ? ', fetched from the carrier' : ', never fetched from the carrier')),
-      missing.length ? 'MISSING COMPONENTS: ' + missing.join(', ')
-                     : 'all four SMS components installed',
-    ].join(' \u00b7 ');
-  }
-
   /* ASK ANDROID FOR PERMISSION TO READ. Resolves whether it was granted; a refusal is an answer, not
    * an error. Older APKs have no `ensureRead` method at all, and there the honest result is "no". */
   async function ensureRead(){
@@ -420,24 +378,48 @@
 
   // ---------------------------------------------------------------- publishing (the phone only)
 
+  async function ensureMmsFolder(){
+    const fi = PC.filesIdx ? PC.filesIdx() : null;
+    if(!fi || !fi.addFolder) return;
+    try{
+      if(fi.pull) await fi.pull();
+      fi.addFolder('MMS', true);
+    }catch(_){ }
+  }
+
+  /* Store one provider attachment in the account's encrypted Blossom drive. The Nostr document
+   * carries only the ciphertext hash; the media server never sees the photo and a relay event never
+   * has to carry megabytes of base64. A failed upload fails this message's mirror pass so the high
+   * water mark stays behind it and the next sweep retries instead of permanently archiving a hollow
+   * attachment. */
+  async function archivePart(p){
+    if(p.sha) return p.sha;
+    const d = await partData(p);
+    if(!d || !d.blob) throw new Error((d && d.why) || 'could not read MMS attachment');
+    if(!PC.uploadEncFile) throw new Error('encrypted file storage is unavailable');
+    const name = p.name || ('mms.' + (String(p.ct || '').split('/')[1] || 'bin'));
+    p.sha = await PC.uploadEncFile(new File([d.blob], name, {
+      type: p.ct || d.blob.type || 'application/octet-stream'
+    }), 'MMS');
+    return p.sha;
+  }
+
   async function publishOne(m){
     const body = {
       address: m.address, body: m.body, date: m.date,
       incoming: !!m.incoming, name: m.name || '',
     };
-    /* WHAT WAS ATTACHED, WITHOUT THE BYTES — and saying so is the point.
-     *
-     * A laptop that knows a message carried two photos can say "2 photos, on your phone" instead of
-     * drawing an empty bubble, which is what "this message failed" looks like. What it must NOT do
-     * is claim to have them.
-     *
-     * The provider ROW ID is deliberately left behind: it is local to this handset, so carrying it
-     * across devices would be carrying a number that means something different on each of them —
-     * the same reason a message's archive address is derived from the message and never from its
-     * row. `type`/`name`/`bytes` ride in the PDU and mean the same everywhere. */
+    /* MMS bytes live in the encrypted `MMS` Blossom folder. Provider row ids remain local to the
+     * handset; the content hash is portable and decryptable by every client holding the drive key. */
     if(m.mms) body.mms = true;
-    if(m.parts && m.parts.length)
-      body.att = m.parts.map(p => ({ ct: p.ct, name: p.name, bytes: p.bytes }));
+    if(m.parts && m.parts.length){
+      await ensureMmsFolder();
+      body.att = [];
+      for(const p of m.parts){
+        const sha = await archivePart(p);
+        body.att.push({ ct: p.ct, name: p.name, bytes: p.bytes, sha });
+      }
+    }
 
     const ct = await PC.nip44enc(ME().pubkey, JSON.stringify(body));
     const r = await PC.publish(KIND, ct, [['d', m.doc], ['l', L_TAG]], {quiet:true, noQueue:true});
@@ -751,8 +733,7 @@
   function blankNote(n){
     if(!n) return '';
     return '<div class="muted small" style="padding:8px 12px">' + n + ' message'
-         + (n === 1 ? '' : 's') + ' in this conversation came back with no text \u2014 tap '
-         + '\u201cWhy isn\u2019t this working?\u201d for what the phone reported.</div>';
+         + (n === 1 ? '' : 's') + ' in this conversation could not be displayed.</div>';
   }
 
   async function docIdFor(address, dateMs, body, incoming, partsKey){
@@ -804,7 +785,9 @@
   function cleanParts(parts){
     return (parts || []).map(p => ({ id: Number(p.id) || 0, ct: String(p.ct || ''),
                                      name: String(p.name || ''),
-                                     bytes: p.bytes === undefined ? -1 : Number(p.bytes) }));
+                                     bytes: p.bytes === undefined ? -1 : Number(p.bytes),
+                                     sha: /^[0-9a-f]{64}$/i.test(String(p.sha || ''))
+                                       ? String(p.sha).toLowerCase() : '' }));
   }
 
   async function sha256hex(s){
@@ -1087,9 +1070,14 @@
 
   async function partData(p){
     const id = Number(p && p.id) || 0;
-    /* NOT ON THIS DEVICE, and that is not a failure. The archive names what was attached and
-     * deliberately does not carry the bytes or the provider row id — a row id means something
-     * different on every phone. So a laptop knows there is a photo and knows where it is. */
+    const sha = String((p && p.sha) || '');
+    if(!id && sha && PC.encFileUrl){
+      try{
+        const url = await PC.encFileUrl(sha, p.ct || 'application/octet-stream');
+        const blob = await fetch(url).then(r => r.blob());
+        return { url, blob, ct: p.ct || blob.type || '' };
+      }catch(_){ return { why: attLabel(p) + ' \u00b7 could not be opened from encrypted storage' }; }
+    }
     if(!id) return { why: attLabel(p) + ' \u00b7 on your phone' };
     if(ATT.has(id)) return ATT.get(id);
     const P = plug('attachment');
@@ -1321,8 +1309,8 @@
        * for texts that are being withheld. */
       const r = await loadFromPhone();
       if(r && r.refused){
-        S.emptyWhy = 'This phone allowed the permission but its message store still would not '
-                   + 'answer. Open “Why isn\u2019t this working?” below for what it reported.';
+        S.emptyWhy = 'This phone allowed the permission, but its message store still would not '
+                   + 'answer. Your messages have not been changed.';
         S.emptyFix = '';
       }
       paint();
@@ -1552,8 +1540,8 @@
        * takes. The button path had the message; the path to it did not. */
       loadFromPhone().then((r) => {
         if(r && r.refused && !S.msgs.size){
-          S.emptyWhy = 'This phone allowed the permission but its message store still would not '
-                     + 'answer. Open \u201cWhy isn\u2019t this working?\u201d below for what it reported.';
+          S.emptyWhy = 'This phone allowed the permission, but its message store still would not '
+                     + 'answer. Your messages have not been changed.';
           S.emptyFix = '';
         }
         paint();

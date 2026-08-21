@@ -103,6 +103,8 @@ const PLUGIN = {
   async attachment(a){
     calls.push(['attachment', a && a.part]);
     const part = (opt.parts || {})[String(a && a.part)];
+    const known = rows.some(r => (r.parts || []).some(p => Number(p.id) === Number(a && a.part)));
+    if(!part && known) return { data: 'eA==', bytes: 1 };
     if(!part) return { data: '', tooBig: false };
     if(part.tooBig) return { data: '', tooBig: true };
     return { data: part.data || '', bytes: (part.data || '').length };
@@ -166,6 +168,12 @@ global.__PC = {
   switchView(){},
   capPlugin: (name, method) => (name === 'Sms' && PLUGIN[method || 'status']) ? PLUGIN : null,
   osNotify: (title, body) => { notified.push([String(title), String(body)]); },
+  filesIdx: () => ({ async pull(){}, addFolder(name, enc){ calls.push(['folder', name, enc]); } }),
+  uploadEncFile: async (file, folder) => {
+    calls.push(['uploadEncFile', file.name, folder]);
+    return 'a'.repeat(64);
+  },
+  encFileUrl: async sha => 'blob:' + sha,
   // A transparent "encryption": the sim is about the protocol, not the cipher, and a readable
   // transcript is what makes a wrong body visible in a failure message.
   nip44enc: async (pk, s) => 'enc:' + s,

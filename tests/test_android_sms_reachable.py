@@ -236,12 +236,12 @@ class ThePhoneCanSayWhatItMeasured(unittest.TestCase):
         for k in ("smsDeliver", "mmsDeliver", "sendTo", "respondViaMessage"):
             self.assertIn(k, body, k)
 
-    def test_the_screen_can_show_it(self):
+    def test_diagnostics_stay_available_to_support_without_scaring_users(self):
         js = (ROOT / "static/js/client/sms.js").read_text()
-        self.assertIn("diagnose", js, "nothing in the client ever asks for it")
-        self.assertIn("sms-why", js, "there is no way for a person to see it")
-        for k in ("roleHeld", "canRead", "refused"):
-            self.assertIn(k, js, "the panel drops %s" % k)
+        self.assertNotIn("sms-why", js)
+        self.assertNotIn("Why isn", js)
+        self.assertIn("diagnose", self.src,
+                      "support diagnostics were removed from the native bridge")
 
 
 class ANewTextCanActuallyBeANNOUNCED(unittest.TestCase):
@@ -367,15 +367,14 @@ class TheNativeScreenNamesWhatAndroidNamed(unittest.TestCase):
         self.assertLess(cap.index("isSmsCapable"), cap.index("FEATURE_TELEPHONY_MESSAGING"),
                         "the precise question must be asked before the coarse one")
 
-    def test_the_panel_can_say_which_signal_lied(self):
-        """Twice wrong on one boolean is twice too many: the three are reported separately so the
-        next report settles it instead of starting another round."""
+    def test_support_diagnostics_keep_each_capability_signal(self):
+        """Support can inspect the native measurement without exposing a frightening debug panel."""
         # diagnose() lives in SmsPlugin; self.src on this class is ThreadListActivity.
         body = method(strip_comments((SMS / "SmsPlugin.java").read_text()), "public void diagnose")
         for k in ("isSmsCapable", "featureTelephony", "featureMessaging"):
             self.assertIn(k, body, "diagnose() does not report %s" % k)
         js = (ROOT / "static/js/client/sms.js").read_text()
-        self.assertIn("isSmsCapable=", js, "the panel never prints them")
+        self.assertNotIn("isSmsCapable=", js)
 
     def test_the_screen_uses_it(self):
         body = method(self.src, "private void draw")
