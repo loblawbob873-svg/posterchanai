@@ -305,15 +305,13 @@ class TheLiveSessionActuallyStarts(unittest.TestCase):
                                         "%r appears in only one of the two profiles" % line)
 
     def test_home_itself_is_not_excluded(self):
-        """`-e home` removes the directory AND everything the pseudo-file list puts back inside it.
+        """Each home is named individually rather than excluding /home wholesale.
 
-        The image then has no /home/live at all, so the live user autologins into a home that does
-        not exist: bash finds no profile and gives a prompt ("booted to a terminal, no gui"), and
-        sway started by hand has nowhere for the Electron shell to write its profile, so it paints
-        nothing ("sway loads a black screen"). One missing directory, two symptoms that look
-        unrelated. Excluding each real home individually leaves /home in the image."""
-        self.assertNotIn("EXCLUDES+=(home)", self.fn,
-                         "excluding /home wholesale suppresses the pseudo-entries written into it")
+        NOT because `-e home` breaks the pseudo entries — measured against squashfs-tools, it does
+        not; that claim was mine and it was wrong. It is because naming them states the intent
+        ("these people's files are not in the image") and leaves /home visibly in the tree that the
+        session-home entries are written into."""
+        self.assertNotIn("EXCLUDES+=(home)", self.fn)
 
     def test_every_real_home_is_still_left_out(self):
         """Leaving /home in must not leave anybody's files in it."""
@@ -324,10 +322,39 @@ class TheLiveSessionActuallyStarts(unittest.TestCase):
         """/home/.snapshots exists on btrfs installs and a plain glob misses it."""
         self.assertIn("/home/.[!.]*", self.fn)
 
-    def test_the_pseudo_entries_still_create_the_home(self):
-        for entry in ("home d 755 0 0", "home/live d 755 1000 1000"):
+    def test_the_session_user_gets_a_home_whatever_was_answered(self):
+        """THE REAL CAUSE of three rebuilds that booted to a terminal.
+
+        The home and profile were emitted inside the CLEAN branch, so they only existed for the
+        clean image's `live` account. Answer `n` to the clean question and the autologin stays as
+        the operator — whose home is excluded anyway, because that is a SEPARATE question with its
+        own default. That combination produces an image where the person who logs in has no home at
+        all: bash finds no profile and gives a prompt, and `sway` typed by hand then gives a black
+        screen, because Electron has nowhere to write its profile. Two symptoms, one missing
+        directory, and nothing in the build said so."""
+        for entry in ('home d 755 0 0',
+                      'home/$SESS_USER d 755 $SESS_UID $SESS_GID',
+                      'home/$SESS_USER/.bash_profile f 644 $SESS_UID $SESS_GID'):
             with self.subTest(entry=entry):
                 self.assertIn(entry, self.fn)
+
+    def test_those_entries_are_outside_the_clean_branch(self):
+        """Emitted for the operator too, not only for `live`."""
+        i = self.fn.index('home/$SESS_USER d 755')
+        # The nearest preceding `if [[ "$CLEAN"` must be closed before this point.
+        before = self.fn[:i]
+        self.assertEqual(before.count('if [[ "$CLEAN" = *y* ]]; then'),
+                         before.count("\n\t\tfi\n") + before.count("\n\tfi\n"),
+                         "the session-home entries sit inside an unclosed CLEAN branch")
+
+    def test_the_session_user_is_read_not_guessed(self):
+        """On a personal rescue disc it is whoever this machine already autologins."""
+        self.assertIn("--autologin", self.fn)
+        self.assertIn("SESS_USER=", self.fn)
+
+    def test_the_build_says_who_will_log_in(self):
+        """Three rebuilds went by with nothing on screen naming the account that would autologin."""
+        self.assertIn("Live session logs in as", self.fn)
 
     def test_the_file_exists_before_the_image_is_packed(self):
         """A pseudo-file naming a path that does not exist yet is a silently missing entry."""

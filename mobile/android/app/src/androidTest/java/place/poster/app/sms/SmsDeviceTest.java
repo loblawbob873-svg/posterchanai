@@ -157,15 +157,18 @@ public class SmsDeviceTest {
     }
 
     @Test
-    public void sendingRefusesWhenWeAreNotTheDefaultApp() {
-        // Deliberately WITHOUT taking the role. A non-default app can still reach SmsManager and may
-        // not write the provider, so the message would be sent and then be missing from the thread
-        // it was sent in — which reads as "it didn't send".
+    public void sendingWithoutTheRoleGoesOutAndSaysItWasNotStored() {
+        /* THIS TEST USED TO ASSERT THE OPPOSITE, and the behaviour it protected was the bug.
+         *
+         * Refusing to send without the role made a texting app that cannot text -- reported as
+         * "PosterChan is not this phone's messaging app when i send message" -- to avoid a gap in a
+         * DIFFERENT app's list. Sending does not need the role; writing the provider does. So it
+         * sends either way and reports which happened, and `stored` is how a caller knows to say so
+         * rather than pretend nothing was sent. */
         Assume.assumeFalse("this device already has us as the default",
                 Telephony.Sms.getDefaultSmsPackage(ctx).equals(ctx.getPackageName()));
-        SmsSender.Result r = SmsSender.send(ctx, "+15550100", "should not go out");
-        assertFalse("a non-default app sent a message", r.ok);
-        assertTrue("it failed without saying why", r.error.length() > 0);
+        SmsSender.Result r = SmsSender.send(ctx, "+15550100", "pc-no-role-" + System.currentTimeMillis());
+        assertFalse("a non-default app wrote the phone's message store", r.stored);
     }
 
     @Test

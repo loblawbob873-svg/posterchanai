@@ -283,7 +283,13 @@ class MmsProvider(unittest.TestCase):
         used in a WHERE clause the other way round, `since` matches nothing until the year 55000 and
         the archive silently never publishes a picture at all."""
         src = self._code("MmsStore.java")
-        self.assertIn("c.getLong(2) * 1000L", src, "the mms date is not converted to milliseconds")
+        self.assertIn("raw * 1000L", src, "the mms date is not converted to milliseconds")
+        # And multiplied only when it IS seconds. A provider that already stores milliseconds would
+        # otherwise put every picture message tens of thousands of years in the future, where it
+        # sorts ahead of everything and pushes the texts out of a conversation's newest N -- which
+        # reads as "my replies are missing" with the replies untouched in the store.
+        self.assertIn("raw > 100000000000L ? raw : raw * 1000L", src,
+                      "a milliseconds-storing provider is multiplied into the year 57000")
         self.assertIn("dateMs / 1000L", src, "`since` compares milliseconds against a second column")
 
     def test_every_message_box_is_mapped_explicitly(self):

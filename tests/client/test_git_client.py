@@ -316,3 +316,117 @@ class StarTests(unittest.TestCase):
     def test_an_empty_star_list_never_strands_the_view(self):
         self.assertIn("_repoScope==='starred' && (!_stars || !_stars.size)", self.git,
                       "landing on an empty Starred scope shows nothing with no way out")
+
+
+@unittest.skipIf(not NODE, "no node on this node")
+class WhichReposThisNodeCanBrowseTests(unittest.TestCase):
+    """The repo view's Files / Commits / branch switcher, and who they may be offered to.
+
+    Reported as "clicking on a git repo gets stuck and never loads" in the desktop app. The decision
+    was made on the URL SHAPE alone — `…/<npub>/<repo>.git` — and every GRASP forge on nostr uses
+    that shape. Measured against the live node: for a repo hosted on relay.ngit.dev, our own
+    /client/git/refs and /tree answer 404 in ~20ms and /readme spends 8-9 SECONDS timing out
+    against a host that is not a forge. Nine seconds of spinner, then a page whose every panel says
+    it could not read anything. The majority of what Discover → Git lists is exactly those repos.
+
+    Two facts have to hold together, which is why they are tested together: the repo must be hosted
+    HERE, and "here" must be the INSTANCE — in the desktop app and the APK the page origin is the
+    bundle (`app://posterchan`), so a check against `location.origin` answers no to the node's own
+    repos and yes to nothing at all.
+    """
+
+    OURS = "https://poster.place/git/npub1fdtthaqujtjcd6yfy7kt0zpkadyl9vvypq00s5nztnmche74d0tqv6uwwr/posterchanai.git"
+    # Real clone URLs, taken off relay.poster.place — these are what the list is actually full of.
+    FOREIGN = [
+        "https://relay.ngit.dev/npub107jk7htfv243u0x5ynn43scq9wrxtaasmrwwa8lfu2ydwag6cx2quqncxg/grimoire.git",
+        "https://git.gittr.space/npub1n2ph08n4pqz4d3jk6n2p35p2f4ldhc5g5tu7dhftfpueajf4rpxqfjhzmc/gittr.git",
+        "https://pyramid.fiatjaf.com/npub1ye5ptcxfyyxl5vjvdjar2ua3f0hynkjzpx552mu5snj3qmx5pzjscpknpr/fips.git",
+    ]
+
+    def _ask(self, clone, *, host_base="", create=True, page_origin="https://poster.place",
+             server_origin="https://poster.place"):
+        """Run the SHIPPED helpers against one clone URL, with the surface they really read."""
+        js = """
+        const S = { CFG: { git_host_base: %s, git_create_available: %s } };
+        const self = { location: { origin: %s } };
+        const _serverOrigin = () => %s;
+        %s
+        const ev = { kind:30617, pubkey:'a'.repeat(64), tags:[['d','r'],['clone', %s]] };
+        process.stdout.write(JSON.stringify(
+          { shaped: _graspShaped(%s), here: _repoHostedHere(ev), browsable: _repoBrowsableHere(ev),
+            base: _gitHostBase() }));
+        """ % (json.dumps(host_base), "true" if create else "false", json.dumps(page_origin),
+               json.dumps(server_origin),
+               _lift(["_gitHostBase", "_repoHostname", "_repoHostedHere", "_graspShaped",
+                      "_repoBrowsableHere"]),
+               json.dumps(clone), json.dumps(clone))
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+        return json.loads(r.stdout or "null")
+
+    def test_our_own_repo_is_browsable(self):
+        got = self._ask(self.OURS)
+        self.assertTrue(got["shaped"])
+        self.assertTrue(got["browsable"], "the node can no longer browse its own repos: %r" % got)
+
+    def test_a_repo_on_another_grasp_forge_is_not_browsable_here(self):
+        """This is the regression. Each of these has the right SHAPE and lives somewhere else, and
+        asking our git host about it can only 404 — after eight seconds of README timeout."""
+        for clone in self.FOREIGN:
+            got = self._ask(clone)
+            self.assertTrue(got["shaped"], "%s no longer parses as a GRASP url" % clone)
+            self.assertFalse(got["browsable"],
+                             "%s is hosted elsewhere but the repo view would offer Files, Commits "
+                             "and a branch switcher for it, all of which can only fail: %r"
+                             % (clone, got))
+
+    def test_the_host_is_the_instance_not_the_page(self):
+        """The desktop app and the APK serve the client from their own bundle, so `location.origin`
+        is `app://posterchan`. Reading the host from there answered no to the node's OWN repos (no
+        Files tab in the app at all) and made createRepo mint `app://posterchan/git/<npub>/<id>.git`
+        as a clone URL — and sign a NIP-98 token for it."""
+        got = self._ask(self.OURS, page_origin="app://posterchan",
+                        server_origin="https://poster.place")
+        self.assertEqual(got["base"], "https://poster.place/git",
+                         "the git host base is being read off the page origin, not the instance")
+        self.assertTrue(got["browsable"],
+                        "the bundled app cannot browse the instance's own repos: %r" % got)
+
+    def test_with_no_instance_nothing_is_hosted_here(self):
+        """Standalone (relays only). There is no node to ask, so no repo may claim to be browsable —
+        the alternative is a Files tab whose every fetch is rejected before it leaves the app."""
+        got = self._ask(self.OURS, page_origin="app://posterchan", server_origin="")
+        self.assertEqual(got["base"], "")
+        self.assertFalse(got["browsable"])
+
+    def test_a_node_with_no_git_host_claims_nothing(self):
+        got = self._ask(self.OURS, host_base="", create=False)
+        self.assertEqual(got["base"], "")
+        self.assertFalse(got["here"])
+
+    def test_an_explicit_git_host_base_wins(self):
+        got = self._ask("https://git.example.org/npub1abc/thing.git",
+                        host_base="https://git.example.org/", server_origin="https://poster.place")
+        self.assertEqual(got["base"], "https://git.example.org")
+        self.assertTrue(got["browsable"])
+
+    def test_the_rule_this_replaced_would_have_said_yes(self):
+        """Proof the check above can fail — the pre-fix rule, re-run over the same fixtures.
+
+        `isGrasp` was this expression inline in openRepo, and nothing else. It asks only about the
+        shape, so it answers YES for every GRASP forge on the network. Without this, the tests above
+        pass on any code that happens to define the helper, and say nothing about what it decides.
+        """
+        js = """
+        const shapeOnly = (cloneUrl) => { try{
+          const sg=new URL(cloneUrl).pathname.split('/').filter(Boolean);
+          const gi=sg.findIndex(s=>s.endsWith('.git'));
+          return gi>0 && (/^npub1/.test(sg[gi-1])||/^[0-9a-fA-F]{64}$/.test(sg[gi-1]));
+        }catch(_){ return false; } };
+        process.stdout.write(JSON.stringify(%s.map(shapeOnly)));
+        """ % json.dumps(self.FOREIGN)
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+        self.assertEqual(json.loads(r.stdout), [True] * len(self.FOREIGN),
+                         "the fixtures no longer exercise the bug — pick real foreign GRASP clone "
+                         "URLs that the shape-only rule accepts")

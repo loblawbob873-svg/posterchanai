@@ -152,8 +152,17 @@ public final class MmsStore {
                 m.mms = true;
                 m.id = c.getLong(0);
                 m.threadId = c.getLong(1);
-                // SECONDS in this table. See the class comment.
-                m.date = c.getLong(2) * 1000L;
+                /* SECONDS in this table -- by specification, and on every phone that follows it.
+                 * Multiplied blind, a provider that already stores MILLISECONDS lands every picture
+                 * message tens of thousands of years in the future, where it sorts ahead of
+                 * everything: a conversation then shows its newest N as pictures alone and the
+                 * texts are pushed out of the window entirely. That reads as "my replies are
+                 * missing" with the replies sitting in the store untouched.
+                 *
+                 * Seconds now are ~1.8e9 and milliseconds ~1.8e12, so 1e11 separates them with room
+                 * either side: as seconds it is the year 5138, as milliseconds it is 1973. */
+                long raw = c.getLong(2);
+                m.date = raw > 100000000000L ? raw : raw * 1000L;
                 m.type = box(c.getInt(3));
                 m.read = c.getInt(4) != 0;
                 String subject = str(c, 5);
