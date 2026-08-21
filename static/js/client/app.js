@@ -4656,6 +4656,13 @@
       _navPushed=Math.max(0,_navPushed-1);
       if(!ME && !GUEST) return;
       const st = (e && e.state) || history.state;
+      /* A community is an entity view on the root URL. Keep its event id in history so Forward can
+       * rebuild it, while Back restores the stamped Social/Nostrverse entry underneath. */
+      if(!_entityFromPath() && st && st.pcv==='community' && st.community){
+        const c=Store.get(st.community);
+        if(c){ _routing=true; try{ openCommunity(c, true); } finally{ _routing=false; }
+          _restoreNavScroll(st); return; }
+      }
       if(!_entityFromPath() && st && st.pcv && st.pcv!=='thread' && st.pcv!=='profile'){
         _routing = true;
         try{ switchView(st.pcv); }catch(_){ }
@@ -6301,11 +6308,11 @@
     // are self-contained cards (articleCard) that open in the reader. NIP-22 comments (1111) and
     // channel chat (40/42) are intentionally excluded — they're reply fragments / high-volume and
     // render as orphaned posts in a flat feed (they belong in the thread / a Channels view).
-    // + articles (30023), and NEW communities (34550) / channels (40) so people discover them in the
-    // feed instead of having to visit the Communities/Chat tabs (both are low-volume creation events,
-    // so they surface without flooding). Channel chat MESSAGES (42) stay out — those would flood.
-    if (VIEW==='home') return [{ kinds:[1,6,1068,5,30023,34550,40], authors:[...FOLLOWS], limit:_flim(80) }];
-    return [{ kinds:[1,6,1068,5,30023,34550,40], limit:_flim(120) }];
+    // Community DEFINITIONS (34550) belong in Communities, not Social. One prolific creator can
+    // otherwise turn Nostrverse into a wall of directory-cover images. Channel messages (42) stay
+    // out too; channel definitions are compact enough to remain discoverable here.
+    if (VIEW==='home') return [{ kinds:[1,6,1068,5,30023,40], authors:[...FOLLOWS], limit:_flim(80) }];
+    return [{ kinds:[1,6,1068,5,30023,40], limit:_flim(120) }];
   }
   // NIP-09: a kind-5 removes the AUTHOR'S OWN events it e-tags. Drop them from the cache, the feed,
   // AND notifications (a deleted bot post/reply must stop showing as a notification too).
@@ -6346,7 +6353,7 @@
   const _NEG_WINDOW = 3*24*3600;   // negentropy reconciles the home feed over this recent window (bounded)
   const _NEG_MAX_FETCH = 800;      // if the delta exceeds this (cold cache), use the plain limit pull instead
   let _tlGen = 0;                  // render generation — invalidates a slow async sync from a superseded render
-  const _TL_KINDS = [1,6,1068,5,30023,34550,40];
+  const _TL_KINDS = [1,6,1068,5,30023,40];
   // The two views that hold a firehose subscription in `subs` — the whole set _parkOffscreenTimelines
   // is allowed to touch. Named once so "which subs may be closed" is a fact of the file rather than a
   // literal repeated at the one call site that could quietly grow to include somebody's DMs.
@@ -7389,7 +7396,8 @@
     // user choosing to share it, which is not the firehose this filter exists to keep out.
     const hideFedi = ClientSettings.get('hideFediBridge', true);
     const follows = view==='home' ? (e=>FOLLOWS.has(e.pubkey)) : null;
-    return ev => (!follows || follows(ev))
+    return ev => ev.kind!==34550
+              && (!follows || follows(ev))
               && !(hideR && ev.kind===1 && isReply(ev))
               && !(hideFedi && isFediBridged(ev));
   }
@@ -7641,8 +7649,8 @@
     if(_tl.loading || _tl.done || !_tl.oldest) return;
     _tl.loading=true; const view=VIEW; const feed=$('#feed'); loadSentinel(feed);
     const until=_tl.oldest;
-    const filt = view==='home' ? [{ kinds:[1,6,1068,30023,34550,40], authors:[...FOLLOWS], until:until-1, limit:_flim(50) }]
-                               : [{ kinds:[1,6,1068,30023,34550,40], until:until-1, limit:_flim(60) }];
+    const filt = view==='home' ? [{ kinds:[1,6,1068,30023,40], authors:[...FOLLOWS], until:until-1, limit:_flim(50) }]
+                               : [{ kinds:[1,6,1068,30023,40], until:until-1, limit:_flim(60) }];
     let evs=[], complete=false; try{ evs=await Relay.query(filt); complete=(evs.complete!==false); }catch(_){}
     clearSentinel(feed);
     if(VIEW!==view){ _tl.loading=false; return; }   // user navigated away mid-fetch
@@ -10478,7 +10486,14 @@
         <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span></div>
       </div></article>`;
   }
-  async function openCommunity(e){
+  async function openCommunity(e, routed){
+    /* Opening an inline discovery card is navigation. Previously it only assigned VIEW, so Android
+     * Back had no app entry to pop and skipped Social (or exited). Stamp the timeline and push one
+     * reconstructable community entry; repainting after a post must not push another. */
+    if(!routed && VIEW!=='community'){
+      _navView('community');
+      try{ history.replaceState(Object.assign({}, history.state||{}, {pcv:'community', community:e.id}), ''); }catch(_){}
+    }
     VIEW='community'; _clearNav(); $('#view-title').textContent='Community';
     const feed=$('#feed'); const p=profOf(e.pubkey); needProfile(e.pubkey);
     const d=(e.tags.find(t=>t[0]==='d')||[])[1]||'';
@@ -10493,7 +10508,10 @@
       <div class="search-section-title">Recent posts</div>
       <div id="comm-posts"><div class="spinner"></div></div>
     </div>`;
-    $('#comm-back').onclick=()=>switchView('communities');
+    $('#comm-back').onclick=()=>{
+      if(_navPushed>0){ try{ history.back(); return; }catch(_){} }
+      switchView(_startTimeline());
+    };
     { const cp=$('#comm-post'); if(cp) cp.onclick=()=>compose({community:e}); }
     feed.querySelectorAll('[data-prof]').forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
     // Posts reference the community via an `a` tag (34550:pubkey:d). Modern NIP-72 clients post as
