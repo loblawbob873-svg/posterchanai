@@ -29,10 +29,32 @@ final class HasRole {
      *
      * Never cached. The role can be handed to another app in Settings while this app is running.
      */
+    /**
+     * ARE WE THIS PHONE'S MESSAGES APP — and the message store's row is not the only way to be.
+     *
+     * This asked `getDefaultSmsPackage` alone. On a real device it answered:
+     *
+     *     role: true    store names: (none)
+     *
+     * Android had granted PosterChan the SMS ROLE and the store's default-app row was EMPTY. The two
+     * are separate tables on Android 10+ and OEM builds do not always write both. So the app said
+     * "PosterChan is not this phone's messages app" to somebody who had just made it exactly that,
+     * every gate that depended on it did nothing, and setting the default again changed nothing
+     * visible — "the checkbox in settings never works", all day.
+     *
+     * NOBODY NAMED PLUS THE ROLE MEANS US. There is no other candidate: the role is granted to one
+     * app, and the row that would name a different one is empty.
+     *
+     * ANOTHER APP NAMED STILL WINS, even if we hold the role. That is the case where messages are
+     * genuinely being delivered elsewhere, and claiming otherwise would have us write into a store
+     * somebody else owns and report sends that another app performed.
+     */
     static boolean sms(Context ctx) {
         try {
+            String mine = ctx.getPackageName();
             String cur = Telephony.Sms.getDefaultSmsPackage(ctx);
-            return cur != null && cur.equals(ctx.getPackageName());
+            if (cur != null && !cur.isEmpty()) return cur.equals(mine);
+            return roleHeld(ctx);
         } catch (Throwable t) { return false; }
     }
 
