@@ -207,7 +207,8 @@ media-video/pipewire media-video/wireplumber gui-libs/gtk media-fonts/noto media
 www-client/firefox-bin \
 sys-apps/xdg-desktop-portal gui-libs/xdg-desktop-portal-wlr sys-apps/xdg-desktop-portal-gtk \
 media-video/obs-studio \
-sec-keys/openpgp-keys-gentoo-release dev-vcs/git"
+sec-keys/openpgp-keys-gentoo-release dev-vcs/git \
+net-vpn/tor"
 # net-misc/networkmanager (nmcli, the whole network tray), app-admin/sudo, sys-apps/systemd
 # (systemctl: sleep, reboot, power profiles) and sys-apps/util-linux (`script`, which IS the local
 # terminal's PTY — see desktop/localterm.js) come from BASE_PACKAGES / @system above. They are
@@ -861,9 +862,51 @@ services() {
 	echo "[Install]" >> /etc/systemd/system/boot-snapshot.timer
 	echo "WantedBy=default.target" >> /etc/systemd/system/boot-snapshot.timer
 
+	torService
+
 	for i in "${SERVICES[@]}"; do
 		systemctl enable $i
 	done
+}
+
+# ── TOR, ON FROM THE FIRST BOOT ───────────────────────────────────────────────────────────────────
+#
+# A system daemon, which is NOT the same thing as the desktop app's own bundled tor. That one is
+# per-app and dies with the app; this is a SOCKS port every program on the machine can use, up
+# before anybody logs in.
+#
+# GeoIPFile IS LOAD-BEARING. Without it tor cannot resolve a `{cc}` country code at all -- and it
+# does not fail loudly: it bootstraps to 100%, reports itself healthy, and silently ignores the
+# country restriction. A configuration that appears to work and does not is worse here than one that
+# refuses to start, because the whole point of asking for a country is that the traffic goes there.
+#
+# StrictNodes goes WITH ExitNodes and nowhere else: it turns the preference into a requirement, so
+# tor fails to build a circuit rather than quietly leaving the country when it cannot.
+#
+# A NOTE ON ENTRY NODES, since this was asked for explicitly. Pinning entry guards by country is a
+# real reduction in anonymity -- guards are meant to be few, stable and randomly chosen, and picking
+# them by geography narrows the set an observer has to watch -- and on a slow day it can make
+# bootstrapping take much longer. It is written here because it was asked for, and it is one line to
+# remove.
+torService() {
+	mkdir -p /etc/tor
+	# The file is rewritten rather than appended to, so re-running the installer cannot end up with
+	# two ExitNodes lines -- where tor takes the LAST and the visible first one is a lie.
+	cat >/etc/tor/torrc <<-'TORRC'
+		# PosterChanOS. Managed by gentoo.sh -- edits here are replaced on reinstall.
+		SocksPort 9050
+		# Country-restricted entry and exit. GeoIPFile is what makes {us} mean anything; without it
+		# tor bootstraps to 100% and ignores both lines.
+		GeoIPFile /usr/share/tor/geoip
+		GeoIPv6File /usr/share/tor/geoip6
+		EntryNodes {us}
+		ExitNodes {us}
+		StrictNodes 1
+	TORRC
+	chmod 0644 /etc/tor/torrc
+	# Gentoo's net-vpn/tor ships tor.service; enabling it here rather than in SERVICES keeps the
+	# whole of this feature -- package, config and unit -- in one place somebody can read at once.
+	systemctl enable tor 2>/dev/null || true
 }
 
 plymouthTheme() {
@@ -1194,16 +1237,37 @@ posterchanShell() {
 	# without this the machine boots into an empty compositor with no way to do anything, which is
 	# the most convincing possible imitation of a broken install.
 	#
-	# The AppImage is EXTRACTED rather than run as one. An AppImage needs FUSE at runtime, and FUSE
-	# is exactly the sort of thing a minimal profile does not have; extracting once at install time
-	# needs it never, and turns the shell into an ordinary directory of files that starts in the
-	# time it takes to exec.
+	# A PLAIN TARBALL, AND THE APPIMAGE ONLY IF THERE IS NOT ONE.
+	#
+	# The desktop ships in two shapes from one build. The AppImage is for an ordinary Linux desktop,
+	# where it auto-updates and its self-contained-ness is the point. It is the WRONG shape here:
+	# mounting one needs FUSE, which a minimal profile does not have, and it verifies itself on every
+	# start -- so this always had to EXTRACT it, downloading a self-mounting archive purely to unpack
+	# it and throw the wrapper away, while inheriting its failure modes ("VERIFY FAILED" on a machine
+	# that only ever wanted the files inside).
+	#
+	# `PosterChan-<version>-linux-x64.tar.zst` is the same files, packed before the image is built.
+	# No FUSE, no runtime, nothing to verify itself; it unpacks with the zstd this installer already
+	# needs for the live image's squashfs.
+	#
+	# The AppImage path stays as a FALLBACK, not as a preference: a release cut before the tarball
+	# existed has only the image, and an installer that refused it would fail on the last release
+	# rather than the next one.
 	echo -e "\033[1;33mInstalling the PosterChan desktop\033[0m"
+	GH="https://github.com/loblawbob873-svg/posterchanai/releases/download/desktop-latest"
+	APPTAR="/tmp/PosterChan-linux-x64.tar.zst"
 	APPIMG="/tmp/PosterChan.AppImage"
 	mkdir -p ${TARGET}/tmp 2>/dev/null
-	if [ ! -f "$APPIMG" ]; then
-		curl -sSfL --retry 3 --connect-timeout 20 -o "$APPIMG" \
-			https://github.com/loblawbob873-svg/posterchanai/releases/download/desktop-latest/PosterChan.AppImage \
+	# The release names the tarball with its version, which this cannot know in advance; the API
+	# lists the assets, and one grep finds it without hardcoding a build number.
+	if [ ! -s "$APPTAR" ]; then
+		TARURL="$(curl -sSfL --retry 2 --connect-timeout 20 \
+			https://api.github.com/repos/loblawbob873-svg/posterchanai/releases/tags/desktop-latest \
+			2>/dev/null | grep -o 'https://[^"]*linux-x64\.tar\.zst' | head -1)"
+		[ -n "$TARURL" ] && curl -sSfL --retry 3 --connect-timeout 20 -o "$APPTAR" "$TARURL" || true
+	fi
+	if [ ! -s "$APPTAR" ] && [ ! -f "$APPIMG" ]; then
+		curl -sSfL --retry 3 --connect-timeout 20 -o "$APPIMG" "$GH/PosterChan.AppImage" \
 			|| curl -sSfL --retry 2 -o "$APPIMG" https://poster.place/desktop/PosterChan.AppImage || true
 	fi
 	# RUN IT WHERE THE FILES ARE. This function is called BOTH ways — from the installer on the live
@@ -1215,7 +1279,19 @@ posterchanShell() {
 	else
 		_in() { chroot "$TARGET" /bin/bash -c "$1"; }
 	fi
-	if [ -s "$APPIMG" ]; then
+	if [ -s "$APPTAR" ]; then
+		[ "${TARGET:-/}" = "/" ] || cp -f "$APPTAR" ${TARGET}/tmp/PosterChan-linux-x64.tar.zst
+		# Unpacked into a NEW directory and moved into place, so a half-written tree is never what
+		# sway execs. `mkdir -p /opt` first: a stage3 does not guarantee it.
+		_in 'mkdir -p /opt && cd /opt && rm -rf posterchan posterchan.new \
+			&& mkdir -p posterchan.new \
+			&& tar -C posterchan.new -xaf /tmp/PosterChan-linux-x64.tar.zst \
+			&& mv posterchan.new posterchan \
+			&& chmod -R a+rX /opt/posterchan \
+			&& chown root:root /opt/posterchan/chrome-sandbox \
+			&& chmod 4755 /opt/posterchan/chrome-sandbox \
+			&& rm -f /tmp/PosterChan-linux-x64.tar.zst'
+	elif [ -s "$APPIMG" ]; then
 		[ "${TARGET:-/}" = "/" ] || cp -f "$APPIMG" ${TARGET}/tmp/PosterChan.AppImage
 		# `mkdir -p /opt` first: a stage3 does not guarantee it, and `cd` into a directory that is not
 		# there fails the whole && chain — which showed up as "the AppImage did not extract" about an
@@ -1228,6 +1304,8 @@ posterchanShell() {
 			&& chown root:root /opt/posterchan/chrome-sandbox \
 			&& chmod 4755 /opt/posterchan/chrome-sandbox \
 			&& rm -f /tmp/PosterChan.AppImage'
+	fi
+	if [ -s "$APPTAR" ] || [ -s "$APPIMG" ]; then
 		# A WRAPPER, NOT A SYMLINK. `AppRun` finds the binary through $APPDIR, and $APPDIR is set by
 		# the AppImage RUNTIME — which is exactly the thing extracting removes. Symlinked into
 		# /usr/local/bin it resolves to an empty string and the shell dies with
@@ -1255,7 +1333,7 @@ posterchanShell() {
 		if [ -e "${TARGET}/usr/local/bin/posterchan" ]; then
 			echo -e "\033[1;32m  ✓ /usr/local/bin/posterchan\033[0m"
 		else
-			echo -e "\033[1;31m  ✗ the AppImage did not extract — sway will start with no shell\033[0m"
+			echo -e "\033[1;31m  ✗ the desktop did not unpack — sway will start with no shell\033[0m"
 		fi
 	else
 		echo -e "\033[1;31m  ✗ could not download the PosterChan desktop — sway will start with no shell\033[0m"

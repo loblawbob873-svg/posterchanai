@@ -69,28 +69,47 @@ else
 	# extracted and checked in a temp directory, then swapped by rename. An update that fails leaves
 	# the machine running exactly what it was running, which matters more here than anywhere else:
 	# this IS the desktop, and a half-replaced one is a black screen with no way back.
-	REL="${PC_DESKTOP_URL:-https://github.com/loblawbob873-svg/posterchanai/releases/download/desktop-latest/PosterChan.AppImage}"
 	TMP="$(mktemp -d /var/tmp/pc-update.XXXXXX)" || exit 1
 	trap 'rm -rf "$TMP"' EXIT
+	NEW="$TMP/tree"
 
+	# A PLAIN TARBALL FIRST, THE APPIMAGE ONLY IF THERE IS NOT ONE. The desktop ships in two shapes
+	# from one build: the AppImage for an ordinary Linux desktop, where it auto-updates, and a
+	# tar.zst of the same files for machines that install it into /opt. This is the second kind.
+	# Mounting an AppImage needs FUSE, which a minimal profile does not have, and it verifies itself
+	# on every start -- so taking one here meant downloading a self-mounting archive purely to unpack
+	# it and throw the wrapper away. The fallback stays because a release cut before the tarball
+	# existed has only the image.
 	echo "${CYA}Downloading the current desktop${OFF}"
-	if ! curl -fL --progress-bar -o "$TMP/app.AppImage" "$REL"; then
-		echo "${RED}Could not download it. Nothing was changed.${OFF}"
-		exit 1
+	TARURL="${PC_DESKTOP_TAR:-}"
+	if [ -z "$TARURL" ]; then
+		TARURL="$(curl -fsSL --retry 2 \
+			https://api.github.com/repos/loblawbob873-svg/posterchanai/releases/tags/desktop-latest \
+			2>/dev/null | grep -o 'https://[^"]*linux-x64\.tar\.zst' | head -1)"
 	fi
-	chmod +x "$TMP/app.AppImage"
-
-	# EXTRACTED, NEVER RUN AS AN APPIMAGE. It is a transport format here and nothing more: mounting
-	# one needs FUSE, which a minimal profile does not have, and the extracted tree is ordinary files
-	# that need nothing at all. This is the same thing the ebuild's src_unpack does.
-	echo "${CYA}Extracting${OFF}"
-	if ! ( cd "$TMP" && ./app.AppImage --appimage-extract >/dev/null 2>&1 ) \
-		|| [ ! -x "$TMP/squashfs-root/AppRun" ]; then
-		echo "${RED}The download did not extract — it is probably incomplete. Nothing was changed.${OFF}"
-		exit 1
+	if [ -n "$TARURL" ] && curl -fL --progress-bar -o "$TMP/app.tar.zst" "$TARURL"; then
+		mkdir -p "$NEW"
+		if ! tar -C "$NEW" -xaf "$TMP/app.tar.zst"; then
+			echo "${RED}The download did not unpack — it is probably incomplete. Nothing was changed.${OFF}"
+			exit 1
+		fi
+	else
+		REL="${PC_DESKTOP_URL:-https://github.com/loblawbob873-svg/posterchanai/releases/download/desktop-latest/PosterChan.AppImage}"
+		echo "${YEL}No tarball in that release — falling back to the AppImage.${OFF}"
+		if ! curl -fL --progress-bar -o "$TMP/app.AppImage" "$REL"; then
+			echo "${RED}Could not download it. Nothing was changed.${OFF}"
+			exit 1
+		fi
+		chmod +x "$TMP/app.AppImage"
+		# EXTRACTED, NEVER RUN AS ONE — see above.
+		if ! ( cd "$TMP" && ./app.AppImage --appimage-extract >/dev/null 2>&1 ) \
+			|| [ ! -x "$TMP/squashfs-root/AppRun" ]; then
+			echo "${RED}The download did not extract — it is probably incomplete. Nothing was changed.${OFF}"
+			exit 1
+		fi
+		NEW="$TMP/squashfs-root"
 	fi
-
-	NEW="$TMP/squashfs-root"
+	[ -x "$NEW/AppRun" ] || { echo "${RED}That download has no desktop in it. Nothing was changed.${OFF}"; exit 1; }
 	chmod -R a+rX "$NEW"
 	chmod 0755 "$NEW/AppRun" 2>/dev/null || true
 	[ -f "$NEW/posterchan-desktop" ] && chmod 0755 "$NEW/posterchan-desktop"

@@ -746,3 +746,47 @@ class MoreThanOneScreenWorksWithoutConfiguring(unittest.TestCase):
                           f"{name}: Super+Enter does not raise PosterChan's terminal")
             self.assertIn("bindsym $mod+Shift+Return exec foot", cfg,
                           f"{name}: Super+Shift+Enter does not open a plain terminal")
+
+
+class TorIsUpFromTheFirstBoot(unittest.TestCase):
+    """A SYSTEM DAEMON, not the desktop app's bundled one.
+
+    The app's own tor is per-app and dies with the app. This is a SOCKS port every program on the
+    machine can use, up before anybody logs in.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = open(SH, encoding="utf-8").read()
+
+    def test_the_package_is_installed(self):
+        self.assertIn("net-vpn/tor", self.src, "tor is not in the package list")
+
+    def test_it_is_enabled_at_boot(self):
+        self.assertIn("systemctl enable tor", self.src, "tor is installed but never enabled")
+
+    def test_the_country_is_pinned_at_both_ends(self):
+        self.assertIn("EntryNodes {us}", self.src)
+        self.assertIn("ExitNodes {us}", self.src)
+
+    def test_the_geoip_file_is_configured(self):
+        """WITHOUT IT THE COUNTRY LINES DO NOTHING, and nothing says so: tor cannot resolve a {cc}
+        code with no GeoIP database, bootstraps to 100%, reports itself healthy and ignores the
+        restriction. A config that appears to work and does not is worse than one that refuses to
+        start, because the entire point of naming a country is that the traffic goes there."""
+        self.assertIn("GeoIPFile", self.src, "ExitNodes {us} cannot be resolved without GeoIPFile")
+        self.assertIn("GeoIPv6File", self.src)
+
+    def test_strictnodes_accompanies_the_country(self):
+        """It turns the preference into a requirement, so tor fails to build a circuit rather than
+        quietly leaving the country when it cannot stay."""
+        self.assertIn("StrictNodes 1", self.src)
+
+    def test_the_config_is_rewritten_not_appended(self):
+        """Two ExitNodes lines and tor takes the LAST one, so the visible first line is a lie. A
+        re-run of the installer must not be able to produce that."""
+        i = self.src.index("EntryNodes {us}")
+        before = self.src[max(0, i - 1200):i]
+        self.assertIn("cat >/etc/tor/torrc", before,
+                      "the torrc is not written whole, so re-running could append a second copy")
+        self.assertNotIn(">>/etc/tor/torrc", self.src)

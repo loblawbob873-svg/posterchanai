@@ -262,6 +262,34 @@ jobs:
           fi
           ls -la dist
 
+      # ── A PLAIN TARBALL, FOR THE MACHINES THAT SHOULD NEVER SEE AN APPIMAGE ──────────────────
+      #
+      # PosterChanOS installs the desktop into /opt and execs it from sway. An AppImage is a
+      # squashfs image with a runtime stapled to the front: mounting one needs FUSE, which a minimal
+      # profile does not have, and it verifies itself on every start. Both the installer and the
+      # ebuild were therefore EXTRACTING it -- downloading a self-mounting archive purely to unpack
+      # it and throw the wrapper away, and inheriting its failure modes on the way ("VERIFY FAILED"
+      # on a machine that only ever wanted the files inside).
+      #
+      # electron-builder already produces exactly those files in dist/linux-unpacked on its way to
+      # building the image. Shipping THEM is strictly less machinery: no FUSE, no self-verification,
+      # no squashfs, and a checksum portage can pin. The AppImage stays for everyone else -- it is
+      # what auto-updates on an ordinary Linux desktop -- so this adds a format rather than
+      # replacing one.
+      - name: Pack the unpacked build for PosterChanOS
+        if: matrix.name == 'linux'
+        working-directory: desktop
+        shell: bash
+        run: |
+          test -d dist/linux-unpacked || { echo "::error::no linux-unpacked to pack"; exit 1; }
+          ver="$(node -p "require('./package.json').version")"
+          # zstd: in the base system on the machines that consume this (the live image already needs
+          # it for its squashfs), and far quicker to unpack than xz on a first boot.
+          tar -C dist/linux-unpacked -caf "dist/PosterChan-${ver}-linux-x64.tar.zst" .
+          ( cd dist && sha512sum "PosterChan-${ver}-linux-x64.tar.zst" \
+              >"PosterChan-${ver}-linux-x64.tar.zst.sha512" )
+          ls -la dist/PosterChan-*.tar.zst*
+
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.name }}
@@ -270,6 +298,8 @@ jobs:
             desktop/dist/*.exe
             desktop/dist/*.blockmap
             desktop/dist/*.AppImage
+            desktop/dist/*.tar.zst
+            desktop/dist/*.tar.zst.sha512
             desktop/dist/*.dmg
             desktop/dist/latest*.yml
 
