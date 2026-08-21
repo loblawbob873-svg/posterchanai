@@ -1234,8 +1234,6 @@
           <button class="btn small" id="sms-deep2">Bring in older messages</button>
           <span class="muted small" id="sms-deep-note" style="margin-left:8px"></span>
         </div>
-        <div class="muted small" style="margin-top:6px">
-          <button class="btn small" id="sms-why">Why isn\u2019t this working?</button></div>
         <div class="sms-threads">${rows.map(t => {
           const last = t.msgs[t.msgs.length-1] || {};
           const who = whoIs(last.name, t.address);
@@ -1295,22 +1293,6 @@
     if(q) q.oninput = () => { S.q = q.value; paint(); q.focus(); };
     const nw = PC.$('#sms-new');
     if(nw) nw.onclick = composeNew;
-    const dbg = PC.$('#sms-why');
-    if(dbg) dbg.onclick = async () => {
-      dbg.disabled = true;
-      const d = await details();
-      const el = PC.$('#sms-note');
-      /* SHOWN, not written into a collapsed element. `noteWhere` hides this line on a phone — there
-       * is nothing worth captioning there — and the diagnostic used the same element, so pressing
-       * the button printed the answer into `display:none`. A diagnostic that cannot be read is
-       * worse than none: it looks like the button does nothing, on the screen somebody opened
-       * because nothing was working. */
-      if(el){
-        el.style.display = '';
-        el.textContent = (d ? detailLine(d) : 'This build cannot report it — it is older than this screen.')
-                       + ' \u00b7 ' + countLine();
-      }
-    };
     const role = PC.$('#sms-role');
     if(role) role.onclick = () => askForRole(role);
     const defs = PC.$('#sms-defaults');
@@ -1559,10 +1541,19 @@
         paint();
       }, () => {});
     }
-    // PUBLISHING needs to read; PERFORMING A SEND another device asked for needs the role, because
-    // only the default SMS app may write the provider. Two jobs, two gates.
+    /* PUBLISHING needs to READ; performing a send another device asked for needs a RADIO. Two
+     * jobs, two gates -- and this one used to name the role for the second, which contradicted the
+     * function it calls.
+     *
+     * `drainOutbox` was corrected to gate on telephony, with its own comment explaining why: sending
+     * needs SEND_SMS, and the role only decides whether messages arrive and whether the phone's own
+     * store may be written. The CALL SITES were left asking for the role, so on a handset that had
+     * not been made the default the drain was never reached at all -- the laptop's request sat
+     * unperformed on a phone perfectly able to send it, and the laptop said "waiting for your phone"
+     * for ever, which is true and useless. The fix inside a function is not a fix while the only
+     * thing that calls it disagrees. */
     if(st.canRead) mirror();
-    if(st.isDefault) drainOutbox();
+    if(st.telephony) drainOutbox();
   }
 
   function init(){
@@ -1575,10 +1566,10 @@
     document.addEventListener('visibilitychange', async () => {
       if(document.visibilityState !== 'visible') return;
       const st = await phoneState();
-      if(!st.canRead && !st.isDefault) return;
+      if(!st.canRead && !st.telephony) return;
       await load();
       if(st.canRead) mirror();
-      if(st.isDefault) drainOutbox();
+      if(st.telephony) drainOutbox();
     });
   }
   init();
