@@ -589,7 +589,8 @@ finalizeInstall() {
 	echo 'bash /usr/bin/gentoo.sh bootloader' >>$TARGET/setup.sh
 	echo 'bash /usr/bin/gentoo.sh accounts' >>$TARGET/setup.sh
 	echo 'bash /usr/bin/gentoo.sh services' >>$TARGET/setup.sh
-	echo "chown -R $USER:$USER /home/$USER" >>$TARGET/setup.sh
+	# Do not carry the LiveCD operator into the installed system. On a live install USER=live, but
+	# that account is deliberately removed; with `set -e`, chowning /home/live aborted finalization.
 	# THE DISPLAY MANAGER IS A KDE COMPONENT AND PosterChanOS DOES NOT HAVE ONE. Enabling a unit
 	# that was never installed fails the whole finalize step — and on the profile whose entire point
 	# is that the shell IS the desktop, there is nothing for a login screen to launch. The shell
@@ -617,12 +618,20 @@ finalizeInstall() {
 	# rewrite the file it points at, so the distro's own copy stays intact underneath.
 	ln -sf ../etc/os-release $TARGET/usr/lib/os-release 2>/dev/null || true
 	cp -f gentoo.sh $TARGET/usr/bin/gentoo.sh
-	chroot $TARGET /usr/bin/bash /usr/bin/gentoo.sh posterchan-shell
 	plymouthTheme
 	chmod +x $TARGET/usr/bin/gentoo.sh
 	chmod +x $TARGET/setup.sh
 	cp -f /tmp/disk $TARGET/etc/disk
 	chroot $TARGET /setup.sh
+	# accounts() creates `posterchan`; configure its graphical session only after that. Doing this
+	# before accounts selected the LiveCD's `live` account and copied its autologin onto the NVMe.
+	chroot $TARGET /usr/bin/bash /usr/bin/gentoo.sh posterchan-shell
+	# This is the installed machine's local console, not the public live session or a remote signer.
+	# Its terminal needs a recovery/admin path before any human account has been provisioned.
+	printf '%s\n' 'posterchan ALL=(ALL:ALL) NOPASSWD: ALL' \
+		>$TARGET/etc/sudoers.d/posterchan-local-admin
+	chmod 0440 $TARGET/etc/sudoers.d/posterchan-local-admin
+	chroot $TARGET /usr/sbin/visudo -cf /etc/sudoers.d/posterchan-local-admin
 	rm -f $TARGET/setup.sh
 	echo
 	echo -e "\033[1;33mGentoo Installation Complete!\033[0m"
@@ -976,8 +985,15 @@ liveISOinstall() {
 	# built from. Run against an empty one, kernel-install has no directory to write into.
 	#
 	# So the identity is minted first, in the target, and it is the installed machine's from then on.
+	sudo mkdir -p "$TARGET/var/tmp"
+	sudo chmod 1777 "$TARGET/var/tmp"
 	sudo chroot $TARGET /usr/bin/systemd-machine-id-setup >/dev/null 2>&1 \
 		|| sudo chroot $TARGET /bin/sh -c 'systemd-machine-id-setup' >/dev/null 2>&1 || true
+	if [ ! -s "$TARGET/etc/machine-id" ]; then
+		echo -e "${COLOR_YELLOW}Could not create the installed machine ID — refusing to build${COLOR_RESET}"
+		echo -e "${COLOR_YELLOW}boot paths with an empty directory name.${COLOR_RESET}"
+		return 1
+	fi
 
 	local KVER
 	KVER="$(ls $TARGET/lib/modules 2>/dev/null | sort -V | tail -1)"
@@ -1229,6 +1245,20 @@ posterchanShell() {
 	# nobody while looking perfectly well formed.
 	SHELL_USER="posterchan"
 	id -u "$SHELL_USER" >/dev/null 2>&1 || SHELL_USER="${USER:-posterchan}"
+	_configure_shell_session() {
+		local GETTY_DIR="${TARGET}/etc/systemd/system/getty@tty1.service.d"
+		mkdir -p "$GETTY_DIR" "${TARGET}/home/$SHELL_USER"
+		printf '[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin %s --noclear %%I $TERM\n' \
+			"$SHELL_USER" >"$GETTY_DIR/override.conf"
+		cat >"${TARGET}/home/$SHELL_USER/.bash_profile" <<-'PROFILE'
+[[ -f ~/.bashrc ]] && . ~/.bashrc
+if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
+	export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=sway MOZ_ENABLE_WAYLAND=1
+	exec sway
+fi
+PROFILE
+		chown "$SHELL_USER:$SHELL_USER" "${TARGET}/home/$SHELL_USER/.bash_profile" 2>/dev/null || true
+	}
 
 	# NOTHING HERE MAY PULL WEBKIT — masked so a future dependency FAILS rather than costing hours.
 	# webkit-gtk is one of the longest builds in the tree, and the way you find out you need it is
@@ -1508,6 +1538,9 @@ posterchanShell() {
 		fi
 		if [ -x "${TARGET}/usr/local/bin/posterchan" ] && [ -d "${TARGET}/opt/posterchan" ]; then
 			echo -e "\033[1;32m  ✓ installed from the overlay\033[0m"
+			# The package being present does not mean the session account was configured. In particular,
+			# an install copied from a LiveCD still autologs `live` and has no installed-user profile.
+			_configure_shell_session
 			return 0
 		fi
 	fi
@@ -1653,21 +1686,7 @@ posterchanShell() {
 
 	# Autologin straight into the shell. A display manager is another package, another theme and
 	# another thing between the power button and the desktop.
-	GETTY_DIR="${TARGET}/etc/systemd/system/getty@tty1.service.d"
-	mkdir -p $GETTY_DIR
-	printf '[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin %s --noclear %%I $TERM\n' \
-		"$SHELL_USER" >$GETTY_DIR/override.conf
-
-	# ...and start sway from the login shell on tty1 only, so a second console is still a console.
-	mkdir -p ${TARGET}/home/$SHELL_USER
-	cat >${TARGET}/home/$SHELL_USER/.bash_profile <<-'PROFILE'
-	[[ -f ~/.bashrc ]] && . ~/.bashrc
-	if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
-		export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=sway MOZ_ENABLE_WAYLAND=1
-		exec sway
-	fi
-	PROFILE
-	chown $SHELL_USER:$SHELL_USER ${TARGET}/home/$SHELL_USER/.bash_profile 2>/dev/null
+	_configure_shell_session
 }
 
 installSteam() {
@@ -1739,7 +1758,8 @@ accounts() {
 	for g in audio video input netdev render; do
 		getent group "$g" >/dev/null 2>&1 && gpasswd -a $SHELL_USER "$g" >/dev/null 2>&1
 	done
-	# One command, not ALL. The shell provisions accounts; it is not an administrator.
+	# One command, not ALL. Broad local administration is added only by finalizeInstall() on a
+	# machine being installed to disk; the reusable shell/session setup stays restricted.
 	mkdir -p /etc/sudoers.d
 	printf '%s\n' \
 		"# The shell provisions a Unix account for whoever signs in. This one command, nothing else." \
@@ -2993,6 +3013,10 @@ hibernation() {
 }
 
 bootloader() {
+	# dracut requires a real temporary directory. Live images exclude /var/tmp contents, and an
+	# absent directory made an otherwise-correct encrypted-root rebuild fail.
+	mkdir -p /var/tmp
+	chmod 1777 /var/tmp
 	chmod -R 740 /boot/EFI
 	rm -rf /boot/loader/entries/*
 	if [ -f "/etc/disk" ]; then
@@ -3021,7 +3045,15 @@ bootloader() {
 			echo -e "\033[1;31m  but this disk may have no boot loader to read it.\033[0m"
 		fi
 		mkdir -p /boot/loader/entries
-		MACHINE_ID=$(cat /etc/machine-id)
+		MACHINE_ID=$(cat /etc/machine-id 2>/dev/null)
+		if [ -z "$MACHINE_ID" ]; then
+			systemd-machine-id-setup >/dev/null 2>&1 || true
+			MACHINE_ID=$(cat /etc/machine-id 2>/dev/null)
+		fi
+		if [ -z "$MACHINE_ID" ]; then
+			echo -e "\033[1;31mNo machine ID — refusing to delete modules or write invalid /boot paths.\033[0m"
+			return 1
+		fi
 		# The directory name already IS the complete kernel version. Splitting `kernel-$version`
 		# into a fixed number of dash-separated fields truncated versions such as
 		# 6.18.43-gentoo-dist-bin to 6.18.43-gentoo-dist, so the entry named files that did not exist.

@@ -34,7 +34,12 @@ if [ -L "$LOCK" ]; then
     esac
 fi
 
-/usr/local/bin/posterchan --shell &
+# Do not leave Electron's backend to auto-detection. On the installed laptop that produced a live
+# main process and zygotes but no renderer and no Wayland surface: Sway was healthy, yet the screen
+# stayed black forever. The same binary maps immediately when Ozone is explicitly pointed at the
+# compositor. APPDIR also makes an extracted AppImage and a plain tarball behave identically.
+ELECTRON_OZONE_PLATFORM_HINT=auto APPDIR=/opt/posterchan \
+  /usr/local/bin/posterchan --shell &
 
 # Up to 60s: an Electron cold start on a slow disk is not a failure. Polling rather than
 # subscribing, because this must work before anything else in the session is up.

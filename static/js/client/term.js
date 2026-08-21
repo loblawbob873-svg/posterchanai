@@ -67,6 +67,10 @@
     let term = null, fit = null, ws = null, link = null, host = null, ro = null;
     let hosts = [], connected = false, ctrl = false, mounted = null;
     let sid = '', cursor = 0, retry = 0, retryT = null, want = false, live = [];
+    /* A mount can cross awaits (host list, session list). Raising the same Terminal window twice
+     * starts a second render before the first resumes; without a generation token BOTH continuations
+     * mount xterm and attach input, so every physical key is written twice. */
+    let renderEpoch = 0;
     // Set on `ready`, fires once the socket has HELD. Only then does a reconnect count as
     // having worked — see the ready handler.
     let provenT = null;
@@ -815,6 +819,7 @@
        * bound to had been destroyed, so `if(!term && !_mountTerm())` skipped the remount and every
        * byte of output went into a detached node: "connected", over a black screen, until a reload. */
       unmount();
+      const epoch = ++renderEpoch;
       feed.innerHTML = _shellHtml();
       mounted = feed;
       _state('');
@@ -824,12 +829,14 @@
       _histStart();
       _histPaint();
       const ok = await loadHosts();
+      if(epoch !== renderEpoch || mounted !== feed) return;
       _wire();
       { const hb = $('#tty-hist'); if(hb) hb.onclick = _histToggle; }
       document.addEventListener('visibilitychange', _wake);
       if(ok && !hosts.length) _state('no hosts configured — add some in Admin → Nodes', 'err');
       if(ok){
         await _sessions();
+        if(epoch !== renderEpoch || mounted !== feed) return;
         /* COME BACK TO THE SHELL YOU LEFT. The id this device remembers is reattached to on sight —
          * leaving the Terminal and returning, or reopening the app, should land you back in your
          * session rather than at a host picker with your work invisible behind it. Anything the
@@ -877,6 +884,7 @@
     }
 
     function unmount(){
+      ++renderEpoch;                 // every pending continuation now belongs to a dead screen
       // LEAVING THE SCREEN IS DETACHING, never killing: the shell keeps running and the id is kept,
       // so coming back reattaches. This used to close the socket AND that was the end of the session.
       _bye();

@@ -3515,6 +3515,15 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 
 /* ===== settings view ===== */
 .settings{padding:22px 32px 70px;max-width:none;margin:0;animation:fade .25s;font-size:17px}
+.signer-app{max-width:920px;margin:0 auto}
+.signer-hero{display:flex;align-items:center;gap:20px;padding:22px 24px;margin-bottom:18px;border:1px solid rgba(var(--accent-rgb),.35);border-radius:22px;background:linear-gradient(135deg,rgba(var(--accent-rgb),.15),rgba(8,5,18,.35));box-shadow:0 16px 44px rgba(0,0,0,.18)}
+.signer-hero h2{font:700 25px/1.2 'Orbitron',sans-serif;color:var(--neon);margin:0 0 7px;text-shadow:0 0 14px rgba(var(--accent-rgb),.35)}
+.signer-hero p{margin:0;max-width:58ch;color:var(--muted);line-height:1.5}
+.signer-mark{position:relative;display:grid;place-items:center;flex:0 0 76px;width:76px;height:76px;border-radius:24px;background:rgba(var(--accent-rgb),.13);color:var(--neon);box-shadow:inset 0 0 0 1px rgba(var(--accent-rgb),.32),0 0 28px rgba(var(--accent-rgb),.16)}
+.signer-mark>.ic{width:48px;height:48px}.signer-mark>.signer-mark-key{position:absolute;width:24px;height:24px;color:#fff;filter:drop-shadow(0 2px 5px rgba(0,0,0,.55))}
+.signer-app .set-card{border-radius:18px;background:linear-gradient(145deg,rgba(8,5,18,.52),rgba(var(--accent-rgb),.045))}
+.signer-app .set-body{margin-top:14px}.signer-app #signer-apps>.row{padding:8px 0;border-top:1px solid var(--line)}
+@media(max-width:600px){.signer-hero{align-items:flex-start;padding:18px;gap:14px}.signer-mark{flex-basis:58px;width:58px;height:58px;border-radius:18px}.signer-mark>.ic{width:38px;height:38px}.signer-mark>.signer-mark-key{width:19px;height:19px}.signer-hero h2{font-size:20px}}
 .set-card{background:rgba(8,5,18,.4);border:1px solid var(--line);border-radius:var(--r);padding:20px 20px 18px;margin-bottom:18px}
 .set-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
 .set-head .muted.small{margin-top:6px;line-height:1.45;max-width:50ch;font-size:15px}

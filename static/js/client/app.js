@@ -2297,6 +2297,18 @@
       this._sync();
     },
 
+    revokeAll(){
+      this.sessions.clear();
+      this._persist();
+      this.active = false;
+      this.socks.forEach(ws => { try{ ws.onclose = null; ws.close(); }catch(_){} });
+      this.socks.clear();
+      /* Push the EMPTY session set to the native service too. Clearing browser storage alone would
+       * leave Android answering requests for pairings the Signer screen says were revoked. */
+      this._pushNative().catch(()=>{});
+      this._sync();
+    },
+
     _open(relay){
       const have = this.socks.get(relay);
       if(have && have.readyState === 1) return Promise.resolve();
@@ -28156,13 +28168,24 @@
       /* THE SECOND WAY IN, and it is not a nicety. Scanning the app's QR only works for apps that
        * SHOW one; nostrudel's signer login is a single text field wanting `bunker://…`, so without
        * this there is no way to log into it at all. One line, because space is tight on a phone. */
-      + '<div class="row" style="margin-top:8px"><button class="mini" id="signer-bunker">'
-      + 'Connect an app with a link</button></div>';
+      + '<div class="row" style="margin-top:8px;gap:8px"><button class="mini" id="signer-bunker">'
+      + 'Connect an app with a link</button>'
+      + (apps.length ? '<button class="mini" id="signer-revoke-all" style="color:var(--danger)">Revoke all apps</button>' : '')
+      + '</div>';
 
     $$('[data-revoke]', box).forEach(b => b.onclick = () => {
       Nip46Signer.revoke(b.dataset.revoke); toast('signed that app out'); _renderSignerApps(); });
     const bk = $('#signer-bunker', box);
     if(bk) bk.onclick = () => _showBunkerLink();
+    const ra = $('#signer-revoke-all', box);
+    if(ra) ra.onclick = async () => {
+      if(!await uiConfirm('Revoke every app signed in with this device? They will all need to pair again.',
+                          { ok:'Revoke all', cancel:'Keep them' })) return;
+      Nip46Signer.revokeAll();
+      _renderSignerApps._native = {};
+      toast('all signer apps revoked');
+      _renderSignerApps();
+    };
     _signerBackgroundHint(box);
   }
 
@@ -28387,9 +28410,13 @@
   function renderSigner(){
     const feed=$('#feed');
     feed.innerHTML = `<div class="settings signer-app">
+      <div class="signer-hero">
+        <div class="signer-mark"><svg class="ic" aria-hidden="true"><use href="#i-shield"></use></svg><svg class="ic signer-mark-key" aria-hidden="true"><use href="#i-key"></use></svg></div>
+        <div><h2>Your key, your approval</h2><p>Sign into Nostr apps without copying your private key around. PosterChan keeps it here and signs only when an app asks.</p></div>
+      </div>
       <section class="set-card">
-        <div class="set-head"><div><div class="set-title"><svg class="ic b-ic" aria-hidden="true"><use href="#i-key"></use></svg>Signer</div>
-          <div class="muted small">Use this device to sign in and approve actions in other Nostr apps. Your private key stays on this device.</div></div></div>
+        <div class="set-head"><div><div class="set-title">Sign in another device</div>
+          <div class="muted small">Scan the QR shown by a desktop or web app. Your private key never leaves this device.</div></div></div>
         <div class="set-body">
           <button class="btn btn-neon small" id="signer-scan-qr"${ME.mode === 'local' ? '' : ' disabled'}><svg class="ic b-ic" aria-hidden="true"><use href="#i-camera"></use></svg>Scan sign-in QR</button>
           ${ME.mode === 'local' ? '' : `<div class="muted small" style="margin-top:8px">Sign in here with a local key first. This session keeps its key in ${ME.mode === 'nip07' ? 'a browser extension' : 'another signer'}, so this device cannot sign for another app.</div>`}
@@ -28397,8 +28424,8 @@
         </div>
       </section>
       <section class="set-card">
-        <div class="set-head"><div><div class="set-title">Apps on this phone</div>
-          <div class="muted small">Let Android Nostr apps use PosterChan as their signer, like Amber.</div></div></div>
+        <div class="set-head"><div><div class="set-title">Use with apps on this phone</div>
+          <div class="muted small">Let Android Nostr apps ask PosterChan to sign, just like they would ask Amber.</div></div></div>
         <div class="set-body"><div id="signer-nip55" class="muted small"></div></div>
       </section>
     </div>`;
