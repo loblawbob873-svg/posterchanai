@@ -5137,6 +5137,10 @@
     root.className = 'os-root';
     root.innerHTML = '<div class="os-desk" id="os-desk"></div><div class="os-bar" id="os-bar"></div>';
     document.body.appendChild(root);
+    /* Sway reports the bare-Super RELEASE even after a Super+Return chord. Remember terminal's
+     * key-down tick long enough to reject that trailing release; otherwise one shortcut opens the
+     * terminal and then immediately raises Start over it. */
+    let _suppressStartUntil = 0;
     /* THE POSTERCHANOS SHELL, when this machine IS the desktop.
      *
      * IT ADDS NO FURNITURE OF ITS OWN. It used to mount three floating bars — a launcher bottom
@@ -5180,7 +5184,10 @@
              * Found by asking the compositor which window is ours rather than remembering an id: a
              * shell that was restarted, or a second one, would hold a stale number, and focusing a
              * window that no longer exists fails silently. */
-            if(p === 'pc:start'){ _raiseShell().then(() => toggleStart(), () => toggleStart()); }
+            if(p === 'pc:start'){
+              if(Date.now() < _suppressStartUntil){ toggleStart(false); return; }
+              _raiseShell().then(() => toggleStart(), () => toggleStart());
+            }
             else if(p === 'pc:start:close') toggleStart(false);
             /* PRINT SCREEN, through the same function the tray button calls. A screenshot taken by
              * the key and one taken from the tray must land in the same folder under the same
@@ -5192,7 +5199,11 @@
             /* Super+Return. `openApp` is what a start-menu entry and a desktop icon both go through,
              * so the terminal opened by the key is the same window, in the same place in the
              * stacking order, as the one opened by clicking it. */
-            else if(p === 'pc:terminal') openApp('terminal');
+            else if(p === 'pc:terminal'){
+              _suppressStartUntil = Date.now() + 1200;
+              toggleStart(false);
+              openApp('terminal');
+            }
           });
         }catch(_){}
         PCOSShell.watch(() => { adoptAll(); drawBar(); }).then(off => {

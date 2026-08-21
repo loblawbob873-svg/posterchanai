@@ -57,6 +57,15 @@ class ModReturnOpensOurs(unittest.TestCase):
         i = src.index("'pc:terminal'")
         self.assertNotIn("window.open", src[i:i + 160])
 
+    def test_its_super_release_cannot_open_start_over_the_terminal(self):
+        """Sway emits the bare-Super release after the Return binding has already fired."""
+        src = OS_JS.read_text()
+        terminal = src.index("else if(p === 'pc:terminal')")
+        start = src.index("if(p === 'pc:start')")
+        self.assertIn("_suppressStartUntil =", src[terminal:terminal + 260])
+        self.assertIn("Date.now() < _suppressStartUntil", src[start:start + 260])
+        self.assertIn("toggleStart(false)", src[terminal:terminal + 260])
+
     def test_ctrl_enter_does_not_steal_send_from_an_editor(self):
         """The OS handler runs in capture, before a composer can consume Ctrl+Enter itself."""
         src = OS_JS.read_text()
