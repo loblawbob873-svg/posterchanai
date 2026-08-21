@@ -223,4 +223,101 @@ public class SmsDeviceTest {
             return out.toString("UTF-8");
         }
     }
+
+    // ------------------------------------------------------------- a whole conversation, on a real
+    //                                                               provider
+
+    /**
+     * THE REPORTED FAULT, REPRODUCED RATHER THAN REASONED ABOUT.
+     *
+     * "all replies I made to 2 people are not there", "i see replies i made to my dad at jul 2,
+     * nothing after which is today". Four builds went out against theories about why, each argued
+     * from a description of a screen. This puts both halves of a conversation into a real provider
+     * and reads the conversation back the way the app does, so the answer is measured on an Android
+     * instead of inferred from here.
+     */
+    @Test
+    public void aConversationShowsBothHalvesOfItself() {
+        Assume.assumeTrue("could not take the SMS role on this device", takeRole());
+
+        long now = System.currentTimeMillis();
+        String them = "+15550188";
+        String theirs = "pc-in-" + now;
+        String mine = "pc-out-" + now;
+
+        Uri a = SmsStore.storeInbox(ctx, them, theirs, now - 2000, 0);
+        assertNotNull("the provider refused the incoming message", a);
+        // Stored the way a reply is: no thread id known, address as the app holds it.
+        Uri b = SmsStore.storeSent(ctx, them, mine, now - 1000, Telephony.Sms.MESSAGE_TYPE_SENT);
+        assertNotNull("the provider refused the outgoing message", b);
+        try {
+            List<SmsStore.Thread> threads = Messages.threads(ctx, 200, false);
+            SmsStore.Thread found = null;
+            for (SmsStore.Thread t : threads) {
+                for (SmsMsg m : Messages.thread(ctx, t.ids, 200)) {
+                    if (theirs.equals(m.body) || mine.equals(m.body)) { found = t; break; }
+                }
+                if (found != null) break;
+            }
+            assertNotNull("neither message appears in any conversation the app lists", found);
+
+            List<SmsMsg> rows = Messages.thread(ctx, found.ids, 200);
+            boolean sawTheirs = false, sawMine = false;
+            for (SmsMsg m : rows) {
+                if (theirs.equals(m.body)) sawTheirs = true;
+                if (mine.equals(m.body)) sawMine = true;
+            }
+            assertTrue("their message is missing from the conversation", sawTheirs);
+            // The one that was actually wrong on the phone.
+            assertTrue("MY OWN REPLY IS MISSING FROM THE CONVERSATION", sawMine);
+
+            // And it is ONE conversation, not one per direction.
+            int holding = 0;
+            for (SmsStore.Thread t : threads) {
+                for (SmsMsg m : Messages.thread(ctx, t.ids, 200)) {
+                    if (theirs.equals(m.body) || mine.equals(m.body)) { holding++; break; }
+                }
+            }
+            assertEquals("one person, more than one conversation", 1, holding);
+        } finally {
+            try { ctx.getContentResolver().delete(a, null, null); } catch (Throwable ignored) { }
+            try { ctx.getContentResolver().delete(b, null, null); } catch (Throwable ignored) { }
+        }
+    }
+
+    /**
+     * DOES A DIFFERENT SPELLING OF THE SAME NUMBER MINT A SECOND CONVERSATION? Asserted as fact in
+     * a commit message here; never measured. The answer decides whether a reply may be stored
+     * against a resolved address at all, so it is asked of the platform rather than assumed either
+     * way -- `aThreadIdIsMintedForANumber` only ever tried spellings that differ by whitespace.
+     */
+    @Test
+    public void aCountryCodeIsNotASecondConversation() {
+        Assume.assumeTrue("could not take the SMS role on this device", takeRole());
+        long withCode = SmsStore.threadIdFor(ctx, "+15550199");
+        long without = SmsStore.threadIdFor(ctx, "5550199");
+        assertTrue("no thread id", withCode > 0 && without > 0);
+        assertEquals("the same person has two conversations, one per spelling of their number",
+                withCode, without);
+    }
+
+    /**
+     * THE PROVIDER'S CONVERSATION LIST IS THE ONE THE APP SHOWS. Fossify Messages reads
+     * `content://mms-sms/conversations?simple=true` and was right on a phone where this app was
+     * wrong; folding the list out of the messages is the fallback. If the provider answers at all,
+     * that is what must reach the screen.
+     */
+    @Test
+    public void theConversationListComesFromTheProvider() {
+        Assume.assumeTrue("could not take the SMS role on this device", takeRole());
+        long now = System.currentTimeMillis();
+        Uri a = SmsStore.storeInbox(ctx, "+15550177", "pc-list-" + now, now, 0);
+        assertNotNull("the provider refused the insert", a);
+        try {
+            assertFalse("the provider's own conversation table came back empty",
+                    SmsStore.platformThreads(ctx, 200, false).isEmpty());
+        } finally {
+            try { ctx.getContentResolver().delete(a, null, null); } catch (Throwable ignored) { }
+        }
+    }
 }
