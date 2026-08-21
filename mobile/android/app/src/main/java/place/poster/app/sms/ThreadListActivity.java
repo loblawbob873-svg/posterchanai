@@ -59,6 +59,14 @@ public class ThreadListActivity extends PcActivity {
         search = (EditText) findViewById(R.id.pc_sms_search);
         empty = (TextView) findViewById(R.id.pc_sms_empty);
         notice = (TextView) findViewById(R.id.pc_sms_notice);
+        /* THE DIAGNOSTIC, ON THE SCREEN THE PHONE ACTUALLY OPENS. The Messages tile starts this
+         * activity, not the WebView's Texts view, so every "why isn't this working?" built so far
+         * was unreachable from a handset. It prints what THIS device measured — not a verdict. */
+        final TextView why = (TextView) findViewById(R.id.pc_sms_why);
+        if (why != null) why.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { notice.setVisibility(View.VISIBLE);
+                                                   notice.setText(measured()); }
+        });
         title = (TextView) findViewById(R.id.pc_sms_title);
 
         adapter = new Threads();
@@ -196,7 +204,10 @@ public class ThreadListActivity extends PcActivity {
     private void reload() {
         new Thread(new Runnable() {
             @Override public void run() {
-                final List<SmsStore.Thread> found = SmsStore.threads(ThreadListActivity.this, 800);
+                // BOTH PROVIDERS — see Messages. A conversation whose newest message is a
+                // picture otherwise showed the last TEXT as its snippet, dated days early.
+                final List<SmsStore.Thread> found =
+                        Messages.threads(ThreadListActivity.this, 800, true);
                 // Read on this thread, immediately after the query, because it describes THAT read.
                 final boolean refused = SmsStore.refused();
                 main.post(new Runnable() {
@@ -258,6 +269,37 @@ public class ThreadListActivity extends PcActivity {
     }
 
     /** The measured reason this app is not the messages app, in a sentence naming the packages. */
+    /* WHAT THIS PHONE MEASURED, in one line.
+     *
+     * Every number here is read at the moment it is asked for, and each separates two states that
+     * look identical on screen and need different fixes:
+     *
+     *   may-read   — READ_SMS. Without it the provider answers nothing and the screen falls back to
+     *                the encrypted archive, which looks like a working messages app holding a few
+     *                hundred old texts.
+     *   rows       — what the provider actually handed back just now. A big number here with a
+     *                small list on screen is OUR bug; a small number here is the phone's answer.
+     *   role/store — the two tables Android keeps separately and OEM builds do not keep in step.
+     */
+    private String measured() {
+        StringBuilder b = new StringBuilder();
+        boolean read = mayReadTexts();
+        b.append("may-read: ").append(read);
+        int rows = -1;
+        try { rows = SmsStore.recent(this, 100000).size(); } catch (Throwable ignored) { }
+        b.append("  rows: ").append(rows < 0 ? "error" : String.valueOf(rows));
+        b.append(SmsStore.refused() ? " (REFUSED)" : "");
+        b.append("  threads: ").append(all == null ? 0 : all.size());
+        b.append("\nrole: ").append(HasRole.roleHeld(this));
+        String cur = "";
+        try { cur = android.provider.Telephony.Sms.getDefaultSmsPackage(this); }
+        catch (Throwable ignored) { }
+        b.append("  store names: ").append(cur == null || cur.isEmpty() ? "(none)" : cur);
+        b.append("\nthis app: ").append(getPackageName());
+        b.append("  sim: ").append(HasRole.smsCapable(this));
+        return b.toString();
+    }
+
     private String whyNotDefault() {
         String cur = "";
         try { cur = android.provider.Telephony.Sms.getDefaultSmsPackage(this); }
