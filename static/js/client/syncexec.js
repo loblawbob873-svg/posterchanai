@@ -1071,12 +1071,12 @@
            * The version is the record's, not a bump: this device learned nothing the folder did not
            * already know, and bumping would hand every other device a new version to re-examine —
            * one rewrite here becoming a round of work everywhere. */
-          const _R = state[u.path];
-          if(!u.mustSend && _R && !_R.deletedAt && _R.csum && typeof fs.hashFile === 'function'){
-            let _h = null;
-            try{ _h = await fs.hashFile(o.id, u.path); }catch(_){ _h = null; }
-            if(_h && _h === _R.csum){
-              record(u.path, _R, { size: u.stat.size, mtime: u.stat.mtime, csum: _h }, false);
+	          const _R = state[u.path];
+	          let _localHash = null;
+	          if(!u.mustSend && _R && !_R.deletedAt && _R.csum && typeof fs.hashFile === 'function'){
+	            try{ _localHash = await fs.hashFile(o.id, u.path); }catch(_){ _localHash = null; }
+	            if(_localHash && _localHash === _R.csum){
+	              record(u.path, _R, { size: u.stat.size, mtime: u.stat.mtime, csum: _localHash }, false);
               (report.settledByContent = report.settledByContent || []).push(u.path);
               return;
             }
@@ -1104,13 +1104,25 @@
            * this copy sent has the resend (`mustSend`), which is exempt above — that is somebody
            * answering the question rather than an inference from a timestamp. */
           const _idx = index[u.path];
-          if(!u.mustSend && _R && !_R.deletedAt && _idx && _idx.local && _idx.local.dl
-             && E.versionOf(_R) === _idx.local.dl){
-            report.rewrittenAfterDownload = report.rewrittenAfterDownload || [];
-            report.rewrittenAfterDownload.push(u.path);
-            report.ok = false;
-            record(u.path, _R, { size: u.stat.size, mtime: u.stat.mtime,
-                                 csum: (_idx.local || {}).csum, dl: _idx.local.dl }, false);
+	          if(!u.mustSend && _R && !_R.deletedAt && _idx && _idx.local && _idx.local.dl
+	             && E.versionOf(_R) === _idx.local.dl){
+	            /* During a fresh/incomplete join (`thin`) this is Android finishing the copy it was
+	             * just handed — media providers commonly rewrite image metadata. It is still held
+	             * local and never published, but it is not an actionable error and listing hundreds
+	             * of files makes a successful first sync look broken. On an established device the
+	             * same event is unexpected and remains visible. */
+	            if(!thin){
+	              report.rewrittenAfterDownload = report.rewrittenAfterDownload || [];
+	              report.rewrittenAfterDownload.push(u.path);
+	              report.ok = false;
+	            } else report.localRewritesSettled = (report.localRewritesSettled || 0) + 1;
+	            /* Remember what THIS filesystem now holds. Recording the old downloaded checksum here
+	             * makes diskChanged rediscover the same rewrite on every sweep, so the warning never
+	             * clears even though nothing changed again. The hash above is the measurement that
+	             * justified holding the rewrite back; it is also the only honest new baseline. */
+	            record(u.path, _R, { size: u.stat.size, mtime: u.stat.mtime,
+	                                 csum: _localHash || (_idx.local || {}).csum,
+	                                 dl: _idx.local.dl }, false);
             return;
           }
           /* NO EVIDENCE OF A DIFFERENCE IS NOT EVIDENCE OF ONE — and reading it as one is what makes

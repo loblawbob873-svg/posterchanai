@@ -399,11 +399,52 @@ scenario('a device that rewrites what it downloads does not start a round trip',
   t.eq(sky.recs[victim].v, 1, 'the record moved to v' + sky.recs[victim].v
        + ' — every other device now has a version to react to');
 
+  // The rewrite is a one-time finding, not the permanent state of this folder. Its measured local
+  // checksum becomes the new device baseline, while the shared checksum stays untouched.
+  const B3 = device('phone', sky, { disk: B2.disk, index: B2.st.index,
+                                    mtimes: { [victim]: 987654 } });
+  const rQuiet = await B3.sweep();
+  t.eq((rQuiet.rewrittenAfterDownload || []).length, 0,
+       'the same Android rewrite was reported again on the next fresh sweep');
+  t.eq(rQuiet.uploaded.length, 0, 'the quiet follow-up published the held-back rewrite');
+
   // And the desktop, sweeping after it, has nothing to do: no fetch, no publish, no round trip.
   const A2 = device('desktop', sky, { disk: A.disk, index: A.st.index });
   const r3 = await A2.sweep();
   t.eq(r3.uploaded.length, 0, 'the desktop republished after the phone was held back');
   t.eq(r3.downloaded.length, 0, 'the desktop fetched the rewrite');
+});
+
+scenario('a fresh phone settles Android rewrites quietly and finishes its first sync', async (t) => {
+  const sky = cloud();
+  const A = device('desktop', sky, { disk: photos(300) });
+  await A.sweep();
+
+  // The first join is interrupted after some files have landed and been journalled.
+  const B = device('phone', sky, {});
+  let checks = 0;
+  const partial = await B.sweep({ shouldStop: () => ++checks > 100 });
+  t.ok(partial.stopped === true, 'the setup did not interrupt the first sync');
+  const victim = Object.keys(B.disk).sort()[0];
+  t.ok(!!victim, 'nothing landed before the interruption');
+  B.disk[victim] = Buffer.concat([B.disk[victim], Buffer.from('EXIF')]);
+
+  // This is still a thin journal: resume the join, keep the provider rewrite local, and do not put
+  // a giant warning in front of somebody setting up their phone.
+  const B2 = device('phone', sky, { disk: B.disk, index: B.st.index,
+                                    mtimes: { [victim]: 987654 } });
+  const resumed = await B2.sweep();
+  t.eq(resumed.uploaded.length, 0, 'the fresh phone published its provider rewrite');
+  t.eq((resumed.rewrittenAfterDownload || []).length, 0,
+       'the first sync displayed the established-device rewrite warning');
+  t.eq(resumed.localRewritesSettled || 0, 1, 'the local rewrite was not accounted for');
+  t.eq(Object.keys(B2.disk).length, 300, 'the resumed first sync did not finish the folder');
+
+  const B3 = device('phone', sky, { disk: B2.disk, index: B2.st.index,
+                                    mtimes: { [victim]: 987654 } });
+  const quiet = await B3.sweep();
+  t.eq((quiet.rewrittenAfterDownload || []).length, 0, 'the settled rewrite came back again');
+  t.eq(quiet.uploaded.length, 0, 'the quiet follow-up published the provider rewrite');
 });
 
 scenario('a refused mass delete is not proposed again — the files come back instead', async (t) => {

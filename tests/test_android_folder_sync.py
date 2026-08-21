@@ -1090,3 +1090,26 @@ def test_the_background_sweeps_progress_reaches_the_card():
     # A build whose plugin cannot answer keeps the old sentence — the only honest thing to print.
     assert "typeof fs.nativeLive !== 'function'" in page, \
         "an older APK would now show a blank status instead of the fallback sentence"
+
+
+def test_an_inflight_page_sweep_survives_the_android_handoff():
+    """A manual multi-GB download is already authorized work, not a new scheduled sweep.
+
+    Reapplying onlyWhenCharging when Android hides/recreates the WebView abandoned the transfer and
+    changed its card from a live percentage to "waiting until you plug in". The native continuation
+    must be recorded before the page claim is released, bypass scheduler policy once, and still
+    honor a later explicit Pause.
+    """
+    java = os.path.join(JAVA, "sync")
+    plugin = _code_only(_read(java, "FolderSyncPlugin.java"))
+    runner = _code_only(_read(java, "NativeRunner.java"))
+    mark = plugin.index("NativeRunner.continueFolders(continuing)")
+    release = plugin.index("NativeSweep.releaseAll(")
+    assert mark < release, "the page claim is released before its continuation is recorded"
+    assert "if (continuing(f.key) && f.enabled && !f.paused)" in runner, (
+        "the native handoff either reapplies charging policy or ignores an explicit Pause"
+    )
+    tick = runner[runner.index("public static boolean tick(Context ctx, String why, final Runnable done)"):]
+    assert tick.index("consumeContinuations(p.due)") < tick.index("running = true"), (
+        "a handed-over manual sweep remains permanently exempt from scheduling policy"
+    )

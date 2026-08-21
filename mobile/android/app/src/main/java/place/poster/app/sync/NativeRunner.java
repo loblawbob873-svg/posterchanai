@@ -10,6 +10,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 import place.poster.app.signer.SignerKey;
 import place.poster.app.home.LauncherState;
@@ -41,6 +43,22 @@ public final class NativeRunner {
 
     private static volatile boolean running = false;
     private static volatile String lastWhy = "";
+    /* Folders whose visible-page sweep was already in flight when Android hid/recreated the
+     * WebView. This is a continuation, not a new scheduled sweep, so charging/interval policy must
+     * not cancel what the user explicitly started. Consumed when the native run actually starts. */
+    private static final Set<String> CONTINUE = new LinkedHashSet<String>();
+
+    public static synchronized void continueFolders(Set<String> keys) {
+        if (keys != null) for (String key : keys) if (key != null && !key.isEmpty()) CONTINUE.add(key);
+    }
+
+    private static synchronized boolean continuing(String key) { return CONTINUE.contains(key); }
+
+    private static synchronized boolean hasContinuations() { return !CONTINUE.isEmpty(); }
+
+    private static synchronized void consumeContinuations(List<SyncStore.Folder> due) {
+        for (SyncStore.Folder f : due) CONTINUE.remove(f.key);
+    }
 
     public static boolean busy() { return running; }
 
@@ -103,7 +121,7 @@ public final class NativeRunner {
          * The window is seconds long in real use, so the cost of standing down is one missed alarm,
          * and LauncherState bounds it so a phone parked awake on its home screen is late rather than
          * never. Screen OFF at the home screen does NOT defer — that is the best time to sync. */
-        if (LauncherState.deferSweep(interactive(app), System.currentTimeMillis())) {
+        if (!hasContinuations() && LauncherState.deferSweep(interactive(app), System.currentTimeMillis())) {
             lastWhy = "you are on the home screen — syncing waits until the phone is idle";
             return null;
         }
@@ -118,6 +136,13 @@ public final class NativeRunner {
              * Asked, never taken: `plan()` decides and does not sweep, so a claim taken here would
              * have to be given back on every path that decides not to. */
             if (NativeSweep.claimed(f.key)) continue;
+            /* A continuation bypasses scheduling policy, not an explicit Stop/Pause. Those are a
+             * newer user decision than the sweep that was handed over. */
+            if (continuing(f.key) && f.enabled && !f.paused) {
+                p.due.add(f);
+                p.deep.add(false);
+                continue;
+            }
             Map<String, Object> s = new LinkedHashMap<String, Object>(state);
             s.put("lastSyncAt", store.lastSyncAt(f.key));
             s.put("lastFullScanAt", store.lastFullScanAt(f.key));
@@ -171,6 +196,7 @@ public final class NativeRunner {
         if (running) { lastWhy = "a native sweep is already running"; return false; }
         final Plan p = plan(app);
         if (p == null) return false;
+        consumeContinuations(p.due);
 
         running = true;
         lastWhy = "sweeping " + p.due.size() + " folder" + (p.due.size() == 1 ? "" : "s")

@@ -453,8 +453,14 @@ public class FolderSyncPlugin extends Plugin {
    * going OFF also runs onPause, is not interactive, and starts the sweep exactly as before.
    */
   private void handOver() {
+    java.util.Set<String> continuing = new java.util.LinkedHashSet<String>();
     synchronized (pageClaims) {
       if (!pageClaims.isEmpty()) {
+        continuing.addAll(pageClaims);
+        /* Preserve the meaning of an in-flight manual run before releasing its claim. NativeRunner
+         * will consume this once and bypass only the start policy (charging/minimum interval); the
+         * filesystem checkpoint and all safety checks remain unchanged. */
+        NativeRunner.continueFolders(continuing);
         NativeSweep.releaseAll(new java.util.LinkedHashSet<String>(pageClaims));
         pageClaims.clear();
       }
