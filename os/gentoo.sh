@@ -970,12 +970,29 @@ liveISOinstall() {
 		# `kernel-install` first: this profile uses systemd-boot and the Boot Loader Spec layout, and
 		# it is what puts a kernel where bootctl will find it. dracut alone is the fallback for a
 		# target that does not have it.
+		# AN INITRAMFS THAT CANNOT OPEN LUKS CANNOT FIND THE ROOT FILESYSTEM, and a machine that
+		# cannot find its root drops to emergency mode -- which is the first half of what was
+		# reported. This profile installs onto an encrypted disk every time, so `crypt` and `dm` are
+		# not optional here the way dracut's autodetection treats them: built inside a chroot,
+		# hostonly detection is looking at the LIVE session's block devices, not the target's.
+		#
+		# `cryptsetup` has to be in the target for the crypt module to build at all. The build log
+		# for the ISO already showed the shape of that failure -- "Module 'systemd-cryptsetup'
+		# depends on module 'crypt', which can't be installed" -- so it is checked rather than hoped
+		# for, and said out loud when it is missing.
+		if [ ! -x "$TARGET/sbin/cryptsetup" ] && [ ! -x "$TARGET/usr/sbin/cryptsetup" ]; then
+			echo -e "${COLOR_YELLOW}  cryptsetup is not on the target — the initramfs cannot open${COLOR_RESET}"
+			echo -e "${COLOR_YELLOW}  an encrypted root and the machine will boot to emergency mode${COLOR_RESET}"
+		fi
+		DRACUT_ADD="crypt dm rootfs-block"
 		if [ -x "$TARGET/usr/bin/kernel-install" ] && [ -f "$TARGET/boot/vmlinuz" ]; then
 			sudo chroot $TARGET /usr/bin/kernel-install add "$KVER" /boot/vmlinuz \
-				|| sudo chroot $TARGET /usr/bin/dracut --force "/boot/initramfs-$KVER.img" "$KVER" \
+				|| sudo chroot $TARGET /usr/bin/dracut --force --add "$DRACUT_ADD" \
+					"/boot/initramfs-$KVER.img" "$KVER" \
 				|| echo -e "${COLOR_YELLOW}  could not build an initramfs — see the bootloader step${COLOR_RESET}"
 		else
-			sudo chroot $TARGET /usr/bin/dracut --force "/boot/initramfs-$KVER.img" "$KVER" \
+			sudo chroot $TARGET /usr/bin/dracut --force --add "$DRACUT_ADD" \
+				"/boot/initramfs-$KVER.img" "$KVER" \
 				|| echo -e "${COLOR_YELLOW}  could not build an initramfs — see the bootloader step${COLOR_RESET}"
 		fi
 	else
@@ -992,6 +1009,24 @@ liveISOinstall() {
 	# …and the autologin that names it, or the installed machine tries to log in an account that is
 	# no longer there — which is a login prompt, and the exact failure the ISO builder was fixed for.
 	sudo rm -f $TARGET/etc/systemd/system/getty@tty1.service.d/override.conf 2>/dev/null
+
+	# ROOT MUST BE ABLE TO LOG IN BEFORE ANYTHING ELSE IS TRIED.
+	#
+	# The ISO ships /etc/shadow with root LOCKED (`!`), which is right for a disc anybody can pick up
+	# and is copied straight onto the installed machine by the rsync above. `accounts` sets a
+	# password later -- it is run from setup.sh by finalizeInstall, and its own comment says locking
+	# root here is "catastrophic... the alternative is a brick" -- but that is at the END of a chain
+	# of steps, and if any of them fails the machine is left with a locked root and no way in.
+	#
+	# That is exactly what was reported: an installed system dropping to emergency mode with
+	# "Cannot open access to console, the root account is locked". Two failures, and the second is
+	# what turned a fixable boot problem into a brick: systemd's emergency shell refuses to start
+	# for a locked root, so the one tool for diagnosing the first failure was unavailable.
+	#
+	# Done HERE, immediately after the copy, so it is true even if everything after it fails.
+	echo -e "${COLOR_CYAN}Unlocking root on the installed system${COLOR_RESET}"
+	echo "root:$ROOT_PASSWORD" | sudo chroot $TARGET /usr/sbin/chpasswd 2>/dev/null \
+		|| echo -e "${COLOR_YELLOW}  could not set a root password — emergency mode will refuse a shell${COLOR_RESET}"
 
 	fstab
 	if [ -f "$PCOS_TREE/gentoo.sh" ]; then
