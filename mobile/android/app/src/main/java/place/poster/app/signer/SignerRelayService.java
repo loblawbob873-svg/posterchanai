@@ -79,6 +79,7 @@ public class SignerRelayService extends Service {
     public static final String ACTION_START = "place.poster.app.SIGNER_START";
     public static final String ACTION_STOP = "place.poster.app.SIGNER_STOP";
     public static final String ACTION_RELOAD = "place.poster.app.SIGNER_RELOAD";
+    public static final String ACTION_SMS_ARCHIVE = "place.poster.app.SMS_ARCHIVE";
 
     public static final String PREFS = "pcsigner_relay";
     private static final String K_SESSIONS = "sessions";
@@ -155,6 +156,15 @@ public class SignerRelayService extends Service {
     /** The SMS outbox's own subscription id, so its events are told apart from signer traffic. */
     private String smsSubId;
     private boolean stopping = false;
+    private static final java.util.concurrent.ConcurrentLinkedQueue<String[]> smsArchive =
+            new java.util.concurrent.ConcurrentLinkedQueue<>();
+
+    /** Called by the SMS_DELIVER receiver; the queue survives a cold service start in this process. */
+    public static void archiveIncoming(Context ctx, String from, String body, long when) {
+        smsArchive.add(new String[]{from == null ? "" : from, body == null ? "" : body,
+                Long.toString(when)});
+        if (wanted(ctx)) kick(ctx, ACTION_SMS_ARCHIVE);
+    }
 
     @Override
     public IBinder onBind(Intent intent) { return null; }
@@ -236,6 +246,7 @@ public class SignerRelayService extends Service {
         /* Posted, not called: `reload()` opens sockets and reads the Keystore, and it mutates the
          * maps `recv` owns. `startForeground` above stays on this thread, where the 5s deadline is. */
         handler.post(this::reload);
+        handler.post(this::publishSmsArchive);
         return START_STICKY;   // a signer that stops answering because of memory pressure is the bug
     }
 
@@ -409,7 +420,7 @@ public class SignerRelayService extends Service {
                     } catch (Throwable ignored2) { }
                 } catch (Throwable ignored) { }
                 handler.post(() -> { lastRx.put(url, System.currentTimeMillis());
-                                     connected = socks.size(); note(); });
+                                     connected = socks.size(); note(); publishSmsArchive(); });
             }
             @Override public void onMessage(WebSocket s, String text) {
                 handler.post(() -> { lastRx.put(url, System.currentTimeMillis()); recv(url, text); });
@@ -515,11 +526,14 @@ public class SignerRelayService extends Service {
     private void smsOutbox(String url, JSONObject ev) {
         if (ev == null) return;
         if (!SmsOutbox.isRequest(ev)) return;
+        // The socket map belongs to the handler thread. Capture the connection before dispatching
+        // the expensive decrypt/sign/send work; reading HashMap from the pool races reconnects.
+        final WebSocket ws = socks.get(url);
         pool().execute(() -> {
             JSONObject done = SmsOutbox.perform(SignerRelayService.this, ev);
             if (done == null) return;
-            WebSocket ws = socks.get(url);
-            if (ws != null) ws.send(new JSONArray().put("EVENT").put(done).toString());
+            final String wire = new JSONArray().put("EVENT").put(done).toString();
+            handler.post(() -> { if (ws != null) ws.send(wire); });
         });
     }
 
@@ -635,6 +649,26 @@ public class SignerRelayService extends Service {
                                                        : new JSONObject(String.valueOf(p));
             return tpl.optInt("kind", -1);
         } catch (Throwable t) { return -1; }
+    }
+
+    /** Publish receiver-captured texts on the signer's already-connected relays, with no WebView. */
+    private void publishSmsArchive() {
+        if (socks.isEmpty()) return;                 // onOpen calls us again once a relay exists
+        final String[] row = smsArchive.poll();
+        if (row == null) return;
+        final java.util.List<WebSocket> targets = new java.util.ArrayList<>(socks.values());
+        pool().execute(() -> {
+            JSONObject ev = SmsOutbox.archiveIncoming(SignerRelayService.this, row[0], row[1],
+                    Long.parseLong(row[2]));
+            handler.post(() -> {
+                if (ev == null) smsArchive.add(row);
+                else {
+                    String wire = new JSONArray().put("EVENT").put(ev).toString();
+                    for (WebSocket ws : targets) if (ws != null) ws.send(wire);
+                }
+                publishSmsArchive();
+            });
+        });
     }
 
     /** Try both schemes, ordered by the payload's own marker, and remember which one worked. */

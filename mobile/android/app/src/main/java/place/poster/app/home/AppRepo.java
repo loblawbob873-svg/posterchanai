@@ -181,9 +181,9 @@ public final class AppRepo {
     }
 
     public boolean appInfo(AppShelf.Entry e) {
-        if (e == null || e.isOurs()) return false;
+        if (e == null) return false;
         return fire(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                Uri.parse("package:" + e.pkg)));
+                Uri.parse("package:" + (e.isOurs() ? ctx.getPackageName() : e.pkg))));
     }
 
     /**

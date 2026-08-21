@@ -128,6 +128,14 @@ class TheDrainRefusesWhatItMustRefuse(unittest.TestCase):
         with. Asking any other peer would decrypt nothing."""
         self.assertIn("Crypt.conversationKey(sec, me)", self.src)
 
+    def test_incoming_sms_is_archived_without_the_webview(self):
+        receiver = open(os.path.join(SMS, "SmsDeliverReceiver.java")).read()
+        service = open(os.path.join(ac.JAVA, "place", "poster", "app", "signer",
+                                    "SignerRelayService.java")).read()
+        self.assertIn("SignerRelayService.archiveIncoming", receiver)
+        self.assertIn("SmsOutbox.archiveIncoming", service)
+        self.assertIn("publishSmsArchive", service)
+
 
 if __name__ == "__main__":
     unittest.main()

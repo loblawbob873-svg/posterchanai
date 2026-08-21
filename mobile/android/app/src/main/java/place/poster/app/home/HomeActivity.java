@@ -966,7 +966,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
         // THE TITLE NAMES WHAT WAS PRESSED. A menu about an existing widget headed "Add a widget"
         // reads as the wrong menu, which on the one item whose Remove was unreachable is the last
         // thing it should say.
-        show(item.isWidget() ? widgetLabel(item) : (e == null ? "" : e.label),
+        showAppMenu(item.isWidget() ? widgetLabel(item) : (e == null ? "" : e.label),
              labels, new Pick() {
             @Override public void pick(int w) {
                 switch (acts.get(w)) {
@@ -976,8 +976,8 @@ public class HomeActivity extends Activity implements DeskView.Host {
                     case 3: addWidget(); break;
                     default: break;                        // 9 = the hint; the frame is already up
                 }
-            }
-        });
+             }
+        }, e);
     }
 
     /** Long press in the drawer. */
@@ -997,7 +997,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
         }
         if (!e.essential) { labels.add(getString(R.string.home_hide)); acts.add(4); }
         labels.add(getString(R.string.home_apps)); acts.add(5);
-        show(e.label, labels, new Pick() {
+        showAppMenu(e.label, labels, new Pick() {
             @Override public void pick(int w) {
                 switch (acts.get(w)) {
                     case 0: addToDesk(e); break;
@@ -1009,7 +1009,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
                     case 6: closeDrawer(); addWidget(); break;
                 }
             }
-        });
+        }, e);
     }
 
     /** What a placed widget calls itself, for the menu that removes it. */
@@ -1028,7 +1028,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
         List<String> labels = new ArrayList<String>();
         labels.add(getString(R.string.home_remove_from_dock));
         labels.add(getString(R.string.home_add_to_home));
-        show(e.label, labels, new Pick() {
+        showAppMenu(e.label, labels, new Pick() {
             @Override public void pick(int w) {
                 if (w == 0) {
                     List<String> d = new ArrayList<String>(prefs.dock());
@@ -1037,7 +1037,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
                     redrawDock();
                 } else { addToDesk(e); }
             }
-        });
+        }, e);
     }
 
     private void addToDesk(AppShelf.Entry e) {
@@ -1362,6 +1362,47 @@ public class HomeActivity extends Activity implements DeskView.Host {
                     @Override public void onClick(android.content.DialogInterface d, int w) { cb.pick(w); }
                 }).show();
         } catch (Throwable ignored) { }
+    }
+
+    /**
+     * An app menu's heading is also its App info shortcut, matching Android's stock launchers. The
+     * title is deliberately a real button-shaped TextView instead of AlertDialog.setTitle(): the
+     * platform title is not actionable or reliably addressable across Samsung/Google themes.
+     */
+    private void showAppMenu(String title, List<String> labels, final Pick cb,
+                             final AppShelf.Entry app) {
+        if (app == null) { show(title, labels, cb); return; }
+        CharSequence[] items = labels.toArray(new CharSequence[0]);
+        try {
+            final TextView heading = appMenuTitle(title);
+            final AlertDialog dialog = new AlertDialog.Builder(this)
+                    .setCustomTitle(heading)
+                    .setItems(items, new android.content.DialogInterface.OnClickListener() {
+                        @Override public void onClick(android.content.DialogInterface d, int w) { cb.pick(w); }
+                    }).create();
+            heading.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View ignored) {
+                    dialog.dismiss();
+                    if (!repo.appInfo(app)) toast(getString(R.string.home_cannot_open));
+                }
+            });
+            dialog.show();
+        } catch (Throwable ignored) { }
+    }
+
+    private TextView appMenuTitle(String title) {
+        TextView v = new TextView(this);
+        v.setText(title + "  ⓘ");
+        v.setTextColor(pal.text);
+        v.setTextSize(18);
+        v.setGravity(Gravity.CENTER_VERTICAL);
+        int h = Skin.dp(this, 24), y = Skin.dp(this, 18);
+        v.setPadding(h, y, h, y);
+        v.setBackground(Skin.panel(this, pal));
+        v.setContentDescription(title + ". " + getString(R.string.home_app_info));
+        v.setClickable(true);
+        v.setFocusable(true);
+        return v;
     }
 
     private void fire(Intent i) {

@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import place.poster.app.signer.SignerRelayService;
 
 /**
  * WHERE A TEXT MESSAGE ARRIVES, and the one code path in this app that must never fail quietly.
@@ -98,6 +99,10 @@ public class SmsDeliverReceiver extends BroadcastReceiver {
             // running at all. It is how an open Messages screen redraws without polling, and how the
             // Nostr archive learns there is something new to publish.
             try { SmsPlugin.onIncoming(from, body, when); } catch (Throwable ignored) { }
+            // The WebView may be dead. The native signer already owns the account's relay socket,
+            // so hand it the archive event and let every PosterChan client see the reply live.
+            try { SignerRelayService.archiveIncoming(ctx, from, body, when); }
+            catch (Throwable t) { Log.w(TAG, "sms: could not queue archive publish", t); }
         }
     }
 }

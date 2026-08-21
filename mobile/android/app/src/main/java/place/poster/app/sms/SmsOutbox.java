@@ -56,6 +56,36 @@ public final class SmsOutbox {
 
     private SmsOutbox() { }
 
+    /** Build the encrypted archive event for a text that arrived while the WebView was asleep. */
+    public static JSONObject archiveIncoming(Context ctx, String from, String body, long when) {
+        try {
+            byte[] sec = SignerKey.load(ctx);
+            if (sec == null || from == null || from.isEmpty()) return null;
+            byte[] me = Nostr.pubkey(sec);
+            JSONObject o = new JSONObject();
+            o.put("address", from); o.put("body", body == null ? "" : body);
+            o.put("date", when); o.put("incoming", true); o.put("name", "");
+            byte[] ck = Crypt.conversationKey(sec, me);
+            String ct = Crypt.nip44Encrypt(ck, o.toString(), null);
+            String doc = SmsKeys.docId(from, when, body, true);
+            List<List<String>> tags = new ArrayList<List<String>>();
+            List<String> d = new ArrayList<String>(); d.add("d"); d.add(doc); tags.add(d);
+            List<String> l = new ArrayList<String>(); l.add("l"); l.add(L_TAG); tags.add(l);
+            long now = System.currentTimeMillis() / 1000L;
+            String pubHex = hex(me), tagsJson = Nostr.tagsJson(tags);
+            String ser = Nostr.serialize(pubHex, now, KIND, tagsJson, ct);
+            byte[] id = Nostr.sha256(ser.getBytes("UTF-8"));
+            JSONObject out = new JSONObject();
+            out.put("id", hex(id)); out.put("pubkey", pubHex); out.put("created_at", now);
+            out.put("kind", KIND); out.put("tags", new JSONArray(tagsJson)); out.put("content", ct);
+            out.put("sig", hex(Nostr.sign(id, sec, null)));
+            return out;
+        } catch (Throwable t) {
+            Log.w(TAG, "sms archive: could not seal incoming message", t);
+            return null;
+        }
+    }
+
     /** The REQ this drain needs on a relay socket the caller already owns. */
     public static JSONObject filter(String mePubHex) throws Exception {
         JSONObject f = new JSONObject();
@@ -117,14 +147,15 @@ public final class SmsOutbox {
 
             long asked = req.optLong("at", 0L);
             if (System.currentTimeMillis() - asked > MAX_AGE_MS) {
-                return marker(ctx, sec, me, doc, false, "too old");
+                return marker(ctx, sec, me, doc, false, "too old", to, body, asked);
             }
 
             SmsSender.Result r = SmsSender.send(ctx, to, body);
             /* MARKED WHETHER IT WENT OR NOT. A text that went out and whose marker did not is a text
              * that goes out AGAIN on the next pass, and there is no undo for that. A failure is
              * recorded in the marker so the other device can say so, rather than retried blindly. */
-            return marker(ctx, sec, me, doc, r != null && r.ok, r == null ? "no result" : r.error);
+            return marker(ctx, sec, me, doc, r != null && r.ok, r == null ? "no result" : r.error,
+                    to, body, asked);
         } catch (Throwable t) {
             Log.w(TAG, "sms outbox: could not perform a request", t);
             return null;
@@ -133,12 +164,18 @@ public final class SmsOutbox {
 
     /** The `{done:true}` replacement for the request, signed and ready to publish. */
     private static JSONObject marker(Context ctx, byte[] sec, byte[] me, String doc,
-                                     boolean ok, String error) throws Exception {
+                                     boolean ok, String error, String to, String body,
+                                     long asked) throws Exception {
         JSONObject o = new JSONObject();
         o.put("done", true);
         o.put("ok", ok);
         o.put("error", error == null ? "" : error);
         o.put("by", "phone");
+        // The completion is also the desktop's durable sent receipt. Without these fields the
+        // phone can send successfully while every non-phone client has nothing it can draw.
+        o.put("to", to);
+        o.put("body", body);
+        o.put("at", asked);
         byte[] ck = Crypt.conversationKey(sec, me);
         String ct = Crypt.nip44Encrypt(ck, o.toString(), null);
 

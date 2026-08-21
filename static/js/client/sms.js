@@ -221,6 +221,24 @@
     const list = (evs || []).slice().sort((a,b) => (b.created_at||0) - (a.created_at||0));
     for(const ev of list){
       const d = ((ev.tags||[]).find(t => t[0]==='d') || [])[1] || '';
+      /* A background handset answers a desktop send by replacing its outbox request with a signed,
+       * encrypted completion. That receipt is the only authoritative moment the desktop knows the
+       * radio accepted it. Turn it into the ordinary sent bubble, durably, instead of leaving the
+       * thread unchanged after showing a transient "sent" toast. */
+      if(d.startsWith(D_OUT) && ev.content){
+        try{
+          const ack = JSON.parse(await PC.nip44dec(ME().pubkey, ev.content));
+          if(ack && ack.done && ack.ok && ack.to && ack.body){
+            const at = Number(ack.at) || Number(ev.created_at || 0) * 1000 || Date.now();
+            const md = await docIdFor(ack.to, at, ack.body, false);
+            const have = S.msgs.get(md);
+            if(!have || have._at < ev.created_at)
+              S.msgs.set(md, { doc:md, address:ack.to, body:ack.body, date:at,
+                               incoming:false, name:'', _at:ev.created_at });
+          }
+        }catch(_){}
+        continue;
+      }
       if(!d.startsWith(D_MSG)) continue;
       const have = S.msgs.get(d);
       if(have && have._at >= ev.created_at) continue;

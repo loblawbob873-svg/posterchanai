@@ -650,6 +650,17 @@ class Launcher(unittest.TestCase):
 
 @unittest.skipIf(not os.path.isdir(HOME), "no android sources here")
 class LauncherSources(unittest.TestCase):
+    def test_long_press_app_title_opens_android_app_info(self):
+        """The menu heading behaves like Pixel/Samsung launchers: tap it for force-stop, storage,
+        permissions and defaults on Android's own app-details page."""
+        home = _code(open(os.path.join(HOME, "HomeActivity.java")).read())
+        repo = _code(open(os.path.join(HOME, "AppRepo.java")).read())
+        self.assertIn("showAppMenu(", home)
+        self.assertIn("heading.setOnClickListener", home)
+        self.assertIn("repo.appInfo(app)", home)
+        self.assertIn("ACTION_APPLICATION_DETAILS_SETTINGS", repo)
+        self.assertIn('Uri.parse("package:"', repo)
+
     def test_the_home_screen_never_touches_the_webview(self):
         """THE WHOLE SAFETY ARGUMENT, ASSERTED.
 

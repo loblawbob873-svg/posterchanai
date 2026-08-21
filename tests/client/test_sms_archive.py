@@ -178,6 +178,16 @@ class Deleting(unittest.TestCase):
 @unittest.skipIf(shutil.which("node") is None, "node not installed")
 class SendingFromAnotherDevice(unittest.TestCase):
 
+    def test_a_success_marker_carries_the_sent_message_back_to_the_desktop(self):
+        """A radio success with no address/body/time leaves the web thread blank forever."""
+        src = (ROOT / "mobile/android/app/src/main/java/place/poster/app/sms/SmsOutbox.java").read_text()
+        web = (ROOT / "static/js/client/sms.js").read_text()
+        self.assertIn('o.put("to", to)', src)
+        self.assertIn('o.put("body", body)', src)
+        self.assertIn('o.put("at", asked)', src)
+        self.assertIn("d.startsWith(D_OUT)", web)
+        self.assertIn("ack.done && ack.ok", web)
+
     def test_a_laptop_queues_a_request_and_says_so(self):
         """It cannot reach a radio. Reporting the message as sent would be a lie the person only
         discovers when the reply never comes.

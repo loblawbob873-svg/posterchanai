@@ -948,7 +948,10 @@ def test_the_crypto_does_not_run_on_the_socket_thread():
         "decode still takes the session, so the pool writes session state off-thread"
     assert "private void send(byte[] sec, String peerPk, String enc, WebSocket ws, String payload)" in svc, \
         "send still reads the session and the socket map from the pool"
-    body = svc[svc.index("pool().execute("):]
+    # This service also uses the pool for background SMS archival. Anchor on the NIP-46 request's
+    # captured session values so this assertion measures the crypto path it describes.
+    request = svc.index("final Nip46Core.Session sref = sess;")
+    body = svc[svc.index("pool().execute(", request):]
     body = body[:body.index("\n    }")]
     for banned in ("sessions.", "socks.", "failures."):
         assert banned not in body, f"the crypto pool touches {banned} — those maps are thread-confined"
@@ -1020,4 +1023,3 @@ def test_neither_signing_path_serializes_tags_with_a_json_library():
     assert 'new JSONArray().put(new JSONArray().put("p")' not in svc, (
         "the reply event builds its tags a third way — one file, one serializer"
     )
-
