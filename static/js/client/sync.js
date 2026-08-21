@@ -306,6 +306,24 @@
    * half before admitting it, which is its own kind of hang. Long enough for a slow radio, short
    * enough that giving up still feels like an answer. */
   const _POST_TIMEOUT_MS = 20000;
+  /* A FULL RECORD READ IS NOT A SMALL JSON POST, and sharing the ceiling above with one is what put
+   * every device out of sync at once.
+   *
+   * Measured on a real folder: 12,436 records answer in 6.15 MB (4.03 MB gzipped), and the server
+   * spends 1.2s of that reading the relay — the rest is serialising and sending it through a single
+   * uvicorn worker that several devices are asking at the same time. Twenty seconds is a reasonable
+   * ceiling for a DELTA, which is a few kB; for the full set it is a coin toss.
+   *
+   * And losing that toss is not one slow sweep, it is a device that can never sync again: the read
+   * is all-or-nothing, so a device that times out caches nothing, and a device with no cache can
+   * only ask for the full set — which times out. "Could not read the folder's shared record" on
+   * every device, for ever, with the server answering 200 to all of it.
+   *
+   * The real fix is to page this read so a device keeps what it got; this ceiling is what stops the
+   * loop meanwhile. It is deliberately large: there is no better answer than waiting, and giving up
+   * is what costs. Nothing about the sweep's DECISIONS changes with it — a read either arrives
+   * whole or it throws, exactly as before. */
+  const _FULL_READ_TIMEOUT_MS = 4 * 60 * 1000;
   /* One whole-file transfer. Generous — a slow radio is not a broken one — but a ceiling, which
    * there was not: past this the socket is dead rather than slow, and waiting longer only means
    * waiting for ever. */
@@ -917,13 +935,14 @@
     _authAt = Date.now();
     return _authB64;
   }
-  async function _statePost(body, _retry){
+  async function _statePost(body, _retry, ms){
     let tok = _syncToken();
     if(!tok){ try{ tok = await _mintToken(); }catch(e){ tok = ''; } }
     const authB64 = tok ? '' : await _syncAuth();
     let ctl = null, timer = null;
     try{ ctl = new AbortController(); }catch(_){ ctl = null; }
-    if(ctl) timer = setTimeout(() => { try{ ctl.abort(); }catch(_){} }, _POST_TIMEOUT_MS);
+    const bound = ms || _POST_TIMEOUT_MS;
+    if(ctl) timer = setTimeout(() => { try{ ctl.abort(); }catch(_){} }, bound);
     let r;
     try{
       r = await _bounded(fetch('/client/sync-state', {
@@ -931,7 +950,7 @@
         signal: ctl ? ctl.signal : undefined,
         body: JSON.stringify(Object.assign({ pubkey: PC.me().pubkey,
                                              auth: authB64, token: tok }, body)),
-      }), 'server', _POST_TIMEOUT_MS);
+      }), 'server', bound);
     }catch(e){
       const aborted = e && (e.name === 'AbortError' || /abort|stopped responding/i.test(String(e.message || e)));
       throw new Error(aborted ? 'the server did not answer in time — will try again'
@@ -942,7 +961,7 @@
       // Revoked or foreign token: one signature mints a fresh one, then the call repeats once.
       try{ localStorage.removeItem(_TOK_KEY()); }catch(_){}
       await _mintToken();
-      return _statePost(body, true);
+      return _statePost(body, true, ms);
     }
     if(r.status === 409 && j && j.eraChanged){
       const e = new Error('this folder was retired or re-added elsewhere — syncing again from the top');
@@ -975,7 +994,8 @@
       const cache = await this._cache(key);
       const body = { pair: key };
       if(cache && cache.cursor){ body.since = Math.max(0, cache.cursor - 60); body.era = cache.era; }
-      const j = await _statePost(body);
+      /* No `since` is a FULL read — every record, which is megabytes. See _FULL_READ_TIMEOUT_MS. */
+      const j = await _statePost(body, false, body.since ? _POST_TIMEOUT_MS : _FULL_READ_TIMEOUT_MS);
       let entries, d2p;
       if(j.full){ entries = {}; d2p = {}; }
       else { entries = cache.entries; d2p = cache.d2p || {}; }
