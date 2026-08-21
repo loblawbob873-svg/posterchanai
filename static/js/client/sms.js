@@ -1404,15 +1404,29 @@
           <div class="sms-title">${enc(who)}</div>
         </div>
         ${blankNote(blankCount(t.msgs))}
-        <div class="sms-msgs">${t.msgs.map((m, i) => `
-          <div class="sms-msg ${m.incoming ? 'them' : 'me'}" data-doc="${enc(m.doc)}">
-            <div class="sms-bub${(m.parts||[]).length ? ' has-att' : ''}">${(m.parts||[]).map((p, j) => attHtml(p, enc, i, j)).join('')}${
-              /* THE ATTACHMENTS COME FIRST AND THE CAPTION UNDER THEM, which is where every
-                 messages app puts it — and a bubble whose only content is an attachment must not
-                 also render an empty text node, or it collapses to a sliver. */
-              m.body ? '<div class="sms-txt">' + enc(m.body) + '</div>' : ''}</div>
-            <div class="sms-meta muted">${enc(when(m.date))}</div>
-          </div>`).join('')}</div>
+        <div class="sms-msgs dm-msgs">${t.msgs.map((m, i) => {
+          /* THE SAME BUBBLE AS A DM, not a second one that looks nearly like it.
+           *
+           * Texts had its own parallel set of classes -- sms-msg/sms-bub/sms-meta -- built to the
+           * same idea and drifting from it: different padding, no grouping, no run of messages
+           * collapsing into one column. Two implementations of one thing means every future change
+           * to a conversation has to be made twice, and the one nobody remembers is the one that
+           * looks wrong. Reported as "Texts UI looks ugly and should look like DM's".
+           *
+           * `.bubble .in/.out` and `.grp`/`.cont` are the DM's own, so Texts inherits its shape,
+           * its spacing and any later change to either for free. What stays sms-specific is the
+           * part DMs do not have: MMS attachments inside the bubble. */
+          const prev = t.msgs[i-1];
+          const grp = !prev || !!prev.incoming !== !!m.incoming ? ' grp' : ' cont';
+          const atts = (m.parts||[]).map((p, j) => attHtml(p, enc, i, j)).join('');
+          return `<div class="bubble ${m.incoming ? 'in' : 'out'}${grp}${atts ? ' has-att' : ''}" data-doc="${enc(m.doc)}">`
+            + atts
+            /* THE ATTACHMENTS COME FIRST AND THE CAPTION UNDER THEM, which is where every messages
+               app puts it -- and a bubble whose only content is an attachment must not also render
+               an empty text node, or it collapses to a sliver. */
+            + (m.body ? `<span class="b-txt">${enc(m.body)}</span>` : '')
+            + `<span class="b-meta">${enc(when(m.date))}</span></div>`;
+        }).join('')}</div>
         <div class="sms-compose">
           <input class="input" id="sms-in" placeholder="Text message">
           <button class="btn btn-neon" id="sms-send">${ICO('send','b-ic')}Send</button>
@@ -1433,7 +1447,11 @@
     };
     btn.onclick = go;
     input.onkeydown = e => { if(e.key === 'Enter') go(); };
-    feed.querySelectorAll('.sms-msg').forEach(el => {
+    /* `.bubble[data-doc]`, because the bubble IS a DM bubble now and `data-doc` is what makes it a
+     * text rather than a DM. Selected on the class it actually has: this was `.sms-msg`, and moving
+     * the markup to the shared bubble would have matched nothing -- so right-clicking a message
+     * would silently stop offering to delete it, on a screen that still drew perfectly. */
+    feed.querySelectorAll('.bubble[data-doc]').forEach(el => {
       el.oncontextmenu = async (e) => {
         e.preventDefault();
         if(!await PC.uiConfirm('Delete this message from your archive' +

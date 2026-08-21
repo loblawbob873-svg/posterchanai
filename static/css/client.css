@@ -8430,20 +8430,21 @@ html.osfr-on body > .app, html.osfr-on #os-root{ visibility:hidden; }
 .sms-who{flex:1;min-width:0;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sms-when{flex:none;font-size:.72rem}
 .sms-snip{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.82rem}
-.sms-msgs{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:8px;
-  padding:8px 0}
-.sms-msg{display:flex;flex-direction:column;max-width:78%}
-.sms-msg.me{align-self:flex-end;align-items:flex-end}
-.sms-msg.them{align-self:flex-start;align-items:flex-start}
-.sms-bub{padding:8px 12px;border-radius:var(--r);border:1px solid var(--line);
-  background:var(--panel2);white-space:pre-wrap;word-break:break-word}
-.sms-msg.me .sms-bub{background:rgba(var(--accent-rgb),.16);border-color:rgba(var(--accent-rgb),.5)}
-.sms-meta{font-size:.68rem;margin-top:2px}
+/* TEXTS IS A CONVERSATION AND SO IS A DM, so it draws with the DM's own `.bubble .in/.out` rather
+   than a second set built to the same idea. The rules that were here -- sms-msg, sms-bub, sms-meta
+   -- were exactly that second set, and they had already drifted: different padding, no grouping of
+   a run of messages, no shared radius. Two implementations of one screen means every later change
+   has to be made twice, and the copy nobody remembers is the one that looks wrong.
+   `.sms-msgs` keeps only what it needs to be a scroll container; `.dm-msgs` beside it in the markup
+   supplies the padding and the scrolling. */
+.sms-msgs{flex:1;min-height:0}
 /* PICTURE MESSAGES. The bubble's `white-space:pre-wrap` is for TEXT, and it puts a phantom line
    between stacked attachments (the newlines in the template) — so the caption gets its own element
    and the bubble's padding shrinks to a frame once there is a picture in it. */
-.sms-bub.has-att{padding:4px;white-space:normal}
-.sms-txt{white-space:pre-wrap;word-break:break-word;padding:4px 8px}
+.bubble.has-att{padding:4px}
+/* The caption under an MMS picture. `.b-txt` is the DM's own and already wraps; this only adds the
+   padding a bubble in attachment mode gave up. */
+.bubble.has-att .b-txt{display:block;padding:4px 8px}
 .sms-att{display:block;margin:0;border-radius:calc(var(--r) - 2px);overflow:hidden}
 .sms-att+.sms-att{margin-top:4px}
 /* max-width, never a fixed one: a bubble is already capped at 78% of the thread and an MMS photo is
