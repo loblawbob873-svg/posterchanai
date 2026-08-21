@@ -28213,7 +28213,11 @@
        * this there is no way to log into it at all. One line, because space is tight on a phone. */
       + '<div class="row" style="margin-top:8px;gap:8px"><button class="mini" id="signer-bunker">'
       + 'Connect an app with a link</button>'
-      + (apps.length ? '<button class="mini" id="signer-revoke-all" style="color:var(--danger)">Revoke all apps</button>' : '')
+      /* Keep this visible even when the WebView has not recovered the native service's session
+       * list yet. Android can still be signing for apps that this page currently reports as zero;
+       * revokeAll() deliberately pushes an empty set into BOTH stores. Hiding the emergency stop
+       * based on only one store made the control disappear in exactly that state. */
+      + '<button class="mini" id="signer-revoke-all" style="color:var(--danger)">Revoke all apps</button>'
       + '</div>';
 
     $$('[data-revoke]', box).forEach(b => b.onclick = () => {

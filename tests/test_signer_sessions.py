@@ -190,6 +190,18 @@ def test_the_pairings_are_visible_and_revocable():
     assert "data-revoke" in src, "the settings card offers no revoke"
 
 
+def test_revoke_all_stays_visible_when_the_webview_list_is_empty():
+    """Android's native signer may own sessions before the WebView recovers its list."""
+    src = _src()
+    seg = src[src.index("  function _renderSignerApps(){"):
+              src.index("  async function _showBunkerLink(){")]
+    assert "id=\"signer-revoke-all\"" in seg
+    assert "apps.length ? '<button class=\"mini\" id=\"signer-revoke-all\"" not in seg, \
+        "Revoke all disappears when only Android's native signer still has sessions"
+    assert "Nip46Signer.revokeAll()" in seg, \
+        "the visible control does not clear both the WebView and native signer stores"
+
+
 def test_background_signing_no_longer_depends_on_the_webview_being_alive():
     """This test used to assert the OPPOSITE, and keeping the reversal on the record is the point.
 
@@ -257,7 +269,7 @@ def test_the_qr_carries_the_short_uri_and_the_link_carries_the_full_one():
     # …and the drawing uses it. Anchored inside loginAmberNostrConnect, because `qrSrc(` also
     # appears in the generic qrImg helper, which has nothing to do with this screen.
     draw = src[src.index("  async function loginAmberNostrConnect(){"):]
-    draw = draw[:draw.index("Open in Amber / scan QR")]   # to the end of that function
+    draw = draw[:draw.index("  // ---------- sign in with an account")]  # whole function only
     assert "qrSrc(qrUri" in draw, "the QR is drawn from the full URI, not the short one"
 
 
