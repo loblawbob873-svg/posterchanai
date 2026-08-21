@@ -515,7 +515,7 @@ public class SignerRelayService extends Service {
     private void smsOutbox(String url, JSONObject ev) {
         if (ev == null) return;
         if (!SmsOutbox.isRequest(ev)) return;
-        pool.execute(() -> {
+        pool().execute(() -> {
             JSONObject done = SmsOutbox.perform(SignerRelayService.this, ev);
             if (done == null) return;
             WebSocket ws = socks.get(url);

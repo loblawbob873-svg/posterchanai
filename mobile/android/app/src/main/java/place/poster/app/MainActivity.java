@@ -42,27 +42,6 @@ public class MainActivity extends BridgeActivity {
     // A plugin that lives IN this app (rather than in an npm package) is not auto-registered by Capacitor —
     // it has to be declared here, before super.onCreate() builds the bridge, or JS never sees it.
     @Override
-    /* WHETHER THIS APP IS ON SCREEN, for the background SMS drain.
-     *
-     * The client's JavaScript drains the outbox when it is visible; the native drain refuses while
-     * this says true. Without it they are two readers of one send request with no agreement between
-     * them, and the failure mode is a text delivered TWICE, which cannot be undone.
-     *
-     * Answered from the lifecycle rather than inferred from ActivityManager: "is my own app in the
-     * foreground" is exact and free here, and an inference would be wrong in precisely the window
-     * that matters -- the seconds around the app opening. */
-    @Override
-    protected void onResume() {
-        super.onResume();
-        try { place.poster.app.sms.AppVisible.set(true); } catch (Throwable ignored) { }
-    }
-
-    @Override
-    protected void onPause() {
-        try { place.poster.app.sms.AppVisible.set(false); } catch (Throwable ignored) { }
-        super.onPause();
-    }
-
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(ScreenSharePlugin.class);
         registerPlugin(ShareTargetPlugin.class);
@@ -97,6 +76,28 @@ public class MainActivity extends BridgeActivity {
         openPopupsInARealBrowser();
         surviveRenderProcessDeath();
     }
+
+    /* WHETHER THIS APP IS ON SCREEN, for the background SMS drain.
+     *
+     * The client's JavaScript drains the outbox when it is visible; the native drain refuses while
+     * this says true. Without it they are two readers of one send request with no agreement between
+     * them, and the failure mode is a text delivered TWICE, which cannot be undone.
+     *
+     * Answered from the lifecycle rather than inferred from ActivityManager: "is my own app in the
+     * foreground" is exact and free here, and an inference would be wrong in precisely the window
+     * that matters -- the seconds around the app opening. */
+    @Override
+    public void onResume() {
+        super.onResume();
+        try { place.poster.app.sms.AppVisible.set(true); } catch (Throwable ignored) { }
+    }
+
+    @Override
+    public void onPause() {
+        try { place.poster.app.sms.AppVisible.set(false); } catch (Throwable ignored) { }
+        super.onPause();
+    }
+
 
     /**
      * A LINK IN AN EMAIL DID NOTHING IN THE APK, and the web client was already doing this right.
