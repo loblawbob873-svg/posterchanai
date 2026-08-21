@@ -266,7 +266,21 @@ public final class SyncStore {
         }
     }
 
+    /** A path journal is resumable progress; it is not proof that the first sweep completed. */
+    private String baselineKey(String key) {
+        return "baseline:" + SyncCrypto.sha256hex(SyncCrypto.utf8(key));
+    }
+
+    public boolean baselineComplete(String key) {
+        return prefs().getBoolean(baselineKey(key), false);
+    }
+
+    public void markBaselineComplete(String key) {
+        prefs().edit().putBoolean(baselineKey(key), true).commit();
+    }
+
     public void dropBase(String key) {
         try { baseFile(key).delete(); } catch (Exception ignored) { }
+        prefs().edit().remove(baselineKey(key)).commit();
     }
 }

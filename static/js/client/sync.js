@@ -245,6 +245,16 @@
     await _IDB._tx('readwrite', st => st.put(base, key));
     try{ localStorage.removeItem(BASE_KEY(key)); }catch(_){}   // the old copy is now stale, not a fallback
   }
+  const _BASELINE_PREFIX = '\u0000baseline:';
+  async function _loadBaseline(key){
+    try{
+      const v = await _IDB._tx('readonly', st => st.get(_BASELINE_PREFIX + key));
+      return !!(v && v.complete === true);
+    }catch(_){ return false; }
+  }
+  async function _saveBaseline(key){
+    await _IDB._tx('readwrite', st => st.put({ complete:true, at:Date.now() }, _BASELINE_PREFIX + key));
+  }
   /* CLEARING THE AGREEMENT MUST NOT FAIL QUIETLY.
    *
    * "Stop syncing" exists almost entirely to clear this, and the agreement is what decides whether
@@ -1176,6 +1186,8 @@
     flagBad: (key, items) => stateS.flag(key, items),
     index: (key) => _loadBase(key),
     saveIndex: (key, idx) => _saveBase(key, idx),
+    baselineComplete: (key) => _loadBaseline(key),
+    markBaselineComplete: (key) => _saveBaseline(key),
     getBlob: (sha) => store.getBlob(sha),
     putBlob: (bytes) => store.putBlob(bytes),
     getParts: store.getParts,

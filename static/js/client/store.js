@@ -412,6 +412,17 @@
     }
   };
 
+  /* A newly selected PosterChanOS identity arrives in a NEW Unix home, so it cannot inherit the
+   * shared renderer's localStorage. The root switcher leaves exactly one 0600 handoff in that home;
+   * Electron reads and deletes it synchronously, and the ordinary Session API owns it thereafter. */
+  try{
+    const b = window.pcOS && typeof window.pcOS.bootstrap === 'function' ? window.pcOS.bootstrap() : null;
+    if(b && b.sess){
+      Session.save(b.sess);
+      Session.remember(b.sess, b.meta || {});
+    }
+  }catch(_){}
+
   // ---- client settings (browser-side) ----
   const Settings = {
     all(){ try { return JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'); } catch(_){ return {}; } },

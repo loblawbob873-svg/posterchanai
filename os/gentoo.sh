@@ -1659,7 +1659,7 @@ PROFILE
 	# what joins the two. It is the ONLY privileged thing the shell asks for, and it is limited to
 	# exactly that one command — signing in with a key is not the same as being trusted with root,
 	# and a machine anyone may log into must not hand every visitor sudo.
-	for helper in pc-provision-user pc-shell-start pc-key pc-idle update-posterchan; do
+	for helper in pc-provision-user pc-session-switch pc-shell-start pc-key pc-idle update-posterchan; do
 		if [ -f "$PCOS_TREE/bin/$helper" ]; then
 			cp -f "$PCOS_TREE/bin/$helper" ${TARGET}/usr/local/bin/$helper
 		elif [ -f /tmp/bin/$helper ]; then
@@ -1679,6 +1679,13 @@ PROFILE
 		chmod 0440 ${TARGET}/etc/sudoers.d/posterchan-provision
 	else
 		echo -e "\033[1;31m  ✗ pc-provision-user not shipped — nobody can be given an account\033[0m"
+	fi
+	if [ -f "${TARGET}/usr/local/bin/pc-session-switch" ]; then
+		chmod 0755 ${TARGET}/usr/local/bin/pc-session-switch
+		printf '%s\n' \
+			"%posterchan ALL=(root) NOPASSWD: /usr/local/bin/pc-session-switch *" \
+			> ${TARGET}/etc/sudoers.d/posterchan-session-switch
+		chmod 0440 ${TARGET}/etc/sudoers.d/posterchan-session-switch
 	fi
 
 	# Autologin straight into the shell. A display manager is another package, another theme and

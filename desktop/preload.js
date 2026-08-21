@@ -202,6 +202,10 @@ if (isOurPage) {
      * have validated it. */
     provision: (npub) => ipcRenderer.invoke('pc:os:provision', String(npub || '')),
     provisioned: () => ipcRenderer.invoke('pc:os:provisioned'),
+    identity: () => ipcRenderer.invoke('pc:os:identity'),
+    switch: (npub, handoff) => ipcRenderer.invoke('pc:os:switch', String(npub || ''), handoff || {}),
+    logout: () => ipcRenderer.invoke('pc:os:logout'),
+    bootstrap: () => ipcRenderer.sendSync('pc:os:bootstrap'),
   });
 
   contextBridge.exposeInMainWorld('pcFs', {

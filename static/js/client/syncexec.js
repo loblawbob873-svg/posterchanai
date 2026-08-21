@@ -165,6 +165,15 @@
     try{ index = (await io.index(key)) || {}; }
     catch(e){ throw new Error('could not read this device’s sync record — nothing has been changed. ('
                               + msg(e) + ')'); }
+    /* A JOURNAL WITH ENTRIES IS NOT A COMPLETED FIRST SYNC. It is also what an interrupted first
+     * sync leaves behind, and using coverage (half the folder) as permission to publish deletions
+     * let a cleared phone delete files from the original desktop on its next attempt. Completion is
+     * a separate durable fact, written only after the final record flush succeeds. Older clients
+     * have no fact and therefore receive one conservative, deletion-free baseline sweep. */
+    let baselineComplete = false;
+    try{ baselineComplete = !!(io.baselineComplete && await io.baselineComplete(key)); }catch(_){ baselineComplete = false; }
+    const joining = !baselineComplete;
+    if(joining) report.joining = true;
 
     /* COLLECT ABANDONED `.part` FILES BEFORE SCANNING, and this needs a caller or it is decoration.
      *
@@ -319,6 +328,25 @@
      * unreadable subtree can neither be deleted here nor tombstoned to anyone. */
     let plan = E.plan({ disk, state, index, device: me, now,
                         excludes: (o.excludes || []).concat(unread) });
+
+    /* A JOINING DEVICE CANNOT SPEAK FOR ABSENCE. Until it has completed one entire sweep, a missing
+     * path may mean an interrupted download, a user clearing the destination to retry, a revoked
+     * provider grant, or a genuinely deleted local file. Only the last is a deletion, and there is
+     * no evidence that distinguishes it yet. Drop every outgoing tombstone; live records will be
+     * fetched/settled and the completed baseline makes later real deletions authoritative. */
+    if(joining && plan.tombstone.length){
+      const held = plan.tombstone.map(x => x.path);
+      const fetch = plan.fetch.slice();
+      const already = new Set(fetch.map(x => x.path));
+      for(const p of held){
+        const R = state[p];
+        if(R && !R.deletedAt && !already.has(p))
+          fetch.push({ path:p, v:E.versionOf(R), entry:R, from:R.by,
+                       why:'first sync is not allowed to publish a local absence' });
+      }
+      report.joinDeletionsHeld = held;
+      plan = Object.assign({}, plan, { tombstone: [], fetch });
+    }
 
     /* HEAL WHAT OTHERS REFUSE. A record another device has FLAGGED — its stored copy failed a
      * checksum on download — is re-sent by whoever still holds a good local copy: the fresh upload
@@ -1246,6 +1274,10 @@
      * that reports success there is the same silence this feature keeps paying for. */
     report.ok = report.failed.length === 0 && !(report.unfetchable || []).length
               && !(report.uncompared || []).length;
+    if(report.ok && !report.stopped && !report.checkpointError && io.markBaselineComplete){
+      await io.markBaselineComplete(key);
+      report.baselineCompleted = joining;
+    }
     return report;
   }
 

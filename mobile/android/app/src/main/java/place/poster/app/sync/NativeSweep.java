@@ -78,6 +78,8 @@ public final class NativeSweep {
         public final List<String> removedRemote = new ArrayList<String>();
         /** Deletion claims held back for lack of positive proof — the card says how many and why. */
         public final List<String> unconfirmedAbsent = new ArrayList<String>();
+        /** Absences a not-yet-completed device was forbidden to publish. */
+        public final List<String> joinDeletionsHeld = new ArrayList<String>();
         /* THE REPAIR OF A FLAGGED RECORD, in three answers. `reseeding` is what went back up;
          * `staleChecksum` is the subset where the bytes were fine and the published checksum was
          * the thing that was wrong; `badHere` is where this device's own copy disagreed with both
@@ -111,6 +113,7 @@ public final class NativeSweep {
             m.put("trashed", trashed.size());
             m.put("removedRemote", removedRemote.size());
             m.put("unconfirmedAbsent", unconfirmedAbsent.size());
+            if (!joinDeletionsHeld.isEmpty()) m.put("joinDeletionsHeld", (long) joinDeletionsHeld.size());
             if (!reseeding.isEmpty()) m.put("reseeding", (long) reseeding.size());
             if (!staleChecksum.isEmpty()) m.put("staleChecksum", (long) staleChecksum.size());
             if (!badHere.isEmpty()) m.put("badHere", (long) badHere.size());
@@ -352,6 +355,28 @@ public final class NativeSweep {
         }
 
         SyncReconcile.Plan planned = SyncReconcile.plan(local, state, index, f.excludes, device, now);
+        /* Entries in a partial journal say only how far an interrupted join got. Until a complete
+         * sweep has been durably marked, this phone has no authority to turn an absence into an
+         * account-wide tombstone. Restore live shared records instead. */
+        final boolean joining = !store.baselineComplete(f.key);
+        if (joining && !planned.tombstone.isEmpty()) {
+            Set<String> fetching = new LinkedHashSet<String>();
+            for (Map<String, Object> x : planned.fetch) fetching.add(Json.str(x.get("path"), ""));
+            for (Map<String, Object> t : new ArrayList<Map<String, Object>>(planned.tombstone)) {
+                String path = Json.str(t.get("path"), "");
+                rep.joinDeletionsHeld.add(path);
+                Map<String, Object> R = state.get(path);
+                if (R != null && R.get("deletedAt") == null && !fetching.contains(path)) {
+                    Map<String, Object> get = new LinkedHashMap<String, Object>();
+                    get.put("path", path); get.put("v", R.get("v")); get.put("entry", R);
+                    get.put("from", R.get("by"));
+                    get.put("why", "first sync is not allowed to publish a local absence");
+                    planned.fetch.add(get);
+                    fetching.add(path);
+                }
+            }
+            planned.tombstone.clear();
+        }
         heal(planned, state, local, fs, device, rep);
         List<Map<String, Object>> verdicts = SyncReconcile.check(planned, state);
         /* NOBODY IS WATCHING, SO A REFUSAL IS THE ANSWER — and it suppresses one bucket, never the
@@ -574,6 +599,7 @@ public final class NativeSweep {
         }
 
         j.flush();
+        if (rep.failed.isEmpty() && rep.error.isEmpty()) store.markBaselineComplete(f.key);
     }
 
     /** What a file looked like on this disk when we applied something to it — the journal's own

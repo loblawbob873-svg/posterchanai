@@ -1290,6 +1290,51 @@ ipcMain.handle('pc:os:provisioned', (e) => {
   try { return fs.statSync('/var/lib/posterchanos/admin-npub').size > 0; }
   catch (_) { return false; }
 });
+ipcMain.handle('pc:os:identity', (e) => {
+  fsGuard(e);
+  try { return fs.readFileSync(path.join(app.getPath('home'), '.posterchan-npub'), 'utf8').trim(); }
+  catch (_) { return ''; }
+});
+ipcMain.handle('pc:os:switch', (e, npub, handoff) => {
+  fsGuard(e);
+  const id = String(npub || '');
+  if (!/^npub1[023456789acdefghjklmnpqrstuvwxyz]{58}$/.test(id))
+    return { ok: false, why: 'not an npub' };
+  let body = '';
+  try { body = JSON.stringify(handoff || {}); } catch (_) { return { ok: false, why: 'bad session' }; }
+  if (Buffer.byteLength(body) > 65535) return { ok: false, why: 'session is too large' };
+  return new Promise((resolve) => {
+    const { spawn } = require('child_process');
+    const p = spawn('sudo', ['-n', '/usr/local/bin/pc-session-switch', id],
+                    { stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = '', err = '';
+    p.stdout.on('data', b => { if (out.length < 65536) out += b; });
+    p.stderr.on('data', b => { if (err.length < 65536) err += b; });
+    p.on('error', x => resolve({ ok: false, why: String(x.message || x) }));
+    p.on('close', code => resolve(code === 0 ? { ok: true, output: out.trim() }
+                                               : { ok: false, why: err.trim() || `exit ${code}` }));
+    p.stdin.end(body);
+  });
+});
+ipcMain.handle('pc:os:logout', (e) => {
+  fsGuard(e);
+  return new Promise((resolve) => {
+    const { execFile } = require('child_process');
+    execFile('sudo', ['-n', '/usr/local/bin/pc-session-switch', '--greeter'], { timeout: 10000 },
+      (err, stdout, stderr) => resolve(err ? { ok: false, why: String(stderr || err.message).trim() }
+                                           : { ok: true, output: String(stdout).trim() }));
+  });
+});
+/* Synchronous because store.js must import the one-shot handoff before app.js resumes a session.
+ * The file is inside this Unix user's 0700 home and is removed on the first read. */
+ipcMain.on('pc:os:bootstrap', (e) => {
+  try {
+    const file = path.join(app.getPath('home'), '.posterchan-session-bootstrap');
+    const raw = fs.readFileSync(file, 'utf8');
+    fs.unlinkSync(file);
+    e.returnValue = raw.length <= 65536 ? JSON.parse(raw) : null;
+  } catch (_) { e.returnValue = null; }
+});
 ipcMain.handle('pc:fs:list', (e) => { fsGuard(e); return fsbridge.list(); });
 ipcMain.handle('pc:fs:pick', async (e) => {
   fsGuard(e);

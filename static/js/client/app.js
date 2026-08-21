@@ -4065,8 +4065,10 @@
       if(!GUEST && ME && ME.npub && window.PCOSShell)
         PCOSShell.detect().then(yes => {
           if(!yes) return;
-          return PCOSShell.ensureAccount(ME.npub).then(r => {
-            if(r && r.ok === false && r.why) console.warn('[os] no account for this identity:', r.why);
+          const sess = Session.load();
+          return PCOSShell.activateAccount(ME.npub, sess,
+            { pubkey: ME.pubkey, npub: ME.npub }).then(r => {
+            if(r && r.ok === false && r.why) console.warn('[os] could not enter identity session:', r.why);
           });
         }).catch(()=>{});
     }catch(_){}
@@ -4822,7 +4824,20 @@
      * whatever screen was underneath ("brings me to zapstore and never logs out"). The cleanup
      * gets four seconds of courtesy; the logout happens regardless. */
     { let _done = false;
-      const _go = () => { if(!_done){ _done = true; try{ location.reload(); }catch(_){} } };
+      const _go = () => { if(_done) return; _done = true;
+        /* PosterChanOS logout is a Unix logout. Returning only to an empty renderer leaves this
+         * identity's processes, HOME and compositor alive for the next person. The helper restarts
+         * tty1 as the restricted sign-in shell; every other platform keeps the ordinary reload. */
+        try{
+          if(window.PCOSShell) return PCOSShell.detect().then(yes => {
+            if(yes) return PCOSShell.logoutSession().then(r => {
+              if(!r || r.ok === false) location.reload();
+            });
+            location.reload();
+          }).catch(()=> location.reload());
+        }catch(_){}
+        try{ location.reload(); }catch(_){}
+      };
       setTimeout(_go, 4000);
       _forgetPhonebook().catch(() => {}).then(_go); } }
 
@@ -5383,6 +5398,24 @@
   }
   function _accountSwitch(a){
     if(!a || !a.sess) return;
+    /* On PosterChanOS, accounts are Unix sessions. Hand the selected saved signer session to its
+     * 0700 home and let getty replace this whole compositor. The browser-only swap below remains
+     * the right implementation for phones, browsers, Windows and macOS. */
+    try{
+      if(window.PCOSShell){
+        PCOSShell.detect().then(yes => {
+          if(!yes) return _accountSwitchBrowser(a);
+          return PCOSShell.activateAccount(a.npub || (a.sess && a.sess.npub), a.sess, a).then(r => {
+            if(!r || r.ok === false){ toast((r && r.why) || 'could not switch OS user'); return; }
+            if(r.current) _accountSwitchBrowser(a);
+          });
+        }).catch(()=> _accountSwitchBrowser(a));
+        return;
+      }
+    }catch(_){}
+    _accountSwitchBrowser(a);
+  }
+  function _accountSwitchBrowser(a){
     try{ Session.save(a.sess); }catch(_){}
     try{ localStorage.removeItem('pc_settings_cache'); }catch(_){}   // per-user — never cross identities
     try{ if(window.PCVault && PCVault.forget) PCVault.forget(); }catch(_){}

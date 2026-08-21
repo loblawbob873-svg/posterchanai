@@ -30,7 +30,7 @@ RDEPEND="
 src_install() {
 	# The helpers. pc-key must obey the same limits as the on-screen controls; the repo's
 	# tests/test_pc_key_limits.py is what keeps the two in step, and it runs before this is built.
-	for helper in pc-provision-user pc-shell-start pc-key pc-idle update-posterchan; do
+	for helper in pc-provision-user pc-session-switch pc-shell-start pc-key pc-idle update-posterchan; do
 		dobin "${FILESDIR}/${helper}"
 	done
 

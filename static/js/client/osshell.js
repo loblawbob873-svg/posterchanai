@@ -326,6 +326,25 @@
     try{ return !!(await os.provisioned()); }catch(_){ return false; }
   }
 
+  async function identity(){
+    const os = OS(); if(!os || typeof os.identity !== 'function') return '';
+    try{ return String((await os.identity()) || ''); }catch(_){ return ''; }
+  }
+
+  /** Move the whole graphical login, not merely the key inside the shared browser profile. */
+  async function activateAccount(npub, sess, meta){
+    const os = OS(); if(!os || typeof os.switch !== 'function') return { ok:false, why:'not PosterChanOS' };
+    const here = await identity();
+    if(here === String(npub || '')) return { ok:true, current:true };
+    try{ return await os.switch(String(npub || ''), { sess: sess || null, meta: meta || {} }); }
+    catch(e){ return { ok:false, why:String((e && e.message) || e) }; }
+  }
+
+  async function logoutSession(){
+    const os = OS(); if(!os || typeof os.logout !== 'function') return { ok:false, why:'not PosterChanOS' };
+    try{ return await os.logout(); }catch(e){ return { ok:false, why:String((e && e.message) || e) }; }
+  }
+
   /* ── THE VISIBLE HALF ─────────────────────────────────────────────────────────────────────────
    *
    * Deliberately small. Everything above decides; this draws. It is also the only part that cannot
@@ -1163,7 +1182,8 @@
 
   const API = { available, detect, APPS, taskbarRows, existingWindow, launch, panelState, panelSummary,
                 profileMenu, machineApps, mergedApps, allApps, wifiIcon, volIcon, batterySvg,
-                ensureAccount, provisioned, panelHTML, quickHTML, taskbarHTML, launcherHTML, render, watch,
+                ensureAccount, provisioned, identity, activateAccount, logoutSession,
+                panelHTML, quickHTML, taskbarHTML, launcherHTML, render, watch,
                 takeShot, shotAvailable, closePop,
                 setViewOpener, refresh, paintTray, bindApps, bindPanel,
                 summary: () => _sum, rows: () => _rows, readAt: () => _readAt };

@@ -152,7 +152,9 @@ function device(name, sky, opts){
   const o = opts || {};
   const CH = o.chunk || 4 * MB;
   const disk = o.disk || {};
-  const st = { index: o.index || {}, trashed: [], parts: {}, moved: [],
+  const st = { index: o.index || {}, baseline: o.baseline !== undefined ? !!o.baseline
+                                                     : Object.keys(o.index || {}).length > 0,
+               trashed: [], parts: {}, moved: [],
                live: { small: 0, big: 0 }, peak: { small: 0, big: 0 }, saves: 0, publishes: 0 };
   const stat = (r) => ({ size: disk[r].length, mtime: (o.mtimes && o.mtimes[r]) || 1000 });
 
@@ -271,6 +273,8 @@ function device(name, sky, opts){
     index: async () => { if(o.indexFails) throw new Error('IndexedDB: UnknownError');
                          return JSON.parse(JSON.stringify(st.index)); },
     saveIndex: async (k, idx) => { st.saves++; st.index = JSON.parse(JSON.stringify(idx)); },
+    baselineComplete: async () => st.baseline,
+    markBaselineComplete: async () => { st.baseline = true; },
     hashBytes: async (b) => sha(Buffer.from(b)),
     putBlob: async (b) => {
       // What the real path holds at once: the plaintext, the ciphertext and the upload body.
@@ -389,7 +393,7 @@ scenario('a device that rewrites what it downloads does not start a round trip',
   const victim = Object.keys(B.disk).sort()[0];
   B.disk[victim] = Buffer.concat([B.disk[victim], Buffer.from('EXIF')]);
 
-  const B2 = device('phone', sky, { disk: B.disk, index: B.st.index,
+  const B2 = device('phone', sky, { disk: B.disk, index: B.st.index, baseline: B.st.baseline,
                                     mtimes: { [victim]: 987654 } });
   const r2 = await B2.sweep();
   t.eq(r2.uploaded.length, 0, 'the phone published ' + r2.uploaded.length
@@ -468,7 +472,7 @@ scenario('a refused mass delete is not proposed again — the files come back in
    * reported (400 refused, twice, on a phone that still held a few thousand of ~12,000 files). */
   const keep = Object.keys(B.disk).sort().slice(0, 20);
   for(const p of Object.keys(B.disk)) if(keep.indexOf(p) === -1) delete B.disk[p];
-  const B2 = device('phone', sky, { disk: B.disk, index: B.st.index });
+  const B2 = device('phone', sky, { disk: B.disk, index: B.st.index, baseline: B.st.baseline });
   const r2 = await B2.sweep();
   t.eq(r2.refusedMassDelete > 0, true, 'the refusal was not reported: ' + r2.refusedMassDelete);
   const alive = Object.values(sky.recs).filter(r => !r.t).length;
@@ -603,6 +607,28 @@ scenario('an interrupted sweep resumes where it stopped', async (t) => {
   t.ok(second.downloaded.length <= (300 - got) + EXEC.LANES * 2,
        'it re-fetched files it already had (' + second.downloaded.length + ' for '
        + (300 - got) + ' missing)');
+});
+
+scenario('an interrupted first phone sync cannot publish cleared files as deletions', async (t) => {
+  const sky = cloud();
+  const A = device('desktop', sky, { disk: photos(160) });
+  await A.sweep();
+  const B = device('phone', sky, {});
+  let checks = 0;
+  const partial = await B.sweep({ shouldStop: () => ++checks > 130 });
+  t.ok(partial.stopped === true, 'the first phone sweep was not interrupted');
+  t.ok(Object.keys(B.st.index).length > 80, 'the partial journal did not pass the old half-full heuristic');
+  const removed = Object.keys(B.disk).slice(0, 11);
+  for(const p of removed) delete B.disk[p];
+
+  const B2 = device('phone', sky, { disk: B.disk, index: B.st.index, baseline: B.st.baseline });
+  const resumed = await B2.sweep();
+  t.eq(resumed.removedRemote.length, 0, 'the joining phone published remote deletions');
+  t.eq((resumed.joinDeletionsHeld || []).length, 11, 'the missing first-join files were not held');
+  t.eq(Object.keys(sky.folder()).filter(p => sky.folder()[p].deletedAt).length, 0,
+       'the original folder gained tombstones from a partial phone');
+  t.eq(identical(A.disk, B2.disk), null, 'the phone did not restore the held files from the original');
+  t.ok(B2.st.baseline, 'a successful resumed sweep did not complete its baseline');
 });
 
 scenario('corrupt bytes are refused, never written over a good file', async (t) => {
