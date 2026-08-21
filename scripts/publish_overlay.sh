@@ -38,6 +38,39 @@ else
     echo "[overlay] could not read the desktop version — publishing the ebuild as it stands" >&2
 fi
 
+# ---------------------------------------------------------------- the Manifest
+#
+# WITHOUT ONE, PORTAGE REFUSES THE BINARY IT JUST DOWNLOADED: "VERIFY FAILED! Reason: Insufficient
+# data for checksum verification". That is not a corrupt download, it is an ebuild with nothing to
+# check against -- and it is what every `update-posterchan` on an overlay machine hit.
+#
+# Generated here rather than committed, because it describes bytes that live at a URL: the digest and
+# the ebuild version have to move together, and this is the one place that already knows both (it
+# renamed the ebuild to the live version a few lines up).
+#
+# The hashes are the ones the overlay's layout.conf declares. A thin-manifest DIST line is exactly
+# size + those digests, so it is written directly rather than through `ebuild ... manifest`, which
+# would need a configured portage tree and tie publishing to this machine's package state.
+if [ -n "${LIVE:-}" ]; then
+    EB_DIR="$SRC/app-misc/posterchan-desktop"
+    ASSET="PosterChan-${LIVE}-linux-x64.tar.zst"
+    GH="https://github.com/loblawbob873-svg/posterchanai/releases/download/desktop-latest"
+    DL="$(mktemp)"
+    if curl -fsSL --retry 2 --max-time 900 -o "$DL" "$GH/$ASSET"; then
+        printf 'DIST posterchan-desktop-%s.tar.zst %s BLAKE2B %s SHA512 %s\n' \
+            "$LIVE" "$(stat -c%s "$DL")" \
+            "$(b2sum "$DL" | cut -d' ' -f1)" \
+            "$(sha512sum "$DL" | cut -d' ' -f1)" >"$EB_DIR/Manifest"
+        echo "[overlay] Manifest written for $ASSET"
+    else
+        # NEVER LEAVE A STALE ONE. A Manifest describing a different build is worse than none: the
+        # download succeeds and portage rejects it, which reads as a corrupt mirror.
+        rm -f "$EB_DIR/Manifest"
+        echo "[overlay] WARN: could not fetch $ASSET — publishing with no Manifest (emerge will refuse it)" >&2
+    fi
+    rm -f "$DL"
+fi
+
 echo "[overlay] staging $(find "$SRC" -type f | wc -l) files"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT

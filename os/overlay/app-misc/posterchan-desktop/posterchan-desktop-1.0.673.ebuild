@@ -5,9 +5,18 @@ EAPI=8
 
 DESCRIPTION="PosterChan desktop — the shell PosterChanOS boots into"
 HOMEPAGE="https://poster.place"
-# The rolling release: one URL, re-tagged on every build. Fetched with the version in the local
-# file name so portage's cache cannot serve yesterday's binary for today's version.
-SRC_URI="https://github.com/loblawbob873-svg/posterchanai/releases/download/desktop-latest/PosterChan.AppImage -> ${P}.AppImage"
+# A VERSIONED TARBALL, AND THAT IS WHAT MAKES A MANIFEST POSSIBLE.
+#
+# This used to fetch PosterChan.AppImage from the rolling `desktop-latest` tag -- one URL,
+# re-uploaded on every build. A Manifest pins a digest, so an ebuild naming a MUTABLE url verifies
+# today and fails for everybody on the next desktop build, with no change to the overlay. The
+# failure looks like a corrupt download and is actually a design error. Without a Manifest at all,
+# portage refuses outright: "VERIFY FAILED! Reason: Insufficient data for checksum verification".
+#
+# The release now also carries PosterChan-<version>-linux-x64.tar.zst: the same files
+# electron-builder produces on its way to building the image, under a name that cannot change. No
+# FUSE, no AppImage runtime, nothing that verifies itself -- and a digest that stays true.
+SRC_URI="https://github.com/loblawbob873-svg/posterchanai/releases/download/desktop-latest/PosterChan-${PV}-linux-x64.tar.zst -> ${P}.tar.zst"
 S="${WORKDIR}"
 
 LICENSE="GPL-3"
@@ -20,9 +29,6 @@ SLOT="0"
 KEYWORDS="amd64"
 RESTRICT="mirror strip"
 
-# EXTRACTED AT BUILD TIME, NOT RUN AS AN APPIMAGE. An AppImage needs FUSE at runtime, which a minimal
-# profile does not have; extracting once here needs it never and turns the shell into an ordinary
-# directory of files.
 RDEPEND="
 	gui-wm/sway
 	x11-base/xwayland
@@ -30,15 +36,18 @@ RDEPEND="
 	media-video/wireplumber
 "
 
+# `default` would work -- a .tar.zst is an archive portage knows -- but the tree is unpacked into a
+# subdirectory of its own so src_install has one predictable path to copy, whatever the archive's
+# top level happens to look like.
 src_unpack() {
-	cp "${DISTDIR}/${P}.AppImage" "${WORKDIR}/app.AppImage" || die
-	chmod +x "${WORKDIR}/app.AppImage" || die
-	"${WORKDIR}/app.AppImage" --appimage-extract >/dev/null || die "could not extract the AppImage"
+	mkdir -p "${WORKDIR}/tree" || die
+	tar -C "${WORKDIR}/tree" -xaf "${DISTDIR}/${P}.tar.zst" || die "could not unpack the desktop"
+	[[ -f "${WORKDIR}/tree/AppRun" ]] || die "that archive has no desktop in it"
 }
 
 src_install() {
 	insinto /opt/posterchan
-	doins -r "${WORKDIR}"/squashfs-root/.
+	doins -r "${WORKDIR}"/tree/.
 	# READABLE AND EXECUTABLE BY THE PEOPLE WHO RUN IT. `--appimage-extract` inherits the umask of
 	# whatever ran it; installed at 0700 the one directory every session execs from is root-only.
 	fperms -R a+rX /opt/posterchan
