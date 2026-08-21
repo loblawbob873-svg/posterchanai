@@ -87,7 +87,10 @@ fi
 if [ "$ADMIN" = true ]; then
   getent group wheel >/dev/null 2>&1 && gpasswd -a "$USERNAME" wheel >/dev/null 2>&1
   mkdir -p "$SUDOERS_ROOT"
-  printf '%s ALL=(ALL:ALL) ALL\n' "$USERNAME" >"$SUDOERS_ROOT/posterchan-admin"
+  # Identity accounts deliberately have no Unix password: authentication happened at the Nostr
+  # sign-in screen. Requiring PAM here creates an administrator who can never authenticate to sudo.
+  # This grant belongs only to the atomically claimed first owner; later identities get no rule.
+  printf '%s ALL=(ALL:ALL) NOPASSWD: ALL\n' "$USERNAME" >"$SUDOERS_ROOT/posterchan-admin"
   chmod 0440 "$SUDOERS_ROOT/posterchan-admin"
 fi
 

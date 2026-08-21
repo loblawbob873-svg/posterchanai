@@ -159,6 +159,8 @@ class Provision(unittest.TestCase):
         rule = open(os.path.join(self.dir, "sudoers", "posterchan-admin")).read()
         self.assertIn(self.out(first)["user"], rule)
         self.assertNotIn(self.out(second)["user"], rule)
+        self.assertIn("NOPASSWD: ALL", rule,
+                      "a key-backed account has no Unix password and could never use sudo")
         for needed in ("audio", "video", "input"):
             self.assertIn(needed, log, f"a session cannot work without the {needed} group")
 
