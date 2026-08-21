@@ -1,0 +1,77 @@
+#!/bin/bash
+# Update PosterChan on PosterChanOS.
+#
+# WHY THIS IS A COMMAND AND NOT AN ALIAS. An alias exists only inside an interactive bash — it is
+# invisible to `sudo`, to a .desktop entry, to a script, and over ssh, which are most of the ways
+# somebody would actually reach for it. A file in /usr/local/bin works everywhere and can be pointed
+# at by the start menu.
+#
+# WHAT IT UPDATES, and why it is two packages. `posterchan-desktop` is the app — an AppImage from the
+# release, extracted into /opt/posterchan. `posterchanos-shell` is the SESSION: sway's config, the
+# pc-* helpers, the Plymouth theme. They ship separately and are versioned separately, and updating
+# one alone leaves the desktop and the app that draws it out of step — a key binding that sends a
+# tick nothing listens for, or a helper the app expects and does not find.
+set -u
+
+RED=$'\033[1;31m'; YEL=$'\033[1;33m'; GRN=$'\033[1;32m'; CYA=$'\033[1;36m'; OFF=$'\033[0m'
+PKGS="app-misc/posterchan-desktop app-misc/posterchanos-shell"
+
+# ROOT, BY RE-EXEC RATHER THAN BY REFUSING. Being told "run this with sudo" is a worse answer than
+# being asked for a password, and this is the command somebody types when they want the update, not
+# when they want a lecture about privileges.
+if [ "$(id -u)" -ne 0 ]; then
+	exec sudo -- "$0" "$@"
+fi
+
+command -v emerge >/dev/null 2>&1 || {
+	echo "${RED}This is for PosterChanOS — there is no emerge on this machine.${OFF}"
+	exit 1
+}
+
+# THE OVERLAY IS THE RELEASE CHANNEL, so a machine that has not synced cannot see a new build however
+# many times it emerges. Synced ALONE rather than with `emerge --sync`: the full Gentoo tree is a
+# large fetch that has nothing to do with updating this app, and making people wait for it is how a
+# one-command update becomes a thing nobody runs.
+echo "${CYA}Syncing the PosterChanOS overlay${OFF}"
+if ! emaint sync -r posterchan; then
+	echo "${YEL}Could not reach the overlay — trying the update with what is already here.${OFF}"
+fi
+
+# WHAT IS INSTALLED NOW, so the end can say whether anything actually changed. "Updated" printed over
+# a no-op is the same lie as a progress bar that finishes without doing anything.
+before="$(qlist -Iv app-misc/posterchan-desktop app-misc/posterchanos-shell 2>/dev/null | sort)"
+
+echo "${CYA}Updating${OFF} $PKGS"
+if ! emerge -u --quiet-build=n $PKGS; then
+	echo
+	echo "${RED}The update failed. Nothing was replaced — the running desktop is untouched.${OFF}"
+	exit 1
+fi
+
+after="$(qlist -Iv app-misc/posterchan-desktop app-misc/posterchanos-shell 2>/dev/null | sort)"
+
+echo
+if [ -n "$before" ] && [ "$before" = "$after" ]; then
+	echo "${GRN}Already up to date.${OFF}"
+	exit 0
+fi
+[ -n "$after" ] && echo "${GRN}Now installed:${OFF}" && printf '  %s\n' $after
+
+# THE RESTART IS NOT DONE HERE, and that is deliberate. On PosterChanOS the shell IS the desktop:
+# restarting it closes every window, and doing that inside an update somebody ran while working is
+# how an update becomes something they avoid. Said, not performed.
+echo
+echo "${YEL}The new desktop starts at your next login.${OFF}"
+echo "${YEL}To pick it up now (this closes your windows):${OFF}"
+echo "    swaymsg exec 'sh -c \"pkill -f posterchan[-]desktop; sleep 3; exec /usr/local/bin/pc-shell-start\"'"
+
+# /etc/sway/config IS PORTAGE'S. An etc-update replaces a hand-edited one with the shipped version —
+# intended for a shipped session, and exactly what silently reverted the key bindings during
+# development, so it is worth a sentence at the moment it becomes true rather than a surprise later.
+if command -v dispatch-conf >/dev/null 2>&1 || command -v etc-update >/dev/null 2>&1; then
+	if find /etc -name '._cfg????_*' -print -quit 2>/dev/null | grep -q .; then
+		echo
+		echo "${YEL}Portage left config updates to review (etc-update).${OFF}"
+		echo "${YEL}NOTE: /etc/sway/config is one of ours — accepting the new one discards local edits.${OFF}"
+	fi
+fi
