@@ -967,6 +967,15 @@ liveISOinstall() {
 		return 1
 	}
 
+	# THE LIVE IMAGE MAY HAVE BEEN BUILT BY AN OLDER INSTALLER and therefore still carry the source
+	# machine's /etc/dracut.conf. That file names the source LUKS UUID and asks for its unlock.sh and
+	# keyfile, neither of which belongs to this new target. The first target dracut run is below,
+	# while bootloader() creates the new disk's real key and configuration later in finalizeInstall.
+	# Clear only the copied host policy now; packaged defaults under /usr/lib/dracut remain intact.
+	sudo mkdir -p "$TARGET/etc/dracut.conf.d"
+	sudo sh -c ': > "$1/etc/dracut.conf"' sh "$TARGET"
+	sudo find "$TARGET/etc/dracut.conf.d" -maxdepth 1 -type f -name '*.conf' -delete
+
 	# THE LIVE INITRAMFS IS THE ONE THING ON THAT MEDIUM THAT MUST NOT BE INSTALLED, hence the
 	# excludes above. It is built to find a squashfs on a removable disc: put it on a hard drive and
 	# the machine boots looking for the USB stick it was installed from, which is a failure that
@@ -2317,7 +2326,7 @@ liveCD() {
 		var/tmp var/cache/distfiles var/cache/binpkgs var/lib/portage/distfiles
 		var/log/journal .snapshots
 		boot efi
-		etc/fstab etc/machine-id etc/crypttab
+		etc/fstab etc/machine-id etc/crypttab etc/dracut.conf.d
 	)
 	# THE WORK DIRECTORY EXCLUDES ITSELF — see the header. Stored relative, because mksquashfs's
 	# -e paths are relative to the source root.
@@ -2510,6 +2519,14 @@ FSTAB
 	local PSEUDO="$WORK/pseudo"
 	{
 		pseudoput "etc/fstab" f 644 0 0 cat "$LIVEFSTAB"
+		# The installed machine's dracut.conf is host boot state, not live-image configuration.
+		# bootloader() puts its encrypted-root UUID, unlock helper and LUKS key path here. /boot is
+		# deliberately excluded from the squashfs, so retaining this file leaves the live session
+		# asking dracut to install files that cannot exist. Worse, it publishes the source machine's
+		# disk identity. The ISO initramfs is built explicitly below with an isolated configuration;
+		# leave the live userland's copy empty so rebuilding an initramfs from the disc cannot inherit
+		# the source laptop's encrypted-root recipe.
+		pseudoput "etc/dracut.conf" f 644 0 0 echo -n
 		# An EMPTY machine-id, not a copy of this machine's. systemd treats empty as "first boot"
 		# and generates a fresh one; a duplicated id gives every live boot the same identity, which
 		# breaks journald, DHCP leases and systemd-boot's own /boot layout.
@@ -2682,6 +2699,16 @@ DESKTOP
 				_lcd_fail "The image would log in as '${WHO:-nobody}' and its /etc/passwd has ${PW} such account. That is a login prompt, not a desktop — the ISO was not made. (mksquashfs ignores a pseudo-file whose path exists in the source; see pseudoput.)"
 				return
 			fi
+		fi
+		# A live image must not retain the source machine's encrypted-root recipe. Checking the
+		# extracted contents (rather than merely the path) catches both an ignored pseudo-file and
+		# any future regression that puts unlock.sh, a key path, or a disk UUID back into this file.
+		local LIVE_DRACUT_CONF
+		LIVE_DRACUT_CONF="$(unsquashfs -cat "$WORK/iso/LiveOS/squashfs.img" etc/dracut.conf 2>/dev/null)"
+		if [[ -n "$LIVE_DRACUT_CONF" ]]; then
+			{ echo "live /etc/dracut.conf was not empty:"; printf '%s\n' "$LIVE_DRACUT_CONF"; } >>"$LOG" 2>/dev/null
+			_lcd_fail "The image retained this machine's dracut configuration — refusing to publish its encrypted-root UUID or key path."
+			return
 		fi
 		echo -e "${COLOR_GREEN}Image checked: $SESS_USER has a home, a login profile, an account and a desktop.${COLOR_RESET}"
 	fi
