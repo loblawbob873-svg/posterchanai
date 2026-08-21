@@ -518,6 +518,7 @@ public class Drv {
       finally { net.unreachable = false; }
       out.put("wave_offline_trashed", r3.trashed.size());
       out.put("wave_offline_kept", r3.keptUnconfirmed.size());
+      out.put("wave_offline_join_held", r3.joinDeletionsHeld.size());
     }
 
     // ---- …AND BELOW THE FLOOR AN ORDINARY DELETION STILL JUST HAPPENS. A guard that stops
@@ -745,6 +746,7 @@ public class Fake extends Context {
           public Editor putString(String k, String v) { STORE.put(k, v); return this; }
           public Editor putBoolean(String k, boolean v) { STORE.put(k, Boolean.valueOf(v)); return this; }
           public Editor remove(String k) { STORE.remove(k); return this; }
+          public boolean commit() { return true; }
           public void apply() { }
         };
       }
@@ -935,9 +937,9 @@ def test_and_the_same_wave_deletes_nothing_when_the_store_cannot_be_asked():
     r = result()
     assert r["wave_offline_trashed"] == 0, (
         "it deleted %r files it could not verify were recoverable" % r["wave_offline_trashed"])
-    assert r["wave_offline_kept"] == 25, (
-        "it kept the files but reported %r of them — a deletion that did not happen looks exactly "
-        "like one that did unless somebody says so" % r["wave_offline_kept"])
+    assert r["wave_offline_join_held"] == 25, (
+        "the fresh device kept the files but reported %r of them — a deletion that did not happen "
+        "looks exactly like one that did unless somebody says so" % r["wave_offline_join_held"])
 
 
 def test_and_an_ordinary_deletion_still_just_happens():

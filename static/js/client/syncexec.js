@@ -170,9 +170,12 @@
      * let a cleared phone delete files from the original desktop on its next attempt. Completion is
      * a separate durable fact, written only after the final record flush succeeds. Older clients
      * have no fact and therefore receive one conservative, deletion-free baseline sweep. */
+    const baselineKnown = typeof io.baselineComplete === 'function';
     let baselineComplete = false;
-    try{ baselineComplete = !!(io.baselineComplete && await io.baselineComplete(key)); }catch(_){ baselineComplete = false; }
-    const joining = !baselineComplete;
+    try{ baselineComplete = !!(baselineKnown && await io.baselineComplete(key)); }catch(_){ baselineComplete = false; }
+    /* Old/testing bridges without checkpoint support retain established-sync semantics. Every
+     * shipped bridge provides this method; absence is not evidence that a real folder is new. */
+    const joining = baselineKnown && !baselineComplete;
     if(joining) report.joining = true;
 
     /* COLLECT ABANDONED `.part` FILES BEFORE SCANNING, and this needs a caller or it is decoration.
@@ -334,6 +337,11 @@
      * provider grant, or a genuinely deleted local file. Only the last is a deletion, and there is
      * no evidence that distinguishes it yet. Drop every outgoing tombstone; live records will be
      * fetched/settled and the completed baseline makes later real deletions authoritative. */
+    if(joining && plan.remove.length){
+      const heldIncoming = plan.remove.map(x => x.path);
+      report.joinDeletionsHeld = (report.joinDeletionsHeld || []).concat(heldIncoming);
+      plan = Object.assign({}, plan, { remove: [] });
+    }
     if(joining && plan.tombstone.length){
       const held = plan.tombstone.map(x => x.path);
       const fetch = plan.fetch.slice();
@@ -344,7 +352,7 @@
           fetch.push({ path:p, v:E.versionOf(R), entry:R, from:R.by,
                        why:'first sync is not allowed to publish a local absence' });
       }
-      report.joinDeletionsHeld = held;
+      report.joinDeletionsHeld = (report.joinDeletionsHeld || []).concat(held);
       plan = Object.assign({}, plan, { tombstone: [], fetch });
     }
 
@@ -1009,10 +1017,17 @@
            * can tell a file this device RECEIVED from one it wrote: both are just bytes with a
            * timestamp afterwards. It is what the guard on the send side reads — see
            * "A DEVICE THAT REWRITES WHAT IT DOWNLOADS". */
+          const stale = d.entry._pcStaleCsum || '';
+          delete d.entry._pcStaleCsum;
           record(d.path, Object.assign({}, d.entry), { size: st.size, mtime: st.mtime,
-                                                       csum: d.entry.csum,
+                                                       csum: stale || d.entry.csum,
                                                        dl: E.versionOf(d.entry) || 1 });
           report.downloaded.push(d.path);
+          if(stale){
+            report.staleChecksum = report.staleChecksum || [];
+            report.staleChecksum.push(d.path);
+            flagQueue.push({ path:d.path, id:idOf(d.entry), got:stale });
+          }
         }catch(e){
           if(isStop(e)) return;               // the loop sees the latch and halts cleanly
           /* TWO KINDS OF UNUSABLE COPY, AND ONLY ONE OF THEM IS PERMANENT-UNTIL-REPAIRED.
@@ -1631,7 +1646,17 @@
        * pass, and it is what decides whether these bytes are usable. */
       if(!(entry.size && have >= entry.size)) await pull(have);
       try{
-        await verifyPart(fs, o, path, entry);
+        const measured = await verifyPart(fs, o, path, entry);
+        if(measured && entry.csum && measured !== entry.csum){
+          /* First eliminate a stale/spliced PART. Only a clean reconstruction that measures the
+           * same different hash proves the manifest's old whole-file checksum is stale. */
+          if(have){
+            try{ if(typeof fs.discardPart === 'function') await fs.discardPart(o.id, path); }catch(_){}
+            await pull(0);
+            const clean = await verifyPart(fs, o, path, entry);
+            if(clean && clean !== entry.csum) entry._pcStaleCsum = clean;
+          } else entry._pcStaleCsum = measured;
+        }
       }catch(e){
         /* AN UNANSWERED HASH IS NOT A FAILED ONE, and here the difference is 2 GB. `hashPart` reads
          * the whole part file back — on Android through SAF, minutes of I/O that can throw or be
@@ -1651,7 +1676,8 @@
         if(!have) throw e;
         try{ if(typeof fs.discardPart === 'function') await fs.discardPart(o.id, path); }catch(_){}
         await pull(0);
-        await verifyPart(fs, o, path, entry);
+        const measured = await verifyPart(fs, o, path, entry);
+        if(measured && entry.csum && measured !== entry.csum) entry._pcStaleCsum = measured;
       }
       if(beforeCommit) await beforeCommit();
       return await fs.writeCommit(o.id, path, entry.mtime || 0);
@@ -1672,13 +1698,15 @@
   const UNVERIFIED = 'downloaded, but this device could not read it back to check it — the bytes '
                    + 'are kept and the next sync will verify them';
   async function verifyPart(fs, o, path, entry){
-    if(!entry.csum || typeof fs.hashPart !== 'function') return;
+    if(!entry.csum || typeof fs.hashPart !== 'function') return '';
     let got = null, asked = true;
     try{ got = await fs.hashPart(o.id, path); }catch(_){ asked = false; }
     if(!asked || !got){ const e = new Error(UNVERIFIED); e.unverified = true; throw e; }
     /* THE HASH WE MEASURED TRAVELS WITH THE FAILURE. Without it the holder is asked "is your copy
      * bad, or was your checksum wrong?" and has nothing to answer with — see the heal path. */
-    if(got !== entry.csum){ const e = new Error(BAD_COPY); e.got = got; throw e; }
+    /* Authenticated chunks plus the exact manifest length are the bytes the holder published. An
+     * older scanner could publish a prefix hash; keep the valid file and flag that stale number. */
+    return got;
   }
 
   /* An upload, and the record the other devices will read.

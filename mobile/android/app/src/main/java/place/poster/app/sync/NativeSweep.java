@@ -359,6 +359,15 @@ public final class NativeSweep {
          * sweep has been durably marked, this phone has no authority to turn an absence into an
          * account-wide tombstone. Restore live shared records instead. */
         final boolean joining = !store.baselineComplete(f.key);
+        /* Nor may an un-baselined replica OBEY old deletion history. A reused pair name can have
+         * tombstones from an earlier incarnation; applying those to the only local copy is how a
+         * clean first sync put thousands of files in Android trash. Keep the bytes in place until
+         * one complete, durable baseline establishes that this device belongs to this history. */
+        if (joining && !planned.remove.isEmpty()) {
+            for (Map<String, Object> t : planned.remove)
+                rep.joinDeletionsHeld.add(Json.str(t.get("path"), ""));
+            planned.remove.clear();
+        }
         if (joining && !planned.tombstone.isEmpty()) {
             Set<String> fetching = new LinkedHashSet<String>();
             for (Map<String, Object> x : planned.fetch) fetching.add(Json.str(x.get("path"), ""));
@@ -490,8 +499,17 @@ public final class NativeSweep {
                     }
                 }
                 long[] got = download(net, fs, mk, path, R, now);
-                j.applied(path, R, stat(got, Json.str(R.get("csum"), "")), false);
+                String stale = Json.str(R.remove("_pcStaleCsum"), "");
+                j.applied(path, R, stat(got, stale.isEmpty() ? Json.str(R.get("csum"), "") : stale), false);
                 rep.downloaded.add(path);
+                if (!stale.isEmpty()) {
+                    Map<String, Object> row = new LinkedHashMap<String, Object>();
+                    row.put("d", pathD(path));
+                    row.put("bad", SyncDiff.addressOf(R) + "|" + stale);
+                    List<Object> flag = new ArrayList<Object>(); flag.add(row);
+                    try { net.flagState(f.key, st.era, flag); } catch (Exception ignored) { }
+                    rep.staleChecksum.add(path);
+                }
             } catch (ChecksumMismatch e) {
                 /* A checksum failure must reach whoever still holds the source bytes. The page
                  * executor has always published this flag; the native executor only logged it, so
@@ -645,6 +663,7 @@ public final class NativeSweep {
         List<Object> chunks = R.get("chunks") instanceof List ? Json.arr(R.get("chunks")) : null;
         long mtime = Json.num(R.get("mtime"), 0);
         String csum = Json.str(R.get("csum"), "");
+        long resumedBytes = 0;
         if (chunks != null && !chunks.isEmpty()) {
             long expect = Json.num(R.get("size"), -1);
             long off = 0;
@@ -655,6 +674,7 @@ public final class NativeSweep {
             long cs = Json.num(R.get("cs"), 0);
             if (!csum.isEmpty() && cs > 0) {
                 long have = fs.partSize(path);
+                resumedBytes = have;
                 if (have > 0) {
                     /* A restart can land after the final write and before hash/commit. That is the
                      * most expensive possible checkpoint for a multi-GB file, and it used to be
@@ -716,9 +736,18 @@ public final class NativeSweep {
                 throw new java.io.IOException("downloaded, but Android could not verify it yet — "
                         + "the completed download is kept and verification will resume");
             }
+            /* Every chunk has already passed AES-GCM authentication and the reconstructed length
+             * matches the signed manifest. If those bytes disagree with an old whole-file checksum,
+             * the checksum is stale; discarding gigabytes here made a valid file retry forever. */
             if (!got.equals(csum)) {
-                fs.discardPart(path);
-                throw new ChecksumMismatch(got);
+                /* A mismatch after resume may be our stale/spliced temp file. Throw that away once;
+                 * only a from-scratch authenticated reconstruction may repair a stale manifest
+                 * checksum instead of downloading forever. */
+                if (resumedBytes > 0) {
+                    fs.discardPart(path);
+                    throw new ChecksumMismatch(got);
+                }
+                R.put("_pcStaleCsum", got);
             }
         }
         return fs.commitPart(path, mtime);

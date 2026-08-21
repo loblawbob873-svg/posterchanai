@@ -272,7 +272,11 @@ public final class SyncStore {
     }
 
     public boolean baselineComplete(String key) {
-        return prefs().getBoolean(baselineKey(key), false);
+        /* THE MARKER AND ITS AGREEMENT ARE ONE CHECKPOINT. Android can retain preferences while
+         * app files are cleared/restored independently, and older builds also left this boolean
+         * behind when a folder was paired again. A marker without the exact base it certifies must
+         * never grant deletion authority to what is, in fact, a first sync. */
+        return baseFile(key).isFile() && prefs().getBoolean(baselineKey(key), false);
     }
 
     public void markBaselineComplete(String key) {
@@ -280,7 +284,14 @@ public final class SyncStore {
     }
 
     public void dropBase(String key) {
-        try { baseFile(key).delete(); } catch (Exception ignored) { }
-        prefs().edit().remove(baselineKey(key)).commit();
+        try {
+            File base = baseFile(key);
+            base.delete();
+            new File(base.getPath() + ".state").delete();
+            new File(base.getPath() + ".tmp").delete();
+            new File(base.getPath() + ".state.tmp").delete();
+        } catch (Exception ignored) { }
+        prefs().edit().remove(baselineKey(key))
+                .remove("lastSync:" + key).remove("lastFull:" + key).commit();
     }
 }
