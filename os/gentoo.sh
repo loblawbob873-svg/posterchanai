@@ -319,12 +319,29 @@ snapshots() {
 		echo -e "\033[1;33mAlready booted in Previous\033[0m"
 	else
 		echo -e "\033[1;33mRemoving Snapshots older than 5 days\033[0m"
-		sudo /usr/bin/btrfs sub del /.snapshots/snapshot-*
+		# A glob with no matches is passed literally; btrfs then fails on a path named `snapshot-*`.
+		# Delete only directories that actually exist.
+		local OLD
+		for OLD in /.snapshots/snapshot-*; do
+			[ -d "$OLD" ] && sudo /usr/bin/btrfs subvolume delete "$OLD"
+		done
 		sudo rm -f /boot/loader/entries/snapshot-*
 		sudo /usr/bin/btrfs sub snapshot / /.snapshots/snapshot-$DATE
-		BOOT_FILES=$(sudo bootctl | grep "Current Entry" | cut -d " " -f3)
-		sudo cp -f /boot/loader/entries/$BOOT_FILES /boot/loader/entries/snapshot-$DATE.conf
-		sudo sed -i "s/@$ROOT_NAME/@.snapshots\/snapshot-$DATE/i" /boot/loader/entries/snapshot-$DATE.conf
+		# `Current Entry:` has leading alignment spaces. `cut -d ' ' -f3` therefore returned the
+		# literal word `Entry:` and every boot snapshot unit failed after creating the snapshot.
+		BOOT_FILES=$(sudo bootctl status --no-pager | awk '$1=="Current" && $2=="Entry:" {print $3; exit}')
+		[ -n "$BOOT_FILES" ] && [ -f "/boot/loader/entries/$BOOT_FILES" ] || {
+			echo "Could not identify the current systemd-boot entry" >&2
+			return 1
+		}
+		sudo cp -f "/boot/loader/entries/$BOOT_FILES" "/boot/loader/entries/snapshot-$DATE.conf"
+		# /.snapshots is its own mounted Btrfs subvolume. Name its on-disk FSROOT, not the mountpoint:
+		# this install uses @snapshots, so `@.snapshots/...` can never be booted.
+		local SNAP_ROOT
+		SNAP_ROOT=$(findmnt -no FSROOT /.snapshots | sed 's#^/##')
+		[ -n "$SNAP_ROOT" ] || { echo "Could not identify the snapshots subvolume" >&2; return 1; }
+		sudo sed -i "s#subvol=@$ROOT_NAME#subvol=$SNAP_ROOT/snapshot-$DATE#g" \
+			"/boot/loader/entries/snapshot-$DATE.conf"
 	fi
 }
 
@@ -1161,8 +1178,8 @@ services() {
 
 	echo "[Service]" > /etc/systemd/system/boot-snapshot.service
 	echo "ExecStart=/usr/bin/gentoo.sh snapshot" >> /etc/systemd/system/boot-snapshot.service
-	echo "User=verita84"  >> /etc/systemd/system/boot-snapshot.service
-	echo "Group=verita84"  >> /etc/systemd/system/boot-snapshot.service
+	# Snapshots require root, and the first key-backed account deliberately has a generated name.
+	# Hardcoding the ISO builder's user made this unit fail with 217/USER on every installed machine.
 	echo "SyslogIdentifier=boot-snapshot"  >> /etc/systemd/system/boot-snapshot.service
 	echo "[Install]"  >> /etc/systemd/system/boot-snapshot.service
 	echo "WantedBy=default.target"  >> /etc/systemd/system/boot-snapshot.service
@@ -2430,21 +2447,21 @@ FSTAB
 
 		# The account files, rewritten. Everything below uid 1000 stays — root and the system users
 		# are what makes a Linux system work — and every real person is dropped, replaced by one
-		# passwordless `live`.
+	# console-only, password-locked `live`.
 		awk -F: '$3 < 1000 || $3 >= 65534' /etc/passwd  >"$WORK/passwd"
 		echo 'live:x:1000:1000:Live session:/home/live:/bin/bash' >>"$WORK/passwd"
 		awk -F: '$3 < 1000 || $3 >= 65534' /etc/group   >"$WORK/group"
 		echo 'live:x:1000:' >>"$WORK/group"
-		# EMPTY password field, not a hash and not `!`. Empty is "no password"; `!` is "locked", and
-		# a locked account cannot autologin — which would be a live disc that boots to a prompt
-		# nobody has the answer to.
+		# LOCKED password field. agetty's console autologin invokes login's preauthenticated (`-f`)
+		# path as root, so it does not need a password hash. `!` prevents this disposable account from
+		# being used through ssh, a display-manager password prompt, or any other authentication path.
 		awk -F: 'NR==FNR { if ($3 >= 1000 && $3 < 65534) drop[$1]; next } !($1 in drop)' \
 			/etc/passwd /etc/shadow >"$WORK/shadow" 2>/dev/null || cp /etc/shadow "$WORK/shadow"
 		# A CLEAN DISC MUST NOT CARRY THE BUILD MACHINE'S ROOT PASSWORD HASH. The live account has
 		# its narrowly-scoped NOPASSWD rule below, so direct root login is unnecessary; lock it in the
 		# image while leaving the running machine untouched.
 		sed -i 's/^root:[^:]*/root:!/' "$WORK/shadow"
-		echo 'live::20000:0:99999:7:::' >>"$WORK/shadow"
+		echo 'live:!:20000:0:99999:7:::' >>"$WORK/shadow"
 		# The groups that decide whether a desktop can use the hardware. Taken from what THIS machine
 		# actually has rather than a guessed list, because a live user outside `video`/`input` gets a
 		# desktop with no screen and no keyboard.
@@ -2454,11 +2471,9 @@ FSTAB
 		done
 		# AND IT CAN BECOME ROOT WITHOUT ONE.
 		#
-		# `live` has an EMPTY password so autologin works, and sudo REFUSES an empty password — so a
-		# live user in `wheel` still cannot become root, and the disc's whole purpose is installing,
-		# which is root's job. The "Install PosterChanOS" entry runs `sudo gentoo.sh` and would have
-		# failed at the password prompt with nothing to type. Reported from the other end: "my root
-		# password 123456 don't even work" — on a disc where the account is not that user at all.
+		# `live` is password-LOCKED, so the installer needs an explicit sudo rule. The disc's whole
+		# purpose is installing, which is root's job; the local console is already physical access to
+		# the install media, while password and ssh login to this account remain impossible.
 		#
 		# NOPASSWD for the live account only, in its own drop-in. This is what every live image does
 		# and it is safe for the same reason theirs is: the medium is read-only, the session is
@@ -3148,7 +3163,7 @@ bootloader() {
 		# PLYMOUTH IS EMBEDDED IN THE INITRAMFS. Selecting the PosterChan theme after dracut means
 		# this boot still contains Gentoo's default and the new choice appears only after some later
 		# kernel rebuild. Choose it first, then build the image that systemd-boot actually names.
-		if ! plymouth-set-default-theme solar; then
+		if ! plymouth-set-default-theme posterchanos; then
 			echo -e "\033[1;31mCould not select the PosterChanOS boot splash.\033[0m"
 			return 1
 		fi

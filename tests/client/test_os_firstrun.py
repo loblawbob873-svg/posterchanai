@@ -203,10 +203,12 @@ class SignedInIsReadFromSomethingThatExists(unittest.TestCase):
     def test_the_saved_session_is_what_decides(self):
         src = open(os.path.join(ROOT, "static", "js", "client", "osfirstrunui.js"),
                    encoding="utf-8").read()
-        i = src.index("w.pubkey = ''")
-        after = src[i:i + 800]
-        self.assertIn("S.load", after,
+        i = src.index("function signedInNpub()")
+        helper = src[i:i + 800]
+        self.assertIn("S.load", helper,
                       "sign-in is still read from a global that does not exist")
+        world = src[src.index("w.pubkey = ''"):][:500]
+        self.assertIn("signedInNpub()", world)
 
     def test_it_does_not_rely_on_window_ME_alone(self):
         src = open(os.path.join(ROOT, "static", "js", "client", "osfirstrunui.js"),
@@ -216,6 +218,16 @@ class SignedInIsReadFromSomethingThatExists(unittest.TestCase):
         # if app.js ever DOES publish ME, the fallback below is fine either way.
         self.assertNotIn("window.ME =", app, "app.js now publishes ME — revisit the fallback")
         self.assertIn("root.ME", src, "the fallback for a build that does publish it is gone")
+
+    def test_provisioning_uses_the_saved_identity_and_waits_if_it_is_not_ready(self):
+        src = open(os.path.join(ROOT, "static", "js", "client", "osfirstrunui.js"),
+                   encoding="utf-8").read()
+        start = src.index("async function stepAccount()")
+        body = src[start:src.index("\n  }", start)]
+        self.assertIn("signedInNpub()", body)
+        self.assertIn("if(!npub)", body)
+        self.assertLess(body.index("if(!npub)"), body.index("ensureAccount(npub)"),
+                        "an empty identity still reaches the privileged provisioner")
 
 
 class FirstBootShowsThePhoneQrImmediately(unittest.TestCase):

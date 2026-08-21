@@ -101,10 +101,7 @@ class TheImageDoesNotCarryTheOperator(unittest.TestCase):
         self.assertIn("--autologin live", self.fn)
 
     def test_the_live_user_can_become_root(self):
-        """An empty password is what makes autologin work, and sudo REFUSES an empty password — so a
-        live user in `wheel` still could not become root, on a disc whose entire purpose is
-        installing. "Install PosterChanOS" runs `sudo gentoo.sh` and would have stopped at a prompt
-        with nothing to type."""
+        """The password-locked console account still needs to run the installer as root."""
         self.assertIn("NOPASSWD", self.fn)
         self.assertIn("etc/sudoers.d/live", self.fn)
 
@@ -129,9 +126,10 @@ class TheImageDoesNotCarryTheOperator(unittest.TestCase):
         self.assertIn("live ALL=", rules[0])
         self.assertNotIn("ALL ALL=", rules[0])
 
-    def test_the_live_account_is_passwordless_not_locked(self):
-        """`!` is locked, and a locked account cannot autologin."""
-        self.assertIn("live::20000", self.fn)
+    def test_the_live_account_has_no_password_login(self):
+        """agetty preauthenticates the local console; every password-based entry stays locked."""
+        self.assertIn("live:!:20000", self.fn)
+        self.assertNotIn("live::20000", self.fn)
 
     def test_the_build_machines_root_password_is_not_in_the_iso(self):
         """The live account reaches root through its explicit sudo rule; copying the host's root
@@ -612,8 +610,7 @@ class InstallingTheLiveImageIsItsOwnJob(unittest.TestCase):
                       "dracut runs outside the chroot — it would describe the live session")
 
     def test_the_live_account_does_not_land_on_the_installed_machine(self):
-        """`live` is passwordless and in wheel with NOPASSWD sudo -- right for a disc anybody can
-        pick up, wrong for a machine somebody keeps."""
+        """The disposable console account still does not belong on a machine somebody keeps."""
         self.assertIn("/^live:/d", self.fn)
         self.assertIn("sudoers.d/live", self.fn)
 

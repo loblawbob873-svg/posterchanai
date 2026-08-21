@@ -44,6 +44,21 @@
   const get = (k) => { try{ return localStorage.getItem(k); }catch(_){ return null; } };
   const set = (k, v) => { try{ localStorage.setItem(k, v); }catch(_){} };
 
+  /* The identity has to come from the saved session, not only from `window.ME`. ME is normally a
+   * closure inside app.js, and even in builds that briefly publish it there is a startup window
+   * after authentication where the session is durable but that global is not ready. readWorld
+   * already used Session for this reason; provisioning used ME alone and could therefore call the
+   * root helper with an EMPTY npub, then falsely report that the home could not be made. */
+  function signedInNpub(){
+    try{
+      const S = root.Session;
+      const sess = S && S.load ? S.load() : null;
+      const id = sess && (sess.npub || sess.userNpub || sess.pubkey || sess.userPk);
+      if(id && String(id).startsWith('npub1')) return String(id);
+    }catch(_){}
+    try{ return (root.ME && root.ME.npub) ? String(root.ME.npub) : ''; }catch(_){ return ''; }
+  }
+
   /* WHAT THE MACHINE ACTUALLY IS RIGHT NOW — never a remembered "which step were we on" counter,
    * which is the thing that goes stale the moment somebody fixes something outside the wizard.
    *
@@ -79,11 +94,7 @@
      * the same accessor as everHadAccount below, and `root.ME` is kept as a fallback in case a
      * later build does publish it. */
     w.pubkey = '';
-    try{
-      const S = root.Session;
-      const sess = S && S.load ? S.load() : null;
-      if(sess && !root.GUEST) w.pubkey = String(sess.userPk || sess.pubkey || sess.npub || 'yes');
-    }catch(_){ }
+    try{ if(!root.GUEST) w.pubkey = signedInNpub(); }catch(_){ }
     if(!w.pubkey){
       try{ w.pubkey = (root.ME && !root.GUEST && root.ME.npub) ? String(root.ME.npub) : ''; }
       catch(_){ w.pubkey = ''; }
@@ -334,8 +345,15 @@
       `<div class="spinner"></div>`, '');
     if(_busy) return;
     _busy = true;
-    let npub = '';
-    try{ npub = String((root.ME && root.ME.npub) || ''); }catch(_){}
+    const npub = signedInNpub();
+    /* Authentication and its saved session can settle on adjacent turns of the event loop. An
+     * absent identity is WAITING, not a provisioning attempt and certainly not proof that mkdir
+     * failed. Keep the spinner and re-read the world instead of sending an invalid root command. */
+    if(!npub){
+      _busy = false;
+      setTimeout(() => { if(_el) run(); }, 250);
+      return;
+    }
     let r = null;
     try{ r = await SHELL().ensureAccount(npub); }catch(e){ r = { ok: false, why: String((e && e.message) || e) }; }
     _busy = false;
