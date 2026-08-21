@@ -532,6 +532,11 @@ class InstallingTheLiveImageIsItsOwnJob(unittest.TestCase):
         cls.src = GENTOO.read_text()
         i = cls.src.index("\nliveISOinstall() {")
         cls.fn = cls.src[i:cls.src.index("\n}", i)]
+        # CODE ONLY for the ordering checks. The comments here NAME the very commands being ordered
+        # -- "before kernel-install runs" sits above the line that mints the machine-id -- so an
+        # index into the raw text lands in prose and reports the opposite of the truth.
+        cls.code = "\n".join(l for l in cls.fn.splitlines()
+                             if not l.strip().startswith("#"))
 
     def test_the_old_path_is_untouched(self):
         i = self.src.index("\nliveOSrestore() {")
@@ -541,7 +546,7 @@ class InstallingTheLiveImageIsItsOwnJob(unittest.TestCase):
 
     def test_the_kernel_is_looked_for_before_anything_is_written(self):
         """An install that copies 4GB and THEN finds it has no kernel has wasted the only slow step."""
-        self.assertLess(self.fn.index("No kernel found"), self.fn.index("Copying the system"))
+        self.assertLess(self.code.index("No kernel found"), self.code.index("Copying the system"))
 
     def test_it_looks_where_a_live_boot_actually_keeps_the_medium(self):
         self.assertIn("/run/initramfs/live", self.fn)
@@ -561,6 +566,37 @@ class InstallingTheLiveImageIsItsOwnJob(unittest.TestCase):
     def test_the_kernel_is_copied_separately(self):
         self.assertIn("--exclude=/boot/*", self.fn)
         self.assertIn('"$KSRC"/ $TARGET/boot/', self.fn)
+
+    def test_the_live_initramfs_is_not_installed(self):
+        """IT IS THE ONE FILE ON THAT MEDIUM THAT MUST NOT TRAVEL. It is built to find a squashfs on
+        a removable disc, so on a hard drive the machine boots looking for the USB stick it was
+        installed from -- a failure that looks like a broken install and is a correct initramfs
+        doing its job in the wrong place."""
+        i = self.fn.index('"$KSRC"/ $TARGET/boot/')
+        line = self.fn[self.fn.rindex("\n", 0, i):i]
+        self.assertIn("--exclude='initramfs*'", line)
+        self.assertIn("--exclude='initrd*'", line)
+
+    def test_the_installed_machine_gets_its_own_identity_first(self):
+        """The ISO ships an EMPTY /etc/machine-id on purpose -- a duplicated one breaks journald,
+        DHCP leases and systemd-boot's own layout, so every live boot generates a fresh one. But
+        this profile installs kernels the Boot Loader Spec way, where the entry token IS the
+        machine-id (`/boot/<machine-id>/<version>/linux`, the layout on the machine this was built
+        from). Run against an empty one, kernel-install has no directory to write into."""
+        self.assertIn("systemd-machine-id-setup", self.code)
+        self.assertLess(self.code.index("systemd-machine-id-setup"),
+                        self.code.index("kernel-install"),
+                        "the identity is minted after the kernel is installed against it")
+
+    def test_a_real_initramfs_is_built_for_the_target(self):
+        """The squashfs carries /lib/modules even though it carries no /boot, so the target has what
+        dracut needs. Built INSIDE the chroot, or it describes this live session's hardware and root
+        device rather than the installed machine's."""
+        self.assertIn("chroot $TARGET", self.fn)
+        self.assertIn("dracut --force", self.fn)
+        i = self.fn.index("dracut --force")
+        self.assertIn("chroot $TARGET", self.fn[max(0, i - 200):i],
+                      "dracut runs outside the chroot — it would describe the live session")
 
     def test_the_live_account_does_not_land_on_the_installed_machine(self):
         """`live` is passwordless and in wheel with NOPASSWD sudo -- right for a disc anybody can

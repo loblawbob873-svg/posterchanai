@@ -935,11 +935,53 @@ liveISOinstall() {
 	# exists. `/boot/*` is excluded above so this is the only thing that writes there, and the
 	# EFI partition mounted at $TARGET/boot is never a delete target.
 	echo -e "${COLOR_CYAN}Installing the kernel${COLOR_RESET}"
-	sudo rsync -aHAX "$KSRC"/ $TARGET/boot/ || {
+	sudo rsync -aHAX --exclude='initramfs*' --exclude='initrd*' "$KSRC"/ $TARGET/boot/ || {
 		echo -e "${COLOR_YELLOW}The kernel did not copy — the disk would not boot.${COLOR_RESET}"
 		read -p "Press enter key to Continue"
 		return 1
 	}
+
+	# THE LIVE INITRAMFS IS THE ONE THING ON THAT MEDIUM THAT MUST NOT BE INSTALLED, hence the
+	# excludes above. It is built to find a squashfs on a removable disc: put it on a hard drive and
+	# the machine boots looking for the USB stick it was installed from, which is a failure that
+	# looks like a broken install and is actually a correct initramfs doing its job in the wrong
+	# place.
+	#
+	# The squashfs carries /lib/modules even though it carries no /boot (the ISO holds the kernel
+	# separately), so the target has everything dracut needs to build a real one. Built INSIDE the
+	# chroot, or it describes this live session's hardware and root device instead of the installed
+	# machine's.
+	# A MACHINE OF ITS OWN NEEDS AN IDENTITY OF ITS OWN, and it needs it BEFORE kernel-install runs.
+	#
+	# The ISO deliberately ships an EMPTY /etc/machine-id so every live boot generates a fresh one --
+	# a duplicated id breaks journald, DHCP leases and systemd-boot's own /boot layout. But this
+	# profile installs kernels the Boot Loader Spec way, where the entry token IS the machine-id:
+	# `/boot/<machine-id>/<version>/linux`, which is exactly the layout on the machine this was
+	# built from. Run against an empty one, kernel-install has no directory to write into.
+	#
+	# So the identity is minted first, in the target, and it is the installed machine's from then on.
+	sudo chroot $TARGET /usr/bin/systemd-machine-id-setup >/dev/null 2>&1 \
+		|| sudo chroot $TARGET /bin/sh -c 'systemd-machine-id-setup' >/dev/null 2>&1 || true
+
+	local KVER
+	KVER="$(ls $TARGET/lib/modules 2>/dev/null | sort -V | tail -1)"
+	if [ -n "$KVER" ]; then
+		echo -e "${COLOR_CYAN}Building an initramfs for $KVER${COLOR_RESET}"
+		# `kernel-install` first: this profile uses systemd-boot and the Boot Loader Spec layout, and
+		# it is what puts a kernel where bootctl will find it. dracut alone is the fallback for a
+		# target that does not have it.
+		if [ -x "$TARGET/usr/bin/kernel-install" ] && [ -f "$TARGET/boot/vmlinuz" ]; then
+			sudo chroot $TARGET /usr/bin/kernel-install add "$KVER" /boot/vmlinuz \
+				|| sudo chroot $TARGET /usr/bin/dracut --force "/boot/initramfs-$KVER.img" "$KVER" \
+				|| echo -e "${COLOR_YELLOW}  could not build an initramfs — see the bootloader step${COLOR_RESET}"
+		else
+			sudo chroot $TARGET /usr/bin/dracut --force "/boot/initramfs-$KVER.img" "$KVER" \
+				|| echo -e "${COLOR_YELLOW}  could not build an initramfs — see the bootloader step${COLOR_RESET}"
+		fi
+	else
+		echo -e "${COLOR_YELLOW}  no /lib/modules on the target — the bootloader step will have to${COLOR_RESET}"
+		echo -e "${COLOR_YELLOW}  build the initramfs${COLOR_RESET}"
+	fi
 
 	# THE LIVE SESSION'S OWN ACCOUNT DOES NOT BELONG ON AN INSTALL. `live` is passwordless and in
 	# wheel with NOPASSWD sudo, which is right for a disc anybody can pick up and wrong for a machine
