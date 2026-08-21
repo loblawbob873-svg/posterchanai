@@ -70,24 +70,6 @@
         android:textSize="13sp"
         android:visibility="gone" />
 
-    <!-- THE DIAGNOSTIC, ON THE SCREEN PEOPLE ACTUALLY OPEN.
-         The Messages tile starts THIS activity, not the WebView's Texts view — they are two
-         implementations of one feature, and every "why isn't this working?" control built so far
-         went into the other one. So on a phone the answer was unreachable: "no button on mobile
-         'why isn't this working' only on webui". Always present, quiet, and it prints what this
-         device measured rather than a verdict. -->
-    <TextView
-        android:id="@+id/pc_sms_why"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginLeft="12dp"
-        android:layout_marginBottom="6dp"
-        android:padding="6dp"
-        android:textSize="12sp"
-        android:clickable="true"
-        android:focusable="true"
-        android:text="@string/sms_why" />
-
     <ListView
         android:id="@+id/pc_sms_threads"
         android:layout_width="match_parent"

@@ -392,14 +392,13 @@ class TheLiveInitramfsStartsFromNothing(unittest.TestCase):
         self.assertLess(i, self.body.index("dracut --force"),
                         "the directory is created after it is used")
 
-    def test_the_contradiction_is_removed_rather_than_silenced(self):
-        """`--omit systemd-cryptsetup` would have stopped the error and left the keyfile in the
-        image, which is the worse of the two failures and the silent one."""
+    def test_live_image_omits_both_halves_of_installed_disk_unlock(self):
+        """A public live image needs neither crypt module.  Its empty config directory prevents
+        host keys from being selected; explicitly omitting both modules also prevents dracut from
+        auto-selecting systemd-cryptsetup without its deliberately omitted crypt dependency."""
         i = self.body.index("dracut --force")
         call = self.body[i:i + 500]
-        self.assertNotIn("systemd-cryptsetup", call,
-                         "the module is omitted by name, which hides the config leak instead of "
-                         "ending it")
+        self.assertIn('--omit "crypt crypt-gpg crypt-loop systemd-cryptsetup"', call)
 
     def test_dracuts_own_output_reaches_the_log(self):
         """"dracut failed" with no reason is the report. Its output is what names the module."""

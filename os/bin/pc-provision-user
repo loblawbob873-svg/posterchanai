@@ -66,6 +66,31 @@ for g in audio video input netdev render; do
   getent group "$g" >/dev/null 2>&1 && gpasswd -a "$USERNAME" "$g" >/dev/null 2>&1
 done
 
+# THE FIRST PERSON OWNS THE MACHINE. Claiming is serialized with flock, so two simultaneous first
+# logins cannot both become administrators. Unlike a mkdir lock, the kernel releases this lock if
+# provisioning is interrupted; one killed login must never prevent every later login from starting.
+# The marker records the npub, not merely the generated user name, and later logins remain ordinary.
+STATE_ROOT="${PC_STATE_ROOT:-/var/lib/posterchanos}"
+SUDOERS_ROOT="${PC_SUDOERS_ROOT:-/etc/sudoers.d}"
+mkdir -p "$STATE_ROOT"
+command -v flock >/dev/null 2>&1 || die "flock is required to assign the first administrator safely"
+exec 9>"$STATE_ROOT/admin.lock" || die "could not open the administrator lock"
+flock -x 9 || die "could not lock the administrator claim"
+ADMIN=false
+if [ ! -s "$STATE_ROOT/admin-npub" ]; then
+  printf '%s\n' "$NPUB" >"$STATE_ROOT/admin-npub"
+  chmod 0600 "$STATE_ROOT/admin-npub"
+  ADMIN=true
+elif [ "$(cat "$STATE_ROOT/admin-npub")" = "$NPUB" ]; then
+  ADMIN=true
+fi
+if [ "$ADMIN" = true ]; then
+  getent group wheel >/dev/null 2>&1 && gpasswd -a "$USERNAME" wheel >/dev/null 2>&1
+  mkdir -p "$SUDOERS_ROOT"
+  printf '%s ALL=(ALL:ALL) ALL\n' "$USERNAME" >"$SUDOERS_ROOT/posterchan-admin"
+  chmod 0440 "$SUDOERS_ROOT/posterchan-admin"
+fi
+
 # ── NODATACOW ON THE PROFILE, WHILE IT IS STILL EMPTY ───────────────────────────────────────────
 #
 # ~/.config/posterchan-desktop is the busiest path on this machine: it is Chromium's profile, and
@@ -102,3 +127,4 @@ chmod 0600 "$HOME_DIR/.posterchan-npub"
 echo "user=$USERNAME"
 echo "home=$HOME_DIR"
 echo "uid=$(id -u "$USERNAME")"
+echo "admin=$ADMIN"

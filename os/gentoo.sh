@@ -626,12 +626,10 @@ finalizeInstall() {
 	# accounts() creates `posterchan`; configure its graphical session only after that. Doing this
 	# before accounts selected the LiveCD's `live` account and copied its autologin onto the NVMe.
 	chroot $TARGET /usr/bin/bash /usr/bin/gentoo.sh posterchan-shell
-	# This is the installed machine's local console, not the public live session or a remote signer.
-	# Its terminal needs a recovery/admin path before any human account has been provisioned.
-	printf '%s\n' 'posterchan ALL=(ALL:ALL) NOPASSWD: ALL' \
-		>$TARGET/etc/sudoers.d/posterchan-local-admin
-	chmod 0440 $TARGET/etc/sudoers.d/posterchan-local-admin
-	chroot $TARGET /usr/sbin/visudo -cf /etc/sudoers.d/posterchan-local-admin
+	# Recovery needed root while the install was incomplete. At this point boot, accounts and the
+	# graphical shell all succeeded, so disable direct root login. pc-provision-user atomically makes
+	# the first key-backed person the administrator; everybody after them is an ordinary user.
+	chroot $TARGET /usr/bin/passwd -l root
 	rm -f $TARGET/setup.sh
 	echo
 	echo -e "\033[1;33mGentoo Installation Complete!\033[0m"

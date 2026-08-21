@@ -65,7 +65,9 @@ class Provision(unittest.TestCase):
 
     def run_it(self, npub):
         env = dict(os.environ, PATH=self.bin + os.pathsep + os.environ["PATH"],
-                   PC_LOG=self.log, PC_PASSWD=self.passwd, PC_HOME_ROOT=self.homes)
+                   PC_LOG=self.log, PC_PASSWD=self.passwd, PC_HOME_ROOT=self.homes,
+                   PC_STATE_ROOT=os.path.join(self.dir, "state"),
+                   PC_SUDOERS_ROOT=os.path.join(self.dir, "sudoers"))
         return subprocess.run(["bash", SCRIPT, npub], capture_output=True, text=True,
                               timeout=60, env=env)
 
@@ -145,13 +147,18 @@ class Provision(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("refusing", r.stderr.lower())
 
-    def test_it_does_not_grant_root(self):
-        """Signing in with a key is not the same as being trusted with root, and a machine anyone
-        may log into must not hand every visitor sudo."""
-        self.run_it(NPUB_A)
+    def test_only_the_first_person_is_admin(self):
+        """The first key claims ownership; a later key must not inherit administration."""
+        first = self.run_it(NPUB_A)
+        second = self.run_it(NPUB_B)
+        self.assertEqual(self.out(first)["admin"], "true")
+        self.assertEqual(self.out(second)["admin"], "false")
         log = open(self.log).read()
-        self.assertNotIn("wheel", log)
-        self.assertNotIn("sudo", log)
+        self.assertEqual(log.count("gpasswd -a pc-") >= 1, True)
+        self.assertEqual(log.count(" wheel"), 1, log)
+        rule = open(os.path.join(self.dir, "sudoers", "posterchan-admin")).read()
+        self.assertIn(self.out(first)["user"], rule)
+        self.assertNotIn(self.out(second)["user"], rule)
         for needed in ("audio", "video", "input"):
             self.assertIn(needed, log, f"a session cannot work without the {needed} group")
 
