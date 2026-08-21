@@ -313,7 +313,7 @@
              this app draws the screen rather than merely watching.
 
              RINGING IS FALSE, AND THAT IS THE FIX RATHER THAN THE OMISSION. It was true, on the
-             reasoning that the platform "keeps its own ringer and ours is never asked" -- which is
+             reasoning that the platform "keeps its own ringer and ours is never asked" — which is
              exactly right, and the trap: RINGING=true means THIS APP is responsible for playing the
              ringtone, and no ringer was ever built. So telecom stayed silent because we told it to,
              and an incoming call made no sound at all. Reported as "i just got a phone call but no
@@ -321,7 +321,7 @@
 
              Handing it back to the platform is not merely the quick answer, it is the better one: it
              rings with the ringtone the OWNER chose, respects Do Not Disturb, the silent switch, the
-             per-contact override and the escalating-vibrate settings -- every one of which a
+             per-contact override and the escalating-vibrate settings — every one of which a
              hand-rolled ringer has to reimplement and usually gets wrong. If a custom ringer is
              wanted later, this flag is where it starts, and the thing to build first is the ringer,
              not the claim. -->
