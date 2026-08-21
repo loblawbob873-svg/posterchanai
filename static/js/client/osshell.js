@@ -492,7 +492,35 @@
     if(_popOff){ document.removeEventListener('pointerdown', _popOff, true); _popOff = null; }
   }
   let _popOff = null;
+
+  /* ONE-SHOT: the next openPop renders INSIDE the flyout instead of beside it.
+   *
+   * Set by the flyout's own tiles. Doing it here rather than in each of netPop/torPop/powerPop is
+   * what makes their ERROR branches navigate too -- "Tor could not be read on this machine" opens
+   * its own openPop, and a refusal that appears in the top-left corner is the same bug wearing a
+   * different message. Consumed by the first openPop it reaches, so it cannot leak into whatever
+   * the person presses next. */
+  let _asSub = false;
+
+  /** The same markup with a way back out of it. */
+  function withBack(html){
+    const back = `<button class="os-pop-back" data-os="quickback" aria-label="Back">`
+      + `${ICO('chevron-left')}</button>`;
+    if(html.indexOf('<div class="os-pop-h">') >= 0)
+      return html.replace('<div class="os-pop-h">', '<div class="os-pop-h">' + back);
+    // No header of its own: give it one, or a sub-panel is a dead end.
+    return `<div class="os-pop-h">${back}</div>` + html;
+  }
+
   function openPop(anchor, html, opts){
+    if(_asSub && _pop){
+      _asSub = false;
+      const sub = _pop;
+      sub.innerHTML = withBack(html);
+      bindPanel(sub);
+      return sub;
+    }
+    _asSub = false;
     closePop();
     const o = opts || {};
     const d = document.createElement('div');
@@ -599,10 +627,15 @@
         if(pw === null) return;
       }
       toast('joining ' + ssid + '…');
+      /* A RETURN IS A SUCCESS AND A THROW IS THE FAILURE — net.connect answers {ssid, reused} and
+       * rejects with what nmcli said. This read `r.ok`, which the bridge has never set, so EVERY
+       * successful join reported "could not join" and then the machine connected a second later.
+       * Reported as "says could not join then connects": one wrong word about a working feature,
+       * which is worse than a broken one, because it teaches people not to trust the screen. */
       try{
         const r = await net.connect(ssid, pw);
-        toast(r && r.ok ? 'joined ' + ssid : (r && r.why) || 'could not join ' + ssid);
-      }catch(e){ toast(String((e && e.message) || e)); }
+        toast((r && r.reused ? 'reconnected to ' : 'joined ') + ssid);
+      }catch(e){ toast(String((e && e.message) || e) || ('could not join ' + ssid)); }
       closePop();
       refresh();
     });
@@ -990,6 +1023,9 @@
     d.querySelectorAll('[data-shot]').forEach(b => b.onclick = () => takeShot(b.dataset.shot));
   }
 
+  /** Was this control pressed inside the open flyout, rather than being a taskbar chip of its own? */
+  const inFlyout = (b) => { try{ return !!(_pop && _pop.contains(b)); }catch(_){ return false; } };
+
   /** Wires whichever chips are present in `into`. Safe to call on markup that has none. */
   function bindPanel(into){
     if(!into) return;
@@ -1005,6 +1041,18 @@
        * within itself, and why a sub-panel that closed its own host would simply vanish. */
       if(kind === 'quickback'){
         if(_pop){ _pop.innerHTML = quickHTML(_sum, { shot: _shotCan || { ok: false } }); wireQuick(_pop); }
+        return;
+      }
+      /* THE FLYOUT'S OWN TILES NAVIGATE WITHIN IT. Wi-Fi, Tor and Power were falling through to
+       * the popover path below, which opens a SECOND popover anchored to a tile that lives inside
+       * the first one -- and an anchor inside a corner flyout has nowhere to put a menu, so it
+       * landed in the top-left of the screen. Reported as "wifi network picker loads a menu in
+       * top-left still! supposed to be like win11". Same rule as outputs/mixer/shot, which were
+       * already sub-panels: a tile in Quick Settings replaces the body and offers a way back. */
+      if(inFlyout(b) && (kind === 'net' || kind === 'tor' || kind === 'power')){
+        _asSub = true;
+        const open = kind === 'net' ? netPop : (kind === 'tor' ? torPop : powerPop);
+        Promise.resolve(open(b)).catch(() => {}).then(() => { _asSub = false; });
         return;
       }
       if(kind === 'outputs'){ outputsPanel(); return; }

@@ -326,3 +326,95 @@ class Render(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(not NODE, "no node on this node")
+class QuickSettingsNavigatesWithinItself(unittest.TestCase):
+    """WINDOWS 11 QUICK SETTINGS NAVIGATES INSIDE ITSELF, and three of its tiles did not.
+
+    Wi-Fi, Tor and Power fell through to the popover path, which opens a SECOND popover anchored to
+    a tile that lives INSIDE the first one. An anchor in a corner flyout has nowhere to put a menu,
+    so it landed in the top-left of the screen -- reported twice, most recently as "you still did
+    not fix the wifi network picker! it loads a menu in top-left still! supposed to be like win11!".
+    Outputs, mixer and screenshot were already sub-panels; these three were never routed.
+
+    This opens the real flyout through the real openPop and presses the real tile. Verified to fail
+    with the sub-panel route removed: a SECOND element is created and appended, which is the menu
+    that was landing in the corner.
+    """
+
+    DOC = r"""{
+      document: {
+        createElement: () => {
+          const e = el(); e.style = {}; e.className = '';
+          e.contains = (b) => e.children.indexOf(b) >= 0;
+          e.remove = () => {};
+          /* The stub tracks BUTTONS, which is what the dispatch is about. Anything else a panel
+           * reaches for gets a detached element so filling it in cannot throw -- the assertions
+           * below are on the flyout's own markup, not on what a sub-panel puts inside it. */
+          e.querySelector = (sel) => { const m = e.querySelectorAll(sel); return (m && m[0]) || el(); };
+          globalThis.__made = (globalThis.__made || 0) + 1;
+          return e;
+        },
+        body: { appendChild: (d) => { (globalThis.__added = globalThis.__added || []).push(d); } },
+        addEventListener: () => {}, removeEventListener: () => {},
+      },
+      window: { innerWidth: 1920, innerHeight: 1080 },
+      pcWM: { windows: async () => [], focus: async () => true, subscribe: async () => true,
+              onEvent: () => () => {} },
+      pcNet: {
+        status: async () => ({ online: true, kind: 'wifi', name: 'Tribble', signal: 71 }),
+        wifi: async () => [{ ssid: 'Tribble', signal: 71, secure: true },
+                           { ssid: 'Nacelle', signal: 40, secure: false }],
+        connect: async (ssid) => ({ ssid, reused: true }),
+      },
+      pcPower: { status: async () => ({ canHibernate: false }) },
+    }"""
+
+    def _press(self, tile):
+        body = r"""
+          globalThis.__made = 0; globalThis.__added = [];
+          await S.render(host);
+          const g = host.querySelectorAll('[data-os]').find(b => b.dataset.os === 'quick');
+          out.tray = !!g;
+          // Anchors are measured in openPop inside a try/catch; a bare object is enough.
+          g.getBoundingClientRect = () => ({ left: 1800, top: 1040, width: 60 });
+          g.offsetWidth = 60;
+          await g.onclick({ stopPropagation: () => {} });
+          await new Promise(r => setTimeout(r, 20));
+          const flyout = (globalThis.__added || [])[0];
+          out.opened = !!flyout;
+          out.madeForFlyout = globalThis.__made;
+          const tile = flyout ? flyout.children.find(b => b.dataset.os === %s) : null;
+          out.hasTile = !!tile;
+          if(tile){
+            tile.getBoundingClientRect = () => ({ left: 1810, top: 900, width: 80 });
+            tile.offsetWidth = 80;
+            const before = globalThis.__made;
+            await tile.onclick({ stopPropagation: () => {} });
+            await new Promise(r => setTimeout(r, 30));
+            out.extraElements = globalThis.__made - before;
+            out.appended = (globalThis.__added || []).length;
+            out.html = flyout.innerHTML;
+          }
+        """ % json.dumps(tile)
+        return Render().run_js(self.DOC, body)
+
+    def test_the_wifi_tile_navigates_inside_the_flyout(self):
+        out = self._press("net")
+        self.assertTrue(out.get("tray"), "no tray group button")
+        self.assertTrue(out.get("opened"), "the flyout did not open")
+        self.assertTrue(out.get("hasTile"), "there is no Wi-Fi tile in Quick Settings")
+        # THE ASSERTION. A second element is the menu that was appearing in the top-left.
+        self.assertEqual(out.get("extraElements"), 0,
+                         "the Wi-Fi tile opened a second popover instead of navigating")
+        self.assertEqual(out.get("appended"), 1, "a second popover was added to the page")
+        self.assertIn("quickback", out.get("html", ""), "the sub-panel has no way back")
+        self.assertIn("Network", out.get("html", ""), "the flyout is not showing the network panel")
+
+    def test_the_power_tile_navigates_inside_the_flyout(self):
+        out = self._press("power")
+        self.assertTrue(out.get("hasTile"), "there is no Power tile in Quick Settings")
+        self.assertEqual(out.get("extraElements"), 0,
+                         "the Power tile opened a second popover instead of navigating")
+        self.assertIn("quickback", out.get("html", ""), "the sub-panel has no way back")
