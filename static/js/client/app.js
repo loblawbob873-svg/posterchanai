@@ -29512,16 +29512,32 @@
    * back to the Home tab instead of obeying Timeline the app opens on" — reported, and true down
    * BOTH branches: this one named Home, and the history pop lands on the root path, which
    * routeFromPath used to answer with Nostrverse). */
-  function _bindThreadBack(feed){
+  function _bindThreadBack(feed, id){
     const tb=$('#th-back',feed); if(!tb) return;
-    tb.onclick=()=>{ if(_navPushed>0){ try{ history.back(); return; }catch(_){} } switchView(_startTimeline()); };
+    tb.onclick=()=>{
+      /* ON THE DESKTOP, BACK IS CLOSING THE WINDOW. A post opened there gets its own frame, and the
+       * screen it was opened from is still behind it and untouched — the repo on its Issues tab, at
+       * the offset it was left at. Reported as "when I am in an issue, i click back, it brings me
+       * back to my Git repos … I want to go back to where I was which should be the issue list".
+       *
+       * History could not answer that, and the reason is structural rather than a missing push: a
+       * window's repaint is not navigation (`_navUrl` declines while `PCOS.isRepainting()`), which is
+       * deliberate — pushing on window focus made Back walk window focus instead of history. So in
+       * desktop mode the post had NO entry of its own and Back popped straight past the repo to the
+       * Git list underneath. Closing the frame is both the correct desktop gesture and the only one
+       * that returns the reader to a screen nothing has repainted. */
+      try{ if(window.PCOS && PCOS.isOn() && PCOS.closeDoc
+              && PCOS.closeDoc('post:' + (id || renderThread._tok || ''))) return; }catch(_){}
+      if(_navPushed>0){ try{ history.back(); return; }catch(_){} }
+      switchView(_startTimeline());
+    };
   }
   function _paintThreadHead(feed, ev){
     if(!feed || !ev) return;
     feed.innerHTML = _THREAD_TOP
       + `<div class="thread-node thread-hl" data-tid="${enc(ev.id)}">${noteHtml(ev)}</div>`
       + `<div class="search-section-title"><span class="spinner spinner-inline"></span>Loading the rest of this conversation…</div>`;
-    hydrate(feed); _bindThreadBack(feed);
+    hydrate(feed); _bindThreadBack(feed, ev.id);
   }
   async function renderThread(id, hints){
     /* RE-RENDERING THE THREAD YOU ARE ALREADY READING MUST NOT MOVE YOU.
@@ -29649,7 +29665,7 @@
     html+=`<div class="search-section-title">${nReplies} repl${nReplies===1?'y':'ies'}</div>`;
     html+= nReplies ? (kids.get(root.id)||[]).sort((a,b)=>a.created_at-b.created_at).map(c=>renderNode(c,1)).join('') : '<div class="empty">No replies yet.</div>';
     feed.innerHTML=html; hydrate(feed);
-    _bindThreadBack(feed);   // the same binder the early paint used — see _paintThreadHead
+    _bindThreadBack(feed, id);   // the same binder the early paint used — see _paintThreadHead
     // Reveal + flash the clicked post (when it isn't the root).
     if(id!==root.id){ const el=feed.querySelector(`.thread-node[data-tid="${CSS.escape(id)}"]`);
       if(el) _revealThreadNode(feed, el, id); }

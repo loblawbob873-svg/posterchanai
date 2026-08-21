@@ -162,6 +162,58 @@ class TheHardwareBackButtonCannotStrandYou(unittest.TestCase):
                       "the floor switch creates a history entry, so Back loops and never exits")
 
 
+class OnTheDesktopBackClosesTheWindow(unittest.TestCase):
+    """"when I am in an issue, i click back, it brings me back to my Git repos … I want to go back to
+    where I was which should be the issue list, this is desktop mode." / "ok you fixed it for
+    classic mode."
+
+    The same report, twice, in two clients — and the classic-mode fix could not reach this one.
+    PosterChanOS does not navigate: a post opens in its OWN window, and `_navUrl` declines while
+    `PCOS.isRepainting()`, deliberately, because pushing on a window repaint made Back walk window
+    focus instead of history. So the post had no entry of its own and Back popped straight past the
+    repo to the Git list underneath it.
+
+    Windows are not history here. The way back out of one is to CLOSE it — which is also the only
+    way back that repaints nothing: the repo window is still sitting there on its Issues tab, at the
+    offset it was left at. `scripts/check_os_back.py` drives it in a real desktop and reproduces the
+    report verbatim against the previous code.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = APP.read_text()
+        cls.os = (ROOT / "static" / "js" / "client" / "os.js").read_text()
+
+    def test_the_desktop_can_close_a_document_window(self):
+        self.assertIn("function closeDoc(key){", self.os)
+        self.assertRegex(self.os, r"isOn: \(\) => on, openDoc, focusDoc, closeDoc",
+                         "closeDoc is defined but not on window.PCOS — the same shape as the "
+                         "`PC._fmtBytes is not a function` trap")
+
+    def test_the_threads_back_button_prefers_it(self):
+        blk = self.app[self.app.index("function _bindThreadBack(feed, id){"):][:1600]
+        self.assertIn("PCOS.isOn()", blk)
+        self.assertIn("PCOS.closeDoc('post:'", blk)
+        self.assertLess(blk.index("PCOS.closeDoc"), blk.index("history.back()"),
+                        "history is popped before the window is closed, which paints the previous "
+                        "screen INTO the Post window and leaves the real one open behind it")
+
+    def test_it_still_falls_through_when_there_is_no_window(self):
+        """A thread reached by a deep link or a back/forward pop paints in place — focusDoc never
+        conjures a window — so closeDoc answers false and the history path must still run."""
+        blk = self.app[self.app.index("function _bindThreadBack(feed, id){"):][:1600]
+        self.assertIn("_navPushed>0", blk)
+        self.assertIn("switchView(_startTimeline())", blk)
+        close = self.os[self.os.index("function closeDoc(key){"):][:260]
+        self.assertIn("if(!w) return false;", close)
+
+    def test_the_binder_is_told_which_post_it_is_closing(self):
+        """Both paints bind it, and the early one runs before renderThread has finished; a binder
+        that guessed from module state would close the wrong window or none."""
+        self.assertIn("_bindThreadBack(feed, ev.id)", self.app)
+        self.assertIn("_bindThreadBack(feed, id)", self.app)
+
+
 class ARepoComesBackToTheTabYouLeft(unittest.TestCase):
     """An issue is opened from the Issues tab and nowhere else, so coming back to the README is
     coming back to a screen the reader never chose."""

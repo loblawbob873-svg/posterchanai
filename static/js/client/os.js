@@ -1442,6 +1442,25 @@
     return !!openApp(view);                       // creates it AND repaints through focusWin
   }
 
+  /* CLOSE the window showing a document — which is what BACK means on a desktop.
+   *
+   * "when I am in an issue, i click back, it brings me back to my Git repos … I want to go back to
+   * where I was which should be the issue list, this is desktop mode." A post opened here gets its
+   * OWN window, and the screen it was opened from is still sitting behind it, untouched: the repo on
+   * its Issues tab, scrolled where it was left. Closing the post's window IS going back — exactly,
+   * and without repainting anything. closeWin already focuses whatever is underneath.
+   *
+   * The alternative was to make windows history entries, and that is a road this file has already
+   * been down: pushing on a window focus made the back button walk window focus instead of history
+   * ("back on Social took me to my profile twice"). Windows are not history here; they are windows,
+   * and the way back out of one is to close it. */
+  function closeDoc(key){
+    const w = wins.find(x => x.view === 'doc:' + key);
+    if(!w) return false;
+    closeWin(w);
+    return true;
+  }
+
   // Focus the window already showing a document, without creating one. Back/forward must never
   // conjure a window: the history entry is a URL, not a user asking for a new frame.
   function focusDoc(key){
@@ -5574,7 +5593,7 @@
    * programs are not installed while somebody is holding the menu open. */
   let _machineApps = null;
 
-  window.PCOS = { enter, exit, suspend, toggle, restore, refresh, isOn: () => on, openDoc, focusDoc, routeView, snapTo, osToast,
+  window.PCOS = { enter, exit, suspend, toggle, restore, refresh, isOn: () => on, openDoc, focusDoc, closeDoc, routeView, snapTo, osToast,
                   // app.js calls this when the player's state changes — the Now-playing widget has
                   // nothing to subscribe to, and polling an element we could be told about is the
                   // mistake the games were just fixed for.
