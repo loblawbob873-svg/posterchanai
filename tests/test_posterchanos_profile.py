@@ -681,3 +681,68 @@ class TheMachineCallsItselfPosterChanOS(unittest.TestCase):
                       "package.mask/posterchanos"):
             with self.subTest(ident=ident):
                 self.assertIn(ident, self.src)
+
+
+class MoreThanOneScreenWorksWithoutConfiguring(unittest.TestCase):
+    """A PLUGGED-IN MONITOR MUST BE REACHABLE, not merely lit.
+
+    sway arranges extra outputs itself and `output *` gives each a background, so a second screen
+    comes on by itself. But this session ships no window-management bindings -- every app is a
+    floating window opened from the desktop -- so the second screen was a lit panel you could not
+    focus, could not move a window onto, and could not launch anything from.
+
+    CHECKED IN BOTH COPIES OF THE CONFIG. The installer writes one and the shell package ships the
+    other, and they had already drifted: gentoo.sh still bound $mod+Return to `foot` long after the
+    package's copy raised PosterChan's own terminal, so a machine installed from the ISO behaved
+    differently from one updated through the package -- reported as "win + enter not loading
+    PosterChan terminal", on an install where that had been fixed and shipped to the other file.
+    """
+
+    CONFIGS = {}
+
+    @classmethod
+    def setUpClass(cls):
+        cls.CONFIGS = {"os/gentoo.sh": open(SH, encoding="utf-8").read()}
+        overlay = os.path.join(ROOT, "os", "overlay", "app-misc", "posterchanos-shell",
+                               "files", "sway.config")
+        if os.path.exists(overlay):
+            cls.CONFIGS["overlay sway.config"] = open(overlay, encoding="utf-8").read()
+
+    def test_focus_can_reach_another_screen(self):
+        for name, cfg in self.CONFIGS.items():
+            for d in ("left", "right", "up", "down"):
+                self.assertIn(f"focus output {d}", cfg, f"{name}: no way to focus the screen {d}")
+
+    def test_a_window_can_be_moved_to_another_screen(self):
+        for name, cfg in self.CONFIGS.items():
+            for d in ("left", "right"):
+                self.assertIn(f"move container to output {d}", cfg,
+                              f"{name}: no way to move a window {d}")
+
+    def test_the_focus_follows_the_window_it_moved(self):
+        # Focus left behind reads as having closed the window.
+        for name, cfg in self.CONFIGS.items():
+            for line in cfg.splitlines():
+                if "move container to output" in line:
+                    self.assertIn("focus output", line,
+                                  f"{name}: moving a window leaves the focus behind: {line.strip()}")
+
+    def test_no_binding_names_a_specific_output(self):
+        # HDMI-A-1 is dead on a machine that does not have one.
+        for name, cfg in self.CONFIGS.items():
+            for line in cfg.splitlines():
+                if line.strip().startswith("bindsym") and "output" in line:
+                    for dead in ("HDMI", "DP-", "eDP", "VGA"):
+                        self.assertNotIn(dead, line, f"{name}: names a specific output: {line.strip()}")
+
+    def test_a_window_can_be_closed(self):
+        for name, cfg in self.CONFIGS.items():
+            self.assertIn("$mod+q kill", cfg, f"{name}: there is no way to close a window")
+
+    def test_the_terminal_binding_has_not_drifted_again(self):
+        """The two files must agree about what Super+Enter does."""
+        for name, cfg in self.CONFIGS.items():
+            self.assertIn("bindsym $mod+Return exec swaymsg -t send_tick pc:terminal", cfg,
+                          f"{name}: Super+Enter does not raise PosterChan's terminal")
+            self.assertIn("bindsym $mod+Shift+Return exec foot", cfg,
+                          f"{name}: Super+Shift+Enter does not open a plain terminal")

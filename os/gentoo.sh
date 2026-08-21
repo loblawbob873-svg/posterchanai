@@ -1101,7 +1101,44 @@ posterchanShell() {
 	bindsym --locked XF86AudioPrev exec /usr/local/bin/pc-key previous
 
 	bindsym $mod+Shift+e exec swaynag -t warning -m 'Exit PosterChanOS?' -B 'Yes' 'swaymsg exit'
-	bindsym $mod+Return exec foot
+	# THE SAME TWO BINDINGS THE SHELL PACKAGE SHIPS. They drifted: this file still opened `foot` on
+	# $mod+Return long after the overlay's copy had been changed to raise PosterChan's own terminal,
+	# so a machine installed from the ISO got the old behaviour and one updated through the package
+	# got the new one -- reported as "win + enter not loading PosterChan terminal on PosterChanOS",
+	# on an install where the fix had been made and shipped to the other copy.
+	bindsym $mod+Return exec swaymsg -t send_tick pc:terminal
+	bindsym $mod+Shift+Return exec foot
+
+	# ── MORE THAN ONE SCREEN ───────────────────────────────────────────────────────────────────────
+	#
+	# sway already ARRANGES extra outputs (left to right, in the order it finds them) and `output *`
+	# already gives each one a background, so a second monitor lights up on its own. What was missing
+	# is any way to REACH it: this session ships no window-management bindings at all -- every app is
+	# a floating window opened from the desktop -- so a plugged-in monitor was a lit screen you could
+	# not focus, could not move anything onto, and could not launch anything from.
+	#
+	# Direction words, not output names. `focus output right` follows whatever the arrangement
+	# actually is, so it keeps working when a monitor is unplugged, moved, or was never there --
+	# where a binding naming HDMI-A-1 is dead on a laptop with nothing attached.
+	bindsym $mod+Left  focus output left
+	bindsym $mod+Right focus output right
+	bindsym $mod+Up    focus output up
+	bindsym $mod+Down  focus output down
+	# The window goes with you: moved to the next screen AND followed, because a window that leaves
+	# the screen you are looking at with the focus staying behind reads as having closed it.
+	bindsym $mod+Shift+Left  move container to output left,  focus output left
+	bindsym $mod+Shift+Right move container to output right, focus output right
+	bindsym $mod+Shift+Up    move container to output up,    focus output up
+	bindsym $mod+Shift+Down  move container to output down,  focus output down
+	# Closing one, which nothing else here offered. The compositor draws no chrome -- PosterChan does
+	# -- so a floating app has no titlebar and can only be closed from inside itself, and not every
+	# app has a way.
+	bindsym $mod+q kill
+
+	# THE DESKTOP ITSELF STAYS PUT. It is maximized on the output it started on, and `focus output`
+	# above can move the FOCUS to a second screen while the shell stays where it is -- which is what
+	# makes the second screen a place to put windows rather than a second copy of the desktop. One
+	# shell serves both: its taskbar lists every window the compositor has, on either screen.
 
 	# THE SUPER KEY OPENS THE START MENU — from anywhere, including out of a full-screen browser.
 	#

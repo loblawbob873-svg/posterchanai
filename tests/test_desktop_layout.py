@@ -308,3 +308,45 @@ class RegistrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheDesktopIsTheDefaultOnABigScreen(unittest.TestCase):
+    """DESKTOP MODE IS WHAT A WIDE SCREEN GETS, until the person leaves it.
+
+    It used to default to off, so the windowed desktop was something you had to discover and then
+    re-enter after every sign-in -- `osMode` was remembered, but only once you had turned it on at
+    least once. On anything wide enough that is backwards: the desktop IS the product on a monitor,
+    and the single column is the phone layout shown to a big screen.
+
+    The three reads must agree. Two of them run on an INVOLUNTARY exit -- the screen became too
+    narrow, or a login gate needed the page -- and re-set the flag afterwards so the desktop returns.
+    Read with a default of false while `restore()` defaults to true, somebody who had never toggled
+    it counted as "did not want it", `exit()` wrote false, and ONE rotation or ONE sign-in turned the
+    default off permanently.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = OS_JS.read_text(encoding="utf-8")
+
+    def test_restore_defaults_to_the_desktop(self):
+        self.assertIn("settings().get(KEY, true) && fits()", self.src,
+                      "the desktop is not the default on a screen that fits")
+
+    def test_every_read_of_the_flag_uses_the_same_default(self):
+        reads = [ln.strip() for ln in self.src.splitlines() if "settings().get(KEY" in ln]
+        self.assertTrue(reads, "the remembered flag is never read")
+        bad = [r for r in reads if "KEY, false" in r]
+        self.assertEqual(bad, [],
+                         "an involuntary exit reads a different default and would turn the desktop "
+                         "off for good: " + str(bad))
+
+    def test_leaving_it_is_still_remembered(self):
+        # "Until they change it" is exit() writing false. Without this the default would be a forced
+        # mode nobody could turn off.
+        self.assertIn("settings().set(KEY, false)", self.src,
+                      "leaving the desktop does not turn the preference off")
+
+    def test_the_size_gate_still_applies(self):
+        # A phone, or a tablet held upright, must never land in it.
+        self.assertIn("&& fits()", self.src, "the desktop default is not gated on screen size")
