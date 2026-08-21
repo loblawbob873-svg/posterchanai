@@ -11,8 +11,10 @@ rules so they cannot be undone by an unrelated CSS tidy; the browser check is wh
 
 THE HEADER WRAPPED. `.hd` was `flex-wrap:wrap`, so a long display name pushed the handle and the
 timestamp onto a second row — the same anatomy in two shapes, decided by how long a stranger's name
-happens to be. It does not wrap now; the name gives way first, the handle second, and the time never
-shrinks, because the time is the one element every card must line up.
+happens to be. It does not wrap now. Which field gives way took three measured attempts, each rejected by a
+planted worst case (see the check script): the overflow goes entirely to the NAME, the handle is
+CAPPED rather than shrunk — a shrinkable handle becomes an unreadable stub — and the time never
+moves at all, because the timestamps' shared right edge is what makes the column read as a column.
 
 THE REPOST HEADER NAMED NOBODY. The reposter's name was baked in as escaped text with no
 `data-prof`, so when their kind-0 finally arrived `decorateProfiles` had nothing to patch and the
@@ -49,12 +51,19 @@ class EveryHeaderIsOneLine(unittest.TestCase):
         self.assertIn("text-overflow:ellipsis", r)
         self.assertIn("min-width:0", r, "a flex item cannot shrink below its content without this")
 
-    def test_the_handle_gives_way_too_but_later(self):
+    def test_the_handle_is_capped_rather_than_shrunk(self):
+        """Two shrinking rules were measured against planted worst cases and both left a stub:
+        shrink 2 gave `Jay Blue Ribbon, Spiritual …` beside `s…`, and shrink 1 crushed `@17mugz59`
+        to 29px beside a 63-character npub, because "in proportion" is not a fair fight when one
+        field is seven times the other. The overflow goes entirely to the name; the handle gets a
+        ceiling instead, which cannot produce a stub and cannot overflow the row."""
         name, handle = self._rule(".note .name"), self._rule(".note .handle")
         self.assertIn("text-overflow:ellipsis", handle)
-        self.assertIn("flex:0 1 auto", name)
-        self.assertIn("flex:0 2 auto", handle,
-                      "the handle must shrink faster than the name, or a long nip05 eats the name")
+        self.assertIn("flex:0 1 auto", name, "the name must be the field that absorbs the overflow")
+        self.assertIn("flex:0 0 auto", handle, "a shrinkable handle is a handle that becomes a stub")
+        self.assertRegex(handle, r"max-width:\d+%",
+                         "with no ceiling a long nip05 crowds the name out — `bitcoinl…` beside "
+                         "`bitcoinlimit@verified-nost…`")
 
     def test_the_timestamp_never_shrinks(self):
         r = self._rule(".note .time")

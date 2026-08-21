@@ -1776,7 +1776,19 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
    time never shrinks — it is three characters and it is the one thing every card must line up. */
 .note .hd{display:flex;gap:8px;align-items:baseline;flex-wrap:nowrap;min-width:0}
 .note .name{font-weight:700;cursor:pointer;font-size:17px;min-width:0;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.note .handle{color:var(--muted);font-size:15px;min-width:0;flex:0 2 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* THE HANDLE DOES NOT SHRINK; IT IS CAPPED. Two earlier rules were measured and rejected against
+   planted worst cases, and both failed the same way — by leaving a stub nobody can read:
+     shrink 2 (give way faster than the name)  -> `Jay Blue Ribbon, Spiritual …` beside `s…`
+     shrink 1 (give way in proportion)         -> `@17mugz59` crushed to 29px beside an npub name,
+                                                  because proportional means "in proportion to how
+                                                  long you already are", and a 63-character name
+                                                  next to a 9-character handle is not a fair fight.
+   So the overflow goes entirely to the NAME, which is the field that has room to lose some, and the
+   handle is bounded by a CEILING instead: 45% of the row, which never touches a handle that fits and
+   holds back only one long enough to crowd the name out (`bitcoinl…` beside
+   `bitcoinlimit@verified-nost…` — the identity truncated so the address could be spelled in full).
+   Worst case the row needs 45% + the timestamp + two gaps, so it cannot overflow. */
+.note .handle{color:var(--muted);font-size:15px;min-width:0;max-width:45%;flex:0 0 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .note .time{color:var(--muted);font-size:17px;margin-inline-start:auto;cursor:pointer;flex:none;white-space:nowrap}
 .note .time:hover{color:var(--cyan)}
 .note .pin-badge{font-size:15px;filter:drop-shadow(0 0 5px rgba(0,240,255,.6))}   /* marks YOUR pinned posts */

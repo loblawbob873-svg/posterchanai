@@ -20,11 +20,25 @@ found the bug: 11 of 63 cards drew a two-line header and 4 of 4 reposts said "so
                     times and the one that decides where it sits in your feed is the repost's.
   handle-overflow   A header element whose right edge is past the card — the failure mode of
                     forbidding the wrap without letting the flexible parts shrink.
+  header-stub       A truncated name or handle with almost nothing left of it. Measured: making the
+                    handle give way twice as fast as the name produced `s…` beside a long display
+                    name — a one-character stub, worse than the wrap it replaced.
+  name-loses        The NAME truncated while the handle beside it did not, and the handle is the
+                    wider of the two: the identity gave way so the address could be spelled out
+                    (`bitcoinl…` beside `bitcoinlimit@verified-nost…`).
   time-misaligned   Timestamps that do not share a right edge. They are what the eye uses to read
                     the column as a column.
 
 Reposts are DATA, not layout: a feed that happens to carry none simply reports 0 and passes. That is
 deliberate — a check that failed on a quiet timeline would be turned off.
+
+THE WORST CASE IS PLANTED, NOT WAITED FOR. Everything above audits whoever happens to be posting,
+and the first version of this check went green against a bad rule simply because that minute's feed
+had no cruelly long display name in it. A pass that depends on the crowd is not a pass, so the audit
+also clones one real card and overwrites its name and handle with known extremes — a 63-character
+npub (an author whose kind-0 has not arrived), a long human name beside a long nip05, and a short
+name beside a long one. Those three are measured under the real stylesheet at every width, and they
+are removed again before the next.
 
     venv-unified/bin/python scripts/check_timeline_uniformity.py [base_url]
 
@@ -48,7 +62,8 @@ PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-tluniform-check"
 WIDTHS = [(390, 844, True), (360, 780, True), (1000, 900, False)]
 
 AUDIT = r"""(() => {
-  const out = {cards: 0, wrapped: [], unnamed: [], noTime: [], overflow: [], reposts: 0, rightEdges: {}};
+  const out = {cards: 0, wrapped: [], unnamed: [], noTime: [], overflow: [], stubs: [],
+               nameLoses: [], reposts: 0, rightEdges: {}};
   document.querySelectorAll('#tl-notes article.note').forEach(a => {
     const hd = a.querySelector('.hd'); if (!hd) return;      // a placeholder still loading its post
     out.cards++;
@@ -67,6 +82,26 @@ AUDIT = r"""(() => {
     });
     if (tm) { const r = Math.round(tm.getBoundingClientRect().right);
               out.rightEdges[r] = (out.rightEdges[r] || 0) + 1; }
+    // A stub is measured in PIXELS OF SURVIVING TEXT, not in characters: the ellipsis is drawn by
+    // the engine and the text node still holds the whole string, so textContent cannot see this.
+    const hl = hd.querySelector('.handle');
+    const cut = el => !!el && el.scrollWidth > el.clientWidth + 1;
+    [[nm, 'name'], [hl, 'handle']].forEach(([el, what]) => {
+      if (cut(el) && el.getBoundingClientRect().width < 40)
+        out.stubs.push(who + ' — ' + what + ' cut to ' + Math.round(el.getBoundingClientRect().width) + 'px');
+    });
+    /* The pathology is not "the name gave way" — with the handle capped rather than shrinkable, a
+       very long name giving up some of itself is the rule working. It is the name reduced to a
+       fraction of the address beside it: `bitcoinl…` (77px) next to `bitcoinlimit@verified-nost…`
+       (172px). Two thirds is the line, and it is measured in pixels because the ellipsis is the
+       engine's — textContent still holds the whole string. */
+    if (cut(nm) && hl && !cut(hl)) {
+      const nw = nm.getBoundingClientRect().width, hw = hl.getBoundingClientRect().width;
+      if (nw < hw * 0.66)
+        out.nameLoses.push(who + ' — name cut to ' + Math.round(nw) + 'px beside a ' +
+                           Math.round(hw) + 'px handle kept in full');
+    }
+    if (a.dataset.pcPlanted) out.planted = (out.planted || 0) + 1;
     const rt = a.querySelector('.repost-tag');
     if (rt) {
       out.reposts++;
@@ -131,6 +166,29 @@ async def drive():
                 return None
             return r["result"].get("value")
 
+        # Three headers the feed may never produce on its own, measured under the real stylesheet.
+        # The name/handle pairs are the shapes that actually broke: an un-resolved npub, a long human
+        # name beside a long nip05, and a short name that a long address can crowd out.
+        PLANT = r"""(() => {
+          const src = document.querySelector('#tl-notes article.note');
+          if (!src) return 0;
+          const CASES = [
+            ['npub1twanjtp3mr0ha65uzhug5xvr9vuh6h2gp52pau2rlxy5ta29qqwst5xjqh', '@17mugz59'],
+            ['Jay Blue Ribbon, Spiritual Advisor', 'spiritualadvisor@nostrcheck.me'],
+            ['bitcoinlimit', 'bitcoinlimit@verified-nostr.example.com'],
+          ];
+          CASES.forEach(([n, h]) => {
+            const c = src.cloneNode(true);
+            c.dataset.pcPlanted = '1';
+            const nm = c.querySelector('.name'), hl = c.querySelector('.handle');
+            if (!nm || !hl) return;
+            nm.textContent = n; hl.textContent = h;
+            src.parentNode.insertBefore(c, src);
+          });
+          return document.querySelectorAll('#tl-notes [data-pc-planted]').length;
+        })()"""
+        UNPLANT = "document.querySelectorAll('#tl-notes [data-pc-planted]').forEach(e=>e.remove()); 1"
+
         await call("Runtime.enable")
         await call("Page.enable")
         for w, h, mobile in WIDTHS:
@@ -155,7 +213,12 @@ async def drive():
             # A profile arriving is what turns "someone" into a name, so give the kind-0s a moment
             # before judging that one — otherwise this check fails on a slow relay rather than on a bug.
             await asyncio.sleep(6)
+            planted = await js(PLANT)
             res = await js(AUDIT) or res
+            await js(UNPLANT)
+            if not planted:
+                print(f"SKIP  {w}px: could not plant the worst-case headers")
+                return 2
 
             label = f"{w}px"
             for x in res["wrapped"]:
@@ -166,13 +229,19 @@ async def drive():
                 problems.append((label, "repost-no-time", x))
             for x in res["overflow"]:
                 problems.append((label, "handle-overflow", x))
+            for x in res["stubs"]:
+                problems.append((label, "header-stub", x))
+            for x in res["nameLoses"]:
+                problems.append((label, "name-loses", x))
             edges = res["rightEdges"]
             if len(edges) > 1:
                 problems.append((label, "time-misaligned",
                                  "timestamps end at " + ", ".join(f"{k}px×{v}" for k, v in edges.items())))
             print(f"{label}: cards={res['cards']} reposts={res['reposts']} "
                   f"wrapped={len(res['wrapped'])} unnamed={len(res['unnamed'])} "
-                  f"noTime={len(res['noTime'])} overflow={len(res['overflow'])}")
+                  f"noTime={len(res['noTime'])} overflow={len(res['overflow'])} "
+                  f"stubs={len(res['stubs'])} nameLoses={len(res['nameLoses'])} "
+                  f"planted={res.get('planted', 0)}")
 
     if not problems:
         print("OK  every card drew the same anatomy")
