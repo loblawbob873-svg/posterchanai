@@ -32857,7 +32857,10 @@
     },
     runSearch,                                                // → the desktop's taskbar search box
     /* The drive, for the desktop's start menu. Both must be HERE and not merely defined — a
-       function reachable only inside this file is the `PC._fmtBytes is not a function` trap. */
+     * function reachable only inside this file is the `PC._fmtBytes is not a function` trap.
+     * (Leading `*` on the continuation: test_relay_change_carry scans this file for uses of the
+     * sub-modules' `PC` binding and skips comment lines by that marker, so a prose line without one
+     * reads as code and fails the build — which is exactly what it had been doing.) */
     driveSearch, driveReveal,
     openExternal,                                             // → web search results, and anything else that must leave the app
     /* THE NATIVE PLUGIN LOOKUP, shared. Not a convenience: `_capPlugin` falls back to
