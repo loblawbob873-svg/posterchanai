@@ -1320,9 +1320,15 @@ posterchanShell() {
 		# that execs itself, an infinite loop of /bin/sh processes and no window. Redirection follows
 		# symlinks; only unlinking does not.
 		_in 'rm -f /usr/local/bin/posterchan'
+		# WHICHEVER SHAPE IS INSTALLED. A tarball install has `posterchan-desktop` and NO AppRun --
+		# AppRun is an AppImage artefact that electron-builder writes when it wraps the build, and
+		# the tarball is that build BEFORE the wrapping. An AppImage extraction has both, and there
+		# AppRun is the shim that needs $APPDIR. Preferring the binary makes the tarball path
+		# independent of a file the AppImage runtime invented.
 		_in 'printf "%s\n" "#!/bin/sh" \
-			"# The extracted AppImage has no runtime to set APPDIR, and AppRun needs it." \
+			"# A tarball install has the binary; an extracted AppImage has AppRun, which needs APPDIR." \
 			"export APPDIR=/opt/posterchan" \
+			"if [ -x \"\$APPDIR/posterchan-desktop\" ]; then exec \"\$APPDIR/posterchan-desktop\" \"\$@\"; fi" \
 			"exec \"\$APPDIR/AppRun\" \"\$@\"" > /usr/local/bin/posterchan \
 			&& chmod 0755 /usr/local/bin/posterchan'
 		# READABLE BY THE PEOPLE WHO HAVE TO RUN IT. `--appimage-extract` inherits the umask of
@@ -2337,7 +2343,11 @@ DESKTOP
 		echo "$LS" | grep -qx "squashfs-root/home/$SESS_USER/.bash_profile" \
 			|| MISSING="$MISSING /home/$SESS_USER/.bash_profile"
 		# The desktop itself. An image with a home and no app boots to an empty sway.
-		echo "$LS" | grep -qx "squashfs-root/opt/posterchan/AppRun" || MISSING="$MISSING /opt/posterchan"
+		# The BINARY, not AppRun: AppRun exists only in an AppImage extraction, and the desktop now
+		# installs from a plain tarball that has never had one. Either shape is accepted, so an
+		# image built from an older release still passes.
+		echo "$LS" | grep -qxE "squashfs-root/opt/posterchan/(posterchan-desktop|AppRun)" \
+			|| MISSING="$MISSING /opt/posterchan"
 		if [[ -n "$MISSING" ]]; then
 			{ echo "image is missing:$MISSING"; echo "--- /home in the image ---";
 			  echo "$LS" | grep '^squashfs-root/home' | head -20; } >>"$LOG" 2>/dev/null

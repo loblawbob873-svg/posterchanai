@@ -171,5 +171,31 @@ class DesktopEntries(unittest.TestCase):
         self.assertTrue(out["lax"], "the naive check would have shown it — so the guard is doing work")
 
 
+    def test_a_daemon_is_not_offered_as_an_app(self):
+        """A DAEMON HAS NO WINDOW, EVER, and the spec has no field that says so.
+
+        `foot-server.desktop` runs `foot --server`: a background process that draws nothing and
+        waits for clients. It passes every other check -- an Application, not NoDisplay, installed
+        -- so it reached the start menu, and clicking it opened a frame that waited twenty seconds
+        for a window that was never coming and then said "Foot Server did not open -- is it
+        installed?". It IS installed. Reported as a menu entry that gives "a black screen with a
+        circle".
+        """
+        srv = ("[Desktop Entry]\nType=Application\nName=Foot Server\n"
+               "Exec=foot --server\n")
+        out = self.js("out.v = A.menuable(A.parseEntry(%s));" % json.dumps(srv))
+        self.assertFalse(out["v"]["ok"], "a daemon is still offered in the menu")
+        self.assertIn("daemon", out["v"]["why"])
+
+    def test_an_ordinary_app_is_untouched_by_the_daemon_rule(self):
+        """Matched on whole ARGUMENTS, so a program whose path merely contains the word stays."""
+        for exec_line in ("Exec=/opt/serverview/bin/view %U",
+                          "Exec=firefox --new-window %u",
+                          "Exec=foot"):
+            entry = "[Desktop Entry]\nType=Application\nName=Thing\n" + exec_line + "\n"
+            out = self.js("out.v = A.menuable(A.parseEntry(%s));" % json.dumps(entry))
+            self.assertTrue(out["v"]["ok"], f"{exec_line} was wrongly treated as a daemon")
+
+
 if __name__ == "__main__":
     unittest.main()

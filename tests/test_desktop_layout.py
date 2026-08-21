@@ -350,3 +350,38 @@ class TheDesktopIsTheDefaultOnABigScreen(unittest.TestCase):
     def test_the_size_gate_still_applies(self):
         # A phone, or a tablet held upright, must never land in it.
         self.assertIn("&& fits()", self.src, "the desktop default is not gated on screen size")
+
+
+class TheStartMenuTakesTyping(unittest.TestCase):
+    """PRESS SUPER, TYPE, AND IT SEARCHES.
+
+    Opening the menu left the caret on the desktop, so typing "fire" to reach Firefox typed into
+    nothing at all. Ctrl+F focused the box -- that binding exists precisely because this did not --
+    but nobody presses Super and then Ctrl+F.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = OS_JS.read_text(encoding="utf-8")
+
+    def test_the_search_box_is_focused_when_the_menu_opens(self):
+        i = self.src.index("root.appendChild(menu);")
+        after = self.src[i:i + 2500]
+        self.assertIn("q0.focus", after, "the start menu opens with the caret nowhere")
+
+    def test_a_printable_key_reaches_the_search_box(self):
+        """For a menu opened with a POINTER, where focusing on open would raise an on-screen
+        keyboard the moment somebody clicked Start."""
+        i = self.src.index("root.appendChild(menu);")
+        after = self.src[i:i + 2500]
+        self.assertIn("e.key.length === 1", after,
+                      "typing into a pointer-opened menu still goes nowhere")
+
+    def test_the_keys_the_menu_needs_are_not_swallowed(self):
+        """`length === 1` is the test for "a character" -- true for letters, digits and punctuation
+        in every layout, false for Escape, Tab, the arrows and the F-keys. A keycode range would
+        have to guess at layouts and would eat the keys that close the menu."""
+        i = self.src.index("root.appendChild(menu);")
+        after = self.src[i:i + 2500]
+        self.assertIn("e.ctrlKey || e.altKey || e.metaKey) return", after,
+                      "modifiers are swallowed, so Ctrl+F and the window bindings would break")

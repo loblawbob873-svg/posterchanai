@@ -85,6 +85,20 @@ function menuable(entry, opts) {
    * a menu of programs and a menu of packages somebody once had. Checked by the caller, which is
    * the half that can look at a disk. */
   if (o.tryExecMissing) return { ok: false, why: 'TryExec ' + e.TryExec + ' is not installed' };
+  /* A DAEMON HAS NO WINDOW, EVER, and the spec has no field that says so.
+   *
+   * `foot-server.desktop` runs `foot --server`: a background process that draws nothing and waits
+   * for clients. It passes every check above -- it is an Application, it is not NoDisplay, it is
+   * installed -- so it reached the menu, and clicking it opened a frame that waited twenty seconds
+   * for a window that was never coming and then reported "Foot Server did not open -- is it
+   * installed?". It IS installed. That message sends somebody to look for a broken package.
+   *
+   * Matched on the ARGUMENT rather than the name, because the name is a label somebody translated
+   * and the flag is the thing that makes it a daemon. Bounded to whole arguments so an app whose
+   * path merely contains the word is untouched. */
+  const argv = String(e.Exec || '').split(/\s+/);
+  if (argv.some((a) => /^--?(server|daemon|no-fork)$/i.test(a)))
+    return { ok: false, why: 'a daemon, not a window' };
   return { ok: true, why: '' };
 }
 

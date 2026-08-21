@@ -164,9 +164,43 @@ window.PCGitFactory = function(dep){
       return u.hostname.replace(/^www\./,'');
     }catch(_){ return ''; }
   }
+  /* NO GIT HOST HERE MEANS NOTHING IS HOSTED HERE. The old fallback to `self.location.origin` meant
+   * a node with no git host still claimed every repo whose clone URL happened to share its
+   * hostname — and in a bundled app it compared against `app://posterchan`, so nothing ever
+   * matched. Both directions were wrong; the question only has an answer when there IS a host. */
   function _repoHostedHere(e){
     const h=_repoHostname(e); if(!h) return false;
-    try{ return h===new URL(_gitHostBase()||self.location.origin).hostname; }catch(_){ return false; }
+    const base=_gitHostBase(); if(!base) return false;
+    try{ return h===new URL(base).hostname; }catch(_){ return false; }
+  }
+  /* Does this clone URL have the shape the browse routes need — `…/<owner npub|hex>/<id>.git`? */
+  function _graspShaped(cloneUrl){
+    try{
+      const sg=new URL(cloneUrl).pathname.split('/').filter(Boolean);
+      const gi=sg.findIndex(s=>s.endsWith('.git'));
+      return gi>0 && (/^npub1/.test(sg[gi-1])||/^[0-9a-fA-F]{64}$/.test(sg[gi-1]));
+    }catch(_){ return false; }
+  }
+  /* CAN THIS NODE BROWSE THIS REPO'S FILES — the question the repo view has to answer before it
+   * offers a Files tab, a Commits tab and a branch switcher.
+   *
+   * It used to be the SHAPE alone, and the shape is not the question. Every GRASP forge on nostr
+   * uses `…/<npub>/<repo>.git` — relay.ngit.dev, gitnostr.com, git.gittr.space, git.shakespeare.diy,
+   * pyramid.fiatjaf.com — and they are the majority of what the relay lists. So opening any of them
+   * asked THIS node's git host for a repo it has never held: measured against poster.place, /refs
+   * and /tree answer 404 in 20ms ("branches unavailable", "Couldn't list files", "Couldn't read the
+   * commit history") while /readme spends 8-9 SECONDS timing out against a host that is not a forge
+   * — nine seconds of spinner ending in a page with nothing on it, which is what "clicking on a git
+   * repo gets stuck and never loads" is. Worse than useless: had our host held an unrelated repo at
+   * the same `<npub>/<id>`, we would have shown ITS files under a stranger's name.
+   *
+   * So a repo is browsable here only when it is hosted here. Everything else keeps its README, its
+   * issues, its patches and its clone URL — the parts that are really about the repo and not about
+   * where it happens to live. */
+  function _repoBrowsableHere(e){
+    const c=(e&&e.tags||[]).find(t=>t[0]==='clone');
+    const url=(c||[])[1]||'';
+    return _graspShaped(url) && _repoHostedHere(e);
   }
   // Yours = you announced it, OR you're in its maintainers tag — the same set that can push to it.
   function _repoIsMine(e){
@@ -330,9 +364,19 @@ window.PCGitFactory = function(dep){
   // The GRASP git host base for creating a repo from THIS node: the operator's public_base if set, else
   // (on a git-PROXY node — e.g. the one serving /client — that has no local base) this client's own
   // origin + /git. '' when the node neither hosts nor proxies git → the Create button stays hidden.
+  /* WHERE THIS NODE'S OWN GIT HOST LIVES — and the fallback must be the INSTANCE, not the page.
+   *
+   * `self.location.origin` is right in a browser tab and WRONG in every packaged build: the desktop
+   * app and the APK serve the client from their own bundle, so the origin is `app://posterchan`.
+   * That made this answer `app://posterchan/git`, which is nobody's git host — so `_repoHostedHere`
+   * said no to the node's OWN repos (the "hosted here" badge never appeared in the app) and
+   * `createRepo` built `app://posterchan/git/<npub>/<id>.git` as a clone URL and signed a NIP-98
+   * token for it. `_serverOrigin()` is the instance the app is actually talking to, and it is empty
+   * with no instance — which is the truthful answer there, since a node that is not there hosts
+   * nothing. */
   function _gitHostBase(){
     if(S.CFG.git_host_base) return String(S.CFG.git_host_base).replace(/\/+$/,'');
-    if(S.CFG.git_create_available){ try{ return (self.location.origin||'').replace(/\/+$/,'')+'/git'; }catch(_){ } }
+    if(S.CFG.git_create_available){ try{ const o=_serverOrigin(); if(o) return o.replace(/\/+$/,'')+'/git'; }catch(_){ } }
     return '';
   }
   // Slugify a repo id to the git host's allowlist (^[a-z0-9][a-z0-9._-]{0,99}$) so a bad id is rejected
@@ -622,7 +666,10 @@ window.PCGitFactory = function(dep){
     const isOwner=!!(S.ME && e.pubkey===S.ME.pubkey);   // only the owner sees Delete (host re-checks the signature)
     // Files browser only for a self-hosted (Nostr-owned) repo — the clone path has an npub/hex owner
     // before <id>.git; a plain forge clone URL (GitHub/Gitea) has no readable file API here.
-    const isGrasp=(()=>{ try{ const sg=new URL(cloneUrl).pathname.split('/').filter(Boolean); const gi=sg.findIndex(s=>s.endsWith('.git')); return gi>0 && (/^npub1/.test(sg[gi-1])||/^[0-9a-fA-F]{64}$/.test(sg[gi-1])); }catch(_){ return false; } })();
+    const isGrasp=_repoBrowsableHere(e);
+    // Hosted somewhere else, but on a forge that speaks the same URL shape. The distinction matters
+    // to the README panel below: it is fetching across the internet, not off this node.
+    const isForeignGrasp=!isGrasp && _graspShaped(cloneUrl);
     _rv = isGrasp ? {ev:e, cloneUrl, ref:'HEAD', refName:'', refs:null, canWrite:_rvCanWrite(e),
                      filesLoaded:false, commitsLoaded:false, path:''} : null;
     feed.innerHTML=`<div class="repo-view">
@@ -660,7 +707,14 @@ window.PCGitFactory = function(dep){
         <button class="rv-tab" data-tab="patches"><svg class="ic b-ic" aria-hidden="true"><use href="#i-bandage"></use></svg>Patches <span class="rv-count" id="rv-c-patches"></span></button>
       </div>
       <div class="rv-panel" data-panel="readme">
-        <div class="markdown rv-readme" id="rv-readme"><div class="spinner"></div></div>
+        <!-- A SPINNER THAT SAYS WHAT IT IS WAITING FOR. Reading a README off another forge is a
+             round trip across the internet that this node bounds at 8s and, for a GRASP host that
+             is not a forge, MEASURED at 8-9 seconds every time. Eight silent seconds under a
+             spinner is indistinguishable from a page that never loads. -->
+        <div class="markdown rv-readme" id="rv-readme"><div class="spinner"></div>${
+          _repoHostname(e) && !isGrasp
+            ? `<div class="muted small" style="text-align:center">reading the README from ${enc(_repoHostname(e))}…</div>`
+            : ''}</div>
       </div>
       ${isGrasp?`<div class="rv-panel" data-panel="files" hidden><div class="fb" id="rv-files"><div class="spinner"></div></div></div>`:''}
       ${isGrasp?`<div class="rv-panel" data-panel="commits" hidden><div class="fb" id="rv-commits"><div class="spinner"></div></div></div>`:''}
@@ -706,7 +760,12 @@ window.PCGitFactory = function(dep){
           box.innerHTML=`<div class="rv-empty"><h2 class="rv-empty-h"><svg class="ic h-ic" aria-hidden="true"><use href="#i-send"></use></svg>Quick start</h2>${_repoQuickStartHtml(_rv.cloneUrl, _repoTag(e,'d')||'repo')}</div>`;
           _wireQuickStart(box);
         }
-        else box.innerHTML=`<div class="muted small">No README found${wurl?` — <a href="${enc(wurl)}" target="_blank" rel="noopener">open the repo</a>`:''}.</div>`;
+        else box.innerHTML=`<div class="muted small">No README found${
+            _repoHostname(e)?` on ${enc(_repoHostname(e))}`:''}${
+            wurl?` — <a href="${enc(wurl)}" target="_blank" rel="noopener">open the repo</a>`:''}.</div>${
+          isForeignGrasp&&cloneUrl?`<div class="muted small" style="margin-top:8px">This repo is hosted on
+            <b>${enc(_repoHostname(e))}</b>, so its files and history are not browsable here. Clone it:
+            <code>${enc(cloneUrl)}</code></div>`:''}`;
       }catch(_){ if(S.VIEW==='repo') box.innerHTML=`<div class="muted small">Couldn’t load the README${wurl?` — <a href="${enc(wurl)}" target="_blank" rel="noopener">open the repo</a>`:''}.</div>`; }
     })();
     // Issues (1621) + patches (1617) reference the repo via an `a` tag = the repo coordinate.

@@ -85,13 +85,34 @@
   function machineUnusable(world){
     const st = stepState(world);
     if(st.network !== 'done') return true;
+    /* A MACHINE NOBODY HAS SIGNED INTO YET IS NOT A USABLE MACHINE, whatever else is configured.
+     *
+     * The rule used to be "an instance OR a signin makes it usable", which is right for a machine
+     * whose owner signed out and wrong for the first boot of a new one -- and the live disc is
+     * always the second. On a hypervisor it has DHCP and it ships an instance, so both halves said
+     * "fine": the welcome never ran and a fresh boot landed on a desktop with a sign-in prompt and
+     * no explanation. Reported as "it booted me to a desktop, but not logged in" and "you miss that
+     * welcome screen".
+     *
+     * `everHadAccount` is what separates the two, and it is read from the account switcher's own
+     * list rather than from a flag: that list survives signing out, exactly so somebody can sign
+     * back in. Never signed in on this machine -> walk them through it. Signed out with accounts
+     * remembered -> they know where the button is, do not nag. */
+    if(st.signin !== 'done' && !world.everHadAccount) return true;
     return st.instance !== 'done' && st.signin !== 'done';
   }
 
   /* WHAT A STEP MAY BE SKIPPED WITH. Deliberately per-step rather than a general "skip" button:
    * the instance and Tor are genuine choices, the network is not one you can decline your way past,
-   * and an account is not a question. */
-  const SKIPPABLE = { instance: true, tor: true, network: false, signin: false, account: false };
+   * and an account is not a question.
+   *
+   * SIGNIN IS SKIPPABLE, AND IT HAS TO BE NOW THAT A FIRST BOOT IS INTERRUPTED. The client reads
+   * the public timeline signed out, so "no key yet" is a real way to use this and not a broken
+   * state. Left unskippable while `machineUnusable` seizes a machine nobody has signed into, the
+   * welcome becomes a wall across the only screen -- somebody who booted a live disc to look at it
+   * could not reach the desktop at all. That is a worse failure than the one the interruption
+   * fixes, so the two changes go together. */
+  const SKIPPABLE = { instance: true, tor: true, network: false, signin: true, account: false };
   const canSkip = (step) => SKIPPABLE[step] === true;
 
   /* DEDUPED BY SSID, STRONGEST KEPT — the same rule the network module applies, repeated here

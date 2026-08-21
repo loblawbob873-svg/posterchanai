@@ -109,7 +109,20 @@ else
 		fi
 		NEW="$TMP/squashfs-root"
 	fi
-	[ -x "$NEW/AppRun" ] || { echo "${RED}That download has no desktop in it. Nothing was changed.${OFF}"; exit 1; }
+	# WHAT PROVES A GOOD TREE IS THE BINARY, NOT AppRun.
+	#
+	# AppRun is an APPIMAGE artefact -- electron-builder writes it when it wraps the build into an
+	# image, and it is the shim that turns $APPDIR into a path. The tarball is the build BEFORE that
+	# wrapping (dist/linux-unpacked), so it has no AppRun and never will. Checking for one rejected
+	# a perfectly good download: "That download has no desktop in it. Nothing was changed."
+	if [ -x "$NEW/posterchan-desktop" ]; then
+		:
+	elif [ -x "$NEW/AppRun" ]; then
+		:
+	else
+		echo "${RED}That download has no desktop in it. Nothing was changed.${OFF}"
+		exit 1
+	fi
 	chmod -R a+rX "$NEW"
 	chmod 0755 "$NEW/AppRun" 2>/dev/null || true
 	[ -f "$NEW/posterchan-desktop" ] && chmod 0755 "$NEW/posterchan-desktop"
@@ -140,10 +153,14 @@ else
 
 	# The wrapper the session execs. AppRun finds the binary through $APPDIR, which the AppImage
 	# RUNTIME would have set — exactly the thing extracting removes.
+	# THE WRAPPER RUNS WHICHEVER SHAPE IS INSTALLED. A tarball install has the binary and no AppRun;
+	# an AppImage extraction has both, and its AppRun is the shim that needs $APPDIR. Preferring the
+	# binary means the tarball path does not depend on a file the AppImage runtime invented.
 	cat >/usr/local/bin/posterchan <<-'WRAP'
 		#!/bin/sh
 		export APPDIR=/opt/posterchan
 		export ELECTRON_OZONE_PLATFORM_HINT=auto
+		if [ -x "$APPDIR/posterchan-desktop" ]; then exec "$APPDIR/posterchan-desktop" "$@"; fi
 		exec "$APPDIR/AppRun" "$@"
 	WRAP
 	chmod 0755 /usr/local/bin/posterchan

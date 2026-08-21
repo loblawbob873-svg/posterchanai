@@ -42,7 +42,10 @@ RDEPEND="
 src_unpack() {
 	mkdir -p "${WORKDIR}/tree" || die
 	tar -C "${WORKDIR}/tree" -xaf "${DISTDIR}/${P}.tar.zst" || die "could not unpack the desktop"
-	[[ -f "${WORKDIR}/tree/AppRun" ]] || die "that archive has no desktop in it"
+	# THE BINARY, NOT AppRun. AppRun is an AppImage artefact -- electron-builder writes it when it
+	# wraps the build into an image -- and this archive is that build BEFORE the wrapping, so it has
+	# none and never will.
+	[[ -f "${WORKDIR}/tree/posterchan-desktop" ]] || die "that archive has no desktop in it"
 }
 
 src_install() {
@@ -51,7 +54,6 @@ src_install() {
 	# READABLE AND EXECUTABLE BY THE PEOPLE WHO RUN IT. `--appimage-extract` inherits the umask of
 	# whatever ran it; installed at 0700 the one directory every session execs from is root-only.
 	fperms -R a+rX /opt/posterchan
-	fperms 0755 /opt/posterchan/AppRun
 	fperms 0755 /opt/posterchan/posterchan-desktop
 	# Electron refuses to start unless its sandbox helper is setuid root, and no archive can carry
 	# that bit. The alternative is --no-sandbox, which turns the renderer sandbox off on a machine
@@ -65,6 +67,7 @@ src_install() {
 		#!/bin/sh
 		export APPDIR=/opt/posterchan
 		export ELECTRON_OZONE_PLATFORM_HINT=auto
+		if [ -x "$APPDIR/posterchan-desktop" ]; then exec "$APPDIR/posterchan-desktop" "$@"; fi
 		exec "$APPDIR/AppRun" "$@"
 	WRAP
 }

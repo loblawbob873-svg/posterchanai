@@ -44,12 +44,28 @@ class FirstRun(unittest.TestCase):
         so on a working machine every remaining step is a question, not an obstacle. Worse, the flow
         would walk them to the sign-in step, which is deliberately NOT skippable, and a desktop that
         worked as a guest a minute earlier would refuse to appear without a key."""
-        world = {"online": True, "instance": "https://poster.place", "pubkey": ""}
+        # `everHadAccount` is what makes this a machine already in use rather than a fresh one: the
+        # account switcher still remembers somebody, which is what signing out leaves behind.
+        world = {"online": True, "instance": "https://poster.place", "pubkey": "",
+                 "everHadAccount": True}
         out = self.js("out.needed = F.firstRunNeeded(%s); out.seize = F.machineUnusable(%s);"
                       % (json.dumps(world), json.dumps(world)))
         self.assertTrue(out["needed"], "Tor was never answered, so something IS unanswered")
         self.assertFalse(out["seize"],
                          "a machine with a network and an instance was seized to ask about Tor")
+
+    def test_a_machine_nobody_has_ever_signed_into_IS_worth_interrupting(self):
+        """THE LIVE DISC. It has DHCP and it ships an instance, so the old rule ("an instance OR a
+        signin makes it usable") called it fine and the welcome never ran -- a fresh boot landed on
+        a desktop with a sign-in prompt and no explanation. Reported as "it booted me to a desktop,
+        but not logged in" and "you miss that welcome screen".
+
+        The distinction is not a "have we run" flag, which would go stale; it is whether the account
+        switcher remembers anybody, which is what signing out leaves behind."""
+        fresh = {"online": True, "instance": "https://poster.place", "pubkey": "",
+                 "everHadAccount": False}
+        out = self.js("out.seize = F.machineUnusable(%s);" % json.dumps(fresh))
+        self.assertTrue(out["seize"], "a machine nobody has ever signed into was not welcomed")
 
     def test_a_computer_out_of_a_box_IS_worth_interrupting(self):
         """Nothing decided — no instance, no key — is what this wizard exists for."""
@@ -130,7 +146,12 @@ class FirstRun(unittest.TestCase):
         self.assertTrue(got["instance"])
         self.assertTrue(got["tor"])
         self.assertFalse(got["network"], "you cannot decline your way past having no network")
-        self.assertFalse(got["signin"])
+        # SKIPPABLE, and it has to be now that a first boot is interrupted. The client reads the
+        # public timeline signed out, so "no key yet" is a real way to use this. Left unskippable
+        # while `machineUnusable` seizes a machine nobody has signed into, the welcome becomes a
+        # wall across the only screen and somebody who booted a live disc to look at it could not
+        # reach the desktop at all -- a worse failure than the one the interruption fixes.
+        self.assertTrue(got["signin"], "a first boot could not be escaped without a key")
         self.assertFalse(got["account"], "an account is not a question")
 
     def test_the_network_list_matches_what_the_network_module_shows(self):

@@ -60,6 +60,13 @@
      * without a key, so `ME` exists in both cases and only the pubkey separates them. */
     try{ w.pubkey = (root.ME && !root.GUEST && root.ME.npub) ? String(root.ME.npub) : ''; }
     catch(_){ w.pubkey = ''; }
+    /* HAS THIS MACHINE EVER HELD AN ACCOUNT? Not a "we have run before" flag -- those go stale and
+     * this module deliberately reads the world each boot -- but the account switcher's own list,
+     * which survives signing out precisely so you can sign back in. It is the difference between a
+     * machine nobody has set up yet and one whose owner signed out an hour ago, and only the first
+     * of those should be walked through a welcome. */
+    try{ const S = root.Session; w.everHadAccount = !!(S && S.accounts && S.accounts().length); }
+    catch(_){ w.everHadAccount = false; }
     w.homeReady = _homeReady;
     w.provisionFailed = _provisionFailed;
     return w;

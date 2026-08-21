@@ -4869,6 +4869,35 @@
          <button class="os-exit" id="os-full" title="Full screen (F11)">${isFull()?'⛶ Windowed':'⛶ Full screen'}</button>
          <button class="os-exit" id="os-exit" title="Leave the desktop">⤢ Classic</button></div>`;
     root.appendChild(menu);
+
+    /* TYPE AND IT SEARCHES, which is what a start menu is for.
+     *
+     * Pressing Super opened the menu and then threw every keystroke away: the caret was still on
+     * the desktop, so typing "fire" to reach Firefox typed into nothing. Ctrl+F focused the box
+     * (that binding exists precisely because this did not), but nobody presses Super and then
+     * Ctrl+F.
+     *
+     * Two halves, because they are two different situations. FOCUS ON OPEN is what Windows does and
+     * is right for a keyboard; a printable key while the menu is open is caught here as well, which
+     * covers the menu having been opened by a POINTER -- and on a touch screen that means the
+     * on-screen keyboard appears when somebody types rather than the instant the menu opens.
+     *
+     * `key.length === 1` is the test for "a character", not a keycode range: it is true for letters,
+     * digits and punctuation in every layout, and false for Escape, Tab, the arrows and F-keys,
+     * which the menu still needs. Modifiers are excluded so Ctrl+F and the window bindings survive.
+     * The key is NOT re-dispatched -- focusing before the default action lets the browser deliver it
+     * to the newly focused field itself, which keeps composition and dead keys working. */
+    const q0 = $('#os-q', menu);
+    if(q0){
+      try{ q0.focus({ preventScroll: true }); }catch(_){ try{ q0.focus(); }catch(__){} }
+      menu.addEventListener('keydown', (e) => {
+        if(e.ctrlKey || e.altKey || e.metaKey) return;
+        if(e.key && e.key.length === 1 && document.activeElement !== q0){
+          try{ q0.focus({ preventScroll: true }); }catch(_){ try{ q0.focus(); }catch(__){} }
+        }
+      });
+    }
+
     const searchNostr = (q) => {
       toggleStart(false);
       // `rerun` — searching again from the start menu must show the NEW query, not re-run the one
