@@ -293,9 +293,24 @@ public class ThreadListActivity extends PcActivity {
         StringBuilder b = new StringBuilder();
         boolean read = mayReadTexts();
         b.append("may-read: ").append(read);
-        int rows = -1;
-        try { rows = SmsStore.recent(this, 100000).size(); } catch (Throwable ignored) { }
+        /* SPLIT BY DIRECTION, because "my history is missing" and "MY SENT MESSAGES are missing"
+         * are different faults with different fixes and look identical on a screen. If the provider
+         * hands back four hundred sent messages and the threads show a dozen, that is ours. If it
+         * hands back a dozen, the messages are not in the table we are allowed to read, and no
+         * amount of work on this side will produce them. */
+        int rows = -1, sent = 0, recv = 0;
+        try {
+            java.util.List<SmsMsg> all = SmsStore.recent(this, 100000);
+            rows = all.size();
+            for (SmsMsg m : all) { if (m.incoming()) recv++; else sent++; }
+        } catch (Throwable ignored) { }
         b.append("  rows: ").append(rows < 0 ? "error" : String.valueOf(rows));
+        if (rows >= 0) b.append(" (").append(sent).append(" sent, ").append(recv).append(" recv)");
+        // Picture messages live in a different table entirely; a history that is mostly group or
+        // photo threads is invisible in the number above.
+        int mms = -1;
+        try { mms = MmsStore.recent(this, 100000).size(); } catch (Throwable ignored) { }
+        b.append("  mms: ").append(mms < 0 ? "n/a" : String.valueOf(mms));
         b.append(SmsStore.refused() ? " (REFUSED)" : "");
         b.append("  threads: ").append(all == null ? 0 : all.size());
         b.append("\nrole: ").append(HasRole.roleHeld(this));

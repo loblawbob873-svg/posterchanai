@@ -730,6 +730,31 @@
    * provider stores milliseconds, a Nostr event stores seconds, and a message re-read from a
    * restored backup can come back rounded — built from seconds, the two copies still agree.
    * tests/test_android_sms.py runs this against the Java. */
+  /* A THREAD OF BLANK BUBBLES IS ALSO A THREAD THAT IS LOSING MESSAGES.
+   *
+   * The archive address is a hash of who, when, direction, body and — since the MMS work — the
+   * attachments. A message with NEITHER text nor attachments therefore hashes the same as every
+   * other empty one to the same person in the same second, and the second silently replaces the
+   * first. So "my moms message is all empty bubbles" and "some threads are missing my part of the
+   * convo" are one fault seen from two sides: the blank ones are the evidence for the missing ones.
+   *
+   * Nothing here invents content. It counts, so the screen can say a conversation came back
+   * unreadable instead of quietly presenting it as short. */
+  function blankCount(msgs){
+    let n = 0;
+    for(const m of (msgs || [])){
+      if(m && !m.gone && !String(m.body || '').trim() && !((m.parts || []).length)) n++;
+    }
+    return n;
+  }
+
+  function blankNote(n){
+    if(!n) return '';
+    return '<div class="muted small" style="padding:8px 12px">' + n + ' message'
+         + (n === 1 ? '' : 's') + ' in this conversation came back with no text \u2014 tap '
+         + '\u201cWhy isn\u2019t this working?\u201d for what the phone reported.</div>';
+  }
+
   async function docIdFor(address, dateMs, body, incoming, partsKey){
     let canon = key(address) + '\n' + Math.floor(dateMs / 1000) + '\n'
               + (incoming ? 'in' : 'out') + '\n' + (body || '');
@@ -1396,6 +1421,7 @@
           <button class="btn small" id="sms-back">${ICO('arrow-left','b-ic')}</button>
           <div class="sms-title">${enc(who)}</div>
         </div>
+        ${blankNote(blankCount(t.msgs))}
         <div class="sms-msgs">${t.msgs.map((m, i) => `
           <div class="sms-msg ${m.incoming ? 'them' : 'me'}" data-doc="${enc(m.doc)}">
             <div class="sms-bub${(m.parts||[]).length ? ' has-att' : ''}">${(m.parts||[]).map((p, j) => attHtml(p, enc, i, j)).join('')}${
