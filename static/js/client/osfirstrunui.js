@@ -305,34 +305,25 @@
     if(on) watch();
   }
 
-  /* SIGN IN. Handed straight to the client's own gate — the one every other sign-in on this machine
-   * goes through, with the signer, the nsec, the QR and the account switcher already on it. */
+  /* SIGN IN. One explicit choice remains here because "Browse without an account" must be reachable;
+   * the primary path jumps straight past the generic login and signer menus and draws the phone QR. */
   function stepSignin(){
-    const card = shell('signin', 'Sign in',
-      'PosterChanOS has no accounts of its own. Your Nostr key IS the account — sign in with the '
-      + 'PosterChan Signer on your phone, or paste an nsec.',
-      `<div class="osfr-note">Your computer gets its own private home folder, named for your key.</div>`,
-      `<button class="btn btn-neon" data-fr="in">Sign in</button>`
-      + `<button class="btn" data-fr="later">Browse without an account</button>`);
-    /* THE WAY OUT, and the reason a first boot may be interrupted at all. This client reads the
-     * public timeline signed out, so "no key yet" is a real way to use it -- and a welcome that
-     * seizes the only screen with no way past would be a wall across a machine somebody booted to
-     * look at. Recorded, so it is asked once rather than at every boot. */
+    const card = shell('signin', 'Welcome to PosterChanOS',
+      'Scan one code with PosterChan Signer on your phone. Your Nostr key becomes this computer’s '
+      + 'account and gives you a private home folder.',
+      `<div class="osfr-note">The QR opens immediately on the next screen.</div>`,
+      `<button class="btn" data-fr="later">Browse without an account</button>`
+      + `<button class="btn btn-neon" data-fr="qr">Show my sign-in QR</button>`);
     card.querySelector('[data-fr="later"]').onclick = () => {
       set(KEY_SIGNIN_SKIP, '1');
       unmount();
       try{ if(root.PCOS && root.PCOS.restore) root.PCOS.restore(); }catch(_){}
     };
-    card.querySelector('[data-fr="in"]').onclick = () => {
-      /* The gate is a full-screen layer of its own and it hides the desktop; this must get out of
-       * the way or it draws on top of the form it just opened. `run()` is re-entered by the sign-in
-       * itself (app.js calls `PCFirstRunUI.recheck()` once a key is loaded). */
+    card.querySelector('[data-fr="qr"]').onclick = () => {
       unmount();
-      try{ PC().showAuth(); }catch(_){ say('the sign-in screen is not available here'); run(); }
+      try{ PC().showAuth('qr'); }
+      catch(_){ say('the sign-in screen is not available here'); run(); }
     };
-    /* Some people arrive here already signed in on another surface — the poll costs nothing and
-     * saves a machine that is waiting for a button nobody needs to press. */
-    if(!_poll) _poll = setInterval(() => { if(_el) recheck(); }, 2000);
   }
   let _poll = 0;
 

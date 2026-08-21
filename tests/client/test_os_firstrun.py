@@ -218,6 +218,30 @@ class SignedInIsReadFromSomethingThatExists(unittest.TestCase):
         self.assertIn("root.ME", src, "the fallback for a build that does publish it is gone")
 
 
+class FirstBootShowsThePhoneQrImmediately(unittest.TestCase):
+    """The welcome must not hide its primary action behind three more screens and a button."""
+
+    def test_first_run_hands_auth_the_qr_route(self):
+        src = open(os.path.join(ROOT, "static", "js", "client", "osfirstrunui.js"),
+                   encoding="utf-8").read()
+        start = src.index("function stepSignin()")
+        body = src[start:src.index("\n  }", start)]
+        self.assertIn("showAuth('qr')", body)
+        self.assertNotIn("data-fr=\"in\"", body,
+                         "first boot still stops at an intermediate Sign in button")
+        self.assertIn('data-fr="later"', body,
+                      "the faster QR route removed the signed-out escape hatch")
+
+    def test_qr_route_opens_and_starts_the_signer(self):
+        src = open(os.path.join(ROOT, "static", "js", "client", "app.js"),
+                   encoding="utf-8").read()
+        start = src.index("function showAuth(which)")
+        body = src[start:src.index("\n  }", start)]
+        self.assertIn("which === 'qr'", body)
+        self.assertIn("loginAmberNostrConnect()", body)
+        self.assertIn("auth-amber", body)
+
+
 @unittest.skipIf(not NODE, "no node on this node")
 class TheSignerHandshakeUsesOurRelay(unittest.TestCase):
     """THE FIRST SCREEN OF THE DISC MUST NOT SEND SOMEBODY TO A STRANGER'S RELAY.

@@ -342,7 +342,7 @@ def test_the_list_is_what_tells_two_identical_names_apart():
     seg = src[src.index("  function _renderSignerApps(){"):]
     seg = seg[:seg.index("\n  }\n")]
     assert "a.created" in seg and "added " in seg, "the list cannot say WHEN a pairing was made"
-    assert "never used" in seg, "a pairing that was never used is indistinguishable from a live one"
+    assert "ready to use" in seg, "a pairing that was never used is indistinguishable from a live one"
     assert "data-revoke" in seg, "there is no way to sign one device out"
 
 

@@ -58,6 +58,7 @@ class FakeFs implements SyncIo.Files {
     long mtime = 1000L;
     /** The whole folder is unreachable — the unmounted-drive case, which must confirm NOTHING. */
     boolean blind = false;
+    boolean failHashOnce = false;
 
     public SafFs.Scan scan(boolean hash, long maxBytes, List<String> excludes) {
         SafFs.Scan s = new SafFs.Scan();
@@ -94,6 +95,7 @@ class FakeFs implements SyncIo.Files {
     public long partSize(String rel) { byte[] b = parts.get(rel); return b == null ? 0 : b.length; }
     public void discardPart(String rel) { parts.remove(rel); }
     public String hashPart(String rel) {
+        if (failHashOnce) { failHashOnce = false; return null; }
         byte[] b = parts.get(rel);
         return b == null ? "" : SyncCrypto.sha256hex(b);
     }
@@ -129,6 +131,7 @@ class FakeNet implements SyncIo.Net {
             new LinkedHashMap<String, Map<String, Map<String, Object>>>();
     final Map<String, Long> eras = new LinkedHashMap<String, Long>();
     long clock = 100000L;
+    int gets = 0;
     int refusedBatches = 0;
     static final int TOMB_CAP = 100;      // the server's backstop, mirrored
 
@@ -276,6 +279,7 @@ class FakeNet implements SyncIo.Net {
         return out;
     }
     public byte[] getBlob(String sha) throws Exception {
+        gets++;
         byte[] b = blobs.get(sha);
         if (b == null) throw new Exception("blob " + sha.substring(0, 8) + " unavailable (404)");
         return b;
@@ -356,10 +360,15 @@ public class Drv {
 
     // ---- device B: nothing on disk, its own journal, reading the record set.
     FakeFs fsB = new FakeFs();
+    // The renderer/process died after the final part write but before verification. Recovery must
+    // hash and commit this complete part, not download the multi-chunk file from byte zero again.
+    fsB.parts.put("DCIM/clip.mp4", Arrays.copyOf(fsA.disk.get("DCIM/clip.mp4"),
+                                                 fsA.disk.get("DCIM/clip.mp4").length));
     Fake ctxB = new Fake();
     SyncStore stB = store(ctxB, "phone-bbb");
     SyncStore.Folder fB = folder("Pictures", "tree://b");
     NativeSweep.Report repB = sweep(ctxB, stB, fB, sec, false, net, mk, fsB);
+    out.put("B_blob_gets", net.gets);
     out.put("B_downloaded", repB.downloaded.size());
     out.put("B_failed", repB.failed.size());
     out.put("B_trashed", repB.trashed.size());
@@ -398,6 +407,32 @@ public class Drv {
     NativeSweep.Report repB2s = sweep(ctxB, stB, fB, sec, false, net, mk, fsB);
     out.put("B2s_settled", repB2s.settledByContent);
     out.put("B2s_unchanged", repB2s.unchanged);
+
+    /* ---- verification can fail after every byte is safely in the part file. Keep it, commit
+     * nothing, and on the next sweep hash it again without fetching a single chunk. */
+    {
+      String path = "archive/big.jex";
+      byte[] bytes = fsA.disk.get("DCIM/clip.mp4");
+      Map<String,Object> source = new LinkedHashMap<String,Object>(
+          net.read("Pictures", mk, "DCIM/clip.mp4"));
+      source.remove("path");
+      net.publish("Recover", mk, path, source, false);
+      FakeFs fsR = new FakeFs();
+      fsR.parts.put(path, Arrays.copyOf(bytes, bytes.length));
+      fsR.failHashOnce = true;
+      Fake ctxR = new Fake();
+      SyncStore stR = store(ctxR, "tablet-recover");
+      SyncStore.Folder fR = folder("Recover", "tree://recover");
+      int reads = net.gets;
+      NativeSweep.Report r1 = sweep(ctxR, stR, fR, sec, false, net, mk, fsR);
+      out.put("R1_failed", r1.failed.size());
+      out.put("R1_committed", fsR.disk.containsKey(path));
+      out.put("R1_part_kept", fsR.parts.containsKey(path));
+      NativeSweep.Report r2 = sweep(ctxR, stR, fR, sec, false, net, mk, fsR);
+      out.put("R2_downloaded", r2.downloaded.size());
+      out.put("R2_committed", fsR.disk.containsKey(path));
+      out.put("R_blob_gets", net.gets - reads);
+    }
 
 
     // ---- ONE deletion on A travels as a tombstone, keeps its address, and B applies it once.
@@ -773,6 +808,23 @@ def test_a_second_device_gets_every_byte():
     assert r["B_trashed"] == 0, r
     assert r["differ"] == 0, "%d files came back different" % r["differ"]
     assert r["same"] == 31, r
+
+
+def test_a_complete_part_left_by_a_reload_is_verified_without_redownloading():
+    """The tablet can die between the last write and hash/commit; 2 GB must not restart at zero."""
+    r = result()
+    assert r["B_blob_gets"] == 30, (
+        "the 30 small files require 30 blob reads; extra reads mean the already-complete chunked "
+        "file was downloaded again after restart: %r" % r)
+
+
+def test_an_unavailable_hash_keeps_the_complete_download_for_verification():
+    """A temporary SAF read failure is neither a checksum match nor a reason to fetch 2 GB again."""
+    r = result()
+    assert r["R1_failed"] == 1 and r["R1_committed"] is False, r
+    assert r["R1_part_kept"] is True, "the complete part was discarded after an unanswered hash: %r" % r
+    assert r["R2_downloaded"] == 1 and r["R2_committed"] is True, r
+    assert r["R_blob_gets"] == 0, "verification retry downloaded the large file again: %r" % r
 
 
 def test_the_second_device_adds_no_records_of_its_own():

@@ -3421,6 +3421,18 @@
       if(lg && su){ const signup = which==='signup';
         lg.classList.toggle('hidden', signup); su.classList.toggle('hidden', !signup); }
     }catch(_){}
+    /* First boot is already an explicit request to sign in with the phone. Do not make a new owner
+     * cross the welcome card, the generic login menu, the remote-signer menu and one final "show
+     * QR" button before the first useful thing appears. Open that pane and start the handshake
+     * immediately. Back still exposes every other login method if the phone is not available. */
+    if(which === 'qr'){
+      try{
+        $('#auth-login').classList.add('hidden');
+        $('#auth-signup').classList.add('hidden');
+        $('#auth-amber').classList.remove('hidden');
+        loginAmberNostrConnect();
+      }catch(_){ }
+    }
     try{ _instancePicker(); }catch(_){}
   }
   // Drop the guest chrome and open the auth gate. Shared by the guest card and every _guestPrompt()
@@ -28200,12 +28212,7 @@
                    * this there is no way to tell which entry belongs to which device, and "revoke"
                    * is a guess. */
                   a.created ? ' · added ' + enc(timeAgo(a.created)) + ' ago' : ''}${
-                  a.last ? ' · last used ' + enc(timeAgo(a.last)) + ' ago' : ' · never used'}${
-                  /* The tally that names a LOOPING app: high repeats = the same request over and
-                   * over, i.e. a device stuck re-asking. Session-lifetime numbers, so a healthy
-                   * app shows a modest count and the runaway stands out by an order of magnitude. */
-                  a.stats && a.stats.n ? ' · asked ' + enc(String(a.stats.n)) + '\u00d7 this session'
-                    + (a.stats.dup > 4 ? ' (\u26a0 ' + enc(String(a.stats.dup)) + ' repeats — this app may be stuck in a loop)' : '') : ''}</span></span>
+                  a.last ? ' · last used ' + enc(timeAgo(a.last)) + ' ago' : ' · ready to use'}</span></span>
               <button class="mini" data-revoke="${enc(a.pk)}">revoke</button></div>`).join('')
         : 'No apps are signed in with this device.')
       /* THE SECOND WAY IN, and it is not a nicety. Scanning the app's QR only works for apps that
@@ -28443,10 +28450,9 @@
       return;
     }
     box.insertAdjacentHTML('beforeend',
-      '<div class="muted small" style="margin-top:6px">The background signer is not running'
-      + (s.lastError ? ' (' + enc(String(s.lastError)) + ')' : '')
-      + ' — these only sign while PosterChan is open. '
-      + '<button class="mini" id="signer-start">start it</button></div>');
+      '<div class="muted small" style="margin-top:6px">Background signing is paused. Apps can still '
+      + 'ask for approval while PosterChan is open. '
+      + '<button class="mini" id="signer-start">Enable background signing</button></div>');
     const b = $('#signer-start', box);
     if(b) b.onclick = async () => {
       try{ await Nip46Signer._pushNative(); toast('background signer started'); _renderSignerApps(); }

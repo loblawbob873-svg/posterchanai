@@ -628,11 +628,24 @@ public final class NativeSweep {
             if (!csum.isEmpty() && cs > 0) {
                 long have = fs.partSize(path);
                 if (have > 0) {
+                    /* A restart can land after the final write and before hash/commit. That is the
+                     * most expensive possible checkpoint for a multi-GB file, and it used to be
+                     * treated as "resume from zero": whole == chunks.size() failed the partial
+                     * resume condition below, skip stayed zero, and every chunk was fetched again.
+                     * A complete part is not trusted here — the checksum below still decides — but
+                     * it does not need another download merely to be verified. */
+                    if (expect >= 0 && have == expect) {
+                        skip = chunks.size();
+                        off = expect;
+                    } else if (expect >= 0 && have > expect) {
+                        fs.discardPart(path);
+                        have = 0;
+                    }
                     /* Keep only complete chunks. An interrupted write normally stops inside a
                      * chunk; requiring exact divisibility restarted multi-GB downloads from zero.
                      * The next write begins at the preceding boundary and overwrites the tail. */
                     long whole = have / cs;
-                    if (whole > 0 && whole < chunks.size()
+                    if (skip == 0 && whole > 0 && whole < chunks.size()
                             && (expect < 0 || whole * cs < expect)) {
                         skip = (int) whole; off = whole * cs;
                     }
@@ -667,7 +680,15 @@ public final class NativeSweep {
         }
         if (!csum.isEmpty()) {
             String got = fs.hashPart(path);
-            if (got != null && !got.equals(csum)) {
+            /* No hash is UNKNOWN, never success. SAF can temporarily refuse/read-fail a complete
+             * multi-GB part under memory or provider pressure. Keep it for the next sweep, which
+             * now recognises a complete part and retries only this hash; committing it unchecked
+             * turns a transient read failure into a silently accepted corrupt file. */
+            if (got == null || got.isEmpty()) {
+                throw new java.io.IOException("downloaded, but Android could not verify it yet — "
+                        + "the completed download is kept and verification will resume");
+            }
+            if (!got.equals(csum)) {
                 fs.discardPart(path);
                 throw new ChecksumMismatch(got);
             }
