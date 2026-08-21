@@ -71,10 +71,25 @@ if [ -n "${LIVE:-}" ]; then
     rm -f "$DL"
 fi
 
-echo "[overlay] staging $(find "$SRC" -type f | wc -l) files"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 cp -r "$SRC/." "$TMP/"
+
+# ONE CANONICAL INSTALLER. Keeping a second 3,000-line gentoo.sh under FILESDIR guarantees drift;
+# instead inject the repository's os/gentoo.sh into the staging tree that becomes the real overlay.
+# The ebuild owns /usr/bin/gentoo.sh, so every ordinary update now refreshes the LiveUSB/repair tool.
+install -m 0755 "$(dirname "$SRC")/gentoo.sh" \
+  "$TMP/app-misc/posterchanos-shell/files/gentoo.sh"
+
+# A changed ebuild with the same version is invisible to Portage. The shell used to stay 1.0.0 for
+# ever, which is why installed machines said “Already up to date” while keeping an old launcher.
+# Timestamp versions are monotonic and make each published session (helpers + gentoo.sh) upgradable.
+SHELL_DIR="$TMP/app-misc/posterchanos-shell"
+SHELL_EBUILD=$(find "$SHELL_DIR" -maxdepth 1 -name 'posterchanos-shell-*.ebuild' -print -quit)
+SHELL_VER="1.0.$(date -u +%Y%m%d%H%M%S)"
+mv "$SHELL_EBUILD" "$SHELL_DIR/posterchanos-shell-${SHELL_VER}.ebuild"
+
+echo "[overlay] staging $(find "$TMP" -type f | wc -l) files (shell $SHELL_VER)"
 
 cd "$TMP"
 git init -q -b main

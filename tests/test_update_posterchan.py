@@ -40,6 +40,14 @@ class TheCommandExists(unittest.TestCase):
             with self.subTest(file=f.name):
                 self.assertIn("update-posterchan", f.read_text())
 
+    def test_the_overlay_owns_the_current_installer(self):
+        """Updating PosterChanOS must update its recovery/LiveUSB tool as well."""
+        ebuild = EBUILD.read_text()
+        publish = (ROOT / "scripts" / "publish_overlay.sh").read_text()
+        self.assertIn('dobin "${FILESDIR}/gentoo.sh"', ebuild)
+        self.assertIn('$(dirname "$SRC")/gentoo.sh', publish)
+        self.assertIn('posterchanos-shell-${SHELL_VER}.ebuild', publish)
+
 
 class ItUpdatesBothHalves(unittest.TestCase):
     @classmethod

@@ -33,6 +33,9 @@ src_install() {
 	for helper in pc-provision-user pc-session-switch pc-shell-start pc-key pc-idle update-posterchan; do
 		dobin "${FILESDIR}/${helper}"
 	done
+	# The installed recovery/LiveUSB tool is package-owned too. publish_overlay.sh injects the
+	# canonical os/gentoo.sh into FILESDIR, so an ordinary update cannot leave an older installer.
+	dobin "${FILESDIR}/gentoo.sh"
 
 	insinto /etc/sway
 	doins "${FILESDIR}/sway.config"
