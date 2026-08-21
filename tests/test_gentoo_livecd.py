@@ -96,7 +96,11 @@ class LiveCD(unittest.TestCase):
         """The image's fstab is built with mksquashfs's pseudo-file feature precisely so that
         nothing on the running system is touched to do it."""
         self.assertIn("-pf ", self.code)
-        self.assertIn("etc/fstab f 644", self.code)
+        # QUOTED OR NOT. `pseudoput` was introduced to record which source paths a pseudo-file
+        # replaces (mksquashfs ignores a pseudo whose path exists in the source), and it quoted the
+        # path on the way — which broke this assertion and left the gate red, saying "the live fstab
+        # is gone" about a refactor that only added quotation marks.
+        self.assertRegex(self.code, r'pseudoput\s+"?etc/fstab"?\s+f\s+644')
         self.assertNotRegex(self.code, r">\s*/etc/fstab")
         self.assertNotRegex(self.code, r"sed -i[^\n]*/etc/fstab")
 

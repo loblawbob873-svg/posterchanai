@@ -185,6 +185,16 @@ _INERT_PREFIXES = ("static/", "docs/", "tests/", "scripts/", ".github/", "README
                    # both nodes, dropping every connected Nostr client. That is precisely the outage
                    # the role split removed, caused by the tooling that exists to prevent it.
                    "git_hooks/",
+                   # PosterChanOS: the Gentoo installer (os/gentoo.sh), the helpers it puts on an
+                   # installed machine (os/bin) and the portage overlay (os/overlay). None of it is
+                   # imported, read or served by any service here — an installed PosterChanOS box
+                   # gets it by `emerge`, by update-posterchan, or by hand; the only references in
+                   # the whole tree are four test files. Unmapped it meant "could affect anything",
+                   # so fixing the LiveCD installer's initramfs would have restarted all eight units
+                   # on both nodes: every connected Nostr client dropped, streams killed
+                   # mid-broadcast, the bots bounced — for a shell script neither node opens. The
+                   # same mistake as desktop/, mobile/, extension/ and git_hooks/ above.
+                   "os/",
                    # The CONTAINER build: docker-compose.yml, the Dockerfiles, and docker/ (nginx conf,
                    # the bundled SearXNG's settings template). A systemd node runs none of it — compose
                    # is the other way to deploy this app, and docker/searxng/settings.yml is read by
