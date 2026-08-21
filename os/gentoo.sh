@@ -2984,7 +2984,26 @@ bootloader() {
 		echo -e "\033[1;33mInstalling Bootloader...................\033[0m"
 		sleep 3
 		echo
-		bootctl install
+		# THE ENTRY IS WRITTEN WITH `>`, WHICH CANNOT CREATE A DIRECTORY -- and every line of it
+		# failed, silently, on a machine that then booted to a menu holding nothing but "Reboot Into
+		# Firmware Interface". Reproduced against a fake target: six "No such file or directory"
+		# lines on stderr, an install that reports success, and a disk with a kernel, an initramfs
+		# and no way to name them.
+		#
+		# `bootctl install` is what normally creates /boot/loader/entries, so the code assumed it.
+		# In a chroot it is exactly the thing most likely NOT to have run: it needs to identify the
+		# ESP through udev and it needs EFI variables, and a failure there prints and exits nonzero
+		# while the install carries on. Worse, the `rm -rf` above has already deleted the entries a
+		# previous install left -- which is why the menu is EMPTY rather than stale, and why the
+		# machine looks freshly broken instead of half-installed.
+		#
+		# So: say whether bootctl worked, and make the directory regardless. `mkdir -p` costs
+		# nothing and removes the dependency entirely.
+		if ! bootctl install; then
+			echo -e "\033[1;31m  bootctl install FAILED — the boot entry is still written below,\033[0m"
+			echo -e "\033[1;31m  but this disk may have no boot loader to read it.\033[0m"
+		fi
+		mkdir -p /boot/loader/entries
 		MACHINE_ID=$(cat /etc/machine-id)
 		KERNEL="kernel-$(ls /boot/$MACHINE_ID | grep gentoo | tail -1)"
 		KERNEL_VERSION=$(echo $KERNEL | cut -d '-' -f2-5)
@@ -3061,6 +3080,27 @@ bootloader() {
 		echo "machine-id $MACHINE_ID" >>$LOADER_FILE
 		echo "linux /$MACHINE_ID/$KERNEL_VERSION/linux" >>$LOADER_FILE
 		echo "initrd /$MACHINE_ID/$KERNEL_VERSION/initrd" >>$LOADER_FILE
+
+		# READ BACK WHAT WAS WRITTEN. Everything above is `echo >` into paths built from variables,
+		# and the failure this exists for produced no output a person would see and no exit code
+		# anyone checked -- the install said "Complete!" and the machine had no entries at all.
+		#
+		# systemd-boot DROPS an entry whose `linux` file is missing, so an entry that exists is not
+		# the same as an entry that boots: both are checked, and named when they are wrong.
+		if [ ! -s "$LOADER_FILE" ]; then
+			echo -e "\033[1;31m◆ NO BOOT ENTRY WAS WRITTEN ◆\033[0m"
+			echo -e "\033[1;31m  $LOADER_FILE is missing or empty. This disk will boot to a menu\033[0m"
+			echo -e "\033[1;31m  with nothing in it. Check that /boot is the mounted EFI partition.\033[0m"
+		elif [ ! -f "/boot/$MACHINE_ID/$KERNEL_VERSION/linux" ]; then
+			echo -e "\033[1;31m◆ THE BOOT ENTRY NAMES A KERNEL THAT IS NOT THERE ◆\033[0m"
+			echo -e "\033[1;31m  /boot/$MACHINE_ID/$KERNEL_VERSION/linux does not exist, and\033[0m"
+			echo -e "\033[1;31m  systemd-boot hides an entry it cannot find a kernel for.\033[0m"
+		elif [ ! -f "/boot/$MACHINE_ID/$KERNEL_VERSION/initrd" ]; then
+			echo -e "\033[1;33m  the entry has no initramfs beside it — dracut did not run here.\033[0m"
+		else
+			echo -e "\033[1;32m◆ BOOT ENTRY WRITTEN ◆ $LOADER_FILE\033[0m"
+			echo -e "\033[1;32m  kernel + initramfs are in /boot/$MACHINE_ID/$KERNEL_VERSION\033[0m"
+		fi
 	else
 		echo -e "\033[1;33mError, Missing /etc/disk\033[0m"
 		exit 1
