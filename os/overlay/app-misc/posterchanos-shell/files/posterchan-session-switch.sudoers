@@ -1,0 +1,2 @@
+# Identity accounts may only ask the root-owned helper to change the local graphical session.
+%posterchan ALL=(root) NOPASSWD: /usr/local/bin/pc-session-switch *

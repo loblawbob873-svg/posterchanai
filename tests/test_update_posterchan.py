@@ -53,6 +53,19 @@ class TheCommandExists(unittest.TestCase):
         self.assertIn("exeinto /usr/local/bin", ebuild)
         self.assertIn('doexe "${FILESDIR}/${helper}"', ebuild)
 
+    def test_privileged_helper_rules_are_package_owned(self):
+        """An update must make multi-user login work, not only a fresh gentoo.sh install."""
+        ebuild = EBUILD.read_text()
+        self.assertIn("posterchan-provision.sudoers", ebuild)
+        self.assertIn("posterchan-session-switch.sudoers", ebuild)
+        self.assertIn("fperms 0440 /etc/sudoers.d/posterchan-provision", ebuild)
+        self.assertIn("fperms 0440 /etc/sudoers.d/posterchan-session-switch", ebuild)
+        files = EBUILD.parent / "files"
+        self.assertIn("/usr/local/bin/pc-provision-user",
+                      (files / "posterchan-provision.sudoers").read_text())
+        self.assertIn("/usr/local/bin/pc-session-switch *",
+                      (files / "posterchan-session-switch.sudoers").read_text())
+
 
 class ItUpdatesBothHalves(unittest.TestCase):
     @classmethod

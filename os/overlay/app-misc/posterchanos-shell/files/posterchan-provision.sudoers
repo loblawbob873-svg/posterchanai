@@ -1,0 +1,2 @@
+# The locked greeter may create a private Unix account for a Nostr identity, and nothing else.
+posterchan ALL=(root) NOPASSWD: /usr/local/bin/pc-provision-user

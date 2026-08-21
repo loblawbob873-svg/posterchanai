@@ -38,6 +38,15 @@ src_install() {
 	# canonical os/gentoo.sh into FILESDIR, so an ordinary update cannot leave an older installer.
 	dobin "${FILESDIR}/gentoo.sh"
 
+	# The greeter may create an identity account, and an identity session may switch to another
+	# identity. Keep both grants package-owned: gentoo.sh writes the same rules during an install,
+	# but an already-installed machine must gain them through update-posterchan too.
+	insinto /etc/sudoers.d
+	newins "${FILESDIR}/posterchan-provision.sudoers" posterchan-provision
+	newins "${FILESDIR}/posterchan-session-switch.sudoers" posterchan-session-switch
+	fperms 0440 /etc/sudoers.d/posterchan-provision
+	fperms 0440 /etc/sudoers.d/posterchan-session-switch
+
 	insinto /etc/sway
 	doins "${FILESDIR}/sway.config"
 	# Portage owns /etc/sway/config, so an `etc-update --automode -5` replaces a hand-edited one
