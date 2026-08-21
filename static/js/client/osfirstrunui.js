@@ -58,8 +58,28 @@
     w.torSkipped = tor === 'off';
     /* NOT SIGNED IN IS NOT THE SAME AS SIGNED IN AS A GUEST. The client reads the public timeline
      * without a key, so `ME` exists in both cases and only the pubkey separates them. */
-    try{ w.pubkey = (root.ME && !root.GUEST && root.ME.npub) ? String(root.ME.npub) : ''; }
-    catch(_){ w.pubkey = ''; }
+    /* THE SAVED SESSION IS THE ANSWER, NOT `window.ME` -- WHICH DOES NOT EXIST.
+     *
+     * `ME` is a closure variable inside app.js and is not published on window, so this read was
+     * ALWAYS empty and `signin` always said "todo". It went unnoticed because the old rule
+     * short-circuited before it mattered: `instance !== 'done' && signin !== 'done'` is false the
+     * moment there is an instance, whatever this said. The moment signin got a say of its own, a
+     * machine that WAS signed in was told it was not, and the welcome came back on every boot.
+     *
+     * `Session.load()` is the record that decides it for real: it is what `resume()` signs back in
+     * from, it survives a reload, and it is empty exactly when nobody is signed in. Read through
+     * the same accessor as everHadAccount below, and `root.ME` is kept as a fallback in case a
+     * later build does publish it. */
+    w.pubkey = '';
+    try{
+      const S = root.Session;
+      const sess = S && S.load ? S.load() : null;
+      if(sess && !root.GUEST) w.pubkey = String(sess.userPk || sess.pubkey || sess.npub || 'yes');
+    }catch(_){ }
+    if(!w.pubkey){
+      try{ w.pubkey = (root.ME && !root.GUEST && root.ME.npub) ? String(root.ME.npub) : ''; }
+      catch(_){ w.pubkey = ''; }
+    }
     /* HAS THIS MACHINE EVER HELD AN ACCOUNT? Not a "we have run before" flag -- those go stale and
      * this module deliberately reads the world each boot -- but the account switcher's own list,
      * which survives signing out precisely so you can sign back in. It is the difference between a

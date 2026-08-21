@@ -167,3 +167,33 @@ class FirstRun(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(not NODE, "no node on this node")
+class SignedInIsReadFromSomethingThatExists(unittest.TestCase):
+    """`window.ME` IS NOT A THING, and readWorld asked it whether somebody was signed in.
+
+    `ME` is a closure variable inside app.js and is never published on window, so `w.pubkey` was
+    ALWAYS empty and `signin` always said "todo". It went unnoticed for as long as the rule
+    short-circuited before it mattered -- `instance !== 'done' && signin !== 'done'` is false the
+    moment there is an instance, whatever the signin half said. The moment signin got a say of its
+    own, a machine that WAS signed in was told it was not, and the welcome came back on every boot.
+    Reported as "so why do I get the welcome message again after reboot" and "i should be logged in".
+    """
+
+    def test_the_saved_session_is_what_decides(self):
+        src = open(os.path.join(ROOT, "static", "js", "client", "osfirstrunui.js"),
+                   encoding="utf-8").read()
+        i = src.index("w.pubkey = ''")
+        after = src[i:i + 800]
+        self.assertIn("S.load", after,
+                      "sign-in is still read from a global that does not exist")
+
+    def test_it_does_not_rely_on_window_ME_alone(self):
+        src = open(os.path.join(ROOT, "static", "js", "client", "osfirstrunui.js"),
+                   encoding="utf-8").read()
+        app = open(os.path.join(ROOT, "static", "js", "client", "app.js"), encoding="utf-8").read()
+        # The premise, asserted so this cannot quietly become true again in the other direction:
+        # if app.js ever DOES publish ME, the fallback below is fine either way.
+        self.assertNotIn("window.ME =", app, "app.js now publishes ME — revisit the fallback")
+        self.assertIn("root.ME", src, "the fallback for a build that does publish it is gone")
