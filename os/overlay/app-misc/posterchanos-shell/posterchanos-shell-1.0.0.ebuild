@@ -20,6 +20,7 @@ KEYWORDS="amd64"
 RDEPEND="
 	app-misc/posterchan-desktop
 	gui-wm/sway
+	gui-apps/swayidle
 	gui-apps/foot
 	sys-apps/xdg-desktop-portal
 	gui-libs/xdg-desktop-portal-wlr
@@ -29,7 +30,7 @@ RDEPEND="
 src_install() {
 	# The helpers. pc-key must obey the same limits as the on-screen controls; the repo's
 	# tests/test_pc_key_limits.py is what keeps the two in step, and it runs before this is built.
-	for helper in pc-provision-user pc-shell-start pc-key update-posterchan; do
+	for helper in pc-provision-user pc-shell-start pc-key pc-idle update-posterchan; do
 		dobin "${FILESDIR}/${helper}"
 	done
 

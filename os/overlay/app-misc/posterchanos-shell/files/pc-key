@@ -42,9 +42,22 @@ bright_step() {
     [ "$new" -gt 100 ] && new=100
     raw=$(( new * max / 100 ))
     [ "$raw" -lt 1 ] && raw=1
-    # brightnessctl first: sysfs is root-owned unless a udev rule says otherwise, and that rule is
-    # exactly the thing a fresh install has not got.
-    brightnessctl set "${new}%" >/dev/null 2>&1 || echo "$raw" > "$p/brightness" 2>/dev/null
+    # Straight to sysfs. brightnessctl would be the usual tool and is NOT IN THE GENTOO TREE; the
+    # installer's udev rule hands /sys/class/backlight/*/brightness to the `video` group instead,
+    # which every provisioned account is in. It is still tried second in case a machine has it.
+    echo "$raw" > "$p/brightness" 2>/dev/null || brightnessctl set "${new}%" >/dev/null 2>&1
+}
+
+# PLAYBACK, THROUGH MPRIS, WITH NO EXTRA PACKAGE. playerctl is the usual answer and is a D-Bus
+# client; `busctl` is one too and systemd already ships it. The player is found rather than named,
+# because the bus name carries the process id — org.mpris.MediaPlayer2.chromium.instance1234 — and
+# hardcoding one means the keys work until the app restarts.
+mpris() {
+    svc=$(busctl --user list --no-legend 2>/dev/null \
+          | awk '$1 ~ /^org\.mpris\.MediaPlayer2\./ { print $1; exit }')
+    [ -n "${svc:-}" ] || exit 0
+    busctl --user call "$svc" /org/mpris/MediaPlayer2 org.mpris.MediaPlayer2.Player "$1" \
+        >/dev/null 2>&1
 }
 
 case "${1:-}" in
@@ -56,7 +69,10 @@ case "${1:-}" in
     mic-mute)     wpctl set-mute "$SOURCE" toggle ;;
     brightness-up)   bright_step "$BRIGHT_STEP" ;;
     brightness-down) bright_step "-$BRIGHT_STEP" ;;
-    *) echo "usage: pc-key volume-up|volume-down|mute|mic-mute|brightness-up|brightness-down" >&2
+    play-pause)   mpris PlayPause ;;
+    next)         mpris Next ;;
+    previous)     mpris Previous ;;
+    *) echo "usage: pc-key volume-up|volume-down|mute|mic-mute|brightness-up|brightness-down|play-pause|next|previous" >&2
        exit 2 ;;
 esac
 exit 0

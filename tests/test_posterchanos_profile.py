@@ -836,3 +836,45 @@ class TheDisplayTurnsItselfOff(unittest.TestCase):
         (brightnessctl is not in the Gentoo tree). A stage that calls something absent is a stage
         that silently does nothing."""
         self.assertNotIn("dpms on", self.idle)
+
+
+class TheTwoCOPIESOfEveryHelperAgree(unittest.TestCase):
+    """os/bin IS THE SOURCE AND THE PACKAGE CARRIES A COPY, so they have to be identical.
+
+    The installer runs the helpers out of os/bin (through PCOS_TREE); the shell package installs its
+    own copies from FILESDIR. Nothing kept them in step, and they had already drifted: pc-key
+    differed between the two, and `update-posterchan` was listed in the ebuild's install loop while
+    files/ did not contain it at all -- `dobin` on a missing file DIES, so
+    `emerge app-misc/posterchanos-shell` failed outright. That is why every install fell through to
+    the manual path: the overlay was not merely unreachable, the package could not build.
+
+    This is the same drift that had gentoo.sh binding Super+Enter to `foot` long after the package's
+    config raised PosterChan's terminal, and it costs a beta each time.
+    """
+
+    PKG = os.path.join(ROOT, "os", "overlay", "app-misc", "posterchanos-shell")
+
+    def _helpers(self):
+        eb = [f for f in os.listdir(self.PKG) if f.endswith(".ebuild")][0]
+        src = open(os.path.join(self.PKG, eb), encoding="utf-8").read()
+        line = [l for l in src.splitlines() if "for helper in" in l][0]
+        return line.split("for helper in", 1)[1].split(";")[0].split()
+
+    def test_every_helper_the_ebuild_installs_is_actually_there(self):
+        for h in self._helpers():
+            self.assertTrue(os.path.isfile(os.path.join(self.PKG, "files", h)),
+                            f"the ebuild installs {h} and files/ does not have it — dobin would die")
+
+    def test_the_package_copy_matches_the_installer_copy(self):
+        for h in self._helpers():
+            a = os.path.join(ROOT, "os", "bin", h)
+            b = os.path.join(self.PKG, "files", h)
+            if not os.path.isfile(a):
+                continue
+            self.assertEqual(open(a, "rb").read(), open(b, "rb").read(),
+                             f"{h} differs between os/bin and the shell package")
+
+    def test_the_session_config_agrees_about_the_idle_timer(self):
+        cfg = open(os.path.join(self.PKG, "files", "sway.config"), encoding="utf-8").read()
+        self.assertIn("/usr/local/bin/pc-idle", cfg,
+                      "the package's session never starts the idle watcher")
