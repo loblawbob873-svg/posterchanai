@@ -1937,9 +1937,28 @@
       // one older sessions kept, and dropping it would strand every session paired before today.
       const paired = (Array.isArray(s.relays) && s.relays.length ? s.relays : [s.relay]).filter(Boolean);
       const relays = paired.concat(_ncRelays()).filter(Boolean);
-      try{ await this._openAll(relays); }
-      catch(e){ await this._openRelay(paired[0] || s.relay); }   // keep the original error shape if none open
       this.remotePk=s.remotePk; this.userPk=s.userPk||null;
+      /* A SOCKET THAT WILL NOT OPEN RIGHT NOW IS NOT A LOST LOGIN.
+       *
+       * This used to throw when no relay opened, and the caller reads a throw from `resume` as "the
+       * session is unusable" and starts a read-only GUEST. On a machine that has just booted that
+       * is the normal case, not the exceptional one: sway execs the shell and the first socket is
+       * attempted a second or two later, before there is a route. Reported as "i rebooted laptop and
+       * am not signed in anymore" -- with the phone's signer answering a ping throughout, because
+       * the phone was never the problem.
+       *
+       * The identity does not depend on the socket. `userPk` is IN the saved session, so there is
+       * nothing to ask anybody: the login is known, and `_ensure()` exists precisely to dial before
+       * the first request that needs a signature (see its comment about the machine having been
+       * asleep). Failing here threw away a login over a connection that was seconds away.
+       *
+       * A session with NO userPk is different and still fails: that one genuinely has to ask the
+       * signer who it is, and it cannot without a socket. */
+      try{ await this._openAll(relays); }
+      catch(e){
+        try{ await this._openRelay(paired[0] || s.relay); }
+        catch(e2){ if(!this.userPk) throw e2; console.warn('signer relay not up yet — keeping the login:', e2); }
+      }
       if(!this.userPk) this.userPk=await this._send('get_public_key',[]);
       return this.userPk;
     },
@@ -3234,7 +3253,8 @@
         // read-only guest, and say so — a reload (or plugging the signer back in) resumes the same login.
         console.warn('session resume failed (keeping the saved login):', e);
         startGuest();
-        try{ toast('couldn’t reach your signer — browsing read-only; reload to retry your login'); }catch(_){}
+        try{ toast('couldn’t reach your signer — browsing read-only; retrying when the network is back'); }catch(_){}
+        _armLoginRetry();
         return;
       }
     }
@@ -3243,6 +3263,43 @@
     // (the guest banner offers login). No more login wall just to read.
     startGuest();
   }
+  /* A BOOT THAT LOST THE RACE WITH THE NETWORK RETRIES ITSELF.
+   *
+   * Keeping the session and falling back to guest is right -- the alternative logged people out
+   * permanently -- but the only way back was a reload the person had to know to perform. On a
+   * machine that has just STARTED that is the common case, not the rare one: sway execs the shell
+   * and wifi associates several seconds later, so the resume fails, and the desktop sits read-only
+   * until somebody notices. Reported as "i rebooted laptop and am not signed in anymore", with the
+   * phone's signer answering a ping the whole time.
+   *
+   * A reload, not an in-place retry: `resume()` sets the identity and calls `startApp()`, and doing
+   * that twice in one page is a second, half-initialised app. A reload is the path already known to
+   * work -- it is what the toast used to ask for.
+   *
+   * BOUNDED, because a reload loop is worse than a read-only desktop. The count lives in
+   * sessionStorage, so it survives the reloads it is counting and dies with the page session, and a
+   * successful resume clears it. Three attempts, then it stops and says so once. */
+  const RETRY_KEY = 'pc_resume_retry';
+  function _armLoginRetry(){
+    let tries = 0;
+    try{ tries = +(sessionStorage.getItem(RETRY_KEY) || 0) || 0; }catch(_){}
+    if(tries >= 3) return;
+    let fired = false;
+    const go = () => {
+      if(fired) return;
+      if(!Session.load()) return;          // signed out in the meantime — nothing to resume
+      try{ if(navigator.onLine === false) return; }catch(_){}
+      fired = true;
+      try{ sessionStorage.setItem(RETRY_KEY, String(tries + 1)); }catch(_){}
+      location.reload();
+    };
+    /* Two triggers, because neither is reliable alone: `online` does not fire when the interface
+     * never went down (it was up, it just had no route yet), and a timer alone would reload a
+     * machine that is genuinely offline and cannot be helped. */
+    try{ window.addEventListener('online', () => setTimeout(go, 1500), { once: true }); }catch(_){}
+    setTimeout(go, 9000);
+  }
+
   // Public read-only session: no key, no signer. The guest sentinel ME (empty pubkey) keeps every
   // `ev.pubkey===ME.pubkey` comparison safely false, and publish() blocks writes → "log in to interact".
   function startGuest(){
@@ -3274,6 +3331,9 @@
       signer = makeSigner('local', r.pubkey); ME = { mode:'local', pubkey: r.pubkey, npub: NT().nip19.npubEncode(r.pubkey) };
     }
     Session.save(s);
+    // The login worked, so the boot-retry budget is spent on nothing. Cleared here rather than in
+    // startApp so a guest start cannot clear it.
+    try{ sessionStorage.removeItem(RETRY_KEY); }catch(_){}
     startApp();
   }
 
