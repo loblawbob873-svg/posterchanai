@@ -325,3 +325,21 @@ class TheSignerHandshakeUsesOurRelay(unittest.TestCase):
         i = self.APP.index("const FALLBACK_RELAYS")
         self.assertIn("poster.place", self.APP[i:i + 120],
                       "our own relay is no longer first in the fallback set")
+
+    def test_untouched_default_is_only_our_relay(self):
+        i = self.APP.index("const FALLBACK_RELAYS")
+        line = self.APP[i:self.APP.index(";", i)]
+        self.assertIn("relay.poster.place", line)
+        for stranger in ("nos.lol", "relay.primal.net", "nostr.mom", "offchain.pub", "relay.ditto.pub"):
+            self.assertNotIn(stranger, line,
+                             "an untouched PosterChan login still defaults to a public relay bundle")
+
+    def test_accidentally_saved_old_seed_is_migrated(self):
+        i = self.APP.index("function _dropLegacyAutoRelays()")
+        body = self.APP[i:self.APP.index("\n  }", i)]
+        self.assertIn("LEGACY_AUTO_RELAYS", body)
+        self.assertIn("ClientSettings.set('relays', [])", body)
+        self.assertIn("ClientSettings.set('relaysEnabled', false)", body)
+        connect = self.APP[self.APP.index("function connectRelays()"):
+                           self.APP.index("\n  }", self.APP.index("function connectRelays()"))]
+        self.assertIn("_dropLegacyAutoRelays()", connect)

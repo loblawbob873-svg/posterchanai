@@ -171,9 +171,8 @@ class AuthConnectionRowOnTheWeb(unittest.TestCase):
 
     def test_the_pane_opens_prefilled(self):
         self.assertTrue(self.out["paneOpen"], "the chooser does not open")
-        self.assertGreaterEqual(self.out["prefilled"], 2,
-                                "the relay box is not pre-filled; an empty box asks the user to already "
-                                "know which relays exist")
+        self.assertEqual(self.out["prefilled"], 1,
+                         "an untouched login must offer only relay.poster.place")
 
     def test_no_server_section_in_a_browser(self):
         self.assertFalse(self.out["serverSection"],

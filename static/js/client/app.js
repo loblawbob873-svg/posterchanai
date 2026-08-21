@@ -4884,18 +4884,26 @@
    * reachable" are the same situation from here. A desktop or phone build that can only suggest
    * relays while a server is up has not actually made anyone independent of it.
    *
-   * These are OUR relays, not an arbitrary pick of popular ones: `wss://relay.poster.place` is this
-   * project's public relay, and the rest are the head of the upstream set every PosterChan node syncs
-   * with (`nostr_service.DEFAULT_RELAYS`) — so someone who switches off this instance keeps reading
-   * the same firehose they were reading a moment ago instead of landing somewhere unfamiliar. Keep
-   * the two lists in step when that one changes. */
-  const FALLBACK_RELAYS = ['wss://relay.poster.place/', 'wss://nos.lol/', 'wss://relay.primal.net/',
-                           'wss://nostr.mom/', 'wss://offchain.pub/', 'wss://relay.ditto.pub/'];
+   * The default is our public relay only. Other relays are an explicit user choice made on the
+   * sign-in screen, never an inherited server suggestion. */
+  /* The untouched default is deliberately ONE relay.  A user may replace it on the sign-in screen,
+   * but merely signing in must never opt them into a public relay bundle. */
+  const FALLBACK_RELAYS = ['wss://relay.poster.place/'];
+  /* Builds before the login-screen seed fix accidentally persisted this exact suggestion as a user
+   * choice.  Recognise only that complete fingerprint; any genuinely edited list remains theirs. */
+  const LEGACY_AUTO_RELAYS = ['wss://relay.poster.place/', 'wss://nos.lol/', 'wss://relay.primal.net/',
+                              'wss://nostr.mom/', 'wss://offchain.pub/', 'wss://relay.ditto.pub/'];
+  function _dropLegacyAutoRelays(){
+    if(!ClientSettings.get('relaysEnabled')) return false;
+    const got=userRelays().map(normalizeRelay);
+    const old=LEGACY_AUTO_RELAYS.map(normalizeRelay);
+    if(got.length!==old.length || got.some((u,i)=>u!==old[i])) return false;
+    ClientSettings.set('relays', []); ClientSettings.set('relaysEnabled', false);
+    return true;
+  }
   function defaultRelays(){
-    const fromCfg = (CFG && Array.isArray(CFG.default_relays) ? CFG.default_relays : [])
-      .map(u=>String(u||'').trim()).filter(Boolean);
     const own = (CFG && CFG.relay_url) ? [String(CFG.relay_url)] : [];
-    const out = [...new Set([...own, ...fromCfg, ...FALLBACK_RELAYS])].slice(0, 6);
+    const out = [...new Set([...own, ...FALLBACK_RELAYS])];
     return out.length ? out : [''];
   }
   /* Which relays this session actually talks to.
@@ -4908,6 +4916,7 @@
    * can only fail — so a client with no reachable server sat at "reconnecting…" forever even though
    * it needs nothing from a server to read Nostr. */
   function connectRelays(){
+    _dropLegacyAutoRelays();
     let list = ClientSettings.get('relaysEnabled') ? userRelays() : [];
     if (!list.length && CFG && CFG.relay_url) return Relay.connect(CFG.relay_url);
     if (!list.length) list = defaultRelays().filter(Boolean);

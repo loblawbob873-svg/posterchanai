@@ -7380,10 +7380,10 @@ body.os-on #os-root{pointer-events:auto}
 /* Something is waiting: the bell itself takes the accent, so it reads at a glance and not only by
    the badge — which is 15px and easy to miss on a wide screen. */
 .os-bell:has(.os-dot){color:var(--neon)}
-.os-net{position:relative;display:flex;align-items:center;justify-content:center;width:34px;height:34px;
+.os-net{position:relative;display:flex;align-items:center;justify-content:center;width:40px;height:40px;
   border:0;border-radius:8px;background:none;color:var(--muted);cursor:pointer;padding:0}
 .os-net:hover,.os-net.on{background:var(--panel2)}
-.os-net .ic{width:18px;height:18px}
+.os-net .ic{width:23px;height:23px}
 .os-net.net-ok{color:var(--neon)}
 .os-net.net-partial{color:#ffcf2b}
 .os-net.net-connecting{color:var(--muted)}
@@ -7395,21 +7395,21 @@ body.os-on #os-root{pointer-events:auto}
 @media (prefers-reduced-motion:reduce){ .os-net.net-connecting .ic{animation:none;opacity:.7} }
 
 /* Narrower than the notification centre: this is a list of hostnames, not of posts. */
-.os-net-panel{width:min(340px,calc(100vw - 16px))}
-.os-net-sum{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line)}
-.os-net-sum .ic{width:20px;height:20px;flex:0 0 auto;margin-top:1px;color:var(--muted)}
+.os-net-panel{width:min(420px,calc(100vw - 16px));font-size:14px}
+.os-net-sum{display:flex;align-items:flex-start;gap:12px;padding:15px 17px;border-bottom:1px solid var(--line)}
+.os-net-sum .ic{width:25px;height:25px;flex:0 0 auto;margin-top:1px;color:var(--muted)}
 .os-net-sum.net-ok .ic{color:var(--neon)}
 .os-net-sum.net-partial .ic{color:#ffcf2b}
 .os-net-sum.net-off .ic{color:#ff6b6b}
 .os-net-sum span{min-width:0}
-.os-net-sum b{display:block;font-size:13px}
-.os-net-sum i{display:block;font-style:normal;font-size:11.5px;color:var(--muted);margin-top:2px}
+.os-net-sum b{display:block;font-size:15px}
+.os-net-sum i{display:block;font-style:normal;font-size:13px;color:var(--muted);margin-top:3px}
 .os-net-list{overflow-y:auto;overscroll-behavior:contain;padding:4px 0;max-height:46vh}
-.os-net-row{display:flex;align-items:center;gap:9px;padding:8px 14px;font-size:12.5px}
+.os-net-row{display:flex;align-items:center;gap:10px;padding:11px 17px;font-size:14px}
 /* min-width:0 on the NAME, so a long hostname ellipsises instead of squeezing the state text — which
    is the half of the row that answers the question the panel was opened to answer. */
 .os-net-n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.os-net-s{flex:0 0 auto;color:var(--muted);font-size:11.5px}
+.os-net-s{flex:0 0 auto;color:var(--muted);font-size:13px}
 .os-net-tag{font-style:normal;font-size:10px;color:var(--muted);border:1px solid var(--line);
   border-radius:5px;padding:1px 4px;margin-inline-start:6px}
 .os-net-led{flex:0 0 auto;width:8px;height:8px;border-radius:50%;background:var(--muted)}
@@ -8314,12 +8314,12 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
  * for: "we need the desktop experience to mirror win11 basically — including all the control in the
  * bottom-right". */
 .os-tray-group{
-  display:flex; align-items:center; gap:7px; height:34px; padding:0 9px;
+  display:flex; align-items:center; gap:9px; height:40px; padding:0 12px;
   background:transparent; border:1px solid transparent; border-radius:8px;
   color:var(--text); cursor:pointer;
 }
 .os-tray-group:hover, .os-tray-group.on{ background:var(--panel2); border-color:var(--line); }
-.os-tray-group .ic{ width:17px; height:17px; flex:0 0 auto; }
+.os-tray-group .ic{ width:22px; height:22px; flex:0 0 auto; }
 /* The battery is drawn at the tray's own colour; the CHARGE inside it takes the accent, so a glance
    separates the shell from the level without reading a number. */
 .os-bat-fill{ color:var(--neon,#3ce8ff); }
@@ -8329,7 +8329,7 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
 /* ── Quick Settings ─────────────────────────────────────────────────────────────────────────────
    A tile grid over sliders, the way Windows lays it out — a tile is a state you toggle and a slider
    is a value you drag, and mixing them into one list makes both harder to hit. */
-.os-pop-quick{ width:340px; max-width:calc(100vw - 16px); }
+.os-pop-quick{ width:410px; max-width:calc(100vw - 16px); font-size:14px; }
 /* THE POWER FLYOUT IS THE VOLUME FLYOUT'S TWIN. Two chips at the same end of the same taskbar drew
    two different panels — one 340px and anchored to its right edge, one a generic 230-320px box laid
    out from the chip's left, which walks it across the screen. Reported as "power button menu is
@@ -8346,19 +8346,19 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
 }
 .os-pop-power-acts .os-pop-row .ic{ width:18px; height:18px; flex:none; opacity:.85; }
 .os-pop-power-acts .os-pop-row.os-pop-danger .ic{ color:#ff6b6b; opacity:1; }
-.os-qs{ padding:10px; display:flex; flex-direction:column; gap:10px; }
+.os-qs{ padding:13px; display:flex; flex-direction:column; gap:13px; }
 .os-qs-tiles{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
 .os-qs-tile{
   display:flex; flex-direction:column; align-items:flex-start; gap:2px;
-  padding:10px 11px; min-height:64px; border-radius:9px; cursor:pointer;
+  padding:13px 14px; min-height:78px; border-radius:10px; cursor:pointer;
   border:1px solid var(--line); background:var(--panel2); color:var(--text); text-align:start;
 }
 .os-qs-tile:hover{ border-color:var(--neon,#3ce8ff); }
 .os-qs-tile.on{ background:rgba(60,232,255,.16); border-color:var(--neon,#3ce8ff); }
-.os-qs-tile .ic{ width:19px; height:19px; margin-bottom:3px; color:var(--neon,#3ce8ff); }
-.os-qs-tile b{ font-size:12.5px; font-weight:600; }
+.os-qs-tile .ic{ width:23px; height:23px; margin-bottom:4px; color:var(--neon,#3ce8ff); }
+.os-qs-tile b{ font-size:14px; font-weight:600; }
 .os-qs-tile span{
-  font-size:11px; color:var(--muted,#7a8699);
+  font-size:12.5px; color:var(--muted,#7a8699);
   max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
 .os-qs-row{ display:flex; align-items:center; gap:9px; }

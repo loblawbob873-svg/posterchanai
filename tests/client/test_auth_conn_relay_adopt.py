@@ -169,8 +169,8 @@ class ConnectDoesNotAdoptTheSuggestions(unittest.TestCase):
 
     def test_the_box_is_prefilled(self):
         """If this ever stops being true the rest of the test is asserting nothing."""
-        self.assertGreater(self.out["prefilled"], 1,
-                           "the relay box is no longer pre-filled — re-check what Connect can adopt")
+        self.assertEqual(self.out["prefilled"], 1,
+                         "an untouched login must offer only relay.poster.place")
 
     def test_connecting_to_a_server_does_not_adopt_the_prefilled_relays(self):
         self.assertFalse(
