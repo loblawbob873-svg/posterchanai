@@ -75,6 +75,14 @@ public final class Messages {
 
     /** The conversation list, with picture messages counted in the snippet and the unread count. */
     public static List<SmsStore.Thread> threads(Context ctx, int limit, boolean withNames) {
+        // THE PROVIDER'S OWN CONVERSATION LIST FIRST -- the same table Fossify Messages reads, and
+        // the reason its conversations were right on a phone where ours were not. Folding the list
+        // out of the messages is a second opinion about something the platform already maintains,
+        // and every disagreement reads as a missing, duplicated or half-empty conversation.
+        List<SmsStore.Thread> real = SmsStore.platformThreads(ctx, limit, withNames);
+        if (!real.isEmpty()) return real;
+        // Empty means the table could not be read -- an OEM that guards it, or a phone with no
+        // conversations at all. Folding answers both without claiming there is nothing there.
         return SmsStore.fold(ctx, recent(ctx, Math.max(limit, 200)), withNames);
     }
 

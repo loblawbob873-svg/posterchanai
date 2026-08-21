@@ -309,11 +309,17 @@ public class ThreadListActivity extends PcActivity {
         if (rows >= 0) b.append(" (").append(sent).append(" sent, ").append(recv).append(" recv)");
         // Picture messages live in a different table entirely; a history that is mostly group or
         // photo threads is invisible in the number above.
+        // WHERE THE CONVERSATION LIST CAME FROM. The provider's own table is what a working
+        // messages app reads; folding is the fallback, and the two disagreeing is the whole class of
+        // "a conversation is missing half its messages". Reported so the answer is measured.
+        int platform = -1;
+        try { platform = SmsStore.platformThreads(this, 100000, false).size(); } catch (Throwable ignored) { }
         int mms = -1;
         try { mms = MmsStore.recent(this, 100000).size(); } catch (Throwable ignored) { }
         b.append("  mms: ").append(mms < 0 ? "n/a" : String.valueOf(mms));
         b.append(SmsStore.refused() ? " (REFUSED)" : "");
         b.append("  threads: ").append(all == null ? 0 : all.size());
+        b.append("  provider threads: ").append(platform < 0 ? "could not ask" : platform);
         b.append("\nrole: ").append(HasRole.roleHeld(this));
         String cur = "";
         try { cur = android.provider.Telephony.Sms.getDefaultSmsPackage(this); }

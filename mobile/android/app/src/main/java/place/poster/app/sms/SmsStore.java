@@ -57,6 +57,10 @@ public final class SmsStore {
          * `fold` for why it can be more, and why reading only `id` loses half a conversation.
          */
         public long[] ids = new long[0];
+        /** How many people are in it, straight from the provider's recipient list. 1 is ordinary. */
+        public int people = 1;
+        /** Every participant, for a group. Empty for a one-to-one conversation. */
+        public String everyone = "";
     }
 
     private SmsStore() { }
@@ -162,6 +166,128 @@ public final class SmsStore {
             }
         } catch (Throwable ignored) { }
         return fallback > 0 ? new long[]{ fallback } : new long[0];
+    }
+
+    /**
+     * THE CONVERSATION LIST, READ FROM THE PLATFORM'S OWN THREADS TABLE.
+     *
+     * This is what every working messages app does -- checked against Fossify Messages, which is
+     * the app that was showing this phone's conversations correctly while ours was not. It reads
+     * `content://mms-sms/conversations?simple=true`, whose rows ARE the conversations: the id, the
+     * snippet, the date, the message count and the RECIPIENT IDS, maintained by the provider itself
+     * across both tables.
+     *
+     * We used to fold the conversation list out of the messages instead, which is a second opinion
+     * about something the platform already knows. Every disagreement between the two shows up as a
+     * conversation that is missing, duplicated, or missing half its messages, and none of them can
+     * be told apart from the outside. The messages themselves are then read by THREAD_ID exactly as
+     * Fossify reads them -- that half was never the difference.
+     *
+     * Recipient count comes free with the row, so a group is identified by what the provider says
+     * rather than inferred from an MMS address table.
+     *
+     * Returns an EMPTY list when the table cannot be read at all, and the caller falls back to
+     * folding. "Could not ask" is not "no conversations".
+     */
+    public static List<Thread> platformThreads(Context ctx, int limit, boolean withNames) {
+        List<Thread> out = new ArrayList<Thread>();
+        if (ctx == null) return out;
+        Cursor c = null;
+        String[] cols = { Telephony.Threads._ID, Telephony.Threads.DATE, Telephony.Threads.SNIPPET,
+                          Telephony.Threads.MESSAGE_COUNT, Telephony.Threads.RECIPIENT_IDS,
+                          Telephony.Threads.READ };
+        try {
+            c = ctx.getContentResolver().query(
+                    Uri.parse(Telephony.Threads.CONTENT_URI + "?simple=true"), cols,
+                    Telephony.Threads.MESSAGE_COUNT + " > 0", null,
+                    Telephony.Threads.DATE + " DESC");
+        } catch (Throwable t) {
+            Log.w(TAG, "sms: could not read the conversation list", t);
+            return out;
+        }
+        java.util.LinkedHashMap<Thread, String> ids = new java.util.LinkedHashMap<Thread, String>();
+        try {
+            if (c == null) return out;
+            while (c.moveToNext() && out.size() < Math.max(1, limit)) {
+                Thread t = new Thread();
+                t.id = c.getLong(0);
+                t.ids = new long[]{ t.id };
+                t.date = c.getLong(1);
+                t.snippet = str(c, 2);
+                t.count = (int) c.getLong(3);
+                // The provider's `read` is the whole conversation's. A count of unread messages is
+                // not in this table, so an unread conversation counts as one rather than claiming a
+                // number it has not looked up.
+                t.unread = c.getInt(5) != 0 ? 0 : 1;
+                ids.put(t, str(c, 4));
+                out.add(t);
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "sms: the conversation list went bad part-way", t);
+        } finally {
+            if (c != null) try { c.close(); } catch (Throwable ignored) { }
+        }
+        fillRecipients(ctx, ids);
+        // A group is named after everybody in it. Labelled by `address` alone it takes the name of
+        // whichever member the provider happened to list first, which is a conversation several
+        // people can read wearing one person's name.
+        if (withNames) for (Thread t : out) t.label = groupLabel(ctx, t);
+        return out;
+    }
+
+    /** Every participant by name, or the one person's. */
+    private static String groupLabel(Context ctx, Thread t) {
+        if (t.people <= 1 || t.everyone.isEmpty()) return PhoneBook.label(ctx, t.address);
+        StringBuilder b = new StringBuilder();
+        for (String n : t.everyone.split(", ")) {
+            if (b.length() > 0) b.append(", ");
+            b.append(PhoneBook.label(ctx, n));
+        }
+        return b.toString();
+    }
+
+    /**
+     * RECIPIENT IDS ARE NOT PHONE NUMBERS -- they index `content://mms-sms/canonical-addresses`, and
+     * a conversation row carries a space-separated list of them. Resolved in ONE query for the whole
+     * screen; per row it is a cross-process query per conversation on every repaint.
+     */
+    private static void fillRecipients(Context ctx, java.util.LinkedHashMap<Thread, String> ids) {
+        if (ids.isEmpty()) return;
+        java.util.LinkedHashSet<String> want = new java.util.LinkedHashSet<String>();
+        for (String raw : ids.values()) {
+            for (String one : raw.trim().split("\\s+")) if (one.matches("\\d+")) want.add(one);
+        }
+        Map<String, String> number = new java.util.HashMap<String, String>();
+        if (!want.isEmpty()) {
+            Cursor c = null;
+            try {
+                StringBuilder in = new StringBuilder();
+                for (String one : want) { if (in.length() > 0) in.append(','); in.append(one); }
+                c = ctx.getContentResolver().query(
+                        Uri.withAppendedPath(Telephony.MmsSms.CONTENT_URI, "canonical-addresses"),
+                        new String[]{ "_id", "address" }, "_id IN (" + in + ")", null, null);
+                if (c != null) while (c.moveToNext()) number.put(String.valueOf(c.getLong(0)), str(c, 1));
+            } catch (Throwable t) {
+                Log.w(TAG, "sms: could not resolve who a conversation is with", t);
+            } finally {
+                if (c != null) try { c.close(); } catch (Throwable ignored) { }
+            }
+        }
+        for (Map.Entry<Thread, String> e : ids.entrySet()) {
+            Thread t = e.getKey();
+            List<String> people = new ArrayList<String>();
+            for (String one : e.getValue().trim().split("\\s+")) {
+                String n = number.get(one);
+                if (n != null && !n.isEmpty()) people.add(n);
+            }
+            t.people = people.size();
+            if (!people.isEmpty()) t.address = people.get(0);
+            if (people.size() > 1) {
+                StringBuilder all = new StringBuilder();
+                for (String n : people) { if (all.length() > 0) all.append(", "); all.append(n); }
+                t.everyone = all.toString();
+            }
+        }
     }
 
     /** The newest messages, newest first, across all conversations. */
