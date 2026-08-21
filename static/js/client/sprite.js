@@ -73,6 +73,7 @@
   <symbol id="i-link" viewBox="0 0 24 24"><path d="M10.2 13.8a3.8 3.8 0 005.7.4l2.6-2.6a3.8 3.8 0 00-5.37-5.37l-1.5 1.48"/><path d="M13.8 10.2a3.8 3.8 0 00-5.7-.4l-2.6 2.6a3.8 3.8 0 005.37 5.37l1.48-1.48"/></symbol>
   <symbol id="i-film" viewBox="0 0 24 24"><rect x="3" y="4.6" width="18" height="14.8" rx="2.2"/><path d="M7.4 4.6v14.8M16.6 4.6v14.8M3 12h18M3 8.3h4.4M3 15.7h4.4M16.6 8.3H21M16.6 15.7H21"/></symbol>
   <symbol id="i-reply" viewBox="0 0 24 24"><path d="M9.4 6.6L4 12l5.4 5.4"/><path d="M4 12h9.6a6 6 0 016 6v1.4"/></symbol>
+  <symbol id="i-forward" viewBox="0 0 24 24"><path d="M14.6 6.6L20 12l-5.4 5.4"/><path d="M20 12h-9.6a6 6 0 00-6 6v1.4"/></symbol>
   <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.2" y="4.8" width="17.6" height="14.4" rx="2.4"/><circle cx="8.8" cy="10" r="1.7"/><path d="M3.6 16.6l4.6-4.2 3.6 3.2 3.2-2.8 5.4 4.6"/></symbol>
   <symbol id="i-text" viewBox="0 0 24 24"><path d="M5 6.4V4.8h14v1.6"/><path d="M12 4.8v14.4"/><path d="M9 19.2h6"/></symbol>
   <symbol id="i-play" viewBox="0 0 24 24"><path d="M8.4 5.6l10 6.4-10 6.4z"/></symbol>

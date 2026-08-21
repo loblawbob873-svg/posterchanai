@@ -69,6 +69,12 @@ class MailActionsUseTheSprite(unittest.TestCase):
         self.assertEqual(sorted(acts),
                          sorted(["reply", "replyall", "forward", "ai", "unread", "move", "delete"]))
 
+    def test_forward_is_an_email_arrow_not_the_generic_share_graph(self):
+        button = re.search(r'<button[^>]*data-act="forward"[^>]*>(.*?)</button>', self.row, re.S)
+        self.assertIsNotNone(button)
+        self.assertIn("#i-forward", button.group(1))
+        self.assertNotIn("#i-share", button.group(1))
+
 
 if __name__ == "__main__":
     unittest.main()

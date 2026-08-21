@@ -23782,7 +23782,7 @@
         <div class="mail-actions">
           <button class="btn btn-cyan small icon-only" data-act="reply" title="Reply" aria-label="Reply"><svg class="ic b-ic" aria-hidden="true"><use href="#i-reply"></use></svg></button>
           <button class="btn small icon-only" data-act="replyall" title="Reply all" aria-label="Reply all"><svg class="ic b-ic" aria-hidden="true"><use href="#i-repost"></use></svg></button>
-          <button class="btn small icon-only" data-act="forward" title="Forward" aria-label="Forward"><svg class="ic b-ic" aria-hidden="true"><use href="#i-share"></use></svg></button>
+          <button class="btn small icon-only" data-act="forward" title="Forward" aria-label="Forward"><svg class="ic b-ic" aria-hidden="true"><use href="#i-forward"></use></svg></button>
           <button class="btn small icon-only" data-act="ai" title="AI tools" aria-label="AI tools"><svg class="ic b-ic" aria-hidden="true"><use href="#i-wand"></use></svg></button>
           <button class="btn small icon-only" data-act="unread" title="Mark unread" aria-label="Mark unread"><svg class="ic b-ic" aria-hidden="true"><use href="#i-eye"></use></svg></button>
           <button class="btn small icon-only" data-act="move" title="Move" aria-label="Move"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg></button>
