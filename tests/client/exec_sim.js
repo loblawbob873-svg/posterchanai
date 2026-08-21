@@ -251,8 +251,16 @@ function device(name, sky, opts){
       const out = { ok: [], stale: [], failed: [] };
       let tombs = 0;
       for(const r of batch) if(r.entry && r.entry.deletedAt) tombs++;
-      if(tombs > 100 && !(o2 && o2.confirmed))
-        throw new Error('refused: ' + tombs + ' tombstones need the deliberate delete flow');
+      /* MIRRORS THE SHIPPED TRANSPORT, which is the only reason this fake is worth anything. The
+       * server answers 409 + {backstop}; `stateS.put` turns that into every path in the batch
+       * STRUCK (`stale`) plus a count, rather than the throw it used to be — a throw killed the
+       * whole flush, left the journal intact, and had the device propose the same deletions on
+       * every sweep for ever. A sim that kept throwing would agree with that bug. */
+      if(tombs > 100 && !(o2 && o2.confirmed)){
+        for(const r of batch) out.stale.push(r.path);
+        out.backstop = batch.length;
+        return out;
+      }
       for(const r of batch){
         const res = sky.putRec(r.path, Object.assign({ by: name }, r.entry));
         (res === 'ok' ? out.ok : out.stale).push(r.path);
@@ -396,6 +404,44 @@ scenario('a device that rewrites what it downloads does not start a round trip',
   const r3 = await A2.sweep();
   t.eq(r3.uploaded.length, 0, 'the desktop republished after the phone was held back');
   t.eq(r3.downloaded.length, 0, 'the desktop fetched the rewrite');
+});
+
+scenario('a refused mass delete is not proposed again — the files come back instead', async (t) => {
+  /* THE REPORT: "REFUSED 400 tombstones for Documents (backstop)" at 10:40 and 400 more for
+   * Pictures at 10:46, on a phone whose folder had been emptied. The server was right to refuse.
+   * The client then threw, kept every journal entry, and proposed exactly the same deletions on the
+   * next sweep — a device with no way forward and a person watching sync do nothing. */
+  const sky = cloud();
+  const A = device('desktop', sky, { disk: photos(200) });
+  await A.sweep();
+
+  const B = device('phone', sky, {});
+  await B.sweep();                                   // joins and fetches all 200
+  t.eq(Object.keys(B.disk).length, 200, 'the phone did not fetch the folder');
+
+  /* MOST of the folder is wiped off the phone — not all of it, which is the case that reaches the
+   * server at all. A device that can see NONE of what it knows about is caught here by
+   * `emptyDevice`, FATAL and unconfirmable, and never proposes anything. A device that can still
+   * see SOME files is treated as authoritative about the rest, and the SERVER's backstop is the
+   * only thing left between it and everybody else's copies — which is exactly the shape that was
+   * reported (400 refused, twice, on a phone that still held a few thousand of ~12,000 files). */
+  const keep = Object.keys(B.disk).sort().slice(0, 20);
+  for(const p of Object.keys(B.disk)) if(keep.indexOf(p) === -1) delete B.disk[p];
+  const B2 = device('phone', sky, { disk: B.disk, index: B.st.index });
+  const r2 = await B2.sweep();
+  t.eq(r2.refusedMassDelete > 0, true, 'the refusal was not reported: ' + r2.refusedMassDelete);
+  const alive = Object.values(sky.recs).filter(r => !r.t).length;
+  t.eq(alive, 200, 'the folder lost records — only ' + alive + ' of 200 are still alive');
+
+  // THE POINT: the next sweep must not propose the same deletions. With the journal struck, a
+  // record that lives and a file that is absent is a DOWNLOAD.
+  const B3 = device('phone', sky, { disk: B2.disk, index: B2.st.index });
+  const r3 = await B3.sweep();
+  t.eq(r3.refusedMassDelete || 0, 0, 'the phone proposed the mass delete a second time');
+  t.eq(r3.downloaded.length, 180, 'the phone fetched ' + r3.downloaded.length
+       + ' of 180 back — a struck journal must resolve as "I do not have this yet"');
+  t.eq(Object.values(sky.recs).filter(r => r.t).length, 0, 'something was tombstoned after all');
+  t.eq(identical(A.disk, B3.disk), null, 'the phone did not end up holding the folder again');
 });
 
 scenario('two hosts updating at the same time — neither loses the other\'s work', async (t) => {

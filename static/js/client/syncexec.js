@@ -639,6 +639,15 @@
       for(const p of (res && res.failed) || []){
         failed(report, p, 'publish', new Error('the record was not stored — will retry next sweep'));
       }
+      /* THE SERVER REFUSED A MASS DELETE. Those paths have been struck from this device's journal
+       * (see stateS.put), so the next sweep fetches them back rather than proposing the deletion
+       * again — but a person has to be told, because from here it looks like a sync that did
+       * nothing. Not `failed`: nothing failed, a claim was rejected, and the difference decides
+       * whether somebody goes looking for a broken network. */
+      if(res && res.backstop){
+        report.refusedMassDelete = (report.refusedMassDelete || 0) + res.backstop;
+        report.ok = false;
+      }
     };
     journal.beforeSave = flushPuts;
 

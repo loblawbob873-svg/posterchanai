@@ -85,6 +85,12 @@ function makeWorld(){
     if(body.put){
       if(body.era !== undefined && body.era !== null && +body.era !== P.era)
         return j409({ ok: false, eraChanged: true, era: P.era });
+      /* THE MASS-DELETE BACKSTOP, as the real endpoint answers it: more than _FS_TOMB_CAP
+       * tombstones in one batch without the deliberate-delete confirm is refused WHOLE, 409. */
+      const tombs = body.put.filter(r => r.t).length;
+      if(tombs > 100 && !body.confirmed)
+        return j409({ ok: false, backstop: true,
+                      error: 'refused: ' + tombs + ' deletions need the deliberate delete flow' });
       const results = [];
       for(const r of body.put){
         const cur = P.rows.get(r.d);
@@ -287,6 +293,36 @@ scenario('a-delta-read-fetches-only-the-news', async () => {
     ok: Object.keys(got.state).length === 51 && !!got.state['new.jpg']
         && listPost && typeof listPost.since === 'number',
     detail: { n: Object.keys(got.state).length, since: listPost && listPost.since },
+  };
+});
+
+/* A REFUSED MASS DELETE COMES BACK AS STRUCK PATHS, NOT AS A THROW.
+ *
+ * The server is right to refuse — it is the last thing between a device that has gone wrong and
+ * everybody else's files. But the client threw, which killed the whole flush and left this device's
+ * journal intact, so the next sweep proposed exactly the same deletions. Measured on a real
+ * account: "REFUSED 400 tombstones for Documents" at 10:40 and 400 for Pictures at 10:46, on a
+ * phone with no way forward. Struck instead (the same treatment a CAS race gets), the device stops
+ * claiming the deletion and the executor re-derives each path against the folder — a live record
+ * and an absent file is a DOWNLOAD. */
+scenario('a-refused-mass-delete-strikes-instead-of-throwing', async () => {
+  const { docs } = boot();
+  const batch = [];
+  for(let i = 0; i < 150; i++)
+    batch.push({ path: 'gone/' + i + '.jpg',
+                 entry: { v: 2, by: 'phone', deletedAt: 7777, sha: 's' + i, csum: 'c' + i,
+                          size: 9, mtime: 1 } });
+  /* CAUGHT ON PURPOSE. Before the fix this REJECTED, so a scenario that simply awaited it died
+   * before reaching a single assertion — passing by not running, which is the failure mode a test
+   * can least afford. The throw is the thing under test, so it has to be caught to be asserted. */
+  let res = null, threw = null;
+  try{ res = await docs.putState('Documents', batch, {}); }catch(e){ threw = e; }
+  if(threw) return { ok: false, threw: String(threw && threw.message || threw) };
+  return {
+    ok: (res.stale || []).length === 150 && (res.ok || []).length === 0 && res.backstop === 150,
+    struck: (res.stale || []).length,
+    written: (res.ok || []).length,
+    backstop: res.backstop,
   };
 });
 

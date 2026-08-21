@@ -1096,7 +1096,36 @@
           put.push(row);
         }
         if(!put.length) continue;
-        const j = await _statePost({ pair: key, era, put, confirmed: !!o.confirmed });
+        /* A REFUSED MASS DELETE MUST NOT BE PROPOSED AGAIN FOR EVER, and that is what it was.
+         *
+         * The server's backstop refuses a batch that tombstones more than the cap without the
+         * deliberate-delete confirm — correctly: it is the last thing between a device that has
+         * gone wrong and everybody else's files. But the refusal was a THROW that nothing caught,
+         * so the whole flush died, this device's journal kept every one of those entries, and the
+         * next sweep proposed exactly the same deletions. Measured on a real account: 400
+         * tombstones refused for Documents at 10:40 and 400 for Pictures at 10:46, a phone with no
+         * way forward, and the same 400 waiting to be refused again.
+         *
+         * Struck from the journal instead — the same treatment a CAS race gets, and for the same
+         * reason. A device whose claim was rejected must stop making it: `stale` deletes the
+         * journal entry, so this device then honestly knows nothing about those paths, and the next
+         * sweep resolves each one against the folder. A path whose record still lives and whose
+         * file is absent here is then a DOWNLOAD, not a deletion — the files come back rather than
+         * spreading. Nothing is deleted anywhere by this, on any device.
+         *
+         * It is REPORTED, not silent: the count rides the result so the sweep can say "this device
+         * asked to delete N files everywhere and was refused" instead of a generic write error. */
+        let j;
+        try{
+          j = await _statePost({ pair: key, era, put, confirmed: !!o.confirmed });
+        }catch(e){
+          if(e && e.backstop){
+            for(const d0 in byD) out.stale.push(byD[d0]);
+            out.backstop = (out.backstop || 0) + put.length;
+            continue;
+          }
+          throw e;
+        }
         for(const res of (j.results || [])){
           const path = byD[res.d];
           if(!path) continue;
@@ -2652,6 +2681,19 @@
       return '<div class="sync-grp"><b>' + PC.enc(label) + '</b><ul>' + shown + more + '</ul></div>';
     };
     const p = rep.plan || {};
+    /* SAID FIRST AND IN FULL, because from the outside it looks like a sweep that did nothing.
+     * This device asked to delete files on EVERY device and the server refused; those paths have
+     * been struck from its journal, so the next sweep fetches them back instead of asking again.
+     * A count, not a list — the paths are the whole folder's worth and naming them would bury the
+     * one sentence that matters. */
+    const mass = rep.refusedMassDelete
+      ? '<div class="sync-note danger">This device asked to delete <b>' + rep.refusedMassDelete
+        + '</b> file' + (rep.refusedMassDelete === 1 ? '' : 's') + ' on every device, and the '
+        + 'server refused. Nothing was deleted anywhere. This device has stopped claiming those '
+        + 'deletions, so the next sync brings the files back here instead.<br><br>If you really '
+        + 'did mean to delete them everywhere, do it from Files rather than by removing them on '
+        + 'this device \u2014 that path asks first and knows what it is deleting.</div>'
+      : '';
     const unf = grp('Can\u2019t be fetched \u2014 the store doesn\u2019t have the bytes',
                     rep.unfetchable || [], a => a.path + ' \u2014 ' + a.why);
     const unc = grp('Deletions held \u2014 absence couldn\u2019t be confirmed on disk',
@@ -2687,7 +2729,7 @@
         + '</div>';
     }
     return '<div class="sync-details">'
-      + unf + unc + unr
+      + mass + unf + unc + unr
       + grp('Failed', rep.failed, a => a.path + ' — ' + a.what + ': ' + a.error)
       + grp('Skipped', rep.skipped, a => a.path + ' — ' + a.why)
       + grp('Couldn\u2019t be compared \u2014 both copies left alone, retried next sync',
