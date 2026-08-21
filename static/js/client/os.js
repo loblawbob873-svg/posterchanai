@@ -837,6 +837,44 @@
       when: () => !!(me() && PC().goLive && !(PC().standalone && PC().standalone())) },
   ];
 
+  /* AN IMAGE THAT FAILS TO LOAD LEAVES NO START BUTTON, and this one has now vanished twice.
+   *
+   * The mark is the instance's logo, read live off `.brand-logo` so a custom one wins — which means
+   * the src can be an INSTANCE URL, and an instance that is slow, unreachable over Tor, down, or
+   * simply not configured yet gives a broken image where the start button should be. Nothing to
+   * click, and nothing on screen to say why.
+   *
+   * Two fallbacks, and the second is the one that matters. The bundled PNG is not a second opinion
+   * about which logo is right — it is the one that cannot 404, because it ships inside the app. The
+   * sprite flower after it needs no network and no file at all, so the button exists even on a
+   * bundle built before build-www.sh started copying the images (which is a real state: that copy
+   * was missing once already, and the symptom was every font falling back).
+   *
+   * `once` on each step, or a fallback that also fails re-enters its own handler for ever. */
+  function _keepStartVisible(img){
+    if(!img || img.dataset.guarded) return;
+    img.dataset.guarded = '1';
+    img.addEventListener('error', () => {
+      if(img.src.indexOf('/static/posterchan-relay.png') < 0){
+        img.src = '/static/posterchan-relay.png';
+        img.addEventListener('error', () => _startGlyph(img), { once: true });
+        return;
+      }
+      _startGlyph(img);
+    }, { once: true });
+    // ALREADY BROKEN BY THE TIME WE BOUND. An <img> that failed before this ran fires no further
+    // event — `complete` with a zero natural width is the only way to see it.
+    if(img.complete && !img.naturalWidth) _startGlyph(img);
+  }
+
+  function _startGlyph(img){
+    if(!img || !img.parentElement) return;
+    const span = document.createElement('span');
+    span.className = 'os-start-ic';
+    span.innerHTML = iconSvg('flower');
+    img.replaceWith(span);
+  }
+
   /* The start button wears the instance's own logo — the same image the sidebar brand shows, read
    * live rather than hardcoded, so a deployment that set a custom logo (Admin → Site) gets ITS mark
    * on the start button instead of PosterChan's. */
@@ -4278,6 +4316,7 @@
     try{ if(window.PCOSShell && PCOSShell.available()) PCOSShell.paintTray($('#os-shell', bar)); }
     catch(_){}
     $('#os-start', bar).onclick = (e) => { e.stopPropagation(); toggleStart(); };
+    _keepStartVisible($('#os-start img', bar));
     /* There is deliberately no New post button here. One was added when posting appeared impossible
      * on the desktop — but the real cause was the compose MODAL rendering behind it (see the
      * z-index block in client.css). With that fixed, the timeline's own composer works inside a

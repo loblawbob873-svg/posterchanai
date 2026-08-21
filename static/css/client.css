@@ -7096,6 +7096,12 @@ body.os-on #os-root{pointer-events:auto}
 .osw.focused{border-color:color-mix(in srgb, var(--neon) 55%, var(--line));
   box-shadow:0 22px 64px rgba(0,0,0,.62)}
 .osw.minimised{display:none}
+/* The start button's LAST resort. When the instance logo cannot be fetched and the bundled PNG is
+   missing too, the button draws the sprite flower — sized to match the image it replaces, so the
+   taskbar does not reflow at the moment the logo fails. */
+.os-start-ic{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px}
+.os-start-ic .ic{width:20px;height:20px}
+
 /* WHERE 100% IS, on a slider that goes to 150. Everything past the mark is PipeWire scaling the
    samples in software rather than the hardware being asked for more, and a slider with no mark
    makes "loud" and "boosted" the same gesture — you cannot tell you have left the safe range until
