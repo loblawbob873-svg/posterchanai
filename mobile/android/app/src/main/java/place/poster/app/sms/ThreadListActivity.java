@@ -204,10 +204,14 @@ public class ThreadListActivity extends PcActivity {
     private void reload() {
         new Thread(new Runnable() {
             @Override public void run() {
-                // BOTH PROVIDERS — see Messages. A conversation whose newest message is a
-                // picture otherwise showed the last TEXT as its snippet, dated days early.
+                /* SMS ONLY, FOR NOW. This briefly called `Messages.threads` — the picture-message
+                 * reader — which is being written in another session and whose class is not
+                 * committed yet. I committed the CALL without the CALLEE and broke the release
+                 * build; the local compile check did not catch it because it compiles the working
+                 * TREE, where the file exists, while CI builds from git. Restored to the reader that
+                 * exists; the MMS work will land both halves together. */
                 final List<SmsStore.Thread> found =
-                        Messages.threads(ThreadListActivity.this, 800, true);
+                        SmsStore.threads(ThreadListActivity.this, 800);
                 // Read on this thread, immediately after the query, because it describes THAT read.
                 final boolean refused = SmsStore.refused();
                 main.post(new Runnable() {
