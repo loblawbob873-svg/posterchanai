@@ -135,6 +135,17 @@ class TheFeedDoesNotJumpToTheTop(unittest.TestCase):
         self.assertIn("_drawTimeline(false)", self.src[i:k],
                       "entering a timeline no longer starts at the top")
 
+    def test_resume_preserves_a_card_not_only_a_pixel(self):
+        """New events above the reader change what a raw scrollTop means."""
+        draw = self.src[self.src.index("function _drawTimeline(preserveScroll){"):][:5200]
+        self.assertIn("_tlAnchor(feed)", draw)
+        self.assertIn("_restoreTlAnchor(feed, place)", draw)
+
+    def test_resume_keeps_the_loaded_scrollback_tail(self):
+        """A redraw after paging must not reconcile 400 loaded cards down to the newest 200."""
+        draw = self.src[self.src.index("function _drawTimeline(preserveScroll){"):][:1200]
+        self.assertIn("_tl.pages===0 ? 200 : _FEED_MAX_CARDS", draw)
+
 
 class EveryRouteOutOfTheFeedRemembers(unittest.TestCase):
     """"if I scroll, click a post, read through the comments, then click home, I go back to the top."

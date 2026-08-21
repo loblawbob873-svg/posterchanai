@@ -133,6 +133,11 @@ class TheImageDoesNotCarryTheOperator(unittest.TestCase):
         """`!` is locked, and a locked account cannot autologin."""
         self.assertIn("live::20000", self.fn)
 
+    def test_the_build_machines_root_password_is_not_in_the_iso(self):
+        """The live account reaches root through its explicit sudo rule; copying the host's root
+        hash into a clean image leaks a credential and leaves an unnecessary direct-login path."""
+        self.assertIn("sed -i 's/^root:[^:]*/root:!/'", self.fn)
+
     def test_the_hostname_is_not_this_machines(self):
         self.assertIn('pseudoput "etc/hostname" f 644 0 0 echo posterchanos', self.fn)
 
@@ -419,7 +424,15 @@ class TheAccountRewriteActuallyWorks(unittest.TestCase):
             {"passwd": self.PASSWD, "shadow": self.SHADOW})["shadow.out"]
         self.assertNotIn("SECRETHASH", out)
         self.assertNotIn("OTHERHASH", out)
-        self.assertIn("root:$6$realhash", out, "root's entry was dropped — the image cannot boot")
+        self.assertIn("root:$6$realhash", out, "the rewrite step must retain root before locking it")
+
+    def test_root_is_retained_but_locked_for_the_clean_image(self):
+        out = self._run(
+            "awk -F: 'NR==FNR { if ($3 >= 1000 && $3 < 65534) drop[$1]; next } !($1 in drop)' "
+            "passwd shadow > shadow.out; sed -i 's/^root:[^:]*/root:!/' shadow.out",
+            {"passwd": self.PASSWD, "shadow": self.SHADOW})["shadow.out"]
+        self.assertIn("root:!:19000", out)
+        self.assertNotIn("realhash", out)
 
 
 if __name__ == "__main__":

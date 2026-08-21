@@ -2416,6 +2416,10 @@ FSTAB
 		# nobody has the answer to.
 		awk -F: 'NR==FNR { if ($3 >= 1000 && $3 < 65534) drop[$1]; next } !($1 in drop)' \
 			/etc/passwd /etc/shadow >"$WORK/shadow" 2>/dev/null || cp /etc/shadow "$WORK/shadow"
+		# A CLEAN DISC MUST NOT CARRY THE BUILD MACHINE'S ROOT PASSWORD HASH. The live account has
+		# its narrowly-scoped NOPASSWD rule below, so direct root login is unnecessary; lock it in the
+		# image while leaving the running machine untouched.
+		sed -i 's/^root:[^:]*/root:!/' "$WORK/shadow"
 		echo 'live::20000:0:99999:7:::' >>"$WORK/shadow"
 		# The groups that decide whether a desktop can use the hardware. Taken from what THIS machine
 		# actually has rather than a guessed list, because a live user outside `video`/`input` gets a

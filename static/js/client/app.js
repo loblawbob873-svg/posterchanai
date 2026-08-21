@@ -6765,6 +6765,26 @@
   // composer and make the "cap at 200" scan (which walks direct children) match nothing at all.
   // Falls back to #feed for the views that render into it without a timeline header.
   function _tlNotes(feed){ return (feed && feed.querySelector('#tl-notes')) || feed; }
+  /* A PIXEL IS NOT A PLACE IN A CHANGING FEED. Remember the first visible keyed card and its
+   * distance from the viewport while reconciling; new cards inserted above it then cannot turn the
+   * same scrollTop into a completely different post after resume/reconnect. */
+  function _tlAnchor(feed){
+    if(!feed) return null;
+    const edge=feed.getBoundingClientRect().top;
+    for(const el of [..._tlNotes(feed).children]){
+      if(!(el.dataset && el.dataset.key)) continue;
+      const r=el.getBoundingClientRect();
+      if(r.bottom > edge) return { key:el.dataset.key, dy:r.top-edge };
+    }
+    return null;
+  }
+  function _restoreTlAnchor(feed, place){
+    if(!feed || !place) return false;
+    const el=[..._tlNotes(feed).children].find(n=>n.dataset && n.dataset.key===place.key);
+    if(!el) return false;
+    feed.scrollTop += el.getBoundingClientRect().top-feed.getBoundingClientRect().top-place.dy;
+    return true;
+  }
   // Scroll-back has no ceiling: every page appends another 30-60 cards, each holding full-resolution
   // <img>/<video> the device must keep decoded and (for video) a live media player. _prependLive's
   // 200-card cap deliberately stops applying the moment you paginate — it would delete the history you
@@ -7377,8 +7397,13 @@
     if(VIEW!=='home' && VIEW!=='global') return;
     const feed=$('#feed'); if(!feed) return;
     const top=preserveScroll?feed.scrollTop:0;
+    const place=preserveScroll?_tlAnchor(feed):null;
     const fn = _tlFilter(VIEW);
-    const notes = Store.feed(e=>fn(e)&&!isMutedView(e)).slice(0,200);
+    /* Once scroll-back has loaded older pages, a resume redraw must include them. Reconciling only
+     * the newest 200 deleted the loaded tail, made posts appear missing, and left scrollTop pointing
+     * at a newer card. The DOM remains bounded by the same 400-card ceiling used by pagination. */
+    const notes = Store.feed(e=>fn(e)&&!isMutedView(e))
+      .slice(0, _tl.pages===0 ? 200 : _FEED_MAX_CARDS);
     // seed the scroll-back cursor from the initial draw only — once the user has paged older, a late
     // EOSE redraw must NOT move the cursor forward (it would re-query an already-loaded range)
     if(notes.length && _tl.pages===0) _tl.oldest = notes[notes.length-1].created_at;
@@ -7418,7 +7443,7 @@
     // BEFORE hydrate, so a card this puts back is decorated and observed like every other one. The
     // reconcile reuses keyed cards, so nothing else in a redraw ever looks inside one again.
     _healGhostPairs(notesEl, true);
-    hydrate(notesEl); if(preserveScroll) feed.scrollTop=top;
+    hydrate(notesEl); if(preserveScroll && !_restoreTlAnchor(feed, place)) feed.scrollTop=top;
   }
   // Bring `box`'s cards in line with `notes` by KEY, reusing every card that is already there.
   //
