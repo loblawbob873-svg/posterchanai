@@ -246,14 +246,19 @@
     try{ localStorage.removeItem(BASE_KEY(key)); }catch(_){}   // the old copy is now stale, not a fallback
   }
   const _BASELINE_PREFIX = '\u0000baseline:';
-  async function _loadBaseline(key){
+  async function _loadBaseline(key, copy){
     try{
       const v = await _IDB._tx('readonly', st => st.get(_BASELINE_PREFIX + key));
-      return !!(v && v.complete === true);
+      /* Completion belongs to THIS LOCAL FOLDER HANDLE, not merely to the shared pair name. Android
+       * issues a new SAF handle when a folder is removed and selected again. Reusing the old pair's
+       * completion made that empty replacement look established, so its very first download minted
+       * conflicts. Old records have no `copy` and deliberately take one conservative baseline. */
+      return !!(v && v.complete === true && String(v.copy || '') === String(copy || ''));
     }catch(_){ return false; }
   }
-  async function _saveBaseline(key){
-    await _IDB._tx('readwrite', st => st.put({ complete:true, at:Date.now() }, _BASELINE_PREFIX + key));
+  async function _saveBaseline(key, copy){
+    await _IDB._tx('readwrite', st => st.put({ complete:true, copy:String(copy || ''), at:Date.now() },
+                                             _BASELINE_PREFIX + key));
   }
   /* CLEARING THE AGREEMENT MUST NOT FAIL QUIETLY.
    *
@@ -1186,8 +1191,8 @@
     flagBad: (key, items) => stateS.flag(key, items),
     index: (key) => _loadBase(key),
     saveIndex: (key, idx) => _saveBase(key, idx),
-    baselineComplete: (key) => _loadBaseline(key),
-    markBaselineComplete: (key) => _saveBaseline(key),
+    baselineComplete: (key, copy) => _loadBaseline(key, copy),
+    markBaselineComplete: (key, copy) => _saveBaseline(key, copy),
     getBlob: (sha) => store.getBlob(sha),
     putBlob: (bytes) => store.putBlob(bytes),
     getParts: store.getParts,

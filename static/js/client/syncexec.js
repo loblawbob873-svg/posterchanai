@@ -172,7 +172,7 @@
      * have no fact and therefore receive one conservative, deletion-free baseline sweep. */
     const baselineKnown = typeof io.baselineComplete === 'function';
     let baselineComplete = false;
-    try{ baselineComplete = !!(baselineKnown && await io.baselineComplete(key)); }catch(_){ baselineComplete = false; }
+    try{ baselineComplete = !!(baselineKnown && await io.baselineComplete(key, o.id)); }catch(_){ baselineComplete = false; }
     /* Old/testing bridges without checkpoint support retain established-sync semantics. Every
      * shipped bridge provides this method; absence is not evidence that a real folder is new. */
     const joining = baselineKnown && !baselineComplete;
@@ -1294,7 +1294,7 @@
      * wave. Only a later pass with no held deletions may cross the boundary. */
     if(report.ok && !report.stopped && !report.checkpointError
        && !(report.joinDeletionsHeld || []).length && io.markBaselineComplete){
-      await io.markBaselineComplete(key);
+      await io.markBaselineComplete(key, o.id);
       report.baselineCompleted = joining;
     }
     return report;
