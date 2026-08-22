@@ -39,3 +39,9 @@ def test_shell_restart_is_serialized_and_targets_only_the_shell_process():
     assert "posterchan-shell-start.lock" in start
     assert "posterchan-desktop --shell" in restart
     assert "pkill -TERM" in restart and "pkill -KILL" in restart
+
+
+def test_super_is_a_global_physical_key_binding_not_a_bare_modifier_binding():
+    cfg = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config").read_text()
+    assert "bindsym --release --no-repeat Super_L exec swaymsg -t send_tick pc:start" in cfg
+    assert "bindsym --release --no-repeat $mod exec swaymsg -t send_tick pc:start" not in cfg

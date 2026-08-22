@@ -7395,21 +7395,21 @@ body.os-on #os-root{pointer-events:auto}
 @media (prefers-reduced-motion:reduce){ .os-net.net-connecting .ic{animation:none;opacity:.7} }
 
 /* Narrower than the notification centre: this is a list of hostnames, not of posts. */
-.os-net-panel{width:min(420px,calc(100vw - 16px));font-size:14px}
-.os-net-sum{display:flex;align-items:flex-start;gap:12px;padding:15px 17px;border-bottom:1px solid var(--line)}
-.os-net-sum .ic{width:25px;height:25px;flex:0 0 auto;margin-top:1px;color:var(--muted)}
+.os-net-panel{width:min(520px,calc(100vw - 16px));font-size:16px}
+.os-net-sum{display:flex;align-items:flex-start;gap:14px;padding:18px 20px;border-bottom:1px solid var(--line)}
+.os-net-sum .ic{width:30px;height:30px;flex:0 0 auto;margin-top:1px;color:var(--muted)}
 .os-net-sum.net-ok .ic{color:var(--neon)}
 .os-net-sum.net-partial .ic{color:#ffcf2b}
 .os-net-sum.net-off .ic{color:#ff6b6b}
 .os-net-sum span{min-width:0}
-.os-net-sum b{display:block;font-size:15px}
-.os-net-sum i{display:block;font-style:normal;font-size:13px;color:var(--muted);margin-top:3px}
+.os-net-sum b{display:block;font-size:18px}
+.os-net-sum i{display:block;font-style:normal;font-size:14px;color:var(--muted);margin-top:4px}
 .os-net-list{overflow-y:auto;overscroll-behavior:contain;padding:4px 0;max-height:46vh}
-.os-net-row{display:flex;align-items:center;gap:10px;padding:11px 17px;font-size:14px}
+.os-net-row{display:flex;align-items:center;gap:12px;padding:14px 20px;font-size:16px}
 /* min-width:0 on the NAME, so a long hostname ellipsises instead of squeezing the state text — which
    is the half of the row that answers the question the panel was opened to answer. */
 .os-net-n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.os-net-s{flex:0 0 auto;color:var(--muted);font-size:13px}
+.os-net-s{flex:0 0 auto;color:var(--muted);font-size:14px}
 .os-net-tag{font-style:normal;font-size:10px;color:var(--muted);border:1px solid var(--line);
   border-radius:5px;padding:1px 4px;margin-inline-start:6px}
 .os-net-led{flex:0 0 auto;width:8px;height:8px;border-radius:50%;background:var(--muted)}
@@ -7425,9 +7425,11 @@ body.os-on #os-root{pointer-events:auto}
 /* Scoped to the PANEL, not bare `.os-net-stats`: `.os-stats` (the start menu's flex row) is defined
    further DOWN this file, so at equal specificity it won and the grid never applied — five cells laid
    out 4+1 instead of 3+2. Measured, not assumed; see the same trap in the icon/label button rules. */
-.os-net-panel .os-net-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:9px 6px;
-  padding:11px 14px 12px;margin-top:0;border-top:1px solid var(--line)}
-.os-net-panel .os-net-stats .os-stat{min-width:0;font-size:11.5px;gap:4px}
+.os-net-panel .os-net-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px 8px;
+  padding:15px 18px 17px;margin-top:0;border-top:1px solid var(--line)}
+.os-net-panel .os-net-stats .os-stat{min-width:0;font-size:14px;gap:6px}
+.os-net-panel .os-net-stats .os-stat .ic{width:22px;height:22px}
+.os-net-panel .os-net-stats .os-stat b{font-size:18px}
 .os-net-panel .os-net-stats .os-stat i{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* Arrival toasts, bottom-right, the way Windows does them. Above the notification centre so one
@@ -8329,11 +8331,11 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
 /* ── Quick Settings ─────────────────────────────────────────────────────────────────────────────
    A tile grid over sliders, the way Windows lays it out — a tile is a state you toggle and a slider
    is a value you drag, and mixing them into one list makes both harder to hit. */
-.os-pop-quick{ width:410px; max-width:calc(100vw - 16px); font-size:14px; }
+.os-pop-quick{ width:480px; max-width:calc(100vw - 16px); font-size:16px; }
 /* Power actions are a real control surface, not a cramped context menu. A 2x2 grid gives every
    destructive/session action a square, unmistakable target while retaining the same right-edge
    anchor and visual language as Quick Settings. */
-.os-pop-power{ width:430px; }
+.os-pop-power{ width:480px; }
 .os-pop-power .os-pop-h{ display:flex; align-items:center; gap:10px; padding:16px 18px 13px; font-size:17px; }
 .os-pop-power .os-pop-h .ic{ width:22px; height:22px; flex:none; color:var(--neon,#3ce8ff); }
 .os-pop-power .os-pop-profs{ padding:12px 14px 4px; }
@@ -8353,19 +8355,19 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
   .os-pop-power{ width:calc(100vw - 16px); }
   .os-pop-power-acts .os-pop-row{ min-height:96px; }
 }
-.os-qs{ padding:13px; display:flex; flex-direction:column; gap:13px; }
+.os-qs{ padding:16px; display:flex; flex-direction:column; gap:16px; }
 .os-qs-tiles{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
 .os-qs-tile{
   display:flex; flex-direction:column; align-items:flex-start; gap:2px;
-  padding:13px 14px; min-height:78px; border-radius:10px; cursor:pointer;
+  padding:16px; min-height:96px; border-radius:12px; cursor:pointer;
   border:1px solid var(--line); background:var(--panel2); color:var(--text); text-align:start;
 }
 .os-qs-tile:hover{ border-color:var(--neon,#3ce8ff); }
 .os-qs-tile.on{ background:rgba(60,232,255,.16); border-color:var(--neon,#3ce8ff); }
-.os-qs-tile .ic{ width:23px; height:23px; margin-bottom:4px; color:var(--neon,#3ce8ff); }
-.os-qs-tile b{ font-size:14px; font-weight:600; }
+.os-qs-tile .ic{ width:28px; height:28px; margin-bottom:5px; color:var(--neon,#3ce8ff); }
+.os-qs-tile b{ font-size:16px; font-weight:600; }
 .os-qs-tile span{
-  font-size:12.5px; color:var(--muted,#7a8699);
+  font-size:14px; color:var(--muted,#7a8699);
   max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
 .os-qs-row{ display:flex; align-items:center; gap:9px; }

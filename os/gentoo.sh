@@ -1508,7 +1508,7 @@ PROFILE
 	# --release, because a binding on the press swallows it: sway would then never deliver Super as
 	# the modifier of $mod+Return, and every other shortcut on this machine would stop working.
 	# --no-repeat so holding it does not open and close the menu at the key repeat rate.
-	bindsym --release --no-repeat $mod exec swaymsg -t send_tick pc:start
+	bindsym --release --no-repeat Super_L exec swaymsg -t send_tick pc:start
 
 	# Recovery for the UI only. Sway and native applications remain running.
 	bindcode --no-repeat Ctrl+Mod1+22 exec /usr/local/bin/pc-shell-restart

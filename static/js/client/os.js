@@ -5197,7 +5197,8 @@
         /* THE SUPER KEY OPENS THE START MENU, and it has to work when something else has the
          * keyboard — which is most of the time, since you press it to leave whatever you are in.
          * A key handler in this page cannot see that press at all: the compositor gave the keyboard
-         * to firefox. So sway is bound to `swaymsg -t send_tick pc:start` on Super release and this
+         * to firefox. So sway binds the actual `Super_L` key (a bare modifier name is not a key
+         * event in every Sway/XKB path) and broadcasts `pc:start` on release; this
          * is what receives it. The in-page handler further down covers the other half — the press
          * made while the desktop itself is focused — because a tick needs a binding installed on
          * the machine and the desktop must not be dependent on one being there. */
