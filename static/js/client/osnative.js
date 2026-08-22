@@ -59,29 +59,15 @@
     && a.top < b.top + b.height && b.top < a.top + a.height;
 
   /* WHICH NATIVE WINDOWS MUST GO AWAY RIGHT NOW.
-   *
-   * A native surface cannot be put behind one of ours, so anything of ours that needs the same
-   * pixels can only be seen if the native window is stashed. That is a judgement with a cost either
-   * way — stash too eagerly and a browser vanishes whenever a notification lands near it; stash too
-   * little and the person is typing into a window they cannot see.
-   *
-   * The rule: a native window is stashed while it is MINIMISED, while its own frame is not on
-   * screen, or while an HTML window that is ABOVE IT IN OUR OWN STACKING ORDER covers any part of
-   * it. Nothing else — a window merely being focused elsewhere is not a reason, or clicking the
-   * desktop would blank a video.
-   */
+   * Only an explicit minimise (or a frame that genuinely has no area) may stash a native app.
+   * Overlap used to hide Firefox whenever another PosterChan window was selected. That attempted
+   * to emulate cross-surface z-order with disappearance, and made ordinary focus look like data
+   * loss. A real desktop keeps background windows mapped; focus never means minimise. */
   function stashPlan(items, htmlWins){
     const stash = [], show = [];
     for(const it of (items || [])){
       if(!it || it.native == null) continue;
-      let hide = !!it.minimised || !it.rect || !(it.rect.width > 0) || !(it.rect.height > 0);
-      if(!hide){
-        for(const h of (htmlWins || [])){
-          if(!h || h.minimised || !h.rect) continue;
-          if(!(h.z > it.z)) continue;               // only what is genuinely in front of it
-          if(overlaps(h.rect, it.rect)){ hide = true; break; }
-        }
-      }
+      const hide = !!it.minimised || !it.rect || !(it.rect.width > 0) || !(it.rect.height > 0);
       (hide ? stash : show).push(it.native);
     }
     return { stash, show };

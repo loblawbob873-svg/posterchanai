@@ -1939,15 +1939,10 @@
       const items = nativeWins().map(w => ({ native: w.native, z: _zOf(w),
                                              minimised: !!w.min,
                                              rect: _frameRect(w), w }));
-      /* A native surface is compositor-level and therefore above the shell's HTML regardless of
-       * our z-index. Feed every real HTML window into the tested stacking plan as well as menus:
-       * otherwise virt-viewer/Firefox/Telegram remain glued above Terminal, Notes and Settings even
-       * after those windows are focused. Native frames are excluded because sway already stacks
-       * their real surfaces against one another. */
-      const htmls = wins.filter(w => w.native == null).map(w => ({
-        z: _zOf(w), minimised: !!w.min, rect: _frameRect(w)
-      })).concat(overlayRects());
-      const plan = NAT().stashPlan(items, htmls);
+      /* Focus is not minimise. The old overlap plan moved Firefox to the scratchpad whenever an
+       * HTML window was selected over it, so choosing another window made the browser disappear.
+       * Keep every native surface mapped unless its own frame was explicitly minimised. */
+      const plan = NAT().stashPlan(items, []);
       const stash = new Set(plan.stash);
       for(const it of items){
         /* RECORDED AFTER THE CALL, NEVER BEFORE. Each of these used to write what it was about to
@@ -2264,7 +2259,13 @@
     w.el.classList.add('snapped');
     Object.assign(w.el.style, css);
     focusWin(w);
-    if(nativeWins().length) nsync();
+    if(w.native != null){
+      /* CSS geometry settles after this stack. Invalidate the old compositor rectangle and perform
+       * a full placement on the next frame; otherwise a right/left tile can retain Firefox's old
+       * size even though its PosterChan frame already fills the half-screen. */
+      _natSent.delete(Number(w.native));
+      requestAnimationFrame(() => requestAnimationFrame(nsync));
+    }else if(nativeWins().length) nsync();
   }
 
   function unsnap(w){
@@ -2386,8 +2387,12 @@
       w.el.style.left = Math.round(curX) + 'px';
       w.el.style.top = Math.round(curY) + 'px';
       hideGhost();
-      if(zone) snapTo(w, zone);
       _natGesture(w, false);
+      /* Clear gesture mode BEFORE snapping. While gesturing, nsync deliberately uses move() only
+       * and never resizes; the previous order therefore moved Firefox into the right tile at its
+       * old size and never issued the final full placement. */
+      if(zone) snapTo(w, zone);
+      else if(w.native != null) nsync();
     };
     document.addEventListener('pointermove', move);
     document.addEventListener('pointerup', up);

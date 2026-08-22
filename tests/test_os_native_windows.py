@@ -75,17 +75,15 @@ class NativeWindowGeometry(unittest.TestCase):
         self.assertIsNotNone(out["c"])
 
     # ---- stashing ----------------------------------------------------------------------------
-    def test_an_html_window_in_front_stashes_the_app_under_it(self):
-        """A native surface always floats above ours — the shell is a tiled compositor window and
-        firefox is a floating one. So a settings window dragged over a browser is drawn UNDERNEATH
-        it, and the only cure the compositor offers is to put the browser away."""
+    def test_selecting_an_html_window_does_not_make_firefox_disappear(self):
+        """Focus is not minimise. Background native apps remain mapped like a real desktop."""
         out = self.js("""
           out.p = N.stashPlan(
             [{native: 7, z: 1, rect:{left:100, top:100, width:800, height:600}}],
             [{z: 2, rect:{left:400, top:300, width:500, height:400}}]);
         """)
-        self.assertEqual(out["p"]["stash"], [7])
-        self.assertEqual(out["p"]["show"], [])
+        self.assertEqual(out["p"]["stash"], [])
+        self.assertEqual(out["p"]["show"], [7])
 
     def test_a_window_behind_it_does_not(self):
         """Stacking is respected in both directions, or every native window would be stashed by

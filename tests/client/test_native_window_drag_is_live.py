@@ -26,6 +26,16 @@ def test_native_bridge_retains_move_for_non_gesture_placement_operations():
     assert "move(id, x, y)" in wm
 
 
+def test_snapping_ends_move_only_mode_before_the_full_native_resize():
+    src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+    up = src[src.index("const up = () =>", src.index("function startDrag")):
+             src.index("document.addEventListener('pointermove'", src.index("function startDrag"))]
+    assert up.index("_natGesture(w, false)") < up.index("if(zone) snapTo(w, zone)")
+    snap = src[src.index("function snapTo"):src.index("function unsnap")]
+    assert "_natSent.delete(Number(w.native))" in snap
+    assert "requestAnimationFrame(() => requestAnimationFrame(nsync))" in snap
+
+
 def test_taskbar_is_icon_only():
     css = (ROOT / "static/css/client.css").read_text(encoding="utf-8")
     assert ".os-task span{display:none}" in css
