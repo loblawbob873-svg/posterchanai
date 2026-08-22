@@ -411,14 +411,32 @@
    * water mark stays behind it and the next sweep retries instead of permanently archiving a hollow
    * attachment. */
   async function archivePart(p){
-    if(p.sha) return p.sha;
+    if(p.sha && (p.thumb || !isImage(p.ct))) return p.sha;
     const d = await partData(p);
     if(!d || !d.blob) throw new Error((d && d.why) || 'could not read MMS attachment');
     if(!PC.uploadEncFile) throw new Error('encrypted file storage is unavailable');
     const name = p.name || ('mms.' + (String(p.ct || '').split('/')[1] || 'bin'));
-    p.sha = await PC.uploadEncFile(new File([d.blob], name, {
+    if(!p.sha) p.sha = await PC.uploadEncFile(new File([d.blob], name, {
       type: p.ct || d.blob.type || 'application/octet-stream'
     }), 'MMS');
+    /* A thread needs a picture, not the original camera file.  Archive one small encrypted preview
+     * beside it so every laptop/tablet does not download several megabytes merely by opening the
+     * conversation.  The original is fetched only when the thumbnail is tapped. */
+    if(isImage(p.ct) && !p.thumb){
+      try{
+        const bm = await createImageBitmap(d.blob);
+        const scale = Math.min(1, 512 / Math.max(bm.width, bm.height));
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(bm.width * scale));
+        c.height = Math.max(1, Math.round(bm.height * scale));
+        c.getContext('2d').drawImage(bm, 0, 0, c.width, c.height);
+        if(bm.close) bm.close();
+        const preview = await new Promise(resolve => c.toBlob(resolve, 'image/jpeg', .72));
+        if(preview) p.thumb = await PC.uploadEncFile(
+          new File([preview], 'thumb-' + name.replace(/\.[^.]*$/, '') + '.jpg', {type:'image/jpeg'}),
+          'MMS');
+      }catch(_){ /* The original is still complete; a thumbnail failure must not hollow the MMS. */ }
+    }
     return p.sha;
   }
 
@@ -435,7 +453,7 @@
       body.att = [];
       for(const p of m.parts){
         const sha = await archivePart(p);
-        body.att.push({ ct: p.ct, name: p.name, bytes: p.bytes, sha });
+        body.att.push({ ct: p.ct, name: p.name, bytes: p.bytes, sha, thumb: p.thumb || '' });
       }
     }
 
@@ -477,7 +495,8 @@
     let n = 0, top = since;
     for(const r of rows){
       if(!r || !r.doc) continue;
-      if(S.msgs.has(r.doc)) { if(r.date > top) top = r.date; continue; }
+      const old = S.msgs.get(r.doc);
+      if(old && !needsPartUpgrade(r, old)) { if(r.date > top) top = r.date; continue; }
       // The contact's name is resolved on the phone against the phone's OWN address book and
       // carried, so a laptop — which has no phone book — shows a name instead of a number.
       const m = fromRow(r);
@@ -555,8 +574,18 @@
     S.lastRead = rows.length;      // what the PROVIDER returned, before any of our filtering
     for(const r of rows){
       if(!r || !r.doc) continue;
-      if(S.msgs.has(r.doc)) continue;
-      S.msgs.set(r.doc, fromRow(r));
+      const old = S.msgs.get(r.doc);
+      if(old && !needsPartUpgrade(r, old)) continue;
+      const local = fromRow(r);
+      /* On the handset, prefer its live provider part ids so the attachment can be opened now.
+       * Preserve portable hashes already present in the archive by position while a repair upload
+       * is pending; replacing those with empty strings would make a working remote copy regress. */
+      if(old && old.parts) for(let i=0;i<local.parts.length;i++){
+        if(!old.parts[i]) continue;
+        if(old.parts[i].sha) local.parts[i].sha = old.parts[i].sha;
+        if(old.parts[i].thumb) local.parts[i].thumb = old.parts[i].thumb;
+      }
+      S.msgs.set(r.doc, Object.assign({}, old || {}, local));
       total++;
     }
     S.mmsRefused = mmsRef;
@@ -613,7 +642,9 @@
       catch(_){ return { published: total, why: 'could not read the phone' }; }
       let n = 0, oldest = edge;
       for(const r of rows){
-        if(!r || !r.doc || S.msgs.has(r.doc)) continue;
+        if(!r || !r.doc) continue;
+        const old = S.msgs.get(r.doc);
+        if(old && !needsPartUpgrade(r, old)) continue;
         const m = fromRow(r);
         let ok = false;
         try{ ok = await publishOne(m); }catch(_){ ok = false; }
@@ -805,7 +836,21 @@
                                      name: String(p.name || ''),
                                      bytes: p.bytes === undefined ? -1 : Number(p.bytes),
                                      sha: /^[0-9a-f]{64}$/i.test(String(p.sha || ''))
-                                       ? String(p.sha).toLowerCase() : '' }));
+                                       ? String(p.sha).toLowerCase() : '',
+                                     thumb: /^[0-9a-f]{64}$/i.test(String(p.thumb || ''))
+                                       ? String(p.thumb).toLowerCase() : '' }));
+  }
+
+  /* An archived MMS is complete only when every attachment has a portable encrypted-store address.
+   * A body-only version of the same document is not a duplicate to skip: older clients published
+   * exactly that shape, and the phone still has the provider part ids needed to repair it. */
+  function needsPartUpgrade(phone, archived){
+    const src = (phone && phone.parts) || [];
+    if(!src.length) return false;
+    const dst = (archived && archived.parts) || [];
+    return dst.length !== src.length || dst.some(p =>
+      !/^[0-9a-f]{64}$/i.test(String(p.sha || '')) ||
+      (isImage(p.ct) && !/^[0-9a-f]{64}$/i.test(String(p.thumb || ''))));
   }
 
   async function sha256hex(s){
@@ -1091,9 +1136,11 @@
     const sha = String((p && p.sha) || '');
     if(!id && sha && PC.encFileUrl){
       try{
-        const url = await PC.encFileUrl(sha, p.ct || 'application/octet-stream');
+        const previewSha = isImage(p.ct) && p.thumb ? p.thumb : sha;
+        const url = await PC.encFileUrl(previewSha,
+          previewSha === sha ? (p.ct || 'application/octet-stream') : 'image/jpeg');
         const blob = await fetch(url).then(r => r.blob());
-        return { url, blob, ct: p.ct || blob.type || '' };
+        return { url, blob, ct: p.ct || blob.type || '', preview: previewSha !== sha };
       }catch(_){ return { why: attLabel(p) + ' \u00b7 could not be opened from encrypted storage' }; }
     }
     if(!id) return { why: attLabel(p) + ' \u00b7 on your phone' };
@@ -1160,7 +1207,16 @@
       img.src = d.url;
       img.alt = p.name || 'Photo';
       // The app's own lightbox, so a photo in a text opens the way a photo in a post does.
-      img.onclick = () => { try{ PC.openLightbox(d.url, 'image'); }catch(_){ } };
+      img.onclick = async () => {
+        let url = d.url;
+        /* A remote thread initially holds only the thumbnail. Fetch/decrypt the original on intent,
+         * not on render; this is the bandwidth saving the separate preview exists to provide. */
+        if(d.preview && p.sha && PC.encFileUrl){
+          try{ url = await PC.encFileUrl(p.sha, p.ct || 'image/jpeg'); }
+          catch(_){ PC.toast('could not open the full picture'); return; }
+        }
+        try{ PC.openLightbox(url, 'image'); }catch(_){ }
+      };
       el.appendChild(img);
       return;
     }

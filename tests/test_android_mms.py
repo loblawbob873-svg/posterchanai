@@ -377,11 +377,30 @@ class MmsAttachmentsTravelAcrossClients(unittest.TestCase):
 
     def test_remote_clients_decrypt_the_attachment_hash(self):
         js = open(SMSJS, encoding="utf-8").read()
-        self.assertIn("PC.encFileUrl(sha", js)
+        self.assertIn("PC.encFileUrl(p.sha", js)
+
+    def test_threads_use_an_encrypted_thumbnail_until_the_picture_is_opened(self):
+        js = open(SMSJS, encoding="utf-8").read()
+        self.assertIn("createImageBitmap(d.blob)", js)
+        self.assertIn("body.att.push({ ct: p.ct, name: p.name, bytes: p.bytes, sha, thumb:", js)
+        self.assertIn("const previewSha = isImage(p.ct) && p.thumb ? p.thumb : sha", js)
+        self.assertIn("if(d.preview && p.sha && PC.encFileUrl)", js,
+                      "the full picture is not deferred until the thumbnail is tapped")
 
     def test_failed_upload_does_not_advance_past_a_hollow_message(self):
         js = open(SMSJS, encoding="utf-8").read()
         self.assertIn("throw new Error((d && d.why)", js)
+
+    def test_existing_body_only_archive_is_upgraded_not_skipped(self):
+        """The document can already exist from an older client while its MMS hashes do not.  That
+        is an incomplete message, not a duplicate: the handset must merge its provider ids and the
+        mirror/import paths must publish the repaired version."""
+        js = open(SMSJS, encoding="utf-8").read()
+        self.assertIn("function needsPartUpgrade", js)
+        self.assertGreaterEqual(js.count("needsPartUpgrade(r, old)"), 3,
+                                "one of read, mirror or history import still skips hollow MMS")
+        self.assertIn("Object.assign({}, old || {}, local)", js,
+                      "the phone's provider attachment ids are not merged into the archived body")
 
 
 if __name__ == "__main__":
