@@ -283,6 +283,18 @@ def test_the_signer_refuses_a_read_only_pairing():
     assert "cfg.mode === 'full' && cfg.sk" in src
 
 
+def test_posterchan_signer_pairing_delegates_without_exporting_the_nsec():
+    """A desktop authenticated by PosterChan Signer must offer a useful Firefox pairing, but the
+    payload may carry only the NIP-46 app credential—not pretend it found the account secret."""
+    vault = open(os.path.join(ROOT, "static", "js", "client", "vault.js"), encoding="utf-8").read()
+    assert "ME().mode === 'local' || ME().mode === 'nip46'" in vault
+    assert "payload.nip46" in vault and "remotePk:s.remotePk" in vault
+    bg = _src("background.js")
+    assert "N46.rpc('sign_event'" in bg
+    assert "N46.rpc('nip44_encrypt'" in bg and "N46.rpc('nip44_decrypt'" in bg
+    assert "payload.nip46.sk && payload.nip46.remotePk" in bg
+
+
 def test_permissions_can_be_reviewed_and_revoked():
     """A remembered allow signs with no window forever; unpairing must not be the only way out."""
     assert "case 'nostr-forget'" in _src("background.js")

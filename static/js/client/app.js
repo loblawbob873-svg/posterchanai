@@ -24702,6 +24702,7 @@
           ${CFG.gif_enabled?`<button class="mini" id="dm-gif" title="GIF"><svg class="ic b-ic" aria-hidden="true"><use href="#i-film"></use></svg></button>`:''}
           <input type="file" id="dm-file" multiple hidden>
           <textarea class="input dm-in" id="dm-in" rows="1" placeholder="Message…">${enc(_dmDrafts.get(pk)||'')}</textarea>
+          <span class="dm-sendstate" id="dm-sendstate" role="status" aria-live="polite"></span>
           <button class="dm-sendbtn" id="dm-send" title="Send" aria-label="Send"><svg class="ic x-ic" aria-hidden="true"><use href="#i-send"></use></svg></button>
         </div></div>`;
     // Back must do something on DESKTOP too. It only removed `has-active`, which is what shows the
@@ -24752,6 +24753,12 @@
     { const g=$('#dm-gif'); if(g) g.onclick=dmPickGif(inp); }
     let _dmSending=false;
     const send=async()=>{ if(_dmSending) return; const t=inp.value.trim(); if(!t)return; _dmSending=true;   // guard: a 2nd Enter before the send resolves must not send twice
+      /* SIGNING IS REMOTE for PosterChan Signer logins and may take seconds. Show that fact on the
+       * very first frame; an unchanged icon made a healthy signer round-trip indistinguishable from
+       * a dead click, so people pressed Send repeatedly and waited with no idea what was happening. */
+      const busyBtn=$('#dm-send'), busyState=$('#dm-sendstate');
+      if(busyBtn){ busyBtn.disabled=true; busyBtn.classList.add('busy'); busyBtn.title='Waiting for PosterChan Signer'; busyBtn.setAttribute('aria-label','Waiting for PosterChan Signer'); }
+      if(busyState) busyState.textContent=(typeof signer!=='undefined' && signer && signer.mode==='local')?'Sending…':'Waiting for signer…';
       // A reply goes out as a quote block the receiving client already renders, followed by a blank
       // line and the actual message.
       const _body = _dmReply && _dmReply.text
@@ -24772,7 +24779,10 @@
         _dmDrafts.set(pk, t);
         const box=document.getElementById('dm-in'); if(box && !box.value){ box.value=t; box.dispatchEvent(new Event('dm-reset')); }
         toast('dm failed: '+((e&&e.message)||e)); }
-      finally{ _dmSending=false; } };
+      finally{ _dmSending=false;
+        if(busyBtn && busyBtn.isConnected){ busyBtn.disabled=false; busyBtn.classList.remove('busy'); busyBtn.title='Send'; busyBtn.setAttribute('aria-label','Send'); }
+        if(busyState && busyState.isConnected) busyState.textContent='';
+      } };
     attachEmojiAutocomplete($('#dm-in'));   // `:shortcode` suggestions in DMs too (the rumor carries the tags)
     $('#dm-send').onclick=send; $('#dm-in').onkeydown=e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } };
     // One row that GROWS to a cap (messenger behaviour), and a send button that only lights up when

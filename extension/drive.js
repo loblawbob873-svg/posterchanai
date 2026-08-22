@@ -30,7 +30,7 @@
 
   /* The account's master key, unwrapped. `/client/files-index` answers a POST proving ownership with a
    * signed kind-27235, and returns a pointer whose `mk` is the key NIP-44'd to the account itself. */
-  async function masterKey(cfg, skBytes, sign) {
+  async function masterKey(cfg, skBytes, sign, decryptSelf) {
     const auth = await sign(27235, 'files-index', [['p', cfg.pubkey]]);
     const r = await fetch(cfg.api + '/client/files-index', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -42,8 +42,10 @@
     if (!wrapped)
       throw new Error('this account has no encrypted drive yet — open Files in PosterChan once, then try again');
     const T = NT();
-    const ck = T.nip44.v2.utils.getConversationKey(skBytes, cfg.pubkey);
-    const mk = JSON.parse(T.nip44.v2.decrypt(wrapped, ck)).k;
+    const plain = decryptSelf
+      ? await decryptSelf(wrapped)
+      : T.nip44.v2.decrypt(wrapped, T.nip44.v2.utils.getConversationKey(skBytes, cfg.pubkey));
+    const mk = JSON.parse(plain).k;
     const raw = _u8(mk);
     if (raw.length !== 32) throw new Error('the drive key came back the wrong size — nothing was changed');
     return raw;

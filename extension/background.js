@@ -45,7 +45,7 @@ const L_BM = (BM && BM.L_BM) || 'pcai-bm';
 
 // ---------------------------------------------------------------- state
 
-let cfg = null;          // { pubkey, key(b64), relay, mode, sk? }
+let cfg = null;          // { pubkey, key(b64), relay, mode, sk? or nip46? }
 let key = null;          // raw Uint8Array(32)
 let items = new Map();   // id -> item
 /* ONE SOCKET PER RELAY. The vault is published to every relay the app is connected to, so reading
@@ -276,14 +276,14 @@ function waitOpen(ms){
 }
 
 async function publishBookmark(syncId, item){
-  if(!(cfg && cfg.mode === 'full' && cfg.sk)) return false;      // read-only: receive only
+  if(!((cfg && cfg.mode === 'full' && cfg.sk) || (cfg && cfg.mode === 'full' && cfg.nip46))) return false;
   if(!await waitOpen()) return false;                            // nothing open, and none arrived
   const at = Math.floor(Date.now()/1000);
   try{
     // A tombstone is an EMPTY content, never an absent event: "I don't have it" and "it was deleted"
     // are different facts, and only the second may remove a bookmark on another device.
     const content = item ? await V.seal(key, item) : '';
-    const ev = finalize({ kind: KIND, created_at: at, content,
+    const ev = await finalize({ kind: KIND, created_at: at, content,
                           tags: [['d', D_BM + syncId], ['l', L_BM]] });
     return await publishAndWait(ev);
   }catch(_){ return false; }
@@ -303,13 +303,13 @@ async function initBookmarks(){
       B: B,
       open: (ct) => V.open(key, ct),
       publish: publishBookmark,
-      isFull: () => !!(cfg && cfg.mode === 'full' && cfg.sk),
+      isFull: () => _hasSigner(),
       /* WHY a merge sent nothing, in words, for the popup to show. "Nothing happened" sent me
        * guessing at the pairing mode and asserting it as fact when the real cause was a socket that
        * had not opened yet; the software knows which it is and should say so. */
       why: () => !cfg ? 'not paired'
                 : !B.bookmarks ? 'the browser has not granted the bookmarks permission to this extension'
-                : !(cfg.mode === 'full' && cfg.sk) ? 'this pairing is read-only — it has no signing key'
+                : !_hasSigner() ? 'this pairing is read-only — it has no signer access'
                 : !_anyOpen() ? 'no relay connection'
                 : '',
     });
@@ -364,10 +364,10 @@ async function saveItem(item, full){
   item._at = item.updated;
   items.set(item.id, item);
   await saveItems();
-  if(cfg.mode === 'full' && cfg.sk){
+  if(_hasSigner()){
     try{
       const ct = await V.seal(key, stripLocal(item));
-      const ev = finalize({ kind: KIND, created_at: item.updated, content: ct,
+      const ev = await finalize({ kind: KIND, created_at: item.updated, content: ct,
                             tags: [['d', D_ITEM + item.id], ['l', L_TAG]] });
       /* Wait for the relay's OK before calling it published. send() is a silent no-op unless the
        * socket is open — and right after an event-page wake it never is — so reporting success
@@ -400,7 +400,58 @@ function publishAndWait(ev, ms){
 
 function stripLocal(it){ const o = Object.assign({}, it); delete o._at; delete o._match; return o; }
 
-function finalize(tmpl){
+function _hasSigner(){ return !!(cfg && cfg.mode === 'full' && (cfg.sk || cfg.nip46)); }
+
+/* A full pairing from a PosterChan Signer carries the NIP-46 APP credential, not the account nsec.
+ * It is safe to store only to the same extent as any signer pairing: possession lets this extension
+ * request signatures, while the signer still owns policy/revocation and the identity key never
+ * enters Firefox. The desktop need not stay open; both are clients of the signer relay. */
+const N46 = {
+  sockets:[], pending:new Map(), opening:null,
+  async open(){
+    if(this.sockets.some(w=>w.readyState===1)) return;
+    if(this.opening) return this.opening;
+    const n=cfg && cfg.nip46; if(!n) throw new Error('no delegated signer session');
+    const urls=_uniqRelays([...(n.relays||[]), n.relay||'']);
+    this.opening=new Promise((resolve,reject)=>{
+      let left=urls.length, won=false; const fail=()=>{ if(--left<=0&&!won) reject(new Error('cannot reach PosterChan Signer')); };
+      if(!left) return reject(new Error('the signer pairing has no relay'));
+      for(const url of urls){ let w; try{ w=new WebSocket(url); }catch(_){ fail(); continue; }
+        w.onerror=fail; w.onclose=()=>{ this.sockets=this.sockets.filter(x=>x!==w); };
+        w.onopen=()=>{ this.sockets.push(w); this._subscribe(w); if(!won){ won=true; resolve(); } };
+        w.onmessage=e=>this._recv(e.data);
+      }
+    }).finally(()=>{ this.opening=null; });
+    return this.opening;
+  },
+  _appSk(){ const s=cfg.nip46.sk; return /^[0-9a-f]{64}$/i.test(s)?V.fromHex(s):NT().nip19.decode(s).data; },
+  _appPk(){ return NT().getPublicKey(this._appSk()); },
+  _subscribe(w){ try{ w.send(JSON.stringify(['REQ','pcn46',{kinds:[24133],'#p':[this._appPk()],since:Math.floor(Date.now()/1000)-300}])); }catch(_){} },
+  async _crypt(op, peer, text){ const T=NT(), sk=this._appSk();
+    if(op==='nip44') return T.nip44.v2.encrypt(text,T.nip44.v2.utils.getConversationKey(sk,peer));
+    return T.nip04.encrypt(sk,peer,text); },
+  async _decrypt(peer, ct){ const T=NT(), sk=this._appSk(), ops=/\?iv=/.test(ct)?['nip04','nip44']:['nip44','nip04'];
+    for(const op of ops) try{ return op==='nip44'
+      ? T.nip44.v2.decrypt(ct,T.nip44.v2.utils.getConversationKey(sk,peer))
+      : await T.nip04.decrypt(sk,peer,ct); }catch(_){} throw new Error('could not read signer response'); },
+  async _recv(raw){ let m; try{m=JSON.parse(raw);}catch(_){return;} if(m[0]!=='EVENT'||m[1]!=='pcn46'||!m[2])return;
+    let p; try{p=JSON.parse(await this._decrypt(m[2].pubkey,m[2].content));}catch(_){return;}
+    const q=this.pending.get(p.id); if(!q)return; this.pending.delete(p.id); clearTimeout(q.timer);
+    p.error?q.reject(new Error(p.error)):q.resolve(p.result); },
+  async rpc(method, params){ await this.open(); const n=cfg.nip46, id='x'+randomId(), body=JSON.stringify({id,method,params});
+    const enc=n.enc==='nip44'?'nip44':'nip04', content=await this._crypt(enc,n.remotePk,body);
+    const ev=NT().finalizeEvent({kind:24133,created_at:Math.floor(Date.now()/1000),tags:[['p',n.remotePk]],content},this._appSk());
+    return new Promise((resolve,reject)=>{ const timer=setTimeout(()=>{this.pending.delete(id);reject(new Error('PosterChan Signer timed out'));},120000);
+      this.pending.set(id,{resolve,reject,timer}); let sent=0; for(const w of this.sockets)if(w.readyState===1)try{w.send(JSON.stringify(['EVENT',ev]));sent++;}catch(_){}
+      if(!sent){clearTimeout(timer);this.pending.delete(id);reject(new Error('cannot reach PosterChan Signer'));}
+    }); },
+  sign: async tmpl=>JSON.parse(await N46.rpc('sign_event',[JSON.stringify(tmpl)])),
+  enc: (peer,text)=>N46.rpc('nip44_encrypt',[peer,text]), dec:(peer,ct)=>N46.rpc('nip44_decrypt',[peer,ct]),
+  enc04:(peer,text)=>N46.rpc('nip04_encrypt',[peer,text]), dec04:(peer,ct)=>N46.rpc('nip04_decrypt',[peer,ct]),
+};
+
+async function finalize(tmpl){
+  if(cfg && cfg.nip46) return N46.sign(tmpl);
   const T = NT();
   const sk = /^[0-9a-f]{64}$/i.test(cfg.sk) ? V.fromHex(cfg.sk) : T.nip19.decode(cfg.sk).data;
   return T.finalizeEvent(tmpl, sk);
@@ -637,7 +688,7 @@ async function _contentHash(s){
 
 async function sharePost(msg){
   if(!cfg || !key) return { ok:false, error:'PosterChan Passwords is not paired' };
-  if(!(cfg.mode === 'full' && cfg.sk))
+  if(!((cfg.mode === 'full' && cfg.sk) || (cfg.mode === 'full' && cfg.nip46)))
     return { ok:false, error:'this browser is paired READ-ONLY, so it has no signing key and cannot ' +
                             'post. Re-pair with full access from PosterChan → Passwords → Pair a device.' };
   const content = String((msg && msg.text) || '').replace(/\s+$/, '').slice(0, 8000);
@@ -649,7 +700,7 @@ async function sharePost(msg){
     return { ok:false, duplicate:true, nevent: dup.nevent || '', at: dup.at || 0,
              error:'you have already posted this exact text — edit it to post it again' };
   let ev;
-  try{ ev = finalize({ kind: 1, created_at: Math.floor(Date.now()/1000), content,
+  try{ ev = await finalize({ kind: 1, created_at: Math.floor(Date.now()/1000), content,
                        tags: _shareTags(content, msg && msg.url) }); }
   catch(e){ return { ok:false, error:'could not sign it: ' + ((e && e.message) || 'bad key') }; }
   const r = await broadcast(ev);
@@ -711,7 +762,7 @@ const L_NOTE = 'pcai-notes';
  * (kind, content, tags) triple, and there is no `signEvent` function in this file — that name is a
  * NIP-07 METHOD in the permissions Set, which is exactly the kind of thing that looks callable and
  * is not. */
-function _signAuth(kind, content, tags){
+async function _signAuth(kind, content, tags){
   return finalize({ kind, content: String(content || ''), created_at: Math.floor(Date.now()/1000),
                     tags: _cleanTags(tags) });
 }
@@ -732,7 +783,7 @@ async function savePage(msg, tabId){
 
 async function _savePage(msg, tabId){
   if(!cfg || !key) return { ok:false, error:'PosterChan Passwords is not paired' };
-  if(!(cfg.mode === 'full' && cfg.sk))
+  if(!((cfg.mode === 'full' && cfg.sk) || (cfg.mode === 'full' && cfg.nip46)))
     return { ok:false, error:'this browser is paired READ-ONLY, so it holds no key to encrypt a note with. ' +
                             'Re-pair with full access from PosterChan → Passwords → Pair a device.' };
   if(!cfg.api)
@@ -749,7 +800,8 @@ async function _savePage(msg, tabId){
   let sha;
   try{
     step('encrypting…');
-    const mk = await self.PCDrive.masterKey(cfg, _skBytes(), _signAuth);
+    const mk = await self.PCDrive.masterKey(cfg, cfg.sk ? _skBytes() : null, _signAuth,
+      cfg.nip46 ? (ct => N46.dec(cfg.pubkey, ct)) : null);
     const sealed = await self.PCDrive.seal(mk, bytes);
     step('uploading…');
     ({ sha } = await self.PCDrive.upload(cfg, sealed, _signAuth));
@@ -771,8 +823,9 @@ async function _savePage(msg, tabId){
   let ev;
   try{
     const T = NT();
-    const ck = T.nip44.v2.utils.getConversationKey(_skBytes(), cfg.pubkey);
-    ev = finalize({ kind: NOTE_KIND, created_at: at, content: T.nip44.v2.encrypt(JSON.stringify(note), ck),
+    const content = cfg.nip46 ? await N46.enc(cfg.pubkey, JSON.stringify(note))
+      : T.nip44.v2.encrypt(JSON.stringify(note), T.nip44.v2.utils.getConversationKey(_skBytes(), cfg.pubkey));
+    ev = await finalize({ kind: NOTE_KIND, created_at: at, content,
                     tags: [['d', D_NOTE + note.id], ['l', L_NOTE]] });
   }catch(e){ return { ok:false, error:'could not encrypt the note: ' + ((e && e.message) || 'bad key') }; }
   const r = await broadcast(ev);
@@ -785,7 +838,7 @@ async function _savePage(msg, tabId){
 
 async function saveNote(msg){
   if(!cfg || !key) return { ok:false, error:'PosterChan Passwords is not paired' };
-  if(!(cfg.mode === 'full' && cfg.sk))
+  if(!((cfg.mode === 'full' && cfg.sk) || (cfg.mode === 'full' && cfg.nip46)))
     return { ok:false, error:'this browser is paired READ-ONLY, so it holds no key to encrypt a note ' +
                             'with. Re-pair with full access from PosterChan → Passwords → Pair a device.' };
   /* Capped by what NIP-44 WILL ACTUALLY ENCRYPT, measured, not guessed.
@@ -816,8 +869,9 @@ async function saveNote(msg){
   let ev;
   try{
     const T = NT();
-    const ck = T.nip44.v2.utils.getConversationKey(_skBytes(), cfg.pubkey);
-    ev = finalize({ kind: NOTE_KIND, created_at: at, content: T.nip44.v2.encrypt(JSON.stringify(note), ck),
+    const content = cfg.nip46 ? await N46.enc(cfg.pubkey, JSON.stringify(note))
+      : T.nip44.v2.encrypt(JSON.stringify(note), T.nip44.v2.utils.getConversationKey(_skBytes(), cfg.pubkey));
+    ev = await finalize({ kind: NOTE_KIND, created_at: at, content,
                     tags: [['d', D_NOTE + note.id], ['l', L_NOTE]] });
   }catch(e){ return { ok:false, error:'could not encrypt it: ' + ((e && e.message) || 'bad key') }; }
   /* THE SAME RELAYS A POST GOES TO, which includes the ones the PAIRING carries.
@@ -897,7 +951,7 @@ async function handleNostr(msg, sender){
   const params = msg.params || {};
   if(!NOSTR_METHODS.has(method)) return { ok:false, error:'unsupported method' };
   const needsKey = method !== 'getPublicKey' && method !== 'getRelays';
-  if(needsKey && !(cfg.mode === 'full' && cfg.sk))
+  if(needsKey && !((cfg.mode === 'full' && cfg.sk) || (cfg.mode === 'full' && cfg.nip46)))
     return { ok:false, error:'this browser is paired READ-ONLY, so it cannot sign. Re-pair with full access from PosterChan → Passwords → Pair a device.' };
 
   let kind = null;
@@ -910,7 +964,7 @@ async function handleNostr(msg, sender){
 
   try{
     const T = NT();
-    const sk = _skBytes();
+    const sk = cfg.sk ? _skBytes() : null;
     switch(method){
       case 'getPublicKey': return { ok:true, result: cfg.pubkey };
       case 'getRelays': {
@@ -930,17 +984,15 @@ async function handleNostr(msg, sender){
         if(!Number.isFinite(at) || Math.abs(at - now) > 900) at = now;
         const ev = { kind, created_at: Math.floor(at), tags: _cleanTags(src.tags),
                      content: String(src.content == null ? '' : src.content) };
-        return { ok:true, result: T.finalizeEvent(ev, sk) };
+        return { ok:true, result: await finalize(ev) };
       }
-      case 'nip04.encrypt': return { ok:true, result: await T.nip04.encrypt(sk, params.pubkey, params.plaintext) };
-      case 'nip04.decrypt': return { ok:true, result: await T.nip04.decrypt(sk, params.pubkey, params.ciphertext) };
+      case 'nip04.encrypt': return { ok:true, result: cfg.nip46 ? await N46.enc04(params.pubkey, params.plaintext) : await T.nip04.encrypt(sk, params.pubkey, params.plaintext) };
+      case 'nip04.decrypt': return { ok:true, result: cfg.nip46 ? await N46.dec04(params.pubkey, params.ciphertext) : await T.nip04.decrypt(sk, params.pubkey, params.ciphertext) };
       case 'nip44.encrypt': {
-        const ck = T.nip44.v2.utils.getConversationKey(sk, params.pubkey);
-        return { ok:true, result: T.nip44.v2.encrypt(params.plaintext, ck) };
+        return { ok:true, result: cfg.nip46 ? await N46.enc(params.pubkey, params.plaintext) : T.nip44.v2.encrypt(params.plaintext, T.nip44.v2.utils.getConversationKey(sk, params.pubkey)) };
       }
       case 'nip44.decrypt': {
-        const ck = T.nip44.v2.utils.getConversationKey(sk, params.pubkey);
-        return { ok:true, result: T.nip44.v2.decrypt(params.ciphertext, ck) };
+        return { ok:true, result: cfg.nip46 ? await N46.dec(params.pubkey, params.ciphertext) : T.nip44.v2.decrypt(params.ciphertext, T.nip44.v2.utils.getConversationKey(sk, params.pubkey)) };
       }
       default: return { ok:false, error:'unsupported method ' + method };
     }
@@ -1078,14 +1130,15 @@ async function pair(code){
   catch(_){ throw new Error('that pairing code is not readable — copy it again from the app'); }
   if(!payload || payload.t !== 'pcvault' || !payload.pubkey || !payload.key)
     throw new Error('that is not a PosterChan pairing code');
-  if(payload.mode === 'full' && !payload.sk)
-    throw new Error('that code says "full" but carries no signing key — pair again');
+  if(payload.mode === 'full' && !payload.sk && !(payload.nip46 && payload.nip46.sk && payload.nip46.remotePk))
+    throw new Error('that code says "full" but carries no signer session — pair again');
   if(!payload.relay && !(payload.relays || []).length)
     throw new Error('that pairing code carries no relay address, so this browser could never sync. ' +
                     'Check the app has a relay configured and pair again.');
   cfg = { pubkey: payload.pubkey, key: payload.key, relay: payload.relay || '',
           relays: Array.isArray(payload.relays) ? payload.relays.filter(Boolean) : [],
           mode: payload.mode === 'full' ? 'full' : 'ro', sk: payload.sk || '',
+          nip46: payload.nip46 || null,
           /* THE INSTANCE, and the only thing in here this extension ever makes an HTTP request to.
            *
            * Everything else is relay-only on purpose. Saving a PAGE needs the encrypted drive — a

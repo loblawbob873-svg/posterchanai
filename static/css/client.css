@@ -5156,6 +5156,11 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
   background:var(--panel2);color:var(--muted);font-size:17px;cursor:pointer;transition:.15s}
 .dm-sendbtn.on{background:linear-gradient(135deg,var(--neon),var(--neon2));color:#04121a;
   border-color:transparent;box-shadow:var(--glow-cy)}
+.dm-sendstate{flex:0 1 auto;max-width:120px;color:var(--neon);font-size:11px;line-height:1.15;
+  text-align:end;white-space:normal}
+.dm-sendbtn.busy{opacity:.9;border-color:var(--neon);cursor:wait}
+.dm-sendbtn.busy .ic{animation:dm-send-spin .85s linear infinite}
+@keyframes dm-send-spin{to{transform:rotate(360deg)}}
 .dm-row .mini{flex:0 0 auto;width:40px;height:40px}
 /* 🔒 attachment encryption, off by default — it has to read as OFF at a glance, because the whole
    point is that the user chose it for this file. Dimmed when off, lit amber when on. */

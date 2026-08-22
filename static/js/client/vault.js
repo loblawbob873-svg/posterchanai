@@ -1429,7 +1429,7 @@
    *               would produce a pairing that silently can't save.
    */
   function openPair(){
-    const canFull = ME() && ME().mode === 'local';
+    const canFull = ME() && (ME().mode === 'local' || ME().mode === 'nip46');
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-link"></use></svg>Pair a device</h3>
       <div class="muted small">For the PosterChan browser add-on, or another browser. The code below
         contains the key that decrypts your passwords — treat it like the passwords themselves.</div>
@@ -1442,8 +1442,10 @@
           saved in the browser wait for this app to publish them. Cannot post as you.</span></label>
         <label class="nf-opt${canFull?'':' pv-dim'}"><input type="radio" name="pv-mode" value="full" ${canFull?'':'disabled'}>
           <b>Full</b><span class="muted small"> — also saves new logins straight from the browser.
-          This hands over your signing key: that browser can then post and read DMs as you.
-          ${canFull?'':'<b>Unavailable:</b> you’re signed in with an external signer, so this device has no key to hand over.'}</span></label>
+          ${ME() && ME().mode === 'nip46'
+            ? 'Signing requests go to your PosterChan Signer; your account key stays there.'
+            : 'This hands over your signing key: that browser can then post and read DMs as you.'}
+          ${canFull?'':'<b>Unavailable:</b> this signer cannot delegate a session to the browser.'}</span></label>
       </div>
       <div id="pv-pair-out"></div>
       <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px">
@@ -1485,19 +1487,22 @@
                             // 404s on the only screen it is ever opened from.
                             media: (PC.mediaServer && PC.mediaServer()) || '' };
           if(mode === 'full'){
-            // Only a LOCAL login has a key to give. nip07/nip46/nip55 hold it in a signer that never
-            // hands it over — which is the point of them — so there is nothing to pair, and the
-            // radio for it is disabled above rather than producing a pairing that silently can't save.
             const s = (window.Session && window.Session.load && window.Session.load()) || null;
             const sk = (s && s.mode === 'local' && s.sk) || '';
-            if(!sk){ out.innerHTML = '<div class="nt-warn small">this device has no signing key to hand over — pair read-only instead</div>'; return; }
-            payload.sk = sk;
+            if(sk) payload.sk = sk;
+            else if(s && s.mode === 'nip46' && s.sk && s.remotePk){
+              /* This is the APP'S ephemeral NIP-46 key, never the account nsec. The extension uses
+               * it to ask the same PosterChan Signer directly, including after this window closes. */
+              payload.nip46 = { sk:s.sk, remotePk:s.remotePk, userPk:s.userPk || ME().pubkey,
+                                relay:s.relay || '', relays:Array.isArray(s.relays)?s.relays:[],
+                                enc:s.enc === 'nip44' ? 'nip44' : 'nip04' };
+            } else { out.innerHTML = '<div class="nt-warn small">this signer cannot delegate a browser session — pair read-only instead</div>'; return; }
           }
           const code = V().toB64(new TextEncoder().encode(JSON.stringify(payload)));
           out.innerHTML = `<div class="pv-pair-code"><textarea class="input" id="pv-code" rows="4" readonly>${enc(code)}</textarea></div>
             <div class="pv-pair-copy"><button class="btn btn-neon small" id="pv-code-copy">Copy code</button></div>
             <div class="muted small">Paste this into the extension’s Pair screen. Anyone who has it has your
-              ${mode==='full'?'passwords AND your identity':'passwords'} — don’t send it over chat.</div>`;
+              ${mode==='full'?(payload.nip46?'passwords and access to request signatures from your Signer':'passwords AND your identity'):'passwords'} — don’t send it over chat.</div>`;
           $('#pv-code-copy', root).onclick = () => copy(code, 'pairing code copied', 300000);
           const ta = $('#pv-code', root);
           // Selected on sight: this is a one-shot value that has to leave this window, and requiring

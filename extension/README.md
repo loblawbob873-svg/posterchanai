@@ -125,11 +125,12 @@ add-on's popup.
 | | reads your logins | saves a new login | if the device is stolen |
 |---|---|---|---|
 | **read-only** (default) | yes | queued until the app publishes it | your passwords |
-| **full** | yes | immediately, on its own | your passwords **and** your identity |
+| **full** | yes | immediately, through your local key or PosterChan Signer | your passwords and signing access |
 
-The code carries the key that decrypts your passwords — **don't send it over chat.** Full access
-hands over a signing key, so it's only offered when the device you're pairing from actually holds
-one; a NIP-07/NIP-46/Amber login has nothing to give and the option is disabled rather than creating
+The code carries the key that decrypts your passwords — **don't send it over chat.** With a local
+login, full access also carries the signing key. With PosterChan Signer (NIP-46), it carries a
+delegated client session instead: Firefox asks Signer directly and the account `nsec` never leaves
+Signer. Other external signers that cannot delegate remain read-only rather than creating
 a pairing that silently can't save.
 
 If sync does nothing after pairing, check **Relays** in the popup — a pairing code that carried an
