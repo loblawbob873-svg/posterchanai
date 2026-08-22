@@ -12,17 +12,6 @@
 [ -n "$SWAYSOCK" ] || SWAYSOCK=$(ls /run/user/$(id -u)/sway-ipc.*.sock 2>/dev/null | head -1)
 export SWAYSOCK
 
-# Sway starts forced XWayland and its exec commands concurrently. Chromium uses Wayland, but
-# Electron's GTK integration still connects to DISPLAY during BrowserWindow construction. If that
-# one connection wins the race, GTK aborts and Sway remains a healthy black screen forever.
-if [ -n "$DISPLAY" ]; then
-  i=0
-  while [ $i -lt 100 ]; do
-    xset q >/dev/null 2>&1 && break
-    i=$((i + 1)); sleep 0.1
-  done
-fi
-
 # A STALE SINGLE-INSTANCE LOCK IS A BLACK SCREEN FOREVER, and this is the bug that proves the
 # shell needs a launcher at all rather than a bare exec line.
 #
@@ -45,14 +34,11 @@ if [ -L "$LOCK" ]; then
     esac
 fi
 
-# This Electron build cannot create GTK's style context in a Wayland-only process: Chromium starts,
-# GTK aborts with "Can't create a GtkStyleContext without a display connection", and Sway stays
-# black. Run the OS shell through the XWayland we forced above; the post-map rules below deliberately
-# handle its late WM_CLASS. Ordinary desktop launches still use automatic Ozone selection.
-DESKTOP=/usr/local/bin/posterchan
-[ -x "$DESKTOP" ] || DESKTOP=/opt/posterchan/posterchan-desktop
-ELECTRON_OZONE_PLATFORM_HINT=x11 APPDIR=/opt/posterchan \
-  "$DESKTOP" --shell --ozone-platform=x11 &
+# Proven on the booted reference LiveOS: let the packaged wrapper's `auto` Ozone choice select the
+# backend. Forcing this build through X11 produced a healthy Sway session with no mapped shell — the
+# repeated black-screen ISO. The placement loop below handles either app_id or late WM_CLASS, so it
+# does not need to dictate the rendering backend.
+/usr/local/bin/posterchan --shell &
 
 # Up to 60s: an Electron cold start on a slow disk is not a failure. Polling rather than
 # subscribing, because this must work before anything else in the session is up.
