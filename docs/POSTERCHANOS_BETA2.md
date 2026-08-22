@@ -15,3 +15,6 @@ Deferred from the Beta 1 stabilization cutoff:
   locked.
 - Put a visible Edit button on every VM and open a polished graphical editor for CPU, memory,
   storage, networking, BIOS/EFI, graphics, sound, USB, boot order, and other attached hardware.
+- Simplify the VM editor around a guided Basic view (name, OS, CPU, memory, disk, network and
+  firmware), put uncommon devices and raw libvirt controls behind an Advanced section, use plain
+  labels instead of empty icon boxes, and keep Save, Cancel and destructive actions unambiguous.

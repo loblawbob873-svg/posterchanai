@@ -57,10 +57,16 @@ class VmBackend(unittest.TestCase):
     def test_gaming_uses_a_captured_relative_mouse(self):
         src = (ROOT / "desktop" / "vm.js").read_text()
         self.assertIn('<input type="mouse" bus="ps2"/>', src)
+        self.assertIn('<input type="tablet" bus="usb"/>', src)
+        create = src[src.index('async function create('):src.index('async function view(')]
+        self.assertNotIn('<input type="mouse" bus="ps2"/>', create,
+                         "new VMs must not capture the pointer merely when it enters the viewer")
+        self.assertIn('<input type="tablet" bus="usb"/>', create)
         self.assertIn("async function gamingMouse", src)
         ui = (ROOT / "static/js/client/os.js").read_text()
         self.assertIn("data-vme-mouse", ui)
         self.assertIn("Ctrl+Alt releases it", ui)
+        self.assertIn("Mouse capture: Off", ui)
 
     def test_powered_off_vm_hardware_is_editable_in_the_ui(self):
         ui = (ROOT / "static/js/client/os.js").read_text()

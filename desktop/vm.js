@@ -141,7 +141,9 @@ async function create(opts){
       <interface type="user"><model type="virtio"/></interface>
       <graphics type="spice" autoport="yes"><listen type="none"/></graphics><video><model type="virtio"/></video>
       <channel type="spicevmc"><target type="virtio" name="com.redhat.spice.0"/></channel>
-      <input type="mouse" bus="ps2"/><input type="keyboard" bus="usb"/><sound model="ich9"/><audio id="1" type="spice"/>${tpm}
+      <!-- Absolute input is the safe desktop default: entering the viewer does not imprison the
+           host pointer. Relative PS/2 capture remains an explicit gaming-mode choice. -->
+      <input type="tablet" bus="usb"/><input type="keyboard" bus="usb"/><sound model="ich9"/><audio id="1" type="spice"/>${tpm}
     </devices></domain>`;
   const xf=path.join(dir,'domain.xml'); await fs.promises.writeFile(xf,def,{mode:0o600});
   const d=await virsh(['define',xf],30000); if(!d.ok){ await fs.promises.rm(dir,{recursive:true,force:true}); return d; }

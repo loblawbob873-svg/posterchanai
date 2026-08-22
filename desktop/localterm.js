@@ -19,6 +19,7 @@
 'use strict';
 const { spawn } = require('child_process');
 const fs = require('fs');
+const posterfetch = require('./posterfetch.js');
 
 const MAX_SESSIONS = 8;      // a shell each for a person who has lost count is still not eight
 const sessions = new Map();  // id -> { proc, buf, seq, subscribers }
@@ -47,7 +48,10 @@ function start(opts) {
   });
 
   const id = String(nextId++);
-  const s = { id, proc, buf: '', seq: 0, subs: new Set(), alive: true, at: Date.now() };
+  /* The welcome is part of this tab's buffered output, so it appears exactly once even though the
+   * renderer attaches after start and can later reload/reconnect. */
+  const welcome = posterfetch.render(process.env);
+  const s = { id, proc, buf: welcome, seq: welcome.length, subs: new Set(), alive: true, at: Date.now() };
   sessions.set(id, s);
 
   const push = (chunk) => {
