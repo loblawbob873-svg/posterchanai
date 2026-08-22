@@ -106,6 +106,12 @@ public final class SyncStore {
 
     public String wrappedDriveKey() { return prefs().getString(K_MK, ""); }
 
+    /** Replace a cached key only with the value just read from the account's authoritative index. */
+    public void setWrappedDriveKey(String wrappedKey) {
+        if (wrappedKey == null || wrappedKey.isEmpty()) return;
+        prefs().edit().putString(K_MK, wrappedKey).commit();
+    }
+
     public String deviceName() { return prefs().getString(K_DEVICE, "this phone"); }
 
     public List<Folder> folders() {

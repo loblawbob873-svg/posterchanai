@@ -63,6 +63,48 @@ public final class SyncNet implements SyncIo.Net {
 
     public String pubkey() { return pub; }
 
+    /**
+     * The account's authoritative wrapped drive key.
+     *
+     * Native settings survive APK upgrades.  That is normally required for unattended sync, but it
+     * also means a losing key from an old first-pair race can wake before the WebView has pulled the
+     * server index and corrected it.  A sweep must therefore verify this value before it decrypts or
+     * publishes anything.  Failure is an error, never permission to keep using the cached value.
+     */
+    public String driveKey() throws IOException {
+        Map<String, Object> body = new LinkedHashMap<String, Object>();
+        body.put("pubkey", pub);
+        body.put("auth", Crypt.b64(SyncCrypto.utf8(
+                signedEvent(27235, "files-index", Arrays.asList(tag("p", pub))))));
+        HttpURLConnection c = open(apiBase + "/client/files-index", "POST", POST_TIMEOUT_MS);
+        try {
+            byte[] payload = SyncCrypto.utf8(Json.write(body));
+            c.setDoOutput(true);
+            c.setFixedLengthStreamingMode(payload.length);
+            c.setRequestProperty("Content-Type", "application/json");
+            OutputStream os = c.getOutputStream();
+            os.write(payload);
+            os.flush();
+            os.close();
+            int code = c.getResponseCode();
+            InputStream in = (code >= 200 && code < 300) ? c.getInputStream() : c.getErrorStream();
+            String text = in == null ? "" : new String(drain(in), "UTF-8");
+            Map<String, Object> j;
+            try { j = Json.obj(Json.parse(text)); }
+            catch (RuntimeException e) {
+                throw new IOException("the drive index answered something that is not JSON (" + code + ")");
+            }
+            if (code < 200 || code >= 300 || !Json.bool(j.get("ok"), false)) {
+                throw new IOException(Json.str(j.get("error"), "drive index " + code));
+            }
+            String key = Json.str(Json.obj(j.get("index")).get("mk"), "");
+            if (key.isEmpty()) throw new IOException("the account drive index has no key yet");
+            return key;
+        } finally {
+            c.disconnect();
+        }
+    }
+
     // ------------------------------------------------------------------------ signed events
 
     /**

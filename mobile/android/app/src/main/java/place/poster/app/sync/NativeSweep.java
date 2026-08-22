@@ -285,7 +285,13 @@ public final class NativeSweep {
         }
         try {
             SyncNet net = new SyncNet(store.apiBase(), store.mediaBase(), sec);
-            byte[] mk = SyncCrypto.unwrapMasterKey(sec, store.wrappedDriveKey());
+            /* Preferences survive an APK update, including a key that lost an old first-pair race.
+             * Verify the server's first-writer-wins value before reading OR writing a package.  If
+             * the server cannot answer, stop: using an unverified key can create another generation
+             * of perfectly intact blobs that no other device can open. */
+            String canonical = net.driveKey();
+            if (!canonical.equals(store.wrappedDriveKey())) store.setWrappedDriveKey(canonical);
+            byte[] mk = SyncCrypto.unwrapMasterKey(sec, canonical);
             sweep(ctx, store, f, sec, hash, stop, rep, net, mk, new SafFs(ctx, f.id));
         } catch (Throwable t) {
             rep.error = String.valueOf(t.getMessage() == null ? t : t.getMessage());

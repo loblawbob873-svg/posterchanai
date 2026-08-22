@@ -89,6 +89,8 @@ DRIVER = r"""
           // pass a test while disarming the guard in production.
           out = ("{\"ok\":false,\"error\":\"refused\",\"collapse\":true,\"old\":900,\"new\":3}")
                  .getBytes("UTF-8");
+        } else if (path.endsWith("/files-index")) {
+          out = "{\"ok\":true,\"index\":{\"mk\":\"canonical-wrapped-key\"}}".getBytes("UTF-8");
         } else if (path.endsWith("/sync-manifest")) {
           out = "{\"ok\":true,\"manifest\":{\"n\":2,\"sealed\":\"xx\"}}".getBytes("UTF-8");
         } else {
@@ -113,6 +115,7 @@ DRIVER = r"""
     results.put("got", new String(net.getBlob(storedSha), "UTF-8"));
     results.put("put", net.putBlob("hello blossom".getBytes("UTF-8")));
     results.put("put_expected", SyncCrypto.sha256hex("hello blossom".getBytes("UTF-8")));
+    results.put("drive_key", net.driveKey());
 
     java.util.Map<String,Object> read = net.manifest("Documents", null, false);
     results.put("read_ok", Json.bool(read.get("ok"), false));
@@ -169,6 +172,7 @@ def test_the_transfer_does_what_it_says(wire):
     assert r["got"] == "ciphertext-bytes"
     assert r["put"] == r["put_expected"], "the sha recorded is not the sha of what was sent"
     assert r["read_ok"] is True
+    assert r["drive_key"] == "canonical-wrapped-key"
 
 
 def test_present_is_not_enough_a_blob_on_its_way_out_is_uploaded_again(wire):
@@ -209,7 +213,8 @@ def test_this_nodes_own_verifier_accepts_the_phones_auth():
     from app.services.nostr import event as nostr_event
 
     w = _run()
-    posts = [q for q in w["requests"] if q["path"] == "/client/sync-manifest"]
+    posts = [q for q in w["requests"]
+             if q["path"] in ("/client/sync-manifest", "/client/files-index")]
     assert posts, "the sweep never posted a manifest"
     for q in posts:
         body = json.loads(q["body"])
