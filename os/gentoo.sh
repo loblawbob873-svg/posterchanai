@@ -137,7 +137,7 @@ EMERGE_DEFAULT_OPTS="--jobs 5 --getbinpkg "
 # zstd is GLOBAL, not per-package: the live CD build compresses its squashfs with it and
 # dracut needs to be able to read that back, so a kernel/initramfs built without the flag
 # fails at "zstd is not supported" — after the whole image has been built.
-USE_FLAGS=" flatpak dracut -webp -ladspa -gpm npm introspection lame systemd-boot dist-kernel luks cryptsetup kernel-install boot opus theora vpx kernel-install systemd firmware btrfs networkmanager zstd"
+USE_FLAGS=" flatpak dracut -webp -ladspa -gpm npm introspection lame systemd-boot dist-kernel luks cryptsetup kernel-install boot opus theora vpx kernel-install systemd firmware btrfs networkmanager zstd opengl vulkan"
 VIDEO_CARDS="intel amdgpu radeon radeonsi"
 #
 #PACKAGE CONFIGURATION
@@ -210,6 +210,7 @@ x11-misc/xdg-utils \
 media-video/pipewire media-video/wireplumber gui-libs/gtk media-fonts/noto media-fonts/noto-emoji \
 www-client/firefox-bin \
 games-util/steam-launcher gui-wm/gamescope games-util/game-device-udev-rules \
+media-libs/mesa media-libs/vulkan-loader dev-util/vulkan-tools \
 sys-apps/xdg-desktop-portal gui-libs/xdg-desktop-portal-wlr sys-apps/xdg-desktop-portal-gtk \
 media-video/obs-studio \
 sec-keys/openpgp-keys-gentoo-release dev-vcs/git \
@@ -1782,11 +1783,23 @@ installSteam() {
 	# the machine rather than a Flatpak runtime and that is the PosterChanOS policy.
 	# Do not patch systemd or replace Gentoo's os-release metadata to install a game launcher.
 	rm -f /etc/portage/patches/sys-apps/systemd/010-posterchanos-sbat-url.patch
+	# Steam/Proton still needs the real 32-bit graphics stack. A no-multilib profile cannot be made
+	# safe by appending ABI_X86 after the fact; stop with the actual reason instead of emerging a
+	# launcher whose games fail later. On a multilib profile, make both the loader and Mesa Vulkan
+	# support explicit rather than depending on today's Steam ebuild dependency choices.
+	if eselect profile show 2>/dev/null | grep -qi 'no-multilib'; then
+		echo "Steam requires a multilib Gentoo profile; this system is no-multilib."
+		return 1
+	fi
+	grep -Eq '^ABI_X86=.*[[:space:]\"]32([[:space:]\"]|$)' /etc/portage/make.conf 2>/dev/null || \
+		echo 'ABI_X86="64 32"' >>/etc/portage/make.conf
+	mkdir -p /etc/portage/package.use
+	printf '%s\n' 'media-libs/mesa vulkan' > /etc/portage/package.use/posterchan-steam
 	mkdir -p /etc/portage/package.license
 	echo 'games-util/steam-launcher steam' >/etc/portage/package.license/posterchan-steam
-	emerge --autounmask-write games-util/steam-launcher gui-wm/gamescope || true
+	emerge --autounmask-write games-util/steam-launcher gui-wm/gamescope media-libs/vulkan-loader dev-util/vulkan-tools || true
 	etc-update -q --automode -5
-	emerge games-util/steam-launcher gui-wm/gamescope
+	emerge games-util/steam-launcher gui-wm/gamescope media-libs/vulkan-loader dev-util/vulkan-tools
 }
 
 locale() {

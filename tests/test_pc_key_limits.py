@@ -71,8 +71,12 @@ class KeyLimits(unittest.TestCase):
 
     def test_the_helper_is_shipped_by_the_installer(self):
         cfg = open(SH, encoding="utf-8").read()
-        self.assertIn("pc-provision-user pc-shell-start pc-key", cfg,
+        helper_loop = re.search(r"for helper in ([^\n]+); do", cfg)
+        self.assertIsNotNone(helper_loop, "the installer has no support-helper copy loop")
+        self.assertIn("pc-key", helper_loop.group(1),
                       "pc-key is bound in the config but never copied to the machine")
+        self.assertIn('cp -f "$PCOS_TREE/bin/$helper"', cfg,
+                      "the packaged support tree is not copied into the installed system")
 
     def test_volume_and_brightness_work_with_the_screen_locked(self):
         """They are not secrets, and a laptop whose volume keys stop at the lock screen is one

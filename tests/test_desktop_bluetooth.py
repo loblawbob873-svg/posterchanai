@@ -17,7 +17,11 @@ class BluetoothBackend(unittest.TestCase):
         src = (ROOT / "os" / "gentoo.sh").read_text()
         self.assertIn("net-wireless/bluez", src)
         self.assertIn("media-video/pipewire sound-server bluetooth", src)
-        self.assertIn("SERVICES+=(sshd systemd-timesyncd libvirtd bluetooth", src)
+        services = next(line for line in src.splitlines() if line.startswith("SERVICES+=("))
+        self.assertIn("bluetooth", services)
+        # SSH is installed for recovery, but a new workstation must not expose the daemon until its
+        # administrator explicitly enables it.
+        self.assertNotIn("sshd", services)
 
     def test_existing_install_gets_bluez_and_a_running_service(self):
         src = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()

@@ -609,7 +609,8 @@ class PosterChanOSProfile(unittest.TestCase):
         """The regular PosterChanOS ISO is a gaming desktop, so native Steam, Gamescope and game
         controller rules must be installed by the normal package pass."""
         for atom in ("games-util/steam-launcher", "gui-wm/gamescope",
-                     "games-util/game-device-udev-rules"):
+                     "games-util/game-device-udev-rules", "media-libs/mesa",
+                     "media-libs/vulkan-loader", "dev-util/vulkan-tools"):
             self.assertIn(atom, self.pkgs, f"{atom} is missing from the regular install")
         steam = self._fn("installSteam")
         self.assertIn("gui-wm/gamescope", steam, "native Steam should include Gamescope")
@@ -618,10 +619,17 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertNotIn("sbat-distro-url", steam, "Steam installation must not patch systemd")
         self.assertIn("rm -f /etc/portage/patches/sys-apps/systemd/010-posterchanos-sbat-url.patch", steam,
                       "upgrades must remove the previously shipped systemd patch")
+        self.assertIn("no-multilib", steam, "the repair path can install a launcher with no 32-bit runtime")
+        self.assertIn('ABI_X86="64 32"', steam, "the repair path does not enable Steam's 32-bit ABI")
+        self.assertIn("media-libs/mesa vulkan", steam, "Mesa may be built without a Vulkan driver")
+        self.assertIn("media-libs/vulkan-loader", steam, "the Vulkan driver has no libvulkan.so.1 loader")
+        self.assertIn("dev-util/vulkan-tools", steam, "the installed graphics stack cannot be verified")
 
         configure = self._fn("configurePortage")
         self.assertIn('ABI_X86="64 32"', configure,
                       "Steam's 32-bit runtime and graphics libraries are not enabled")
+        self.assertIn("vulkan", self.src.split('USE_FLAGS="', 1)[1].split('"', 1)[0],
+                      "fresh installs can build Mesa without Vulkan support")
         self.assertIn("grep -vi 'plasma\\|gnome\\|no-multilib'", configure,
                       "the installer can select a no-multilib profile")
         self.assertIn("eselect repository enable steam-overlay", configure)
