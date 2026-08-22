@@ -391,6 +391,20 @@ class MmsAttachmentsTravelAcrossClients(unittest.TestCase):
         js = open(SMSJS, encoding="utf-8").read()
         self.assertIn("throw new Error((d && d.why)", js)
 
+    def test_archive_provider_pages_from_the_oldest_pending_message(self):
+        """A limited newest slice strands the older backlog forever once its cursor advances."""
+        sms = open(os.path.join(SMS, "SmsStore.java"), encoding="utf-8").read()
+        mms = open(os.path.join(SMS, "MmsStore.java"), encoding="utf-8").read()
+        messages = open(os.path.join(SMS, "Messages.java"), encoding="utf-8").read()
+        self.assertIn('new String[]{ String.valueOf(dateMs) }, "date ASC", limit)', sms)
+        self.assertIn('new String[]{ String.valueOf(dateMs / 1000L) }, "date ASC", limit)', mms)
+        self.assertIn("Collections.sort(out, OLDEST_FIRST)", messages)
+
+    def test_fixed_cursor_recovers_rows_old_clients_skipped(self):
+        js = open(SMSJS, encoding="utf-8").read()
+        self.assertIn("HWM_FIX", js)
+        self.assertIn("since - 1000", js)
+
     def test_existing_body_only_archive_is_upgraded_not_skipped(self):
         """The document can already exist from an older client while its MMS hashes do not.  That
         is an incomplete message, not a duplicate: the handset must merge its provider ids and the

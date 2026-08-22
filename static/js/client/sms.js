@@ -32,6 +32,7 @@
    * otherwise spend an afternoon on it and fill the relay in one go; the person can ask for more. */
   const FIRST_RUN_DAYS = 30;
   const HWM = () => 'pc_sms_hwm_' + (PC && PC.ME && PC.ME.pubkey ? PC.ME.pubkey.slice(0, 12) : 'anon');
+  const HWM_FIX = () => HWM() + '_oldest_first_v1';
   let _messagesFolderReady = false;
 
   let PC = null;
@@ -526,9 +527,23 @@
     if(!P || !st.canRead) return { published:0, skipped:'cannot read this phone' };
     let since = 0;
     try{ since = Number(localStorage.getItem(HWM()) || 0) || 0; }catch(_){ }
+    /* Repair archives made by the old newest-first limited query. Its mark could sit beyond rows
+     * the provider never returned, so changing the order alone cannot recover them. Rewind each
+     * account once to the documented first-sync boundary; complete archive rows are cheap skips,
+     * while missing texts and hollow MMS are published again. */
+    try{
+      if(!localStorage.getItem(HWM_FIX())){
+        since = Math.min(since || Date.now(), Date.now() - FIRST_RUN_DAYS * 86400000);
+        localStorage.setItem(HWM(), String(since));
+        localStorage.setItem(HWM_FIX(), '1');
+      }
+    }catch(_){ }
     if(!since) since = Date.now() - FIRST_RUN_DAYS * 86400000;
+    // MMS dates have one-second precision. Overlap the last second and deduplicate by document so
+    // two messages filed in that second cannot be skipped by the strict provider predicate.
+    const querySince = Math.max(0, since - 1000);
     let rows = [];
-    try{ rows = ((await P.list({ since, limit: (opts && opts.limit) || 400 })) || {}).messages || []; }
+    try{ rows = ((await P.list({ since: querySince, limit: (opts && opts.limit) || 400 })) || {}).messages || []; }
     catch(_){ return { published:0, skipped:'could not read the phone' }; }
 
     let n = 0, top = since;

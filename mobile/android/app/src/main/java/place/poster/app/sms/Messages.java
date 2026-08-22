@@ -38,6 +38,10 @@ public final class Messages {
         }
     };
 
+    private static final Comparator<SmsMsg> OLDEST_FIRST = new Comparator<SmsMsg>() {
+        public int compare(SmsMsg a, SmsMsg b) { return -NEWEST_FIRST.compare(a, b); }
+    };
+
     /** Everything on the phone, newest first, both kinds. */
     public static List<SmsMsg> recent(Context ctx, int limit) {
         return merge(SmsStore.recent(ctx, limit), MmsStore.recent(ctx, limit), limit);
@@ -50,10 +54,12 @@ public final class Messages {
      * caller must never have to know which table it is asking about.
      */
     public static List<SmsMsg> since(Context ctx, long dateMs, int limit) {
-        List<SmsMsg> out = merge(SmsStore.since(ctx, dateMs, limit),
-                                 MmsStore.since(ctx, dateMs, limit), limit);
-        Collections.reverse(out);
-        return out;
+        List<SmsMsg> out = new ArrayList<SmsMsg>();
+        out.addAll(SmsStore.since(ctx, dateMs, limit));
+        out.addAll(MmsStore.since(ctx, dateMs, limit));
+        Collections.sort(out, OLDEST_FIRST);
+        int want = Math.max(1, limit);
+        return out.size() > want ? new ArrayList<SmsMsg>(out.subList(0, want)) : out;
     }
 
     /** One conversation, oldest first — the order a thread is read in. */

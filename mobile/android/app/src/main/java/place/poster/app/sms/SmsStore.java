@@ -335,10 +335,12 @@ public final class SmsStore {
      * would re-publish the lot.
      */
     public static List<SmsMsg> since(Context ctx, long dateMs, int limit) {
-        List<SmsMsg> newest = query(ctx, Telephony.Sms.DATE + ">?",
-                new String[]{ String.valueOf(dateMs) }, "date DESC", limit);
-        java.util.Collections.reverse(newest);
-        return newest;
+        // OLDEST pending rows, not the newest slice of the backlog. Asking DESC here and reversing
+        // afterwards looks oldest-first, but a backlog larger than `limit` has already lost its
+        // oldest rows before the reverse. Once the caller advances its cursor those rows can never
+        // be asked for again.
+        return query(ctx, Telephony.Sms.DATE + ">?",
+                new String[]{ String.valueOf(dateMs) }, "date ASC", limit);
     }
 
     /**

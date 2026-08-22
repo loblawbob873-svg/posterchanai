@@ -94,7 +94,7 @@ public final class MmsStore {
     public static boolean refused() { return refused; }
 
     public static List<SmsMsg> recent(Context ctx, int limit) {
-        return query(ctx, null, null, limit);
+        return query(ctx, null, null, "date DESC", limit);
     }
 
     /**
@@ -104,8 +104,10 @@ public final class MmsStore {
      * never publish a picture message and nothing would say why.
      */
     public static List<SmsMsg> since(Context ctx, long dateMs, int limit) {
+        // See SmsStore.since: paginate from the oldest pending row. Selecting the newest limited
+        // slice first permanently strands the older part of a busy backlog behind the cursor.
         return query(ctx, Telephony.Mms.DATE + ">?",
-                     new String[]{ String.valueOf(dateMs / 1000L) }, limit);
+                     new String[]{ String.valueOf(dateMs / 1000L) }, "date ASC", limit);
     }
 
     public static List<SmsMsg> thread(Context ctx, long threadId, int limit) {
@@ -116,10 +118,11 @@ public final class MmsStore {
     public static List<SmsMsg> thread(Context ctx, long[] threadIds, int limit) {
         if (threadIds == null || threadIds.length == 0) return new ArrayList<SmsMsg>();
         return query(ctx, Telephony.Mms.THREAD_ID + " IN (" + SmsStore.marks(threadIds.length) + ")",
-                     SmsStore.args(threadIds), limit);
+                     SmsStore.args(threadIds), "date DESC", limit);
     }
 
-    private static List<SmsMsg> query(Context ctx, String where, String[] args, int limit) {
+    private static List<SmsMsg> query(Context ctx, String where, String[] args,
+                                      String order, int limit) {
         List<SmsMsg> out = new ArrayList<SmsMsg>();
         if (ctx == null) return out;
         refused = false;
@@ -130,11 +133,11 @@ public final class MmsStore {
             // rejects it throws the whole query, so the retry asks again without it. Same shape as
             // SmsStore.query, and for the same reason: slower and correct beats fast and empty.
             c = ctx.getContentResolver().query(Telephony.Mms.CONTENT_URI, COLS, where, args,
-                                               "date DESC LIMIT " + want);
+                                               order + " LIMIT " + want);
         } catch (Throwable t) {
             try {
                 c = ctx.getContentResolver().query(Telephony.Mms.CONTENT_URI, COLS, where, args,
-                                                   "date DESC");
+                                                   order);
             } catch (Throwable t2) {
                 // COULD NOT ASK IS NOT NOTHING THERE — SmsStore's rule, and it matters more here:
                 // several OEM providers guard the MMS tables differently from the SMS ones, so this
