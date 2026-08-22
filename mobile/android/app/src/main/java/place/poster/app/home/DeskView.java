@@ -212,6 +212,19 @@ public class DeskView extends ViewGroup {
     private boolean begun;
 
     /**
+     * RemoteViews may call this on DOWN (sliders and other clickable widget children commonly do).
+     * Honouring it before our 400 ms decision means the parent never receives the later UP, so the
+     * widget can consume the only gesture that exposes "Remove from home".  Keep observing while a
+     * long press is undecided or owed. A short tap is still never intercepted; movement cancels the
+     * pending press through onInterceptTouchEvent and the widget then owns its ordinary control.
+     */
+    @Override
+    public void requestDisallowInterceptTouchEvent(boolean disallowIntercept) {
+        if (disallowIntercept && (pending != null || menuFor != null || stealing)) return;
+        super.requestDisallowInterceptTouchEvent(disallowIntercept);
+    }
+
+    /**
      * A WIDGET COULD NOT BE LONG-PRESSED, WHICH MEANT IT COULD NOT BE REMOVED — reported as "no way
      * to remove widgets", and it was also why one could not be moved or resized.
      *

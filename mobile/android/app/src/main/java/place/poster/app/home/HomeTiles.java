@@ -66,6 +66,7 @@ public final class HomeTiles {
         new Tile("messages",      "DMs",           "speech",   true),
         new Tile("notes",         "Notes",         "note",     true),
         new Tile("blossom",       "Files",         "folder",   true),
+        new Tile("music",         "Music",         "music",    true),
         new Tile("calendar",      "Calendar",      "clock",    true),
         new Tile("contacts",      "Contacts",      "user",     true),
         new Tile("ai",            "AI",            "ai",       false),

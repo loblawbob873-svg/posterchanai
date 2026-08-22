@@ -650,6 +650,19 @@ class Launcher(unittest.TestCase):
 
 @unittest.skipIf(not os.path.isdir(HOME), "no android sources here")
 class LauncherSources(unittest.TestCase):
+    def test_music_is_a_real_launcher_app_and_deep_link(self):
+        tiles = _code(open(os.path.join(HOME, "HomeTiles.java")).read())
+        app = open(os.path.join(ROOT, "static", "js", "client", "app.js"), encoding="utf-8").read()
+        self.assertRegex(tiles, r'new Tile\("music",\s*"Music",\s*"music",\s*true\)')
+        self.assertIn("'notes','music'", app)
+        self.assertIn("if (VIEW==='music') return renderMusicApp()", app)
+
+    def test_widget_children_cannot_swallow_the_remove_gesture(self):
+        desk = _code(open(os.path.join(HOME, "DeskView.java")).read())
+        self.assertIn("requestDisallowInterceptTouchEvent(boolean disallowIntercept)", desk)
+        self.assertIn("pending != null || menuFor != null || stealing", desk)
+        self.assertIn("flushMenu()", desk)
+
     def test_long_press_app_title_opens_android_app_info(self):
         """The menu heading behaves like Pixel/Samsung launchers: tap it for force-stop, storage,
         permissions and defaults on Android's own app-details page."""

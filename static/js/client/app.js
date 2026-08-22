@@ -3239,7 +3239,7 @@
       compose({ text: lines.join('\n\n') });
       return true;
     }
-    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','markets','streams','communities','calls','settings','signer','translate','news','websearch','terminal','calendar','contacts','texts','notes']);
+    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','markets','streams','communities','calls','settings','signer','translate','news','websearch','terminal','calendar','contacts','texts','notes','music']);
     if(view && VALID.has(view)){ _clean(); switchView(view); return true; }
     return false;
   }
@@ -6379,6 +6379,7 @@
     if (VIEW==='xdc'){ if(window.PCWebxdc && PCWebxdc.gallery) return PCWebxdc.gallery(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (window.PCGames && window.PCGames[VIEW]) return window.PCGames[VIEW]();   // game modules (chess.js/ttt.js/hangman.js)
     if (VIEW==='blossom') return renderBlossom();
+    if (VIEW==='music') return renderMusicApp();
     if (VIEW==='settings') return renderSettings();
     if (VIEW==='signer') return renderSigner();
     if (VIEW==='ai') return renderAI();
