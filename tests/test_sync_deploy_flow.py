@@ -321,9 +321,12 @@ def test_the_overlay_is_published_when_its_inputs_change():
     assert "publish_overlay.sh" in src, "sync.sh never publishes the overlay"
     i = src.index("publish_overlay.sh")
     guard = src[max(0, i - 400):i]
-    assert "os/(overlay|bin|plymouth)" in guard, (
+    assert "overlay/|bin/|plymouth/" in guard, (
         "the overlay is published on every deploy — a forced push each time makes every installed "
         "machine re-sync a repo whose contents are identical")
+    assert "gentoo\\.sh" in guard, (
+        "publish_overlay.sh injects os/gentoo.sh into the package, but installer-only fixes do not "
+        "trigger an overlay publish")
     assert "WARN" in src[i:i + 200], (
         "a failed publish is silent; the deploy would report success with the overlay stale")
 

@@ -128,7 +128,11 @@ ssh router.lan "cd /srv/posterchanai && sudo git fetch origin && sudo git reset 
 #
 # Only on a change: the publish force-pushes a fresh commit, and doing that on every deploy would
 # make every installed machine re-sync a repo whose contents are identical.
-if git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -qE '^os/(overlay|bin|plymouth)/'; then
+# gentoo.sh is injected into posterchanos-shell by publish_overlay.sh just as surely as files under
+# os/overlay are. Omitting it here made an installer-only fix reach git while every installed
+# machine's /usr/bin/gentoo.sh remained unchanged (the exact kind of fix most likely needed to make
+# the next recovery medium). Keep the canonical script itself in the publish trigger.
+if git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -qE '^os/(gentoo\.sh$|overlay/|bin/|plymouth/)'; then
     echo "[sync] overlay inputs changed — publishing"
     ./scripts/publish_overlay.sh || echo "[sync] WARN: overlay publish failed (machines keep the last one)"
 else
