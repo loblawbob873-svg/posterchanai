@@ -3250,8 +3250,34 @@
     // Standalone has no /client/config to ask, and asking anyway costs a failed request and a cached
     // answer from whichever instance this install used to point at — which would then re-enable every
     // server-backed surface for a session with no server. Skip straight to {}.
-    CFG = _standalone() ? {}
-        : (await fetch('/client/config').then(r=>r.json()).catch(()=>null)) || _cfgCached() || {};
+    /* THE LOCAL APP SHELL MAY NEVER WAIT FOR THE NETWORK TO PAINT.
+     *
+     * On Android, every launcher tile opens the bundled page first and routes to its requested view
+     * afterwards. `fetch('/client/config')` is rewritten to the selected PosterChan server; in a
+     * poor-but-not-disconnected network, fetch can sit pending for minutes. boot() awaited it before
+     * showing either #app or #auth-gate, so every tile was a black screen until the process was
+     * restarted. `navigator.onLine` cannot detect this state — the radio is associated, it simply
+     * cannot reach the server.
+     *
+     * The config already has a local copy. Give the fresh request 2.5 seconds, then paint from that
+     * copy (or the safe empty config on a first-ever offline launch). The request is allowed to
+     * finish in the background; the next launch sees its normal server response/cache path.
+     */
+    let _bootCfg = null;
+    if(!_standalone()){
+      let _cfgTimer;
+      try{
+        const _cfgRequest = fetch('/client/config')
+          .then(r=>r.ok ? r.json() : null)
+          .then(c=>{ if(c) _cfgCache(c); return c; })
+          .catch(()=>null);
+        _bootCfg = await Promise.race([
+          _cfgRequest,
+          new Promise(resolve=>{ _cfgTimer=setTimeout(()=>resolve(null), 2500); }),
+        ]);
+      } finally { if(_cfgTimer) clearTimeout(_cfgTimer); }
+    }
+    CFG = _standalone() ? {} : _bootCfg || _cfgCached() || {};
     _cfgCache(CFG);
     applyInstanceGating();
     // The logo becomes the way into PosterChan OS. Wired after gating, so the desktop's app list —
@@ -18580,10 +18606,55 @@
       return true;
     }catch(_){ return false; }
   }
-  async function _syncBlobBytes(sha){
+  async function _syncBlobBytes(sha, onWireProgress){
     const r = await fetch(mediaServer() + '/' + sha);
     if(!r.ok) throw new Error('blob ' + String(sha).slice(0,8) + ' unavailable (' + r.status + ')');
-    const bytes = new Uint8Array(await r.arrayBuffer());
+    /* KEEP THE STALL CLOCK TIED TO BYTES, NOT TO WHOLE BLOBS.
+     *
+     * Folder-sync chunks written by a desktop are 16 MB. On a weak mobile link that can take many
+     * minutes, and the old code said nothing until arrayBuffer() had received every byte. The
+     * watchdog therefore declared a healthy transfer dead (and the card sat at one percentage)
+     * even while the radio was moving data. Read the response stream so every network read proves
+     * liveness. We still join one encrypted chunk for its SHA-256/AES-GCM check; memory remains
+     * bounded by the chunk size, exactly as before.
+     */
+    let bytes;
+    if(r.body && typeof r.body.getReader === 'function'){
+      const rd = r.body.getReader();
+      const declared = +(r.headers.get('content-length') || 0);
+      let direct = declared > 0 ? new Uint8Array(declared) : null;
+      let parts = direct ? null : [];
+      let n = 0;
+      for(;;){
+        const x = await rd.read();
+        if(x.done) break;
+        if(x.value && x.value.length){
+          /* Content-Length is normally present, so fill one allocation directly. Besides avoiding
+           * an unnecessary second 16 MB copy, this matters on Android where the decrypted chunk,
+           * WebView bridge buffer and filesystem write can briefly coexist. If a proxy omitted or
+           * lied about the length, fall back to joining the pieces and let the content hash decide
+           * whether the response is complete. */
+          if(direct && n + x.value.length <= direct.length){
+            direct.set(x.value, n);
+          } else {
+            if(direct){ parts = [direct.subarray(0, n)]; direct = null; }
+            parts.push(x.value);
+          }
+          n += x.value.length;
+          try{ if(onWireProgress) onWireProgress(n, declared); }catch(_){}
+        }
+      }
+      if(direct){
+        bytes = n === direct.length ? direct : direct.subarray(0, n);
+      } else {
+        bytes = new Uint8Array(n);
+        let at = 0;
+        for(const p of parts){ bytes.set(p, at); at += p.length; }
+      }
+    } else {
+      bytes = new Uint8Array(await r.arrayBuffer());
+      try{ if(onWireProgress) onWireProgress(bytes.length, bytes.length); }catch(_){}
+    }
     /* WHAT ARRIVED, BEFORE WHAT IT MEANS. AES-GCM answers one word — OperationError — for two
      * completely different failures: bytes that arrived damaged (a proxy stream cut short, a bad
      * hop) and bytes that are perfect but sealed with a key this device does not hold. The store is
@@ -33356,6 +33427,7 @@
        * follows: a mismatch discards the part file, so the next attempt starts clean rather than
        * resuming onto the same bad prefix for ever. Do not use one without the other. */
       async getParts(chunks, writePart, expect, have, cs){
+        const onWireProgress = arguments[5];
         let off = 0;
         let skip = 0;
         /* EVERY CONDITION HERE IS LOAD-BEARING, and the clamp is the one that was wrong.
@@ -33400,7 +33472,7 @@
         let i = 0;
         for(const sha of (chunks || [])){
           if(i++ < skip) continue;                       // already on disk from a previous attempt
-          const bytes = await _syncBlobBytes(sha);
+          const bytes = await _syncBlobBytes(sha, onWireProgress);
           await writePart(off, bytes);
           off += bytes.length;
         }

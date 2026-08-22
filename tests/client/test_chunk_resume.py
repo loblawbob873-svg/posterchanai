@@ -54,18 +54,19 @@ class ChunkedResume(unittest.TestCase):
         js = """
         const impl = { %s };
         (async () => {
-          const writes = [];
+          const writes = []; let bumps = 0;
           const chunks = %s;
           const n = await impl.getParts(chunks,
             async (off, bytes) => { writes.push([off, bytes.length]); },
-            %s, %s, %s);
-          process.stdout.write(JSON.stringify({ rebuilt: n, writes }));
+            %s, %s, %s, () => { bumps++; });
+          process.stdout.write(JSON.stringify({ rebuilt: n, writes, bumps }));
         })().catch(e => { process.stdout.write(JSON.stringify({ threw: String(e.message || e) })); });
-        """ % (self.fn.replace("_syncBlobBytes(sha)", "FAKE(sha)"),
+        """ % (self.fn.replace("_syncBlobBytes(sha, onWireProgress)", "FAKE(sha, onWireProgress)"),
                json.dumps(chunks), json.dumps(expect), json.dumps(have), json.dumps(cs))
         # Every chunk is `cs` bytes except the last, which is short — the real shape.
         js = ("const CS = %s, EXPECT = %s;\n"
-              "const FAKE = async (sha) => { const i = Number(String(sha).split('-')[1]);\n"
+              "const FAKE = async (sha, progress) => { const i = Number(String(sha).split('-')[1]);\n"
+              "  progress(1, 2); progress(2, 2);\n"
               "  const last = Math.ceil(EXPECT / CS) - 1;\n"
               "  return new Uint8Array(i === last ? (EXPECT - last * CS) : CS); };\n" % (cs, expect)) + js
         with tempfile.TemporaryDirectory() as d:
@@ -123,6 +124,12 @@ class ChunkedResume(unittest.TestCase):
         cs, total = 4096, 4
         out = self.run_js([f"c-{i}" for i in range(total)], cs * 3 + 10, 100, cs)
         self.assertEqual(out["writes"][0][0], 0)
+
+    def test_wire_reads_reach_the_stall_watchdog(self):
+        cs, total = 4096, 4
+        out = self.run_js([f"c-{i}" for i in range(total)], cs * 3 + 10, 0, cs)
+        self.assertEqual(out["bumps"], total * 2,
+                         "byte-level progress was not forwarded; a slow 16 MB chunk will look stalled")
 
 
 if __name__ == "__main__":

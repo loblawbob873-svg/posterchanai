@@ -617,7 +617,7 @@
           const w = _stallGuard('download', Math.max(_STALL_MS, Math.ceil(_cs / 32768) * 1000));
           return Promise.race([
             PC.syncBlobs.getParts(chunks, (off, bytes) => { w.bump(); return write(off, bytes); },
-                                  ...rest),
+                                  ...rest, () => w.bump()),
             w.tripped,
           ]).then(v => { w.stop(); return v; }, e => { w.stop(); throw e; });
         } : null,

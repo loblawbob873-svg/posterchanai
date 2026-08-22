@@ -102,6 +102,24 @@ class TestNavigationsSurviveAQueryString(unittest.TestCase):
             "/client/config must not bypass the worker — offline it leaves the client with no relay URL",
         )
 
+    def test_first_paint_does_not_wait_forever_for_config(self):
+        # Android can report itself online while an associated but poor network leaves fetch pending
+        # for minutes. boot() runs before either app surface becomes visible, so an unbounded config
+        # request is a literal black screen for every launcher shortcut.
+        src = _read(os.path.join(_ROOT, "static", "js", "client", "app.js"))
+        boot = re.search(r"async function boot\(\)\{(.*?)\n  \}", src, re.S)
+        self.assertTrue(boot, "boot() not found in app.js")
+        body = boot.group(1)
+        self.assertIn("Promise.race", body)
+        self.assertRegex(body, r"setTimeout\(\(\)=>resolve\(null\),\s*2500\)")
+        self.assertIn("_bootCfg || _cfgCached() || {}", body)
+
+    def test_late_config_response_still_refreshes_the_cache(self):
+        src = _read(os.path.join(_ROOT, "static", "js", "client", "app.js"))
+        boot = re.search(r"async function boot\(\)\{(.*?)\n  \}", src, re.S)
+        self.assertTrue(boot)
+        self.assertRegex(boot.group(1), r"\.then\(c=>\{ if\(c\) _cfgCache\(c\)")
+
 
 class TestOutboxSafety(unittest.TestCase):
     """The queue may only hold kinds where re-sending the identical event is a no-op at the relay."""
