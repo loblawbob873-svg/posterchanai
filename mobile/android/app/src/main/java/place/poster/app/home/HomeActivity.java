@@ -178,7 +178,10 @@ public class HomeActivity extends Activity implements DeskView.Host {
         if (desk == null) return;
         desk.post(new Runnable() {
             @Override public void run() {
-                if (deskCols() != desk.cols() || deskRows() != desk.rows()) redrawDesk();
+                // Always redraw once after measurement. Even when the grid SHAPE was already right,
+                // maxResizeWidth/Height are converted through the final cell pixels; the first draw
+                // uses provisional dimensions and can leave a phone widget one column too wide.
+                redrawDesk();
             }
         });
     }

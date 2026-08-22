@@ -609,9 +609,14 @@ public class WidgetDeviceTest {
 
         HomeRoles.enableLauncherComponent(ctx, true);
         LauncherPrefs prefs = new LauncherPrefs(ctx);
+        int[] shape = deskShape();
+        String geometry = HomeMetrics.geometry(shape[0], shape[1]);
+        String savedDesk = prefs.desk(geometry);
+        prefs.setDesk(geometry, "");
         final Widgets.Choice chosen = pick;
         final int[] made = new int[]{ -1 };
         final String[] after = new String[]{ "" };
+        final String[] persistedAfter = new String[]{ "" };
         ActivityScenario<HomeActivity> s = ActivityScenario.launch(HomeActivity.class);
         try {
             Thread.sleep(1200);
@@ -631,15 +636,17 @@ public class WidgetDeviceTest {
                 a.removeFromDesk(new Desk.Item(Desk.widgetKey(made[0]), 0, 0, 1, 1));
                 after[0] = Desk.serialize(a.deskItemsForTest());
             });
+            persistedAfter[0] = prefs.desk(geometry);
         } finally {
             s.close();
+            prefs.setDesk(geometry, savedDesk);
         }
         Log.i(TAG, "widget probe: after remove the desktop is " + after[0].replace('\n', ' '));
         assertFalse("Remove left the widget on the home screen — it matched by object identity and"
                 + " the desk had already been rebuilt. desktop=" + after[0],
                 after[0].contains(Desk.widgetKey(made[0])));
         assertFalse("it did not survive a redraw either",
-                prefs.desk().contains(Desk.widgetKey(made[0])));
+                persistedAfter[0].contains(Desk.widgetKey(made[0])));
     }
 
     /** One touch event at a point given in CELLS, dispatched on the main thread. */

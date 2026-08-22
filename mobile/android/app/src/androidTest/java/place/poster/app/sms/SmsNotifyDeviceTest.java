@@ -12,7 +12,6 @@ import android.service.notification.StatusBarNotification;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 
-import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -33,10 +32,13 @@ import java.io.InputStream;
  * That is not visible from a source file. `notify()` returns void and succeeds whether or not
  * anything appears. The only proof is reading the shade back, which is what this does.
  *
- * The grant is taken through the shell (`pm grant`, the instrumentation runs as the shell UID) and
- * REVOKED again in @After, because leaving it on would let every later test in this boot assume a
- * permission no fresh install has. When it cannot be taken the tests SKIP with a reason rather than
- * passing: a check that could not run is not a check that passed.
+ * The grant is taken through the shell (`pm grant`, the instrumentation runs as the shell UID).
+ * Do not revoke it between cases: Android kills an app when a runtime permission is revoked, and
+ * the instrumentation lives in that app process. The old teardown therefore passed the first case,
+ * killed its own runner, and reported the next case as an empty "Process crashed" failure. CI uses
+ * a freshly installed APK and disposable emulator, so retaining the grant for this test run cannot
+ * leak into a user's install or another run. When it cannot be taken the tests SKIP with a reason
+ * rather than passing: a check that could not run is not a check that passed.
  */
 @RunWith(AndroidJUnit4.class)
 public class SmsNotifyDeviceTest {
@@ -57,14 +59,6 @@ public class SmsNotifyDeviceTest {
             granted = true;                       // no runtime grant existed before 33
         }
         clearOurs();
-    }
-
-    @After
-    public void tearDown() {
-        clearOurs();
-        if (android.os.Build.VERSION.SDK_INT >= 33) {
-            shell("pm revoke " + ctx.getPackageName() + " " + PERM);
-        }
     }
 
     @Test
