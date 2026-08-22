@@ -34,7 +34,9 @@ def test_remote_desktop_sends_a_screen_and_no_guest_media():
 
 def test_launcher_tiles_leave_desktop_without_forgetting_the_preference():
     assert "mobileLanding: () => { if(on) exit(false); }" in OS
-    assert PHONE.count("PCOS.mobileLanding()") >= 2
+    # Both cold/resume paths go through the one boot-ordered landing function.
+    assert PHONE.count("PCOS.mobileLanding()") == 1
+    assert PHONE.count("landView(v)") >= 3
 
 
 def test_wifi_panel_is_repositioned_after_async_results_change_its_size():

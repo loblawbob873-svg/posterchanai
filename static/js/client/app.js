@@ -4614,6 +4614,11 @@
         setInterval(()=>{ _lastApkCheck = Date.now(); try{ _checkApkUpdate(); _checkDesktopUpdate(); }catch(_){} }, 3600000);   // + hourly backstop so a long-open session still notices a new build
       }
     }
+    /* Native launcher tiles may arrive while this async boot is still loading config/storage.
+     * Announce the point AFTER desktop restore and the initial landing, so their requested screen
+     * is the final navigation rather than being overwritten by the remainder of boot. */
+    window.__PC_BOOTED = true;
+    try{ document.dispatchEvent(new Event('pc-app-ready')); }catch(_){}
   }
   // Document/window/#feed listeners and background timers — bound ONCE PER PAGE LOAD, not per login.
   // startApp() runs again when a guest logs in WITHOUT a reload (see the hydrateUser note there), and

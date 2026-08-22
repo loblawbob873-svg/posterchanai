@@ -251,6 +251,10 @@ class EveryTileNamesAViewTheClientHas(unittest.TestCase):
         views.discard("")
         html = (ROOT / "templates" / "client.html").read_text()
         known = set(re.findall(r'data-view="([a-z0-9_]+)"', html))
+        # Launcher-only apps need not occupy scarce sidebar space. They are still valid when the
+        # shipped renderer explicitly handles them (Music is the first such app).
+        app = (ROOT / "static" / "js" / "client" / "app.js").read_text()
+        known.update(re.findall(r"VIEW==='([a-z0-9_]+)'", app))
         missing = sorted(v for v in views if v and v not in known)
         self.assertEqual(missing, [],
                          "the launcher offers %r, which the client's sidebar has no view for" % missing)

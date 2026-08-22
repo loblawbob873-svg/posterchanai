@@ -16,6 +16,21 @@
 (function(){
   let PC = null;
 
+  /* A launcher destination must run AFTER app.js has finished booting. #feed is present in the
+   * server-rendered shell before boot even starts, so using its existence as "ready" races the
+   * config/store load on a slower tablet: this module opens Folder Sync, then startApp restores the
+   * remembered desktop over it. app.js raises pc-app-ready after that restore/initial landing. */
+  function landView(v){
+    const go = () => {
+      try{ if(window.PCOS && PCOS.mobileLanding) PCOS.mobileLanding(); }catch(_){}
+      if(v === '__music'){
+        try{ if(typeof PC.openMusic === 'function') PC.openMusic(); }catch(_){}
+      } else try{ PC.switchView(v); }catch(_){}
+    };
+    if(window.__PC_BOOTED){ go(); return; }
+    document.addEventListener('pc-app-ready', go, { once:true });
+  }
+
   function plug(method){
     try{ return PC && PC.capPlugin ? PC.capPlugin('HomeScreen', method) : null; }catch(_){ return null; }
   }
@@ -45,16 +60,14 @@
     let v = '';
     try{ v = ((await P.consumeLaunchView()) || {}).view || ''; }catch(_){ return ''; }
     if(!v) return '';
-    try{ if(window.PCOS && PCOS.mobileLanding) PCOS.mobileLanding(); }catch(_){}
     /* THE PLAYER IS NOT A VIEW. app.js's own More menu spells it `__music` and opens it with
      * `openMusic()`; `switchView('__music')` would fall through to the default screen, which is
      * exactly what "clicking play on music widget opens up default posterchan app page instead of
      * music" looked like from the other end. One name, used by both. */
     if(v === '__music'){
-      try{ if(typeof PC.openMusic === 'function'){ PC.openMusic(); return v; } }catch(_){}
-      return '';
+      landView(v); return v;
     }
-    try{ PC.switchView(v); }catch(_){}
+    landView(v);
     return v;
   }
 
@@ -360,9 +373,7 @@
     const launched = (e) => {
       const v = e && typeof e.view === 'string' ? e.view.trim() : '';
       if(v && document.querySelector('#feed')){
-        try{ if(window.PCOS && PCOS.mobileLanding) PCOS.mobileLanding(); }catch(_){}
-        if(v === '__music'){ try{ if(typeof PC.openMusic === 'function') PC.openMusic(); }catch(_){} }
-        else try{ PC.switchView(v); }catch(_){}
+        landView(v);
       }
       consumeLaunchView();                 // consume the duplicate parked/intent carrier exactly once
     };
