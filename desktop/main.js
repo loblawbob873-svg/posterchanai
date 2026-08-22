@@ -1146,6 +1146,7 @@ const audio = require('./audio.js');
 ipcMain.handle('pc:power:status', (e) => { fsGuard(e); return power.status(); });
 ipcMain.handle('pc:power:brightness', (e, pct) => { fsGuard(e); return power.setBrightness(pct); });
 ipcMain.handle('pc:power:profile', (e, name) => { fsGuard(e); return power.setProfile(name); });
+ipcMain.handle('pc:power:keep-awake', (e, on) => { fsGuard(e); return power.setKeepAwake(!!on); });
 /* The four that END things are separate handlers rather than one with a verb argument: a single
  * `pc:power:do(action)` is one typo away from a page asking to power off when it meant to sleep. */
 ipcMain.handle('pc:power:suspend', (e) => { fsGuard(e); return power.suspend(); });

@@ -178,15 +178,27 @@ const hibernate = () => {
 const poweroff = () => run('systemctl', ['poweroff'], 20000).then(() => ({ ok: true }));
 const reboot = () => run('systemctl', ['reboot'], 20000).then(() => ({ ok: true }));
 
+const IDLE_HELPER = process.env.PC_IDLE_HELPER || '/usr/local/bin/pc-idle';
+async function keepAwakeStatus() {
+  try { return (await run(IDLE_HELPER, ['hold', 'status'], 3000)).trim() === 'on'; }
+  catch (_) { return false; }
+}
+async function setKeepAwake(on) {
+  await run(IDLE_HELPER, ['hold', on ? 'on' : 'off'], 5000);
+  return { on: !!on };
+}
+
 /** Everything the shell needs to draw the panel, in one call. */
 async function status() {
   return {
     brightness: brightness(),
     battery: battery(),
     profiles: await profiles(),
+    keepAwake: await keepAwakeStatus(),
     canHibernate: hibernateReady(),
   };
 }
 
 module.exports = { brightness, setBrightness, battery, profiles, setProfile,
-                   suspend, hibernate, poweroff, reboot, hibernateReady, status, MIN_PERCENT };
+                   suspend, hibernate, poweroff, reboot, hibernateReady, keepAwakeStatus,
+                   setKeepAwake, status, MIN_PERCENT };

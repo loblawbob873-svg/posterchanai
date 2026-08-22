@@ -20,6 +20,7 @@ set -eu
 
 CONF="${PC_IDLE_CONF:-/etc/posterchanos/idle}"
 DEFAULT=120                       # two minutes, which is what was asked for
+HOLD="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/posterchan-keep-awake"
 
 read_secs() {
     s=""
@@ -31,6 +32,15 @@ read_secs() {
 }
 
 case "${1:-run}" in
+  hold)
+      case "${2:-status}" in
+        on)  : >"$HOLD"; pkill -x swayidle 2>/dev/null || true; echo on ;;
+        off) rm -f "$HOLD"; pkill -x swayidle 2>/dev/null || true
+             setsid "$0" run >/dev/null 2>&1 & echo off ;;
+        status) [ -e "$HOLD" ] && echo on || echo off ;;
+        *) echo "usage: pc-idle hold on|off|status" >&2; exit 2 ;;
+      esac
+      ;;
   set)
       # `pc-idle set 300`, or `pc-idle set 0` for never.
       n="$(echo "${2:-}" | tr -dc '0-9')"
@@ -46,6 +56,7 @@ case "${1:-run}" in
       read_secs
       ;;
   run|*)
+      [ ! -e "$HOLD" ] || exit 0
       SECS="$(read_secs)"
       [ "$SECS" -gt 0 ] || exit 0        # never: nothing to run, and no daemon left behind
       # One instance. `exec_always` re-runs this on every sway reload, and two swayidles fight over

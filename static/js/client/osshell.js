@@ -290,6 +290,7 @@
     const prof = profileMenu(s.power || null);
     return { net, battery: bat, volume: vol, brightness: bright, tor,
              profile: prof.active, profiles: prof.list,
+             keepAwake: !!(s.power && s.power.keepAwake),
              canHibernate: !!(s.power && s.power.canHibernate) };
   }
 
@@ -443,7 +444,7 @@
   /* ── QUICK SETTINGS ────────────────────────────────────────────────────────────────────────────
    *
    * The flyout the group opens: the four things people change without opening anything (wifi, Tor,
-   * a screenshot, power), then the two sliders, then the battery. Laid out like Windows 11's
+   * Keep Awake, power), then the two sliders, then the battery. Laid out like Windows 11's
    * because that is what was asked for, and because a tile grid over sliders is genuinely the right
    * shape — a tile is a state you toggle, a slider is a value you drag, and mixing them into one
    * list makes both worse.
@@ -461,11 +462,8 @@
       tiles.push(`<button class="os-qs-tile${s.tor.on ? ' on' : ''}" data-os="tor">
           ${ICO('shield')}<b>Tor</b><span>${s.tor.on
             ? (s.tor.bootstrapped >= 100 ? 'On' : H(s.tor.bootstrapped) + '%') : 'Off'}</span></button>`);
-    /* OFFERED ONLY WHERE IT CAN WORK. `grim` is a package, not a guarantee, and a Screenshot tile on
-     * a machine without it is a button whose only outcome is an apology. */
-    if(o.shot && o.shot.ok)
-      tiles.push(`<button class="os-qs-tile" data-os="shot">
-          ${ICO('screenshot')}<b>Screenshot</b><span>${o.shot.region ? 'Screen or area' : 'Whole screen'}</span></button>`);
+    tiles.push(`<button class="os-qs-tile${s.keepAwake ? ' on' : ''}" data-os="awake">
+        ${ICO('eye')}<b>Keep Awake</b><span>${s.keepAwake ? 'On' : 'Off'}</span></button>`);
     tiles.push(`<button class="os-qs-tile" data-os="power">
         ${ICO('power')}<b>Power</b><span>${H(s.profile || 'Sleep, restart…')}</span></button>`);
 
@@ -1083,6 +1081,13 @@
       if(kind === 'outputs'){ outputsPanel(); return; }
       if(kind === 'mixer'){ mixerPanel(); return; }
       if(kind === 'shot'){ shotPanel(); return; }
+      if(kind === 'awake'){
+        const p = POWER();
+        if(!p || typeof p.setKeepAwake !== 'function') return;
+        Promise.resolve(p.setKeepAwake(!(_sum && _sum.keepAwake)))
+          .then(() => repaintQuick()).catch(e => toast(String((e && e.message) || e)));
+        return;
+      }
       if(kind === 'mute'){
         const a = AUDIO();
         const muted = !!(_sum && _sum.volume && _sum.volume.muted);

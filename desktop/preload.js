@@ -131,6 +131,7 @@ if (isOurPage) {
      * 0 is off rather than dim and somebody who cannot see the screen cannot undo it. */
     setBrightness: (pct) => ipcRenderer.invoke('pc:power:brightness', Number(pct)),
     setProfile: (name) => ipcRenderer.invoke('pc:power:profile', String(name || '')),
+    setKeepAwake: (on) => ipcRenderer.invoke('pc:power:keep-awake', !!on),
     suspend: () => ipcRenderer.invoke('pc:power:suspend'),
     hibernate: () => ipcRenderer.invoke('pc:power:hibernate'),
     poweroff: () => ipcRenderer.invoke('pc:power:poweroff'),

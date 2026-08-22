@@ -341,22 +341,14 @@ class Tray(unittest.TestCase):
         broken = self.press("mixer", read, bridges=self.SOUND, pre="globalThis.__mixFail = 1;")
         self.assertIn("could not be read", broken["said"])
 
-    def test_a_screenshot_is_taken_and_says_where_it_went(self):
-        """A screenshot whose only feedback is a shutter nobody can hear is a key people press three
-        times and then go looking in four folders for."""
-        out = self.press("shot", """
-          const modes = pop.querySelectorAll('[data-shot]').map(b => b.dataset.shot);
-          out.modes = modes;
-          const whole = pop.querySelectorAll('[data-shot]').find(b => b.dataset.shot === 'screen');
-          if(whole) await whole.onclick();
-          await new Promise(r => setTimeout(r, 260));
-          out.took = globalThis.__took || null;
-        """, bridges=self.SOUND)
-        self.assertIsNone(out.get("threw"), out.get("threw"))
-        self.assertEqual(sorted(out["modes"]), ["region", "screen"])
-        self.assertEqual(out["took"]["mode"], "screen")
-        self.assertTrue(any("Screenshot saved" in t for t in out["toasts"]),
-                        "the screenshot said nothing about where it went: %r" % (out["toasts"],))
+    def test_quick_settings_uses_the_space_for_keep_awake(self):
+        out = self.run_js(self.SOUND, self.OPEN_QUICK + """
+          out.tiles = pop.querySelectorAll('[data-os]').map(b => b.dataset.os);
+          out.markup = pop._html;
+        """)
+        self.assertNotIn("shot", out["tiles"])
+        self.assertIn("awake", out["tiles"])
+        self.assertIn("Keep Awake", out["markup"])
 
     def test_a_machine_without_grim_is_not_offered_a_screenshot_button(self):
         """A tile whose only possible outcome is an apology about a missing package. `grim` is not
@@ -368,17 +360,6 @@ class Tray(unittest.TestCase):
         """)
         self.assertNotIn("shot", out["tiles"],
                          "a Screenshot tile was drawn on a machine that cannot take one")
-
-    def test_a_cancelled_region_is_not_an_error(self):
-        """slurp exits nonzero when somebody presses Escape. Reported as a failure that is a toast
-        apologising every time a person changes their mind."""
-        out = self.press("shot", """
-          globalThis.__shotRes = {ok: false, cancelled: true, why: ''};
-          const area = pop.querySelectorAll('[data-shot]').find(b => b.dataset.shot === 'region');
-          if(area) await area.onclick();
-          await new Promise(r => setTimeout(r, 260));
-        """, bridges=self.SOUND)
-        self.assertEqual(out["toasts"], [], "cancelling a screenshot apologised: %r" % (out["toasts"],))
 
     def test_a_network_that_could_not_be_read_is_not_an_empty_room(self):
         """A wifi list that is empty because NetworkManager is dead looks exactly like a room with
