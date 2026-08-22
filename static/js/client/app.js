@@ -16105,9 +16105,13 @@
   // ---- Blossom access (request-to-upload) ----
   // Pre-flight whether THIS user may upload (BUD-06 HEAD /upload → 200 allowed / 403 denied), so the
   // Files view + post composer can offer a "request access" flow instead of a dead upload button.
+  let _blossomUploadOK=null, _blossomUploadAt=0, _blossomUploadP=null;
   async function blossomCanUpload(){
     const server=mediaServer(); if(!server) return false;
-    try{
+    const now=Date.now();
+    if(_blossomUploadOK!==null && now-_blossomUploadAt<300000) return _blossomUploadOK;
+    if(_blossomUploadP) return _blossomUploadP;
+    _blossomUploadP=(async()=>{ try{
       // TIME-BOX the signer. This is a permission PROBE, and it sits on the awaited path that paints
       // the Files view — so an external signer (Amber/NIP-55, a NIP-46 bunker) that never answers,
       // because the prompt wasn't shown or the app isn't installed, left the whole drive as a spinner
@@ -16125,6 +16129,9 @@
       // upload speaks, and its 403 triggers the request-access flow.
       return res.status!==401 && res.status!==403 && res.status!==413;
     }catch(_){ return true; }    // CORS/network hiccup → don't gate; let the real upload speak
+    })();
+    try{ _blossomUploadOK=await _blossomUploadP; _blossomUploadAt=Date.now(); return _blossomUploadOK; }
+    finally{ _blossomUploadP=null; }
   }
   function _blossomDenied(err){ const m=String(err&&err.message||err||'').toLowerCase(); return m.includes('not authorized')||m.includes('403')||m.includes('privilege'); }
   let _blossomReqSent=false;
@@ -17492,9 +17499,9 @@
       finally{ this._pulling = false; }
     },
     async _pull(){
-      try{ const auth=await sign(27235,'files-index',[['p',ME.pubkey]]);
+      try{ const auth=await selfProof();
         const r=await fetch('/client/files-index',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth))})}).then(r=>r.json());
+          body:JSON.stringify({pubkey:ME.pubkey,auth})}).then(r=>r.json());
         const ptr=r&&r.ok&&r.index;
         if(ptr&&typeof ptr==='object'){
           /* THE SERVER'S WRAPPED KEY WINS, and a stale local one is thrown away — including the
@@ -17642,7 +17649,7 @@
           const url=await uploadBlob(new File([await _masterEncrypt(mk, new TextEncoder().encode(json))],'files-index.enc',{type:'application/octet-stream'}), {keep:true, noCompress:true});
           ptr.indexSha=_shaFromUrl(url);
         }
-        const auth=await sign(27235,'files-index',[['p',ME.pubkey]]);
+        const auth=await selfProof();
         /* Already confirmed once? Then send FORCE with the first request.
          *
          * The 409 path costs TWO signatures for one action — and with a remote signer each is a
@@ -17651,7 +17658,7 @@
          * whatever happened to it took the whole save with it. Remembered until the write lands, so
          * a retry is one signature and no second prompt. */
         const sr=await fetch('/client/files-index',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify(Object.assign({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth)),index:ptr},
+          body:JSON.stringify(Object.assign({pubkey:ME.pubkey,auth,index:ptr},
                                             this._forceOk?{force:true}:{}))});
         // 409 = the server refused a write that would collapse the index. That is right when it's a
         // bug and wrong when the user genuinely just deleted a big folder — and since nothing else
@@ -17709,9 +17716,9 @@
             return false;
           }
           this._forceOk=true;   // said yes — a retry must not ask again, or sign twice again
-          const auth2=await sign(27235,'files-index',[['p',ME.pubkey]]);
+          const auth2=await selfProof();
           const fr=await fetch('/client/files-index',{method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({pubkey:ME.pubkey,auth:btoa(JSON.stringify(auth2)),index:ptr,force:true})});
+            body:JSON.stringify({pubkey:ME.pubkey,auth:auth2,index:ptr,force:true})});
           if(!fr || !fr.ok){ this._dirty=true; throw new Error('files-index forced save HTTP '+(fr?fr.status:'?')); }
         } else if(!sr || !sr.ok) throw new Error('files-index save HTTP '+(sr?sr.status:'?'));
         // The superseded index blob is deliberately KEPT. It is ~133 KB and it is the only
@@ -19622,9 +19629,15 @@
     pane.innerHTML='<div class="spinner"></div>';
     // Anything that throws below leaves this spinner on screen forever unless it is caught, and
     // "a spinner that never stops" tells the user nothing and tells us less. Surface it instead.
-    let canUp=false;
-    try{ canUp=await blossomCanUpload(); }
-    catch(e){ console.warn('blossom: upload probe failed', e); canUp=true; }   // inconclusive → let the real PUT decide
+    /* DRAW FIRST; permission discovery is advisory and may live on a phone signer. Blocking this
+     * paint on it made an otherwise locally-cached Drive look hung for eight seconds (or until an
+     * approval appeared elsewhere). A definitive denial repaints once into the request-access card;
+     * the real PUT remains the authority if the probe was inconclusive. */
+    const canUp=_blossomUploadOK!==false;
+    blossomCanUpload().then(ok=>{
+      if(ok===canUp || VIEW!=='blossom' || _filesTab!=='public') return;
+      renderBlossom();
+    }).catch(()=>{});
     const head = canUp
       ? `<div class="drop-zone" id="bl-drop"><input type="file" id="bl-file" multiple ${_filesFolder==='Music'?'accept="audio/*,.mp3,.m4a,.m4b,.aac,.flac,.wav,.ogg,.oga,.opus,.wma,.aif,.aiff,.mka,.ape,.dsf"':''} hidden><input type="file" id="bl-folder" webkitdirectory hidden>
           <div class="dz-inner"><span class="dz-ic">⬆</span> Drop files/folders here, or <button class="btn btn-cyan small" id="bl-pick">choose files</button> <button class="btn btn-neon small" id="bl-pickfolder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>choose folder</button>
