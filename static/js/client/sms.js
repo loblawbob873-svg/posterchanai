@@ -300,7 +300,11 @@
    * what makes an unknown number stay unknown rather than acquiring a name from a near-miss. */
   function whoIs(nameFromMsg, address){
     const n = String(nameFromMsg || '').trim();
-    if(n) return n;
+    /* Android providers commonly return the address itself in the display-name column when their
+     * contact join has not warmed yet. That is not a name and must not prevent the portable Contacts
+     * index below from resolving it on this device. Compare through the same phone-number key so
+     * formatting differences (+1, spaces, parentheses) do not disguise the fallback value. */
+    if(n && key(n) !== key(address)) return n;
     try{
       const c = window.PCContacts;
       const found = c && c.nameFor ? c.nameFor(address) : '';
@@ -1669,9 +1673,12 @@
   }
 
   async function render(){
-    load();
     watch();
-    paint();
+    /* Do not paint a convincing empty inbox while the encrypted cache is still being opened. The
+     * route already installed a spinner; awaiting the first cache pass makes the first visit behave
+     * exactly like the second one instead of requiring the person to close and reopen Texts. */
+    if(!S.ready) await load();
+    else paint();
     /* WHY IT IS EMPTY, asked once per visit and never on a keystroke — `emptyWhy` calls the plugin,
      * and paint() runs on every character typed in the search box. Painted again once the answer is
      * in, so the empty list is only briefly the useless kind. */

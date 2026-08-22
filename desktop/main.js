@@ -1132,9 +1132,21 @@ ipcMain.handle('pc:wm:subscribe', async (e) => {
   await w.subscribe(NAMES);
   for (const name of NAMES) {
     w.on(name, (ev) => {
+      /* window::new already contains the container we need. Throwing it away forced the renderer
+       * to ask for the entire sway tree (and PCOSShell to ask once more) before it could draw a
+       * frame around a freshly launched app. On a busy terminal launch that is visibly late: btop
+       * appears, then its PosterChan frame catches up. Send the one normalized leaf with the event;
+       * the ordinary tree refresh remains the recovery path for rename/close/workspace changes. */
+      let window = null;
+      if (name === 'window' && ev && ev.container) {
+        try {
+          const { flatten } = require('./wm.js');
+          window = flatten(ev.container, [], '')[0] || null;
+        } catch (_) {}
+      }
       for (const win of BrowserWindow.getAllWindows()) {
         try { win.webContents.send('pc:wm:event',
-                { name, change: ev && ev.change, payload: ev && ev.payload }); } catch (_) {}
+                { name, change: ev && ev.change, payload: ev && ev.payload, window }); } catch (_) {}
       }
     });
   }

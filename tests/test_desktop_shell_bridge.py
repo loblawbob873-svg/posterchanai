@@ -184,6 +184,14 @@ class Bridge(unittest.TestCase):
         self.assertIn("payload", m.group(1),
                       "a tick is forwarded without its payload — every binding looks the same")
 
+    def test_a_new_window_is_forwarded_without_another_tree_walk(self):
+        """The event already carries sway's container. Dropping it makes a new app appear first and
+        its PosterChan frame catch up after two GET_TREE round trips."""
+        i = self.main.index("if (name === 'window' && ev && ev.container)")
+        body = self.main[i:i + 850]
+        self.assertIn("flatten(ev.container", body)
+        self.assertIn("payload: ev && ev.payload, window", body)
+
     def test_windows_and_mac_get_a_REJECTION_not_an_empty_window_list(self):
         """THE ONE LINK THAT MAKES THE WINDOWS GUARD HOLD, and it is a single word wide.
 

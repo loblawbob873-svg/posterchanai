@@ -389,8 +389,12 @@ class TheStartMenuTakesTyping(unittest.TestCase):
         focus inside a window that is not receiving keys, and every character lands in the other
         app -- which is worse than nothing, because it types into somebody's editor."""
         i = self.src.index("if(p === 'pc:start')")
-        self.assertIn("_raiseShell()", self.src[i:i + 200],
-                      "the start tick opens the menu without taking the keyboard")
+        tick = self.src[i:i + 200]
+        self.assertIn("_bareSuper(true)", tick,
+                      "the start tick bypasses the compositor-aware Super path")
+        j = self.src.index("async function _bareSuper")
+        self.assertIn("await _raiseShell()", self.src[j:j + 500],
+                      "the compositor-aware Super path opens before taking the keyboard")
 
     def test_our_window_is_found_by_asking_not_by_remembering(self):
         """A shell that was restarted, or a second one, would hold a stale id -- and focusing a

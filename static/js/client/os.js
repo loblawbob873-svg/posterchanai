@@ -40,11 +40,24 @@
    * shell, and Chromium then receives the release as Meta keyup. Treat them as one signal or Start
    * opens and closes in the same blink. Kept outside enter() because the DOM listener is too. */
   let _lastBareSuper = 0;
-  function _bareSuper(fromSway){
+  function _focusStartSearch(){
+    if(!startOpen) return;
+    const q = root && $('#os-q', root);
+    if(!q) return;
+    try{ q.focus({ preventScroll: true }); }catch(_){ try{ q.focus(); }catch(__){} }
+  }
+  async function _bareSuper(fromSway){
     const now=Date.now(); if(now-_lastBareSuper<500)return;
     _lastBareSuper=now;
-    if(fromSway) _raiseShell().then(()=>toggleStart(),()=>toggleStart());
-    else toggleStart();
+    if(fromSway) await _raiseShell();
+    toggleStart();
+    /* Electron can acknowledge the compositor focus before Chromium has installed its keyboard
+     * focus. Keep the caret in Start through that hand-off. Without these two frame-sized retries,
+     * Super visibly opens the menu but the first typed characters still go to Firefox. */
+    if(startOpen){
+      requestAnimationFrame(_focusStartSearch);
+      setTimeout(_focusStartSearch, 80);
+    }
   }
 
   /* WINDOWS LIVE IN A BOUNDED BAND, and that bound is the whole of a bug that reads as "the start
@@ -5322,7 +5335,15 @@
          * the machine and the desktop must not be dependent on one being there. */
         try{
           _tickOff = pcWM.onEvent((ev) => {
-            if(!ev || ev.name !== 'tick') return;
+            if(!ev) return;
+            /* Adopt window::new from the event itself. This is deliberately before the slower
+             * reconciliation watcher below: its job is to heal missed events and closes, not to
+             * make every new native application wait for two GET_TREE round trips. */
+            if(ev.name === 'window'){
+              if(ev.change === 'new' && ev.window) adoptNative(ev.window);
+              return;
+            }
+            if(ev.name !== 'tick') return;
             const p = String(ev.payload || '');
             /* THE SHELL TAKES THE KEYBOARD FIRST, or the menu opens and your typing goes to
              * FIREFOX. Reported exactly that way: "it only works if no other window is focused".

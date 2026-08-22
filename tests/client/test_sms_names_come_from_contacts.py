@@ -44,7 +44,13 @@ class TheMessageNameStillWins(unittest.TestCase):
 
     def test_it_falls_back_to_the_number(self):
         i = self.src.index("function whoIs(")
-        self.assertIn("String(address", self.src[i:i + 700])
+        self.assertIn("return String(address", self.src[i:i + 1000])
+
+    def test_a_provider_number_is_not_mistaken_for_a_name(self):
+        i = self.src.index("function whoIs(")
+        body = self.src[i:i + 1000]
+        self.assertIn("key(n) !== key(address)", body)
+        self.assertLess(body.index("key(n) !== key(address)"), body.index("nameFor"))
 
     def test_a_missing_contacts_module_is_not_fatal(self):
         """Texts must work with contacts disabled, or on a build without it."""
