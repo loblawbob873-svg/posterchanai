@@ -1765,11 +1765,11 @@ PROFILE
 }
 
 installSteam() {
-	# Steam is OPT-IN and stays that way — a separate step, exactly as it was. gamescope belongs
-	# here rather than in the base package list: it is a micro-compositor for GAMES, useless on a
-	# machine that never installs Steam, and it has no business being emerged on one. (It also does
-	# not live where its name suggests — `gui-wm/gamescope`, not `games-util/` — and one
-	# unresolvable atom makes emerge refuse the whole set it appears in.)
+	# Steam is OPT-IN and self-contained. Do not emerge Gamescope here: asking Portage for one native
+	# helper performs a full @world dependency update on an installed machine and has repeatedly
+	# rebuilt systemd before Steam was even downloaded. The Flatpak already carries Steam's 32-bit
+	# graphics/runtime stack and runs directly under Sway; Gamescope remains an optional expert add-on,
+	# not a condition for installing or playing games.
 	# THE 32-BIT STACK IS THE WHOLE COST, and on a source distribution it is measured in hours.
 	# Native steam-launcher pulls ABI_X86=32 through the entire graphics stack — every one of those
 	# libraries built twice — for a program that ships its own runtime anyway. So on PosterChanOS
@@ -1777,11 +1777,11 @@ installSteam() {
 	# dropped flatpak: one prebuilt download instead of a multilib world rebuild, and the base
 	# system stays free of a 32-bit ABI it has no other use for.
 	#
-	# gamescope is emerged natively either way: it is 64-bit only, small, and it is what lets a game
-	# have the screen to itself under the compositor.
-	emerge -uDN sys-apps/flatpak gui-wm/gamescope --autounmask-write
-	etc-update -q --automode -5
-	emerge -uDN sys-apps/flatpak gui-wm/gamescope
+	# Flatpak is part of every PosterChanOS install. Keep a guarded fallback for older images, but do
+	# not use -uDN: installing one application must not initiate an operating-system rebuild.
+	if ! command -v flatpak >/dev/null 2>&1; then
+		emerge --oneshot sys-apps/flatpak || return 1
+	fi
 	/usr/bin/flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 	/usr/bin/flatpak install -y com.valvesoftware.Steam
 }

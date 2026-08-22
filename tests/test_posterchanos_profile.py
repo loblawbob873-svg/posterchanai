@@ -597,7 +597,8 @@ class PosterChanOSProfile(unittest.TestCase):
             self.assertFalse([p for p in self.pkgs if game in p],
                              f"{game} is in the always-installed profile")
         steam = self._fn("installSteam")
-        self.assertIn("gamescope", steam, "gamescope is not installed with Steam")
+        self.assertNotIn("gui-wm/gamescope", steam,
+                         "installing Steam triggers a native Gamescope/systemd rebuild")
         # ...and it must not drag a multilib world rebuild in with it. Native steam-launcher pulls
         # ABI_X86=32 through the whole graphics stack — every library built twice, hours of it, for
         # a program that ships its own runtime.
