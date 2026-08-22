@@ -130,6 +130,17 @@ pkg_postinst() {
 	# THE THEME LIVES INSIDE THE INITRAMFS. Setting it without rebuilding leaves the previous splash
 	# on screen and gives no hint as to why.
 	if [[ -z ${ROOT} ]]; then
+		# systemd 261 builds SBAT records for its EFI pieces and uses BUG_REPORT_URL from os-release as
+		# the distribution URL. Older PosterChanOS images replaced Gentoo's os-release without that
+		# optional field, so a routine package update aborted Meson with "sbat-distro-url option not
+		# set" — often while installing Steam, which made Steam look broken. Repair installed systems
+		# here; gentoo.sh writes both fields directly for new ones.
+		local osrel="${EROOT%/}/usr/lib/os-release"
+		if [[ -f ${osrel} ]] && grep -q '^ID=posterchanos$' "${osrel}"; then
+			grep -q '^SUPPORT_URL=' "${osrel}" || echo 'SUPPORT_URL="https://poster.place/"' >>"${osrel}"
+			grep -q '^BUG_REPORT_URL=' "${osrel}" || \
+				echo 'BUG_REPORT_URL="https://gitworkshop.dev/npub1fdtthaqujtjcd6yfy7kt0zpkadyl9vvypq00s5nztnmche74d0tqv6uwwr/relay.poster.place/posterchanai/issues"' >>"${osrel}"
+		fi
 		plymouth-set-default-theme -R posterchanos || \
 			ewarn "could not set the boot splash — run: plymouth-set-default-theme -R posterchanos"
 		# Sound is enabled GLOBALLY, not per user: accounts here are created when somebody signs in
