@@ -9,7 +9,17 @@ def test_dragging_does_not_hide_the_native_surface():
     assert "minimised: !!w.min" in src
     assert "minimised: !!(w.min || w.gesturing)" not in src
     drag = src[src.index("function startDrag"):src.index("function startResize")]
-    assert "if(w.native != null) nsync();" in drag
+    assert "if(w.native != null) _natMove(w);" in drag
+    assert "pcWM.hide(w.native)" not in drag
+    assert "pcWM.place" not in drag
+
+
+def test_drag_uses_move_only_ipc_and_places_once_on_release():
+    preload = (ROOT / "desktop/preload.js").read_text(encoding="utf-8")
+    main = (ROOT / "desktop/main.js").read_text(encoding="utf-8")
+    wm = (ROOT / "desktop/wm.js").read_text(encoding="utf-8")
+    assert "pc:wm:move" in preload and "pc:wm:move" in main
+    assert "move(id, x, y)" in wm
 
 
 def test_taskbar_is_icon_only():

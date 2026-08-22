@@ -947,6 +947,9 @@ ipcMain.handle('pc:wm:close', (e, id) => { fsGuard(e); return wm().close(Number(
 ipcMain.handle('pc:wm:place', (e, id, x, y, w, h) => {
   fsGuard(e); return wm().place(Number(id), Number(x), Number(y), Number(w), Number(h));
 });
+ipcMain.handle('pc:wm:move', (e, id, x, y) => {
+  fsGuard(e); return wm().move(Number(id), Number(x), Number(y));
+});
 ipcMain.handle('pc:wm:hide', (e, id) => { fsGuard(e); return wm().hide(Number(id)); });
 ipcMain.handle('pc:wm:show', (e, id) => { fsGuard(e); return wm().show(Number(id)); });
 ipcMain.handle('pc:wm:fullscreen', (e, id, on) => { fsGuard(e); return wm().fullscreen(Number(id), !!on); });

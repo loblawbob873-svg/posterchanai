@@ -207,6 +207,13 @@ class WM {
                         + Math.round(x) + ' ' + Math.round(y));
   }
 
+  /** Dragging changes position only. Resizing/re-floating the client on every pointer frame makes
+   * Firefox repaint and Telegram fall seconds behind the frame; the full place() runs on release. */
+  move(id, x, y){
+    return this.command('[con_id=' + Number(id) + '] move absolute position '
+                        + Math.round(x) + ' ' + Math.round(y));
+  }
+
   /** Subscribe on its OWN socket. sway will not answer ordinary requests on a subscribed one. */
   async subscribe(names){
     if(this.subSock) return;

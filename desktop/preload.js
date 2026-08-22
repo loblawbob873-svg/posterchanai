@@ -97,6 +97,7 @@ if (isOurPage) {
     close: (id) => ipcRenderer.invoke('pc:wm:close', Number(id)),
     place: (id, x, y, w, h) => ipcRenderer.invoke('pc:wm:place', Number(id), Number(x), Number(y),
                                                   Number(w), Number(h)),
+    move: (id, x, y) => ipcRenderer.invoke('pc:wm:move', Number(id), Number(x), Number(y)),
     /* Minimise, as the compositor can express it: the window is moved to the scratchpad, keeps
      * running, and comes back where it was. */
     hide: (id) => ipcRenderer.invoke('pc:wm:hide', Number(id)),
