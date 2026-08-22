@@ -317,8 +317,8 @@ def test_the_native_tick_is_wired_end_to_end():
         "and a shorter period simply aliases: a 10-minute alarm gives a 20-minute effective period "
         "(sweep at 0, refused at 10, runs at 20)" % (minutes, floor)
     )
-    m = re.search(r'notifyListeners\(\s*"([^"]+)"', plugin)
-    assert m, "FolderSyncPlugin emits no event, so the tick reaches no WebView"
+    m = re.search(r'notifyListeners\(\s*"(folderSyncTick)"', plugin)
+    assert m, "FolderSyncPlugin emits no tick event, so the tick reaches no WebView"
     event = m.group(1)
     assert event in shim, (
         "the plugin emits %r and the shim listens for something else — the two halves are wired to "
@@ -704,7 +704,7 @@ def test_the_unattended_sweep_refuses_what_it_cannot_ask_about():
     # settled until somebody opens the app, so that folder would be swept on every single alarm, for
     # ever, to defer it again. An error is different — nothing was learned — so the next tick retries.
     runner = _read(JAVA, "sync", "NativeRunner.java")
-    assert "if (rep.error.isEmpty()) {" in runner
+    assert "if (rep.error.isEmpty() && !rep.stopped) {" in runner
     assert "rep.deferred == 0" not in runner
 
 
@@ -1103,15 +1103,53 @@ def test_an_inflight_page_sweep_survives_the_android_handoff():
     java = os.path.join(JAVA, "sync")
     plugin = _code_only(_read(java, "FolderSyncPlugin.java"))
     runner = _code_only(_read(java, "NativeRunner.java"))
+    page = _read(CLIENT, "sync.js")
     mark = plugin.index("NativeRunner.continueFolders(continuing)")
-    release = plugin.index("NativeSweep.releaseAll(")
-    assert mark < release, "the page claim is released before its continuation is recorded"
+    handoff = plugin.index('notifyListeners("folderSyncHandoff"')
+    release_method = plugin[plugin.index("public void releaseSweep("):]
+    assert mark < handoff, "the continuation is not recorded before the page is asked to checkpoint"
+    assert "NativeSweep.releaseAll(" not in plugin[mark:handoff + 200], (
+        "onPause still steals the page claim and permits concurrent manifest writers"
+    )
+    assert "startNativeAfterHandoff" in release_method, (
+        "the native continuation starts before the page acknowledges its durable checkpoint"
+    )
+    assert "folderSyncHandoff" in page and "stopping.add(f.id)" in page, (
+        "the page never stops in response to the native handoff request"
+    )
     assert "if (continuing(f.key) && f.enabled && !f.paused)" in runner, (
         "the native handoff either reapplies charging policy or ignores an explicit Pause"
     )
     tick = runner[runner.index("public static boolean tick(Context ctx, String why, final Runnable done)"):]
     assert tick.index("consumeContinuations(p.due)") < tick.index("running = true"), (
         "a handed-over manual sweep remains permanently exempt from scheduling policy"
+    )
+
+
+def test_removing_a_folder_cancels_the_captured_native_job():
+    """Configuration is not cancellation: a worker already holds its own Folder snapshot."""
+    java = os.path.join(JAVA, "sync")
+    plugin = _code_only(_read(java, "FolderSyncPlugin.java"))
+    runner = _code_only(_read(java, "NativeRunner.java"))
+    sweep = _code_only(_read(java, "NativeSweep.java"))
+    page = _read(CLIENT, "sync.js")
+
+    forget = plugin[plugin.index("public void forget(PluginCall call)"):]
+    assert forget.index("NativeRunner.cancelFolder(f.key)") < forget.index(
+        "releasePersistableUriPermission"
+    ), "the folder grant is removed before its running native job is cancelled"
+    assert "new NativeSweep.Stop()" in runner and "cancelled(f.key)" in runner, (
+        "the runner records cancellation but does not pass it into the active sweep"
+    )
+    assert sweep.count("rep.stopped = true; j.flush(); return;") >= 4, (
+        "removal cannot stop every native transfer phase at a durable checkpoint"
+    )
+    assert "rep.error.isEmpty() && !rep.stopped" in runner, (
+        "a cancelled run advances the success clock and suppresses its continuation"
+    )
+    remove = page[page.index("card.querySelector('.sync-forget').onclick"):]
+    assert remove.index("saveFolders(folders().filter") < remove.index("await _pushNativeConfig()"), (
+        "the page does not remove the folder from native durable configuration"
     )
 
 

@@ -256,6 +256,7 @@ public class FolderSyncPlugin extends Plugin {
       call.reject("could not store the sync settings: " + t.getMessage());
       return;
     }
+    for (SyncStore.Folder f : store.folders()) NativeRunner.allowFolder(f.key);
     /* AND ARM THE CLOCK, which is the whole of "background sync does not work on this phone".
      *
      * It used to be armed by StayAwakeService — the "Stay connected" switch, off by default, in the
@@ -364,8 +365,24 @@ public class FolderSyncPlugin extends Plugin {
   @PluginMethod
   public void releaseSweep(PluginCall call) {
     String key = call.getString("key", "");
-    if (pageClaims.remove(key)) NativeSweep.release(key);
+    if (pageClaims.remove(key)) {
+      NativeSweep.release(key);
+      /* THIS IS THE ACKNOWLEDGED HANDOFF. The page reaches here only from its sweep's finally,
+       * after its journal was flushed. Starting native work before this point lets two executors
+       * write one manifest and was observed as stop -> restart -> conflicts on a fresh phone. */
+      if (!foreground) startNativeAfterHandoff(getContext());
+    }
     call.resolve();
+  }
+
+  private static void startNativeAfterHandoff(Context from) {
+    if (from == null) return;
+    final Context ctx = from.getApplicationContext();
+    new Thread(() -> {
+      try {
+        if (NativeRunner.eligible(ctx) && !SyncService.start(ctx)) SyncWork.start(ctx);
+      } catch (Throwable ignored) { }
+    }, "pc-sync-handoff").start();
   }
 
   @PluginMethod
@@ -416,16 +433,11 @@ public class FolderSyncPlugin extends Plugin {
    * and skips it. Nothing resumes until the claim expires or somebody opens the app. From the
    * outside: it was syncing, you locked the phone, it stopped.
    *
-   * So backgrounding is a HANDOVER, performed now:
-   *   * the page's claims are RELEASED — a hidden page cannot finish them, so holding them only
-   *     blocks the engine that can;
-   *   * the native sweep is started immediately rather than at the next tick.
+   * So backgrounding is a HANDOVER, performed now. The page is asked to stop; it checkpoints and
+   * releases its claim in its own finally; only that acknowledgement starts the native sweep.
    *
-   * Starting a foreground service is allowed here because the app is still foreground at onPause —
-   * this is the one moment in the cycle where that start is never refused, which is exactly when it
-   * is needed. A brief overlap with a page sweep that has not yet been throttled is possible and is
-   * survivable: `store.save` re-reads and merges, and the server's collapse guard is the backstop.
-   * A folder that syncs nothing until you next unlock the phone is not survivable.
+   * There is deliberately no timeout that steals the claim. A slow checkpoint delays continuation;
+   * stealing it creates concurrent writers, which is corruption disguised as availability.
    */
   @Override
   public void handleOnPause() {
@@ -461,8 +473,13 @@ public class FolderSyncPlugin extends Plugin {
          * will consume this once and bypass only the start policy (charging/minimum interval); the
          * filesystem checkpoint and all safety checks remain unchanged. */
         NativeRunner.continueFolders(continuing);
-        NativeSweep.releaseAll(new java.util.LinkedHashSet<String>(pageClaims));
-        pageClaims.clear();
+        JSObject data = new JSObject();
+        JSArray keys = new JSArray();
+        for (String key : continuing) keys.put(key);
+        data.put("keys", keys);
+        notifyListeners("folderSyncHandoff", data);
+        /* DO NOT release here. releaseSweep is the page's durable checkpoint acknowledgement. */
+        return;
       }
     }
     Context ctx = getContext();
@@ -509,8 +526,11 @@ public class FolderSyncPlugin extends Plugin {
      * must survive the page dying, which is the entire point of it. */
     synchronized (pageClaims) {
       if (!pageClaims.isEmpty()) {
+        java.util.Set<String> abandoned = new java.util.LinkedHashSet<String>(pageClaims);
+        NativeRunner.continueFolders(abandoned);
         NativeSweep.releaseAll(new java.util.LinkedHashSet<String>(pageClaims));
         pageClaims.clear();
+        startNativeAfterHandoff(getContext());
       }
     }
     super.handleOnDestroy();
@@ -653,6 +673,12 @@ public class FolderSyncPlugin extends Plugin {
   @PluginMethod
   public void forget(PluginCall call) {
     String id = call.getString("id", "");
+    /* Releasing the SAF grant does not stop a worker that already captured this Folder. Cancel by
+     * pair key first; the sweep observes it at its next durable checkpoint and cannot keep syncing
+     * a folder whose card and permission the user removed. */
+    for (SyncStore.Folder f : new SyncStore(getContext()).folders()) {
+      if (id.equals(f.id)) { NativeRunner.cancelFolder(f.key); break; }
+    }
     try {
       getContext().getContentResolver().releasePersistableUriPermission(Uri.parse(id),
           Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);

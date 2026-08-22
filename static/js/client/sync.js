@@ -3673,6 +3673,7 @@
          * device. Both keys go, because a build older than the pair key wrote the id one.
          * tests/client/two_device_sim.js — 'stale-base-is-what-deletes-everything'. */
         saveFolders(folders().filter(x => x.id !== id));
+        try{ await _pushNativeConfig(); }catch(_){}
         paint();
       };
     });
@@ -3906,7 +3907,14 @@
         swept(cur, {});                // the policy may well decline; that is the point of asking
       }, 1500));
     });
-    document.addEventListener('visibilitychange', () => { if(!document.hidden) nudge('visible'); });
+    document.addEventListener('visibilitychange', () => {
+      if(document.hidden){
+        /* An Android background handoff is cooperative: stop at the next chunk/file boundary,
+         * flush the journal, then release the native claim from the sweep's finally. Java does not
+         * start its continuation until that release, so the two engines never write concurrently. */
+        for(const id of running.keys()) stopping.add(id);
+      } else nudge('visible');
+    });
     window.addEventListener('online', () => nudge('online'));
     window.addEventListener('focus', () => nudge('focus'));
     // Capacitor's own resume is more reliable than visibilitychange in a WebView that the OS froze.
@@ -3937,6 +3945,12 @@
      * can only be produced by a foreground service the user switched on precisely so that work
      * happens while nobody is. */
     try{ if(fs.onTick) fs.onTick(() => nudge('native', true)); }catch(_){}
+    try{
+      if(fs.addListener) fs.addListener('folderSyncHandoff', (ev) => {
+        const keys = new Set((ev && ev.keys) || []);
+        for(const f of folders()) if(keys.has(keyOf(f)) && running.has(f.id)) stopping.add(f.id);
+      });
+    }catch(_){}
     _pushTickPolicy();
     try{ const r = _pushNativeConfig(); if(r && r.catch) r.catch(()=>{}); }catch(_){}
     /* THE DESKTOP'S OWN VERSION OF THE SAME HOLE, and the shell already had the signal.

@@ -68,6 +68,7 @@ public final class NativeSweep {
          *  nothing can be partially read: a record set that could not be fetched throws and the
          *  sweep changes nothing. */
         public int devices = 0;
+        public boolean stopped = false;
         /** Set when this sweep refused to tell the other devices to delete in bulk. */
         public String refusedRemoteDelete = null;
         public final List<String> uploaded = new ArrayList<String>();
@@ -125,6 +126,7 @@ public final class NativeSweep {
             m.put("alreadyStored", (long) alreadyStored);
             m.put("checkpoints", (long) checkpoints);
             m.put("hashed", hashed);
+            if (stopped) m.put("stopped", true);
             if (repaired > 0) m.put("repaired", (long) repaired);
             if (!refusedTrash.isEmpty()) m.put("refusedTrash", refusedTrash);
             if (!refusedResurrect.isEmpty()) m.put("refusedResurrect", refusedResurrect);
@@ -449,7 +451,7 @@ public final class NativeSweep {
          * is a fact about the file, the other is a fact about the moment. */
         int ti = 0;
         for (Map<String, Object> t : plan.remove) {
-            if (stop != null && stop.stopping()) { j.flush(); return; }
+            if (stop != null && stop.stopping()) { rep.stopped = true; j.flush(); return; }
             String path = Json.str(t.get("path"), "");
             progress(f.key, "deleting", path, ++ti, plan.remove.size());
             Map<String, Object> entry = Json.obj(t.get("entry"));
@@ -469,7 +471,7 @@ public final class NativeSweep {
 
         int di = 0;
         for (Map<String, Object> d : plan.fetch) {
-            if (stop != null && stop.stopping()) { j.flush(); return; }
+            if (stop != null && stop.stopping()) { rep.stopped = true; j.flush(); return; }
             String path = Json.str(d.get("path"), "");
             Map<String, Object> R = Json.obj(d.get("entry"));
             progress(f.key, "downloading", path, ++di, plan.fetch.size());
@@ -529,7 +531,7 @@ public final class NativeSweep {
 
         int ui = 0;
         for (Map<String, Object> u : plan.send) {
-            if (stop != null && stop.stopping()) { j.flush(); return; }
+            if (stop != null && stop.stopping()) { rep.stopped = true; j.flush(); return; }
             String path = Json.str(u.get("path"), "");
             Map<String, Object> meta = local.get(path);
             if (meta == null) continue;
@@ -578,7 +580,7 @@ public final class NativeSweep {
         }
 
         for (Map<String, Object> t : plan.tombstone) {
-            if (stop != null && stop.stopping()) { j.flush(); return; }
+            if (stop != null && stop.stopping()) { rep.stopped = true; j.flush(); return; }
             String path = Json.str(t.get("path"), "");
             /* POSITIVE PROOF, mirroring the JS executor: a deletion is only announced when the
              * exact path is confirmed absent under a healthy parent. Every way a scan fails to

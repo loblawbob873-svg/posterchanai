@@ -181,13 +181,16 @@ class TheSweepConsultsIt(unittest.TestCase):
                     self.assertNotIn(reach, src,
                                      "%s reaches into the launcher for %s" % (f.name, reach))
 
-    def test_the_claims_are_handed_back_unconditionally(self):
-        """Releasing and starting are separate concerns: a claim held by a page that is no longer
-        running must be freed even when the sweep is not started."""
+    def test_an_inflight_page_is_always_asked_to_checkpoint(self):
+        """Launcher deferral must not skip the checkpoint request, but ownership remains with the
+        page until its release acknowledgement so a native writer cannot overlap it."""
         body = method(strip_comments((SYNC / "FolderSyncPlugin.java").read_text()),
                       "private void handOver")
-        self.assertLess(body.index("releaseAll"), body.index("leavingIntoOurOwnLauncher(ctx)"),
-                        "the early return skips handing the page's claims back")
+        self.assertLess(body.index('notifyListeners("folderSyncHandoff"'),
+                        body.index("leavingIntoOurOwnLauncher(ctx)"),
+                        "launcher deferral skips asking the page for its durable checkpoint")
+        self.assertNotIn("releaseAll", body,
+                         "onPause steals ownership before the page has checkpointed")
 
 
 class NothingAboutBeingTheLauncherReSyncs(unittest.TestCase):

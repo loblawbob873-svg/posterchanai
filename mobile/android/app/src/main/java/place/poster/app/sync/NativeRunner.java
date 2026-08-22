@@ -47,6 +47,7 @@ public final class NativeRunner {
      * WebView. This is a continuation, not a new scheduled sweep, so charging/interval policy must
      * not cancel what the user explicitly started. Consumed when the native run actually starts. */
     private static final Set<String> CONTINUE = new LinkedHashSet<String>();
+    private static final Set<String> CANCEL = new LinkedHashSet<String>();
 
     public static synchronized void continueFolders(Set<String> keys) {
         if (keys != null) for (String key : keys) if (key != null && !key.isEmpty()) CONTINUE.add(key);
@@ -59,6 +60,16 @@ public final class NativeRunner {
     private static synchronized void consumeContinuations(List<SyncStore.Folder> due) {
         for (SyncStore.Folder f : due) CONTINUE.remove(f.key);
     }
+
+    public static synchronized void cancelFolder(String key) {
+        if (key == null || key.isEmpty()) return;
+        CANCEL.add(key);
+        CONTINUE.remove(key);
+    }
+
+    public static synchronized void allowFolder(String key) { CANCEL.remove(key); }
+
+    private static synchronized boolean cancelled(String key) { return CANCEL.contains(key); }
 
     public static boolean busy() { return running; }
 
@@ -242,7 +253,10 @@ public final class NativeRunner {
             for (int i = 0; i < due.size(); i++) {
                 SyncStore.Folder f = due.get(i);
                 boolean hash = i < deep.size() && Boolean.TRUE.equals(deep.get(i));
-                NativeSweep.Report rep = NativeSweep.run(ctx, store, f, sec, hash, null);
+                NativeSweep.Report rep = NativeSweep.run(ctx, store, f, sec, hash,
+                        new NativeSweep.Stop() {
+                            public boolean stopping() { return cancelled(f.key); }
+                        });
                 reports.add(rep.toMap());
                 /* THE CLOCK ADVANCES WHEN THE SWEEP COMPLETED, and a DEFERRAL is a completion.
                  *
@@ -251,7 +265,7 @@ public final class NativeRunner {
                  * until somebody opens the app, so that folder would be swept again on every single
                  * alarm, for ever, to defer it again. An ERROR is different — nothing was learned —
                  * and still holds the clock back so the next tick retries promptly. */
-                if (rep.error.isEmpty()) {
+                if (rep.error.isEmpty() && !rep.stopped) {
                     store.setLastSyncAt(f.key, rep.at);
                     if (hash) store.setLastFullScanAt(f.key, rep.at);
                 }
