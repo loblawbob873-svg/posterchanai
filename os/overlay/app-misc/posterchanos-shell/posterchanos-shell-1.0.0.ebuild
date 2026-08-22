@@ -71,11 +71,11 @@ pkg_postinst() {
 	local cfg
 	for cfg in "${EROOT%/}/home/posterchan/.config/sway/config" "${EROOT%/}"/home/pc-*/.config/sway/config; do
 		[[ -f ${cfg} ]] || continue
-		grep -q 'Ctrl+Mod1+BackSpace' "${cfg}" && continue
+		grep -q 'Ctrl+Mod1+22' "${cfg}" && continue
 		cat >>"${cfg}" <<-'SWAY_RECOVERY'
 
 		# Restart only the PosterChan desktop shell; native applications remain open.
-		bindsym --release --no-repeat Ctrl+Mod1+BackSpace exec sh -c 'pkill -f posterchan[-]desktop; sleep 1; exec /usr/local/bin/pc-shell-start'
+		bindcode --no-repeat Ctrl+Mod1+22 exec sh -c 'pkill -f posterchan[-]desktop; sleep 1; exec /usr/local/bin/pc-shell-start'
 		SWAY_RECOVERY
 	done
 

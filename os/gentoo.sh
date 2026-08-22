@@ -1511,7 +1511,7 @@ PROFILE
 	bindsym --release --no-repeat $mod exec swaymsg -t send_tick pc:start
 
 	# Recovery for the UI only. Sway and native applications remain running.
-	bindsym --release --no-repeat Ctrl+Mod1+BackSpace exec sh -c 'pkill -f posterchan[-]desktop; sleep 1; exec /usr/local/bin/pc-shell-start'
+	bindcode --no-repeat Ctrl+Mod1+22 exec sh -c 'pkill -f posterchan[-]desktop; sleep 1; exec /usr/local/bin/pc-shell-start'
 
 	# A game gets the screen to itself and nothing above it.
 	for_window [class="^steam_app_.*"] fullscreen enable, inhibit_idle fullscreen
