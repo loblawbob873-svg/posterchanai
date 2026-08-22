@@ -46,7 +46,7 @@ class ANativeWindowDoesNotSwitchTheClientView(unittest.TestCase):
 
     def test_native_windows_are_declared_nofeed(self):
         """The gate is worth nothing if adoptNative stops passing it."""
-        self.assertIn("openApp(view, nw.title || nw.app || 'App', 'grid', null, true)",
+        self.assertIn("openApp(view, nw.title || nw.app || 'App', 'i-grid', null, true)",
                       OS_JS.read_text())
 
 

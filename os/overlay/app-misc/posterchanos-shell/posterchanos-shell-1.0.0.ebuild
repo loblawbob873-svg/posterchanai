@@ -22,6 +22,7 @@ RDEPEND="
 	gui-wm/sway
 	gui-apps/swayidle
 	gui-apps/foot
+	net-wireless/bluez
 	sys-apps/xdg-desktop-portal
 	gui-libs/xdg-desktop-portal-wlr
 	sys-boot/plymouth
@@ -74,6 +75,10 @@ pkg_postinst() {
 		# These are package-owned bindings inside an otherwise user-owned file. Remove every older
 		# form first; merely checking for the keycode retained a stale command forever.
 		sed -i -E '/Ctrl\+Mod1\+(BackSpace|22).*pc-shell-(start|restart)/d' "${cfg}"
+		# Super+Return also fires the bare-Super release binding on some Sway/XKB paths, opening
+		# Start over the terminal. Alt+Return is the shipped shortcut now; repair private configs
+		# created by an older image so an update changes the key people actually use.
+		sed -i -E 's#bindsym \$mod\+Return exec swaymsg -t send_tick pc:terminal#bindsym Mod1+Return exec swaymsg -t send_tick pc:terminal#' "${cfg}"
 		sed -i 's#bindsym --release --no-repeat \$mod exec swaymsg -t send_tick pc:start#bindsym --release --no-repeat Super_L exec swaymsg -t send_tick pc:start#' "${cfg}"
 		if ! grep -q 'Super_L exec swaymsg -t send_tick pc:start' "${cfg}"; then
 			echo 'bindsym --release --no-repeat Super_L exec swaymsg -t send_tick pc:start' >>"${cfg}"
@@ -95,6 +100,13 @@ pkg_postinst() {
 		# account that does not exist yet.
 		systemctl --global enable pipewire.socket pipewire-pulse.socket wireplumber.service \
 			>/dev/null 2>&1 || true
+		# gentoo.sh has always enabled this on a fresh install, but an existing PosterChanOS
+		# machine learns about the Bluetooth panel through update-posterchan. Make that upgrade
+		# complete as well: install BlueZ through RDEPEND and bring its system daemon up now and
+		# on every later boot. Without this, bluetoothctl waits for a daemon that is not running
+		# and the on-screen Bluetooth button appears to do nothing.
+		systemctl enable --now bluetooth.service >/dev/null 2>&1 || \
+			ewarn "could not start Bluetooth — check: systemctl status bluetooth.service"
 	fi
 	elog "PosterChanOS session installed."
 	elog "Autologin is configured by the installer, not by this package."

@@ -69,8 +69,11 @@
        * glanced at the timeline is a worse bug than the one being fixed. The library stays in memory
        * and `render` re-watches, so coming back is instant and costs one REQ. */
       sleep(){ unwatch(); },
-      // Called on reconnect — flush anything written while offline.
-      flush: flushPending,
+      /* Called when the relay becomes ready. Reconnect is not only an OUTBOX event: on a cold
+       * launch Notes can paint its (empty) local cache before the relay is connected, and its first
+       * background query then has nothing to read. Reopening accidentally retried it. Refresh the
+       * open library on the same readiness signal that drains writes so the first opening fills in. */
+      async flush(){ const n = await flushPending(); refresh(); return n; },
       /* Exposed so the absorb table can be run against real event batches — a deleted note coming
        * back is a data bug, and it is decided entirely here. See test_notes_deletion_sticks.py. */
       _absorb,

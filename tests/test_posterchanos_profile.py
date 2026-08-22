@@ -768,10 +768,10 @@ class MoreThanOneScreenWorksWithoutConfiguring(unittest.TestCase):
             self.assertIn("$mod+q kill", cfg, f"{name}: there is no way to close a window")
 
     def test_the_terminal_binding_has_not_drifted_again(self):
-        """The two files must agree about what Super+Enter does."""
+        """The two files must agree about what Alt+Enter does."""
         for name, cfg in self.CONFIGS.items():
-            self.assertIn("bindsym $mod+Return exec swaymsg -t send_tick pc:terminal", cfg,
-                          f"{name}: Super+Enter does not raise PosterChan's terminal")
+            self.assertIn("bindsym Mod1+Return exec swaymsg -t send_tick pc:terminal", cfg,
+                          f"{name}: Alt+Enter does not raise PosterChan's terminal")
             self.assertIn("bindsym $mod+Shift+Return exec foot", cfg,
                           f"{name}: Super+Shift+Enter does not open a plain terminal")
 

@@ -19,6 +19,11 @@ class BluetoothBackend(unittest.TestCase):
         self.assertIn("media-video/pipewire sound-server bluetooth", src)
         self.assertIn("SERVICES+=(sshd systemd-timesyncd libvirtd bluetooth", src)
 
+    def test_existing_install_gets_bluez_and_a_running_service(self):
+        src = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
+        self.assertIn("net-wireless/bluez", src)
+        self.assertIn("systemctl enable --now bluetooth.service", src)
+
     def test_pairing_is_inside_the_volume_mixer(self):
         src = (ROOT / "static" / "js" / "client" / "osshell.js").read_text()
         self.assertIn('data-os="bluetooth"', src)

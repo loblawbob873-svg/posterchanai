@@ -1306,7 +1306,7 @@
     return { x, y, w, h };
   }
 
-  function openApp(view, label, icon, render, noFeed){
+  function openApp(view, label, icon, render, noFeed, direct){
     if(view && view.indexOf('folder:') === 0 && !_inFolder){
       const f = layout().folders.find(x => 'folder:' + x.key === view);
       return f ? openFolder(f) : null;
@@ -1317,7 +1317,7 @@
     if(view === 'mail'){
       try{ mailAck = (PC().mailUnread && PC().mailUnread()) || 0; }catch(_){}
     }
-    const extra = EXTRAS.find(x => x.view === view);
+    const extra = !direct && EXTRAS.find(x => x.view === view);
     if(extra){ try{ extra.act(); }catch(err){ try{ PC().toast('could not open ' + extra.label); }catch(_){} } return null; }
     const existing = wins.find(w => w.view === view);
     if(existing){ focusWin(existing); return existing; }
@@ -1433,7 +1433,10 @@
 
   function openTaskManager(){
     const old=wins.find(x=>x.view==='__tasks'); if(old){focusWin(old,false);return old;}
-    const w=openApp('__tasks','Task Manager','#i-chart',null,true); if(!w)return null;
+    /* `__tasks` is also an EXTRAS launcher entry. This call creates its actual window, so bypass
+     * EXTRAS; routing it through the launcher again recursively called openTaskManager until the
+     * stack overflowed and made the button appear dead. */
+    const w=openApp('__tasks','Task Manager','#i-chart',null,true,true); if(!w)return null;
     w.el.classList.add('osw-taskmgr');
     w.slot.innerHTML=`<div class="tm"><div class="tm-head"><div><b>Task Manager</b><span>Performance and processes</span></div>
       <input class="input tm-search" placeholder="Search processes" aria-label="Search processes"></div>
@@ -1460,7 +1463,8 @@
 
   function openVmManager(){
     const old=wins.find(x=>x.view==='__vms');if(old){focusWin(old,false);return old;}
-    const w=openApp('__vms','Virtual Machines','#i-monitor',null,true);if(!w)return null;
+    /* Same launcher/window split as Task Manager above. */
+    const w=openApp('__vms','Virtual Machines','#i-monitor',null,true,true);if(!w)return null;
     w.el.classList.add('osw-vms');
     w.slot.innerHTML=`<div class="vmui"><div class="vmui-top"><div><b>Virtual Machines</b><span>Private to this PosterChanOS user</span></div><button class="btn" data-vm-new>＋ New VM</button></div><div class="vmui-create" hidden>
       <label>Name<input class="input" data-vm-name placeholder="Windows 11"></label>
@@ -1616,10 +1620,12 @@
     }catch(_){ return false; }
   };
 
-  /* Keep the native surface LIVE during a gesture. The old implementation moved it to Sway's
-   * scratchpad and dragged only the HTML frame; that made the frame visibly run ahead of the app
-   * for the entire gesture. Position-only `pcWM.move` is cheap enough to follow each painted frame
-   * (unlike resize/place), and the final sync performs the full authoritative placement. */
+  /* A NATIVE SURFACE AND AN HTML FRAME CANNOT MOVE IN ONE COMPOSITOR TRANSACTION. Trying to imitate
+   * that by sending one sway IPC command per animation frame merely makes the two chase each other:
+   * IPC acknowledgements serialize, the cursor keeps moving, and Firefox winds up visibly detached
+   * from its PosterChan frame. Park the real surface for the gesture, move the lightweight frame at
+   * display speed, then place the parked surface at the final rectangle before showing it. There is
+   * one coherent window before and after the drag and no queue of stale positions to replay. */
   function _natGesture(w, on){
     /* Cleared for EVERY window, not just a native one: the hold is armed by the press, and the
      * press does not know yet whether the frame it landed on wraps an app. Left set after dragging
@@ -1627,7 +1633,7 @@
     if(!on) _natFocusHold = false;
     if(!w || w.native == null) return;
     w.gesturing = !!on;
-    if(on) return;
+    if(on){ nsync(); return; }
     const done = nsync();
     /* The app has the keyboard again now that it is back on screen. After the sync, not before:
      * focusing a window that is still in the scratchpad brings it back wherever the compositor
@@ -1785,7 +1791,10 @@
          * never shown again. A latch set before the attempt it describes; the same shape that has
          * bitten this codebase before. Failure now leaves the memory alone (hidden stays hidden, so
          * the next pass retries the show) or clears it (so the next pass re-places). */
-        if(stash.has(it.native)){
+        /* During a drag the HTML frame is the preview. Keeping the compositor surface live would
+         * require an atomic cross-process move that Wayland/Electron cannot provide; queuing sway
+         * moves is what separated Firefox from the frame. */
+        if(it.w.gesturing || stash.has(it.native)){
           if(_natSent.get(it.native) !== 'hidden'){
             try{ await pcWM.hide(it.native); _natSent.set(it.native, 'hidden'); }catch(_){}
           }
@@ -1808,17 +1817,18 @@
           continue;
         }
         const was = _natSent.get(it.native);
-        if(was === 'hidden'){
-          // Left as 'hidden' on failure ON PURPOSE: that is what makes the next pass try again.
-          try{ await pcWM.show(it.native); }catch(_){ continue; }
-        }
         if(was === 'hidden' || NAT().changed(was, rect)){
-          try{ if(it.w.gesturing) await pcWM.move(it.native, rect.x, rect.y);
-               else await pcWM.place(it.native, rect.x, rect.y, rect.w, rect.h);
-               _natSent.set(it.native, rect);
-               _natRetry = 0;              // something landed: the budget is for a STUCK measure
+          try{ await pcWM.place(it.native, rect.x, rect.y, rect.w, rect.h); }
+          catch(_){ _natSent.delete(it.native); continue; }
+          /* Place it while it is still parked. Showing first flashes the app at its old position,
+           * which looks exactly like it escaped from the PosterChan window. A failed show remains
+           * recorded as hidden so the next pass retries the operation that actually failed. */
+          if(was === 'hidden'){
+            try{ await pcWM.show(it.native); }
+            catch(_){ _natSent.set(it.native, 'hidden'); continue; }
           }
-          catch(_){ _natSent.delete(it.native); }
+          _natSent.set(it.native, rect);
+          _natRetry = 0;              // something landed: the budget is for a STUCK measure
         }
       }
     }catch(_){ }
@@ -5265,9 +5275,8 @@
     root.className = 'os-root';
     root.innerHTML = '<div class="os-desk" id="os-desk"></div><div class="os-bar" id="os-bar"></div>';
     document.body.appendChild(root);
-    /* Sway reports the bare-Super RELEASE even after a Super+Return chord. Remember terminal's
-     * key-down tick long enough to reject that trailing release; otherwise one shortcut opens the
-     * terminal and then immediately raises Start over it. */
+    /* Kept for old Sway configs during their first session after an upgrade. Current installs use
+     * Alt+Return, which cannot produce a trailing bare-Super release. */
     let _suppressStartUntil = 0;
     /* THE POSTERCHANOS SHELL, when this machine IS the desktop.
      *
@@ -5325,7 +5334,7 @@
              * `takeShot` itself answers that, so the binding does not have to. */
             else if(p === 'pc:shot') _shot('screen');
             else if(p === 'pc:shot:region') _shot('region');
-            /* Super+Return. `openApp` is what a start-menu entry and a desktop icon both go through,
+            /* Alt+Return (and Super+Return from an old config). `openApp` is what a start-menu entry and a desktop icon both go through,
              * so the terminal opened by the key is the same window, in the same place in the
              * stacking order, as the one opened by clicking it. */
             else if(p === 'pc:terminal'){

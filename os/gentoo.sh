@@ -1459,11 +1459,11 @@ PROFILE
 
 	bindsym $mod+Shift+e exec swaynag -t warning -m 'Exit PosterChanOS?' -B 'Yes' 'swaymsg exit'
 	# THE SAME TWO BINDINGS THE SHELL PACKAGE SHIPS. They drifted: this file still opened `foot` on
-	# $mod+Return long after the overlay's copy had been changed to raise PosterChan's own terminal,
+	# Alt+Return long after the overlay's copy had been changed to raise PosterChan's own terminal,
 	# so a machine installed from the ISO got the old behaviour and one updated through the package
 	# got the new one -- reported as "win + enter not loading PosterChan terminal on PosterChanOS",
 	# on an install where the fix had been made and shipped to the other copy.
-	bindsym $mod+Return exec swaymsg -t send_tick pc:terminal
+	bindsym Mod1+Return exec swaymsg -t send_tick pc:terminal
 	bindsym Ctrl+Mod1+Delete exec swaymsg -t send_tick pc:tasks
 	bindsym $mod+Shift+Return exec foot
 

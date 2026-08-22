@@ -1,4 +1,4 @@
-"""Super+Return opens PosterChan's terminal, and there is still a way in when the shell is broken.
+"""Alt+Return opens PosterChan's terminal, and there is still a way in when the shell is broken.
 
     "terminal is also not the one I wanted you to build"
     "win + enter not loading PosterChan terminal"
@@ -29,10 +29,10 @@ class ModReturnOpensOurs(unittest.TestCase):
         cls.binds = dict(re.findall(r"(?m)^bindsym\s+(\S+)\s+exec\s+(.+)$", cls.cfg))
 
     def test_it_is_bound(self):
-        self.assertIn("$mod+Return", self.binds)
+        self.assertIn("Mod1+Return", self.binds)
 
     def test_it_is_not_a_third_party_terminal(self):
-        cmd = self.binds["$mod+Return"]
+        cmd = self.binds["Mod1+Return"]
         self.assertNotIn("foot", cmd,
                          "Super+Return opens a different terminal emulator than the one this OS "
                          "ships, which is what was reported twice")
@@ -41,7 +41,7 @@ class ModReturnOpensOurs(unittest.TestCase):
                 self.assertNotIn(other, cmd)
 
     def test_it_reaches_the_shell(self):
-        self.assertIn("send_tick pc:terminal", self.binds["$mod+Return"])
+        self.assertIn("send_tick pc:terminal", self.binds["Mod1+Return"])
 
     def test_the_shell_answers_it(self):
         src = OS_JS.read_text()
@@ -58,7 +58,7 @@ class ModReturnOpensOurs(unittest.TestCase):
         self.assertNotIn("window.open", src[i:i + 160])
 
     def test_its_super_release_cannot_open_start_over_the_terminal(self):
-        """Sway emits the bare-Super release after the Return binding has already fired."""
+        """Old configs remain harmless for the first session before the package repairs them."""
         src = OS_JS.read_text()
         terminal = src.index("else if(p === 'pc:terminal')")
         start = src.index("if(p === 'pc:start')")
@@ -96,7 +96,7 @@ class TheWayBackSurvives(unittest.TestCase):
         binds = dict(re.findall(r"(?m)^bindsym\s+(\S+)\s+exec\s+(.+)$", self.cfg))
         foot = [k for k, v in binds.items() if v.strip().startswith("foot")]
         self.assertTrue(foot)
-        self.assertNotIn("$mod+Return", foot)
+        self.assertNotIn("Mod1+Return", foot)
 
 
 if __name__ == "__main__":
