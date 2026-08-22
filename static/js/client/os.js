@@ -2337,6 +2337,15 @@
        * bar is the height of what it holds. */
       return { w: Math.max(200, Math.min(wide, Math.round(deskW * 0.72))), h: 54 };
     }
+    /* Community is five labelled facts, not a decorative tile. Give existing saved widgets the
+     * readable footprint automatically; requiring everybody to remove/re-add or discover a resize
+     * menu would leave the reported tiny widget unchanged. */
+    if(def && def.community){
+      const c = { s: { w: 300, h: 150 }, m: { w: 440, h: 210 }, l: { w: 580, h: 290 } }[size]
+                || { w: 440, h: 210 };
+      return { w: Math.max(250, Math.min(c.w, Math.round(deskW * 0.68))),
+               h: Math.max(130, Math.min(c.h, Math.round(deskH * 0.46))) };
+    }
     const s = WGT_SIZES[size] || WGT_SIZES.m;
     return { w: Math.max(150, Math.min(s.w, Math.round(deskW * 0.46))),
              h: Math.max(96,  Math.min(s.h, Math.round(deskH * 0.40))) };
@@ -2927,6 +2936,7 @@
 
     stats: {
       label: 'Community', icon: '#i-wot', blurb: 'Web of trust, who is online, live streams and calls',
+      community: true,
       // The app polls /client/stats once every 15s for the sidebar; this reads what that already
       // fetched, so it matches the tick it depends on and costs nothing of its own.
       every: 15000,

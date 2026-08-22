@@ -7092,14 +7092,14 @@ body.os-on #os-root{pointer-events:auto}
    top-left that is a panel with a hole in the bottom-right of it — the same "wasting too much space"
    the clock had. align-content centres the rows in whatever height the widget has, justify-items
    centres each tile in its column, and the tile centres its own icon+number pair. */
-.wgt-st{display:grid;grid-template-columns:repeat(auto-fit,minmax(78px,1fr));gap:8px 10px;
+.wgt-st{display:grid;grid-template-columns:repeat(auto-fit,minmax(116px,1fr));gap:16px 18px;
   height:100%;align-content:center;justify-items:center;cursor:pointer}
-.wgt-stc{display:grid;grid-template-columns:15px auto;grid-template-rows:auto auto;gap:0 6px;
+.wgt-stc{display:grid;grid-template-columns:24px auto;grid-template-rows:auto auto;gap:2px 9px;
   align-items:center;justify-content:center}
-.wgt-stc .ic{width:15px;height:15px;color:var(--muted);grid-row:span 2}
-.wgt-stc b{font-size:16px;font-weight:700;color:var(--text);line-height:1.1;
+.wgt-stc .ic{width:24px;height:24px;color:var(--muted);grid-row:span 2}
+.wgt-stc b{font-size:24px;font-weight:750;color:var(--text);line-height:1.05;
   font-variant-numeric:tabular-nums}
-.wgt-stc i{font-style:normal;font-size:10.5px;color:var(--muted);
+.wgt-stc i{font-style:normal;font-size:13px;color:var(--muted);line-height:1.2;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* Something is actually live: the icon lights and breathes. Only ever for a NON-ZERO counter — this
    is the one cell whose value changes what the panel is for. */
