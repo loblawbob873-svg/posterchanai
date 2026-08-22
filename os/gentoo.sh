@@ -590,6 +590,8 @@ _pc_write_os_release() {
 		ID_LIKE=gentoo
 		ANSI_COLOR="1;36"
 		HOME_URL="https://poster.place/"
+		SUPPORT_URL="https://poster.place/"
+		BUG_REPORT_URL="https://gitworkshop.dev/npub1fdtthaqujtjcd6yfy7kt0zpkadyl9vvypq00s5nztnmche74d0tqv6uwwr/relay.poster.place/posterchanai/issues"
 	OSREL
 	ln -s ../usr/lib/os-release "$ROOT/etc/os-release"
 	[ -s "$ROOT/etc/os-release" ] && grep -q '^ID=posterchanos$' "$ROOT/etc/os-release"

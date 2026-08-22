@@ -7281,9 +7281,11 @@ body.os-on #os-root{pointer-events:auto}
   touch-action:none;background:linear-gradient(135deg,transparent 50%,var(--line) 50%)}
 
 /* Taskbar */
-/* Centred start + tasks, tray pinned right — the Win11 arrangement. The tray is absolutely placed
-   so the centred group is centred on the SCREEN, not on the space the tray leaves over. */
-.os-bar{position:relative;flex:0 0 48px;display:flex;align-items:center;justify-content:center;gap:8px;padding:0 10px;
+/* Start/search stay at the far left; running apps own all remaining taskbar space. Keeping the tray
+   absolute means it never gets squeezed, while the right padding keeps task buttons from sliding
+   underneath it when many applications are open. */
+.os-bar{position:relative;flex:0 0 48px;display:flex;align-items:center;justify-content:flex-start;gap:8px;
+  padding:0 min(390px,32vw) 0 10px;
   background:color-mix(in srgb, var(--panel2) 88%, transparent);
   border-top:1px solid var(--line);backdrop-filter:blur(10px)}
 .os-start{flex:0 0 auto;width:40px;height:40px;border-radius:10px;border:1px solid transparent;
@@ -7299,7 +7301,7 @@ body.os-on #os-root{pointer-events:auto}
 .os-new:hover{filter:brightness(1.08)}
 .os-new .ic{width:15px;height:15px}
 @media (pointer:coarse){ .os-new{height:calc(42px / var(--zf, 1))} }
-.os-tasks{flex:0 1 auto;min-width:0;display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}
+.os-tasks{flex:1 1 auto;min-width:0;display:flex;justify-content:flex-start;gap:6px;overflow-x:auto;scrollbar-width:none}
 .os-tasks::-webkit-scrollbar{display:none}
 .os-task{flex:0 0 40px;width:40px;display:grid;place-items:center;height:38px;
   padding:0;border-radius:9px;border:1px solid transparent;background:rgba(255,255,255,.05);
@@ -7365,7 +7367,7 @@ body.os-on #os-root{pointer-events:auto}
 /* AFTER the base rule, or same-specificity cascade means these never apply. On a narrow desktop the
    task buttons matter more than the search box, so it shrinks and then goes. */
 @media (max-width:1200px){ .os-qbox{flex:0 1 170px;min-width:120px} }
-@media (max-width:1080px){ .os-qbox{display:none} }
+@media (max-width:1080px){ .os-qbox{display:none}.os-bar{padding-inline-end:300px} }
 
 /* The community counters, moved into the start menu because the desktop hides the sidebar. */
 /* Notification centre — the flyout Windows opens from the clock. Above .os-root (300) and the start
