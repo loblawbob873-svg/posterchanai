@@ -48,7 +48,7 @@ class TheBuilderShipsTheInstaller(unittest.TestCase):
     def test_it_does_not_copy_into_the_running_system(self):
         """Building an ISO must not modify the machine being imaged — the same rule the fstab
         rewrite follows."""
-        i = self.fn.index("usr/local/share/posterchanos")
+        i = self.fn.index('pseudoput "usr/local/share/posterchanos/$REL"')
         seg = self.fn[max(0, i - 600):i + 600]
         self.assertNotIn("cp -r /usr/local/share", seg)
         self.assertIn("cat ", seg)
@@ -116,11 +116,21 @@ class TheImageDoesNotCarryTheOperator(unittest.TestCase):
         i = self.fn.index('"etc/sudoers.d/live" f')
         self.assertIn("440", self.fn[i:i + 60])
 
-    def test_it_does_not_touch_the_real_sudoers(self):
-        """An installed system keeps whatever policy it was given."""
-        i = self.fn.index("NOPASSWD")
-        seg = self.fn[max(0, i - 500):i + 500]
-        self.assertNotIn("/etc/sudoers ", seg)
+    def test_it_does_not_edit_the_build_hosts_sudoers(self):
+        """The squashfs replaces its policy through a pseudo-file; the running host is untouched."""
+        self.assertNotRegex(self.fn, r"(?:>|sed[^\n]*|chmod[^\n]*)\s*/etc/sudoers(?:\s|$)")
+
+    def test_the_sudoers_drop_in_is_reachable(self):
+        """A correct file in sudoers.d grants nothing unless the main policy includes the directory."""
+        self.assertIn("@includedir /etc/sudoers.d", self.fn)
+        self.assertIn('pseudoput "etc/sudoers" f 440', self.fn)
+        self.assertIn("visudo -cf", self.fn)
+
+    def test_the_live_image_forces_the_posterchan_sway_config(self):
+        """A host's stock config may name an excluded wallpaper and does not start our shell."""
+        self.assertIn('pseudoput "etc/sway/config" f 644', self.fn)
+        self.assertIn("pc-shell-start", self.fn)
+        self.assertIn("sway -C -c", self.fn)
 
     def test_it_grants_only_the_live_account(self):
         # The RULE, not the first mention of the word — "NOPASSWD" appears in the comment above it

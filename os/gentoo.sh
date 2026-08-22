@@ -103,7 +103,7 @@ done
 # a bare script is still better than no install. It just cannot copy what it does not have.
 [ -n "$PCOS_TREE" ] || PCOS_TREE="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
 
-COLOR_CYAN="\033[1;36m"; COLOR_MAGENTA="\033[1;35m"; COLOR_YELLOW="\033[1;33m"
+COLOR_RED="\033[1;31m"; COLOR_CYAN="\033[1;36m"; COLOR_MAGENTA="\033[1;35m"; COLOR_YELLOW="\033[1;33m"
 COLOR_GREEN="\033[1;32m"; COLOR_RESET="\033[0m"; COLOR_BOLD="\033[1;97m"
 TARGET='/tmp/install'
 mkdir $TARGET
@@ -2473,9 +2473,22 @@ FSTAB
 		# NOPASSWD for the live account only, in its own drop-in. This is what every live image does
 		# and it is safe for the same reason theirs is: the medium is read-only, the session is
 		# transient, and anybody holding the disc can already read every file on it. It does NOT
-		# touch /etc/sudoers, so an installed system keeps whatever policy it was given.
+		# touch the RUNNING host's /etc/sudoers. The image gets a clean main file below, including the
+		# @includedir that makes this drop-in real; the source host used for the failed disc omitted
+		# that directive, so the perfectly formed live rule was silently unreachable.
 		mkdir -p "$WORK/sudoers.d"
 		printf 'live ALL=(ALL:ALL) NOPASSWD: ALL\n' >"$WORK/sudoers.d/live"
+		cat >"$WORK/sudoers" <<-'SUDOERS'
+		Defaults env_reset
+		Defaults secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+		root ALL=(ALL:ALL) ALL
+		@includedir /etc/sudoers.d
+		SUDOERS
+		chmod 0440 "$WORK/sudoers" "$WORK/sudoers.d/live"
+		if command -v visudo >/dev/null 2>&1 && ! visudo -cf "$WORK/sudoers" >>"$LOG" 2>&1; then
+			echo -e "${COLOR_RED}Live sudo policy is invalid; refusing to build the ISO.${COLOR_RESET}"
+			return 1
+		fi
 
 		# Autologin as the live user. Same file the installed system uses, rewritten rather than
 		# removed — deleting it gives a login prompt for an account with no password set.
@@ -2554,8 +2567,41 @@ FSTAB
 	pseudoput() { PSEUDO_REPLACED+=("$1"); echo "$@"; }
 
 	local PSEUDO="$WORK/pseudo"
+	# THE LIVE IMAGE GETS OUR SWAY CONFIG, NOT WHATEVER THIS BUILD HOST HAPPENS TO USE.
+	#
+	# Clean-image exclusions intentionally remove optional wallpapers. Copying the host's stock
+	# Gentoo config therefore produced a disc that reached Sway and immediately raised:
+	#
+	#   Error on line 24 ... Unable to access ... Sway_Wallpaper_Blue_1920x1080.png
+	#
+	# More fundamentally, that config does not start pc-shell-start at all. Find the package-owned
+	# config from either a source checkout or the synced overlay and REQUIRE its shell marker; a
+	# missing session config is an image-build error, not something to discover after burning it.
+	local LIVE_SWAY=""
+	for F in \
+		"$PCOS_TREE/overlay/app-misc/posterchanos-shell/files/sway.config" \
+		"/var/db/repos/posterchan/app-misc/posterchanos-shell/files/sway.config"; do
+		if [ -f "$F" ] && grep -q '/usr/local/bin/pc-shell-start' "$F"; then
+			LIVE_SWAY="$F"; break
+		fi
+	done
+	if [ -z "$LIVE_SWAY" ]; then
+		echo -e "${COLOR_RED}PosterChanOS Sway config was not found; refusing to build a broken desktop.${COLOR_RESET}"
+		echo "Looked beside gentoo.sh and in /var/db/repos/posterchan." >>"$LOG"
+		return 1
+	fi
+	# Parse it before the multi-gigabyte squashfs is made. A headless backend lets validation run
+	# from an SSH/build session with no seat; without it sway tries DRM first and reports a backend
+	# failure before it ever reaches the config parser.
+	if ! WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 sway -C -c "$LIVE_SWAY" >>"$LOG" 2>&1; then
+		echo -e "${COLOR_RED}PosterChanOS Sway config is invalid; refusing to build the ISO.${COLOR_RESET}"
+		return 1
+	fi
 	{
 		pseudoput "etc/fstab" f 644 0 0 cat "$LIVEFSTAB"
+		# Always replace /etc/sway/config. mksquashfs otherwise silently keeps the source host's file
+		# when a pseudo-file targets an existing path (PSEUDO_REPLACED excludes it below).
+		pseudoput "etc/sway/config" f 644 0 0 "cat \"$LIVE_SWAY\""
 		# The installed machine's dracut.conf is host boot state, not live-image configuration.
 		# bootloader() puts its encrypted-root UUID, unlock helper and LUKS key path here. /boot is
 		# deliberately excluded from the squashfs, so retaining this file leaves the live session
@@ -2573,6 +2619,7 @@ FSTAB
 			pseudoput "etc/passwd" f 644 0 0 cat "$WORK/passwd"
 			pseudoput "etc/group" f 644 0 0 cat "$WORK/group"
 			pseudoput "etc/shadow" f 640 0 0 cat "$WORK/shadow"
+			pseudoput "etc/sudoers" f 440 0 0 cat "$WORK/sudoers"
 			echo "home d 755 0 0"
 			# AN EMPTY HOME IS A TERMINAL, NOT A DESKTOP.
 			#
