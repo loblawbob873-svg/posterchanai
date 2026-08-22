@@ -83,12 +83,13 @@ class APlacementThatCouldNotBeMeasuredIsRetried(unittest.TestCase):
         fn = body(self.src, "function _natMeasureAgain")
         self.assertIn("if(_natRetryT", fn)
 
-    def test_real_html_windows_participate_in_native_stacking(self):
-        """The arithmetic already tests overlap/z-order. This guards the live wiring: passing only
-        popovers leaves every native VM/browser permanently above every PosterChan window."""
+    def test_html_overlap_never_stashes_a_live_native_window(self):
+        """A PosterChan frame is the native surface's owner, not an occluder. Feeding HTML frame
+        rectangles into stashPlan made Firefox disappear or turn black whenever focus changed."""
         sync = body(self.src, "async function nsync")
-        self.assertIn("wins.filter(w => w.native == null)", sync)
-        self.assertIn(".concat(overlayRects())", sync)
+        self.assertIn("stashPlan(items, [])", sync)
+        self.assertNotIn("wins.filter(w => w.native == null)", sync)
+        self.assertNotIn("overlayRects()", sync)
 
 
 if __name__ == "__main__":
