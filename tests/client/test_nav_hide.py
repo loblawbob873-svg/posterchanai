@@ -492,6 +492,13 @@ class MovedOutTakesTheGroupsPlace(unittest.TestCase):
         self.assertEqual(saved.index("blossom"), saved.index("group:files") + 1,
                          "it joined the order but not at its group's slot")
 
+    def test_group_membership_and_position_publish_atomically(self):
+        out = run(sidebar=self.S, order=["home", "group:files", "notes"],
+                  groupMove={"blossom": ""})
+        writes = [p for p in out["published"] if "navGroupOf" in p]
+        self.assertTrue(writes)
+        self.assertIn("navOrder", writes[-1], "moving out raced two versions of the same prefs document")
+
     def test_no_explicit_order_stores_none(self):
         out = run(sidebar=self.S, groupMove={"blossom": ""})
         self.assertFalse(out.get("navOrderSaved"),

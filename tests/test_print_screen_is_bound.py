@@ -29,27 +29,24 @@ class ThePrintKeyIsBound(unittest.TestCase):
         cls.cfg = SWAY.read_text()
 
     def test_print_is_bound(self):
-        self.assertRegex(self.cfg, r"(?m)^bindsym\s+Print\s+exec\b",
+        self.assertRegex(self.cfg, r"(?m)^bindsym\s+--no-repeat\s+Print\s+exec\b",
                          "no Print binding — the key every keyboard has for this does nothing")
 
     def test_a_region_shot_has_its_own_binding(self):
-        self.assertRegex(self.cfg, r"(?m)^bindsym\s+Shift\+Print\s+exec\b")
+        self.assertRegex(self.cfg, r"(?m)^bindsym\s+--no-repeat\s+Shift\+Print\s+exec\b")
 
-    def test_neither_shells_out_to_grim_directly(self):
-        """A second implementation is how the key and the button end up disagreeing about where a
-        screenshot goes."""
+    def test_ctrl_shift_s_is_bound(self):
+        self.assertRegex(self.cfg, r"(?m)^bindsym\s+--no-repeat\s+Ctrl\+Shift\+s\s+exec\s+/usr/local/bin/pc-screenshot region$")
+
+    def test_bindings_use_the_compositor_helper(self):
         for line in self.cfg.splitlines():
-            if re.match(r"^bindsym\s+(Shift\+)?Print\b", line):
+            if re.match(r"^bindsym\s+--no-repeat\s+(?:Print|Shift\+Print|Ctrl\+Shift\+s)\b", line):
                 with self.subTest(line=line.strip()):
-                    self.assertIn("send_tick", line)
-                    self.assertNotIn("grim", line)
-                    self.assertNotIn("slurp", line)
+                    self.assertIn("/usr/local/bin/pc-screenshot", line)
 
     def test_the_two_ticks_differ(self):
-        ticks = re.findall(r"(?m)^bindsym\s+(?:Shift\+)?Print\s+exec\s+swaymsg -t send_tick (\S+)",
-                           self.cfg)
-        self.assertEqual(len(ticks), 2)
-        self.assertEqual(len(set(ticks)), 2, "both Print bindings send the same tick")
+        self.assertIn("pc-screenshot region", self.cfg)
+        self.assertIn("pc-screenshot screen", self.cfg)
 
 
 class TheShellAnswersThem(unittest.TestCase):

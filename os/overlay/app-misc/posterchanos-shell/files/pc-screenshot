@@ -1,0 +1,45 @@
+#!/bin/sh
+# Compositor-level PosterChanOS screenshots. This deliberately does not depend on the Electron
+# desktop being focused, subscribed to Sway IPC, or even finished reloading.
+set -eu
+
+mode="${1:-region}"
+lock="${XDG_RUNTIME_DIR:-/tmp}/posterchan-screenshot-${UID}.lock"
+# A held Print key must never stack region selectors. `slurp` owns the pointer until a selection or
+# Escape, so a second copy cannot help and is exactly how ten invisible selectors accumulated.
+mkdir "$lock" 2>/dev/null || exit 0
+trap 'rmdir "$lock" 2>/dev/null || true' EXIT INT TERM
+dir="${XDG_PICTURES_DIR:-${HOME}/Pictures}/Screenshots"
+mkdir -p "$dir" || exit 1
+file="$dir/PosterChan-$(date +%Y-%m-%d-%H%M%S-%N).png"
+
+if ! command -v grim >/dev/null 2>&1; then
+	command -v notify-send >/dev/null 2>&1 && notify-send 'Screenshot failed' 'grim is not installed'
+	exit 1
+fi
+
+case "$mode" in
+	region)
+		if ! command -v slurp >/dev/null 2>&1; then
+			command -v notify-send >/dev/null 2>&1 && notify-send 'Screenshot failed' 'slurp is not installed'
+			exit 1
+		fi
+		geometry="$(slurp)" || exit 0
+		[ -n "$geometry" ] || exit 0
+		grim -g "$geometry" "$file"
+		;;
+	screen) grim "$file" ;;
+	*) exit 2 ;;
+esac
+
+if [ ! -s "$file" ]; then
+	rm -f "$file"
+	command -v notify-send >/dev/null 2>&1 && notify-send 'Screenshot failed' 'The captured image was empty'
+	exit 1
+fi
+
+# This helper is a tiny standalone process, so wl-copy cannot inherit the desktop shell's sockets.
+if command -v wl-copy >/dev/null 2>&1; then
+	wl-copy --type image/png <"$file" >/dev/null 2>&1 || true
+fi
+command -v notify-send >/dev/null 2>&1 && notify-send 'Screenshot saved' "$file"

@@ -22,6 +22,9 @@ RDEPEND="
 	gui-wm/sway
 	gui-apps/swayidle
 	gui-apps/foot
+	gui-apps/grim
+	gui-apps/slurp
+	gui-apps/wl-clipboard
 	net-wireless/bluez
 	sys-apps/xdg-desktop-portal
 	gui-libs/xdg-desktop-portal-wlr
@@ -32,7 +35,7 @@ src_install() {
 	# The helpers. pc-key must obey the same limits as the on-screen controls; the repo's
 	# tests/test_pc_key_limits.py is what keeps the two in step, and it runs before this is built.
 	exeinto /usr/local/bin
-	for helper in pc-provision-user pc-session-switch pc-shell-start pc-shell-restart pc-key pc-idle update-posterchan; do
+	for helper in pc-provision-user pc-session-switch pc-shell-start pc-shell-restart pc-key pc-idle pc-screenshot update-posterchan; do
 		doexe "${FILESDIR}/${helper}"
 	done
 	# The installed recovery/LiveUSB tool is package-owned too. publish_overlay.sh injects the
@@ -80,15 +83,26 @@ pkg_postinst() {
 		# created by an older image so an update changes the key people actually use.
 		sed -i -E 's#bindsym \$mod\+Return exec swaymsg -t send_tick pc:terminal#bindsym Mod1+Return exec swaymsg -t send_tick pc:terminal#' "${cfg}"
 		sed -i 's#bindsym --release --no-repeat \$mod exec swaymsg -t send_tick pc:start#bindsym --release --no-repeat Super_L exec swaymsg -t send_tick pc:start#' "${cfg}"
+		sed -i -E '/bindsym (Print|Ctrl\+Shift\+s|Shift\+Print).*pc:(shot|screenshot)/d' "${cfg}"
+		sed -i -E '/bindsym (Print|Ctrl\+Shift\+s|Shift\+Print).*pc-screenshot/d' "${cfg}"
 		if ! grep -q 'Super_L exec swaymsg -t send_tick pc:start' "${cfg}"; then
 			echo 'bindsym --release --no-repeat Super_L exec swaymsg -t send_tick pc:start' >>"${cfg}"
 		fi
 		cat >>"${cfg}" <<-'SWAY_RECOVERY'
 
+		# Screenshots work even while the desktop renderer is restarting.
+		bindsym --no-repeat Print exec /usr/local/bin/pc-screenshot region
+		bindsym --no-repeat Ctrl+Shift+s exec /usr/local/bin/pc-screenshot region
+		bindsym --no-repeat Shift+Print exec /usr/local/bin/pc-screenshot screen
+
 		# Restart only the PosterChan desktop shell; native applications remain open.
 		bindcode --no-repeat Ctrl+Mod1+22 exec /usr/local/bin/pc-shell-restart
 		SWAY_RECOVERY
 	done
+	# Older renderer-driven bindings could auto-repeat and leave several slurp selection overlays
+	# dimming native applications. The new helper is locked and non-repeating; clear only those stale
+	# selectors once during the upgrade so the desktop is immediately usable again.
+	pkill -x slurp >/dev/null 2>&1 || true
 
 	# THE THEME LIVES INSIDE THE INITRAMFS. Setting it without rebuilding leaves the previous splash
 	# on screen and gives no hint as to why.

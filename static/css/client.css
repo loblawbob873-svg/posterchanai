@@ -8431,17 +8431,17 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
 .os-qs-more .ic{ width:15px; height:15px; }
 .os-qs-foot{
   display:flex; align-items:center; justify-content:space-between; gap:8px;
-  padding-top:8px; border-top:1px solid var(--line); font-size:12px; color:var(--muted,#7a8699);
+  padding-top:12px; border-top:1px solid var(--line); font-size:15px; color:var(--muted,#7a8699);
 }
-.os-qs-bat{ display:flex; align-items:center; gap:6px; }
-.os-qs-bat .ic{ width:18px; height:18px; }
+.os-qs-bat{ display:flex; align-items:center; gap:8px; font-weight:600; }
+.os-qs-bat .ic{ width:24px; height:24px; }
 .os-qs-link{
-  display:flex; align-items:center; gap:6px; padding:5px 8px; border-radius:7px;
+  display:flex; align-items:center; gap:9px; min-height:42px; padding:9px 14px; border-radius:9px;
   border:1px solid var(--line); background:transparent; color:var(--text);
-  font:inherit; font-size:12px; cursor:pointer;
+  font:inherit; font-size:15px; font-weight:600; cursor:pointer;
 }
 .os-qs-link:hover{ border-color:var(--neon,#3ce8ff); }
-.os-qs-link .ic{ width:14px; height:14px; }
+.os-qs-link .ic{ width:20px; height:20px; }
 /* A sub-panel's way back. In the header so it reads as the panel's own title bar, not as a row. */
 .os-pop-back{
   display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px;

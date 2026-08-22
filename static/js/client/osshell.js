@@ -524,7 +524,7 @@
    * different message. Consumed by the first openPop it reaches, so it cannot leak into whatever
    * the person presses next. */
   let _asSub = false;
-  let _popAnchor = null, _popOpts = null;
+  let _popAnchor = null, _popAnchorKey = '', _popOpts = null;
 
   /** The same markup with a way back out of it. */
   function withBack(html){
@@ -540,7 +540,17 @@
     if(!d || !anchor) return;
     const o = opts || {};
     try{
+      /* `refresh()` redraws the taskbar while a Wi-Fi scan or connection is in progress. The old
+       * tray button is then a detached node whose rectangle is 0,0,0,0; clamping that rectangle
+       * quite correctly puts the newly-small network list at 8,8 — the top-left bug. Reacquire
+       * the current button by its stable action before measuring it. */
+      if(!anchor.isConnected || !anchor.offsetWidth){
+        const key = _popAnchorKey || (anchor.dataset && anchor.dataset.os) || '';
+        const fresh = key && document.querySelector(`[data-os="${CSS.escape(key)}"]`);
+        if(fresh){ anchor = fresh; _popAnchor = fresh; }
+      }
       const r = anchor.getBoundingClientRect();
+      if(!anchor.isConnected || r.width <= 0 || r.height <= 0) return;
       const w = d.offsetWidth || 280, h = d.offsetHeight || 200;
       const zf = (anchor.offsetWidth > 0 && r.width > 0) ? (r.width / anchor.offsetWidth) : 1;
       const L = r.left / zf, T = r.top / zf, W = r.width / zf;
@@ -573,7 +583,9 @@
     d.className = 'os-pop' + (o.cls ? ' ' + o.cls : '');
     d.innerHTML = html;
     document.body.appendChild(d);
-    _popAnchor = anchor; _popOpts = o;
+    _popAnchor = anchor;
+    _popAnchorKey = (anchor && anchor.dataset && anchor.dataset.os) || '';
+    _popOpts = o;
     /* Anchored to the chip and kept ON SCREEN: the tray is at the right-hand end of the taskbar, so
      * a popover laid out from the chip's left edge hangs off the display. */
     try{
@@ -650,7 +662,8 @@
     /* "Looking…" is a tiny panel; the network list is not. Re-anchor after the async answer changes
      * its dimensions or the browser keeps coordinates computed for the loading card, which is how
      * the finished Wi-Fi panel jumps toward the top-left on a scaled desktop. */
-    requestAnimationFrame(() => { if(_pop===d) positionPop(d,_popAnchor,_popOpts); });
+    (root.requestAnimationFrame || ((fn) => setTimeout(fn, 0)))(
+      () => { if(_pop===d) positionPop(d,_popAnchor,_popOpts); });
     body.querySelectorAll('[data-ssid]').forEach(b => b.onclick = async () => {
       const ssid = b.dataset.ssid;
       let pw = '';

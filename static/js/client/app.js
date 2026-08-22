@@ -749,6 +749,7 @@
   }
   function setNavGroupOf(key, group){
     const cur = navGroupOf();
+    let changedOrder = null;
     const wasIn = cur[key] || (_navItemByKey(key) && (()=>{ const g=_navItemByKey(key).closest('.nav-group');
       const h=g && g.querySelector('.nav-grouphd'); return h ? _navKey(h) : ''; })()) || '';
     if(group === undefined || group === null) delete cur[key]; else cur[key] = group;
@@ -766,11 +767,16 @@
         if(at >= 0) ord.splice(at + 1, 0, key); else ord.push(key);
         ClientSettings.set('navOrder', ord);
         _prefTouched.add('navOrder');
-        saveClientPrefsNostr({ navOrder: ord });
+        changedOrder = ord;
       }
     }
     applyNavGroups(); applyNavOrder();
-    return saveClientPrefsNostr({ navGroupOf: cur });
+    /* ONE replaceable-document write. Publishing navOrder and navGroupOf separately races two
+     * versions of the same kind-30078 document at the same second; whichever relay kept last could
+     * remember the row's new position but not that it left the folder (or vice versa). That was the
+     * intermittent “Git moved out, then went back” bug, and it applies to every sidebar app. */
+    return saveClientPrefsNostr(Object.assign({ navGroupOf: cur },
+      changedOrder ? { navOrder: changedOrder } : {}));
   }
   function addNavUserGroup(name){
     const gs = navUserGroups();
