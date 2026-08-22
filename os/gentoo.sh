@@ -627,6 +627,25 @@ finalizeInstall() {
 	# accounts() creates `posterchan`; configure its graphical session only after that. Doing this
 	# before accounts selected the LiveCD's `live` account and copied its autologin onto the NVMe.
 	chroot $TARGET /usr/bin/bash /usr/bin/gentoo.sh posterchan-shell
+	# FINALIZATION OWNS THE BOOT SESSION. posterchan-shell also writes these for upgrades and live
+	# sessions, but an installed disk must not depend on which overlay/package branch that helper
+	# took, nor on USER/HOME inherited through chroot. Write the two tiny boot-critical files against
+	# the target explicitly after the account exists, then set ownership inside that target.
+	mkdir -p "$TARGET/home/posterchan/.config/sway" \
+		"$TARGET/etc/systemd/system/getty@tty1.service.d"
+	[ -e "$TARGET/home/posterchan/.config/sway/outputs.conf" ] || \
+		: >"$TARGET/home/posterchan/.config/sway/outputs.conf"
+	cat >"$TARGET/home/posterchan/.bash_profile" <<-'POSTERCHAN_PROFILE'
+[[ -f ~/.bashrc ]] && . ~/.bashrc
+if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
+	export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=sway MOZ_ENABLE_WAYLAND=1
+	exec sway
+fi
+POSTERCHAN_PROFILE
+	printf '[Unit]\nWants=NetworkManager.service\nAfter=NetworkManager.service\n[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin posterchan --noclear %%I $TERM\n' \
+		>"$TARGET/etc/systemd/system/getty@tty1.service.d/override.conf"
+	chroot "$TARGET" /bin/chown -R posterchan:posterchan /home/posterchan/.bash_profile \
+		/home/posterchan/.config/sway
 	# RELEASE GATE, NOT A BEST-EFFORT CHECK. These are the exact omissions that otherwise produce a
 	# technically booted machine at a tty and a stock splash, after the installer claimed success.
 	# Check the target files themselves after every phase that can overwrite them.

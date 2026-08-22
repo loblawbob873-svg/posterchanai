@@ -62,6 +62,14 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertNotIn("sshd", services.group(1).split(),
                          "fresh installs must not expose the SSH daemon by default")
 
+    def test_finalization_writes_the_installed_session_without_overlay_side_effects(self):
+        fn = self._fn("finalizeInstall")
+        shell = fn.index("posterchan-shell")
+        profile = fn.index('cat >"$TARGET/home/posterchan/.bash_profile"')
+        self.assertGreater(profile, shell)
+        self.assertIn("--autologin posterchan", fn[profile:])
+        self.assertIn('chroot "$TARGET" /bin/chown -R posterchan:posterchan', fn[profile:])
+
     def test_there_is_a_compositor_and_xwayland(self):
         """XWayland is not optional the moment Steam is in scope — most games, and Steam's own
         client, are X11 clients and simply have no way onto the screen without it."""
