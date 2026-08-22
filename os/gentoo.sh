@@ -1765,25 +1765,31 @@ PROFILE
 }
 
 installSteam() {
-	# Steam is OPT-IN and self-contained. Do not emerge Gamescope here: asking Portage for one native
-	# helper performs a full @world dependency update on an installed machine and has repeatedly
-	# rebuilt systemd before Steam was even downloaded. The Flatpak already carries Steam's 32-bit
-	# graphics/runtime stack and runs directly under Sway; Gamescope remains an optional expert add-on,
-	# not a condition for installing or playing games.
-	# THE 32-BIT STACK IS THE WHOLE COST, and on a source distribution it is measured in hours.
-	# Native steam-launcher pulls ABI_X86=32 through the entire graphics stack — every one of those
-	# libraries built twice — for a program that ships its own runtime anyway. So on PosterChanOS
-	# Steam comes as a FLATPAK, which is what this script always did before the minimal profile
-	# dropped flatpak: one prebuilt download instead of a multilib world rebuild, and the base
-	# system stays free of a 32-bit ABI it has no other use for.
+	# Native Steam, explicitly. Its 32-bit graphics stack is substantial on Gentoo, but it belongs to
+	# the machine rather than a Flatpak runtime and that is the PosterChanOS policy.
 	#
-	# Flatpak is part of every PosterChanOS install. Keep a guarded fallback for older images, but do
-	# not use -uDN: installing one application must not initiate an operating-system rebuild.
-	if ! command -v flatpak >/dev/null 2>&1; then
-		emerge --oneshot sys-apps/flatpak || return 1
-	fi
-	/usr/bin/flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-	/usr/bin/flatpak install -y com.valvesoftware.Steam
+	# systemd's EFI build derives SBAT metadata from /etc/os-release. Older PosterChanOS releases did
+	# not provide BUG_REPORT_URL, and systemd 261 aborts configuration with "sbat-distro-url option
+	# not set". A Portage user patch is deterministic even on those already-installed systems and is
+	# applied before Meson runs; it does not disable systemd-boot or Secure Boot support.
+	local PD=/etc/portage/patches/sys-apps/systemd
+	mkdir -p "$PD"
+	cat >"$PD/010-posterchanos-sbat-url.patch" <<-'PATCH'
+		--- a/meson_options.txt
+		+++ b/meson_options.txt
+		@@ -434,7 +434,7 @@ option('sbat-distro-pkgname', type : 'string',
+		        description : 'SBAT distribution package name, e.g. systemd')
+		 option('sbat-distro-version', type : 'string',
+		        description : 'SBAT distribution package version, e.g. 248-7.fc34')
+		-option('sbat-distro-url', type : 'string',
+		+option('sbat-distro-url', type : 'string', value : 'https://poster.place/',
+		        description : 'SBAT distribution URL, e.g. https://src.fedoraproject.org/rpms/systemd')
+	PATCH
+	mkdir -p /etc/portage/package.license
+	echo 'games-util/steam-launcher steam' >/etc/portage/package.license/posterchan-steam
+	emerge --autounmask-write games-util/steam-launcher gui-wm/gamescope || true
+	etc-update -q --automode -5
+	emerge games-util/steam-launcher gui-wm/gamescope
 }
 
 locale() {

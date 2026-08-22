@@ -597,16 +597,11 @@ class PosterChanOSProfile(unittest.TestCase):
             self.assertFalse([p for p in self.pkgs if game in p],
                              f"{game} is in the always-installed profile")
         steam = self._fn("installSteam")
-        self.assertNotIn("gui-wm/gamescope", steam,
-                         "installing Steam triggers a native Gamescope/systemd rebuild")
-        # ...and it must not drag a multilib world rebuild in with it. Native steam-launcher pulls
-        # ABI_X86=32 through the whole graphics stack — every library built twice, hours of it, for
-        # a program that ships its own runtime.
-        self.assertIn("com.valvesoftware.Steam", steam,
-                      "PosterChanOS builds Steam natively — that is the 32-bit stack from source")
-        self.assertNotIn("games-util/steam-launcher", steam,
-                         "the native 32-bit Steam path came back — ABI_X86=32 through the whole "
-                         "graphics stack, built twice, for a program that ships its own runtime")
+        self.assertIn("gui-wm/gamescope", steam, "native Steam should include Gamescope")
+        self.assertIn("games-util/steam-launcher", steam, "Steam must be installed by Portage")
+        self.assertNotIn("com.valvesoftware.Steam", steam, "the Flatpak Steam path came back")
+        self.assertIn("010-posterchanos-sbat-url.patch", steam)
+        self.assertIn("sbat-distro-url', type : 'string', value : 'https://poster.place/'", steam)
 
     def test_every_package_name_has_a_category(self):
         """`games-util/gamescope` does not exist — it is `gui-wm/gamescope` — and emerge refuses the
