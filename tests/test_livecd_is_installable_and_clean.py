@@ -394,6 +394,13 @@ class TheLiveSessionActuallyStarts(unittest.TestCase):
         pack = self.src.index('mksquashfs / "$WORK/iso/LiveOS/squashfs.img"')
         self.assertLess(write, pack)
 
+    def test_the_live_image_injects_and_reads_back_its_desktop_launcher(self):
+        """A desktop binary without its tiny wrapper boots into a valid but empty black Sway."""
+        self.assertIn('pseudoput "usr/local/bin/posterchan" f 755', self.fn)
+        self.assertIn('LIVE_DESKTOP_LAUNCHER="$(unsquashfs -cat', self.fn)
+        self.assertIn("/opt/posterchan/posterchan-desktop", self.fn)
+        self.assertIn("black Sway screen", self.fn)
+
 
 class TheAccountRewriteActuallyWorks(unittest.TestCase):
     """RUN, not grepped. It fails in two opposite silent ways: leaving a person in, or dropping the

@@ -238,8 +238,11 @@ class ThePhoneCanSayWhatItMeasured(unittest.TestCase):
 
     def test_diagnostics_stay_available_to_support_without_scaring_users(self):
         js = (ROOT / "static/js/client/sms.js").read_text()
+        phone_settings = (ROOT / "static/js/client/phoneshell.js").read_text()
         self.assertNotIn("sms-why", js)
         self.assertNotIn("Why isn", js)
+        self.assertNotIn("Why isn", phone_settings)
+        self.assertNotIn("full reading", phone_settings)
         self.assertIn("diagnose", self.src,
                       "support diagnostics were removed from the native bridge")
 

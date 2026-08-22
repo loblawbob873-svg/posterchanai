@@ -2567,6 +2567,19 @@ FSTAB
 	pseudoput() { PSEUDO_REPLACED+=("$1"); echo "$@"; }
 
 	local PSEUDO="$WORK/pseudo"
+	# Never inherit the desktop launcher from the machine doing the build. A package can leave the
+	# 186 MB Electron binary installed while its /usr/local/bin wrapper is absent; that image passes
+	# a binary-only check, starts Sway successfully, and then shows nothing but the black compositor
+	# background because pc-shell-start has no command it can execute. Ship this small, deterministic
+	# bridge as part of the live-image contract and read it back below.
+	cat >"$WORK/posterchan-launcher" <<-'LAUNCHER'
+	#!/bin/sh
+	export APPDIR=/opt/posterchan
+	export ELECTRON_OZONE_PLATFORM_HINT=auto
+	if [ -x "$APPDIR/posterchan-desktop" ]; then exec "$APPDIR/posterchan-desktop" "$@"; fi
+	exec "$APPDIR/AppRun" "$@"
+	LAUNCHER
+	chmod 0755 "$WORK/posterchan-launcher"
 	# THE LIVE IMAGE GETS OUR SWAY CONFIG, NOT WHATEVER THIS BUILD HOST HAPPENS TO USE.
 	#
 	# Clean-image exclusions intentionally remove optional wallpapers. Copying the host's stock
@@ -2601,6 +2614,7 @@ FSTAB
 	fi
 	{
 		pseudoput "etc/fstab" f 644 0 0 cat "$LIVEFSTAB"
+		pseudoput "usr/local/bin/posterchan" f 755 0 0 cat "$WORK/posterchan-launcher"
 		# Always replace /etc/sway/config. mksquashfs otherwise silently keeps the source host's file
 		# when a pseudo-file targets an existing path (PSEUDO_REPLACED excludes it below).
 		pseudoput "etc/sway/config" f 644 0 0 "cat \"$LIVE_SWAY\""
@@ -2752,6 +2766,8 @@ DESKTOP
 		# image built from an older release still passes.
 		echo "$LS" | grep -qxE "squashfs-root/opt/posterchan/(posterchan-desktop|AppRun)" \
 			|| MISSING="$MISSING /opt/posterchan"
+		echo "$LS" | grep -qx "squashfs-root/usr/local/bin/posterchan" \
+			|| MISSING="$MISSING /usr/local/bin/posterchan"
 		# The welcome screen cannot configure wifi without the daemon, and launching getty before it
 		# is ready creates the exact same visible failure as omitting it.
 		echo "$LS" | grep -qx "squashfs-root/usr/lib/systemd/system/NetworkManager.service" \
@@ -2794,6 +2810,13 @@ DESKTOP
 		if [[ -n "$LIVE_DRACUT_CONF" ]]; then
 			{ echo "live /etc/dracut.conf was not empty:"; printf '%s\n' "$LIVE_DRACUT_CONF"; } >>"$LOG" 2>/dev/null
 			_lcd_fail "The image retained this machine's dracut configuration — refusing to publish its encrypted-root UUID or key path."
+			return
+		fi
+		local LIVE_DESKTOP_LAUNCHER
+		LIVE_DESKTOP_LAUNCHER="$(unsquashfs -cat "$WORK/iso/LiveOS/squashfs.img" \
+			usr/local/bin/posterchan 2>/dev/null)"
+		if [[ "$LIVE_DESKTOP_LAUNCHER" != *'/opt/posterchan/posterchan-desktop'* ]]; then
+			_lcd_fail "The image has no working PosterChan desktop launcher — it would boot to a black Sway screen."
 			return
 		fi
 		echo -e "${COLOR_GREEN}Image checked: $SESS_USER has a home, a login profile, an account and a desktop.${COLOR_RESET}"

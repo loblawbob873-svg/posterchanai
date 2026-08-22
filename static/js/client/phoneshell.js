@@ -168,7 +168,7 @@
           msg('Android will not offer PosterChan as your ' + what + ': '
             + (gone.length ? 'this build is missing ' + gone.join(', ')
                            : 'it does not qualify on this phone')
-            + '. Press \u201cWhy isn\u2019t this working?\u201d in Texts for the full reading.');
+            + '. Open Android Default apps to review the available choices.');
           const b = $('#ps-defaults'); if(b) b.hidden = false;
           return;
         }
