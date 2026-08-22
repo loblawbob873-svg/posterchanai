@@ -890,6 +890,20 @@
     return d;
   }
 
+  /* System Settings reuses the exact controls from Quick Settings. Keeping one implementation is
+   * important here: Wi-Fi password prompting, Bluetooth pairing and destructive power confirms
+   * have enough edge cases that a second "settings" copy would immediately drift. */
+  async function openControl(kind, anchor){
+    if(!anchor) throw new Error('a settings control needs an anchor');
+    await refresh();
+    if(kind === 'network') return netPop(anchor);
+    if(kind === 'sound') return volPop(anchor);
+    if(kind === 'bluetooth') return bluetoothPop(anchor);
+    if(kind === 'power') return powerPop(anchor);
+    if(kind === 'brightness') return brightPop(anchor);
+    throw new Error('unknown system setting: ' + kind);
+  }
+
   /* Re-drawn IN PLACE after anything that changes a reading, so the panel never shows a stale
    * number beside a control somebody just moved. The popover is not reopened — reopening drops it
    * out from under the cursor and loses whichever sub-panel somebody is standing in. */
@@ -1268,7 +1282,7 @@
                 profileMenu, machineApps, mergedApps, allApps, wifiIcon, volIcon, batterySvg,
                 ensureAccount, provisioned, identity, activateAccount, logoutSession,
                 panelHTML, quickHTML, taskbarHTML, launcherHTML, render, watch,
-                takeShot, shotAvailable, closePop,
+                takeShot, shotAvailable, closePop, openControl,
                 setViewOpener, refresh, paintTray, bindApps, bindPanel,
                 summary: () => _sum, rows: () => _rows, readAt: () => _readAt };
   root.PCOSShell = API;

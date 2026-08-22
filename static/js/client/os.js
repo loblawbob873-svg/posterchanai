@@ -1527,9 +1527,9 @@
       };
       host.querySelectorAll('[data-jump]').forEach(b=>b.onclick=()=>{
         const k=b.dataset.jump;
-        if(k==='network'||k==='bluetooth'||k==='sound'||k==='power'){
-          try{ PC().toast('Use Quick Settings for '+k+' controls while this page is being expanded.'); }catch(_){}
-        }
+        if(k==='network'||k==='bluetooth'||k==='sound'||k==='power')
+          try{ Promise.resolve(PCOSShell.openControl(k,b)).catch(e=>PC().toast(String(e&&e.message||e))); }
+          catch(e){ try{PC().toast(String(e&&e.message||e))}catch(_){} }
       });
     };
     draw();
