@@ -508,6 +508,19 @@ console.log(JSON.stringify(out));
         "straight here shows an empty grid until a full reload")
 
 
+def test_streams_paints_cache_before_a_bounded_network_refresh():
+    """A connected relay that never sends EOSE must not leave Streams on a black spinner forever."""
+    src = APP_JS.read_text(encoding="utf-8")
+    body = src[src.index("async function renderStreams("):]
+    body = body[:body.index("\n  function streamCard(")]
+    cache = body.index("Store.query([{ kinds:[30311], limit:80 }])")
+    first_paint = body.index("\n    paint();")
+    network = body.index("Relay.query([{ kinds:[30311], limit:80 }])")
+    assert cache < first_paint < network
+    assert "Promise.race" in body
+    assert "stream relay timed out" in body
+
+
 def test_replays_are_stamped_on_startup_not_only_when_streams_is_opened():
     """A replay nobody else can see is the same as no replay.
 

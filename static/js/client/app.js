@@ -8832,8 +8832,13 @@
     return Promise.resolve();
   }
   async function renderStreams(){
-    const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
-    let evs=[]; try{ evs=await Relay.query([{ kinds:[30311], limit:80 }]); }catch(_){}
+    const feed=$('#feed');
+    /* PAINT THE LOCAL STORE FIRST. Relay.query is network-only and a WebSocket whose peer never
+     * answers can remain pending indefinitely. Awaiting it before the first paint left the entire
+     * Streams window as a black spinner. Cached streams and the Go Live control need no network
+     * round-trip, so make the screen usable immediately and merge the network answer afterwards. */
+    let evs=[];
+    try{ evs=(Store.query([{ kinds:[30311], limit:80 }])||[]).slice(); }catch(_){ evs=[]; }
     /* MERGE IN WHAT WE ALREADY HOLD. Relay.query is network-only, so this list was whatever the
      * relays answered in that instant — and the one event most certain to be missing from it is the
      * one YOU published a second ago. _goLive publishes, requires the relay to have stored it, then
@@ -8844,10 +8849,6 @@
      * publish() already saved it locally, so the fix is to stop depending on the round-trip. A
      * cached copy that is genuinely stale loses anyway: _dedupAddr keeps the NEWEST per address, so
      * the relay's version wins whenever it has one. */
-    try{
-      const seen=new Set(evs.map(e=>e.id));
-      (Store.query([{ kinds:[30311], limit:80 }])||[]).forEach(e=>{ if(!seen.has(e.id)) evs.push(e); });
-    }catch(_){ }
     evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
     if(VIEW!=='streams') return;
     const paint=()=>{
@@ -8870,6 +8871,21 @@
     };
     paint();
     _maybeOfferAnnounce();   // surface a one-tap Announce if our OWN OBS feed is ingesting but unannounced
+    /* Refresh after the useful local paint, with a hard deadline. This Promise.race is also needed
+     * for relays that connect but never send EOSE: catch() cannot help when the promise never settles. */
+    let fresh=[];
+    try{
+      fresh=await Promise.race([
+        Relay.query([{ kinds:[30311], limit:80 }]),
+        new Promise((_,reject)=>setTimeout(()=>reject(new Error('stream relay timed out')),8000))
+      ]);
+    }catch(_){ fresh=[]; }
+    if(fresh && fresh.length && VIEW==='streams'){
+      const have=new Set(evs.map(e=>e.id));
+      fresh.forEach(e=>{ if(!have.has(e.id)){ have.add(e.id); evs.push(e); }
+        Store.saveEvent(e); needProfile(e.pubkey); });
+      paint();
+    }
     // Merge in streams from the wider network (background — the local list already painted). External
     // relays are UNTRUSTED, so VERIFY each event's signature before saving/rendering — an unverified
     // forgery could spoof a host or (addressable) shadow a real user's stream in the local cache.
