@@ -66,6 +66,13 @@ class TheCommandExists(unittest.TestCase):
         self.assertIn("/usr/local/bin/pc-session-switch *",
                       (files / "posterchan-session-switch.sudoers").read_text())
 
+    def test_session_switch_reloads_the_changed_getty_dropin(self):
+        """Restart alone reuses systemd's cached ExecStart and logs back into the old user."""
+        helper = (EBUILD.parent / "files" / "pc-session-switch").read_text()
+        reload_at = helper.index("systemctl daemon-reload")
+        restart_at = helper.index("systemd-run --quiet", reload_at)
+        self.assertLess(reload_at, restart_at)
+
 
 class ItUpdatesBothHalves(unittest.TestCase):
     @classmethod

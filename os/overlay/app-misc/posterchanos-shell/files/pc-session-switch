@@ -22,6 +22,9 @@ write_getty(){
 # Restart out of band: restarting getty kills this caller's entire graphical session. A transient
 # unit owns the timer and survives that teardown, while the IPC call has time to return success.
 restart_later(){
+  # A changed drop-in is only a file until PID 1 reloads it. Restarting getty without this reuses
+  # the cached ExecStart and logs straight back into the account we were trying to leave.
+  systemctl daemon-reload
   systemd-run --quiet --unit="posterchan-session-switch-$(date +%s%N)" \
     --on-active=1s /usr/bin/systemctl restart getty@tty1.service >/dev/null
 }

@@ -321,9 +321,16 @@ partitionDetection() {
 		ROOT_NAME=$(cat /tmp/disk | tail -2 | head -1)
 	fi
 
-	EFI=$(blkid | grep $HARD_DISK | sort | cut -d ":" -f1 | head -1 | tail -1)
-	BTRFS=$(blkid | grep $HARD_DISK | sort | cut -d ":" -f1 | head -2 | tail -1)
-	ROOT_MAPPER_NAME="/dev/mapper/luks-$(/sbin/blkid -s UUID -o value ${BTRFS})"
+	# Children of THIS disk only. Grepping all blkid output matched serials, mapper UUIDs and names
+	# containing the same text; one corrupt prompt then assembled a mapper name from three devices.
+	local DISK_PATH="/dev/$HARD_DISK"
+	EFI="$(lsblk -nrpo NAME,TYPE,FSTYPE "$DISK_PATH" 2>/dev/null \
+		| awk '$2=="part" && $3=="vfat" {print $1; exit}')"
+	BTRFS="$(lsblk -nrpo NAME,TYPE "$DISK_PATH" 2>/dev/null \
+		| awk '$2=="part" {n++; if(n==2){print $1; exit}}')"
+	local LUKS_UUID=""
+	[ -n "$BTRFS" ] && LUKS_UUID="$(/sbin/blkid -s UUID -o value "$BTRFS" 2>/dev/null)"
+	ROOT_MAPPER_NAME="/dev/mapper/luks-$LUKS_UUID"
 
 	echo
 	echo
@@ -3111,30 +3118,35 @@ setDevices() {
 		echo
 		echo
 	else
-		i=0
-		while [ $i != "n" ]; do
-			clear
-			echo
-			echo -e "\033[1;33mDisks and Partitions:\033[0m"
-			echo
-			cat /proc/partitions
-			echo
-			echo -e "\033[1;33mErase the line and press enter to skip to the next detected disk\033[0m"
-			echo
-			i=$(expr $i + 1)
-			read -p 'Disk Device to Use: ' -e -i $(lsblk | grep -i disk | grep -Evi 'swap|zram|dm-0' | cut -d ' ' -f1 | head -$i | tail -1) device
-			if [[ ! -z $device ]]; then
-				i="n"
-			fi
-		done
+		clear
+		echo
+		echo -e "\033[1;33mDisks and Partitions:\033[0m"
+		echo
+		lsblk -e7 -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINTS,MODEL
+		echo
+		local LIVE_SOURCE LIVE_PART LIVE_DISK DEFAULT_DISK
+		LIVE_SOURCE="$(findmnt -no SOURCE /run/initramfs/live 2>/dev/null)"
+		LIVE_PART="${LIVE_SOURCE#/dev/}"
+		LIVE_DISK="$(lsblk -ndo PKNAME "$LIVE_SOURCE" 2>/dev/null)"
+		[ -n "$LIVE_DISK" ] || LIVE_DISK="$LIVE_PART"
+		DEFAULT_DISK="$(lsblk -dnro NAME,TYPE | awk -v live="$LIVE_DISK" '$2=="disk" && $1!=live && $1!~/^(zram|loop)/ {print $1; exit}')"
+		[ -n "$DEFAULT_DISK" ] || { echo "No install disk found besides the live medium."; return 1; }
+		read -r -p "Disk Device to Use [$DEFAULT_DISK]: " device
+		device="${device:-$DEFAULT_DISK}"
+		if [ ! -b "/dev/$device" ] || [ "$(lsblk -dnro TYPE "/dev/$device" 2>/dev/null)" != disk ]; then
+			echo "Not a whole disk: /dev/$device"; return 1
+		fi
+		if [ "$device" = "$LIVE_DISK" ]; then
+			echo "Refusing to install onto the live boot disk /dev/$device"; return 1
+		fi
 
-		read -p 'BTRFS Root Volume name:  ' -e -i "gentoo" root_name
-		read -p 'LUKS Device Mapper Name:  ' -e -i "root" device_mapper_name
+		read -r -p 'BTRFS Root Volume name [gentoo]: ' root_name
+		root_name="${root_name:-gentoo}"
 
 		HARD_DISK=$device
 		echo $HARD_DISK >/tmp/disk
 		echo $root_name >>/tmp/disk
-		echo $device_mapper_name >>/tmp/disk
+		echo none >>/tmp/disk
 		setDevices
 	fi
 	partitionDetection
