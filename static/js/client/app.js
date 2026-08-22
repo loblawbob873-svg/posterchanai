@@ -17962,7 +17962,7 @@
     const cls = 'file-card row' + (o.enc ? ' enc' : '') + (o.dir ? ' isdir' : '') + (o.selected ? ' selected' : '');
     const attrs = (o.sha ? ` data-sha="${enc(o.sha)}"` : '') + (o.dir ? ` data-dir="${enc(o.name)}"` : '')
                 + (o.draggable ? ' draggable="true"' : '');
-    const inner = `<span class="fx-ic">${o.icon || '📎'}</span>`
+    const inner = `<span class="fx-ic"${o.thumb || ''}>${o.icon || '📎'}</span>`
                 + `<span class="fname" title="${enc(o.title || o.name)}">${enc(o.name)}</span>`;
     const name = o.href
       ? `<a href="${enc(o.href)}" class="fx-name${o.encOpen ? ' enc-open' : ''}"${o.sha && o.encOpen ? ` data-sha="${enc(o.sha)}"` : ''}${o.mime !== undefined ? ` data-mime="${enc(o.mime||'')}"` : ''}${o.encOpen ? '' : ' target="_blank"'}>${inner}</a>`
@@ -19001,14 +19001,16 @@
       _thumbs.delete(oldest);
     }
   }
-  async function _thumbFor(sha){
-    if(_thumbs.has(sha)) return _thumbs.get(sha);
+  async function _thumbFor(sha, chunks){
+    const key = sha || ('chunks:' + (chunks || []).join(','));
+    if(_thumbs.has(key)) return _thumbs.get(key);
     while(_thumbBusy >= _THUMB_PAR) await new Promise(r=>setTimeout(r, 120));
     _thumbBusy++;
     try{
-      const bytes = await _syncBlobBytes(sha);
-      const url = URL.createObjectURL(new Blob([bytes]));
-      _thumbRemember(sha, url);
+      const blob = chunks && chunks.length ? await _syncFileBlob('', chunks)
+                                          : new Blob([await _syncBlobBytes(sha)]);
+      const url = URL.createObjectURL(blob);
+      _thumbRemember(key, url);
       return url;
     } finally { _thumbBusy--; }
   }
@@ -19020,9 +19022,10 @@
       for(const en of entries){
         if(!en.isIntersecting) continue;
         const el = en.target, sha = el.dataset.thumb;
+        const chunks = (el.dataset.thumbChunks || '').split(',').filter(Boolean);
         _thumbObs.unobserve(el);
-        if(!sha) continue;
-        _thumbFor(sha).then(url=>{
+        if(!sha && !chunks.length) continue;
+        _thumbFor(sha, chunks).then(url=>{
           // The grid is rebuilt on every navigation, so a decrypt that lands after the user has
           // moved on must not paint into a card that is no longer on the page.
           if(!el.isConnected) return;
@@ -19220,7 +19223,10 @@
       const icon = it.trashdir ? '🗑️' : (it.dir ? '📁' : _fxIcon(ext, ''));
       const type = it.dir ? (it.n + ' item' + (it.n===1?'':'s'))
                 : (it.where ? (_fxType(ext) + ' · in ' + it.where) : _fxType(ext));
-      const canThumb = !it.dir && it.sha && _THUMB_EXT.test(ext) && (it.size||0) <= _THUMB_MAX;
+      const canThumb = !it.dir && (it.sha || (it.chunks && it.chunks.length))
+                    && _THUMB_EXT.test(ext) && (it.size||0) <= _THUMB_MAX;
+      const thumbAttrs = canThumb
+        ? ` data-thumb="${enc(it.sha||'')}"${it.chunks?` data-thumb-chunks="${enc(it.chunks.join(','))}"`:''}` : '';
       // The FULL path is what an edit needs — a manifest has no folders, only paths — and a directory
       // row has none of its own, so it is rebuilt from where we are standing.
       const full = it.dir ? ((_syncPath ? _syncPath + '/' : '') + it.name) : it.path;
@@ -19249,10 +19255,10 @@
           + `<button class="keepsync" data-sha="${enc(it.sha||'')}"${it.chunks?` data-chunks="${enc(it.chunks.join(','))}"`:''} data-name="${enc(it.name)}" title="Save a copy to your drive"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg></button>`)
         + edits;
       const nav = it.dir ? ` data-dir="${enc(it.name)}"` : '';
-      if(details) return _fxDetailsRow({ dir:!!it.dir, name:it.name, icon:icon, size:_fxBytes(it.size),
-        type:type, when:_fxWhen(it.mtime), acts:act });
+      if(details) return _fxDetailsRow({ dir:!!it.dir, name:it.name, icon:icon, thumb:thumbAttrs,
+        size:_fxBytes(it.size), type:type, when:_fxWhen(it.mtime), acts:act });
       return `<div class="file-card${it.dir?' isdir':''}"${nav}>
-        <div class="file-icon"${canThumb?` data-thumb="${enc(it.sha)}"`:''}>${icon}<span>${enc(it.dir?'folder':(ext||'file'))}</span></div>
+        <div class="file-icon"${thumbAttrs}>${icon}<span>${enc(it.dir?'folder':(ext||'file'))}</span></div>
         <div class="meta"><span class="fname" title="${enc(it.name)}">${enc(fileLabel(it.name, ext, it.size))}</span>${act?`<span class="fc-acts">${act}</span>`:''}</div></div>`;
     };
     const fileItems = items.filter(it => !it.dir);

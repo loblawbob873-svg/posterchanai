@@ -241,7 +241,7 @@
       return `<div class="tty-wrap">
         <div class="tty-bar">
           <select class="input tty-host" id="tty-host" aria-label="Host"></select>
-          <button class="btn btn-neon small" id="tty-go">Connect</button>
+          <button class="btn btn-neon small" id="tty-go">New tab</button>
           <button class="btn btn-ghost small hidden" id="tty-stop" title="Leave it running">Detach</button>
           <button class="btn btn-ghost small hidden tty-kill" id="tty-kill" title="End this session">Kill</button>
           <button class="btn btn-ghost small hidden" id="tty-hist"
@@ -249,7 +249,7 @@
           <span class="tty-state" id="tty-state"></span>
         </div>
         <div class="tty-hist" id="tty-hist-panel" hidden></div>
-        <div class="tty-sessions" id="tty-sessions" hidden></div>
+        <div class="tty-sessions tty-tabs" id="tty-sessions" aria-label="Terminal tabs"></div>
         <div class="tty-screen"><div class="tty-fit" id="tty-screen"></div></div>
         <div class="tty-keys" id="tty-keys" hidden>
           <button data-k="Escape">esc</button>
@@ -718,14 +718,22 @@
         const r = await authFetch('/api/ssh/sessions');
         live = live.concat(((await r.json()) || {}).sessions || []);
       }catch(_){}
-      const others = live.filter(x => x.sid !== sid || !connected);
-      box.hidden = !others.length;
-      if(!others.length){ box.innerHTML = ''; return; }
-      box.innerHTML = '<span class="tty-sess-lbl">still running</span>' + others.map(x =>
-        `<span class="tty-sess"><b>${enc(x.host || '?')}</b>`
+      /* THESE ARE TABS, not a recovery list. Every row names a distinct PTY; selecting one tears
+       * down only the viewing transport and attaches this xterm to that PTY. The processes and
+       * input streams never merge. Keeping the active shell in the strip is what makes the model
+       * visible: two terminals look like two tabs, instead of one terminal plus an obscure
+       * “still running” diagnostic people quite reasonably did not recognize as tab support. */
+      const tabs = live.slice();
+      if(sid && !tabs.some(x => x.sid === sid))
+        tabs.unshift({ sid, host:host || 'local', age:0, alive:true });
+      box.hidden = false;
+      box.innerHTML = '<span class="tty-sess-lbl">tabs</span>' + tabs.map((x, n) =>
+        `<span class="tty-sess tty-tab${x.sid === sid ? ' active' : ''}" data-tab="${enc(x.sid)}"
+               data-host="${enc(x.host || '')}"><b>${enc(x.host || 'terminal')} ${n + 1}</b>`
         + `<i>${_ago(x.age)}</i>`
-        + `<button data-att="${enc(x.sid)}" data-host="${enc(x.host || '')}">Attach</button>`
-        + `<button data-kill="${enc(x.sid)}" class="tty-kill">Kill</button></span>`).join('');
+        + `<button data-kill="${enc(x.sid)}" class="tty-kill" title="Close tab"
+                   aria-label="Close terminal tab">×</button></span>`).join('')
+        + '<button class="tty-tab-new" id="tty-tab-new" title="New terminal tab">+</button>';
     }
 
     function _ago(sec){
@@ -774,8 +782,10 @@
       { const b = $('#tty-stop'); if(b) b.onclick = () => detach(); }
       { const b = $('#tty-kill'); if(b) b.onclick = () => kill(); }
       { const box = $('#tty-sessions'); if(box) box.onclick = (ev) => {
-          const a = ev.target.closest('[data-att]'); if(a) return attach(a.dataset.att, a.dataset.host);
-          const k = ev.target.closest('[data-kill]'); if(k) return kill(k.dataset.kill); }; }
+          const k = ev.target.closest('[data-kill]'); if(k){ ev.stopPropagation(); return kill(k.dataset.kill); }
+          const add = ev.target.closest('#tty-tab-new'); if(add) return connect();
+          const a = ev.target.closest('[data-tab]');
+          if(a && a.dataset.tab !== sid) return attach(a.dataset.tab, a.dataset.host); }; }
       { const k = $('#tty-keys'); if(k) k.onclick = (ev) => {
           const b = ev.target.closest('[data-k]'); if(!b) return;
           ev.preventDefault(); _key(b.dataset.k); }; }

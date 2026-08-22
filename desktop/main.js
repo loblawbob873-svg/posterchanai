@@ -1177,6 +1177,7 @@ ipcMain.handle('pc:power:keep-awake', (e, on) => { fsGuard(e); return power.setK
  * `pc:power:do(action)` is one typo away from a page asking to power off when it meant to sleep. */
 ipcMain.handle('pc:power:suspend', (e) => { fsGuard(e); return power.suspend(); });
 ipcMain.handle('pc:power:hibernate', (e) => { fsGuard(e); return power.hibernate(); });
+ipcMain.handle('pc:power:enable-hibernate', (e) => { fsGuard(e); return power.enableHibernation(); });
 ipcMain.handle('pc:power:poweroff', (e) => { fsGuard(e); return power.poweroff(); });
 ipcMain.handle('pc:power:reboot', (e) => { fsGuard(e); return power.reboot(); });
 

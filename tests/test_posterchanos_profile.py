@@ -210,6 +210,14 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertTrue(use, "the global USE flags moved")
         self.assertIn("-gpm", use.group(1).split())
 
+    def test_installed_hibernation_command_is_real_and_rebuilds_the_initramfs(self):
+        self.assertIn("hibernateSetup()", self.src)
+        body = self.src[self.src.index("hibernateSetup()"):]
+        body = body[:body.index("\n}")]
+        self.assertIn("btrfs filesystem mkswapfile", body)
+        self.assertIn("resume_offset", body)
+        self.assertIn("dracut --regenerate-all --force", body)
+
     def test_the_portal_backend_is_named_for_this_desktop(self):
         """The portal picks its backend by desktop NAME and has no fallback: an unknown name gets
         "no such capture", which reads to the person as OBS being broken."""

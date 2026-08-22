@@ -1457,8 +1457,9 @@
     if(!host || !window.pcDisplays){ if(host) host.innerHTML='<div class="empty">System settings are unavailable.</div>'; return; }
     host.className='feed os-settings-feed';
     host.innerHTML='<div class="spinner"></div>';
-    let outs=[]; try{ outs=await pcDisplays.status(); }
+    let outs=[], power={}; try{ outs=await pcDisplays.status(); }
     catch(e){ host.innerHTML='<div class="empty">Could not read displays: '+enc(String(e&&e.message||e))+'</div>'; return; }
+    try{ power=window.pcPower?await pcPower.status():{}; }catch(_){ power={}; }
     const rows=outs.map(o=>{ const cur=(o.modes||[]).find(m=>m.current);
       const hz=m=>Math.round((+m.refresh||0)/1000*1000)/1000;
       return {name:o.name,label:[o.make,o.model].filter(Boolean).join(' ')||o.name,enabled:!!o.active,
@@ -1488,6 +1489,8 @@
         <div class="os-display-controls"></div>
         <div class="os-set-actions"><button class="btn" data-detect>Detect displays</button>
           <button class="btn primary" data-apply>Apply</button><span class="muted" data-status></span></div>
+        <section class="os-hibernate"><div><b>Hibernation</b><span>${power.hibernateConfigured?'Enabled':'Save your session to disk when the computer powers down.'}</span></div>
+          ${power.hibernateConfigured?'<span class="os-set-ready">Ready</span>':'<button class="btn" data-enable-hibernate>Enable hibernation</button>'}</section>
       </main></div>`;
       wire(); controls();
     };
@@ -1524,6 +1527,12 @@
           if(keep){await pcDisplays.confirm(p.token);if(st)st.textContent='Saved';}
           else {await pcDisplays.revert(p.token);return renderSystemSettings();}
         }catch(e){if(st)st.textContent=String(e&&e.message||e)} finally{apply.disabled=false}
+      };
+      const hib=host.querySelector('[data-enable-hibernate]'); if(hib)hib.onclick=async()=>{
+        if(!window.pcPower||!pcPower.enableHibernation)return;
+        hib.disabled=true;hib.textContent='Configuring…';
+        try{await pcPower.enableHibernation();PC().toast('Hibernation enabled — reboot once before using it');renderSystemSettings();}
+        catch(e){hib.disabled=false;hib.textContent='Enable hibernation';PC().toast(String(e&&e.message||e));}
       };
       host.querySelectorAll('[data-jump]').forEach(b=>b.onclick=()=>{
         const k=b.dataset.jump;

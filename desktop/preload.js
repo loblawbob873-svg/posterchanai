@@ -142,6 +142,7 @@ if (isOurPage) {
     setKeepAwake: (on) => ipcRenderer.invoke('pc:power:keep-awake', !!on),
     suspend: () => ipcRenderer.invoke('pc:power:suspend'),
     hibernate: () => ipcRenderer.invoke('pc:power:hibernate'),
+    enableHibernation: () => ipcRenderer.invoke('pc:power:enable-hibernate'),
     poweroff: () => ipcRenderer.invoke('pc:power:poweroff'),
     reboot: () => ipcRenderer.invoke('pc:power:reboot'),
   });

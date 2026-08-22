@@ -3258,6 +3258,49 @@ hibernation() {
 	unlink /usr/lib/systemd/system/systemd-suspend.service
 }
 
+# Enable hibernation on an already-installed PosterChanOS machine. This is also the backend for
+# System Settings, so it is deliberately non-interactive and idempotent.
+hibernateSetup() {
+	if [ "$(id -u)" != "0" ]; then
+		echo "hibernation setup needs administrator access" >&2; return 1
+	fi
+	local swap=/swap/swap ram uuid offset conf entry
+	mkdir -p /swap /etc/dracut.conf.d
+	if [ ! -f "$swap" ]; then
+		ram="$(awk '/MemTotal:/ {printf "%dM", ($2/1024)+1024}' /proc/meminfo)"
+		if ! command -v btrfs >/dev/null || ! btrfs filesystem mkswapfile --size "$ram" "$swap"; then
+			echo "could not create the Btrfs hibernation swapfile" >&2; return 1
+		fi
+	fi
+	chmod 0600 "$swap"
+	grep -qF "$swap none swap" /etc/fstab 2>/dev/null || echo "$swap none swap defaults 0 0" >>/etc/fstab
+	swapon "$swap" 2>/dev/null || true
+	offset="$(btrfs inspect-internal map-swapfile -r "$swap" 2>/dev/null)"
+	uuid="$(findmnt -no UUID -T "$swap" 2>/dev/null | head -1)"
+	if [ -z "$uuid" ] || [ -z "$offset" ]; then
+		echo "could not determine the swapfile resume address" >&2; return 1
+	fi
+	conf=/etc/dracut.conf.d/90-posterchan-hibernate.conf
+	cat >"$conf" <<-EOF
+	add_dracutmodules+=" resume "
+	kernel_cmdline+=" resume=UUID=$uuid resume_offset=$offset "
+	EOF
+	# Keep Boot Loader Specification entries bootable even when the installed dracut build does not
+	# import its embedded command line early enough for systemd's resume generator.
+	for entry in /boot/loader/entries/*.conf; do
+		[ -f "$entry" ] || continue
+		sed -i -E 's/[[:space:]]+resume=(UUID=)?[^[:space:]]+//g; s/[[:space:]]+resume_offset=[^[:space:]]+//g' "$entry"
+		sed -i -E "s#^options (.*)#options \\1 resume=UUID=$uuid resume_offset=$offset#" "$entry"
+	done
+	hibernation
+	if command -v dracut >/dev/null; then
+		dracut --regenerate-all --force || { echo "dracut could not rebuild the initramfs" >&2; return 1; }
+	else
+		echo "dracut is not installed" >&2; return 1
+	fi
+	echo "hibernation enabled; reboot once before using it"
+}
+
 bootloader() {
 	# dracut requires a real temporary directory. Live images exclude /var/tmp contents, and an
 	# absent directory made an otherwise-correct encrypted-root rebuild fail.

@@ -124,6 +124,30 @@ class LocalTerminal(unittest.TestCase):
         self.assertEqual(out["opened"], 8)
         self.assertIn("too many", out.get("threw") or "")
 
+    def test_two_tabs_are_two_independent_ptys(self):
+        """Input for one terminal must never appear in another terminal's output."""
+        out = self.run_js("""
+          const a = T.start({cols: 80, rows: 24});
+          const b = T.start({cols: 120, rows: 40});
+          let ao = '', bo = '';
+          T.subscribe(a.id, ev => { if(ev.t === 'out') ao += ev.d; });
+          T.subscribe(b.id, ev => { if(ev.t === 'out') bo += ev.d; });
+          setTimeout(() => T.write(a.id, "echo ONLY-TAB-A\\n"), 600);
+          setTimeout(() => T.write(b.id, "echo ONLY-TAB-B\\n"), 900);
+          setTimeout(() => done({ao, bo, ids:[a.id,b.id]}), 2200);
+        """)
+        self.assertNotEqual(out["ids"][0], out["ids"][1])
+        self.assertIn("ONLY-TAB-A", out["ao"])
+        self.assertNotIn("ONLY-TAB-B", out["ao"])
+        self.assertIn("ONLY-TAB-B", out["bo"])
+        self.assertNotIn("ONLY-TAB-A", out["bo"])
+
+    def test_terminal_screen_exposes_real_tab_controls(self):
+        src = open(CLIENT, encoding="utf-8").read()
+        self.assertIn('aria-label="Terminal tabs"', src)
+        self.assertIn('id="tty-tab-new"', src)
+        self.assertIn('data-tab=', src)
+
     def test_no_typescript_file_is_written(self):
         """`script` writes a verbatim log of the session, including everything typed at a password
         prompt. /dev/null is the whole point of that argument."""

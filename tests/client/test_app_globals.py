@@ -268,6 +268,15 @@ class TestSyncedFolderThumbnails(unittest.TestCase):
         i = src.index("function _bindThumbs")
         self.assertIn("isConnected", src[i:i + 900])
 
+    def test_chunked_photos_and_details_rows_get_thumbnail_targets(self):
+        src = open(APP, encoding="utf-8").read()
+        thumbs = src[src.index("async function _thumbFor"):src.index("/* An edit to the shared manifest")]
+        self.assertIn("_syncFileBlob('', chunks)", thumbs,
+                      "chunked pictures are excluded from synced-folder previews")
+        self.assertIn("data-thumb-chunks", src)
+        details = src[src.index("function _fxDetailsRow"):src.index("function _fxBindCols")]
+        self.assertIn("o.thumb", details, "Details view has no thumbnail target")
+
     def test_a_synced_folder_deletes_through_the_sync_store_only(self):
         """Deleting from a synced folder is not a drive operation. It has to become a TOMBSTONE in
         the shared manifest and then a deletion on every other device, which means going through

@@ -104,6 +104,11 @@ class Power(unittest.TestCase):
         if not out.get("ok"):          # this box may genuinely have swap
             self.assertIn("swap", out.get("threw", ""))
 
+    def test_hibernation_setup_is_exposed_without_an_invisible_password_prompt(self):
+        src = open(os.path.join(ROOT, "desktop", "power.js"), encoding="utf-8").read()
+        self.assertIn("enableHibernation", src)
+        self.assertIn("['-n', '/usr/bin/gentoo.sh', 'hibernate']", src)
+
     def profile_choices(self, choices, active):
         d = os.path.join(self.sys, "firmware", "acpi")
         os.makedirs(d, exist_ok=True)

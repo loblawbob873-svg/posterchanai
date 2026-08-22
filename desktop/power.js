@@ -186,6 +186,15 @@ function hibernateReady() {
     return sw.length > 1;
   } catch (_) { return false; }
 }
+function hibernateConfigured() {
+  return hibernateReady() && /resume=UUID=/.test(readStr('/etc/dracut.conf.d/90-posterchan-hibernate.conf'));
+}
+async function enableHibernation() {
+  /* The first provisioned identity is the administrator and has a narrowly auditable sudo path.
+   * -n is intentional: a GUI must never hang behind an invisible password prompt. */
+  const out = await run('sudo', ['-n', '/usr/bin/gentoo.sh', 'hibernate'], 15 * 60 * 1000);
+  return { ok:true, configured:hibernateConfigured(), rebootRequired:true, message:out.trim() };
+}
 const suspend = () => run('systemctl', ['suspend'], 20000).then(() => ({ ok: true }));
 const hibernate = () => {
   if (!hibernateReady()) return Promise.reject(new Error('there is no swap to hibernate into'));
@@ -214,9 +223,11 @@ async function status() {
     profiles: await profiles(),
     keepAwake: await keepAwakeStatus(),
     canHibernate: hibernateReady(),
+    hibernateConfigured: hibernateConfigured(),
   };
 }
 
 module.exports = { brightness, ddcBrightness, setBrightness, battery, profiles, setProfile,
-                   suspend, hibernate, poweroff, reboot, hibernateReady, keepAwakeStatus,
+                   suspend, hibernate, poweroff, reboot, hibernateReady, hibernateConfigured,
+                   enableHibernation, keepAwakeStatus,
                    setKeepAwake, status, MIN_PERCENT };
