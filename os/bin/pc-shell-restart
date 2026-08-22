@@ -14,4 +14,20 @@ while pgrep -f "$pattern" >/dev/null 2>&1 && [ "$i" -lt 20 ]; do
   i=$((i + 1))
 done
 pkill -KILL -f "$pattern" 2>/dev/null || true
+# A killed Wayland client is not removed from Sway's tree synchronously. Starting while the old
+# surface is still mapped lets pc-shell-start "find" that dying window and report success before
+# the replacement has drawn anything. Wait for BOTH records to disappear.
+i=0
+while [ "$i" -lt 50 ]; do
+  procs=0; mapped=0
+  pgrep -f "$pattern" >/dev/null 2>&1 && procs=1
+  swaymsg -t get_tree 2>/dev/null | grep -q '"app_id": "posterchan-desktop"\|"class": "posterchan-desktop"' && mapped=1
+  [ "$procs" -eq 0 ] && [ "$mapped" -eq 0 ] && break
+  sleep 0.1
+  i=$((i + 1))
+done
+# No PosterChan process remains, so these cannot belong to a live Electron singleton. Removing the
+# dead socket as well as SingletonLock prevents the new process handing off to nobody and exiting.
+state_dir="${HOME:-/home/$(id -un)}/.config/posterchan-desktop"
+rm -f "$state_dir/SingletonLock" "$state_dir/SingletonSocket" "$state_dir/SingletonCookie"
 exec /usr/local/bin/pc-shell-start

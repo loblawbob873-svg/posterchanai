@@ -18190,7 +18190,8 @@
     if(p === 'error') return '<div class="fx-sec"><b>Synced folders</b>'
       + '<div class="muted small fx-secnote">couldn’t be loaded just now</div></div>';
     if(!Array.isArray(p)) return '<div class="fx-sec"><b>Synced folders</b>'
-      + '<div class="muted small fx-secnote">looking…</div></div>';
+      + '<button class="btn btn-ghost small" data-load-sync-folders>Load synced folders</button>'
+      + '<div class="muted small fx-secnote">Uses your signer only when you ask.</div></div>';
     if(!p.length) return '';        // nothing synced — Folder Sync is its own screen; no empty shelf here
     return '<div class="fx-sec"><b>Synced folders</b>' + p.map(f =>
       `<span class="fx-syncwrap"><button class="folder-chip syncroot${_syncRoot===f.key?' active':''}" data-synckey="${enc(f.key)}"
@@ -18954,14 +18955,13 @@
     { const nf=$('#bl-newfolder',r); if(nf) nf.onclick=_newFolderModal; }
     { const df=$('#bl-delfolder',r); if(df) df.onclick=async()=>{ if(await uiConfirm('Delete folder “'+_filesFolder+'”? Its files move to All — the files themselves aren\'t deleted.')){ FilesIdx.removeFolder(_filesFolder); _filesFolder=''; renderBlossom(); } }; }
     _fxBindChipDrop(r);
-    // The synced-folder list is one request away and must never hold up the drive's first paint, so
-    // it lands into the sidebar afterwards. In place — a full re-render here would throw away an
-    // upload queue mid-upload.
-    _ensureSyncPairs().then(changed=>{
-      if(!changed || VIEW!=='blossom' || _filesTab!=='public') return;
-      const side=document.querySelector('.fx-side'); if(!side) return;
-      side.innerHTML=_fxSideHTML(); _fxBindSide(side);
-    });
+    /* Opening Files must never summon a remote signer. Discovery is encrypted, so make it an
+     * explicit action instead of a background side effect of drawing the sidebar. */
+    { const loadSync=$('[data-load-sync-folders]',r); if(loadSync) loadSync.onclick=async()=>{
+      loadSync.disabled=true; loadSync.textContent='Waiting for signer…';
+      try{ await _ensureSyncPairs(); renderBlossom(); }
+      catch(e){ loadSync.disabled=false; loadSync.textContent='Try again'; toast(String(e&&e.message||e)); }
+    }; }
   }
   function _fxCrumbs(){
     const home = { label:'Files', to:'b:' };
@@ -19523,6 +19523,7 @@
     const used = haveSizes ? _fxBytes([..._blobSizes.values()].reduce((a,b)=>a+b, 0)) : '—';
     const usedLine = `<div class="fx-used"><b>${enc(used)}</b> stored`
       + (_blobHave ? ` · ${_blobHave.size} file${_blobHave.size===1?'':'s'}` : ' · counting…')
+      + ` <button class="btn btn-ghost small fx-refresh" title="Refresh encrypted drive metadata using your signer.">Refresh</button>`
       + ` <button class="btn btn-ghost small fx-check" title="Check every file in your drive against what the server actually holds. Changes nothing.">Check my drive</button></div>`;
     grid.innerHTML = '<div class="fx-home">'
       + usedLine
@@ -19537,17 +19538,16 @@
                    + tile('💻', 'Files on this computer', 'browse this machine', 'data-hosthome="1"') : '')
       + '</div>';
     { const cb = $('.fx-check', pane); if(cb) cb.onclick = () => driveCheck(cb); }
+    { const rb = $('.fx-refresh', pane); if(rb) rb.onclick = async()=>{
+      rb.disabled=true; rb.textContent='Waiting for signer…';
+      try{ await FilesIdx.ensure(); await _ensureSyncPairs(); renderBlossom(); }
+      catch(e){ rb.disabled=false; rb.textContent='Try again'; toast(String(e&&e.message||e)); }
+    }; }
     $$('.fx-home-tile[data-folder]', pane).forEach(b => b.onclick = () => {
       _syncRoot=''; _syncPath=''; _hostOn=false; _filesFolder=b.dataset.folder; renderBlossom(); });
     $$('.fx-home-tile[data-synckey]', pane).forEach(b => b.onclick = () => {
       _syncRoot=b.dataset.synckey; _syncPath=''; _hostOn=false; renderBlossom(); });
     $$('.fx-home-tile[data-hosthome]', pane).forEach(b => b.onclick = _openHostFiles);
-    // The synced list arrives after first paint on a cold visit; repaint when it does, or the shelf
-    // stays missing until the user navigates away and back.
-    if(_syncPairs===null){
-      _ensureSyncPairs().then(()=>{ if(VIEW==='blossom' && _filesTab==='public' && _filesFolder===null && !_syncRoot) renderBlossom(); })
-                        .catch(()=>{});
-    }
   }
 
   /* The machine's own disk. The module draws it; this hands it the things that belong to the Files
@@ -19632,9 +19632,8 @@
      * deduplicated, and changing accounts gives it a different key. */
     const renderKey=FilesIdx._key();
     if(_filesRenderLoadedKey!==renderKey){ FilesIdx.loadLocal(); _filesRenderLoadedKey=renderKey; }
-    // Guarded on `_pullOk` rather than on ensure()'s own latch: with the index already loaded
-    // ensure() resolves immediately, and re-rendering from that would call this line again.
-    if(!FilesIdx._pullOk) FilesIdx.ensure().then(ok=>{ if(ok && VIEW==='blossom') renderBlossom(); }).catch(()=>{});
+    // Remote drive metadata is encrypted. The explicit Refresh control requests it; opening Files
+    // itself stays instant and never waits on a signer.
     /* A synced folder is a different SOURCE, not a different folder of the drive: its list comes from
      * the sync manifest, not from Blossom's /list. Branch BEFORE the upload probe and the listing —
      * neither is anything to do with it, and both are a round trip. */
@@ -19648,10 +19647,6 @@
      * approval appeared elsewhere). A definitive denial repaints once into the request-access card;
      * the real PUT remains the authority if the probe was inconclusive. */
     const canUp=_blossomUploadOK!==false;
-    blossomCanUpload().then(ok=>{
-      if(ok===canUp || VIEW!=='blossom' || _filesTab!=='public') return;
-      renderBlossom();
-    }).catch(()=>{});
     const head = canUp
       ? `<div class="drop-zone" id="bl-drop"><input type="file" id="bl-file" multiple ${_filesFolder==='Music'?'accept="audio/*,.mp3,.m4a,.m4b,.aac,.flac,.wav,.ogg,.oga,.opus,.wma,.aif,.aiff,.mka,.ape,.dsf"':''} hidden><input type="file" id="bl-folder" webkitdirectory hidden>
           <div class="dz-inner"><span class="dz-ic">⬆</span> Drop files/folders here, or <button class="btn btn-cyan small" id="bl-pick">choose files</button> <button class="btn btn-neon small" id="bl-pickfolder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>choose folder</button>

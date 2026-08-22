@@ -1566,7 +1566,7 @@ PROFILE
 	bindsym --release --no-repeat Super_L exec swaymsg -t send_tick pc:start
 
 	# Recovery for the UI only. Sway and native applications remain running.
-	bindcode --no-repeat Ctrl+Mod1+22 exec /usr/local/bin/pc-shell-restart
+	bindsym --no-repeat Ctrl+Mod1+BackSpace exec /usr/local/bin/pc-shell-restart
 
 	# A game gets the screen to itself and nothing above it.
 	for_window [class="^steam_app_.*"] fullscreen enable, inhibit_idle fullscreen
