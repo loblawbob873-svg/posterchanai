@@ -4,6 +4,7 @@ const fs = require('fs');
 const os = require('os');
 
 let last = null;
+let processLast = new Map(), processAt = 0;
 const read = p => fs.readFileSync(p, 'utf8');
 function counters(){
   const c=(read('/proc/stat').match(/^cpu\s+(.+)$/m)||[])[1]||'';
@@ -32,7 +33,14 @@ function processes(){
                 cpuSeconds:((Number(tail[11])||0)+(Number(tail[12])||0))/clk});
     }catch(_){}
   }
-  return out.sort((a,b)=>b.rss-a.rss).slice(0,300);
+  const now=Date.now(), dt=processAt?Math.max(.001,(now-processAt)/1000):0;
+  const cores=Math.max(1,os.cpus().length), next=new Map();
+  for(const p of out){
+    const before=processLast.get(p.pid); next.set(p.pid,p.cpuSeconds);
+    p.cpu=before!==undefined&&dt?Math.max(0,Math.min(100,(p.cpuSeconds-before)*100/dt/cores)):0;
+  }
+  processLast=next; processAt=now;
+  return out.sort((a,b)=>b.cpu-a.cpu||b.rss-a.rss).slice(0,300);
 }
 function snapshot(withProcesses){
   const cur=counters(), prev=last; last=cur;

@@ -92,7 +92,10 @@ async function view(name){
   name=cleanName(name); if(!name) return {ok:false,error:'invalid VM name'};
   const bin=['virt-viewer','remote-viewer'].find(b=>{ try{return fs.existsSync('/usr/bin/'+b);}catch(_){return false;} });
   if(!bin) return {ok:false,error:'SPICE viewer is not installed (install app-emulation/virt-viewer)'};
-  const args=bin==='virt-viewer'?['--connect',URI,'--wait',name]:[];
+  /* Session VMs expose SPICE through libvirt's private socket, not a public TCP endpoint. Attach
+   * through libvirt's pre-opened descriptor; a plain viewer connection can start successfully and
+   * still show no display. --wait also covers the short start/view race. */
+  const args=bin==='virt-viewer'?['--connect',URI,'--attach','--wait',name]:[];
   if(bin==='remote-viewer'){
     const d=await virsh(['domdisplay',name]); if(!d.ok) return d; args.push(d.out.trim());
   }

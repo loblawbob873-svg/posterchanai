@@ -1438,26 +1438,40 @@
      * stack overflowed and made the button appear dead. */
     const w=openApp('__tasks','Task Manager','#i-chart',null,true,true); if(!w)return null;
     w.el.classList.add('osw-taskmgr');
-    w.slot.innerHTML=`<div class="tm"><div class="tm-head"><div><b>Task Manager</b><span>Performance and processes</span></div>
-      <input class="input tm-search" placeholder="Search processes" aria-label="Search processes"></div>
-      <div class="tm-cards"></div><div class="tm-table"><div class="tm-tr tm-th"><span>Name</span><span>PID</span><span>Memory</span><span></span></div><div class="tm-rows"></div></div></div>`;
-    let dead=false,busy=false;
+    w.slot.innerHTML=`<div class="pctm"><aside class="pctm-nav">
+      <div class="pctm-brand"><svg><use href="#i-chart"></use></svg><span>Task Manager</span></div>
+      <button class="active" data-tm-page="processes"><svg><use href="#i-grid"></use></svg><span>Processes</span></button>
+      <button data-tm-page="performance"><svg><use href="#i-chart"></use></svg><span>Performance</span></button>
+    </aside><main class="pctm-main"><header class="pctm-top"><div><h2>Processes</h2><p>Apps and background processes</p></div>
+      <input class="input pctm-search" placeholder="Search" aria-label="Search processes"></header>
+      <section class="pctm-page" data-tm-processes><div class="pctm-summary"></div>
+        <div class="pctm-table"><div class="pctm-tr pctm-th"><button data-sort="name">Name</button><button data-sort="pid">PID</button><button data-sort="cpu">CPU</button><button data-sort="rss">Memory</button><span></span></div><div class="pctm-rows"></div></div>
+      </section><section class="pctm-page pctm-performance" data-tm-performance hidden><div class="pctm-perfgrid"></div></section>
+    </main></div>`;
+    let dead=false,busy=false,page='processes',sort='cpu',desc=true;
+    const history={cpu:[],ram:[],rx:[],tx:[]};
+    const line=(a,max,color)=>{const n=Math.max(1,max||Math.max(1,...a));return `<svg class="pctm-graph" viewBox="0 0 300 90" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="g-${color}" x1="0" y1="0" x2="0" y2="1"><stop stop-color="var(--${color})" stop-opacity=".32"/><stop offset="1" stop-color="var(--${color})" stop-opacity="0"/></linearGradient></defs><polygon fill="url(#g-${color})" points="0,90 ${a.map((v,i)=>`${i*300/Math.max(1,a.length-1)},${90-v*84/n}`).join(' ')} 300,90"/><polyline fill="none" stroke="var(--${color})" stroke-width="2" vector-effect="non-scaling-stroke" points="${a.map((v,i)=>`${i*300/Math.max(1,a.length-1)},${90-v*84/n}`).join(' ')}"/></svg>`;};
+    const switchPage=(next)=>{page=next;w.slot.querySelectorAll('[data-tm-page]').forEach(b=>b.classList.toggle('active',b.dataset.tmPage===page));$('[data-tm-processes]',w.slot).hidden=page!=='processes';$('[data-tm-performance]',w.slot).hidden=page!=='performance';const h=$('.pctm-top h2',w.slot),p=$('.pctm-top p',w.slot),q=$('.pctm-search',w.slot);if(h)h.textContent=page==='processes'?'Processes':'Performance';if(p)p.textContent=page==='processes'?'Apps and background processes':'Live system utilization';if(q)q.hidden=page!=='processes';};
     const paint=async()=>{
       if(dead||busy||!window.pcSystem)return;busy=true;
       try{
         const s=await pcSystem.snapshot(true);if(dead)return;
-        const cards=$('.tm-cards',w.slot);if(cards)cards.innerHTML=`
-          <div class="tm-card cpu"><span>CPU</span><b>${enc(s.cpu.percent)}%</b><i><em style="width:${enc(s.cpu.percent)}%"></em></i></div>
-          <div class="tm-card ram"><span>Memory</span><b>${enc(s.memory.percent)}%</b><small>${enc(_sysBytes(s.memory.used))} / ${enc(_sysBytes(s.memory.total))}</small><i><em style="width:${enc(s.memory.percent)}%"></em></i></div>
-          <div class="tm-card net"><span>Network</span><b>${enc(_sysBytes((s.network.rx||0)+(s.network.tx||0)))}/s</b><small>↓ ${enc(_sysBytes(s.network.rx))} · ↑ ${enc(_sysBytes(s.network.tx))}</small></div>`;
-        const q=(($('.tm-search',w.slot)||{}).value||'').toLowerCase();
-        const rows=(s.processes||[]).filter(p=>!q||(p.name+' '+p.cmd+' '+p.pid).toLowerCase().includes(q));
-        const host=$('.tm-rows',w.slot);if(host){host.innerHTML=rows.map(p=>`<div class="tm-tr"><span title="${enc(p.cmd||p.name)}"><b>${enc(p.name)}</b><small>${enc((p.cmd||'').slice(0,90))}</small></span><span>${enc(p.pid)}</span><span>${enc(_sysBytes(p.rss))}</span><button class="btn btn-ghost small" data-end="${enc(p.pid)}">End task</button></div>`).join('')||'<div class="os-pop-none">No matching processes.</div>';
+        for(const [k,v] of Object.entries({cpu:s.cpu.percent,ram:s.memory.percent,rx:s.network.rx||0,tx:s.network.tx||0})){history[k].push(v);if(history[k].length>60)history[k].shift();}
+        const summary=$('.pctm-summary',w.slot);if(summary)summary.innerHTML=`<div><span>CPU</span><b>${enc(s.cpu.percent)}%</b></div><div><span>Memory</span><b>${enc(s.memory.percent)}%</b></div><div><span>Network</span><b>${enc(_sysBytes((s.network.rx||0)+(s.network.tx||0)))}/s</b></div>`;
+        const perf=$('.pctm-perfgrid',w.slot);if(perf)perf.innerHTML=`
+          <article class="pctm-perf cpu"><header><div><b>CPU</b><small>${enc(s.cpu.cores)} logical processors</small></div><strong>${enc(s.cpu.percent)}%</strong></header>${line(history.cpu,100,'cyan')}<footer><span>Utilization <b>${enc(s.cpu.percent)}%</b></span><span>Up time <b>${enc(Math.floor(s.uptime/3600))}h ${enc(Math.floor(s.uptime/60)%60)}m</b></span></footer></article>
+          <article class="pctm-perf ram"><header><div><b>Memory</b><small>${enc(_sysBytes(s.memory.total))} installed</small></div><strong>${enc(s.memory.percent)}%</strong></header>${line(history.ram,100,'violet')}<footer><span>In use <b>${enc(_sysBytes(s.memory.used))}</b></span><span>Available <b>${enc(_sysBytes(s.memory.total-s.memory.used))}</b></span></footer></article>
+          <article class="pctm-perf net"><header><div><b>Network</b><small>Send and receive</small></div><strong>${enc(_sysBytes((s.network.rx||0)+(s.network.tx||0)))}/s</strong></header>${line(history.rx.map((x,i)=>x+(history.tx[i]||0)),0,'neon')}<footer><span>Receive <b>${enc(_sysBytes(s.network.rx))}/s</b></span><span>Send <b>${enc(_sysBytes(s.network.tx))}/s</b></span></footer></article>`;
+        const q=(($('.pctm-search',w.slot)||{}).value||'').toLowerCase();
+        const rows=(s.processes||[]).filter(p=>!q||(p.name+' '+p.cmd+' '+p.pid).toLowerCase().includes(q)).sort((a,b)=>{let x=a[sort],y=b[sort];if(sort==='name'){x=String(x).toLowerCase();y=String(y).toLowerCase();return (x<y?-1:x>y?1:0)*(desc?-1:1);}return ((Number(x)||0)-(Number(y)||0))*(desc?-1:1);});
+        const host=$('.pctm-rows',w.slot);if(host){host.innerHTML=rows.map(p=>`<div class="pctm-tr"><span title="${enc(p.cmd||p.name)}"><i class="pctm-appicon">${enc((p.name||'?')[0].toUpperCase())}</i><b>${enc(p.name)}</b></span><span>${enc(p.pid)}</span><span class="pctm-heat" style="--use:${Math.min(100,Number(p.cpu)||0)}%">${enc((Number(p.cpu)||0).toFixed(1))}%</span><span class="pctm-heat" style="--use:${Math.min(100,s.memory.total?p.rss*100/s.memory.total:0)}%">${enc(_sysBytes(p.rss))}</span><button class="btn btn-ghost small" data-end="${enc(p.pid)}">End task</button></div>`).join('')||'<div class="os-pop-none">No matching processes.</div>';
           host.querySelectorAll('[data-end]').forEach(b=>b.onclick=async()=>{try{await pcSystem.end(Number(b.dataset.end));paint();}catch(e){try{PC().toast(String((e&&e.message)||e));}catch(_){}}});}
-      }catch(e){const h=$('.tm-rows',w.slot);if(h)h.innerHTML='<div class="os-pop-none">Performance data is unavailable.</div>';}
+      }catch(e){const h=$('.pctm-rows',w.slot);if(h)h.innerHTML='<div class="os-pop-none">Performance data is unavailable.</div>';}
       finally{busy=false;}
     };
-    const search=$('.tm-search',w.slot);if(search)search.oninput=()=>paint();
+    w.slot.querySelectorAll('[data-tm-page]').forEach(b=>b.onclick=()=>switchPage(b.dataset.tmPage));
+    w.slot.querySelectorAll('[data-sort]').forEach(b=>b.onclick=()=>{if(sort===b.dataset.sort)desc=!desc;else{sort=b.dataset.sort;desc=sort!=='name';}paint();});
+    const search=$('.pctm-search',w.slot);if(search)search.oninput=()=>paint();
     const timer=setInterval(paint,2000);w.onClose=()=>{dead=true;clearInterval(timer);};paint();return w;
   }
 
@@ -1466,7 +1480,7 @@
     /* Same launcher/window split as Task Manager above. */
     const w=openApp('__vms','Virtual Machines','#i-monitor',null,true,true);if(!w)return null;
     w.el.classList.add('osw-vms');
-    w.slot.innerHTML=`<div class="vmui"><div class="vmui-top"><div><b>Virtual Machines</b><span>Private to this PosterChanOS user</span></div><button class="btn" data-vm-new>＋ New VM</button></div><div class="vmui-create" hidden>
+    w.slot.innerHTML=`<div class="vmui"><div class="vmui-top"><div><b>Virtual Machines</b><span>Private to this PosterChanOS user</span></div><button class="btn" data-vm-new><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New VM</button></div><div class="vmui-create" hidden>
       <label>Name<input class="input" data-vm-name placeholder="Windows 11"></label>
       <label>Installer ISO<div class="vmui-pick"><input class="input" data-vm-iso readonly placeholder="Choose an .iso"><button class="btn btn-ghost" data-vm-pick>Browse</button></div></label>
       <div class="vmui-spec"><label>Guest<select class="input" data-vm-guest><option value="linux">Linux</option><option value="windows">Windows 10 / 11</option></select></label><label>Firmware<select class="input" data-vm-firmware><option value="efi">UEFI</option><option value="bios">Legacy BIOS</option></select></label></div>
@@ -1478,7 +1492,7 @@
     const paint=async()=>{if(dead||busy)return;busy=true;try{const r=await pcVM.list();if(dead)return;
       if(!r.available){list.innerHTML=`<div class="vmui-empty"><b>Virtualization is unavailable</b><span>${enc(r.error||'libvirt could not be reached')}</span></div>`;return;}
       list.innerHTML=(r.machines||[]).map(m=>{const running=/running|paused|idle/.test(m.state);return `<article class="vmui-card"><div class="vmui-machine"><i class="${running?'on':''}"></i><div><b>${enc(m.name)}</b><span>${enc(m.state)} · ${enc(m.cpus)} CPU · ${enc(Math.round((m.memoryKiB||0)/1024))} MB</span></div></div><div class="vmui-actions">
-        ${running?`<button class="btn" data-vm-view="${enc(m.name)}">View</button><button class="btn btn-ghost" data-vm-act="shutdown" data-name="${enc(m.name)}">Shut down</button><button class="btn btn-ghost" data-vm-act="reboot" data-name="${enc(m.name)}">Restart</button><button class="btn btn-ghost danger" data-vm-act="stop" data-name="${enc(m.name)}">Force off</button>`:`<button class="btn" data-vm-act="start" data-name="${enc(m.name)}">Start</button><button class="btn btn-ghost danger" data-vm-delete="${enc(m.name)}">Delete</button>`}</div></article>`;}).join('')||'<div class="vmui-empty"><b>No virtual machines yet</b><span>Create one from an installation ISO.</span></div>';
+        ${running?`<button class="btn vmui-primary" data-vm-view="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-monitor"></use></svg>View</button><button class="btn btn-ghost" data-vm-act="shutdown" data-name="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-power"></use></svg>Shut down</button><button class="btn btn-ghost" data-vm-act="reboot" data-name="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-refresh"></use></svg>Restart</button><button class="btn btn-ghost danger" data-vm-act="stop" data-name="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-stop"></use></svg>Force off</button>`:`<button class="btn vmui-primary" data-vm-act="start" data-name="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-play"></use></svg>Start</button><button class="btn btn-ghost danger" data-vm-delete="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-trash"></use></svg>Delete</button>`}</div></article>`;}).join('')||'<div class="vmui-empty"><b>No virtual machines yet</b><span>Create one from an installation ISO.</span></div>';
       list.querySelectorAll('[data-vm-act]').forEach(b=>b.onclick=async()=>{b.disabled=true;const r=await pcVM.action(b.dataset.name,b.dataset.vmAct);if(!r.ok)say(r.error||'VM action failed');setTimeout(paint,500);});
       list.querySelectorAll('[data-vm-view]').forEach(b=>b.onclick=async()=>{const r=await pcVM.view(b.dataset.vmView);if(!r.ok)say(r.error||'Viewer could not start');});
       list.querySelectorAll('[data-vm-delete]').forEach(b=>b.onclick=async()=>{const n=b.dataset.vmDelete;if(!confirm(`Delete ${n} and its virtual disk?`))return;const r=await pcVM.remove(n,true);if(!r.ok)say(r.error||'Delete failed');paint();});

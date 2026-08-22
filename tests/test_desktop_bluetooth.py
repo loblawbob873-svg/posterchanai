@@ -31,6 +31,13 @@ class BluetoothBackend(unittest.TestCase):
         self.assertIn("Pair", src)
         self.assertIn("Forget", src)
 
+    def test_async_mixer_markup_is_bound_after_it_is_inserted(self):
+        """The Bluetooth button is created after the first bind pass, so the final body needs one."""
+        src = (ROOT / "static" / "js" / "client" / "osshell.js").read_text()
+        mixer = src[src.index("async function mixerPanel") : src.index("async function bluetoothPanel")]
+        self.assertGreaterEqual(mixer.count("bindPanel("), 2)
+        self.assertLess(mixer.rindex("body.innerHTML"), mixer.rindex("bindPanel(body)"))
+
 
 if __name__ == "__main__":
     unittest.main()

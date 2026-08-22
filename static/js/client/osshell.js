@@ -995,6 +995,10 @@
                  value="${H(r.percent == null ? 100 : r.percent)}" aria-label="${H(r.name)} volume"></div>
         <span class="os-qs-val" data-val="mix${H(r.id)}">${H(r.percent == null ? '—' : r.percent + '%')}</span>
       </div>`).join('') : '<div class="os-pop-none">Nothing is playing.</div>'}</div>`;
+    /* The body is replaced AFTER the asynchronous PipeWire reads. `bindPanel(d)` above wired the
+     * temporary "Looking…" markup, not these newly-created controls, so Bluetooth had a data-os
+     * attribute and no click handler at all. Wire the final subtree before its specialist inputs. */
+    bindPanel(body);
     body.querySelectorAll('[data-device]').forEach(sel => sel.onchange = async () => {
       try{ await a.setDefault(Number(sel.value)); }
       catch(e){ toast(String((e&&e.message)||e)); return; }

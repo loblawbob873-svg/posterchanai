@@ -48,6 +48,15 @@ class VmBackend(unittest.TestCase):
         self.assertIn('version="2.0"', src)
         self.assertIn('type="spice"', src)
 
+    def test_viewer_attaches_through_libvirt(self):
+        src = (ROOT / "desktop" / "vm.js").read_text()
+        self.assertIn("['--connect',URI,'--attach','--wait',name]", src)
+
+    def test_new_vm_uses_the_shared_plus_icon(self):
+        src = (ROOT / "static/js/client/os.js").read_text()
+        self.assertIn('data-vm-new><svg class="ic b-ic"', src)
+        self.assertIn('<use href="#i-plus"></use></svg>New VM', src)
+
 
 if __name__ == "__main__":
     unittest.main()
