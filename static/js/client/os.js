@@ -1540,9 +1540,8 @@
     }catch(_){ return false; }
   };
 
-  /* During a drag the surface follows through the compositor's move-only operation. The full
-   * place operation resizes and re-floats a client, which makes browsers repaint and cannot run at
-   * pointer speed; one full placement is performed when the gesture ends. */
+  /* A native surface cannot cheaply follow an HTML transform. Stash it for the gesture, move the
+   * lightweight labelled frame at display speed, then perform exactly one placement on release. */
   function _natGesture(w, on){
     /* Cleared for EVERY window, not just a native one: the hold is armed by the press, and the
      * press does not know yet whether the frame it landed on wraps an app. Left set after dragging
@@ -1550,8 +1549,12 @@
     if(!on) _natFocusHold = false;
     if(!w || w.native == null) return;
     w.gesturing = !!on;
-    if(on) return;
-    const done = nsync();
+    let done;
+    if(on){
+      try{ done = pcWM.hide(w.native); _natSent.set(w.native, 'hidden'); }catch(_){}
+      return;
+    }
+    done = nsync();
     /* The app has the keyboard again now that it is back on screen. After the sync, not before:
      * focusing a window that is still in the scratchpad brings it back wherever the compositor
      * feels like putting it, and the placement then has to move it a second time. */
@@ -1568,22 +1571,6 @@
     try{ const r = (w.body || w.el).getBoundingClientRect();
          return { left: r.left, top: r.top, width: r.width, height: r.height }; }
     catch(_){ return null; }
-  }
-
-  /* One move in flight per app, with the newest pointer position retained. This bounds IPC while
-   * keeping the real Firefox/Telegram surface attached to its PosterChan frame. */
-  function _natMove(w){
-    if(!w || w.native == null || !pcWM.move || !_natShell) return;
-    if(w._moving){ w._moveAgain = true; return; }
-    const scale = NAT().scaleFrom(_natShell.rect, document.documentElement.clientWidth,
-                                  document.documentElement.clientHeight);
-    const rect = scale && NAT().mapRect(_bodyRect(w), scale);
-    if(!rect) return;
-    w._moving = true;
-    Promise.resolve(pcWM.move(w.native, rect.x, rect.y)).catch(() => {}).finally(() => {
-      w._moving = false;
-      if(w._moveAgain){ w._moveAgain = false; _natMove(w); }
-    });
   }
 
   /* THE DESKTOP'S OWN OVERLAYS ARE NOT WINDOWS, AND A NATIVE SURFACE IS ABOVE EVERY ONE OF THEM.
@@ -2079,12 +2066,12 @@
      *     buttons === 0 on its next move, which is checked below).
      * Only armed for a real button press, so synthetic events — which carry buttons: 0 — still work. */
     try{ ev.preventDefault(); }catch(_){}
+    try{ w.el.setPointerCapture(ev.pointerId); }catch(_){}
     const hadButtons = (ev.buttons || 0) > 0;
     w.el.classList.add('dragging');
     const paint = () => {
       raf = 0;
       w.el.style.transform = `translate(${curX - ox}px, ${curY - oy}px)`;
-      if(w.native != null) _natMove(w);
     };
     const move = (e) => {
       // A released mouse reports buttons === 0 on its next move. Checked FIRST: doing it at the end
@@ -2120,6 +2107,7 @@
       document.removeEventListener('pointercancel', up);
       window.removeEventListener('blur', up);
       w.el.removeEventListener('lostpointercapture', up);
+      try{ if(w.el.hasPointerCapture(ev.pointerId)) w.el.releasePointerCapture(ev.pointerId); }catch(_){}
       if(raf) cancelAnimationFrame(raf);
       w.el.classList.remove('dragging');
       w.el.style.transform = '';
@@ -2132,7 +2120,9 @@
     document.addEventListener('pointermove', move);
     document.addEventListener('pointerup', up);
     document.addEventListener('pointercancel', up);
-    window.addEventListener('blur', up);          // alt-tabbed away mid-drag
+    /* Focusing a hosted native app blurs the shell. Pointer capture is the authority for that
+     * gesture; treating blur as release was why Telegram stopped after the first few pixels. */
+    if(w.native == null) window.addEventListener('blur', up);
     w.el.addEventListener('lostpointercapture', up);
   }
 

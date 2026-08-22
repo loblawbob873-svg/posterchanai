@@ -4,17 +4,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_dragging_does_not_hide_the_native_surface():
+def test_dragging_stashes_native_surface_and_places_it_once():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
-    assert "minimised: !!w.min" in src
-    assert "minimised: !!(w.min || w.gesturing)" not in src
     drag = src[src.index("function startDrag"):src.index("function startResize")]
-    assert "if(w.native != null) _natMove(w);" in drag
-    assert "pcWM.hide(w.native)" not in drag
+    gesture = src[src.index("function _natGesture"):src.index("const _zOf")]
+    assert "pcWM.hide(w.native)" in gesture
+    assert "_natMove(w)" not in drag
     assert "pcWM.place" not in drag
+    assert "setPointerCapture(ev.pointerId)" in drag
+    assert "if(w.native == null) window.addEventListener('blur', up)" in drag
 
 
-def test_drag_uses_move_only_ipc_and_places_once_on_release():
+def test_native_bridge_retains_move_for_non_gesture_placement_operations():
     preload = (ROOT / "desktop/preload.js").read_text(encoding="utf-8")
     main = (ROOT / "desktop/main.js").read_text(encoding="utf-8")
     wm = (ROOT / "desktop/wm.js").read_text(encoding="utf-8")

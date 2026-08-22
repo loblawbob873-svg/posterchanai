@@ -12,6 +12,11 @@
 [ -n "$SWAYSOCK" ] || SWAYSOCK=$(ls /run/user/$(id -u)/sway-ipc.*.sock 2>/dev/null | head -1)
 export SWAYSOCK
 
+# Sway may execute a recovery binding more than once when keys bounce or are held. Electron's own
+# profile lock is created too late to close that race, so serialize the launcher itself.
+exec 9>"/run/user/$(id -u)/posterchan-shell-start.lock"
+flock -n 9 || exit 0
+
 # Native GTK chrome follows the session preference. Firefox can have dark web content selected and
 # still draw a bright toolbar when a minimal Sway session provides no desktop theme setting at all.
 # Children launched by PosterChan inherit this too, giving one dark desktop instead of mixed chrome.

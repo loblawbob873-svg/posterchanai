@@ -1511,7 +1511,7 @@ PROFILE
 	bindsym --release --no-repeat $mod exec swaymsg -t send_tick pc:start
 
 	# Recovery for the UI only. Sway and native applications remain running.
-	bindcode --no-repeat Ctrl+Mod1+22 exec sh -c 'pkill -f posterchan[-]desktop; sleep 1; exec /usr/local/bin/pc-shell-start'
+	bindcode --no-repeat Ctrl+Mod1+22 exec /usr/local/bin/pc-shell-restart
 
 	# A game gets the screen to itself and nothing above it.
 	for_window [class="^steam_app_.*"] fullscreen enable, inhibit_idle fullscreen
@@ -1670,7 +1670,7 @@ PROFILE
 	# what joins the two. It is the ONLY privileged thing the shell asks for, and it is limited to
 	# exactly that one command — signing in with a key is not the same as being trusted with root,
 	# and a machine anyone may log into must not hand every visitor sudo.
-	for helper in pc-provision-user pc-session-switch pc-shell-start pc-key pc-idle update-posterchan; do
+	for helper in pc-provision-user pc-session-switch pc-shell-start pc-shell-restart pc-key pc-idle update-posterchan; do
 		if [ -f "$PCOS_TREE/bin/$helper" ]; then
 			cp -f "$PCOS_TREE/bin/$helper" ${TARGET}/usr/local/bin/$helper
 		elif [ -f /tmp/bin/$helper ]; then

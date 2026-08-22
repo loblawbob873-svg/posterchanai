@@ -31,7 +31,7 @@ src_install() {
 	# The helpers. pc-key must obey the same limits as the on-screen controls; the repo's
 	# tests/test_pc_key_limits.py is what keeps the two in step, and it runs before this is built.
 	exeinto /usr/local/bin
-	for helper in pc-provision-user pc-session-switch pc-shell-start pc-key pc-idle update-posterchan; do
+	for helper in pc-provision-user pc-session-switch pc-shell-start pc-shell-restart pc-key pc-idle update-posterchan; do
 		doexe "${FILESDIR}/${helper}"
 	done
 	# The installed recovery/LiveUSB tool is package-owned too. publish_overlay.sh injects the
@@ -75,7 +75,7 @@ pkg_postinst() {
 		cat >>"${cfg}" <<-'SWAY_RECOVERY'
 
 		# Restart only the PosterChan desktop shell; native applications remain open.
-		bindcode --no-repeat Ctrl+Mod1+22 exec sh -c 'pkill -f posterchan[-]desktop; sleep 1; exec /usr/local/bin/pc-shell-start'
+		bindcode --no-repeat Ctrl+Mod1+22 exec /usr/local/bin/pc-shell-restart
 		SWAY_RECOVERY
 	done
 
