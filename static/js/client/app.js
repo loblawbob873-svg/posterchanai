@@ -19680,9 +19680,30 @@
      * there was no way to put anything in one. The uploader is built above, so it is here now;
      * only the /list and the file grid are skipped, which is what made the landing instant. */
     if(_filesFolder === null){ _renderDriveHome(pane); return; }
+    /* STALE-WHILE-REVALIDATE. The blob listing is public metadata and already cached in this
+     * session; folder changes only filter it through the encrypted local index. Paint that copy
+     * immediately, then refresh it. A media host or CORS proxy that stops answering must not turn
+     * a drive we just displayed into an infinite spinner. */
+    const cachedList=Array.isArray(_filesGridList)?_filesGridList:null;
+    if(cachedList){
+      try{ if(_filesFolder==='Music') _renderMusicList($('#bl-grid',pane),cachedList,_filesQ);
+        else _renderFilesGrid($('#bl-grid',pane),cachedList); }catch(_){}
+    }
     let list=null;
-    try{ const r=await fetch(server+'/list/'+ME.pubkey, { cache:'no-store' }); if(!r.ok) throw new Error('HTTP '+r.status); list=await r.json(); }
-    catch(e){ const g=$('#bl-grid',pane); if(g) g.innerHTML='<div class="empty">Couldn\'t load files from '+enc(server)+' ('+enc(e.message)+').</div>'; }
+    const ctl=typeof AbortController!=='undefined'?new AbortController():null;
+    const listTimer=ctl?setTimeout(()=>ctl.abort(),12000):null;
+    try{ const r=await fetch(server+'/list/'+ME.pubkey,
+      Object.assign({cache:'no-store'},ctl?{signal:ctl.signal}:{}));
+      if(!r.ok) throw new Error('HTTP '+r.status); list=await r.json();
+      if(!Array.isArray(list)) throw new Error('invalid response'); }
+    catch(e){
+      /* Keep a successfully painted cached list. With no copy, replace the spinner with a useful
+       * bounded failure and a retry button—never leave animation pretending work is continuing. */
+      if(!cachedList){ const g=$('#bl-grid',pane); if(g){
+        g.innerHTML='<div class="empty">Couldn\'t load files from '+enc(server)+' ('+enc(e&&e.name==='AbortError'?'timed out':e.message)+'). <button class="btn btn-ghost small" id="bl-list-retry">Retry</button></div>';
+        const retry=$('#bl-list-retry',g);if(retry)retry.onclick=()=>renderBlossom();
+      } }
+    }finally{ if(listTimer)clearTimeout(listTimer); }
     if(list!==null){ _blobHave=new Set(list.map(b=>b.sha256));   // reuse this fetch for the music player's existence check
       // …and the SIZES, which the drive home totals. Filled here as well as in _refreshBlobHave
       // because this is the fetch the Files screen actually makes; keying the figure on the other
