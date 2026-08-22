@@ -204,6 +204,12 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertTrue(obs and "pipewire" in obs.group(1),
                         "obs-studio is not built with pipewire — no screen capture on Wayland")
 
+    def test_gpm_is_disabled_globally(self):
+        """PosterChanOS uses a graphical Wayland session; console mouse support is unwanted."""
+        use = re.search(r'^USE_FLAGS="([^"]*)"', self.src, re.M)
+        self.assertTrue(use, "the global USE flags moved")
+        self.assertIn("-gpm", use.group(1).split())
+
     def test_the_portal_backend_is_named_for_this_desktop(self):
         """The portal picks its backend by desktop NAME and has no fallback: an unknown name gets
         "no such capture", which reads to the person as OBS being broken."""

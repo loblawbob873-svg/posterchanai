@@ -135,7 +135,7 @@ EMERGE_DEFAULT_OPTS="--jobs 5 --getbinpkg "
 # zstd is GLOBAL, not per-package: the live CD build compresses its squashfs with it and
 # dracut needs to be able to read that back, so a kernel/initramfs built without the flag
 # fails at "zstd is not supported" — after the whole image has been built.
-USE_FLAGS=" flatpak dracut -webp -ladspa npm introspection lame systemd-boot dist-kernel luks cryptsetup kernel-install boot opus theora vpx kernel-install systemd firmware btrfs networkmanager zstd"
+USE_FLAGS=" flatpak dracut -webp -ladspa -gpm npm introspection lame systemd-boot dist-kernel luks cryptsetup kernel-install boot opus theora vpx kernel-install systemd firmware btrfs networkmanager zstd"
 VIDEO_CARDS="intel amdgpu radeon radeonsi"
 #
 #PACKAGE CONFIGURATION

@@ -453,6 +453,16 @@ class OutgoingMms(unittest.TestCase):
         self.assertIn("PC.encFileUrl(req.attachment.sha", js)
         self.assertIn("P.sendMms", js)
 
+    def test_non_default_phone_keeps_its_successful_mms_attachment(self):
+        """Without the SMS role there is no provider row for mirror() to recover later."""
+        js = open(SMSJS, encoding="utf-8").read()
+        send = js[js.index("async function send(to, body, file)"):]
+        send = send[:send.index("\n  }")]
+        unstored = send[send.index("r.stored === false"):]
+        self.assertIn("PC.uploadEncFile(file, 'MMS')", unstored)
+        self.assertIn("m.parts =", unstored)
+        self.assertIn("await publishOne(m)", unstored)
+
     def test_plugin_decodes_only_at_the_phone_transport_boundary(self):
         plugin = open(os.path.join(SMS, "SmsPlugin.java"), encoding="utf-8").read()
         self.assertIn("public void sendMms", plugin)

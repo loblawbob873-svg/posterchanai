@@ -797,6 +797,21 @@
              * twice. */
             const doc = await docIdFor(to, at, body, false);
             const m = { doc, address: to, body, date: at, incoming: false, name: '' };
+            /* A successful MMS on a phone that is not the default Messages app has no provider
+             * row for `mirror` to recover. Preserve the photo in the encrypted archive now, just
+             * as the remote-send path does, or every other client receives a text-only bubble. */
+            if(file){
+              try{
+                await ensureMmsFolder();
+                const sha = await PC.uploadEncFile(file, 'MMS');
+                m.mms = true;
+                m.parts = [{ ct:file.type||'image/jpeg', name:file.name||'photo.jpg',
+                             bytes:file.size, sha }];
+              }catch(_){
+                /* The carrier send already succeeded. Keep the truthful text record even when
+                 * encrypted media storage is temporarily unreachable; never report it unsent. */
+              }
+            }
             /* PUBLISHED, not just remembered. `mirror` republishes from the phone's message store
              * and without the role there is no row there to find — so an in-memory copy is gone on
              * the next load, and the message that was genuinely sent vanishes from the thread it

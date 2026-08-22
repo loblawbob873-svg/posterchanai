@@ -69,7 +69,7 @@ class TheClientSendsFromTheDeviceHoldingTheRadio(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.src = SMS_JS.read_text()
-        cls.send = block(cls.src, "async function send(to, body)", "\n  }")
+        cls.send = block(cls.src, "async function send(to, body, file)", "\n  }")
 
     def test_it_no_longer_gates_on_the_role(self):
         self.assertNotIn("if(await isPhone()){", self.send,
