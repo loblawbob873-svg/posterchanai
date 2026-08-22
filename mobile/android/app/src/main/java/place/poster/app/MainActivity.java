@@ -352,7 +352,11 @@ public class MainActivity extends BridgeActivity {
         // or is coalesced away. This is the moment it actually happened, from the Activity, which is
         // the half Android never freezes. No payload — the client still consumes the parked request
         // itself, so there is one consumer and no second path to disagree with it.
-        try { place.poster.app.home.HomePlugin.announceLaunchView(); } catch (Throwable ignored) { }
+        try {
+            place.poster.app.home.HomePlugin.announceLaunchView(
+                intent == null ? "" : intent.getStringExtra(
+                    place.poster.app.home.HomeActivity.EXTRA_VIEW));
+        } catch (Throwable ignored) { }
     }
 
     /* THE CONTROLLER'S WAY IN, and the reason it needs one: a webxdc game driven by a Bluetooth pad

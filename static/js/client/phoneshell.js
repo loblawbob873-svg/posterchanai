@@ -352,6 +352,18 @@
      * Listening to all three costs nothing: `LaunchView.take()` CONSUMES, so whichever fires first
      * performs the navigation and every later one reads "" and does nothing. */
     const again = () => { if(document.querySelector('#feed')) consumeLaunchView(); };
+    /* onNewIntent knows the requested view at the exact instant Android delivers the tile press.
+     * Use that payload directly, then drain the parked copy. Waiting for a resume/visibility race
+     * made the old screen (often Notifications) win on an already-running app. The parked carrier
+     * remains the cold-start fallback, where no JS listener exists yet. */
+    const launched = (e) => {
+      const v = e && typeof e.view === 'string' ? e.view.trim() : '';
+      if(v && document.querySelector('#feed')){
+        if(v === '__music'){ try{ if(typeof PC.openMusic === 'function') PC.openMusic(); }catch(_){} }
+        else try{ PC.switchView(v); }catch(_){}
+      }
+      consumeLaunchView();                 // consume the duplicate parked/intent carrier exactly once
+    };
     document.addEventListener('visibilitychange', () => {
       if(document.visibilityState === 'visible') again();
     });
@@ -361,7 +373,7 @@
     }catch(_){}
     try{
       const H = plug('addListener');
-      if(H && H.addListener) H.addListener('launchView', again);
+      if(H && H.addListener) H.addListener('launchView', launched);
     }catch(_){}
   }
   init();

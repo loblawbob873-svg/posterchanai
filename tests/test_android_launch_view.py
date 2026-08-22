@@ -172,6 +172,15 @@ class TheLaunchIsNotDressedAsALauncherPress(unittest.TestCase):
     PATHS = [(HOME / "HomeActivity.java", "private void openApp"),
              (JAVA / "shortcut/ViewActivity.java", "protected void onCreate")]
 
+    def test_warm_launch_event_carries_the_requested_view(self):
+        main = (JAVA / "MainActivity.java").read_text()
+        plugin = (HOME / "HomePlugin.java").read_text()
+        client = (ROOT / "static/js/client/phoneshell.js").read_text()
+        self.assertIn("getStringExtra(\n                    place.poster.app.home.HomeActivity.EXTRA_VIEW)", main)
+        self.assertIn('o.put("view", requested', plugin)
+        self.assertIn("PC.switchView(v)", client)
+        self.assertIn("addListener('launchView', launched)", client)
+
     def _start_block(self, path, fn):
         return method(strip_comments(path.read_text()), fn)
 

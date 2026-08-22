@@ -53,11 +53,17 @@ public class HomePlugin extends Plugin {
     protected void handleOnDestroy() { if (live == this) live = null; }
 
     /** Tell the page there may be a launch request to read. Safe to call when nothing is listening. */
-    public static void announceLaunchView() {
+    public static void announceLaunchView(String requested) {
         HomePlugin p = live;
         if (p == null) return;
-        try { p.notifyListeners("launchView", new JSObject()); } catch (Throwable ignored) { }
+        try {
+            JSObject o = new JSObject();
+            o.put("view", requested == null ? "" : requested.trim());
+            p.notifyListeners("launchView", o);
+        } catch (Throwable ignored) { }
     }
+
+    public static void announceLaunchView() { announceLaunchView(""); }
 
     @PluginMethod
     public void status(PluginCall call) {
