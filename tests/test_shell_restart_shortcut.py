@@ -47,6 +47,8 @@ def test_upgrade_removes_optioned_printscreen_bindings_before_adding_one_copy():
     ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
     assert "bindsym .*?(Print|Ctrl\\+Shift\\+s|Shift\\+Print)" in ebuild
     assert "outputs.conf" in ebuild
+    assert "include ~/.config/sway/outputs.conf" in ebuild
+    assert "floating_modifier $mod normal" in ebuild
 
 
 def test_super_is_a_global_physical_key_binding_not_a_bare_modifier_binding():

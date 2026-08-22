@@ -93,6 +93,13 @@ pkg_postinst() {
 		if ! grep -q 'Super_L exec swaymsg -t send_tick pc:start' "${cfg}"; then
 			echo 'bindsym --release --no-repeat Super_L exec swaymsg -t send_tick pc:start' >>"${cfg}"
 		fi
+		# Identity configs are copies, not includes of /etc/sway/config. Accounts made before Display
+		# Settings therefore never read the file the UI successfully saved, and every reboot reverted
+		# the monitor layout. Add the two new compositor hooks once without replacing custom config.
+		grep -qF 'include ~/.config/sway/outputs.conf' "${cfg}" || \
+			echo 'include ~/.config/sway/outputs.conf' >>"${cfg}"
+		grep -qE '^floating_modifier[[:space:]]+\$mod[[:space:]]+normal' "${cfg}" || \
+			echo 'floating_modifier $mod normal' >>"${cfg}"
 		cat >>"${cfg}" <<-'SWAY_RECOVERY'
 
 		# Screenshots work even while the desktop renderer is restarting.
