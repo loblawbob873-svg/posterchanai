@@ -8373,7 +8373,11 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
 .os-pop-sig{ color:var(--muted,#7a8699); font-size:12px; flex:none; }
 .os-pop-none{ padding:10px; color:var(--muted,#7a8699); }
 .os-pop-b .os-pop-range{ flex:1; min-width:0; }
-.os-pop-b:has(.os-pop-range){ flex-direction:row; align-items:center; gap:10px; padding:12px; }
+/* Only the tiny one-control volume/brightness popup puts its DIRECT slider and value on one row.
+   The full Volume Mixer also contains sliders, but they are nested inside Devices and Apps
+   sections. Matching every descendant turned those sections into one long horizontal strip and
+   clipped the right/bottom of the mixer. Keep its sections vertical and let .os-pop-b scroll. */
+.os-pop-b:has(> .os-pop-range){ flex-direction:row; align-items:center; gap:10px; padding:12px; }
 .os-pop-val{ flex:none; min-width:44px; text-align:right; color:var(--muted,#7a8699); }
 .os-pop-f{ padding:0 8px 8px; }
 .os-pop-btn{

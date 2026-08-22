@@ -335,6 +335,14 @@ class Tray(unittest.TestCase):
         self.assertEqual(out["sv"], [80, 25], "moving one app's slider moved something else")
         self.assertEqual(out["sm"], [80, True], "muting one app never reached the machine")
 
+    def test_full_mixer_stays_vertical_and_scrolls_inside_the_screen(self):
+        """A descendant-slider :has rule once put Devices and Apps side by side, clipping both the
+        right and bottom of the Volume Mixer. Only the small direct-slider popup is horizontal."""
+        css = open(os.path.join(ROOT, "static", "css", "client.css"), encoding="utf-8").read()
+        self.assertIn(".os-pop-b:has(> .os-pop-range)", css)
+        self.assertNotIn(".os-pop-b:has(.os-pop-range)", css)
+        self.assertRegex(css, r"\.os-pop-b\{[^}]*max-height:[^;}]+;[^}]*overflow-y:auto")
+
     def test_the_mixer_switches_both_input_and_output_devices(self):
         out = self.press("mixer", """
           const b=pop.querySelector('.os-pop-b');
