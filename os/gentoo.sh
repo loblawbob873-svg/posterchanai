@@ -644,6 +644,9 @@ fi
 POSTERCHAN_PROFILE
 	printf '[Unit]\nWants=NetworkManager.service\nAfter=NetworkManager.service\n[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin posterchan --noclear %%I $TERM\n' \
 		>"$TARGET/etc/systemd/system/getty@tty1.service.d/override.conf"
+	# Wi-Fi is boot-critical. Enable it explicitly in the completed target rather than relying only
+	# on the earlier services loop, which may have been interrupted before finalization.
+	chroot "$TARGET" /bin/systemctl enable NetworkManager.service
 	chroot "$TARGET" /bin/chown -R posterchan:posterchan /home/posterchan/.bash_profile \
 		/home/posterchan/.config/sway
 	# RELEASE GATE, NOT A BEST-EFFORT CHECK. These are the exact omissions that otherwise produce a
@@ -656,6 +659,10 @@ POSTERCHAN_PROFILE
 	if ! grep -q -- '--autologin posterchan' \
 		"$TARGET/etc/systemd/system/getty@tty1.service.d/override.conf" 2>/dev/null; then
 		echo -e "\033[1;31mPosterChan autologin was not installed — refusing to report success.\033[0m"
+		return 1
+	fi
+	if [ ! -e "$TARGET/etc/systemd/system/multi-user.target.wants/NetworkManager.service" ]; then
+		echo -e "\033[1;31mNetworkManager was not enabled in the installed system — refusing to report success.\033[0m"
 		return 1
 	fi
 	if ! grep -q '^Theme=posterchanos$' "$TARGET/etc/plymouth/plymouthd.conf" 2>/dev/null; then

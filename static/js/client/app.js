@@ -19544,7 +19544,7 @@
     $$('.fx-home-tile[data-hosthome]', pane).forEach(b => b.onclick = _openHostFiles);
     // The synced list arrives after first paint on a cold visit; repaint when it does, or the shelf
     // stays missing until the user navigates away and back.
-    if(!Array.isArray(_syncPairs)){
+    if(_syncPairs===null){
       _ensureSyncPairs().then(()=>{ if(VIEW==='blossom' && _filesTab==='public' && _filesFolder===null && !_syncRoot) renderBlossom(); })
                         .catch(()=>{});
     }
@@ -19634,7 +19634,7 @@
     if(_filesRenderLoadedKey!==renderKey){ FilesIdx.loadLocal(); _filesRenderLoadedKey=renderKey; }
     // Guarded on `_pullOk` rather than on ensure()'s own latch: with the index already loaded
     // ensure() resolves immediately, and re-rendering from that would call this line again.
-    if(!FilesIdx._pullOk) FilesIdx.ensure().then(()=>{ if(VIEW==='blossom') renderBlossom(); });
+    if(!FilesIdx._pullOk) FilesIdx.ensure().then(ok=>{ if(ok && VIEW==='blossom') renderBlossom(); }).catch(()=>{});
     /* A synced folder is a different SOURCE, not a different folder of the drive: its list comes from
      * the sync manifest, not from Blossom's /list. Branch BEFORE the upload probe and the listing —
      * neither is anything to do with it, and both are a round trip. */
