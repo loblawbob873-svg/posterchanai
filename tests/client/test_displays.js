@@ -13,6 +13,8 @@ const rows=[
 ];
 assert.deepStrictEqual(validate(rows,live).map(x=>x.name),['eDP-1','DP-1']);
 assert(commands(validate(rows,live))[1].includes('pos 1920 0'));
+assert(commands(validate(rows,live)).includes('workspace 1 output "eDP-1"'));
+assert(commands(validate(rows,live)).includes('focus output "eDP-1"'));
 assert.throws(()=>validate([{name:'DP-9'}],live),/unknown/);
 assert.throws(()=>validate(rows.map(x=>Object.assign({},x,{enabled:false})),live),/at least one/);
 
@@ -25,6 +27,6 @@ assert.throws(()=>validate(rows.map(x=>Object.assign({},x,{enabled:false})),live
  await d.confirm(p.token);
  assert(fs.readFileSync(path.join(dir,'outputs.conf'),'utf8').includes('2560x1440@144Hz'));
  const p2=await d.preview(rows); await d.revert(p2.token);
- assert(seen.slice(-2).some(x=>x.includes('pos 1920 0')));
+ assert(seen.slice(-4).some(x=>x.includes('pos 1920 0')));
  console.log('ALL OK');
 })().catch(e=>{console.error(e);process.exit(1)});

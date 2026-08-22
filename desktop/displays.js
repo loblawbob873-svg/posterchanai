@@ -50,7 +50,7 @@ function validate(layout, actual){
 }
 
 function commands(rows){
-  return rows.map(o => {
+  const out=rows.map(o => {
     let s='output '+quote(o.name)+' '+(o.enabled?'enable':'disable');
     if(o.enabled){
       if(o.mode) s+=' mode '+o.mode;
@@ -58,6 +58,15 @@ function commands(rows){
     }
     return s;
   });
+  /* Sway has no freestanding `primary` flag. The meaningful desktop equivalent is where workspace
+   * 1 (and therefore the PosterChan shell on a normal session) belongs. Assign it persistently and
+   * focus that output for the live preview; otherwise the radio button is saved-looking decoration. */
+  const primary=rows.find(o=>o.enabled&&o.primary);
+  if(primary){
+    out.push('workspace 1 output '+quote(primary.name));
+    out.push('focus output '+quote(primary.name));
+  }
+  return out;
 }
 
 function snapshot(actual){
