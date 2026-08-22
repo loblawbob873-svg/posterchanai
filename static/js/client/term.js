@@ -242,7 +242,7 @@
       return `<div class="tty-wrap">
         <div class="tty-bar">
           <select class="input tty-host" id="tty-host" aria-label="Host"></select>
-          <button class="btn btn-neon small" id="tty-go">New tab</button>
+          <button class="btn btn-neon small" id="tty-go" title="Open a separate terminal session">New tab</button>
           <button class="btn btn-ghost small hidden" id="tty-stop" title="Leave it running">Detach</button>
           <button class="btn btn-ghost small hidden tty-kill" id="tty-kill" title="End this session">Kill</button>
           <button class="btn btn-ghost small hidden" id="tty-hist"
@@ -615,6 +615,12 @@
             if(m.host) host = m.host;
             _state((m.resumed ? 'reattached to ' : 'connected to ') + host, 'ok');
             _chrome(true); _fit(); _focus();
+            /* A NEW PTY IS A NEW TAB. Starting one used to update `sid` but never repaint the tab
+             * strip, so the shell existed while the only visible tab was still the previous one.
+             * The next press appeared to do nothing useful and switching was impossible until a
+             * full render happened. Refresh after the ready frame—the first point at which the
+             * server/local bridge has assigned the distinct session id. */
+            _sessions();
             return;
           }
           if(m.t === 'gone'){
@@ -768,7 +774,11 @@
     function _chrome(on){
       const go = $('#tty-go'), stop = $('#tty-stop'), kb = $('#tty-kill'),
             keys = $('#tty-keys'), sel = $('#tty-host');
-      if(go) go.classList.toggle('hidden', on);
+      /* New tab is useful WHILE a terminal is connected. Hiding it at precisely that moment left
+       * only the tiny `+` in the session strip and made the primary control behave like Connect,
+       * not tabs. Each press calls connect(), which first detaches this viewer and then creates a
+       * distinct PTY; the old PTY remains alive and selectable in the strip. */
+      if(go) go.classList.remove('hidden');
       if(stop) stop.classList.toggle('hidden', !on);
       if(kb) kb.classList.toggle('hidden', !on);
       if(sel) sel.disabled = on;

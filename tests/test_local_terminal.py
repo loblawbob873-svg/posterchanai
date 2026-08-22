@@ -148,6 +148,16 @@ class LocalTerminal(unittest.TestCase):
         self.assertIn('id="tty-tab-new"', src)
         self.assertIn('data-tab=', src)
 
+    def test_new_tab_stays_visible_and_new_sessions_repaint_the_strip(self):
+        """A second PTY is not useful as a tab if its button disappears once connected or the
+        strip keeps showing the old session until the whole Terminal view is reopened."""
+        src = open(CLIENT, encoding="utf-8").read()
+        chrome = src[src.index("function _chrome(on)"):src.index("function _focus()")]
+        self.assertIn("go.classList.remove('hidden')", chrome)
+        self.assertNotIn("go.classList.toggle('hidden', on)", chrome)
+        ready = src[src.index("if(m.t === 'ready')"):src.index("if(m.t === 'gone')")]
+        self.assertIn("_sessions();", ready)
+
     def test_no_typescript_file_is_written(self):
         """`script` writes a verbatim log of the session, including everything typed at a password
         prompt. /dev/null is the whole point of that argument."""
