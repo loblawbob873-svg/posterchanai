@@ -1895,14 +1895,20 @@
        * rarely: it changes when a display does, not when a window moves. */
       const now = Date.now();
       if(!_natShell || now - _natShellAt > 4000){
-        const list = await pcWM.windows();
+        let list, allIds = null;
+        if(pcWM.snapshot){
+          const snap = await pcWM.snapshot();
+          list = Array.isArray(snap && snap.windows) ? snap.windows : [];
+          allIds = new Set(Array.isArray(snap && snap.allIds) ? snap.allIds.map(Number) : []);
+        }else list = await pcWM.windows();
         _natShell = list.find(x => /^posterchan(-desktop)?$/.test(String(x.app || ''))) || null;
         _natShellAt = now;
         /* A native window the compositor no longer has is one the app closed by itself — from its
          * own File menu, or by crashing. Our frame has to go with it, or the desktop keeps a window
          * for something that is not running. */
         const live = new Set(list.map(x => Number(x.id)));
-        for(const w of nativeWins()) if(!live.has(Number(w.native))) closeWin(w);
+        for(const w of nativeWins()) if(!live.has(Number(w.native)))
+          closeWin(w, { killNative: !(allIds && allIds.has(Number(w.native))) });
         if(!nativeWins().length) return;
         /* WHAT WE REMEMBER SENDING IS NOT WHAT THE COMPOSITOR DID. `_natSent` is a record of intent,
          * kept so an unchanged rectangle is not re-sent sixty times a second — but read as truth it
@@ -2081,7 +2087,14 @@
   async function adoptAll(){
     if(!window.pcWM || !window.PCOSShell || !PCOSShell.available()) return false;
     let list = [];
-    try{ list = await pcWM.windows(); }catch(_){ return false; }
+    let allIds = null;
+    try{
+      if(pcWM.snapshot){
+        const snap = await pcWM.snapshot();
+        list = Array.isArray(snap && snap.windows) ? snap.windows : [];
+        allIds = new Set(Array.isArray(snap && snap.allIds) ? snap.allIds.map(Number) : []);
+      }else list = await pcWM.windows();
+    }catch(_){ return false; }
     let rows = [];
     try{ rows = PCOSShell.taskbarRows(list); }catch(_){ rows = []; }
     let changed = false;
@@ -2101,7 +2114,9 @@
      * Existence is the compositor's list, exactly as `nsync` reads it. */
     const live = new Set(list.map(x => Number(x.id)));
     for(const w of nativeWins()) if(!live.has(Number(w.native))){
-      closeWin(w);
+      /* Still alive globally means ownership moved to another output. Remove only this HTML frame;
+       * closing the compositor surface here would kill Firefox/Steam during the handoff. */
+      closeWin(w, { killNative: !(allIds && allIds.has(Number(w.native))) });
       changed = true;
     }
     /* A title is the page a browser is showing and it changes constantly; the frame follows it, the
@@ -2118,7 +2133,7 @@
     return changed;
   }
 
-  function closeWin(w){
+  function closeWin(w, opts){
     const i = wins.indexOf(w);
     if(i < 0) return;
     wins.splice(i, 1);
@@ -2140,7 +2155,9 @@
       /* The `.catch` is not decoration. This is a PROMISE, so a `try` around the call catches only
        * a synchronous throw — a rejection sails past it to the client's unhandledrejection handler,
        * which puts "action failed" on screen. Reported exactly that way, on closing firefox. */
-      try{ Promise.resolve(pcWM.close(w.native)).catch(() => {}); }catch(_){}
+      if(!opts || opts.killNative !== false){
+        try{ Promise.resolve(pcWM.close(w.native)).catch(() => {}); }catch(_){}
+      }
     }
     if(realFeed && realFeed.parentElement === w.body) releaseFeed();
     w.el.remove();

@@ -92,5 +92,30 @@ class APlacementThatCouldNotBeMeasuredIsRetried(unittest.TestCase):
         self.assertNotIn("overlayRects()", sync)
 
 
+class MovingBetweenOutputsDoesNotCloseTheApplication(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.raw = OS_JS.read_text()
+        cls.src = strip_comments(cls.raw)
+
+    def test_the_bridge_returns_scoped_and_global_liveness_separately(self):
+        preload = (ROOT / "desktop" / "preload.js").read_text()
+        main = (ROOT / "desktop" / "main.js").read_text()
+        self.assertIn("pc:wm:snapshot", preload)
+        self.assertIn("pc:wm:snapshot", main)
+        self.assertIn("allIds", main)
+
+    def test_a_window_alive_on_another_output_is_detached_not_killed(self):
+        adopt = body(self.src, "async function adoptAll")
+        self.assertIn("pcWM.snapshot", adopt)
+        self.assertIn("allIds.has", adopt)
+        self.assertIn("killNative:", adopt)
+
+    def test_detaching_skips_the_compositor_close(self):
+        close = body(self.src, "function closeWin")
+        self.assertIn("opts.killNative !== false", close)
+        self.assertIn("pcWM.close", close)
+
+
 if __name__ == "__main__":
     unittest.main()

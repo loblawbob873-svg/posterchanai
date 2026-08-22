@@ -93,6 +93,9 @@ if (isOurPage) {
   contextBridge.exposeInMainWorld('pcWM', {
     available: () => ipcRenderer.invoke('pc:wm:available'),
     windows: () => ipcRenderer.invoke('pc:wm:windows'),
+    /* `windows` is this shell surface's ownership view; `allIds` distinguishes an app that moved
+     * to another output from one that actually exited. */
+    snapshot: () => ipcRenderer.invoke('pc:wm:snapshot'),
     focus: (id) => ipcRenderer.invoke('pc:wm:focus', Number(id)),
     close: (id) => ipcRenderer.invoke('pc:wm:close', Number(id)),
     place: (id, x, y, w, h) => ipcRenderer.invoke('pc:wm:place', Number(id), Number(x), Number(y),

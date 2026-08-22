@@ -971,6 +971,14 @@ function displays(){
 
 ipcMain.handle('pc:wm:available', (e) => { fsGuard(e); return wm().available(); });
 ipcMain.handle('pc:wm:windows', (e) => { fsGuard(e); return wm().windows(); });
+ipcMain.handle('pc:wm:snapshot', async (e) => {
+  fsGuard(e);
+  /* Today the primary surface owns the full list. Per-output surfaces replace `windows` with their
+   * workspace slice, while allIds remains global; keeping that distinction in the API prevents a
+   * renderer from killing an app merely because it crossed a monitor boundary. */
+  const rows = await wm().windows();
+  return { windows: rows, allIds: rows.map(x => Number(x.id)).filter(Number.isFinite) };
+});
 ipcMain.handle('pc:wm:focus', (e, id) => { fsGuard(e); return wm().focus(Number(id)); });
 ipcMain.handle('pc:wm:close', (e, id) => { fsGuard(e); return wm().close(Number(id)); });
 ipcMain.handle('pc:wm:place', (e, id, x, y, w, h) => {
