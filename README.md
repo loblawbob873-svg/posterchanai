@@ -22,6 +22,7 @@
 [Try it](#try-it-in-one-command) ·
 [Quick start](#quick-start-backend-and-web-ui) ·
 [Features](#features) ·
+[PosterChanOS](#posterchanos) ·
 [Bots & social](#bots--social) ·
 [Documentation](#documentation)
 
@@ -64,6 +65,24 @@ Then, when you want more:
 - 🟣 **Encrypted events, not somebody's database** — the built-in **web-of-trust relay** (on PostgreSQL) is the source of truth. Settings, accounts, API keys, notes, calendars and AI chats are **NIP-44-encrypted `kind-30078` events** signed by your node. Log in with your **Nostr key** (NIP-07/NIP-46). No SQLite, no proprietary schema, nothing to export because you already hold it.
 - 🔐 **Passwords & bookmarks in the browser you already use** — a **Firefox / Chrome / Brave** extension turns your relay into an end-to-end-encrypted **password manager** and **cross-browser bookmark sync**. Every login is an **AES-GCM-encrypted** event decrypted only on your device — the relay holds ciphertext. Autofill, **TOTP** codes, a generator, and a built-in **NIP-07 signer** so you sign into Nostr apps without pasting your `nsec`.
 - 📱 **Every surface** — a cyberpunk **Nostr web client** and PWA, a **desktop app** (Windows/macOS/Linux, with bundled Tor), an **Android APK**, a **windowed desktop mode**, and CalDAV/CardDAV for the phone apps you already have. The native apps bundle the client and can run with **no server at all** — relays and a key are enough.
+
+### PosterChanOS
+
+- 🖥️ **A Nostr-native desktop operating system** — **PosterChanOS** is the Gentoo-based, encrypted
+  bare-metal edition of PosterChan. It boots directly into the PosterChan desktop shell on Sway, so
+  Social, Messages, Notes, Files, Music, Terminal and the rest are applications rather than tabs
+  trapped in a browser. Native Wayland applications such as Firefox, Telegram, Steam and office
+  tools open alongside them in the same desktop.
+- 🔑 **Your Nostr identity is your OS identity** — signing in with an `npub` provisions a stable,
+  separate Linux account and a private `0700` home directory. Multiple Nostr identities can use one
+  computer without sharing files. The first identity to claim a new installation becomes its
+  administrator; later identities are ordinary users, and root is not the daily login.
+- 🔒 **Encrypted from the first boot** — the installer creates a LUKS-backed Btrfs system, builds the
+  matching initramfs and bootloader configuration, and installs the PosterChanOS boot and recovery
+  tools. The live image can be used to try the desktop or install it to disk.
+- 🔄 **One update path** — `update-posterchan` updates both the packaged desktop and the PosterChanOS
+  session integration. The canonical installer is [`os/gentoo.sh`](os/gentoo.sh), and the design is
+  explained in **[the PosterChanOS article](docs/blog/posterchanos.md)**.
 
 ### The AI powerhouse
 
@@ -123,6 +142,15 @@ A companion **browser extension** (Firefox, and Chrome / Brave via MV3) makes yo
 
 ### Your personal cloud (mail, calendar, contacts, files, sync)
 
+- **SMS and MMS over Nostr**: use an Android phone as the cellular bridge, then read and answer its
+  conversations from any PosterChan client. The phone mirrors SMS/MMS as encrypted, addressable
+  Nostr records; message bodies and MMS originals/thumbnails are encrypted on-device and stored in
+  the logical **Messages** and **MMS** Blossom folders. A desktop send becomes an idempotent encrypted
+  request that the paired phone performs through its radio and acknowledges so it cannot be sent
+  twice. Thumbnails save bandwidth and the original is fetched only when opened. Android's system
+  message provider remains authoritative, and the phone must be reachable to perform a carrier send.
+  Existing MMS already stored by Android can be mirrored; fetching a new MMS from a carrier MMSC is
+  not yet supported. See **[docs/PHONE_SHELL.md](docs/PHONE_SHELL.md)**.
 - **Email**: a full mail client (Messages → 📧 Email) over your own IMAP/SMTP accounts. The mailbox
   is mirrored into **encrypted Nostr events** — one per message — so it is searchable without an
   IMAP round trip and syncs across your devices; **attachments are AES-GCM encrypted and stored in
@@ -423,6 +451,7 @@ the Arc environment.
 | `botframework/` | Merged autonomous bot framework (Pleroma/nitter listeners + daemons); spawned by `app/services/bot_manager_service.py`. See [docs/BOTS.md](docs/BOTS.md) |
 | `templates/` | Jinja2 HTML (login, chat, admin, modals) |
 | `static/` | CSS, JS, icons, mascot assets |
+| `os/` | PosterChanOS installer, Sway session, boot theme, system helpers and Gentoo overlay |
 | `run.py` | Server entry (uvicorn) |
 | `requirements.txt` | Python dependencies |
 | `install.sh` | Interactive installer (Linux) |
@@ -439,6 +468,8 @@ the Arc environment.
 - **[docs/MAIL.md](docs/MAIL.md)** — The mail client: how the mailbox is stored, why it is local to your node, encrypted attachments, folder mapping and notifications
 - **[docs/CALENDAR.md](docs/CALENDAR.md)** — Bundled CalDAV: what "encrypted" does and does not mean here, adding it to a phone, import/export and recurrence
 - **[docs/CONTACTS.md](docs/CONTACTS.md)** — Bundled CardDAV: one account for calendar *and* contacts, and why cards round-trip byte for byte
+- **[docs/blog/posterchanos.md](docs/blog/posterchanos.md)** — How PosterChanOS joins Nostr identity, private Unix homes, an encrypted disk and the desktop shell
+- **[docs/PHONE_SHELL.md](docs/PHONE_SHELL.md)** — Android phone integration and encrypted SMS/MMS mirroring and sending over Nostr
 - **[docs/WEBSEARCH.md](docs/WEBSEARCH.md)** — The bundled SearXNG, the in-app reader, and where a node actually searches
 - **docs/** — nginx and other feature documentation
 

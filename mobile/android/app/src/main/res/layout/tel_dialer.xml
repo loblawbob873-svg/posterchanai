@@ -48,31 +48,6 @@
         android:singleLine="true"
         android:importantForAutofill="no" />
 
-    <!-- Recents / Contacts / Voicemail. A row of three, because a dialer with only a call log is
-         missing the two things people open it for most often. -->
-    <LinearLayout
-        android:id="@+id/pc_dl_tabs"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:layout_marginLeft="12dp"
-        android:layout_marginRight="12dp"
-        android:layout_marginBottom="6dp">
-
-        <TextView android:id="@+id/pc_dl_t_pad" android:layout_width="0dp"
-            android:layout_height="wrap_content" android:layout_weight="1" android:gravity="center"
-            android:paddingTop="9dp" android:paddingBottom="9dp" android:text="@string/tel_tab_keypad" />
-        <TextView android:id="@+id/pc_dl_t_recent" android:layout_width="0dp"
-            android:layout_height="wrap_content" android:layout_weight="1" android:gravity="center"
-            android:paddingTop="9dp" android:paddingBottom="9dp" android:text="@string/tel_tab_recent" />
-        <TextView android:id="@+id/pc_dl_t_contacts" android:layout_width="0dp"
-            android:layout_height="wrap_content" android:layout_weight="1" android:gravity="center"
-            android:paddingTop="9dp" android:paddingBottom="9dp" android:text="@string/tel_tab_contacts" />
-        <TextView android:id="@+id/pc_dl_t_vm" android:layout_width="0dp"
-            android:layout_height="wrap_content" android:layout_weight="1" android:gravity="center"
-            android:paddingTop="9dp" android:paddingBottom="9dp" android:text="@string/tel_tab_voicemail" />
-    </LinearLayout>
-
     <TextView
         android:id="@+id/pc_dl_notice"
         android:layout_width="match_parent"
@@ -163,5 +138,34 @@
                 android:layout_gravity="center_vertical|left" android:layout_marginLeft="14dp"
                 android:contentDescription="@string/tel_backspace" />
         </FrameLayout>
+    </LinearLayout>
+
+    <!-- Primary phone destinations belong under the thumb. IDs and behavior are unchanged; only
+         their visual position moved from below the title to a bottom navigation row. -->
+    <LinearLayout
+        android:id="@+id/pc_dl_tabs"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginLeft="12dp"
+        android:layout_marginRight="12dp"
+        android:layout_marginBottom="8dp">
+
+        <TextView android:id="@+id/pc_dl_t_pad" android:layout_width="0dp"
+            android:layout_height="wrap_content" android:layout_weight="1" android:gravity="center"
+            android:minHeight="48dp" android:paddingTop="12dp" android:paddingBottom="12dp"
+            android:text="@string/tel_tab_keypad" />
+        <TextView android:id="@+id/pc_dl_t_recent" android:layout_width="0dp"
+            android:layout_height="wrap_content" android:layout_weight="1" android:gravity="center"
+            android:minHeight="48dp" android:paddingTop="12dp" android:paddingBottom="12dp"
+            android:text="@string/tel_tab_recent" />
+        <TextView android:id="@+id/pc_dl_t_contacts" android:layout_width="0dp"
+            android:layout_height="wrap_content" android:layout_weight="1" android:gravity="center"
+            android:minHeight="48dp" android:paddingTop="12dp" android:paddingBottom="12dp"
+            android:text="@string/tel_tab_contacts" />
+        <TextView android:id="@+id/pc_dl_t_vm" android:layout_width="0dp"
+            android:layout_height="wrap_content" android:layout_weight="1" android:gravity="center"
+            android:minHeight="48dp" android:paddingTop="12dp" android:paddingBottom="12dp"
+            android:text="@string/tel_tab_voicemail" />
     </LinearLayout>
 </LinearLayout>

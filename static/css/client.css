@@ -916,6 +916,7 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
   padding:10px 18px;border-radius:999px;font-weight:700;font-size:15px;letter-spacing:.3px;
   box-shadow:0 4px 18px rgba(0,0,0,.45),var(--glow);animation:pillin .18s ease-out}
 .new-posts-pill:hover{transform:translateX(-50%) translateY(-1px)}
+.osw-body:has(> .new-posts-pill){position:relative}
 @keyframes pillin{from{opacity:0}to{opacity:1}}   /* opacity-only so it stays centered (translateX) */
 @media(max-width:820px){ .new-posts-pill{top:calc(50px + env(safe-area-inset-top))} }
 /* desktop-only right column: Hot / Trending + GitHub link (hidden below 1100px) */
@@ -3959,10 +3960,19 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 
 /* ---------- Files view tabs (Public / AI Chat) ---------- */
 .files-tabs{display:flex;gap:8px;padding:14px 16px 6px;border-bottom:1px solid var(--line)}
+.feed.feed-files{padding:0;overflow:hidden;display:flex;flex-direction:column}
+.feed-files .files-tabs{flex:0 0 auto}
+.feed-files #files-pane{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column}
+.feed-files #files-pane>.fx-explorer{flex:1;min-height:0;border-radius:0;border-width:0}
+.feed-files #files-pane>.fx-explorer>.fx-side{max-height:none;min-height:0}
+.feed-files #files-pane>.fx-explorer>.fx-main{min-height:0;overflow:auto}
 .ftab{padding:8px 16px;border:1px solid var(--line);border-radius:16px;background:var(--panel);
   color:var(--muted);cursor:pointer;font-family:inherit;font-size:15px;font-weight:600}
 .ftab:hover{border-color:var(--cyan);color:var(--text)}
 .ftab.active{background:var(--cyan);color:#06121a;border-color:var(--cyan)}
+@media(max-width:820px){
+  .feed-files #files-pane{padding-bottom:calc(62px + env(safe-area-inset-bottom));box-sizing:border-box}
+}
 
 /* ---------- Chess hub (#chesstr) ---------- */
 .chess-hub{padding:16px;display:flex;flex-direction:column;gap:18px}
@@ -7066,6 +7076,10 @@ body.os-on #os-root{pointer-events:auto}
    Each repaint replaces the rows, so the animation runs on arrival for free — and is dropped whole
    for anyone who has asked for less motion, where a ticker is exactly the thing they meant. */
 .wgt-news{display:flex;flex-direction:column;gap:5px;height:100%;min-height:0;overflow:hidden}
+.wgt-news-tools{display:flex;align-items:center;gap:8px;flex:none;min-height:20px;border-bottom:1px solid var(--line);padding-bottom:4px}
+.wgt-news-tools b{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.wgt-news-tools button{margin-inline-start:auto;border:0;background:transparent;color:var(--neon);font:inherit;font-size:10.5px;cursor:pointer;padding:2px 4px;border-radius:5px}
+.wgt-news-tools button:hover{background:rgba(var(--accent-rgb),.12)}
 .wgt-nrow{display:block;flex:none;text-decoration:none;color:inherit;border-radius:6px;
   animation:wgtnews .42s ease}
 .wgt-nt{display:block;font-size:12.5px;line-height:1.25;color:var(--text);
@@ -7101,6 +7115,16 @@ body.os-on #os-root{pointer-events:auto}
   font-variant-numeric:tabular-nums}
 .wgt-stc i{font-style:normal;font-size:13px;color:var(--muted);line-height:1.2;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Small is 300×150 (276×130 after body padding). The generic 116px minimum fits only two columns,
+   which turns five facts into THREE rows: their line boxes plus two 16px gaps consume the entire
+   height and clip the labels against both edges. Small mode is deliberately 3+2, with dimensions
+   that fit rather than relying on overflow to shave the text. */
+.os-wgt[data-size="s"] .wgt-st{grid-template-columns:repeat(3,minmax(0,1fr));gap:9px 5px;
+  align-content:center;padding-block:2px;box-sizing:border-box}
+.os-wgt[data-size="s"] .wgt-stc{grid-template-columns:18px minmax(0,auto);gap:1px 5px;min-width:0}
+.os-wgt[data-size="s"] .wgt-stc .ic{width:18px;height:18px}
+.os-wgt[data-size="s"] .wgt-stc b{font-size:17px;line-height:1.1}
+.os-wgt[data-size="s"] .wgt-stc i{font-size:10.5px;line-height:1.25;max-width:68px}
 /* Something is actually live: the icon lights and breathes. Only ever for a NON-ZERO counter — this
    is the one cell whose value changes what the panel is for. */
 .wgt-stc.live .ic{color:var(--neon);animation:wgtpulse 2.2s ease-in-out infinite}
@@ -7870,6 +7894,17 @@ html.os-on #upload-badge.upbadge{z-index:333}
   display:grid;grid-template-columns:24px minmax(0,1fr) 88px 140px 172px var(--fx-acts);align-items:center;gap:8px}
 .files-grid.details.nosel .fx-cols,
 .files-grid.details.nosel .file-card.row{grid-template-columns:minmax(0,1fr) 88px 140px 172px var(--fx-acts)}
+/* “This Computer” lives beside the explorer sidebar, so viewport media queries do not describe the
+   width its details table actually has. The four fixed secondary columns could consume the whole
+   pane while the name's minmax column collapsed to zero: folder icons with no labels, even though
+   Tiles showed the same names. Local files have no inline actions until selected, and Name/Size are
+   the useful browsing facts, so keep those columns readable and omit Type/Modified in this pane. */
+#host-pane .fx-cols,
+#host-pane .files-grid.details .file-card.row{
+  grid-template-columns:minmax(140px,1fr) 88px var(--fx-acts)
+}
+#host-pane .fx-c-type,#host-pane .fx-c-modified,
+#host-pane .fx-type,#host-pane .fx-mod{display:none}
 .fx-cols{position:sticky;top:0;z-index:2;padding:4px 8px;background:var(--panel);
   border-bottom:1px solid var(--line)}
 .fx-col{background:none;border:0;font:inherit;font-size:12px;font-weight:700;letter-spacing:.5px;
@@ -8418,6 +8453,14 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
 .os-mix-row{ padding:4px 2px; }
 .os-mix-body{ flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
 .os-mix-nm{ font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.os-mix-section{display:flex;flex-direction:column;gap:6px;padding:5px 0 10px;border-bottom:1px solid var(--line)}
+.os-mix-section:last-child{border-bottom:0;padding-bottom:2px}
+.os-mix-title{font-size:10.5px;font-weight:750;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.os-mix-titlebar{display:flex;align-items:center;justify-content:space-between;gap:8px}.os-mix-titlebar .btn{letter-spacing:0;text-transform:none;display:flex;align-items:center;gap:5px}
+.os-mix-device{gap:4px;margin:0}.os-mix-device>span{font-size:11.5px;color:var(--muted)}
+.os-mix-device select{width:100%;height:31px;padding:4px 8px;font-size:12px}
+.os-mix-master{background:rgba(var(--accent-rgb),.045);border-radius:8px}
+.os-bt-tools{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-bottom:10px;border-bottom:1px solid var(--line)}.os-bt-tools label{display:flex;align-items:center;gap:8px;font-weight:650}.os-bt-list{display:flex;flex-direction:column;gap:6px;padding-top:8px}.os-bt-row{display:flex;align-items:center;gap:9px;padding:9px;border:1px solid var(--line);border-radius:10px;background:rgba(var(--accent-rgb),.035)}.os-bt-icon{width:24px;height:24px;display:grid;place-items:center;color:var(--neon)}.os-bt-icon svg{width:18px;height:18px}.os-bt-name{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.os-bt-name b{font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.os-bt-name small{font-size:10.5px;color:var(--muted)}.os-bt-actions{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}.os-bt-actions .btn{padding:6px 8px;font-size:10.5px}
 
 .os-applist-h{
   padding:10px 12px 4px; font-size:11px; letter-spacing:.08em; text-transform:uppercase;
@@ -8486,6 +8529,16 @@ html.osfr-on body > .app, html.osfr-on #os-root{ visibility:hidden; }
    the muted colour, so "Tor: off" is a state and not a warning. */
 .os-chip.os-off{ opacity:.62; }
 .os-chip.on{ color:var(--neon,#3ce8ff); }
+
+/* PosterChanOS virtual machines: a compact libvirt front-end, not virt-manager embedded in a
+   window.  Cards remain useful at laptop width and the creation form never hides its action. */
+.osw-vms .osw-body{padding:0}.vmui{height:100%;overflow:auto;padding:18px;display:flex;flex-direction:column;gap:14px}
+.vmui-top{display:flex;align-items:center;justify-content:space-between;gap:16px}.vmui-top>div{display:flex;flex-direction:column;gap:3px}.vmui-top>div>b{font-size:20px}.vmui-top span,.vmui-note,.vmui-empty span,.vmui-machine span{color:var(--muted);font-size:12px}
+.vmui-create{padding:16px;border:1px solid rgba(var(--accent-rgb),.38);border-radius:14px;background:var(--panel);box-shadow:0 12px 40px rgba(0,0,0,.18)}
+.vmui-create[hidden]{display:none}.vmui-create label{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted);margin-bottom:12px}.vmui-pick{display:flex;gap:8px}.vmui-pick .input{flex:1}.vmui-spec{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.vmui-formacts{display:flex;justify-content:flex-end;gap:8px}
+.vmui-list{display:flex;flex-direction:column;gap:9px}.vmui-card{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px;border:1px solid var(--line);border-radius:13px;background:var(--panel)}
+.vmui-machine{display:flex;align-items:center;gap:11px;min-width:180px}.vmui-machine>i{width:10px;height:10px;border-radius:50%;background:#69717d;flex:none}.vmui-machine>i.on{background:#55e39b;box-shadow:0 0 11px #55e39b}.vmui-machine>div{display:flex;flex-direction:column;gap:3px}.vmui-actions{display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap}.vmui-actions .btn{font-size:12px;padding:7px 10px}.vmui-empty{min-height:150px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;border:1px dashed var(--line);border-radius:13px;text-align:center}.vmui-note{padding:8px 10px;border-radius:9px;background:rgba(var(--accent-rgb),.07)}
+@media(max-width:720px){.vmui-card{align-items:flex-start;flex-direction:column}.vmui-actions{justify-content:flex-start}.vmui-spec{grid-template-columns:1fr}.vmui-top{align-items:flex-start}}
 
 /* ============================ Texts (the phone's messages, archived) =========================
    The web half of the phone shell. The screens on the HANDSET are native Android — that is what

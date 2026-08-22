@@ -357,6 +357,7 @@
         </div>
         <div class="row" style="margin-top:14px">
           <button class="btn btn-cyan" id="cc-save">Save</button>
+          ${isNew ? '' : '<button class="btn btn-ghost" id="cc-share"><svg class="ic b-ic" aria-hidden="true"><use href="#i-share"></use></svg>Share</button>'}
           ${isNew ? '' : '<button class="btn btn-ghost" id="cc-del">Delete</button>'}
         </div>`, root => {
         const rewire = () => {
@@ -410,6 +411,24 @@
           }catch(err){ toast('could not save: ' + ((err && err.message) || 'error')); }
         };
         const del = $('#cc-del', root);
+        const share = $('#cc-share', root);
+        if(share) share.onclick = async ()=>{
+          const name = V().displayName(c) || 'Contact';
+          const vcf = V().serialize(c);
+          try{
+            const nativeShare = PC.capPlugin ? PC.capPlugin('ContactShare', 'share') : null;
+            if(nativeShare){ await nativeShare({ name, vcf }); return; }
+            const file = new File([vcf], name.replace(/[^A-Za-z0-9._ -]/g, '_') + '.vcf',
+                                  { type:'text/vcard' });
+            if(navigator.share){ await navigator.share({ title:name, files:[file] }); return; }
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(file); a.download = file.name; a.click();
+            setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+          }catch(err){
+            if(err && err.name === 'AbortError') return;
+            toast('could not share contact: ' + ((err && err.message) || 'error'));
+          }
+        };
         if(del) del.onclick = async ()=>{
           if(!(await uiConfirm('Delete this contact?'))) return;
           try{

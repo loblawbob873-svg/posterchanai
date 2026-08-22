@@ -22,6 +22,8 @@ const fsbridge = require('./fsbridge');
 const fs = require('fs');
 const tor = require('./tor');
 const background = require('./background');
+const vm = require('./vm');
+const bluetooth = require('./bluetooth');
 
 /* --shell: this process IS the desktop, not an app running on one.
  *
@@ -1215,6 +1217,24 @@ ipcMain.handle('pc:audio:default', (e, id) => { fsGuard(e); return audio.setDefa
 ipcMain.handle('pc:audio:mixer', (e) => { fsGuard(e); return audio.mixer(); });
 ipcMain.handle('pc:audio:streamvol', (e, id, pct) => { fsGuard(e); return audio.setStreamVolume(id, pct); });
 ipcMain.handle('pc:audio:streammute', (e, id, on) => { fsGuard(e); return audio.setStreamMuted(id, !!on); });
+ipcMain.handle('pc:bt:status', (e, scan) => { fsGuard(e); return bluetooth.status(!!scan); });
+ipcMain.handle('pc:bt:power', (e, on) => { fsGuard(e); return bluetooth.power(!!on); });
+ipcMain.handle('pc:bt:device', (e, address, action) => {
+  fsGuard(e); return bluetooth.device(String(address||''),String(action||''));
+});
+const systemInfo = require('./system.js');
+ipcMain.handle('pc:system:snapshot', (e, full) => { fsGuard(e); return systemInfo.snapshot(!!full); });
+ipcMain.handle('pc:system:end', (e, pid) => { fsGuard(e); return systemInfo.end(Number(pid)); });
+ipcMain.handle('pc:vm:list', (e) => { fsGuard(e); return vm.list(); });
+ipcMain.handle('pc:vm:create', (e, opts) => { fsGuard(e); return vm.create(opts || {}); });
+ipcMain.handle('pc:vm:action', (e, name, action) => { fsGuard(e); return vm.action(name, action); });
+ipcMain.handle('pc:vm:remove', (e, name, disks) => { fsGuard(e); return vm.remove(name, !!disks); });
+ipcMain.handle('pc:vm:view', (e, name) => { fsGuard(e); return vm.view(name); });
+ipcMain.handle('pc:vm:pick-iso', async (e) => {
+  fsGuard(e); const r=await dialog.showOpenDialog(win,{title:'Choose installation ISO',properties:['openFile'],
+    filters:[{name:'Disc images',extensions:['iso','img']},{name:'All files',extensions:['*']}]});
+  return r.canceled?'':(r.filePaths[0]||'');
+});
 
 /* SCREENSHOTS. See screenshot.js for why this is grim and not capturePage() or desktopCapturer.
  * `available` is asked separately so a tray can hide a button that could only ever fail. */

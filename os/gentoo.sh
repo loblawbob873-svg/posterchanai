@@ -126,7 +126,7 @@ REPO_CHOICE="local"
 #Overrided Swap File Size
 #SWAP_SIZE='1G'
 #
-SERVICES+=(sshd systemd-timesyncd libvirtd smartd cups NetworkManager)
+SERVICES+=(sshd systemd-timesyncd libvirtd bluetooth smartd cups NetworkManager)
 MAKEOPTS="-j$(cat /proc/cpuinfo | grep -i processor | grep -vi 'model' | wc -l)"
 ROOT_PARTITION_SIZE="30GB"
 FEATURES="-pid-sandbox getbinpkg -binpkg-request-signature"
@@ -139,8 +139,8 @@ USE_FLAGS=" flatpak dracut -webp -ladspa npm introspection lame systemd-boot dis
 VIDEO_CARDS="intel amdgpu radeon radeonsi"
 #
 #PACKAGE CONFIGURATION
-BASE_PACKAGES="net-print/cups-filters net-misc/networkmanager net-fs/sshfs app-shells/starship dev-util/sh sys-boot/plymouth sys-power/acpid app-arch/zip dev-python/virtualenv sys-apps/flatpak sys-power/powertop app-shells/bash-completion sys-power/cpupower media-libs/gexiv2 mail-mta/postfix app-admin/sysstat sys-apps/smartmontools net-fs/nfs-utils net-firewall/nftables dev-python/pip sys-fs/inotify-tools net-analyzer/nmap app-misc/screen app-portage/gentoolkit sys-fs/dosfstools app-admin/sudo sys-apps/systemd app-eselect/eselect-repository dev-vcs/git sys-block/parted sys-process/btop net-vpn/wireguard-tools app-editors/neovim app-misc/fastfetch sys-fs/btrfs-progs net-print/cups sys-firmware/seabios-bin sys-firmware/edk2-bin app-emulation/libvirt app-emulation/qemu"
-SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 nls pam readline server ssl system zlib zstd uuid" "dev-build/meson test test-full" "dev-qt/qtwebengine bindist" "media-sound/sox -opus" "media-video/vlc -opus -theora -vpx" "dev-qt/qtpositioning geoclue" "media-libs/libvpx postproc" "dev-python/pillow webp" "gui-libs/gtk colord sysprof" "media-libs/freetype harfbuzz" "dev-lang/php gmp sodium sysvipc calendar bcmath exif bzip2 intl ctype curl fileinfo filter gd iconv ssl posix session simplexml xmlreader xmlwriter zip zlib postgres png opcache jit cli fpm zip pdo" "net-im/synapse postgres" "net-p2p/qbittorrent webui" "app-crypt/certbot certbot-nginx" "acct-user/git gitea" "app-admin/vaultwarden web postgres" "media-gfx/imagemagick -postscript" "media-gfx/imagemagick -postscript dev-libs/jemalloc statsv" "media-libs/libsdl2 -kms -pipewire" "media-video/obs-studio pipewire wayland" "media-video/pipewire sound-server" "gui-wm/sway X" "mail-mta/postfix sasl")
+BASE_PACKAGES="net-print/cups-filters net-misc/networkmanager net-wireless/bluez net-fs/sshfs app-shells/starship dev-util/sh sys-boot/plymouth sys-power/acpid app-arch/zip dev-python/virtualenv sys-apps/flatpak sys-power/powertop app-shells/bash-completion sys-power/cpupower media-libs/gexiv2 media-plugins/gst-plugins-pulse mail-mta/postfix app-admin/sysstat sys-apps/smartmontools net-fs/nfs-utils net-firewall/nftables dev-python/pip sys-fs/inotify-tools net-analyzer/nmap app-misc/screen app-portage/gentoolkit sys-fs/dosfstools app-admin/sudo sys-apps/systemd app-eselect/eselect-repository dev-vcs/git sys-block/parted sys-process/btop net-vpn/wireguard-tools app-editors/neovim app-misc/fastfetch sys-fs/btrfs-progs net-print/cups sys-firmware/seabios-bin sys-firmware/edk2-bin app-emulation/libvirt app-emulation/qemu app-emulation/virt-viewer app-crypt/swtpm"
+SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 nls pam readline server ssl system zlib zstd uuid" "dev-build/meson test test-full" "dev-qt/qtwebengine bindist" "media-sound/sox -opus" "media-video/vlc -opus -theora -vpx" "dev-qt/qtpositioning geoclue" "media-libs/libvpx postproc" "dev-python/pillow webp" "gui-libs/gtk colord sysprof" "media-libs/freetype harfbuzz" "dev-lang/php gmp sodium sysvipc calendar bcmath exif bzip2 intl ctype curl fileinfo filter gd iconv ssl posix session simplexml xmlreader xmlwriter zip zlib postgres png opcache jit cli fpm zip pdo" "net-im/synapse postgres" "net-p2p/qbittorrent webui" "app-crypt/certbot certbot-nginx" "acct-user/git gitea" "app-admin/vaultwarden web postgres" "media-gfx/imagemagick -postscript" "media-gfx/imagemagick -postscript dev-libs/jemalloc statsv" "media-libs/libsdl2 -kms -pipewire" "media-video/obs-studio pipewire wayland" "media-video/pipewire sound-server bluetooth" "gui-wm/sway X" "mail-mta/postfix sasl" "app-emulation/qemu spice usbredir pipewire" "app-emulation/libvirt qemu virt-network" "app-emulation/virt-viewer spice")
 #
 # ── PosterChanOS ────────────────────────────────────────────────────────────────────────────────
 # The shell is the PosterChan desktop itself, so there is no second desktop environment to install.
@@ -1464,6 +1464,7 @@ PROFILE
 	# got the new one -- reported as "win + enter not loading PosterChan terminal on PosterChanOS",
 	# on an install where the fix had been made and shipped to the other copy.
 	bindsym $mod+Return exec swaymsg -t send_tick pc:terminal
+	bindsym Ctrl+Mod1+Delete exec swaymsg -t send_tick pc:tasks
 	bindsym $mod+Shift+Return exec foot
 
 	# ── MORE THAN ONE SCREEN ───────────────────────────────────────────────────────────────────────
@@ -1749,6 +1750,22 @@ fstab() {
 }
 
 accounts() {
+	# Binpkgs install files as nobody:nogroup. A restored live image can retain the nobody passwd
+	# entry while losing the matching group; then every binary merge fails with “Failed to find group
+	# nogroup”. Recreate the conventional overflow group before any desktop packages are installed.
+	if ! getent group nogroup >/dev/null 2>&1; then
+		OVERFLOW_GROUP="$(getent group 65534 | cut -d: -f1)"
+		if [ "$OVERFLOW_GROUP" = nobody ]; then
+			# Some stage images call the standard 65534 group `nobody`; Portage binpkgs name the same
+			# group `nogroup`. Rename it—the nobody user refers to the gid, so its ownership is intact.
+			groupmod -n nogroup nobody || return 1
+		elif [ -z "$OVERFLOW_GROUP" ]; then
+			groupadd -g 65534 nogroup || return 1
+		else
+			echo -e "\033[1;31mGID 65534 belongs to $OVERFLOW_GROUP; refusing to rewrite it.\033[0m"
+			return 1
+		fi
+	fi
 	# ── PosterChanOS ─────────────────────────────────────────────────────────────────────────────
 	# NOBODY IS NAMED IN THE IMAGE. Accounts are made when somebody signs in with a key
 	# (pc-provision-user), so baking one person's login into the installer is wrong twice over: it
@@ -1770,7 +1787,10 @@ accounts() {
 	# No password: this account is entered by autologin and must not be a way IN from anywhere
 	# else — not ssh, not a login prompt, not su.
 	passwd -l $SHELL_USER >/dev/null 2>&1
-	for g in audio video input netdev render; do
+	# The greeter normally hands the session to a per-npub account, but it is also the live image's
+	# desktop user. Give that live/repair session KVM access too, so the VM app does not change from
+	# “works installed” to “permission denied” merely because PosterChanOS is being tried from USB.
+	for g in audio video input netdev render kvm; do
 		getent group "$g" >/dev/null 2>&1 && gpasswd -a $SHELL_USER "$g" >/dev/null 2>&1
 	done
 	# One command, not ALL. Broad local administration is added only by finalizeInstall() on a
@@ -2747,7 +2767,7 @@ DESKTOP
 	# The source copy of anything a pseudo-file replaces, or the pseudo is ignored. See pseudoput.
 	for f in "${PSEUDO_REPLACED[@]}"; do EXARGS+=(-e "$f"); done
 	if ! mksquashfs / "$WORK/iso/LiveOS/squashfs.img" \
-		-comp zstd -Xcompression-level 15 -noappend -no-progress \
+		-comp zstd -Xcompression-level 19 -b 1M -noappend -no-progress \
 		-pf "$PSEUDO" "${EXARGS[@]}"; then
 		echo
 		_lcd_fail "mksquashfs failed — nothing was written."

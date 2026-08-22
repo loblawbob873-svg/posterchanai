@@ -962,20 +962,31 @@
         aria-label="Back">${ICO('chevron-left')}</button>Volume mixer</div>
       <div class="os-pop-b">Looking…</div>`;
     bindPanel(d);
-    let rows = null;
-    try{ rows = await a.mixer(); }catch(_){ rows = null; }
+    let rows = null, st = null;
+    try{ [rows, st] = await Promise.all([a.mixer(), a.status()]); }catch(_){ rows = null; st = null; }
     if(_pop !== d) return;
     const body = d.querySelector('.os-pop-b');
     if(!body) return;
-    if(rows === null){
+    if(rows === null || st === null){
       body.innerHTML = `<div class="os-pop-none">The mixer could not be read on this machine.</div>`;
       return;
     }
-    if(!rows.length){
-      body.innerHTML = `<div class="os-pop-none">Nothing is playing.</div>`;
-      return;
-    }
-    body.innerHTML = rows.map(r => `<div class="os-qs-row os-mix-row">
+    const chooser = (label, kind, list) => `<label class="fld os-mix-device"><span>${label}</span>
+      <select class="input" data-device="${kind}" aria-label="${label}">
+        ${(list||[]).map(x=>`<option value="${H(x.id)}"${x.isDefault?' selected':''}>${H(x.name)}</option>`).join('')}
+      </select></label>`;
+    const master = (label, kind, v) => `<div class="os-qs-row os-mix-row os-mix-master">
+      <button class="os-qs-ic" data-mastermute="${kind}" title="${v&&v.muted?'Unmute':'Mute'}"
+        aria-label="${v&&v.muted?'Unmute':'Mute'} ${label}">${ICO(v&&v.muted?'volume-mute':(kind==='source'?'mic':'volume'))}</button>
+      <div class="os-mix-body"><span class="os-mix-nm">${label}</span>
+        <input class="os-qs-range os-boostable" data-mastervol="${kind}" type="range" min="0" max="${VOL_MAX}"
+          value="${H(v&&v.percent!=null?v.percent:100)}" aria-label="${label} volume"></div>
+      <span class="os-qs-val" data-masterval="${kind}">${H(v&&v.percent!=null?v.percent+'%':'—')}</span></div>`;
+    body.innerHTML = `<div class="os-mix-section"><div class="os-mix-title os-mix-titlebar"><span>Devices</span>
+        ${root.pcBluetooth?`<button class="btn btn-ghost small" data-os="bluetooth">${ICO('headphones')} Bluetooth</button>`:''}</div>
+        ${chooser('Output device','sink',st.sinks)}${master('Output volume','sink',st.output)}
+        ${chooser('Input device','source',st.sources)}${master('Input volume','source',st.input)}</div>
+      <div class="os-mix-section"><div class="os-mix-title">Apps</div>${rows.length ? rows.map(r => `<div class="os-qs-row os-mix-row">
         <button class="os-qs-ic" data-mix="${H(r.id)}" title="${r.muted ? 'Unmute' : 'Mute'}"
           aria-label="${r.muted ? 'Unmute' : 'Mute'} ${H(r.name)}"
           >${ICO(r.muted ? 'volume-mute' : 'volume')}</button>
@@ -983,7 +994,25 @@
           <input class="os-qs-range os-boostable" data-mixvol="${H(r.id)}" type="range" min="0" max="${VOL_MAX}"
                  value="${H(r.percent == null ? 100 : r.percent)}" aria-label="${H(r.name)} volume"></div>
         <span class="os-qs-val" data-val="mix${H(r.id)}">${H(r.percent == null ? '—' : r.percent + '%')}</span>
-      </div>`).join('');
+      </div>`).join('') : '<div class="os-pop-none">Nothing is playing.</div>'}</div>`;
+    body.querySelectorAll('[data-device]').forEach(sel => sel.onchange = async () => {
+      try{ await a.setDefault(Number(sel.value)); }
+      catch(e){ toast(String((e&&e.message)||e)); return; }
+      if(_pop===d) mixerPanel();
+    });
+    body.querySelectorAll('[data-mastervol]').forEach(sl => {
+      const kind=sl.dataset.mastervol, val=body.querySelector('[data-masterval="'+kind+'"]');
+      let busy=false, want=null;
+      const push=async()=>{ if(busy)return; busy=true; while(want!==null){ const n=want; want=null;
+        try{ await a.setVolume(n,kind); }catch(e){ if(!sl.dataset.said){sl.dataset.said='1';toast(String((e&&e.message)||e));} }
+      } busy=false; };
+      sl.oninput=()=>{ if(val)val.textContent=sl.value+'%'; want=Number(sl.value); push(); };
+    });
+    body.querySelectorAll('[data-mastermute]').forEach(b=>b.onclick=async()=>{
+      const kind=b.dataset.mastermute, v=kind==='source'?st.input:st.output;
+      try{ await a.setMuted(!(v&&v.muted),kind); }catch(e){toast(String((e&&e.message)||e));return;}
+      if(_pop===d)mixerPanel();
+    });
     body.querySelectorAll('[data-mixvol]').forEach(sl => {
       const id = sl.dataset.mixvol;
       const val = body.querySelector('[data-val="mix' + id + '"]');
@@ -1006,6 +1035,20 @@
       catch(e){ toast(String((e && e.message) || e)); return; }
       if(_pop === d) mixerPanel();
     });
+  }
+
+  async function bluetoothPanel(scan){
+    const bt=root.pcBluetooth,d=_pop;if(!bt||!d)return;
+    d.innerHTML=`<div class="os-pop-h"><button class="os-pop-back" data-os="mixer" aria-label="Back">${ICO('chevron-left')}</button>Bluetooth audio</div><div class="os-pop-b"><div class="os-pop-none">${scan?'Scanning…':'Looking…'}</div></div>`;
+    bindPanel(d);let st;try{st=await bt.status(!!scan);}catch(e){st={available:false,error:String(e)}}
+    if(_pop!==d)return;const body=d.querySelector('.os-pop-b');if(!body)return;
+    if(!st.available){body.innerHTML=`<div class="os-pop-none">Bluetooth is unavailable.${st.error?' '+H(st.error):''}</div>`;return;}
+    const devices=(st.devices||[]).slice().sort((a,b)=>Number(b.connected)-Number(a.connected)||Number(b.paired)-Number(a.paired)||a.name.localeCompare(b.name));
+    body.innerHTML=`<div class="os-bt-tools"><label><input type="checkbox" data-bt-power ${st.powered?'checked':''}> Bluetooth</label><button class="btn btn-ghost small" data-bt-scan ${st.powered?'':'disabled'}>${ICO('refresh')} Scan</button></div>
+      <div class="os-bt-list">${!st.powered?'<div class="os-pop-none">Turn Bluetooth on to find devices.</div>':devices.length?devices.map(x=>`<div class="os-bt-row"><span class="os-bt-icon">${ICO(x.audio?'headphones':'monitor')}</span><span class="os-bt-name"><b>${H(x.name||x.address)}</b><small>${x.connected?'Connected':x.paired?'Paired':'Available'}</small></span><span class="os-bt-actions">${x.connected?`<button class="btn btn-ghost small" data-bt-act="disconnect" data-bt-mac="${H(x.address)}">Disconnect</button>`:x.paired?`<button class="btn small" data-bt-act="connect" data-bt-mac="${H(x.address)}">Connect</button>`:`<button class="btn small" data-bt-act="pair" data-bt-mac="${H(x.address)}">Pair</button>`}${x.paired?`<button class="btn btn-ghost small" data-bt-act="remove" data-bt-mac="${H(x.address)}" title="Forget device">Forget</button>`:''}</span></div>`).join(''):'<div class="os-pop-none">No devices found. Put the device in pairing mode and scan again.</div>'}</div>`;
+    const power=body.querySelector('[data-bt-power]');if(power)power.onchange=async()=>{power.disabled=true;const r=await bt.power(power.checked);if(!r.ok)toast(r.error||'Bluetooth power failed');bluetoothPanel(power.checked);};
+    const scanBtn=body.querySelector('[data-bt-scan]');if(scanBtn)scanBtn.onclick=()=>bluetoothPanel(true);
+    body.querySelectorAll('[data-bt-act]').forEach(b=>b.onclick=async()=>{b.disabled=true;const r=await bt.device(b.dataset.btMac,b.dataset.btAct);if(!r.ok)toast(r.error||'Bluetooth action failed');await bluetoothPanel(false);});
   }
 
   /* A SCREENSHOT, AND THEN A SENTENCE SAYING WHERE IT WENT. A screenshot whose only feedback is a
@@ -1094,6 +1137,7 @@
       }
       if(kind === 'outputs'){ outputsPanel(); return; }
       if(kind === 'mixer'){ mixerPanel(); return; }
+      if(kind === 'bluetooth'){ bluetoothPanel(false); return; }
       if(kind === 'shot'){ shotPanel(); return; }
       if(kind === 'awake'){
         const p = POWER();

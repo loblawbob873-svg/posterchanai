@@ -59,6 +59,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(place.poster.app.sync.FolderSyncPlugin.class);
         registerPlugin(place.poster.app.gamepad.GamepadPlugin.class);
         registerPlugin(place.poster.app.contacts.ContactSyncPlugin.class);
+        registerPlugin(place.poster.app.contacts.ContactSharePlugin.class);
         registerPlugin(place.poster.app.signer.SignerPlugin.class);
         // The native QR scanner. A plugin that lives in this app is NOT auto-discovered, so without
         // this line Capacitor.Plugins.QrScan is simply absent, the client's guarded lookup falls

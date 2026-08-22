@@ -53,12 +53,29 @@
    * single most used control in a file manager, and a text field is not it. */
   function crumbs(p){
     const s = String(p || '');
+    /* Windows drive paths are not slash paths. Treating `C:\\Users\\me` as one segment produced a
+     * breadcrumb with no usable parent, which became a dead end when a protected junction refused
+     * to open. Keep the platform's separator and make the drive itself the root crumb. */
+    const win = /^([A-Za-z]:)[\\/]/.exec(s);
+    if(win){
+      const rootPath = win[1] + '\\';
+      const parts = s.slice(win[0].length).split(/[\\/]+/).filter(Boolean);
+      const out = [{ label: win[1], path: rootPath }];
+      let acc = rootPath;
+      for(const seg of parts){ acc += (acc.endsWith('\\') ? '' : '\\') + seg; out.push({ label:seg, path:acc }); }
+      return out;
+    }
     if(!s || s === '/') return [{ label: '/', path: '/' }];
     const parts = s.split('/').filter(Boolean);
     const out = [{ label: '/', path: '/' }];
     let acc = '';
     for(const seg of parts){ acc += '/' + seg; out.push({ label: seg, path: acc }); }
     return out;
+  }
+
+  function parentPath(p){
+    const cs = crumbs(p);
+    return cs.length > 1 ? cs[cs.length - 2].path : null;
   }
 
   /* A HOME-RELATIVE LABEL, because `/home/npub1fdtthaq…/Documents` is unreadable and the leading
@@ -83,7 +100,7 @@
          + 'them back from any file manager on it.';
   }
 
-  const API = { available, keyOf, order, crumbs, pretty, deletePrompt, extOf, barCrumbs, H };
+  const API = { available, keyOf, order, crumbs, parentPath, pretty, deletePrompt, extOf, barCrumbs, H };
 
   /* ── the visible half ────────────────────────────────────────────────────────────────────────
    *
@@ -209,7 +226,14 @@
      * the wrong folder's files under the right folder's name. */
     if(!pane.isConnected) return;
     if(err){
-      pane.innerHTML = `<div class="empty">Couldn’t read ${H(pretty(_path, _home))} — ${H(err)}</div>`;
+      const upPath = parentPath(_path);
+      const bar = u.bar ? u.bar(barCrumbs(_path, _home)) : '';
+      pane.innerHTML = bar + `<div class="fx-actions">
+          <button class="btn btn-ghost small hf-error-up"${upPath ? '' : ' disabled'}>Up</button>
+        </div><div class="empty">Couldn’t read ${H(pretty(_path, _home))} — ${H(err)}</div>`;
+      if(u.bindBar) u.bindBar();
+      const up = pane.querySelector('.hf-error-up');
+      if(up && upPath) up.onclick = () => { enter(upPath); render(pane, ui); };
       return;
     }
     const details = u.view === 'details';
@@ -220,6 +244,8 @@
     if(q) rows = rows.filter(e => String(e.name || '').toLowerCase().includes(q));
 
     const bar = u.bar ? u.bar(barCrumbs(_path, _home)) : '';
+    const oneSelected = _sel.size === 1
+      ? rows.find(e => e.path === [..._sel][0] && !e.dir) : null;
     pane.innerHTML = bar
       + `<div class="fx-actions">
            <button class="btn btn-ghost small hf-up"${listing.parent ? '' : ' disabled'}>Up</button>
@@ -227,10 +253,12 @@
            <button class="btn btn-ghost small hf-hidden">${_hidden ? 'Hide dotfiles' : 'Show dotfiles'}</button>
            <span class="spacer"></span>
            ${_sel.size ? `<span class="muted small">${_sel.size} selected</span>
+             ${oneSelected && typeof u.shareFile === 'function'
+               ? '<button class="btn btn-cyan small hf-share">Share with Blossom</button>' : ''}
              <button class="btn btn-ghost small hf-rename"${_sel.size === 1 ? '' : ' disabled'}>Rename</button>
              <button class="btn btn-ghost small hf-del">Move to trash</button>` : ''}
          </div>
-         <div class="files-grid${details ? ' details' : ''}" id="hf-grid">${
+         <div class="files-grid${details ? ' details nosel' : ''}" id="hf-grid">${
            q && !rows.length
              ? `<div class="empty">Nothing in ${H(pretty(_path, _home))} matches “${H(q)}”.</div>`
              : rowsHTML(rows, u)}</div>`;
@@ -279,6 +307,13 @@
     });
 
     if(_sel.size){
+      const sh = $('.hf-share');
+      if(sh && oneSelected) sh.onclick = async () => {
+        sh.disabled = true;
+        try{ await u.shareFile(oneSelected); }
+        catch(e){ u.toast(String((e && e.message) || e)); }
+        finally{ sh.disabled = false; }
+      };
       $('.hf-del').onclick = async () => {
         const chosen = [...(_sel)].map(x => byPath.get(x)).filter(Boolean);
         let ok = false;

@@ -36,6 +36,16 @@
   let root = null, bar = null, desk = null;
   let wins = [];                   // [{id, view, title, el, body, min, max, rect}]
   let seq = 0, zTop = 10, on = false, startOpen = false;
+  /* One physical Super release can arrive twice on PosterChanOS: Sway emits `pc:start`, focuses the
+   * shell, and Chromium then receives the release as Meta keyup. Treat them as one signal or Start
+   * opens and closes in the same blink. Kept outside enter() because the DOM listener is too. */
+  let _lastBareSuper = 0;
+  function _bareSuper(fromSway){
+    const now=Date.now(); if(now-_lastBareSuper<500)return;
+    _lastBareSuper=now;
+    if(fromSway) _raiseShell().then(()=>toggleStart(),()=>toggleStart());
+    else toggleStart();
+  }
 
   /* WINDOWS LIVE IN A BOUNDED BAND, and that bound is the whole of a bug that reads as "the start
    * menu stopped going over windows". zTop was a plain counter that only ever went up, and it is
@@ -835,6 +845,18 @@
      * constant: an instance can be set while the app is running, and this list is rebuilt. */
     { view: '__golive', label: 'Go Live', icon: '#i-live', act: () => PC().goLive && PC().goLive(),
       when: () => !!(me() && PC().goLive && !(PC().standalone && PC().standalone())) },
+    /* A first-class launcher app, not a Settings footnote. It deliberately clicks the shared
+     * report entry point: that path resolves the configured NIP-34 repo, enforces sign-in, and opens
+     * the one issue composer (attachments and @mentions included), so the OS cannot drift into a
+     * second incompatible bug-report format. */
+    { view: '__bug', label: 'Bug Report', icon: '#i-bug',
+      act: () => { const b=document.getElementById('rb-report'); if(b) b.click();
+                   else if(PC().toast) PC().toast('bug reporting is unavailable'); },
+      when: () => !!me() },
+    { view: '__tasks', label: 'Task Manager', icon: '#i-chart', act: () => openTaskManager(),
+      when: () => !!(window.pcSystem && pcSystem.snapshot) },
+    { view: '__vms', label: 'Virtual Machines', icon: '#i-monitor', act: () => openVmManager(),
+      when: () => !!(window.pcVM && pcVM.list) },
   ];
 
   /* AN IMAGE THAT FAILS TO LOAD LEAVES NO START BUTTON, and this one has now vanished twice.
@@ -1409,6 +1431,60 @@
     return openApp(view, label, icon, render, noFeed);
   }
 
+  function openTaskManager(){
+    const old=wins.find(x=>x.view==='__tasks'); if(old){focusWin(old,false);return old;}
+    const w=openApp('__tasks','Task Manager','#i-chart',null,true); if(!w)return null;
+    w.el.classList.add('osw-taskmgr');
+    w.slot.innerHTML=`<div class="tm"><div class="tm-head"><div><b>Task Manager</b><span>Performance and processes</span></div>
+      <input class="input tm-search" placeholder="Search processes" aria-label="Search processes"></div>
+      <div class="tm-cards"></div><div class="tm-table"><div class="tm-tr tm-th"><span>Name</span><span>PID</span><span>Memory</span><span></span></div><div class="tm-rows"></div></div></div>`;
+    let dead=false,busy=false;
+    const paint=async()=>{
+      if(dead||busy||!window.pcSystem)return;busy=true;
+      try{
+        const s=await pcSystem.snapshot(true);if(dead)return;
+        const cards=$('.tm-cards',w.slot);if(cards)cards.innerHTML=`
+          <div class="tm-card cpu"><span>CPU</span><b>${enc(s.cpu.percent)}%</b><i><em style="width:${enc(s.cpu.percent)}%"></em></i></div>
+          <div class="tm-card ram"><span>Memory</span><b>${enc(s.memory.percent)}%</b><small>${enc(_sysBytes(s.memory.used))} / ${enc(_sysBytes(s.memory.total))}</small><i><em style="width:${enc(s.memory.percent)}%"></em></i></div>
+          <div class="tm-card net"><span>Network</span><b>${enc(_sysBytes((s.network.rx||0)+(s.network.tx||0)))}/s</b><small>↓ ${enc(_sysBytes(s.network.rx))} · ↑ ${enc(_sysBytes(s.network.tx))}</small></div>`;
+        const q=(($('.tm-search',w.slot)||{}).value||'').toLowerCase();
+        const rows=(s.processes||[]).filter(p=>!q||(p.name+' '+p.cmd+' '+p.pid).toLowerCase().includes(q));
+        const host=$('.tm-rows',w.slot);if(host){host.innerHTML=rows.map(p=>`<div class="tm-tr"><span title="${enc(p.cmd||p.name)}"><b>${enc(p.name)}</b><small>${enc((p.cmd||'').slice(0,90))}</small></span><span>${enc(p.pid)}</span><span>${enc(_sysBytes(p.rss))}</span><button class="btn btn-ghost small" data-end="${enc(p.pid)}">End task</button></div>`).join('')||'<div class="os-pop-none">No matching processes.</div>';
+          host.querySelectorAll('[data-end]').forEach(b=>b.onclick=async()=>{try{await pcSystem.end(Number(b.dataset.end));paint();}catch(e){try{PC().toast(String((e&&e.message)||e));}catch(_){}}});}
+      }catch(e){const h=$('.tm-rows',w.slot);if(h)h.innerHTML='<div class="os-pop-none">Performance data is unavailable.</div>';}
+      finally{busy=false;}
+    };
+    const search=$('.tm-search',w.slot);if(search)search.oninput=()=>paint();
+    const timer=setInterval(paint,2000);w.onClose=()=>{dead=true;clearInterval(timer);};paint();return w;
+  }
+
+  function openVmManager(){
+    const old=wins.find(x=>x.view==='__vms');if(old){focusWin(old,false);return old;}
+    const w=openApp('__vms','Virtual Machines','#i-monitor',null,true);if(!w)return null;
+    w.el.classList.add('osw-vms');
+    w.slot.innerHTML=`<div class="vmui"><div class="vmui-top"><div><b>Virtual Machines</b><span>Private to this PosterChanOS user</span></div><button class="btn" data-vm-new>＋ New VM</button></div><div class="vmui-create" hidden>
+      <label>Name<input class="input" data-vm-name placeholder="Windows 11"></label>
+      <label>Installer ISO<div class="vmui-pick"><input class="input" data-vm-iso readonly placeholder="Choose an .iso"><button class="btn btn-ghost" data-vm-pick>Browse</button></div></label>
+      <div class="vmui-spec"><label>Guest<select class="input" data-vm-guest><option value="linux">Linux</option><option value="windows">Windows 10 / 11</option></select></label><label>Firmware<select class="input" data-vm-firmware><option value="efi">UEFI</option><option value="bios">Legacy BIOS</option></select></label></div>
+      <div class="vmui-spec"><label>Memory (MB)<input class="input" data-vm-ram type="number" min="512" value="4096"></label><label>CPUs<input class="input" data-vm-cpu type="number" min="1" value="2"></label><label>Disk (GB)<input class="input" data-vm-disk type="number" min="4" value="40"></label></div>
+      <div class="vmui-formacts"><button class="btn btn-ghost" data-vm-cancel>Cancel</button><button class="btn" data-vm-create>Create and start</button></div></div>
+      <div class="vmui-note">VMs use libvirt's per-user session. Disks stay inside your private home directory.</div><div class="vmui-list"><div class="os-pop-none">Loading virtual machines…</div></div></div>`;
+    const form=$('.vmui-create',w.slot),list=$('.vmui-list',w.slot);let dead=false,busy=false;
+    const say=s=>{try{PC().toast(s);}catch(_){}};
+    const paint=async()=>{if(dead||busy)return;busy=true;try{const r=await pcVM.list();if(dead)return;
+      if(!r.available){list.innerHTML=`<div class="vmui-empty"><b>Virtualization is unavailable</b><span>${enc(r.error||'libvirt could not be reached')}</span></div>`;return;}
+      list.innerHTML=(r.machines||[]).map(m=>{const running=/running|paused|idle/.test(m.state);return `<article class="vmui-card"><div class="vmui-machine"><i class="${running?'on':''}"></i><div><b>${enc(m.name)}</b><span>${enc(m.state)} · ${enc(m.cpus)} CPU · ${enc(Math.round((m.memoryKiB||0)/1024))} MB</span></div></div><div class="vmui-actions">
+        ${running?`<button class="btn" data-vm-view="${enc(m.name)}">View</button><button class="btn btn-ghost" data-vm-act="shutdown" data-name="${enc(m.name)}">Shut down</button><button class="btn btn-ghost" data-vm-act="reboot" data-name="${enc(m.name)}">Restart</button><button class="btn btn-ghost danger" data-vm-act="stop" data-name="${enc(m.name)}">Force off</button>`:`<button class="btn" data-vm-act="start" data-name="${enc(m.name)}">Start</button><button class="btn btn-ghost danger" data-vm-delete="${enc(m.name)}">Delete</button>`}</div></article>`;}).join('')||'<div class="vmui-empty"><b>No virtual machines yet</b><span>Create one from an installation ISO.</span></div>';
+      list.querySelectorAll('[data-vm-act]').forEach(b=>b.onclick=async()=>{b.disabled=true;const r=await pcVM.action(b.dataset.name,b.dataset.vmAct);if(!r.ok)say(r.error||'VM action failed');setTimeout(paint,500);});
+      list.querySelectorAll('[data-vm-view]').forEach(b=>b.onclick=async()=>{const r=await pcVM.view(b.dataset.vmView);if(!r.ok)say(r.error||'Viewer could not start');});
+      list.querySelectorAll('[data-vm-delete]').forEach(b=>b.onclick=async()=>{const n=b.dataset.vmDelete;if(!confirm(`Delete ${n} and its virtual disk?`))return;const r=await pcVM.remove(n,true);if(!r.ok)say(r.error||'Delete failed');paint();});
+    }catch(e){list.innerHTML='<div class="vmui-empty"><b>Could not read virtual machines</b></div>';}finally{busy=false;}};
+    $('[data-vm-new]',w.slot).onclick=()=>{form.hidden=false;};$('[data-vm-cancel]',w.slot).onclick=()=>{form.hidden=true;};
+    $('[data-vm-pick]',w.slot).onclick=async()=>{const p=await pcVM.pickIso();if(p)$('[data-vm-iso]',w.slot).value=p;};
+    $('[data-vm-create]',w.slot).onclick=async function(){this.disabled=true;this.textContent='Creating…';const r=await pcVM.create({name:$('[data-vm-name]',w.slot).value,iso:$('[data-vm-iso]',w.slot).value,guest:$('[data-vm-guest]',w.slot).value,firmware:$('[data-vm-firmware]',w.slot).value,ramMiB:$('[data-vm-ram]',w.slot).value,cpus:$('[data-vm-cpu]',w.slot).value,diskGiB:$('[data-vm-disk]',w.slot).value});this.disabled=false;this.textContent='Create and start';if(!r.ok){say(r.error||'VM creation failed');return;}form.hidden=true;paint();};
+    const timer=setInterval(paint,3000);w.onClose=()=>{dead=true;clearInterval(timer);};paint();return w;
+  }
+
   /* Route a view switch to that feature's OWN window. Returns true when it has taken over (a window
    * was created and has already repainted itself), false when the caller should paint where it is —
    * which covers both "that window already exists, the feed has been moved into it" and "this view
@@ -1540,8 +1616,10 @@
     }catch(_){ return false; }
   };
 
-  /* A native surface cannot cheaply follow an HTML transform. Stash it for the gesture, move the
-   * lightweight labelled frame at display speed, then perform exactly one placement on release. */
+  /* Keep the native surface LIVE during a gesture. The old implementation moved it to Sway's
+   * scratchpad and dragged only the HTML frame; that made the frame visibly run ahead of the app
+   * for the entire gesture. Position-only `pcWM.move` is cheap enough to follow each painted frame
+   * (unlike resize/place), and the final sync performs the full authoritative placement. */
   function _natGesture(w, on){
     /* Cleared for EVERY window, not just a native one: the hold is armed by the press, and the
      * press does not know yet whether the frame it landed on wraps an app. Left set after dragging
@@ -1549,12 +1627,8 @@
     if(!on) _natFocusHold = false;
     if(!w || w.native == null) return;
     w.gesturing = !!on;
-    let done;
-    if(on){
-      try{ done = pcWM.hide(w.native); _natSent.set(w.native, 'hidden'); }catch(_){}
-      return;
-    }
-    done = nsync();
+    if(on) return;
+    const done = nsync();
     /* The app has the keyboard again now that it is back on screen. After the sync, not before:
      * focusing a window that is still in the scratchpad brings it back wherever the compositor
      * feels like putting it, and the placement then has to move it a second time. */
@@ -1698,9 +1772,10 @@
       const items = nativeWins().map(w => ({ native: w.native, z: _zOf(w),
                                              minimised: !!w.min,
                                              rect: _frameRect(w), w }));
-      const htmls = wins.filter(w => w.native == null)
-                        .map(w => ({ z: _zOf(w), minimised: !!w.min, rect: _frameRect(w) }))
-                        .concat(overlayRects());
+      /* Ordinary HTML windows must never scratchpad every native window behind them. Opening a
+       * terminal used to turn all background apps into black holes until another sync happened.
+       * Only transient shell overlays need to cover native compositor surfaces. */
+      const htmls = overlayRects();
       const plan = NAT().stashPlan(items, htmls);
       const stash = new Set(plan.stash);
       for(const it of items){
@@ -1738,7 +1813,8 @@
           try{ await pcWM.show(it.native); }catch(_){ continue; }
         }
         if(was === 'hidden' || NAT().changed(was, rect)){
-          try{ await pcWM.place(it.native, rect.x, rect.y, rect.w, rect.h);
+          try{ if(it.w.gesturing) await pcWM.move(it.native, rect.x, rect.y);
+               else await pcWM.place(it.native, rect.x, rect.y, rect.w, rect.h);
                _natSent.set(it.native, rect);
                _natRetry = 0;              // something landed: the budget is for a STUCK measure
           }
@@ -2049,12 +2125,8 @@
     let ox = parseInt(w.el.style.left, 10), oy = parseInt(w.el.style.top, 10);
     let curX = ox, curY = oy, zone = '', raf = 0;
     hideLayouts();
-    /* A NATIVE WINDOW CANNOT FOLLOW A TRANSFORM. The gesture moves our frame on the compositor with
-     * a transform per frame and writes left/top once on release — but the app is a separate surface
-     * that only moves when it is TOLD to, so following the drag would mean a placement, a
-     * reconfigure and a full relayout of a browser on every animation frame. It is put away for the
-     * length of the gesture instead and placed once at the end, which is what the frame's own
-     * placeholder is for. */
+    /* Native apps follow the frame with position-only compositor moves. Resizing/re-floating on
+     * every frame is still avoided; `_natGesture` makes nsync choose pcWM.move until release. */
     _natGesture(w, true);
     /* A drag must not be able to outlive the button. Three ways it could, all of which end with the
      * window glued to the cursor because `up` never ran:
@@ -2072,6 +2144,7 @@
     const paint = () => {
       raf = 0;
       w.el.style.transform = `translate(${curX - ox}px, ${curY - oy}px)`;
+      if(w.native != null) nsync();
     };
     const move = (e) => {
       // A released mouse reports buttons === 0 on its next move. Checked FIRST: doing it at the end
@@ -2398,6 +2471,23 @@
     return ['⛈️', 'Thunderstorm'];
   }
 
+  const _sysBytes = n => { n=Number(n)||0; const u=['B','KB','MB','GB','TB']; let i=0;
+    while(n>=1024&&i<u.length-1){n/=1024;i++;} return (n>=100||i===0?n.toFixed(0):n.toFixed(1))+' '+u[i]; };
+  function _performanceWidget(label, kind, icon){
+    return {label,icon,blurb:'Live '+label.toLowerCase()+' use on this computer',every:2000,
+      mount(el){el.innerHTML='<div class="wgt-perf"><div class="wgt-perf-num">—</div><div class="wgt-perf-bar"><i></i></div><div class="wgt-dim">reading…</div></div>';},
+      async refresh(el){
+        if(!window.pcSystem||!pcSystem.snapshot)return;
+        let s;try{s=await pcSystem.snapshot(false);}catch(_){return;}
+        const num=$('.wgt-perf-num',el),bar=$('.wgt-perf-bar i',el),dim=$('.wgt-dim',el);
+        let pct=0,text='',sub='';
+        if(kind==='cpu'){pct=s.cpu.percent;text=pct+'%';sub=(s.cpu.cores||0)+' logical processors';}
+        else if(kind==='memory'){pct=s.memory.percent;text=pct+'%';sub=_sysBytes(s.memory.used)+' of '+_sysBytes(s.memory.total);}
+        else{const rate=(s.network.rx||0)+(s.network.tx||0);pct=Math.min(100,Math.round(rate/125000));text=_sysBytes(rate)+'/s';sub='↓ '+_sysBytes(s.network.rx)+'/s  ↑ '+_sysBytes(s.network.tx)+'/s';}
+        if(num)num.textContent=text;if(bar)bar.style.width=Math.max(0,Math.min(100,pct))+'%';if(dim)dim.textContent=sub;
+      }};
+  }
+
   /* THE REGISTRY. Each widget is `{label, icon, blurb, every, mount(el, w), refresh(el, w)}`:
    *   mount   — build the body ONCE (and wire its controls).
    *   refresh — update it in place. Called on mount and every `every` ms while the desktop is up.
@@ -2405,6 +2495,9 @@
    *             events, and a search box has nothing to poll for.
    * `w` is the stored widget (`cfg` included); `save(w)` persists a cfg change. */
   const WIDGETS = {
+    cpu: _performanceWidget('CPU', 'cpu', '#i-chart'),
+    ram: _performanceWidget('Memory', 'memory', '#i-server'),
+    network: _performanceWidget('Network', 'network', '#i-wifi'),
     crypto: {
       label: 'Crypto ticker', icon: '#i-chart', blurb: 'Live prices for the coins Markets follows',
       every: 90000,
@@ -2904,7 +2997,7 @@
         if(box.dataset.hold && box.dataset.filled) return;
         // How many fit, measured — same discipline as the block tiles. 33px is a title line and its
         // source/age line at 12.5px; 4px is the gap.
-        const h = Math.max(40, box.clientHeight || el.clientHeight || 120);
+        const h = Math.max(40, (box.clientHeight || el.clientHeight || 120) - 25);
         const rows = Math.max(1, Math.min(6, Math.floor(h / 33)));
         let off = Number(box.dataset.off) || 0;
         if(box.dataset.filled) off = (off + 1) % items.length;
@@ -2912,7 +3005,7 @@
         box.dataset.filled = '1';
         box.onclick = null;      // the empty state binds one; a populated panel must not carry it
         const shown = _newsWindow(items, off, rows);
-        box.innerHTML = shown.map(it => {
+        box.innerHTML = `<div class="wgt-news-tools"><b>Unread</b><button type="button" data-news-read>Mark all read</button></div>` + shown.map(it => {
           const meta = `<span class="wgt-nt">${enc(it.title || '(untitled)')}</span>
             <span class="wgt-nm">${enc(it.feedName || '')}${it.ts ? ' · ' + enc(_wgtAgo(it.ts)) : ''}</span>`;
           /* NO LINK, NO ANCHOR. A feed item without a usable http(s) link used to render
@@ -2925,13 +3018,15 @@
                             rel="noopener noreferrer"${id}>${meta}</a>`
                       : `<div class="wgt-nrow nolink"${id}>${meta}</div>`;
         }).join('');
+        { const done=$('[data-news-read]',box); if(done){
+          done.onpointerdown=(ev)=>ev.stopPropagation();
+          done.onclick=(ev)=>{ev.preventDefault();ev.stopPropagation();try{N.markAllRead&&N.markAllRead();}catch(_){}
+            delete box.dataset.filled;_wgtRefreshOne(el.closest('.os-wgt'));}; } }
         for(const a of box.querySelectorAll('.wgt-nrow')){
           // A link is a link — but the drag handle is the whole panel, so the row must not start one.
           a.onpointerdown = (ev) => ev.stopPropagation();
-          /* OPENING IT IS READING IT. The panel only carries unread items, so without this the same
-           * article comes round for ever — the News screen marks on scroll and nobody scrolls a
-           * widget. It marks on the way out, so the row is gone by the next rotation. */
-          a.onclick = () => { try{ if(a.dataset.nid && N.markRead) N.markRead(a.dataset.nid); }catch(_){} };
+          /* Opening and clearing are different decisions. The visible Mark-all control clears the
+           * queue; merely following a headline must not make it disappear from every device. */
         }
       },
     },
@@ -5220,7 +5315,7 @@
              * window that no longer exists fails silently. */
             if(p === 'pc:start'){
               if(Date.now() < _suppressStartUntil){ toggleStart(false); return; }
-              _raiseShell().then(() => toggleStart(), () => toggleStart());
+              _bareSuper(true);
             }
             else if(p === 'pc:start:close') toggleStart(false);
             /* PRINT SCREEN, through the same function the tray button calls. A screenshot taken by
@@ -5237,6 +5332,16 @@
               _suppressStartUntil = Date.now() + 1200;
               toggleStart(false);
               openApp('terminal');
+            }
+            else if(p === 'pc:tasks'){
+              toggleStart(false);
+              openTaskManager();
+              /* The tick arrives even while Firefox/a VM owns compositor focus. The Task Manager
+               * is DOM inside the shell, so bring that shell surface forward after drawing it. */
+              Promise.resolve(pcWM.windows()).then(list=>{
+                const sh=(list||[]).find(x=>/^posterchan(-desktop)?$/.test(String(x.app||'')));
+                if(sh) return pcWM.focus(sh.id);
+              }).catch(()=>{});
             }
           });
         }catch(_){}
@@ -5563,7 +5668,7 @@
     if(!clean || !on) return;
     try{ if(!window.PCOSShell || !PCOSShell.available()) return; }catch(_){ return; }
     e.preventDefault();
-    toggleStart();
+    _bareSuper(false);
   }, true);
 
   // Win+Arrow. Meta, not Ctrl: Ctrl+Arrow is caret navigation inside every text box on this desktop.

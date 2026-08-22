@@ -26,6 +26,8 @@ import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.TextView;
+import android.widget.ImageView;
+import android.util.LruCache;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -83,6 +85,11 @@ public class ThreadActivity extends PcActivity {
     private Msgs adapter;
     private final Handler main = new Handler(Looper.getMainLooper());
     private ContentObserver watcher;
+    /* Thumbnails only. A conversation may contain years of pictures; bounding this cache prevents
+     * the Messages screen from becoming the reason Android kills the app. */
+    private final LruCache<Long, Bitmap> thumbs = new LruCache<Long, Bitmap>(24) {
+        @Override protected int sizeOf(Long k, Bitmap b) { return Math.max(1, b.getByteCount() / (256 * 1024)); }
+    };
 
     @Override
     protected void onCreate(Bundle saved) {
@@ -212,8 +219,9 @@ public class ThreadActivity extends PcActivity {
         Skin.glow(name, pal);
         sub.setText(label.equals(address) ? "" : address);
         sub.setTextColor(pal.muted);
-        avatar.setText(initials(label));
-        avatar.setBackground(Skin.avatar(this, pal, label));
+        android.graphics.drawable.Drawable photo = PhoneBook.photoDrawable(this, address);
+        avatar.setText(photo == null ? initials(label) : "");
+        avatar.setBackground(photo == null ? Skin.avatar(this, pal, label) : photo);
         icon(R.id.pc_th_back, R.drawable.ic_pc_arrow_left, pal.text);
         icon(R.id.pc_th_call, R.drawable.ic_pc_call, pal.accent);
         icon(R.id.pc_th_menu, R.drawable.ic_pc_menu, pal.muted);
@@ -412,6 +420,41 @@ public class ThreadActivity extends PcActivity {
         return b.toString();
     }
 
+    private Bitmap picture(long id) {
+        byte[] bytes = MmsStore.partBytes(this, id, 24 * 1024 * 1024);
+        if (bytes == null || bytes.length == 0) return null;
+        BitmapFactory.Options o = new BitmapFactory.Options(); o.inJustDecodeBounds = true;
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.length, o);
+        o.inSampleSize = 1;
+        while (o.outWidth / o.inSampleSize > 900 || o.outHeight / o.inSampleSize > 900) o.inSampleSize *= 2;
+        o.inJustDecodeBounds = false; return BitmapFactory.decodeByteArray(bytes, 0, bytes.length, o);
+    }
+
+    private void showPicture(final Bitmap bm) {
+        ImageView full = new ImageView(this); full.setImageBitmap(bm);
+        full.setAdjustViewBounds(true); full.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        new AlertDialog.Builder(this).setView(full).setPositiveButton(android.R.string.ok, null).show();
+    }
+
+    private void drawParts(final LinearLayout host, SmsMsg m) {
+        host.removeAllViews();
+        for (final SmsPart p : m.parts) {
+            if (p.ct == null || !p.ct.toLowerCase().startsWith("image/")) continue;
+            final ImageView image = new ImageView(this);
+            image.setAdjustViewBounds(true); image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            image.setMinimumWidth(dp(180)); image.setMinimumHeight(dp(110));
+            image.setMaxWidth(dp(320)); image.setMaxHeight(dp(260));
+            final String token = m.id + ":" + p.id; image.setTag(token); host.addView(image);
+            Bitmap cached = thumbs.get(p.id);
+            if (cached != null) { image.setImageBitmap(cached); image.setOnClickListener(v -> showPicture(cached)); continue; }
+            new Thread(() -> {
+                final Bitmap bm = picture(p.id); if (bm != null) thumbs.put(p.id, bm);
+                main.post(() -> { if (!token.equals(image.getTag()) || bm == null) return;
+                    image.setImageBitmap(bm); image.setOnClickListener(v -> showPicture(bm)); });
+            }, "pc-mms-thumb").start();
+        }
+    }
+
     private final class Msgs extends BaseAdapter {
         private List<SmsMsg> rows = new ArrayList<SmsMsg>();
 
@@ -431,6 +474,7 @@ public class ThreadActivity extends PcActivity {
             LinearLayout wrap = (LinearLayout) v.findViewById(R.id.pc_b_wrap);
             TextView text = (TextView) v.findViewById(R.id.pc_b_text);
             TextView meta = (TextView) v.findViewById(R.id.pc_b_meta);
+            LinearLayout attachments = (LinearLayout) v.findViewById(R.id.pc_b_attachments);
             if (m == null) return v;
 
             boolean mine = !m.incoming();
@@ -438,6 +482,7 @@ public class ThreadActivity extends PcActivity {
             // failed rather than one this screen cannot draw. This screen labels attachments; the
             // app's own Texts view shows them.
             text.setText(bubbleText(m));
+            drawParts(attachments, m);
             text.setTextColor(pal.text);
             wrap.setBackground(Skin.bubble(ThreadActivity.this, pal, mine));
             // The bubble hugs its side and stops well short of the far edge, so a thread reads as a

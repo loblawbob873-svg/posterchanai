@@ -143,6 +143,9 @@ class PosterChanOSProfile(unittest.TestCase):
         "nmcli": "base:net-misc/networkmanager",   # BASE_PACKAGES
         "systemctl": "base:sys-apps/systemd",
         "script": "base:sys-apps/util-linux",      # the local terminal's PTY
+        "virsh": "base:app-emulation/libvirt",
+        "qemu-img": "base:app-emulation/qemu",
+        "bluetoothctl": "base:net-wireless/bluez",
         "sudo": "base:app-admin/sudo",
         # Windows-only, and never run on this profile.
         "attrib": "base:n/a", "icacls": "base:n/a",

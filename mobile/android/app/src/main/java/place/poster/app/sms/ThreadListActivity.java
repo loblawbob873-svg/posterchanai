@@ -127,6 +127,16 @@ public class ThreadListActivity extends PcActivity {
         }
     }
 
+    private boolean mayReadContacts() {
+        if (android.os.Build.VERSION.SDK_INT < 23) return true;
+        try {
+            return checkSelfPermission(android.Manifest.permission.READ_CONTACTS)
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     @Override
     public void onRequestPermissionsResult(int code, String[] perms, int[] granted) {
         super.onRequestPermissionsResult(code, perms, granted);
@@ -139,10 +149,12 @@ public class ThreadListActivity extends PcActivity {
     protected void onStart() {
         super.onStart();
         applySkin();
-        if (!mayReadTexts()) {
+        if (!mayReadTexts() || !mayReadContacts()) {
             try {
-                requestPermissions(new String[]{ android.Manifest.permission.READ_SMS },
-                                   ASK_READ_SMS);
+                java.util.ArrayList<String> ask = new java.util.ArrayList<String>();
+                if (!mayReadTexts()) ask.add(android.Manifest.permission.READ_SMS);
+                if (!mayReadContacts()) ask.add(android.Manifest.permission.READ_CONTACTS);
+                requestPermissions(ask.toArray(new String[ask.size()]), ASK_READ_SMS);
             } catch (Throwable ignored) { }
         }
         reload();
@@ -375,8 +387,11 @@ public class ThreadListActivity extends PcActivity {
             // Already resolved, on the thread that read the provider — see SmsStore.Thread.label.
             String label = t.label.isEmpty() ? t.address : t.label;
             card.setBackground(Skin.panel(ThreadListActivity.this, pal));
-            av.setBackground(Skin.avatar(ThreadListActivity.this, pal, label));
-            av.setText(initials(label));
+            android.graphics.drawable.Drawable photo =
+                    PhoneBook.photoDrawable(ThreadListActivity.this, t.address);
+            av.setBackground(photo == null
+                    ? Skin.avatar(ThreadListActivity.this, pal, label) : photo);
+            av.setText(photo == null ? initials(label) : "");
             name.setText(label);
             name.setTextColor(pal.text);
             snip.setText(t.snippet);

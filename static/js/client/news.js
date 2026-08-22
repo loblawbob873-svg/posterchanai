@@ -96,7 +96,11 @@
       _recomputeBadge();
     }
     function markAllRead(){
-      for(const it of _items){ markRead(it.id); }        // grey the visible cards
+      /* ALL KNOWN ITEMS, not only the News screen's current tab. The desktop Headlines widget reads
+       * `_lastAll`; marking only `_items` left its unread rows rotating after “mark all read”. */
+      const all = new Map();
+      for(const it of _lastAll.concat(_items)) if(it && it.id) all.set(it.id, it);
+      for(const it of all.values()) markRead(it.id);
       // Advance the watermark to the newest item we know of, or NOW if we have no snapshot yet (empty session)
       // — so ✓✓ still sticks and a later background tick can't re-inflate the badge against a stale watermark.
       const nt = Math.max(_newestTs(_lastAll), _newestTs(_items)) || Math.floor(Date.now()/1000);
@@ -509,7 +513,8 @@
       return -1;
     }
 
-    window.PCNews = { render: renderNews, updateBadge, latest, feedCount, markRead: markReadById };
+    window.PCNews = { render: renderNews, updateBadge, latest, feedCount,
+                      markRead: markReadById, markAllRead };
     // One-time migration: the old badge counted scroll-unread (stuck at 99+). If there's no "seen" baseline
     // yet, clear that stale count so the new "new since last visit" model starts clean.
     try{

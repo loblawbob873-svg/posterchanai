@@ -2,8 +2,16 @@ package place.poster.app.sms;
 
 import android.content.Context;
 import android.database.Cursor;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.provider.ContactsContract;
+
+import androidx.core.graphics.drawable.RoundedBitmapDrawable;
+import androidx.core.graphics.drawable.RoundedBitmapDrawableFactory;
+
+import java.io.InputStream;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -28,6 +36,7 @@ public final class PhoneBook {
 
     private static final Map<String, String> NAMES = new HashMap<String, String>();
     private static final Map<String, String> PHOTOS = new HashMap<String, String>();
+    private static final Map<String, Bitmap> PHOTO_BYTES = new HashMap<String, Bitmap>();
     private static final int MAX = 512;
 
     private PhoneBook() { }
@@ -66,6 +75,34 @@ public final class PhoneBook {
         return uri;
     }
 
+    /** A fresh circular drawable for the contact photo, or null for the initials fallback. */
+    public static Drawable photoDrawable(Context ctx, String number) {
+        String uri = photoOf(ctx, number);
+        if (uri.isEmpty()) return null;
+        Bitmap bitmap;
+        synchronized (PHOTO_BYTES) { bitmap = PHOTO_BYTES.get(uri); }
+        if (bitmap == null) {
+            InputStream in = null;
+            try {
+                in = ctx.getContentResolver().openInputStream(Uri.parse(uri));
+                bitmap = BitmapFactory.decodeStream(in);
+                if (bitmap != null) synchronized (PHOTO_BYTES) {
+                    if (PHOTO_BYTES.size() > MAX) PHOTO_BYTES.clear();
+                    PHOTO_BYTES.put(uri, bitmap);
+                }
+            } catch (Throwable ignored) {
+                return null;
+            } finally {
+                if (in != null) try { in.close(); } catch (Throwable ignored) { }
+            }
+        }
+        if (bitmap == null) return null;
+        RoundedBitmapDrawable out = RoundedBitmapDrawableFactory.create(ctx.getResources(), bitmap);
+        out.setCircular(true);
+        out.setAntiAlias(true);
+        return out;
+    }
+
     private static String lookup(Context ctx, String number, String column) {
         Cursor c = null;
         try {
@@ -99,5 +136,6 @@ public final class PhoneBook {
     public static void forget() {
         synchronized (NAMES) { NAMES.clear(); }
         synchronized (PHOTOS) { PHOTOS.clear(); }
+        synchronized (PHOTO_BYTES) { PHOTO_BYTES.clear(); }
     }
 }

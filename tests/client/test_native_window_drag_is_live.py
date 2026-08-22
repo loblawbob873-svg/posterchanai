@@ -4,11 +4,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_dragging_stashes_native_surface_and_places_it_once():
+def test_dragging_keeps_native_surface_live_and_moves_it_with_the_frame():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
     drag = src[src.index("function startDrag"):src.index("function startResize")]
     gesture = src[src.index("function _natGesture"):src.index("const _zOf")]
-    assert "pcWM.hide(w.native)" in gesture
+    assert "pcWM.hide(w.native)" not in gesture
+    assert "if(w.native != null) nsync()" in drag
+    assert "if(it.w.gesturing) await pcWM.move" in src
     assert "_natMove(w)" not in drag
     assert "pcWM.place" not in drag
     assert "setPointerCapture(ev.pointerId)" in drag

@@ -59,10 +59,11 @@ chown "$USERNAME:$USERNAME" "$HOME_DIR"
 chmod 0700 "$HOME_DIR"
 
 # The groups a desktop session needs to be usable at all: audio and video for playback and the GPU,
-# input for the compositor's devices, netdev so NetworkManager will take instructions. NOT wheel —
+# input for the compositor's devices, netdev for NetworkManager, and kvm for that identity's private
+# qemu:///session virtual machines. NOT wheel —
 # signing in with a key is not the same as being trusted with root, and a machine anyone may log
 # into must not hand every visitor sudo.
-for g in audio video input netdev render posterchan; do
+for g in audio video input netdev render kvm posterchan; do
   getent group "$g" >/dev/null 2>&1 && gpasswd -a "$USERNAME" "$g" >/dev/null 2>&1
 done
 

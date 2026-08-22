@@ -176,29 +176,66 @@ public final class SyncNet implements SyncIo.Net {
     }
 
     public byte[] getBlob(String sha) throws IOException {
-        HttpURLConnection c = open(mediaBase + "/" + sha, "GET", READ_TIMEOUT_MS);
-        try {
-            int code = c.getResponseCode();
-            if (code < 200 || code >= 300) {
-                throw new IOException("blob " + shortSha(sha) + " unavailable (" + code + ")");
+        IOException last = null;
+        for (int attempt = 0; attempt < 3; attempt++) {
+            HttpURLConnection c = open(blobDownloadUrl(sha, attempt), "GET", READ_TIMEOUT_MS);
+            try {
+                int code = c.getResponseCode();
+                if (code >= 200 && code < 300) return drain(c.getInputStream());
+                last = new IOException("blob " + shortSha(sha) + " unavailable (" + code + ")");
+                if (!retryableDownload(code) || attempt == 2) throw last;
+            } catch (IOException e) {
+                last = e;
+                if (attempt == 2) throw e;
+            } finally {
+                c.disconnect();
             }
-            return drain(c.getInputStream());
-        } finally {
-            c.disconnect();
+            backoff(attempt);
         }
+        throw last == null ? new IOException("blob " + shortSha(sha) + " unavailable") : last;
     }
 
     /** Stream one blob straight to disk, so a big file never has to fit in memory twice. */
     public void getBlobTo(String sha, OutputStream sink) throws IOException {
-        HttpURLConnection c = open(mediaBase + "/" + sha, "GET", READ_TIMEOUT_MS);
-        try {
-            int code = c.getResponseCode();
-            if (code < 200 || code >= 300) {
-                throw new IOException("blob " + shortSha(sha) + " unavailable (" + code + ")");
+        IOException last = null;
+        for (int attempt = 0; attempt < 3; attempt++) {
+            HttpURLConnection c = open(blobDownloadUrl(sha, attempt), "GET", READ_TIMEOUT_MS);
+            try {
+                int code = c.getResponseCode();
+                if (code >= 200 && code < 300) {
+                    /* Do not retry after streaming begins: the sink may already contain a prefix.
+                     * The caller's resumable part-file path owns recovery from a mid-body failure. */
+                    copy(c.getInputStream(), sink);
+                    return;
+                }
+                last = new IOException("blob " + shortSha(sha) + " unavailable (" + code + ")");
+                if (!retryableDownload(code) || attempt == 2) throw last;
+            } finally {
+                c.disconnect();
             }
-            copy(c.getInputStream(), sink);
-        } finally {
-            c.disconnect();
+            backoff(attempt);
+        }
+        throw last == null ? new IOException("blob " + shortSha(sha) + " unavailable") : last;
+    }
+
+    private String blobDownloadUrl(String sha, int attempt) {
+        // Keep the canonical content-addressed URL on the first request (also important for stores
+        // that sign or strictly route that path).  Only a retry needs a unique URL to escape an edge
+        // cache that has just served a transient 404/5xx; open() already disables local caches.
+        String url = mediaBase + "/" + sha;
+        return attempt == 0 ? url : url + "?sync=" + System.currentTimeMillis() + "-" + attempt;
+    }
+
+    private static boolean retryableDownload(int code) {
+        return code == 404 || code == 408 || code == 425 || code == 429
+                || code == 500 || code == 502 || code == 503 || code == 504;
+    }
+
+    private static void backoff(int attempt) throws IOException {
+        try { Thread.sleep(250L * (attempt + 1L)); }
+        catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("blob download interrupted", e);
         }
     }
 

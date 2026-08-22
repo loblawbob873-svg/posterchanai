@@ -152,6 +152,26 @@ if (isOurPage) {
     setStreamMuted: (id, on) => ipcRenderer.invoke('pc:audio:streammute', Number(id), !!on),
   });
 
+  contextBridge.exposeInMainWorld('pcBluetooth', {
+    status: (scan) => ipcRenderer.invoke('pc:bt:status', !!scan),
+    power: (on) => ipcRenderer.invoke('pc:bt:power', !!on),
+    device: (address, action) => ipcRenderer.invoke('pc:bt:device', String(address||''), String(action||'')),
+  });
+
+  contextBridge.exposeInMainWorld('pcSystem', {
+    snapshot: (withProcesses) => ipcRenderer.invoke('pc:system:snapshot', !!withProcesses),
+    end: (pid) => ipcRenderer.invoke('pc:system:end', Number(pid)),
+  });
+
+  contextBridge.exposeInMainWorld('pcVM', {
+    list: () => ipcRenderer.invoke('pc:vm:list'),
+    create: (opts) => ipcRenderer.invoke('pc:vm:create', opts || {}),
+    action: (name, action) => ipcRenderer.invoke('pc:vm:action', String(name||''), String(action||'')),
+    remove: (name, disks) => ipcRenderer.invoke('pc:vm:remove', String(name||''), !!disks),
+    view: (name) => ipcRenderer.invoke('pc:vm:view', String(name||'')),
+    pickIso: () => ipcRenderer.invoke('pc:vm:pick-iso'),
+  });
+
   /* SCREENSHOTS. `available()` answers before anything is drawn, so the tray never offers a button
    * whose only possible outcome is an error about a missing package. */
   contextBridge.exposeInMainWorld('pcShot', {

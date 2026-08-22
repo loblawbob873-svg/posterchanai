@@ -73,6 +73,37 @@ class HostFilesView(unittest.TestCase):
                          ["/", "/home", "/home/x", "/home/x/Documents"])
         self.assertEqual(out["r"], [{"label": "/", "path": "/"}])
 
+    def test_windows_paths_have_a_real_parent_and_breadcrumbs(self):
+        out = self.js(r"""
+          out.c = F.crumbs('C:\\Users\\Default User');
+          out.p = F.parentPath('C:\\Users\\Default User');
+          out.root = F.parentPath('C:\\');
+        """)
+        self.assertEqual([c["label"] for c in out["c"]], ["C:", "Users", "Default User"])
+        self.assertEqual([c["path"] for c in out["c"]],
+                         ["C:\\", "C:\\Users", "C:\\Users\\Default User"])
+        self.assertEqual(out["p"], "C:\\Users")
+        self.assertIsNone(out["root"])
+
+    def test_an_unreadable_folder_keeps_an_up_button(self):
+        src = open(MOD, encoding="utf-8").read()
+        err = src[src.index("if(err){"):src.index("const details", src.index("if(err){"))]
+        self.assertIn("hf-error-up", err)
+        self.assertIn("parentPath(_path)", err)
+        self.assertIn("u.bar", err, "the error replaced the breadcrumbs and trapped navigation")
+
+    def test_one_selected_file_can_be_shared_to_blossom(self):
+        host = open(MOD, encoding="utf-8").read()
+        app = open(APP, encoding="utf-8").read()
+        self.assertIn("Share with Blossom", host)
+        self.assertIn("!e.dir", host, "folders are being offered as uploadable files")
+        self.assertIn("shareFile: _shareHostFile", app)
+        share = app[app.index("async function _shareHostFile"):]
+        share = share[:share.index("\n  }") + 4]
+        self.assertIn("folder:'Shared'", share)
+        self.assertIn("noCompress:true", share, "sharing silently rewrites images or video")
+        self.assertIn("copyValue(url", share, "the resulting public URL never reaches the clipboard")
+
     def test_a_home_path_is_shortened_but_never_the_one_used(self):
         """`/home/npub1fdtthaq…/Documents` is unreadable and its leading two thirds never change."""
         out = self.js("out.a = F.pretty('/home/u/Documents', '/home/u');"

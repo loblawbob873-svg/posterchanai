@@ -307,10 +307,12 @@ parts key gives a byte-identical id to the four-argument form, so a text-only me
 through the MMS path is not a second document. `tests/test_android_mms.py` runs the Java and the
 JavaScript against each other.
 
-**The archive names attachments and does not carry them.** The bytes stay on the handset; the
-document records type/name/length so another device can say *"Photo · on your phone"* instead of
-drawing an empty bubble, which is what a message that FAILED looks like. Putting the bytes in Blossom
-is the next piece of work, not this one.
+**The archive carries attachments through encrypted Blossom storage.** The phone reads each provider
+part, encrypts it with the user's drive key and uploads the ciphertext into the logical `MMS` folder.
+The Nostr document carries the encrypted-store hash plus type/name/length, never the plaintext bytes.
+Images also receive a small encrypted thumbnail: other clients show that first and fetch the original
+only when it is opened. Message bodies use the same design in the logical `Messages` folder, so the
+relay document is a small encrypted pointer rather than a second place holding the payload.
 
 **A delete is now two URIs as well as two copies.** A picture message is `content://mms/<id>`; handed
 to `SmsStore.delete` it removes nothing AND reports nothing, which the client correctly reads as a
@@ -531,7 +533,7 @@ genuine SDK instead of hand-written stubs. It found three real bugs on its first
   because its archive document arrives there.
 * **Group MMS threads** — a group picture message is READ (it lands under its first recipient, which
   is where the client's last-seven-digits grouping puts it), but there is no group *conversation*:
-  sending to several people at once needs MMS sending, which is the first item on this list.
+  current MMS sending addresses one conversation/recipient at a time.
 
 ---
 

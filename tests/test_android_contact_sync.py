@@ -120,7 +120,8 @@ def test_plugin_is_registered_and_named_the_same_on_both_sides():
     # Every name the client asks for has to be one Java answers to. A typo here is invisible: the
     # lookup returns null, which every caller reads as "not the packaged app".
     asked = set(re.findall(r"capPlugin\(\s*'([A-Za-z]+)'", CONTACTS_JS))
-    assert asked == {"ContactSync"}, f"contacts.js asks for {asked}"
+    assert asked == {"ContactSync", "ContactShare"}, f"contacts.js asks for {asked}"
+    assert "registerPlugin(place.poster.app.contacts.ContactSharePlugin.class)" in MAIN
 
 
 def test_the_plugin_is_registered_before_the_bridge_is_built():
@@ -514,7 +515,10 @@ def test_signing_out_takes_the_phones_copy_with_it():
     assert "setTimeout(" in body, (
         "no fallback: a bridge call that never settles leaves the user signed in for ever")
     switch = re.search(r"function _accountSwitch\(a\)\{(.*?)\n  \}", APPJS, re.S)
-    assert switch and "_forgetPhonebook()" in switch.group(1)
+    browser = re.search(r"function _accountSwitchBrowser\(a\)\{(.*?)\n  \}", APPJS, re.S)
+    assert switch and browser and "_accountSwitchBrowser(a)" in switch.group(1)
+    assert "_forgetPhonebook()" in browser.group(1), (
+        "the browser/phone account switch keeps the previous account's contacts")
     # Removing the ACCOUNT is what makes it complete — the provider deletes every row under it.
     assert "removeAccountExplicitly" in WRITER
     # …and the belt to that brace: a session that ended without the JS call is caught on the next

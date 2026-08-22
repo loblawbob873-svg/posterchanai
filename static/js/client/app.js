@@ -6289,6 +6289,7 @@
     feed.classList.toggle('feed-meme', VIEW==='meme');     // full-height Meme Builder (stage + one pane)
     feed.classList.toggle('feed-admin', VIEW==='admin');   // full-height admin iframe
     feed.classList.toggle('feed-term', VIEW==='terminal');  // full-height terminal
+    feed.classList.toggle('feed-files', VIEW==='blossom');  // tabs + explorer fill the available pane
     // Tell the desktop what the focused window is actually showing. A window navigated inside itself
     // (the Admin panel is opened from Settings) otherwise keeps repainting as the view it was opened
     // as — which sent a drag of the Admin window back to User Settings, and blacked it out.
@@ -6959,10 +6960,16 @@
   }
   // "new posts" pill — only on the live timelines; clicking it jumps to top and shows them
   function _newPostsPill(){
+    const feed=$('#feed');
+    // Desktop mode moves #feed into the focused app window.  Keeping this control on the shell's
+    // original .main leaves it underneath the windows, so new posts are counted but the button is
+    // invisible.  Follow the live feed into its window; in browser/mobile mode this remains .main.
+    const host=(feed&&feed.closest('.osw-body'))||document.querySelector('.main')||document.body;
     let p=document.getElementById('new-posts-pill');
     if(!p){ p=document.createElement('button'); p.id='new-posts-pill'; p.className='new-posts-pill hidden';
       p.onclick=()=>{ const feed=$('#feed'); if(feed) feed.scrollTop=0; _flushPending(); };
-      (document.querySelector('.main')||document.body).appendChild(p); }
+    }
+    if(p.parentNode!==host) host.appendChild(p);
     return p;
   }
   // The pill floats over .main (which doesn't scroll — #feed does), so its resting place has to clear
@@ -6977,7 +6984,7 @@
   // effective scale, recovered from rect-vs-offset width (offsetWidth is the unzoomed one) rather than by
   // parsing a zoom the breakpoints own.
   function _placePill(p){
-    const main=document.querySelector('.main'), tabs=document.querySelector('#feed .tl-tabs');
+    const main=p.parentElement, feed=$('#feed'), tabs=feed&&feed.querySelector('.tl-tabs');
     if(!main||!tabs) return;                       // no timeline header to measure → keep the CSS default
     const box=main.getBoundingClientRect(), z=(main.offsetWidth ? box.width/main.offsetWidth : 1) || 1;
     p.style.top = Math.max(0, (tabs.getBoundingClientRect().bottom - box.top + 10) / z) + 'px';
@@ -18630,7 +18637,30 @@
     }catch(_){ return false; }
   }
   async function _syncBlobBytes(sha, onWireProgress){
-    const r = await fetch(mediaServer() + '/' + sha);
+    /* A DOWNLOAD MUST MISS NEGATIVE CACHES JUST LIKE THE EXISTENCE PROBE ABOVE.
+     *
+     * A freshly uploaded blob can briefly sit behind a cached 404 at a proxy/edge.  The HEAD probe
+     * already carries a nonce, but the GET did not, so a receiver could be told "unavailable" for
+     * bytes the store actually held. Folder Sync remembers a deterministic 404 to avoid burning
+     * bandwidth forever; that made one stale cache answer persist as "incoming copy could not be
+     * fetched" and the unresolved record then appeared as hundreds of conflicts.  Retry only
+     * response failures that can be transient, with a fresh URL each time.  A successful response
+     * still goes through the content hash and AES-GCM checks below.
+     */
+    let r = null;
+    for(let attempt = 0; attempt < 3; attempt++){
+      try{
+        r = await fetch(mediaServer() + '/' + sha + '?sync=' + Date.now() + '-' + attempt,
+                        { cache:'no-store' });
+      }catch(e){
+        if(attempt === 2) throw e;
+        await new Promise(done => setTimeout(done, 250 * (attempt + 1)));
+        continue;
+      }
+      if(r.ok || !([404, 408, 425, 429, 500, 502, 503, 504].includes(r.status)) || attempt === 2) break;
+      try{ if(r.body && r.body.cancel) await r.body.cancel(); }catch(_){}
+      await new Promise(done => setTimeout(done, 250 * (attempt + 1)));
+    }
     if(!r.ok) throw new Error('blob ' + String(sha).slice(0,8) + ' unavailable (' + r.status + ')');
     /* KEEP THE STALL CLOCK TIED TO BYTES, NOT TO WHOLE BLOBS.
      *
@@ -19525,8 +19555,39 @@
       bindBar: () => _fxBindBar(pane),
       bindCols: _fxBindCols,
       query: () => _filesQ,
+      shareFile: _shareHostFile,
       toast, prompt: uiPrompt, confirm: uiConfirm,
     });
+  }
+
+  /* A DELIBERATE PUBLIC COPY from this machine into Blossom. The bridge read is bounded because it
+   * crosses into the renderer as one buffer; uploadBlob also hashes and sends one buffer, so
+   * pretending this path streams would only move the memory spike somewhere less visible. The
+   * original filename and bytes are retained (`noCompress`), and `folder:'Shared'` indexes the
+   * result under one predictable public folder before its URL reaches the clipboard. */
+  async function _shareHostFile(entry){
+    if(!entry || entry.dir) throw new Error('select one file to share');
+    const cap = 256 * 1024 * 1024;
+    if((+entry.size || 0) > cap)
+      throw new Error('this file is over 256 MB; local sharing needs the streaming uploader first');
+    const H = window.pcHost;
+    if(!H || typeof H.read !== 'function') throw new Error('this build cannot read local files');
+    _uploadBadge('Sharing ' + (entry.name || 'file') + ' with Blossom…');
+    try{
+      const bytes = await H.read(entry.path, cap);
+      const file = new File([bytes], entry.name || 'file', { type:'application/octet-stream' });
+      const url = await uploadBlob(file, { folder:'Shared', noCompress:true });
+      await copyValue(url, 'shared to Blossom — URL copied', 'Shared URL:');
+      _uploadBadge('Shared to Blossom — URL copied', true);
+      return url;
+    }catch(e){
+      _uploadBadge(null);
+      if(typeof _blossomDenied === 'function' && _blossomDenied(e)){
+        requestBlossomAccess();
+        throw new Error('no Blossom upload access yet — requested it from the admin');
+      }
+      throw e;
+    }
   }
 
   async function renderPublicFiles(pane){

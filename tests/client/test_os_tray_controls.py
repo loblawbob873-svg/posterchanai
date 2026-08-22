@@ -24,7 +24,7 @@ DOM = r"""
 function el(tag){
   const e = { tag: tag || 'div', _html: '', kids: [], dataset: {}, disabled: false,
               onclick: null, style: {}, className: '', offsetWidth: 260, offsetHeight: 180 };
-  const RE = () => /<(button|input|div|span)\b([^>]*)>/g;
+  const RE = () => /<(button|input|select|div|span)\b([^>]*)>/g;
   const attr = (s, n) => { const m = new RegExp(n + '="([^"]*)"').exec(s); return m ? m[1] : null; };
   Object.defineProperty(e, 'innerHTML', {
     get(){ return e._html; },
@@ -41,7 +41,7 @@ function el(tag){
         k.value = attr(raw, 'value') || '';
         k.textContent = '';
         for(const d of ['app','win','os','ssid','sec','act','prof','mute','kind',
-                        'qs','val','sink','mix','mixvol','shot','p','d']){
+                        'qs','val','sink','mix','mixvol','device','mastervol','mastermute','masterval','shot','p','d']){
           const a = attr(raw, 'data-' + d);
           if(a !== null) k.dataset[d] = a;
         }
@@ -275,9 +275,13 @@ class Tray(unittest.TestCase):
 
     SOUND = """{ pcWM: { windows: async () => [], focus: async () => true },
                  pcAudio: { status: async () => ({ output: {percent: 40, muted: false},
+                              input: {percent: 65, muted: false},
                               sinks: [{id: 50, name: 'Speakers', isDefault: true},
-                                      {id: 51, name: 'Headphones', isDefault: false}] }),
-                            setVolume: async () => true, setMuted: async () => true,
+                                      {id: 51, name: 'Headphones', isDefault: false}],
+                              sources: [{id: 60, name: 'Laptop microphone', isDefault: true},
+                                        {id: 61, name: 'USB microphone', isDefault: false}] }),
+                            setVolume: async (n, k) => { globalThis.__masterVol=[n,k]; return true; },
+                            setMuted: async (on, k) => { globalThis.__masterMute=[on,k]; return true; },
                             setDefault: async (id) => { globalThis.__sink = id; return {id}; },
                             mixer: async () => { if(globalThis.__mixFail) throw new Error('no sound server');
                               return globalThis.__streams || [{id: 80, name: 'Firefox', percent: 100, muted: false}]; },
@@ -330,6 +334,24 @@ class Tray(unittest.TestCase):
         self.assertEqual(out["n"], 1, "the playing application has no slider")
         self.assertEqual(out["sv"], [80, 25], "moving one app's slider moved something else")
         self.assertEqual(out["sm"], [80, True], "muting one app never reached the machine")
+
+    def test_the_mixer_switches_both_input_and_output_devices(self):
+        out = self.press("mixer", """
+          const b=pop.querySelector('.os-pop-b');
+          const dev=b.querySelectorAll('[data-device]');
+          out.kinds=dev.map(x=>x.dataset.device);
+          const mic=dev.find(x=>x.dataset.device==='source');
+          if(mic){mic.value='61';await mic.onchange();}
+          await new Promise(r=>setTimeout(r,40));
+          out.picked=globalThis.__sink;
+          const input=b.querySelectorAll('[data-mastervol]').find(x=>x.dataset.mastervol==='source');
+          if(input){input.value='35';input.oninput();}
+          await new Promise(r=>setTimeout(r,40));
+          out.vol=globalThis.__masterVol||null;
+        """, bridges=self.SOUND)
+        self.assertEqual(out["kinds"], ["sink", "source"])
+        self.assertEqual(out["picked"], 61)
+        self.assertEqual(out["vol"], [35, "source"])
 
     def test_nothing_playing_and_could_not_read_are_different_answers(self):
         """An empty mixer drawn as a blank panel is indistinguishable from a mixer that failed to
