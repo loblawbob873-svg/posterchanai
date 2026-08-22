@@ -14488,7 +14488,7 @@
     // and it was buried in Discover → Streams where nobody found it. Mirrors the desktop sidebar item.
     // Icons come from the shared sprite via ICO() — the same glyphs the desktop sidebar uses, so the
     // phone and desktop navs never drift apart (and they take the theme's colour, unlike emoji).
-    const items=[['ai','ai','PosterChan AI'],['mail','mail','Email'],['websearch','search','Web Search'],['terminal','terminal','Terminal'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['texts','chat','Texts'],['__music','music','Music'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['repos','git','Git'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__bug','bug','Report a Bug'],['__accounts','user','Switch account'],['settings','gear','Settings'],
+    const items=[['ai','ai','PosterChan AI'],['mail','mail','Email'],['websearch','search','Web Search'],['terminal','terminal','Terminal'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['texts','chat','Texts'],['__music','music','Music'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['repos','git','Git'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__bug','bug','Report a Bug'],['__accounts','user','Switch account'],['signer','key','Signer'],['settings','gear','Settings'],
       // Same button, same rule as the sidebar's: a guest is offered a way IN, not a second way out.
       (GUEST ? ['__login','user','Log in'] : ['logout','logout','Logout'])]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai')
@@ -14507,10 +14507,6 @@
                    // sidebar on a phone, so a row hidden on the laptop that survived here would make
                    // the preference mean nothing on the device it declutters most.
                    && !_sheetOff(_navOffKeys, v));
-    if(!_sheetOff(_navOffKeys, 'signer')){
-      const at = Math.max(0, items.findIndex(x => x[0] === 'settings'));
-      items.splice(at, 0, ['signer','key','Signer']);
-    }
     /* The sheet follows the SAME order the sidebar does — it is the sidebar on a phone. Keys map
      * through _SHEET_NAV_KEY (the three sub-sheets), unknowns keep their default position. */
     { const ord = navOrderList();
