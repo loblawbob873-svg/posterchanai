@@ -1958,12 +1958,16 @@
 
   /* Whatever the compositor has that we have not framed yet. */
   async function adoptAll(){
-    if(!window.pcWM || !window.PCOSShell || !PCOSShell.available()) return;
+    if(!window.pcWM || !window.PCOSShell || !PCOSShell.available()) return false;
     let list = [];
-    try{ list = await pcWM.windows(); }catch(_){ return; }
+    try{ list = await pcWM.windows(); }catch(_){ return false; }
     let rows = [];
     try{ rows = PCOSShell.taskbarRows(list); }catch(_){ rows = []; }
-    for(const r of rows) if(!wins.find(w => w.native === Number(r.id))) adoptNative(r);
+    let changed = false;
+    for(const r of rows) if(!wins.find(w => w.native === Number(r.id))){
+      adoptNative(r);
+      changed = true;
+    }
     /* WHAT TO ADOPT AND WHAT IS STILL ALIVE ARE DIFFERENT QUESTIONS, and answering both with
      * `taskbarRows` is how an app gets KILLED.
      *
@@ -1975,7 +1979,10 @@
      *
      * Existence is the compositor's list, exactly as `nsync` reads it. */
     const live = new Set(list.map(x => Number(x.id)));
-    for(const w of nativeWins()) if(!live.has(Number(w.native))) closeWin(w);
+    for(const w of nativeWins()) if(!live.has(Number(w.native))){
+      closeWin(w);
+      changed = true;
+    }
     /* A title is the page a browser is showing and it changes constantly; the frame follows it, the
      * same way it would for one of our own documents. */
     for(const w of nativeWins()){
@@ -1983,9 +1990,11 @@
       if(r && r.title && r.title !== w.title){
         w.title = r.title;
         const t = $('.osw-title', w.el); if(t) t.textContent = r.title;
+        changed = true;
       }
     }
     nsync();
+    return changed;
   }
 
   function closeWin(w){
@@ -5368,6 +5377,17 @@
              * make every new native application wait for two GET_TREE round trips. */
             if(ev.name === 'window'){
               if(ev.change === 'new' && ev.window) adoptNative(ev.window);
+              /* Firefox/XWayland can announce `window::new` before class/title metadata has reached
+               * the tree. In that state main.js quite correctly cannot normalise a visible leaf,
+               * and the old unconditional return below then ignored the later title/focus event —
+               * a second Firefox window remained a bare compositor surface forever. Every window
+               * event is a reconciliation opportunity, plus one delayed pass for the metadata race.
+               * `adoptAll` is idempotent by con_id, so a complete new event still creates one frame. */
+              const reconcile = () => Promise.resolve(adoptAll()).then(changed => {
+                if(changed) drawBar();
+              }).catch(()=>{});
+              reconcile();
+              if(ev.change === 'new') setTimeout(reconcile, 180);
               return;
             }
             if(ev.name !== 'tick') return;
@@ -5416,7 +5436,20 @@
             }
           });
         }catch(_){}
-        PCOSShell.watch(() => { adoptAll(); drawBar(); }).then(off => {
+        PCOSShell.watch(() => {
+          /* Hardware readings change often. Rebuilding `bar.innerHTML` for every battery, volume,
+           * Wi-Fi or PipeWire notification destroys and recreates the Start image, making the logo
+           * visibly blink while the desktop is otherwise idle. Reconcile compositor windows first;
+           * redraw the whole bar only if that changed its task list. An ordinary shell tick paints
+           * only the tray node it owns, preserving Start, the search caret and every task button. */
+          Promise.resolve(adoptAll()).then(changed => {
+            if(changed){ drawBar(); return; }
+            try{
+              const shell = $('#os-shell', bar);
+              if(shell && PCOSShell.available()) PCOSShell.paintTray(shell);
+            }catch(_){}
+          }).catch(()=>{});
+        }).then(off => {
           _shellOff = off;
           if(PCOSShell.available()) drawBar();   // the tray can only be painted once the answer is in
         }, () => {});
