@@ -871,7 +871,7 @@
           attach(prev, s0 && s0.host);
         }else if(prev){
           _remember('');           // it is gone; do not offer to reattach to nothing
-        }else if(LOCAL() && hosts.length && hosts[0].local){
+        }else if(LOCAL() && hosts.length === 1 && hosts[0].local){
           /* OPENING THE TERMINAL ON THIS MACHINE GIVES YOU A SHELL. There is no host to choose
            * between, no password to type and nothing to authorise — every one of those steps exists
            * for a shell on somebody ELSE'S computer. Making the person press Connect to reach their

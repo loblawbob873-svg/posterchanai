@@ -52,6 +52,11 @@ class VmBackend(unittest.TestCase):
         src = (ROOT / "desktop" / "vm.js").read_text()
         self.assertIn("['--connect',URI,'--attach','--wait',name]", src)
 
+    def test_viewer_cannot_pin_itself_over_the_desktop(self):
+        sway = (ROOT / "os" / "overlay" / "app-misc" / "posterchanos-shell" / "files" / "sway.config").read_text()
+        self.assertIn('[app_id="virt-viewer"] fullscreen disable, sticky disable', sway)
+        self.assertIn('[class="Virt-viewer"] fullscreen disable, sticky disable', sway)
+
     def test_new_vm_uses_the_shared_plus_icon(self):
         src = (ROOT / "static/js/client/os.js").read_text()
         self.assertIn('data-vm-new><svg class="ic b-ic"', src)

@@ -17,12 +17,21 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MOD = os.path.join(ROOT, "desktop", "localterm.js")
+CLIENT = os.path.join(ROOT, "static", "js", "client", "term.js")
 NODE = shutil.which("node") or shutil.which("nodejs")
 SCRIPT = shutil.which("script")
 
 
 @unittest.skipIf(not NODE or not SCRIPT, "needs node and util-linux script")
 class LocalTerminal(unittest.TestCase):
+    def test_server_hosts_are_not_hidden_by_an_automatic_local_connection(self):
+        """PosterChanOS prepends local to every server host list. Auto-connecting merely because
+        local is first disables the selector and makes all configured servers unreachable."""
+        with open(CLIENT, encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertIn("LOCAL() && hosts.length === 1 && hosts[0].local", src)
+        self.assertNotIn("LOCAL() && hosts.length && hosts[0].local", src)
+
     def run_js(self, body, timeout=30):
         js = ("const T = require(%s);\n(async () => { const out = {};\n"
               "const done = (o) => { Object.assign(out, o); try{ T.closeAll(); }catch(_){}\n"

@@ -1828,10 +1828,14 @@
       const items = nativeWins().map(w => ({ native: w.native, z: _zOf(w),
                                              minimised: !!w.min,
                                              rect: _frameRect(w), w }));
-      /* Ordinary HTML windows must never scratchpad every native window behind them. Opening a
-       * terminal used to turn all background apps into black holes until another sync happened.
-       * Only transient shell overlays need to cover native compositor surfaces. */
-      const htmls = overlayRects();
+      /* A native surface is compositor-level and therefore above the shell's HTML regardless of
+       * our z-index. Feed every real HTML window into the tested stacking plan as well as menus:
+       * otherwise virt-viewer/Firefox/Telegram remain glued above Terminal, Notes and Settings even
+       * after those windows are focused. Native frames are excluded because sway already stacks
+       * their real surfaces against one another. */
+      const htmls = wins.filter(w => w.native == null).map(w => ({
+        z: _zOf(w), minimised: !!w.min, rect: _frameRect(w)
+      })).concat(overlayRects());
       const plan = NAT().stashPlan(items, htmls);
       const stash = new Set(plan.stash);
       for(const it of items){
