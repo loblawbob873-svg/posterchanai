@@ -524,6 +524,7 @@
    * different message. Consumed by the first openPop it reaches, so it cannot leak into whatever
    * the person presses next. */
   let _asSub = false;
+  let _popAnchor = null, _popOpts = null;
 
   /** The same markup with a way back out of it. */
   function withBack(html){
@@ -535,12 +536,34 @@
     return `<div class="os-pop-h">${back}</div>` + html;
   }
 
+  function positionPop(d, anchor, opts){
+    if(!d || !anchor) return;
+    const o = opts || {};
+    try{
+      const r = anchor.getBoundingClientRect();
+      const w = d.offsetWidth || 280, h = d.offsetHeight || 200;
+      const zf = (anchor.offsetWidth > 0 && r.width > 0) ? (r.width / anchor.offsetWidth) : 1;
+      const L = r.left / zf, T = r.top / zf, W = r.width / zf;
+      const vw = window.innerWidth / zf, vh = window.innerHeight / zf;
+      const want = o.align === 'end' ? (L + W) - w + 6 : L + W / 2 - w / 2;
+      const x = Math.max(8, Math.min(vw - w - 8, want));
+      const y = Math.max(8, Math.min(vh - h - 8, T - h - 10));
+      d.style.left = Math.round(x) + 'px';
+      d.style.top = Math.round(y) + 'px';
+      /* If the panel is taller than the space above the taskbar, scroll inside it. Never let a
+       * shutdown control disappear behind the bar merely because a profile row was added. */
+      d.style.maxHeight = Math.max(160, Math.floor(T - 16)) + 'px';
+      d.style.overflowY = 'auto';
+    }catch(_){}
+  }
+
   function openPop(anchor, html, opts){
     if(_asSub && _pop){
       _asSub = false;
       const sub = _pop;
       sub.innerHTML = withBack(html);
       bindPanel(sub);
+      requestAnimationFrame(() => positionPop(sub, _popAnchor, _popOpts));
       return sub;
     }
     _asSub = false;
@@ -550,11 +573,11 @@
     d.className = 'os-pop' + (o.cls ? ' ' + o.cls : '');
     d.innerHTML = html;
     document.body.appendChild(d);
+    _popAnchor = anchor; _popOpts = o;
     /* Anchored to the chip and kept ON SCREEN: the tray is at the right-hand end of the taskbar, so
      * a popover laid out from the chip's left edge hangs off the display. */
     try{
       const r = anchor.getBoundingClientRect();
-      const w = d.offsetWidth || 280, h = d.offsetHeight || 200;
       /* TWO DIFFERENT PIXELS, AND MIXING THEM PUT THIS PANEL IN THE MIDDLE OF THE SCREEN.
        *
        * The client scales the whole page with `body{zoom}` by viewport width (.67–.77 on a desktop
@@ -568,17 +591,8 @@
        * The factor is taken from the anchor itself rather than read out of a stylesheet or a
        * variable, because it is exactly the ratio between the two things being mixed, whatever set
        * it. Everything below is then in layout px, which is what `style.left` will be read as. */
-      const zf = (anchor.offsetWidth > 0 && r.width > 0) ? (r.width / anchor.offsetWidth) : 1;
-      const L = r.left / zf, T = r.top / zf, W = r.width / zf;
-      const vw = window.innerWidth / zf, vh = window.innerHeight / zf;
-      /* `end` pins the flyout's RIGHT edge near the screen's, which is where Windows puts Quick
-       * Settings and where a corner panel has to sit — centred on its button, a 340px panel opened
-       * from a tray 60px from the edge is a panel that starts halfway across the taskbar. */
-      const want = o.align === 'end' ? (L + W) - w + 6 : L + W / 2 - w / 2;
-      const x = Math.max(8, Math.min(vw - w - 8, want));
-      const y = Math.max(8, Math.min(vh - h - 8, T - h - 10));
-      d.style.left = Math.round(x) + 'px';
-      d.style.top = Math.round(y) + 'px';
+      void r; // positioning helper measures after the panel has its final content
+      positionPop(d, anchor, o);
     }catch(_){}
     /* Closed by a press ANYWHERE else, captured — a click inside a window would otherwise leave it
      * open behind whatever the person went on to do. */

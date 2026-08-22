@@ -102,3 +102,10 @@ class ThePowerAndVolumePanelsAgree(unittest.TestCase):
         body, _ = call("powerPop")
         self.assertIn("os-pop-danger", body)
         self.assertIn("os-pop-danger", CSS)
+
+    def test_taller_subpanel_is_remeasured_and_kept_above_taskbar(self):
+        self.assertIn("requestAnimationFrame(() => positionPop(sub, _popAnchor, _popOpts))", JS)
+        position = JS[JS.index("function positionPop"):JS.index("function openPop")]
+        self.assertIn("d.offsetHeight", position)
+        self.assertIn("T - h - 10", position)
+        self.assertIn("d.style.maxHeight", position)

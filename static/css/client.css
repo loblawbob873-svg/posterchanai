@@ -8355,6 +8355,14 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
   .os-pop-power{ width:calc(100vw - 16px); }
   .os-pop-power-acts .os-pop-row{ min-height:96px; }
 }
+
+/* Desktop tabs must remain readable after the shell's desktop zoom is applied. Phone sizing is
+   already touch-oriented and stays unchanged. */
+@media(min-width:900px){
+  .tl-tab,.ntab,.prof-tab,.cmp-tab,.rv-tab,.us-tab,.ftab,.st-tab,.np-tab,.bg-tab{
+    font-size:16px; min-height:42px;
+  }
+}
 .os-qs{ padding:16px; display:flex; flex-direction:column; gap:16px; }
 .os-qs-tiles{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
 .os-qs-tile{
