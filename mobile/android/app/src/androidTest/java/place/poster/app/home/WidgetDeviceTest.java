@@ -574,17 +574,27 @@ public class WidgetDeviceTest {
             items.add(new Desk.Item(Desk.widgetKey(made[0]), 0, 0, g[0], 2));
             prefs.setDesk(geom, Desk.serialize(items));
 
+            final int[] launcherCeiling = new int[]{ -1 };
             ActivityScenario<HomeActivity> s = ActivityScenario.launch(HomeActivity.class);
-            try { Thread.sleep(1500); } finally { s.close(); }
+            try {
+                Thread.sleep(1500);
+                // AppWidgetProviderInfo and View measurements use the app's logical pixel space;
+                // `deskShape()` observes the emulator's physical override and can differ under
+                // Android compatibility scaling. Ask the launcher in the coordinate system that
+                // actually lays the widget out.
+                s.onActivity(a -> launcherCeiling[0] = a.maxSpanX(
+                        new Desk.Item(Desk.widgetKey(made[0]), 0, 0, g[0], 2)));
+            } finally { s.close(); }
 
             String after = prefs.desk(geom);
             Log.i(TAG, "phone widgets: gigantic " + g[0] + "-wide widget redrew as -> "
-                    + after.replace('\n', ' ') + " (ceiling " + ceilingCells + " cells)");
+                    + after.replace('\n', ' ') + " (launcher ceiling " + launcherCeiling[0]
+                    + " cells; physical estimate " + ceilingCells + ")");
             Desk.Item back = Desk.byKey(Desk.parse(after), Desk.widgetKey(made[0]));
             assertNotNull("the widget was dropped rather than resized: " + after, back);
             assertTrue("a widget stored at the full width of the grid stayed there — its provider"
-                    + " says it wants at most " + ceilingCells + " cells. desktop=" + after,
-                    back.spanX <= ceilingCells);
+                    + " says it wants at most " + launcherCeiling[0] + " launcher cells. desktop="
+                    + after, launcherCeiling[0] > 0 && back.spanX <= launcherCeiling[0]);
         } finally {
             if (!geom.isEmpty()) prefs.setDesk(geom, before);
             asItWas();

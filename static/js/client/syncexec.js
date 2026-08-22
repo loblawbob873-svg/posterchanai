@@ -1289,7 +1289,11 @@
      * that reports success there is the same silence this feature keeps paying for. */
     report.ok = report.failed.length === 0 && !(report.unfetchable || []).length
               && !(report.uncompared || []).length;
-    if(report.ok && !report.stopped && !report.checkpointError && io.markBaselineComplete){
+    /* A held join deletion is unresolved. Certifying the baseline now gives the very next sweep
+     * authority to apply the same stale tombstone, turning a safe first pass into a delayed trash
+     * wave. Only a later pass with no held deletions may cross the boundary. */
+    if(report.ok && !report.stopped && !report.checkpointError
+       && !(report.joinDeletionsHeld || []).length && io.markBaselineComplete){
       await io.markBaselineComplete(key);
       report.baselineCompleted = joining;
     }

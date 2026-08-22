@@ -1128,6 +1128,9 @@ def test_a_fresh_native_sync_cannot_publish_missing_files_as_deletions():
     assert "final boolean joining = !store.baselineComplete(f.key);" in sweep
     assert "planned.tombstone.clear()" in sweep
     assert "store.markBaselineComplete(f.key)" in sweep
+    assert "rep.joinDeletionsHeld.isEmpty()" in sweep, (
+        "a native first sweep can hold stale deletes, certify itself, then apply them next time"
+    )
     assert sweep.index("planned.tombstone.clear()") < sweep.index("for (Map<String, Object> t : plan.tombstone)"), (
         "a joining phone can still reach the tombstone publisher"
     )

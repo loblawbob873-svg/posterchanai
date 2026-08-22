@@ -628,7 +628,14 @@ scenario('an interrupted first phone sync cannot publish cleared files as deleti
   t.eq(Object.keys(sky.folder()).filter(p => sky.folder()[p].deletedAt).length, 0,
        'the original folder gained tombstones from a partial phone');
   t.eq(identical(A.disk, B2.disk), null, 'the phone did not restore the held files from the original');
-  t.ok(B2.st.baseline, 'a successful resumed sweep did not complete its baseline');
+  t.ok(!B2.st.baseline, 'a sweep that held deletions incorrectly granted itself delete authority');
+  const B3 = device('phone', sky, { disk: B2.disk, index: B2.st.index, baseline: B2.st.baseline });
+  const settled = await B3.sweep();
+  t.eq((settled.joinDeletionsHeld || []).length, 0,
+       'restored files still looked like unresolved join deletions');
+  t.ok(B3.st.baseline, 'the clean follow-up sweep did not complete its baseline');
+  t.eq(Object.keys(sky.folder()).filter(p => sky.folder()[p].deletedAt).length, 0,
+       'the follow-up sweep published the previously held deletions');
 });
 
 scenario('corrupt bytes are refused, never written over a good file', async (t) => {

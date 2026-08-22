@@ -618,7 +618,13 @@ public final class NativeSweep {
         }
 
         j.flush();
-        if ((stop == null || !stop.stopping()) && rep.failed.isEmpty() && rep.error.isEmpty())
+        /* Holding a deletion is an unresolved first-sync conflict, not a completed baseline. If we
+         * certify it here, the next sweep is no longer `joining` and immediately applies the same
+         * stale tombstone we just refused — exactly the delayed fresh-sync trash wave this guard
+         * exists to prevent. A later clean sweep (normally after live records were restored) has
+         * nothing held and may establish the baseline. */
+        if ((stop == null || !stop.stopping()) && rep.failed.isEmpty() && rep.error.isEmpty()
+                && rep.joinDeletionsHeld.isEmpty())
             store.markBaselineComplete(f.key);
     }
 
