@@ -88,6 +88,13 @@ class TheStartScriptStillDisablesIt(unittest.TestCase):
         """`floating disable` is what makes it fill the workspace without being fullscreen."""
         self.assertIn("floating disable", START.read_text())
 
+    def test_recovery_launch_recovers_the_wayland_display(self):
+        """An SSH/recovery shell lacks Sway's environment; `auto` must not fall through to X11."""
+        src = START.read_text()
+        self.assertIn('XDG_RUNTIME_DIR=/run/user/$(id -u)', src)
+        self.assertIn("-name 'wayland-*'", src)
+        self.assertIn('WAYLAND_DISPLAY=${wayland_socket##*/}', src)
+
 
 if __name__ == "__main__":
     unittest.main()
