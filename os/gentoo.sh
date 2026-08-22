@@ -1243,6 +1243,23 @@ torService() {
 	systemctl enable tor 2>/dev/null || true
 }
 
+_pc_record_plymouth_theme() {
+	# plymouth-set-default-theme is inconsistent across releases: some versions update
+	# plymouthd.conf, while others only maintain the default-theme link.  Dracut honours the config
+	# file and finalization verifies it, so record the selected theme explicitly after the selector
+	# succeeds.  Preserve every unrelated daemon option already present.
+	local ROOT CONF
+	ROOT="${TARGET%/}"
+	CONF="${ROOT}/etc/plymouth/plymouthd.conf"
+	mkdir -p "$(dirname "$CONF")"
+	if [ -f "$CONF" ] && grep -q '^[[:space:]]*Theme[[:space:]]*=' "$CONF"; then
+		sed -i 's/^[[:space:]]*Theme[[:space:]]*=.*/Theme=posterchanos/' "$CONF"
+	else
+		[ -s "$CONF" ] || printf '[Daemon]\n' >"$CONF"
+		printf 'Theme=posterchanos\n' >>"$CONF"
+	fi
+}
+
 plymouthTheme() {
 	# The boot splash. Plymouth is already in BASE_PACKAGES; what it lacks is a theme that is ours,
 	# and the stock one is not merely off-brand here — this boot asks for a LUKS PASSPHRASE, and a
@@ -1270,10 +1287,11 @@ plymouthTheme() {
 	# is a theme that will not appear and gives no hint as to why.
 	if [ -n "$TARGET" ] && [ "$TARGET" != "/" ]; then
 		chroot $TARGET /usr/bin/plymouth-set-default-theme -R posterchanos || \
-			chroot $TARGET /usr/bin/plymouth-set-default-theme posterchanos
+			chroot $TARGET /usr/bin/plymouth-set-default-theme posterchanos || return 1
 	else
-		plymouth-set-default-theme -R posterchanos || plymouth-set-default-theme posterchanos
+		plymouth-set-default-theme -R posterchanos || plymouth-set-default-theme posterchanos || return 1
 	fi
+	_pc_record_plymouth_theme
 }
 
 posterchanShell() {
@@ -3402,6 +3420,7 @@ bootloader() {
 			echo -e "\033[1;31mCould not select the PosterChanOS boot splash.\033[0m"
 			return 1
 		fi
+		_pc_record_plymouth_theme
 		if ! dracut --force --add "$dracut_modules" "$INITRD" "$KERNEL_VERSION"; then
 			echo -e "\033[1;31mCould not build the encrypted-root initramfs at $INITRD.\033[0m"
 			return 1

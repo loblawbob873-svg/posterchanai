@@ -155,8 +155,11 @@ class BootloaderWritesAnEntryThatNamesARealKernel(unittest.TestCase):
         src = open(SH, encoding="utf-8").read()
         body = _fn(src, "bootloader")
         theme = body.index("plymouth-set-default-theme posterchanos")
+        recorded = body.index("_pc_record_plymouth_theme")
         dracut = body.index("dracut --force")
         self.assertLess(theme, dracut)
+        self.assertLess(recorded, dracut,
+                        "the selected splash must be recorded before building the initramfs")
         self.assertNotIn("plymouth-set-default-theme solar", body)
 
 
