@@ -326,6 +326,17 @@ public class DeskView extends ViewGroup {
                 menuFor = hit;
                 menuEmpty = (hit == null);
                 if (hit != null) {
+                    /* A RemoteViews child is allowed to CANCEL the parent gesture after this
+                     * callback. Deferring its menu until UP therefore makes Remove disappear on
+                     * real launchers even though inert app icons work. Widgets open their menu at
+                     * the recognized long-press; app icons still defer so they can be dragged
+                     * without a dialog covering the destination cells. */
+                    if (hit.isWidget()) {
+                        menuFor = null;
+                        performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+                        if (host != null) host.onLongPress(hit);
+                        return;
+                    }
                     lift(hit);
                 }
             }

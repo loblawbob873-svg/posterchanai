@@ -32448,7 +32448,15 @@
     if(n==='NotReadableError') return 'Your camera/mic is already in use by another app.';
     return 'Could not start the camera/mic'+(n?' ('+n+')':'')+'.';
   }
-  function _getMedia(video){
+  function _getMedia(video, remoteHost, remoteGuest){
+    /* Remote Desktop is screen-only. The HOST chooses a screen through the browser/Electron picker;
+     * the viewer sends no camera or microphone back. Keeping it on the call transport gives it the
+     * same encrypted Nostr signaling and TURN fallback without pretending a camera call is a
+     * desktop-sharing session. */
+    if(remoteHost) return navigator.mediaDevices.getDisplayMedia({
+      video:{width:{ideal:1920},height:{ideal:1080},frameRate:{ideal:24}}, audio:false
+    });
+    if(remoteGuest) return Promise.resolve(new MediaStream());
     return navigator.mediaDevices.getUserMedia({ audio:true, video: video ? {width:{ideal:640},height:{ideal:480},frameRate:{ideal:24}} : false });
   }
   function _hasLiveVideo(stream){ return !!(stream && stream.getVideoTracks().some(t=>t.readyState==='live')); }
@@ -32486,11 +32494,13 @@
     if(GUEST){ _guestPrompt(); return; }
     if(!peerHex || peerHex===ME.pubkey){ return; }
     if(_call){ toast('already in a call'); return; }
-    const video = !!(opts && opts.video);
-    _call = { id:_rid(), peer:peerHex, pc:null, local:null, remote:null, video, state:'calling', caller:true, pendingIce:[] };
+    const remoteDesktop = !!(opts && opts.remoteDesktop);
+    const video = remoteDesktop || !!(opts && opts.video);
+    _call = { id:_rid(), peer:peerHex, pc:null, local:null, remote:null, video, remoteDesktop,
+              state:'calling', caller:true, pendingIce:[] };
     _callUI();
     let local;
-    try{ local = await _getMedia(video); }catch(e){ toast(_mediaErrMsg(e)); _callTeardown(); return; }
+    try{ local = await _getMedia(video, remoteDesktop, false); }catch(e){ toast(remoteDesktop && e&&e.name==='NotAllowedError'?'screen sharing cancelled':_mediaErrMsg(e)); _callTeardown(); return; }
     if(!_call){ local.getTracks().forEach(t=>t.stop()); return; }   // hung up while prompting
     _call.local = local;
     const ice = await _fetchIceServers();
@@ -32507,8 +32517,15 @@
       if(!_call || _call.pc!==pc){ return; }
     }catch(_){ toast('couldn’t start the call'); _hangup(false); return; }
     _callUI();
-    await _callSend(peerHex, {v:1, callId:_call.id, t:'invite', video, sdp: pc.localDescription.sdp});
+    await _callSend(peerHex, {v:1, callId:_call.id, t:'invite', video, remoteDesktop,
+                              sdp: pc.localDescription.sdp});
     if(_call) _call.timeout = setTimeout(()=>{ if(_call && _call.state==='calling'){ toast('no answer'); _hangup(false); } }, 45000);
+  }
+  async function startRemoteDesktop(peer){
+    const pk=safePk(String(peer||'').trim());
+    if(!pk){ toast('enter a valid npub or 64-character public key'); return false; }
+    await startCall(pk,{remoteDesktop:true});
+    return !!_call;
   }
   async function _acceptCall(){
     if(!_call || _call.state!=='ringing') return;
@@ -32521,7 +32538,7 @@
     try{ _callSend(ME.pubkey, {v:1, callId:_call.id, t:'handled'}); }catch(_){}
     const invite = _call.invite;
     let local;
-    try{ local = await _getMedia(_call.video); }catch(_){ toast('microphone/camera permission needed'); _declineCall(); return; }
+    try{ local = await _getMedia(_call.video, false, !!_call.remoteDesktop); }catch(_){ toast('microphone/camera permission needed'); _declineCall(); return; }
     if(!_call){ local.getTracks().forEach(t=>t.stop()); return; }
     _call.local = local; _callUI();
     const ice = await _fetchIceServers();
@@ -32620,7 +32637,9 @@
           _call = null;   // yield → fall through and ring their invite
         }
         if(_call){ _callSend(from, {v:1, callId:msg.callId, t:'bye'}); return; }   // busy with someone else → auto-decline
-        _call = { id:msg.callId, peer:from, pc:null, local:null, remote:null, video:!!msg.video, state:'ringing', caller:false, invite:msg, pendingIce:[] };
+        _call = { id:msg.callId, peer:from, pc:null, local:null, remote:null, video:!!msg.video,
+                  remoteDesktop:!!msg.remoteDesktop, state:'ringing', caller:false, invite:msg,
+                  pendingIce:[] };
         // Stop ringing if the caller vanishes without a 'bye' (crash/offline) — ephemeral events can be lost.
         _call.timeout = setTimeout(()=>{ if(_call && _call.state==='ringing'){ _ringtone(false); _missedAdd(_call.peer, _call.id); _callTeardown(); } }, 60000);
         try{ needProfile(from); }catch(_){}
@@ -32833,7 +32852,9 @@
     const p=profOf(_call.peer)||{};
     const av=document.getElementById('call-av'); if(av) av.src=(p.picture||LOGO);
     const nm=document.getElementById('call-name'); if(nm) nm.textContent=(p.name||p.display_name||'anon');
-    const stx=document.getElementById('call-status'); if(stx) stx.textContent=_callStatus();
+    const stx=document.getElementById('call-status'); if(stx) stx.textContent=_call.remoteDesktop
+      ? (_call.state==='ringing' ? 'wants to share a desktop' : 'remote desktop · '+_callStatus())
+      : _callStatus();
     const hasLocalVid=_hasLiveVideo(_call.local), hasRemoteVid=_hasLiveVideo(_call.remote);
     const showVid=hasLocalVid||hasRemoteVid;
     // Preserve the minimized state: _callUI re-runs on every call event (ICE, mute, remote video), and a
@@ -32851,11 +32872,11 @@
     // Show the video button once media is up (i.e. not while merely ringing/calling with no PC yet).
     const canVid=!!(_call.local && _call.pc);
     const html = (_call.state==='ringing' && !_call.caller)
-      ? act('call-accept','📞','Answer','accept')+act('call-decline','✕','Decline','decline')
+      ? act('call-accept',_call.remoteDesktop?'🖥':'📞',_call.remoteDesktop?'View':'Answer','accept')+act('call-decline','✕','Decline','decline')
       : act('call-min','▁','Minimize')
-        +act('call-mute', _call.muted?'🔇':'🎙️', _call.muted?'Unmute':'Mute')
-        +(canVid?act('call-cam', sendingVid?'🚫':'📷', sendingVid?'Stop video':'Start video'):'')
-        +act('call-hang','📵','End','hang');
+        +(_call.remoteDesktop?'':act('call-mute', _call.muted?'🔇':'🎙️', _call.muted?'Unmute':'Mute'))
+        +(!_call.remoteDesktop&&canVid?act('call-cam', sendingVid?'🚫':'📷', sendingVid?'Stop video':'Start video'):'')
+        +act('call-hang','📵',_call.remoteDesktop&&_call.caller?'Stop sharing':'End','hang');
     if(acts && acts.dataset.k!==html){ acts.dataset.k=html; acts.innerHTML=html;
       const b=id=>document.getElementById(id);
       if(b('call-accept')) b('call-accept').onclick=_acceptCall;
@@ -33109,6 +33130,7 @@
      * holds and nothing else can fetch. */
     saveBlobAs,
     ensureProfile: _ensureProfile, NT, compose, switchView,   // compose → News "Share as note"; switchView → nav
+    startRemoteDesktop,
     /* The one pass that fills every `.name[data-prof]` (and avatars, nip05s, @mentions) once a kind-0
      * arrives. A sub-module that paints author names MUST be able to call it, or its names are frozen
      * at whatever was cached when it drew — webxdc.js's app gallery is not repainted by anything else,

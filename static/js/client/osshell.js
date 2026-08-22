@@ -647,6 +647,10 @@
            <span class="os-pop-nm">${H(n.ssid)}</span>
            <span class="os-pop-sig">${n.secure ? '🔒 ' : ''}${H(n.signal)}%</span></button>`).join('')
       : `<div class="os-pop-none">Nothing in range.</div>`);
+    /* "Looking…" is a tiny panel; the network list is not. Re-anchor after the async answer changes
+     * its dimensions or the browser keeps coordinates computed for the loading card, which is how
+     * the finished Wi-Fi panel jumps toward the top-left on a scaled desktop. */
+    requestAnimationFrame(() => { if(_pop===d) positionPop(d,_popAnchor,_popOpts); });
     body.querySelectorAll('[data-ssid]').forEach(b => b.onclick = async () => {
       const ssid = b.dataset.ssid;
       let pw = '';

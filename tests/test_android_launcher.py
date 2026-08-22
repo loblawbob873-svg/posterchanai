@@ -790,6 +790,15 @@ class LauncherSources(unittest.TestCase):
         q = man[man.index("<queries>"):man.index("</queries>")]
         self.assertIn("android.intent.category.HOME", q)
 
+    def test_a_widget_opens_its_menu_before_remoteviews_can_cancel(self):
+        """App icons may defer their menu until lift-off for dragging; RemoteViews may cancel that
+        gesture, so a widget's only Remove route must fire at the recognized long press."""
+        desk = _code(open(os.path.join(HOME, "DeskView.java")).read())
+        i = desk.index("if (hit.isWidget())")
+        body = desk[i:i + 400]
+        self.assertIn("host.onLongPress(hit)", body)
+        self.assertLess(body.index("host.onLongPress(hit)"), body.index("return;"))
+
 
 if __name__ == "__main__":
     unittest.main()

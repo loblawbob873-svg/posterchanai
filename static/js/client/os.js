@@ -870,6 +870,8 @@
       when: () => !!(window.pcSystem && pcSystem.snapshot) },
     { view: '__vms', label: 'Virtual Machines', icon: '#i-monitor', act: () => openVmManager(),
       when: () => !!(window.pcVM && pcVM.list) },
+    { view: '__remote', label: 'Remote Desktop', icon: '#i-monitor', act: () => openRemoteDesktop(),
+      when: () => !!(me() && PC().startRemoteDesktop) },
   ];
 
   /* AN IMAGE THAT FAILS TO LOAD LEAVES NO START BUTTON, and this one has now vanished twice.
@@ -1514,6 +1516,23 @@
     $('[data-vm-pick]',w.slot).onclick=async()=>{const p=await pcVM.pickIso();if(p)$('[data-vm-iso]',w.slot).value=p;};
     $('[data-vm-create]',w.slot).onclick=async function(){this.disabled=true;this.textContent='Creating…';const r=await pcVM.create({name:$('[data-vm-name]',w.slot).value,iso:$('[data-vm-iso]',w.slot).value,guest:$('[data-vm-guest]',w.slot).value,firmware:$('[data-vm-firmware]',w.slot).value,ramMiB:$('[data-vm-ram]',w.slot).value,cpus:$('[data-vm-cpu]',w.slot).value,diskGiB:$('[data-vm-disk]',w.slot).value});this.disabled=false;this.textContent='Create and start';if(!r.ok){say(r.error||'VM creation failed');return;}form.hidden=true;paint();};
     const timer=setInterval(paint,3000);w.onClose=()=>{dead=true;clearInterval(timer);};paint();return w;
+  }
+
+  function openRemoteDesktop(){
+    const old=wins.find(x=>x.view==='__remote');if(old){focusWin(old,false);return old;}
+    const w=openApp('__remote','Remote Desktop','#i-monitor',null,true,true);if(!w)return null;
+    w.el.classList.add('osw-remote');
+    w.slot.innerHTML=`<div class="pcrd"><div class="pcrd-hero"><svg class="ic"><use href="#i-monitor"></use></svg><div><b>Share this desktop</b><span>Encrypted peer-to-peer screen sharing, signaled over Nostr.</span></div></div>
+      <label class="pcrd-label">Viewer’s npub<input class="input" data-rd-peer placeholder="npub1…" autocomplete="off" spellcheck="false"></label>
+      <button class="btn btn-neon" data-rd-share><svg class="ic b-ic"><use href="#i-share"></use></svg>Choose screen and share</button>
+      <div class="pcrd-note"><b>The viewer must accept.</b> Media uses a direct WebRTC path when possible and your configured TURN service when it is not.</div>
+      <div class="pcrd-cap"><span>✓ PosterChanOS, browser, and phone viewers</span><span>✓ Encrypted Nostr signaling</span><span class="muted">Keyboard/mouse control and direct IP connections are not enabled in this build.</span></div></div>`;
+    const input=$('[data-rd-peer]',w.slot),button=$('[data-rd-share]',w.slot);
+    const go=async()=>{const peer=String(input.value||'').trim();if(!peer){input.focus();return;}
+      button.disabled=true;button.textContent='Opening screen picker…';
+      try{const ok=await PC().startRemoteDesktop(peer);if(ok){button.textContent='Sharing request sent';setTimeout(()=>{if(button.isConnected){button.disabled=false;button.textContent='Choose screen and share';}},3000);}else{button.disabled=false;button.textContent='Choose screen and share';}}
+      catch(e){button.disabled=false;button.textContent='Choose screen and share';try{PC().toast(String((e&&e.message)||e));}catch(_){}}};
+    button.onclick=go;input.onkeydown=e=>{if(e.key==='Enter')go();};return w;
   }
 
   /* Route a view switch to that feature's OWN window. Returns true when it has taken over (a window
@@ -5450,7 +5469,7 @@
     settings().set(KEY, true);
   }
 
-  function exit(){
+  function exit(remember){
     if(!on) return;
     on = false;
     // The shell's watcher holds a compositor subscription and a 30s timer. Left running it redraws
@@ -5500,7 +5519,7 @@
     startOpen = false;
     document.body.classList.remove('os-on');
     document.documentElement.classList.remove('os-on');
-    settings().set(KEY, false);
+    if(remember !== false) settings().set(KEY, false);
     /* Land the classic UI on a view it actually HAS. Windows can leave VIEW on something only the
      * desktop knows — 'music' is the Music window's own screen, reachable from the launcher and from
      * nowhere in the sidebar — and switching back to it drops the classic client on a dead view
@@ -5783,7 +5802,12 @@
    * programs are not installed while somebody is holding the menu open. */
   let _machineApps = null;
 
-  window.PCOS = { enter, exit, suspend, toggle, restore, refresh, isOn: () => on, openDoc, focusDoc, closeDoc, routeView, snapTo, osToast,
+  window.PCOS = { enter, exit, suspend, toggle, restore, refresh, isOn: () => on,
+                  /* Android launcher tiles are MOBILE destinations even on a landscape tablet.
+                   * Leave the windowed desktop for this session without changing the user's saved
+                   * desktop preference; an ordinary later launch may restore it. */
+                  mobileLanding: () => { if(on) exit(false); },
+                  openDoc, focusDoc, closeDoc, routeView, snapTo, osToast,
                   // app.js calls this when the player's state changes — the Now-playing widget has
                   // nothing to subscribe to, and polling an element we could be told about is the
                   // mistake the games were just fixed for.

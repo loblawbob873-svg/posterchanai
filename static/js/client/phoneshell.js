@@ -45,6 +45,7 @@
     let v = '';
     try{ v = ((await P.consumeLaunchView()) || {}).view || ''; }catch(_){ return ''; }
     if(!v) return '';
+    try{ if(window.PCOS && PCOS.mobileLanding) PCOS.mobileLanding(); }catch(_){}
     /* THE PLAYER IS NOT A VIEW. app.js's own More menu spells it `__music` and opens it with
      * `openMusic()`; `switchView('__music')` would fall through to the default screen, which is
      * exactly what "clicking play on music widget opens up default posterchan app page instead of
@@ -359,6 +360,7 @@
     const launched = (e) => {
       const v = e && typeof e.view === 'string' ? e.view.trim() : '';
       if(v && document.querySelector('#feed')){
+        try{ if(window.PCOS && PCOS.mobileLanding) PCOS.mobileLanding(); }catch(_){}
         if(v === '__music'){ try{ if(typeof PC.openMusic === 'function') PC.openMusic(); }catch(_){} }
         else try{ PC.switchView(v); }catch(_){}
       }
