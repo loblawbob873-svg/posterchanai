@@ -578,25 +578,6 @@ buildGentoo() {
 	finalizeInstall
 }
 
-_pc_write_os_release() {
-	local ROOT="${1:-}"
-	[ -n "$ROOT" ] || return 1
-	rm -f "$ROOT/etc/os-release" "$ROOT/usr/lib/os-release"
-	mkdir -p "$ROOT/etc" "$ROOT/usr/lib"
-	cat >"$ROOT/usr/lib/os-release" <<-'OSREL'
-		NAME="PosterChanOS"
-		PRETTY_NAME="PosterChanOS"
-		ID=posterchanos
-		ID_LIKE=gentoo
-		ANSI_COLOR="1;36"
-		HOME_URL="https://poster.place/"
-		SUPPORT_URL="https://poster.place/"
-		BUG_REPORT_URL="https://gitworkshop.dev/npub1fdtthaqujtjcd6yfy7kt0zpkadyl9vvypq00s5nztnmche74d0tqv6uwwr/relay.poster.place/posterchanai/issues"
-	OSREL
-	ln -s ../usr/lib/os-release "$ROOT/etc/os-release"
-	[ -s "$ROOT/etc/os-release" ] && grep -q '^ID=posterchanos$' "$ROOT/etc/os-release"
-}
-
 finalizeInstall() {
 	# A bootloader/initramfs failure is an INSTALL failure. setup.sh used to continue into accounts
 	# and services after bootloader() returned non-zero, so the menu reported completion and the
@@ -612,28 +593,6 @@ finalizeInstall() {
 	# is that the shell IS the desktop, there is nothing for a login screen to launch. The shell
 	# session (autologin into sway, which starts PosterChan) goes in instead.
 	touch $TARGET/etc/posterchanos
-	# THE MACHINE CALLS ITSELF WHAT IT IS. Without this the installed system answers "Gentoo"
-	# to everything that asks — the login banner, hostnamectl, neofetch, the bootloader entry,
-	# every crash report — on an operating system whose whole point is that it is PosterChanOS.
-	# The branding was already right in every string a person reads INSIDE the shell, which is
-	# exactly why the gap was easy to miss: it is only visible from outside it.
-	#
-	# `ID` is lowercase because the spec says so (os-release IDs are lowercase, no spaces), and
-	# `ID_LIKE=gentoo` is load-bearing: it is how portage tooling, bug reporters and anything
-	# reading os-release keep treating this as the Gentoo it actually is. `NAME`/`PRETTY_NAME`
-	# are the display strings, and those get the real capitalisation.
-	# MAKE ONE REAL FILE BEFORE WRITING IT. Gentoo normally has /etc/os-release ->
-	# ../usr/lib/os-release. Writing through that link is fine until a LiveCD image happens to carry
-	# the inverse compatibility link too; then the two names form a loop and systemd refuses the
-	# otherwise complete root with “does not seem to be an OS tree”. Remove both ends first, write
-	# the canonical /usr file, and only then recreate the standard /etc link.
-	_pc_write_os_release "$TARGET"
-	# Test by FOLLOWING the exact path switch_root tests. A dangling or circular symlink is not an
-	# OS identity and must stop the install before root is locked and the live environment is gone.
-	if [ ! -s "$TARGET/etc/os-release" ] || ! grep -q '^ID=posterchanos$' "$TARGET/etc/os-release"; then
-		echo -e "\033[1;31mInstalled root has no readable os-release — refusing to lock root or report success.\033[0m"
-		return 1
-	fi
 	# Resolve again inside finalization: this function also runs in the target chroot as a fresh shell,
 	# so the build-stage INSTALLER_SRC variable does not cross that process boundary.
 	INSTALLER_SRC="$PCOS_TREE/gentoo.sh"
@@ -986,16 +945,9 @@ liveISOinstall() {
 		--exclude=/boot/*** $RSYNC_EXCLUDES "$ROOTSRC/" $TARGET/
 	local RC=$?
 
-	# Older live images can carry the exact circular compatibility pair repaired in
-	# finalizeInstall(): /etc/os-release -> /usr/lib/os-release -> /etc/os-release. Normalize it
-	# before the OS-tree assertion so this installer can repair the disc it is currently running
-	# from instead of requiring a newer disc to install the newer disc.
-	_pc_write_os_release "$TARGET" || RC=1
-
-	# A directory is not an OS tree. Assert the same files systemd's switch-root requires, or stop
+	# A directory is not an OS tree. Assert systemd itself was copied, or stop
 	# while the live environment still exists and can explain the copy failure.
-	if [ "$RC" -ne 0 ] || [ ! -s "$TARGET/etc/os-release" -a ! -s "$TARGET/usr/lib/os-release" ] \
-		|| [ ! -x "$TARGET/usr/lib/systemd/systemd" ]; then
+	if [ "$RC" -ne 0 ] || [ ! -x "$TARGET/usr/lib/systemd/systemd" ]; then
 		echo
 		echo -e "${COLOR_YELLOW}The copy did not complete — nothing was installed.${COLOR_RESET}"
 		if ! mountpoint -q "$TARGET" 2>/dev/null; then
@@ -1767,24 +1719,8 @@ PROFILE
 installSteam() {
 	# Native Steam, explicitly. Its 32-bit graphics stack is substantial on Gentoo, but it belongs to
 	# the machine rather than a Flatpak runtime and that is the PosterChanOS policy.
-	#
-	# systemd's EFI build derives SBAT metadata from /etc/os-release. Older PosterChanOS releases did
-	# not provide BUG_REPORT_URL, and systemd 261 aborts configuration with "sbat-distro-url option
-	# not set". A Portage user patch is deterministic even on those already-installed systems and is
-	# applied before Meson runs; it does not disable systemd-boot or Secure Boot support.
-	local PD=/etc/portage/patches/sys-apps/systemd
-	mkdir -p "$PD"
-	cat >"$PD/010-posterchanos-sbat-url.patch" <<-'PATCH'
-		--- a/meson_options.txt
-		+++ b/meson_options.txt
-		@@ -434,7 +434,7 @@ option('sbat-distro-pkgname', type : 'string',
-		        description : 'SBAT distribution package name, e.g. systemd')
-		 option('sbat-distro-version', type : 'string',
-		        description : 'SBAT distribution package version, e.g. 248-7.fc34')
-		-option('sbat-distro-url', type : 'string',
-		+option('sbat-distro-url', type : 'string', value : 'https://poster.place/',
-		        description : 'SBAT distribution URL, e.g. https://src.fedoraproject.org/rpms/systemd')
-	PATCH
+	# Do not patch systemd or replace Gentoo's os-release metadata to install a game launcher.
+	rm -f /etc/portage/patches/sys-apps/systemd/010-posterchanos-sbat-url.patch
 	mkdir -p /etc/portage/package.license
 	echo 'games-util/steam-launcher steam' >/etc/portage/package.license/posterchan-steam
 	emerge --autounmask-write games-util/steam-launcher gui-wm/gamescope || true

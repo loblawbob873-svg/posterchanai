@@ -67,6 +67,7 @@
     let term = null, fit = null, ws = null, link = null, host = null, ro = null;
     let hosts = [], connected = false, ctrl = false, mounted = null;
     let sid = '', cursor = 0, retry = 0, retryT = null, want = false, live = [];
+    let findHits = [], findAt = -1;
     /* A mount can cross awaits (host list, session list). Raising the same Terminal window twice
      * starts a second render before the first resumes; without a generation token BOTH continuations
      * mount xterm and attach input, so every physical key is written twice. */
@@ -246,7 +247,16 @@
           <button class="btn btn-ghost small hidden tty-kill" id="tty-kill" title="End this session">Kill</button>
           <button class="btn btn-ghost small hidden" id="tty-hist"
                   title="Commands from your terminals">History</button>
+          <button class="btn btn-ghost small" id="tty-find" title="Find in terminal (Ctrl+Shift+F)">Find</button>
           <span class="tty-state" id="tty-state"></span>
+        </div>
+        <div class="tty-find" id="tty-find-panel" hidden>
+          <input class="input" id="tty-find-input" type="search" autocomplete="off"
+                 spellcheck="false" placeholder="Find in terminal" aria-label="Find in terminal">
+          <button class="btn btn-ghost small" id="tty-find-prev" title="Previous match">↑</button>
+          <button class="btn btn-ghost small" id="tty-find-next" title="Next match">↓</button>
+          <span id="tty-find-count" aria-live="polite">0 matches</span>
+          <button class="btn btn-ghost small" id="tty-find-close" title="Close find" aria-label="Close find">×</button>
         </div>
         <div class="tty-hist" id="tty-hist-panel" hidden></div>
         <div class="tty-sessions tty-tabs" id="tty-sessions" aria-label="Terminal tabs"></div>
@@ -334,6 +344,18 @@
       }catch(_){ fit = null; }
       term.open(box);
       _fit();
+
+      /* FIND LIVES IN THE RENDERER, not in the shell. Sending Ctrl+F into readline searches command
+       * history; Ctrl+Shift+F searches everything xterm still holds, including program output and
+       * the 5,000-line scrollback. The buffer API is public xterm API, so this works in the web,
+       * Android and desktop bundles without another CDN or a version-sensitive private property. */
+      try{ term.attachCustomKeyEventHandler((ev) => {
+        if(ev.type === 'keydown' && (ev.ctrlKey || ev.metaKey) && ev.shiftKey
+            && String(ev.key).toLowerCase() === 'f'){
+          ev.preventDefault(); _findOpen(); return false;
+        }
+        return true;
+      }); }catch(_){}
 
       /* HIGHLIGHT COPIES, RIGHT-CLICK PASTES -- the two things every terminal has done for thirty
        * years and this one did not. Without them a command is copied out of a browser and retyped
@@ -761,6 +783,56 @@
       else if(term) term.focus();
     }
 
+    function _findScan(step){
+      const input = $('#tty-find-input'), count = $('#tty-find-count');
+      const q = String(input && input.value || '');
+      findHits = []; findAt = -1;
+      if(term && q){
+        try{
+          const b = term.buffer.active, needle = q.toLocaleLowerCase();
+          for(let row = 0; row < b.length; row++){
+            const line = b.getLine(row); if(!line) continue;
+            const text = line.translateToString(true), hay = text.toLocaleLowerCase();
+            let col = 0;
+            while((col = hay.indexOf(needle, col)) >= 0){
+              findHits.push({ row, col, len:q.length }); col += Math.max(1, needle.length);
+            }
+          }
+        }catch(_){ findHits = []; }
+      }
+      if(findHits.length){ findAt = step < 0 ? findHits.length - 1 : 0; _findShow(); }
+      else {
+        try{ term && term.clearSelection(); }catch(_){}
+        if(count) count.textContent = q ? 'No matches' : '0 matches';
+      }
+    }
+
+    function _findShow(){
+      if(!term || !findHits.length) return;
+      findAt = (findAt + findHits.length) % findHits.length;
+      const h = findHits[findAt], count = $('#tty-find-count');
+      try{ term.select(h.col, h.row, h.len); term.scrollToLine(h.row); }catch(_){}
+      if(count) count.textContent = (findAt + 1) + ' of ' + findHits.length;
+    }
+
+    function _findMove(step){
+      if(!findHits.length) return _findScan(step);
+      findAt += step; _findShow();
+    }
+
+    function _findOpen(){
+      const panel = $('#tty-find-panel'), input = $('#tty-find-input');
+      if(!panel || !input) return;
+      panel.hidden = false;
+      requestAnimationFrame(() => { input.focus(); input.select(); });
+    }
+
+    function _findClose(){
+      const panel = $('#tty-find-panel'); if(panel) panel.hidden = true;
+      try{ term && term.clearSelection(); }catch(_){}
+      findHits = []; findAt = -1; _focus();
+    }
+
     /* The key bar. `ctrl` is STICKY — press it, then press a letter — because a phone cannot hold two
      * keys at once, and a Ctrl that needs holding is a Ctrl that does not exist. */
     const SEQ = { Escape: '\x1b', Tab: '\t', ArrowUp: '\x1b[A', ArrowDown: '\x1b[B',
@@ -781,6 +853,17 @@
       { const b = $('#tty-go'); if(b) b.onclick = () => connect(); }
       { const b = $('#tty-stop'); if(b) b.onclick = () => detach(); }
       { const b = $('#tty-kill'); if(b) b.onclick = () => kill(); }
+      { const b = $('#tty-find'); if(b) b.onclick = _findOpen; }
+      { const b = $('#tty-find-prev'); if(b) b.onclick = () => _findMove(-1); }
+      { const b = $('#tty-find-next'); if(b) b.onclick = () => _findMove(1); }
+      { const b = $('#tty-find-close'); if(b) b.onclick = _findClose; }
+      { const input = $('#tty-find-input'); if(input){
+          input.oninput = () => _findScan(1);
+          input.onkeydown = (ev) => {
+            if(ev.key === 'Escape'){ ev.preventDefault(); _findClose(); }
+            else if(ev.key === 'Enter'){ ev.preventDefault(); _findMove(ev.shiftKey ? -1 : 1); }
+          };
+        } }
       { const box = $('#tty-sessions'); if(box) box.onclick = (ev) => {
           const k = ev.target.closest('[data-kill]'); if(k){ ev.stopPropagation(); return kill(k.dataset.kill); }
           const add = ev.target.closest('#tty-tab-new'); if(add) return connect();

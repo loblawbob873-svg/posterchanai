@@ -6646,6 +6646,12 @@ body.os-on #os-root{pointer-events:auto}
 .tty-state{flex:1 1 100%;font-size:11.5px;color:var(--muted);order:9}
 .tty-state.ok{color:#5dffb0}
 .tty-state.err{color:#ff6b8b}
+.tty-find{flex:0 0 auto;display:flex;align-items:center;gap:7px;padding:6px 10px;
+  border-bottom:1px solid var(--line);background:var(--panel2)}
+.tty-find[hidden]{display:none}
+.tty-find .input{flex:1;min-width:80px;padding:6px 8px;font-family:ui-monospace,monospace}
+.tty-find>span{min-width:64px;color:var(--muted);font-size:11px;text-align:center;white-space:nowrap}
+.tty-find .btn{min-width:32px;padding-inline:8px}
 /* "Still running" — sessions this ACCOUNT has open that this device is not attached to, which is
    what makes a shell started on the laptop resumable on the phone. Scrolls sideways rather than
    wrapping: on a phone this sits above the screen and must never eat rows from it. */

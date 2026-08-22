@@ -600,8 +600,9 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertIn("gui-wm/gamescope", steam, "native Steam should include Gamescope")
         self.assertIn("games-util/steam-launcher", steam, "Steam must be installed by Portage")
         self.assertNotIn("com.valvesoftware.Steam", steam, "the Flatpak Steam path came back")
-        self.assertIn("010-posterchanos-sbat-url.patch", steam)
-        self.assertIn("sbat-distro-url', type : 'string', value : 'https://poster.place/'", steam)
+        self.assertNotIn("sbat-distro-url", steam, "Steam installation must not patch systemd")
+        self.assertIn("rm -f /etc/portage/patches/sys-apps/systemd/010-posterchanos-sbat-url.patch", steam,
+                      "upgrades must remove the previously shipped systemd patch")
 
     def test_every_package_name_has_a_category(self):
         """`games-util/gamescope` does not exist — it is `gui-wm/gamescope` — and emerge refuses the
@@ -658,58 +659,19 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class TheMachineCallsItselfPosterChanOS(unittest.TestCase):
-    """An operating system that answers "Gentoo" to everything that asks is not branded, however
-    good the shell looks.
-
-    The branding was already correct in every string a person reads INSIDE the shell — the plymouth
-    theme, the installer's own output, the prose — which is exactly why this gap was easy to miss:
-    it is only visible from outside it. The login banner, `hostnamectl`, neofetch, the bootloader
-    entry and every crash report read `/etc/os-release`, and nothing wrote one.
-    """
+class GentooOwnsOsRelease(unittest.TestCase):
+    """PosterChanOS is a Gentoo system; the installer must not replace package-owned metadata."""
 
     @classmethod
     def setUpClass(cls):
         with open(os.path.join(ROOT, "os", "gentoo.sh"), encoding="utf-8") as fh:
             cls.src = fh.read()
 
-    def test_it_writes_an_os_release(self):
-        self.assertIn("/etc/os-release", self.src,
-                      "nothing writes an os-release, so the machine answers 'Gentoo'")
-
-    def test_the_display_names_are_capitalised_the_way_the_product_is(self):
-        for field in ('NAME="PosterChanOS"', 'PRETTY_NAME="PosterChanOS"'):
-            with self.subTest(field=field):
-                self.assertIn(field, self.src)
-
-    def test_the_id_is_lowercase_because_the_spec_says_so(self):
-        """os-release IDs are lowercase with no spaces. A display string in `ID` breaks the tools
-        that key on it, which is the opposite of what branding it was for."""
-        self.assertIn("ID=posterchanos", self.src)
-        self.assertNotIn("ID=PosterChanOS", self.src)
-
-    def test_it_still_says_it_is_a_gentoo(self):
-        """`ID_LIKE` is how portage tooling, bug reporters and anything else reading os-release keep
-        treating this as the Gentoo it actually is. Dropping it renames the system to something no
-        tool has heard of."""
-        self.assertIn("ID_LIKE=gentoo", self.src)
-
-    def test_os_release_has_one_real_file_and_one_standard_link(self):
-        """Two compatibility symlinks pointing at each other make a complete root fail
-        systemd's switch-root OS-tree test."""
-        start = self.src.index("_pc_write_os_release() {")
-        body = self.src[start:self.src.index("\n}", start)]
-        self.assertIn('rm -f "$ROOT/etc/os-release" "$ROOT/usr/lib/os-release"', body)
-        self.assertIn('cat >"$ROOT/usr/lib/os-release"', body)
-        self.assertIn('ln -s ../usr/lib/os-release "$ROOT/etc/os-release"', body)
-        self.assertNotIn('ln -sf ../etc/os-release $TARGET/usr/lib/os-release', body)
-
-    def test_unreadable_os_identity_stops_before_root_is_locked(self):
-        start = self.src.index("finalizeInstall() {")
-        body = self.src[start:self.src.index("\n}", start)]
-        check = body.index("Installed root has no readable os-release")
-        lock = body.index("passwd -l root")
-        self.assertLess(check, lock)
+    def test_installer_does_not_write_os_release(self):
+        self.assertNotIn("_pc_write_os_release", self.src)
+        self.assertNotIn('ID=posterchanos', self.src)
+        self.assertNotIn('PRETTY_NAME="PosterChanOS"', self.src)
+        self.assertNotIn('cat >"$ROOT/usr/lib/os-release"', self.src)
 
     def test_the_machine_identifiers_are_left_alone(self):
         """These are NOT branding and must never be recapitalised: the chroot marker, the plymouth
