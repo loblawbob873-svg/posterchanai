@@ -63,6 +63,8 @@ fi
 # repeated black-screen ISO. The placement loop below handles either app_id or late WM_CLASS, so it
 # does not need to dictate the rendering backend.
 /usr/local/bin/posterchan --shell &
+shell_pid=$!
+retries=0
 
 # Up to 60s: an Electron cold start on a slow disk is not a failure. Polling rather than
 # subscribing, because this must work before anything else in the session is up.
@@ -83,7 +85,21 @@ while [ $i -lt 120 ]; do
     done
     exit 0
   fi
+  # Electron can exit before mapping when its SingletonSocket/Lock outlives the process that was
+  # just killed. A one-shot launcher then leaves a permanent black screen. Clean only a dead lock
+  # (the guarded logic above) and retry; a healthy cold start is left its full 60 seconds.
+  if ! kill -0 "$shell_pid" 2>/dev/null && [ "$retries" -lt 3 ]; then
+    if [ -L "$LOCK" ]; then
+      target=$(readlink "$LOCK" 2>/dev/null || echo '')
+      pid=${target##*-}
+      case "$pid" in ''|*[!0-9]*) rm -f "$LOCK" ;; *) kill -0 "$pid" 2>/dev/null || rm -f "$LOCK" ;; esac
+    fi
+    retries=$((retries + 1))
+    sleep 1
+    /usr/local/bin/posterchan --shell &
+    shell_pid=$!
+  fi
   i=$((i + 1))
   sleep 0.5
 done
-exit 0
+exit 1

@@ -85,8 +85,11 @@ pkg_postinst() {
 		# created by an older image so an update changes the key people actually use.
 		sed -i -E 's#bindsym \$mod\+Return exec swaymsg -t send_tick pc:terminal#bindsym Mod1+Return exec swaymsg -t send_tick pc:terminal#' "${cfg}"
 		sed -i 's#bindsym --release --no-repeat \$mod exec swaymsg -t send_tick pc:start#bindsym --release --no-repeat Super_L exec swaymsg -t send_tick pc:start#' "${cfg}"
-		sed -i -E '/bindsym (Print|Ctrl\+Shift\+s|Shift\+Print).*pc:(shot|screenshot)/d' "${cfg}"
-		sed -i -E '/bindsym (Print|Ctrl\+Shift\+s|Shift\+Print).*pc-screenshot/d' "${cfg}"
+		# Options such as --no-repeat sit between `bindsym` and the key. The old expression did not
+		# allow that, so every package update appended another identical PrintScreen binding and Sway
+		# reported the private config as erroneous. Delete every historical form before adding one.
+		sed -i -E '/bindsym .*?(Print|Ctrl\+Shift\+s|Shift\+Print).*pc:(shot|screenshot)/d' "${cfg}"
+		sed -i -E '/bindsym .*?(Print|Ctrl\+Shift\+s|Shift\+Print).*pc-screenshot/d' "${cfg}"
 		if ! grep -q 'Super_L exec swaymsg -t send_tick pc:start' "${cfg}"; then
 			echo 'bindsym --release --no-repeat Super_L exec swaymsg -t send_tick pc:start' >>"${cfg}"
 		fi
@@ -100,6 +103,13 @@ pkg_postinst() {
 		# Restart only the PosterChan desktop shell; native applications remain open.
 		bindcode --no-repeat Ctrl+Mod1+22 exec /usr/local/bin/pc-shell-restart
 		SWAY_RECOVERY
+		# The system config includes this per-account file. It must exist before Sway parses the
+		# config; saving a display arrangement later fills it atomically.
+		local outputs="${cfg%/config}/outputs.conf"
+		if [[ ! -e ${outputs} ]]; then
+			install -m 0600 -o "$(stat -c %u "${cfg}")" -g "$(stat -c %g "${cfg}")" \
+				/dev/null "${outputs}"
+		fi
 	done
 	# Older renderer-driven bindings could auto-repeat and leave several slurp selection overlays
 	# dimming native applications. The new helper is locked and non-repeating; clear only those stale

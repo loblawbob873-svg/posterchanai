@@ -1293,7 +1293,9 @@ posterchanShell() {
 	id -u "$SHELL_USER" >/dev/null 2>&1 || SHELL_USER="${USER:-posterchan}"
 	_configure_shell_session() {
 		local GETTY_DIR="${TARGET}/etc/systemd/system/getty@tty1.service.d"
-		mkdir -p "$GETTY_DIR" "${TARGET}/home/$SHELL_USER"
+		mkdir -p "$GETTY_DIR" "${TARGET}/home/$SHELL_USER/.config/sway"
+		[ -e "${TARGET}/home/$SHELL_USER/.config/sway/outputs.conf" ] || \
+			: >"${TARGET}/home/$SHELL_USER/.config/sway/outputs.conf"
 		# The desktop asks NetworkManager on its first frame. multi-user services and getty otherwise
 		# start in parallel, so a fast SSD can launch the welcome screen before nmcli has a D-Bus
 		# service and falsely report that the computer has no network hardware.
@@ -1306,7 +1308,8 @@ if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
 	exec sway
 fi
 PROFILE
-		chown "$SHELL_USER:$SHELL_USER" "${TARGET}/home/$SHELL_USER/.bash_profile" 2>/dev/null || true
+		chown -R "$SHELL_USER:$SHELL_USER" "${TARGET}/home/$SHELL_USER/.bash_profile" \
+			"${TARGET}/home/$SHELL_USER/.config" 2>/dev/null || true
 	}
 
 	# NOTHING HERE MAY PULL WEBKIT — masked so a future dependency FAILS rather than costing hours.
@@ -2759,6 +2762,9 @@ FSTAB
 		echo "home d 755 0 0"
 		echo "home/$SESS_USER d 755 $SESS_UID $SESS_GID"
 		echo "home/$SESS_USER/.bash_profile f 644 $SESS_UID $SESS_GID cat $WORK/live.bash_profile"
+		echo "home/$SESS_USER/.config d 700 $SESS_UID $SESS_GID"
+		echo "home/$SESS_USER/.config/sway d 700 $SESS_UID $SESS_GID"
+		pseudoput "home/$SESS_USER/.config/sway/outputs.conf" f 600 "$SESS_UID" "$SESS_GID" echo -n
 
 		# ---------------------------------------------------------------- the installer
 		#

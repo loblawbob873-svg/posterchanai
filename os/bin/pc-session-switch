@@ -65,6 +65,7 @@ elif [ -s /etc/sway/config ]; then
 else
   die 'no PosterChanOS sway configuration installed'
 fi
+[ -e "$HOME_DIR/.config/sway/outputs.conf" ] || : >"$HOME_DIR/.config/sway/outputs.conf"
 
 # Optional one-shot browser session for a newly-added identity. It is opaque data, never evaluated
 # by this root helper, bounded to keep stdin from becoming a disk-fill interface, and readable only
@@ -76,7 +77,7 @@ dd bs=65536 count=1 of="$BOOT" 2>/dev/null || die 'could not receive session han
 [ "$(stat -c %s "$BOOT")" -le 65536 ] || { rm -f "$BOOT"; die 'session handoff too large'; }
 chown -R "$USER_NAME:$USER_NAME" "$HOME_DIR/.bash_profile" "$HOME_DIR/.config" "$BOOT"
 chmod 0700 "$HOME_DIR" "$HOME_DIR/.config" "$HOME_DIR/.config/sway"
-chmod 0600 "$HOME_DIR/.bash_profile" "$HOME_DIR/.config/sway/config" "$BOOT"
+chmod 0600 "$HOME_DIR/.bash_profile" "$HOME_DIR/.config/sway/config" "$HOME_DIR/.config/sway/outputs.conf" "$BOOT"
 
 write_getty "$USER_NAME"
 printf '%s\n' "$NPUB" >"$STATE_ROOT/current-npub"
