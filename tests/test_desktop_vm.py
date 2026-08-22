@@ -70,9 +70,20 @@ class VmBackend(unittest.TestCase):
 
     def test_powered_off_vm_hardware_is_editable_in_the_ui(self):
         ui = (ROOT / "static/js/client/os.js").read_text()
-        for api in ("details", "update", "addDisk", "changeIso", "addNetwork"):
+        for api in ("details", "update", "addDisk", "changeIso", "ejectIso", "addNetwork"):
             self.assertIn("pcVM." + api, ui)
         self.assertIn("data-vm-edit-open", ui)
+
+    def test_installation_iso_can_be_ejected_for_a_real_disk_boot(self):
+        backend = (ROOT / "desktop" / "vm.js").read_text()
+        preload = (ROOT / "desktop" / "preload.js").read_text()
+        main = (ROOT / "desktop" / "main.js").read_text()
+        ui = (ROOT / "static" / "js" / "client" / "os.js").read_text()
+        self.assertIn("['change-media',d.name,cd.target,'--eject','--config']", backend)
+        self.assertIn("pc:vm:eject-iso", preload)
+        self.assertIn("pc:vm:eject-iso", main)
+        self.assertIn('data-vme-eject>Eject ISO', ui)
+        self.assertNotIn('p.canceled||!p.path', ui, "the ISO picker returns a path string")
 
     def test_viewer_cannot_pin_itself_over_the_desktop(self):
         sway = (ROOT / "os" / "overlay" / "app-misc" / "posterchanos-shell" / "files" / "sway.config").read_text()

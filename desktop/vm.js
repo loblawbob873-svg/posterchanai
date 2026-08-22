@@ -85,6 +85,19 @@ async function changeIso(name, iso){
   const cd=d.disks.find(x=>x.device==='cdrom'); if(!cd)return {ok:false,error:'This VM has no CD/DVD device'};
   return virsh(['change-media',d.name,cd.target,iso,'--insert','--config'],30000);
 }
+async function ejectIso(name){
+  const d=await details(name);if(!d.ok)return d;
+  if(!/shut off|shutoff|inactive/.test(d.state))
+    return {ok:false,error:'Shut down the VM before ejecting its installation disc'};
+  const cd=d.disks.find(x=>x.device==='cdrom');
+  if(!cd)return {ok:false,error:'This VM has no CD/DVD device'};
+  /* --config changes the next boot, which is exactly what an installer test needs.  Verify by
+   * reading the domain again: virsh success without a changed source is not an ejected disc. */
+  const r=await virsh(['change-media',d.name,cd.target,'--eject','--config'],30000);if(!r.ok)return r;
+  const after=await details(d.name);if(!after.ok)return after;
+  const left=after.disks.find(x=>x.device==='cdrom' && x.source && x.source!=='-');
+  return left?{ok:false,error:'The installation disc is still attached'}:{ok:true};
+}
 async function addNetwork(name){ const d=await details(name);if(!d.ok)return d;
   if(!/shut off|shutoff|inactive/.test(d.state))return {ok:false,error:'Shut down the VM before adding a network adapter'};
   return virsh(['attach-interface',d.name,'user','--model','virtio','--config'],30000); }
@@ -162,4 +175,4 @@ async function view(name){
   }
   const p=spawn(bin,args,{detached:true,stdio:'ignore'}); p.unref(); return {ok:true};
 }
-module.exports={available,list,details,update,addDisk,changeIso,addNetwork,gamingMouse,create,action,remove,view,cleanName};
+module.exports={available,list,details,update,addDisk,changeIso,ejectIso,addNetwork,gamingMouse,create,action,remove,view,cleanName};
