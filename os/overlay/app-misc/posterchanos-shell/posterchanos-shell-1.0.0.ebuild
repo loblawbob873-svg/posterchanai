@@ -69,7 +69,7 @@ pkg_postinst() {
 	# customizations they may have made since. The live IPC binding is installed by the updater;
 	# this copy is what makes it survive the next login.
 	local cfg
-	for cfg in "${EROOT}home/posterchan/.config/sway/config" "${EROOT}"home/pc-*/.config/sway/config; do
+	for cfg in "${EROOT%/}/home/posterchan/.config/sway/config" "${EROOT%/}"/home/pc-*/.config/sway/config; do
 		[[ -f ${cfg} ]] || continue
 		grep -q 'Ctrl+Mod1+BackSpace' "${cfg}" && continue
 		cat >>"${cfg}" <<-'SWAY_RECOVERY'

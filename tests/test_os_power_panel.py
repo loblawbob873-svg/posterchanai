@@ -88,6 +88,16 @@ class ThePowerAndVolumePanelsAgree(unittest.TestCase):
         self.assertGreaterEqual(int(pad.group(1)), 10,
                                 "the power rows are as tight as an ordinary menu line")
 
+    def test_actions_are_a_large_two_column_grid(self):
+        rule = re.search(r"\.os-pop-power-acts\{([^}]*)\}", CSS, re.S)
+        self.assertIsNotNone(rule)
+        self.assertIn("display:grid", rule.group(1).replace(" ", ""))
+        self.assertIn("grid-template-columns:repeat(2", rule.group(1).replace(" ", ""))
+        tile = re.search(r"\.os-pop-power-acts \.os-pop-row\{([^}]*)\}", CSS, re.S)
+        self.assertIsNotNone(tile)
+        self.assertIn("min-height:112px", tile.group(1).replace(" ", ""))
+        self.assertIn("aspect-ratio:", tile.group(1))
+
     def test_the_dangerous_one_still_looks_dangerous(self):
         body, _ = call("powerPop")
         self.assertIn("os-pop-danger", body)

@@ -8330,22 +8330,29 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
    A tile grid over sliders, the way Windows lays it out — a tile is a state you toggle and a slider
    is a value you drag, and mixing them into one list makes both harder to hit. */
 .os-pop-quick{ width:410px; max-width:calc(100vw - 16px); font-size:14px; }
-/* THE POWER FLYOUT IS THE VOLUME FLYOUT'S TWIN. Two chips at the same end of the same taskbar drew
-   two different panels — one 340px and anchored to its right edge, one a generic 230-320px box laid
-   out from the chip's left, which walks it across the screen. Reported as "power button menu is
-   garbage, it opens up top-left", then "make it function like the volume section". Same width and
-   alignment come from `os-pop-quick`; these are the rows, sized for a pointer rather than for a
-   list, because every entry here loses whatever is on screen and none of them should be a small
-   target beside the one that shuts the machine down. */
-.os-pop-power .os-pop-h{ display:flex; align-items:center; gap:8px; padding:12px 14px 10px; font-size:14px; }
-.os-pop-power .os-pop-h .ic{ width:18px; height:18px; flex:none; }
-.os-pop-power-acts{ padding:10px; gap:6px; }
-.os-pop-power-acts .os-pop-row{
-  display:flex; align-items:center; gap:12px;
-  padding:12px 14px; border-radius:10px; font-size:14px;
+/* Power actions are a real control surface, not a cramped context menu. A 2x2 grid gives every
+   destructive/session action a square, unmistakable target while retaining the same right-edge
+   anchor and visual language as Quick Settings. */
+.os-pop-power{ width:430px; }
+.os-pop-power .os-pop-h{ display:flex; align-items:center; gap:10px; padding:16px 18px 13px; font-size:17px; }
+.os-pop-power .os-pop-h .ic{ width:22px; height:22px; flex:none; color:var(--neon,#3ce8ff); }
+.os-pop-power .os-pop-profs{ padding:12px 14px 4px; }
+.os-pop-power-acts{
+  padding:14px; gap:10px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr));
+  overflow:visible; max-height:none;
 }
-.os-pop-power-acts .os-pop-row .ic{ width:18px; height:18px; flex:none; opacity:.85; }
+.os-pop-power-acts .os-pop-row{
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:11px;
+  aspect-ratio:1.3/1; min-height:112px; padding:14px; border-radius:14px; font-size:15px;
+  background:var(--panel2); border-color:var(--line); text-align:center;
+}
+.os-pop-power-acts .os-pop-row:hover{ transform:translateY(-1px); }
+.os-pop-power-acts .os-pop-row .ic{ width:30px; height:30px; flex:none; opacity:.9; color:var(--neon,#3ce8ff); }
 .os-pop-power-acts .os-pop-row.os-pop-danger .ic{ color:#ff6b6b; opacity:1; }
+@media(max-width:480px){
+  .os-pop-power{ width:calc(100vw - 16px); }
+  .os-pop-power-acts .os-pop-row{ min-height:96px; }
+}
 .os-qs{ padding:13px; display:flex; flex-direction:column; gap:13px; }
 .os-qs-tiles{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
 .os-qs-tile{
