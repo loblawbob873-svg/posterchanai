@@ -3869,6 +3869,16 @@
   }
 
   let _started = false;
+  /* A foreground signal cancels only the cooperative Java handoff latch. Android does not promise
+   * which of visibilitychange, focus, pageshow or Capacitor appStateChange it will deliver after a
+   * frozen WebView is thawed; requiring one particular signal leaves a resumed sweep stopping at
+   * its first boundary. Keep the operation in one helper so every foreground door has identical
+   * resume semantics. The running sweep already latched a stop internally, so clearing this Set
+   * cannot turn its partial scan into a deletion plan. */
+  function foregroundNudge(why){
+    for(const f of folders()) stopping.delete(f.id);
+    nudge(why);
+  }
   function startAll(){
     const fs = FS();
     /* NO ADAPTER YET IS NOT "NO ADAPTER". This returned and left `_started` false, which is correct —
@@ -3921,20 +3931,19 @@
          * the visible nudge immediately started another page sweep with that same stop bit still
          * set. It exited at its first boundary: "stopped before anything moved" on a brand-new
          * folder. A manual Sync happened to clear it; automatic resume must mean the same thing. */
-        for(const f of folders()) stopping.delete(f.id);
-        nudge('visible');
+        foregroundNudge('visible');
       }
     });
     window.addEventListener('online', () => nudge('online'));
-    window.addEventListener('focus', () => nudge('focus'));
+    window.addEventListener('focus', () => foregroundNudge('focus'));
+    window.addEventListener('pageshow', () => foregroundNudge('pageshow'));
     // Capacitor's own resume is more reliable than visibilitychange in a WebView that the OS froze.
     try{
       if(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App){
         window.Capacitor.Plugins.App.addListener('appStateChange', (st) => {
           _readKeptAlive();                       // the switch may have moved while we were away
           if(st && st.isActive){
-            for(const f of folders()) stopping.delete(f.id);
-            nudge('resume');
+            foregroundNudge('resume');
           }
         });
       }

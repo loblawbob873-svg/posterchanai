@@ -200,11 +200,14 @@ class StopFlagTests(unittest.TestCase):
         self.assertIn("stopping.add(id);", self.src)
 
     def test_foreground_resume_clears_a_cooperative_handoff_stop(self):
-        """A brief Android pause must not poison the automatic sweep started on return."""
-        visible = self.src.index("nudge('visible')")
-        resume = self.src.index("nudge('resume')")
-        self.assertIn("stopping.delete(f.id)", self.src[visible-300:visible])
-        self.assertIn("stopping.delete(f.id)", self.src[resume-250:resume])
+        """Every wake event Android may choose must share the same un-latch operation."""
+        at = self.src.index("function foregroundNudge(why)")
+        body = self.src[at:self.src.index("\n  function startAll", at)]
+        self.assertIn("stopping.delete(f.id)", body)
+        self.assertIn("nudge(why)", body)
+        for signal in ("visible", "focus", "pageshow", "resume"):
+            self.assertIn("foregroundNudge('%s')" % signal, self.src,
+                          signal + " can resume with the cooperative stop flag still set")
 
 
 class RepairTests(unittest.TestCase):
