@@ -60,6 +60,13 @@ class PosterChanOSProfile(unittest.TestCase):
         client, are X11 clients and simply have no way onto the screen without it."""
         self.assertIn("gui-wm/sway", self.pkgs)
         self.assertIn("x11-base/xwayland", self.pkgs)
+        self.assertIn("xwayland force", self.src,
+                      "lazy XWayland leaves Electron's GTK integration with no DISPLAY")
+        shell_start = open(os.path.join(ROOT, "os", "bin", "pc-shell-start"), encoding="utf-8").read()
+        self.assertIn("xset q", shell_start,
+                      "Electron can race XWayland and abort GTK before its socket is ready")
+        self.assertIn("--ozone-platform=x11", shell_start,
+                      "the packaged Electron GTK build aborts in a Wayland-only process")
 
     def test_screen_capture_has_all_three_halves(self):
         """Wayland has no "read the screen" call by design, so a recorder gets frames through the
