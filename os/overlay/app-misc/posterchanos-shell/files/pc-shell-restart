@@ -1,0 +1,12 @@
+#!/bin/sh
+# Replace only the PosterChan desktop layer. Native Sway applications remain open.
+set -u
+pattern='[/]opt/posterchan/posterchan-desktop --shell'
+pkill -TERM -f "$pattern" 2>/dev/null || true
+i=0
+while pgrep -f "$pattern" >/dev/null 2>&1 && [ "$i" -lt 20 ]; do
+  sleep 0.1
+  i=$((i + 1))
+done
+pkill -KILL -f "$pattern" 2>/dev/null || true
+exec /usr/local/bin/pc-shell-start
