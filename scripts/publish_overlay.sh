@@ -1,7 +1,8 @@
 #!/bin/bash
 # Publish the PosterChanOS overlay so installed machines can update themselves.
 #
-# WHERE IT GOES, AND WHY THERE. router.lan already NFS-mounts 192.168.0.85:/raid/distfiles and
+# WHERE IT GOES, AND WHY THERE. router.lan NFS-mounts the explicitly exported
+# 192.168.0.85:/raid/distfiles/distfiles at /var/lib/distfiles and
 # already serves it as https://gentoo.poster.place with autoindex and a valid certificate. Putting
 # the overlay inside that tree needs no new vhost, no new certificate and no new mount — and it is
 # the same /raid the Gentoo mirror lives on, which is where this was asked to go.
@@ -13,7 +14,7 @@
 set -euo pipefail
 
 NAS="${NAS:-nas.lan}"
-DEST="${DEST:-/raid/distfiles/posterchan-overlay.git}"
+DEST="${DEST:-/raid/distfiles/distfiles/posterchan-overlay.git}"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/os/overlay"
 URL="https://gentoo.poster.place/posterchan-overlay.git"
 
