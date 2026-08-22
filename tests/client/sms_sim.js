@@ -24,6 +24,7 @@ const opt = JSON.parse(process.argv[2] || '{}');
 const calls = [];        // every plugin call, in order
 const published = [];    // every event handed to publish(), in order
 const notified = [];
+const uploads = Object.create(null);
 
 /* ---- the stub phone -------------------------------------------------------------------------- */
 
@@ -171,7 +172,11 @@ global.__PC = {
   filesIdx: () => ({ async pull(){}, addFolder(name, enc){ calls.push(['folder', name, enc]); } }),
   uploadEncFile: async (file, folder) => {
     calls.push(['uploadEncFile', file.name, folder]);
-    return 'a'.repeat(64);
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const sha = Buffer.from(await webcrypto.subtle.digest('SHA-256', bytes)).toString('hex');
+    uploads[sha] = { folder, name:file.name, type:file.type,
+                     text:Buffer.from(bytes).toString('utf8') };
+    return sha;
   },
   encFileUrl: async sha => 'blob:' + sha,
   // A transparent "encryption": the sim is about the protocol, not the cipher, and a readable
@@ -192,6 +197,12 @@ global.__PC = {
     if(content) relay.set(d, ev); else relay.delete(d);
     return { ok:true, ev };
   },
+};
+global.fetch = async url => {
+  const sha = String(url || '').replace(/^blob:/, '');
+  const item = uploads[sha];
+  if(!item) return { ok:false, async json(){ throw new Error('missing encrypted blob ' + sha); } };
+  return { ok:true, async json(){ return JSON.parse(item.text); } };
 };
 
 require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
@@ -222,7 +233,7 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
   await new Promise(r => setTimeout(r, 20));
   const st = S._state();
   console.log(JSON.stringify({
-    calls, published, notified,
+    calls, published, notified, uploads,
     rows: rows.map(r => r.doc),
     relay: Array.from(relay.keys()).sort(),
     // LIVE documents only. A tombstone is kept in the map as a marker (see sms.js absorb) so an

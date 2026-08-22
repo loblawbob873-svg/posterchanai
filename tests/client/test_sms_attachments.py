@@ -66,7 +66,11 @@ def calls_of(res, name):
 def published(res, doc):
     for p in res["published"]:
         if p["d"] == doc:
-            return json.loads(p["content"][4:]) if p["content"].startswith("enc:") else None
+            body = json.loads(p["content"][4:]) if p["content"].startswith("enc:") else None
+            if body and body.get("blob"):
+                stored = res.get("uploads", {}).get(body["blob"])
+                return json.loads(stored["text"]) if stored else None
+            return body
     return None
 
 

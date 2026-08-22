@@ -165,11 +165,27 @@ def _java():
     with open(os.path.join(pkg, "MmsHarness.java"), "w") as f:
         f.write(HARNESS)
     src = [os.path.join(SMS, f) for f in SOURCES] + [os.path.join(pkg, "MmsHarness.java")]
-    r = subprocess.run([JAVAC, "-nowarn", "-Xlint:-options", "-source", "11", "-target", "11",
-                        "-classpath", JAR, "-d", tmp, "-sourcepath", ac.JAVA] + src,
-                       capture_output=True, text=True, timeout=300)
+    # This harness RUNS only Messages.merge. Shim the two provider stores so javac does not
+    # recursively pull PhoneBook and its AndroidX graphics dependency into this pure-Java test.
+    stores = {
+        "place/poster/app/sms/SmsStore.java": """package place.poster.app.sms;
+import android.content.Context; import java.util.*;
+final class SmsStore { static class Thread { String address,label; }
+ static List<SmsMsg> recent(Context c,int n){return new ArrayList<>();}
+ static List<SmsMsg> since(Context c,long d,int n){return new ArrayList<>();}
+ static List<SmsMsg> thread(Context c,long[] ids,int n){return new ArrayList<>();}
+ static List<Thread> platformThreads(Context c,int n,boolean w){return new ArrayList<>();}
+ static List<Thread> fold(Context c,List<SmsMsg> m,boolean w){return new ArrayList<>();} }""",
+        "place/poster/app/sms/MmsStore.java": """package place.poster.app.sms;
+import android.content.Context; import java.util.*;
+final class MmsStore {
+ static List<SmsMsg> recent(Context c,int n){return new ArrayList<>();}
+ static List<SmsMsg> since(Context c,long d,int n){return new ArrayList<>();}
+ static List<SmsMsg> thread(Context c,long[] ids,int n){return new ArrayList<>();} }""",
+    }
+    r = ac.compile_sources(src, tmp, shims=stores)
     assert r.returncode == 0, r.stderr[-4000:]
-    r = subprocess.run([JAVARUN, "-cp", tmp + os.pathsep + JAR,
+    r = subprocess.run([JAVARUN, "-cp", os.path.join(tmp, "classes") + os.pathsep + JAR,
                         "place.poster.app.sms.MmsHarness"],
                        capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stderr[-4000:]
@@ -450,10 +466,12 @@ class OutgoingMms(unittest.TestCase):
         self.assertIn("obj = await openMessageBody(envelope)", js)
         self.assertIn("!archived._blob", js,
                       "legacy inline records are never migrated to encrypted Blossom")
-        self.assertIn("archiveMessageBody(doc, { to, body, at, attachment })", js,
-                      "a remote-send request still leaves the text body in its relay event")
+        # Outbox commands stay inline NIP-44: Android's background receiver has no WebView drive
+        # API with which to fetch a Blossom pointer. Archive HISTORY still uses encrypted Blossom.
+        self.assertIn("const request = { to, body, at, attachment }", js)
+        self.assertNotIn("archiveMessageBody(doc, { to, body, at, attachment })", js)
         self.assertIn("req = await openMessageBody(request)", js,
-                      "the phone cannot open a Blossom-backed remote-send request")
+                      "new clients cannot drain older Blossom-backed remote-send requests")
 
 
 if __name__ == "__main__":
