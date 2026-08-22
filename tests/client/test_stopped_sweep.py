@@ -199,6 +199,13 @@ class StopFlagTests(unittest.TestCase):
     def test_pause_still_stops_the_sweep_that_is_running(self):
         self.assertIn("stopping.add(id);", self.src)
 
+    def test_foreground_resume_clears_a_cooperative_handoff_stop(self):
+        """A brief Android pause must not poison the automatic sweep started on return."""
+        visible = self.src.index("nudge('visible')")
+        resume = self.src.index("nudge('resume')")
+        self.assertIn("stopping.delete(f.id)", self.src[visible-300:visible])
+        self.assertIn("stopping.delete(f.id)", self.src[resume-250:resume])
+
 
 class RepairTests(unittest.TestCase):
     """Repair may only trash a damaged file when the store can actually replace it.

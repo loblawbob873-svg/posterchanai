@@ -111,6 +111,14 @@
         android:layout_margin="8dp"
         android:padding="4dp">
 
+        <ImageView
+            android:id="@+id/pc_th_attach"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:padding="11dp"
+            android:contentDescription="@string/sms_add_attachment"
+            android:src="@drawable/ic_pc_paperclip" />
+
         <EditText
             android:id="@+id/pc_th_input"
             android:layout_width="0dp"

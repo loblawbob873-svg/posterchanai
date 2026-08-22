@@ -3913,7 +3913,17 @@
          * flush the journal, then release the native claim from the sweep's finally. Java does not
          * start its continuation until that release, so the two engines never write concurrently. */
         for(const id of running.keys()) stopping.add(id);
-      } else nudge('visible');
+      } else {
+        /* RETURNING TO THE FOREGROUND CANCELS THE HANDOFF REQUEST.
+         *
+         * Hidden set `stopping` so the page could checkpoint and let Java continue. If Android
+         * only hid the WebView briefly (permission UI, launcher transition, renderer recreation),
+         * the visible nudge immediately started another page sweep with that same stop bit still
+         * set. It exited at its first boundary: "stopped before anything moved" on a brand-new
+         * folder. A manual Sync happened to clear it; automatic resume must mean the same thing. */
+        for(const f of folders()) stopping.delete(f.id);
+        nudge('visible');
+      }
     });
     window.addEventListener('online', () => nudge('online'));
     window.addEventListener('focus', () => nudge('focus'));
@@ -3922,7 +3932,10 @@
       if(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App){
         window.Capacitor.Plugins.App.addListener('appStateChange', (st) => {
           _readKeptAlive();                       // the switch may have moved while we were away
-          if(st && st.isActive) nudge('resume');
+          if(st && st.isActive){
+            for(const f of folders()) stopping.delete(f.id);
+            nudge('resume');
+          }
         });
       }
     }catch(_){}

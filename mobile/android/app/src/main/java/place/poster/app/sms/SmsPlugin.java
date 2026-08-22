@@ -3,6 +3,9 @@ package place.poster.app.sms;
 import android.content.Context;
 import android.content.Intent;
 import android.provider.Telephony;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.util.Base64;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -15,6 +18,10 @@ import com.getcapacitor.annotation.Permission;
 import org.json.JSONArray;
 
 import java.util.List;
+
+import com.klinker.android.send_message.Message;
+import com.klinker.android.send_message.Settings;
+import com.klinker.android.send_message.Transaction;
 
 /**
  * THE APP'S WINDOW ONTO THE PHONE'S MESSAGES — read, send, delete, and be told when one arrives.
@@ -407,6 +414,33 @@ public class SmsPlugin extends Plugin {
         // role to write its store. The caller keeps its own copy and says so; it is not a failure.
         o.put("stored", r.stored);
         o.put("row", r.row == null ? "" : r.row.toString());
+        call.resolve(o);
+    }
+
+    /** Send an image as a carrier MMS. The caller supplies plaintext only at this final phone hop. */
+    @PluginMethod
+    public void sendMms(PluginCall call) {
+        String to = call.getString("to", "");
+        String body = call.getString("body", "");
+        String b64 = call.getString("data", "");
+        JSObject o = new JSObject();
+        if (to.trim().isEmpty() || b64.isEmpty()) {
+            o.put("ok", false); o.put("error", "missing recipient or attachment"); call.resolve(o); return;
+        }
+        try {
+            byte[] raw = Base64.decode(b64, Base64.DEFAULT);
+            Bitmap image = BitmapFactory.decodeByteArray(raw, 0, raw.length);
+            if (image == null) throw new IllegalArgumentException("attachment is not an image");
+            Settings settings = new Settings();
+            settings.setUseSystemSending(true);
+            Message message = new Message(body, to, image);
+            message.setSave(true);
+            new Transaction(getContext(), settings).sendNewMessage(message, Transaction.NO_THREAD_ID);
+            o.put("ok", true);
+        } catch (Throwable t) {
+            o.put("ok", false);
+            o.put("error", t.getMessage() == null ? "could not send picture message" : t.getMessage());
+        }
         call.resolve(o);
     }
 

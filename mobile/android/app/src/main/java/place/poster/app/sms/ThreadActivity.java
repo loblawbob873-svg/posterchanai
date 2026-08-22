@@ -6,6 +6,8 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.database.ContentObserver;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -27,6 +29,11 @@ import android.widget.TextView;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.io.InputStream;
+
+import com.klinker.android.send_message.Message;
+import com.klinker.android.send_message.Settings;
+import com.klinker.android.send_message.Transaction;
 
 import place.poster.app.R;
 import place.poster.app.ui.CalendarPeek;
@@ -50,6 +57,8 @@ import place.poster.app.ui.Skin;
  */
 public class ThreadActivity extends PcActivity {
 
+    private static final int PICK_MMS_IMAGE = 7312;
+
     public static final String EXTRA_THREAD = "thread";
     /**
      * EVERY thread id this conversation covers. One person can own more than one (SmsStore.fold),
@@ -69,6 +78,7 @@ public class ThreadActivity extends PcActivity {
     private String address = "";
     private ListView list;
     private EditText input;
+    private Uri attachment;
     private TextView count, name, sub, avatar, context;
     private Msgs adapter;
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -105,6 +115,9 @@ public class ThreadActivity extends PcActivity {
         });
         findViewById(R.id.pc_th_send).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { send(); }
+        });
+        findViewById(R.id.pc_th_attach).setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { pickAttachment(); }
         });
         findViewById(R.id.pc_th_call).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { call(); }
@@ -205,6 +218,7 @@ public class ThreadActivity extends PcActivity {
         icon(R.id.pc_th_call, R.drawable.ic_pc_call, pal.accent);
         icon(R.id.pc_th_menu, R.drawable.ic_pc_menu, pal.muted);
         icon(R.id.pc_th_send, R.drawable.ic_pc_send, pal.onAccent());
+        icon(R.id.pc_th_attach, R.drawable.ic_pc_paperclip, pal.accent);
         findViewById(R.id.pc_th_send).setBackground(Skin.pill(this, pal, pal.accent, true));
         input.setTextColor(pal.text);
         input.setHintTextColor(pal.muted);
@@ -267,14 +281,65 @@ public class ThreadActivity extends PcActivity {
 
     private void send() {
         String body = input.getText().toString();
-        if (body.trim().isEmpty()) return;
+        if (body.trim().isEmpty() && attachment == null) return;
         if (address.isEmpty()) { say(getString(R.string.sms_not_default)); return; }
+        if (attachment != null) {
+            sendMms(body);
+            return;
+        }
         SmsSender.Result r = SmsSender.send(this, address, body, threadId);
         if (!r.ok) { say(r.error.isEmpty() ? getString(R.string.sms_failed) : r.error); return; }
         // Cleared only once the row exists. If the send throws, what somebody typed is still there.
         input.setText("");
         updateCount();
         reload();
+    }
+
+    /** Pick through Android's document provider: no broad photo permission and no copied plaintext. */
+    private void pickAttachment() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+                .addCategory(Intent.CATEGORY_OPENABLE)
+                .setType("image/*");
+        try { startActivityForResult(i, PICK_MMS_IMAGE); }
+        catch (Throwable t) { say(getString(R.string.sms_attachment_bad)); }
+    }
+
+    @Override
+    protected void onActivityResult(int request, int result, Intent data) {
+        super.onActivityResult(request, result, data);
+        if (request != PICK_MMS_IMAGE || result != RESULT_OK || data == null) return;
+        Uri picked = data.getData();
+        if (picked == null) return;
+        try {
+            getContentResolver().takePersistableUriPermission(picked,
+                    data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                     | Intent.FLAG_GRANT_WRITE_URI_PERMISSION));
+        } catch (Throwable ignored) { }
+        attachment = picked;
+        say(getString(R.string.sms_attachment_ready));
+    }
+
+    /** Build a carrier MMS PDU and hand it to Android's public system MMS transport. */
+    private void sendMms(String body) {
+        Bitmap image = null;
+        try (InputStream in = getContentResolver().openInputStream(attachment)) {
+            image = BitmapFactory.decodeStream(in);
+        } catch (Throwable ignored) { }
+        if (image == null) { say(getString(R.string.sms_attachment_bad)); return; }
+        try {
+            Settings settings = new Settings();
+            settings.setUseSystemSending(true);
+            Message message = new Message(body == null ? "" : body, address, image);
+            message.setSave(true);
+            new Transaction(this, settings).sendNewMessage(message, threadId);
+            attachment = null;
+            input.setText("");
+            updateCount();
+            say(getString(R.string.sms_mms_sent));
+            reload();
+        } catch (Throwable t) {
+            say(t.getMessage() == null ? getString(R.string.sms_failed) : t.getMessage());
+        }
     }
 
     private void call() {

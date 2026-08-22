@@ -32,6 +32,7 @@
    * otherwise spend an afternoon on it and fill the relay in one go; the person can ask for more. */
   const FIRST_RUN_DAYS = 30;
   const HWM = () => 'pc_sms_hwm_' + (PC && PC.ME && PC.ME.pubkey ? PC.ME.pubkey.slice(0, 12) : 'anon');
+  let _messagesFolderReady = false;
 
   let PC = null;
   const S = {
@@ -48,6 +49,7 @@
     loading: false,
     error: '',
     scroll: 0,
+    attach: null,         // File waiting in the open conversation's composer
     /* THE FLOOR FOR NOTIFICATIONS, set once when the module loads. A first sync pulls a phone's
        whole history through the subscription, and every one of those is "new" to this device — a
        thousand notifications for messages read weeks ago. Only something that arrived AFTER this
@@ -228,12 +230,13 @@
       if(d.startsWith(D_OUT) && ev.content){
         try{
           const ack = JSON.parse(await PC.nip44dec(ME().pubkey, ev.content));
-          if(ack && ack.done && ack.ok && ack.to && ack.body){
-            const at = Number(ack.at) || Number(ev.created_at || 0) * 1000 || Date.now();
-            const md = await docIdFor(ack.to, at, ack.body, false);
+          const sent = ack && ack.request ? await openMessageBody(ack.request) : ack;
+          if(ack && ack.done && ack.ok && sent && sent.to && (sent.body || sent.attachment)){
+            const at = Number(sent.at) || Number(ev.created_at || 0) * 1000 || Date.now();
+            const md = await docIdFor(sent.to, at, sent.body || '', false);
             const have = S.msgs.get(md);
             if(!have || have._at < ev.created_at)
-              S.msgs.set(md, { doc:md, address:ack.to, body:ack.body, date:at,
+              S.msgs.set(md, { doc:md, address:sent.to, body:sent.body || '', date:at,
                                incoming:false, name:'', _at:ev.created_at });
           }
         }catch(_){}
@@ -258,7 +261,11 @@
        * Kept as a marker, the ordinary "newest wins" rule handles it, and `rebuild` skips it. */
       if(!ev.content){ S.msgs.set(d, { doc:d, _at: ev.created_at, gone:true }); continue; }
       let obj = null;
-      try{ obj = JSON.parse(await PC.nip44dec(ME().pubkey, ev.content)); }
+      try{
+        const envelope = JSON.parse(await PC.nip44dec(ME().pubkey, ev.content));
+        obj = await openMessageBody(envelope);
+        if(envelope && envelope.blob) obj._blob = envelope.blob;
+      }
       catch(_){ continue; }                       // not ours, or not decryptable with this key
       if(!obj || typeof obj !== 'object') continue;
       obj.doc = d; obj._at = ev.created_at;
@@ -405,6 +412,36 @@
     }catch(_){ }
   }
 
+  async function ensureMessagesFolder(){
+    if(_messagesFolderReady) return;
+    const fi = PC.filesIdx ? PC.filesIdx() : null;
+    if(!fi || !fi.addFolder) return;
+    try{
+      if(fi.pull) await fi.pull();
+      fi.addFolder('Messages', true);
+      _messagesFolderReady = true;
+    }catch(_){ }
+  }
+
+  /* Message bodies belong in the encrypted Blossom drive too. The relay keeps the small encrypted
+   * pointer needed for live sync and deletion ordering, never the message payload. Existing inline
+   * NIP-44 records remain readable so this is a storage migration, not a history reset. */
+  async function archiveMessageBody(doc, body){
+    if(!PC.uploadEncFile) throw new Error('encrypted message storage is unavailable');
+    await ensureMessagesFolder();
+    const file = new File([JSON.stringify(body)], 'message-' + doc.slice(-24) + '.json',
+                          {type:'application/json'});
+    const sha = await PC.uploadEncFile(file, 'Messages');
+    return {v:1, blob:sha, mime:'application/json'};
+  }
+
+  async function openMessageBody(envelope){
+    if(!envelope || !/^[0-9a-f]{64}$/i.test(String(envelope.blob||''))) return envelope;
+    if(!PC.encFileUrl) throw new Error('encrypted message storage is unavailable');
+    const url = await PC.encFileUrl(envelope.blob, envelope.mime || 'application/json');
+    return await fetch(url).then(r=>r.json());
+  }
+
   /* Store one provider attachment in the account's encrypted Blossom drive. The Nostr document
    * carries only the ciphertext hash; the media server never sees the photo and a relay event never
    * has to carry megabytes of base64. A failed upload fails this message's mirror pass so the high
@@ -457,7 +494,9 @@
       }
     }
 
-    const ct = await PC.nip44enc(ME().pubkey, JSON.stringify(body));
+    const envelope = await archiveMessageBody(m.doc, body);
+    m._blob = envelope.blob;
+    const ct = await PC.nip44enc(ME().pubkey, JSON.stringify(envelope));
     const r = await PC.publish(KIND, ct, [['d', m.doc], ['l', L_TAG]], {quiet:true, noQueue:true});
     return !!(r && r.ok);
   }
@@ -496,7 +535,7 @@
     for(const r of rows){
       if(!r || !r.doc) continue;
       const old = S.msgs.get(r.doc);
-      if(old && !needsPartUpgrade(r, old)) { if(r.date > top) top = r.date; continue; }
+      if(old && !needsArchiveUpgrade(r, old)) { if(r.date > top) top = r.date; continue; }
       // The contact's name is resolved on the phone against the phone's OWN address book and
       // carried, so a laptop — which has no phone book — shows a name instead of a number.
       const m = fromRow(r);
@@ -575,7 +614,7 @@
     for(const r of rows){
       if(!r || !r.doc) continue;
       const old = S.msgs.get(r.doc);
-      if(old && !needsPartUpgrade(r, old)) continue;
+      if(old && !needsArchiveUpgrade(r, old)) continue;
       const local = fromRow(r);
       /* On the handset, prefer its live provider part ids so the attachment can be opened now.
        * Preserve portable hashes already present in the archive by position while a repair upload
@@ -644,7 +683,7 @@
       for(const r of rows){
         if(!r || !r.doc) continue;
         const old = S.msgs.get(r.doc);
-        if(old && !needsPartUpgrade(r, old)) continue;
+        if(old && !needsArchiveUpgrade(r, old)) continue;
         const m = fromRow(r);
         let ok = false;
         try{ ok = await publishOne(m); }catch(_){ ok = false; }
@@ -676,8 +715,15 @@
    * IT NEEDS THE PHONE TO BE REACHABLE, and says so rather than pretending. A request published to a
    * handset that is switched off sits there until the app is next opened; the UI reports it as
    * "waiting for your phone", never as sent. */
-  async function send(to, body){
-    if(!to || !body) return { ok:false, error:'nothing to send' };
+  async function fileB64(file){
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let s = '';
+    for(let i=0;i<bytes.length;i+=0x8000) s += String.fromCharCode(...bytes.subarray(i,i+0x8000));
+    return btoa(s);
+  }
+
+  async function send(to, body, file){
+    if(!to || (!body && !file)) return { ok:false, error:'nothing to send' };
     /* THE RADIO IS IN THIS DEVICE OR IT IS NOT — the ROLE is a different question.
      *
      * This used to ask `isPhone()`, which is "do we hold the SMS role". On a phone that has not
@@ -695,10 +741,14 @@
      * a message on a network. Gating on `present` sent a laptop's text down the radio path, which
      * the archive test caught by name. */
     if(st0.telephony){
-      const P = plug('send');
+      const P = plug(file ? 'sendMms' : 'send');
       if(!P) return { ok:false, error:'no messages plugin' };
       let r = null;
-      try{ r = await P.send({ to, body }); }catch(e){ return { ok:false, error:String(e) }; }
+      try{
+        r = file ? await P.sendMms({ to, body, data:await fileB64(file),
+                                     mime:file.type||'image/jpeg', name:file.name||'photo.jpg' })
+                 : await P.send({ to, body });
+      }catch(e){ return { ok:false, error:String(e) }; }
       if(r && r.ok){
         if(r.stored === false){
           /* WE KEEP THE COPY THE PROVIDER WOULD HAVE. `mirror` republishes from the phone's store,
@@ -740,7 +790,16 @@
     }
     const at = Date.now();
     const doc = await outboxId(to, body, at);
-    const ct = await PC.nip44enc(ME().pubkey, JSON.stringify({ to, body, at }));
+    let attachment = null;
+    if(file){
+      if(!/^image\//i.test(file.type||'')) return {ok:false,error:'MMS currently supports photos'};
+      try{
+        const sha = await PC.uploadEncFile(file, 'MMS');
+        attachment = {sha, mime:file.type||'image/jpeg', name:file.name||'photo.jpg', bytes:file.size};
+      }catch(e){ return {ok:false,error:'could not encrypt attachment: '+String(e&&e.message||e)}; }
+    }
+    const request = await archiveMessageBody(doc, { to, body, at, attachment });
+    const ct = await PC.nip44enc(ME().pubkey, JSON.stringify(request));
     const r = await PC.publish(KIND, ct, [['d', doc], ['l', L_TAG]], {quiet:true, noQueue:true});
     if(r && r.ok) return { ok:true, where:'queued', doc };
     return { ok:false, error:'could not reach your relay' };
@@ -853,6 +912,10 @@
       (isImage(p.ct) && !/^[0-9a-f]{64}$/i.test(String(p.thumb || ''))));
   }
 
+  function needsArchiveUpgrade(phone, archived){
+    return !archived || !archived._blob || needsPartUpgrade(phone, archived);
+  }
+
   async function sha256hex(s){
     const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
     return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
@@ -881,22 +944,32 @@
     for(const ev of evs || []){
       const d = ((ev.tags||[]).find(t => t[0]==='d') || [])[1] || '';
       if(!d.startsWith(D_OUT) || !ev.content) continue;
-      let req = null;
-      try{ req = JSON.parse(await PC.nip44dec(ME().pubkey, ev.content)); }catch(_){ continue; }
+      let req = null, request = null;
+      try{
+        request = JSON.parse(await PC.nip44dec(ME().pubkey, ev.content));
+        req = await openMessageBody(request);
+      }catch(_){ continue; }
       if(!req || req.done) continue;
-      if(!req.to || !req.body) continue;
+      if(!req.to || (!req.body && !req.attachment)) continue;
       if(Date.now() - (req.at || 0) > MAX_AGE_MS){
         await mark(d, { done:true, dropped:'too old' });
         continue;
       }
-      const P = plug('send');
+      const P = plug(req.attachment ? 'sendMms' : 'send');
       if(!P) return done;
       let r = null;
-      try{ r = await P.send({ to:req.to, body:req.body }); }catch(_){ r = null; }
+      try{
+        if(req.attachment){
+          const u = await PC.encFileUrl(req.attachment.sha, req.attachment.mime);
+          const blob = await fetch(u).then(x=>x.blob());
+          r = await P.sendMms({to:req.to, body:req.body||'', data:await fileB64(blob),
+                               mime:req.attachment.mime, name:req.attachment.name});
+        }else r = await P.send({ to:req.to, body:req.body });
+      }catch(_){ r = null; }
       // MARKED BEFORE ANYTHING ELSE, and marked even when the send FAILED. A text that went out and
       // whose marker did not is a text that goes out again on the next drain; there is no undo for
       // that, so a failed send is reported in the marker rather than retried blindly.
-      await mark(d, { done:true, ok: !!(r && r.ok), error: (r && r.error) || '' });
+      await mark(d, { done:true, ok: !!(r && r.ok), error: (r && r.error) || '', request });
       done++;
     }
     if(done) mirror({ limit: 50 });
@@ -1490,20 +1563,30 @@
             + `<span class="b-meta">${enc(when(m.date))}</span></div>`;
         }).join('')}</div>
         <div class="sms-compose">
+          <button class="btn small" id="sms-attach" title="Add photo">${ICO('paperclip','b-ic')}</button>
+          <input id="sms-file" type="file" accept="image/*" hidden>
           <input class="input" id="sms-in" placeholder="Text message">
           <button class="btn btn-neon" id="sms-send">${ICO('send','b-ic')}Send</button>
         </div>
       </div>`;
     PC.$('#sms-back').onclick = () => { S.open = ''; paint(); };
     const input = PC.$('#sms-in'), btn = PC.$('#sms-send');
+    const pick = PC.$('#sms-file'), attachBtn = PC.$('#sms-attach');
+    attachBtn.onclick = () => pick.click();
+    pick.onchange = () => {
+      S.attach = (pick.files||[])[0] || null;
+      attachBtn.classList.toggle('btn-neon', !!S.attach);
+      attachBtn.title = S.attach ? S.attach.name : 'Add photo';
+    };
     const go = async () => {
       const body = input.value.trim();
-      if(!body) return;
+      if(!body && !S.attach) return;
       btn.disabled = true;
-      const r = await send(t.address, body);
+      const r = await send(t.address, body, S.attach);
       btn.disabled = false;
       if(!r.ok){ PC.toast(r.error || 'could not send'); return; }
       input.value = '';
+      S.attach = null;
       PC.toast(r.where === 'phone' ? 'sent' : 'waiting for your phone to send it');
       paint();
     };

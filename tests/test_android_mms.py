@@ -397,10 +397,49 @@ class MmsAttachmentsTravelAcrossClients(unittest.TestCase):
         mirror/import paths must publish the repaired version."""
         js = open(SMSJS, encoding="utf-8").read()
         self.assertIn("function needsPartUpgrade", js)
-        self.assertGreaterEqual(js.count("needsPartUpgrade(r, old)"), 3,
+        self.assertGreaterEqual(js.count("needsArchiveUpgrade(r, old)"), 3,
                                 "one of read, mirror or history import still skips hollow MMS")
         self.assertIn("Object.assign({}, old || {}, local)", js,
                       "the phone's provider attachment ids are not merged into the archived body")
+
+
+class OutgoingMms(unittest.TestCase):
+    """A paperclip must terminate at the carrier, including when another client starts the send."""
+
+    def test_native_messages_has_a_photo_picker_and_carrier_transport(self):
+        thread = open(os.path.join(SMS, "ThreadActivity.java"), encoding="utf-8").read()
+        layout = open(os.path.join(ROOT, "mobile/android/app/src/main/res/layout/sms_thread.xml"),
+                      encoding="utf-8").read()
+        gradle = open(os.path.join(ROOT, "mobile/android/app/build.gradle"), encoding="utf-8").read()
+        self.assertIn("pc_th_attach", layout)
+        self.assertIn("ACTION_OPEN_DOCUMENT", thread)
+        self.assertIn("setUseSystemSending(true)", thread)
+        self.assertIn("android-smsmms:5.2.6", gradle)
+
+    def test_web_composer_seals_remote_attachment_and_phone_sends_it(self):
+        js = open(SMSJS, encoding="utf-8").read()
+        self.assertIn('id="sms-file"', js)
+        self.assertIn("PC.uploadEncFile(file, 'MMS')", js)
+        self.assertIn("PC.encFileUrl(req.attachment.sha", js)
+        self.assertIn("P.sendMms", js)
+
+    def test_plugin_decodes_only_at_the_phone_transport_boundary(self):
+        plugin = open(os.path.join(SMS, "SmsPlugin.java"), encoding="utf-8").read()
+        self.assertIn("public void sendMms", plugin)
+        self.assertIn("Base64.decode", plugin)
+        self.assertIn("sendNewMessage", plugin)
+
+    def test_message_bodies_are_encrypted_blobs_not_relay_payloads(self):
+        js = open(SMSJS, encoding="utf-8").read()
+        self.assertIn("archiveMessageBody(m.doc, body)", js)
+        self.assertIn("PC.uploadEncFile(file, 'Messages')", js)
+        self.assertIn("obj = await openMessageBody(envelope)", js)
+        self.assertIn("!archived._blob", js,
+                      "legacy inline records are never migrated to encrypted Blossom")
+        self.assertIn("archiveMessageBody(doc, { to, body, at, attachment })", js,
+                      "a remote-send request still leaves the text body in its relay event")
+        self.assertIn("req = await openMessageBody(request)", js,
+                      "the phone cannot open a Blossom-backed remote-send request")
 
 
 if __name__ == "__main__":
