@@ -2369,6 +2369,18 @@ liveCD() {
 		[[ -n "$f" ]] && EXCLUDES+=("${f#/}")
 	done
 
+	# NEVER FOLLOW ANOTHER MOUNT INTO THE IMAGE.  A builder may have removable media, NAS data or
+	# phone-sync storage mounted at an ordinary top-level path (this host uses /usb).  mksquashfs
+	# crosses filesystem boundaries by default, so a path not named in the static list above would
+	# silently become part of the public ISO.  Preserve /home only when it was explicitly requested;
+	# every other subordinate mount is host/external state, not part of this root filesystem.
+	local MP
+	while IFS= read -r MP; do
+		[[ -z "$MP" || "$MP" == / ]] && continue
+		[[ "$MP" == /home && "$KEEP_HOME" != *n* && "$CLEAN" != *y* ]] && continue
+		EXCLUDES+=("${MP#/}")
+	done < <(findmnt -rn -o TARGET 2>/dev/null | sort -u)
+
 	echo
 	echo -e "${COLOR_MAGENTA}◆ LEAVING OUT ◆${COLOR_RESET}"
 	printf '    %s\n' "${EXCLUDES[@]}"
@@ -2845,7 +2857,11 @@ GRUB
 	echo
 	echo -e "${COLOR_YELLOW}Writing $ISO${COLOR_RESET}"
 	echo
-	grub-mkrescue -o "$ISO" "$WORK/iso" -- -volid "$LABEL" 2>&1 | tee -a "$LOG"
+	# ISO levels 1 and 2 cap every individual file at 4 GiB.  The squashfs is deliberately one
+	# contiguous image and a normal desktop root can exceed that even after compression, so request
+	# level 3 explicitly.  Without it grub-mkrescue finishes all expensive work and xorriso then
+	# rejects LiveOS/squashfs.img at the final step.
+	grub-mkrescue -o "$ISO" "$WORK/iso" -volid "$LABEL" -iso-level 3 2>&1 | tee -a "$LOG"
 	# PIPESTATUS, not the pipeline's — see the note above. `tee` succeeds whatever grub-mkrescue did.
 	if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
 		echo
