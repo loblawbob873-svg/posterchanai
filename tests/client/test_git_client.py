@@ -191,6 +191,24 @@ class TheContractWithAppJsTests(unittest.TestCase):
         self.assertIn("_clearNav()", body)
         self.assertNotIn("switchView('repo')", body)
 
+    def test_bug_reports_use_the_shared_mention_picker_and_publish_p_tags(self):
+        """Typing @name in an issue must behave like the normal composer, and choosing somebody
+        must notify them. The picker without mentionTags would only make pretty text; mentionTags
+        without the picker is the reported missing dropdown."""
+        at = self.git.index("function newRepoIssue(")
+        body = self.git[at:self.git.index("\n  // ----------", at)]
+        self.assertIn("attachMentionAutocomplete(ta)", body)
+        self.assertIn("mentionTags(body).forEach", body)
+        self.assertIn("!tags.some(x=>x[0]==='p'&&x[1]===t[1])", body,
+                      "a maintainer who is also mentioned would get duplicate p tags")
+
+        # The factory boundary is explicit: both names must cross it or the issue modal throws only
+        # when opened, despite both helpers existing in app.js.
+        deps = self.app[self.app.index("window.PCGitFactory({"):
+                        self.app.index("}));", self.app.index("window.PCGitFactory({"))]
+        self.assertIn("attachMentionAutocomplete", deps)
+        self.assertIn("mentionTags", deps)
+
 
 class GitJsParsesTests(unittest.TestCase):
     @unittest.skipIf(not NODE, "no node on this node")

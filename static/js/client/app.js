@@ -8771,7 +8771,7 @@
                get GUEST(){ return GUEST; }, get LOGO(){ return LOGO; } },
       $, $$, NT, _ISSUES_REPO, _blossomDenied, _clearNav, _dedupAddr, _fmtBytes, _guestPrompt,
       _mdUrl, _navUrl, _serverOrigin, _webLink, closeModal, copyValue, decorateProfiles, enc,
-      imetaTagsFor, mdToHtml, mediaParts, modal, needProfile, openLightbox, openMenuPopover,
+      attachMentionAutocomplete, imetaTagsFor, mdToHtml, mediaParts, mentionTags, modal, needProfile, openLightbox, openMenuPopover,
       openThread, profOf, publish, renderProfileView, requestBlossomAccess, sign, switchView,
       timeAgo, toast, uiConfirm, uiPrompt, uploadBlob,
     }));

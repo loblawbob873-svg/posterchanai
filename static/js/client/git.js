@@ -34,7 +34,7 @@ window.PCGitFactory = function(dep){
   const {
     $, $$, NT, _ISSUES_REPO, _blossomDenied, _clearNav, _dedupAddr, _fmtBytes, _guestPrompt,
     _mdUrl, _navUrl, _serverOrigin, _webLink, closeModal, copyValue, decorateProfiles, enc,
-    imetaTagsFor, mdToHtml, mediaParts, modal, needProfile, openLightbox, openMenuPopover,
+    attachMentionAutocomplete, imetaTagsFor, mdToHtml, mediaParts, mentionTags, modal, needProfile, openLightbox, openMenuPopover,
     openThread, profOf, publish, renderProfileView, requestBlossomAccess, sign, switchView,
     timeAgo, toast, uiConfirm, uiPrompt, uploadBlob,
   } = dep;
@@ -916,6 +916,10 @@ window.PCGitFactory = function(dep){
       <div class="muted small" id="ri-status"></div>`,
       root=>{
         const ta=$('#ri-body',root), st=$('#ri-status',root);
+        // Bug reports are social Nostr events too. Reuse the normal composer autocomplete so typing
+        // `@verita` shows the same people picker, and keep the resulting p-tags below so the chosen
+        // person is actually notified rather than merely appearing as text in the issue body.
+        attachMentionAutocomplete(ta);
         $('#ri-cancel',root).onclick=closeModal;
         $('#ri-attach',root).onclick=()=>$('#ri-file',root).click();
         $('#ri-file',root).onchange=async e=>{ await _issueAttach(e.target.files, ta, st); e.target.value=''; };
@@ -950,6 +954,7 @@ window.PCGitFactory = function(dep){
             // for free: NIP-10 replyTags() carries a parent's `p` tags forward, so everyone on the issue
             // stays on the thread without a second mechanism watching for them.
             _repoPeople(repo).forEach(pk=>{ if(pk!==(S.ME&&S.ME.pubkey)) tags.push(['p',pk]); });
+            mentionTags(body).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
             imetaTagsFor(body).forEach(t=>tags.push(t));   // NIP-92 media metadata, same as a post
             st.textContent='publishing…';
             if(pub) pub.disabled=true;                  // one issue per press, not one per impatient tap
