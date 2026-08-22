@@ -648,3 +648,14 @@ class InstallingTheLiveImageIsItsOwnJob(unittest.TestCase):
 
     def test_there_is_a_way_in_that_is_not_the_menu(self):
         self.assertIn('elif [ "$1" = "install-live" ]; then', self.src)
+
+    def test_success_is_gated_on_the_final_encrypted_boot_chain(self):
+        """The bootloader can succeed and a later phase can still replace one of its files. The
+        finalizer must inspect what the firmware will actually use before it locks root."""
+        i = self.src.index("finalizeInstall() {")
+        final = self.src[i:self.src.index("\n}", i)]
+        for proof in ("BOOT_ENTRY", "rd\\.luks\\.uuid=luks-", "etc/crypttab",
+                      "systemd-cryptsetup", "boot/keyfile.key"):
+            self.assertIn(proof, final)
+        self.assertLess(final.index("systemd-cryptsetup"), final.index("passwd -l root"))
+        self.assertLess(final.index("systemd-cryptsetup"), final.index("Gentoo Installation Complete"))

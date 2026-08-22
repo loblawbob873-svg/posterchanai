@@ -670,10 +670,31 @@ POSTERCHAN_PROFILE
 		echo -e "\033[1;31mPosterChan boot splash was not selected — refusing to report success.\033[0m"
 		return 1
 	fi
-	BOOT_INITRD="$(sed -n 's|^initrd[[:space:]]\+|/boot/|p' "$TARGET"/boot/loader/entries/*.conf 2>/dev/null | head -1)"
+	BOOT_ENTRY="$(find "$TARGET/boot/loader/entries" -maxdepth 1 -type f -name '*.conf' 2>/dev/null | sort | head -1)"
+	if [ -z "$BOOT_ENTRY" ] || [ ! -s "$BOOT_ENTRY" ]; then
+		echo -e "\033[1;31mNo systemd-boot entry was installed — refusing to report success.\033[0m"
+		return 1
+	fi
+	BOOT_INITRD="$(sed -n 's|^initrd[[:space:]]\+|/boot/|p' "$BOOT_ENTRY" 2>/dev/null | head -1)"
 	if [ -z "$BOOT_INITRD" ] || ! chroot "$TARGET" /usr/bin/lsinitrd "$BOOT_INITRD" 2>/dev/null \
 		| grep -q 'themes/posterchanos/posterchanos.plymouth'; then
 		echo -e "\033[1;31mPosterChan boot splash is not embedded in the booted initramfs — refusing to report success.\033[0m"
+		return 1
+	fi
+	# READ BACK THE ENCRYPTED BOOT CHAIN AT THE LAST POSSIBLE MOMENT. bootloader() validates its own
+	# work, but later finalization steps used to overwrite files and still print Complete. A valid
+	# splash inside an initramfs proves nothing about whether that image can open the root volume.
+	if ! grep -q 'rd\.luks\.uuid=luks-' "$BOOT_ENTRY" 2>/dev/null \
+		|| ! grep -Eq '[[:space:]]luks([[:space:]]|$)' "$TARGET/etc/crypttab" 2>/dev/null \
+		|| ! chroot "$TARGET" /usr/bin/lsinitrd "$BOOT_INITRD" 2>/dev/null \
+			| grep -q 'systemd-cryptsetup'; then
+		echo -e "\033[1;31mEncrypted-root boot files are incomplete — refusing to report success.\033[0m"
+		return 1
+	fi
+	if [ "$AUTO_DECRYPT" = "True" ] && { \
+		! chroot "$TARGET" /usr/bin/lsinitrd "$BOOT_INITRD" 2>/dev/null | grep -q 'boot/keyfile.key'; \
+	}; then
+		echo -e "\033[1;31mAutomatic LUKS unlock was selected but its key is not in the booted initramfs.\033[0m"
 		return 1
 	fi
 	if ! cmp -s "$INSTALLER_SRC" "$TARGET/usr/bin/gentoo.sh"; then
