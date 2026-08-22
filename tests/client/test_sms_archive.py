@@ -93,13 +93,15 @@ class Mirror(unittest.TestCase):
         self.assertEqual(sorted(res["relay"]), sorted(m["doc"] for m in rows))
         self.assertEqual(res["hwm"], rows[-1]["date"])
 
-    def test_a_message_already_in_the_archive_is_not_published_again(self):
+    def test_an_inline_archive_message_is_upgraded_to_encrypted_blossom_once(self):
         rows = [msg(1)]
         res = run(rows=rows,
                   relay=[ev(rows[0]["doc"], {"address": "+15550100", "body": "message 1",
                                              "date": rows[0]["date"], "incoming": True})],
                   steps=["load", "mirror"])
-        self.assertEqual([p for p in res["published"] if p["kind"] == 30078], [])
+        upgrades = [p for p in res["published"] if p["kind"] == 30078]
+        self.assertEqual(len(upgrades), 1)
+        self.assertIn('"blob":', upgrades[0]["content"])
 
     def test_an_unreachable_relay_leaves_the_local_archive_alone(self):
         """The anti-wipe rule this codebase keeps relearning. On a laptop this copy is the only one —
@@ -199,7 +201,11 @@ class SendingFromAnotherDevice(unittest.TestCase):
         res = run(isPhone=False, telephony=False, steps=["load", "send:+15550100:on my way"])
         result = calls_of(res, "sendResult")[0]
         self.assertEqual([result[1], result[2]], [True, "queued"])
-        self.assertTrue(any(p["d"].startswith("pcai:smsout:") for p in res["published"]))
+        queued = next(p for p in res["published"] if p["d"].startswith("pcai:smsout:"))
+        self.assertIn('"to":"+15550100"', queued["content"])
+        self.assertIn('"body":"on my way"', queued["content"])
+        self.assertNotIn('"blob":', queued["content"],
+                         "Android cannot perform a web outbox command hidden behind Blossom")
         self.assertEqual(calls_of(res, "send"), [], "a laptop tried to use a radio")
 
     def test_a_phone_without_the_role_still_sends_its_own_text(self):
@@ -312,11 +318,11 @@ class Permission(unittest.TestCase):
 
     def test_reading_is_not_gated_on_being_the_default_sms_app(self):
         """A phone that may READ shows its messages whether or not it RECEIVES them. Publishing the
-        archive and performing another device's send still need the role, because only the default
-        SMS app may write the provider — so nothing is published here."""
+        archive does not need the role: it reads the provider and publishes encrypted account data.
+        Only writing back into Android's provider needs the default-SMS role."""
         res = run(rows=[msg(1)], isPhone=False, canRead=True, steps=["render", "settle"])
         self.assertEqual(res["docs"], ["pcai:sms:%024d" % 1])
-        self.assertEqual(res["relay"], [])
+        self.assertEqual(res["relay"], ["pcai:sms:%024d" % 1])
 
     def test_a_refusal_is_not_retried_into_a_wall(self):
         """Declining leaves the screen saying what is missing rather than an empty list — and the

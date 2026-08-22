@@ -581,6 +581,27 @@
         ws.onclose = () => fin(false);
       }))).then(rs => rs.reduce((a,b)=>a+b,0));
     },
+    /* A temporary LIVE subscription to one or more relays outside the user's normal pool.
+     * Remote Desktop address discovery uses this for a peer's advertised relay: publishing the
+     * invite there is only half a signaling path; answers and ICE must be heard there too. External
+     * events are signature-verified before delivery and sockets are closed with the returned
+     * function, so discovering an IP never silently changes the user's saved relay list. */
+    subscribeFrom(urls, filters, { onEvent, timeout=60000, max=4 } = {}){
+      const targets=[...new Set((urls||[]).filter(Boolean))].filter(u=>!this._conns.has(u)).slice(0,max);
+      const sockets=[]; let closed=false,tm=null;
+      const stop=()=>{ if(closed)return;closed=true;if(tm)clearTimeout(tm);sockets.forEach(ws=>{try{ws.close();}catch(_){}}); };
+      if(timeout>0) tm=setTimeout(stop,timeout);
+      targets.forEach((u,n)=>{
+        let ws; const id='xf'+Math.random().toString(36).slice(2,9)+n;
+        try{ws=new WebSocket(u);sockets.push(ws);}catch(_){return;}
+        ws.onopen=()=>{try{ws.send(JSON.stringify(['REQ',id,...filters]));}catch(_){}};
+        ws.onmessage=async e=>{let m;try{m=JSON.parse(e.data);}catch(_){return;}
+          if(closed||m[0]!=='EVENT'||m[1]!==id||!m[2])return;
+          try{const rs=await worker.call('verifyBatch',{events:[m[2]]});
+            if(!closed&&rs&&rs[0]&&rs[0].valid&&onEvent)onEvent(this._normTags(m[2]));}catch(_){} };
+      });
+      return stop;
+    },
     // One-shot AUTHENTICATED publish to a single EXTERNAL relay (e.g. a NIP-29 group relay like
     // groups.0xchat.com that requires NIP-42 AUTH to write). Opens a short-lived socket, sends the
     // EVENT optimistically, and if the relay issues an ["AUTH", challenge] it calls signAuth(challenge)

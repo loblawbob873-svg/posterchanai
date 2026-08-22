@@ -111,9 +111,11 @@ focus. Sway captures the system shortcut and sends it to the PosterChan shell, w
 forward after drawing the Task Manager. The separate Ctrl+Alt+Backspace recovery shortcut restarts
 only the desktop renderer, leaving Sway and native applications running.
 
-## Remote Desktop over Nostr (in progress)
+## Remote Desktop over Nostr
 
-The next step is remote screen sharing addressed by **`npub`, not IP address**. Nostr provides
+Remote screen sharing can be addressed by **`npub`**, by a PosterChan host/IP, or by
+`name@host` when a machine advertises several identities. An IP is used for discovery rather than
+trusted as an identity: the host's NIP-05 document supplies the recipient public key and relay, then Nostr provides
 identity, permission records and WebRTC signaling; the encrypted screen stream travels directly
 between peers when possible and through TURN only when NAT requires it. A LAN connection therefore
 uses the local path automatically without asking the user to type an address.

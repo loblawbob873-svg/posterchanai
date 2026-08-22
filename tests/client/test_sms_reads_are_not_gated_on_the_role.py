@@ -72,7 +72,7 @@ class NoReadOrSendConsultsTheRole(unittest.TestCase):
         self.assertIn("canRead", body)
 
     def test_sending(self):
-        self.assertNotIn("if(await isPhone()){", fn(self.src, "async function send(to, body)"))
+        self.assertNotIn("if(await isPhone()){", fn(self.src, "async function send(to, body, file)"))
 
     def test_performing_another_device_s_send(self):
         body = fn(self.src, "async function drainOutbox")

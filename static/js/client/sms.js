@@ -231,14 +231,26 @@
       if(d.startsWith(D_OUT) && ev.content){
         try{
           const ack = JSON.parse(await PC.nip44dec(ME().pubkey, ev.content));
-          const sent = ack && ack.request ? await openMessageBody(ack.request) : ack;
-          if(ack && ack.done && ack.ok && sent && sent.to && (sent.body || sent.attachment)){
+          /* Old web builds put the request behind a Blossom envelope. New requests stay inline so
+           * Android's background service can perform them without a WebView or Blossom client. */
+          const sent = ack && ack.request ? await openMessageBody(ack.request) : await openMessageBody(ack);
+          if(sent && sent.to && (sent.body || sent.attachment)){
             const at = Number(sent.at) || Number(ev.created_at || 0) * 1000 || Date.now();
             const md = await docIdFor(sent.to, at, sent.body || '', false);
             const have = S.msgs.get(md);
-            if(!have || have._at < ev.created_at)
-              S.msgs.set(md, { doc:md, address:sent.to, body:sent.body || '', date:at,
-                               incoming:false, name:'', _at:ev.created_at });
+            if(!ack.done){
+              if(!have || !Number(have._at) || have._at < ev.created_at)
+                S.msgs.set(md, { doc:md, address:sent.to, body:sent.body || '', date:at,
+                                 incoming:false, name:'', pending:true, outbox:d,
+                                 _at:ev.created_at });
+            }else if(ack.done && ack.ok){
+              if(!have || have.pending || have.failed || !Number(have._at) || have._at < ev.created_at)
+                S.msgs.set(md, { doc:md, address:sent.to, body:sent.body || '', date:at,
+                                 incoming:false, name:'', _at:ev.created_at });
+            }else if(have && have.pending){
+              have.pending = false; have.failed = true; have.error = String(ack.error || 'not sent');
+              have._at = ev.created_at;
+            }
           }
         }catch(_){}
         continue;
@@ -817,10 +829,20 @@
         attachment = {sha, mime:file.type||'image/jpeg', name:file.name||'photo.jpg', bytes:file.size};
       }catch(e){ return {ok:false,error:'could not encrypt attachment: '+String(e&&e.message||e)}; }
     }
-    const request = await archiveMessageBody(doc, { to, body, at, attachment });
+    /* COMMANDS STAY INLINE. Message archives use encrypted Blossom to keep history off the relay,
+     * but the Android background service is deliberately tiny: it decrypts NIP-44 and talks to the
+     * radio while no WebView is running. Hiding `to` and `body` behind a Blossom pointer made every
+     * background web send a valid-looking no-op. The event is still NIP-44 encrypted to ourselves. */
+    const request = { to, body, at, attachment };
     const ct = await PC.nip44enc(ME().pubkey, JSON.stringify(request));
     const r = await PC.publish(KIND, ct, [['d', doc], ['l', L_TAG]], {quiet:true, noQueue:true});
-    if(r && r.ok) return { ok:true, where:'queued', doc };
+    if(r && r.ok){
+      const md = await docIdFor(to, at, body || '', false);
+      S.msgs.set(md, { doc:md, address:to, body:body || '', date:at, incoming:false, name:'',
+                       pending:true, outbox:doc, _at:Number((r.ev && r.ev.created_at) || now()) });
+      rebuild();
+      return { ok:true, where:'queued', doc };
+    }
     return { ok:false, error:'could not reach your relay' };
   }
 
@@ -1579,7 +1601,7 @@
                app puts it -- and a bubble whose only content is an attachment must not also render
                an empty text node, or it collapses to a sliver. */
             + (m.body ? `<span class="b-txt">${enc(m.body)}</span>` : '')
-            + `<span class="b-meta">${enc(when(m.date))}</span></div>`;
+            + `<span class="b-meta">${enc(when(m.date))}${m.pending?' · waiting for phone':m.failed?' · not sent':''}</span></div>`;
         }).join('')}</div>
         <div class="sms-compose">
           <button class="btn small" id="sms-attach" title="Add photo">${ICO('paperclip','b-ic')}</button>

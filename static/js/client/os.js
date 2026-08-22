@@ -1523,16 +1523,20 @@
     const w=openApp('__remote','Remote Desktop','#i-monitor',null,true,true);if(!w)return null;
     w.el.classList.add('osw-remote');
     w.slot.innerHTML=`<div class="pcrd"><div class="pcrd-hero"><svg class="ic"><use href="#i-monitor"></use></svg><div><b>Share this desktop</b><span>Encrypted peer-to-peer screen sharing, signaled over Nostr.</span></div></div>
-      <label class="pcrd-label">Viewer’s npub<input class="input" data-rd-peer placeholder="npub1…" autocomplete="off" spellcheck="false"></label>
+      <label class="pcrd-label">Viewer’s npub or address<input class="input" data-rd-peer placeholder="npub1… · 192.168.1.20 · name@host" autocomplete="off" spellcheck="false"></label>
+      <label class="pcrd-label" data-rd-choose hidden>User at this address<select class="input" data-rd-choice></select></label>
       <button class="btn btn-neon" data-rd-share><svg class="ic b-ic"><use href="#i-share"></use></svg>Choose screen and share</button>
       <div class="pcrd-note"><b>The viewer must accept.</b> Media uses a direct WebRTC path when possible and your configured TURN service when it is not.</div>
-      <div class="pcrd-cap"><span>✓ PosterChanOS, browser, and phone viewers</span><span>✓ Encrypted Nostr signaling</span><span class="muted">Keyboard/mouse control and direct IP connections are not enabled in this build.</span></div></div>`;
-    const input=$('[data-rd-peer]',w.slot),button=$('[data-rd-share]',w.slot);
+      <div class="pcrd-cap"><span>✓ PosterChanOS, browser, and phone viewers</span><span>✓ npub, IP address, or name@host</span><span>✓ Authenticated, encrypted Nostr signaling</span></div></div>`;
+    const input=$('[data-rd-peer]',w.slot),button=$('[data-rd-share]',w.slot),choose=$('[data-rd-choose]',w.slot),choice=$('[data-rd-choice]',w.slot);
     const go=async()=>{const peer=String(input.value||'').trim();if(!peer){input.focus();return;}
       button.disabled=true;button.textContent='Opening screen picker…';
       try{const ok=await PC().startRemoteDesktop(peer);if(ok){button.textContent='Sharing request sent';setTimeout(()=>{if(button.isConnected){button.disabled=false;button.textContent='Choose screen and share';}},3000);}else{button.disabled=false;button.textContent='Choose screen and share';}}
-      catch(e){button.disabled=false;button.textContent='Choose screen and share';try{PC().toast(String((e&&e.message)||e));}catch(_){}}};
-    button.onclick=go;input.onkeydown=e=>{if(e.key==='Enter')go();};return w;
+      catch(e){button.disabled=false;button.textContent='Choose screen and share';
+        if(e&&e.remoteChoices&&e.remoteChoices.length){choice.innerHTML=e.remoteChoices.map(x=>`<option value="${enc(x.value)}">${enc(x.label)}</option>`).join('');input.value=e.remoteChoices[0].value;choose.hidden=false;choice.focus();return;}
+        try{PC().toast(String((e&&e.message)||e));}catch(_){}}};
+    choice.onchange=()=>{input.value=choice.value;choose.hidden=true;};
+    button.onclick=go;input.oninput=()=>{choose.hidden=true;};input.onkeydown=e=>{if(e.key==='Enter')go();};return w;
   }
 
   /* Route a view switch to that feature's OWN window. Returns true when it has taken over (a window

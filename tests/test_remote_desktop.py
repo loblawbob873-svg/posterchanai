@@ -10,6 +10,19 @@ SHELL = (ROOT / "static/js/client/osshell.js").read_text(encoding="utf-8")
 def test_remote_desktop_is_a_real_launcher_app():
     assert "label: 'Remote Desktop'" in OS
     assert "PC().startRemoteDesktop(peer)" in OS
+    assert "Viewer’s npub or address" in OS
+    assert "name@host" in OS
+
+
+def test_remote_desktop_resolves_ip_without_trusting_it_as_identity():
+    assert "async function _remoteDesktopAddress(peer)" in APP
+    assert "'/.well-known/nostr.json'" in APP
+    assert "e.remoteChoices=names.map" in APP
+    assert "signalRelays:target.relays" in APP
+    assert "Relay.subscribeFrom(signalRelays" in APP
+    relay=(ROOT / "static/js/client/relay.js").read_text(encoding="utf-8")
+    assert "worker.call('verifyBatch',{events:[m[2]]})" in relay
+    assert "if(_call.signalClose) _call.signalClose()" in APP
 
 
 def test_remote_desktop_sends_a_screen_and_no_guest_media():

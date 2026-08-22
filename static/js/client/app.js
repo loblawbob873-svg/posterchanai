@@ -32374,6 +32374,8 @@
     // frame per ICE candidate, i.e. ~8-20 sockets in two seconds per call, more for a group room.
     try{ const own = (CFG && CFG.relay_url) ? [normalizeRelay(CFG.relay_url)].filter(Boolean) : [];   // empty on a standalone install (no instance)
       if(own.length) Relay.publishTo(own, ev).catch(()=>{}); }catch(_){}
+    try{ if(_call && _call.signalRelays && _call.signalRelays.length)
+      Relay.publishTo(_call.signalRelays, ev).catch(()=>{}); }catch(_){}
   }
   /* The ONE frame per call that should wake a phone, marked in the clear so the server can tell.
    *
@@ -32502,8 +32504,14 @@
     if(_call){ toast('already in a call'); return; }
     const remoteDesktop = !!(opts && opts.remoteDesktop);
     const video = remoteDesktop || !!(opts && opts.video);
+    const signalRelays=[...new Set(((opts&&opts.signalRelays)||[]).map(normalizeRelay).filter(Boolean))];
     _call = { id:_rid(), peer:peerHex, pc:null, local:null, remote:null, video, remoteDesktop,
-              state:'calling', caller:true, pendingIce:[] };
+              signalRelays, signalClose:null, state:'calling', caller:true, pendingIce:[] };
+    if(signalRelays.length && Relay.subscribeFrom){
+      _call.signalClose=Relay.subscribeFrom(signalRelays,
+        [{ '#p':[ME.pubkey], kinds:[CALL_KIND], since:Math.floor(Date.now()/1000)-5 }],
+        {onEvent:_onCallEvent,timeout:120000});
+    }
     _callUI();
     let local;
     try{ local = await _getMedia(video, remoteDesktop, false); }catch(e){ toast(remoteDesktop && e&&e.name==='NotAllowedError'?'screen sharing cancelled':_mediaErrMsg(e)); _callTeardown(); return; }
@@ -32527,10 +32535,35 @@
                               sdp: pc.localDescription.sdp});
     if(_call) _call.timeout = setTimeout(()=>{ if(_call && _call.state==='calling'){ toast('no answer'); _hangup(false); } }, 45000);
   }
+  async function _remoteDesktopAddress(peer){
+    const raw=String(peer||'').trim(), direct=safePk(raw);
+    if(direct)return {pk:direct,relays:[]};
+    let name='',host=raw;
+    const ai=raw.lastIndexOf('@');if(ai>0){name=raw.slice(0,ai).trim();host=raw.slice(ai+1).trim();}
+    if(!host||/[\s/?#]/.test(host)||host.includes('\\')||host.includes('..'))
+      throw new Error('enter an npub, IP address, host name, or name@address');
+    const explicit=/^https?:\/\//i.test(host);let schemeHint='';
+    if(explicit){try{const u=new URL(host);schemeHint=u.protocol.slice(0,-1);host=u.host;}catch(_){throw new Error('invalid PosterChan address');}}
+    const schemes=explicit?[schemeHint]:
+      ((BUNDLED||!window.isSecureContext)?['https','http']:['https']);
+    let doc=null,last='';
+    for(const scheme of schemes){
+      const ac=new AbortController(),tm=setTimeout(()=>ac.abort(),5000);
+      try{const q=name?'?name='+encodeURIComponent(name):'';
+        const r=await fetch(scheme+'://'+host+'/.well-known/nostr.json'+q,
+          {signal:ac.signal,cache:'no-store'});if(r.ok){doc=await r.json();break;}last='HTTP '+r.status;
+      }catch(e){last=String(e&&e.message||e);}finally{clearTimeout(tm);}
+    }
+    const names=Object.entries((doc&&doc.names)||{}).map(([n,p])=>({name:n,pk:safePk(String(p||''))})).filter(x=>x.pk);
+    if(name){const hit=names.find(x=>x.name.toLowerCase()===name.toLowerCase());if(!hit)throw new Error('that user is not advertised by '+host);names.splice(0,names.length,hit);}
+    if(!names.length)throw new Error('no PosterChan remote-desktop identity found at '+host+(last?' ('+last+')':''));
+    if(names.length>1){const e=new Error('choose a user on '+host);e.remoteChoices=names.map(x=>({label:x.name+'@'+host,value:x.name+'@'+host}));throw e;}
+    const pk=names[0].pk, relays=((doc.relays&&doc.relays[pk])||[]).map(normalizeRelay).filter(Boolean);
+    return {pk,relays};
+  }
   async function startRemoteDesktop(peer){
-    const pk=safePk(String(peer||'').trim());
-    if(!pk){ toast('enter a valid npub or 64-character public key'); return false; }
-    await startCall(pk,{remoteDesktop:true});
+    const target=await _remoteDesktopAddress(peer);
+    await startCall(target.pk,{remoteDesktop:true,signalRelays:target.relays});
     return !!_call;
   }
   async function _acceptCall(){
@@ -32604,6 +32637,7 @@
   function _callTeardown(){
     if(!_call) return;
     try{ clearTimeout(_call.timeout); }catch(_){}
+    try{ if(_call.signalClose) _call.signalClose(); }catch(_){}
     try{ if(_call.pc) _call.pc.close(); }catch(_){}
     try{ if(_call.local) _call.local.getTracks().forEach(t=>t.stop()); }catch(_){}
     _call = null; _callService(false); _callUI();
