@@ -28548,27 +28548,14 @@
      * line for hours. `serviceRunning` is read off the service itself. */
     if(s.serviceRunning){
       const n = Number(s.connected || 0);
-      /* WHEN A REQUEST LAST ARRIVED is the one number that splits the two failures, and it was
-       * measured by the service and then not shown. "The desktop says waiting for the signer" has
-       * two completely different causes — the request never reached this phone (the desktop's own
-       * relay socket died, which is the common one), or it arrived and was not answered — and they
-       * are indistinguishable from either end without this line. */
-      const last = Number(s.lastRequestAt || 0);
+      /* Keep the normal screen about what a person can DO. Request counters, timestamps, crypto
+       * implementations and provider errors are diagnostics; showing them here made a healthy
+       * signer look alarming and asked users to interpret internals they cannot act on. The native
+       * status call still carries those fields for support/device diagnostics. */
       box.insertAdjacentHTML('beforeend',
-        '<div class="muted small" style="margin-top:6px">These keep signing while PosterChan is '
-        + 'closed' + (n ? '' : ' — reconnecting to the relay now') + '.'
-        + (s.answered ? ' ' + enc(String(s.answered)) + ' requests answered.' : '')
-        + (last ? ' Last request ' + enc(timeAgo(last)) + ' ago.'   // the service stamps it in SECONDS
-                : ' No request has reached this phone yet.')
-        /* AND WHETHER THE CRYPTO IS IN C. Four point multiplications per request: in libsecp256k1
-         * that is microseconds, in BigInteger it is most of a second, and `Native` turns itself off
-         * silently on any phone where the library is missing or disagrees with the Java code. The
-         * difference is the whole of "way too slow, nobody will use it", so it is on screen. */
-        + (s.fastCrypto === undefined ? ''
-           : (s.fastCrypto && s.fastEcdh
-              ? ' Fast crypto: on.'
-              : ' <b>Fast crypto: OFF</b>' + (s.fastWhy ? ' (' + enc(String(s.fastWhy)) + ')' : '')
-                + ' — signing is running in Java and will be slow.'))
+        '<div class="muted small" style="margin-top:6px">'
+        + (n ? 'Ready to sign while PosterChan is closed.'
+             : 'Connecting in the background… Your paired apps will work when the connection is ready.')
         + '</div>');
       /* The honest limit of a foreground service, and the one thing left that can still delay a
        * request. Doze defers an unexempted app's network while the screen is off, so a signature can

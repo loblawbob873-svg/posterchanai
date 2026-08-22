@@ -970,7 +970,12 @@ def test_the_panel_can_see_whether_the_crypto_is_in_c():
     for k in ("fastCrypto", "fastEcdh", "fastWhy"):
         assert k in plug, f"status() does not report {k}"
     assert "Native.ecdhActive()" in plug, "the ECDH half is not reported separately from signing"
-    assert "Fast crypto: OFF" in app, "the panel never says when the slow path is in use"
+    assert "Ready to sign while PosterChan is closed." in app
+    assert "Connecting in the background" in app
+    assert "Fast crypto: OFF" not in app, (
+        "the normal Signer screen exposes crypto diagnostics that users cannot act on"
+    )
+    assert "s.fastWhy" not in app, "native provider diagnostics leaked into the normal Signer UI"
 
 def test_the_keystore_is_opened_once_not_once_per_request():
     """A hardware-backed decrypt per request is most of what "too slow" was made of.
