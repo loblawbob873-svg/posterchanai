@@ -903,7 +903,7 @@
    * either form. */
   const iconSvg = (href) => {
     const h = String(href || '').trim();
-    const id = !h ? '#i-app' : (h.charAt(0) === '#' ? h : '#' + h);
+    const id = !h ? '#i-grid' : (h.charAt(0) === '#' ? h : '#' + h);
     return `<svg class="ic" aria-hidden="true"><use href="${enc(id)}"></use></svg>`;
   };
 
@@ -1794,7 +1794,7 @@
     if(existing){ focusWin(existing); return existing; }
     /* `noFeed` — it owns its contents in the most literal way available: they are not in this
      * document at all. Handing it the shared #feed would blank whichever window was using it. */
-    const w = openApp(view, nw.title || nw.app || 'App', 'grid', null, true);
+    const w = openApp(view, nw.title || nw.app || 'App', 'i-grid', null, true);
     if(!w) return null;
     w.native = Number(nw.id);
     w.el.classList.add('osw-native');
@@ -2058,7 +2058,15 @@
     try{ ev.preventDefault(); }catch(_){}
     const hadButtons = (ev.buttons || 0) > 0;
     w.el.classList.add('dragging');
-    const paint = () => { raf = 0; w.el.style.transform = `translate(${curX - ox}px, ${curY - oy}px)`; };
+    const paint = () => {
+      raf = 0;
+      w.el.style.transform = `translate(${curX - ox}px, ${curY - oy}px)`;
+      /* A native surface is a separate compositor object. Moving only this HTML frame produces the
+       * exact broken effect of a black window leading while Telegram/Firefox stays behind. nsync is
+       * serialised and coalesced, so asking once per animation frame keeps the real surface under
+       * its frame without building an unbounded IPC queue. */
+      if(w.native != null) nsync();
+    };
     const move = (e) => {
       // A released mouse reports buttons === 0 on its next move. Checked FIRST: doing it at the end
       // of the handler still applied one more move, which is the whole symptom.

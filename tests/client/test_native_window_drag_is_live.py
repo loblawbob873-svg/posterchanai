@@ -8,12 +8,20 @@ def test_dragging_does_not_hide_the_native_surface():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
     assert "minimised: !!w.min" in src
     assert "minimised: !!(w.min || w.gesturing)" not in src
+    drag = src[src.index("function startDrag"):src.index("function startResize")]
+    assert "if(w.native != null) nsync();" in drag
 
 
 def test_taskbar_is_icon_only():
     css = (ROOT / "static/css/client.css").read_text(encoding="utf-8")
     assert ".os-task span{display:none}" in css
     assert ".os-task .ic{width:20px;height:20px" in css
+
+
+def test_native_task_buttons_have_an_existing_fallback_icon():
+    src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+    assert "'#i-grid'" in src
+    assert "'App', 'i-grid'" in src
 
 
 def test_native_apps_inherit_the_dark_gtk_chrome():
