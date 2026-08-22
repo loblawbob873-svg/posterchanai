@@ -110,6 +110,7 @@ class WM {
     this.subSock = null;
     this.pending = [];           // FIFO of {type, resolve, reject} — sway answers in order
     this.listeners = new Map();  // event name -> Set(fn)
+    this.moves = new Map();      // con_id -> latest-wins drag queue (never replay stale positions)
   }
 
   available(){ return !!this.path; }
@@ -207,11 +208,26 @@ class WM {
                         + Math.round(x) + ' ' + Math.round(y));
   }
 
-  /** Dragging changes position only. Resizing/re-floating the client on every pointer frame makes
-   * Firefox repaint and Telegram fall seconds behind the frame; the full place() runs on release. */
+  /** Dragging changes position only, and LATEST WINS.
+   *
+   * Pointer frames arrive faster than sway IPC acknowledgements. Sending every one through the
+   * ordinary FIFO makes Firefox trail its frame, then replay obsolete positions after the mouse
+   * stops. One command may be in flight per window; while it is, all intermediate positions collapse
+   * into the newest one. The full place() still runs on release to commit size and final geometry. */
   move(id, x, y){
-    return this.command('[con_id=' + Number(id) + '] move absolute position '
-                        + Math.round(x) + ' ' + Math.round(y));
+    const key = Number(id);
+    let state = this.moves.get(key);
+    const at = { x: Math.round(x), y: Math.round(y) };
+    if(state){ state.next = at; return state.promise; }
+    state = { next: at, promise: null };
+    state.promise = (async () => {
+      while(state.next){
+        const here = state.next; state.next = null;
+        await this.command('[con_id=' + key + '] move absolute position ' + here.x + ' ' + here.y);
+      }
+    })().finally(() => { if(this.moves.get(key) === state) this.moves.delete(key); });
+    this.moves.set(key, state);
+    return state.promise;
   }
 
   /** Subscribe on its OWN socket. sway will not answer ordinary requests on a subscribed one. */

@@ -4,11 +4,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_dragging_parks_native_surface_until_the_frame_reaches_its_final_position():
+def test_dragging_keeps_native_surface_live_and_coalesces_position_moves():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
     drag = src[src.index("function startDrag"):src.index("function startResize")]
     assert "if(w.native != null) nsync()" in drag
-    assert "if(it.w.gesturing || stash.has(it.native))" in src
+    assert "if(stash.has(it.native))" in src
+    assert "if(it.w.gesturing && was !== 'hidden')" in src
+    assert "await pcWM.move(it.native, rect.x, rect.y)" in src
     assert src.index("pcWM.place(it.native") < src.index("pcWM.show(it.native")
     assert "_natMove(w)" not in drag
     assert "pcWM.place" not in drag

@@ -173,6 +173,19 @@ class CompositorIPC(unittest.TestCase):
         self.assertIn("[con_id=11] resize set 800 600", cmds)
         self.assertIn("[con_id=11] move absolute position 100 50", cmds)
 
+    def test_drag_moves_drop_intermediate_positions_instead_of_replaying_them(self):
+        """Pointer frames outrun sway replies; only the in-flight and newest position may survive."""
+        out = self.run_js("""
+          const a = wm.move(11, 10, 20);
+          const b = wm.move(11, 30, 40);
+          const c = wm.move(11, 50, 60);
+          await Promise.all([a,b,c]);
+          out.done = true;
+        """)
+        cmds = [s["payload"] for s in out["seen"] if s["type"] == 0]
+        self.assertEqual(cmds, ["[con_id=11] move absolute position 10 20",
+                                "[con_id=11] move absolute position 50 60"])
+
     def test_events_arrive_on_their_own_socket(self):
         """sway will not answer ordinary requests on a subscribed connection, so a shell that
         subscribes on its command socket loses every reply after it."""

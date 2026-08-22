@@ -1778,12 +1778,10 @@
     }catch(_){ return false; }
   };
 
-  /* A NATIVE SURFACE AND AN HTML FRAME CANNOT MOVE IN ONE COMPOSITOR TRANSACTION. Trying to imitate
-   * that by sending one sway IPC command per animation frame merely makes the two chase each other:
-   * IPC acknowledgements serialize, the cursor keeps moving, and Firefox winds up visibly detached
-   * from its PosterChan frame. Park the real surface for the gesture, move the lightweight frame at
-   * display speed, then place the parked surface at the final rectangle before showing it. There is
-   * one coherent window before and after the drag and no queue of stale positions to replay. */
+  /* The native surface stays LIVE during a drag. pcWM.move coalesces pointer frames so one command
+   * may be in flight and only the newest pending position survives. The previous scratchpad preview
+   * made the frame move as a black/empty rectangle and Firefox appear only on release — technically
+   * coherent, visibly unusable. Full size/placement is still committed once at gesture end. */
   function _natGesture(w, on){
     /* Cleared for EVERY window, not just a native one: the hold is armed by the press, and the
      * press does not know yet whether the frame it landed on wraps an app. Left set after dragging
@@ -1953,10 +1951,7 @@
          * never shown again. A latch set before the attempt it describes; the same shape that has
          * bitten this codebase before. Failure now leaves the memory alone (hidden stays hidden, so
          * the next pass retries the show) or clears it (so the next pass re-places). */
-        /* During a drag the HTML frame is the preview. Keeping the compositor surface live would
-         * require an atomic cross-process move that Wayland/Electron cannot provide; queuing sway
-         * moves is what separated Firefox from the frame. */
-        if(it.w.gesturing || stash.has(it.native)){
+        if(stash.has(it.native)){
           /* Never leave an EMPTY HTML frame on screen while its real Wayland surface is in the
            * scratchpad. That rectangle was the reported black window. The taskbar still owns the
            * window and focusing it raises/restores the native surface; only the lie that its pixels
@@ -1984,6 +1979,18 @@
           continue;
         }
         const was = _natSent.get(it.native);
+        /* While dragging, position-only movement keeps Firefox/Telegram/virt-viewer visible without
+         * forcing a resize and repaint on every pointer frame. `move` is latest-wins in wm.js, so a
+         * slow compositor cannot build a tail of old locations. A previously hidden surface is
+         * restored by the ordinary full-place branch before live movement begins. */
+        if(it.w.gesturing && was !== 'hidden'){
+          if(!was || NAT().changed(was, rect)){
+            try{ await pcWM.move(it.native, rect.x, rect.y); _natSent.set(it.native, rect); }
+            catch(_){ _natSent.delete(it.native); }
+          }
+          it.w.el.classList.remove('native-stashed');
+          continue;
+        }
         if(was === 'hidden' || NAT().changed(was, rect)){
           try{ await pcWM.place(it.native, rect.x, rect.y, rect.w, rect.h); }
           catch(_){ _natSent.delete(it.native); continue; }
