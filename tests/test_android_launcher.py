@@ -790,14 +790,15 @@ class LauncherSources(unittest.TestCase):
         q = man[man.index("<queries>"):man.index("</queries>")]
         self.assertIn("android.intent.category.HOME", q)
 
-    def test_a_widget_opens_its_menu_before_remoteviews_can_cancel(self):
-        """App icons may defer their menu until lift-off for dragging; RemoteViews may cancel that
-        gesture, so a widget's only Remove route must fire at the recognized long press."""
+    def test_a_widget_is_lifted_before_its_menu_opens(self):
+        """Widgets need the same edit state as icons or their resize handles never exist."""
         desk = _code(open(os.path.join(HOME, "DeskView.java")).read())
-        i = desk.index("if (hit.isWidget())")
-        body = desk[i:i + 400]
-        self.assertIn("host.onLongPress(hit)", body)
-        self.assertLess(body.index("host.onLongPress(hit)"), body.index("return;"))
+        armed = desk[desk.index("menuFor = hit;"):desk.index("postDelayed(pending, 400)")]
+        self.assertIn("lift(hit)", armed)
+        self.assertNotIn("if (hit.isWidget())", armed,
+                         "widgets bypass lift(), so they cannot be dragged or resized")
+        self.assertIn("flushMenu()", desk,
+                      "the widget was lifted but its Remove menu is never shown on release")
 
 
 if __name__ == "__main__":

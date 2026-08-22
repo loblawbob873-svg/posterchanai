@@ -326,17 +326,11 @@ public class DeskView extends ViewGroup {
                 menuFor = hit;
                 menuEmpty = (hit == null);
                 if (hit != null) {
-                    /* A RemoteViews child is allowed to CANCEL the parent gesture after this
-                     * callback. Deferring its menu until UP therefore makes Remove disappear on
-                     * real launchers even though inert app icons work. Widgets open their menu at
-                     * the recognized long-press; app icons still defer so they can be dragged
-                     * without a dialog covering the destination cells. */
-                    if (hit.isWidget()) {
-                        menuFor = null;
-                        performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
-                        if (host != null) host.onLongPress(hit);
-                        return;
-                    }
+                    /* Widgets follow the SAME lift-first contract as icons. Opening their menu
+                     * here leaves `editing` null, so Remove may be visible but drag and resize are
+                     * impossible — exactly what the device test caught. `stealing` makes the next
+                     * event intercept the RemoteViews child; the UP path above then flushes this
+                     * owed menu after the item has had a chance to move. */
                     lift(hit);
                 }
             }
