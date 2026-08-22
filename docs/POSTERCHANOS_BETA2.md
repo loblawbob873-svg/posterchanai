@@ -13,3 +13,5 @@ Deferred from the Beta 1 stabilization cutoff:
 - Keep the VM viewer attached to its PosterChan frame while dragging and resizing. Recompute the
   guest viewport after every frame move and size change, and never leave it detached or foreground
   locked.
+- Put a visible Edit button on every VM and open a polished graphical editor for CPU, memory,
+  storage, networking, BIOS/EFI, graphics, sound, USB, boot order, and other attached hardware.
