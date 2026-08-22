@@ -319,8 +319,13 @@ def test_the_overlay_is_published_when_its_inputs_change():
     either end: the deploy succeeds, the machines are simply old."""
     src = open(SYNC, encoding="utf-8").read()
     assert "publish_overlay.sh" in src, "sync.sh never publishes the overlay"
-    i = src.index("publish_overlay.sh")
-    guard = src[max(0, i - 400):i]
+    # Inspect the executable publish block, not a fixed number of characters before the first
+    # mention. Explanatory comments legitimately grow, and `publish_overlay.sh` is named in the
+    # comment before the guard as well as in the command it protects.
+    i = src.index("./scripts/publish_overlay.sh")
+    guard_start = src.rfind("if git diff --name-only", 0, i)
+    assert guard_start >= 0, "overlay publishing has no changed-input guard"
+    guard = src[guard_start:i]
     assert "overlay/|bin/|plymouth/" in guard, (
         "the overlay is published on every deploy — a forced push each time makes every installed "
         "machine re-sync a repo whose contents are identical")

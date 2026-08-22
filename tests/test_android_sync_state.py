@@ -71,6 +71,7 @@ public class Fake extends Context {
           public Editor putBoolean(String k, boolean v) { STORE.put(k, Boolean.valueOf(v)); return this; }
           public Editor remove(String k) { STORE.remove(k); return this; }
           public void apply() { }
+          public boolean commit() { return true; }
         };
       }
     };
