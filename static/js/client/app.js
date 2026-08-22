@@ -6379,7 +6379,15 @@
     if (VIEW==='meme'){ if(window.PCMeme) return window.PCMeme.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='stats'){ if(window.PCStats) return window.PCStats.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
     if (VIEW==='budget'){ if(window.PCBudget) return window.PCBudget.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
-    if (VIEW==='notes'){ if(window.PCNotes) return window.PCNotes.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
+    if (VIEW==='notes'){
+      if(window.PCNotes) return window.PCNotes.render();
+      const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>';
+      /* A failed/late module script must heal on the FIRST open. The old branch returned after the
+       * spinner and nothing ever called render again; closing and reopening happened to work only
+       * when notes.js finished in between. Use the same self-healing loader as Texts. */
+      _withNotes(m => { if(VIEW==='notes') m.render(); });
+      return;
+    }
     /* Texts goes through the late loader rather than the usual `if(window.PCSms)` guard, because a
        bundle whose shell predates sms.js would otherwise show a spinner that never resolves — the
        module IS in the bundle (build-www.sh copies every client .js) and only the <script> tag is
@@ -28241,6 +28249,7 @@
   }
   const _withPhoneShell = fn => _withModule('phoneshell.js', 'PCPhone', fn);
   const _withSms = fn => _withModule('sms.js', 'PCSms', fn);
+  const _withNotes = fn => _withModule('notes.js', 'PCNotes', fn);
   /* Load it once anyway, late, so the theme mirror and the home-screen landing work on a bundle whose
      shell carries no <script> tag for it. After `load` and behind a delay ON PURPOSE: outside the
      boot path, because this app has already broken its own APK once with a speculative guard inside

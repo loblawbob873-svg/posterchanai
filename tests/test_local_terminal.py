@@ -66,6 +66,21 @@ class LocalTerminal(unittest.TestCase):
         """)
         self.assertEqual(out.get("cols"), 123, out)
 
+    def test_resize_never_injects_stty_into_the_users_input(self):
+        """Resize is an ioctl on the slave PTY, not text pasted into a half-written command."""
+        out = self.run_js("""
+          const s = T.start({cols: 80, rows: 24}); let seen = '';
+          T.subscribe(s.id, ev => { if(ev.t === 'out') seen += ev.d; });
+          setTimeout(() => T.write(s.id, "printf RESIZE-SAFE"), 500);
+          setTimeout(() => T.resize(s.id, 131, 47), 650);
+          setTimeout(() => T.write(s.id, "\\n"), 800);
+          setTimeout(() => T.write(s.id, "echo SIZE=$(tput cols)x$(tput lines)\\n"), 1050);
+          setTimeout(() => done({seen}), 1900);
+        """)
+        self.assertIn("RESIZE-SAFE", out["seen"])
+        self.assertIn("SIZE=131x47", out["seen"])
+        self.assertNotIn("stty cols 131", out["seen"])
+
     def test_output_survives_a_reloaded_page(self):
         """The WebView is recreated under memory pressure and on a crash. A terminal that comes back
         blank is one nobody trusts with a long-running command."""
@@ -181,7 +196,7 @@ class LocalTerminal(unittest.TestCase):
             src = fh.read()
         reqs = re.findall(r"require\(\s*['\"]([^'\"]+)['\"]", src)
         self.assertEqual([r for r in reqs if not r.startswith((".", "/"))],
-                         ["child_process"], reqs)
+                         ["child_process", "fs"], reqs)
 
 
 if __name__ == "__main__":

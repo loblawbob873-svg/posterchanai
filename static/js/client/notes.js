@@ -204,10 +204,13 @@
     const lib = { notes:new Map(), folders:new Map(), gone:new Map() };
     let cached = [];
     try{ cached = Store().query([FILTER()]) || []; }catch(_){ cached = []; }
-    // Progressive: repaint every 60 decrypts so a big library fills in visibly instead of holding
-    // a spinner. Decryption is per note and there is no way around it — the title lives inside the
-    // ciphertext — so with a thousand notes the difference is a blank screen versus a filling one.
-    await _absorb(lib, cached, n => { if(n % 60 === 0){ _lib = lib; _paint(); } });
+    /* THE NOTES APP EXISTS BEFORE THE SIGNER ANSWERS. Publish the empty local model first so the
+     * complete shell (including Compose) paints immediately. With a remote signer every encrypted
+     * record is a round trip; the old first repaint at 60 decryptions made opening Notes look hung.
+     * Repaint after the first successful record, then in small batches while the rest unlock. */
+    _lib = lib;
+    _paint();
+    await _absorb(lib, cached, n => { if(n === 1 || n % 12 === 0){ _lib = lib; _paint(); } });
     _lib = lib;
     return _lib;
   }
@@ -267,7 +270,7 @@
     let seen = 0;
     evs = (evs || []).slice().sort((a,b) => (b.created_at||0) - (a.created_at||0));
     for(const ev of evs){
-      if(onProgress) onProgress(++seen);
+      seen++;
       const d = (ev.tags||[]).find(t=>t[0]==='d');
       if(!d || !d[1]) continue;
       const isNote = d[1].startsWith(D_NOTE), isFolder = d[1].startsWith(D_FOLDER);
@@ -308,6 +311,9 @@
       if(!Array.isArray(obj.tags)) obj.tags = [];
       if(!Array.isArray(obj.res)) obj.res = [];
       into.set(id, obj);
+      /* Progress means one usable decrypted record, not merely one ciphertext inspected. Calling
+       * this before the await made the first progressive paint contain zero notes. */
+      if(onProgress) onProgress(seen);
     }
   }
 

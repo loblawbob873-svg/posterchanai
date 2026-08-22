@@ -409,6 +409,15 @@
       _fitT = setTimeout(() => {
         _fitT = null;
         if(!term) return;
+        /* FOCUS MAY CHANGE Z-ORDER, NEVER TERMINAL GEOMETRY. PosterChanOS parks/moves the shared
+         * feed while another window takes focus, and that transition fires ResizeObserver with a
+         * temporary content size. Fitting xterm there sends SIGWINCH to the PTY and makes the
+         * background terminal visibly rewrap. A deliberate edge resize focuses its frame before
+         * changing the box, so ignoring background measurements loses no real resize. */
+        try{
+          const frame = box && box.closest && box.closest('.osw');
+          if(frame && !frame.classList.contains('focused')) return;
+        }catch(_){}
         try{ term.options.fontSize = fontSize(); }catch(_){}
         try{ if(fit) fit.fit(); }catch(_){}
         /* A ZERO-SIZED BOX IS NOT A SIZE. In desktop mode the Terminal's window is PARKED when

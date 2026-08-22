@@ -18,6 +18,7 @@
  */
 'use strict';
 const { spawn } = require('child_process');
+const fs = require('fs');
 
 const MAX_SESSIONS = 8;      // a shell each for a person who has lost count is still not eight
 const sessions = new Map();  // id -> { proc, buf, seq, subscribers }
@@ -78,14 +79,62 @@ function write(id, data) {
   return { ok: true };
 }
 
+/* Find the slave PTY owned by the shell below util-linux `script`.
+ *
+ * `script` keeps the PTY master while its child shell has /dev/pts/N on fd 0. Reading procfs is
+ * Linux-only, as is this PosterChanOS local-terminal bridge. The traversal is ownership-safe: it
+ * starts at the exact process we spawned and follows only its descendants, then accepts only a
+ * kernel PTY path. */
+function terminalTty(s) {
+  if (s.tty && /^\/dev\/pts\/\d+$/.test(s.tty)) return s.tty;
+  const todo = [s.proc.pid], seen = new Set();
+  while (todo.length) {
+    const pid = Number(todo.shift());
+    if (!pid || seen.has(pid)) continue;
+    seen.add(pid);
+    if (pid !== s.proc.pid) {
+      try {
+        const tty = fs.readlinkSync(`/proc/${pid}/fd/0`);
+        if (/^\/dev\/pts\/\d+$/.test(tty)) { s.tty = tty; return tty; }
+      } catch (_) {}
+    }
+    try {
+      const kids = fs.readFileSync(`/proc/${pid}/task/${pid}/children`, 'utf8').trim();
+      if (kids) todo.push(...kids.split(/\s+/).map(Number));
+    } catch (_) {}
+  }
+  return '';
+}
+
+function applySize(s, cols, rows, attempt) {
+  if (!s || !s.alive) return;
+  const tty = terminalTty(s);
+  if (!tty) {
+    /* The child appears a few milliseconds after spawn. Keep only the newest desired size and find
+     * the PTY once it exists; no bytes are ever written to the interactive stdin. */
+    if ((attempt || 0) < 20)
+      setTimeout(() => applySize(s, s.wantCols, s.wantRows, (attempt || 0) + 1), 25);
+    return;
+  }
+  try {
+    const p = spawn('stty', ['-F', tty, 'cols', String(cols), 'rows', String(rows)], {
+      stdio: 'ignore', windowsHide: true,
+    });
+    p.on('error', () => {});
+    p.unref();
+  } catch (_) {}
+}
+
 function resize(id, cols, rows) {
   const s = sessions.get(id);
   if (!s || !s.alive) return { ok: false };
   const c = Math.max(20, Math.min(500, Number(cols) || 80));
   const r = Math.max(5, Math.min(200, Number(rows) || 24));
-  /* Written into the pty rather than signalled: without node-pty there is no ioctl to send, and a
-   * shell told its own size by stty behaves correctly from the next prompt. */
-  try { s.proc.stdin.write(`stty cols ${c} rows ${r} 2>/dev/null\n`); } catch (_) {}
+  /* Resize the PTY itself. Writing `stty …\n` to proc.stdin injected that text into whatever the
+   * user was typing, executed it as a command, and made multiple terminals collide. `stty -F`
+   * performs the same TIOCSWINSZ ioctl without touching the interactive byte stream. */
+  s.wantCols = c; s.wantRows = r;
+  applySize(s, c, r, 0);
   return { ok: true, cols: c, rows: r };
 }
 
