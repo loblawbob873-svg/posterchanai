@@ -37,6 +37,9 @@ import java.util.Set;
  */
 public final class NativeSweep {
 
+    /** The durable agreement belongs to one local SAF replica, not merely the shared pair name. */
+    static String localReplicaKey(SyncStore.Folder f) { return f.key + "\n" + f.id; }
+
     private NativeSweep() { }
 
     /**
@@ -320,7 +323,10 @@ public final class NativeSweep {
          * ghost that minted 373 conflicts on the real phone. */
         StateSet st = readState(net, sec, mk, store, f.key);
         Map<String, Map<String, Object>> state = st.state;
-        Map<String, Map<String, Object>> index = store.base(f.key);
+        /* A pair name identifies the shared folder; the SAF URI identifies THIS local replica.
+         * Re-selecting an empty Android folder must not inherit another replica's agreement. */
+        final String localKey = localReplicaKey(f);
+        Map<String, Map<String, Object>> index = store.base(localKey);
         {
             Set<String> devs = new LinkedHashSet<String>();
             for (Map<String, Object> e : state.values()) {
@@ -366,7 +372,7 @@ public final class NativeSweep {
         /* Entries in a partial journal say only how far an interrupted join got. Until a complete
          * sweep has been durably marked, this phone has no authority to turn an absence into an
          * account-wide tombstone. Restore live shared records instead. */
-        final boolean joining = !store.baselineComplete(f.key);
+        final boolean joining = !store.baselineComplete(localKey);
         /* Nor may an un-baselined replica OBEY old deletion history. A reused pair name can have
          * tombstones from an earlier incarnation; applying those to the only local copy is how a
          * clean first sync put thousands of files in Android trash. Keep the bytes in place until
@@ -414,7 +420,7 @@ public final class NativeSweep {
                     + (plan.keepBoth.size() == 1 ? "" : "s") + " need the app open";
         }
 
-        Journal j = new Journal(net, store, sec, mk, f.key, device, st.era, index, rep);
+        Journal j = new Journal(net, store, sec, mk, f.key, localKey, device, st.era, index, rep);
 
         /* GIVE EVERY ENTRY A CONTENT IDENTITY WHILE WE ARE HERE.
          *
@@ -633,7 +639,7 @@ public final class NativeSweep {
          * nothing held and may establish the baseline. */
         if ((stop == null || !stop.stopping()) && rep.failed.isEmpty() && rep.error.isEmpty()
                 && rep.joinDeletionsHeld.isEmpty())
-            store.markBaselineComplete(f.key);
+            store.markBaselineComplete(localKey);
     }
 
     /** What a file looked like on this disk when we applied something to it — the journal's own
@@ -1084,7 +1090,7 @@ public final class NativeSweep {
         private final SyncIo.Net net;
         private final SyncStore store;
         private final byte[] sec, mk;
-        private final String key, me;
+        private final String key, localKey, me;
         private final long era;
         private final Map<String, Map<String, Object>> index;
         private final List<Map<String, Object>> pending = new ArrayList<Map<String, Object>>();
@@ -1092,10 +1098,10 @@ public final class NativeSweep {
         private boolean dirty = false;
         private int since = 0;
 
-        Journal(SyncIo.Net net, SyncStore store, byte[] sec, byte[] mk, String key, String me,
+        Journal(SyncIo.Net net, SyncStore store, byte[] sec, byte[] mk, String key, String localKey, String me,
                 long era, Map<String, Map<String, Object>> index, Report rep) {
             this.net = net; this.store = store; this.sec = sec; this.mk = mk;
-            this.key = key; this.me = me; this.era = era; this.index = index; this.rep = rep;
+            this.key = key; this.localKey = localKey; this.me = me; this.era = era; this.index = index; this.rep = rep;
         }
 
         private static Map<String, Object> strip(Map<String, Object> e) {
@@ -1190,7 +1196,7 @@ public final class NativeSweep {
                     }
                 }
             }
-            store.saveBase(key, index);
+            store.saveBase(localKey, index);
         }
     }
 }

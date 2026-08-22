@@ -1540,9 +1540,10 @@
     }catch(_){ return false; }
   };
 
-  /* Keep the native surface live during a drag or resize. Hiding it made the frame a black hole for
-   * the whole gesture and made ordinary window movement look broken. The focus hold above prevents
-   * the old blur-cancels-drag race; nsync can therefore move the real surface with its frame. */
+  /* A native surface cannot cheaply follow an HTML transform: every place request makes sway
+   * reconfigure the client, and doing that once per pointer frame makes movement lag and lets two
+   * surfaces occupy stale rectangles. Stash it for the gesture, move the lightweight labelled
+   * frame, then perform exactly one placement on release. */
   function _natGesture(w, on){
     /* Cleared for EVERY window, not just a native one: the hold is armed by the press, and the
      * press does not know yet whether the frame it landed on wraps an app. Left set after dragging
@@ -1550,8 +1551,12 @@
     if(!on) _natFocusHold = false;
     if(!w || w.native == null) return;
     w.gesturing = !!on;
-    const done = nsync();
-    if(on) return;
+    let done;
+    if(on){
+      try{ done = pcWM.hide(w.native); _natSent.set(w.native, 'hidden'); }catch(_){}
+      return;
+    }
+    done = nsync();
     /* The app has the keyboard again now that it is back on screen. After the sync, not before:
      * focusing a window that is still in the scratchpad brings it back wherever the compositor
      * feels like putting it, and the placement then has to move it a second time. */
@@ -1797,11 +1802,18 @@
     const w = openApp(view, nw.title || nw.app || 'App', 'i-grid', null, true);
     if(!w) return null;
     w.native = Number(nw.id);
+    w.nativeApp = String(nw.app || '');
     w.el.classList.add('osw-native');
     /* THE BODY IS A HOLE. There is nothing to draw in it — the app is a real surface floating over
      * that rectangle — and anything painted there would be underneath the app and invisible, so it
      * says what it is instead, which is what shows while the window is being moved. */
     if(w.slot) w.slot.innerHTML = '<div class="osw-nat-note">' + enc(nw.app || 'application') + '</div>';
+    try{ PCOSShell.allApps().then(list => {
+      const n = w.nativeApp.toLowerCase();
+      const same = (a, b) => a === b || a.startsWith(b + '-') || b.startsWith(a + '-');
+      w.machineApp = (list || []).find(a => same(String(a.match || a.id || '').toLowerCase(), n)) || null;
+      drawBar();
+    }); }catch(_){}
     nsync();
     return w;
   }
@@ -2061,11 +2073,6 @@
     const paint = () => {
       raf = 0;
       w.el.style.transform = `translate(${curX - ox}px, ${curY - oy}px)`;
-      /* A native surface is a separate compositor object. Moving only this HTML frame produces the
-       * exact broken effect of a black window leading while Telegram/Firefox stays behind. nsync is
-       * serialised and coalesced, so asking once per animation frame keeps the real surface under
-       * its frame without building an unbounded IPC queue. */
-      if(w.native != null) nsync();
     };
     const move = (e) => {
       // A released mouse reports buttons === 0 on its next move. Checked FIRST: doing it at the end
@@ -4324,7 +4331,7 @@
        <div class="os-tasks">${wins.map(w =>
          `<button class="os-task${w.el.classList.contains('focused') && !w.min ? ' on' : ''}"
                   data-id="${w.id}" title="${enc(w.title)}">
-            ${iconSvg(w.icon)}<span>${enc(w.title)}</span></button>`).join('')}</div>
+            ${w.machineApp ? appIcon(w.machineApp) : iconSvg(w.icon)}<span>${enc(w.title)}</span></button>`).join('')}</div>
        <div class="os-tray">
          <div class="os-sys" id="os-shell"></div>
          <button class="os-net net-${netNow.level}${netOpen ? ' on' : ''}" id="os-net"

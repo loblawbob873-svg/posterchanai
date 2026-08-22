@@ -1163,9 +1163,10 @@ def test_a_fresh_native_sync_cannot_publish_missing_files_as_deletions():
     store = _read(JAVA, "sync", "SyncStore.java")
     sweep = _read(JAVA, "sync", "NativeSweep.java")
     assert "baselineComplete(" in store and "markBaselineComplete(" in store
-    assert "final boolean joining = !store.baselineComplete(f.key);" in sweep
+    assert "final String localKey = localReplicaKey(f);" in sweep
+    assert "final boolean joining = !store.baselineComplete(localKey);" in sweep
+    assert "store.markBaselineComplete(localKey);" in sweep
     assert "planned.tombstone.clear()" in sweep
-    assert "store.markBaselineComplete(f.key)" in sweep
     assert "rep.joinDeletionsHeld.isEmpty()" in sweep, (
         "a native first sweep can hold stale deletes, certify itself, then apply them next time"
     )
