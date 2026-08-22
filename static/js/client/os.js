@@ -1947,6 +1947,11 @@
          * require an atomic cross-process move that Wayland/Electron cannot provide; queuing sway
          * moves is what separated Firefox from the frame. */
         if(it.w.gesturing || stash.has(it.native)){
+          /* Never leave an EMPTY HTML frame on screen while its real Wayland surface is in the
+           * scratchpad. That rectangle was the reported black window. The taskbar still owns the
+           * window and focusing it raises/restores the native surface; only the lie that its pixels
+           * are currently present is hidden. */
+          it.w.el.classList.add('native-stashed');
           if(_natSent.get(it.native) !== 'hidden'){
             try{ await pcWM.hide(it.native); _natSent.set(it.native, 'hidden'); }catch(_){}
           }
@@ -1980,6 +1985,7 @@
             catch(_){ _natSent.set(it.native, 'hidden'); continue; }
           }
           _natSent.set(it.native, rect);
+          it.w.el.classList.remove('native-stashed');
           _natRetry = 0;              // something landed: the budget is for a STUCK measure
         }
       }

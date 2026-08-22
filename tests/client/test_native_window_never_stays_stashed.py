@@ -89,5 +89,14 @@ class NothingIsRecordedBeforeItSucceeds(unittest.TestCase):
                       "never re-sent")
 
 
+class AStashedSurfaceIsNotDrawnAsABlackWindow(unittest.TestCase):
+    def test_the_empty_frame_is_hidden_and_restored_with_the_surface(self):
+        raw = OS_JS.read_text()
+        css = (ROOT / "static" / "css" / "client.css").read_text()
+        self.assertIn("it.w.el.classList.add('native-stashed')", raw)
+        self.assertIn("it.w.el.classList.remove('native-stashed')", raw)
+        self.assertIn(".osw.native-stashed{visibility:hidden", css)
+
+
 if __name__ == "__main__":
     unittest.main()

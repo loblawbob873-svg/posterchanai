@@ -7745,7 +7745,7 @@ html.os-on #upload-badge.upbadge{z-index:333}
    reported as "start menu not scrollable". Wider and taller so the whole of a normal machine fits,
    and `overscroll-behavior:contain` so a flick at the end of the list stops there instead of
    scrolling the desktop behind it, which is what "not scrollable" feels like from the other side. */
-.os-startmenu{position:absolute;inset-inline-start:50%;transform:translateX(-50%);bottom:56px;
+.os-startmenu{position:absolute;inset-inline-start:10px;bottom:56px;
   width:min(660px,86vw);max-height:min(74vh,620px);
   display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:14px;
   /* --panel is translucent by design (rgba .72), which over a wallpaper leaves the app list reading
@@ -7754,6 +7754,10 @@ html.os-on #upload-badge.upbadge{z-index:333}
   background:linear-gradient(var(--panel),var(--panel)), var(--bg);
   backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
   border:1px solid var(--line);box-shadow:0 20px 60px rgba(0,0,0,.6);z-index:320}
+/* A native app's pixels are a Wayland surface, not children of this HTML frame. When the compositor
+   parks that surface, showing its empty frame is a literal black rectangle. Keep the taskbar entry
+   (the app is still running), but never draw a window whose content is not on screen. */
+.osw.native-stashed{visibility:hidden;pointer-events:none}
 .os-search{font-size:14px}
 .os-applist{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;display:grid;
   grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:4px;align-content:start}
