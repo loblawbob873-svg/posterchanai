@@ -104,6 +104,17 @@ class MovingBetweenOutputsDoesNotCloseTheApplication(unittest.TestCase):
         self.assertIn("pc:wm:snapshot", preload)
         self.assertIn("pc:wm:snapshot", main)
         self.assertIn("allIds", main)
+        self.assertIn("_shellScopes", main)
+        self.assertIn("_nativeOwners", main)
+        self.assertIn("scopedWindows(e, rows)", main)
+
+    def test_a_minimised_window_keeps_its_last_display_owner(self):
+        main = (ROOT / "desktop" / "main.js").read_text()
+        i = main.index("function scopedWindows")
+        scoped = main[i:main.index("let _shellRecoveryWired", i)]
+        self.assertIn("!row.stashed", scoped)
+        self.assertIn("_nativeOwners.set", scoped)
+        self.assertIn("row && row.stashed ? _nativeOwners.get(id)", scoped)
 
     def test_a_window_alive_on_another_output_is_detached_not_killed(self):
         adopt = body(self.src, "async function adoptAll")

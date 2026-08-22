@@ -940,6 +940,26 @@ function wm() {
   if (!_wm) { const { WM } = require('./wm.js'); _wm = new WM(); }
   return _wm;
 }
+/* One renderer per output needs one compositor view per renderer. Kept empty on a single-output
+ * session, where the existing window sees everything. Scratchpad rows have no real workspace, so
+ * remember the last non-scratch owner; otherwise every monitor would adopt the same minimised app. */
+const _shellScopes = new Map();       // webContents.id -> { output, workspace }
+const _nativeOwners = new Map();      // con_id -> last ordinary workspace
+function scopedWindows(e, rows){
+  const all = Array.isArray(rows) ? rows : [];
+  for(const row of all){
+    const id = Number(row && row.id);
+    if(Number.isFinite(id) && row && !row.stashed && row.workspace)
+      _nativeOwners.set(id, String(row.workspace));
+  }
+  const scope = e && e.sender && _shellScopes.get(e.sender.id);
+  if(!scope) return all;
+  return all.filter(row => {
+    const id = Number(row && row.id);
+    const owner = row && row.stashed ? _nativeOwners.get(id) : String(row && row.workspace || '');
+    return owner === String(scope.workspace);
+  });
+}
 let _shellRecoveryWired = false;
 async function wireShellRecovery(){
   if(!SHELL_MODE || _shellRecoveryWired || !wm().available()) return;
@@ -970,14 +990,15 @@ function displays(){
 }
 
 ipcMain.handle('pc:wm:available', (e) => { fsGuard(e); return wm().available(); });
-ipcMain.handle('pc:wm:windows', (e) => { fsGuard(e); return wm().windows(); });
+ipcMain.handle('pc:wm:windows', async (e) => { fsGuard(e); return scopedWindows(e, await wm().windows()); });
 ipcMain.handle('pc:wm:snapshot', async (e) => {
   fsGuard(e);
   /* Today the primary surface owns the full list. Per-output surfaces replace `windows` with their
    * workspace slice, while allIds remains global; keeping that distinction in the API prevents a
    * renderer from killing an app merely because it crossed a monitor boundary. */
   const rows = await wm().windows();
-  return { windows: rows, allIds: rows.map(x => Number(x.id)).filter(Number.isFinite) };
+  return { windows: scopedWindows(e, rows),
+           allIds: rows.map(x => Number(x.id)).filter(Number.isFinite) };
 });
 ipcMain.handle('pc:wm:focus', (e, id) => { fsGuard(e); return wm().focus(Number(id)); });
 ipcMain.handle('pc:wm:close', (e, id) => { fsGuard(e); return wm().close(Number(id)); });
