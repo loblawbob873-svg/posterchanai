@@ -398,7 +398,8 @@ class TheLiveSessionActuallyStarts(unittest.TestCase):
         """A desktop binary without its tiny wrapper boots into a valid but empty black Sway."""
         self.assertIn('pseudoput "usr/local/bin/posterchan" f 755', self.fn)
         self.assertIn('LIVE_DESKTOP_LAUNCHER="$(unsquashfs -cat', self.fn)
-        self.assertIn("/opt/posterchan/posterchan-desktop", self.fn)
+        self.assertIn("APPDIR=/opt/posterchan", self.fn)
+        self.assertIn("$APPDIR/posterchan-desktop", self.fn)
         self.assertIn("black Sway screen", self.fn)
 
 

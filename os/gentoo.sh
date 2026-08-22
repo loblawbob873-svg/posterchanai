@@ -2815,7 +2815,8 @@ DESKTOP
 		local LIVE_DESKTOP_LAUNCHER
 		LIVE_DESKTOP_LAUNCHER="$(unsquashfs -cat "$WORK/iso/LiveOS/squashfs.img" \
 			usr/local/bin/posterchan 2>/dev/null)"
-		if [[ "$LIVE_DESKTOP_LAUNCHER" != *'/opt/posterchan/posterchan-desktop'* ]]; then
+		if [[ "$LIVE_DESKTOP_LAUNCHER" != *'APPDIR=/opt/posterchan'* \
+			|| "$LIVE_DESKTOP_LAUNCHER" != *'$APPDIR/posterchan-desktop'* ]]; then
 			_lcd_fail "The image has no working PosterChan desktop launcher — it would boot to a black Sway screen."
 			return
 		fi
