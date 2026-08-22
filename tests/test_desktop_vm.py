@@ -39,7 +39,9 @@ class VmBackend(unittest.TestCase):
         self.assertIn("qemu:///session", src)
         self.assertNotIn("qemu:///system", src)
         provision = (ROOT / "os" / "bin" / "pc-provision-user").read_text()
-        self.assertIn("render kvm posterchan", provision)
+        group_line = next(x for x in provision.splitlines() if x.startswith("for g in "))
+        for group in ("render", "kvm", "posterchan"):
+            self.assertIn(group, group_line)
 
     def test_windows_preset_has_uefi_tpm_and_spice_audio(self):
         src = (ROOT / "desktop" / "vm.js").read_text()
@@ -51,6 +53,20 @@ class VmBackend(unittest.TestCase):
     def test_viewer_attaches_through_libvirt(self):
         src = (ROOT / "desktop" / "vm.js").read_text()
         self.assertIn("['--connect',URI,'--attach','--wait',name]", src)
+
+    def test_gaming_uses_a_captured_relative_mouse(self):
+        src = (ROOT / "desktop" / "vm.js").read_text()
+        self.assertIn('<input type="mouse" bus="ps2"/>', src)
+        self.assertIn("async function gamingMouse", src)
+        ui = (ROOT / "static/js/client/os.js").read_text()
+        self.assertIn("data-vme-mouse", ui)
+        self.assertIn("Ctrl+Alt releases it", ui)
+
+    def test_powered_off_vm_hardware_is_editable_in_the_ui(self):
+        ui = (ROOT / "static/js/client/os.js").read_text()
+        for api in ("details", "update", "addDisk", "changeIso", "addNetwork"):
+            self.assertIn("pcVM." + api, ui)
+        self.assertIn("data-vm-edit-open", ui)
 
     def test_viewer_cannot_pin_itself_over_the_desktop(self):
         sway = (ROOT / "os" / "overlay" / "app-misc" / "posterchanos-shell" / "files" / "sway.config").read_text()

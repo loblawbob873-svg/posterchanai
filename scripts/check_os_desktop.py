@@ -1590,11 +1590,14 @@ async def drive(url):
                         out.extend(r.get("folderApps", {}).get(v, [v]) if str(v).startswith("folder:")
                                    else [v])
                     return out
-                if sorted(flat(r["icons"])) != sorted(r["navViews"]):
+                # Bug Report is deliberately an OS app even though its shared action lives outside
+                # the sidebar. Other conditional extras are absent from this signed-out fixture.
+                expected_apps = sorted(r["navViews"] + (["__bug"] if "__bug" in flat(r["icons"]) else []))
+                if sorted(flat(r["icons"])) != expected_apps:
                     problems.append((label, "apps-missing",
                                      f"desktop icons {flat(r['icons'])} do not match the sidebar "
                                      f"{r['navViews']}"))
-                if sorted(flat(r["menuApps"])) != sorted(r["navViews"]):
+                if sorted(flat(r["menuApps"])) != expected_apps:
                     problems.append((label, "apps-missing",
                                      f"the start menu lists {flat(r['menuApps'])}"))
                 # "cal" legitimately matches Calendar AND Calls — the filter is a substring match

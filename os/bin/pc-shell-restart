@@ -1,7 +1,12 @@
 #!/bin/sh
 # Replace only the PosterChan desktop layer. Native Sway applications remain open.
 set -u
-pattern='[/]opt/posterchan/posterchan-desktop --shell'
+# Killing only `posterchan-desktop --shell` leaves Electron renderer/GPU children behind. One of
+# those children can retain SingletonSocket while owning no window; the replacement then hands off
+# to that headless process, exits successfully, and leaves Sway showing a permanent black screen.
+# Every process below /opt/posterchan belongs to this one packaged Electron app, so stop the whole
+# tree. The bracketed slash keeps pkill from matching this helper's own command line.
+pattern='[/]opt/posterchan/'
 pkill -TERM -f "$pattern" 2>/dev/null || true
 i=0
 while pgrep -f "$pattern" >/dev/null 2>&1 && [ "$i" -lt 20 ]; do

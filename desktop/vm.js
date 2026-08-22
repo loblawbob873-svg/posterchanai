@@ -41,6 +41,65 @@ async function action(name, what){
   if(!map[what]) return {ok:false,error:'unknown action'};
   return virsh(map[what].concat(name),30000);
 }
+async function details(name){
+  name=cleanName(name); if(!name) return {ok:false,error:'invalid VM name'};
+  const info=await virsh(['dominfo',name]), blocks=await virsh(['domblklist',name,'--details']),
+    xml=await virsh(['dumpxml',name]);
+  if(!info.ok) return info;
+  const get=k=>((info.out.match(new RegExp('^'+k+':\\s*(.*)$','mi'))||[])[1]||'').trim();
+  const disks=blocks.ok?blocks.out.split(/\r?\n/).slice(2).map(x=>x.trim().split(/\s+/))
+    .filter(x=>x.length>=4).map(x=>({type:x[0],device:x[1],target:x[2],source:x.slice(3).join(' ')})):[];
+  const body=xml.ok?xml.out:'';
+  return {ok:true,name,state:get('State').toLowerCase(),ramMiB:Math.round(Number((get('Max memory').match(/\d+/)||[0])[0])/1024),
+    cpus:Number(get('CPU\\(s\\)'))||1,autostart:/enable/i.test(get('Autostart')),disks,
+    gamingMouse:/<input type=['"]mouse['"] bus=['"]ps2['"]/.test(body),
+    networks:(body.match(/<interface\b/g)||[]).length};
+}
+async function update(name, opts){
+  const d=await details(name); if(!d.ok)return d;
+  if(!/shut off|shutoff|inactive/.test(d.state)) return {ok:false,error:'Shut down the VM before changing its hardware'};
+  const ram=Math.max(512,Math.min(65536,Number(opts&&opts.ramMiB)||d.ramMiB));
+  const cpus=Math.max(1,Math.min(32,Number(opts&&opts.cpus)||d.cpus));
+  for(const args of [['setmaxmem',d.name,`${ram}MiB`,'--config'],['setmem',d.name,`${ram}MiB`,'--config'],
+    ['setvcpus',d.name,String(cpus),'--maximum','--config'],['setvcpus',d.name,String(cpus),'--config']]){
+    const r=await virsh(args,30000); if(!r.ok)return r;
+  }
+  const a=await virsh(['autostart',d.name].concat(opts&&opts.autostart?[]:['--disable']));
+  return a.ok?details(d.name):a;
+}
+async function addDisk(name, gib){
+  const d=await details(name); if(!d.ok)return d;
+  if(!/shut off|shutoff|inactive/.test(d.state))return {ok:false,error:'Shut down the VM before adding a disk'};
+  gib=Math.max(1,Math.min(2048,Number(gib)||20));
+  const used=new Set(d.disks.map(x=>x.target)); let target='';
+  for(const c of 'bcdefghijklmnopqrstuvwxyz')if(!used.has('vd'+c)){target='vd'+c;break;}
+  if(!target)return {ok:false,error:'No virtual disk slots are available'};
+  const dir=path.join(root(),d.name); await fs.promises.mkdir(dir,{recursive:true,mode:0o700});
+  const file=path.join(dir,`disk-${target}.qcow2`); const q=await run('qemu-img',['create','-f','qcow2',file,`${gib}G`],30000);if(!q.ok)return q;
+  const r=await virsh(['attach-disk',d.name,file,target,'--persistent','--subdriver','qcow2','--targetbus','virtio'],30000);
+  if(!r.ok)try{await fs.promises.unlink(file);}catch(_){} return r.ok?details(d.name):r;
+}
+async function changeIso(name, iso){
+  const d=await details(name);if(!d.ok)return d; iso=path.resolve(String(iso||''));
+  try{if(!(await fs.promises.stat(iso)).isFile())throw Error();}catch(_){return {ok:false,error:'ISO file was not found'};}
+  const cd=d.disks.find(x=>x.device==='cdrom'); if(!cd)return {ok:false,error:'This VM has no CD/DVD device'};
+  return virsh(['change-media',d.name,cd.target,iso,'--insert','--config'],30000);
+}
+async function addNetwork(name){ const d=await details(name);if(!d.ok)return d;
+  if(!/shut off|shutoff|inactive/.test(d.state))return {ok:false,error:'Shut down the VM before adding a network adapter'};
+  return virsh(['attach-interface',d.name,'user','--model','virtio','--config'],30000); }
+async function gamingMouse(name, enabled){
+  const d=await details(name);if(!d.ok)return d;
+  if(!/shut off|shutoff|inactive/.test(d.state))return {ok:false,error:'Shut down the VM before changing mouse mode'};
+  const x=await virsh(['dumpxml',d.name]);if(!x.ok)return x;
+  let body=x.out.replace(/\s*<input type=['"](?:tablet|mouse)['"] bus=['"](?:usb|ps2)['"]\s*\/>/g,'');
+  const input=enabled?'      <input type="mouse" bus="ps2"/>':'      <input type="tablet" bus="usb"/>';
+  body=body.replace(/\s*<\/devices>/,`\n${input}\n    </devices>`);
+  const dir=path.join(root(),d.name);await fs.promises.mkdir(dir,{recursive:true,mode:0o700});
+  const file=path.join(dir,'domain-edit.xml');await fs.promises.writeFile(file,body,{mode:0o600});
+  const r=await virsh(['define',file],30000);try{await fs.promises.unlink(file);}catch(_){}
+  return r.ok?{ok:true,gamingMouse:!!enabled}:r;
+}
 async function remove(name, disks){
   name=cleanName(name); if(!name) return {ok:false,error:'invalid VM name'};
   const r=await virsh(['undefine',name,'--nvram'],30000);
@@ -82,7 +141,7 @@ async function create(opts){
       <interface type="user"><model type="virtio"/></interface>
       <graphics type="spice" autoport="yes"><listen type="none"/></graphics><video><model type="virtio"/></video>
       <channel type="spicevmc"><target type="virtio" name="com.redhat.spice.0"/></channel>
-      <input type="tablet" bus="usb"/><input type="keyboard" bus="usb"/><sound model="ich9"/><audio id="1" type="spice"/>${tpm}
+      <input type="mouse" bus="ps2"/><input type="keyboard" bus="usb"/><sound model="ich9"/><audio id="1" type="spice"/>${tpm}
     </devices></domain>`;
   const xf=path.join(dir,'domain.xml'); await fs.promises.writeFile(xf,def,{mode:0o600});
   const d=await virsh(['define',xf],30000); if(!d.ok){ await fs.promises.rm(dir,{recursive:true,force:true}); return d; }
@@ -101,4 +160,4 @@ async function view(name){
   }
   const p=spawn(bin,args,{detached:true,stdio:'ignore'}); p.unref(); return {ok:true};
 }
-module.exports={available,list,create,action,remove,view,cleanName};
+module.exports={available,list,details,update,addDisk,changeIso,addNetwork,gamingMouse,create,action,remove,view,cleanName};

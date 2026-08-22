@@ -31,3 +31,15 @@ def test_blob_listing_cannot_leave_an_infinite_spinner():
     assert "new AbortController()" in render
     assert "12000" in render
     assert 'id="bl-list-retry"' in render
+
+
+def test_large_drive_index_is_not_reparsed_on_every_blossom_repaint():
+    render = APP[APP.index("let _filesRenderLoadedKey="):APP.index("\n  let _vodNameMap")]
+    assert "_filesRenderLoadedKey!==renderKey" in render
+    assert "FilesIdx.loadLocal()" in render
+
+
+def test_drive_home_reuses_folder_counts_until_index_changes():
+    home = APP[APP.index("let _fxCountsRev="):APP.index("function _renderDriveHome(pane){")]
+    assert "_fxCountsRev===FilesIdx._rev" in home
+    assert "_fxCountsRev=FilesIdx._rev" in home

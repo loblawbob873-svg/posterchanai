@@ -972,16 +972,15 @@
           const s0 = live.find(x => x.sid === prev);
           if(s0 && $('#tty-host')) $('#tty-host').value = s0.host || '';
           attach(prev, s0 && s0.host);
-        }else if(prev){
-          _remember('');           // it is gone; do not offer to reattach to nothing
-        }else if(LOCAL() && hosts.length === 1 && hosts[0].local){
-          /* OPENING THE TERMINAL ON THIS MACHINE GIVES YOU A SHELL. There is no host to choose
-           * between, no password to type and nothing to authorise — every one of those steps exists
-           * for a shell on somebody ELSE'S computer. Making the person press Connect to reach their
-           * own machine is the sort of ceremony that makes a desktop feel like a web page.
-           * Deliberately only when there is nothing to reattach to and no other host is listed. */
-          if($('#tty-host')) $('#tty-host').value = 'local';
-          connect();
+        }else{
+          if(prev) _remember('');   // it is gone; do not offer to reattach to nothing
+          /* AN EMPTY TERMINAL STARTS A SESSION. Previously this happened only when `local` was the
+           * sole configured host, so adding one saved SSH server made the desktop Terminal open to
+           * an inert picker. `loadHosts` deliberately puts this computer first on PosterChanOS;
+           * elsewhere the person's first configured host remains the selected default. Existing
+           * sessions are never replaced — they remain as tabs and a remembered one was attached
+           * above. */
+          if(!live.length && hosts.length) connect();
         }
       }
       // xterm is a separate <script>; if it has not run yet the screen would be a blank box with no

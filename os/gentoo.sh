@@ -126,7 +126,9 @@ REPO_CHOICE="local"
 #Overrided Swap File Size
 #SWAP_SIZE='1G'
 #
-SERVICES+=(sshd systemd-timesyncd libvirtd bluetooth smartd cups NetworkManager)
+# OpenSSH stays installed for recovery/admin use, but a fresh desktop must not expose a password
+# daemon before its administrator deliberately enables it (`systemctl enable --now sshd`).
+SERVICES+=(systemd-timesyncd libvirtd bluetooth smartd cups NetworkManager)
 MAKEOPTS="-j$(cat /proc/cpuinfo | grep -i processor | grep -vi 'model' | wc -l)"
 ROOT_PARTITION_SIZE="30GB"
 FEATURES="-pid-sandbox getbinpkg -binpkg-request-signature"
@@ -207,6 +209,7 @@ gui-apps/grim gui-apps/slurp \
 x11-misc/xdg-utils \
 media-video/pipewire media-video/wireplumber gui-libs/gtk media-fonts/noto media-fonts/noto-emoji \
 www-client/firefox-bin \
+games-util/steam-launcher gui-wm/gamescope games-util/game-device-udev-rules \
 sys-apps/xdg-desktop-portal gui-libs/xdg-desktop-portal-wlr sys-apps/xdg-desktop-portal-gtk \
 media-video/obs-studio \
 sec-keys/openpgp-keys-gentoo-release dev-vcs/git \
@@ -486,6 +489,9 @@ configurePortage() {
 	chroot $TARGET /usr/bin/emerge --sync
 
 	echo "USE=\"$USE_FLAGS\"" >>$TARGET/etc/portage/make.conf
+	# Steam and Proton are 32-bit applications even on amd64. Keep both ABIs enabled and let
+	# Portage select the matching current graphics/audio dependency set.
+	echo 'ABI_X86="64 32"' >>$TARGET/etc/portage/make.conf
 
 	echo "MAKEOPTS=\"$MAKEOPTS\"" >>$TARGET/etc/portage/make.conf
 
@@ -501,11 +507,22 @@ configurePortage() {
 	# and pulls Plasma into @world no matter what PACKAGES says, which is how a "minimal" build was
 	# caught emerging kde-frameworks/breeze-icons. PosterChanOS takes the plain desktop profile: the
 	# desktop USE defaults (which sway, pipewire and OBS all want) without a desktop environment.
-	GENTOO_PROFILE=$(chroot $TARGET /usr/bin/eselect profile list | grep -i 'desktop' | grep -vi 'plasma\|gnome' | grep systemd | grep -i stable | head -1 | cut -d '[' -f2 | cut -d ']' -f1)
+	GENTOO_PROFILE=$(chroot $TARGET /usr/bin/eselect profile list | grep -i 'desktop' | grep -vi 'plasma\|gnome\|no-multilib' | grep systemd | grep -i stable | head -1 | cut -d '[' -f2 | cut -d ']' -f1)
+	if [ -z "$GENTOO_PROFILE" ]; then
+		echo -e "\033[1;31mNo stable multilib desktop/systemd Gentoo profile was found.\033[0m"
+		return 1
+	fi
 	chroot $TARGET /usr/bin/eselect profile set $GENTOO_PROFILE
+
+	# Steam is maintained in Gentoo's Steam overlay. Make it part of the ordinary install so the
+	# machine is gaming-ready on first boot rather than requiring a hidden post-install step.
+	chroot $TARGET /usr/bin/emerge -1 app-eselect/eselect-repository
+	chroot $TARGET /usr/bin/eselect repository enable steam-overlay
+	chroot $TARGET /usr/bin/emerge --sync steam-overlay
 
 	mkdir -p $TARGET/etc/portage/package.license
 	echo "*/*  *" >$TARGET/etc/portage/package.license/license
+	echo 'games-util/steam-launcher steam' >$TARGET/etc/portage/package.license/posterchan-steam
 	rm -rf $TARGET/etc/portage/package.accept_keywords
 	mkdir -p $TARGET/etc/portage/package.mask
 	echo "dev-lang/rust" >$TARGET/etc/portage/package.mask/rust
@@ -689,8 +706,8 @@ installPackages() {
 
 # Flathub is added, and nothing is installed from it. The list this used to carry was the KDE
 # desktop's — konsole, dolphin, kcalc, kdenlive, Brava, Thunderbird — and PosterChanOS supplies its
-# own equivalents. The remote stays because Steam is installed through it (see the steam function),
-# and because it is the sane place for a person to get an app this OS does not ship.
+# own equivalents. Native Steam comes from Portage; the remote remains the sane place for a person
+# to get an app this OS does not ship.
 installFlatpaks() {
 	/usr/bin/flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 }

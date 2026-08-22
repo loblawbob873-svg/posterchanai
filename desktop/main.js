@@ -1252,6 +1252,12 @@ ipcMain.handle('pc:vm:create', (e, opts) => { fsGuard(e); return vm.create(opts 
 ipcMain.handle('pc:vm:action', (e, name, action) => { fsGuard(e); return vm.action(name, action); });
 ipcMain.handle('pc:vm:remove', (e, name, disks) => { fsGuard(e); return vm.remove(name, !!disks); });
 ipcMain.handle('pc:vm:view', (e, name) => { fsGuard(e); return vm.view(name); });
+ipcMain.handle('pc:vm:details', (e, name) => { fsGuard(e); return vm.details(name); });
+ipcMain.handle('pc:vm:update', (e, name, opts) => { fsGuard(e); return vm.update(name, opts||{}); });
+ipcMain.handle('pc:vm:add-disk', (e, name, gib) => { fsGuard(e); return vm.addDisk(name, gib); });
+ipcMain.handle('pc:vm:change-iso', (e, name, iso) => { fsGuard(e); return vm.changeIso(name, iso); });
+ipcMain.handle('pc:vm:add-network', (e, name) => { fsGuard(e); return vm.addNetwork(name); });
+ipcMain.handle('pc:vm:gaming-mouse', (e, name, on) => { fsGuard(e); return vm.gamingMouse(name, !!on); });
 ipcMain.handle('pc:vm:pick-iso', async (e) => {
   fsGuard(e); const r=await dialog.showOpenDialog(win,{title:'Choose installation ISO',properties:['openFile'],
     filters:[{name:'Disc images',extensions:['iso','img']},{name:'All files',extensions:['*']}]});

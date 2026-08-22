@@ -39,6 +39,7 @@ def test_shell_restart_is_serialized_and_targets_only_the_shell_process():
     assert "flock -n 9" in start
     assert "posterchan-shell-start.lock" in start
     assert "posterchan-desktop --shell" in restart
+    assert "pattern='[/]opt/posterchan/'" in restart
     assert "pkill -TERM" in restart and "pkill -KILL" in restart
     assert "retries" in start and "exit 1" in start
 

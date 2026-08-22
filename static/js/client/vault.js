@@ -1487,7 +1487,10 @@
                             // 404s on the only screen it is ever opened from.
                             media: (PC.mediaServer && PC.mediaServer()) || '' };
           if(mode === 'full'){
-            const s = (window.Session && window.Session.load && window.Session.load()) || null;
+            /* The live signer is authoritative. A resumed NIP-46 transport may have repaired its
+             * ephemeral app key in memory while an older Session record still has no `sk`; using
+             * that stale record emitted a code that SAID full and could not sign. */
+            const s = (PC.signerSession && PC.signerSession()) || null;
             const sk = (s && s.mode === 'local' && s.sk) || '';
             if(sk) payload.sk = sk;
             else if(s && s.mode === 'nip46' && s.sk && s.remotePk){

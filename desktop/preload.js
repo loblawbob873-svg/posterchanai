@@ -177,6 +177,12 @@ if (isOurPage) {
     action: (name, action) => ipcRenderer.invoke('pc:vm:action', String(name||''), String(action||'')),
     remove: (name, disks) => ipcRenderer.invoke('pc:vm:remove', String(name||''), !!disks),
     view: (name) => ipcRenderer.invoke('pc:vm:view', String(name||'')),
+    details: (name) => ipcRenderer.invoke('pc:vm:details', String(name||'')),
+    update: (name, opts) => ipcRenderer.invoke('pc:vm:update', String(name||''), opts||{}),
+    addDisk: (name, gib) => ipcRenderer.invoke('pc:vm:add-disk', String(name||''), Number(gib)),
+    changeIso: (name, iso) => ipcRenderer.invoke('pc:vm:change-iso', String(name||''), String(iso||'')),
+    addNetwork: (name) => ipcRenderer.invoke('pc:vm:add-network', String(name||'')),
+    gamingMouse: (name, on) => ipcRenderer.invoke('pc:vm:gaming-mouse', String(name||''), !!on),
     pickIso: () => ipcRenderer.invoke('pc:vm:pick-iso'),
   });
 

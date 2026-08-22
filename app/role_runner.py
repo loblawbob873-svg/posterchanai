@@ -82,9 +82,14 @@ def run_role(role: str) -> int:
     try:
         _bootstrap_settings()
     except Exception as e:
-        # Not fatal: the supervisors have their own retries and the settings may simply not exist yet
-        # on a fresh node. Loud, though — a silent partial start is what this comment exists to avoid.
-        logger.error("[role] settings hydrate failed — services may use defaults: %s", e, exc_info=True)
+        # Configuration-gated supervisors default to OFF. Starting them after a failed hydrate
+        # therefore creates a healthy-looking role process that supervises nothing forever: this
+        # left Go Live returning WHIP 502 for a day after Postgres was briefly unavailable at boot.
+        # Exit instead. Every role unit has Restart=always, so systemd retries the complete hydrate
+        # three seconds later and no partially initialised process can become the steady state.
+        logger.error("[role] settings hydrate failed — exiting for a clean retry: %s", e,
+                     exc_info=True)
+        return 1
 
     started = []
     for label, module, start_fn, stop_fn in services:

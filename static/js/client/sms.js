@@ -1798,6 +1798,9 @@
 
   window.PCSms = { render, mirror, importAll, loadFromPhone, emptyWhy, ensureRead, phoneState,
                    drainOutbox, send, remove, load,
+                   // Contacts can finish after Texts has already painted on a desktop. Rebuild the
+                   // thread labels from the same messages; no relay or phone read is necessary.
+                   refreshNames: () => { rebuild(); if(PC && PC.VIEW==='texts') paint(); },
                    _state: () => S, _key: key, _outboxId: outboxId, _docId: docIdFor,
                    // The attachment identity rules, for tests/test_android_mms.py — which runs them
                    // against SmsKeys.partKey/partsKey in Java, because a picture message filed at

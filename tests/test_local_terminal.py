@@ -24,13 +24,14 @@ SCRIPT = shutil.which("script")
 
 @unittest.skipIf(not NODE or not SCRIPT, "needs node and util-linux script")
 class LocalTerminal(unittest.TestCase):
-    def test_server_hosts_are_not_hidden_by_an_automatic_local_connection(self):
-        """PosterChanOS prepends local to every server host list. Auto-connecting merely because
-        local is first disables the selector and makes all configured servers unreachable."""
+    def test_local_is_default_without_hiding_saved_server_hosts(self):
+        """PosterChanOS prepends local, starts it when no tabs exist, and keeps every configured
+        server available through New tab after that first session is ready."""
         with open(CLIENT, encoding="utf-8") as fh:
             src = fh.read()
-        self.assertIn("LOCAL() && hosts.length === 1 && hosts[0].local", src)
-        self.assertNotIn("LOCAL() && hosts.length && hosts[0].local", src)
+        self.assertIn("return LOCAL() ? [LOCAL_HOST].concat(rest) : rest", src)
+        self.assertIn("if(!live.length && hosts.length) connect();", src)
+        self.assertIn("go.classList.remove('hidden')", src)
 
     def run_js(self, body, timeout=30):
         js = ("const T = require(%s);\n(async () => { const out = {};\n"
@@ -157,6 +158,12 @@ class LocalTerminal(unittest.TestCase):
         self.assertNotIn("go.classList.toggle('hidden', on)", chrome)
         ready = src[src.index("if(m.t === 'ready')"):src.index("if(m.t === 'gone')")]
         self.assertIn("_sessions();", ready)
+
+    def test_an_empty_terminal_starts_its_first_session(self):
+        """Configured SSH hosts must not turn PosterChanOS Terminal into an inert host picker."""
+        src = open(CLIENT, encoding="utf-8").read()
+        render = src[src.index("async function render()") : src.index("function unmount()")]
+        self.assertIn("if(!live.length && hosts.length) connect();", render)
 
     def test_no_typescript_file_is_written(self):
         """`script` writes a verbatim log of the session, including everything typed at a password

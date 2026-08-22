@@ -1599,17 +1599,27 @@
       <div class="vmui-spec"><label>Guest<select class="input" data-vm-guest><option value="linux">Linux</option><option value="windows">Windows 10 / 11</option></select></label><label>Firmware<select class="input" data-vm-firmware><option value="efi">UEFI</option><option value="bios">Legacy BIOS</option></select></label></div>
       <div class="vmui-spec"><label>Memory (MB)<input class="input" data-vm-ram type="number" min="512" value="4096"></label><label>CPUs<input class="input" data-vm-cpu type="number" min="1" value="2"></label><label>Disk (GB)<input class="input" data-vm-disk type="number" min="4" value="40"></label></div>
       <div class="vmui-formacts"><button class="btn btn-ghost" data-vm-cancel>Cancel</button><button class="btn" data-vm-create>Create and start</button></div></div>
-      <div class="vmui-note">VMs use libvirt's per-user session. Disks stay inside your private home directory.</div><div class="vmui-list"><div class="os-pop-none">Loading virtual machines…</div></div></div>`;
+      <div class="vmui-note">VMs use libvirt's per-user session. Disks stay inside your private home directory.</div>
+      <div class="vmui-edit" data-vm-edit hidden></div><div class="vmui-list"><div class="os-pop-none">Loading virtual machines…</div></div></div>`;
     const form=$('.vmui-create',w.slot),list=$('.vmui-list',w.slot);let dead=false,busy=false;
     const say=s=>{try{PC().toast(s);}catch(_){}};
     const paint=async()=>{if(dead||busy)return;busy=true;try{const r=await pcVM.list();if(dead)return;
       if(!r.available){list.innerHTML=`<div class="vmui-empty"><b>Virtualization is unavailable</b><span>${enc(r.error||'libvirt could not be reached')}</span></div>`;return;}
       list.innerHTML=(r.machines||[]).map(m=>{const running=/running|paused|idle/.test(m.state);return `<article class="vmui-card"><div class="vmui-machine"><i class="${running?'on':''}"></i><div><b>${enc(m.name)}</b><span>${enc(m.state)} · ${enc(m.cpus)} CPU · ${enc(Math.round((m.memoryKiB||0)/1024))} MB</span></div></div><div class="vmui-actions">
-        ${running?`<button class="btn vmui-primary" data-vm-view="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-monitor"></use></svg>View</button><button class="btn btn-ghost" data-vm-act="shutdown" data-name="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-power"></use></svg>Shut down</button><button class="btn btn-ghost" data-vm-act="reboot" data-name="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-refresh"></use></svg>Restart</button><button class="btn btn-ghost danger" data-vm-act="stop" data-name="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-stop"></use></svg>Force off</button>`:`<button class="btn vmui-primary" data-vm-act="start" data-name="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-play"></use></svg>Start</button><button class="btn btn-ghost danger" data-vm-delete="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-trash"></use></svg>Delete</button>`}</div></article>`;}).join('')||'<div class="vmui-empty"><b>No virtual machines yet</b><span>Create one from an installation ISO.</span></div>';
+        ${running?`<button class="btn vmui-primary" data-vm-view="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-monitor"></use></svg>View</button><button class="btn btn-ghost" data-vm-act="shutdown" data-name="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-power"></use></svg>Shut down</button><button class="btn btn-ghost" data-vm-act="reboot" data-name="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-refresh"></use></svg>Restart</button><button class="btn btn-ghost danger" data-vm-act="stop" data-name="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-stop"></use></svg>Force off</button>`:`<button class="btn vmui-primary" data-vm-act="start" data-name="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-play"></use></svg>Start</button><button class="btn btn-ghost" data-vm-edit-open="${enc(m.name)}">Edit hardware</button><button class="btn btn-ghost danger" data-vm-delete="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-trash"></use></svg>Delete</button>`}</div></article>`;}).join('')||'<div class="vmui-empty"><b>No virtual machines yet</b><span>Create one from an installation ISO.</span></div>';
       list.querySelectorAll('[data-vm-act]').forEach(b=>b.onclick=async()=>{b.disabled=true;const r=await pcVM.action(b.dataset.name,b.dataset.vmAct);if(!r.ok)say(r.error||'VM action failed');setTimeout(paint,500);});
       list.querySelectorAll('[data-vm-view]').forEach(b=>b.onclick=async()=>{const r=await pcVM.view(b.dataset.vmView);if(!r.ok)say(r.error||'Viewer could not start');});
+      list.querySelectorAll('[data-vm-edit-open]').forEach(b=>b.onclick=()=>editHardware(b.dataset.vmEditOpen));
       list.querySelectorAll('[data-vm-delete]').forEach(b=>b.onclick=async()=>{const n=b.dataset.vmDelete;if(!confirm(`Delete ${n} and its virtual disk?`))return;const r=await pcVM.remove(n,true);if(!r.ok)say(r.error||'Delete failed');paint();});
     }catch(e){list.innerHTML='<div class="vmui-empty"><b>Could not read virtual machines</b></div>';}finally{busy=false;}};
+    const editHardware=async(name)=>{const box=$('[data-vm-edit]',w.slot);if(!box)return;box.hidden=false;box.innerHTML='<div class="spinner"></div>';const d=await pcVM.details(name);if(!d.ok){box.innerHTML='<div class="vmui-empty">'+enc(d.error||'Could not read VM hardware')+'</div>';return;}
+      box.innerHTML=`<div class="vmui-top"><div><b>Edit ${enc(name)}</b><span>Power-off hardware configuration</span></div><button class="btn btn-ghost" data-vme-close>Close</button></div><div class="vmui-spec"><label>Memory (MB)<input class="input" data-vme-ram type="number" min="512" value="${enc(d.ramMiB)}"></label><label>CPUs<input class="input" data-vme-cpu type="number" min="1" value="${enc(d.cpus)}"></label><label><input data-vme-auto type="checkbox" ${d.autostart?'checked':''}> Start at boot</label></div><div class="vmui-actions"><button class="btn" data-vme-save>Save CPU/RAM</button><button class="btn btn-ghost" data-vme-disk>Add disk</button><button class="btn btn-ghost" data-vme-iso>Change ISO</button><button class="btn btn-ghost" data-vme-net>Add network (${enc(d.networks)})</button><button class="btn btn-ghost" data-vme-mouse>${d.gamingMouse?'Use desktop pointer':'Use gaming mouse'}</button></div><div class="tty-state" data-vme-state></div>`;
+      const state=t=>{const x=$('[data-vme-state]',box);if(x)x.textContent=t||'';};$('[data-vme-close]',box).onclick=()=>{box.hidden=true;box.innerHTML='';};
+      $('[data-vme-save]',box).onclick=async()=>{const r=await pcVM.update(name,{ramMiB:Number($('[data-vme-ram]',box).value),cpus:Number($('[data-vme-cpu]',box).value),autostart:$('[data-vme-auto]',box).checked});state(r.ok?'Hardware saved':r.error);if(r.ok)paint();};
+      $('[data-vme-disk]',box).onclick=async()=>{const gib=Number(prompt('New disk size in GB','40'));if(!gib)return;const r=await pcVM.addDisk(name,gib);state(r.ok?'Disk added':r.error);};
+      $('[data-vme-iso]',box).onclick=async()=>{const p=await pcVM.pickIso();if(!p||p.canceled||!p.path)return;const r=await pcVM.changeIso(name,p.path);state(r.ok?'Installation disc changed':r.error);};
+      $('[data-vme-net]',box).onclick=async()=>{const r=await pcVM.addNetwork(name);state(r.ok?'Network adapter added':r.error);};
+      $('[data-vme-mouse]',box).onclick=async()=>{const r=await pcVM.gamingMouse(name,!d.gamingMouse);state(r.ok?(!d.gamingMouse?'Gaming mouse enabled — Ctrl+Alt releases it':'Desktop pointer enabled'):r.error);if(r.ok)editHardware(name);};};
     $('[data-vm-new]',w.slot).onclick=()=>{form.hidden=false;};$('[data-vm-cancel]',w.slot).onclick=()=>{form.hidden=true;};
     $('[data-vm-pick]',w.slot).onclick=async()=>{const p=await pcVM.pickIso();if(p)$('[data-vm-iso]',w.slot).value=p;};
     $('[data-vm-create]',w.slot).onclick=async function(){this.disabled=true;this.textContent='Creating…';const r=await pcVM.create({name:$('[data-vm-name]',w.slot).value,iso:$('[data-vm-iso]',w.slot).value,guest:$('[data-vm-guest]',w.slot).value,firmware:$('[data-vm-firmware]',w.slot).value,ramMiB:$('[data-vm-ram]',w.slot).value,cpus:$('[data-vm-cpu]',w.slot).value,diskGiB:$('[data-vm-disk]',w.slot).value});this.disabled=false;this.textContent='Create and start';if(!r.ok){say(r.error||'VM creation failed');return;}form.hidden=true;paint();};
@@ -2418,7 +2428,7 @@
 
   // Icon tile geometry, in LAYOUT pixels — the same space style.left/width live in. Kept here
   // rather than only in the stylesheet because the column count is computed, not authored.
-  const ICON_W = 96, ICON_H = 80, ICON_GAP = 4, ICON_PAD = 14;   // matches .os-icon in the stylesheet
+  const ICON_W = 108, ICON_H = 88, ICON_GAP = 4, ICON_PAD = 14;  // matches .os-icon in the stylesheet
 
   // How many columns it takes to fit EVERY app in the height available. A fixed three columns fits
   // a 900px laptop and cuts the last rows off a tablet in landscape, where the desktop is short —
@@ -5746,9 +5756,11 @@
         if(!dw || !dh) return;
         const r = w.el;
         let cw = r.offsetWidth, ch = r.offsetHeight;
-        if(cw > dw){ r.style.width = Math.max(420, dw - 16) + 'px'; cw = r.offsetWidth; }
-        if(ch > dh){ r.style.height = Math.max(260, dh - 16) + 'px'; ch = r.offsetHeight; }
+        if(cw > dw){ r.style.width = Math.max(1, dw - 16) + 'px'; cw = r.offsetWidth; }
+        if(ch > dh){ r.style.height = Math.max(1, dh - 16) + 'px'; ch = r.offsetHeight; }
         const x = r.offsetLeft, y = r.offsetTop;
+        if(x < 0) r.style.left = '0px';
+        if(y < 0) r.style.top = '0px';
         if(x + cw > dw) r.style.left = Math.max(0, dw - cw) + 'px';
         if(y + ch > dh) r.style.top = Math.max(0, dh - ch) + 'px';
       }catch(_){}
@@ -5767,10 +5779,12 @@
     if(e.key === 'Escape' && netOpen){ e.stopPropagation(); toggleNet(false); return; }
     if(e.key === 'Escape' && notiOpen){ e.stopPropagation(); toggleNoti(false); return; }
     if(e.key === 'Escape' && startOpen){ e.stopPropagation(); toggleStart(false); return; }
-    // Alt+W closes the focused window — Ctrl+W is the browser's tab and must not be taken.
-    if(e.altKey && (e.key === 'w' || e.key === 'W')){
+    // Ctrl+W closes the focused PosterChan window, matching every tabbed desktop application.
+    // Native Firefox/Telegram windows have compositor focus instead, so this shell handler cannot
+    // steal their own Ctrl+W. Keep Alt+W as a compatibility alias for existing installations.
+    if((e.ctrlKey || e.altKey) && !e.metaKey && (e.key === 'w' || e.key === 'W')){
       const f = wins.find(w => w.el.classList.contains('focused'));
-      if(f){ e.preventDefault(); closeWin(f); }
+      if(f){ e.preventDefault(); e.stopPropagation(); closeWin(f); return; }
     }
 
     /* PRINT SCREEN. Windows takes the whole screen with PrtSc and picks an area with Shift+PrtSc
@@ -5969,12 +5983,12 @@
    * programs are not installed while somebody is holding the menu open. */
   let _machineApps = null;
 
-  window.PCOS = { enter, exit, suspend, toggle, restore, refresh, isOn: () => on,
+  window.PCOS = { enter, exit, suspend, toggle, restore, refresh,
                   /* Android launcher tiles are MOBILE destinations even on a landscape tablet.
                    * Leave the windowed desktop for this session without changing the user's saved
                    * desktop preference; an ordinary later launch may restore it. */
                   mobileLanding: () => { if(on) exit(false); },
-                  openDoc, focusDoc, closeDoc, routeView, snapTo, osToast,
+                  isOn: () => on, openDoc, focusDoc, closeDoc, routeView, snapTo, osToast,
                   // app.js calls this when the player's state changes — the Now-playing widget has
                   // nothing to subscribe to, and polling an element we could be told about is the
                   // mistake the games were just fixed for.

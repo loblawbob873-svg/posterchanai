@@ -321,6 +321,13 @@ class RunPyDispatch(unittest.TestCase):
                 self.assertTrue(hasattr(mod, start_fn), f"{module}.{start_fn} missing")
                 self.assertTrue(hasattr(mod, stop_fn), f"{module}.{stop_fn} missing")
 
+    def test_a_role_does_not_stay_up_with_unhydrated_off_by_default_services(self):
+        from app import role_runner
+        src = open(role_runner.__file__, encoding="utf-8").read()
+        failed = src[src.index("except Exception as e:", src.index("_bootstrap_settings()")):]
+        self.assertIn("return 1", failed[:900])
+        self.assertNotIn("services may use defaults", failed[:900])
+
 
 if __name__ == "__main__":
     unittest.main()

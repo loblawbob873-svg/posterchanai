@@ -55,6 +55,13 @@ class PosterChanOSProfile(unittest.TestCase):
                 self.assertEqual(m.group(2).strip(), "123456",
                                  f"{m.group(1)} is not a placeholder")
 
+    def test_ssh_is_installed_but_not_enabled_on_a_fresh_install(self):
+        self.assertIn("net-fs/sshfs", self.src)
+        services = re.search(r"SERVICES\+=\(([^)]*)\)", self.src)
+        self.assertTrue(services, "the installer service list moved")
+        self.assertNotIn("sshd", services.group(1).split(),
+                         "fresh installs must not expose the SSH daemon by default")
+
     def test_there_is_a_compositor_and_xwayland(self):
         """XWayland is not optional the moment Steam is in scope — most games, and Steam's own
         client, are X11 clients and simply have no way onto the screen without it."""
@@ -589,13 +596,12 @@ class PosterChanOSProfile(unittest.TestCase):
                               "this profile line does not exclude plasma, so KDE arrives through "
                               "the USE flags whatever the package list says")
 
-    def test_steam_is_opt_in_and_not_in_the_base_profile(self):
-        """Steam is a separate step and always was. Its tooling belongs with it: gamescope is a
-        micro-compositor for GAMES and has no business being emerged on a machine that never
-        installs Steam."""
-        for game in ("steam", "gamescope", "wine"):
-            self.assertFalse([p for p in self.pkgs if game in p],
-                             f"{game} is in the always-installed profile")
+    def test_native_steam_is_supported_on_first_boot(self):
+        """The regular PosterChanOS ISO is a gaming desktop, so native Steam, Gamescope and game
+        controller rules must be installed by the normal package pass."""
+        for atom in ("games-util/steam-launcher", "gui-wm/gamescope",
+                     "games-util/game-device-udev-rules"):
+            self.assertIn(atom, self.pkgs, f"{atom} is missing from the regular install")
         steam = self._fn("installSteam")
         self.assertIn("gui-wm/gamescope", steam, "native Steam should include Gamescope")
         self.assertIn("games-util/steam-launcher", steam, "Steam must be installed by Portage")
@@ -603,6 +609,14 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertNotIn("sbat-distro-url", steam, "Steam installation must not patch systemd")
         self.assertIn("rm -f /etc/portage/patches/sys-apps/systemd/010-posterchanos-sbat-url.patch", steam,
                       "upgrades must remove the previously shipped systemd patch")
+
+        configure = self._fn("configurePortage")
+        self.assertIn('ABI_X86="64 32"', configure,
+                      "Steam's 32-bit runtime and graphics libraries are not enabled")
+        self.assertIn("grep -vi 'plasma\\|gnome\\|no-multilib'", configure,
+                      "the installer can select a no-multilib profile")
+        self.assertIn("eselect repository enable steam-overlay", configure)
+        self.assertIn("emerge --sync steam-overlay", configure)
 
     def test_every_package_name_has_a_category(self):
         """`games-util/gamescope` does not exist — it is `gui-wm/gamescope` — and emerge refuses the

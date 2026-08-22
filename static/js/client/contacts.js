@@ -107,7 +107,7 @@
      *
      * Written after a WHOLE load only, for the same reason: caching a partial one would persist the
      * short list this feature has twice nearly lost an address book to. */
-    const CKEY = () => 'pc_contacts_cache:' + ((PC.ME && PC.ME.pubkey) || '');
+    const CKEY = () => 'pc_contacts_cache:' + (((PC.me && PC.me()) || {}).pubkey || '');
     function _saveCache(){
       try{ localStorage.setItem(CKEY(), JSON.stringify({ books: S.books, cards: S.cards, at: Date.now() })); }
       catch(_){ /* quota, private mode — the network path is unaffected */ }
@@ -1232,11 +1232,21 @@
       return idx;
     }
 
+    let _nameLoad = null;
+    function _loadNames(){
+      if(_nameLoad) return;
+      _nameLoad = load().then(()=>{
+        try{ if(window.PCSms && PCSms.refreshNames) PCSms.refreshNames(); }catch(_){ }
+      }).catch(()=>{}).finally(()=>{ _nameLoad=null; });
+    }
+
     window.PCContacts = {
       /** The name for a phone number, or '' — never the number back, so the caller decides. */
       nameFor(number){
         try{
-          if(!S.ready && !Object.keys(S.cards || {}).length) _loadCache();
+          if(!S.ready && !Object.keys(S.cards || {}).length){
+            if(!_loadCache()) _loadNames();
+          }
           const k = _numKey(number);
           return (k && _buildTelIndex().get(k)) || '';
         }catch(_){ return ''; }

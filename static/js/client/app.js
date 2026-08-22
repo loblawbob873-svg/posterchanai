@@ -10066,14 +10066,20 @@
       const r=await fetch(info.whip_url, { method:'POST',
         headers:Object.assign({'Content-Type':'application/sdp'}, _aiToken?{'Authorization':'Bearer '+_aiToken}:{}),
         body:pc.localDescription.sdp });
-      if(!r.ok) throw new Error('whip '+r.status);
+      if(!r.ok) throw new Error('stream server rejected the connection (WHIP '+r.status+')');
       await pc.setRemoteDescription({type:'answer', sdp:await r.text()});
       // Bandwidth saving: the browser already hardware-encodes; cap the upload bitrate/framerate so a
       // phone on mobile data doesn't blast a huge stream (and viewers get a lighter feed).
       try{ const vs=pc.getSenders().find(s=>s.track&&s.track.kind==='video');
         if(vs){ const pr=vs.getParameters(); pr.encodings=(pr.encodings&&pr.encodings.length)?pr.encodings:[{}];
           pr.encodings[0].maxBitrate=1500000; pr.encodings[0].maxFramerate=30; await vs.setParameters(pr); } }catch(_){}
-    }catch(e){ try{pc&&pc.close();}catch(_){} try{local.getTracks().forEach(t=>t.stop());}catch(_){} _goingLive=false; toast('couldn’t go live (network/firewall)'); return; }
+    }catch(e){
+      console.error('go-live: media connection failed', e);
+      try{pc&&pc.close();}catch(_){} try{local.getTracks().forEach(t=>t.stop());}catch(_){} _goingLive=false;
+      const why=(e&&e.message)||'media connection failed';
+      toast('couldn’t go live — '+why);
+      return;
+    }
     let devId=null; try{ const s=local.getVideoTracks()[0].getSettings(); devId=s.deviceId||null; if(s.facingMode) facing=s.facingMode; }catch(_){}
     // `info` is kept so a later switch to the native screen share can build its RTMP target from the same
     // ingest (same token ⇒ same kind-30311, so viewers never have to re-open the stream).
@@ -17291,6 +17297,9 @@
     // state in which writing anything would destroy it. The three are not the same thing, and
     // conflating _pullDone with "we have the index" is what wiped a drive's folders: see _save/_gc.
     data: { folders: ['Music'], files: {}, encFolders: [] }, _pulling:false, _ensuring:null, _pullDone:false, _pullOk:false, _pullBlocked:false, _t:null, mk:null, _mkWrapped:null, _batch:false, _lastIndexSha:null, _indexShas:new Set(), _dirty:false, _saving:false,
+    // Derived drive summaries use this revision instead of walking a multi-thousand-file index on
+    // every repaint. It changes whenever local or pulled state is materialised.
+    _rev:0,
     // A collapsing write the user has already confirmed, and the retry that follows a failure.
     _forceOk:false, _saveFailed:false, _retryT:null, _retryN:0, _saveAgain:false, _savingP:null,
     /* When this device last AGREED with the server, in unix seconds. It is what tells a
@@ -17305,8 +17314,9 @@
       if(!this.data.folders.includes('Music')) this.data.folders.unshift('Music'); return this.data; },
     loadLocal(){ try{ const d=JSON.parse(localStorage.getItem(this._key())||'null'); if(d) this.data=d; }catch(_){}
       try{ this._syncedAt = +(localStorage.getItem(this._key()+'_sync')||0) || 0; }catch(_){}
-      try{ this._mkWrapped = localStorage.getItem(this._key()+'_mk') || this._mkWrapped; }catch(_){} return this._norm(); },
-    saveLocal(){ this._norm(); try{ localStorage.setItem(this._key(), JSON.stringify(this.data)); if(this._mkWrapped) localStorage.setItem(this._key()+'_mk', this._mkWrapped); if(this._syncedAt) localStorage.setItem(this._key()+'_sync', String(this._syncedAt)); }catch(_){} },
+      try{ this._mkWrapped = localStorage.getItem(this._key()+'_mk') || this._mkWrapped; }catch(_){}
+      this._rev++; return this._norm(); },
+    saveLocal(){ this._norm(); this._rev++; try{ localStorage.setItem(this._key(), JSON.stringify(this.data)); if(this._mkWrapped) localStorage.setItem(this._key()+'_mk', this._mkWrapped); if(this._syncedAt) localStorage.setItem(this._key()+'_sync', String(this._syncedAt)); }catch(_){} },
     // We and the server now hold the same thing. Everything before this moment that the server does
     // not have was deleted by somebody, not added by us (see _mergeFiles).
     _synced(){ this._syncedAt = Math.floor(Date.now()/1000); this.saveLocal(); },
@@ -19473,11 +19483,13 @@
    * which on a drive of any size was seconds of work to draw something nobody had asked for yet.
    * "All files" is still one click away; it is just no longer what you land on.
    */
+  let _fxCountsRev=-1, _fxCountsCache={};
   function _fxFolderCounts(){
+    if(_fxCountsRev===FilesIdx._rev) return _fxCountsCache;
     const out = {};
     const files = (FilesIdx._norm().files) || {};
     for(const sha in files){ const f = files[sha].folder || ''; out[f] = (out[f] || 0) + 1; }
-    return out;
+    _fxCountsRev=FilesIdx._rev; _fxCountsCache=out; return out;
   }
   function _renderDriveHome(pane){
     const counts = _fxFolderCounts();
@@ -19610,10 +19622,16 @@
     }
   }
 
+  let _filesRenderLoadedKey='';
   async function renderPublicFiles(pane){
     const server=mediaServer();
     if(!server){ pane.innerHTML='<div class="empty">Blossom server not configured.</div>'; return; }
-    FilesIdx.loadLocal();
+    /* One visit can repaint several times while permission, remote-index and synced-folder probes
+     * settle. Re-parsing a large local index for each repaint freezes Electron's only UI thread.
+     * Other callers keep loadLocal's ordinary fresh-read semantics; only this repaint loop is
+     * deduplicated, and changing accounts gives it a different key. */
+    const renderKey=FilesIdx._key();
+    if(_filesRenderLoadedKey!==renderKey){ FilesIdx.loadLocal(); _filesRenderLoadedKey=renderKey; }
     // Guarded on `_pullOk` rather than on ensure()'s own latch: with the index already loaded
     // ensure() resolves immediately, and re-rendering from that would call this line again.
     if(!FilesIdx._pullOk) FilesIdx.ensure().then(()=>{ if(VIEW==='blossom') renderBlossom(); });
@@ -33291,6 +33309,20 @@
       try{ Nip46Signer.socks.forEach(ws => { try{ ws.close(); n++; }catch(_){} }); }catch(_){}
       return n; },
     signerRevoke: (pk) => { try{ Nip46Signer.revoke(pk); }catch(_){} },
+    /* A FULL browser pairing must be made from the signer that is live NOW, not merely from the
+     * persisted login record. NIP-46 can resume/recover its ephemeral transport in memory while an
+     * older saved session lacks `sk`; reading Session.load() then produced a payload labelled full
+     * with no signer key. This snapshot contains the app transport key, never the account nsec. */
+    signerSession: () => {
+      if(!ME || GUEST) return null;
+      if(ME.mode === 'local'){
+        const s=Session.load(); return s && s.mode === 'local' && s.sk ? { mode:'local', sk:s.sk } : null;
+      }
+      if(ME.mode !== 'nip46' || !Nip46.appSk || !Nip46.remotePk) return null;
+      return { mode:'nip46', sk:Nip46.appSk, remotePk:Nip46.remotePk,
+               userPk:Nip46.userPk || ME.pubkey, relay:Nip46.relay || '',
+               relays:(Nip46._urls || []).slice(), enc:Nip46._enc === 'nip44' ? 'nip44' : 'nip04' };
+    },
     /* Who is signed in. os.js and the other modules live OUTSIDE this IIFE, so `window.ME` is
      * undefined for them no matter who is logged in — which silently hid the desktop's tray avatar
      * (and with it the whole account switcher) and both launcher entries gated on it. */
