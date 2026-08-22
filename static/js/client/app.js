@@ -2870,7 +2870,13 @@
   function _navState(view){
     let top = 0;
     try{ const f = $('#feed'); top = (f && f.scrollTop) || 0; }catch(_){ }
-    return { pcv: view || null, top };
+    let anchor = null;
+    /* Pixels are only a fallback for a timeline. Between opening a post and pressing Back, a live
+     * event or a newly-resolved card can change everything above the reader. Preserve the keyed
+     * first-visible post as well, so Back returns to the same post rather than merely reusing an
+     * offset in a changed list. `_tlAnchor` is a function declaration and is available here. */
+    try{ if(_TL_TABS.indexOf(view) >= 0) anchor = _tlAnchor($('#feed')); }catch(_){ }
+    return { pcv: view || null, top, anchor };
   }
   // Stamp the entry we are LEAVING. The empty url argument keeps the current one — this must never
   // move the address bar, only annotate the entry that is already there.
@@ -2901,10 +2907,11 @@
    * a repo) rebuild asynchronously — a README is a round trip across the internet — so the budget is
    * generous. It costs nothing: _putScroll stops the moment the reader scrolls or leaves. */
   function _restoreNavScroll(st){
-    if(!st || !(st.top > 0)) return;
+    if(!st || (!(st.top > 0) && !st.anchor)) return;
     const v = st.pcv;
     try{ if(_TL_TABS.indexOf(v) >= 0) _tlScrollMemo[v] = st.top; }catch(_){ }   // a timeline redraw restores it too
-    _putScroll(st.top, () => !v || VIEW === v, 160);
+    if(st.anchor) _putAnchor(st.anchor, () => !v || VIEW === v, 160);
+    else _putScroll(st.top, () => !v || VIEW === v, 160);
   }
   // "Has a person done anything yet?" — see _navView. Capture phase, so a handler that stops the
   // event still sets it, and passive because it only ever writes this flag.
@@ -6871,6 +6878,21 @@
     if(!el) return false;
     feed.scrollTop += el.getBoundingClientRect().top-feed.getBoundingClientRect().top-place.dy;
     return true;
+  }
+  /* Restore a history entry by POST, not by pixel. The timeline may initially contain skeletons or
+   * may still be rebuilding from Store when popstate fires, so wait for the keyed card just as the
+   * pixel fallback waits for enough scroll height. */
+  function _putAnchor(place, ok, budget){
+    if(!place || !place.key) return;
+    let tries=0;
+    const put=()=>{
+      if(++tries > (budget||40) || (ok && !ok())) return;
+      let feed=null;
+      try{ feed=$('#feed'); }catch(_){ }
+      if(feed && _restoreTlAnchor(feed, place)) return;
+      setTimeout(put,25);
+    };
+    put();
   }
   // Scroll-back has no ceiling: every page appends another 30-60 cards, each holding full-resolution
   // <img>/<video> the device must keep decoded and (for video) a live media player. _prependLive's

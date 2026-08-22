@@ -87,9 +87,16 @@ class AViewIsAHistoryEntry(unittest.TestCase):
         self.assertIn("history.pushState({ pcv:v, top:0 }", blk)
 
     def test_the_entry_carries_where_you_were_reading(self):
-        blk = self.src[self.src.index("function _navState(view){"):][:500]
+        blk = self.src[self.src.index("function _navState(view){"):][:1000]
         self.assertIn("f.scrollTop", blk)
         self.assertIn("pcv:", blk)
+
+    def test_a_timeline_entry_carries_the_visible_post_not_only_a_pixel(self):
+        blk = self.src[self.src.index("function _navState(view){"):][:1000]
+        self.assertIn("_tlAnchor($('#feed'))", blk)
+        self.assertIn("anchor", blk)
+        restore = self.src[self.src.index("function _restoreNavScroll(st){"):][:700]
+        self.assertIn("_putAnchor(st.anchor", restore)
 
     def test_leaving_a_screen_stamps_it_before_the_push(self):
         """The offset has to be written onto the entry we are LEAVING, while that screen is still on
