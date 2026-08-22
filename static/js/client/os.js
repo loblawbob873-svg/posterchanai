@@ -1540,7 +1540,9 @@
     }catch(_){ return false; }
   };
 
-  /* Held off screen for the length of a drag or a resize, and put back where the frame ended up. */
+  /* Keep the native surface live during a drag or resize. Hiding it made the frame a black hole for
+   * the whole gesture and made ordinary window movement look broken. The focus hold above prevents
+   * the old blur-cancels-drag race; nsync can therefore move the real surface with its frame. */
   function _natGesture(w, on){
     /* Cleared for EVERY window, not just a native one: the hold is armed by the press, and the
      * press does not know yet whether the frame it landed on wraps an app. Left set after dragging
@@ -1691,7 +1693,7 @@
       if(!scale) return;
 
       const items = nativeWins().map(w => ({ native: w.native, z: _zOf(w),
-                                             minimised: !!(w.min || w.gesturing),
+                                             minimised: !!w.min,
                                              rect: _frameRect(w), w }));
       const htmls = wins.filter(w => w.native == null)
                         .map(w => ({ z: _zOf(w), minimised: !!w.min, rect: _frameRect(w) }))

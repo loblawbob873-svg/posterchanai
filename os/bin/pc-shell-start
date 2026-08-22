@@ -12,6 +12,12 @@
 [ -n "$SWAYSOCK" ] || SWAYSOCK=$(ls /run/user/$(id -u)/sway-ipc.*.sock 2>/dev/null | head -1)
 export SWAYSOCK
 
+# Native GTK chrome follows the session preference. Firefox can have dark web content selected and
+# still draw a bright toolbar when a minimal Sway session provides no desktop theme setting at all.
+# Children launched by PosterChan inherit this too, giving one dark desktop instead of mixed chrome.
+export GTK_THEME="${GTK_THEME:-Adwaita:dark}"
+export GTK_APPLICATION_PREFER_DARK_THEME=1
+
 # Recovery launches (most notably over SSH) do not inherit Sway's display environment.  There is
 # only one compositor socket in a PosterChanOS session, so recover it instead of letting Electron's
 # `auto` backend fall through to X11 and leave the user looking at a black desktop.

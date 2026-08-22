@@ -7247,14 +7247,14 @@ body.os-on #os-root{pointer-events:auto}
 @media (pointer:coarse){ .os-new{height:calc(42px / var(--zf, 1))} }
 .os-tasks{flex:0 1 auto;min-width:0;display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}
 .os-tasks::-webkit-scrollbar{display:none}
-.os-task{flex:0 0 auto;max-width:190px;display:flex;align-items:center;gap:7px;height:38px;
-  padding:0 11px;border-radius:9px;border:1px solid transparent;background:rgba(255,255,255,.05);
+.os-task{flex:0 0 40px;width:40px;display:grid;place-items:center;height:38px;
+  padding:0;border-radius:9px;border:1px solid transparent;background:rgba(255,255,255,.05);
   color:var(--text);cursor:pointer;font-size:12.5px}
 .os-task:hover{background:rgba(255,255,255,.11)}
 .os-task.on{background:color-mix(in srgb, var(--neon) 18%, transparent);
   border-color:color-mix(in srgb, var(--neon) 45%, var(--line))}
-.os-task .ic{width:15px;height:15px;color:var(--neon);flex:0 0 auto}
-.os-task span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.os-task .ic{width:20px;height:20px;color:var(--neon);flex:0 0 auto}
+.os-task span{display:none}
 .os-tray{position:absolute;inset-inline-end:10px;top:0;height:100%;display:flex;align-items:center;gap:10px}
 .os-exit{height:34px;padding:0 12px;border-radius:9px;border:1px solid var(--line);
   background:transparent;color:var(--muted);cursor:pointer;font-size:12px}
