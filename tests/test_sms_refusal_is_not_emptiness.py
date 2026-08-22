@@ -94,7 +94,11 @@ class TheScreenSaysWhichKindOfEmpty(unittest.TestCase):
         """The route almost everybody takes — opening Texts with the permission already granted —
         discarded `loadFromPhone`'s answer entirely. The Allow button had the message; the path to it
         did not, so the refusal was silent for anyone who had granted the permission elsewhere."""
-        i = self.src.index("await load();")
+        # The first await load() primes the encrypted cache before first paint. Inspect the phone
+        # entry path specifically; otherwise adding unrelated cache-first work makes this guard
+        # silently look at the wrong block.
+        phone_entry = self.src.index("if(st.canRead){")
+        i = self.src.index("await load();", phone_entry)
         seg = self.src[i:i + 900]
         self.assertIn("loadFromPhone().then((r)", seg,
                       "the entry path throws away the loader's result")
@@ -112,6 +116,13 @@ class TheScreenSaysWhichKindOfEmpty(unittest.TestCase):
         i = self.src.index("const r = await loadFromPhone()")
         self.assertIn("r.refused", self.src[i:i + 600])
         self.assertIn("emptyWhy", self.src[i:i + 600])
+
+    def test_header_allow_button_does_not_discard_provider_refusal(self):
+        """The header's Allow button uses askForRead, not the empty-state button handler."""
+        i = self.src.index("async function askForRead")
+        seg = self.src[i:self.src.index("async function runBackfill", i)]
+        self.assertIn("const r = await loadFromPhone()", seg)
+        self.assertIn("r && r.refused", seg)
 
 
 if __name__ == "__main__":

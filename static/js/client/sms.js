@@ -1123,7 +1123,12 @@
       return;
     }
     S.emptyWhy = ''; S.emptyFix = '';
-    await loadFromPhone();
+    const r = await loadFromPhone();
+    if(r && r.refused){
+      S.emptyWhy = 'This phone allowed the permission, but its message store still would not '
+                 + 'answer. Your messages have not been changed.';
+      S.emptyFix = '';
+    }
     if(btn) btn.disabled = false;
     paint();
   }
