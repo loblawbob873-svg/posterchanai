@@ -48,7 +48,9 @@ src_install() {
 	fperms 0440 /etc/sudoers.d/posterchan-session-switch
 
 	insinto /etc/sway
-	doins "${FILESDIR}/sway.config"
+	# Sway reads /etc/sway/config. `doins sway.config` preserves the source filename and silently
+	# creates /etc/sway/sway.config instead, leaving the compositor on the distro's old config.
+	newins "${FILESDIR}/sway.config" config
 	# Portage owns /etc/sway/config, so an `etc-update --automode -5` replaces a hand-edited one
 	# with ours. That is the intended behaviour for a shipped session — and it is exactly what
 	# silently reverted the config during development, so it is worth stating rather than
@@ -62,6 +64,21 @@ src_install() {
 }
 
 pkg_postinst() {
+	# Identity accounts receive a private Sway config when they are provisioned. Keep the recovery
+	# binding available to accounts created by an older image without replacing any personal Sway
+	# customizations they may have made since. The live IPC binding is installed by the updater;
+	# this copy is what makes it survive the next login.
+	local cfg
+	for cfg in "${EROOT}home/posterchan/.config/sway/config" "${EROOT}"home/pc-*/.config/sway/config; do
+		[[ -f ${cfg} ]] || continue
+		grep -q 'Ctrl+Mod1+BackSpace' "${cfg}" && continue
+		cat >>"${cfg}" <<-'SWAY_RECOVERY'
+
+		# Restart only the PosterChan desktop shell; native applications remain open.
+		bindsym --release --no-repeat Ctrl+Mod1+BackSpace exec sh -c 'pkill -f posterchan[-]desktop; sleep 1; exec /usr/local/bin/pc-shell-start'
+		SWAY_RECOVERY
+	done
+
 	# THE THEME LIVES INSIDE THE INITRAMFS. Setting it without rebuilding leaves the previous splash
 	# on screen and gives no hint as to why.
 	if [[ -z ${ROOT} ]]; then
