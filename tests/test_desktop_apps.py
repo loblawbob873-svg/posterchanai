@@ -20,6 +20,7 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MOD = os.path.join(ROOT, "desktop", "apps.js")
+OS_UI = os.path.join(ROOT, "static", "js", "client", "os.js")
 NODE = shutil.which("node") or shutil.which("nodejs")
 
 
@@ -31,6 +32,11 @@ class DesktopEntries(unittest.TestCase):
         r = subprocess.run([NODE, "-e", src], capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr[-900:])
         return json.loads(r.stdout)
+
+    def test_opening_start_forces_a_fresh_installed_app_scan(self):
+        src = open(OS_UI, encoding="utf-8").read()
+        self.assertIn("PCOSShell.allApps(true)", src,
+                      "apps installed since the previous Start opening remain invisible")
 
     # ---- Exec is not a command line you can split on spaces ------------------------------------
     def test_field_codes_are_removed_not_passed_through(self):

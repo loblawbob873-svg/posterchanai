@@ -5075,7 +5075,11 @@
      * are what most people came for — are already in the list above. */
     try{
       if(window.PCOSShell && PCOSShell.available()){
-        PCOSShell.allApps().then(list => {
+        /* FORCE A NEW MACHINE SCAN EACH TIME THE MENU OPENS. `machineApps` intentionally caches
+         * within one open menu so typing does not walk /usr/share repeatedly, but carrying that
+         * cache across openings means an app installed moments ago is invisible until PosterChan
+         * itself restarts. Telegram installed successfully and then did not exist in Start. */
+        PCOSShell.allApps(true).then(list => {
           const q = ($('#os-q', menu) || {}).value || '';
           if(!menu.isConnected) return;
           _machineApps = list;
