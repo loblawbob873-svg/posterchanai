@@ -23,6 +23,8 @@ def test_remote_desktop_resolves_ip_without_trusting_it_as_identity():
     relay=(ROOT / "static/js/client/relay.js").read_text(encoding="utf-8")
     assert "worker.call('verifyBatch',{events:[m[2]]})" in relay
     assert "if(_call.signalClose) _call.signalClose()" in APP
+    assert "'http://'+host+':3051'" in APP
+    assert "const pk=names[0].pk" in APP
 
 
 def test_remote_desktop_sends_a_screen_and_no_guest_media():

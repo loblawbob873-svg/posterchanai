@@ -178,6 +178,25 @@ class WidgetSizing(unittest.TestCase):
     def test_a_big_desktop_gets_the_full_size(self):
         self.assertEqual(self.box("l", 2560, 1400), {"w": 380, "h": 250})
 
+
+class PerformanceWidgetSource(WidgetSizing):
+    """The useful part of a performance widget is history, not a progress bar snapshot."""
+
+    def test_cpu_ram_and_network_have_numeric_line_charts(self):
+        src = OS_JS.read_text()
+        self.assertIn('class="wgt-perf-graph"', src)
+        self.assertIn('class="wgt-perf-line primary"', src)
+        self.assertIn("h.a.length>60", src)
+        self.assertIn("' logical CPUs'", src)
+        self.assertIn("'Total  '+_sysBytes(s.memory.total)", src)
+        self.assertIn("'\u2193 '+_sysBytes(a)+'/s'", src)
+        self.assertIn("'\u2191 '+_sysBytes(b)+'/s'", src)
+
+    def test_network_has_separate_receive_and_send_lines(self):
+        src = OS_JS.read_text()
+        self.assertIn("kind==='network'?_perfPoints(h.b,max):''", src)
+        self.assertIn("max=Math.max(1024,...h.a,...h.b)*1.12", src)
+
     def test_a_small_desktop_shrinks_it(self):
         """A tablet must not be covered by one panel — nor left with a widget too small to read."""
         b = self.box("l", 700, 420)

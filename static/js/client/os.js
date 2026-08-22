@@ -2650,18 +2650,34 @@
 
   const _sysBytes = n => { n=Number(n)||0; const u=['B','KB','MB','GB','TB']; let i=0;
     while(n>=1024&&i<u.length-1){n/=1024;i++;} return (n>=100||i===0?n.toFixed(0):n.toFixed(1))+' '+u[i]; };
+  const _perfPoints = (a, max) => {
+    const vals=(a&&a.length?a:[0]).map(v=>Math.max(0,Number(v)||0)), top=Math.max(1,Number(max)||Math.max(...vals));
+    /* Start short histories at the RIGHT. A new widget therefore grows leftward into a timeline
+     * instead of drawing one misleading point across the full width. */
+    const step=240/59,off=240-step*(vals.length-1);
+    return vals.map((v,i)=>(off+i*step).toFixed(1)+','+(76-Math.min(1,v/top)*68).toFixed(1)).join(' ');
+  };
   function _performanceWidget(label, kind, icon){
     return {label,icon,blurb:'Live '+label.toLowerCase()+' use on this computer',every:2000,
-      mount(el){el.innerHTML='<div class="wgt-perf"><div class="wgt-perf-num">—</div><div class="wgt-perf-bar"><i></i></div><div class="wgt-dim">reading…</div></div>';},
+      mount(el){
+        el._pcPerf={a:[],b:[]};
+        el.innerHTML='<div class="wgt-perf"><header><div><b>'+label+'</b><span class="wgt-perf-sub">last 2 minutes</span></div><strong class="wgt-perf-num">—</strong></header><svg class="wgt-perf-graph" viewBox="0 0 240 80" preserveAspectRatio="none" role="img" aria-label="'+label+' history"><g class="wgt-perf-grid"><path d="M0 8H240 M0 25H240 M0 42H240 M0 59H240 M0 76H240"/><path d="M0 8V76 M60 8V76 M120 8V76 M180 8V76 M240 8V76"/></g><polyline class="wgt-perf-line primary" vector-effect="non-scaling-stroke"/><polyline class="wgt-perf-line secondary" vector-effect="non-scaling-stroke"/></svg><div class="wgt-perf-stats"><span class="primary">reading…</span><span class="secondary"></span></div></div>';
+      },
       async refresh(el){
         if(!window.pcSystem||!pcSystem.snapshot)return;
         let s;try{s=await pcSystem.snapshot(false);}catch(_){return;}
-        const num=$('.wgt-perf-num',el),bar=$('.wgt-perf-bar i',el),dim=$('.wgt-dim',el);
-        let pct=0,text='',sub='';
-        if(kind==='cpu'){pct=s.cpu.percent;text=pct+'%';sub=(s.cpu.cores||0)+' logical processors';}
-        else if(kind==='memory'){pct=s.memory.percent;text=pct+'%';sub=_sysBytes(s.memory.used)+' of '+_sysBytes(s.memory.total);}
-        else{const rate=(s.network.rx||0)+(s.network.tx||0);pct=Math.min(100,Math.round(rate/125000));text=_sysBytes(rate)+'/s';sub='↓ '+_sysBytes(s.network.rx)+'/s  ↑ '+_sysBytes(s.network.tx)+'/s';}
-        if(num)num.textContent=text;if(bar)bar.style.width=Math.max(0,Math.min(100,pct))+'%';if(dim)dim.textContent=sub;
+        const h=el._pcPerf||(el._pcPerf={a:[],b:[]}),num=$('.wgt-perf-num',el),
+          one=$('.wgt-perf-stats .primary',el),two=$('.wgt-perf-stats .secondary',el),
+          p1=$('.wgt-perf-line.primary',el),p2=$('.wgt-perf-line.secondary',el);
+        let a=0,b=0,max=100,text='',left='',right='';
+        if(kind==='cpu'){a=Math.max(0,Number(s.cpu.percent)||0);text=Math.round(a)+'%';left='Current  '+Math.round(a)+'%';right=(s.cpu.cores||0)+' logical CPUs';}
+        else if(kind==='memory'){a=Math.max(0,Number(s.memory.percent)||0);text=Math.round(a)+'%';left='Used  '+_sysBytes(s.memory.used);right='Total  '+_sysBytes(s.memory.total);}
+        else{a=Math.max(0,Number(s.network.rx)||0);b=Math.max(0,Number(s.network.tx)||0);text=_sysBytes(a+b)+'/s';left='↓ '+_sysBytes(a)+'/s';right='↑ '+_sysBytes(b)+'/s';}
+        h.a.push(a);h.b.push(b);if(h.a.length>60)h.a.shift();if(h.b.length>60)h.b.shift();
+        if(kind==='network')max=Math.max(1024,...h.a,...h.b)*1.12;
+        if(num)num.textContent=text;if(one)one.textContent=left;if(two)two.textContent=right;
+        if(p1)p1.setAttribute('points',_perfPoints(h.a,max));
+        if(p2){p2.setAttribute('points',kind==='network'?_perfPoints(h.b,max):'');p2.style.display=kind==='network'?'':'none';}
       }};
   }
 

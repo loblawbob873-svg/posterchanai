@@ -32557,11 +32557,21 @@
     if(explicit){try{const u=new URL(host);schemeHint=u.protocol.slice(0,-1);host=u.host;}catch(_){throw new Error('invalid PosterChan address');}}
     const schemes=explicit?[schemeHint]:
       ((BUNDLED||!window.isSecureContext)?['https','http']:['https']);
-    let doc=null,last='';
+    /* A BARE LAN IP usually has no reverse proxy. PosterChan's direct client service listens on
+     * 3051, so only trying 443/80 made the UI's documented `192.168…` form work by accident on
+     * hosts that happened to run nginx. Identity is still the returned, verified npub; the IP is
+     * discovery/routing information and is never trusted as a person. Browsers on HTTPS cannot
+     * fetch cleartext LAN endpoints (mixed-content policy), while bundled desktop/Android can. */
+    const endpoints=[];
     for(const scheme of schemes){
+      endpoints.push(scheme+'://'+host);
+      if(!explicit && scheme==='http' && !/:\d+$/.test(host)) endpoints.push('http://'+host+':3051');
+    }
+    let doc=null,last='';
+    for(const base of endpoints){
       const ac=new AbortController(),tm=setTimeout(()=>ac.abort(),5000);
       try{const q=name?'?name='+encodeURIComponent(name):'';
-        const r=await fetch(scheme+'://'+host+'/.well-known/nostr.json'+q,
+        const r=await fetch(base+'/.well-known/nostr.json'+q,
           {signal:ac.signal,cache:'no-store'});if(r.ok){doc=await r.json();break;}last='HTTP '+r.status;
       }catch(e){last=String(e&&e.message||e);}finally{clearTimeout(tm);}
     }

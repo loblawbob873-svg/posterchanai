@@ -6801,6 +6801,26 @@ body.os-on #os-root{pointer-events:auto}
   touch-action:none}
 .wgt-dim{color:var(--muted);font-size:11.5px}
 
+/* CPU, memory and network. A number says where the machine is now; the trace says whether that is
+   a spike or a trend. Sixty samples at two seconds is a compact two-minute history. */
+.wgt-perf{height:100%;min-height:0;display:flex;flex-direction:column;gap:7px;font-variant-numeric:tabular-nums}
+.wgt-perf header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex:none}
+.wgt-perf header>div{display:flex;flex-direction:column;min-width:0}
+.wgt-perf header b{font-size:13px;line-height:1.2;color:var(--text)}
+.wgt-perf-sub{font-size:9.5px;color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+.wgt-perf-num{font-size:22px;line-height:1;font-weight:750;color:var(--neon);white-space:nowrap}
+.wgt-perf-graph{display:block;width:100%;flex:1;min-height:62px;border:1px solid var(--line);
+  border-radius:7px;background:rgba(var(--accent-rgb),.035);overflow:visible}
+.wgt-perf-grid path{fill:none;stroke:var(--line);stroke-width:.65;vector-effect:non-scaling-stroke;opacity:.65}
+.wgt-perf-line{fill:none;stroke:var(--neon);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.wgt-perf-line.secondary{stroke:var(--violet)}
+.wgt-perf-stats{display:flex;justify-content:space-between;align-items:center;gap:8px;flex:none;
+  color:var(--muted);font-size:10.5px;white-space:nowrap}
+.wgt-perf-stats span{overflow:hidden;text-overflow:ellipsis}
+.wgt-perf-stats .primary::before,.wgt-perf-stats .secondary:not(:empty)::before{content:'';display:inline-block;
+  width:7px;height:2px;margin:0 4px 3px 0;border-radius:2px;background:var(--neon)}
+.wgt-perf-stats .secondary:not(:empty)::before{background:var(--violet)}
+
 /* Bitcoin blocks. Pending stacked on the left, confirmed on the right, meeting at the chain tip —
    the arrangement mempool.space uses, and not decoration: it is what makes "my transaction is two
    blocks away" readable at a glance.
