@@ -2362,10 +2362,20 @@ liveCD() {
 	local EXCLUDES=(
 		proc sys dev run tmp mnt media lost+found
 		var/tmp var/cache/distfiles var/cache/binpkgs var/lib/portage/distfiles
+		# Runtime payloads are not part of an operating-system image. Keep the engines and their
+		# configuration, but never pack container layers, volumes, NVRAM or multi-gigabyte VM disks.
+		var/lib/docker var/lib/containers var/lib/containerd var/lib/libvirt
 		var/log/journal .snapshots
 		boot efi
 		etc/fstab etc/machine-id etc/crypttab etc/dracut.conf.d
 	)
+	# PosterChanOS uses qemu:///session, so its VM disks live in each user's private home instead of
+	# /var/lib/libvirt. A personal rescue image may keep the rest of /home; it must still not quietly
+	# turn every qcow2 disk into part of the ISO.
+	local VMHOME
+	for VMHOME in /home/*/.local/share/PosterChanOS/vms; do
+		[[ -e "$VMHOME" ]] && EXCLUDES+=("${VMHOME#/}")
+	done
 	# THE WORK DIRECTORY EXCLUDES ITSELF — see the header. Stored relative, because mksquashfs's
 	# -e paths are relative to the source root.
 	EXCLUDES+=("${OUTDIR#/}")
@@ -2458,7 +2468,7 @@ FSTAB
 		# relay/media data and (in several cases) credentials.  They are both enormous and unsafe to
 		# publish.  Keep Portage/system state under /var, but remove known mutable service payloads.
 		for F in /var/www /var/intel \
-			/var/lib/containerd /var/lib/gitea /var/lib/postgresql \
+			/var/lib/gitea /var/lib/postgresql \
 			/var/lib/posterchanai /var/lib/synapse /var/lib/pleroma \
 			/var/lib/redis /var/lib/radicale /var/lib/tor /var/lib/letsencrypt; do
 			[[ -e "$F" ]] && EXCLUDES+=("${F#/}")
