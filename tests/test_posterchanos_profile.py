@@ -146,6 +146,7 @@ class PosterChanOSProfile(unittest.TestCase):
         "virsh": "base:app-emulation/libvirt",
         "qemu-img": "base:app-emulation/qemu",
         "bluetoothctl": "base:net-wireless/bluez",
+        "ddcutil": "app-misc/ddcutil",
         "sudo": "base:app-admin/sudo",
         # Windows-only, and never run on this profile.
         "attrib": "base:n/a", "icacls": "base:n/a",

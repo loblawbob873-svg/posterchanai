@@ -868,6 +868,8 @@
       when: () => !!me() },
     { view: '__tasks', label: 'Task Manager', icon: '#i-chart', act: () => openTaskManager(),
       when: () => !!(window.pcSystem && pcSystem.snapshot) },
+    { view: '__ossettings', label: 'System Settings', icon: '#i-gear', act: () => openSystemSettings(),
+      when: () => !!(window.pcDisplays && pcDisplays.status) },
     { view: '__vms', label: 'Virtual Machines', icon: '#i-monitor', act: () => openVmManager(),
       when: () => !!(window.pcVM && pcVM.list) },
     { view: '__remote', label: 'Remote Desktop', icon: '#i-monitor', act: () => openRemoteDesktop(),
@@ -1444,6 +1446,93 @@
       return existing;
     }
     return openApp(view, label, icon, render, noFeed);
+  }
+
+  function openSystemSettings(){
+    openDoc('os-settings', 'System Settings', 'i-gear', renderSystemSettings);
+  }
+
+  async function renderSystemSettings(){
+    const host=document.getElementById('feed');
+    if(!host || !window.pcDisplays){ if(host) host.innerHTML='<div class="empty">System settings are unavailable.</div>'; return; }
+    host.className='feed os-settings-feed';
+    host.innerHTML='<div class="spinner"></div>';
+    let outs=[]; try{ outs=await pcDisplays.status(); }
+    catch(e){ host.innerHTML='<div class="empty">Could not read displays: '+enc(String(e&&e.message||e))+'</div>'; return; }
+    const rows=outs.map(o=>{ const cur=(o.modes||[]).find(m=>m.current);
+      const hz=m=>Math.round((+m.refresh||0)/1000*1000)/1000;
+      return {name:o.name,label:[o.make,o.model].filter(Boolean).join(' ')||o.name,enabled:!!o.active,
+        x:(o.rect&&o.rect.x)||0,y:(o.rect&&o.rect.y)||0,w:(o.rect&&o.rect.width)||1920,
+        h:(o.rect&&o.rect.height)||1080,scale:+o.scale||1,transform:o.transform||'normal',
+        mode:cur?(cur.width+'x'+cur.height+(hz(cur)?'@'+hz(cur)+'Hz':'')):'',
+        modes:o.modes||[],primary:!!o.focused}; });
+    let selected=rows.findIndex(x=>x.primary); if(selected<0) selected=0;
+    const modeText=m=>m.width+'x'+m.height+(m.refresh?'@'+(Math.round(m.refresh/1000*1000)/1000)+'Hz':'');
+    const draw=()=>{
+      const minX=Math.min(...rows.filter(x=>x.enabled).map(x=>x.x),0), minY=Math.min(...rows.filter(x=>x.enabled).map(x=>x.y),0);
+      const maxX=Math.max(...rows.filter(x=>x.enabled).map(x=>x.x+x.w),1920), maxY=Math.max(...rows.filter(x=>x.enabled).map(x=>x.y+x.h),1080);
+      const scale=Math.min(620/Math.max(1,maxX-minX),300/Math.max(1,maxY-minY));
+      host.innerHTML=`<div class="os-settings"><aside class="os-set-nav">
+        <div class="os-set-title">${iconSvg('gear')}<b>System Settings</b></div>
+        <button class="on">${iconSvg('monitor')} Displays</button>
+        <button data-jump="sound">${iconSvg('volume')} Sound</button>
+        <button data-jump="network">${iconSvg('wifi')} Network</button>
+        <button data-jump="bluetooth">${iconSvg('bluetooth')} Bluetooth</button>
+        <button data-jump="power">${iconSvg('power')} Power &amp; brightness</button>
+      </aside><main class="os-set-main"><h2>Displays</h2>
+        <p class="muted">Drag screens into the same arrangement as the monitors on your desk.</p>
+        <div class="os-display-map" style="height:${Math.max(180,(maxY-minY)*scale+40)}px">${rows.map((r,i)=>
+          `<button class="os-display ${i===selected?'selected':''} ${r.enabled?'':'off'}" data-i="${i}"
+           style="left:${20+(r.x-minX)*scale}px;top:${20+(r.y-minY)*scale}px;width:${Math.max(90,r.w*scale)}px;height:${Math.max(60,r.h*scale)}px">
+           <b>${i+1}</b><span>${enc(r.label)}</span><small>${r.w} × ${r.h}</small></button>`).join('')}</div>
+        <div class="os-display-controls"></div>
+        <div class="os-set-actions"><button class="btn" data-detect>Detect displays</button>
+          <button class="btn primary" data-apply>Apply</button><span class="muted" data-status></span></div>
+      </main></div>`;
+      wire(); controls();
+    };
+    const controls=()=>{
+      const r=rows[selected], box=host.querySelector('.os-display-controls'); if(!r||!box)return;
+      box.innerHTML=`<label><input type="checkbox" data-enable ${r.enabled?'checked':''}> Use this display</label>
+        <label>Resolution &amp; refresh<select data-mode>${r.modes.map(m=>{const t=modeText(m);return `<option ${t===r.mode?'selected':''}>${enc(t)}</option>`}).join('')}</select></label>
+        <label>Scale<select data-scale>${[.75,1,1.25,1.5,1.75,2].map(n=>`<option value="${n}" ${n===r.scale?'selected':''}>${Math.round(n*100)}%</option>`).join('')}</select></label>
+        <label>Orientation<select data-transform>${['normal','90','180','270','flipped'].map(n=>`<option ${n===r.transform?'selected':''}>${n}</option>`).join('')}</select></label>
+        <label><input type="radio" name="primary" data-primary ${r.primary?'checked':''}> Primary display</label>`;
+      box.querySelector('[data-enable]').onchange=e=>{r.enabled=e.target.checked;draw()};
+      box.querySelector('[data-mode]').onchange=e=>{r.mode=e.target.value};
+      box.querySelector('[data-scale]').onchange=e=>{r.scale=+e.target.value};
+      box.querySelector('[data-transform]').onchange=e=>{r.transform=e.target.value};
+      box.querySelector('[data-primary]').onchange=()=>{rows.forEach(x=>x.primary=false);r.primary=true;draw()};
+    };
+    const wire=()=>{
+      host.querySelectorAll('.os-display').forEach(b=>{
+        b.onclick=()=>{selected=+b.dataset.i;draw()};
+        b.onpointerdown=e=>{ if(e.button!==0)return; e.preventDefault(); selected=+b.dataset.i;
+          const r=rows[selected], sx=e.clientX,sy=e.clientY,ox=r.x,oy=r.y; b.setPointerCapture(e.pointerId);
+          b.onpointermove=ev=>{ if(!b.hasPointerCapture(ev.pointerId))return;
+            r.x=Math.round((ox+(ev.clientX-sx)/Math.max(.01,parseFloat(b.style.width)/r.w))/10)*10;
+            r.y=Math.round((oy+(ev.clientY-sy)/Math.max(.01,parseFloat(b.style.height)/r.h))/10)*10;
+            b.style.transform=`translate(${ev.clientX-sx}px,${ev.clientY-sy}px)`; };
+          b.onpointerup=ev=>{try{b.releasePointerCapture(ev.pointerId)}catch(_){} draw()}; };
+      });
+      const detect=host.querySelector('[data-detect]'); if(detect)detect.onclick=()=>renderSystemSettings();
+      const apply=host.querySelector('[data-apply]'); if(apply)apply.onclick=async()=>{
+        const st=host.querySelector('[data-status]'); apply.disabled=true; if(st)st.textContent='Applying…';
+        try{ const p=await pcDisplays.preview(rows.map(r=>({name:r.name,enabled:r.enabled,x:r.x,y:r.y,
+              mode:r.mode,scale:r.scale,transform:r.transform,primary:r.primary})));
+          const keep=await PC().uiConfirm('Keep these display settings? They will automatically revert in 15 seconds.',{ok:'Keep settings'});
+          if(keep){await pcDisplays.confirm(p.token);if(st)st.textContent='Saved';}
+          else {await pcDisplays.revert(p.token);return renderSystemSettings();}
+        }catch(e){if(st)st.textContent=String(e&&e.message||e)} finally{apply.disabled=false}
+      };
+      host.querySelectorAll('[data-jump]').forEach(b=>b.onclick=()=>{
+        const k=b.dataset.jump;
+        if(k==='network'||k==='bluetooth'||k==='sound'||k==='power'){
+          try{ PC().toast('Use Quick Settings for '+k+' controls while this page is being expanded.'); }catch(_){}
+        }
+      });
+    };
+    draw();
   }
 
   function openTaskManager(){
@@ -2278,14 +2367,17 @@
     // restore yanks it back to a size the user has just replaced by hand.
     if(w.snap){ w.snap = null; w.el.classList.remove('snapped'); }
     ev.preventDefault();
+    try{ w.el.setPointerCapture(ev.pointerId); }catch(_){}
     const sx = ev.clientX, sy = ev.clientY, ow = w.el.offsetWidth, oh = w.el.offsetHeight;
     // A resize really does have to relayout the contents, so the saving here is doing it ONCE per
     // animation frame instead of once per pointer event — a touchscreen fires far more of those.
     const k = zf();
     let nw = ow, nh = oh, raf = 0;
+    const hadButtons = (ev.buttons || 0) > 0;
     _natGesture(w, true);                        // see startDrag — the surface is placed once, at the end
     const paint = () => { raf = 0; w.el.style.width = nw + 'px'; w.el.style.height = nh + 'px'; };
     const move = (e) => {
+      if(hadButtons && e.pointerType !== 'touch' && (e.buttons || 0) === 0){ up(); return; }
       nw = Math.max(420, ow + (e.clientX - sx) / k);
       nh = Math.max(260, oh + (e.clientY - sy) / k);
       if(!raf) raf = requestAnimationFrame(paint);
@@ -2296,12 +2388,15 @@
                        document.removeEventListener('pointerup', up);
                        document.removeEventListener('pointercancel', up);
                        window.removeEventListener('blur', up);
+                       w.el.removeEventListener('lostpointercapture', up);
+                       try{ if(w.el.hasPointerCapture(ev.pointerId)) w.el.releasePointerCapture(ev.pointerId); }catch(_){}
                        if(raf){ cancelAnimationFrame(raf); paint(); }
                        _natGesture(w, false); };
     document.addEventListener('pointermove', move);
     document.addEventListener('pointerup', up);
     document.addEventListener('pointercancel', up);
-    window.addEventListener('blur', up);
+    if(w.native == null) window.addEventListener('blur', up);
+    w.el.addEventListener('lostpointercapture', up);
   }
 
   // ---- desktop, taskbar, start menu -----------------------------------------------------------

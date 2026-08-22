@@ -60,10 +60,26 @@ function brightness() {
   return { available: true, name: p.name, percent: Math.round((p.cur / p.max) * 100) };
 }
 
+/* External monitors do not appear under /sys/class/backlight. DDC/CI VCP code 0x10 is the
+ * hardware brightness control and ddcutil is the small, standard userspace client for it. Kept
+ * separate from brightness() so the synchronous sysfs tests and fast laptop path stay unchanged. */
+async function ddcBrightness() {
+  try {
+    const out = await run('ddcutil', ['getvcp', '10', '--brief'], 5000);
+    const m = out.match(/VCP\s+10\s+[^\d]*([0-9]+)\s+([0-9]+)/i);
+    if(!m || !(+m[2])) return { available:false };
+    return { available:true, name:'DDC/CI monitor', ddc:true,
+             percent:Math.round((+m[1]/+m[2])*100) };
+  } catch (_) { return { available:false }; }
+}
+
 async function setBrightness(percent) {
   const p = panel();
-  if (!p) throw new Error('this machine has no backlight');
   const want = Math.max(MIN_PERCENT, Math.min(100, Math.round(Number(percent) || 0)));
+  if (!p) {
+    try { await run('ddcutil', ['setvcp', '10', String(want)], 8000); return {percent:want,ddc:true}; }
+    catch (_) { throw new Error('no controllable backlight — enable DDC/CI in the monitor menu'); }
+  }
   const raw = Math.max(1, Math.round((want / 100) * p.max));
   const file = path.join(p.dir, 'brightness');
   try {
@@ -190,8 +206,10 @@ async function setKeepAwake(on) {
 
 /** Everything the shell needs to draw the panel, in one call. */
 async function status() {
+  let bright = brightness();
+  if(!bright.available) bright = await ddcBrightness();
   return {
-    brightness: brightness(),
+    brightness: bright,
     battery: battery(),
     profiles: await profiles(),
     keepAwake: await keepAwakeStatus(),
@@ -199,6 +217,6 @@ async function status() {
   };
 }
 
-module.exports = { brightness, setBrightness, battery, profiles, setProfile,
+module.exports = { brightness, ddcBrightness, setBrightness, battery, profiles, setProfile,
                    suspend, hibernate, poweroff, reboot, hibernateReady, keepAwakeStatus,
                    setKeepAwake, status, MIN_PERCENT };

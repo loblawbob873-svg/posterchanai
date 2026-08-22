@@ -142,6 +142,8 @@ VIDEO_CARDS="intel amdgpu radeon radeonsi"
 BASE_PACKAGES="net-print/cups-filters net-misc/networkmanager net-wireless/bluez net-fs/sshfs app-shells/starship dev-util/sh sys-boot/plymouth sys-power/acpid app-arch/zip dev-python/virtualenv sys-apps/flatpak sys-power/powertop app-shells/bash-completion sys-power/cpupower media-libs/gexiv2 media-plugins/gst-plugins-pulse mail-mta/postfix app-admin/sysstat sys-apps/smartmontools net-fs/nfs-utils net-firewall/nftables dev-python/pip sys-fs/inotify-tools net-analyzer/nmap app-misc/screen app-portage/gentoolkit sys-fs/dosfstools app-admin/sudo sys-apps/systemd app-eselect/eselect-repository dev-vcs/git sys-block/parted sys-process/btop net-vpn/wireguard-tools app-editors/neovim app-misc/fastfetch sys-fs/btrfs-progs net-print/cups sys-firmware/seabios-bin sys-firmware/edk2-bin app-emulation/libvirt app-emulation/qemu app-emulation/virt-viewer app-crypt/swtpm"
 SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 nls pam readline server ssl system zlib zstd uuid" "dev-build/meson test test-full" "dev-qt/qtwebengine bindist" "media-sound/sox -opus" "media-video/vlc -opus -theora -vpx" "dev-qt/qtpositioning geoclue" "media-libs/libvpx postproc" "dev-python/pillow webp" "gui-libs/gtk colord sysprof" "media-libs/freetype harfbuzz" "dev-lang/php gmp sodium sysvipc calendar bcmath exif bzip2 intl ctype curl fileinfo filter gd iconv ssl posix session simplexml xmlreader xmlwriter zip zlib postgres png opcache jit cli fpm zip pdo" "net-im/synapse postgres" "net-p2p/qbittorrent webui" "app-crypt/certbot certbot-nginx" "acct-user/git gitea" "app-admin/vaultwarden web postgres" "media-gfx/imagemagick -postscript" "media-gfx/imagemagick -postscript dev-libs/jemalloc statsv" "media-libs/libsdl2 -kms -pipewire" "media-video/obs-studio pipewire wayland" "media-video/pipewire sound-server bluetooth" "gui-wm/sway X" "mail-mta/postfix sasl" "app-emulation/qemu spice usbredir pipewire" "app-emulation/libvirt qemu virt-network" "app-emulation/virt-viewer spice")
 #
+# External desktop monitors expose brightness over DDC/CI rather than /sys/class/backlight.
+BASE_PACKAGES="www-client/firefox-bin $BASE_PACKAGES"
 # ── PosterChanOS ────────────────────────────────────────────────────────────────────────────────
 # The shell is the PosterChan desktop itself, so there is no second desktop environment to install.
 # A browser and a Steam game have to appear on that desktop, and those two rule out every embedding
@@ -199,7 +201,7 @@ SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 
 # a tool goes missing on the next fresh build with nothing to say why.
 # Audited against desktop/*.js: grim slurp wl-copy wpctl nmcli systemctl xdg-open script sudo
 # swaymsg (+ brightnessctl, see above). `tests/test_posterchanos_profile.py` re-runs that audit.
-POSTERCHANOS_PACKAGES="gui-wm/sway x11-base/xwayland gui-apps/foot \
+POSTERCHANOS_PACKAGES="gui-wm/sway x11-base/xwayland gui-apps/foot app-misc/ddcutil \
 gui-apps/wl-clipboard \
 gui-apps/grim gui-apps/slurp \
 x11-misc/xdg-utils \
@@ -1477,6 +1479,10 @@ PROFILE
 	# Nothing draws over the desktop uninvited — no compositor wallpaper, no status bar. PosterChan
 	# is the wallpaper and the taskbar.
 	output * bg #000000 solid_color
+	# Per-machine monitor arrangement written atomically by System Settings → Displays.
+	include ~/.config/sway/outputs.conf
+	# Hold Super and drag anywhere in a native app, including across monitor boundaries.
+	floating_modifier $mod normal
 
 	# The one binding that is not PosterChan's to take: a way out when the shell is not running.
 	# THE LAPTOP'S OWN KEYS. A desktop that ignores the volume and brightness keys on the keyboard
@@ -1833,7 +1839,7 @@ accounts() {
 	# The greeter normally hands the session to a per-npub account, but it is also the live image's
 	# desktop user. Give that live/repair session KVM access too, so the VM app does not change from
 	# “works installed” to “permission denied” merely because PosterChanOS is being tried from USB.
-	for g in audio video input netdev render kvm; do
+	for g in audio video input netdev render kvm i2c; do
 		getent group "$g" >/dev/null 2>&1 && gpasswd -a $SHELL_USER "$g" >/dev/null 2>&1
 	done
 	# One command, not ALL. Broad local administration is added only by finalizeInstall() on a

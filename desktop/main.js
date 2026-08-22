@@ -941,6 +941,11 @@ function wm() {
   return _wm;
 }
 const net = require('./net.js');
+let _displays = null;
+function displays(){
+  if(!_displays){ const { Displays } = require('./displays.js'); _displays = new Displays(wm()); }
+  return _displays;
+}
 
 ipcMain.handle('pc:wm:available', (e) => { fsGuard(e); return wm().available(); });
 ipcMain.handle('pc:wm:windows', (e) => { fsGuard(e); return wm().windows(); });
@@ -955,6 +960,10 @@ ipcMain.handle('pc:wm:move', (e, id, x, y) => {
 ipcMain.handle('pc:wm:hide', (e, id) => { fsGuard(e); return wm().hide(Number(id)); });
 ipcMain.handle('pc:wm:show', (e, id) => { fsGuard(e); return wm().show(Number(id)); });
 ipcMain.handle('pc:wm:fullscreen', (e, id, on) => { fsGuard(e); return wm().fullscreen(Number(id), !!on); });
+ipcMain.handle('pc:display:status', (e) => { fsGuard(e); return displays().status(); });
+ipcMain.handle('pc:display:preview', (e, rows) => { fsGuard(e); return displays().preview(rows); });
+ipcMain.handle('pc:display:confirm', (e, token) => { fsGuard(e); return displays().confirm(token); });
+ipcMain.handle('pc:display:revert', (e, token) => { fsGuard(e); return displays().revert(token); });
 /* Launch takes an ARGV ARRAY, never a command string. A string would have to be handed to a shell
  * to be useful, and then a file name with a space in it is an injection. */
 ipcMain.handle('pc:wm:launch', async (e, argv, opts) => {

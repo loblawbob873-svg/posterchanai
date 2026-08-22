@@ -25,6 +25,8 @@ RDEPEND="
 	gui-apps/grim
 	gui-apps/slurp
 	gui-apps/wl-clipboard
+	app-misc/ddcutil
+	www-client/firefox-bin
 	net-wireless/bluez
 	sys-apps/xdg-desktop-portal
 	gui-libs/xdg-desktop-portal-wlr

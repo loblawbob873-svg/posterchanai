@@ -63,7 +63,7 @@ chmod 0700 "$HOME_DIR"
 # qemu:///session virtual machines. NOT wheel —
 # signing in with a key is not the same as being trusted with root, and a machine anyone may log
 # into must not hand every visitor sudo.
-for g in audio video input netdev render kvm posterchan; do
+for g in audio video input netdev render kvm i2c posterchan; do
   getent group "$g" >/dev/null 2>&1 && gpasswd -a "$USERNAME" "$g" >/dev/null 2>&1
 done
 

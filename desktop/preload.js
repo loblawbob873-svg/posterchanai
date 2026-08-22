@@ -116,6 +116,13 @@ if (isOurPage) {
     },
   });
 
+  contextBridge.exposeInMainWorld('pcDisplays', {
+    status: () => ipcRenderer.invoke('pc:display:status'),
+    preview: rows => ipcRenderer.invoke('pc:display:preview', Array.isArray(rows) ? rows : []),
+    confirm: token => ipcRenderer.invoke('pc:display:confirm', String(token||'')),
+    revert: token => ipcRenderer.invoke('pc:display:revert', String(token||'')),
+  });
+
   contextBridge.exposeInMainWorld('pcNet', {
     available: () => ipcRenderer.invoke('pc:net:available'),
     status: () => ipcRenderer.invoke('pc:net:status'),
