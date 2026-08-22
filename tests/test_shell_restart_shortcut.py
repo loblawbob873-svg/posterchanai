@@ -36,13 +36,15 @@ def test_shell_package_migrates_existing_identity_configs_without_replacing_them
 def test_shell_restart_is_serialized_and_targets_only_the_shell_process():
     start = (ROOT / "os/bin/pc-shell-start").read_text()
     restart = (ROOT / "os/bin/pc-shell-restart").read_text()
-    assert "SingletonSocket" in restart
-    assert "swaymsg -t get_tree" in restart
+    main = (ROOT / "desktop/main.js").read_text()
     assert "flock -n 9" in start
     assert "posterchan-shell-start.lock" in start
-    assert "posterchan-desktop --shell" in restart
     assert "pattern='[/]opt/posterchan/'" in restart
-    assert "pkill -TERM" in restart and "pkill -KILL" in restart
+    assert "send_tick pc:restart" in restart
+    assert "pkill" not in restart
+    assert "reloadIgnoringCache" in main
+    assert "ev.payload !== 'pc:restart'" in main
+    assert "exec /usr/local/bin/pc-shell-start" in restart
     assert "retries" in start and "exit 1" in start
 
 

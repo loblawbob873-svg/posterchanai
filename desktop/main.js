@@ -940,6 +940,28 @@ function wm() {
   if (!_wm) { const { WM } = require('./wm.js'); _wm = new WM(); }
   return _wm;
 }
+let _shellRecoveryWired = false;
+async function wireShellRecovery(){
+  if(!SHELL_MODE || _shellRecoveryWired || !wm().available()) return;
+  _shellRecoveryWired = true;
+  try{
+    await wm().subscribe(['window','workspace','tick']);
+    wm().on('tick', (ev) => {
+      if(!ev || ev.payload !== 'pc:restart') return;
+      /* Keep the Wayland surface mapped. Killing Electron and racing its replacement against the
+       * singleton socket is what turned Ctrl+Alt+Backspace into a permanent black screen. */
+      try{
+        if(win && !win.isDestroyed()){
+          win.webContents.reloadIgnoringCache();
+          win.show();
+        }
+      }catch(e){ console.warn('[shell restart]', e && e.message || e); }
+    });
+  }catch(e){
+    _shellRecoveryWired = false;
+    console.warn('[shell recovery]', e && e.message || e);
+  }
+}
 const net = require('./net.js');
 let _displays = null;
 function displays(){
@@ -1569,6 +1591,7 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
     buildMenu();
     startHidden = background.launchedHidden();
     createWindow();
+    wireShellRecovery();
     background.init({
       show: showWindow,
       syncNow: () => { try { win && !win.isDestroyed() && win.webContents.send('pc:sync:now'); } catch (_) {} },
