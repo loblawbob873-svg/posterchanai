@@ -973,7 +973,21 @@ ipcMain.handle('pc:wm:launch', async (e, argv, opts) => {
     list = (Array.isArray(argv) ? argv : []).map(String).filter(Boolean);
   }
   if (!list.length) throw new Error('nothing to launch');
-  const started = wm().launch(list, opts || {});
+  let launchOpts = opts || {};
+  /* TELEGRAM 7 + QT 6.9 ON SWAY: its native Wayland QRhi window probes AMD OpenGL correctly,
+   * then Qt fails `EGL_WL_bind_wayland_display`. The window paints its spinner and turns black as
+   * soon as rendering moves to that surface. XWayland on the same Mesa driver initializes GLX and
+   * stays painted. Scope the fallback to Telegram — forcing every Qt app through X11 would throw
+   * away native Wayland and would be particularly wrong for Steam/games.
+   *
+   * Sway starts XWayland lazily, and this shell was exec'd before it, so DISPLAY can be absent from
+   * our inherited environment even though its socket is :0. That is why the fallback supplies it. */
+  if (/^(telegram-desktop|telegram-desktop-bin)$/i.test(path.basename(list[0]))) {
+    launchOpts = Object.assign({}, launchOpts, { env: Object.assign({}, launchOpts.env || {}, {
+      QT_QPA_PLATFORM: 'xcb', DISPLAY: process.env.DISPLAY || ':0',
+    }) });
+  }
+  const started = wm().launch(list, launchOpts);
   /* The window is matched by PID and reported back, so the desktop can place what it just opened
    * rather than guessing which of several windows appeared. Null when it never shows — an app that
    * failed to start must not be reported as launched.

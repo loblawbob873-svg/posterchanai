@@ -84,8 +84,16 @@ class Bridge(unittest.TestCase):
 
     def test_a_launch_that_never_appears_is_not_reported_as_launched(self):
         i = self.main.index("'pc:wm:launch'")
-        body = self.main[i:i + 2200]
+        body = self.main[i:i + 3200]
         self.assertIn("waitForWindow", body)
+
+    def test_telegram_uses_the_working_xwayland_renderer_only_for_telegram(self):
+        """Qt's Wayland EGL failure must not turn Telegram black or disable GPU use globally."""
+        i = self.main.index("telegram-desktop|telegram-desktop-bin")
+        body = self.main[i:i + 500]
+        self.assertIn("QT_QPA_PLATFORM: 'xcb'", body)
+        self.assertIn("DISPLAY: process.env.DISPLAY || ':0'", body)
+        self.assertNotIn("process.env.QT_QPA_PLATFORM", self.main)
 
     def test_the_event_listener_can_be_removed(self):
         """The desktop redraws its taskbar on every window event; a listener the page cannot remove
