@@ -59,6 +59,13 @@
     try{ return (root.ME && root.ME.npub) ? String(root.ME.npub) : ''; }catch(_){ return ''; }
   }
 
+  function savedSession(){
+    try{
+      const S = root.Session;
+      return (S && S.load) ? S.load() : null;
+    }catch(_){ return null; }
+  }
+
   /* WHAT THE MACHINE ACTUALLY IS RIGHT NOW — never a remembered "which step were we on" counter,
    * which is the thing that goes stale the moment somebody fixes something outside the wizard.
    *
@@ -373,7 +380,20 @@
       return;
     }
     let r = null;
-    try{ r = await SHELL().ensureAccount(npub); }catch(e){ r = { ok: false, why: String((e && e.message) || e) }; }
+    try{
+      r = await SHELL().ensureAccount(npub);
+      /* Creating the protected home is only half of account setup. A restored browser session can
+       * reach this wizard without passing through app.js's fresh-login hook; merely provisioning
+       * then leaves the graphical getty running as the locked `posterchan` bootstrap user. Require
+       * the same durable OS-session switch here before declaring the home ready. */
+      if(r && r.ok !== false){
+        const sess = savedSession();
+        const meta = { npub };
+        const pk = sess && (sess.pubkey || sess.userPk);
+        if(pk) meta.pubkey = String(pk);
+        r = await SHELL().activateAccount(npub, sess, meta);
+      }
+    }catch(e){ r = { ok: false, why: String((e && e.message) || e) }; }
     _busy = false;
     if(r && r.ok !== false){ _homeReady = true; _provisionFailed = false; return run(); }
     _provisionFailed = true;

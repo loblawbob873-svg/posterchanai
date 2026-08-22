@@ -245,6 +245,19 @@ class SignedInIsReadFromSomethingThatExists(unittest.TestCase):
         self.assertLess(body.index("if(!npub)"), body.index("ensureAccount(npub)"),
                         "an empty identity still reaches the privileged provisioner")
 
+    def test_provisioning_also_enters_the_identity_os_session(self):
+        src = open(os.path.join(ROOT, "static", "js", "client", "osfirstrunui.js"),
+                   encoding="utf-8").read()
+        start = src.index("async function stepAccount()")
+        body = src[start:src.index("\n  }", start)]
+        self.assertIn("activateAccount(npub, sess, meta)", body)
+        self.assertLess(body.index("ensureAccount(npub)"),
+                        body.index("activateAccount(npub, sess, meta)"),
+                        "the OS session was switched before its protected home existed")
+        self.assertLess(body.index("activateAccount(npub, sess, meta)"),
+                        body.index("_homeReady = true"),
+                        "welcome still completes before the graphical session is activated")
+
 
 class FirstBootShowsThePhoneQrImmediately(unittest.TestCase):
     """The welcome must not hide its primary action behind three more screens and a button."""
