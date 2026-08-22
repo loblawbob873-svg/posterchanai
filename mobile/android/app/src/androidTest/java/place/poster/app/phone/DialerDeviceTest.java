@@ -52,7 +52,8 @@ public class DialerDeviceTest {
         // screen — ours is simply never asked, with nothing anywhere to say so.
         assertTrue("IN_CALL_SERVICE_UI is not set",
                 info.metaData.getBoolean("android.telecom.IN_CALL_SERVICE_UI", false));
-        assertTrue("IN_CALL_SERVICE_RINGING is not set",
+        assertFalse("PosterChan claims ringtone playback but has no ringtone player; Android Telecom"
+                        + " must remain responsible for ringing",
                 info.metaData.getBoolean("android.telecom.IN_CALL_SERVICE_RINGING", false));
     }
 
