@@ -28,7 +28,8 @@ def test_shell_package_installs_the_config_name_sway_actually_reads():
 def test_shell_package_migrates_existing_identity_configs_without_replacing_them():
     ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
     assert '"${EROOT%/}"/home/pc-*/.config/sway/config' in ebuild
-    assert "grep -q 'Ctrl+Mod1+22'" in ebuild
+    assert "Ctrl\\+Mod1\\+(BackSpace|22)" in ebuild
+    assert "Super_L exec swaymsg -t send_tick pc:start" in ebuild
     assert 'cat >>"${cfg}"' in ebuild
 
 

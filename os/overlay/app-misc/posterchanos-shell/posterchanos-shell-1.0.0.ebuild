@@ -71,7 +71,13 @@ pkg_postinst() {
 	local cfg
 	for cfg in "${EROOT%/}/home/posterchan/.config/sway/config" "${EROOT%/}"/home/pc-*/.config/sway/config; do
 		[[ -f ${cfg} ]] || continue
-		grep -q 'Ctrl+Mod1+22' "${cfg}" && continue
+		# These are package-owned bindings inside an otherwise user-owned file. Remove every older
+		# form first; merely checking for the keycode retained a stale command forever.
+		sed -i -E '/Ctrl\+Mod1\+(BackSpace|22).*pc-shell-(start|restart)/d' "${cfg}"
+		sed -i 's#bindsym --release --no-repeat \$mod exec swaymsg -t send_tick pc:start#bindsym --release --no-repeat Super_L exec swaymsg -t send_tick pc:start#' "${cfg}"
+		if ! grep -q 'Super_L exec swaymsg -t send_tick pc:start' "${cfg}"; then
+			echo 'bindsym --release --no-repeat Super_L exec swaymsg -t send_tick pc:start' >>"${cfg}"
+		fi
 		cat >>"${cfg}" <<-'SWAY_RECOVERY'
 
 		# Restart only the PosterChan desktop shell; native applications remain open.
