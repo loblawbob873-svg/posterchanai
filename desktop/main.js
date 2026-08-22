@@ -412,9 +412,10 @@ function quitApp() {
 }
 
 // ---- window ------------------------------------------------------------------------------------
-function createWindow() {
-  const b = cfg.bounds || {};
-  win = new BrowserWindow({
+function createWindow(assignment) {
+  const primary = !assignment || assignment.primary !== false;
+  const b = primary ? (cfg.bounds || {}) : (assignment.rect || {});
+  const created = new BrowserWindow({
     width: b.width || 1280,
     height: b.height || 860,
     x: b.x, y: b.y,
@@ -453,7 +454,7 @@ function createWindow() {
     icon: path.join(__dirname, 'icon.png'),
     // Started by the login item: come up HIDDEN rather than showing and then hiding, which is a
     // window flashing on screen at every boot — the thing that makes people turn autostart off.
-    show: !startHidden,
+    show: primary ? !startHidden : false,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -469,29 +470,33 @@ function createWindow() {
        * visible-but-unfocused window the way Chromium does, which is the whole of the difference. */
       backgroundThrottling: false,
       preload: path.join(__dirname, 'preload.js'),
+      /* A companion display is a view, not a second background agent. The preload uses this marker
+       * to withhold folder-sync ownership so adding a monitor cannot run two writers over one tree. */
+      additionalArguments: primary ? [] : ['--pc-secondary-surface'],
     },
   });
-  if (cfg.maximized) win.maximize();
+  if(primary) win = created;
+  if (primary && cfg.maximized) created.maximize();
   /* The window still exists and the renderer still runs while hidden, which is the whole mechanism:
    * folder sync is renderer code, so "running in the background" is a hidden window, not a headless
    * process. Consumed here so a LATER createWindow (macOS activate) opens normally. */
   startHidden = false;
 
   const remember = () => {
-    if (!win || win.isDestroyed()) return;
-    cfg.maximized = win.isMaximized();
-    if (!cfg.maximized && !win.isMinimized()) cfg.bounds = win.getNormalBounds();
+    if (!primary || created.isDestroyed()) return;
+    cfg.maximized = created.isMaximized();
+    if (!cfg.maximized && !created.isMinimized()) cfg.bounds = created.getNormalBounds();
     saveCfg();
   };
-  win.on('close', remember);
+  created.on('close', remember);
   /* Close means HIDE while the tray is holding the app open — otherwise closing the window ends the
    * process and, with it, the folder sync the tray exists to keep running. Guarded on the tray
    * actually being there: on a desktop with no tray this would make the app impossible to close.
    * `quitting` is the escape hatch every real quit path sets. */
-  win.on('close', (e) => {
-    if (quitting || !closeToTray() || !background.available()) return;
+  created.on('close', (e) => {
+    if (!primary || quitting || !closeToTray() || !background.available()) return;
     e.preventDefault();
-    if (win && !win.isDestroyed()) win.hide();
+    if (!created.isDestroyed()) created.hide();
     /* Say so, ONCE. Closing a window and having the app keep running is not what closing a window
      * normally means, and an app that appears not to have quit — with no window and no message — is
      * indistinguishable from one that hung. Every app that does this shows this notice; skipping it
@@ -508,15 +513,15 @@ function createWindow() {
   // necessarily — with a visible menu bar the first keystroke can go to the chrome instead, which is why
   // no shortcut or scroll key worked until you clicked inside the page. Also on every window focus, so
   // alt-tabbing back does not need a click either.
-  const focusPage = () => { if (win && !win.isDestroyed()) win.webContents.focus(); };
-  win.webContents.on('did-finish-load', focusPage);
-  win.on('focus', focusPage);
+  const focusPage = () => { if (!created.isDestroyed()) created.webContents.focus(); };
+  created.webContents.on('did-finish-load', focusPage);
+  created.on('focus', focusPage);
   /* FILLS THE SCREEN WITHOUT BEING FULLSCREEN. See the SHELL_MODE block in the options above: the
    * compositor's fullscreen state hides every floating window on the workspace, which is every app
    * this desktop exists to host. Maximising is the state that means "as big as the screen" without
    * claiming exclusive use of it, and on PosterChanOS `pc-shell-start` tiles the window anyway — so
    * this is the fallback for a compositor that does not, not the normal path. */
-  if (SHELL_MODE) { try { win.maximize(); } catch (_) {} }
+  if (SHELL_MODE) { try { created.maximize(); } catch (_) {} }
 
   /* AND AGAIN WHENEVER THE SCREEN CHANGES SHAPE, which on a live boot is always.
    *
@@ -537,35 +542,37 @@ function createWindow() {
   if (SHELL_MODE) {
     const refit = () => {
       try {
-        if (win.isDestroyed() || win.isMinimized()) return;
+        if (created.isDestroyed() || created.isMinimized()) return;
         // unmaximize FIRST: a window still flagged maximized at a stale size ignores maximize().
-        if (win.isMaximized()) win.unmaximize();
-        win.maximize();
+        if (created.isMaximized()) created.unmaximize();
+        created.maximize();
       } catch (_) {}
     };
-    for (const ev of ['display-metrics-changed', 'display-added', 'display-removed']) {
-      try { screen.on(ev, refit); } catch (_) {}
-    }
+    const displayEvents = ['display-metrics-changed', 'display-added', 'display-removed'];
+    for (const ev of displayEvents) { try { screen.on(ev, refit); } catch (_) {} }
+    created.once('closed', () => {
+      for (const ev of displayEvents) { try { screen.removeListener(ev, refit); } catch (_) {} }
+    });
     // The mode can also settle a moment after the window is first shown, with no event we can see.
-    win.once('ready-to-show', () => { setTimeout(refit, 1200); setTimeout(refit, 4000); });
+    created.once('ready-to-show', () => { setTimeout(refit, 1200); setTimeout(refit, 4000); });
   }
-  win.once('ready-to-show', focusPage);
+  created.once('ready-to-show', focusPage);
 
   // Right-click menu. Electron ships NO default context menu, so `spellcheck: true` above only ever drew
   // the red underline — there was no way to act on it, and no cut/copy/paste either. Chromium hands us the
   // suggestions in params.dictionarySuggestions; replaceMisspelling() applies one. Built per-event because
   // the suggestions differ for every word.
-  win.webContents.on('context-menu', (_e, params) => {
+  created.webContents.on('context-menu', (_e, params) => {
     const items = [];
     if (params.misspelledWord) {
       for (const s of params.dictionarySuggestions) {
-        items.push({ label: s, click: () => win.webContents.replaceMisspelling(s) });
+        items.push({ label: s, click: () => created.webContents.replaceMisspelling(s) });
       }
       if (!params.dictionarySuggestions.length) items.push({ label: 'No suggestions', enabled: false });
       items.push({ type: 'separator' });
       items.push({
         label: 'Add to dictionary',
-        click: () => win.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
+        click: () => created.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
       });
       items.push({ type: 'separator' });
     }
@@ -579,20 +586,20 @@ function createWindow() {
     items.push({ role: 'copy', enabled: params.editFlags.canCopy });
     items.push({ role: 'paste', enabled: canEdit && params.editFlags.canPaste });
     if (canEdit) items.push({ role: 'selectAll' });
-    Menu.buildFromTemplate(items).popup({ window: win });
+    Menu.buildFromTemplate(items).popup({ window: created });
   });
 
   // Off-site links (and target=_blank to another host) belong in the user's real browser; our own pages —
   // plus blob:/data: (media the client builds locally) — open as a normal app window.
-  win.webContents.setWindowOpenHandler(({ url }) => {
+  created.webContents.setWindowOpenHandler(({ url }) => {
     if (isOurs(url) || /^blob:|^data:/.test(url)) return { action: 'allow' };
     if (/^https?:/.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
   // A 302 out to the provider fires will-redirect, not will-navigate, so watch it too — but only to
   // NOTICE the trip starting.
-  win.webContents.on('will-redirect', (e, url) => { isSignInNav(url); });
-  win.webContents.on('will-navigate', (e, url) => {
+  created.webContents.on('will-redirect', (e, url) => { isSignInNav(url); });
+  created.webContents.on('will-navigate', (e, url) => {
     if (isOurs(url) || url.startsWith('file://')) { oauth = null; return; }
     if (isSignInNav(url)) return;                     // the sign-in round trip comes back to us
     e.preventDefault(); shell.openExternal(url);      // everything else belongs in the real browser
@@ -601,7 +608,7 @@ function createWindow() {
   // The bundle is on disk, so "can't load the app" is no longer a network condition — it means the
   // packaged www/ is missing or unreadable, which is a broken install and nothing a retry fixes. Say
   // that rather than showing Chromium's error page.
-  win.webContents.on('did-fail-load', (e, code, desc, url, isMainFrame) => {
+  created.webContents.on('did-fail-load', (e, code, desc, url, isMainFrame) => {
     if (!isMainFrame || code === -3) return;   // -3 = aborted (a normal in-app navigation)
     console.warn('[load]', code, desc, url);
     dialog.showErrorBox('PosterChan could not start',
@@ -619,7 +626,7 @@ function createWindow() {
    * Reload rather than quit — everything this app holds is either on the relay or on disk, so a
    * reload is cheap and returns a usable window instead of a black one. Say what happened first, or
    * the reload just looks like the app blinked. */
-  win.webContents.on('render-process-gone', (e, details) => {
+  created.webContents.on('render-process-gone', (e, details) => {
     const reason = (details && details.reason) || 'unknown';
     console.warn('[renderer] gone:', reason, details && details.exitCode);
     if (reason === 'clean-exit') return;
@@ -629,11 +636,15 @@ function createWindow() {
           + 'very large file was being synced.\n\nThe app will reload. Files already synced are '
           + 'safe, and the next check resumes where it stopped.'
         : 'The window stopped unexpectedly (' + reason + ').\n\nThe app will reload.');
-    try { win.webContents.reloadIgnoringCache(); }
-    catch (_) { try { loadApp(); } catch (_e) {} }
+    try { created.webContents.reloadIgnoringCache(); }
+    catch (_) { try { loadApp(created); } catch (_e) {} }
   });
 
-  loadApp();
+  const contentsId = created.webContents.id;
+  if(assignment) _shellScopes.set(contentsId, assignment);
+  created.on('closed', () => _shellScopes.delete(contentsId));
+  loadApp(created);
+  return created;
 }
 
 /* What the window shows, and in what order.
@@ -647,13 +658,15 @@ function createWindow() {
 // "Continue without Tor" (or Reload, or a menu action) calls it again from inside that window. Two
 // concurrent runs would both eventually loadURL, and the LOSER could apply a stale proxy decision
 // after the winner's. A generation counter lets the older run notice it has been superseded and stop.
-let loadGen = 0;
-async function loadApp() {
-  if (!win || win.isDestroyed()) return;
-  const gen = ++loadGen;
-  const current = () => gen === loadGen && win && !win.isDestroyed();
+const loadGens = new WeakMap();
+async function loadApp(target) {
+  target = target || win;
+  if (!target || target.isDestroyed()) return;
+  const gen = (loadGens.get(target) || 0) + 1;
+  loadGens.set(target, gen);
+  const current = () => gen === loadGens.get(target) && !target.isDestroyed();
   if (tor.status().enabled) {
-    await win.loadFile(path.join(__dirname, 'boot.html'));
+    await target.loadFile(path.join(__dirname, 'boot.html'));
     if (!current()) return;
     pushTorStatus();
     const ok = await tor.waitBootstrapped(120000);
@@ -664,7 +677,17 @@ async function loadApp() {
   }
   await applyProxy();
   if (!current()) return;
-  win.loadURL(APP_URL);
+  target.loadURL(APP_URL);
+}
+function loadAllApps(){
+  /* Native pickers are BrowserWindows too, but they are not app surfaces. Reloading one as the
+   * PosterChan client halfway through choosing a folder turns a settings change into a destroyed
+   * dialog. The primary and the registered output surfaces are the complete reload set. */
+  const windows = Array.from(new Set([win].concat(
+    Array.from(_shellSurfaces.values()).map(surface => surface.browser))))
+    .filter(w => w && !w.isDestroyed());
+  if(!windows.length) return loadApp();
+  return Promise.all(windows.map(w => loadApp(w)));
 }
 
 // ---- downloads ---------------------------------------------------------------------------------
@@ -866,7 +889,7 @@ function setInstance(url) {
   cfg.instance = clean;
   saveCfg();
   buildMenu();                      // the File menu names the current instance
-  loadApp();
+  loadAllApps();
   return true;
 }
 
@@ -880,7 +903,7 @@ async function setTor(opts) {
   // Turning Tor on or off changes which network every open socket uses, and the page holds plenty of
   // them (relay WebSockets above all). Only a reload re-opens them through the new route; leaving them
   // up would keep the old path alive under a UI claiming otherwise.
-  if (s.enabled !== before) loadApp();
+  if (s.enabled !== before) loadAllApps();
   pushTorStatus();
   return s;
 }
@@ -897,7 +920,11 @@ function fromOurPage(e) {
 ipcMain.on('pc:instance:sync', (e) => { e.returnValue = instance(); });
 ipcMain.handle('pc:instance:get', () => instance());
 ipcMain.handle('pc:instance:set', (e, url) => fromOurPage(e) ? setInstance(url) : false);
-ipcMain.on('pc:retry', (e) => { if (fromOurPage(e)) loadApp(); });
+ipcMain.on('pc:retry', (e) => {
+  if(!fromOurPage(e)) return;
+  const target = BrowserWindow.fromWebContents(e.sender);
+  loadApp(target || win);
+});
 
 ipcMain.handle('pc:tor:status', () => tor.status());
 ipcMain.handle('pc:tor:set', (e, opts) => fromOurPage(e) ? setTor(opts) : tor.status());
@@ -906,7 +933,7 @@ ipcMain.handle('pc:tor:restart', async (e) => {
   if (!fromOurPage(e)) return tor.status();
   await tor.start();
   await applyProxy();
-  loadApp();
+  loadAllApps();
   return tor.status();
 });
 
@@ -945,6 +972,9 @@ function wm() {
  * remember the last non-scratch owner; otherwise every monitor would adopt the same minimised app. */
 const _shellScopes = new Map();       // webContents.id -> { output, workspace }
 const _nativeOwners = new Map();      // con_id -> last ordinary workspace
+const _shellSurfaces = new Map();     // output name -> { browser, conId, assignment }
+let _displayReconcile = null;
+let _displayReconcileTimer = null;
 function scopedWindows(e, rows){
   const all = Array.isArray(rows) ? rows : [];
   for(const row of all){
@@ -965,15 +995,20 @@ async function wireShellRecovery(){
   if(!SHELL_MODE || _shellRecoveryWired || !wm().available()) return;
   _shellRecoveryWired = true;
   try{
-    await wm().subscribe(['window','workspace','tick']);
+    await wm().subscribe(['window','workspace','output','tick']);
     wm().on('tick', (ev) => {
       if(!ev || ev.payload !== 'pc:restart') return;
       /* Keep the Wayland surface mapped. Killing Electron and racing its replacement against the
        * singleton socket is what turned Ctrl+Alt+Backspace into a permanent black screen. */
       try{
         if(win && !win.isDestroyed()){
-          win.webContents.reloadIgnoringCache();
-          win.show();
+          for(const surface of _shellSurfaces.values()){
+            const browser = surface.browser;
+            if(browser && !browser.isDestroyed()){
+              browser.webContents.reloadIgnoringCache();
+              browser.show();
+            }
+          }
         }
       }catch(e){ console.warn('[shell restart]', e && e.message || e); }
     });
@@ -981,6 +1016,73 @@ async function wireShellRecovery(){
     _shellRecoveryWired = false;
     console.warn('[shell recovery]', e && e.message || e);
   }
+}
+
+/* ONE DESKTOP SURFACE PER OUTPUT. Sway cannot stretch one Wayland surface across unrelated
+ * outputs, and trying to fake it in the page is what left the second monitor black. Each surface
+ * owns one numbered workspace. Native windows belong to the surface for their current workspace,
+ * so dragging Firefox across an output is a hand-off, not a second copy and not a close. */
+const shellDisplays = require('./shell-displays.js');
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function newShellContainer(before){
+  const old = new Set((before || []).map(row => Number(row.id)));
+  for(let n=0;n<40;n++){
+    const rows = await wm().windows();
+    const found = rows.find(row => Number(row.pid) === process.pid && !old.has(Number(row.id)));
+    if(found) return found;
+    await delay(50);
+  }
+  throw new Error('the compositor did not map the PosterChan desktop surface');
+}
+async function placeShellSurface(record, assignment){
+  record.assignment = assignment;
+  _shellScopes.set(record.browser.webContents.id, assignment);
+  for(const command of shellDisplays.placement(record.conId, assignment)) await wm().command(command);
+}
+async function reconcileShellDisplays(){
+  if(!SHELL_MODE || !wm().available()) return;
+  if(_displayReconcile) return _displayReconcile;
+  _displayReconcile = (async () => {
+    const assignments = shellDisplays.plan(await wm().outputs(), await wm().workspaces());
+    if(!assignments.length) return;
+    const wanted = new Set(assignments.map(a => a.output));
+    for(const [output, record] of Array.from(_shellSurfaces)){
+      if(wanted.has(output)) continue;
+      _shellSurfaces.delete(output);
+      if(record.browser !== win && !record.browser.isDestroyed()) record.browser.destroy();
+    }
+    let rows = await wm().windows();
+    let used = new Set(Array.from(_shellSurfaces.values()).map(r => Number(r.conId)));
+    for(const assignment of assignments){
+      let record = _shellSurfaces.get(assignment.output);
+      if(record && (!record.browser || record.browser.isDestroyed())){
+        _shellSurfaces.delete(assignment.output);
+        record = null;
+      }
+      if(!record && assignment.primary){
+        const own = rows.find(row => Number(row.pid) === process.pid && !used.has(Number(row.id)));
+        if(!own) throw new Error('the primary PosterChan desktop surface is not mapped');
+        record = { browser: win, conId: Number(own.id), assignment };
+      }else if(!record){
+        const before = await wm().windows();
+        const browser = createWindow(assignment);
+        browser.show();
+        const own = await newShellContainer(before);
+        record = { browser, conId: Number(own.id), assignment };
+      }
+      used.add(Number(record.conId));
+      _shellSurfaces.set(assignment.output, record);
+      await placeShellSurface(record, assignment);
+      if(!record.browser.isVisible()) record.browser.show();
+    }
+  })().catch(e => console.warn('[shell displays]', (e && e.message) || e))
+    .finally(() => { _displayReconcile = null; });
+  return _displayReconcile;
+}
+function scheduleDisplayReconcile(){
+  if(!SHELL_MODE) return;
+  clearTimeout(_displayReconcileTimer);
+  _displayReconcileTimer = setTimeout(() => reconcileShellDisplays(), 250);
 }
 const net = require('./net.js');
 let _displays = null;
@@ -1188,10 +1290,11 @@ ipcMain.handle('pc:wm:subscribe', async (e) => {
    * subscriber. That is what makes the Super key open the start menu even while FIREFOX has the
    * keyboard, which is the case that matters: a key handler in this page only ever fires when this
    * page is focused, and the moment you want a start menu is usually the moment something else is. */
-  const NAMES = ['window', 'workspace', 'tick'];
+  const NAMES = ['window', 'workspace', 'output', 'tick'];
   await w.subscribe(NAMES);
   for (const name of NAMES) {
     w.on(name, (ev) => {
+      if(name === 'output') scheduleDisplayReconcile();
       /* window::new already contains the container we need. Throwing it away forced the renderer
        * to ask for the entire sway tree (and PCOSShell to ask once more) before it could draw a
        * frame around a freshly launched app. On a busy terminal launch that is visibly late: btop
@@ -1204,9 +1307,15 @@ ipcMain.handle('pc:wm:subscribe', async (e) => {
           window = flatten(ev.container, [], '')[0] || null;
         } catch (_) {}
       }
-      for (const win of BrowserWindow.getAllWindows()) {
-        try { win.webContents.send('pc:wm:event',
-                { name, change: ev && ev.change, payload: ev && ev.payload, window }); } catch (_) {}
+      for (const target of BrowserWindow.getAllWindows()) {
+        try {
+          const scope = _shellScopes.get(target.webContents.id);
+          const owner = window && (window.stashed ? _nativeOwners.get(Number(window.id))
+                                                   : String(window.workspace || ''));
+          const localWindow = !scope || !window || owner === String(scope.workspace) ? window : null;
+          target.webContents.send('pc:wm:event',
+            { name, change: ev && ev.change, payload: ev && ev.payload, window: localWindow });
+        } catch (_) {}
       }
     });
   }
@@ -1620,6 +1729,7 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
     buildMenu();
     startHidden = background.launchedHidden();
     createWindow();
+    await reconcileShellDisplays();
     wireShellRecovery();
     background.init({
       show: showWindow,

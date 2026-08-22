@@ -32,7 +32,12 @@
   const PC = window.__PC || {};
   const S = window.PCFolderSync, RUN = window.PCSyncRun, EXEC = window.PCSyncExec;
   const S_ENGINE = window.PCSyncState;
-  const FS = () => window.pcFs || null;            // desktop only, for now — Android SAF lands next
+  /* One Electron renderer per monitor is still ONE DEVICE. Only its primary surface owns
+   * background services; treating every display as a sync engine makes two writers publish the
+   * same device manifest and manufacture conflicts. Secondary surfaces remain complete desktop
+   * views, but folder operations stay owned by the primary. */
+  const FS = () => (window.pcShell && window.pcShell.backgroundOwner === false)
+    ? null : (window.pcFs || null);                 // desktop + Android SAF adapter
   /* Sizes for the humans reading this screen.
    *
    * Local, and NOT app.js's `_fmtBytes`. That one exists but is not on `PC` — it is passed into

@@ -14,6 +14,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 const isOurPage = location.protocol === 'file:' || location.origin === 'app://posterchan';
+const backgroundOwner = !process.argv.includes('--pc-secondary-surface');
 
 // Clipboard WRITE, exposed more widely than the controls below — it cannot repoint the app or enumerate
 // anything, and the main process still checks the caller. It exists because there is no working web
@@ -41,6 +42,10 @@ if (isOurPage) {
 
   contextBridge.exposeInMainWorld('pcShell', {
     instanceSync,
+    /* Multi-monitor PosterChanOS has one renderer per output. Only the primary may run unattended
+     * services such as folder sync; otherwise every extra monitor becomes another filesystem
+     * writer with the same device identity. */
+    backgroundOwner,
     getInstance: () => ipcRenderer.invoke('pc:instance:get'),
     setInstance: (url) => ipcRenderer.invoke('pc:instance:set', url == null ? '' : url),
     retry: () => ipcRenderer.send('pc:retry'),

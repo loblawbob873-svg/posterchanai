@@ -49,7 +49,7 @@ class TheShellWindowIsNotCreatedFullscreen(unittest.TestCase):
         Matched as one guarded statement rather than by looking near the first `win.maximize()` —
         main.js already had one, restoring `cfg.maximized`, and anchoring on it passed while the
         shell had no maximise at all."""
-        self.assertRegex(self.src, r"if \(SHELL_MODE\)[^\n]*win\.maximize\(\)",
+        self.assertRegex(self.src, r"if \(SHELL_MODE\)[^\n]*created\.maximize\(\)",
                          "shell mode neither asks for fullscreen nor fills the screen")
 
     def test_the_pre_existing_restore_is_untouched(self):

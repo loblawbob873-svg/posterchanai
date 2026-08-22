@@ -33,7 +33,7 @@ const MSG = { RUN_COMMAND: 0, GET_WORKSPACES: 1, SUBSCRIBE: 2, GET_OUTPUTS: 3, G
 const EVENT_BIT = 0x80000000;
 /* Event type numbers, low bits. `window` is the one this shell lives on: a launched app's surface
  * appears as `window::new` and that is the only moment its pid can be tied to a window id. */
-const EVENT = { 0: 'workspace', 2: 'mode', 3: 'window', 4: 'barconfig_update', 5: 'binding',
+const EVENT = { 0: 'workspace', 1: 'output', 2: 'mode', 3: 'window', 4: 'barconfig_update', 5: 'binding',
                 6: 'shutdown', 7: 'tick', 14: 'input' };
 
 function frame(type, payload){

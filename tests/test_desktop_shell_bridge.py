@@ -128,11 +128,24 @@ class Bridge(unittest.TestCase):
     def test_shell_mode_has_no_window_chrome(self):
         """The compositor decides the size, and it is the whole screen. A title bar, a resize border
         and remembered geometry are all statements that this is a window on a desktop."""
-        i = self.main.index("win = new BrowserWindow")
+        i = self.main.index("new BrowserWindow")
         opts = self.main[i:i + 1400]
         self.assertIn("frame: !SHELL_MODE", opts)
         self.assertIn("autoHideMenuBar: SHELL_MODE", opts)
-        self.assertIn("fullscreen: true", opts)
+        self.assertNotIn("fullscreen: true,", opts)
+
+    def test_shell_creates_and_scopes_one_surface_per_active_output(self):
+        self.assertIn("require('./shell-displays.js')", self.main)
+        self.assertIn("shellDisplays.plan(await wm().outputs()", self.main)
+        self.assertIn("createWindow(assignment)", self.main)
+        self.assertIn("_shellScopes.set(record.browser.webContents.id, assignment)", self.main)
+        self.assertIn("'output'", self.main[self.main.index("const NAMES ="):])
+        self.assertIn("--pc-secondary-surface", self.main)
+        self.assertIn("backgroundOwner", self.pre)
+        sync = open(os.path.join(ROOT, "static/js/client/sync.js"),
+                    encoding="utf-8", errors="replace").read()
+        self.assertIn("window.pcShell.backgroundOwner === false", sync,
+                      "each monitor can start another folder-sync writer")
 
     def test_it_is_absent_rather_than_broken_without_a_compositor(self):
         """A desktop install that is not PosterChanOS has no sway. The page must be able to ask,
