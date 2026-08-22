@@ -55,3 +55,13 @@ def test_super_is_a_global_physical_key_binding_not_a_bare_modifier_binding():
     cfg = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config").read_text()
     assert "bindsym --release --no-repeat Super_L exec swaymsg -t send_tick pc:start" in cfg
     assert "bindsym --release --no-repeat $mod exec swaymsg -t send_tick pc:start" not in cfg
+
+
+def test_alt_tab_is_compositor_owned_and_migrated_to_existing_accounts():
+    cfg = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config").read_text()
+    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
+    helper = ROOT / "os/bin/pc-window-cycle"
+    assert "Mod1+Tab exec /usr/local/bin/pc-window-cycle next" in cfg
+    assert "Mod1+Shift+Tab exec /usr/local/bin/pc-window-cycle previous" in cfg
+    assert "pc-window-cycle" in ebuild
+    assert helper.exists()

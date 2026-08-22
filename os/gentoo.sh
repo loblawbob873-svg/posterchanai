@@ -1487,6 +1487,11 @@ PROFILE
 	# Hold Super and drag anywhere in a native app, including across monitor boundaries.
 	floating_modifier $mod normal
 
+	# Application switching is compositor-owned, so it keeps working while a native app has focus or
+	# the desktop renderer is recovering.
+	bindsym --no-repeat Mod1+Tab exec /usr/local/bin/pc-window-cycle next
+	bindsym --no-repeat Mod1+Shift+Tab exec /usr/local/bin/pc-window-cycle previous
+
 	# The one binding that is not PosterChan's to take: a way out when the shell is not running.
 	# THE LAPTOP'S OWN KEYS. A desktop that ignores the volume and brightness keys on the keyboard
 	# in front of you is not one — and these have to obey the same limits as the on-screen controls,
@@ -1723,7 +1728,7 @@ PROFILE
 	# what joins the two. It is the ONLY privileged thing the shell asks for, and it is limited to
 	# exactly that one command — signing in with a key is not the same as being trusted with root,
 	# and a machine anyone may log into must not hand every visitor sudo.
-	for helper in pc-provision-user pc-session-switch pc-shell-start pc-shell-restart pc-key pc-idle update-posterchan; do
+	for helper in pc-provision-user pc-session-switch pc-shell-start pc-shell-restart pc-window-cycle pc-key pc-idle update-posterchan; do
 		if [ -f "$PCOS_TREE/bin/$helper" ]; then
 			cp -f "$PCOS_TREE/bin/$helper" ${TARGET}/usr/local/bin/$helper
 		elif [ -f /tmp/bin/$helper ]; then
