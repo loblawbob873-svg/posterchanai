@@ -662,9 +662,10 @@ class LauncherSources(unittest.TestCase):
         self.assertIn("requestDisallowInterceptTouchEvent(boolean disallowIntercept)", desk)
         self.assertIn("pending != null || menuFor != null || stealing", desk)
         self.assertIn("flushMenu()", desk)
-        self.assertIn("if (hit.isWidget() && host != null)", desk)
-        self.assertIn("host.onLongPress(hit)", desk,
-                      "widget removal still depends on a release its RemoteViews can swallow")
+        self.assertNotIn("if (hit.isWidget() && host != null)", desk,
+                         "the widget menu opens before lift-off and blocks dragging")
+        self.assertIn("if (e.getActionMasked() == MotionEvent.ACTION_UP) flushMenu();", desk,
+                      "widget removal is not deferred until the launcher observes lift-off")
 
     def test_long_press_app_title_opens_android_app_info(self):
         """The menu heading behaves like Pixel/Samsung launchers: tap it for force-stop, storage,

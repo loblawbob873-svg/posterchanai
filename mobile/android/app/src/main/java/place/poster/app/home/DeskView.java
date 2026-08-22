@@ -327,18 +327,6 @@ public class DeskView extends ViewGroup {
                 menuEmpty = (hit == null);
                 if (hit != null) {
                     lift(hit);
-                    /* A THIRD-PARTY WIDGET GETS NO VETO OVER ITS LAUNCHER MENU.
-                     *
-                     * Even after observing the gesture above, several RemoteViews implementations
-                     * consume/cancel the release.  Icons can safely defer their menu until lift-off
-                     * (so dragging stays unobstructed); widgets cannot, because that release was the
-                     * only route to Remove from home. Open a widget's menu now, at the moment the
-                     * launcher itself recognised the long press. The item is already lifted, so
-                     * dismissing the menu still leaves the ordinary move/resize state available. */
-                    if (hit.isWidget() && host != null) {
-                        menuFor = null; menuEmpty = false;
-                        host.onLongPress(hit);
-                    }
                 }
             }
         };
