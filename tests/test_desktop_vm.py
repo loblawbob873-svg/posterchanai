@@ -66,7 +66,7 @@ class VmBackend(unittest.TestCase):
         ui = (ROOT / "static/js/client/os.js").read_text()
         self.assertIn("data-vme-mouse", ui)
         self.assertIn("Ctrl+Alt releases it", ui)
-        self.assertIn("Mouse capture: Off", ui)
+        self.assertIn("Enable gaming mouse capture", ui)
 
     def test_powered_off_vm_hardware_is_editable_in_the_ui(self):
         ui = (ROOT / "static/js/client/os.js").read_text()
@@ -84,6 +84,13 @@ class VmBackend(unittest.TestCase):
         self.assertIn("pc:vm:eject-iso", main)
         self.assertIn('data-vme-eject>Eject ISO', ui)
         self.assertNotIn('p.canceled||!p.path', ui, "the ISO picker returns a path string")
+
+    def test_editor_keeps_the_common_path_simple(self):
+        ui = (ROOT / "static" / "js" / "client" / "os.js").read_text()
+        self.assertIn('<section class="vmui-section"><h3>Performance</h3>', ui)
+        self.assertIn('<section class="vmui-section"><h3>Installation disc</h3>', ui)
+        self.assertIn('<details class="vmui-advanced">', ui)
+        self.assertIn('Eject ISO and boot from disk', ui)
 
     def test_viewer_cannot_pin_itself_over_the_desktop(self):
         sway = (ROOT / "os" / "overlay" / "app-misc" / "posterchanos-shell" / "files" / "sway.config").read_text()
