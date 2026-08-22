@@ -2593,7 +2593,9 @@ FSTAB
 	# Parse it before the multi-gigabyte squashfs is made. A headless backend lets validation run
 	# from an SSH/build session with no seat; without it sway tries DRM first and reports a backend
 	# failure before it ever reaches the config parser.
-	if ! WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 sway -C -c "$LIVE_SWAY" >>"$LOG" 2>&1; then
+	mkdir -p "$WORK/sway-runtime" && chmod 0700 "$WORK/sway-runtime"
+	if ! XDG_RUNTIME_DIR="$WORK/sway-runtime" WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 \
+		sway -C -c "$LIVE_SWAY" >>"$LOG" 2>&1; then
 		echo -e "${COLOR_RED}PosterChanOS Sway config is invalid; refusing to build the ISO.${COLOR_RESET}"
 		return 1
 	fi
