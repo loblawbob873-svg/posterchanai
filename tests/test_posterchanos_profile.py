@@ -710,6 +710,23 @@ class TheMachineCallsItselfPosterChanOS(unittest.TestCase):
             with self.subTest(ident=ident):
                 self.assertIn(ident, self.src)
 
+    def test_install_completion_is_gated_on_a_graphical_session_and_splash(self):
+        """A tty login and a stock Plymouth theme are failed installs, even if the root boots."""
+        start = self.src.index("finalizeInstall() {")
+        body = self.src[start:self.src.index("\n}", start)]
+        complete = body.index("Gentoo Installation Complete")
+        for required in ("exec sway", "--autologin posterchan", "Theme=posterchanos",
+                         "themes/posterchanos/posterchanos.plymouth"):
+            with self.subTest(required=required):
+                self.assertIn(required, body)
+                self.assertLess(body.index(required), complete)
+
+    def test_installer_copy_uses_the_resolved_asset_tree_not_the_working_directory(self):
+        start = self.src.index("finalizeInstall() {")
+        body = self.src[start:self.src.index("\n}", start)]
+        self.assertIn('INSTALLER_SRC="$PCOS_TREE/gentoo.sh"', body)
+        self.assertNotIn("cp -f gentoo.sh", body)
+
 
 class MoreThanOneScreenWorksWithoutConfiguring(unittest.TestCase):
     """A PLUGGED-IN MONITOR MUST BE REACHABLE, not merely lit.

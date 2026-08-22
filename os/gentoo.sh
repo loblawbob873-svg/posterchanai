@@ -557,7 +557,16 @@ buildGentoo() {
 	# default list and installs the whole KDE desktop, hours of it, on the profile whose entire point
 	# is not having one. finalizeInstall writes the marker too; by then it is far too late.
 	touch $TARGET/etc/posterchanos
-	cp -f gentoo.sh $TARGET/usr/bin/gentoo.sh
+	# Never depend on the caller's working directory. The LiveCD desktop starts this script through
+	# a .desktop file, and its cwd is not the directory containing gentoo.sh; a relative copy either
+	# failed outright or copied a stale unrelated file into the new OS.
+	INSTALLER_SRC="$PCOS_TREE/gentoo.sh"
+	[ -f "$INSTALLER_SRC" ] || INSTALLER_SRC="/usr/local/share/posterchanos/gentoo.sh"
+	if [ ! -f "$INSTALLER_SRC" ]; then
+		echo -e "\033[1;31mPosterChanOS installer source is missing — refusing to create an unrepairable target.\033[0m"
+		return 1
+	fi
+	cp -f "$INSTALLER_SRC" "$TARGET/usr/bin/gentoo.sh"
 	chroot $TARGET /usr/bin/bash /usr/bin/gentoo.sh install-packages
 	echo
 	echo
@@ -621,7 +630,15 @@ finalizeInstall() {
 		echo -e "\033[1;31mInstalled root has no readable os-release — refusing to lock root or report success.\033[0m"
 		return 1
 	fi
-	cp -f gentoo.sh $TARGET/usr/bin/gentoo.sh
+	# Resolve again inside finalization: this function also runs in the target chroot as a fresh shell,
+	# so the build-stage INSTALLER_SRC variable does not cross that process boundary.
+	INSTALLER_SRC="$PCOS_TREE/gentoo.sh"
+	[ -f "$INSTALLER_SRC" ] || INSTALLER_SRC="/usr/local/share/posterchanos/gentoo.sh"
+	if [ ! -f "$INSTALLER_SRC" ]; then
+		echo -e "\033[1;31mPosterChanOS installer source is missing during finalization — refusing to continue.\033[0m"
+		return 1
+	fi
+	cp -f "$INSTALLER_SRC" "$TARGET/usr/bin/gentoo.sh"
 	plymouthTheme
 	chmod +x $TARGET/usr/bin/gentoo.sh
 	chmod +x $TARGET/setup.sh
@@ -630,6 +647,32 @@ finalizeInstall() {
 	# accounts() creates `posterchan`; configure its graphical session only after that. Doing this
 	# before accounts selected the LiveCD's `live` account and copied its autologin onto the NVMe.
 	chroot $TARGET /usr/bin/bash /usr/bin/gentoo.sh posterchan-shell
+	# RELEASE GATE, NOT A BEST-EFFORT CHECK. These are the exact omissions that otherwise produce a
+	# technically booted machine at a tty and a stock splash, after the installer claimed success.
+	# Check the target files themselves after every phase that can overwrite them.
+	if ! grep -q 'exec sway' "$TARGET/home/posterchan/.bash_profile" 2>/dev/null; then
+		echo -e "\033[1;31mPosterChan session profile was not installed — refusing to report success.\033[0m"
+		return 1
+	fi
+	if ! grep -q -- '--autologin posterchan' \
+		"$TARGET/etc/systemd/system/getty@tty1.service.d/override.conf" 2>/dev/null; then
+		echo -e "\033[1;31mPosterChan autologin was not installed — refusing to report success.\033[0m"
+		return 1
+	fi
+	if ! grep -q '^Theme=posterchanos$' "$TARGET/etc/plymouth/plymouthd.conf" 2>/dev/null; then
+		echo -e "\033[1;31mPosterChan boot splash was not selected — refusing to report success.\033[0m"
+		return 1
+	fi
+	BOOT_INITRD="$(sed -n 's|^initrd[[:space:]]\+|/boot/|p' "$TARGET"/boot/loader/entries/*.conf 2>/dev/null | head -1)"
+	if [ -z "$BOOT_INITRD" ] || ! chroot "$TARGET" /usr/bin/lsinitrd "$BOOT_INITRD" 2>/dev/null \
+		| grep -q 'themes/posterchanos/posterchanos.plymouth'; then
+		echo -e "\033[1;31mPosterChan boot splash is not embedded in the booted initramfs — refusing to report success.\033[0m"
+		return 1
+	fi
+	if ! cmp -s "$INSTALLER_SRC" "$TARGET/usr/bin/gentoo.sh"; then
+		echo -e "\033[1;31mThe target did not receive this PosterChanOS installer version — refusing to report success.\033[0m"
+		return 1
+	fi
 	# Recovery needed root while the install was incomplete. At this point boot, accounts and the
 	# graphical shell all succeeded, so disable direct root login. pc-provision-user atomically makes
 	# the first key-backed person the administrator; everybody after them is an ordinary user.
