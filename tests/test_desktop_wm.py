@@ -173,6 +173,15 @@ class CompositorIPC(unittest.TestCase):
         self.assertIn("[con_id=11] resize set 800 600", cmds)
         self.assertIn("[con_id=11] move absolute position 100 50", cmds)
 
+    def test_final_placement_is_clamped_inside_the_destination_monitor(self):
+        """A stale frame may ask for a window whose bottom/title bar is outside the output."""
+        out = self.run_js("""
+          const { clampRectToOutputs } = require(__WM__);
+          out.at = clampRectToOutputs({x:3342,y:1105,w:986,h:2124},
+            [{active:true,rect:{x:2340,y:270,width:3840,height:2560}}]);
+        """.replace("__WM__", json.dumps(WM)))
+        self.assertEqual(out["at"], {"x":3342,"y":706,"w":986,"h":2124})
+
     def test_drag_moves_drop_intermediate_positions_instead_of_replaying_them(self):
         """Pointer frames outrun sway replies; only the in-flight and newest position may survive."""
         out = self.run_js("""

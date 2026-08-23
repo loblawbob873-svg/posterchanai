@@ -103,6 +103,30 @@ function flatten(node, out, ws){
   return out;
 }
 
+/* A compositor is the final authority on whether a native surface is on-screen. The HTML frame can
+ * briefly report a stale/oversized rectangle during monitor handoff; accepting that rectangle put
+ * Telegram hundreds of pixels below the panel and made its title bar unreachable. Choose the
+ * output containing the requested centre (nearest when it lands in a layout gap), cap the size to
+ * that output, and clamp the final top-left. Live drag still uses move() unchanged, so crossing an
+ * edge remains fluid; this is the release-time commit. */
+function clampRectToOutputs(rect, outputs){
+  const rows=(Array.isArray(outputs)?outputs:[]).filter(o=>o && o.active!==false && o.rect
+    && Number(o.rect.width)>0 && Number(o.rect.height)>0);
+  if(!rows.length) return rect;
+  const cx=Number(rect.x)+Math.max(0,Number(rect.w))/2;
+  const cy=Number(rect.y)+Math.max(0,Number(rect.h))/2;
+  let best=null;
+  for(const o of rows){
+    const b=o.rect, l=Number(b.x)||0, t=Number(b.y)||0, r=l+Number(b.width), d=t+Number(b.height);
+    const dx=cx<l?l-cx:cx>r?cx-r:0, dy=cy<t?t-cy:cy>d?cy-d:0, dist=dx*dx+dy*dy;
+    if(!best || dist<best.dist) best={dist,l,t,r,d};
+  }
+  const w=Math.min(Math.max(1,Math.round(Number(rect.w)||1)),best.r-best.l);
+  const h=Math.min(Math.max(1,Math.round(Number(rect.h)||1)),best.d-best.t);
+  return {x:Math.min(Math.max(Math.round(Number(rect.x)||0),best.l),best.r-w),
+          y:Math.min(Math.max(Math.round(Number(rect.y)||0),best.t),best.d-h),w,h};
+}
+
 class WM {
   constructor(sockPath){
     this.path = sockPath || process.env.SWAYSOCK || process.env.I3SOCK || '';
@@ -201,11 +225,13 @@ class WM {
   /* Placement only means anything for a FLOATING window — a tiled one is positioned by the layout,
    * and moving it is silently a no-op. A desktop that places windows makes them floating first. */
   async place(id, x, y, w, h){
+    let at={x,y,w,h};
+    try{ at=clampRectToOutputs(at,await this.outputs()); }catch(_){}
     await this.floating(id, true);
     await this.command('[con_id=' + Number(id) + '] resize set '
-                       + Math.round(w) + ' ' + Math.round(h));
+                       + Math.round(at.w) + ' ' + Math.round(at.h));
     return this.command('[con_id=' + Number(id) + '] move absolute position '
-                        + Math.round(x) + ' ' + Math.round(y));
+                        + Math.round(at.x) + ' ' + Math.round(at.y));
   }
 
   /** Dragging changes position only, and LATEST WINS.
@@ -311,4 +337,4 @@ class WM {
   }
 }
 
-module.exports = { WM, frame, decoder, flatten, MSG, EVENT, EVENT_BIT };
+module.exports = { WM, frame, decoder, flatten, clampRectToOutputs, MSG, EVENT, EVENT_BIT };
