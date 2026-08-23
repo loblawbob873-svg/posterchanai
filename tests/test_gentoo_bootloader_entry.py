@@ -37,7 +37,12 @@ KVER = "6.12.31-gentoo-dist"
 MID = "deadbeefmachineid0000000000000"
 
 STUBS = {
-    "bootctl": '#!/bin/sh\necho "[stub] bootctl $*"\nexit ${PC_BOOTCTL_RC:-0}\n',
+    "bootctl": ('#!/bin/sh\n'
+                'echo "[stub] bootctl $*"\n'
+                '[ "${PC_BOOTCTL_RC:-0}" = 0 ] || exit "$PC_BOOTCTL_RC"\n'
+                'for x in "$@"; do case "$x" in --esp-path=*) esp=${x#*=};; esac; done\n'
+                'mkdir -p "$esp/EFI/BOOT"\n'
+                'printf EFI > "$esp/EFI/BOOT/BOOTX64.EFI"\n'),
     "dracut": '#!/bin/sh\nexit 0\n',
     "plymouth-set-default-theme": '#!/bin/sh\nexit 0\n',
     "depmod": '#!/bin/sh\nexit 0\n',
@@ -141,14 +146,17 @@ class BootloaderWritesAnEntryThatNamesARealKernel(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(target, "boot", m.group(1).lstrip("/"))),
                         f"the entry names {m.group(1)}, which is not on the disk")
 
-    def test_it_says_so_when_bootctl_fails(self):
-        """bootctl failing in a chroot is the normal case, not the exotic one — and it used to be
-        the reason the directory was missing, printed nowhere anyone would look."""
+    def test_offline_install_writes_a_firmware_bootable_esp(self):
+        target, out = self._run()
+        fallback = os.path.join(target, "boot", "EFI", "BOOT", "BOOTX64.EFI")
+        self.assertTrue(os.path.getsize(fallback), "fresh UEFI NVRAM has no fallback loader\n" + out)
+        self.assertIn("--no-variables install", out)
+
+    def test_bootctl_failure_is_an_install_failure(self):
         target, out = self._run(bootctl_rc=1)
-        self.assertIn("bootctl install FAILED", out)
-        self.assertEqual(len(self._entries(target)), 1,
-                         "a failed bootctl must not also cost the entry — the disk may already "
-                         "carry a loader from an earlier install")
+        self.assertIn("could not install systemd-boot", out)
+        self.assertEqual(self._entries(target), [],
+                         "an installer without an EFI executable must not report a usable disk")
 
     def test_no_kernel_means_a_refusal_not_a_broken_entry(self):
         """With nothing to boot, writing an entry that names nothing is worse than writing none:

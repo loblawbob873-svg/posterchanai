@@ -675,6 +675,10 @@ POSTERCHAN_PROFILE
 		echo -e "\033[1;31mNo systemd-boot entry was installed — refusing to report success.\033[0m"
 		return 1
 	fi
+	if [ ! -s "$TARGET/boot/EFI/BOOT/BOOTX64.EFI" ]; then
+		echo -e "\033[1;31mThe EFI fallback loader is missing — refusing to report success.\033[0m"
+		return 1
+	fi
 	BOOT_INITRD="$(sed -n 's|^initrd[[:space:]]\+|/boot/|p' "$BOOT_ENTRY" 2>/dev/null | head -1)"
 	if [ -z "$BOOT_INITRD" ] || ! chroot "$TARGET" /usr/bin/lsinitrd "$BOOT_INITRD" 2>/dev/null \
 		| grep -q 'themes/posterchanos/posterchanos.plymouth'; then
@@ -3383,18 +3387,18 @@ bootloader() {
 		# lines on stderr, an install that reports success, and a disk with a kernel, an initramfs
 		# and no way to name them.
 		#
-		# `bootctl install` is what normally creates /boot/loader/entries, so the code assumed it.
-		# In a chroot it is exactly the thing most likely NOT to have run: it needs to identify the
-		# ESP through udev and it needs EFI variables, and a failure there prints and exits nonzero
-		# while the install carries on. Worse, the `rm -rf` above has already deleted the entries a
-		# previous install left -- which is why the menu is EMPTY rather than stale, and why the
-		# machine looks freshly broken instead of half-installed.
-		#
-		# So: say whether bootctl worked, and make the directory regardless. `mkdir -p` costs
-		# nothing and removes the dependency entirely.
-		if ! bootctl install; then
-			echo -e "\033[1;31m  bootctl install FAILED — the boot entry is still written below,\033[0m"
-			echo -e "\033[1;31m  but this disk may have no boot loader to read it.\033[0m"
+		# `bootctl install` normally creates /boot/loader/entries. In a chroot its automatic ESP and
+		# EFI-variable discovery describes the live host, not the target, so use the explicit offline
+		# form below and require its fallback executable before writing any text entries.
+		# Install for a target mounted in a chroot: do not inspect the live host's udev state or
+		# modify its EFI variables. The fallback loader is what fresh VM NVRAM boots first.
+		if ! bootctl --esp-path=/boot --no-variables install; then
+			echo -e "\033[1;31m  bootctl could not install systemd-boot on the target ESP.\033[0m"
+			return 1
+		fi
+		if [ ! -s /boot/EFI/BOOT/BOOTX64.EFI ]; then
+			echo -e "\033[1;31m  EFI/BOOT/BOOTX64.EFI is missing from the target ESP.\033[0m"
+			return 1
 		fi
 		mkdir -p /boot/loader/entries
 		MACHINE_ID=$(cat /etc/machine-id 2>/dev/null)

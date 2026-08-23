@@ -134,7 +134,7 @@ async function bootDisk(name){
 }
 async function addNetwork(name){ const d=await details(name);if(!d.ok)return d;
   if(!/shut off|shutoff|inactive/.test(d.state))return {ok:false,error:'Shut down the VM before adding a network adapter'};
-  return virsh(['attach-interface',d.name,'user','--model','virtio','--config'],30000); }
+  return virsh(['attach-interface',d.name,'user','--model','e1000e','--config'],30000); }
 async function gamingMouse(name, enabled){
   const d=await details(name);if(!d.ok)return d;
   if(!/shut off|shutoff|inactive/.test(d.state))return {ok:false,error:'Shut down the VM before changing mouse mode'};
@@ -185,7 +185,10 @@ async function create(opts){
     <devices><emulator>/usr/bin/qemu-system-x86_64</emulator>
       <disk type="file" device="disk"><driver name="qemu" type="qcow2"/><source file="${xml(disk)}"/><target dev="vda" bus="virtio"/></disk>
       <disk type="file" device="cdrom"><driver name="qemu" type="raw"/><source file="${xml(iso)}"/><target dev="sda" bus="sata"/><readonly/></disk>
-      <interface type="user"><model type="virtio"/></interface>
+      <!-- User-mode NAT requires no root bridge. e1000e is intentionally used for the installer
+           path because Linux and Windows installation media carry it without an extra VirtIO
+           driver disc; an unreachable guest cannot download that missing driver. -->
+      <interface type="user"><model type="e1000e"/></interface>
       <graphics type="spice" autoport="yes"><listen type="none"/></graphics><video><model type="virtio"/></video>
       <channel type="spicevmc"><target type="virtio" name="com.redhat.spice.0"/></channel>
       <!-- Absolute input is the safe desktop default: entering the viewer does not imprison the

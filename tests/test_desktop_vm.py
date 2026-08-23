@@ -50,6 +50,11 @@ class VmBackend(unittest.TestCase):
         self.assertIn('version="2.0"', src)
         self.assertIn('type="spice"', src)
 
+    def test_new_vm_network_works_without_guest_virtio_drivers(self):
+        src = (ROOT / "desktop" / "vm.js").read_text()
+        self.assertIn('<interface type="user"><model type="e1000e"/></interface>', src)
+        self.assertIn("'--model','e1000e'", src)
+
     def test_viewer_attaches_through_libvirt(self):
         src = (ROOT / "desktop" / "vm.js").read_text()
         self.assertIn("['--connect',URI,'--attach','--wait',name]", src)
@@ -101,7 +106,9 @@ class VmBackend(unittest.TestCase):
         self.assertIn("mounted?ejectIso(d.name):setBootOrder(d.name,'disk')", backend)
         self.assertIn("pc:vm:boot-disk", preload)
         self.assertIn("pc:vm:boot-disk", main)
-        self.assertIn("Boot installed system", ui)
+        self.assertIn("Startup disk: installed system", ui)
+        self.assertIn("Startup disk: shut down to change", ui)
+        self.assertIn("Choose startup disk / edit hardware", ui)
         self.assertIn("await pcVM.bootDisk(n)", ui)
         self.assertNotIn('p.canceled||!p.path', ui, "the ISO picker returns a path string")
 
