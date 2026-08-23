@@ -1036,8 +1036,10 @@ liveISOinstall() {
 		echo -e "${COLOR_YELLOW}This will erase every file on /dev/$HARD_DISK.${COLOR_RESET}"
 		read -r -p "Erase /dev/$HARD_DISK and install PosterChanOS? [y/N]: " erase
 		[[ "$erase" = [yY]* ]] || { echo "Install cancelled; nothing was written."; return 1; }
+		readInstallPassword confirm || return 1
 		prepareInstallDisk || return 1
 	else
+		readInstallPassword existing || return 1
 		partitionDetection
 		if [ "$(blkid -s TYPE -o value "$EFI" 2>/dev/null)" != "vfat" ] \
 			|| ! cryptsetup isLuks "$BTRFS" >/dev/null 2>&1; then
@@ -1994,6 +1996,34 @@ accounts() {
 # text and people's shell history both use it.
 btrfs-tweaks() {
 	btrfsTweaks
+}
+
+# The literals near the top of this legacy script remain defaults for its old repair subcommands;
+# they must never become a fresh machine's real encryption key. The Live installer asks without
+# echoing, confirms before destructive work, and uses the same secret as the emergency root login so
+# a person has one recovery credential to retain. Automation may provide PC_INSTALL_PASSWORD through
+# a protected environment; it is not accepted empty and is never written to /tmp/disk or the target.
+readInstallPassword() {
+	local kind="${1:-confirm}" first="${PC_INSTALL_PASSWORD:-}" second=""
+	if [ -z "$first" ]; then
+		read -r -s -p "Disk encryption and recovery password: " first
+		echo
+	fi
+	if [ -z "$first" ]; then
+		echo -e "${COLOR_YELLOW}A blank encryption password is not allowed.${COLOR_RESET}"
+		return 1
+	fi
+	if [ "$kind" = "confirm" ] && [ -z "${PC_INSTALL_PASSWORD:-}" ]; then
+		read -r -s -p "Confirm password: " second
+		echo
+		if [ "$first" != "$second" ]; then
+			echo -e "${COLOR_YELLOW}Passwords did not match; nothing was written.${COLOR_RESET}"
+			return 1
+		fi
+	fi
+	DISK_PASSWORD="$first"
+	ROOT_PASSWORD="$first"
+	return 0
 }
 
 prepareInstallDisk() {

@@ -91,6 +91,19 @@ class TheBuilderShipsTheInstaller(unittest.TestCase):
         self.assertGreaterEqual(body.count("partitionDetection"), 2,
                                 "the LUKS UUID is not re-read after formatting")
 
+    def test_live_install_never_uses_the_legacy_shared_password(self):
+        i = self.src.index("liveISOinstall() {")
+        body = self.src[i:self.src.index("\n}", i)]
+        self.assertIn("readInstallPassword confirm || return 1", body)
+        self.assertIn("readInstallPassword existing || return 1", body)
+        i = self.src.index("readInstallPassword() {")
+        password = self.src[i:self.src.index("\n}", i)]
+        self.assertIn("read -r -s", password, "the disk password is echoed on screen")
+        self.assertIn('DISK_PASSWORD="$first"', password)
+        self.assertIn('ROOT_PASSWORD="$first"', password)
+        self.assertIn("Passwords did not match", password)
+        self.assertNotIn(">/tmp/disk", password)
+
 
 class TheImageDoesNotCarryTheOperator(unittest.TestCase):
     @classmethod
