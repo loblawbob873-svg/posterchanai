@@ -305,6 +305,11 @@ class TheLiveSessionActuallyStarts(unittest.TestCase):
         self.assertIn("home/live/.bash_profile", self.fn,
                       "the live user's home is empty, so autologin lands on a bash prompt")
 
+    def test_a_clean_disc_forgets_the_build_machines_admin_claim(self):
+        """The OS-level claim suppresses Welcome even after browser profiles and users are gone."""
+        self.assertIn("EXCLUDES+=(var/lib/posterchanos etc/sudoers.d/posterchan-admin)", self.fn)
+        self.assertIn("still carries this machine's administrator claim", self.fn)
+
     def test_it_starts_the_compositor(self):
         i = self.fn.index('cat >"$WORK/live.bash_profile"')
         self.assertIn("exec sway", self.fn[i:i + 400])

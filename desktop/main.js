@@ -1385,6 +1385,15 @@ ipcMain.handle('pc:term:attach', (e, id) => {
   }
   return true;
 });
+ipcMain.handle('pc:term:detach', (e, id) => {
+  fsGuard(e);
+  const links = localTermRenderers.get(e.sender);
+  const sid = String(id);
+  if (!links || !links.has(sid)) return true;
+  try { links.get(sid)(); } catch (_) {}
+  links.delete(sid);
+  return true;
+});
 /* Every shell dies with the app. A session outliving the desktop is a process nobody can reach and
  * nothing will ever reap. */
 app.on('will-quit', () => { try { localterm.closeAll(); } catch (_) {} });

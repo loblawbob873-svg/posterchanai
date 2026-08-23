@@ -212,6 +212,7 @@ if (isOurPage) {
     close: (id) => ipcRenderer.invoke('pc:term:close', String(id)),
     list: () => ipcRenderer.invoke('pc:term:list'),
     attach: (id) => ipcRenderer.invoke('pc:term:attach', String(id)),
+    detach: (id) => ipcRenderer.invoke('pc:term:detach', String(id)),
     onData: (fn) => {
       const h = (_e, ev) => { try { fn(ev); } catch (_) {} };
       ipcRenderer.on('pc:term:data', h);

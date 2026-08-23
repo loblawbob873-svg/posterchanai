@@ -1282,6 +1282,28 @@ _pc_record_plymouth_theme() {
 	fi
 }
 
+_pc_select_plymouth_theme() {
+	# Do not make a correct install depend on plymouth-set-default-theme's distro/version-specific
+	# bookkeeping. Plymouth's real inputs are the default.plymouth link and plymouthd.conf; write
+	# both ourselves, then let the helper update any extra metadata when it can. The final dracut
+	# build below is what embeds the result in the image that systemd-boot actually loads.
+	local ROOT THEME DEFAULT
+	ROOT="${TARGET%/}"
+	THEME="${ROOT}/usr/share/plymouth/themes/posterchanos/posterchanos.plymouth"
+	DEFAULT="${ROOT}/usr/share/plymouth/themes/default.plymouth"
+	[ -s "$THEME" ] || return 1
+	mkdir -p "$(dirname "$DEFAULT")"
+	ln -sfn posterchanos/posterchanos.plymouth "$DEFAULT" || return 1
+	_pc_record_plymouth_theme || return 1
+	if [ -n "$TARGET" ] && [ "$TARGET" != "/" ]; then
+		chroot "$TARGET" /usr/bin/plymouth-set-default-theme posterchanos >/dev/null 2>&1 || true
+	else
+		plymouth-set-default-theme posterchanos >/dev/null 2>&1 || true
+	fi
+	[ "$(readlink "$DEFAULT" 2>/dev/null)" = "posterchanos/posterchanos.plymouth" ] \
+		&& grep -q '^Theme=posterchanos$' "${ROOT}/etc/plymouth/plymouthd.conf"
+}
+
 plymouthTheme() {
 	# The boot splash. Plymouth is already in BASE_PACKAGES; what it lacks is a theme that is ours,
 	# and the stock one is not merely off-brand here — this boot asks for a LUKS PASSPHRASE, and a
@@ -1304,16 +1326,7 @@ plymouthTheme() {
 	DEST="${TARGET}/usr/share/plymouth/themes/posterchanos"
 	mkdir -p "$DEST"
 	cp -f "$SRC"/* "$DEST"/
-	# `plymouth-set-default-theme -R` rebuilds the initramfs, which is the half that is actually
-	# load-bearing: the theme lives INSIDE the initramfs at boot, so a theme set without a rebuild
-	# is a theme that will not appear and gives no hint as to why.
-	if [ -n "$TARGET" ] && [ "$TARGET" != "/" ]; then
-		chroot $TARGET /usr/bin/plymouth-set-default-theme -R posterchanos || \
-			chroot $TARGET /usr/bin/plymouth-set-default-theme posterchanos || return 1
-	else
-		plymouth-set-default-theme -R posterchanos || plymouth-set-default-theme posterchanos || return 1
-	fi
-	_pc_record_plymouth_theme
+	_pc_select_plymouth_theme || return 1
 }
 
 posterchanShell() {
@@ -2501,6 +2514,13 @@ liveCD() {
 			[[ -e "$H" ]] && EXCLUDES+=("${H#/}")
 		done
 	fi
+	if [[ "$CLEAN" = *y* ]]; then
+		# A live image made from an already-claimed machine must still be a first boot. Keeping this
+		# root-owned marker makes pc:os:provisioned answer true even though every person and browser
+		# profile was scrubbed, so the Welcome flow deliberately stays hidden. It also assigns the
+		# first real login's administrator rights to an npub that is not present on the disc.
+		EXCLUDES+=(var/lib/posterchanos etc/sudoers.d/posterchan-admin)
+	fi
 	local f
 	for f in $SWAPFILES; do
 		[[ -n "$f" ]] && EXCLUDES+=("${f#/}")
@@ -2928,6 +2948,10 @@ DESKTOP
 		# `unsquashfs -cat` costs a few kilobytes and answers what actually got written.
 		if [[ "$CLEAN" = *y* ]]; then
 			local WHO PW NET_ORDER
+			if echo "$LS" | grep -qx 'squashfs-root/var/lib/posterchanos/admin-npub'; then
+				_lcd_fail "The clean image still carries this machine's administrator claim, so Welcome would never appear — the ISO was not made."
+				return
+			fi
 			WHO="$(unsquashfs -cat "$WORK/iso/LiveOS/squashfs.img" \
 				etc/systemd/system/getty@tty1.service.d/override.conf 2>/dev/null \
 				| sed -n "s/.*--autologin \([^ ]*\).*/\1/p" | head -1)"
@@ -3450,11 +3474,10 @@ bootloader() {
 		# PLYMOUTH IS EMBEDDED IN THE INITRAMFS. Selecting the PosterChan theme after dracut means
 		# this boot still contains Gentoo's default and the new choice appears only after some later
 		# kernel rebuild. Choose it first, then build the image that systemd-boot actually names.
-		if ! plymouth-set-default-theme posterchanos; then
+		if ! _pc_select_plymouth_theme; then
 			echo -e "\033[1;31mCould not select the PosterChanOS boot splash.\033[0m"
 			return 1
 		fi
-		_pc_record_plymouth_theme
 		if ! dracut --force --add "$dracut_modules" "$INITRD" "$KERNEL_VERSION"; then
 			echo -e "\033[1;31mCould not build the encrypted-root initramfs at $INITRD.\033[0m"
 			return 1

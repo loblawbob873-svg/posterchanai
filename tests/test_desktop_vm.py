@@ -83,6 +83,14 @@ class VmBackend(unittest.TestCase):
         self.assertIn("pc:vm:eject-iso", preload)
         self.assertIn("pc:vm:eject-iso", main)
         self.assertIn('data-vme-eject>Eject ISO', ui)
+
+    def test_boot_drive_can_be_selected_and_eject_makes_disk_first(self):
+        backend = (ROOT / "desktop" / "vm.js").read_text()
+        ui = (ROOT / "static" / "js" / "client" / "os.js").read_text()
+        self.assertIn("async function setBootOrder", backend)
+        self.assertIn("setBootOrder(d.name,'disk')", backend)
+        self.assertIn('data-vme-boot', ui)
+        self.assertIn("bootOrder:$('[data-vme-boot]'", ui)
         self.assertNotIn('p.canceled||!p.path', ui, "the ISO picker returns a path string")
 
     def test_editor_keeps_the_common_path_simple(self):

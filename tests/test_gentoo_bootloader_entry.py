@@ -69,7 +69,10 @@ def _fn(src, name):
 class BootloaderWritesAnEntryThatNamesARealKernel(unittest.TestCase):
     def _run(self, *, kernel=True, modules=True, bootctl_rc=0):
         src = open(SH, encoding="utf-8").read()
-        body = _fn(src, "partitionDetection") + "\n\n" + _fn(src, "bootloader")
+        body = (_fn(src, "partitionDetection") + "\n\n" +
+                _fn(src, "_pc_record_plymouth_theme") + "\n\n" +
+                _fn(src, "_pc_select_plymouth_theme") + "\n\n" +
+                _fn(src, "bootloader"))
         for a, b in (("/boot", "$R/boot"), ("/etc/disk", "$R/etc/disk"),
                      ("/etc/machine-id", "$R/etc/machine-id"), ("/etc/crypttab", "$R/etc/crypttab"),
                      ("/etc/dracut.conf", "$R/etc/dracut.conf"),
@@ -81,8 +84,11 @@ class BootloaderWritesAnEntryThatNamesARealKernel(unittest.TestCase):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         target, stub = os.path.join(d, "t"), os.path.join(d, "stub")
-        for sub in ("boot", "etc", "swap", "tmp", f"usr/lib/modules/{KVER}"):
+        for sub in ("boot", "etc", "swap", "tmp", f"usr/lib/modules/{KVER}",
+                    "usr/share/plymouth/themes/posterchanos"):
             os.makedirs(os.path.join(target, sub), exist_ok=True)
+        open(os.path.join(target, "usr/share/plymouth/themes/posterchanos/posterchanos.plymouth"),
+             "w").write("[Plymouth Theme]\nName=PosterChanOS\n")
         if not modules:
             shutil.rmtree(os.path.join(target, "usr/lib/modules", KVER))
         if kernel:
@@ -97,7 +103,7 @@ class BootloaderWritesAnEntryThatNamesARealKernel(unittest.TestCase):
             os.chmod(p, 0o755)
 
         script = os.path.join(d, "run.sh")
-        open(script, "w").write("#!/bin/bash\nR=\"$1\"\nAUTO_DECRYPT=False\n" + body + "\nbootloader\n")
+        open(script, "w").write("#!/bin/bash\nR=\"$1\"\nTARGET=\"$R\"\nAUTO_DECRYPT=False\n" + body + "\nbootloader\n")
         env = dict(os.environ, PATH=stub + os.pathsep + os.environ["PATH"],
                    PC_BOOTCTL_RC=str(bootctl_rc))
         r = subprocess.run(["bash", script, target], capture_output=True, text=True,
@@ -154,13 +160,18 @@ class BootloaderWritesAnEntryThatNamesARealKernel(unittest.TestCase):
     def test_posterchan_splash_is_selected_before_dracut(self):
         src = open(SH, encoding="utf-8").read()
         body = _fn(src, "bootloader")
-        theme = body.index("plymouth-set-default-theme posterchanos")
-        recorded = body.index("_pc_record_plymouth_theme")
+        theme = body.index("_pc_select_plymouth_theme")
         dracut = body.index("dracut --force")
         self.assertLess(theme, dracut)
-        self.assertLess(recorded, dracut,
-                        "the selected splash must be recorded before building the initramfs")
         self.assertNotIn("plymouth-set-default-theme solar", body)
+
+    def test_splash_selection_writes_plymouths_real_inputs_directly(self):
+        src = open(SH, encoding="utf-8").read()
+        body = _fn(src, "_pc_select_plymouth_theme")
+        self.assertIn("default.plymouth", body)
+        self.assertIn("ln -sfn posterchanos/posterchanos.plymouth", body)
+        self.assertIn("_pc_record_plymouth_theme", body)
+        self.assertIn("grep -q '^Theme=posterchanos$'", body)
 
 
 if __name__ == "__main__":

@@ -180,8 +180,32 @@ class LocalTerminal(unittest.TestCase):
         src = open(CLIENT, encoding="utf-8").read()
         local = src[src.index("function _openLocal"):src.index("function _frame")]
         started = local[local.index("await T.start"):]
-        self.assertIn("await T.backlog(id, 0)", started)
+        self.assertIn("await T.backlog(id, fresh ? 0", started)
         self.assertNotIn("b = null", started.split("if(gone)")[0])
+        self.assertLess(started.index("await T.attach(id)"), started.index("await T.backlog(id, fresh ? 0"))
+
+    def test_switching_tabs_detaches_the_old_renderer_stream(self):
+        """A tab switch must remove the old main-process subscription, not merely hide its bytes
+        in the renderer. Otherwise every visited PTY keeps feeding the same window forever."""
+        preload = open(os.path.join(ROOT, "desktop", "preload.js"), encoding="utf-8").read()
+        main = open(os.path.join(ROOT, "desktop", "main.js"), encoding="utf-8").read()
+        client = open(CLIENT, encoding="utf-8").read()
+        self.assertIn("detach: (id) => ipcRenderer.invoke('pc:term:detach'", preload)
+        self.assertIn("ipcMain.handle('pc:term:detach'", main)
+        self.assertIn("links.delete(sid)", main)
+        self.assertIn("T.detach(id)", client)
+
+    def test_a_stale_async_open_cannot_take_over_the_new_tab(self):
+        src = open(CLIENT, encoding="utf-8").read()
+        self.assertIn("let openEpoch = 0", src)
+        opened = src[src.index("function _open(frame)"):src.index("function _openLocal")]
+        self.assertIn("const opening = ++openEpoch", opened)
+        self.assertGreaterEqual(opened.count("opening !== openEpoch"), 3)
+
+    def test_backlog_and_push_overlap_is_deduplicated_by_sequence(self):
+        src = open(CLIENT, encoding="utf-8").read()
+        frame = src[src.index("function _frame(m)"):src.index("if(m.t === 'ready')")]
+        self.assertIn("m.seq <= cursor", frame)
 
     def test_an_empty_terminal_starts_its_first_session(self):
         """Configured SSH hosts must not turn PosterChanOS Terminal into an inert host picker."""

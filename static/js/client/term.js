@@ -72,6 +72,10 @@
      * starts a second render before the first resumes; without a generation token BOTH continuations
      * mount xterm and attach input, so every physical key is written twice. */
     let renderEpoch = 0;
+    /* Every connect/attach owns a generation. Authentication and PTY startup both cross awaits;
+     * without this, a slower OLD tab switch can finish after the newest one and replace its link,
+     * which is the exact shape of tabs sharing input or snapping back to the previous shell. */
+    let openEpoch = 0;
     // Set on `ready`, fires once the socket has HELD. Only then does a reconnect count as
     // having worked — see the ready handler.
     let provenT = null;
@@ -489,6 +493,7 @@
     }
 
     function _open(frame){
+      const opening = ++openEpoch;
       want = true;
       /* The cache above is per-SOCKET, not per-terminal. A reattach opens a PTY that knows nothing
        * about what this client last sent — and on the cross-device path (start on the laptop, pick it
@@ -508,12 +513,15 @@
       if(isLocal(frame.host) || isLocalSid(frame.resume)) return _openLocal(frame);
       (async () => {
         try{ await PC.ensureAiSession(); }catch(_){}   // the socket's token
+        if(opening !== openEpoch) return;
         if(!term && !_mountTerm()){ _state('the terminal could not start', 'err'); want = false; return; }
-        if(!want) return;
+        if(!want || opening !== openEpoch) return;
         _state(frame.resume ? 'reattaching…' : 'connecting…');
         try{ ws = new WebSocket(_wsUrl()); }
         catch(_){ _state('could not open a connection', 'err'); return _later(); }
+        const mine = ws;
         ws.onopen = () => {
+          if(opening !== openEpoch){ try{ mine.close(); }catch(_){} return; }
           /* The socket authenticates with the SAME bearer the rest of the app uses. It is sent in the
            * open frame rather than the URL: a query string lands in every proxy log between here and
            * the server, and this one is a credential. */
@@ -522,16 +530,17 @@
           frame.password = '';             // never kept past the one frame that needs it
         };
         ws.onmessage = (ev) => {
+          if(opening !== openEpoch) return;
           let m; try{ m = JSON.parse(ev.data); }catch(_){ return; }
           _frame(m);
         };
         link = {
           kind: 'ws',
           send(o){ try{ if(ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }catch(_){} },
-          close(){ if(ws){ try{ ws.onclose = null; ws.onmessage = null; ws.close(); }catch(_){} } },
+          close(){ try{ mine.onclose = null; mine.onmessage = null; mine.close(); }catch(_){} },
         };
-        ws.onclose = () => _drop();
-        ws.onerror = () => {};             // onclose follows and is where the retry lives
+        mine.onclose = () => { if(opening === openEpoch) _drop(); };
+        mine.onerror = () => {};           // onclose follows and is where the retry lives
       })();
     }
 
@@ -542,6 +551,7 @@
      * from. That matters more here than over SSH, because the WebView holding this page is the half
      * Android and Chromium take away under memory pressure. */
     function _openLocal(frame){
+      const opening = openEpoch;
       const T = LOCAL();
       if(!T){ _frame({ t: 'err', m: 'this build has no shell of its own' }); return; }
       let id = String(frame.resume || '').replace(/^local:/, '');
@@ -557,11 +567,15 @@
            * only thing that ends it. Identical to the server side. */
           else if(o.t === 'close'){ gone = true; T.close(id); }
         },
-        close(){ gone = true; if(stop){ try{ stop(); }catch(_){} stop = null; } },
+        close(){
+          gone = true;
+          if(stop){ try{ stop(); }catch(_){} stop = null; }
+          if(id && T.detach){ try{ T.detach(id); }catch(_){} }
+        },
       };
       (async () => {
         if(!term && !_mountTerm()){ _state('the terminal could not start', 'err'); want = false; return; }
-        if(!want) return;
+        if(!want || opening !== openEpoch) return;
         _state(frame.resume ? 'reattaching…' : 'starting a shell…');
         try{
           let b = null;
@@ -578,16 +592,15 @@
             id = String(s0 && s0.id || '');
             if(!id) throw new Error('the shell would not start');
             fresh = true;
-            /* START ALREADY PRODUCED OUTPUT. localterm creates Posterfetch synchronously and a fast
-             * login shell can print its prompt before this renderer has subscribed. Setting b=null
-             * discarded both, leaving a real new PTY as a blank screen that looked exactly like the
-             * old tab was still active. Read from cursor zero before attaching; anything produced
-             * after this read is delivered by the subscription installed immediately below. */
-            b = await T.backlog(id, 0);
           }
-          if(gone) return;
+          if(gone || opening !== openEpoch) return;
+          /* Subscribe FIRST, then take the snapshot. This closes the otherwise unavoidable gap
+           * where the shell can print after backlog() but before attach(). The cumulative sequence
+           * guard in _frame makes the overlap safe whichever IPC message reaches us first. */
           stop = T.onData((ev) => { if(String(ev.id) === id) _frame(ev); });
           await T.attach(id);
+          b = await T.backlog(id, fresh ? 0 : (Number(cursor) || 0));
+          if(gone || opening !== openEpoch) return;
           _frame({ t: 'ready', sid: localSid(id), host: 'local', resumed: !fresh });
           if(b){
             /* Redraw what was missed, and say so when the gap is bigger than what is still kept —
@@ -608,6 +621,10 @@
       if(!m) return;
       if(!term) return;
           if(m.t === 'out'){
+            /* Attach and backlog deliberately overlap so no byte can fall between them. If the
+             * pushed event wins the race, its cumulative sequence makes the later snapshot old;
+             * discard that snapshot instead of drawing the prompt/echo twice. */
+            if(typeof m.seq === 'number' && m.seq <= cursor) return;
             term.write(m.d);
             _histSaw(m.d);
             // The CURSOR is what a reconnect resumes from, so it advances only for bytes that reached
@@ -1005,6 +1022,7 @@
     }
 
     function unmount(){
+      ++openEpoch;
       ++renderEpoch;                 // every pending continuation now belongs to a dead screen
       // LEAVING THE SCREEN IS DETACHING, never killing: the shell keeps running and the id is kept,
       // so coming back reattaches. This used to close the socket AND that was the end of the session.

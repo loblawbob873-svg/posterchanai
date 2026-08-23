@@ -50,10 +50,30 @@ async function details(name){
   const disks=blocks.ok?blocks.out.split(/\r?\n/).slice(2).map(x=>x.trim().split(/\s+/))
     .filter(x=>x.length>=4).map(x=>({type:x[0],device:x[1],target:x[2],source:x.slice(3).join(' ')})):[];
   const body=xml.ok?xml.out:'';
+  const boots=[...body.matchAll(/<boot\s+dev=['"](hd|cdrom)['"]\s*\/>/g)].map(x=>x[1]);
   return {ok:true,name,state:get('State').toLowerCase(),ramMiB:Math.round(Number((get('Max memory').match(/\d+/)||[0])[0])/1024),
     cpus:Number(get('CPU\\(s\\)'))||1,autostart:/enable/i.test(get('Autostart')),disks,
+    bootOrder:boots[0]==='cdrom'?'cdrom':'disk',
     gamingMouse:/<input type=['"]mouse['"] bus=['"]ps2['"]/.test(body),
     networks:(body.match(/<interface\b/g)||[]).length};
+}
+async function setBootOrder(name, first){
+  const d=await details(name);if(!d.ok)return d;
+  if(!/shut off|shutoff|inactive/.test(d.state))return {ok:false,error:'Shut down the VM before changing boot order'};
+  const x=await virsh(['dumpxml',d.name]);if(!x.ok)return x;
+  const order=first==='cdrom'?['cdrom','hd']:['hd','cdrom'];
+  let body=x.out;
+  const m=body.match(/<os\b[^>]*>[\s\S]*?<\/os>/);
+  if(!m)return {ok:false,error:'The VM has no editable boot configuration'};
+  const osBody=m[0].replace(/\s*<boot\s+dev=['"](?:hd|cdrom)['"]\s*\/>/g,'')
+    .replace(/\s*<\/os>/,`\n    <boot dev="${order[0]}"/>\n    <boot dev="${order[1]}"/>\n  </os>`);
+  body=body.replace(m[0],osBody);
+  const dir=path.join(root(),d.name);await fs.promises.mkdir(dir,{recursive:true,mode:0o700});
+  const file=path.join(dir,'domain-boot.xml');await fs.promises.writeFile(file,body,{mode:0o600});
+  const r=await virsh(['define',file],30000);try{await fs.promises.unlink(file);}catch(_){}
+  if(!r.ok)return r;
+  const after=await details(d.name);
+  return after.ok&&after.bootOrder===(first==='cdrom'?'cdrom':'disk')?{ok:true}: {ok:false,error:'Boot order did not persist'};
 }
 async function update(name, opts){
   const d=await details(name); if(!d.ok)return d;
@@ -65,7 +85,9 @@ async function update(name, opts){
     const r=await virsh(args,30000); if(!r.ok)return r;
   }
   const a=await virsh(['autostart',d.name].concat(opts&&opts.autostart?[]:['--disable']));
-  return a.ok?details(d.name):a;
+  if(!a.ok)return a;
+  if(opts&&opts.bootOrder){const b=await setBootOrder(d.name,opts.bootOrder);if(!b.ok)return b;}
+  return details(d.name);
 }
 async function addDisk(name, gib){
   const d=await details(name); if(!d.ok)return d;
@@ -96,7 +118,8 @@ async function ejectIso(name){
   const r=await virsh(['change-media',d.name,cd.target,'--eject','--config'],30000);if(!r.ok)return r;
   const after=await details(d.name);if(!after.ok)return after;
   const left=after.disks.find(x=>x.device==='cdrom' && x.source && x.source!=='-');
-  return left?{ok:false,error:'The installation disc is still attached'}:{ok:true};
+  if(left)return {ok:false,error:'The installation disc is still attached'};
+  return setBootOrder(d.name,'disk');
 }
 async function addNetwork(name){ const d=await details(name);if(!d.ok)return d;
   if(!/shut off|shutoff|inactive/.test(d.state))return {ok:false,error:'Shut down the VM before adding a network adapter'};
