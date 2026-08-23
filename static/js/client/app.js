@@ -2817,6 +2817,13 @@
        * revoke the right row. */
       const nm=await Nip46Signer.start(uri);
       toast('✅ “'+nm+'” is now logged in — your key stayed on this device');
+      /* The startup check runs before a FIRST pairing has made the native service `wanted`, so it
+       * correctly does nothing then.  Run it again after the hand-over: this is the first instant
+       * Android can truthfully say that background signing is enabled, and therefore the first
+       * instant an unexempted phone can be warned that Doze will defer its relay traffic until the
+       * screen wakes.  Without this call a fresh pairing never saw the prompt until a later app
+       * restart, which is exactly the visible failure: every desktop post waits for the phone. */
+      try{ await _signerBatteryCheck(); }catch(_){}
     }catch(e){
       // NOT stop(). That killed every OTHER app this device was signing for because one QR failed —
       // start() already removes the half-made session on its own way out.

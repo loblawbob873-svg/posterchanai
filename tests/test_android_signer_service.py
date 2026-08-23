@@ -737,6 +737,21 @@ def test_the_battery_check_runs_at_boot_and_re_asks_on_every_new_build():
     )
 
 
+def test_a_fresh_pairing_checks_doze_after_the_service_is_wanted():
+    """At startup a phone with no pairings correctly has no signer service to protect.
+
+    A first pairing changes that state later in the same session.  If pairing does not rerun the
+    check, Android may defer the native signer's network as soon as the screen sleeps and the paired
+    desktop waits until somebody wakes the phone.  The check belongs after ``start`` has published
+    the session and kicked the service, never before it.
+    """
+    js = _read(APP_JS)
+    body = js[js.index("async function onQrScanned(uri)"):js.index("// ---------- boot ----------")]
+    paired = body.index("await Nip46Signer.start(uri)")
+    doze = body.index("await _signerBatteryCheck()")
+    assert doze > paired, "the first pairing never checks whether Doze will silence its signer"
+
+
 def test_the_work_thread_is_not_in_the_background_cgroup():
     """Getting the crypto off the UI thread was right; taking it out of the foreground scheduler
     with it was not, and it is the same one-word mistake either way.

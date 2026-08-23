@@ -154,6 +154,14 @@ class Bridge(unittest.TestCase):
         self.assertIn("window.pcShell.backgroundOwner === false", sync,
                       "each monitor can start another folder-sync writer")
 
+    def test_a_shell_restart_recovers_which_monitor_owned_a_stashed_app(self):
+        """Sway keeps scratchpad apps across an Electron restart; the in-memory owner map is lost."""
+        self.assertIn("function ownerFromRect(row)", self.main)
+        scoped = self.main[self.main.index("function scopedWindows(e, rows)"):]
+        scoped = scoped[:scoped.index("let _shellRecoveryWired")]
+        self.assertIn("ownerFromRect(row)", scoped)
+        self.assertIn("_nativeOwners.set(id, owner)", scoped)
+
     def test_native_windows_can_be_handed_to_an_adjacent_display(self):
         self.assertIn("'pc:wm:handoff'", self.main)
         self.assertIn("handoff:", self.pre)

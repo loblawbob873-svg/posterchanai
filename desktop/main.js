@@ -975,6 +975,28 @@ const _nativeOwners = new Map();      // con_id -> last ordinary workspace
 const _shellSurfaces = new Map();     // output name -> { browser, conId, assignment }
 let _displayReconcile = null;
 let _displayReconcileTimer = null;
+/* Recover the owner of a parked window after the shell process itself restarts.
+ *
+ * `_nativeOwners` is process-local, but Sway's scratchpad survives an Electron restart. A stashed
+ * Firefox/Telegram therefore comes back with no ordinary workspace and no remembered owner; every
+ * scoped renderer filters it out and the app appears to vanish. Sway preserves its last absolute
+ * rectangle, so assign it to the display containing its centre (or the nearest display when an old
+ * rectangle is partly off-screen). The renderer's normal placement pass then clamps it. */
+function ownerFromRect(row){
+  const r = row && row.rect || {};
+  const x = (Number(r.x)||0) + Math.max(0, Number(r.width)||0) / 2;
+  const y = (Number(r.y)||0) + Math.max(0, Number(r.height)||0) / 2;
+  let best = null;
+  for(const scope of _shellScopes.values()){
+    const b = scope && scope.rect || {};
+    const left=Number(b.x)||0, top=Number(b.y)||0;
+    const right=left+Math.max(0,Number(b.width)||0), bottom=top+Math.max(0,Number(b.height)||0);
+    const dx=x<left?left-x:x>right?x-right:0, dy=y<top?top-y:y>bottom?y-bottom:0;
+    const d=dx*dx+dy*dy;
+    if(!best || d<best.d) best={d,workspace:String(scope.workspace||'')};
+  }
+  return best && best.workspace || '';
+}
 function scopedWindows(e, rows){
   const all = Array.isArray(rows) ? rows : [];
   for(const row of all){
@@ -986,7 +1008,11 @@ function scopedWindows(e, rows){
   if(!scope) return all;
   return all.filter(row => {
     const id = Number(row && row.id);
-    const owner = row && row.stashed ? _nativeOwners.get(id) : String(row && row.workspace || '');
+    let owner = row && row.stashed ? _nativeOwners.get(id) : String(row && row.workspace || '');
+    if(row && row.stashed && !owner){
+      owner = ownerFromRect(row);
+      if(Number.isFinite(id) && owner) _nativeOwners.set(id, owner);
+    }
     return owner === String(scope.workspace);
   });
 }
