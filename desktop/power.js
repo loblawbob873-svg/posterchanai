@@ -213,6 +213,21 @@ async function setKeepAwake(on) {
   return { on: !!on };
 }
 
+async function idleTimeout() {
+  const raw = (await run(IDLE_HELPER, ['get'], 3000)).trim();
+  const seconds = Number(raw);
+  if (!Number.isInteger(seconds) || seconds < 0) throw new Error('the display timeout is invalid');
+  return seconds;
+}
+
+async function setIdleTimeout(seconds) {
+  const n = Number(seconds);
+  if (!Number.isInteger(n) || n < 0 || n > 86400)
+    throw new Error('display timeout must be whole seconds from 0 to 86400');
+  await run(IDLE_HELPER, ['set', String(n)], 5000);
+  return { seconds: n };
+}
+
 /** Everything the shell needs to draw the panel, in one call. */
 async function status() {
   let bright = brightness();
@@ -222,6 +237,7 @@ async function status() {
     battery: battery(),
     profiles: await profiles(),
     keepAwake: await keepAwakeStatus(),
+    idleSeconds: await idleTimeout().catch(() => 120),
     canHibernate: hibernateReady(),
     hibernateConfigured: hibernateConfigured(),
   };
@@ -230,4 +246,4 @@ async function status() {
 module.exports = { brightness, ddcBrightness, setBrightness, battery, profiles, setProfile,
                    suspend, hibernate, poweroff, reboot, hibernateReady, hibernateConfigured,
                    enableHibernation, keepAwakeStatus,
-                   setKeepAwake, status, MIN_PERCENT };
+                   setKeepAwake, idleTimeout, setIdleTimeout, status, MIN_PERCENT };

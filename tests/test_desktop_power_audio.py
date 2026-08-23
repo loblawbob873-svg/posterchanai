@@ -109,6 +109,21 @@ class Power(unittest.TestCase):
         self.assertIn("enableHibernation", src)
         self.assertIn("['-n', '/usr/bin/gentoo.sh', 'hibernate']", src)
 
+    def test_system_settings_exposes_the_idle_timeout_including_never(self):
+        power = open(os.path.join(ROOT, "desktop", "power.js"), encoding="utf-8").read()
+        main = open(os.path.join(ROOT, "desktop", "main.js"), encoding="utf-8").read()
+        preload = open(os.path.join(ROOT, "desktop", "preload.js"), encoding="utf-8").read()
+        ui = open(os.path.join(ROOT, "static", "js", "client", "os.js"), encoding="utf-8").read()
+        self.assertIn("setIdleTimeout", power)
+        self.assertIn("pc:power:idle", main)
+        self.assertIn("setIdleTimeout", preload)
+        self.assertIn('data-idle-timeout', ui)
+        self.assertIn("[0,'Never']", ui)
+
+    def test_idle_timeout_rejects_nonsense_before_calling_the_helper(self):
+        out = self.run_js("await P.setIdleTimeout(-1);")
+        self.assertIn("whole seconds", out.get("threw", ""))
+
     def profile_choices(self, choices, active):
         d = os.path.join(self.sys, "firmware", "acpi")
         os.makedirs(d, exist_ok=True)

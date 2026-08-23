@@ -163,6 +163,7 @@ if (isOurPage) {
     setBrightness: (pct) => ipcRenderer.invoke('pc:power:brightness', Number(pct)),
     setProfile: (name) => ipcRenderer.invoke('pc:power:profile', String(name || '')),
     setKeepAwake: (on) => ipcRenderer.invoke('pc:power:keep-awake', !!on),
+    setIdleTimeout: (seconds) => ipcRenderer.invoke('pc:power:idle', Number(seconds)),
     suspend: () => ipcRenderer.invoke('pc:power:suspend'),
     hibernate: () => ipcRenderer.invoke('pc:power:hibernate'),
     enableHibernation: () => ipcRenderer.invoke('pc:power:enable-hibernate'),

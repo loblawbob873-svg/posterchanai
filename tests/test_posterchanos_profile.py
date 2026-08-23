@@ -869,6 +869,11 @@ class TheDisplayTurnsItselfOff(unittest.TestCase):
         self.assertIn("PC_IDLE_CONF", self.idle)
         self.assertIn("set)", self.idle, "there is no way to change it")
 
+    def test_the_timeout_file_is_writable_by_the_identity_without_sudo(self):
+        self.assertIn("XDG_CONFIG_HOME", self.idle)
+        self.assertIn("$HOME/.config", self.idle)
+        self.assertNotIn("PC_IDLE_CONF:-/etc/", self.idle)
+
     def test_never_is_an_answer(self):
         """Somebody watching a film should be able to say never, and it must leave no daemon
         running that would blank the screen anyway."""

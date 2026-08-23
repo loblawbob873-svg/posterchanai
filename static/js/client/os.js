@@ -1491,6 +1491,10 @@
           <button class="btn primary" data-apply>Apply</button><span class="muted" data-status></span></div>
         <section class="os-hibernate"><div><b>Hibernation</b><span>${power.hibernateConfigured?'Enabled':'Save your session to disk when the computer powers down.'}</span></div>
           ${power.hibernateConfigured?'<span class="os-set-ready">Ready</span>':'<button class="btn" data-enable-hibernate>Enable hibernation</button>'}</section>
+        <section class="os-hibernate"><div><b>Turn display off</b><span>Choose how long the computer may be idle before its displays switch off.</span></div>
+          <select data-idle-timeout aria-label="Display idle timeout">
+            ${[[60,'1 minute'],[120,'2 minutes'],[300,'5 minutes'],[600,'10 minutes'],[1800,'30 minutes'],[0,'Never']].map(([n,label])=>`<option value="${n}" ${Number(power.idleSeconds)===n?'selected':''}>${label}</option>`).join('')}
+          </select></section>
       </main></div>`;
       wire(); controls();
     };
@@ -1533,6 +1537,12 @@
         hib.disabled=true;hib.textContent='Configuring…';
         try{await pcPower.enableHibernation();PC().toast('Hibernation enabled — reboot once before using it');renderSystemSettings();}
         catch(e){hib.disabled=false;hib.textContent='Enable hibernation';PC().toast(String(e&&e.message||e));}
+      };
+      const idle=host.querySelector('[data-idle-timeout]'); if(idle)idle.onchange=async()=>{
+        idle.disabled=true;
+        try{await pcPower.setIdleTimeout(Number(idle.value));PC().toast(Number(idle.value)?'Display timeout updated':'Automatic display-off disabled');}
+        catch(e){PC().toast(String(e&&e.message||e));}
+        finally{idle.disabled=false;}
       };
       host.querySelectorAll('[data-jump]').forEach(b=>b.onclick=()=>{
         const k=b.dataset.jump;

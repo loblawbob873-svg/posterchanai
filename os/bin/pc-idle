@@ -18,7 +18,9 @@
 # can come back before it has been told to, leaving a display that is on and reported off.
 set -eu
 
-CONF="${PC_IDLE_CONF:-/etc/posterchanos/idle}"
+# Per identity, writable without sudo, and protected by that identity's 0700 home. A setting under
+# /etc looked persistent but `pc-idle set` ran as the desktop user and could never create it.
+CONF="${PC_IDLE_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/posterchanos/idle}"
 DEFAULT=120                       # two minutes, which is what was asked for
 HOLD="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/posterchan-keep-awake"
 
