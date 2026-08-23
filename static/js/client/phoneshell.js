@@ -109,8 +109,9 @@
           <div class="muted small" id="ps-sms-note">Texts stay in the phone's own message store, so
             nothing else on the phone loses them, and an encrypted copy of each one goes to your relay
             so you can read and answer them from <a href="#" id="ps-texts">Texts</a> on any of your
-            devices. <strong>MMS (picture messages) is not supported yet</strong> — if you receive
-            many of them, keep your current app.</div>
+            devices. Picture messages are downloaded through the carrier when PosterChan holds the
+            Messages role; encrypted originals and small previews are mirrored to your Blossom
+            <strong>MMS</strong> folder.</div>
 
           <label class="set-stay" style="margin-top:12px"><input type="checkbox" id="ps-dialer"${st.isDefaultDialer?' checked':''}>
             Phone (calls over the mobile network)</label>

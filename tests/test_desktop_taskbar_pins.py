@@ -24,3 +24,9 @@ def test_start_menu_and_taskbar_offer_pin_and_unpin():
     assert "setPinned('app', app, !pinned)" in SRC
     assert "setPinned('view', view, !pinned)" in SRC
 
+
+def test_start_menu_can_add_and_remove_apps_from_desktop():
+    assert "Add ' + label + ' to the desktop" in SRC
+    assert "Hide ' + label + ' from the desktop" in SRC
+    assert "showItem(view)" in SRC
+    assert "hideItem(view)" in SRC

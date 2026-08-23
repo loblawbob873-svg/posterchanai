@@ -277,7 +277,7 @@ here, each of which cost Notes a total silent loss before it was learned:
    and in `_CARRY_D` (app.js). On every device that is *not* the phone the archive is the only copy,
    so eviction there is not a cache miss — it is the messages being gone.
 
-### Picture messages are READ; FETCHING a new one is still not supported
+### Picture messages are read and new carrier MMS is fetched
 
 Two different pieces of work wearing one word, and collapsing them is what lets a screen promise the
 second while delivering the first. `SmsPlugin.status` reports them separately — `mms` and `mmsFetch`.
@@ -323,20 +323,15 @@ SMS ones, so a phone whose texts read perfectly can hand over no pictures at all
 `mmsRefused` are separate answers and the screen says which — a thread that silently lost its photos
 looks exactly like a thread somebody sent fewer photos in.
 
-### Fetching an incoming MMS is still not supported, and it says so
+### Fetching an incoming MMS
 
-Android will not grant the SMS role without a `WAP_PUSH_DELIVER` receiver, so `MmsDeliverReceiver`
-exists. What it does not do is pretend. Retrieving an MMS means decoding a WSP-encoded
-`M-Notification.ind`, fetching from the carrier's MMSC over the MMS APN and decomposing the
-`M-Retrieve.conf` into the `pdu`/`addr`/`part` tables — several hundred lines of binary parsing that
-cannot be exercised without a SIM and a carrier, on the one code path where a mistake means somebody's
-message is gone. Writing a placeholder row would be worse than nothing: it would put a message that
-does not exist into every app and every backup on the phone.
-
-So a picture message raises a notification saying plainly that PosterChan cannot fetch it and that
-switching the messages app back will. **The opt-in screen says the same thing before the role is
-taken**, which is the only honest place to say it. Nothing touches the provider; an MMS not fetched is
-an MMS still waiting at the carrier.
+`MmsDeliverReceiver` extends the maintained Fossify MMS transport's `PushReceiver`. It decodes the
+carrier's `M-Notification.ind`, downloads the payload over the subscription's MMS APN, and persists
+the resulting provider rows. `MmsDownloadedReceiver` then wakes the message archive and UI so the
+message, encrypted Blossom original, and thumbnail are mirrored without waiting for the next poll.
+The manifest-facing receiver name remains ours so upgrades never leave Android targeting a removed
+role component. `SmsPlugin.status` continues to report `mms` and `mmsFetch` separately because an old
+APK may support reading stored MMS without supporting carrier retrieval.
 
 ---
 
@@ -523,9 +518,6 @@ genuine SDK instead of hand-written stubs. It found three real bugs on its first
 
 ## What is deliberately not built
 
-* **MMS retrieval** — see above. Existing picture messages are read and shown; *fetching* a newly
-  arrived one off the carrier's MMSC is not built. The receiver exists because the role requires it;
-  it says what it cannot do rather than pretending.
 * **Call-log mirroring to Nostr** — a second source of truth for something with no second use.
 * **Notification mirroring** — forwarding *every* app's notifications to other devices needs
   `BIND_NOTIFICATION_LISTENER_SERVICE`, which reads every notification on the phone. What is built is

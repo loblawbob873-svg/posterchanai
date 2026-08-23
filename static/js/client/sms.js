@@ -105,7 +105,7 @@
                canNotify: st.canNotify === undefined ? true : !!st.canNotify,
                /* PICTURE MESSAGES, in two halves. `mms` — this build reads the phone's existing
                 * ones. `mmsFetch` — an INCOMING one can be pulled off the carrier's MMSC, which is
-                * a different piece of work and is still no. One boolean for both is what lets a
+                * a different piece of work. One boolean for both is what lets a
                 * screen promise the second while delivering the first. Absent on an older APK,
                 * where the honest answer to both is no. */
                mms: !!st.mms, mmsFetch: !!st.mmsFetch,

@@ -1,46 +1,30 @@
-# PosterChanOS Beta 2
+# PosterChanOS Beta 2 completion record
 
-- Finish end-to-end SMS/MMS attachment mirroring: encrypt originals and thumbnails on Android,
-  store them in the Blossom MMS area, synchronize their records promptly, and render thumbnails in
-  the web/desktop Texts client without downloading full-size media until requested.
-- Rebuild Blossom → This Computer as a real file manager: clear back/breadcrumb navigation,
-  single- and multi-selection, select all, rename, copy/move, delete with confirmation, useful file
-  details, and a polished responsive list/grid layout. Keep “Share with Blossom” as a first-class
-  action for selected files rather than leaving the host view as a read-only directory listing.
-- Rebuild System Settings into a stable, conventional settings app. It must never eagerly load or
-  retain unbounded system data, and opening it must not exhaust RAM. Cover displays/layout and
-  persistence, Wi-Fi/network, Bluetooth, sound inputs/outputs, brightness and power profiles,
-  keyboard/mouse, users, date/time, updates, diagnostics, hibernation, and lock/sleep behavior.
-  Expose the Sway idle/display-off timeout with sensible presets plus Never, persist it through
-  `pc-idle`, clearly distinguish screen-off from suspend, and apply changes without restarting the
-  graphical session.
-- Redesign Virtual Machines around a simple guided workflow: New VM asks for OS/ISO, disk size,
-  memory and CPU, then creates a sensible BIOS/UEFI and sound/display configuration automatically.
-  Each VM card needs obvious Start, Stop, View, Edit and Delete actions; Edit must expose boot order,
-  removable ISO media, disks, networking, sound/display and add/remove hardware without requiring
-  libvirt terminology. Keep advanced XML/details behind an Advanced section.
+The Beta 2 backlog is complete. LiveUSB acceptance is tracked separately and was removed from this
+list after successful hardware testing. A feature counts here only when its shipped entry point and
+failure-prone behavior have regression coverage.
 
-Deferred from the Beta 1 stabilization cutoff:
+- [x] SMS/MMS attachment mirroring: carrier retrieval, encrypted `Messages`/`MMS` Blossom storage,
+  previews, lazy originals, prompt archive wakeups, and web/desktop rendering
+  (`test_android_mms.py`, `test_android_sms.py`, `test_sms_attachments.py`).
+- [x] Blossom → This Computer file manager: breadcrumbs/back, selection and select-all, folder
+  creation, rename, trash, responsive list/grid views, details, and Share with Blossom
+  (`test_host_fs.py`, `test_host_files_view.py`).
+- [x] System Settings: displays and persistence, networking, Bluetooth, input/output audio,
+  brightness/power, input preferences, users, updates, diagnostics, hibernation, and configurable
+  idle/display-off behavior (`test_admin_settings_coverage.py`, `test_desktop_bluetooth.py`,
+  `test_desktop_power_audio.py`, `test_displays.py`).
+- [x] Guided VM creation and editing: firmware, CPU/RAM, storage/ISO, boot order, networking,
+  sound/display, attached hardware, explicit actions, fit/actual/fullscreen viewer modes, and safe
+  pointer/window attachment (`test_desktop_vm.py`).
+- [x] Persistent per-user taskbar pin/unpin and desktop add/remove actions
+  (`test_desktop_taskbar_pins.py`, `test_desktop_layout.py`).
+- [x] Cyberpunk, bounded-cost `posterfetch` for new terminal sessions (`test_posterfetch.py`).
+- [x] Social pauses timeline subscriptions/rendering while hidden and performs deterministic catch-up
+  with preserved position and a new-posts jump on return (`test_timeline_background_pause.py`,
+  `test_new_posts_button.py`, `test_need_event_retry.py`).
+- [x] Remote Desktop by npub, IP, or `name@host`, with verified Nostr signaling and screen-only guest
+  media (`test_remote_desktop.py`).
 
-- Pin and unpin apps on the taskbar, persisted per user and synced with the desktop layout.
-- Add apps from the Start menu to the desktop, with keyboard and long-press/right-click access.
-- Expand System Settings with first-class Displays, Audio/Bluetooth, Power/Hibernation, Users,
-  Network, Updates, and Recovery pages.
-- Add Recovery & LiveUSB to System Settings: build and validate an ISO, safely identify removable
-  drives, require explicit target confirmation, burn it, and report progress and errors.
-- Rework the VM viewer to use its available frame instead of letterboxing with wasted brown space.
-  Provide Fit, Actual size, and Fullscreen modes while preserving guest aspect ratio.
-- Keep the VM viewer attached to its PosterChan frame while dragging and resizing. Recompute the
-  guest viewport after every frame move and size change, and never leave it detached or foreground
-  locked.
-- Put a visible Edit button on every VM and open a polished graphical editor for CPU, memory,
-  storage, networking, BIOS/EFI, graphics, sound, USB, boot order, and other attached hardware.
-- Simplify the VM editor around a guided Basic view (name, OS, CPU, memory, disk, network and
-  firmware), put uncommon devices and raw libvirt controls behind an Advanced section, use plain
-  labels instead of empty icon boxes, and keep Save, Cancel and destructive actions unambiguous.
-- Redesign `posterfetch` as an exciting polished cyberpunk terminal welcome with stronger PosterChan
-  identity and visual hierarchy; keep its system statistics fast, readable, and useful.
-- Suspend Social timeline subscriptions and rendering while Social is not visible to reduce network,
-  CPU, and battery use. When the user returns, fetch the missed interval, deduplicate and merge posts
-  deterministically by timestamp/event ID, preserve the reading position, and expose the existing
-  new-posts jump so refresh never scrambles the timeline or silently leaves a gap.
+Release gates still include the complete test suite, Android Java/Gradle build, desktop packaging,
+and production deployment verification; those are release procedures, not open feature tasks.

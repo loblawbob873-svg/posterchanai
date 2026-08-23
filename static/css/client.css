@@ -3971,7 +3971,15 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .ftab:hover{border-color:var(--cyan);color:var(--text)}
 .ftab.active{background:var(--cyan);color:#06121a;border-color:var(--cyan)}
 @media(max-width:820px){
-  .feed-files #files-pane{padding-bottom:calc(62px + env(safe-area-inset-bottom));box-sizing:border-box}
+  /* ONE VERTICAL SCROLLER ON A PHONE.  The desktop explorer gives `.fx-main` its own overflow box,
+     inside the already-scrollable `#files-pane`. Android WebView can hand the touch gesture to that
+     inner box while its block-layout height is unconstrained, so neither box moves: Files looks
+     complete but cannot scroll. Let the pane own vertical touch scrolling and allow the explorer
+     and its main column to take their natural height. Horizontal folder chips remain independent. */
+  .feed-files #files-pane{padding-bottom:calc(62px + env(safe-area-inset-bottom));box-sizing:border-box;
+    overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y}
+  .feed-files #files-pane>.fx-explorer{flex:0 0 auto;overflow:visible}
+  .feed-files #files-pane>.fx-explorer>.fx-main{overflow:visible}
 }
 
 /* ---------- Chess hub (#chesstr) ---------- */
