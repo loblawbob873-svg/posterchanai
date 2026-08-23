@@ -2343,7 +2343,7 @@
     const k = zf();
     let sx = ev.clientX, sy = ev.clientY;
     let ox = parseInt(w.el.style.left, 10), oy = parseInt(w.el.style.top, 10);
-    let curX = ox, curY = oy, zone = '', raf = 0;
+    let curX = ox, curY = oy, zone = '', handoff = '', raf = 0;
     hideLayouts();
     /* Native apps follow the frame with position-only compositor moves. Resizing/re-floating on
      * every frame is still avoided; `_natGesture` makes nsync choose pcWM.move until release. */
@@ -2387,6 +2387,13 @@
       // bar stays on screen and above the taskbar.
       curX = Math.max(-w.el.offsetWidth + 120, Math.min(vwL() - 120, ox + (e.clientX - sx) / k));
       curY = Math.max(0, Math.min(vhL() - TASKBAR - 34, oy + (e.clientY - sy) / k));
+      /* A monitor is another renderer, so pointer capture cannot carry DOM events across its
+       * boundary. Reaching an outside edge while dragging a native app requests a compositor
+       * hand-off on release; the adjacent shell adopts it and supplies the new frame. */
+      if(w.native != null){
+        handoff = e.clientX <= 1 ? 'left' : e.clientX >= window.innerWidth-2 ? 'right'
+                : e.clientY <= 1 ? 'up' : e.clientY >= window.innerHeight-2 ? 'down' : '';
+      }
       if(!raf) raf = requestAnimationFrame(paint);
       const z = zoneAt(e.clientX, e.clientY);
       if(z !== zone){ zone = z; showGhost(zone); }     // only when it CHANGES — not 120 times a second
@@ -2407,6 +2414,13 @@
       w.el.style.left = Math.round(curX) + 'px';
       w.el.style.top = Math.round(curY) + 'px';
       hideGhost();
+      if(handoff && w.native != null && pcWM.handoff){
+        w.gesturing=false; _natFocusHold=false;
+        const id=w.native;
+        closeWin(w,{killNative:false});
+        try{ Promise.resolve(pcWM.handoff(id,handoff)).catch(()=>{}); }catch(_){}
+        return;
+      }
       _natGesture(w, false);
       /* Clear gesture mode BEFORE snapping. While gesturing, nsync deliberately uses move() only
        * and never resizes; the previous order therefore moved Firefox into the right tile at its

@@ -1110,6 +1110,32 @@ ipcMain.handle('pc:wm:place', (e, id, x, y, w, h) => {
 ipcMain.handle('pc:wm:move', (e, id, x, y) => {
   fsGuard(e); return wm().move(Number(id), Number(x), Number(y));
 });
+/* Drag a hosted app through a monitor edge. Each output is a different Electron surface, so DOM
+ * pointer coordinates cannot continue into the next renderer. The compositor performs the
+ * ownership hand-off; the destination renderer then adopts the still-running native window. */
+ipcMain.handle('pc:wm:handoff', async (e, id, direction) => {
+  fsGuard(e);
+  const scope = _shellScopes.get(e.sender.id);
+  if(!scope) throw new Error('this desktop surface has no display');
+  const from = scope.rect || {};
+  const cx = (Number(from.x)||0) + (Number(from.width)||0)/2;
+  const cy = (Number(from.y)||0) + (Number(from.height)||0)/2;
+  const rows = Array.from(_shellSurfaces.values()).map(r=>r.assignment).filter(Boolean);
+  const candidates = rows.filter(a=>a.output!==scope.output).map(a=>{
+    const r=a.rect||{}, x=(Number(r.x)||0)+(Number(r.width)||0)/2,
+          y=(Number(r.y)||0)+(Number(r.height)||0)/2;
+    const forward = direction==='left' ? cx-x : direction==='right' ? x-cx
+                  : direction==='up' ? cy-y : y-cy;
+    const cross = /left|right/.test(direction) ? Math.abs(y-cy) : Math.abs(x-cx);
+    return {a,forward,cross};
+  }).filter(x=>x.forward>0).sort((a,b)=>a.forward-b.forward||a.cross-b.cross);
+  if(!candidates.length) return false;
+  const target=candidates[0].a;
+  await wm().command('[con_id='+Number(id)+'] move container to workspace number '+target.workspace);
+  _nativeOwners.set(Number(id), String(target.workspace));
+  await wm().focus(Number(id));
+  return {output:target.output,workspace:target.workspace};
+});
 ipcMain.handle('pc:wm:hide', (e, id) => { fsGuard(e); return wm().hide(Number(id)); });
 ipcMain.handle('pc:wm:show', (e, id) => { fsGuard(e); return wm().show(Number(id)); });
 ipcMain.handle('pc:wm:fullscreen', (e, id, on) => { fsGuard(e); return wm().fullscreen(Number(id), !!on); });

@@ -89,7 +89,12 @@ window.pcWM = {
                          return []; },
   focus: async () => [], subscribe: async () => true, onEvent: () => () => {},
 };
-window.pcOS = { provision: async () => { window.__provisioned = true; return { ok: true }; } };
+window.pcOS = {
+  provision: async () => { window.__provisioned = true; return { ok: true }; },
+  identity: async () => window.__identity || '',
+  provisioned: async () => !!window.__identity,
+  switch: async (npub) => { window.__identity = npub; return { ok:true }; },
+};
 window.pcPower = { status: async () => ({}) };
 window.pcAudio = { status: async () => ({}) };
 window.pcShell = {};                      // no bundled tor on this build
@@ -162,10 +167,10 @@ DRIVE = r"""(async () => {
   out.afterSkip = title();
   /* No bundled tor on this stub, so that step answers itself and the wizard must land on sign-in.
      A wizard that stops on a switch it cannot wire to anything is a machine that cannot finish. */
-  if (!/sign in/i.test(out.afterSkip))
+  if (!/sign in|welcome/i.test(out.afterSkip))
     bad('order-wrong', 'after skipping the instance the wizard showed "' + out.afterSkip + '"');
 
-  const inb = btn('in');
+  const inb = btn('qr');
   if (!inb) { bad('no-way-past-signin', 'the sign-in step has no button'); return out; }
   inb.click();
   await sleep(300);
@@ -215,6 +220,7 @@ DRIVE = r"""(async () => {
      "usable" and never ran, so a fresh boot landed on a desktop with a sign-in prompt and no
      explanation -- "it booted me to a desktop, but not logged in". */
   try { localStorage.clear(); } catch (_) {}
+  window.__identity = '';
   window.ME = null; window.GUEST = true; window.__net.online = true;
   out.freshMachine = { seized: await window.PCFirstRunUI.boot() };
   await sleep(300);

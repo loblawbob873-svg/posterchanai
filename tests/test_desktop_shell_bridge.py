@@ -147,6 +147,13 @@ class Bridge(unittest.TestCase):
         self.assertIn("window.pcShell.backgroundOwner === false", sync,
                       "each monitor can start another folder-sync writer")
 
+    def test_native_windows_can_be_handed_to_an_adjacent_display(self):
+        self.assertIn("'pc:wm:handoff'", self.main)
+        self.assertIn("handoff:", self.pre)
+        self.assertIn("move container to workspace number", self.main)
+        client = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()
+        self.assertIn("pcWM.handoff(id,handoff)", client)
+
     def test_it_is_absent_rather_than_broken_without_a_compositor(self):
         """A desktop install that is not PosterChanOS has no sway. The page must be able to ask,
         rather than discovering it through a thrown error on every call."""

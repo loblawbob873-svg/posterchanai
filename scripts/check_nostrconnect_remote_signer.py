@@ -82,10 +82,10 @@ PHONE_PASTE = r"""(async (uri) => {
   const sleep = ms => new Promise(r=>setTimeout(r,ms));
   const $ = s => document.querySelector(s);
   const seen = [];
-  window.__PC.switchView('settings');
-  for (let i=0;i<60 && !$('#set-scan-qr'); i++) await sleep(200);
-  if (!$('#set-scan-qr')) return { ok:false, err:'Settings has no "Scan QR code" button' };
-  $('#set-scan-qr').click();
+  window.__PC.switchView('signer');
+  for (let i=0;i<60 && !$('#signer-scan-qr'); i++) await sleep(200);
+  if (!$('#signer-scan-qr')) return { ok:false, err:'Signer has no "Scan sign-in QR" button' };
+  $('#signer-scan-qr').click();
   for (let i=0;i<60 && !$('#qr-paste'); i++) await sleep(200);
   if (!$('#qr-paste')) return { ok:false, err:'the scanner offered no "paste link instead"' };
   $('#qr-paste').click();

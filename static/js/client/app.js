@@ -29130,7 +29130,7 @@
              The wiring below is keyed on these ids and did not move. -->
         <!-- The phone shell (launcher / messages / dialer). Rendered by phoneshell.js, which is
              where the roles and their refusals are understood; this is only the pane it lives in. -->
-        <div class="us-pane" data-pane="phone"><div id="phone-shell"></div></div>
+        ${window.Capacitor ? '<div class="us-pane" data-pane="phone"><div id="phone-shell"></div></div>' : ''}
         <div class="us-pane" data-pane="tor">
           ${_hasNativeTor() ? `<div class="fld" id="us-ntor-row"><svg class="ic fld-ico" aria-hidden="true"><use href="#i-shield"></use></svg>Tor
             <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center;margin:6px 0 0">Route everything through Tor<label class="switch"><input type="checkbox" id="us-ntor-on"><span class="slider"></span></label></label>
