@@ -31,7 +31,10 @@ export ELECTRON_ENABLE_LOGGING=1
 export ELECTRON_OZONE_PLATFORM_HINT=wayland
 # Chromium reserves an enormous virtual address space. A fatal startup assertion must not pipe that
 # mapping into systemd-coredump and leave the desktop process stuck forever in CoreDumping.
-ulimit -c 0
+# Set only the SOFT limit. `ulimit -c 0` also lowered the inherited hard limit in this shell;
+# libvirt's per-user daemon then could not raise QEMU's core limit and every VM failed before exec.
+# Electron still writes no core, while independently launched children retain the right to choose.
+ulimit -S -c 0
 
 # Recovery launches (most notably over SSH) do not inherit Sway's display environment.  There is
 # only one compositor socket in a PosterChanOS session, so recover it instead of letting Electron's
