@@ -268,15 +268,15 @@ gentooRepo() {
 	# one URI now and it works from anywhere, including from this LAN.
 	#
 	# webrsync fetches a SIGNED SNAPSHOT TARBALL over https, which the public mirror already carries
-	# (gentoo.poster.place/snapshots/portage-latest.tar.xz, with its .gpgsig) — the same endpoint the
-	# binhost below already uses, so this needs no new infrastructure. The signature is upstream
-	# Gentoo's, mirrored verbatim, and verifying it is what makes fetching a tree over HTTP from
-	# somebody's server acceptable at all.
+	# (distfiles.gentoo.org/snapshots/portage-latest.tar.xz, with its .gpgsig). Use Gentoo's
+	# official endpoint here: gentoo.poster.place is our content-addressed distfiles cache and does
+	# not contain the releases/, snapshots/, or binpackages/ trees. Pointing Portage at those
+	# nonexistent paths broke both repository sync and binary package discovery with HTTP 404.
 	{
 		echo "[gentoo]"
 		echo "location = /var/db/repos/gentoo"
 		echo "sync-type = webrsync"
-		echo "sync-uri = https://gentoo.poster.place"
+		echo "sync-uri = https://distfiles.gentoo.org"
 		echo "sync-webrsync-verify-signature = true"
 	} >$TARGET/etc/portage/repos.conf/gentoo-mirror.conf
 
@@ -306,11 +306,11 @@ gentooRepo() {
 	echo "[binhost]" >$TARGET/etc/portage/binrepos.conf/gentoobinhost.conf
 	echo "priority = 9999" >>$TARGET/etc/portage/binrepos.conf/gentoobinhost.conf
 	echo "sync-type = webrsync" >>$TARGET/etc/portage/binrepos.conf/gentoobinhost.conf
-	echo "sync-uri = https://gentoo.poster.place/releases/amd64/binpackages/23.0/x86-64/" >>$TARGET/etc/portage/binrepos.conf/gentoobinhost.conf
+	echo "sync-uri = https://distfiles.gentoo.org/releases/amd64/binpackages/23.0/x86-64/" >>$TARGET/etc/portage/binrepos.conf/gentoobinhost.conf
 
 	# https, not http: this is fetched by machines that are not on a trusted network, and a plain
 	# http mirror is one anybody in the path can rewrite.
-	echo "GENTOO_MIRRORS=\"https://gentoo.poster.place\"" >>$TARGET/etc/portage/make.conf
+	echo "GENTOO_MIRRORS=\"https://distfiles.gentoo.org\"" >>$TARGET/etc/portage/make.conf
 }
 
 partitionDetection() {
@@ -3127,8 +3127,8 @@ download-setup() {
 	setDevices
 
 	if [[ $REPO_CHOICE = *local* ]]; then
-		STAGE3_URL="https://gentoo.poster.place/releases/amd64/autobuilds/current-stage3-amd64-systemd/$(
-			curl -q https://gentoo.poster.place/releases/amd64/autobuilds/current-stage3-amd64-systemd/ | grep -i stage3-amd64-systemd | grep -Ev 'CONTENTS|DIGESTS|sha|.asc' | grep ".tar.xz" | cut -d '>' -f2 | cut -d '<' -f1
+		STAGE3_URL="https://distfiles.gentoo.org/releases/amd64/autobuilds/current-stage3-amd64-systemd/$(
+			curl -q https://distfiles.gentoo.org/releases/amd64/autobuilds/current-stage3-amd64-systemd/ | grep -i stage3-amd64-systemd | grep -Ev 'CONTENTS|DIGESTS|sha|.asc' | grep ".tar.xz" | cut -d '>' -f2 | cut -d '<' -f1
 		)"
 	else
 		STAGE3_URL=$(curl https://www.gentoo.org/downloads/ | grep -i stage3-amd64-systemd | head -1 | cut -d '"' -f2-3 | cut -d '"' -f1)
