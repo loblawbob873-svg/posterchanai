@@ -19691,6 +19691,12 @@
      * approval appeared elsewhere). A definitive denial repaints once into the request-access card;
      * the real PUT remains the authority if the probe was inconclusive. */
     const canUp=_blossomUploadOK!==false;
+    /* Probe in the background. The first paint remains immediate (a remote signer may take
+     * seconds), but a definitive denial must repaint the optimistic upload controls into the
+     * access-request card. Without this call the cached capability was never populated at all. */
+    blossomCanUpload().then(ok=>{
+      if(!ok && canUp && VIEW==='blossom' && _filesTab==='public') renderBlossom();
+    }).catch(()=>{});
     const head = canUp
       ? `<div class="drop-zone" id="bl-drop"><input type="file" id="bl-file" multiple ${_filesFolder==='Music'?'accept="audio/*,.mp3,.m4a,.m4b,.aac,.flac,.wav,.ogg,.oga,.opus,.wma,.aif,.aiff,.mka,.ape,.dsf"':''} hidden><input type="file" id="bl-folder" webkitdirectory hidden>
           <div class="dz-inner"><span class="dz-ic">⬆</span> Drop files/folders here, or <button class="btn btn-cyan small" id="bl-pick">choose files</button> <button class="btn btn-neon small" id="bl-pickfolder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>choose folder</button>

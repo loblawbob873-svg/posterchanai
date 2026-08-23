@@ -63,6 +63,9 @@ const toast = m => toasts.push(String(m));
 let ME = { pubkey: 'ab'.repeat(32) };
 let signOk = true, fetchStatus = 200, signs = 0, bodies = [], confirmAnswer = true, asked = 0;
 const sign = async () => { signs++; if (!signOk) throw new Error('signer request timed out'); return {id:'e'}; };
+// Production routes every proof through this helper. Keep the extracted method's real dependency
+// instead of accidentally turning every save into a caught ReferenceError.
+const selfProof = async () => sign(27235, 'Files index', []);
 // Counts, because "how many times were you asked" is the whole question in the storm case.
 const uiConfirm = async () => { asked++; return confirmAnswer; };
 const fetch = async (u, o) => {
