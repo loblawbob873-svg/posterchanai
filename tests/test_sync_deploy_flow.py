@@ -347,6 +347,8 @@ def test_the_overlay_ebuild_tracks_the_desktop_build():
     target, reporting success. The version is read from the same update feed the desktop app uses."""
     pub = open(os.path.join(REPO, "scripts", "publish_overlay.sh"), encoding="utf-8").read()
     assert "latest-linux.yml" in pub, "the ebuild version is never bumped — updates can never be seen"
+    assert "|| true; }" in pub, (
+        "an unavailable desktop release manifest aborts the entire overlay publish under pipefail")
     assert "posterchan-desktop-${LIVE}.ebuild" in pub
     assert "could not read the desktop version" in pub, (
         "a failed version read is silent; it would publish a stale version number as though current")

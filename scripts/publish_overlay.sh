@@ -27,9 +27,9 @@ URL="https://gentoo.poster.place/posterchan-overlay.git"
 # the update feed the desktop app itself uses, so there is one source of truth for "what is current".
 # The website route is intentionally not a directory listing and may return 404. The rolling
 # GitHub release is the artifact source used below, so read its Linux update manifest directly.
-LIVE=$(curl -sSfL --max-time 20 \
+LIVE=$({ curl -sSfL --max-time 20 \
        https://github.com/loblawbob873-svg/posterchanai/releases/download/desktop-latest/latest-linux.yml \
-       2>/dev/null | sed -n 's/^version: *//p' | head -1)
+       2>/dev/null || true; } | sed -n 's/^version: *//p' | head -1)
 if [ -n "${LIVE:-}" ]; then
     EB_DIR="$SRC/app-misc/posterchan-desktop"
     CUR=$(ls "$EB_DIR"/posterchan-desktop-*.ebuild 2>/dev/null | head -1)
