@@ -23,7 +23,10 @@
   function landView(v){
     const go = () => {
       try{ if(window.PCOS && PCOS.mobileLanding) PCOS.mobileLanding(); }catch(_){}
-      if(v === '__music'){
+      if(v.indexOf('post:') === 0){
+        const id=v.slice(5);
+        try{ if(/^[0-9a-f]{64}$/i.test(id)) PC.openThread(id); }catch(_){}
+      } else if(v === '__music'){
         try{ if(typeof PC.openMusic === 'function') PC.openMusic(); }catch(_){}
       } else try{ PC.switchView(v); }catch(_){}
     };

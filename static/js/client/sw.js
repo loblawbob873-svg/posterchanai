@@ -617,9 +617,13 @@ self.addEventListener('notificationclick', e => {
   e.notification.close();
   // The app runs at '/', the web PWA at '/client'. Focus the existing window (the app has just one), else
   // open the right home URL for the context.
-  const home = IS_APP ? '/' : '/client';
+  const d=e.notification.data||{}, base=IS_APP ? '/' : '/client';
+  const route=d.eid&&/^[0-9a-f]{64}$/i.test(d.eid)?('?event='+encodeURIComponent(d.eid))
+    :('?view='+encodeURIComponent(d.view||(d.type==='dm'?'messages':d.type==='mail'?'mail':d.type==='call'?'calls':'notifications')));
+  const home=base+route;
   e.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then(cs => {
-    for (const c of cs) { if ((IS_APP || c.url.includes('/client')) && 'focus' in c) return c.focus(); }
+    for (const c of cs) if ((IS_APP || c.url.includes('/client')) && 'focus' in c)
+      return ('navigate' in c ? c.navigate(home) : Promise.resolve(c)).then(x=>(x||c).focus());
     return clients.openWindow(home);
   }));
 });

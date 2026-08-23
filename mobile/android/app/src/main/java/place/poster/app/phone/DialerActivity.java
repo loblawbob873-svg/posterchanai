@@ -489,6 +489,20 @@ public class DialerActivity extends PcActivity {
             call.setOnClickListener(new View.OnClickListener() {
                 @Override public void onClick(View x) { placeNumber(r.number); }
             });
+            /* A contact row means "open this person"; the phone glyph is the explicit call action.
+             * Previously the large row did nothing and Open contact was buried in a menu that was
+             * not wired here either, so the Contacts tab looked selectable but was inert. */
+            card.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View x) {
+                    if (r.contactId >= 0) {
+                        try { startActivity(ContactList.view(r.contactId)); }
+                        catch (Throwable t) { say(getString(R.string.home_cannot_open)); }
+                    } else rowMenu(r);
+                }
+            });
+            card.setOnLongClickListener(new View.OnLongClickListener() {
+                @Override public boolean onLongClick(View x) { rowMenu(r); return true; }
+            });
             return v;
         }
     }

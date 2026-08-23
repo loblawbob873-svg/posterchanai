@@ -44,17 +44,19 @@ public class PushEventService extends PushService {
     @Override
     public void onMessage(@NonNull PushMessage message, @NonNull String instance) {
         Context ctx = this;
-        String title = "PosterChan", body = "New activity", type = "";
+        String title = "PosterChan", body = "New activity", type = "", route = "notifications";
         try {
             JSONObject j = new JSONObject(new String(message.getContent(), "UTF-8"));
             title = j.optString("title", title);
             body = j.optString("body", body);
             type = j.optString("type", "");
+            String eid = j.optString("eid", "").trim();
+            route = !eid.isEmpty() ? "post:" + eid : j.optString("view", route).trim();
         } catch (Throwable ignored) {
             // A payload we cannot parse is still a signal that SOMETHING happened; showing the
             // default beats swallowing it, which would look exactly like a delivery failure.
         }
-        show(ctx, title, body, type, null);
+        show(ctx, title, body, type, null, route);
     }
 
     /**
@@ -68,14 +70,22 @@ public class PushEventService extends PushService {
      * backgrounded APK showed nothing for a DM that had already arrived on its open relay socket.
      */
     public static void show(Context ctx, String title, String body, String type, String tag) {
+        show(ctx, title, body, type, tag, "notifications");
+    }
+
+    public static void show(Context ctx, String title, String body, String type, String tag, String route) {
         boolean isCall = "call".equals(type);
         ensureChannels(ctx);
 
         Intent open = new Intent(ctx, MainActivity.class);
         open.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        open.putExtra(place.poster.app.home.HomeActivity.EXTRA_VIEW,
+                route == null || route.trim().isEmpty() ? "notifications" : route.trim());
+        open.putExtra(place.poster.app.home.HomeActivity.EXTRA_VIEW_AT, System.currentTimeMillis());
         int flags = PendingIntent.FLAG_UPDATE_CURRENT
                 | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0);
-        PendingIntent pi = PendingIntent.getActivity(ctx, isCall ? 1 : 2, open, flags);
+        PendingIntent pi = PendingIntent.getActivity(ctx,
+                isCall ? 1 : 2000 + Math.abs(String.valueOf(route).hashCode() % 100000), open, flags);
 
         Notification.Builder b = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                 ? new Notification.Builder(ctx, isCall ? CH_CALLS : CH_MSGS)

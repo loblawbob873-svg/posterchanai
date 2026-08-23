@@ -227,8 +227,9 @@ public class PushPlugin extends Plugin {
         String body = call.getString("body", "");
         String type = call.getString("type", "");
         String tag = call.getString("tag", null);
+        String route = call.getString("route", "notifications");
         try {
-            PushEventService.show(getContext(), title, body, type, tag);
+            PushEventService.show(getContext(), title, body, type, tag, route);
             call.resolve();
         } catch (Throwable t) {
             call.reject("could not show a notification: " + t.getMessage());

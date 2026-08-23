@@ -3240,7 +3240,7 @@
     // letting the normal default view render first means a failed/empty/guest drain never leaves a blank app.
     if(sp.has('shared')){ try{ history.replaceState({},'','/client'); }catch(_){} }
     if(![...sp.keys()].filter(k=>k!=='shared').length) return false;
-    const view = sp.get('view'), wantCompose = sp.has('compose');
+    const view = sp.get('view'), event = sp.get('event'), wantCompose = sp.has('compose');
     const shared = ['title','text','url'].map(k=>(sp.get(k)||'').trim()).filter(Boolean);
     const _clean = ()=>{ try{ const base=(location.pathname==='/client'||location.pathname.startsWith('/client/'))?'/client':'/'; history.replaceState({},'',base); }catch(_){} };
     // Share target / compose shortcut → open the composer pre-filled (de-duped: a shared URL is
@@ -3252,6 +3252,7 @@
       compose({ text: lines.join('\n\n') });
       return true;
     }
+    if(event && /^[0-9a-f]{64}$/i.test(event)){ _clean(); openThread(event); return true; }
     const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','markets','streams','communities','calls','settings','signer','translate','news','websearch','terminal','calendar','contacts','texts','notes','music']);
     if(view && VALID.has(view)){ _clean(); switchView(view); return true; }
     return false;
@@ -22158,8 +22159,10 @@
       : ev.kind===1617?'🩹 sent a patch to your repo'
       : isReply(ev)?'replied to you' : 'mentioned you';
     notifToast(`🔔 <b>${emojiName(fromPk, who)}</b> ${what}`, p.picture);   // render the sender's custom :emoji: in the toast
+    const target=_notifCtxId(ev)||ev.id;
     osNotify('PosterChan', `${who} ${what}`, { icon:p.picture||LOGO,
-                                               onClick:()=>switchView('notifications') });
+                                               route:target?'post:'+target:'notifications',
+                                               onClick:()=>target?openThread(target):switchView('notifications') });
   }
   // `html` is trusted markup (callers build names via emojiName + enc their content) — do NOT re-escape it.
   function notifToast(html, pic, onClick){
@@ -23220,12 +23223,12 @@
     // alerts) — "you sent you a message" would be both confusing and wrong. Say what it is.
     if(selfNote){
       notifToast('🔔 <b>New notification</b> — saved to your notes to self', LOGO);
-      osNotify('🔔 New notification', 'Saved to your notes to self', { tag:'pc-dm' });
+      osNotify('🔔 New notification', 'Saved to your notes to self', { tag:'pc-dm', route:'messages' });
       return;
     }
     const p=fromPk?profOf(fromPk):{}; const who=p.name||p.display_name||'someone';
     notifToast(`✉ <b>${fromPk?emojiName(fromPk,who):enc(who)}</b> sent you a message`, p.picture);   // in-app toast (no OS permission needed)
-    osNotify('✉ New message', `${who} sent you a DM`, { tag:'pc-dm', icon:p.picture||LOGO,
+    osNotify('✉ New message', `${who} sent you a DM`, { tag:'pc-dm', icon:p.picture||LOGO, route:'messages',
                                                         onClick:()=>switchView('messages') });
   }
   // Index DMs WITHOUT decrypting (decryption is CPU-heavy ECDH+AES in the worker; decrypting all
@@ -24421,7 +24424,7 @@
           // …and an OS notification, like a DM gets: mail that arrives while the app is behind
           // another window is exactly the case a toast inside the app cannot reach.
           if(VIEW!=='mail') osNotify('📧 New email', total+' new message'+(total>1?'s':''),
-                                     { tag:'pc-mail', icon:LOGO, onClick:()=>switchView('mail') }); }
+                                     { tag:'pc-mail', icon:LOGO, route:'mail', onClick:()=>switchView('mail') }); }
         if(this.root && this.acct) this.loadList();
       }catch(_){ if(manual) toast('mail sync failed'); }
       this._syncing=false; const rb2=$('#mail-refresh',this.root); if(rb2){ rb2.textContent='🔄'; rb2.disabled=false; }
@@ -24484,7 +24487,7 @@
           if(VIEW==='mail'){ this.unread=0; try{ this.loadList(); }catch(_){} }
           bumpMail();
           if(VIEW!=='mail') osNotify('📧 New email', total+' new message'+(total>1?'s':''),
-                                     { tag:'pc-mail', icon:LOGO, onClick:()=>switchView('mail') }); }
+                                     { tag:'pc-mail', icon:LOGO, route:'mail', onClick:()=>switchView('mail') }); }
       }catch(_){}
     },
   };
@@ -27456,7 +27459,8 @@
     const P = _capPlugin('PosterChanPush', 'notify');   // the same plugin _pushPlugin() resolves
     if(P){
       try{ const r = P.notify({ title:String(title||'PosterChan'), body:clean,
-                                type:(opts&&opts.type)||'', tag:(opts&&opts.tag)||'' });
+                                type:(opts&&opts.type)||'', tag:(opts&&opts.tag)||'',
+                                route:(opts&&opts.route)||'notifications' });
            if(r && r.catch) r.catch(()=>{}); }catch(_){}
       return null;      // no handle to give back: the tap is wired natively, to MainActivity
     }
