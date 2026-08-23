@@ -555,6 +555,11 @@ class AnUnattendedBuildIsStillAScrubbedOne(unittest.TestCase):
     def test_there_is_a_way_in_that_is_not_the_menu(self):
         self.assertIn('elif [ "$1" = "livecd" ]; then', self.src)
 
+    def test_a_headless_build_returns_after_writing_the_iso(self):
+        tail = self.src.split("It is a hybrid image:")[1]
+        self.assertIn('[[ -t 0 ]] && read -p "Press enter key to Continue"', tail,
+                      "a successful unattended build waits forever for a keyboard it has not got")
+
 
 class InstallingTheLiveImageIsItsOwnJob(unittest.TestCase):
     """A LIVE ISO IS NOT A RUNNING INSTALLED SYSTEM, and `liveOSrestore` assumes it is.

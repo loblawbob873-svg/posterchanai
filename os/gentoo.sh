@@ -3137,7 +3137,9 @@ GRUB
 	echo
 	echo -e "${COLOR_YELLOW}It is a hybrid image: the same file boots on BIOS and on UEFI.${COLOR_RESET}"
 	echo
-	read -p "Press enter key to Continue"
+	# A headless `gentoo.sh livecd` has no keyboard. The image is already complete here, so an
+	# unconditional read leaves the ssh job and its caller hanging forever after a successful build.
+	[[ -t 0 ]] && read -p "Press enter key to Continue"
 }
 
 download-setup() {
