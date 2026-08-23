@@ -56,6 +56,8 @@ def test_shell_restart_is_serialized_and_targets_only_the_shell_process():
     assert "could not find Sway's Wayland display socket" in start
     assert "ulimit -S -c 0" in start
     assert "ulimit -c 0\n" not in start
+    assert 'max_core = 0' in start
+    assert '$HOME/.config/libvirt/qemu.conf' in start
 
 
 def test_upgrade_removes_optioned_printscreen_bindings_before_adding_one_copy():

@@ -29,6 +29,17 @@ export ELECTRON_ENABLE_LOGGING=1
 # exported a usable DISPLAY on first boot; Chromium aborts with SIGTRAP before mapping any window.
 # Native Wayland is already the compositor contract here and avoids that startup race entirely.
 export ELECTRON_OZONE_PLATFORM_HINT=wayland
+# Libvirt defaults QEMU's core limit to "unlimited". A desktop upgraded from the old launcher may
+# already have a hard limit of zero; no descendant can raise it again, so virtqemud aborts before
+# exec with "cannot limit core file size ... Operation not permitted". Requesting zero explicitly
+# is compatible with both old and new sessions and agrees with the desktop's no-coredump policy.
+mkdir -p "$HOME/.config/libvirt"
+if ! grep -qE '^[[:space:]]*max_core[[:space:]]*=' "$HOME/.config/libvirt/qemu.conf" 2>/dev/null; then
+  printf '\n# PosterChanOS: keep VM launch valid even when the session inherited a zero hard limit.\nmax_core = 0\n' \
+    >>"$HOME/.config/libvirt/qemu.conf"
+fi
+chmod 0700 "$HOME/.config/libvirt" 2>/dev/null || true
+chmod 0600 "$HOME/.config/libvirt/qemu.conf" 2>/dev/null || true
 # Chromium reserves an enormous virtual address space. A fatal startup assertion must not pipe that
 # mapping into systemd-coredump and leave the desktop process stuck forever in CoreDumping.
 # Set only the SOFT limit. `ulimit -c 0` also lowered the inherited hard limit in this shell;
