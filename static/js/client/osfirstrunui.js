@@ -79,16 +79,16 @@
     else{
       /* The getty is ordered after NetworkManager on current PosterChanOS images, but older images
        * and a manually-started desktop can still race D-Bus activation. A service that is starting
-       * is not missing hardware. Give it a short bounded readiness window before showing the fatal
-       * network screen. */
-      for(let attempt = 0; attempt < 12; attempt++){
+       * is not missing hardware. Give slow USB boots a bounded readiness window before showing the
+       * fatal network screen; three seconds was shorter than startup on real live media. */
+      for(let attempt = 0; attempt < 60; attempt++){
         try{
           const s = await net.status();
           w.online = !!(s && s.online);
           break;
         }catch(_){
-          if(attempt === 11) w.netReadable = false;
-          else await new Promise(resolve => setTimeout(resolve, 250));
+          if(attempt === 59) w.netReadable = false;
+          else await new Promise(resolve => setTimeout(resolve, 500));
         }
       }
     }
@@ -199,8 +199,8 @@
   async function stepNetwork(blocked){
     const net = NET();
     if(blocked || !net){
-      shell('network', 'This computer cannot see its network hardware',
-            'NetworkManager did not answer. Nothing after this can work, so the setup stops here '
+      shell('network', 'The network service did not start',
+            'NetworkManager did not answer. Nothing after this can work, so setup stops here '
             + 'rather than reporting four more failures with the same cause.',
             '', `<button class="btn btn-ghost" data-fr="retry">Try again</button>`);
       _el.querySelector('[data-fr="retry"]').onclick = () => run();

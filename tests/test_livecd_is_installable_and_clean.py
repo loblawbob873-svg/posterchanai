@@ -358,17 +358,29 @@ class TheLiveSessionActuallyStarts(unittest.TestCase):
 
     def test_a_clean_disc_forgets_the_build_machines_admin_claim(self):
         """The OS-level claim suppresses Welcome even after browser profiles and users are gone."""
-        self.assertIn("EXCLUDES+=(var/lib/posterchanos etc/sudoers.d/posterchan-admin)", self.fn)
+        self.assertIn("EXCLUDES+=(var/lib/posterchanos etc/sudoers.d/posterchan-admin", self.fn)
         self.assertIn("still carries this machine's administrator claim", self.fn)
+
+    def test_clean_disc_drops_host_snapshot_jobs(self):
+        """A host-user service cannot be copied onto a disc whose host user was intentionally removed."""
+        self.assertIn("etc/systemd/system/boot-snapshot.service", self.fn)
+        self.assertIn("etc/systemd/system/boot-snapshot.timer", self.fn)
+
+    def test_live_desktop_repairs_network_manager_before_welcome(self):
+        i = self.fn.index('cat >"$WORK/live.bash_profile"')
+        profile = self.fn[i:i + 900]
+        self.assertIn("systemctl is-active --quiet NetworkManager.service", profile)
+        self.assertIn("sudo -n systemctl start NetworkManager.service", profile)
+        self.assertLess(profile.index("systemctl start NetworkManager.service"), profile.index("exec sway"))
 
     def test_it_starts_the_compositor(self):
         i = self.fn.index('cat >"$WORK/live.bash_profile"')
-        self.assertIn("exec sway", self.fn[i:i + 400])
+        self.assertIn("exec sway", self.fn[i:i + 900])
 
     def test_it_only_does_so_on_the_first_tty(self):
         """A second console must still be a console."""
         i = self.fn.index('cat >"$WORK/live.bash_profile"')
-        self.assertIn("XDG_VTNR", self.fn[i:i + 400])
+        self.assertIn("XDG_VTNR", self.fn[i:i + 900])
 
     def test_it_matches_what_a_real_install_gets(self):
         """The live session and an installed one must not drift — both exec sway from tty1 with the

@@ -196,8 +196,8 @@ class FirstRun(unittest.TestCase):
                   encoding="utf-8").read()
         start = ui.index("async function readWorld()")
         body = ui[start:ui.index("\n  }", start)]
-        self.assertIn("attempt < 12", body)
-        self.assertIn("setTimeout(resolve, 250)", body)
+        self.assertIn("attempt < 60", body)
+        self.assertIn("setTimeout(resolve, 500)", body)
 
 
 if __name__ == "__main__":

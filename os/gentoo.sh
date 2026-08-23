@@ -2663,7 +2663,11 @@ liveCD() {
 		# root-owned marker makes pc:os:provisioned answer true even though every person and browser
 		# profile was scrubbed, so the Welcome flow deliberately stays hidden. It also assigns the
 		# first real login's administrator rights to an npub that is not present on the disc.
-		EXCLUDES+=(var/lib/posterchanos etc/sudoers.d/posterchan-admin)
+		EXCLUDES+=(var/lib/posterchanos etc/sudoers.d/posterchan-admin
+			etc/systemd/system/boot-snapshot.service
+			etc/systemd/system/boot-snapshot.timer
+			etc/systemd/system/timers.target.wants/boot-snapshot.timer
+			etc/systemd/system/multi-user.target.wants/boot-snapshot.service)
 	fi
 	local f
 	for f in $SWAPFILES; do
@@ -3016,6 +3020,12 @@ FSTAB
 	cat >"$WORK/live.bash_profile" <<'PROFILE'
 [[ -f ~/.bashrc ]] && . ~/.bashrc
 if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
+	# Welcome is the live machine's network setup UI, so its API must exist before Sway starts.
+	# Enabled units remain the primary boot path; this also repairs stale enablement inherited from
+	# a build host instead of presenting it to the user as missing network hardware.
+	if [ "$(id -un)" = live ] && ! systemctl is-active --quiet NetworkManager.service; then
+		sudo -n systemctl start NetworkManager.service
+	fi
 	export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=sway MOZ_ENABLE_WAYLAND=1
 	exec sway
 fi
