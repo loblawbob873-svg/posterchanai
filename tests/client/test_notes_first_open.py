@@ -11,6 +11,7 @@ class CoreAppsOpenReliably(unittest.TestCase):
         cls.app = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
         cls.notes = (ROOT / "static/js/client/notes.js").read_text(encoding="utf-8")
         cls.term = (ROOT / "static/js/client/term.js").read_text(encoding="utf-8")
+        cls.sms = (ROOT / "static/js/client/sms.js").read_text(encoding="utf-8")
 
     def test_notes_route_reloads_a_missing_module_and_renders_it(self):
         route = self.app[self.app.index("if (VIEW==='notes'){"):]
@@ -31,6 +32,24 @@ class CoreAppsOpenReliably(unittest.TestCase):
         guard = "frame && !frame.classList.contains('focused')"
         self.assertIn(guard, fit)
         self.assertLess(fit.index(guard), fit.index("fit.fit()"))
+
+    def test_every_module_backed_app_heals_its_first_open(self):
+        for view, file_name, global_name, method in (
+            ('news','news.js','PCNews','render'), ('websearch','websearch.js','PCWebSearch','render'),
+            ('terminal','term.js','PCTerm','render'), ('calendar','calendar.js','PCCalendar','render'),
+            ('contacts','contacts.js','PCContacts','render'), ('markets','markets.js','PCMarkets','render'),
+            ('meme','meme.js','PCMeme','render'), ('stats','stats.js','PCStats','render'),
+            ('budget','budget.js','PCBudget','render'), ('sync','sync.js','PCSync','paint'),
+            ('vault','vault.js','PCVault','render'), ('xdc','webxdc.js','PCWebxdc','gallery')):
+            call = "renderModuleView(%r,%r,%r,%r)" % (view, file_name, global_name, method)
+            self.assertIn(call, self.app, '%s can remain on a spinner after a cold first click' % view)
+
+    def test_texts_paints_newest_messages_before_draining_the_archive(self):
+        load = self.sms[self.sms.index("async function load(force)"):]
+        load = load[:load.index("let _refreshing")]
+        self.assertIn("cached.splice(0, 32)", load)
+        self.assertLess(load.index("S.ready = true"), load.index("while(cached.length)"))
+        self.assertIn("cached.splice(0, 128)", load)
 
 
 if __name__ == "__main__":

@@ -565,6 +565,7 @@
         _state(frame.resume ? 'reattaching…' : 'starting a shell…');
         try{
           let b = null;
+          let fresh = false;
           if(id){
             b = await T.backlog(id, Number(cursor) || 0);
             /* A remembered id can name a shell that died while the app was shut. Saying so is the
@@ -576,12 +577,18 @@
             const s0 = await T.start({ cols: (term && term.cols) || 80, rows: (term && term.rows) || 24 });
             id = String(s0 && s0.id || '');
             if(!id) throw new Error('the shell would not start');
-            b = null;
+            fresh = true;
+            /* START ALREADY PRODUCED OUTPUT. localterm creates Posterfetch synchronously and a fast
+             * login shell can print its prompt before this renderer has subscribed. Setting b=null
+             * discarded both, leaving a real new PTY as a blank screen that looked exactly like the
+             * old tab was still active. Read from cursor zero before attaching; anything produced
+             * after this read is delivered by the subscription installed immediately below. */
+            b = await T.backlog(id, 0);
           }
           if(gone) return;
           stop = T.onData((ev) => { if(String(ev.id) === id) _frame(ev); });
           await T.attach(id);
-          _frame({ t: 'ready', sid: localSid(id), host: 'local', resumed: !!b });
+          _frame({ t: 'ready', sid: localSid(id), host: 'local', resumed: !fresh });
           if(b){
             /* Redraw what was missed, and say so when the gap is bigger than what is still kept —
              * a fragment presented as the whole history is how scrollback loses its middle. */

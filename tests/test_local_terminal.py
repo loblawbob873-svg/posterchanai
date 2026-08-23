@@ -174,6 +174,15 @@ class LocalTerminal(unittest.TestCase):
         ready = src[src.index("if(m.t === 'ready')"):src.index("if(m.t === 'gone')")]
         self.assertIn("_sessions();", ready)
 
+    def test_a_fresh_local_tab_replays_bytes_produced_before_attach(self):
+        """Posterfetch and a fast prompt exist before the renderer subscribes; dropping that backlog
+        makes a distinct new PTY look like a blank copy of the active tab."""
+        src = open(CLIENT, encoding="utf-8").read()
+        local = src[src.index("function _openLocal"):src.index("function _frame")]
+        started = local[local.index("await T.start"):]
+        self.assertIn("await T.backlog(id, 0)", started)
+        self.assertNotIn("b = null", started.split("if(gone)")[0])
+
     def test_an_empty_terminal_starts_its_first_session(self):
         """Configured SSH hosts must not turn PosterChanOS Terminal into an inert host picker."""
         src = open(CLIENT, encoding="utf-8").read()

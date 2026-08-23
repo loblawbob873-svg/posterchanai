@@ -6268,6 +6268,26 @@
      * returns and lands the window where the user left it. */
     else if(_TL_SUB_VIEWS.includes(v) && !subs[v]) renderView(false);
   }
+  function renderModuleView(view, file, global, method){
+    if(VIEW !== view) return false;
+    const run = mod => {
+      if(VIEW !== view || !mod || typeof mod[method] !== 'function') return;
+      try{ mod[method](); }catch(e){
+        const f=$('#feed'); if(f) f.innerHTML='<div class="empty">Could not open this app: '+enc(String((e&&e.message)||e))+'</div>';
+      }
+    };
+    if(window[global]) run(window[global]);
+    else {
+      const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>';
+      /* Script tags are ordered but not instantaneous on a cold APK, a slow disk, or after a
+       * renderer reload. A route that merely checks the global once strands the first click on its
+       * spinner; closing and reopening works only because the script finished in between. Every
+       * module-backed app gets the same self-healing load and view guard. */
+      _withModule(file, global, run);
+    }
+    return true;
+  }
+
   function renderView(reset){
     cleanupInlineStream();   // leaving a view tears down the inline stream player (unless popped out)
     const feed = $('#feed');
@@ -6370,15 +6390,15 @@
     if (VIEW==='chat') return renderChatrooms();
     if (VIEW==='torrents') return renderTorrents();
     if (VIEW==='repos') return renderRepos();
-    if (VIEW==='news'){ if(window.PCNews) return window.PCNews.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
-    if (VIEW==='websearch'){ if(window.PCWebSearch) return window.PCWebSearch.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
-    if (VIEW==='terminal'){ if(window.PCTerm) return window.PCTerm.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
-    if (VIEW==='calendar'){ if(window.PCCalendar) return window.PCCalendar.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
-    if (VIEW==='contacts'){ if(window.PCContacts) return window.PCContacts.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
-    if (VIEW==='markets'){ if(window.PCMarkets) return window.PCMarkets.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
-    if (VIEW==='meme'){ if(window.PCMeme) return window.PCMeme.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
-    if (VIEW==='stats'){ if(window.PCStats) return window.PCStats.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
-    if (VIEW==='budget'){ if(window.PCBudget) return window.PCBudget.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
+    if(renderModuleView('news','news.js','PCNews','render')) return;
+    if(renderModuleView('websearch','websearch.js','PCWebSearch','render')) return;
+    if(renderModuleView('terminal','term.js','PCTerm','render')) return;
+    if(renderModuleView('calendar','calendar.js','PCCalendar','render')) return;
+    if(renderModuleView('contacts','contacts.js','PCContacts','render')) return;
+    if(renderModuleView('markets','markets.js','PCMarkets','render')) return;
+    if(renderModuleView('meme','meme.js','PCMeme','render')) return;
+    if(renderModuleView('stats','stats.js','PCStats','render')) return;
+    if(renderModuleView('budget','budget.js','PCBudget','render')) return;
     if (VIEW==='notes'){
       if(window.PCNotes) return window.PCNotes.render();
       const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>';
@@ -6394,9 +6414,9 @@
        missing. Same reason as _NAV_REQUIRED, one layer down. */
     if (VIEW==='texts'){ const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>';
                          _withSms(m => { if(VIEW==='texts') m.render(); }); return; }
-    if (VIEW==='sync'){ if(window.PCSync) return window.PCSync.paint(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
-    if (VIEW==='vault'){ if(window.PCVault) return window.PCVault.render(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
-    if (VIEW==='xdc'){ if(window.PCWebxdc && PCWebxdc.gallery) return PCWebxdc.gallery(); const f=$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>'; return; }
+    if(renderModuleView('sync','sync.js','PCSync','paint')) return;
+    if(renderModuleView('vault','vault.js','PCVault','render')) return;
+    if(renderModuleView('xdc','webxdc.js','PCWebxdc','gallery')) return;
     if (window.PCGames && window.PCGames[VIEW]) return window.PCGames[VIEW]();   // game modules (chess.js/ttt.js/hangman.js)
     if (VIEW==='blossom') return renderBlossom();
     if (VIEW==='music') return renderMusicApp();

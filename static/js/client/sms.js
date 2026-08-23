@@ -350,6 +350,7 @@
     S.threads = Array.from(by.values()).sort((a,b) => (b.date||0) - (a.date||0));
   }
 
+  let _cacheDrain = null;
   async function load(force){
     if(S.ready && !force) return;
     S.loading = true;
@@ -357,10 +358,27 @@
     // entirely the user's own already-synced data.
     let cached = [];
     try{ cached = Store().query([FILTER()]) || []; }catch(_){ cached = []; }
-    await absorb(cached);
+    /* FIRST PAINT IS A PAGE, NOT THE WHOLE ARCHIVE. FILTER permits 20,000 addressable documents and
+     * every one is NIP-44 encrypted. Awaiting them serially before drawing made Texts an endless
+     * spinner—especially with a signer, where decrypt is not a cheap local function. Newest-first is
+     * already absorb's conflict rule, so paint the newest page and drain history in bounded batches.
+     * Older events cannot replace a newer `_at`, even when this continuation overlaps a relay read. */
+    cached.sort((a,b) => (b.created_at||0) - (a.created_at||0));
+    const first = cached.splice(0, 32);
+    await absorb(first);
     S.ready = true;
     S.loading = false;
     paint();
+    if(cached.length && !_cacheDrain){
+      _cacheDrain = (async () => {
+        while(cached.length){
+          await absorb(cached.splice(0, 128));
+          if(PC && PC.VIEW === 'texts') paint();
+          /* Give navigation, typing and the compositor a turn between decrypt batches. */
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
+      })().catch(() => {}).finally(() => { _cacheDrain = null; });
+    }
     refresh();
   }
 
