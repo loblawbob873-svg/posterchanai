@@ -62,7 +62,10 @@ fi
 # backend. Forcing this build through X11 produced a healthy Sway session with no mapped shell — the
 # repeated black-screen ISO. The placement loop below handles either app_id or late WM_CLASS, so it
 # does not need to dictate the rendering backend.
-/usr/local/bin/posterchan --shell &
+# FD 9 is the launcher mutex, not part of the desktop environment. Close it in Electron: otherwise
+# every app Electron launches (Firefox, Steam, terminals) inherits the lock and a shell restart can
+# never acquire it again until all of those unrelated apps exit.
+/usr/local/bin/posterchan --shell 9>&- &
 shell_pid=$!
 retries=0
 
@@ -96,7 +99,7 @@ while [ $i -lt 120 ]; do
     fi
     retries=$((retries + 1))
     sleep 1
-    /usr/local/bin/posterchan --shell &
+    /usr/local/bin/posterchan --shell 9>&- &
     shell_pid=$!
   fi
   i=$((i + 1))
