@@ -97,6 +97,13 @@ class AStashedSurfaceIsNotDrawnAsABlackWindow(unittest.TestCase):
         self.assertIn("it.w.el.classList.remove('native-stashed')", raw)
         self.assertIn(".osw.native-stashed{visibility:hidden", css)
 
+    def test_application_fullscreen_is_not_cancelled_by_frame_placement(self):
+        raw = OS_JS.read_text()
+        sync = body(raw, "async function nsync")
+        self.assertIn("if(it.w.nativeFullscreen)", sync)
+        self.assertIn("pcWM.fullscreen(it.native,true)", sync)
+        self.assertIn("w.nativeFullscreen = !!nw.fullscreen", raw)
+
 
 if __name__ == "__main__":
     unittest.main()

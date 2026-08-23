@@ -1137,6 +1137,7 @@ ipcMain.handle('pc:wm:handoff', async (e, id, direction) => {
   const record=adjacentShellSurface(e, String(direction||''));
   if(!record) return false;
   const target=record.assignment;
+  await wm().finishMove(Number(id));
   await wm().command('[con_id='+Number(id)+'] move container to workspace number '+target.workspace);
   _nativeOwners.set(Number(id), String(target.workspace));
   await wm().focus(Number(id));
@@ -1153,10 +1154,19 @@ ipcMain.handle('pc:wm:handoff-frame', async (e, payload, direction) => {
   const p=payload && typeof payload==='object' ? payload : {};
   record.browser.webContents.send('pc:wm:handoff-frame', {
     view:String(p.view||''), title:String(p.title||''), icon:String(p.icon||''),
-    width:Number(p.width)||0, height:Number(p.height)||0, direction:String(direction||'')
+    width:Number(p.width)||0, height:Number(p.height)||0, direction:String(direction||''),
+    terminalSid:String(p.terminalSid||'')
   });
   await wm().focus(Number(record.conId));
   return {output:record.assignment.output,workspace:record.assignment.workspace};
+});
+ipcMain.handle('pc:wm:preview-frame', (e, payload, direction) => {
+  fsGuard(e);
+  const record=adjacentShellSurface(e, String(direction||''));
+  if(!record) return false;
+  const p=payload && typeof payload==='object' ? payload : null;
+  record.browser.webContents.send('pc:wm:preview-frame', p);
+  return true;
 });
 ipcMain.handle('pc:wm:hide', (e, id) => { fsGuard(e); return wm().hide(Number(id)); });
 ipcMain.handle('pc:wm:show', (e, id) => { fsGuard(e); return wm().show(Number(id)); });
@@ -1200,6 +1210,15 @@ ipcMain.handle('pc:wm:launch', async (e, argv, opts) => {
   if (/^(telegram-desktop|telegram-desktop-bin)$/i.test(path.basename(list[0]))) {
     launchOpts = Object.assign({}, launchOpts, { env: Object.assign({}, launchOpts.env || {}, {
       QT_QPA_PLATFORM: 'xcb', DISPLAY: process.env.DISPLAY || ':0',
+    }) });
+  }
+  /* Firefox must be a native Wayland client. An inherited/stale GDK_BACKEND=x11 put it through
+   * XWayland with a 3822px client geometry inside a 1278px compositor box; pointer confinement then
+   * hit an invisible wall partway across the monitor—the same symptom games exposed. */
+  if (/^(firefox|firefox-bin)$/i.test(path.basename(list[0]))) {
+    launchOpts = Object.assign({}, launchOpts, { env: Object.assign({}, launchOpts.env || {}, {
+      GDK_BACKEND: 'wayland', MOZ_ENABLE_WAYLAND: '1',
+      WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY || 'wayland-1',
     }) });
   }
   const started = wm().launch(list, launchOpts);

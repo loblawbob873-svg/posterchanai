@@ -84,7 +84,7 @@ class Bridge(unittest.TestCase):
 
     def test_a_launch_that_never_appears_is_not_reported_as_launched(self):
         i = self.main.index("'pc:wm:launch'")
-        body = self.main[i:i + 3200]
+        body = self.main[i:i + 4600]
         self.assertIn("waitForWindow", body)
 
     def test_telegram_uses_the_working_xwayland_renderer_only_for_telegram(self):
@@ -94,6 +94,12 @@ class Bridge(unittest.TestCase):
         self.assertIn("QT_QPA_PLATFORM: 'xcb'", body)
         self.assertIn("DISPLAY: process.env.DISPLAY || ':0'", body)
         self.assertNotIn("process.env.QT_QPA_PLATFORM", self.main)
+
+    def test_firefox_uses_native_wayland_pointer_geometry(self):
+        i = self.main.index("firefox|firefox-bin")
+        body = self.main[i:i + 600]
+        self.assertIn("GDK_BACKEND: 'wayland'", body)
+        self.assertIn("MOZ_ENABLE_WAYLAND: '1'", body)
 
     def test_the_event_listener_can_be_removed(self):
         """The desktop redraws its taskbar on every window event; a listener the page cannot remove
@@ -151,6 +157,7 @@ class Bridge(unittest.TestCase):
         self.assertIn("'pc:wm:handoff'", self.main)
         self.assertIn("handoff:", self.pre)
         self.assertIn("move container to workspace number", self.main)
+        self.assertIn("finishMove(Number(id))", self.main)
         client = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()
         self.assertIn("pcWM.handoff(id,handoff)", client)
 
@@ -161,6 +168,17 @@ class Bridge(unittest.TestCase):
         client = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()
         self.assertIn("pcWM.handoffFrame(payload,handoff)", client)
         self.assertIn("pcWM.onHandoffFrame", client)
+        self.assertIn("'pc:wm:preview-frame'", self.main)
+        self.assertIn("previewFrame:", self.pre)
+        self.assertIn("onPreviewFrame:", self.pre)
+        self.assertIn("pcWM.onPreviewFrame", client)
+
+    def test_terminal_handoff_keeps_the_same_pty(self):
+        client = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()
+        term = open(os.path.join(ROOT, "static/js/client/term.js"), encoding="utf-8").read()
+        self.assertIn("terminalSid:w.view==='terminal'", client)
+        self.assertIn("PCTerm.adoptSession(p.terminalSid)", client)
+        self.assertIn("function adoptSession(id)", term)
 
     def test_global_shell_keys_only_reach_the_focused_monitor(self):
         self.assertIn("(await wm().workspaces()).find(x=>x && x.focused)", self.main)

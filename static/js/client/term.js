@@ -1064,8 +1064,20 @@
       return true;
     }
 
+    /* Move this terminal VIEW to another monitor without changing the shell behind it. The PTY is
+     * owned by the desktop/server and is therefore attachable from the destination renderer; only
+     * its id must cross before render() runs. */
+    function adoptSession(id){
+      id=String(id||'');
+      if(!id) return false;
+      _remember(id);
+      _want=isLocalSid(id)?'local':'';
+      cursor=0;
+      return true;
+    }
+
     window.PCTerm = { render, unmount, isOpen: () => !!mounted, connected: () => connected,
-                      openLocal, sessionId: () => sid };
+                      openLocal, sessionId: () => sid, adoptSession };
   }
   init();
 })();

@@ -7763,6 +7763,11 @@ html.os-on #upload-badge.upbadge{z-index:333}
    parks that surface, showing its empty frame is a literal black rectangle. Keep the taskbar entry
    (the app is still running), but never draw a window whose content is not on screen. */
 .osw.native-stashed{visibility:hidden;pointer-events:none}
+.osw.native-fullscreen-frame{visibility:hidden;pointer-events:none}
+.osw.osw-handoff-preview{pointer-events:none;opacity:.82;border-style:dashed;
+  box-shadow:0 0 0 2px color-mix(in srgb,var(--neon) 60%,transparent),0 24px 70px rgba(0,0,0,.7)}
+.osw-transfer-mark{height:100%;display:grid;place-items:center;color:var(--neon);font-weight:700;
+  background:linear-gradient(135deg,rgba(0,240,255,.08),rgba(145,70,255,.12))}
 .os-search{font-size:14px}
 .os-applist{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;display:grid;
   grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:4px;align-content:start}

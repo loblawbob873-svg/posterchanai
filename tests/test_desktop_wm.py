@@ -186,6 +186,17 @@ class CompositorIPC(unittest.TestCase):
         self.assertEqual(cmds, ["[con_id=11] move absolute position 10 20",
                                 "[con_id=11] move absolute position 50 60"])
 
+    def test_handoff_barrier_drops_the_last_source_monitor_position(self):
+        out = self.run_js("""
+          const moving = wm.move(11, 10, 20);
+          wm.move(11, 900, 800);
+          await wm.finishMove(11);
+          await moving;
+          out.done = true;
+        """)
+        cmds = [s["payload"] for s in out["seen"] if s["type"] == 0]
+        self.assertEqual(cmds, ["[con_id=11] move absolute position 10 20"])
+
     def test_events_arrive_on_their_own_socket(self):
         """sway will not answer ordinary requests on a subscribed connection, so a shell that
         subscribes on its command socket loses every reply after it."""

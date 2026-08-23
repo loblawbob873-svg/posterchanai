@@ -230,6 +230,16 @@ class WM {
     return state.promise;
   }
 
+  /* A monitor handoff is an ordering barrier. Drop queued source-output coordinates and wait for
+   * the one command already on the wire; otherwise it can finish after the workspace move and pull
+   * the window straight back to its original monitor. */
+  finishMove(id){
+    const state=this.moves.get(Number(id));
+    if(!state) return Promise.resolve();
+    state.next=null;
+    return state.promise || Promise.resolve();
+  }
+
   /** Subscribe on its OWN socket. sway will not answer ordinary requests on a subscribed one. */
   async subscribe(names){
     if(this.subSock) return;

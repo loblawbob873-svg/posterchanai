@@ -1955,6 +1955,21 @@
       const plan = NAT().stashPlan(items, htmls.concat(overlayRects()));
       const stash = new Set(plan.stash);
       for(const it of items){
+        /* This pass may have awaited sway while the frame crossed an output. Do not send another
+         * source-monitor coordinate for a window this renderer no longer owns. */
+        if(!wins.includes(it.w)) continue;
+        /* Preserve application-requested fullscreen. Turning every new surface floating in place()
+         * silently cancelled a game's fullscreen/pointer lock and let the mouse escape to another
+         * monitor. A fullscreen client needs no HTML hole until it exits fullscreen itself. */
+        if(it.w.nativeFullscreen){
+          it.w.el.classList.add('native-fullscreen-frame');
+          if(_natSent.get(it.native)!=='fullscreen'){
+            try{ await pcWM.fullscreen(it.native,true); _natSent.set(it.native,'fullscreen'); }
+            catch(_){ _natSent.delete(it.native); }
+          }
+          continue;
+        }
+        it.w.el.classList.remove('native-fullscreen-frame');
         /* RECORDED AFTER THE CALL, NEVER BEFORE. Each of these used to write what it was about to
          * do and then do it inside a catch that swallows — so a refused `show` left the shell
          * believing the window was placed, and since the rectangle then never "changed", it was
@@ -2072,6 +2087,7 @@
     if(!w) return null;
     w.native = Number(nw.id);
     w.nativeApp = String(nw.app || '');
+    w.nativeFullscreen = !!nw.fullscreen;
     w.el.classList.add('osw-native');
     /* THE BODY IS A HOLE. There is nothing to draw in it — the app is a real surface floating over
      * that rectangle — and anything painted there would be underneath the app and invisible, so it
@@ -2127,6 +2143,11 @@
      * same way it would for one of our own documents. */
     for(const w of nativeWins()){
       const r = rows.find(x => Number(x.id) === w.native);
+      if(r && !!r.fullscreen !== !!w.nativeFullscreen){
+        w.nativeFullscreen=!!r.fullscreen;
+        _natSent.delete(Number(w.native));
+        changed=true;
+      }
       if(r && r.title && r.title !== w.title){
         w.title = r.title;
         const t = $('.osw-title', w.el); if(t) t.textContent = r.title;
@@ -2344,7 +2365,8 @@
     const k = zf();
     let sx = ev.clientX, sy = ev.clientY;
     let ox = parseInt(w.el.style.left, 10), oy = parseInt(w.el.style.top, 10);
-    let curX = ox, curY = oy, zone = '', handoff = '', raf = 0, lastMove = ev;
+    let curX = ox, curY = oy, zone = '', handoff = '', raf = 0, lastMove = ev,
+        previewDir='', previewAt=0;
     hideLayouts();
     /* Native apps follow the frame with position-only compositor moves. Resizing/re-floating on
      * every frame is still avoided; `_natGesture` makes nsync choose pcWM.move until release. */
@@ -2373,6 +2395,23 @@
       return e.clientX <= edge ? 'left' : e.clientX >= window.innerWidth-edge ? 'right'
            : e.clientY <= edge ? 'up' : e.clientY >= window.innerHeight-edge ? 'down' : '';
     };
+    const preview = (e) => {
+      if(!window.pcWM || !pcWM.previewFrame) return;
+      const dir=edgeDirection(e), old=previewDir;
+      if(old && old!==dir){ try{ pcWM.previewFrame(null,old); }catch(_){} }
+      previewDir=dir;
+      if(!dir) return;
+      const now=Date.now(); if(now-previewAt<32) return; previewAt=now;
+      const horizontal=/left|right/.test(dir);
+      const overflow=dir==='right'?Math.max(0,e.clientX-window.innerWidth)
+        :dir==='left'?Math.max(0,-e.clientX):dir==='down'?Math.max(0,e.clientY-window.innerHeight)
+        :Math.max(0,-e.clientY);
+      const cross=horizontal ? curY/Math.max(1,vhL()-TASKBAR-w.el.offsetHeight)
+                             : curX/Math.max(1,vwL()-w.el.offsetWidth);
+      try{ pcWM.previewFrame({title:w.title||'',icon:w.icon||'',direction:dir,
+        width:w.el.offsetWidth,height:w.el.offsetHeight,overflow,cross:Math.max(0,Math.min(1,cross))},dir); }
+      catch(_){}
+    };
     const move = (e) => {
       lastMove = e;
       // A released mouse reports buttons === 0 on its next move. Checked FIRST: doing it at the end
@@ -2399,6 +2438,7 @@
        * boundary. Reaching an outside edge while dragging a native app requests a compositor
        * hand-off on release; the adjacent shell adopts it and supplies the new frame. */
       handoff = edgeDirection(e);
+      preview(e);
       if(!raf) raf = requestAnimationFrame(paint);
       const z = zoneAt(e.clientX, e.clientY);
       if(z !== zone){ zone = z; showGhost(zone); }     // only when it CHANGES — not 120 times a second
@@ -2420,6 +2460,7 @@
       w.el.style.top = Math.round(curY) + 'px';
       hideGhost();
       handoff = edgeDirection(endEvent) || handoff || edgeDirection(lastMove);
+      if(previewDir && pcWM.previewFrame){ try{ pcWM.previewFrame(null,previewDir); }catch(_){} }
       if(handoff && w.native != null && pcWM.handoff){
         w.gesturing=false; _natFocusHold=false;
         const id=w.native;
@@ -2429,7 +2470,9 @@
       }
       if(handoff && w.native == null && pcWM.handoffFrame){
         const payload={view:w.appView||w.view,title:w.title||'',icon:w.icon||'',
-                       width:w.el.offsetWidth,height:w.el.offsetHeight};
+                       width:w.el.offsetWidth,height:w.el.offsetHeight,
+                       terminalSid:w.view==='terminal'&&window.PCTerm&&PCTerm.sessionId
+                         ? PCTerm.sessionId() : ''};
         Promise.resolve(pcWM.handoffFrame(payload,handoff)).then(result=>{
           if(result) closeWin(w);
         }).catch(()=>{});
@@ -5643,7 +5686,10 @@
          * them; its app identity and size can, and the destination owns it from this point on. */
         try{
           if(pcWM.onHandoffFrame) _handoffOff = pcWM.onHandoffFrame((p) => {
+            if(_handoffPreviewEl){ _handoffPreviewEl.remove(); _handoffPreviewEl=null; }
             if(!p || !p.view) return;
+            if(p.view==='terminal' && p.terminalSid && window.PCTerm && PCTerm.adoptSession)
+              PCTerm.adoptSession(p.terminalSid);
             const w=openApp(String(p.view), String(p.title||''), String(p.icon||''));
             if(!w) return;
             const ww=Math.max(MIN_W,Math.min(vwL()-24,Number(p.width)||w.el.offsetWidth));
@@ -5656,6 +5702,29 @@
               ? (dir==='up' ? vhL()-TASKBAR-hh-12 : 12)
               : Math.max(12,Math.min(vhL()-TASKBAR-hh-12,parseInt(w.el.style.top,10)||12)))+'px';
             focusWin(w);
+          });
+        }catch(_){}
+        try{
+          if(pcWM.onPreviewFrame) _handoffPreviewOff=pcWM.onPreviewFrame((p)=>{
+            if(!p){ if(_handoffPreviewEl)_handoffPreviewEl.remove(); _handoffPreviewEl=null; return; }
+            if(!_handoffPreviewEl){
+              _handoffPreviewEl=document.createElement('div');
+              _handoffPreviewEl.className='osw osw-handoff-preview';
+              desk.appendChild(_handoffPreviewEl);
+            }
+            const ww=Math.max(MIN_W,Math.min(vwL()-24,Number(p.width)||MIN_W));
+            const hh=Math.max(MIN_H,Math.min(vhL()-TASKBAR-24,Number(p.height)||MIN_H));
+            _handoffPreviewEl.innerHTML='<div class="osw-bar"><span class="osw-ico">'+iconSvg(p.icon||'i-grid')
+              +'</span><span class="osw-title">'+enc(p.title||'Window')+'</span></div>'
+              +'<div class="osw-body"><div class="osw-transfer-mark">Moving to this display</div></div>';
+            const over=Math.max(0,Number(p.overflow)||0)/Math.max(1,zf()), cross=Math.max(0,Math.min(1,Number(p.cross)||0));
+            let x=Math.round(cross*Math.max(0,vwL()-ww)), y=Math.round(cross*Math.max(0,vhL()-TASKBAR-hh));
+            if(p.direction==='right') x=Math.min(12,-ww+120+over);
+            else if(p.direction==='left') x=Math.max(vwL()-ww-12,vwL()-120-over);
+            else if(p.direction==='down') y=Math.min(12,-hh+80+over);
+            else if(p.direction==='up') y=Math.max(vhL()-TASKBAR-hh-12,vhL()-TASKBAR-80-over);
+            Object.assign(_handoffPreviewEl.style,{left:Math.round(x)+'px',top:Math.round(y)+'px',
+              width:Math.round(ww)+'px',height:Math.round(hh)+'px',zIndex:String(nextZ())});
           });
         }catch(_){}
         PCOSShell.watch(() => {
@@ -5742,6 +5811,8 @@
     if(_natObs){ try{ _natObs.disconnect(); }catch(_){} _natObs = null; }
     if(_tickOff){ try{ _tickOff(); }catch(_){} _tickOff = null; }
     if(_handoffOff){ try{ _handoffOff(); }catch(_){} _handoffOff = null; }
+    if(_handoffPreviewOff){ try{ _handoffPreviewOff(); }catch(_){} _handoffPreviewOff=null; }
+    if(_handoffPreviewEl){ _handoffPreviewEl.remove(); _handoffPreviewEl=null; }
     clearInterval(_clock); _clock = null;
     clearInterval(mailT); mailT = 0; mailSeen = null;
     // The pool outlives the desktop — leaving this subscribed keeps a watcher calling drawBar()
@@ -6064,7 +6135,8 @@
   /* Released on exit. A watcher left running after the desktop closes keeps a compositor
    * subscription and a 30s timer alive for the rest of the session, redrawing markup that is no
    * longer in the document. */
-  let _shellOff = null, _tickOff = null, _handoffOff = null;
+  let _shellOff = null, _tickOff = null, _handoffOff = null, _handoffPreviewOff=null,
+      _handoffPreviewEl=null;
   /* What the machine has installed, as the start menu last read it. Kept for the life of the
    * desktop rather than per menu opening: a scan parses every .desktop file on the disk and
    * programs are not installed while somebody is holding the menu open. */

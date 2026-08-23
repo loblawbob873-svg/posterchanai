@@ -114,6 +114,13 @@ if (isOurPage) {
       ipcRenderer.on('pc:wm:handoff-frame', h);
       return () => ipcRenderer.removeListener('pc:wm:handoff-frame', h);
     },
+    previewFrame: (payload, direction) => ipcRenderer.invoke('pc:wm:preview-frame', payload || null,
+                                                              String(direction||'')),
+    onPreviewFrame: (fn) => {
+      const h = (_e, payload) => { try { fn(payload || null); } catch (_) {} };
+      ipcRenderer.on('pc:wm:preview-frame', h);
+      return () => ipcRenderer.removeListener('pc:wm:preview-frame', h);
+    },
     /* Minimise, as the compositor can express it: the window is moved to the scratchpad, keeps
      * running, and comes back where it was. */
     hide: (id) => ipcRenderer.invoke('pc:wm:hide', Number(id)),
