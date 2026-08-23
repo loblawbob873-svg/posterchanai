@@ -102,7 +102,12 @@ git -c user.email=os@poster.place -c user.name=PosterChanOS \
     commit -q -m "overlay $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 echo "[overlay] publishing to $NAS:$DEST"
-ssh "$NAS" "mkdir -p $DEST && cd $DEST && (git rev-parse --git-dir >/dev/null 2>&1 || git init -q --bare)"
+# The exported distfiles root is intentionally root-owned. The publishing login has passwordless
+# sudo, but an ordinary mkdir fails with EACCES and previously left gentoo.poster.place returning
+# 404 while sync.sh only printed a warning. Create the one repository directory as root, then give
+# that bounded path to the publishing account so the SSH git transport can update it normally.
+ssh "$NAS" "sudo -n install -d -o \$(id -un) -g \$(id -gn) '$DEST' \
+    && cd '$DEST' && (git rev-parse --git-dir >/dev/null 2>&1 || git init -q --bare)"
 git push -q --force "ssh://$NAS$DEST" main
 # Dumb HTTP needs this, and it is the step whose absence looks like a working publish: the files are
 # all there, the URL returns 200 for the directory, and `emerge --sync` says the repo is empty.
@@ -110,7 +115,7 @@ git push -q --force "ssh://$NAS$DEST" main
 # `main` leaves HEAD dangling, and a clone then succeeds, reports "remote HEAD refers to nonexistent
 # ref", and produces an EMPTY working tree. `git ls-remote` shows the branch perfectly the whole
 # time, so the repo looks published from every angle except the one that matters.
-ssh "$NAS" "cd $DEST && git symbolic-ref HEAD refs/heads/main && git update-server-info \
+ssh "$NAS" "cd '$DEST' && git symbolic-ref HEAD refs/heads/main && git update-server-info \
     && git config core.sharedRepository group && chmod -R a+rX ."
 
 echo "[overlay] published"

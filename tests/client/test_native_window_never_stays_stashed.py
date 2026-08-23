@@ -104,10 +104,12 @@ class AStashedSurfaceIsNotDrawnAsABlackWindow(unittest.TestCase):
 
     def test_application_fullscreen_is_not_cancelled_by_frame_placement(self):
         raw = OS_JS.read_text()
-        sync = body(raw, "async function nsync")
-        self.assertIn("if(it.w.nativeFullscreen)", sync)
-        self.assertIn("pcWM.fullscreen(it.native,true)", sync)
-        self.assertIn("w.nativeFullscreen = !!nw.fullscreen", raw)
+        adopt = body(raw, "async function adoptAll")
+        # Native apps are no longer placed from a browser-side frame, so their fullscreen state is
+        # owned by Sway and there is nothing here that can accidentally cancel it.
+        self.assertIn("nativeTasks = rows", adopt)
+        self.assertNotIn("pcWM.place", adopt)
+        self.assertNotIn("pcWM.fullscreen", adopt)
 
 
 if __name__ == "__main__":

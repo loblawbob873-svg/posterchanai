@@ -567,12 +567,11 @@ class PosterChanOSProfile(unittest.TestCase):
             self.assertIn(spelling, body,
                           "only one of app_id/class is handled — the other silently does nothing")
 
-    def test_the_compositor_draws_no_chrome(self):
-        """PosterChan draws the window frame, so sway must not draw one too. Left on, its borders and
-        title bars sit on top of the PosterChan desktop wearing the wrong font — two window styles on
-        one screen, and the seam is exactly the thing that makes a shell look like a hack."""
-        for rule in ("default_border none", "default_floating_border none"):
-            self.assertIn(rule, self.src, f"sway still draws {rule.split()[0]}")
+    def test_native_apps_have_real_compositor_chrome(self):
+        """The app, its title bar and its resize border must be one compositor-owned surface."""
+        self.assertIn("default_border none", self.src)  # the tiled desktop itself
+        self.assertRegex(self.src, r"default_floating_border normal [1-9]")
+        self.assertNotIn("default_floating_border none", self.src)
 
     def test_nothing_paints_over_the_desktop_uninvited(self):
         """PosterChan IS the wallpaper and the taskbar. A compositor wallpaper underneath is invisible

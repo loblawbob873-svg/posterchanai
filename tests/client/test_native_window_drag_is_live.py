@@ -46,8 +46,17 @@ def test_taskbar_is_icon_only():
 
 def test_native_task_buttons_have_an_existing_fallback_icon():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
-    assert "'#i-grid'" in src
-    assert "'App', 'i-grid'" in src
+    assert "iconSvg('i-grid')" in src
+    assert 'data-kind="native"' in src
+
+
+def test_native_programs_are_not_mirrored_into_fake_html_frames():
+    src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+    assert "function adoptNative(){ return null; }" in src
+    adopt = src[src.index("async function adoptAll"):src.index("function closeWin")]
+    assert "nativeTasks = rows" in adopt
+    assert "openApp(" not in adopt
+    assert "pcWM.place" not in adopt
 
 
 def test_native_apps_inherit_the_dark_gtk_chrome():

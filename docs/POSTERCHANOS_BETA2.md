@@ -1,5 +1,9 @@
 # PosterChanOS Beta 2
 
+- Finish end-to-end SMS/MMS attachment mirroring: encrypt originals and thumbnails on Android,
+  store them in the Blossom MMS area, synchronize their records promptly, and render thumbnails in
+  the web/desktop Texts client without downloading full-size media until requested.
+
 Deferred from the Beta 1 stabilization cutoff:
 
 - Pin and unpin apps on the taskbar, persisted per user and synced with the desktop layout.

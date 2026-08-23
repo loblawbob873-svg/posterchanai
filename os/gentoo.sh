@@ -1617,14 +1617,10 @@ PROFILE
 	for_window [app_id="firefox"] resize set 1400 900, move position center
 	for_window [class="firefox"] resize set 1400 900, move position center
 
-	# THE COMPOSITOR DRAWS NO CHROME, because PosterChan draws it. Left on, sway's own borders and
-	# title bars would sit on top of the PosterChan desktop — two window styles on one screen, and
-	# the native one wearing the wrong font. PosterChan already knows the rectangle it assigned each
-	# window, so it renders its title bar and border AROUND that rectangle and insets the native
-	# window inside it; the frame is never covered, so drags and window buttons land on the same
-	# os.js code that moves an HTML window. One style for Notes and for Firefox.
+	# Real applications keep compositor title bars and borders. Their visible frame and input surface
+	# are therefore one object across resizing, maximising and monitor handoff.
 	default_border none
-	default_floating_border none
+	default_floating_border normal 3
 	gaps inner 0
 	gaps outer 0
 
@@ -3161,16 +3157,42 @@ DESKTOP
 	# 3. Where a Gentoo dist-kernel also keeps a copy.
 	[[ -z "$KERNEL" && -f "/lib/modules/$KVER/vmlinuz" ]] && KERNEL="/lib/modules/$KVER/vmlinuz"
 	[[ -z "$KERNEL" && -f "/usr/lib/modules/$KVER/vmlinuz" ]] && KERNEL="/usr/lib/modules/$KVER/vmlinuz"
-	# 4. ANY kernel, newest — and say so, because booting the live image on a kernel whose modules
-	#    are not in the image is a different failure and the person should know which one they have.
+	# 4. A MATCHED kernel/modules pair, newest. The old fallback selected any newest file under
+	#    /boot but left KVER set to `uname -r`; dracut then built for one kernel while GRUB booted
+	#    another. Generic graphics could still reach Welcome, but every loadable network driver was
+	#    rejected as the wrong module version: "cannot see its network hardware".
 	if [[ -z "$KERNEL" ]]; then
-		KERNEL="$(ls -1 /boot/*/*/linux /boot/vmlinuz* /boot/linux-* 2>/dev/null | sort -V | tail -1)"
-		[[ -n "$KERNEL" ]] && echo -e "${COLOR_YELLOW}The running kernel ($KVER) is not under /boot; using $KERNEL instead.${COLOR_RESET}"
+		local RUNNING_KVER="$KVER" CANDIDATE CANDIDATE_KERNEL
+		while IFS= read -r CANDIDATE; do
+			[[ -n "$CANDIDATE" ]] || continue
+			CANDIDATE_KERNEL="$(ls -1 /boot/*/"$CANDIDATE"/linux 2>/dev/null | head -1)"
+			[[ -z "$CANDIDATE_KERNEL" ]] && CANDIDATE_KERNEL="$(ls -1 /boot/vmlinuz-"$CANDIDATE"* /boot/linux-"$CANDIDATE"* 2>/dev/null | head -1)"
+			[[ -z "$CANDIDATE_KERNEL" && -f "/lib/modules/$CANDIDATE/vmlinuz" ]] && CANDIDATE_KERNEL="/lib/modules/$CANDIDATE/vmlinuz"
+			[[ -z "$CANDIDATE_KERNEL" && -f "/usr/lib/modules/$CANDIDATE/vmlinuz" ]] && CANDIDATE_KERNEL="/usr/lib/modules/$CANDIDATE/vmlinuz"
+			if [[ -n "$CANDIDATE_KERNEL" ]]; then KVER="$CANDIDATE"; KERNEL="$CANDIDATE_KERNEL"; break; fi
+		done < <(find /lib/modules -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort -Vr)
+		[[ -n "$KERNEL" ]] && echo -e "${COLOR_YELLOW}The running kernel ($RUNNING_KVER) is not under /boot; using matched kernel/modules $KVER instead.${COLOR_RESET}"
 	fi
 	if [[ -z "$KERNEL" ]]; then
 		{ echo "no kernel; /boot holds:"; ls -1 /boot 2>/dev/null | head -40; } >>"$LOG" 2>/dev/null
 		ls -1 /boot 2>/dev/null | head -20
 		_lcd_fail "No kernel found under /boot — looked for /boot/<machine-id>/$KVER/linux, /boot/vmlinuz-$KVER* and /lib/modules/$KVER/vmlinuz."
+		return
+	fi
+	if [[ ! -d "/lib/modules/$KVER" ]]; then
+		_lcd_fail "Kernel $KVER has no matching /lib/modules/$KVER tree. Booting it would hide network hardware."
+		return
+	fi
+	# The squashfs was already packed, so prove the selected modules actually landed in the image.
+	# A source directory existing is insufficient when an exclude or a subordinate mount removed it.
+	if command -v unsquashfs >/dev/null 2>&1 \
+		&& ! printf '%s\n' "$LS" | grep -qE "^squashfs-root/(usr/)?lib/modules/$KVER(/|$)"; then
+		_lcd_fail "The image does not contain /lib/modules/$KVER for its kernel. Network and GPU drivers would not load."
+		return
+	fi
+	if command -v unsquashfs >/dev/null 2>&1 \
+		&& ! printf '%s\n' "$LS" | grep -qE '^squashfs-root/(usr/)?lib/firmware(/|$)'; then
+		_lcd_fail "The image contains no Linux firmware tree. Common Wi-Fi adapters would be invisible."
 		return
 	fi
 	echo -e "${COLOR_YELLOW}Kernel: $KERNEL${COLOR_RESET}"

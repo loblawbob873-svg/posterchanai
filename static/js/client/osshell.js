@@ -179,7 +179,8 @@
       if(!app || /^posterchan(-desktop)?$/.test(app)) continue;
       const title = String(w.title || '').trim();
       if(!title) continue;
-      rows.push({ id: w.id, app, title, focused: !!w.focused, xwayland: !!w.xwayland,
+      rows.push({ id: w.id, app, title, focused: !!w.focused, stashed: !!w.stashed,
+                  workspace: String(w.workspace || ''), xwayland: !!w.xwayland,
                   /* The label a person recognises: the window's own title, which is the page or the
                    * document — the app name is what the ICON says. */
                   label: title.length > 48 ? title.slice(0, 47) + '…' : title });

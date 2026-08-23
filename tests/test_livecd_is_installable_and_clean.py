@@ -458,6 +458,13 @@ class TheLiveSessionActuallyStarts(unittest.TestCase):
         self.assertIn("$APPDIR/posterchan-desktop", self.fn)
         self.assertIn("black Sway screen", self.fn)
 
+    def test_boot_kernel_and_driver_tree_must_match(self):
+        """A mismatched fallback kernel reaches Welcome but cannot load network hardware drivers."""
+        self.assertIn('find /lib/modules', self.fn)
+        self.assertIn('KVER="$CANDIDATE"', self.fn)
+        self.assertIn('no matching /lib/modules/$KVER tree', self.fn)
+        self.assertIn('image does not contain /lib/modules/$KVER', self.fn)
+
 
 class TheAccountRewriteActuallyWorks(unittest.TestCase):
     """RUN, not grepped. It fails in two opposite silent ways: leaving a person in, or dropping the

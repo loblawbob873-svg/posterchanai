@@ -1761,6 +1761,26 @@
   let _natShell = null, _natShellAt = 0, _natSent = new Map(), _natBusy = false, _natAgain = false;
 
   const nativeWins = () => wins.filter(w => w.native != null);
+  /* Native programs are real Sway windows. They deliberately do not get an HTML doppelganger:
+   * two independently rendered rectangles can never remain one window while crossing outputs,
+   * changing scale, maximising, or restoring after a shell restart. PosterChan only mirrors the
+   * compositor's task metadata; Sway owns geometry, decoration, input, and monitor handoff. */
+  let nativeTasks = [];
+  let nativeMenuHidden = [];
+
+  async function _nativeMenuLayer(opening){
+    if(!window.pcWM) return;
+    if(opening){
+      nativeMenuHidden = nativeTasks.filter(w => !w.stashed)
+                                    .map(w => ({ id: Number(w.id), focused: !!w.focused }));
+      await Promise.all(nativeMenuHidden.map(w => Promise.resolve(pcWM.hide(w.id)).catch(() => {})));
+      return;
+    }
+    const restore = nativeMenuHidden.slice(); nativeMenuHidden = [];
+    for(const w of restore) try{ await pcWM.show(w.id); }catch(_){}
+    const focused = restore.find(w => w.focused);
+    if(focused) try{ await pcWM.focus(focused.id); }catch(_){}
+  }
 
   /* A PRESS THAT BEGINS A GESTURE MUST NOT HAND THE KEYBOARD TO A NATIVE APP — and this is why a
    * native window could not be moved at all.
@@ -2084,32 +2104,7 @@
 
   /* Adopt a compositor window into a PosterChan window. Called when one appears, whether the
    * launcher started it or the app opened a second window of its own. */
-  function adoptNative(nw){
-    if(!nw || nw.id == null) return null;
-    const view = 'native:' + nw.id;
-    const existing = wins.find(w => w.view === view);
-    if(existing){ focusWin(existing); return existing; }
-    /* `noFeed` — it owns its contents in the most literal way available: they are not in this
-     * document at all. Handing it the shared #feed would blank whichever window was using it. */
-    const w = openApp(view, nw.title || nw.app || 'App', 'i-grid', null, true);
-    if(!w) return null;
-    w.native = Number(nw.id);
-    w.nativeApp = String(nw.app || '');
-    w.nativeFullscreen = !!nw.fullscreen;
-    w.el.classList.add('osw-native');
-    /* THE BODY IS A HOLE. There is nothing to draw in it — the app is a real surface floating over
-     * that rectangle — and anything painted there would be underneath the app and invisible, so it
-     * says what it is instead, which is what shows while the window is being moved. */
-    if(w.slot) w.slot.innerHTML = '<div class="osw-nat-note">' + enc(nw.app || 'application') + '</div>';
-    try{ PCOSShell.allApps().then(list => {
-      const n = w.nativeApp.toLowerCase();
-      const same = (a, b) => a === b || a.startsWith(b + '-') || b.startsWith(a + '-');
-      w.machineApp = (list || []).find(a => same(String(a.match || a.id || '').toLowerCase(), n)) || null;
-      drawBar();
-    }); }catch(_){}
-    nsync();
-    return w;
-  }
+  function adoptNative(){ return null; } // compatibility for older callers; see adoptAll
 
   /* Whatever the compositor has that we have not framed yet. */
   async function adoptAll(){
@@ -2125,9 +2120,13 @@
     }catch(_){ return false; }
     let rows = [];
     try{ rows = PCOSShell.taskbarRows(list); }catch(_){ rows = []; }
-    let changed = false;
-    for(const r of rows) if(!wins.find(w => w.native === Number(r.id))){
-      adoptNative(r);
+    let changed = JSON.stringify(nativeTasks.map(r => [r.id,r.title,r.focused,r.stashed]))
+               !== JSON.stringify(rows.map(r => [r.id,r.title,r.focused,r.stashed]));
+    nativeTasks = rows;
+    /* Remove frames created by an older renderer without touching their real applications. This
+     * also makes Ctrl+Alt+Backspace a safe migration path during an update. */
+    for(const w of nativeWins().slice()){
+      closeWin(w, { killNative: false, preserveFocus: true });
       changed = true;
     }
     /* WHAT TO ADOPT AND WHAT IS STILL ALIVE ARE DIFFERENT QUESTIONS, and answering both with
@@ -2140,30 +2139,6 @@
      * nothing in any log, and a browser that "just closed itself".
      *
      * Existence is the compositor's list, exactly as `nsync` reads it. */
-    const live = new Set(list.map(x => Number(x.id)));
-    for(const w of nativeWins()) if(!live.has(Number(w.native))){
-      /* Still alive globally means ownership moved to another output. Remove only this HTML frame;
-       * closing the compositor surface here would kill Firefox/Steam during the handoff. */
-      closeWin(w, { killNative: !(allIds && allIds.has(Number(w.native))),
-                    preserveFocus: !!(allIds && allIds.has(Number(w.native))) });
-      changed = true;
-    }
-    /* A title is the page a browser is showing and it changes constantly; the frame follows it, the
-     * same way it would for one of our own documents. */
-    for(const w of nativeWins()){
-      const r = rows.find(x => Number(x.id) === w.native);
-      if(r && !!r.fullscreen !== !!w.nativeFullscreen){
-        w.nativeFullscreen=!!r.fullscreen;
-        _natSent.delete(Number(w.native));
-        changed=true;
-      }
-      if(r && r.title && r.title !== w.title){
-        w.title = r.title;
-        const t = $('.osw-title', w.el); if(t) t.textContent = r.title;
-        changed = true;
-      }
-    }
-    nsync();
     return changed;
   }
 
@@ -4810,8 +4785,12 @@
                 value="${enc(barQuery)}" placeholder="Search Nostr" aria-label="Search Nostr"></div>
        <div class="os-tasks">${wins.map(w =>
          `<button class="os-task${w.el.classList.contains('focused') && !w.min ? ' on' : ''}"
-                  data-id="${w.id}" title="${enc(w.title)}">
-            ${w.machineApp ? appIcon(w.machineApp) : iconSvg(w.icon)}<span>${enc(w.title)}</span></button>`).join('')}</div>
+                  data-id="${w.id}" data-kind="web" title="${enc(w.title)}">
+            ${w.machineApp ? appIcon(w.machineApp) : iconSvg(w.icon)}<span>${enc(w.title)}</span></button>`).join('')
+         + nativeTasks.map(w =>
+         `<button class="os-task${w.focused && !w.stashed ? ' on' : ''}"
+                  data-id="${w.id}" data-kind="native" title="${enc(w.title)}">
+            ${iconSvg('i-grid')}<span>${enc(w.title)}</span></button>`).join('')}</div>
        <div class="os-tray">
          <div class="os-sys" id="os-shell"></div>
          <button class="os-net net-${netNow.level}${netOpen ? ' on' : ''}" id="os-net"
@@ -4872,6 +4851,16 @@
     { const cb = $('#os-clock', bar); if(cb) cb.onclick = (e) => { e.stopPropagation(); toggleNoti(); }; }
     { const nb = $('#os-net', bar); if(nb) nb.onclick = (e) => { e.stopPropagation(); toggleNet(); }; }
     $$('.os-task', bar).forEach(b => b.onclick = () => {
+      if(b.dataset.kind === 'native'){
+        const w = nativeTasks.find(x => String(x.id) === b.dataset.id);
+        if(!w) return;
+        try{
+          if(w.focused && !w.stashed) pcWM.hide(w.id);
+          else if(w.stashed) pcWM.show(w.id).then(() => pcWM.focus(w.id));
+          else pcWM.focus(w.id);
+        }catch(_){}
+        return;
+      }
       const w = wins.find(x => String(x.id) === b.dataset.id);
       if(!w) return;
       // Clicking the focused window's own task button minimises it, the way a taskbar does.
@@ -5387,7 +5376,8 @@
   function toggleStart(force){
     startOpen = (force === undefined) ? !startOpen : !!force;
     let menu = $('#os-startmenu', root);
-    if(!startOpen){ if(menu) menu.remove(); drawBar(); return; }
+    if(!startOpen){ if(menu) menu.remove(); _nativeMenuLayer(false); drawBar(); return; }
+    _nativeMenuLayer(true);
     if(notiOpen){ notiOpen = false; const np = $('#os-noti', root); if(np) np.remove(); }
     if(menu) menu.remove();
     menu = document.createElement('div');
@@ -5676,7 +5666,7 @@
              * reconciliation watcher below: its job is to heal missed events and closes, not to
              * make every new native application wait for two GET_TREE round trips. */
             if(ev.name === 'window'){
-              if(ev.change === 'new' && ev.window) adoptNative(ev.window);
+              /* Sway already mapped the real application; reconciliation adds only its task. */
               /* Firefox/XWayland can announce `window::new` before class/title metadata has reached
                * the tree. In that state main.js quite correctly cannot normalise a visible leaf,
                * and the old unconditional return below then ignored the later title/focus event —

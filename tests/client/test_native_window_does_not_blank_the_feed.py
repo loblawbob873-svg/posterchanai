@@ -44,10 +44,12 @@ class ANativeWindowDoesNotSwitchTheClientView(unittest.TestCase):
         self.assertIn("if(w.render)", self.focus)
         self.assertLess(self.focus.index("if(w.render)"), self.focus.index("else if(!w.noFeed)"))
 
-    def test_native_windows_are_declared_nofeed(self):
-        """The gate is worth nothing if adoptNative stops passing it."""
-        self.assertIn("openApp(view, nw.title || nw.app || 'App', 'i-grid', null, true)",
-                      OS_JS.read_text())
+    def test_native_windows_never_enter_the_shared_feed_window_list(self):
+        """A real compositor window needs neither the shared feed nor a fake HTML frame."""
+        raw = OS_JS.read_text()
+        adopt = body(strip_comments(raw), "async function adoptAll")
+        self.assertIn("nativeTasks = rows", adopt)
+        self.assertNotIn("openApp(", adopt)
 
 
 class APlacementThatCouldNotBeMeasuredIsRetried(unittest.TestCase):
@@ -117,11 +119,12 @@ class MovingBetweenOutputsDoesNotCloseTheApplication(unittest.TestCase):
         self.assertIn("_nativeOwners.set", scoped)
         self.assertIn("row && row.stashed ? _nativeOwners.get(id)", scoped)
 
-    def test_a_window_alive_on_another_output_is_detached_not_killed(self):
+    def test_a_window_moving_outputs_is_only_reconciled_as_task_metadata(self):
         adopt = body(self.src, "async function adoptAll")
         self.assertIn("pcWM.snapshot", adopt)
-        self.assertIn("allIds.has", adopt)
-        self.assertIn("killNative:", adopt)
+        self.assertIn("nativeTasks = rows", adopt)
+        self.assertNotIn("pcWM.close", adopt)
+        self.assertNotIn("pcWM.place", adopt)
 
     def test_detaching_skips_the_compositor_close(self):
         close = body(self.src, "function closeWin")
