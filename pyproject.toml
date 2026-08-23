@@ -26,3 +26,11 @@ exclude = ["venv", "__pycache__"]
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
 ignore = ["E501"]
+
+[tool.pytest.ini_options]
+# Runtime data may contain arbitrary Git checkouts whose packages are also named `app`. Collecting
+# those as PosterChan tests shadows this repository's own package and turns a healthy release gate
+# into dozens of misleading import failures. Keep the default gate on the owned test tree; explicit
+# paths can still run a diagnostic script when needed.
+testpaths = ["tests"]
+norecursedirs = ["data", ".git", ".venv", "venv", "venv-unified", "node_modules"]
