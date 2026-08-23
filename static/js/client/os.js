@@ -2511,6 +2511,11 @@
         const payload={view:w.appView||w.view,title:w.title||'',icon:w.icon||'',
                        width:w.el.offsetWidth,height:w.el.offsetHeight,
                        overflow:edgeOverflow(endEvent||lastMove,handoff),
+                       /* A renderer cannot move its DOM to another monitor, but it can transfer
+                        * the reading position. Use the live feed when this is the focused window
+                        * and its parked slot otherwise; `w.scrollTop` is the last-resort snapshot. */
+                       scrollTop:Math.max(0,Number(realFeed&&realFeed.parentElement===w.body
+                         ? realFeed.scrollTop : w.slot&&w.parked ? w.slot.scrollTop : w.scrollTop)||0),
                        terminalSid:w.view==='terminal'&&window.PCTerm&&PCTerm.sessionId
                          ? PCTerm.sessionId() : ''};
         Promise.resolve(pcWM.handoffFrame(payload,handoff)).then(result=>{
@@ -5751,14 +5756,29 @@
             const hh=Math.max(MIN_H,Math.min(vhL()-TASKBAR-24,Number(p.height)||w.el.offsetHeight));
             w.el.style.width=Math.round(ww)+'px'; w.el.style.height=Math.round(hh)+'px';
             const dir=String(p.direction||'');
-            const over=Math.max(0,Number(p.overflow)||0)/Math.max(1,zf());
-            w.el.style.left=Math.round(dir==='left' ? Math.max(-ww+120,vwL()-120-over)
-              : dir==='right' ? Math.min(vwL()-120,-ww+120+over)
+            /* The preview may straddle the seam, but the committed window must be completely
+             * reachable on its new output.  Leaving all but 120px outside the destination was why
+             * windows appeared half off-screen and could immediately snap back to monitor one. */
+            w.el.style.left=Math.round(dir==='left' ? Math.max(12,vwL()-ww-12)
+              : dir==='right' ? 12
               : Math.max(12,(vwL()-ww)/2))+'px';
             w.el.style.top=Math.round(/up|down/.test(dir)
-              ? (dir==='up' ? vhL()-TASKBAR-hh-12 : 12)
+              ? (dir==='up' ? Math.max(12,vhL()-TASKBAR-hh-12) : 12)
               : Math.max(12,Math.min(vhL()-TASKBAR-hh-12,parseInt(w.el.style.top,10)||12)))+'px';
             focusWin(w);
+            /* openApp has to render the feature in this renderer. Restore only after that render
+             * has produced height; bounded retries handle the relay-backed timeline without
+             * letting a late timer scroll whichever app is focused next. */
+            const want=Math.max(0,Number(p.scrollTop)||0);
+            if(want){
+              let tries=0;
+              const restore=()=>{
+                if(!wins.includes(w)||!realFeed||realFeed.parentElement!==w.body)return;
+                realFeed.scrollTop=want;
+                if(Math.abs(realFeed.scrollTop-want)>2&&++tries<20)setTimeout(restore,50);
+              };
+              setTimeout(restore,0);
+            }
           });
         }catch(_){}
         try{

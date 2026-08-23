@@ -226,9 +226,15 @@ async function view(name){
   /* Session VMs expose SPICE through libvirt's private socket, not a public TCP endpoint. Attach
    * through libvirt's pre-opened descriptor; a plain viewer connection can start successfully and
    * still show no display. --wait also covers the short start/view race. */
-  const args=bin==='virt-viewer'?['--connect',URI,'--attach','--wait',name]:[];
+  /* Keep the guest framebuffer and the GTK drawing area the same size.  Leaving this at the
+   * viewer default is not cosmetic on a scaled/multi-monitor Wayland desktop: spice-gtk can draw
+   * a scaled framebuffer while sending absolute tablet coordinates for the unscaled one.  The
+   * pointer then appears over a button while the guest receives the click somewhere else.  A
+   * host-drawn cursor also makes capture/release unambiguous when gaming mouse mode is enabled. */
+  const viewerArgs=['--auto-resize=always','--cursor=local'];
+  const args=bin==='virt-viewer'?[...viewerArgs,'--connect',URI,'--attach','--wait',name]:[];
   if(bin==='remote-viewer'){
-    const d=await virsh(['domdisplay',name]); if(!d.ok) return d; args.push(d.out.trim());
+    const d=await virsh(['domdisplay',name]); if(!d.ok) return d; args.push(...viewerArgs,d.out.trim());
   }
   const p=spawn(bin,args,{detached:true,stdio:'ignore'}); p.unref(); return {ok:true};
 }

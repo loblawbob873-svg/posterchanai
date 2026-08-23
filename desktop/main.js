@@ -1212,6 +1212,7 @@ ipcMain.handle('pc:wm:handoff-frame', async (e, payload, direction) => {
     view:String(p.view||''), title:String(p.title||''), icon:String(p.icon||''),
     width:Number(p.width)||0, height:Number(p.height)||0, direction:String(direction||''),
     overflow:Number(p.overflow)||0,
+    scrollTop:Math.max(0,Number(p.scrollTop)||0),
     terminalSid:String(p.terminalSid||'')
   });
   await wm().focus(Number(record.conId));

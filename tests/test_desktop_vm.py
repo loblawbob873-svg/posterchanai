@@ -63,7 +63,12 @@ class VmBackend(unittest.TestCase):
 
     def test_viewer_attaches_through_libvirt(self):
         src = (ROOT / "desktop" / "vm.js").read_text()
-        self.assertIn("['--connect',URI,'--attach','--wait',name]", src)
+        self.assertIn("'--connect',URI,'--attach','--wait',name", src)
+
+    def test_viewer_pointer_and_framebuffer_use_the_same_scale(self):
+        src = (ROOT / "desktop" / "vm.js").read_text()
+        self.assertIn("['--auto-resize=always','--cursor=local']", src)
+        self.assertIn("args.push(...viewerArgs,d.out.trim())", src)
 
     def test_gaming_uses_a_captured_relative_mouse(self):
         src = (ROOT / "desktop" / "vm.js").read_text()
