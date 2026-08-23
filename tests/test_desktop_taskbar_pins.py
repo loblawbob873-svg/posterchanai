@@ -1,0 +1,26 @@
+"""Persistent PosterChanOS taskbar pins."""
+from pathlib import Path
+
+
+SRC = (Path(__file__).parents[1] / "static/js/client/os.js").read_text()
+
+
+def test_layout_document_keeps_bounded_namespaced_pins():
+    assert "pins: []" in SRC
+    assert "/^(view|app):" in SRC
+    assert "out.pins.length >= 24" in SRC
+
+
+def test_closed_pins_are_drawn_and_open_windows_are_not_duplicated():
+    assert "const openViews = new Set" in SRC
+    assert "const openApps = new Set" in SRC
+    assert 'data-kind="pin-view"' in SRC
+    assert 'data-kind="pin-app"' in SRC
+
+
+def test_start_menu_and_taskbar_offer_pin_and_unpin():
+    assert SRC.count("Pin to taskbar") >= 2
+    assert SRC.count("Unpin from taskbar") >= 2
+    assert "setPinned('app', app, !pinned)" in SRC
+    assert "setPinned('view', view, !pinned)" in SRC
+

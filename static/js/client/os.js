@@ -239,7 +239,7 @@
    * opens the same account, not 1500px into the middle of it. Fractions reflow; a name lets the
    * actual size come from the screen, so a panel that is comfortable on a desktop does not cover a
    * tablet. Both are properties of the ARRANGEMENT, which is what this document holds. */
-  const BLANK = () => ({ v: 1, folders: [], order: [], hidden: [], pos: {}, bg: '', widgets: [] });
+  const BLANK = () => ({ v: 1, folders: [], order: [], hidden: [], pos: {}, bg: '', widgets: [], pins: [] });
 
   let _doc = null;        // the layout as last read/written; null = nothing read yet (draw defaults)
   let _docPk = '';        // …whose. An account switch must not paint the previous account's desktop.
@@ -310,6 +310,16 @@
       out.pos[key] = [Math.max(0, Math.min(20000, x)), Math.max(0, Math.min(20000, y))];
     }
     out.bg = /^[0-9a-f]{64}$/i.test(String((o && o.bg) || '')) ? String(o.bg).toLowerCase() : '';
+    /* Taskbar pins may name one of our views or a machine .desktop entry. Keep the namespace in the
+     * value so a native application called "mail" cannot collide with our Mail view. Unknown pins
+     * survive older clients, just like unknown widgets, but are not drawn until that app exists. */
+    const seenPin = new Set();
+    for(const p of (Array.isArray(o && o.pins) ? o.pins : [])){
+      const s = str(p, 180);
+      if(!/^(view|app):[A-Za-z0-9_.:+@/-]+$/.test(s) || seenPin.has(s)) continue;
+      seenPin.add(s); out.pins.push(s);
+      if(out.pins.length >= 24) break;
+    }
     /* Widgets. Bounded in every direction, because this document is the one thing here that a future
      * client version — or a half-finished write — could put anything in, and it is read on every draw
      * of the desktop. An unknown TYPE is dropped rather than kept: it would draw an empty frame that
@@ -415,7 +425,7 @@
     const pos = {};
     for(const it of items) if(d.pos[it.view]) pos[it.view] = d.pos[it.view];
     return { items, folders, hidden: [...hidden].map(v => byView.get(v)), pos, bg: d.bg,
-             widgets: Array.isArray(d.widgets) ? d.widgets : [] };
+             widgets: Array.isArray(d.widgets) ? d.widgets : [], pins: d.pins || [] };
   }
 
   let _lay = null;
@@ -797,6 +807,14 @@
       if(doc.hidden.indexOf(view) < 0) return false;
       doc.hidden = doc.hidden.filter(v => v !== view);
       doc.order = _orderNow(lay).concat([view]);
+    });
+  }
+
+  function setPinned(kind, id, on){
+    const key = kind + ':' + id;
+    return _apply((doc) => {
+      doc.pins = Array.isArray(doc.pins) ? doc.pins.filter(x => x !== key) : [];
+      if(on) doc.pins.push(key);
     });
   }
 
@@ -4809,6 +4827,25 @@
     const clock = t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const date = t.toLocaleDateString([], { day: 'numeric', month: 'short' });
     const netNow = netState();
+    const pins = layout().pins || [];
+    const openViews = new Set(wins.map(w => w.view));
+    const openApps = new Set(wins.filter(w => w.machineApp).map(w => w.machineApp.id));
+    const pinHtml = pins.map(key => {
+      const cut = key.indexOf(':'), kind = key.slice(0, cut), id = key.slice(cut + 1);
+      if(kind === 'view'){
+        if(openViews.has(id)) return '';
+        const a = apps().find(x => x.view === id); if(!a) return '';
+        return `<button class="os-task os-pinned" data-pin="${enc(key)}" data-kind="pin-view"
+                 title="${enc(a.label)}">${iconSvg(a.icon)}<span>${enc(a.label)}</span></button>`;
+      }
+      if(kind === 'app'){
+        if(openApps.has(id)) return '';
+        const a = (_machineApps || []).find(x => x.id === id); if(!a) return '';
+        return `<button class="os-task os-pinned" data-pin="${enc(key)}" data-kind="pin-app"
+                 title="${enc(a.name)}">${appIcon(a)}<span>${enc(a.name)}</span></button>`;
+      }
+      return '';
+    }).join('');
     bar.innerHTML =
       `<button class="os-start${startOpen ? ' on' : ''}" id="os-start" title="Start">
          <img src="${enc(brandLogo())}" alt="Start"></button>
@@ -4816,7 +4853,7 @@
          <svg class="ic" aria-hidden="true"><use href="#i-search"></use></svg>
          <input id="os-q-bar" class="os-qin" type="search" autocomplete="off"
                 value="${enc(barQuery)}" placeholder="Search Nostr" aria-label="Search Nostr"></div>
-       <div class="os-tasks">${wins.map(w =>
+       <div class="os-tasks">${pinHtml + wins.map(w =>
          `<button class="os-task${w.el.classList.contains('focused') && !w.min ? ' on' : ''}"
                   data-id="${w.id}" data-kind="web" title="${enc(w.title)}">
             ${w.machineApp ? appIcon(w.machineApp) : iconSvg(w.icon)}<span>${enc(w.title)}</span></button>`).join('')
@@ -4884,6 +4921,11 @@
     { const cb = $('#os-clock', bar); if(cb) cb.onclick = (e) => { e.stopPropagation(); toggleNoti(); }; }
     { const nb = $('#os-net', bar); if(nb) nb.onclick = (e) => { e.stopPropagation(); toggleNet(); }; }
     $$('.os-task', bar).forEach(b => b.onclick = () => {
+      if(b.dataset.kind === 'pin-view'){ openApp(b.dataset.pin.slice(5)); return; }
+      if(b.dataset.kind === 'pin-app'){
+        try{ PCOSShell.launch(b.dataset.pin.slice(4)); }catch(_){}
+        return;
+      }
       if(b.dataset.kind === 'native'){
         const w = nativeTasks.find(x => String(x.id) === b.dataset.id);
         if(!w) return;
@@ -4898,6 +4940,18 @@
       if(!w) return;
       // Clicking the focused window's own task button minimises it, the way a taskbar does.
       if(w.el.classList.contains('focused') && !w.min) minimise(w); else focusWin(w);
+    });
+    $$('.os-task', bar).forEach(b => b.oncontextmenu = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      let key = b.dataset.pin || '';
+      if(!key && b.dataset.kind === 'web'){
+        const w = wins.find(x => String(x.id) === b.dataset.id);
+        if(w && w.view) key = 'view:' + w.view;
+      }
+      if(!key) return;
+      const pinned = pins.indexOf(key) >= 0, cut = key.indexOf(':');
+      showCtx(e.clientX, e.clientY, [{ label: pinned ? 'Unpin from taskbar' : 'Pin to taskbar',
+        run: () => setPinned(key.slice(0, cut), key.slice(cut + 1), !pinned) }]);
     });
   }
 
@@ -5547,31 +5601,37 @@
         toggleStart(false);
         try{ window.pcHost && pcHost.open(b.dataset.path); }catch(_){}
       });
-      /* RIGHT-CLICK IN THE START MENU PUTS IT ON THE DESKTOP — "right-click should offer
-       * add-to-desktop". Until now the only way back for an icon you had hidden was the desktop's
-       * own right-click menu, which lists them by name and only shows twelve; the place people
-       * actually look is the menu entry itself.
-       *
-       * It is offered on OUR views, which are what the layout document is made of. A native program
-       * is not a view — the document holds decisions ABOUT the sidebar, and inventing a second kind
-       * of entry for it is a change to the arrangement format, not a menu item. That is said rather
-       * than silently doing nothing on half the list. */
+      /* Start-menu shortcuts and taskbar pins are both stored in the encrypted account layout. */
       $$('.os-app', menu).forEach(b => b.oncontextmenu = (ev) => {
         ev.preventDefault(); ev.stopPropagation();
         const view = b.dataset.view;
-        if(!view){
-          showCtx(ev.clientX, ev.clientY,
-            [{ label: 'Only PosterChan’s own screens can go on the desktop', run: () => {} }]);
+        const app = b.dataset.app;
+        if(!view && !app){
+          showCtx(ev.clientX, ev.clientY, [{ label: 'Open', run: () => b.click() }]);
           return;
         }
         const lay = layout();
+        const pinKey = (view ? 'view:' + view : 'app:' + app);
+        const pinned = (lay.pins || []).indexOf(pinKey) >= 0;
+        if(app){
+          const a = (_machineApps || []).find(x => x.id === app);
+          showCtx(ev.clientX, ev.clientY,
+            [{ label: pinned ? 'Unpin from taskbar' : 'Pin to taskbar',
+               run: () => { setPinned('app', app, !pinned); toggleStart(false); } },
+             { sep: true },
+             { label: 'Open ' + ((a && a.name) || app), run: () => b.click() }]);
+          return;
+        }
         const shown = lay.items.some(a => a.view === view);
         const label = (apps().find(a => a.view === view) || {}).label || view;
-        showCtx(ev.clientX, ev.clientY, shown
-          ? [{ label: 'Already on the desktop', run: () => { toggleStart(false); openApp(view); } },
+        const rows = shown
+          ? [{ label: 'Open ' + label, run: () => { toggleStart(false); openApp(view); } },
              { sep: true },
              { label: 'Hide ' + label + ' from the desktop', run: () => { hideItem(view); toggleStart(false); } }]
-          : [{ label: 'Add ' + label + ' to the desktop', run: () => { showItem(view); toggleStart(false); } }]);
+          : [{ label: 'Add ' + label + ' to the desktop', run: () => { showItem(view); toggleStart(false); } }];
+        rows.push({ label: pinned ? 'Unpin from taskbar' : 'Pin to taskbar',
+                    run: () => { setPinned('view', view, !pinned); toggleStart(false); } });
+        showCtx(ev.clientX, ev.clientY, rows);
       });
       $$('.os-app', menu).forEach(b => b.onclick = () => {
         if(b.dataset.find) return searchNostr(q);
