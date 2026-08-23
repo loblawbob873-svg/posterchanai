@@ -77,6 +77,17 @@ fi
 WAYLAND_DISPLAY=${wayland_socket##*/}
 export WAYLAND_DISPLAY
 
+# In a SPICE guest the viewer and guest must agree on one framebuffer size. Without the guest agent
+# virt-viewer scales the picture locally while the emulated USB tablet still reports coordinates in
+# the guest's old geometry: the cursor is visibly over one button and clicks another place. The
+# system daemon owns the virtio channel; this session half supplies resize, pointer and clipboard.
+# Physical machines have no channel and do no work here.
+if [ -e /dev/virtio-ports/com.redhat.spice.0 ] && command -v spice-vdagent >/dev/null 2>&1; then
+  if ! pgrep -u "$(id -u)" -x spice-vdagent >/dev/null 2>&1; then
+    spice-vdagent >/tmp/posterchan-spice-vdagent.log 2>&1 &
+  fi
+fi
+
 # A STALE SINGLE-INSTANCE LOCK IS A BLACK SCREEN FOREVER, and this is the bug that proves the
 # shell needs a launcher at all rather than a bare exec line.
 #

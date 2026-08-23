@@ -28,6 +28,7 @@ class VmBackend(unittest.TestCase):
         self.assertIn("app-emulation/libvirt", installer)
         self.assertIn("app-emulation/qemu", installer)
         self.assertIn("app-emulation/virt-viewer", installer)
+        self.assertIn("app-emulation/spice-vdagent", installer)
         self.assertIn("app-crypt/swtpm", installer)
         self.assertIn("media-plugins/gst-plugins-pulse", installer)
         self.assertIn('app-emulation/qemu spice usbredir', installer)
@@ -69,6 +70,13 @@ class VmBackend(unittest.TestCase):
         src = (ROOT / "desktop" / "vm.js").read_text()
         self.assertIn("['--auto-resize=always','--cursor=local']", src)
         self.assertIn("args.push(...viewerArgs,d.out.trim())", src)
+
+    def test_guest_agent_is_started_for_spice_virtual_machines(self):
+        installer = (ROOT / "os" / "gentoo.sh").read_text()
+        launcher = (ROOT / "os" / "bin" / "pc-shell-start").read_text()
+        self.assertIn("spice-vdagentd", installer)
+        self.assertIn("/dev/virtio-ports/com.redhat.spice.0", launcher)
+        self.assertIn("spice-vdagent", launcher)
 
     def test_gaming_uses_a_captured_relative_mouse(self):
         src = (ROOT / "desktop" / "vm.js").read_text()
