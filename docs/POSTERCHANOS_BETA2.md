@@ -3,6 +3,22 @@
 - Finish end-to-end SMS/MMS attachment mirroring: encrypt originals and thumbnails on Android,
   store them in the Blossom MMS area, synchronize their records promptly, and render thumbnails in
   the web/desktop Texts client without downloading full-size media until requested.
+- Rebuild Blossom → This Computer as a real file manager: clear back/breadcrumb navigation,
+  single- and multi-selection, select all, rename, copy/move, delete with confirmation, useful file
+  details, and a polished responsive list/grid layout. Keep “Share with Blossom” as a first-class
+  action for selected files rather than leaving the host view as a read-only directory listing.
+- Rebuild System Settings into a stable, conventional settings app. It must never eagerly load or
+  retain unbounded system data, and opening it must not exhaust RAM. Cover displays/layout and
+  persistence, Wi-Fi/network, Bluetooth, sound inputs/outputs, brightness and power profiles,
+  keyboard/mouse, users, date/time, updates, diagnostics, hibernation, and lock/sleep behavior.
+  Expose the Sway idle/display-off timeout with sensible presets plus Never, persist it through
+  `pc-idle`, clearly distinguish screen-off from suspend, and apply changes without restarting the
+  graphical session.
+- Redesign Virtual Machines around a simple guided workflow: New VM asks for OS/ISO, disk size,
+  memory and CPU, then creates a sensible BIOS/UEFI and sound/display configuration automatically.
+  Each VM card needs obvious Start, Stop, View, Edit and Delete actions; Edit must expose boot order,
+  removable ISO media, disks, networking, sound/display and add/remove hardware without requiring
+  libvirt terminology. Keep advanced XML/details behind an Advanced section.
 
 Deferred from the Beta 1 stabilization cutoff:
 
