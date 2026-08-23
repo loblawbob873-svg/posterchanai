@@ -52,6 +52,36 @@ NOT_SHELL = {
 # which is not on this box — so it is replaced here by the four members the launcher actually uses.
 # MusicService itself is therefore NOT compile-checked by this file; CI's assembleDebug is.
 SHIMS = {
+    # The shell calls into the native signer only to archive a delivered SMS. The real service uses
+    # OkHttp/AndroidX and is compile-checked by Gradle plus test_android_signer_service.py.
+    "place/poster/app/signer/SignerRelayService.java": """
+package place.poster.app.signer;
+public class SignerRelayService {
+  public static void archiveIncoming(android.content.Context c, String f, String b, long w) { }
+}
+""",
+    # MMS transport is an external Android library present in Gradle, not android.jar. Keep these
+    # signatures narrow so this test still checks every call the SMS UI makes into it.
+    "com/klinker/android/send_message/Settings.java": """
+package com.klinker.android.send_message;
+public class Settings { public void setUseSystemSending(boolean b) { } }
+""",
+    "com/klinker/android/send_message/Message.java": """
+package com.klinker.android.send_message;
+public class Message {
+  public Message(String b, String a, byte[] image) { }
+  public Message(String b, String a, android.graphics.Bitmap image) { }
+  public void setSave(boolean save) { }
+}
+""",
+    "com/klinker/android/send_message/Transaction.java": """
+package com.klinker.android.send_message;
+public class Transaction {
+  public static final long NO_THREAD_ID = -1;
+  public Transaction(android.content.Context c, Settings s) { }
+  public void sendNewMessage(Message m, long thread) { }
+}
+""",
     "place/poster/app/music/MusicService.java": """
 package place.poster.app.music;
 public class MusicService {

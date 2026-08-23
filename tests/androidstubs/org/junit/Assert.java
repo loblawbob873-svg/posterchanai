@@ -15,5 +15,6 @@ public class Assert {
   public static void assertEquals(Object a, Object b) { }
   public static void assertEquals(String m, long a, long b) { }
   public static void assertEquals(long a, long b) { }
+  public static void assertNotEquals(Object unexpected, Object actual) { }
   public static void fail(String m) { }
 }

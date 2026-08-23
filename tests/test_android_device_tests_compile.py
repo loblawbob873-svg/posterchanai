@@ -44,6 +44,32 @@ class DeviceTestsCompile(unittest.TestCase):
         for pkg in ("home", "ui", "sms", "phone", "shortcut", "weather"):
             app += glob.glob(os.path.join(ac.JAVA, "place", "poster", "app", pkg, "*.java"))
         shims = {
+            "place/poster/app/signer/SignerRelayService.java": """
+package place.poster.app.signer;
+public class SignerRelayService {
+  public static void archiveIncoming(android.content.Context c, String f, String b, long w) { }
+}
+""",
+            "com/klinker/android/send_message/Settings.java": """
+package com.klinker.android.send_message;
+public class Settings { public void setUseSystemSending(boolean b) { } }
+""",
+            "com/klinker/android/send_message/Message.java": """
+package com.klinker.android.send_message;
+public class Message {
+  public Message(String b, String a, byte[] image) { }
+  public Message(String b, String a, android.graphics.Bitmap image) { }
+  public void setSave(boolean save) { }
+}
+""",
+            "com/klinker/android/send_message/Transaction.java": """
+package com.klinker.android.send_message;
+public class Transaction {
+  public static final long NO_THREAD_ID = -1;
+  public Transaction(android.content.Context c, Settings s) { }
+  public void sendNewMessage(Message m, long thread) { }
+}
+""",
             # MusicService needs androidx.media, which is not on this box; the launcher only uses
             # these four members of it. NOT compile-checked here — CI's assembleDebug is.
             "place/poster/app/music/MusicService.java": """

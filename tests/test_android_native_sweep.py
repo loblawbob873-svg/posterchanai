@@ -451,7 +451,8 @@ public class Drv {
     // must not shadow a shared record that still has one: an address-less tombstone cannot be
     // restored account-wide, and no device holding the file can ever settle against it.
     {
-      Map<String, Map<String, Object>> j = stA.base("Pictures");
+      String localA = NativeSweep.localReplicaKey(fA);
+      Map<String, Map<String, Object>> j = stA.base(localA);
       Map<String, Object> bare = new LinkedHashMap<String, Object>();
       bare.put("v", Json.num(j.get("DCIM/img2.jpg").get("v"), 0));
       bare.put("by", "laptop-aaa");
@@ -460,7 +461,7 @@ public class Drv {
       loc.put("mtime", 1000L);
       bare.put("local", loc);
       j.put("DCIM/img2.jpg", bare);           // no sha, no csum — all it remembers is the version
-      stA.saveBase("Pictures", j);
+      stA.saveBase(localA, j);
       fsA.disk.remove("DCIM/img2.jpg");
       NativeSweep.Report repA3 = sweep(ctxA, stA, fA, sec, false, net, mk, fsA);
       Map<String, Object> t2 = net.read("Pictures", mk, "DCIM/img2.jpg");
@@ -606,7 +607,8 @@ public class Drv {
       fsH.disk.put("r/one.txt", body(2, 70));      // edited here
       fsH.mtime = 9999L;
       NativeSweep.Report rH = sweep(ctxH, stH, fH, sec, true, net, mk, fsH);
-      out.put("race_journal_kept", stH.base("Race").containsKey("r/one.txt"));
+      out.put("race_journal_kept", stH.base(NativeSweep.localReplicaKey(fH))
+              .containsKey("r/one.txt"));
       out.put("race_record_v", Json.num(net.read("Race", mk, "r/one.txt").get("v"), 0));
       out.put("race_failed", rH.failed.size());
     }

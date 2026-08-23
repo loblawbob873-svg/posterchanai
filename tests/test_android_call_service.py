@@ -221,8 +221,9 @@ def test_notes_and_the_vault_drain_when_the_relay_comes_back():
     timers and a killed one runs none until 45s after it is next opened. So the write stayed on the
     device, correctly saved and correctly queued, until something unrelated jogged it.
     """
-    assert "flush: flushPending" in NOTES and "flush: flushPending" in VAULT, (
-        "a module stopped exposing its queue drain")
+    assert "async flush(){ const n = await flushPending()" in NOTES, (
+        "Notes stopped exposing its queue drain/refresh hook")
+    assert "flush: flushPending" in VAULT, "Vault stopped exposing its queue drain"
     i = APPJS.index("if(s === 'ok'){")
     assert "_flushPrivateQueues()" in APPJS[i:i + 200], (
         "the relay reaching 'ok' — the one signal that fires on a cold start, a reconnect AND a "
@@ -346,7 +347,7 @@ def test_folder_sync_may_run_on_a_phone_that_was_asked_to_stay_alive():
     assert "const _idle = () => document.hidden && !window.pcShell && !_keptAlive;" in SYNCJS, (
         "a kept-alive phone is still treated as idle, so it never syncs in the background")
     assert "stayConnected" in SYNCJS
-    i = SYNCJS.index("appStateChange")
+    i = SYNCJS.index("addListener('appStateChange'")
     assert "_readKeptAlive()" in SYNCJS[i:i + 400], (
         "the switch can move while the app is away and would never be re-read")
 
