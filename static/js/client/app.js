@@ -16621,8 +16621,15 @@
   async function renderShorts(){
     const feed=$('#feed');
     feed.innerHTML='<div class="shorts-host" id="shorts-host"><div class="spinner"></div></div>';
-    let evs=[]; try{ evs=await Relay.query([{kinds:[34236,22], limit:120}]); }catch(_){}
-    evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
+    const filt=[{kinds:[34236,22], limit:120}];
+    let fresh=[]; try{ fresh=await Relay.query(filt); }catch(_){}
+    fresh.forEach(e=>Store.saveEvent(e));
+    /* Relay.query is a refresh, not the source of truth for this paint. Offline use, a throttled
+     * relay and a just-received event all live in Store; painting only `fresh` made Shorts open on
+     * an empty screen even though its events were already on the device. Query after saving also
+     * collapses edited addressable 34236 events consistently. */
+    let evs=[]; try{ evs=Store.query(filt)||[]; }catch(_){ evs=fresh; }
+    evs.forEach(e=>needProfile(e.pubkey));
     if(VIEW!=='shorts') return;
     const seen=new Set(); const vids=[];
     for(const e of evs.sort((a,b)=>b.created_at-a.created_at)){

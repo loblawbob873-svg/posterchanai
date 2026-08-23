@@ -2383,8 +2383,18 @@
      * monitor that made the drag stop at the source edge (often about 75% of the combined desk).
      * screenX/screenY remain virtual-desktop coordinates, so use them for gesture distance and
      * convert them back to this surface only for edge/snap hit testing. */
-    let ssx = Number.isFinite(ev.screenX) ? ev.screenX : ev.clientX;
-    let ssy = Number.isFinite(ev.screenY) ? ev.screenY : ev.clientY;
+    /* Constructed PointerEvents (touch emulation, accessibility drivers and our browser gate) have
+     * finite screenX/screenY values too — Chrome fills both with ZERO. Treating "finite" as proof
+     * of a real virtual-desktop coordinate made every such drag have a zero delta. A genuine
+     * pointer starts close to client + this surface's screen origin; once it crosses an output the
+     * screen coordinate is deliberately allowed to diverge. Decide once at press time so the
+     * coordinate space cannot change halfway through a gesture. */
+    const realScreen = Number.isFinite(ev.screenX) && Number.isFinite(ev.screenY)
+      && Math.abs((ev.screenX - (Number(window.screenX)||0)) - ev.clientX) < 256
+      && Math.abs((ev.screenY - (Number(window.screenY)||0)) - ev.clientY) < 256;
+    const gxOf = e => realScreen && Number.isFinite(e.screenX) ? e.screenX : e.clientX;
+    const gyOf = e => realScreen && Number.isFinite(e.screenY) ? e.screenY : e.clientY;
+    let ssx = gxOf(ev), ssy = gyOf(ev);
     let ox = parseInt(w.el.style.left, 10), oy = parseInt(w.el.style.top, 10);
     let curX = ox, curY = oy, zone = '', handoff = '', raf = 0, lastMove = ev,
         previewDir='', previewAt=0;
@@ -2412,8 +2422,8 @@
     };
     const edgeDirection = (e) => {
       if(!e) return '';
-      const ex=Number.isFinite(e.screenX)?e.screenX-window.screenX:e.clientX;
-      const ey=Number.isFinite(e.screenY)?e.screenY-window.screenY:e.clientY;
+      const ex=realScreen?e.screenX-(Number(window.screenX)||0):e.clientX;
+      const ey=realScreen?e.screenY-(Number(window.screenY)||0):e.clientY;
       if(!Number.isFinite(ex) || !Number.isFinite(ey)) return '';
       const edge=12;
       return ex <= edge ? 'left' : ex >= window.innerWidth-edge ? 'right'
@@ -2421,11 +2431,15 @@
     };
     const edgeOverflow = (e,dir) => {
       if(!e)return 0;
-      const ex=Number.isFinite(e.screenX)?e.screenX-window.screenX:e.clientX;
-      const ey=Number.isFinite(e.screenY)?e.screenY-window.screenY:e.clientY;
+      const ex=realScreen?e.screenX-(Number(window.screenX)||0):e.clientX;
+      const ey=realScreen?e.screenY-(Number(window.screenY)||0):e.clientY;
       return dir==='right'?Math.max(0,ex-window.innerWidth)
         :dir==='left'?Math.max(0,-ex):dir==='down'?Math.max(0,ey-window.innerHeight)
         :dir==='up'?Math.max(0,-ey):0;
+    };
+    const handoffDirection = (e) => {
+      const dir=edgeDirection(e);
+      return dir && edgeOverflow(e,dir)>8 ? dir : '';
     };
     const preview = (e) => {
       if(!window.pcWM || !pcWM.previewFrame) return;
@@ -2457,21 +2471,22 @@
         ox = curX = Math.round(e.clientX / k - w.el.offsetWidth * frac);
         oy = curY = Math.max(0, e.clientY / k - 18);
         sx = e.clientX; sy = e.clientY;
-        ssx = Number.isFinite(e.screenX) ? e.screenX : e.clientX;
-        ssy = Number.isFinite(e.screenY) ? e.screenY : e.clientY;
+        ssx = gxOf(e); ssy = gyOf(e);
         w.el.style.transform = '';
         w.el.style.left = ox + 'px'; w.el.style.top = oy + 'px';
       }
       // Clamped so a window can never be dragged somewhere it cannot be dragged back from: the title
       // bar stays on screen and above the taskbar.
-      const gx=Number.isFinite(e.screenX)?e.screenX:e.clientX;
-      const gy=Number.isFinite(e.screenY)?e.screenY:e.clientY;
+      const gx=gxOf(e), gy=gyOf(e);
       curX = ox + (gx - ssx) / k;
       curY = Math.max(0, Math.min(vhL() - TASKBAR - 34, oy + (gy - ssy) / k));
       /* A monitor is another renderer, so pointer capture cannot carry DOM events across its
        * boundary. Reaching an outside edge while dragging a native app requests a compositor
        * hand-off on release; the adjacent shell adopts it and supplies the new frame. */
-      handoff = edgeDirection(e);
+      /* Touching an edge means SNAP. A monitor handoff begins only after the real desktop pointer
+       * has crossed outside this renderer. The old edge-only test stole every ordinary left/right
+       * snap whenever pcWM.handoffFrame existed. */
+      handoff=handoffDirection(e);
       preview(e);
       if(!raf) raf = requestAnimationFrame(paint);
       const z = zoneAt(e.clientX, e.clientY);
@@ -2493,7 +2508,7 @@
       w.el.style.left = Math.round(curX) + 'px';
       w.el.style.top = Math.round(curY) + 'px';
       hideGhost();
-      handoff = edgeDirection(endEvent) || handoff || edgeDirection(lastMove);
+      handoff = handoffDirection(endEvent) || handoff || handoffDirection(lastMove);
       if(previewDir && pcWM.previewFrame){ try{ pcWM.previewFrame(null,previewDir); }catch(_){} }
       if(handoff && w.native != null && pcWM.handoff){
         w.gesturing=false; _natFocusHold=false;
