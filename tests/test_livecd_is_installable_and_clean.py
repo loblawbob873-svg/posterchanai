@@ -140,6 +140,13 @@ class TheBuilderShipsTheInstaller(unittest.TestCase):
                                self.src.index("# Do not carry the LiveCD operator")]
         self.assertNotIn("PC_INSTALL_PASSWORD", setup_lines)
 
+    def test_completed_live_install_returns_success_without_home(self):
+        i = self.src.index("liveISOinstall() {")
+        end = self.src.index("\n}\n\nbackupOS()", i)
+        tail = self.src[self.src.rindex("finalizeInstall || return 1", i, end):end]
+        self.assertIn("return 0", tail)
+        self.assertNotRegex(tail, r"(?m)^\s*cd\s*$")
+
 
 class TheImageDoesNotCarryTheOperator(unittest.TestCase):
     @classmethod

@@ -1267,7 +1267,10 @@ liveISOinstall() {
 	[ -f /tmp/disk ] && sudo cp -f /tmp/disk $TARGET/etc/ 2>/dev/null
 
 	finalizeInstall || return 1
-	cd
+	# A kernel-launched or otherwise unattended installer may intentionally have no HOME. `cd` with
+	# no destination then fails after every release gate has passed and turns a complete install into
+	# exit status 1. Nothing below needs a directory change; report the verified result explicitly.
+	return 0
 }
 
 backupOS() {
