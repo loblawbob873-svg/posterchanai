@@ -154,6 +154,10 @@ class Bridge(unittest.TestCase):
         self.assertIn("window.pcShell.backgroundOwner === false", sync,
                       "each monitor can start another folder-sync writer")
 
+    def test_cold_boot_waits_for_wayland_to_map_the_primary_surface(self):
+        self.assertIn("if(!own) own = await newShellContainer(rows)", self.main)
+        self.assertIn("setTimeout(() => reconcileShellDisplays(), 1200)", self.main)
+
     def test_a_shell_restart_recovers_which_monitor_owned_a_stashed_app(self):
         """Sway keeps scratchpad apps across an Electron restart; the in-memory owner map is lost."""
         self.assertIn("function ownerFromRect(row)", self.main)

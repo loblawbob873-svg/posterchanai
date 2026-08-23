@@ -1108,8 +1108,12 @@ async function reconcileShellDisplays(){
         record = null;
       }
       if(!record && assignment.primary){
-        const own = rows.find(row => Number(row.pid) === process.pid && !used.has(Number(row.id)));
-        if(!own) throw new Error('the primary PosterChan desktop surface is not mapped');
+        /* BrowserWindow creation returns before Wayland maps its surface. An immediate tree lookup
+         * wins that race on a cold boot, aborts this entire reconciliation, and pc-shell-start later
+         * repairs only the primary display: every other monitor stays black until another output
+         * event happens. Wait for the primary exactly as we already wait for companions. */
+        let own = rows.find(row => Number(row.pid) === process.pid && !used.has(Number(row.id)));
+        if(!own) own = await newShellContainer(rows);
         record = { browser: win, conId: Number(own.id), assignment };
       }else if(!record){
         const before = await wm().windows();
@@ -1123,7 +1127,11 @@ async function reconcileShellDisplays(){
       await placeShellSurface(record, assignment);
       if(!record.browser.isVisible()) record.browser.show();
     }
-  })().catch(e => console.warn('[shell displays]', (e && e.message) || e))
+  })().catch(e => {
+      console.warn('[shell displays]', (e && e.message) || e);
+      clearTimeout(_displayReconcileTimer);
+      _displayReconcileTimer = setTimeout(() => reconcileShellDisplays(), 1200);
+    })
     .finally(() => { _displayReconcile = null; });
   return _displayReconcile;
 }
