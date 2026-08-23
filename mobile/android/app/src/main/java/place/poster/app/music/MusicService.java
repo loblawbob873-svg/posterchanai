@@ -694,8 +694,11 @@ public class MusicService extends Service {
     Watcher w = watcher;
     if (w != null) { try { w.onNowPlaying(title, artist, playing); } catch (Throwable ignored) { } }
     MediaMetadataCompat.Builder md = new MediaMetadataCompat.Builder()
-        .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
-        .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist)
+        /* Head units are much narrower than phones and several render metadata without a safe
+         * ellipsis. Give every external surface one clean bounded line; the in-app player keeps the
+         * complete title. */
+        .putString(MediaMetadataCompat.METADATA_KEY_TITLE, MusicWidget.oneLine(title, 120))
+        .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, MusicWidget.oneLine(artist, 90))
         .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, "Library");
     // Only when it is real. A duration of 0 makes a lock screen draw a scrubber it can never fill,
     // and -1 (the "unknown" convention) is what tells it to draw none — the honest answer while a
@@ -757,11 +760,11 @@ public class MusicService extends Service {
 
     NotificationCompat.Builder b = new NotificationCompat.Builder(this, CHANNEL_ID)
         .setSmallIcon(R.drawable.ic_music_note)
-        .setContentTitle(title)
+        .setContentTitle(MusicWidget.oneLine(title, 90))
         // A transport that controls nothing must not look like one that does. When a press went
         // unanswered AND the app could not be brought back, this line is the only place the user can
         // be told why the buttons stopped working — and the tap target is already the app.
-        .setContentText(webGone ? "Tap to reopen — the player stopped responding" : artist)
+        .setContentText(webGone ? "Tap to reopen — the player stopped responding" : MusicWidget.oneLine(artist, 70))
         .setLargeIcon(art)
         .setContentIntent(open)
         .setDeleteIntent(command(ACTION_DISMISS))    // swiped away = stop, not "playing invisibly"

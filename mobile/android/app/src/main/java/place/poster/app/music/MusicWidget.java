@@ -41,6 +41,13 @@ public class MusicWidget extends AppWidgetProvider {
   }
 
   @Override
+  public void onAppWidgetOptionsChanged(Context ctx, AppWidgetManager mgr, int id, android.os.Bundle opts) {
+    MusicService svc = MusicService.INSTANCE;
+    render(ctx, svc == null ? null : MusicService.nowTitle(),
+        svc == null ? null : MusicService.nowArtist(), MusicService.nowPlaying(), svc != null);
+  }
+
+  @Override
   public void onReceive(Context ctx, Intent intent) {
     String action = intent == null ? null : intent.getAction();
     boolean ours = false;
@@ -105,32 +112,40 @@ public class MusicWidget extends AppWidgetProvider {
     int[] ids = mgr.getAppWidgetIds(me);
     if (ids == null || ids.length == 0) return;   // nobody has placed one — don't build views for nothing
 
-    RemoteViews v = new RemoteViews(ctx.getPackageName(), R.layout.widget_music);
-    v.setTextViewText(R.id.mw_title, active && title != null && !title.isEmpty() ? title : "PosterChan Music");
-    v.setTextViewText(R.id.mw_artist, active ? (artist == null ? "" : artist) : "Tap to play");
-    v.setImageViewResource(R.id.mw_play, playing ? R.drawable.ic_media_pause : R.drawable.ic_media_play);
-    v.setContentDescription(R.id.mw_play, playing ? "Pause" : "Play");
-    // Skip buttons are meaningless with no queue — hidden rather than dead, since a button that
-    // visibly does nothing is the complaint this whole feature exists to answer.
-    v.setViewVisibility(R.id.mw_prev, active ? View.VISIBLE : View.GONE);
-    v.setViewVisibility(R.id.mw_next, active ? View.VISIBLE : View.GONE);
-
     /* WHICH KIND of PendingIntent depends on whether there is a player to talk to, and it is not a
      * detail: while one is running the press is a transport command and a broadcast is right, but
      * with nothing running the press has to OPEN the app — and an activity started from a receiver of
      * ours is a background activity start, which Android 10+ blocks. A getActivity() PendingIntent is
      * sent by the LAUNCHER instead, which is allowed. Same button, two different jobs. */
-    if (active) {
-      v.setOnClickPendingIntent(R.id.mw_prev, button(ctx, MusicService.ACTION_PREV));
-      v.setOnClickPendingIntent(R.id.mw_play, button(ctx, MusicService.ACTION_TOGGLE));
-      v.setOnClickPendingIntent(R.id.mw_next, button(ctx, MusicService.ACTION_NEXT));
-    } else {
-      v.setOnClickPendingIntent(R.id.mw_play, open(ctx, 2, "play"));
+    for (int id : ids) {
+      RemoteViews v = new RemoteViews(ctx.getPackageName(), R.layout.widget_music);
+      android.os.Bundle opts = mgr.getAppWidgetOptions(id);
+      int width = opts == null ? 250 : opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 250);
+      boolean compact = width < 240, tiny = width < 170;
+      v.setTextViewText(R.id.mw_title, active && title != null && !title.isEmpty() ? oneLine(title, 90) : "PosterChan Music");
+      v.setTextViewText(R.id.mw_artist, active ? oneLine(artist, 70) : "Tap to play");
+      v.setImageViewResource(R.id.mw_play, playing ? R.drawable.ic_media_pause : R.drawable.ic_media_play);
+      v.setContentDescription(R.id.mw_play, playing ? "Pause" : "Play");
+      // A one/two-column car launcher or phone grid cannot fit artwork + text + three 44dp buttons.
+      // Draw the controls that fit instead of letting RemoteViews clip the play button off-screen.
+      v.setViewVisibility(R.id.mw_prev, active && !compact ? View.VISIBLE : View.GONE);
+      v.setViewVisibility(R.id.mw_next, active && !compact ? View.VISIBLE : View.GONE);
+      v.setViewVisibility(R.id.mw_art, tiny ? View.GONE : View.VISIBLE);
+      v.setViewVisibility(R.id.mw_artist, tiny ? View.GONE : View.VISIBLE);
+      if (active) {
+        v.setOnClickPendingIntent(R.id.mw_prev, button(ctx, MusicService.ACTION_PREV));
+        v.setOnClickPendingIntent(R.id.mw_play, button(ctx, MusicService.ACTION_TOGGLE));
+        v.setOnClickPendingIntent(R.id.mw_next, button(ctx, MusicService.ACTION_NEXT));
+      } else v.setOnClickPendingIntent(R.id.mw_play, open(ctx, 2, "play"));
+      v.setOnClickPendingIntent(R.id.mw_body, open(ctx, 1, "open"));
+      mgr.updateAppWidget(id, v);
     }
-    // The body of the widget opens the app on the Music screen.
-    v.setOnClickPendingIntent(R.id.mw_body, open(ctx, 1, "open"));
+  }
 
-    mgr.updateAppWidget(ids, v);
+  static String oneLine(String s, int max) {
+    String out = s == null ? "" : s.replaceAll("[\\r\\n\\t]+", " ").replaceAll("\\s{2,}", " ").trim();
+    if (out.length() <= max) return out;
+    return out.substring(0, Math.max(1, max - 1)).trim() + "…";
   }
 
   /** A transport press, delivered to this receiver (the player is running — see onReceive). */
