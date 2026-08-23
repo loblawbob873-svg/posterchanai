@@ -1946,10 +1946,12 @@
       const items = nativeWins().map(w => ({ native: w.native, z: _zOf(w),
                                              minimised: !!w.min,
                                              rect: _frameRect(w), w }));
-      /* Focus is not minimise. The old overlap plan moved Firefox to the scratchpad whenever an
-       * HTML window was selected over it, so choosing another window made the browser disappear.
-       * Keep every native surface mapped unless its own frame was explicitly minimised. */
-      const plan = NAT().stashPlan(items, []);
+      /* Focus is not minimise. Ordinary PosterChan WINDOWS must never hide Firefox merely because
+       * focus changed. Real shell OVERLAYS are different: Start, notifications and modals are
+       * painted by the tiled shell underneath every floating native surface, so the surface must
+       * be parked briefly or the overlay is physically impossible to see. overlayRects contains
+       * only those transient layers, never the ordinary window list. */
+      const plan = NAT().stashPlan(items, overlayRects());
       const stash = new Set(plan.stash);
       for(const it of items){
         /* RECORDED AFTER THE CALL, NEVER BEFORE. Each of these used to write what it was about to

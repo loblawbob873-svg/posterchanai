@@ -53,7 +53,8 @@ class VmBackend(unittest.TestCase):
     def test_new_vm_network_works_without_guest_virtio_drivers(self):
         src = (ROOT / "desktop" / "vm.js").read_text()
         self.assertIn('<interface type="user"><model type="e1000e"/></interface>', src)
-        self.assertIn("'--model','e1000e'", src)
+        self.assertIn("domain-network.xml", src)
+        self.assertNotIn("attach-interface',d.name,'user'", src)
 
     def test_viewer_attaches_through_libvirt(self):
         src = (ROOT / "desktop" / "vm.js").read_text()

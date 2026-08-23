@@ -28,3 +28,10 @@ def test_stage3_download_uses_the_official_release_tree():
         "current-stage3-amd64-systemd/"
     )
     assert text.count(url) == 2
+
+
+def test_shell_update_repairs_the_bad_binhost_on_existing_systems():
+    ebuild = next((SCRIPT.parents[0] / "overlay/app-misc/posterchanos-shell").glob("*.ebuild"))
+    text = ebuild.read_text()
+    assert "gentoo\\.poster\\.place/releases/amd64/binpackages" in text
+    assert "https://distfiles.gentoo.org/releases/amd64/binpackages/23.0/x86-64/" in text

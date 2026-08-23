@@ -995,7 +995,16 @@
         if(_want === 'local' && LOCAL() && hosts.some(h => h && h.local)){
           _want = '';
           if($('#tty-host')) $('#tty-host').value = 'local';
-          connect();
+          /* Opening Terminal is not the same operation as pressing New tab. Compositor ticks can
+           * be delivered more than once (and a person can press the shortcut twice); creating a
+           * PTY for each delivery left five identical-looking tabs fighting for the same screen.
+           * Resume the remembered local tab, or the newest live local tab. Only the explicit +
+           * button calls connect() when a terminal already exists. */
+          const prev = _recall();
+          const existing = live.find(x => x.sid === prev && isLocalSid(x.sid))
+                        || live.find(x => isLocalSid(x.sid));
+          if(existing) attach(existing.sid, 'local');
+          else connect();
           if(!XT()) _state('the terminal library did not load', 'err');
           return;
         }
@@ -1044,14 +1053,14 @@
      * caller can say so instead of opening a terminal that will offer a host picker. */
     function openLocal(){
       if(!LOCAL()) return false;
-      _want = 'local';
       /* ALREADY ON THE SCREEN is the case that would otherwise do nothing: the view is mounted, so
-       * nothing re-runs the block that reads `_want`. Connect here instead. */
+       * nothing re-runs the block that reads `_want`. It is also the important idempotence case:
+       * a second shortcut focuses the current shell; it must not manufacture another PTY. */
       if(mounted && hosts.some(h => h && h.local)){
-        _want = '';
-        if($('#tty-host')) $('#tty-host').value = 'local';
-        connect();
+        if(term) _focus();
+        return true;
       }
+      _want = 'local';
       return true;
     }
 

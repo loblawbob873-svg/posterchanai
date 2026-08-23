@@ -18,3 +18,5 @@ Deferred from the Beta 1 stabilization cutoff:
 - Simplify the VM editor around a guided Basic view (name, OS, CPU, memory, disk, network and
   firmware), put uncommon devices and raw libvirt controls behind an Advanced section, use plain
   labels instead of empty icon boxes, and keep Save, Cancel and destructive actions unambiguous.
+- Redesign `posterfetch` as an exciting polished cyberpunk terminal welcome with stronger PosterChan
+  identity and visual hierarchy; keep its system statistics fast, readable, and useful.

@@ -87,9 +87,11 @@ class APlacementThatCouldNotBeMeasuredIsRetried(unittest.TestCase):
         """A PosterChan frame is the native surface's owner, not an occluder. Feeding HTML frame
         rectangles into stashPlan made Firefox disappear or turn black whenever focus changed."""
         sync = body(self.src, "async function nsync")
-        self.assertIn("stashPlan(items, [])", sync)
+        self.assertIn("stashPlan(items, overlayRects())", sync)
         self.assertNotIn("wins.filter(w => w.native == null)", sync)
-        self.assertNotIn("overlayRects()", sync)
+        self.assertEqual(sync.count("overlayRects()"), 1)
+        overlays = body(self.src, "function overlayRects")
+        self.assertIn("el !== desk && el !== bar", overlays)
 
 
 class MovingBetweenOutputsDoesNotCloseTheApplication(unittest.TestCase):

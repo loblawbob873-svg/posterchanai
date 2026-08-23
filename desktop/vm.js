@@ -134,7 +134,14 @@ async function bootDisk(name){
 }
 async function addNetwork(name){ const d=await details(name);if(!d.ok)return d;
   if(!/shut off|shutoff|inactive/.test(d.state))return {ok:false,error:'Shut down the VM before adding a network adapter'};
-  return virsh(['attach-interface',d.name,'user','--model','e1000e','--config'],30000); }
+  const x=await virsh(['dumpxml',d.name]);if(!x.ok)return x;
+  let body=x.out;
+  const iface='      <interface type="user"><model type="e1000e"/></interface>';
+  body=body.replace(/\s*<\/devices>/,`\n${iface}\n    </devices>`);
+  const dir=path.join(root(),d.name);await fs.promises.mkdir(dir,{recursive:true,mode:0o700});
+  const file=path.join(dir,'domain-network.xml');await fs.promises.writeFile(file,body,{mode:0o600});
+  const r=await virsh(['define',file],30000);try{await fs.promises.unlink(file);}catch(_){}
+  return r.ok?details(d.name):r; }
 async function gamingMouse(name, enabled){
   const d=await details(name);if(!d.ok)return d;
   if(!/shut off|shutoff|inactive/.test(d.state))return {ok:false,error:'Shut down the VM before changing mouse mode'};

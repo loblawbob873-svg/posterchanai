@@ -213,6 +213,19 @@ class LocalTerminal(unittest.TestCase):
         render = src[src.index("async function render()") : src.index("function unmount()")]
         self.assertIn("if(!live.length && hosts.length) connect();", render)
 
+    def test_repeated_terminal_shortcuts_do_not_create_duplicate_tabs(self):
+        """Only the explicit New tab control may create another PTY. Repeated compositor ticks or
+        repeated launcher clicks must focus/resume the current local tab."""
+        src = open(CLIENT, encoding="utf-8").read()
+        start = src.rindex("function openLocal()")
+        opened = src[start : src.index("window.PCTerm", start)]
+        self.assertIn("if(term) _focus();", opened)
+        self.assertNotIn("connect();", opened)
+        render = src[src.index("async function render()") : src.index("function unmount()")]
+        start = render.index("if(_want === 'local'")
+        wanted = render[start : render.index("if(!XT())", start)]
+        self.assertIn("existing", wanted)
+
     def test_no_typescript_file_is_written(self):
         """`script` writes a verbatim log of the session, including everything typed at a password
         prompt. /dev/null is the whole point of that argument."""

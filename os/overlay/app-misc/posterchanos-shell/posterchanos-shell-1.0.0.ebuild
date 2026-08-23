@@ -70,6 +70,13 @@ src_install() {
 }
 
 pkg_postinst() {
+	# Repair images published while gentoo.poster.place was mistakenly treated as a full Gentoo
+	# releases mirror. It is our overlay/distfiles host; that binpackages path returns 404. Existing
+	# machines need the migration here because updating gentoo.sh alone only fixes future installs.
+	local binrepo="${EROOT%/}/etc/portage/binrepos.conf/gentoobinhost.conf"
+	if [[ -f ${binrepo} ]]; then
+		sed -i 's#https://gentoo\.poster\.place/releases/amd64/binpackages/23\.0/x86-64/#https://distfiles.gentoo.org/releases/amd64/binpackages/23.0/x86-64/#g' "${binrepo}"
+	fi
 	# Identity accounts receive a private Sway config when they are provisioned. Keep the recovery
 	# binding available to accounts created by an older image without replacing any personal Sway
 	# customizations they may have made since. The live IPC binding is installed by the updater;
