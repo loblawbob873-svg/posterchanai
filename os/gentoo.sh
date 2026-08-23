@@ -2666,8 +2666,10 @@ liveCD() {
 		EXCLUDES+=(var/lib/posterchanos etc/sudoers.d/posterchan-admin
 			etc/systemd/system/boot-snapshot.service
 			etc/systemd/system/boot-snapshot.timer
+			etc/systemd/system/default.target.wants/boot-snapshot.timer
 			etc/systemd/system/timers.target.wants/boot-snapshot.timer
-			etc/systemd/system/multi-user.target.wants/boot-snapshot.service)
+			etc/systemd/system/multi-user.target.wants/boot-snapshot.service
+			etc/systemd/system/multi-user.target.wants/sshd.service)
 	fi
 	local f
 	for f in $SWAPFILES; do
@@ -2872,6 +2874,27 @@ FSTAB
 	pseudoput() { PSEUDO_REPLACED+=("$1"); echo "$@"; }
 
 	local PSEUDO="$WORK/pseudo"
+	# A ROOT-OWNED live boot gate. The package enablement link is retained, but a live image cannot
+	# leave network startup to renderer timing or to a passwordless user command. Pull this unit into
+	# the initial multi-user transaction and do not let tty1 (therefore Welcome) start before NM has
+	# answered systemd. Keeping it live-image-only avoids changing the build host.
+	cat >"$WORK/live-network.service" <<-'UNIT'
+	[Unit]
+	Description=Bring up networking before the PosterChanOS live desktop
+	Requires=NetworkManager.service
+	After=NetworkManager.service
+	Before=getty@tty1.service
+
+	[Service]
+	Type=oneshot
+	ExecStart=/usr/bin/systemctl is-active --quiet NetworkManager.service
+	RemainAfterExit=yes
+	UNIT
+	cat >"$WORK/live-multi-user.conf" <<-'UNIT'
+	[Unit]
+	Requires=posterchan-live-network.service
+	After=posterchan-live-network.service
+	UNIT
 	# Never inherit the desktop launcher from the machine doing the build. A package can leave the
 	# 186 MB Electron binary installed while its /usr/local/bin wrapper is absent; that image passes
 	# a binary-only check, starts Sway successfully, and then shows nothing but the black compositor
@@ -2941,6 +2964,9 @@ FSTAB
 			pseudoput "etc/group" f 644 0 0 cat "$WORK/group"
 			pseudoput "etc/shadow" f 640 0 0 cat "$WORK/shadow"
 			pseudoput "etc/sudoers" f 440 0 0 cat "$WORK/sudoers"
+			pseudoput "etc/systemd/system/posterchan-live-network.service" f 644 0 0 cat "$WORK/live-network.service"
+			echo "etc/systemd/system/multi-user.target.d d 755 0 0"
+			pseudoput "etc/systemd/system/multi-user.target.d/posterchan-live-network.conf" f 644 0 0 cat "$WORK/live-multi-user.conf"
 			echo "home d 755 0 0"
 			# AN EMPTY HOME IS A TERMINAL, NOT A DESKTOP.
 			#
@@ -3088,10 +3114,21 @@ DESKTOP
 			|| MISSING="$MISSING NetworkManager.service"
 		echo "$LS" | grep -qx "squashfs-root/etc/systemd/system/multi-user.target.wants/NetworkManager.service" \
 			|| MISSING="$MISSING NetworkManager-enable"
+		echo "$LS" | grep -qx "squashfs-root/etc/systemd/system/posterchan-live-network.service" \
+			|| MISSING="$MISSING live-network-gate"
+		echo "$LS" | grep -qx "squashfs-root/etc/systemd/system/multi-user.target.d/posterchan-live-network.conf" \
+			|| MISSING="$MISSING live-network-order"
 		if [[ -n "$MISSING" ]]; then
 			{ echo "image is missing:$MISSING"; echo "--- /home in the image ---";
 			  echo "$LS" | grep '^squashfs-root/home' | head -20; } >>"$LOG" 2>/dev/null
 			_lcd_fail "The image is missing:$MISSING — it would boot to a terminal, so it was not made into an ISO."
+			return
+		fi
+		# Packages stay installed for recovery, but a release disc must not inherit services enabled
+		# only on the builder. In particular, generating fresh host keys does not make an unattended
+		# SSH daemon appropriate on every machine booted from the public ISO.
+		if echo "$LS" | grep -qE '^squashfs-root/etc/systemd/system/(multi-user.target.wants/sshd.service|([^/]+\.)?target.wants/boot-snapshot.timer)$'; then
+			_lcd_fail "The clean image inherited SSH or snapshot enablement from the build host — refusing to publish it."
 			return
 		fi
 		# ---------------------------------------------------------- did the REPLACEMENTS land

@@ -365,6 +365,11 @@ class TheLiveSessionActuallyStarts(unittest.TestCase):
         """A host-user service cannot be copied onto a disc whose host user was intentionally removed."""
         self.assertIn("etc/systemd/system/boot-snapshot.service", self.fn)
         self.assertIn("etc/systemd/system/boot-snapshot.timer", self.fn)
+        self.assertIn("etc/systemd/system/default.target.wants/boot-snapshot.timer", self.fn)
+
+    def test_clean_disc_keeps_ssh_installed_but_disabled(self):
+        self.assertIn("etc/systemd/system/multi-user.target.wants/sshd.service", self.fn)
+        self.assertIn("inherited SSH or snapshot enablement", self.fn)
 
     def test_live_desktop_repairs_network_manager_before_welcome(self):
         i = self.fn.index('cat >"$WORK/live.bash_profile"')
@@ -372,6 +377,12 @@ class TheLiveSessionActuallyStarts(unittest.TestCase):
         self.assertIn("systemctl is-active --quiet NetworkManager.service", profile)
         self.assertIn("sudo -n systemctl start NetworkManager.service", profile)
         self.assertLess(profile.index("systemctl start NetworkManager.service"), profile.index("exec sway"))
+
+    def test_live_boot_has_a_root_owned_network_gate(self):
+        self.assertIn('cat >"$WORK/live-network.service"', self.fn)
+        self.assertIn("Requires=NetworkManager.service", self.fn)
+        self.assertIn("Before=getty@tty1.service", self.fn)
+        self.assertIn("multi-user.target.d/posterchan-live-network.conf", self.fn)
 
     def test_it_starts_the_compositor(self):
         i = self.fn.index('cat >"$WORK/live.bash_profile"')
