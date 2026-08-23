@@ -161,6 +161,7 @@ class Bridge(unittest.TestCase):
         self.assertIn("finishMove(Number(id))", self.main)
         client = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()
         self.assertIn("pcWM.handoff(id,handoff)", client)
+        self.assertIn("killNative:false,preserveFocus:true", client)
 
     def test_posterchan_frames_can_be_handed_to_an_adjacent_display(self):
         self.assertIn("'pc:wm:handoff-frame'", self.main)
@@ -173,6 +174,7 @@ class Bridge(unittest.TestCase):
         self.assertIn("previewFrame:", self.pre)
         self.assertIn("onPreviewFrame:", self.pre)
         self.assertIn("pcWM.onPreviewFrame", client)
+        self.assertIn("closeWin(w,{preserveFocus:true})", client)
 
     def test_terminal_handoff_keeps_the_same_pty(self):
         client = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()

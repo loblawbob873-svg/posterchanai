@@ -1909,7 +1909,8 @@
          * for something that is not running. */
         const live = new Set(list.map(x => Number(x.id)));
         for(const w of nativeWins()) if(!live.has(Number(w.native)))
-          closeWin(w, { killNative: !(allIds && allIds.has(Number(w.native))) });
+          closeWin(w, { killNative: !(allIds && allIds.has(Number(w.native))),
+                        preserveFocus: !!(allIds && allIds.has(Number(w.native))) });
         if(!nativeWins().length) return;
         /* WHAT WE REMEMBER SENDING IS NOT WHAT THE COMPOSITOR DID. `_natSent` is a record of intent,
          * kept so an unchanged rectangle is not re-sent sixty times a second — but read as truth it
@@ -2136,7 +2137,8 @@
     for(const w of nativeWins()) if(!live.has(Number(w.native))){
       /* Still alive globally means ownership moved to another output. Remove only this HTML frame;
        * closing the compositor surface here would kill Firefox/Steam during the handoff. */
-      closeWin(w, { killNative: !(allIds && allIds.has(Number(w.native))) });
+      closeWin(w, { killNative: !(allIds && allIds.has(Number(w.native))),
+                    preserveFocus: !!(allIds && allIds.has(Number(w.native))) });
       changed = true;
     }
     /* A title is the page a browser is showing and it changes constantly; the frame follows it, the
@@ -2194,8 +2196,14 @@
       // Some other window closed; if the music app happened to be inside it the transport comes back.
       try{ PC().syncPlayer && PC().syncPlayer(); }catch(_){}
     }
-    const next = wins.filter(x => !x.min).pop();
-    if(next) focusWin(next); else drawBar();
+    /* Monitor handoff already focused the destination renderer/native surface. Focusing the next
+     * source window here steals input back across displays, leaving Firefox painted but inert and
+     * making a moved Terminal maximise back on monitor one. Ordinary closes retain normal focus. */
+    if(opts && opts.preserveFocus) drawBar();
+    else{
+      const next = wins.filter(x => !x.min).pop();
+      if(next) focusWin(next); else drawBar();
+    }
   }
 
   function minimise(w){
@@ -2487,7 +2495,7 @@
          * first creates an ownership gap in which reconciliation sees an unframed native window
          * and can park it in Sway's scratchpad: taskbar icon, no Firefox window. */
         try{ Promise.resolve(pcWM.handoff(id,handoff)).then(result=>{
-          if(result && wins.includes(w)) closeWin(w,{killNative:false});
+          if(result && wins.includes(w)) closeWin(w,{killNative:false,preserveFocus:true});
           else if(!result){ _natGesture(w,false); nsync(); }
         }).catch(()=>{ _natGesture(w,false); nsync(); }); }catch(_){ _natGesture(w,false); nsync(); }
         return;
@@ -2499,7 +2507,7 @@
                        terminalSid:w.view==='terminal'&&window.PCTerm&&PCTerm.sessionId
                          ? PCTerm.sessionId() : ''};
         Promise.resolve(pcWM.handoffFrame(payload,handoff)).then(result=>{
-          if(result) closeWin(w);
+          if(result) closeWin(w,{preserveFocus:true});
         }).catch(()=>{});
         if(nativeWins().length) nsync();
         return;
