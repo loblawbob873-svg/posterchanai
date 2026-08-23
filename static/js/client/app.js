@@ -6423,7 +6423,7 @@
                          _withSms(m => { if(VIEW==='texts') m.render(); }); return; }
     if(renderModuleView('sync','sync.js','PCSync','paint')) return;
     if(renderModuleView('vault','vault.js','PCVault','render')) return;
-    if(renderModuleView('xdc','webxdc.js','PCWebxdc','gallery')) return;
+    if(VIEW==='xdc' && renderModuleView('xdc','webxdc.js','PCWebxdc','gallery')) return;
     if (window.PCGames && window.PCGames[VIEW]) return window.PCGames[VIEW]();   // game modules (chess.js/ttt.js/hangman.js)
     if (VIEW==='blossom') return renderBlossom();
     if (VIEW==='music') return renderMusicApp();
