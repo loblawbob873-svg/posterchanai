@@ -28,6 +28,7 @@ const tor = require('./tor');
 let background = null; // background.js imports Tray, so require it only after app.ready too.
 const vm = require('./vm');
 const bluetooth = require('./bluetooth');
+const liveusb = require('./liveusb');
 
 /* --shell: this process IS the desktop, not an app running on one.
  *
@@ -1233,6 +1234,18 @@ ipcMain.handle('pc:display:status', (e) => { fsGuard(e); return displays().statu
 ipcMain.handle('pc:display:preview', (e, rows) => { fsGuard(e); return displays().preview(rows); });
 ipcMain.handle('pc:display:confirm', (e, token) => { fsGuard(e); return displays().confirm(token); });
 ipcMain.handle('pc:display:revert', (e, token) => { fsGuard(e); return displays().revert(token); });
+ipcMain.handle('pc:liveusb:devices', (e) => { fsGuard(e); return liveusb.devices(); });
+ipcMain.handle('pc:liveusb:status', (e) => { fsGuard(e); return liveusb.status(); });
+ipcMain.handle('pc:liveusb:build', (e, dir, home) => { fsGuard(e); return liveusb.build(String(dir||''), !!home); });
+ipcMain.handle('pc:liveusb:burn', (e, iso, disk) => { fsGuard(e); return liveusb.burn(String(iso||''), String(disk||'')); });
+ipcMain.handle('pc:liveusb:pick-iso', async (e) => {
+  fsGuard(e); const r=await dialog.showOpenDialog(win,{properties:['openFile'],filters:[{name:'ISO images',extensions:['iso']}]});
+  return r.canceled?'':(r.filePaths[0]||'');
+});
+ipcMain.handle('pc:liveusb:pick-dir', async (e) => {
+  fsGuard(e); const r=await dialog.showOpenDialog(win,{properties:['openDirectory','createDirectory']});
+  return r.canceled?'':(r.filePaths[0]||'');
+});
 /* Launch takes an ARGV ARRAY, never a command string. A string would have to be handed to a shell
  * to be useful, and then a file name with a space in it is an injection. */
 ipcMain.handle('pc:wm:launch', async (e, argv, opts) => {

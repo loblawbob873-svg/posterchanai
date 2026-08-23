@@ -146,6 +146,15 @@ if (isOurPage) {
     revert: token => ipcRenderer.invoke('pc:display:revert', String(token||'')),
   });
 
+  contextBridge.exposeInMainWorld('pcLiveUSB', {
+    devices: () => ipcRenderer.invoke('pc:liveusb:devices'),
+    status: () => ipcRenderer.invoke('pc:liveusb:status'),
+    build: (dir, home) => ipcRenderer.invoke('pc:liveusb:build', String(dir||''), !!home),
+    burn: (iso, disk) => ipcRenderer.invoke('pc:liveusb:burn', String(iso||''), String(disk||'')),
+    pickISO: () => ipcRenderer.invoke('pc:liveusb:pick-iso'),
+    pickDir: () => ipcRenderer.invoke('pc:liveusb:pick-dir'),
+  });
+
   contextBridge.exposeInMainWorld('pcNet', {
     available: () => ipcRenderer.invoke('pc:net:available'),
     status: () => ipcRenderer.invoke('pc:net:status'),

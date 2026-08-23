@@ -1512,6 +1512,7 @@
         <button data-jump="network">${iconSvg('wifi')} Network</button>
         <button data-jump="bluetooth">${iconSvg('bluetooth')} Bluetooth</button>
         <button data-jump="power">${iconSvg('power')} Power &amp; brightness</button>
+        ${window.pcLiveUSB?`<button data-jump="liveusb">${iconSvg('drive')} LiveUSB</button>`:''}
       </aside><main class="os-set-main"><h2>Displays</h2>
         <p class="muted">Drag screens into the same arrangement as the monitors on your desk.</p>
         <div class="os-display-map" style="height:${Math.max(180,(maxY-minY)*scale+40)}px">${rows.map((r,i)=>
@@ -1527,6 +1528,10 @@
           <select data-idle-timeout aria-label="Display idle timeout">
             ${[[60,'1 minute'],[120,'2 minutes'],[300,'5 minutes'],[600,'10 minutes'],[1800,'30 minutes'],[0,'Never']].map(([n,label])=>`<option value="${n}" ${Number(power.idleSeconds)===n?'selected':''}>${label}</option>`).join('')}
           </select></section>
+        ${window.pcLiveUSB?`<section class="os-liveusb" data-liveusb><div class="os-liveusb-head"><div><b>PosterChanOS LiveUSB</b><span>Build a recovery/installer ISO or write one to removable media.</span></div><button class="btn" data-live-refresh>Refresh</button></div>
+          <div class="os-liveusb-grid"><div><h3>Build an ISO</h3><label>Output folder<div class="os-path-pick"><input class="input" data-live-out readonly placeholder="Choose a folder"><button class="btn" data-live-dir>Choose…</button></div></label><label><input type="checkbox" data-live-home> Include personal home files <small>(recovery media only)</small></label><button class="btn primary" data-live-build>Build ISO</button></div>
+          <div><h3>Write a USB drive</h3><label>ISO file<div class="os-path-pick"><input class="input" data-live-iso readonly placeholder="Choose an ISO"><button class="btn" data-live-pick>Choose…</button></div></label><label>Removable drive<select data-live-disk><option value="">Scanning…</option></select></label><button class="btn danger" data-live-burn>Write USB…</button></div></div>
+          <pre class="os-liveusb-status" data-live-status>Ready</pre></section>`:''}
       </main></div>`;
       wire(); controls();
     };
@@ -1576,8 +1581,29 @@
         catch(e){PC().toast(String(e&&e.message||e));}
         finally{idle.disabled=false;}
       };
+      const live=host.querySelector('[data-liveusb]');
+      if(live){
+        const out=live.querySelector('[data-live-out]'), iso=live.querySelector('[data-live-iso]');
+        const disk=live.querySelector('[data-live-disk]'), stat=live.querySelector('[data-live-status]');
+        const refresh=async()=>{ try{
+          const ds=await pcLiveUSB.devices();
+          disk.innerHTML='<option value="">Choose a removable drive</option>'+ds.map(d=>
+            `<option value="${enc(d.path)}" ${d.mounted?'disabled':''}>${enc(d.path+' · '+(d.model||'USB drive')+' · '+Math.round(d.size/1073741824)+' GB'+(d.mounted?' · mounted':''))}</option>`).join('');
+          const s=await pcLiveUSB.status(); stat.textContent=(s.message||'Ready')+(s.output?'\n\n'+s.output.slice(-5000):'');
+          if(s.running) setTimeout(()=>{if(live.isConnected)refresh()},2000);
+        }catch(e){stat.textContent=String(e&&e.message||e)} };
+        live.querySelector('[data-live-refresh]').onclick=refresh;
+        live.querySelector('[data-live-dir]').onclick=async()=>{const p=await pcLiveUSB.pickDir();if(p)out.value=p};
+        live.querySelector('[data-live-pick]').onclick=async()=>{const p=await pcLiveUSB.pickISO();if(p)iso.value=p};
+        live.querySelector('[data-live-build]').onclick=async e=>{try{e.target.disabled=true;await pcLiveUSB.build(out.value,live.querySelector('[data-live-home]').checked);stat.textContent='Building ISO…';}catch(x){PC().toast(String(x&&x.message||x))}finally{e.target.disabled=false}};
+        live.querySelector('[data-live-burn]').onclick=async e=>{if(!iso.value||!disk.value)return PC().toast('Choose an ISO and an unmounted USB drive');
+          const ok=await PC().uiConfirm('Everything on '+disk.value+' will be overwritten. Write this ISO?',{ok:'Erase and write USB'});if(!ok)return;
+          try{e.target.disabled=true;await pcLiveUSB.burn(iso.value,disk.value);stat.textContent='Writing USB… do not unplug it';}catch(x){PC().toast(String(x&&x.message||x))}finally{e.target.disabled=false}};
+        refresh();
+      }
       host.querySelectorAll('[data-jump]').forEach(b=>b.onclick=()=>{
         const k=b.dataset.jump;
+        if(k==='liveusb'){ const sec=host.querySelector('[data-liveusb]'); if(sec)sec.scrollIntoView({behavior:'smooth',block:'start'}); return; }
         if(k==='network'||k==='bluetooth'||k==='sound'||k==='power')
           try{ Promise.resolve(PCOSShell.openControl(k,b)).catch(e=>PC().toast(String(e&&e.message||e))); }
           catch(e){ try{PC().toast(String(e&&e.message||e))}catch(_){} }
