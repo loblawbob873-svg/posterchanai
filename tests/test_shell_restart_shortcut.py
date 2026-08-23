@@ -79,3 +79,9 @@ def test_alt_tab_is_compositor_owned_and_migrated_to_existing_accounts():
     assert "Mod1+Shift+Tab exec /usr/local/bin/pc-window-cycle previous" in cfg
     assert "pc-window-cycle" in ebuild
     assert helper.exists()
+
+
+def test_upgrade_restores_native_window_decorations_in_old_identity_configs():
+    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
+    assert "default_floating_border[[:space:]]+none" in ebuild
+    assert "default_floating_border normal 3" in ebuild

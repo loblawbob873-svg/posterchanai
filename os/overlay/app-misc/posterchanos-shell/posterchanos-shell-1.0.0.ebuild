@@ -92,6 +92,11 @@ pkg_postinst() {
 		# created by an older image so an update changes the key people actually use.
 		sed -i -E 's#bindsym \$mod\+Return exec swaymsg -t send_tick pc:terminal#bindsym Mod1+Return exec swaymsg -t send_tick pc:terminal#' "${cfg}"
 		sed -i 's#bindsym --release --no-repeat \$mod exec swaymsg -t send_tick pc:start#bindsym --release --no-repeat Super_L exec swaymsg -t send_tick pc:start#' "${cfg}"
+		# Older PosterChan frames supplied their own HTML title bars, so those images deliberately
+		# disabled Sway's floating decoration. Native applications are compositor-owned now; retaining
+		# that copied setting leaves Firefox, Telegram and terminals with no title bar or resize border.
+		# This is a package default migration, while any other per-user Sway changes remain untouched.
+		sed -i -E 's/^default_floating_border[[:space:]]+none([[:space:]]*)$/default_floating_border normal 3\1/' "${cfg}"
 		# Options such as --no-repeat sit between `bindsym` and the key. The old expression did not
 		# allow that, so every package update appended another identical PrintScreen binding and Sway
 		# reported the private config as erroneous. Delete every historical form before adding one.
