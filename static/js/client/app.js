@@ -16149,36 +16149,10 @@
     return out;
   }
   // ---- Blossom access (request-to-upload) ----
-  // Pre-flight whether THIS user may upload (BUD-06 HEAD /upload → 200 allowed / 403 denied), so the
-  // Files view + post composer can offer a "request access" flow instead of a dead upload button.
-  let _blossomUploadOK=null, _blossomUploadAt=0, _blossomUploadP=null;
-  async function blossomCanUpload(){
-    const server=mediaServer(); if(!server) return false;
-    const now=Date.now();
-    if(_blossomUploadOK!==null && now-_blossomUploadAt<300000) return _blossomUploadOK;
-    if(_blossomUploadP) return _blossomUploadP;
-    _blossomUploadP=(async()=>{ try{
-      // TIME-BOX the signer. This is a permission PROBE, and it sits on the awaited path that paints
-      // the Files view — so an external signer (Amber/NIP-55, a NIP-46 bunker) that never answers,
-      // because the prompt wasn't shown or the app isn't installed, left the whole drive as a spinner
-      // that never stopped. On timeout fall through to "inconclusive", exactly like the 404/405 case
-      // below: the real PUT is what actually decides, and its 403 opens the request-access flow.
-      const auth=await Promise.race([
-        sign(24242,'Upload blob',[['t','upload'],['expiration',String(Math.floor(Date.now()/1000)+3600)]]),
-        new Promise((_,rej)=>setTimeout(()=>rej(new Error('signer timeout')), 8000)),
-      ]);
-      const res=await fetch(server+'/upload',{ method:'HEAD', headers:{ 'Authorization':'Nostr '+btoa(JSON.stringify(auth)) }});
-      // Only a DEFINITIVE denial from the real handler means "no": 401 bad auth, 403 not authorized,
-      // 413 too big. Anything else is inconclusive — some fronting proxies 404/405 a HEAD before it ever
-      // reaches the handler (media.poster.place does exactly this, while PUT/GET route fine), which used
-      // to make EVERY user see a false "request upload access" in Files. Don't gate on that; the real PUT
-      // upload speaks, and its 403 triggers the request-access flow.
-      return res.status!==401 && res.status!==403 && res.status!==413;
-    }catch(_){ return true; }    // CORS/network hiccup → don't gate; let the real upload speak
-    })();
-    try{ _blossomUploadOK=await _blossomUploadP; _blossomUploadAt=Date.now(); return _blossomUploadOK; }
-    finally{ _blossomUploadP=null; }
-  }
+  /* Opening a drive is a read operation and must never wake a phone/remote signer. Upload access is
+   * decided by the real, user-initiated PUT; its authenticated failure enters the request-access
+   * flow below. A signed HEAD probe here made merely opening Blossom freeze behind “waiting for
+   * signer”, and also spent a signature to predict what the authoritative PUT would say. */
   function _blossomDenied(err){ const m=String(err&&err.message||err||'').toLowerCase(); return m.includes('not authorized')||m.includes('403')||m.includes('privilege'); }
   let _blossomReqSent=false;
   // DM the instance operator asking for upload access; the admin grants it in Admin → Users.
@@ -19686,17 +19660,9 @@
     pane.innerHTML='<div class="spinner"></div>';
     // Anything that throws below leaves this spinner on screen forever unless it is caught, and
     // "a spinner that never stops" tells the user nothing and tells us less. Surface it instead.
-    /* DRAW FIRST; permission discovery is advisory and may live on a phone signer. Blocking this
-     * paint on it made an otherwise locally-cached Drive look hung for eight seconds (or until an
-     * approval appeared elsewhere). A definitive denial repaints once into the request-access card;
-     * the real PUT remains the authority if the probe was inconclusive. */
-    const canUp=_blossomUploadOK!==false;
-    /* Probe in the background. The first paint remains immediate (a remote signer may take
-     * seconds), but a definitive denial must repaint the optimistic upload controls into the
-     * access-request card. Without this call the cached capability was never populated at all. */
-    blossomCanUpload().then(ok=>{
-      if(!ok && canUp && VIEW==='blossom' && _filesTab==='public') renderBlossom();
-    }).catch(()=>{});
+    /* Optimistic controls are intentional: no signature or network request happens until the user
+     * chooses files. The real PUT reports denial and offers/request access on that explicit action. */
+    const canUp=true;
     const head = canUp
       ? `<div class="drop-zone" id="bl-drop"><input type="file" id="bl-file" multiple ${_filesFolder==='Music'?'accept="audio/*,.mp3,.m4a,.m4b,.aac,.flac,.wav,.ogg,.oga,.opus,.wma,.aif,.aiff,.mka,.ape,.dsf"':''} hidden><input type="file" id="bl-folder" webkitdirectory hidden>
           <div class="dz-inner"><span class="dz-ic">⬆</span> Drop files/folders here, or <button class="btn btn-cyan small" id="bl-pick">choose files</button> <button class="btn btn-neon small" id="bl-pickfolder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>choose folder</button>

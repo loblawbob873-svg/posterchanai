@@ -5,16 +5,12 @@ from pathlib import Path
 APP = (Path(__file__).resolve().parents[2] / "static/js/client/app.js").read_text()
 
 
-def test_upload_capability_probe_is_cached_and_not_awaited_by_drive_render():
-    fn = APP[APP.index("async function blossomCanUpload(){"):]
-    fn = fn[:fn.index("\n  }") + 4]
-    assert "_blossomUploadP" in fn
-    assert "300000" in fn
+def test_drive_render_never_runs_an_upload_capability_probe():
     render = APP[APP.index("async function renderPublicFiles(pane){"):]
     render = render[:render.index("\n  let _vodNameMap")]
-    assert "const canUp=_blossomUploadOK!==false" in render
+    assert "const canUp=true" in render
     assert "await blossomCanUpload()" not in render
-    assert "blossomCanUpload().then" in render
+    assert "blossomCanUpload().then" not in render
 
 
 def test_drive_index_reuses_the_shared_self_proof():
