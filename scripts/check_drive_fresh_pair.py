@@ -69,7 +69,7 @@ class Tab:
 
     async def start(self, chrome, url):
         import websockets
-        subprocess.run(["rm", "-rf", self.profile], check=False)
+        shutil.rmtree(self.profile, ignore_errors=True)
         self.proc = subprocess.Popen(
             [chrome, "--headless=new", "--disable-gpu", "--no-sandbox",
              f"--remote-debugging-port={self.port}", f"--user-data-dir={self.profile}", "about:blank"],
@@ -98,7 +98,13 @@ class Tab:
         await self.call("Page.navigate", {"url": url})
         for _ in range(80):
             await asyncio.sleep(0.25)
-            if await self.js("!!(window.Relay && Relay.worker && window.__PC)"):
+            # `window.__PC` is published in stages. Seeing the namespace and relay worker does not
+            # mean Folder Sync has attached its test contract yet; under the full parallel matrix
+            # one tab reached COLD in that gap and called undefined.driveColdStart. Readiness is
+            # the capability this check is actually about.
+            if await self.js("!!(window.Relay && Relay.worker && window.__PC && "
+                             "typeof window.__PC.driveColdStart === 'function' && "
+                             "typeof window.__PC.drivePull === 'function')"):
                 return True
         return False
 
@@ -121,10 +127,16 @@ class Tab:
 
     def stop(self):
         try:
-            self.proc and self.proc.terminate()
+            if self.proc:
+                self.proc.terminate()
+                try:
+                    self.proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    self.proc.kill()
+                    self.proc.wait(timeout=10)
         except Exception:
             pass
-        subprocess.run(["rm", "-rf", self.profile], check=False)
+        shutil.rmtree(self.profile, ignore_errors=True)
 
 
 async def drive(url):
@@ -279,7 +291,19 @@ def main():
     except Exception as e:
         print(f"SKIP  no instance at {BASE} ({e})")
         return 2
-    return asyncio.run(drive(BASE + "/client"))
+    # Chrome/CDP itself can be reaped while the full UI matrix runs several isolated browsers in
+    # parallel. That is infrastructure, not a Folder Sync verdict: product failures are converted
+    # to return 1 inside drive() and are NEVER retried. Give a disconnected controller one fresh
+    # browser pair; a second disconnect remains a hard error with its traceback.
+    from websockets.exceptions import ConnectionClosed
+    for attempt in range(2):
+        try:
+            return asyncio.run(drive(BASE + "/client"))
+        except ConnectionClosed:
+            if attempt:
+                raise
+            print("  Chrome debugging connection closed; retrying once with a fresh browser pair")
+    return 2
 
 
 if __name__ == "__main__":

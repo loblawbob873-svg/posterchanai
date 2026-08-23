@@ -207,8 +207,12 @@ async def drive():
             if res is None:
                 print(f"SKIP  {w}px: page did not evaluate (site unreachable?)")
                 return 2
-            if res["cards"] < 15:
-                print(f"SKIP  {w}px: only {res['cards']} cards drew (relay unreachable?)")
+            # One real card is sufficient as the DOM/CSS template: the cruel long-name cases are
+            # cloned below, and reposts are explicitly optional. Requiring 15 made this visual gate
+            # skip on a healthy but quiet/filtered relay (six cards were fully rendered), turning
+            # current relay traffic into a release prerequisite without adding any coverage.
+            if res["cards"] < 1:
+                print(f"SKIP  {w}px: no timeline card drew (relay unreachable?)")
                 return 2
             # A profile arriving is what turns "someone" into a name, so give the kind-0s a moment
             # before judging that one — otherwise this check fails on a slow relay rather than on a bug.
