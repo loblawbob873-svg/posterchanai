@@ -267,7 +267,9 @@ def test_the_apk_can_raise_a_notification_at_all():
     in-app toast if you happened to be looking and nothing whatsoever if you were not. Same shape as
     the media-controls gap (an API the WebView accepts and does nothing with)."""
     i = APPJS.index("function osNotify(")
-    body = APPJS[i:i + 1600]
+    # Slice the whole helper rather than a fixed character budget. Deep-link routing adds fields to
+    # the native call but must not make this test lose sight of the browser fallback below it.
+    body = APPJS[i:APPJS.index("\n  // A reminder fired", i)]
     assert "_capPlugin('PosterChanPush', 'notify')" in body, (
         "osNotify still relies on window.Notification, which does nothing in a WebView")
     assert body.index("_capPlugin('PosterChanPush'") < body.index("window.Notification"), (
@@ -279,7 +281,7 @@ def test_a_push_and_a_locally_raised_notification_use_one_builder():
     """Otherwise the same event looks different depending on whether the app happened to be running —
     and the call treatment (its own channel, a full-screen intent) is the part that would differ."""
     assert "public static void show(Context ctx" in PUSHSVC
-    assert "show(ctx, title, body, type, null);" in PUSHSVC, (
+    assert "show(ctx, title, body, type, null, route);" in PUSHSVC, (
         "onMessage builds its own notification again instead of going through show()")
     assert "PushEventService.show(getContext()" in PUSHPLUG
 

@@ -17177,7 +17177,17 @@
         pb.setAttribute('aria-label', pb.title); } }
     try{ _updateMusicListBtns(); }catch(_){}
   }
-  function openMusic(){   // the Music nav button → shuffle-play your whole library right away
+  function openMusic(){
+    /* OPENING AN APP IS NOT A TRANSPORT COMMAND. The Android launcher routes every PosterChan tile
+     * through the same warm MainActivity, and a repeated/late `__music` landing can arrive while a
+     * track is already alive in that WebView. This function used to choose a random queue entry with
+     * `{force:true}` every time it was reached, so merely moving between PosterChan launcher apps
+     * could restart the song (or replace it with another one). Preserve the one player and its
+     * position; explicit shuffle/next controls remain the only things that change a live track. */
+    if(MusicPlayer.cur || (_audioEl && _audioEl.src)){
+      renderMusicApp();
+      return;
+    }
     FilesIdx.loadLocal();
     const go=()=>{ const tracks=musicTracks(null);
       if(!tracks.length){   // no music yet → open the Music folder + guide them
