@@ -129,7 +129,7 @@ REPO_CHOICE="local"
 #
 # OpenSSH stays installed for recovery/admin use, but a fresh desktop must not expose a password
 # daemon before its administrator deliberately enables it (`systemctl enable --now sshd`).
-SERVICES+=(systemd-timesyncd libvirtd bluetooth smartd cups NetworkManager spice-vdagentd)
+SERVICES+=(systemd-timesyncd libvirtd bluetooth smartd cups NetworkManager)
 MAKEOPTS="-j$(cat /proc/cpuinfo | grep -i processor | grep -vi 'model' | wc -l)"
 ROOT_PARTITION_SIZE="30GB"
 FEATURES="-pid-sandbox getbinpkg -binpkg-request-signature"

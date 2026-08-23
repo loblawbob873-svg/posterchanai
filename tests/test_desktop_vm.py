@@ -74,7 +74,6 @@ class VmBackend(unittest.TestCase):
     def test_guest_agent_is_started_for_spice_virtual_machines(self):
         installer = (ROOT / "os" / "gentoo.sh").read_text()
         launcher = (ROOT / "os" / "bin" / "pc-shell-start").read_text()
-        self.assertIn("spice-vdagentd", installer)
         self.assertIn("/dev/virtio-ports/com.redhat.spice.0", launcher)
         self.assertIn("spice-vdagent", launcher)
 
