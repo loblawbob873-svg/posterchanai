@@ -154,6 +154,18 @@ class Bridge(unittest.TestCase):
         client = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()
         self.assertIn("pcWM.handoff(id,handoff)", client)
 
+    def test_posterchan_frames_can_be_handed_to_an_adjacent_display(self):
+        self.assertIn("'pc:wm:handoff-frame'", self.main)
+        self.assertIn("handoffFrame:", self.pre)
+        self.assertIn("onHandoffFrame:", self.pre)
+        client = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()
+        self.assertIn("pcWM.handoffFrame(payload,handoff)", client)
+        self.assertIn("pcWM.onHandoffFrame", client)
+
+    def test_global_shell_keys_only_reach_the_focused_monitor(self):
+        self.assertIn("(await wm().workspaces()).find(x=>x && x.focused)", self.main)
+        self.assertIn("ev.payload !== 'pc:start:close'", self.main)
+
     def test_it_is_absent_rather_than_broken_without_a_compositor(self):
         """A desktop install that is not PosterChanOS has no sway. The page must be able to ask,
         rather than discovering it through a thrown error on every call."""
@@ -208,7 +220,7 @@ class Bridge(unittest.TestCase):
         """The event already carries sway's container. Dropping it makes a new app appear first and
         its PosterChan frame catch up after two GET_TREE round trips."""
         i = self.main.index("if (name === 'window' && ev && ev.container)")
-        body = self.main[i:i + 850]
+        body = self.main[i:i + 2200]
         self.assertIn("flatten(ev.container", body)
         self.assertIn("payload: ev && ev.payload, window", body)
 

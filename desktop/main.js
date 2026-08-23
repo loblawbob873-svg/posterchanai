@@ -1113,28 +1113,50 @@ ipcMain.handle('pc:wm:move', (e, id, x, y) => {
 /* Drag a hosted app through a monitor edge. Each output is a different Electron surface, so DOM
  * pointer coordinates cannot continue into the next renderer. The compositor performs the
  * ownership hand-off; the destination renderer then adopts the still-running native window. */
-ipcMain.handle('pc:wm:handoff', async (e, id, direction) => {
-  fsGuard(e);
+function adjacentShellSurface(e, direction){
   const scope = _shellScopes.get(e.sender.id);
   if(!scope) throw new Error('this desktop surface has no display');
   const from = scope.rect || {};
   const cx = (Number(from.x)||0) + (Number(from.width)||0)/2;
   const cy = (Number(from.y)||0) + (Number(from.height)||0)/2;
-  const rows = Array.from(_shellSurfaces.values()).map(r=>r.assignment).filter(Boolean);
-  const candidates = rows.filter(a=>a.output!==scope.output).map(a=>{
-    const r=a.rect||{}, x=(Number(r.x)||0)+(Number(r.width)||0)/2,
+  const rows = Array.from(_shellSurfaces.values()).filter(r=>r && r.assignment && r.browser
+    && !r.browser.isDestroyed() && r.browser.webContents.id !== e.sender.id);
+  const candidates = rows.map(record=>{
+    const a=record.assignment, r=a.rect||{}, x=(Number(r.x)||0)+(Number(r.width)||0)/2,
           y=(Number(r.y)||0)+(Number(r.height)||0)/2;
     const forward = direction==='left' ? cx-x : direction==='right' ? x-cx
                   : direction==='up' ? cy-y : y-cy;
     const cross = /left|right/.test(direction) ? Math.abs(y-cy) : Math.abs(x-cx);
-    return {a,forward,cross};
+    return {record,forward,cross};
   }).filter(x=>x.forward>0).sort((a,b)=>a.forward-b.forward||a.cross-b.cross);
-  if(!candidates.length) return false;
-  const target=candidates[0].a;
+  return candidates.length ? candidates[0].record : null;
+}
+
+ipcMain.handle('pc:wm:handoff', async (e, id, direction) => {
+  fsGuard(e);
+  const record=adjacentShellSurface(e, String(direction||''));
+  if(!record) return false;
+  const target=record.assignment;
   await wm().command('[con_id='+Number(id)+'] move container to workspace number '+target.workspace);
   _nativeOwners.set(Number(id), String(target.workspace));
   await wm().focus(Number(id));
   return {output:target.output,workspace:target.workspace};
+});
+
+/* DOM application windows live inside one output renderer. Transfer their durable identity to the
+ * adjacent renderer, which recreates the frame there; this is the counterpart to the compositor
+ * move above and is what makes Notes, Messages and every other PosterChan app cross a monitor. */
+ipcMain.handle('pc:wm:handoff-frame', async (e, payload, direction) => {
+  fsGuard(e);
+  const record=adjacentShellSurface(e, String(direction||''));
+  if(!record) return false;
+  const p=payload && typeof payload==='object' ? payload : {};
+  record.browser.webContents.send('pc:wm:handoff-frame', {
+    view:String(p.view||''), title:String(p.title||''), icon:String(p.icon||''),
+    width:Number(p.width)||0, height:Number(p.height)||0, direction:String(direction||'')
+  });
+  await wm().focus(Number(record.conId));
+  return {output:record.assignment.output,workspace:record.assignment.workspace};
 });
 ipcMain.handle('pc:wm:hide', (e, id) => { fsGuard(e); return wm().hide(Number(id)); });
 ipcMain.handle('pc:wm:show', (e, id) => { fsGuard(e); return wm().show(Number(id)); });
@@ -1333,7 +1355,22 @@ ipcMain.handle('pc:wm:subscribe', async (e) => {
           window = flatten(ev.container, [], '')[0] || null;
         } catch (_) {}
       }
-      for (const target of BrowserWindow.getAllWindows()) {
+      const deliver = async () => {
+        let targets = BrowserWindow.getAllWindows();
+        /* A compositor key binding is broadcast to every renderer. With one shell surface per
+         * monitor that opened two Start menus from one Super press (and could launch two terminals).
+         * Actions belong to the focused output only. Close remains broadcast so a menu which was
+         * open before focus crossed displays cannot be stranded. */
+        if(name === 'tick' && ev && ev.payload !== 'pc:start:close'){
+          try{
+            const active=(await wm().workspaces()).find(x=>x && x.focused);
+            if(active) targets=targets.filter(target=>{
+              const scope=_shellScopes.get(target.webContents.id);
+              return !scope || String(scope.workspace)===String(active.name);
+            });
+          }catch(_){}
+        }
+        for (const target of targets) {
         try {
           const scope = _shellScopes.get(target.webContents.id);
           const owner = window && (window.stashed ? _nativeOwners.get(Number(window.id))
@@ -1342,7 +1379,9 @@ ipcMain.handle('pc:wm:subscribe', async (e) => {
           target.webContents.send('pc:wm:event',
             { name, change: ev && ev.change, payload: ev && ev.payload, window: localWindow });
         } catch (_) {}
-      }
+        }
+      };
+      deliver().catch(()=>{});
     });
   }
   return true;

@@ -1946,12 +1946,13 @@
       const items = nativeWins().map(w => ({ native: w.native, z: _zOf(w),
                                              minimised: !!w.min,
                                              rect: _frameRect(w), w }));
-      /* Focus is not minimise. Ordinary PosterChan WINDOWS must never hide Firefox merely because
-       * focus changed. Real shell OVERLAYS are different: Start, notifications and modals are
-       * painted by the tiled shell underneath every floating native surface, so the surface must
-       * be parked briefly or the overlay is physically impossible to see. overlayRects contains
-       * only those transient layers, never the ordinary window list. */
-      const plan = NAT().stashPlan(items, overlayRects());
+      /* A native surface is compositor-level and therefore always above this HTML surface. A
+       * higher-z PosterChan window which physically overlaps it must park it, otherwise Firefox
+       * draws through that window and the two appear blended together. Non-overlapping windows do
+       * nothing, so ordinary focus is not mistaken for minimise. */
+      const htmls = wins.filter(w => w.native == null)
+        .map(w => ({z:_zOf(w), minimised:!!w.min, rect:_frameRect(w)}));
+      const plan = NAT().stashPlan(items, htmls.concat(overlayRects()));
       const stash = new Set(plan.stash);
       for(const it of items){
         /* RECORDED AFTER THE CALL, NEVER BEFORE. Each of these used to write what it was about to
@@ -2343,7 +2344,7 @@
     const k = zf();
     let sx = ev.clientX, sy = ev.clientY;
     let ox = parseInt(w.el.style.left, 10), oy = parseInt(w.el.style.top, 10);
-    let curX = ox, curY = oy, zone = '', handoff = '', raf = 0;
+    let curX = ox, curY = oy, zone = '', handoff = '', raf = 0, lastMove = ev;
     hideLayouts();
     /* Native apps follow the frame with position-only compositor moves. Resizing/re-floating on
      * every frame is still avoided; `_natGesture` makes nsync choose pcWM.move until release. */
@@ -2364,9 +2365,16 @@
     const paint = () => {
       raf = 0;
       w.el.style.transform = `translate(${curX - ox}px, ${curY - oy}px)`;
-      if(w.native != null) nsync();
+      if(nativeWins().length) nsync();
+    };
+    const edgeDirection = (e) => {
+      if(!e || !Number.isFinite(e.clientX) || !Number.isFinite(e.clientY)) return '';
+      const edge=12;
+      return e.clientX <= edge ? 'left' : e.clientX >= window.innerWidth-edge ? 'right'
+           : e.clientY <= edge ? 'up' : e.clientY >= window.innerHeight-edge ? 'down' : '';
     };
     const move = (e) => {
+      lastMove = e;
       // A released mouse reports buttons === 0 on its next move. Checked FIRST: doing it at the end
       // of the handler still applied one more move, which is the whole symptom.
       if(hadButtons && e.pointerType !== 'touch' && (e.buttons || 0) === 0){ up(); return; }
@@ -2390,16 +2398,13 @@
       /* A monitor is another renderer, so pointer capture cannot carry DOM events across its
        * boundary. Reaching an outside edge while dragging a native app requests a compositor
        * hand-off on release; the adjacent shell adopts it and supplies the new frame. */
-      if(w.native != null){
-        handoff = e.clientX <= 1 ? 'left' : e.clientX >= window.innerWidth-2 ? 'right'
-                : e.clientY <= 1 ? 'up' : e.clientY >= window.innerHeight-2 ? 'down' : '';
-      }
+      handoff = edgeDirection(e);
       if(!raf) raf = requestAnimationFrame(paint);
       const z = zoneAt(e.clientX, e.clientY);
       if(z !== zone){ zone = z; showGhost(zone); }     // only when it CHANGES — not 120 times a second
     };
     let ended = false;
-    const up = () => {
+    const up = (endEvent) => {
       if(ended) return;
       ended = true;
       document.removeEventListener('pointermove', move);
@@ -2414,6 +2419,7 @@
       w.el.style.left = Math.round(curX) + 'px';
       w.el.style.top = Math.round(curY) + 'px';
       hideGhost();
+      handoff = edgeDirection(endEvent) || handoff || edgeDirection(lastMove);
       if(handoff && w.native != null && pcWM.handoff){
         w.gesturing=false; _natFocusHold=false;
         const id=w.native;
@@ -2421,12 +2427,21 @@
         try{ Promise.resolve(pcWM.handoff(id,handoff)).catch(()=>{}); }catch(_){}
         return;
       }
+      if(handoff && w.native == null && pcWM.handoffFrame){
+        const payload={view:w.appView||w.view,title:w.title||'',icon:w.icon||'',
+                       width:w.el.offsetWidth,height:w.el.offsetHeight};
+        Promise.resolve(pcWM.handoffFrame(payload,handoff)).then(result=>{
+          if(result) closeWin(w);
+        }).catch(()=>{});
+        if(nativeWins().length) nsync();
+        return;
+      }
       _natGesture(w, false);
       /* Clear gesture mode BEFORE snapping. While gesturing, nsync deliberately uses move() only
        * and never resizes; the previous order therefore moved Firefox into the right tile at its
        * old size and never issued the final full placement. */
       if(zone) snapTo(w, zone);
-      else if(w.native != null) nsync();
+      else if(nativeWins().length) nsync();
     };
     document.addEventListener('pointermove', move);
     document.addEventListener('pointerup', up);
@@ -5623,6 +5638,26 @@
             }
           });
         }catch(_){}
+        /* A PosterChan window released through another monitor's edge is recreated here. The two
+         * monitors are separate Electron renderers, so no DOM node can literally cross between
+         * them; its app identity and size can, and the destination owns it from this point on. */
+        try{
+          if(pcWM.onHandoffFrame) _handoffOff = pcWM.onHandoffFrame((p) => {
+            if(!p || !p.view) return;
+            const w=openApp(String(p.view), String(p.title||''), String(p.icon||''));
+            if(!w) return;
+            const ww=Math.max(MIN_W,Math.min(vwL()-24,Number(p.width)||w.el.offsetWidth));
+            const hh=Math.max(MIN_H,Math.min(vhL()-TASKBAR-24,Number(p.height)||w.el.offsetHeight));
+            w.el.style.width=Math.round(ww)+'px'; w.el.style.height=Math.round(hh)+'px';
+            const dir=String(p.direction||'');
+            w.el.style.left=Math.round(dir==='left' ? vwL()-ww-12 : dir==='right' ? 12
+              : Math.max(12,(vwL()-ww)/2))+'px';
+            w.el.style.top=Math.round(/up|down/.test(dir)
+              ? (dir==='up' ? vhL()-TASKBAR-hh-12 : 12)
+              : Math.max(12,Math.min(vhL()-TASKBAR-hh-12,parseInt(w.el.style.top,10)||12)))+'px';
+            focusWin(w);
+          });
+        }catch(_){}
         PCOSShell.watch(() => {
           /* Hardware readings change often. Rebuilding `bar.innerHTML` for every battery, volume,
            * Wi-Fi or PipeWire notification destroys and recreates the Start image, making the logo
@@ -5706,6 +5741,7 @@
     // Same reason: it watches `#os-root`, which is about to be removed from the document.
     if(_natObs){ try{ _natObs.disconnect(); }catch(_){} _natObs = null; }
     if(_tickOff){ try{ _tickOff(); }catch(_){} _tickOff = null; }
+    if(_handoffOff){ try{ _handoffOff(); }catch(_){} _handoffOff = null; }
     clearInterval(_clock); _clock = null;
     clearInterval(mailT); mailT = 0; mailSeen = null;
     // The pool outlives the desktop — leaving this subscribed keeps a watcher calling drawBar()
@@ -6028,7 +6064,7 @@
   /* Released on exit. A watcher left running after the desktop closes keeps a compositor
    * subscription and a 30s timer alive for the rest of the session, redrawing markup that is no
    * longer in the document. */
-  let _shellOff = null, _tickOff = null;
+  let _shellOff = null, _tickOff = null, _handoffOff = null;
   /* What the machine has installed, as the start menu last read it. Kept for the life of the
    * desktop rather than per menu opening: a scan parses every .desktop file on the disk and
    * programs are not installed while somebody is holding the menu open. */
