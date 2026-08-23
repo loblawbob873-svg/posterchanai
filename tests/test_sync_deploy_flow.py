@@ -332,6 +332,10 @@ def test_the_overlay_is_published_when_its_inputs_change():
     assert "gentoo\\.sh" in guard, (
         "publish_overlay.sh injects os/gentoo.sh into the package, but installer-only fixes do not "
         "trigger an overlay publish")
+    assert '"$_PREV_HEAD..HEAD"' in guard, (
+        "a multi-commit deploy only checks its final commit, so earlier PosterChanOS changes never "
+        "reach the overlay")
+    assert "HEAD~1 HEAD" not in guard
     assert "WARN" in src[i:i + 200], (
         "a failed publish is silent; the deploy would report success with the overlay stale")
 
