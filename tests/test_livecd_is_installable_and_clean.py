@@ -70,8 +70,26 @@ class TheBuilderShipsTheInstaller(unittest.TestCase):
         """A new GPT ESP has no FSTYPE until the installer formats it."""
         self.assertIn('FSTYPE,PARTTYPE "$DISK_PATH"', self.src)
         self.assertIn('c12a7328-f81f-11d2-ba4b-00a0c93ec93b', self.src)
-        self.assertIn('mkfs.vfat "$EFI" || return 1', self.src)
+        self.assertIn('mkfs.vfat -F 32 "$EFI"', self.src)
         self.assertIn('mountpoint -q "$TARGET/boot"', self.src)
+
+    def test_live_install_prepares_a_fresh_disk_itself(self):
+        """The Start-menu launcher enters install-live directly; requiring a separate initialize
+        menu first is not a one-click installer and used to copy the image into live /tmp."""
+        i = self.src.index("liveISOinstall() {")
+        body = self.src[i:self.src.index("\n}", i)]
+        self.assertIn("prepareInstallDisk || return 1", body)
+        self.assertIn("systemMounts || {", body)
+        self.assertIn("Nothing was copied", body)
+
+    def test_disk_preparation_verifies_fat_luks_and_mapper(self):
+        i = self.src.index("prepareInstallDisk() {")
+        body = self.src[i:self.src.index("\n}", i)]
+        for proof in ("wipefs -a", "partprobe", "udevadm settle", "luksFormat --batch-mode",
+                      "mkfs.btrfs -f", "mkfs.vfat -F 32", "cryptsetup isLuks"):
+            self.assertIn(proof, body)
+        self.assertGreaterEqual(body.count("partitionDetection"), 2,
+                                "the LUKS UUID is not re-read after formatting")
 
 
 class TheImageDoesNotCarryTheOperator(unittest.TestCase):

@@ -70,13 +70,14 @@ _pc_mksquashfs_zstd() {
 #
 # INSTRUCTIONS
 #
-# For new disk installs, initialize the disk to setup partitions from the main menu.
+# "Install this Live image" prepares and verifies the selected disk itself. The separate Initialize
+# option remains a repair/advanced tool; a normal install must not depend on running it first.
 #
 # Before running the install, ensure that you have Internet access.
 #
 # Please be sure to change USER,USER_PASSWORD, DISK_PASSWORD, and ROOT_PASSWORD strings in this file
 #
-# To install a new OS to a disk, run gentoo.sh and choose option 5 from the main menu
+# To install PosterChanOS from the live image, run gentoo.sh and choose option 9.
 #
 ########################
 #Configure this section
@@ -401,7 +402,7 @@ systemMounts() {
 	echo -e "\033[1;32m◆ CHECKING FOR BTRFS PARTITION ◆\033[0m"
 
 	if [[ -e "$BTRFS" ]]; then
-		partitions
+		partitions || return 1
 		if [ -z "$EFI" ] || [ ! -b "$EFI" ]; then
 			echo -e "\033[1;31mNo EFI System Partition was found on $DISK_PATH.\033[0m"
 			return 1
@@ -410,8 +411,13 @@ systemMounts() {
 		echo
 		echo -e "\033[1;33mMounting Boot,EFI,HOME\033[0m"
 		echo
-		mount $ROOT_MAPPER_NAME $TARGET
-		btrfs_filesytem
+		if [ "$(blkid -s TYPE -o value "$EFI" 2>/dev/null)" != "vfat" ]; then
+			echo -e "\033[1;31m$EFI is not a FAT32 EFI filesystem; refusing to install into RAM.\033[0m"
+			return 1
+		fi
+		mount "$ROOT_MAPPER_NAME" "$TARGET" || return 1
+		mountpoint -q "$TARGET" || return 1
+		btrfs_filesytem || return 1
 		mkdir -p $TARGET/boot/EFI
 		if ! mount "$EFI" "$TARGET/boot" || ! mountpoint -q "$TARGET/boot"; then
 			echo -e "\033[1;31mCould not mount the EFI System Partition at $TARGET/boot.\033[0m"
@@ -421,8 +427,8 @@ systemMounts() {
 		#CONFIGURE DATA DIRS (HOME)
 		mkdir $TARGET/home
 		mkdir $TARGET/.snapshots
-		mount -o subvol=@home $ROOT_MAPPER_NAME $TARGET/home
-		mount -o subvol=@swap $ROOT_MAPPER_NAME $TARGET/swap
+		mount -o subvol=@home "$ROOT_MAPPER_NAME" "$TARGET/home" || return 1
+		mount -o subvol=@swap "$ROOT_MAPPER_NAME" "$TARGET/swap" || return 1
 		mkdir $TARGET/home/$USER
 
 		mkdir $TARGET/run
@@ -1004,9 +1010,45 @@ liveISOinstall() {
 	fi
 	echo -e "${COLOR_YELLOW}Kernel source: $KSRC${COLOR_RESET}"
 
-	setDevices
-	partitions
-	systemMounts
+	# THIS IS A ONE-CLICK INSTALLER. The old path silently assumed menu option 5 (Initialize Disk)
+	# had already been run, even though the Start-menu launcher opens this function directly. A fresh
+	# disk then had no LUKS mapper or FAT ESP; systemMounts failed, its status was ignored, and rsync
+	# copied gigabytes into the live session's /tmp. Prepare the selected disk here and prove every
+	# layer before copying one byte.
+	local need
+	for need in parted partprobe cryptsetup mkfs.btrfs mkfs.vfat rsync blkid mountpoint wipefs; do
+		if ! command -v "$need" >/dev/null 2>&1; then
+			echo -e "${COLOR_YELLOW}PosterChanOS installer requirement is missing: $need${COLOR_RESET}"
+			echo -e "${COLOR_YELLOW}Nothing was written.${COLOR_RESET}"
+			return 1
+		fi
+	done
+	setDevices || return 1
+	local layout_ok=0 mode="fresh"
+	if [ -b "$EFI" ] && [ -b "$BTRFS" ] \
+		&& [ "$(blkid -s TYPE -o value "$EFI" 2>/dev/null)" = "vfat" ] \
+		&& cryptsetup isLuks "$BTRFS" >/dev/null 2>&1; then
+		layout_ok=1
+		read -r -p "A prepared encrypted layout exists on /dev/$HARD_DISK. Fresh erase or resume? [f/r]: " mode
+		mode="${mode:-f}"
+	fi
+	if [ "$layout_ok" -eq 0 ] || [[ "$mode" = [fF]* ]]; then
+		echo -e "${COLOR_YELLOW}This will erase every file on /dev/$HARD_DISK.${COLOR_RESET}"
+		read -r -p "Erase /dev/$HARD_DISK and install PosterChanOS? [y/N]: " erase
+		[[ "$erase" = [yY]* ]] || { echo "Install cancelled; nothing was written."; return 1; }
+		prepareInstallDisk || return 1
+	else
+		partitionDetection
+		if [ "$(blkid -s TYPE -o value "$EFI" 2>/dev/null)" != "vfat" ] \
+			|| ! cryptsetup isLuks "$BTRFS" >/dev/null 2>&1; then
+			echo -e "${COLOR_YELLOW}The existing layout is not a usable FAT32 + LUKS install target.${COLOR_RESET}"
+			return 1
+		fi
+	fi
+	systemMounts || {
+		echo -e "${COLOR_YELLOW}The encrypted root or EFI partition could not be mounted. Nothing was copied.${COLOR_RESET}"
+		return 1
+	}
 
 	# ---------------------------------------------------------------- the system
 	#
@@ -1207,22 +1249,27 @@ backupOS() {
 }
 
 btrfs_filesytem() {
-	btrfs sub create $TARGET/@$ROOT_NAME
-	btrfs sub create $TARGET/@.snapshots
-	btrfs sub create $TARGET/@libvirt
-	btrfs sub create $TARGET/@home
-	btrfs sub create $TARGET/@root
-	btrfs sub create $TARGET/@swap
-	if [ -z "${SWAP_SIZE}" ]; then
-		btrfs filesystem mkswapfile --size "$(free -m | awk '{print $2}' | tail -2 | head -1)m" $TARGET/@swap/swap
-	else
-		btrfs filesystem mkswapfile --size "$SWAP_SIZE" $TARGET/@swap/swap
+	# Resume is a supported installer choice. Creating an existing subvolume returns failure, so the
+	# old unconditional sequence made every resumed install stop before the copy. Verify each path is
+	# a subvolume and create only what is absent; an ordinary directory at one of these names remains
+	# an error rather than being mistaken for the intended layout.
+	local sub
+	for sub in "@$ROOT_NAME" "@.snapshots" "@libvirt" "@home" "@root" "@swap"; do
+		btrfs subvolume show "$TARGET/$sub" >/dev/null 2>&1 \
+			|| btrfs subvolume create "$TARGET/$sub" || return 1
+	done
+	if [ ! -f "$TARGET/@swap/swap" ]; then
+		if [ -z "${SWAP_SIZE}" ]; then
+			btrfs filesystem mkswapfile --size "$(free -m | awk '{print $2}' | tail -2 | head -1)m" "$TARGET/@swap/swap" || return 1
+		else
+			btrfs filesystem mkswapfile --size "$SWAP_SIZE" "$TARGET/@swap/swap" || return 1
+		fi
 	fi
 	echo
 	echo -e "\033[1;33mBinding BTRFS Root\033[0m"
 	echo
-	umount $TARGET
-	mount -o $COMPRESSION,subvol=@$ROOT_NAME $ROOT_MAPPER_NAME $TARGET
+	umount "$TARGET" || return 1
+	mount -o "$COMPRESSION,subvol=@$ROOT_NAME" "$ROOT_MAPPER_NAME" "$TARGET" || return 1
 }
 
 services() {
@@ -1949,6 +1996,45 @@ btrfs-tweaks() {
 	btrfsTweaks
 }
 
+prepareInstallDisk() {
+	local disk="/dev/$HARD_DISK"
+	[ -b "$disk" ] || { echo "Not a whole disk: $disk"; return 1; }
+	wipefs -a "$disk" >/dev/null || return 1
+	parted -s "$disk" mklabel gpt || return 1
+	parted -s -a optimal "$disk" mkpart primary fat32 1MiB 2024MiB || return 1
+	parted -s -a optimal "$disk" set 1 esp on || return 1
+	parted -s -a optimal "$disk" mkpart P2 2024MiB 100% || return 1
+	partprobe "$disk" || return 1
+	command -v udevadm >/dev/null 2>&1 && udevadm settle || true
+	local n
+	for n in $(seq 1 50); do
+		partitionDetection
+		[ -b "$EFI" ] && [ -b "$BTRFS" ] && break
+		sleep .1
+	done
+	if [ -z "$EFI" ] || [ ! -b "$EFI" ] || [ -z "$BTRFS" ] || [ ! -b "$BTRFS" ]; then
+		echo -e "\033[1;31mThe new EFI/root partitions did not appear; refusing to continue.\033[0m"
+		return 1
+	fi
+	printf '%s' "$DISK_PASSWORD" | cryptsetup luksFormat --batch-mode --key-file=- "$BTRFS" || return 1
+	# The mapper name is derived from the LUKS UUID, which did not exist before luksFormat.
+	partitionDetection
+	local mapper="${ROOT_MAPPER_NAME#/dev/mapper/}"
+	[ -n "$mapper" ] || return 1
+	printf '%s' "$DISK_PASSWORD" | cryptsetup open --key-file=- "$BTRFS" "$mapper" || return 1
+	mkfs.btrfs -f "$ROOT_MAPPER_NAME" || { cryptsetup close "$mapper"; return 1; }
+	mkfs.vfat -F 32 "$EFI" || { cryptsetup close "$mapper"; return 1; }
+	sync
+	if [ "$(blkid -s TYPE -o value "$EFI" 2>/dev/null)" != "vfat" ] \
+		|| ! cryptsetup isLuks "$BTRFS" >/dev/null 2>&1; then
+		cryptsetup close "$mapper" 2>/dev/null || true
+		echo -e "\033[1;31mDisk verification failed after formatting; refusing to install.\033[0m"
+		return 1
+	fi
+	cryptsetup close "$mapper" || return 1
+	return 0
+}
+
 initializeDisk() {
 	clear
 	echo
@@ -1956,31 +2042,9 @@ initializeDisk() {
 	echo
 	read -p 'Proceed with Wiping the disk? (y/n): ' -i "local" choice
 	if [[ $choice = *y* ]]; then
-		parted /dev/$HARD_DISK mklabel gpt
-		parted -a optimal /dev/$HARD_DISK mkpart primary fat32 1MiB 2024MiB
-		parted -a optimal /dev/$HARD_DISK set 1 esp on
-		parted -a optimal /dev/$HARD_DISK mkpart P2 ext3 2024MiB 100%
-
-		partitionDetection
-		printf "$DISK_PASSWORD\n$DISK_PASSWORD" | cryptsetup luksFormat ${BTRFS}
-		printf "$DISK_PASSWORD" | cryptsetup open ${BTRFS} $(echo $ROOT_MAPPER_NAME | sed 's/\/dev\/mapper\///')
-
+		prepareInstallDisk || return 1
+		echo -e "\033[1;33mInitialize Complete. The disk was verified and is ready to install.\033[0m"
 		echo
-		echo -e "\033[1;33mFormatting.....\033[0m"
-		echo -e "\033[1;33mmkfs.btrfs $ROOT_MAPPER_NAME -f\033[0m"
-		echo y | mkfs.btrfs $ROOT_MAPPER_NAME -f
-		echo
-		echo -e "\033[1;33mFormatting $EFI\033[0m"
-		echo
-		if [ -z "$EFI" ] || [ ! -b "$EFI" ]; then
-			echo -e "\033[1;31mCould not identify the EFI System Partition; refusing to continue.\033[0m"
-			return 1
-		fi
-		mkfs.vfat "$EFI" || return 1
-
-		echo -e "\033[1;33mInitialize Complete. Please reboot your machine to avoid any issues\033[0m"
-		echo
-		cryptsetup close $ROOT_MAPPER_NAME
 		rm -f /tmp/disk
 	fi
 }
