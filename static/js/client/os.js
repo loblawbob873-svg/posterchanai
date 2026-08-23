@@ -2004,7 +2004,7 @@
           _natMeasureAgain();
           continue;
         }
-        const was = _natSent.get(it.native);
+        let was = _natSent.get(it.native);
         /* While dragging, position-only movement keeps Firefox/Telegram/virt-viewer visible without
          * forcing a resize and repaint on every pointer frame. `move` is latest-wins in wm.js, so a
          * slow compositor cannot build a tail of old locations. A previously hidden surface is
@@ -2018,15 +2018,22 @@
           continue;
         }
         if(was === 'hidden' || NAT().changed(was, rect)){
-          try{ await pcWM.place(it.native, rect.x, rect.y, rect.w, rect.h); }
-          catch(_){ _natSent.delete(it.native); continue; }
-          /* Place it while it is still parked. Showing first flashes the app at its old position,
-           * which looks exactly like it escaped from the PosterChan window. A failed show remains
-           * recorded as hidden so the next pass retries the operation that actually failed. */
+          /* SWAY REFUSES TO PLACE A HIDDEN SCRATCHPAD CONTAINER.
+           *
+           * The old order tried to avoid a one-frame flash by placing first and showing second,
+           * but `place()` begins with `floating enable` and Sway answers: "Can't change floating on
+           * hidden scratchpad container". The show was therefore never reached at all. Telegram
+           * crossed a monitor, remained parked, and its HTML frame moved without it. Restore the
+           * exact con_id first, forget the hidden latch immediately, then commit the clamped final
+           * rectangle. A failed placement is retried against a visible surface on the next pass. */
           if(was === 'hidden'){
             try{ await pcWM.show(it.native); }
             catch(_){ _natSent.set(it.native, 'hidden'); continue; }
+            _natSent.delete(it.native);
+            was = null;
           }
+          try{ await pcWM.place(it.native, rect.x, rect.y, rect.w, rect.h); }
+          catch(_){ _natSent.delete(it.native); continue; }
           _natSent.set(it.native, rect);
           it.w.el.classList.remove('native-stashed');
           _natRetry = 0;              // something landed: the budget is for a STUCK measure

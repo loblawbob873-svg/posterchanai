@@ -20,3 +20,7 @@ Deferred from the Beta 1 stabilization cutoff:
   labels instead of empty icon boxes, and keep Save, Cancel and destructive actions unambiguous.
 - Redesign `posterfetch` as an exciting polished cyberpunk terminal welcome with stronger PosterChan
   identity and visual hierarchy; keep its system statistics fast, readable, and useful.
+- Suspend Social timeline subscriptions and rendering while Social is not visible to reduce network,
+  CPU, and battery use. When the user returns, fetch the missed interval, deduplicate and merge posts
+  deterministically by timestamp/event ID, preserve the reading position, and expose the existing
+  new-posts jump so refresh never scrambles the timeline or silently leaves a gap.

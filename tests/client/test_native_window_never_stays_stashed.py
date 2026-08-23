@@ -78,9 +78,14 @@ class NothingIsRecordedBeforeItSucceeds(unittest.TestCase):
         """Clearing the record here would be worse than leaving it: with no entry the show branch is
         never reached again and the window is parked for good."""
         i = self.sync.index("pcWM.show(")
-        seg = self.sync[i:i + 200]
+        seg = self.sync[i:self.sync.index("_natSent.delete(it.native)", i)]
+        self.assertIn("catch", seg)
         self.assertIn("continue", seg)
-        self.assertNotIn("_natSent.delete", seg)
+        self.assertIn("_natSent.set(it.native", seg)
+
+    def test_a_stashed_surface_is_shown_before_sway_is_asked_to_place_it(self):
+        """Sway rejects floating/resize commands against a hidden scratchpad container."""
+        self.assertLess(self.sync.index("pcWM.show("), self.sync.index("pcWM.place("))
 
     def test_a_failed_place_forgets_so_it_retries(self):
         i = self.sync.index("pcWM.place(")

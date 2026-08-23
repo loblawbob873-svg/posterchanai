@@ -7,11 +7,13 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_dragging_keeps_native_surface_live_and_coalesces_position_moves():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
     drag = src[src.index("function startDrag"):src.index("function startResize")]
-    assert "if(w.native != null) nsync()" in drag
+    assert "if(nativeWins().length) nsync()" in drag
     assert "if(stash.has(it.native))" in src
     assert "if(it.w.gesturing && was !== 'hidden')" in src
     assert "await pcWM.move(it.native, rect.x, rect.y)" in src
-    assert src.index("pcWM.place(it.native") < src.index("pcWM.show(it.native")
+    # Sway refuses `floating enable`/resize on a hidden scratchpad container. Restore first, then
+    # place; the opposite order leaves the native app parked while only its HTML frame moves.
+    assert src.index("pcWM.show(it.native") < src.index("pcWM.place(it.native")
     assert "_natMove(w)" not in drag
     assert "pcWM.place" not in drag
     assert "setPointerCapture(ev.pointerId)" in drag
@@ -28,7 +30,7 @@ def test_native_bridge_retains_move_for_non_gesture_placement_operations():
 
 def test_snapping_ends_move_only_mode_before_the_full_native_resize():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
-    up = src[src.index("const up = () =>", src.index("function startDrag")):
+    up = src[src.index("const up = (endEvent) =>", src.index("function startDrag")):
              src.index("document.addEventListener('pointermove'", src.index("function startDrag"))]
     assert up.index("_natGesture(w, false)") < up.index("if(zone) snapTo(w, zone)")
     snap = src[src.index("function snapTo"):src.index("function unsnap")]
