@@ -97,9 +97,10 @@ class Bridge(unittest.TestCase):
 
     def test_firefox_uses_native_wayland_pointer_geometry(self):
         i = self.main.index("firefox|firefox-bin")
-        body = self.main[i:i + 600]
+        body = self.main[i:i + 1800]
         self.assertIn("GDK_BACKEND: 'wayland'", body)
         self.assertIn("MOZ_ENABLE_WAYLAND: '1'", body)
+        self.assertIn("!firefoxRunning", body)
 
     def test_the_event_listener_can_be_removed(self):
         """The desktop redraws its taskbar on every window event; a listener the page cannot remove

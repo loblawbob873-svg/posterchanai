@@ -66,6 +66,13 @@ class TheBuilderShipsTheInstaller(unittest.TestCase):
         i = self.fn.index("[Desktop Entry]")
         self.assertIn("sudo", self.fn[i:i + 500])
 
+    def test_new_unformatted_esp_is_detected_before_mkfs(self):
+        """A new GPT ESP has no FSTYPE until the installer formats it."""
+        self.assertIn('FSTYPE,PARTTYPE "$DISK_PATH"', self.src)
+        self.assertIn('c12a7328-f81f-11d2-ba4b-00a0c93ec93b', self.src)
+        self.assertIn('mkfs.vfat "$EFI" || return 1', self.src)
+        self.assertIn('mountpoint -q "$TARGET/boot"', self.src)
+
 
 class TheImageDoesNotCarryTheOperator(unittest.TestCase):
     @classmethod

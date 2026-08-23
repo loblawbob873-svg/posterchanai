@@ -122,9 +122,18 @@ async function ejectIso(name){
   return setBootOrder(d.name,'disk');
 }
 async function bootDisk(name){
-  const d=await details(name);if(!d.ok)return d;
-  if(!/shut off|shutoff|inactive/.test(d.state))
-    return {ok:false,error:'Shut down the VM before booting its installed system'};
+  let d=await details(name);if(!d.ok)return d;
+  if(!/shut off|shutoff|inactive/.test(d.state)){
+    const stop=await virsh(['shutdown',d.name],30000);if(!stop.ok)return stop;
+    const deadline=Date.now()+90000;
+    do{
+      await new Promise(resolve=>setTimeout(resolve,1000));
+      d=await details(d.name);if(!d.ok)return d;
+      if(/shut off|shutoff|inactive/.test(d.state))break;
+    }while(Date.now()<deadline);
+    if(!/shut off|shutoff|inactive/.test(d.state))
+      return {ok:false,error:'The guest did not shut down. Shut it down inside the VM, then try again.'};
+  }
   const cd=d.disks.find(x=>x.device==='cdrom');
   const mounted=cd&&cd.source&&cd.source!=='-';
   /* One operation for the post-installer transition. An empty optical drive does not need another

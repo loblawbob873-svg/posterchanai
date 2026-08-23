@@ -330,8 +330,14 @@ partitionDetection() {
 	# Children of THIS disk only. Grepping all blkid output matched serials, mapper UUIDs and names
 	# containing the same text; one corrupt prompt then assembled a mapper name from three devices.
 	local DISK_PATH="/dev/$HARD_DISK"
-	EFI="$(lsblk -nrpo NAME,TYPE,FSTYPE "$DISK_PATH" 2>/dev/null \
-		| awk '$2=="part" && $3=="vfat" {print $1; exit}')"
+	# A newly-created ESP has no filesystem yet. Detecting it only by FSTYPE=vfat made EFI empty
+	# between `parted mkpart` and `mkfs.vfat`; every later boot file then landed in the encrypted
+	# root's /boot directory while the real ESP stayed completely blank. Prefer the GPT ESP type,
+	# retain vfat compatibility for existing disks, then fall back to this layout's first partition.
+	EFI="$(lsblk -nrpo NAME,TYPE,FSTYPE,PARTTYPE "$DISK_PATH" 2>/dev/null \
+		| awk '$2=="part" && (tolower($4)=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b" || $3=="vfat") {print $1; exit}')"
+	[ -n "$EFI" ] || EFI="$(lsblk -nrpo NAME,TYPE "$DISK_PATH" 2>/dev/null \
+		| awk '$2=="part" {print $1; exit}')"
 	BTRFS="$(lsblk -nrpo NAME,TYPE "$DISK_PATH" 2>/dev/null \
 		| awk '$2=="part" {n++; if(n==2){print $1; exit}}')"
 	local LUKS_UUID=""
@@ -396,6 +402,10 @@ systemMounts() {
 
 	if [[ -e "$BTRFS" ]]; then
 		partitions
+		if [ -z "$EFI" ] || [ ! -b "$EFI" ]; then
+			echo -e "\033[1;31mNo EFI System Partition was found on $DISK_PATH.\033[0m"
+			return 1
+		fi
 		echo -e "\033[1;33mBTRFS device found\033[0m"
 		echo
 		echo -e "\033[1;33mMounting Boot,EFI,HOME\033[0m"
@@ -403,7 +413,10 @@ systemMounts() {
 		mount $ROOT_MAPPER_NAME $TARGET
 		btrfs_filesytem
 		mkdir -p $TARGET/boot/EFI
-		mount $EFI $TARGET/boot
+		if ! mount "$EFI" "$TARGET/boot" || ! mountpoint -q "$TARGET/boot"; then
+			echo -e "\033[1;31mCould not mount the EFI System Partition at $TARGET/boot.\033[0m"
+			return 1
+		fi
 		mkdir -p $TARGET/swap
 		#CONFIGURE DATA DIRS (HOME)
 		mkdir $TARGET/home
@@ -1959,7 +1972,11 @@ initializeDisk() {
 		echo
 		echo -e "\033[1;33mFormatting $EFI\033[0m"
 		echo
-		echo y | mkfs.vfat $EFI
+		if [ -z "$EFI" ] || [ ! -b "$EFI" ]; then
+			echo -e "\033[1;31mCould not identify the EFI System Partition; refusing to continue.\033[0m"
+			return 1
+		fi
+		mkfs.vfat "$EFI" || return 1
 
 		echo -e "\033[1;33mInitialize Complete. Please reboot your machine to avoid any issues\033[0m"
 		echo

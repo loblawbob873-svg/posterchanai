@@ -1606,10 +1606,10 @@
     const paint=async()=>{if(dead||busy)return;busy=true;try{const r=await pcVM.list();if(dead)return;
       if(!r.available){list.innerHTML=`<div class="vmui-empty"><b>Virtualization is unavailable</b><span>${enc(r.error||'libvirt could not be reached')}</span></div>`;return;}
       list.innerHTML=(r.machines||[]).map(m=>{const running=/running|paused|idle/.test(m.state);return `<article class="vmui-card"><div class="vmui-machine"><i class="${running?'on':''}"></i><div><b>${enc(m.name)}</b><span>${enc(m.state)} · ${enc(m.cpus)} CPU · ${enc(Math.round((m.memoryKiB||0)/1024))} MB</span></div></div><div class="vmui-actions">
-        ${running?`<button class="btn vmui-primary" data-vm-view="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-monitor"></use></svg>View</button><button class="btn btn-ghost" data-vm-act="shutdown" data-name="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-power"></use></svg>Shut down</button><button class="btn btn-ghost" disabled title="Shut down the VM to select its startup disk">Startup disk: shut down to change</button><button class="btn btn-ghost" data-vm-act="reboot" data-name="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-refresh"></use></svg>Restart</button><button class="btn btn-ghost danger" data-vm-act="stop" data-name="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-stop"></use></svg>Force off</button>`:`<button class="btn vmui-primary" data-vm-act="start" data-name="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-play"></use></svg>Start</button><button class="btn" data-vm-boot-disk="${enc(m.name)}">Startup disk: installed system</button><button class="btn btn-ghost" data-vm-edit-open="${enc(m.name)}">Choose startup disk / edit hardware</button><button class="btn btn-ghost danger" data-vm-delete="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-trash"></use></svg>Delete</button>`}</div></article>`;}).join('')||'<div class="vmui-empty"><b>No virtual machines yet</b><span>Create one from an installation ISO.</span></div>';
+        ${running?`<button class="btn vmui-primary" data-vm-view="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-monitor"></use></svg>View</button><button class="btn btn-ghost" data-vm-act="shutdown" data-name="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-power"></use></svg>Shut down</button><button class="btn" data-vm-boot-disk="${enc(m.name)}" title="Shuts down, ejects the installer, and starts from the virtual disk">Boot installed system</button><button class="btn btn-ghost" data-vm-act="reboot" data-name="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-refresh"></use></svg>Restart</button><button class="btn btn-ghost danger" data-vm-act="stop" data-name="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-stop"></use></svg>Force off</button>`:`<button class="btn vmui-primary" data-vm-act="start" data-name="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-play"></use></svg>Start</button><button class="btn" data-vm-boot-disk="${enc(m.name)}">Startup disk: installed system</button><button class="btn btn-ghost" data-vm-edit-open="${enc(m.name)}">Choose startup disk / edit hardware</button><button class="btn btn-ghost danger" data-vm-delete="${enc(m.name)}"><svg class="ic b-ic"><use href="#i-trash"></use></svg>Delete</button>`}</div></article>`;}).join('')||'<div class="vmui-empty"><b>No virtual machines yet</b><span>Create one from an installation ISO.</span></div>';
       list.querySelectorAll('[data-vm-act]').forEach(b=>b.onclick=async()=>{b.disabled=true;const r=await pcVM.action(b.dataset.name,b.dataset.vmAct);if(!r.ok)say(r.error||'VM action failed');setTimeout(paint,500);});
       list.querySelectorAll('[data-vm-view]').forEach(b=>b.onclick=async()=>{const r=await pcVM.view(b.dataset.vmView);if(!r.ok)say(r.error||'Viewer could not start');});
-      list.querySelectorAll('[data-vm-boot-disk]').forEach(b=>b.onclick=async()=>{b.disabled=true;const n=b.dataset.vmBootDisk;const r=await pcVM.bootDisk(n);if(!r.ok){b.disabled=false;say(r.error||'Could not select the installed disk');return;}const s=await pcVM.action(n,'start');if(!s.ok){b.disabled=false;say(s.error||'VM could not start');return;}setTimeout(paint,500);});
+      list.querySelectorAll('[data-vm-boot-disk]').forEach(b=>b.onclick=async()=>{b.disabled=true;b.textContent='Preparing installed system…';const n=b.dataset.vmBootDisk;const r=await pcVM.bootDisk(n);if(!r.ok){b.disabled=false;b.textContent='Boot installed system';say(r.error||'Could not select the installed disk');return;}const s=await pcVM.action(n,'start');if(!s.ok){b.disabled=false;b.textContent='Boot installed system';say(s.error||'VM could not start');return;}setTimeout(paint,500);});
       list.querySelectorAll('[data-vm-edit-open]').forEach(b=>b.onclick=()=>editHardware(b.dataset.vmEditOpen));
       list.querySelectorAll('[data-vm-delete]').forEach(b=>b.onclick=async()=>{const n=b.dataset.vmDelete;if(!confirm(`Delete ${n} and its virtual disk?`))return;const r=await pcVM.remove(n,true);if(!r.ok)say(r.error||'Delete failed');paint();});
     }catch(e){list.innerHTML='<div class="vmui-empty"><b>Could not read virtual machines</b></div>';}finally{busy=false;}};
@@ -2364,6 +2364,12 @@
     // to left/top once on release. The zoom is read once, since it cannot change mid-drag.
     const k = zf();
     let sx = ev.clientX, sy = ev.clientY;
+    /* clientX is clamped to this Electron surface while pointer capture is active. On a second
+     * monitor that made the drag stop at the source edge (often about 75% of the combined desk).
+     * screenX/screenY remain virtual-desktop coordinates, so use them for gesture distance and
+     * convert them back to this surface only for edge/snap hit testing. */
+    let ssx = Number.isFinite(ev.screenX) ? ev.screenX : ev.clientX;
+    let ssy = Number.isFinite(ev.screenY) ? ev.screenY : ev.clientY;
     let ox = parseInt(w.el.style.left, 10), oy = parseInt(w.el.style.top, 10);
     let curX = ox, curY = oy, zone = '', handoff = '', raf = 0, lastMove = ev,
         previewDir='', previewAt=0;
@@ -2390,10 +2396,21 @@
       if(nativeWins().length) nsync();
     };
     const edgeDirection = (e) => {
-      if(!e || !Number.isFinite(e.clientX) || !Number.isFinite(e.clientY)) return '';
+      if(!e) return '';
+      const ex=Number.isFinite(e.screenX)?e.screenX-window.screenX:e.clientX;
+      const ey=Number.isFinite(e.screenY)?e.screenY-window.screenY:e.clientY;
+      if(!Number.isFinite(ex) || !Number.isFinite(ey)) return '';
       const edge=12;
-      return e.clientX <= edge ? 'left' : e.clientX >= window.innerWidth-edge ? 'right'
-           : e.clientY <= edge ? 'up' : e.clientY >= window.innerHeight-edge ? 'down' : '';
+      return ex <= edge ? 'left' : ex >= window.innerWidth-edge ? 'right'
+           : ey <= edge ? 'up' : ey >= window.innerHeight-edge ? 'down' : '';
+    };
+    const edgeOverflow = (e,dir) => {
+      if(!e)return 0;
+      const ex=Number.isFinite(e.screenX)?e.screenX-window.screenX:e.clientX;
+      const ey=Number.isFinite(e.screenY)?e.screenY-window.screenY:e.clientY;
+      return dir==='right'?Math.max(0,ex-window.innerWidth)
+        :dir==='left'?Math.max(0,-ex):dir==='down'?Math.max(0,ey-window.innerHeight)
+        :dir==='up'?Math.max(0,-ey):0;
     };
     const preview = (e) => {
       if(!window.pcWM || !pcWM.previewFrame) return;
@@ -2403,9 +2420,7 @@
       if(!dir) return;
       const now=Date.now(); if(now-previewAt<32) return; previewAt=now;
       const horizontal=/left|right/.test(dir);
-      const overflow=dir==='right'?Math.max(0,e.clientX-window.innerWidth)
-        :dir==='left'?Math.max(0,-e.clientX):dir==='down'?Math.max(0,e.clientY-window.innerHeight)
-        :Math.max(0,-e.clientY);
+      const overflow=edgeOverflow(e,dir);
       const cross=horizontal ? curY/Math.max(1,vhL()-TASKBAR-w.el.offsetHeight)
                              : curX/Math.max(1,vwL()-w.el.offsetWidth);
       try{ pcWM.previewFrame({title:w.title||'',icon:w.icon||'',direction:dir,
@@ -2427,13 +2442,17 @@
         ox = curX = Math.round(e.clientX / k - w.el.offsetWidth * frac);
         oy = curY = Math.max(0, e.clientY / k - 18);
         sx = e.clientX; sy = e.clientY;
+        ssx = Number.isFinite(e.screenX) ? e.screenX : e.clientX;
+        ssy = Number.isFinite(e.screenY) ? e.screenY : e.clientY;
         w.el.style.transform = '';
         w.el.style.left = ox + 'px'; w.el.style.top = oy + 'px';
       }
       // Clamped so a window can never be dragged somewhere it cannot be dragged back from: the title
       // bar stays on screen and above the taskbar.
-      curX = Math.max(-w.el.offsetWidth + 120, Math.min(vwL() - 120, ox + (e.clientX - sx) / k));
-      curY = Math.max(0, Math.min(vhL() - TASKBAR - 34, oy + (e.clientY - sy) / k));
+      const gx=Number.isFinite(e.screenX)?e.screenX:e.clientX;
+      const gy=Number.isFinite(e.screenY)?e.screenY:e.clientY;
+      curX = ox + (gx - ssx) / k;
+      curY = Math.max(0, Math.min(vhL() - TASKBAR - 34, oy + (gy - ssy) / k));
       /* A monitor is another renderer, so pointer capture cannot carry DOM events across its
        * boundary. Reaching an outside edge while dragging a native app requests a compositor
        * hand-off on release; the adjacent shell adopts it and supplies the new frame. */
@@ -2464,13 +2483,19 @@
       if(handoff && w.native != null && pcWM.handoff){
         w.gesturing=false; _natFocusHold=false;
         const id=w.native;
-        closeWin(w,{killNative:false});
-        try{ Promise.resolve(pcWM.handoff(id,handoff)).catch(()=>{}); }catch(_){}
+        /* Keep the source frame until the compositor confirms the workspace move. Removing it
+         * first creates an ownership gap in which reconciliation sees an unframed native window
+         * and can park it in Sway's scratchpad: taskbar icon, no Firefox window. */
+        try{ Promise.resolve(pcWM.handoff(id,handoff)).then(result=>{
+          if(result && wins.includes(w)) closeWin(w,{killNative:false});
+          else if(!result){ _natGesture(w,false); nsync(); }
+        }).catch(()=>{ _natGesture(w,false); nsync(); }); }catch(_){ _natGesture(w,false); nsync(); }
         return;
       }
       if(handoff && w.native == null && pcWM.handoffFrame){
         const payload={view:w.appView||w.view,title:w.title||'',icon:w.icon||'',
                        width:w.el.offsetWidth,height:w.el.offsetHeight,
+                       overflow:edgeOverflow(endEvent||lastMove,handoff),
                        terminalSid:w.view==='terminal'&&window.PCTerm&&PCTerm.sessionId
                          ? PCTerm.sessionId() : ''};
         Promise.resolve(pcWM.handoffFrame(payload,handoff)).then(result=>{
@@ -5696,7 +5721,9 @@
             const hh=Math.max(MIN_H,Math.min(vhL()-TASKBAR-24,Number(p.height)||w.el.offsetHeight));
             w.el.style.width=Math.round(ww)+'px'; w.el.style.height=Math.round(hh)+'px';
             const dir=String(p.direction||'');
-            w.el.style.left=Math.round(dir==='left' ? vwL()-ww-12 : dir==='right' ? 12
+            const over=Math.max(0,Number(p.overflow)||0)/Math.max(1,zf());
+            w.el.style.left=Math.round(dir==='left' ? Math.max(-ww+120,vwL()-120-over)
+              : dir==='right' ? Math.min(vwL()-120,-ww+120+over)
               : Math.max(12,(vwL()-ww)/2))+'px';
             w.el.style.top=Math.round(/up|down/.test(dir)
               ? (dir==='up' ? vhL()-TASKBAR-hh-12 : 12)
@@ -5719,10 +5746,10 @@
               +'<div class="osw-body"><div class="osw-transfer-mark">Moving to this display</div></div>';
             const over=Math.max(0,Number(p.overflow)||0)/Math.max(1,zf()), cross=Math.max(0,Math.min(1,Number(p.cross)||0));
             let x=Math.round(cross*Math.max(0,vwL()-ww)), y=Math.round(cross*Math.max(0,vhL()-TASKBAR-hh));
-            if(p.direction==='right') x=Math.min(12,-ww+120+over);
-            else if(p.direction==='left') x=Math.max(vwL()-ww-12,vwL()-120-over);
-            else if(p.direction==='down') y=Math.min(12,-hh+80+over);
-            else if(p.direction==='up') y=Math.max(vhL()-TASKBAR-hh-12,vhL()-TASKBAR-80-over);
+            if(p.direction==='right') x=Math.min(vwL()-120,-ww+120+over);
+            else if(p.direction==='left') x=Math.max(-ww+120,vwL()-120-over);
+            else if(p.direction==='down') y=Math.min(vhL()-TASKBAR-80,-hh+80+over);
+            else if(p.direction==='up') y=Math.max(-hh+80,vhL()-TASKBAR-80-over);
             Object.assign(_handoffPreviewEl.style,{left:Math.round(x)+'px',top:Math.round(y)+'px',
               width:Math.round(ww)+'px',height:Math.round(hh)+'px',zIndex:String(nextZ())});
           });

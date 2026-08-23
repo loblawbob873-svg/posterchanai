@@ -1155,6 +1155,7 @@ ipcMain.handle('pc:wm:handoff-frame', async (e, payload, direction) => {
   record.browser.webContents.send('pc:wm:handoff-frame', {
     view:String(p.view||''), title:String(p.title||''), icon:String(p.icon||''),
     width:Number(p.width)||0, height:Number(p.height)||0, direction:String(direction||''),
+    overflow:Number(p.overflow)||0,
     terminalSid:String(p.terminalSid||'')
   });
   await wm().focus(Number(record.conId));
@@ -1215,7 +1216,20 @@ ipcMain.handle('pc:wm:launch', async (e, argv, opts) => {
   /* Firefox must be a native Wayland client. An inherited/stale GDK_BACKEND=x11 put it through
    * XWayland with a 3822px client geometry inside a 1278px compositor box; pointer confinement then
    * hit an invisible wall partway across the monitor—the same symptom games exposed. */
+  let firefoxRunning=false;
   if (/^(firefox|firefox-bin)$/i.test(path.basename(list[0]))) {
+    /* A running Firefox owns its profile and remote endpoint. Starting a command for that X11
+     * instance with a contradictory forced-Wayland environment produces a headless process and
+     * "failed to open display" instead of a new window. Reuse it as-is; native Wayland becomes the
+     * default the next time Firefox is fully exited and starts as the first process. */
+    try{
+      firefoxRunning=fs.readdirSync('/proc').some(pid=>/^\d+$/.test(pid) && (()=>{
+        try{return /(?:^|\/)(?:firefox|firefox-bin)(?:\0|$)/.test(fs.readFileSync('/proc/'+pid+'/cmdline','utf8'));}
+        catch(_){return false;}
+      })());
+    }catch(_){}
+  }
+  if (/^(firefox|firefox-bin)$/i.test(path.basename(list[0])) && !firefoxRunning) {
     launchOpts = Object.assign({}, launchOpts, { env: Object.assign({}, launchOpts.env || {}, {
       GDK_BACKEND: 'wayland', MOZ_ENABLE_WAYLAND: '1',
       WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY || 'wayland-1',
