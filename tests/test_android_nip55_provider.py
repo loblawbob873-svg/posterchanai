@@ -187,14 +187,12 @@ def test_the_client_can_turn_it_on_and_off():
         "offered to sessions whose key lives in an extension or a remote signer, which have nothing to give"
 
 
-# APIs that exist on a desktop JDK and NOT at this app's minSdk (23). Each one compiles cleanly
+# APIs that exist on a desktop JDK and NOT at this app's minSdk (26). Each one compiles cleanly
 # against compileSdk 35 and throws at runtime on an older phone — and the crypto tests run on a JDK,
 # so they are structurally blind to every entry here.
 _TOO_NEW = {
     "BigInteger.TWO": 31,          # Java 9; Android API 31
     "BigInteger.ZERO.TWO": 31,
-    "java.util.Base64": 26,        # which is why Crypt has its own encoder
-    "String.chars(": 24,
     "Objects.requireNonNullElse": 30,
     "List.of(": 30,
     "Map.of(": 30,
@@ -209,7 +207,7 @@ _TOO_NEW = {
 def test_nothing_in_the_signer_needs_a_newer_android_than_we_support():
     """A green CI build and a dead signer on a third of devices is the failure this prevents.
 
-    `BigInteger.TWO` was exactly that: Java 9, Android API 31, minSdk 23. It compiled against
+    `BigInteger.TWO` was exactly that: Java 9, Android API 31, minSdk 26. It compiled against
     compileSdk 35 and would have thrown NoSuchFieldError at the first signature on anything older
     than Android 12. The JDK-based crypto tests pass either way, which is the point — they cannot
     see the platform this actually runs on.
@@ -220,7 +218,7 @@ def test_nothing_in_the_signer_needs_a_newer_android_than_we_support():
         code = _code(f)
         for api, since in _TOO_NEW.items():
             if api in code:
-                bad.append(f"{os.path.basename(f)}: {api} (Android API {since}, minSdk 23)")
+                bad.append(f"{os.path.basename(f)}: {api} (Android API {since}, minSdk 26)")
     assert not bad, "APIs newer than minSdk:\n  " + "\n  ".join(bad)
 
 
@@ -228,8 +226,8 @@ def test_minsdk_is_what_this_check_assumes():
     """If minSdk rises, the list above is too strict and should be revisited rather than obeyed."""
     gradle = _read(os.path.join(ROOT, "mobile", "android", "variables.gradle"))
     m = re.search(r"minSdkVersion\s*=\s*(\d+)", gradle)
-    assert m and int(m.group(1)) == 23, \
-        "minSdk changed; the _TOO_NEW list in this test is calibrated to 23"
+    assert m and int(m.group(1)) == 26, \
+        "minSdk changed; the _TOO_NEW list in this test is calibrated to 26"
 
 
 def test_every_spelling_of_the_peer_key_is_read():

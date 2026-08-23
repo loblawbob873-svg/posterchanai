@@ -79,7 +79,21 @@ package com.klinker.android.send_message;
 public class Transaction {
   public static final long NO_THREAD_ID = -1;
   public Transaction(android.content.Context c, Settings s) { }
-  public void sendNewMessage(Message m, long thread) { }
+  public void sendNewMessage(Message m) { }
+}
+""",
+    "com/android/mms/transaction/PushReceiver.java": """
+package com.android.mms.transaction;
+public class PushReceiver extends android.content.BroadcastReceiver {
+  @Override public void onReceive(android.content.Context c, android.content.Intent i) { }
+}
+""",
+    "com/klinker/android/send_message/MmsReceivedReceiver.java": """
+package com.klinker.android.send_message;
+public abstract class MmsReceivedReceiver extends android.content.BroadcastReceiver {
+  public abstract void onMessageReceived(android.content.Context c, android.net.Uri u);
+  public abstract void onError(android.content.Context c, String e);
+  @Override public void onReceive(android.content.Context c, android.content.Intent i) { }
 }
 """,
     "place/poster/app/music/MusicService.java": """

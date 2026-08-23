@@ -98,8 +98,7 @@ public class WeatherConfigActivity extends Activity {
         q.setBackground(Skin.panel(this, pal));
         int q4 = Skin.dp(this, 11);
         q.setPadding(q4, q4, q4, q4);
-        // API 26, and minSdk is 23 — calling it unguarded is a NoSuchMethodError on exactly the
-        // old phones nobody here can test on. A town name is not a credential, but offering to save
+        // API 26, our supported floor. A town name is not a credential, but offering to save
         // it is noise on a one-field screen.
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             q.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);

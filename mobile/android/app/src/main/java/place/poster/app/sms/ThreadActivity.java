@@ -339,7 +339,7 @@ public class ThreadActivity extends PcActivity {
             settings.setUseSystemSending(true);
             Message message = new Message(body == null ? "" : body, address, image);
             message.setSave(true);
-            new Transaction(this, settings).sendNewMessage(message, threadId);
+            new Transaction(this, settings).sendNewMessage(message);
             attachment = null;
             input.setText("");
             updateCount();

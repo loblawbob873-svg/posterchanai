@@ -319,12 +319,12 @@ class MmsProvider(unittest.TestCase):
 
     def test_the_part_and_addr_uris_are_not_the_api_29_constants(self):
         """`Telephony.Mms.Part.CONTENT_URI`, `Part.getPartUriForMessage` and
-        `Addr.getAddrUriForMessage` all arrived in API 29. minSdk here is 23, where reading one is a
+        `Addr.getAddrUriForMessage` all arrived in API 29. minSdk here is 26, where reading one is a
         NoSuchFieldError at runtime that javac cannot see."""
         src = self._code("MmsStore.java")
         self.assertIn('Uri.parse("content://mms/part")', src)
         for gone in ("Part.CONTENT_URI", "getPartUriForMessage", "getAddrUriForMessage"):
-            self.assertNotIn(gone, src, "an API 29 member is used on a minSdk 23 build")
+            self.assertNotIn(gone, src, "an API 29 member is used on a minSdk 26 build")
 
     def test_the_phones_own_number_is_not_a_person(self):
         """AOSP files the handset's own address under a literal placeholder. Kept, every
@@ -349,9 +349,8 @@ class MmsProvider(unittest.TestCase):
         self.assertIn("mmsRefused", js, "the client never reads it")
 
     def test_reading_pictures_never_writes_the_provider(self):
-        """This app does not FETCH an MMS from the carrier (see MmsDeliverReceiver), and a
-        placeholder row would put a message that does not exist into every app and every backup on
-        the phone. Reading is reading."""
+        """Carrier download belongs to the transport receiver; this provider reader must never
+        manufacture a placeholder row that every messaging app and backup would then preserve."""
         src = self._code("MmsStore.java")
         for banned in ("ContentValues", "insert(", "downloadMultimediaMessage"):
             self.assertNotIn(banned, src, "the MMS reader writes to the provider")
@@ -444,7 +443,7 @@ class OutgoingMms(unittest.TestCase):
         self.assertIn("pc_th_attach", layout)
         self.assertIn("ACTION_OPEN_DOCUMENT", thread)
         self.assertIn("setUseSystemSending(true)", thread)
-        self.assertIn("android-smsmms:5.2.6", gradle)
+        self.assertIn("org.fossify:mmslib:1.0.0", gradle)
 
     def test_web_composer_seals_remote_attachment_and_phone_sends_it(self):
         js = open(SMSJS, encoding="utf-8").read()

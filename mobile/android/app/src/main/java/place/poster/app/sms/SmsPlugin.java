@@ -209,15 +209,15 @@ public class SmsPlugin extends Plugin {
          *
          * `mms` — this build READS `content://mms`, so the history already on the phone (everything
          * ever sent, and everything received while another app was the default) is on the screen.
-         * `mmsFetch` — whether an INCOMING picture message can be pulled off the carrier's MMSC,
-         * which is a different piece of work entirely and is still false (MmsDeliverReceiver says
-         * so out loud rather than filing a placeholder row).
+         * `mmsFetch` — whether an INCOMING picture message can be pulled off the carrier's MMSC.
+         * MmsDeliverReceiver performs that download and MmsDownloadedReceiver announces the
+         * completed provider row; this stays separate from merely reading old MMS history.
          *
          * One boolean for both is what lets a screen promise the second while delivering the first.
          * The client prints them separately, on the screen where somebody is deciding whether to
          * hand this app their messages. */
         o.put("mms", true);
-        o.put("mmsFetch", false);
+        o.put("mmsFetch", true);
         /* `mmsRefused` IS DELIBERATELY NOT HERE. `MmsStore.refused()` describes THE LAST READ, and
          * `status` performs none — reported from here it is whatever some earlier call left behind,
          * which is a stale fact wearing a fresh one's clothes. It rides on `list` and `threads`,
@@ -252,7 +252,7 @@ public class SmsPlugin extends Plugin {
         // work, and an older build answers neither key — which the client reads as "this build
         // cannot" rather than inventing a yes.
         o.put("mms", true);
-        o.put("mmsFetch", false);
+        o.put("mmsFetch", true);
         android.content.pm.PackageManager pm = ctx.getPackageManager();
         JSObject parts = new JSObject();
         parts.put("smsDeliver", resolvesReceiver(pm, new Intent(Telephony.Sms.Intents.SMS_DELIVER_ACTION)));
@@ -435,7 +435,7 @@ public class SmsPlugin extends Plugin {
             settings.setUseSystemSending(true);
             Message message = new Message(body, to, image);
             message.setSave(true);
-            new Transaction(getContext(), settings).sendNewMessage(message, Transaction.NO_THREAD_ID);
+            new Transaction(getContext(), settings).sendNewMessage(message);
             o.put("ok", true);
         } catch (Throwable t) {
             o.put("ok", false);

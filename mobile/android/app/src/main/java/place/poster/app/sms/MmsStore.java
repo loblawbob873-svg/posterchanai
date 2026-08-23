@@ -27,11 +27,10 @@ import java.util.Map;
  * write into the same `threads` table, so a conversation containing texts AND pictures has ONE id
  * and the two reads merge on it (see Messages).
  *
- * THIS CLASS ONLY READS. Nothing here writes the provider: PosterChan does not yet FETCH an MMS from
- * the carrier (see MmsDeliverReceiver, which says so out loud rather than filing a placeholder), so
- * what is read here is the history the phone already has — everything received while another app was
- * the default, and everything ever sent. That is the half somebody notices first, and it needs no
- * role, no relay and no network.
+ * THIS CLASS ONLY READS. Carrier delivery is owned by MmsDeliverReceiver and the transport library;
+ * once Android has persisted the completed row, MmsDownloadedReceiver reads it here. Keeping writes
+ * out of this reader prevents duplicate or invented provider rows while still exposing both new and
+ * historical MMS to every PosterChan client.
  *
  * Like SmsStore, every method answers EMPTY rather than throwing, and `refused()` is what separates
  * "this phone has no picture messages" from "I was not allowed to look". They render identically and
@@ -45,7 +44,7 @@ public final class MmsStore {
      * BUILT BY HAND, NOT `Telephony.Mms.Part.CONTENT_URI`.
      *
      * That constant — and `Part.getPartUriForMessage` and `Addr.getAddrUriForMessage` beside it —
-     * arrived in API 29. This app's minSdk is 23, where reading them is a NoSuchFieldError at
+     * arrived in API 29. This app supports API 26, where reading them is a NoSuchFieldError at
      * runtime that javac cannot see and the emulator this repo runs will not reproduce. The COLUMN
      * name constants are API 19 and are used freely.
      */
@@ -95,6 +94,15 @@ public final class MmsStore {
 
     public static List<SmsMsg> recent(Context ctx, int limit) {
         return query(ctx, null, null, "date DESC", limit);
+    }
+
+    /** The exact provider row handed back by the carrier download receiver. */
+    public static SmsMsg one(Context ctx, Uri uri) {
+        if (uri == null) return null;
+        String id = uri.getLastPathSegment();
+        if (id == null || !id.matches("[0-9]+")) return null;
+        List<SmsMsg> rows = query(ctx, Telephony.Mms._ID + "=?", new String[]{ id }, "date DESC", 1);
+        return rows.isEmpty() ? null : rows.get(0);
     }
 
     /**

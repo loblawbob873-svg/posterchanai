@@ -56,7 +56,7 @@ public final class VaultStore {
         return ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
-    /** The Keystore is API 23+, which is this app's minSdk, so there is no fallback path to get wrong. */
+    /** The Keystore predates this app's API-26 floor, so no insecure fallback is needed. */
     private static SecretKey key() throws Exception {
         KeyStore ks = KeyStore.getInstance("AndroidKeyStore");
         ks.load(null);
@@ -197,8 +197,7 @@ public final class VaultStore {
                 // does not fill with forty copies of the app you open every day.
                 if (!p.isEmpty() && !p.equals(pkg) && out.size() < MAX_APPS) out.add(p);
             }
-            // TextUtils.join, not String.join: the latter is API 26 and minSdk here is 23, which
-            // lint treats as a FATAL NewApi error on the release build that CI publishes.
+            // TextUtils.join keeps this persistence path independent of Java-library desugaring.
             prefs(ctx).edit().putString(KEY_APPS, android.text.TextUtils.join("\n", out)).apply();
         } catch (Throwable ignored) {}
     }

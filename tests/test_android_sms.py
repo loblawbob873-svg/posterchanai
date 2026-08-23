@@ -346,8 +346,8 @@ class SmsRole(unittest.TestCase):
                  encoding="utf-8").read())
 
     def test_the_app_icons_resolve_on_every_android_this_supports(self):
-        """minSdk is 23. An adaptive icon alone is an unresolvable resource on 23-25 — the legacy
-        raster in each density folder is what makes the icon exist there at all."""
+        """Keep density-specific legacy icons for OEM launchers that still mishandle adaptive icons,
+        even though the supported Android floor is API 26."""
         for name in ("messages", "phone"):
             for dens in ("mdpi", "hdpi", "xhdpi", "xxhdpi", "xxxhdpi"):
                 p = os.path.join(ROOT, "mobile/android/app/src/main/res",
@@ -406,13 +406,26 @@ class SmsSources(unittest.TestCase):
         rest = src.replace(reply, "")
         self.assertNotIn("FLAG_MUTABLE", rest, "another PendingIntent was made mutable")
 
-    def test_mms_is_declared_unsupported_rather_than_faked(self):
-        """A placeholder row would put a message that does not exist into every app and every backup
-        on the phone. The receiver has to exist for the role; what it must not do is pretend."""
+    def test_mms_delivery_uses_the_carrier_download_receiver(self):
+        """The role receiver must hand the notification PDU to the maintained carrier transport;
+        inventing a provider row would create a message that does not exist."""
         src = self._code(os.path.join(SMS, "MmsDeliverReceiver.java"))
         for banned in ("storeInbox", "ContentValues", "downloadMultimediaMessage", "insert("):
             self.assertNotIn(banned, src, "the MMS receiver writes to the provider")
-        self.assertIn("mmsUnsupported", src, "an unfetched MMS is silent")
+        self.assertIn("extends PushReceiver", src)
+        done = self._code(os.path.join(SMS, "MmsDownloadedReceiver.java"))
+        self.assertIn("extends MmsReceivedReceiver", done)
+        self.assertIn("MmsStore.one(ctx, uri)", done)
+        self.assertIn("SmsPlugin.onIncoming", done)
+
+    def test_mms_completion_receiver_is_explicit_and_private(self):
+        """The transport locates this receiver by its affinity marker and sends an explicit
+        in-package completion broadcast; no outside app needs permission to invoke it."""
+        manifest = open(MANIFEST, encoding="utf-8").read()
+        i = manifest.index('android:name=".sms.MmsDownloadedReceiver"')
+        block = manifest[i:manifest.index("/>", i)]
+        self.assertIn('android:exported="false"', block)
+        self.assertIn('android:taskAffinity="com.klinker.android.messaging.MMS_RECEIVED"', block)
 
     def test_the_send_path_refuses_when_this_app_is_not_the_default(self):
         """A non-default app can still call SmsManager and may NOT write the provider, so the message

@@ -46,10 +46,10 @@ public final class Nostr {
     }
 
     /* NOT `BigInteger.TWO`. That constant exists in the JDK from Java 9 and on ANDROID only from
-     * API 31 — this app's minSdk is 23. It compiles happily against compileSdk 35 and then throws
+     * API 31 — this app's minSdk is 26. It compiles happily against compileSdk 35 and then throws
      * NoSuchFieldError on every phone older than Android 12, at the first signature. The unit tests
      * here run on a desktop JDK, so they cannot see it either: a green CI build and a dead signer on
-     * a third of devices. Anything referenced from this package has to exist at API 23. */
+     * on older supported devices. Anything referenced from this package has to exist at API 26. */
     private static final BigInteger TWO = BigInteger.valueOf(2);
 
     private static final Pt G = new Pt(GX, GY);

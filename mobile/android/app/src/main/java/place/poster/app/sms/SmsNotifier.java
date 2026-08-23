@@ -103,15 +103,11 @@ public final class SmsNotifier {
                 .build();
     }
 
-    /**
-     * Somebody sent a picture message and this app cannot fetch it. SAID OUT LOUD, once per arrival,
-     * because the alternative is a message that never appears and no sign anywhere that it was sent.
-     */
-    public static void mmsUnsupported(Context ctx) {
+    /** Report a carrier download or provider failure instead of silently losing the MMS. */
+    public static void mmsError(Context ctx, String text) {
         ensureChannel(ctx);
         NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm == null) return;
-        String text = ctx.getString(R.string.sms_mms_unsupported);
         nm.notify(TAG_THREAD, ID_MMS, new NotificationCompat.Builder(ctx, CHANNEL)
                 .setSmallIcon(R.drawable.ic_pc_warn)
                 .setContentTitle(ctx.getString(R.string.sms_mms_title))

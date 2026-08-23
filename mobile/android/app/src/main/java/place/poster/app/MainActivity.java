@@ -309,8 +309,8 @@ public class MainActivity extends BridgeActivity {
             new WebViewListener() {
                 @Override
                 public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
-                    // didCrash() is API 26 and minSdk is 23. The callback itself never fires below 26, but
-                    // the SDK_INT guard is what lint's NewApi check reads, and NewApi is fatal-severity —
+                    // didCrash() is available at our API-26 floor. Keep the SDK_INT guard because
+                    // lint's NewApi analysis follows this callback independently and is fatal-severity —
                     // without it lintVitalRelease fails the CI release build rather than the code failing
                     // on a device.
                     boolean crashed = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && detail != null && detail.didCrash();

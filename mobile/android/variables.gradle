@@ -1,5 +1,8 @@
 ext {
-    minSdkVersion = 23
+    // Android 8 is the oldest supported release. The maintained MMS transport uses the modern
+    // exported-receiver contract introduced here; overriding its manifest back to 23 would install
+    // successfully and then fail exactly when a carrier picture message arrives.
+    minSdkVersion = 26
     compileSdkVersion = 35
     targetSdkVersion = 35
     androidxActivityVersion = '1.8.0'

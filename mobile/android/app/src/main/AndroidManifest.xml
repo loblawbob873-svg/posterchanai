@@ -131,9 +131,8 @@
              into the system store. Nothing else does it. See SmsDeliverReceiver: if it drops a
              message, the message does not exist anywhere on the phone.
 
-             MMS IS RECEIVED AND NOT FETCHED, and it says so out loud (MmsDeliverReceiver). The
-             receiver has to exist for the role; pretending to handle a picture message would be
-             worse than admitting it. The opt-in screen warns before the role is taken. -->
+             MMS_DELIVER starts the carrier download. Its explicit completion broadcast is handled
+             by MmsDownloadedReceiver, which persists and announces the finished provider row. -->
         <receiver
             android:name=".sms.SmsDeliverReceiver"
             android:exported="true"
@@ -142,6 +141,11 @@
                 <action android:name="android.provider.Telephony.SMS_DELIVER" />
             </intent-filter>
         </receiver>
+
+        <receiver
+            android:name=".sms.MmsDownloadedReceiver"
+            android:exported="false"
+            android:taskAffinity="com.klinker.android.messaging.MMS_RECEIVED" />
 
         <receiver
             android:name=".sms.MmsDeliverReceiver"
