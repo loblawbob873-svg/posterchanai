@@ -225,7 +225,9 @@
       const live = await Relay().query([FILTER()]);
       if(live && live.length){
         const before = _stamp();
-        await _absorb(_lib, live);
+        await _absorb(_lib, live, n => {
+          if((n === 1 || n % 12 === 0) && PC.VIEW === 'notes' && !_dirty) _paint();
+        });
         if(_stamp() !== before && PC.VIEW === 'notes' && !_dirty) _paint();
       }
     }catch(_){ /* offline: the cache stands on its own */ }
@@ -267,10 +269,9 @@
    * several relays with different created_at, and an older copy must never overwrite a newer one.
    * Newest FIRST, so on a big library the notes someone actually wants to see decrypt first. */
   async function _absorb(lib, evs, onProgress){
-    let seen = 0;
+    let usable = 0;
     evs = (evs || []).slice().sort((a,b) => (b.created_at||0) - (a.created_at||0));
     for(const ev of evs){
-      seen++;
       const d = (ev.tags||[]).find(t=>t[0]==='d');
       if(!d || !d[1]) continue;
       const isNote = d[1].startsWith(D_NOTE), isFolder = d[1].startsWith(D_FOLDER);
@@ -313,7 +314,8 @@
       into.set(id, obj);
       /* Progress means one usable decrypted record, not merely one ciphertext inspected. Calling
        * this before the await made the first progressive paint contain zero notes. */
-      if(onProgress) onProgress(seen);
+      usable++;
+      if(onProgress) onProgress(usable);
     }
   }
 

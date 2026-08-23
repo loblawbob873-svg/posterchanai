@@ -405,7 +405,7 @@
       return true;
     }
 
-    let _fitT = null, _sentSize = '';
+    let _fitT = null, _sentSize = '', _fitPixels = '';
     function _fit(){
       if(_fitT) clearTimeout(_fitT);
       // Coalesced: an on-screen keyboard opening fires a burst of resizes, and each one is a reflow
@@ -422,6 +422,17 @@
           const frame = box && box.closest && box.closest('.osw');
           if(frame && !frame.classList.contains('focused')) return;
         }catch(_){}
+        /* Reattaching the live Terminal DOM after a focus change fires ResizeObserver even when its
+         * box is exactly the same size. FitAddon can round a cell differently during that frame,
+         * which sends SIGWINCH and corrupts full-screen Vim despite no user resize. Pixel geometry
+         * is the authority: if it did not change, neither may the PTY grid. */
+        let px='';
+        try{
+          const br=box.getBoundingClientRect();
+          if(br.width < 2 || br.height < 2)return;
+          px=Math.round(br.width*10)+'x'+Math.round(br.height*10);
+          if(_fitPixels===px && _sentSize)return;
+        }catch(_){}
         try{ term.options.fontSize = fontSize(); }catch(_){}
         try{ if(fit) fit.fit(); }catch(_){}
         /* A ZERO-SIZED BOX IS NOT A SIZE. In desktop mode the Terminal's window is PARKED when
@@ -437,6 +448,7 @@
          * at the far end — and a full-screen program redraws its entire display on each one. The
          * common case of _fit (a reconnect, a repaint, a focus) is that nothing moved at all. */
         const sig = c + 'x' + r;
+        if(px)_fitPixels=px;
         if(sig === _sentSize) return;
         _sentSize = sig;
         _send({ t: 'size', cols: c, rows: r });
@@ -1039,6 +1051,7 @@
       document.removeEventListener('visibilitychange', _wake);
       if(ro){ try{ ro.disconnect(); }catch(_){} ro = null; }
       if(term){ try{ term.dispose(); }catch(_){} term = null; fit = null; }
+      _fitPixels = '';
       if(_fitT){ clearTimeout(_fitT); _fitT = null; }
       window.removeEventListener('resize', _fit);
       /* The relay subscription goes with the screen. Left running it decrypts other devices'

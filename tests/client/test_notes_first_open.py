@@ -26,12 +26,20 @@ class CoreAppsOpenReliably(unittest.TestCase):
         self.assertLess(load.index("_paint();"), load.index("await _absorb"))
         self.assertIn("n === 1", load)
 
+    def test_network_backfill_progressively_reveals_the_library(self):
+        refresh = self.notes[self.notes.index("async function refresh()"):
+                             self.notes.index("function _stamp()")]
+        self.assertIn("await _absorb(_lib, live, n =>", refresh)
+        self.assertIn("n % 12 === 0", refresh)
+
     def test_background_focus_cannot_resize_the_terminal_pty(self):
         fit = self.term[self.term.index("function _fit()"):]
         fit = fit[:fit.index("function _send(")]
         guard = "frame && !frame.classList.contains('focused')"
         self.assertIn(guard, fit)
         self.assertLess(fit.index(guard), fit.index("fit.fit()"))
+        self.assertIn("_fitPixels===px && _sentSize", fit)
+        self.assertLess(fit.index("_fitPixels===px"), fit.index("fit.fit()"))
 
     def test_every_module_backed_app_heals_its_first_open(self):
         for view, file_name, global_name, method in (
