@@ -139,11 +139,14 @@ EMERGE_DEFAULT_OPTS="--jobs 5 --getbinpkg "
 # dracut needs to be able to read that back, so a kernel/initramfs built without the flag
 # fails at "zstd is not supported" — after the whole image has been built.
 USE_FLAGS=" flatpak dracut -webp -ladspa -gpm npm introspection lame systemd-boot dist-kernel luks cryptsetup kernel-install boot opus theora vpx kernel-install systemd firmware btrfs networkmanager zstd opengl vulkan"
-VIDEO_CARDS="intel amdgpu radeon radeonsi"
+# Physical GPUs plus VirGL, which is the accelerated virtio-gpu path used by QEMU/KVM. Without
+# virgl Mesa prints "virtio_gpu: driver missing" on the first installed boot: Sway starts, but EGL
+# cannot render and the VM remains a black screen even though the same live medium appeared fine.
+VIDEO_CARDS="intel amdgpu radeon radeonsi virgl"
 #
 #PACKAGE CONFIGURATION
 BASE_PACKAGES="net-print/cups-filters net-misc/networkmanager net-wireless/bluez net-fs/sshfs app-shells/starship dev-util/sh sys-boot/plymouth sys-power/acpid app-arch/zip dev-python/virtualenv sys-apps/flatpak sys-power/powertop app-shells/bash-completion sys-power/cpupower media-libs/gexiv2 media-plugins/gst-plugins-pulse mail-mta/postfix app-admin/sysstat sys-apps/smartmontools net-fs/nfs-utils net-firewall/nftables dev-python/pip sys-fs/inotify-tools net-analyzer/nmap app-misc/screen app-portage/gentoolkit sys-fs/dosfstools app-admin/sudo sys-apps/systemd app-eselect/eselect-repository dev-vcs/git sys-block/parted sys-process/btop net-vpn/wireguard-tools app-editors/neovim app-misc/fastfetch sys-fs/btrfs-progs net-print/cups sys-firmware/seabios-bin sys-firmware/edk2-bin app-emulation/libvirt app-emulation/qemu app-emulation/virt-viewer app-crypt/swtpm"
-SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 nls pam readline server ssl system zlib zstd uuid" "dev-build/meson test test-full" "dev-qt/qtwebengine bindist" "media-sound/sox -opus" "media-video/vlc -opus -theora -vpx" "dev-qt/qtpositioning geoclue" "media-libs/libvpx postproc" "dev-python/pillow webp" "gui-libs/gtk colord sysprof" "media-libs/freetype harfbuzz" "dev-lang/php gmp sodium sysvipc calendar bcmath exif bzip2 intl ctype curl fileinfo filter gd iconv ssl posix session simplexml xmlreader xmlwriter zip zlib postgres png opcache jit cli fpm zip pdo" "net-im/synapse postgres" "net-p2p/qbittorrent webui" "app-crypt/certbot certbot-nginx" "acct-user/git gitea" "app-admin/vaultwarden web postgres" "media-gfx/imagemagick -postscript" "media-gfx/imagemagick -postscript dev-libs/jemalloc statsv" "media-libs/libsdl2 -kms -pipewire" "media-video/obs-studio pipewire wayland" "media-video/pipewire sound-server bluetooth" "gui-wm/sway X" "mail-mta/postfix sasl" "app-emulation/qemu spice usbredir pipewire" "app-emulation/libvirt qemu virt-network" "app-emulation/virt-viewer spice")
+SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 nls pam readline server ssl system zlib zstd uuid" "dev-build/meson test test-full" "dev-qt/qtwebengine bindist" "media-sound/sox -opus" "media-video/vlc -opus -theora -vpx" "dev-qt/qtpositioning geoclue" "media-libs/libvpx postproc" "dev-python/pillow webp" "gui-libs/gtk colord sysprof" "media-libs/freetype harfbuzz" "dev-lang/php gmp sodium sysvipc calendar bcmath exif bzip2 intl ctype curl fileinfo filter gd iconv ssl posix session simplexml xmlreader xmlwriter zip zlib postgres png opcache jit cli fpm zip pdo" "net-im/synapse postgres" "net-p2p/qbittorrent webui" "app-crypt/certbot certbot-nginx" "acct-user/git gitea" "app-admin/vaultwarden web postgres" "media-gfx/imagemagick -postscript" "media-gfx/imagemagick -postscript dev-libs/jemalloc statsv" "media-libs/libsdl2 -kms -pipewire" "media-video/obs-studio pipewire wayland" "media-video/pipewire sound-server bluetooth" "gui-wm/sway X" "x11-libs/libXrandr abi_x86_32" "mail-mta/postfix sasl" "app-emulation/qemu spice usbredir pipewire virgl" "app-emulation/libvirt qemu virt-network" "app-emulation/virt-viewer spice")
 #
 # External desktop monitors expose brightness over DDC/CI rather than /sys/class/backlight.
 BASE_PACKAGES="www-client/firefox-bin $BASE_PACKAGES"
@@ -204,7 +207,7 @@ BASE_PACKAGES="www-client/firefox-bin $BASE_PACKAGES"
 # a tool goes missing on the next fresh build with nothing to say why.
 # Audited against desktop/*.js: grim slurp wl-copy wpctl nmcli systemctl xdg-open script sudo
 # swaymsg (+ brightnessctl, see above). `tests/test_posterchanos_profile.py` re-runs that audit.
-POSTERCHANOS_PACKAGES="gui-wm/sway x11-base/xwayland gui-apps/foot app-misc/ddcutil \
+POSTERCHANOS_PACKAGES="gui-wm/sway gui-apps/swaybg x11-base/xwayland gui-apps/foot app-misc/ddcutil \
 gui-apps/wl-clipboard \
 gui-apps/grim gui-apps/slurp \
 x11-misc/xdg-utils \
@@ -415,12 +418,25 @@ systemMounts() {
 			echo -e "\033[1;31m$EFI is not a FAT32 EFI filesystem; refusing to install into RAM.\033[0m"
 			return 1
 		fi
-		mount "$ROOT_MAPPER_NAME" "$TARGET" || return 1
+		# A cancelled/failed attempt may have left some of the target tree mounted.  A retry must
+		# start from a known state rather than failing with an unhelpful "already mounted" error.
+		# Unmount children first; never use a lazy unmount here because copying into a detached tree
+		# would make an apparently successful but unbootable installation.
+		local old_mount
+		while read -r old_mount; do
+			[ -n "$old_mount" ] && umount "$old_mount" || true
+		done < <(findmnt -Rrn -o TARGET "$TARGET" 2>/dev/null | sort -r)
+		mkdir -p "$TARGET"
+		if ! mount "$ROOT_MAPPER_NAME" "$TARGET"; then
+			echo -e "\033[1;31mCould not mount encrypted root $ROOT_MAPPER_NAME at $TARGET.\033[0m"
+			return 1
+		fi
 		mountpoint -q "$TARGET" || return 1
 		btrfs_filesytem || return 1
-		mkdir -p $TARGET/boot/EFI
-		if ! mount "$EFI" "$TARGET/boot" || ! mountpoint -q "$TARGET/boot"; then
+		mkdir -p "$TARGET/boot/EFI"
+		if ! mount -t vfat "$EFI" "$TARGET/boot" || ! mountpoint -q "$TARGET/boot"; then
 			echo -e "\033[1;31mCould not mount the EFI System Partition at $TARGET/boot.\033[0m"
+			findmnt "$EFI" 2>/dev/null || true
 			return 1
 		fi
 		mkdir -p $TARGET/swap
@@ -639,7 +655,10 @@ finalizeInstall() {
 		return 1
 	fi
 	cp -f "$INSTALLER_SRC" "$TARGET/usr/bin/gentoo.sh"
-	plymouthTheme
+	plymouthTheme || {
+		echo -e "\033[1;31mPosterChanOS boot splash installation failed.\033[0m"
+		return 1
+	}
 	chmod +x $TARGET/usr/bin/gentoo.sh
 	chmod +x $TARGET/setup.sh
 	cp -f /tmp/disk $TARGET/etc/disk
@@ -659,7 +678,8 @@ finalizeInstall() {
 [[ -f ~/.bashrc ]] && . ~/.bashrc
 if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
 	export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=sway MOZ_ENABLE_WAYLAND=1
-	exec sway
+	mkdir -p "$HOME/.local/state/posterchanos"
+	exec sway >"$HOME/.local/state/posterchanos/sway.log" 2>&1
 fi
 POSTERCHAN_PROFILE
 	printf '[Unit]\nWants=NetworkManager.service\nAfter=NetworkManager.service\n[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin posterchan --noclear %%I $TERM\n' \
@@ -667,8 +687,10 @@ POSTERCHAN_PROFILE
 	# Wi-Fi is boot-critical. Enable it explicitly in the completed target rather than relying only
 	# on the earlier services loop, which may have been interrupted before finalization.
 	chroot "$TARGET" /bin/systemctl enable NetworkManager.service
-	chroot "$TARGET" /bin/chown -R posterchan:posterchan /home/posterchan/.bash_profile \
-		/home/posterchan/.config/sway
+	# This is a brand-new account tree, so its contents all belong to the account. Chowning only the
+	# `sway` child left ~/.config itself root:root 0755; Electron then could not create its userData
+	# directory and Chromium aborted with SIGTRAP before the first desktop window mapped.
+	chroot "$TARGET" /bin/chown -R posterchan:posterchan /home/posterchan
 	# RELEASE GATE, NOT A BEST-EFFORT CHECK. These are the exact omissions that otherwise produce a
 	# technically booted machine at a tty and a stock splash, after the installer claimed success.
 	# Check the target files themselves after every phase that can overwrite them.
@@ -687,6 +709,10 @@ POSTERCHAN_PROFILE
 	fi
 	if ! grep -q '^Theme=posterchanos$' "$TARGET/etc/plymouth/plymouthd.conf" 2>/dev/null; then
 		echo -e "\033[1;31mPosterChan boot splash was not selected — refusing to report success.\033[0m"
+		return 1
+	fi
+	if [ "$(chroot "$TARGET" /usr/bin/stat -c %U /home/posterchan/.config 2>/dev/null)" != posterchan ]; then
+		echo -e "\033[1;31mPosterChan profile directory is not writable by its session account — refusing to report success.\033[0m"
 		return 1
 	fi
 	BOOT_ENTRY="$(find "$TARGET/boot/loader/entries" -maxdepth 1 -type f -name '*.conf' 2>/dev/null | sort | head -1)"
@@ -1360,12 +1386,18 @@ _pc_select_plymouth_theme() {
 	[ -s "$THEME" ] || return 1
 	mkdir -p "$(dirname "$DEFAULT")"
 	ln -sfn posterchanos/posterchanos.plymouth "$DEFAULT" || return 1
-	_pc_record_plymouth_theme || return 1
 	if [ -n "$TARGET" ] && [ "$TARGET" != "/" ]; then
 		chroot "$TARGET" /usr/bin/plymouth-set-default-theme posterchanos >/dev/null 2>&1 || true
 	else
 		plymouth-set-default-theme posterchanos >/dev/null 2>&1 || true
 	fi
+	# Some Plymouth releases rewrite plymouthd.conf using their own default (or remove the explicit
+	# Theme line) even when the requested theme exists.  Record our selection AFTER the helper so the
+	# installed file and the initramfs built immediately below agree.
+	_pc_record_plymouth_theme || return 1
+	# The helper may also rewrite default.plymouth. It has finished now, so restore one canonical,
+	# deterministic link that no later command in this install can mutate.
+	ln -sfn posterchanos/posterchanos.plymouth "$DEFAULT" || return 1
 	[ "$(readlink "$DEFAULT" 2>/dev/null)" = "posterchanos/posterchanos.plymouth" ] \
 		&& grep -q '^Theme=posterchanos$' "${ROOT}/etc/plymouth/plymouthd.conf"
 }
@@ -1421,7 +1453,8 @@ posterchanShell() {
 [[ -f ~/.bashrc ]] && . ~/.bashrc
 if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
 	export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=sway MOZ_ENABLE_WAYLAND=1
-	exec sway
+	mkdir -p "$HOME/.local/state/posterchanos"
+	exec sway >"$HOME/.local/state/posterchanos/sway.log" 2>&1
 fi
 PROFILE
 		chown -R "$SHELL_USER:$SHELL_USER" "${TARGET}/home/$SHELL_USER/.bash_profile" \
@@ -2998,7 +3031,7 @@ Type=Application
 Name=Install PosterChanOS
 Comment=Install this system onto a disk
 Icon=drive-harddisk
-Exec=foot -T "Install PosterChanOS" -e sh -c 'if [ "$(id -u)" = 0 ]; then /usr/local/share/posterchanos/gentoo.sh; else sudo /usr/local/share/posterchanos/gentoo.sh; fi'
+Exec=foot -T "Install PosterChanOS" -e sh -c 'installer=/usr/bin/gentoo.sh; [ -x "$installer" ] || installer=/usr/local/share/posterchanos/gentoo.sh; if [ "$(id -u)" = 0 ]; then exec "$installer" install-live; else exec sudo "$installer" install-live; fi'
 Terminal=false
 Categories=System;
 DESKTOP
@@ -3696,6 +3729,10 @@ elif [ "$1" = "accounts" ]; then
 elif [ "$1" = "hibernate" ]; then
 	hibernateSetup
 elif [ "$1" = "bootloader" ]; then
+	# This entry is invoked from inside the target chroot by finalizeInstall. The script's historical
+	# top-level default is /tmp/install for host-side operations; retaining it here makes Plymouth
+	# inspect /tmp/install/usr/share inside the new root instead of the actual installed system.
+	export TARGET=/
 	bootloader
 elif [ "$1" = "steam" ]; then
 	installSteam

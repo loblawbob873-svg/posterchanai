@@ -39,6 +39,21 @@ def test_the_main_process_listens_for_the_os_resume():
         "nothing subscribes to powerMonitor 'resume' — the machine wakes and no one is told"
 
 
+def test_power_monitor_is_wired_only_after_electron_is_ready():
+    """Electron's native powerMonitor backend is invalid before app.ready and can SIGTRAP."""
+    call = MAIN.index("wirePowerMonitor();")
+    ready = MAIN.index("app.whenReady().then")
+    assert call > ready, "powerMonitor is initialized before Electron app.ready"
+    electron_import = MAIN[:MAIN.index("function wirePowerMonitor")]
+    assert not re.search(r"\{[^}]*\bpowerMonitor\b[^}]*\}\s*=\s*require\(['\"]electron", electron_import, re.S), \
+        "destructuring powerMonitor initializes its native backend before app.ready"
+    assert "wireReadyElectronModules();" in MAIN[ready:], \
+        "ready-only native Electron modules are not initialized from app.whenReady"
+    eager = MAIN[:MAIN.index("function wireReadyElectronModules")]
+    assert not re.search(r"\{[^}]*\bscreen\b[^}]*\}\s*=\s*require\(['\"]electron", eager, re.S), \
+        "Electron screen is a ready-only module and must not be destructured at import time"
+
+
 def test_the_channel_name_is_the_same_on_both_sides():
     """A renamed channel is silent on both ends: send() succeeds, no listener ever fires."""
     sent = set(re.findall(r"webContents\.send\(\s*['\"](pc:wake)['\"]", MAIN))

@@ -22,6 +22,16 @@ flock -n 9 || exit 0
 # Children launched by PosterChan inherit this too, giving one dark desktop instead of mixed chrome.
 export GTK_THEME="${GTK_THEME:-Adwaita:dark}"
 export GTK_APPLICATION_PREFER_DARK_THEME=1
+# The shell is the desktop; a startup failure otherwise leaves only a black screen. Electron's
+# diagnostics go to Sway's per-session log (the profile redirects stderr), never to the UI.
+export ELECTRON_ENABLE_LOGGING=1
+# This launcher only runs inside Sway. `auto` can select X11 before Sway's lazy Xwayland server has
+# exported a usable DISPLAY on first boot; Chromium aborts with SIGTRAP before mapping any window.
+# Native Wayland is already the compositor contract here and avoids that startup race entirely.
+export ELECTRON_OZONE_PLATFORM_HINT=wayland
+# Chromium reserves an enormous virtual address space. A fatal startup assertion must not pipe that
+# mapping into systemd-coredump and leave the desktop process stuck forever in CoreDumping.
+ulimit -c 0
 
 # Recovery launches (most notably over SSH) do not inherit Sway's display environment.  There is
 # only one compositor socket in a PosterChanOS session, so recover it instead of letting Electron's
@@ -30,11 +40,28 @@ if [ -z "$XDG_RUNTIME_DIR" ]; then
   XDG_RUNTIME_DIR=/run/user/$(id -u)
   export XDG_RUNTIME_DIR
 fi
-if [ -z "$WAYLAND_DISPLAY" ]; then
+# Sway runs config `exec` commands while its startup is still in progress. On a fast fresh boot the
+# IPC socket already exists but the client Wayland socket does not. Starting Electron in that tiny
+# gap makes Chromium abort with SIGTRAP and leaves a permanently black desktop. Wait for the actual
+# display endpoint rather than treating an empty lookup as a usable display name.
+wayland_socket=''
+display_tries=0
+while [ "$display_tries" -lt 100 ]; do
+  if [ -n "$WAYLAND_DISPLAY" ] && [ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ]; then
+    wayland_socket="$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY"
+    break
+  fi
   wayland_socket=$(find "$XDG_RUNTIME_DIR" -maxdepth 1 -type s -name 'wayland-*' 2>/dev/null | head -1)
-  [ -z "$wayland_socket" ] || WAYLAND_DISPLAY=${wayland_socket##*/}
-  export WAYLAND_DISPLAY
+  [ -z "$wayland_socket" ] || break
+  display_tries=$((display_tries + 1))
+  sleep 0.1
+done
+if [ -z "$wayland_socket" ]; then
+  echo "PosterChan shell could not find Sway's Wayland display socket" >&2
+  exit 1
 fi
+WAYLAND_DISPLAY=${wayland_socket##*/}
+export WAYLAND_DISPLAY
 
 # A STALE SINGLE-INSTANCE LOCK IS A BLACK SCREEN FOREVER, and this is the bug that proves the
 # shell needs a launcher at all rather than a bare exec line.
@@ -48,15 +75,26 @@ fi
 #
 # Removed only when the pid it names is genuinely gone: a live lock belongs to a running instance,
 # and deleting that would let two copies fight over one profile directory.
-LOCK="${HOME:-/home/$(id -un)}/.config/posterchan-desktop/SingletonLock"
-if [ -L "$LOCK" ]; then
+USER_HOME="${HOME:-/home/$(id -un)}"
+# Current Electron uses the first path. Some packaged/first-run builds placed Chromium's singleton
+# files directly in app.getPath('home'); that is the second path and was the installed-VM black
+# screen: the old pid was dead, but every restart tried its dead socket and no window ever mapped.
+LOCKS="$USER_HOME/.config/posterchan-desktop/SingletonLock $USER_HOME/SingletonLock"
+clear_dead_locks() {
+  for LOCK in $LOCKS; do
+    [ -L "$LOCK" ] || continue
     target=$(readlink "$LOCK" 2>/dev/null || echo '')
     pid=${target##*-}
+    singleton_dir=${LOCK%/SingletonLock}
     case "$pid" in
-        ''|*[!0-9]*) rm -f "$LOCK" ;;               # unparseable: it names no process we can check
-        *) kill -0 "$pid" 2>/dev/null || rm -f "$LOCK" ;;
+      ''|*[!0-9]*) rm -f "$singleton_dir"/SingletonLock "$singleton_dir"/SingletonSocket \
+                          "$singleton_dir"/SingletonCookie ;; # unparseable: no live owner
+      *) kill -0 "$pid" 2>/dev/null || rm -f "$singleton_dir"/SingletonLock \
+          "$singleton_dir"/SingletonSocket "$singleton_dir"/SingletonCookie ;;
     esac
-fi
+  done
+}
+clear_dead_locks
 
 # Proven on the booted reference LiveOS: let the packaged wrapper's `auto` Ozone choice select the
 # backend. Forcing this build through X11 produced a healthy Sway session with no mapped shell — the
@@ -65,7 +103,7 @@ fi
 # FD 9 is the launcher mutex, not part of the desktop environment. Close it in Electron: otherwise
 # every app Electron launches (Firefox, Steam, terminals) inherits the lock and a shell restart can
 # never acquire it again until all of those unrelated apps exit.
-/usr/local/bin/posterchan --shell 9>&- &
+/usr/local/bin/posterchan --shell --ozone-platform=wayland 9>&- &
 shell_pid=$!
 retries=0
 
@@ -86,23 +124,21 @@ while [ $i -lt 120 ]; do
       swaymsg "$sel floating disable" >/dev/null 2>&1
       swaymsg "$sel border none" >/dev/null 2>&1
     done
+    echo "PosterChan shell window mapped"
     exit 0
   fi
   # Electron can exit before mapping when its SingletonSocket/Lock outlives the process that was
   # just killed. A one-shot launcher then leaves a permanent black screen. Clean only a dead lock
   # (the guarded logic above) and retry; a healthy cold start is left its full 60 seconds.
   if ! kill -0 "$shell_pid" 2>/dev/null && [ "$retries" -lt 3 ]; then
-    if [ -L "$LOCK" ]; then
-      target=$(readlink "$LOCK" 2>/dev/null || echo '')
-      pid=${target##*-}
-      case "$pid" in ''|*[!0-9]*) rm -f "$LOCK" ;; *) kill -0 "$pid" 2>/dev/null || rm -f "$LOCK" ;; esac
-    fi
+    clear_dead_locks
     retries=$((retries + 1))
     sleep 1
-    /usr/local/bin/posterchan --shell 9>&- &
+    /usr/local/bin/posterchan --shell --ozone-platform=wayland 9>&- &
     shell_pid=$!
   fi
   i=$((i + 1))
   sleep 0.5
 done
+echo "PosterChan shell window did not map after retries" >&2
 exit 1

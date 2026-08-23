@@ -39,7 +39,7 @@ def test_shell_restart_is_serialized_and_targets_only_the_shell_process():
     main = (ROOT / "desktop/main.js").read_text()
     assert "flock -n 9" in start
     assert "posterchan-shell-start.lock" in start
-    assert start.count("/usr/local/bin/posterchan --shell 9>&- &") == 2
+    assert start.count("/usr/local/bin/posterchan --shell --ozone-platform=wayland 9>&- &") == 2
     assert "pattern='[/]opt/posterchan/'" in restart
     assert "send_tick pc:restart" in restart
     assert "pkill" not in restart
@@ -47,6 +47,14 @@ def test_shell_restart_is_serialized_and_targets_only_the_shell_process():
     assert "ev.payload !== 'pc:restart'" in main
     assert "exec /usr/local/bin/pc-shell-start" in restart
     assert "retries" in start and "exit 1" in start
+    assert "$USER_HOME/SingletonLock" in start
+    assert "clear_dead_locks" in start
+    assert "SingletonSocket" in start and "SingletonCookie" in start
+    assert "ELECTRON_OZONE_PLATFORM_HINT=wayland" in start
+    assert 'while [ "$display_tries" -lt 100 ]' in start
+    assert '[ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ]' in start
+    assert "could not find Sway's Wayland display socket" in start
+    assert "ulimit -c 0" in start
 
 
 def test_upgrade_removes_optioned_printscreen_bindings_before_adding_one_copy():

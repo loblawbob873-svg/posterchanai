@@ -15,13 +15,17 @@
  * The shell still owns only what a page can't: window state, the tor process and the session proxy,
  * routing off-site links to the real browser, the permission grants the client needs, and auto-update.
  */
-const { app, BrowserWindow, shell, session, Menu, clipboard, dialog, ipcMain, desktopCapturer,
-        systemPreferences, protocol, powerMonitor, screen } = require('electron');
+const electron = require('electron');
+// Only app/protocol/ipcMain are valid during Electron's pre-ready configuration phase. Most of the
+// other exports are native lazy getters; destructuring `screen`, powerMonitor, session or Tray while
+// this module loads can initialize platform backends before app.ready and SIGTRAP on a fast boot.
+const { app, ipcMain, protocol } = electron;
+let BrowserWindow, shell, session, Menu, clipboard, dialog, systemPreferences, screen;
 const path = require('path');
 const fsbridge = require('./fsbridge');
 const fs = require('fs');
 const tor = require('./tor');
-const background = require('./background');
+let background = null; // background.js imports Tray, so require it only after app.ready too.
 const vm = require('./vm');
 const bluetooth = require('./bluetooth');
 
@@ -50,6 +54,14 @@ const closeToTray = () => cfg.closeToTray !== false;
 
 let win = null;
 let cfg = {};
+// Electron's Linux powerMonitor accessor initializes its native login1 backend. Keep even the
+// accessor lazy: on a fast boot, destructuring it above can run before app.ready and Chromium
+// deliberately traps before creating a window.
+let powerMonitor = null;
+function wireReadyElectronModules() {
+  ({ BrowserWindow, shell, session, Menu, clipboard, dialog, systemPreferences, screen } = electron);
+  background = require('./background');
+}
 
 // ---- tiny JSON config in userData (instance + window geometry + tor) ---------------------------
 function cfgPath() { return path.join(app.getPath('userData'), 'config.json'); }
@@ -310,7 +322,17 @@ function pushWake() {
     if (!w.isDestroyed()) { try { w.webContents.send('pc:wake'); } catch (_) {} }
   }
 }
-try { powerMonitor.on('resume', pushWake); } catch (_) {}
+function wirePowerMonitor() {
+  // Electron documents powerMonitor as unavailable until app.ready. Registering this while the
+  // module was loading happened to survive on slower machines, but a fast fresh VM reached the
+  // native login1 backend early and Chromium aborted with SIGTRAP before creating its first window.
+  try {
+    powerMonitor = require('electron').powerMonitor;
+    powerMonitor.on('resume', pushWake);
+  } catch (e) {
+    console.warn('[power] could not subscribe to resume:', (e && e.message) || e);
+  }
+}
 
 function pushTorStatus() {
   const s = tor.status();
@@ -1759,7 +1781,7 @@ ipcMain.handle('pc:fs:unwatch', (e, id) => { fsGuard(e); return fsbridge.unwatch
 ipcMain.handle('pc:fs:power', (e) => {
   fsGuard(e);
   let onBattery = false;
-  try { onBattery = powerMonitor.isOnBatteryPower(); } catch (_) {}
+  try { onBattery = !!powerMonitor && powerMonitor.isOnBatteryPower(); } catch (_) {}
   return { charging: !onBattery, metered: false, online: true };
 });
 
@@ -1834,6 +1856,8 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
   // clicks the icon — and that copy may be HIDDEN in the tray, so this has to un-hide, not just focus.
   app.on('second-instance', () => showWindow());
   app.whenReady().then(async () => {
+    wireReadyElectronModules();
+    wirePowerMonitor();
     serveBundle();
     tor.setOnChange(pushTorStatus);
     // Before the window: with Tor on, applyProxy() must have run before anything can request a byte,

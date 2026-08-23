@@ -72,6 +72,14 @@ def _fn(src, name):
 @unittest.skipIf(not os.path.exists(SH), "no os/gentoo.sh here")
 @unittest.skipIf(not shutil.which("bash"), "no bash")
 class BootloaderWritesAnEntryThatNamesARealKernel(unittest.TestCase):
+
+    def test_plymouth_helper_cannot_overwrite_recorded_selection(self):
+        src = open(SH, encoding="utf-8").read()
+        body = _fn(src, "_pc_select_plymouth_theme")
+        self.assertGreater(body.index("_pc_record_plymouth_theme"),
+                           body.index("plymouth-set-default-theme"))
+        self.assertGreater(body.rindex("ln -sfn posterchanos/posterchanos.plymouth"),
+                           body.index("plymouth-set-default-theme"))
     def _run(self, *, kernel=True, modules=True, bootctl_rc=0):
         src = open(SH, encoding="utf-8").read()
         body = (_fn(src, "partitionDetection") + "\n\n" +

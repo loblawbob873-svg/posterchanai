@@ -205,7 +205,11 @@ async function create(opts){
            path because Linux and Windows installation media carry it without an extra VirtIO
            driver disc; an unreachable guest cannot download that missing driver. -->
       <interface type="user"><model type="e1000e"/></interface>
-      <graphics type="spice" autoport="yes"><listen type="none"/></graphics><video><model type="virtio"/></video>
+      <!-- A virtio GPU without VirGL/3D advertises a DRM device but cannot initialize EGL. Sway
+           then owns the display yet paints only black. Keep SPICE local-only (required for GL) and
+           expose the accelerated renderer that both Linux desktops and Windows drivers expect. -->
+      <graphics type="spice" autoport="yes"><listen type="none"/><gl enable="yes"/></graphics>
+      <video><model type="virtio" heads="1" primary="yes"><acceleration accel3d="yes"/></model></video>
       <channel type="spicevmc"><target type="virtio" name="com.redhat.spice.0"/></channel>
       <!-- Absolute input is the safe desktop default: entering the viewer does not imprison the
            host pointer. Relative PS/2 capture remains an explicit gaming-mode choice. -->

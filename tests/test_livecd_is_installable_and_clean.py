@@ -64,7 +64,20 @@ class TheBuilderShipsTheInstaller(unittest.TestCase):
 
     def test_the_desktop_entry_can_reach_root(self):
         i = self.fn.index("[Desktop Entry]")
-        self.assertIn("sudo", self.fn[i:i + 500])
+        entry = self.fn[i:i + 700]
+        self.assertIn("sudo", entry)
+        self.assertIn("/usr/bin/gentoo.sh", entry)
+        self.assertIn("install-live", entry)
+
+    def test_install_retry_cleans_stale_target_mounts(self):
+        i = self.src.index("systemMounts() {")
+        body = self.src[i:self.src.index("\n}", i)]
+        self.assertIn('findmnt -Rrn -o TARGET "$TARGET"', body)
+        self.assertIn('mount -t vfat "$EFI" "$TARGET/boot"', body)
+
+    def test_chroot_bootloader_uses_the_chroot_as_target(self):
+        branch = self.src[self.src.index('elif [ "$1" = "bootloader" ]'):]
+        self.assertLess(branch.index("export TARGET=/"), branch.index("bootloader\n"))
 
     def test_new_unformatted_esp_is_detected_before_mkfs(self):
         """A new GPT ESP has no FSTYPE until the installer formats it."""
@@ -689,6 +702,11 @@ class InstallingTheLiveImageIsItsOwnJob(unittest.TestCase):
         """An autologin naming an account that is no longer there is a login prompt -- the exact
         failure the ISO builder was fixed for."""
         self.assertIn("getty@tty1.service.d/override.conf", self.fn)
+
+    def test_the_installed_shell_can_create_its_electron_profile(self):
+        """A root-owned ~/.config makes Chromium abort before the first desktop window maps."""
+        self.assertIn("chown -R posterchan:posterchan /home/posterchan", self.src)
+        self.assertIn("PosterChan profile directory is not writable", self.src)
 
     def test_the_copy_is_checked_before_the_install_continues(self):
         self.assertIn("did not complete", self.fn)

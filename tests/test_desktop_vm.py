@@ -50,6 +50,11 @@ class VmBackend(unittest.TestCase):
         self.assertIn('version="2.0"', src)
         self.assertIn('type="spice"', src)
 
+    def test_virtual_gpu_can_render_a_wayland_desktop(self):
+        src = (ROOT / "desktop" / "vm.js").read_text(encoding="utf-8")
+        self.assertIn('<gl enable="yes"/>', src)
+        self.assertIn('<acceleration accel3d="yes"/>', src)
+
     def test_new_vm_network_works_without_guest_virtio_drivers(self):
         src = (ROOT / "desktop" / "vm.js").read_text()
         self.assertIn('<interface type="user"><model type="e1000e"/></interface>', src)
