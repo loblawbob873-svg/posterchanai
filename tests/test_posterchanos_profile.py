@@ -159,6 +159,7 @@ class PosterChanOSProfile(unittest.TestCase):
         "systemctl": "base:sys-apps/systemd",
         "script": "base:sys-apps/util-linux",      # the local terminal's PTY
         "stty": "base:sys-apps/util-linux",        # resize that PTY without injecting input
+        "lsblk": "base:sys-apps/util-linux",       # enumerate removable LiveUSB targets safely
         "virsh": "base:app-emulation/libvirt",
         "qemu-img": "base:app-emulation/qemu",
         "bluetoothctl": "base:net-wireless/bluez",
