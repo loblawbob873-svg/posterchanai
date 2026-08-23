@@ -209,6 +209,7 @@ window.PCGitFactory = function(dep){
     return (e.tags||[]).some(t=>t[0]==='maintainers' && t.slice(1).includes(S.ME.pubkey));
   }
   function _kbCards(feed){ return $$('.repo-card',feed); }
+  let _repoEvents = new Map();
   function _kbPaint(feed){
     const cards=_kbCards(feed);
     cards.forEach((c,i)=>c.classList.toggle('kb-sel', i===_kbSel));
@@ -258,7 +259,7 @@ window.PCGitFactory = function(dep){
         case 'h': case 'ArrowLeft': ev.preventDefault(); _kbMove(feed, -1); break;               // prev card
         case 'g': ev.preventDefault(); _kbSel=0; _kbPaint(feed); break;
         case 'G': ev.preventDefault(); _kbSel=_kbCards(feed).length-1; _kbPaint(feed); break;
-        case 'o': case 'Enter': { ev.preventDefault(); const c=_kbCards(feed)[_kbSel]; if(c){ const e=Store.get(c.dataset.id); if(e) openRepo(e); } break; }
+        case 'o': case 'Enter': { ev.preventDefault(); const c=_kbCards(feed)[_kbSel]; if(c){ const e=_repoEvents.get(c.dataset.id)||Store.get(c.dataset.id); if(e) openRepo(e); } break; }
         case '/': ev.preventDefault(); if(q){ q.focus(); if(q.select) q.select(); } break;
         case 'n': ev.preventDefault(); publishRepo(); break;
         case 'Escape': if(_kbSel>=0){ _kbSel=-1; _kbPaint(feed); } break;
@@ -300,6 +301,7 @@ window.PCGitFactory = function(dep){
     evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
     if(S.VIEW!=='repos') return;
     const repos=_dedupAddr(evs).sort((a,b)=>b.created_at-a.created_at);
+    _repoEvents = new Map(repos.map(e=>[e.id,e]));
     const mine=repos.filter(_repoIsMine);
     if(!mine.length) _repoScope='all';           // never open on an empty view
     if(_repoScope==='starred' && (!_stars || !_stars.size)) _repoScope = mine.length?'mine':'all';
@@ -332,7 +334,7 @@ window.PCGitFactory = function(dep){
         b.title=_starred(e)?'Unstar':'Star';
         if(_repoScope==='starred') paint();     // unstarring while looking at Starred removes the card
       });
-      $$('.repo-card',feed).forEach(c=> c.onclick=()=>{ const e=Store.get(c.dataset.id); if(e) openRepo(e); });
+      $$('.repo-card',feed).forEach(c=> c.onclick=ev=>{ ev.stopPropagation(); const e=_repoEvents.get(c.dataset.id)||Store.get(c.dataset.id); if(e) openRepo(e); else toast('this repository is no longer available — refresh Git'); });
     };
     const q=$('#repo-q',feed);
     // ONE renderer for both the scope chips and the search box: they filter the same list, and two

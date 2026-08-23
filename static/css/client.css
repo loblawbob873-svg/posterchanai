@@ -4302,12 +4302,17 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
   .mail-items{padding-bottom:calc(62px + env(safe-area-inset-bottom))}
   .mail-read{display:none}
   .mail-read.has-open{display:flex;position:fixed;inset:0;z-index:46;background:var(--bg);padding-bottom:calc(62px + env(safe-area-inset-bottom))}
-  .mail-html{height:auto;min-height:60dvh}
+  .mail-read-hd{position:sticky;top:0;z-index:3;background:color-mix(in srgb,var(--panel) 96%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+  .mail-html{height:auto;min-height:62dvh;border-radius:0}
   .mail-back{display:inline-flex}
-  .mail-actions{padding:8px 10px;gap:5px;grid-template-columns:repeat(4,minmax(0,1fr))}
-  .mail-actions .btn{min-height:40px;font-size:12.5px;padding:7px 4px}
-  .mail-read-hd{padding:12px 12px 8px}
-  .mr-subj{font-size:16px}
+  .mail-actions{padding:9px 12px;gap:8px;display:flex;overflow-x:auto;scrollbar-width:none;background:var(--panel);border-bottom:1px solid var(--line)}
+  .mail-actions::-webkit-scrollbar{display:none}.mail-actions .btn{flex:0 0 44px;width:44px;min-height:44px;font-size:14px;padding:8px}
+  .mail-read-hd{padding:14px 12px 11px;gap:10px;align-items:flex-start}
+  .mr-subj{font-size:20px;line-height:1.25;font-weight:750;white-space:normal;overflow:visible}
+  .mail-msg-hd{padding:14px 14px;min-height:62px;align-items:center}.mm-who b{font-size:15px}.mm-who .muted{margin-top:3px;font-size:12px}
+  .mail-atts{padding:12px 14px}.mail-att{min-height:44px;padding:9px 11px;max-width:100%}
+  .mail-body{padding:18px 16px 30px;font-size:16px;line-height:1.68;background:color-mix(in srgb,var(--panel) 74%,var(--bg));word-break:normal;overflow-wrap:anywhere}
+  .mail-body .mail-text{max-width:72ch;margin:0 auto;width:100%}
 }
 /* Compose → 👤 Contacts: the same encrypted addressbooks the Contacts screen and your phone sync. */
 /* Stacks OVER the composer: closeModal() empties #modal-root, so a picker opened as a plain modal
