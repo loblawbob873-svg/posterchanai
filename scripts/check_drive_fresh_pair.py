@@ -84,7 +84,15 @@ class Tab:
                 await asyncio.sleep(0.5)
         if not page:
             return False
-        self.ws = await websockets.connect(page["webSocketDebuggerUrl"], max_size=64 * 1024 * 1024)
+        # Runtime.evaluate deliberately waits for a whole encrypted-drive cold start. During the
+        # full release matrix two Chrome instances can spend over the websocket library's 20s pong
+        # deadline inside that one renderer task; CDP is still alive and the outer check timeout is
+        # the correct liveness bound. A protocol keepalive closing the controller halfway through
+        # produced a red Folder Sync result that passed immediately when rerun alone. Disable only
+        # the controller ping — calls still have checkall's hard per-check deadline.
+        self.ws = await websockets.connect(page["webSocketDebuggerUrl"],
+                                           max_size=64 * 1024 * 1024,
+                                           ping_interval=None)
         await self.call("Runtime.enable")
         await self.call("Page.enable")
         await self.call("Page.navigate", {"url": url})
