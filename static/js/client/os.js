@@ -1230,6 +1230,20 @@
   // window opens LARGER than the area place() clamped it into — i.e. off the edge.
   const MIN_W = 420, MIN_H = 260;
 
+  /* Commit a frame wholly inside this output's usable desktop. Drag previews are allowed to cross
+   * an edge so a monitor handoff can be requested, but a rejected handoff (no adjacent output, or
+   * a display disappearing mid-gesture) must never leave only a sliver of the title bar behind. */
+  function keepFrameReachable(w){
+    if(!w || !w.el) return;
+    const maxW=Math.max(MIN_W,vwL()-24), maxH=Math.max(MIN_H,vhL()-TASKBAR-24);
+    const ww=Math.max(MIN_W,Math.min(maxW,w.el.offsetWidth||MIN_W));
+    const hh=Math.max(MIN_H,Math.min(maxH,w.el.offsetHeight||MIN_H));
+    const x=Math.max(12,Math.min(vwL()-ww-12,parseFloat(w.el.style.left)||12));
+    const y=Math.max(12,Math.min(vhL()-TASKBAR-hh-12,parseFloat(w.el.style.top)||12));
+    Object.assign(w.el.style,{left:Math.round(x)+'px',top:Math.round(y)+'px',
+      width:Math.round(ww)+'px',height:Math.round(hh)+'px'});
+  }
+
   /* HOW BIG A WINDOW OPENS, and where.
    *
    * The old answer was one size for everything — 72% of the free width and 78% of the height,
@@ -2520,7 +2534,8 @@
                          ? PCTerm.sessionId() : ''};
         Promise.resolve(pcWM.handoffFrame(payload,handoff)).then(result=>{
           if(result) closeWin(w,{preserveFocus:true});
-        }).catch(()=>{});
+          else { keepFrameReachable(w); _natGesture(w,false); if(nativeWins().length)nsync(); }
+        }).catch(()=>{ keepFrameReachable(w); _natGesture(w,false); if(nativeWins().length)nsync(); });
         if(nativeWins().length) nsync();
         return;
       }
@@ -2557,8 +2572,10 @@
     const paint = () => { raf = 0; w.el.style.width = nw + 'px'; w.el.style.height = nh + 'px'; };
     const move = (e) => {
       if(hadButtons && e.pointerType !== 'touch' && (e.buttons || 0) === 0){ up(); return; }
-      nw = Math.max(420, ow + (e.clientX - sx) / k);
-      nh = Math.max(260, oh + (e.clientY - sy) / k);
+      const left=Math.max(0,parseFloat(w.el.style.left)||0);
+      const top=Math.max(0,parseFloat(w.el.style.top)||0);
+      nw = Math.max(MIN_W,Math.min(vwL()-left-12,ow + (e.clientX - sx) / k));
+      nh = Math.max(MIN_H,Math.min(vhL()-TASKBAR-top-12,oh + (e.clientY - sy) / k));
       if(!raf) raf = requestAnimationFrame(paint);
     };
     let ended = false;
@@ -2570,6 +2587,7 @@
                        w.el.removeEventListener('lostpointercapture', up);
                        try{ if(w.el.hasPointerCapture(ev.pointerId)) w.el.releasePointerCapture(ev.pointerId); }catch(_){}
                        if(raf){ cancelAnimationFrame(raf); paint(); }
+                       keepFrameReachable(w);
                        _natGesture(w, false); };
     document.addEventListener('pointermove', move);
     document.addEventListener('pointerup', up);
