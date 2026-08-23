@@ -4,12 +4,17 @@ import android.content.Context;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.BitmapShader;
+import android.graphics.Canvas;
+import android.graphics.ColorFilter;
+import android.graphics.Matrix;
+import android.graphics.Paint;
+import android.graphics.PixelFormat;
+import android.graphics.Rect;
+import android.graphics.Shader;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.provider.ContactsContract;
-
-import androidx.core.graphics.drawable.RoundedBitmapDrawable;
-import androidx.core.graphics.drawable.RoundedBitmapDrawableFactory;
 
 import java.io.InputStream;
 
@@ -97,10 +102,41 @@ public final class PhoneBook {
             }
         }
         if (bitmap == null) return null;
-        RoundedBitmapDrawable out = RoundedBitmapDrawableFactory.create(ctx.getResources(), bitmap);
-        out.setCircular(true);
-        out.setAntiAlias(true);
-        return out;
+        return new CircleBitmapDrawable(bitmap);
+    }
+
+    /** Framework-only so caller photos work in the app, device tests and minimal Android builds. */
+    private static final class CircleBitmapDrawable extends Drawable {
+        private final Bitmap bitmap;
+        private final BitmapShader shader;
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+        private final Matrix matrix = new Matrix();
+
+        CircleBitmapDrawable(Bitmap source) {
+            bitmap = source;
+            shader = new BitmapShader(source, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
+            paint.setShader(shader);
+        }
+
+        @Override protected void onBoundsChange(Rect bounds) {
+            float scale = Math.max(bounds.width() / (float) Math.max(1, bitmap.getWidth()),
+                                   bounds.height() / (float) Math.max(1, bitmap.getHeight()));
+            float dx = bounds.left + (bounds.width() - bitmap.getWidth() * scale) / 2f;
+            float dy = bounds.top + (bounds.height() - bitmap.getHeight() * scale) / 2f;
+            matrix.reset(); matrix.setScale(scale, scale); matrix.postTranslate(dx, dy);
+            shader.setLocalMatrix(matrix);
+        }
+
+        @Override public void draw(Canvas canvas) {
+            Rect b = getBounds();
+            canvas.drawCircle(b.exactCenterX(), b.exactCenterY(),
+                              Math.min(b.width(), b.height()) / 2f, paint);
+        }
+        @Override public void setAlpha(int alpha) { paint.setAlpha(alpha); invalidateSelf(); }
+        @Override public void setColorFilter(ColorFilter filter) { paint.setColorFilter(filter); invalidateSelf(); }
+        @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
+        @Override public int getIntrinsicWidth() { return bitmap.getWidth(); }
+        @Override public int getIntrinsicHeight() { return bitmap.getHeight(); }
     }
 
     private static String lookup(Context ctx, String number, String column) {
