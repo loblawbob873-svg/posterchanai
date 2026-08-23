@@ -662,7 +662,11 @@ finalizeInstall() {
 	chmod +x $TARGET/usr/bin/gentoo.sh
 	chmod +x $TARGET/setup.sh
 	cp -f /tmp/disk $TARGET/etc/disk
-	chroot $TARGET /setup.sh
+	# The fresh LUKS password lives only in this installer's shell. The bootloader runs in a new
+	# process inside the target, where the historical source default would otherwise become 123456
+	# again and `luksAddKey` would fail with "No key available with this passphrase". Pass it through
+	# the chroot environment for this one operation; it is never written to setup.sh or the target.
+	PC_INSTALL_PASSWORD="$DISK_PASSWORD" chroot "$TARGET" /setup.sh
 	# accounts() creates `posterchan`; configure its graphical session only after that. Doing this
 	# before accounts selected the LiveCD's `live` account and copied its autologin onto the NVMe.
 	chroot $TARGET /usr/bin/bash /usr/bin/gentoo.sh posterchan-shell
@@ -3336,6 +3340,9 @@ GRUB
 	# A headless `gentoo.sh livecd` has no keyboard. The image is already complete here, so an
 	# unconditional read leaves the ssh job and its caller hanging forever after a successful build.
 	[[ -t 0 ]] && read -p "Press enter key to Continue"
+	# The test above is false for deployment automation. Do not let that harmless false condition
+	# turn a completed image into a failed build status.
+	return 0
 }
 
 download-setup() {
@@ -3504,7 +3511,13 @@ setDevices() {
 		LIVE_PART="${LIVE_SOURCE#/dev/}"
 		LIVE_DISK="$(lsblk -ndo PKNAME "$LIVE_SOURCE" 2>/dev/null)"
 		[ -n "$LIVE_DISK" ] || LIVE_DISK="$LIVE_PART"
-		DEFAULT_DISK="$(lsblk -dnro NAME,TYPE | awk -v live="$LIVE_DISK" '$2=="disk" && $1!=live && $1!~/^(zram|loop)/ {print $1; exit}')"
+		# QEMU commonly exposes a legacy /dev/fd0 before its virtio disk.  It reports TYPE=disk but is
+		# neither a writable installation target nor even probeable, so the old "first disk" rule chose
+		# it and failed at wipefs before touching the real vda. Optical, loop/RAM and implausibly small
+		# devices are equally unsuitable defaults. The user may still explicitly name another genuine
+		# whole disk below; this filter only governs the safe one-click default.
+		DEFAULT_DISK="$(lsblk -bdnro NAME,TYPE,SIZE | awk -v live="$LIVE_DISK" \
+			'$2=="disk" && $1!=live && $1!~/^(fd|sr|zram|loop|ram)/ && $3>=8589934592 {print $1; exit}')"
 		[ -n "$DEFAULT_DISK" ] || { echo "No install disk found besides the live medium."; return 1; }
 		read -r -p "Disk Device to Use [$DEFAULT_DISK]: " device
 		device="${device:-$DEFAULT_DISK}"
@@ -3584,11 +3597,14 @@ hibernateSetup() {
 }
 
 bootloader() {
+	# Fresh installs hand the actual user-selected LUKS password through the chroot environment.
+	# Repair invocations without it retain the legacy interactive/script default for compatibility.
+	[ -n "${PC_INSTALL_PASSWORD:-}" ] && DISK_PASSWORD="$PC_INSTALL_PASSWORD"
 	# dracut requires a real temporary directory. Live images exclude /var/tmp contents, and an
 	# absent directory made an otherwise-correct encrypted-root rebuild fail.
 	mkdir -p /var/tmp
 	chmod 1777 /var/tmp
-	chmod -R 740 /boot/EFI
+	[ ! -e /boot/EFI ] || chmod -R 740 /boot/EFI
 	rm -rf /boot/loader/entries/*
 	if [ -f "/etc/disk" ]; then
 		partitionDetection

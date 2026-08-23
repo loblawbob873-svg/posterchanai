@@ -75,6 +75,11 @@ class TheBuilderShipsTheInstaller(unittest.TestCase):
         self.assertIn('findmnt -Rrn -o TARGET "$TARGET"', body)
         self.assertIn('mount -t vfat "$EFI" "$TARGET/boot"', body)
 
+    def test_successful_headless_build_returns_success(self):
+        done = self.src.index('◆ DONE ◆', self.src.index("liveCD() {"))
+        end = self.src.index("\n}\n", done)
+        self.assertIn('return 0', self.src[done:end])
+
     def test_chroot_bootloader_uses_the_chroot_as_target(self):
         branch = self.src[self.src.index('elif [ "$1" = "bootloader" ]'):]
         self.assertLess(branch.index("export TARGET=/"), branch.index("bootloader\n"))
@@ -85,6 +90,13 @@ class TheBuilderShipsTheInstaller(unittest.TestCase):
         self.assertIn('c12a7328-f81f-11d2-ba4b-00a0c93ec93b', self.src)
         self.assertIn('mkfs.vfat -F 32 "$EFI"', self.src)
         self.assertIn('mountpoint -q "$TARGET/boot"', self.src)
+
+    def test_default_install_disk_rejects_virtual_floppy_and_tiny_devices(self):
+        i = self.src.index("setDevices() {")
+        body = self.src[i:self.src.index("\n}\n", i)]
+        self.assertIn("lsblk -bdnro NAME,TYPE,SIZE", body)
+        self.assertIn("^(fd|sr|zram|loop|ram)", body)
+        self.assertIn("8589934592", body)
 
     def test_live_install_prepares_a_fresh_disk_itself(self):
         """The Start-menu launcher enters install-live directly; requiring a separate initialize
@@ -116,6 +128,17 @@ class TheBuilderShipsTheInstaller(unittest.TestCase):
         self.assertIn('ROOT_PASSWORD="$first"', password)
         self.assertIn("Passwords did not match", password)
         self.assertNotIn(">/tmp/disk", password)
+
+    def test_selected_luks_password_reaches_target_bootloader_without_persistence(self):
+        finalize = self.src[self.src.index("finalizeInstall() {"):
+                            self.src.index("\n}\n\ninstallPackages()", self.src.index("finalizeInstall() {"))]
+        self.assertIn('PC_INSTALL_PASSWORD="$DISK_PASSWORD" chroot "$TARGET" /setup.sh', finalize)
+        boot = self.src[self.src.index("bootloader() {"):
+                        self.src.index("\n}\n", self.src.index("bootloader() {"))]
+        self.assertIn('DISK_PASSWORD="$PC_INSTALL_PASSWORD"', boot)
+        setup_lines = self.src[self.src.index("sed -i '1i set -e'"):
+                               self.src.index("# Do not carry the LiveCD operator")]
+        self.assertNotIn("PC_INSTALL_PASSWORD", setup_lines)
 
 
 class TheImageDoesNotCarryTheOperator(unittest.TestCase):
