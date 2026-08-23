@@ -121,6 +121,17 @@ async function ejectIso(name){
   if(left)return {ok:false,error:'The installation disc is still attached'};
   return setBootOrder(d.name,'disk');
 }
+async function bootDisk(name){
+  const d=await details(name);if(!d.ok)return d;
+  if(!/shut off|shutoff|inactive/.test(d.state))
+    return {ok:false,error:'Shut down the VM before booting its installed system'};
+  const cd=d.disks.find(x=>x.device==='cdrom');
+  const mounted=cd&&cd.source&&cd.source!=='-';
+  /* One operation for the post-installer transition. An empty optical drive does not need another
+   * virsh change-media (some libvirt versions reject ejecting empty media); it only needs disk-first
+   * persisted in the domain XML. */
+  return mounted?ejectIso(d.name):setBootOrder(d.name,'disk');
+}
 async function addNetwork(name){ const d=await details(name);if(!d.ok)return d;
   if(!/shut off|shutoff|inactive/.test(d.state))return {ok:false,error:'Shut down the VM before adding a network adapter'};
   return virsh(['attach-interface',d.name,'user','--model','virtio','--config'],30000); }
@@ -198,4 +209,4 @@ async function view(name){
   }
   const p=spawn(bin,args,{detached:true,stdio:'ignore'}); p.unref(); return {ok:true};
 }
-module.exports={available,list,details,update,addDisk,changeIso,ejectIso,addNetwork,gamingMouse,create,action,remove,view,cleanName};
+module.exports={available,list,details,update,addDisk,changeIso,ejectIso,bootDisk,addNetwork,gamingMouse,create,action,remove,view,cleanName};

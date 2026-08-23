@@ -91,6 +91,18 @@ class VmBackend(unittest.TestCase):
         self.assertIn("setBootOrder(d.name,'disk')", backend)
         self.assertIn('data-vme-boot', ui)
         self.assertIn("bootOrder:$('[data-vme-boot]'", ui)
+
+    def test_post_install_disk_boot_is_one_click(self):
+        backend = (ROOT / "desktop" / "vm.js").read_text()
+        preload = (ROOT / "desktop" / "preload.js").read_text()
+        main = (ROOT / "desktop" / "main.js").read_text()
+        ui = (ROOT / "static" / "js" / "client" / "os.js").read_text()
+        self.assertIn("async function bootDisk", backend)
+        self.assertIn("mounted?ejectIso(d.name):setBootOrder(d.name,'disk')", backend)
+        self.assertIn("pc:vm:boot-disk", preload)
+        self.assertIn("pc:vm:boot-disk", main)
+        self.assertIn("Boot installed system", ui)
+        self.assertIn("await pcVM.bootDisk(n)", ui)
         self.assertNotIn('p.canceled||!p.path', ui, "the ISO picker returns a path string")
 
     def test_editor_keeps_the_common_path_simple(self):

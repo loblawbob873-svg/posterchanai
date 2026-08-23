@@ -190,6 +190,7 @@ if (isOurPage) {
     addDisk: (name, gib) => ipcRenderer.invoke('pc:vm:add-disk', String(name||''), Number(gib)),
     changeIso: (name, iso) => ipcRenderer.invoke('pc:vm:change-iso', String(name||''), String(iso||'')),
     ejectIso: (name) => ipcRenderer.invoke('pc:vm:eject-iso', String(name||'')),
+    bootDisk: (name) => ipcRenderer.invoke('pc:vm:boot-disk', String(name||'')),
     addNetwork: (name) => ipcRenderer.invoke('pc:vm:add-network', String(name||'')),
     gamingMouse: (name, on) => ipcRenderer.invoke('pc:vm:gaming-mouse', String(name||''), !!on),
     pickIso: () => ipcRenderer.invoke('pc:vm:pick-iso'),

@@ -1426,6 +1426,7 @@ ipcMain.handle('pc:vm:update', (e, name, opts) => { fsGuard(e); return vm.update
 ipcMain.handle('pc:vm:add-disk', (e, name, gib) => { fsGuard(e); return vm.addDisk(name, gib); });
 ipcMain.handle('pc:vm:change-iso', (e, name, iso) => { fsGuard(e); return vm.changeIso(name, iso); });
 ipcMain.handle('pc:vm:eject-iso', (e, name) => { fsGuard(e); return vm.ejectIso(name); });
+ipcMain.handle('pc:vm:boot-disk', (e, name) => { fsGuard(e); return vm.bootDisk(name); });
 ipcMain.handle('pc:vm:add-network', (e, name) => { fsGuard(e); return vm.addNetwork(name); });
 ipcMain.handle('pc:vm:gaming-mouse', (e, name, on) => { fsGuard(e); return vm.gamingMouse(name, !!on); });
 ipcMain.handle('pc:vm:pick-iso', async (e) => {
