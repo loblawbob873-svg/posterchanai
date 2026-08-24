@@ -75,7 +75,41 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
         self.assertIn("path:", payload,
                       "the monitor handoff sends only a view NAME, so a repo/article/stream lands on "
                       "the other monitor as a view nothing can route")
-        self.assertIn("viewPath", payload)
+        self.assertIn("appPath", payload,
+                      "the path must be the WINDOW's, captured when it was focused/parked")
+
+    def test_the_path_belongs_to_THE_WINDOW_not_to_the_page(self):
+        """`location.pathname` is a property of the PAGE. Read at drag time it hands whichever
+        window you happened to move whatever address the page was last left on — dragging the AI
+        chat to the other monitor opened the REPO LIST, because a repo had been opened earlier and
+        its naddr was still in the URL.
+
+        The previous version of this test asserted only that the payload carried a path, which that
+        bug satisfies perfectly. What has to be true is where the path comes FROM."""
+        i = self.os.index("const payload={")
+        payload = self.os[i:self.os.index("pcWM.handoffFrame(payload", i)]
+        self.assertIn("w.appPath", payload,
+                      "the payload does not use the window's own captured path")
+        self.assertNotIn("viewPath()", payload,
+                         "the payload reads the live page URL at drag time, so every window is "
+                         "handed whatever address the page happens to be on")
+
+    def test_every_place_that_captures_appView_captures_appPath(self):
+        """They are one fact about a window — which screen it is showing — and a site that records
+        half of it leaves the other half stale. That is the same drift that makes two
+        hand-maintained copies of anything go wrong, and here it surfaces as a window that reopens
+        on somebody else's page."""
+        sites = [ln for ln in self.os.splitlines()
+                 if re.search(r"\bw\.appView\s*=|\bx\.appView\s*=", ln)]
+        self.assertGreaterEqual(len(sites), 3, "appView capture sites moved — re-read this test")
+        for ln in sites:
+            with self.subTest(line=ln.strip()[:70]):
+                idx = self.os.index(ln)
+                # appPath must be set in the same statement or the next couple of lines.
+                window = self.os[idx:idx + 900]
+                self.assertIn("appPath", window,
+                              "this records the window's view but not its address, so a handoff "
+                              "from it reopens the wrong page")
 
     def test_the_destination_routes_it(self):
         i = self.os.index("onHandoffFrame")

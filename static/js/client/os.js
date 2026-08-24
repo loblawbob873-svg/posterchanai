@@ -1013,6 +1013,7 @@
      * navigated INSIDE itself (a hashtag or a search opened from the timeline) is no longer showing
      * the view it was opened as. */
     try{ const v = PC().VIEW; if(v) w.appView = v; }catch(_){}
+    try{ w.appPath = (PC().viewPath && PC().viewPath()) || ''; }catch(_){}
     slot.innerHTML = '';
     while(realFeed.firstChild) slot.appendChild(realFeed.firstChild);
     slot.scrollTop = w.scrollTop;
@@ -1174,6 +1175,12 @@
     try{
       if(realFeed && realFeed.parentElement === w.body){
         const v = PC().VIEW; if(v) w.appView = v;
+        /* AND THE URL, WHICH IS WHERE THIS WENT WRONG. `location.pathname` belongs to the PAGE, not
+         * to a window — read at drag time it hands whichever window you happened to move whatever
+         * address the page was last left on. Dragging the AI chat to the other monitor opened the
+         * repo list, because a repo had been opened earlier and its naddr was still in the URL.
+         * Captured HERE it is this window's own address, the same as appView beside it. */
+        w.appPath = (PC().viewPath && PC().viewPath()) || '';
       }
     }catch(_){}
     wins.forEach(x => x.el.classList.toggle('focused', x === w));
@@ -1188,6 +1195,7 @@
     if(!w.noFeed) claimFeed(w);   // a folder owns its own contents and must never take the feed
     if(w.isolated){
       w.appView = w.view;
+      w.appPath = '';                 // a view name reaches it; there is no entity address to carry
       try{ PC().adoptView && PC().adoptView(w.view); }catch(_){}
     }
     drawBar();
@@ -1855,7 +1863,7 @@
   function noteView(v){
     if(!on || !v || !realFeed) return;
     const w = wins.find(x => realFeed.parentElement === x.body);
-    if(w) w.appView = v;
+    if(w){ w.appView = v; try{ w.appPath = (PC().viewPath && PC().viewPath()) || ''; }catch(_){} }
   }
 
   function routeView(view, focusOnly){
@@ -2789,8 +2797,7 @@
                         * black screen with circle"). The path is the address that screen already
                         * publishes for itself, and routing it is the same code every shared link
                         * uses — so this is not a git special case, it is every entity view. */
-                       path:(()=>{ try{ return PC().viewPath ? PC().viewPath() : ''; }
-                                   catch(_){ return ''; } })(),
+                       path:String(w.appPath || ''),
                        /* Generic UI and module state have separate size budgets in main.js. A large
                         * Web Search result set must not cause the compose draft/caret to be dropped. */
                        ui:captureHandoffUI(w),
