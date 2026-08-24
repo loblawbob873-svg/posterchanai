@@ -325,9 +325,25 @@
 
     // ---- server ------------------------------------------------------------------------------
 
+    /* NOTHING HERE MAY WAIT FOR EVER.
+     *
+     * `ensureAiSession` can be waiting on a SIGNER — a phone, an extension prompt nobody saw — and
+     * a signer that never answers is not an error, it is silence. `render()` paints a spinner,
+     * awaits loadConfig, and only paints again afterwards, so one unanswered signature turned this
+     * whole screen into a black box with a circle in it. loadConfig's own catch is careful and was
+     * never reached, because a promise that never settles is not a rejection.
+     *
+     * A timeout is the only thing that turns "never answers" back into something a catch can see. */
+    function _bounded(p, ms, what){
+      if(!p || typeof p.then !== 'function') return Promise.resolve(p);
+      return Promise.race([p, new Promise((_r, rej) => setTimeout(
+        () => rej(new Error((what || 'this node') + ' did not answer — is your signer awake?')),
+        ms || 15000))]);
+    }
+
     async function api(path, opts){
-      try{ await ensureAiSession(); }catch(_){}
-      const r = await authFetch('/api/code' + path, opts);
+      try{ await _bounded(ensureAiSession && ensureAiSession(), 8000, 'the signer'); }catch(_){}
+      const r = await _bounded(authFetch('/api/code' + path, opts), 20000, 'this node');
       let body = null;
       try{ body = await r.json(); }catch(_){}
       if(!r.ok){
@@ -924,8 +940,16 @@
       if(!S.ready){
         restore();                 // ← the half that survives a different Electron renderer
         paint();                   // spinner, from the same paint path as everything else
-        await loadConfig();
-        if(!S.gate) await loadTree(S.cwd);
+        /* AND THE LAST PAINT ALWAYS HAPPENS. Even with the awaits bounded above, anything that
+         * throws between the spinner and the repaint leaves the spinner standing — the screen then
+         * says "loading" about something that already gave up. */
+        try{
+          await loadConfig();
+          if(!S.gate) await loadTree(S.cwd);
+        }catch(e){
+          S.ready = true;
+          if(!S.gate) S.gate = 'Could not open this node: ' + ((e && e.message) || e);
+        }
       }
       paint();
     }

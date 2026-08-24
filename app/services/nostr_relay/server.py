@@ -877,11 +877,13 @@ class RelayServer:
                     or self._dm_for_operator(ev) or self._dm_for_puppet(ev)):
                 self._refuse(conn, eid, ev, "blocked: zap/DM not for a web-of-trust member")
                 return
-        elif kind == 1059:
+        elif kind in (1059, 21059):
             # Concord (CORD-01) reverses NIP-59's routing shape: a derived shared-stream
             # key authors the wrap and its `p` tag is random cover traffic. Neither value
-            # can pass a WoT test. Since kind-1059 is opaque, accept every correctly
-            # signed, size-bounded wrap; retention/event caps remain the spam boundary.
+            # can pass a WoT test. Kind 21059 is the identical ephemeral envelope used
+            # for typing/voice presence; it reaches _is_ephemeral below and is fanned out
+            # without being stored. Since the envelopes are opaque, accept every correctly
+            # signed, size-bounded wrap. Durable 1059 lifecycle is handled by NIP-40.
             pass
         elif kind == 9735:
             # NIP-57 zap receipt — authored by the zapper SERVICE (lnurl provider), not the zapper,

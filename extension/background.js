@@ -1016,13 +1016,32 @@ function _cleanTags(tags){
 
 /* Ask, unless this origin already answered for this method (and kind). A stored `deny` is honoured
  * silently — re-prompting for something the user refused is how people learn to click Allow. */
+/* The approval currently on screen, per permission key — see _ask. Cleared when it is answered,
+ * so the next batch asks again unless the user chose to remember. */
+const _askingByKey = new Map();
+
 async function _ask(origin, method, kind, params){
   const perms = await _perms();
   const k = _permKey(origin, method, kind);
   if(perms[k]) return perms[k];
 
+  /* ONE PROMPT PER PERMISSION, however many callers are waiting on it.
+   *
+   * Signing in restores everything sealed to your own key at once — the notes library, the theme,
+   * the client prefs, the settings — which is DOZENS of `nip44.decrypt` calls in the same tick, all
+   * of them the same question about the same origin. Three of them opened a window and the cap
+   * below silently DENIED the rest, so a fresh login came up with no notes and the default theme
+   * and looked for all the world like the signer was broken. It was answering, three times.
+   *
+   * Identical requests now wait on the FIRST one's answer instead of racing it. That is not a
+   * loosening: it is the same question, asked once, and the user's answer is applied to the batch
+   * they were actually being asked about. `remember` still stores it for next time. */
+  const inflightAsk = _askingByKey.get(k);
+  if(inflightAsk) return inflightAsk;
+
   // A page can call signEvent in a loop. Without a cap that is two hundred browser windows in the
-  // user's face, with no gesture required to open any of them.
+  // user's face, with no gesture required to open any of them. Counted per DISTINCT permission now
+  // — coalescing above means a hundred copies of one question is one window, not a hundred denials.
   const open = _inflight.get(origin) || 0;
   if(open >= 3) return 'deny';
   _inflight.set(origin, open + 1);
@@ -1031,6 +1050,10 @@ async function _ask(origin, method, kind, params){
   const req = { id, origin, method, kind,
                 preview: method === 'signEvent' ? _preview(params.event) : '' };
   const answered = new Promise(res => _asking.set(id, { req, resolve: res }));
+  // Everything that asks this same question while the window is open gets this same answer.
+  _askingByKey.set(k, answered);
+  const releaseKey = () => { if(_askingByKey.get(k) === answered) _askingByKey.delete(k); };
+  answered.then(releaseKey, releaseKey);
   const url = B.runtime.getURL('approve.html#' + id);
   let shut = () => {};
   try{
@@ -1045,6 +1068,7 @@ async function _ask(origin, method, kind, params){
     }
   }catch(_){
     _asking.delete(id);
+    releaseKey();
     _inflight.set(origin, (_inflight.get(origin) || 1) - 1);
     return 'deny';                      // no window: refuse rather than sign unasked
   }
