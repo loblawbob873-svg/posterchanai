@@ -18888,6 +18888,31 @@
     }
     return new Blob([await _syncBlobBytes(sha)]);
   }
+  /* OPEN A FILE FROM A SYNCED FOLDER IN POSTERCHAN CODE.
+   *
+   * The bytes come the same way Download gets them (`_syncFileBlob` — Blossom by sha or chunk list,
+   * decrypted with the drive key), and the buffer carries a `sync` descriptor instead of a drive
+   * sha, so saving writes back into the FOLDER rather than onto the drive. That distinction is the
+   * whole point: a synced file edited here has to reach every device, and a copy quietly landing on
+   * the drive instead would look like the edit worked and change nothing anywhere else. */
+  async function openSyncCodeFile(d){
+    try{
+      const chunks = d.chunks ? String(d.chunks).split(',').filter(Boolean) : null;
+      if(!d.sha && !(chunks && chunks.length)){ toast('this file has no stored copy yet'); return; }
+      toast('decrypting…');
+      const blob = await _syncFileBlob(d.sha, chunks);
+      if(blob.size > _CODE_MAX) throw new Error('that file is too big to edit here');
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      if(bytes.indexOf(0) !== -1) throw new Error('that looks like a binary file');
+      const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+      if(!(window.PCCode && PCCode.openBlob)) throw new Error('the editor did not load');
+      PCCode.openBlob({ sha: d.sha || ('sync:' + d.path), name: d.name || 'document',
+                        mime: mimeForName(d.name || ''), enc: '0',
+                        sync: { key: _syncRoot, path: d.path || '' }, text });
+      switchView('code');
+    }catch(e){ toast('could not open: ' + ((e && e.message) || e)); }
+  }
+
   async function _syncDownload(btn, sha, name, chunks){
     if(!sha && !(chunks && chunks.length)){ toast('this file has no stored copy yet'); return; }
     // innerHTML, not textContent: the button IS an <svg> sprite reference, so textContent reads as ''
@@ -19372,7 +19397,8 @@
           + `<button class="rmsync" data-path="${enc(full)}" data-name="${enc(it.name)}"${it.dir?' data-dir="1"':''} title="Delete${it.dir?' this folder':''} on every device"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg></button>`;
       const act = (it.dir ? ''
         : `<button class="dlsync" data-sha="${enc(it.sha||'')}"${it.chunks?` data-chunks="${enc(it.chunks.join(','))}"`:''} data-name="${enc(it.name)}" data-path="${enc(it.path||'')}" title="Download (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button>`
-          + `<button class="keepsync" data-sha="${enc(it.sha||'')}"${it.chunks?` data-chunks="${enc(it.chunks.join(','))}"`:''} data-name="${enc(it.name)}" title="Save a copy to your drive"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg></button>`)
+          + `<button class="keepsync" data-sha="${enc(it.sha||'')}"${it.chunks?` data-chunks="${enc(it.chunks.join(','))}"`:''} data-name="${enc(it.name)}" title="Save a copy to your drive"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg></button>`
+          + (_CODE_EXT.test(it.name) ? `<button class="codesync" data-sha="${enc(it.sha||'')}"${it.chunks?` data-chunks="${enc(it.chunks.join(','))}"`:''} data-name="${enc(it.name)}" data-path="${enc(it.path||'')}" title="Edit in PosterChan Code — saves to every device">&lt;/&gt;</button>` : ''))
         + edits;
       const nav = it.dir ? ` data-dir="${enc(it.name)}"` : '';
       if(details) return _fxDetailsRow({ dir:!!it.dir, name:it.name, icon:icon, thumb:thumbAttrs,
@@ -19521,6 +19547,8 @@
     const _chunksOf = (b) => (b.dataset.chunks ? b.dataset.chunks.split(',').filter(Boolean) : null);
     $$('.dlsync', grid).forEach(b=> b.onclick=(e)=>{ e.preventDefault(); e.stopPropagation();
       _syncDownload(b, b.dataset.sha, b.dataset.name, _chunksOf(b)); });
+    $$('.codesync', grid).forEach(b=> b.onclick=(e)=>{ e.preventDefault(); e.stopPropagation();
+      openSyncCodeFile(b.dataset); });
     /* RENAME. The path is what changes, so a folder is renamed by renaming everything under it — one
      * write, one confirmation, and the devices move that many files. The box is seeded with the leaf
      * only: this is a rename, and offering the whole path invites someone to retype a directory by
@@ -20010,6 +20038,22 @@
     const name = desc.name || 'document';
     const mime = desc.mime || mimeForName(name) || 'text/plain';
     const updated = fileFromBytes(new TextEncoder().encode(text), name, mime);
+    /* A SYNCED FILE GOES BACK TO THE FOLDER, ON EVERY DEVICE — not onto the drive. Same call the
+     * folder's own uploader makes, so it is one write path with one set of guards; `replace` is
+     * explicit because this path already exists by definition and overwriting it is the whole
+     * intent. Returns no drive sha: there is no drive entry to re-point. */
+    if(desc.sync && desc.sync.key){
+      if(!(window.PCSync && PCSync.edit && PCSync.edit.uploadMany))
+        throw new Error('this build cannot write to a synced folder');
+      const full = String(desc.sync.path || name);
+      const cut = full.lastIndexOf('/');
+      const dir = cut < 0 ? '' : full.slice(0, cut);
+      const r = await PCSync.edit.uploadMany(desc.sync.key, dir, [updated], { replace: true });
+      if(r && r.failed && r.failed.length) throw new Error('the folder refused the write');
+      try{ _syncManifests.delete(desc.sync.key); }catch(_){}
+      try{ if(VIEW === 'blossom' && _syncRoot === desc.sync.key) renderBlossom(); }catch(_){}
+      return '';
+    }
     const old = FilesIdx.meta(desc.sha) || {}, folder = old.folder || FilesIdx.folderOf(desc.sha) || '';
     let newSha = '';
     if(desc.enc === '1') newSha = await uploadEncFile(updated, folder, null);
@@ -33613,7 +33657,10 @@
      * (Continuation lines carry a leading `*`: tests/test_relay_change_carry.py scans app.js for
      * uses of the sub-modules' `PC` binding and skips comment lines by that marker, so a prose line
      * without one reads as code and fails the build.) */
-    openMenuPopover,
+    openMenuPopover, openEmojiPopover,
+    insertAt: _insertAt,
+    startGroupCall,
+    uploadBlob,
     /* HANDING A FILE TO THE PERSON, for the sub-modules — never a bare `<a download>`.
      * The APK's WebView ignores a programmatic download and the desktop's `app://` origin refuses
      * one, so a module that builds its own anchor has a Save button that silently does nothing on

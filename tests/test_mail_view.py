@@ -32,8 +32,17 @@ class ViewTests(unittest.TestCase):
 
     def test_it_gets_the_full_height_layout(self):
         """A mail client has its own scrolling panes; inside the timeline's scroll container it
-        would grow the page instead of filling it."""
-        self.assertIn("feed.classList.toggle('feed-dm', VIEW==='messages' || VIEW==='mail')", APP)
+        would grow the page instead of filling it.
+
+        WHAT MATTERS IS THAT `mail` IS IN THE TOGGLE, not the exact spelling of the line. This
+        asserted the whole literal, so adding another view to the same toggle (`concord`) broke it —
+        reported as Email losing its layout when nothing about Email had changed."""
+        import re
+        m = re.search(r"feed\.classList\.toggle\('feed-dm',([^)]*)\)", APP)
+        self.assertIsNotNone(m, "the feed-dm toggle moved — re-point this test")
+        self.assertIn("VIEW==='mail'", m.group(1).replace(" ", "").replace('"', "'"),
+                      "mail is not in the feed-dm toggle, so it renders inside the timeline's "
+                      "scroll container and grows the page instead of filling it")
 
     def test_the_mount_guard_survived_the_move(self):
         """Remounting restarts a full IMAP sync. That render loop hammering /sync is the documented

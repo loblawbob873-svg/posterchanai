@@ -123,5 +123,55 @@ class FilesOpenInCode(unittest.TestCase):
                         "hydrate reaches the workspace fetch before it checks for a blob buffer")
 
 
+class SyncedFoldersOpenInCodeToo(unittest.TestCase):
+    """A file in a SYNCED folder opens in Code, and saving reaches every device.
+
+    A synced folder's rows offered Download, Save-a-copy-to-drive, Rename and Delete-everywhere —
+    everything except opening the thing. And the save has to go back to the FOLDER: a copy quietly
+    landing on the drive instead would look like the edit worked and change nothing anywhere else,
+    which is the worst of the three possible outcomes.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _read(APP)
+
+    def test_a_synced_file_can_be_opened(self):
+        self.assertIn('class="codesync"', self.app, "no way to open a synced file in Code")
+        self.assertIn("openSyncCodeFile(b.dataset)", self.app, "the button is drawn but not bound")
+
+    def test_it_reuses_the_same_fetch_the_download_uses(self):
+        """Blossom by sha OR chunk list, decrypted with the drive key. A file over ~16 MB has no
+        `sha` of its own, so a path that only knows about sha silently cannot open the common case."""
+        body = _decomment(_fn(self.app, "async function openSyncCodeFile("))
+        self.assertIn("_syncFileBlob", body)
+        self.assertIn("chunks", body, "a chunked file would appear to have no bytes")
+
+    def test_the_buffer_knows_it_came_from_a_folder(self):
+        body = _decomment(_fn(self.app, "async function openSyncCodeFile("))
+        self.assertIn("sync: { key:", body,
+                      "without the descriptor the save falls through to the drive path and the "
+                      "edit reaches no other device")
+
+    def test_saving_writes_back_to_the_folder_not_the_drive(self):
+        body = _decomment(_fn(self.app, "async function saveBlobDoc("))
+        self.assertIn("desc.sync", body)
+        self.assertIn("PCSync.edit.uploadMany", body,
+                      "a synced file is saved through some other path than the folder's own writer")
+        # …and it must take that branch BEFORE the drive upload.
+        self.assertLess(body.index("desc.sync"), body.index("uploadBlob"),
+                        "the drive upload runs first, so a synced edit lands on the drive")
+
+    def test_it_invalidates_the_manifest_it_just_changed(self):
+        """The view must never redraw from the copy the write invalidated."""
+        body = _decomment(_fn(self.app, "async function saveBlobDoc("))
+        self.assertIn("_syncManifests.delete", body)
+
+    def test_binary_and_size_are_refused_here_too(self):
+        body = _decomment(_fn(self.app, "async function openSyncCodeFile("))
+        self.assertIn("bytes.indexOf(0)", body)
+        self.assertIn("_CODE_MAX", body)
+
+
 if __name__ == "__main__":
     unittest.main()

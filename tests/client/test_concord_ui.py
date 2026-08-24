@@ -87,6 +87,15 @@ def test_concord_create_and_send_flow_executes_without_runtime_errors():
     assert "concord runtime flow ok" in run.stdout
 
 
+def test_concord_room_icons_can_be_set_on_create_and_edited_later():
+    assert 'cc-community-icon' in CONCORD
+    assert 'id="cc-edit-icon"' in CONCORD
+    assert 'id="cc-icon-save"' in CONCORD
+    assert 'room.icon=normalizeIcon' in CONCORD
+    assert "u.protocol==='https:'||u.protocol==='http:'" in CONCORD
+    assert '.cc-server-img' in CONCORD_CSS
+
+
 def test_invite_parser_requires_naddr_and_secret_fragment():
     assert "/\\/invite\\/(naddr1" in CONCORD
     assert "m&&u.hash.length>3" in CONCORD

@@ -310,36 +310,37 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class TheDesktopIsTheDefaultOnABigScreen(unittest.TestCase):
-    """DESKTOP MODE IS WHAT A WIDE SCREEN GETS, until the person leaves it.
+class EveryReadOfTheDesktopFlagAgrees(unittest.TestCase):
+    """THE THREE READS OF `osMode` MUST USE THE SAME DEFAULT — whatever that default is.
 
-    It used to default to off, so the windowed desktop was something you had to discover and then
-    re-enter after every sign-in -- `osMode` was remembered, but only once you had turned it on at
-    least once. On anything wide enough that is backwards: the desktop IS the product on a monitor,
-    and the single column is the phone layout shown to a big screen.
+    WHICH default is a product decision and has changed: it was true (the desktop is what a wide
+    screen gets), and `c6e441ea` made it false so a new web visitor lands on the classic client.
+    This class used to assert the VALUE, so that decision turned it red and it stayed red.
 
-    The three reads must agree. Two of them run on an INVOLUNTARY exit -- the screen became too
-    narrow, or a login gate needed the page -- and re-set the flag afterwards so the desktop returns.
-    Read with a default of false while `restore()` defaults to true, somebody who had never toggled
-    it counted as "did not want it", `exit()` wrote false, and ONE rotation or ONE sign-in turned the
-    default off permanently.
+    What is a BUG either way is the reads disagreeing. Two of them run on an INVOLUNTARY exit — the
+    screen became too narrow, or a login gate needed the page — and re-set the flag afterwards. With
+    `restore()` defaulting one way and those defaulting the other, somebody who had never touched the
+    setting counted as having chosen, `exit()` wrote that choice down, and ONE rotation or ONE
+    sign-in made it permanent. That is what this guards, and it survives the default changing.
     """
 
     @classmethod
     def setUpClass(cls):
         cls.src = OS_JS.read_text(encoding="utf-8")
 
-    def test_restore_defaults_to_the_desktop(self):
-        self.assertIn("settings().get(KEY, true) && fits()", self.src,
-                      "the desktop is not the default on a screen that fits")
-
     def test_every_read_of_the_flag_uses_the_same_default(self):
-        reads = [ln.strip() for ln in self.src.splitlines() if "settings().get(KEY" in ln]
+        import re
+        reads = re.findall(r"settings\(\)\.get\(KEY,\s*(true|false)\s*\)", self.src)
         self.assertTrue(reads, "the remembered flag is never read")
-        bad = [r for r in reads if "KEY, false" in r]
-        self.assertEqual(bad, [],
-                         "an involuntary exit reads a different default and would turn the desktop "
-                         "off for good: " + str(bad))
+        self.assertEqual(len(set(reads)), 1,
+                         "the reads of osMode disagree about the default: " + str(sorted(set(reads)))
+                         + " — an involuntary exit then writes down a choice nobody made, and one "
+                           "rotation or one sign-in makes it permanent")
+
+    def test_the_choice_is_still_gated_on_the_screen_fitting(self):
+        """Whatever the default, a phone-width screen must never land in the windowed desktop."""
+        self.assertIn("&& fits()", self.src,
+                      "the desktop can be entered on a screen too small to hold a window")
 
     def test_leaving_it_is_still_remembered(self):
         # "Until they change it" is exit() writing false. Without this the default would be a forced

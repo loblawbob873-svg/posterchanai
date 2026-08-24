@@ -35,9 +35,16 @@ vm.runInThisContext(fs.readFileSync(new URL('../../static/js/client/concord.js',
 PCConcord.render();
 
 control('cc-community-name').value='Runtime Test';
+control('cc-community-icon').value='🚀';
 control('cc-create-go').click();
 const rooms=JSON.parse(data.get('pc.concord.invites'));
-if(rooms.length!==1 || !rooms[0].local || rooms[0].name!=='Runtime Test') throw new Error('create flow failed');
+if(rooms.length!==1 || !rooms[0].local || rooms[0].name!=='Runtime Test' || rooms[0].icon!=='🚀') throw new Error('create flow failed');
+
+control('cc-edit-icon').click();
+control('cc-icon-value').value='https://example.test/room.png';
+control('cc-icon-save').click();
+const edited=JSON.parse(data.get('pc.concord.invites'));
+if(edited[0].icon!=='https://example.test/room.png') throw new Error('icon edit flow failed');
 
 const input=control('cc-input');
 input.value='hello concord';
