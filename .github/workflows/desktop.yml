@@ -342,3 +342,28 @@ jobs:
             Downloads: https://poster.place/desktop
           make_latest: false
           files: artifacts/*
+
+      # THE GENTOO OVERLAY PINS A VERSION, AND A ROLLING TAG CANNOT HOLD ONE.
+      #
+      # app-misc/posterchan-desktop carries a Manifest, so portage needs the EXACT bytes it was
+      # written against — and the step above deletes and re-creates `desktop-latest` on every build,
+      # which takes every previously-versioned tarball with it. An overlay that verified on the day
+      # it was published then 404s on the next desktop build: not a checksum failure, nothing to
+      # download at all. It had gone stale that way three times (1.0.818, 1.0.825, 1.0.828) before
+      # anybody checked, and each time `emerge posterchan-desktop` simply could not run.
+      #
+      # This tag is written once and never touched again, so every pin stays good for ever. Only the
+      # Linux tarball and its checksum: the installers belong to the rolling release, which is what
+      # poster.place/desktop and the auto-updater read.
+      - name: Publish the versioned tarball the Gentoo overlay pins
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: desktop-v1.0.${{ github.run_number }}
+          name: PosterChan Desktop 1.0.${{ github.run_number }}
+          body: |
+            Permanent per-version tarball for the PosterChanOS Gentoo overlay
+            (`app-misc/posterchan-desktop`). Never deleted, so a pinned Manifest keeps resolving.
+          make_latest: false
+          files: |
+            artifacts/PosterChan-*-linux-x64.tar.zst
+            artifacts/PosterChan-*-linux-x64.tar.zst.sha512

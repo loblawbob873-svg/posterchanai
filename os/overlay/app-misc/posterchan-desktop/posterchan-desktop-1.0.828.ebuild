@@ -16,7 +16,16 @@ HOMEPAGE="https://poster.place"
 # The release now also carries PosterChan-<version>-linux-x64.tar.zst: the same files
 # electron-builder produces on its way to building the image, under a name that cannot change. No
 # FUSE, no AppImage runtime, nothing that verifies itself -- and a digest that stays true.
-SRC_URI="https://github.com/loblawbob873-svg/posterchanai/releases/download/desktop-latest/PosterChan-${PV}-linux-x64.tar.zst -> ${P}.tar.zst"
+#
+# AND IT IS FETCHED FROM A PER-VERSION TAG, NOT FROM `desktop-latest`. That was the other half, and
+# without it the paragraph above only moved the problem: the FILENAME could not change, but the
+# rolling release is DELETED AND RE-CREATED on every desktop build (see the "Retire the previous
+# rolling release" step in .github/workflows/desktop.yml), which takes every previously-versioned
+# tarball with it. So a Manifest that verified the day it was written 404s on the next desktop
+# build -- not "fails checksum", cannot be downloaded at all -- and the overlay had gone stale
+# three times that way (1.0.818, 1.0.825, and this one) before anybody looked. `desktop-v<version>`
+# is written once and never touched again.
+SRC_URI="https://github.com/loblawbob873-svg/posterchanai/releases/download/desktop-v${PV}/PosterChan-${PV}-linux-x64.tar.zst -> ${P}.tar.zst"
 S="${WORKDIR}"
 
 LICENSE="GPL-3"
