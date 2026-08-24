@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- GENERATED from static/js/client/sprite.js #i-smile by scripts/gen_android_icons.py.
+     Do not edit: the web client and the native screens must draw the same glyph, and this
+     file is how that is enforced (tests/test_android_icon_sprite.py). Colour is applied at
+     runtime from the active PcTheme palette, so nothing here is themed.
+
+     NO android:tint. It served nothing (every caller tints at runtime) while a vector
+     carrying a baked tint AND a runtime colour filter is the combination that renders
+     nothing at all on some platform versions. That is what 'a lot of the PosterChan apps
+     in the launcher are empty circles' looked like: the pill drawn, no glyph inside. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.7"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M 3.1999999999999993 12.0 a 8.8 8.8 0 1 0 17.6 0 a 8.8 8.8 0 1 0 -17.6 0 z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.7"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M 8.6 14.2 a 4.4 4.4 0 0 0 6.8 0" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M 8.350000000000001 9.8 a 0.95 0.95 0 1 0 1.9 0 a 0.95 0.95 0 1 0 -1.9 0 z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M 13.75 9.8 a 0.95 0.95 0 1 0 1.9 0 a 0.95 0.95 0 1 0 -1.9 0 z" />
+</vector>

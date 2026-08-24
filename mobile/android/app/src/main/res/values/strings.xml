@@ -67,6 +67,8 @@
     <string name="sms_menu">More</string>
     <string name="sms_send">Send</string>
     <string name="sms_add_attachment">Add photo</string>
+    <string name="sms_add_emoji">Add emoji</string>
+    <string name="sms_emoji_title">Choose emoji</string>
     <string name="sms_attachment_ready">Photo attached</string>
     <string name="sms_attachment_bad">That photo could not be opened</string>
     <string name="sms_mms_sent">Picture message sending</string>

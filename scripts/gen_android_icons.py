@@ -41,7 +41,7 @@ WANTED = [
     "flower", "refresh", "gear", "folder", "music", "calendar", "terminal", "compass",
     # sms
     "send", "plus", "arrow-left", "trash", "paperclip", "image", "check", "close",
-    "cloud", "shield", "warn", "reply", "star",
+    "cloud", "shield", "warn", "reply", "star", "smile",
     # dialer
     "call", "mic", "volume", "pin", "logout",
 ]

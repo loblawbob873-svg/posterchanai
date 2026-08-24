@@ -27,6 +27,8 @@ import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.ImageView;
+import android.widget.Button;
+import android.widget.GridLayout;
 import android.util.LruCache;
 
 import java.util.ArrayList;
@@ -125,6 +127,9 @@ public class ThreadActivity extends PcActivity {
         });
         findViewById(R.id.pc_th_attach).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { pickAttachment(); }
+        });
+        findViewById(R.id.pc_th_emoji).setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { pickEmoji(); }
         });
         findViewById(R.id.pc_th_call).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { call(); }
@@ -227,6 +232,7 @@ public class ThreadActivity extends PcActivity {
         icon(R.id.pc_th_menu, R.drawable.ic_pc_menu, pal.muted);
         icon(R.id.pc_th_send, R.drawable.ic_pc_send, pal.onAccent());
         icon(R.id.pc_th_attach, R.drawable.ic_pc_paperclip, pal.accent);
+        icon(R.id.pc_th_emoji, R.drawable.ic_pc_smile, pal.accent);
         findViewById(R.id.pc_th_send).setBackground(Skin.pill(this, pal, pal.accent, true));
         input.setTextColor(pal.text);
         input.setHintTextColor(pal.muted);
@@ -310,6 +316,39 @@ public class ThreadActivity extends PcActivity {
                 .setType("image/*");
         try { startActivityForResult(i, PICK_MMS_IMAGE); }
         catch (Throwable t) { say(getString(R.string.sms_attachment_bad)); }
+    }
+
+    /** A compact carrier-safe Unicode picker. Strings are built from code points so joined emoji
+     * (skin tones, professions and families) are inserted as one selection, never split at a UTF-16
+     * boundary. The system keyboard remains available for its complete/searchable emoji catalogue. */
+    private void pickEmoji() {
+        final int[][] choices = new int[][]{
+            {0x1F600}, {0x1F602}, {0x1F60A}, {0x1F60D}, {0x1F618}, {0x1F62D},
+            {0x1F642}, {0x1F644}, {0x1F914}, {0x1F973}, {0x1F44D}, {0x1F44F},
+            {0x1F64F}, {0x1F4AA}, {0x2764, 0xFE0F}, {0x1F525}, {0x1F389}, {0x2728},
+            {0x1F44B}, {0x1F91D}, {0x1F440}, {0x1F4AF}, {0x1F680}, {0x1F923}
+        };
+        final AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(R.string.sms_emoji_title).create();
+        GridLayout grid = new GridLayout(this);
+        grid.setColumnCount(6);
+        int pad = dp(8); grid.setPadding(pad, pad, pad, pad);
+        for (int[] points : choices) {
+            final String emoji = new String(points, 0, points.length);
+            Button b = new Button(this);
+            b.setText(emoji); b.setTextSize(24); b.setMinWidth(dp(48)); b.setMinHeight(dp(48));
+            b.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+            b.setOnClickListener(v -> { insertEmoji(emoji); dialog.dismiss(); });
+            grid.addView(b, new ViewGroup.LayoutParams(dp(52), dp(52)));
+        }
+        dialog.setView(grid); dialog.show();
+    }
+
+    private void insertEmoji(String emoji) {
+        int start = Math.max(0, input.getSelectionStart());
+        int end = Math.max(0, input.getSelectionEnd());
+        input.getText().replace(Math.min(start, end), Math.max(start, end), emoji);
+        input.requestFocus();
     }
 
     @Override

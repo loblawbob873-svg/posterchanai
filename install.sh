@@ -343,6 +343,21 @@ main() {
         echo "  With Caddy / Traefik / another proxy: one rule — docs/WEBXDC.md"
     fi
 
+    # Step 9h: the built-in CODE office editor (DOCX/XLSX/PPTX in Files). Shipped by DEFAULT, like
+    # MediaMTX, SearXNG and TURN above — the whole point of "built-in" is that a fresh node can open
+    # a spreadsheet without a second install step, and the 📝 button in Files is hidden until the
+    # editor exists, so a node without it silently has no office at all.
+    #
+    # IT IS THE BIGGEST DEFAULT DOWNLOAD HERE (a Collabora AppImage — LibreOffice, a few hundred MB),
+    # so it is announced rather than slipped in, and it is NON-FATAL in every branch: a slow mirror
+    # or an unsupported arch leaves the rest of the install finished and the editor off until
+    # `./install.sh --office`. setup_office_server writes POSTERCHANAI_OFFICE=1 into data/secrets.env
+    # itself, which is what makes the button appear.
+    echo ""
+    echo "Installing the built-in office editor (Collabora CODE) — DOCX/XLSX/PPTX from Files."
+    echo "It is a few hundred MB; everything else is already done if this is interrupted."
+    setup_office_server || print_warning "Office editor not installed; add it later with ./install.sh --office"
+
     # Step 11: Setup systemd service
     setup_systemd
 

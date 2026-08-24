@@ -2088,12 +2088,21 @@
         <div class="sms-compose">
           <button class="btn small" id="sms-attach" title="Add photo">${ICO('paperclip','b-ic')}</button>
           <input id="sms-file" type="file" accept="image/*" hidden>
+          <button class="btn small" id="sms-emoji" title="Add emoji" aria-label="Add emoji">${ICO('smile','b-ic')}</button>
           <input class="input" id="sms-in" placeholder="Text message">
           <button class="btn btn-neon" id="sms-send">${ICO('send','b-ic')}Send</button>
         </div>
       </div>`;
     PC.$('#sms-back').onclick = () => { S.open = ''; paint(); };
     const input = PC.$('#sms-in'), btn = PC.$('#sms-send');
+    const emojiBtn = PC.$('#sms-emoji');
+    emojiBtn.onclick = () => PC.openEmojiPopover(emojiBtn, (emoji, close) => {
+      const start = Number.isInteger(input.selectionStart) ? input.selectionStart : input.value.length;
+      const end = Number.isInteger(input.selectionEnd) ? input.selectionEnd : start;
+      input.setRangeText(emoji, start, end, 'end');
+      input.dispatchEvent(new Event('input', {bubbles:true}));
+      close(); input.focus();
+    }, {unicodeOnly:true});
     const pick = PC.$('#sms-file'), attachBtn = PC.$('#sms-attach');
     attachBtn.onclick = () => pick.click();
     pick.onchange = () => {

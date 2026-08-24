@@ -68,6 +68,7 @@ public final class TileIcons {
         if ("search".equals(icon)) return R.drawable.ic_pc_search;
         if ("send".equals(icon)) return R.drawable.ic_pc_send;
         if ("shield".equals(icon)) return R.drawable.ic_pc_shield;
+        if ("smile".equals(icon)) return R.drawable.ic_pc_smile;
         if ("spade".equals(icon)) return R.drawable.ic_pc_spade;
         if ("speech".equals(icon)) return R.drawable.ic_pc_speech;
         if ("star".equals(icon)) return R.drawable.ic_pc_star;

@@ -13598,7 +13598,8 @@
     }, true);
     window.addEventListener('resize', ()=>{ if(box) place(); });
   }
-  function openEmojiPopover(anchorBtn, onPick){
+  function openEmojiPopover(anchorBtn, onPick, opts){
+    opts=opts||{};
     document.querySelectorAll('.emoji-pop,.pop-backdrop').forEach(p=>p.remove());   // never stack pickers
     const pop=document.createElement('div'); pop.className='emoji-pop';
     pop.innerHTML=`<div class="ep-head" hidden><input class="ep-q" type="search" placeholder="search emoji…" autocomplete="off" spellcheck="false"><div class="ep-tabs"></div></div><div class="ep-grid"></div>`;
@@ -13679,7 +13680,7 @@
                          {inText:['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Escape','Home','End']});
     // Paint the built-in set instantly, then add the tab bar once the instance packs land.
     _show(REACTION_EMOJIS);
-    InstEmoji.load().then(list=>{
+    if(!opts.unicodeOnly) InstEmoji.load().then(list=>{
       if(!pop.isConnected) return;
       if(!list.length) return;             // no custom emoji here → no search box, no tabs, as before
       head.hidden=false;
