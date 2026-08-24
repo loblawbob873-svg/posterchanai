@@ -171,6 +171,38 @@ class WM {
   /* A command's reply is an ARRAY of results, one per command in the string, and a failure is
    * reported IN it rather than as an error — `{success:false, error:"..."}` with a perfectly
    * ordinary transport. Read as "it returned, so it worked", every refusal is silent. */
+  /* THE WINDOW CHROME, APPLIED AT RUNTIME — not left to a config file.
+   *
+   * These same lines are in os/overlay/.../files/sway.config and os/gentoo.sh, and that is where
+   * they were ONLY. A config file is read once, when the session starts, and portage does not
+   * silently replace an existing one on upgrade (etc-update exists precisely so it does not) — so
+   * every fix to the native palette reached a FRESHLY PROVISIONED machine and no other. Reported,
+   * correctly and repeatedly, as Firefox and Telegram still not matching PosterChan's windows days
+   * after it was "fixed".
+   *
+   * swaymsg applies them to the running compositor, so an installed machine gets them on the next
+   * shell start rather than on the next reinstall. Idempotent, and harmless where the config
+   * already agrees. `tests/test_native_window_snap.py` checks these against the shipped config so
+   * the two copies cannot drift.
+   */
+  static CHROME = [
+    'default_floating_border normal 3',
+    'titlebar_border_thickness 0',
+    'titlebar_padding 8 6',
+    'client.focused          #241438 #241438 #f7f4ff #16d9e3 #16d9e3',
+    'client.focused_inactive #171222 #171222 #bcb3cb #4b3a65 #4b3a65',
+    'client.unfocused        #100d18 #100d18 #8f879c #30263f #30263f',
+    'client.urgent           #7a2145 #7a2145 #ffffff #ff4f8b #ff4f8b',
+  ];
+
+  async applyChrome(){
+    for(const line of WM.CHROME){
+      // One at a time: sway answers per command, and a single failure must not drop the rest.
+      try{ await this.command(line); }catch(_){ }
+    }
+    return true;
+  }
+
   async command(cmd){
     const r = await this._send(MSG.RUN_COMMAND, cmd);
     const rows = Array.isArray(r) ? r : [];

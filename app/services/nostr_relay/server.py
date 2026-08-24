@@ -441,6 +441,8 @@ class RelayServer:
             # 40 expiration, 44 encryption, 45 COUNT, 50 search, 59 gift wrap, 65 relay-list,
             # 77 negentropy sync
             "supported_nips": [1, 2, 9, 11, 17, 22, 23, 40, 44, 45, 50, 59, 65, 77],
+            # Concord is a CORD family rather than a NIP, so advertise it separately.
+            "concord": {"cords": [1, 2, 3, 4, 5, 6, 7, 8], "giftwrap_streams": True},
             "limitation": {
                 "max_message_length": c.get("max_message_size", 262144),
                 "max_subscriptions": c.get("max_subs_per_conn", 20),
@@ -865,7 +867,7 @@ class RelayServer:
             if _wot and not (self.gate.is_member(ev.get("pubkey", "")) or self._dm_for_operator(ev)):
                 self._refuse(conn, eid, ev, "blocked: sender not in web of trust")
                 return
-        elif kind in (13, 1059):
+        elif kind == 13:
             # Gift-wrap / seal (NIP-59 / NIP-17): the outer author is a random throwaway key, so the
             # WoT gate can't apply to it — gate on the RECIPIENT instead. Accept when the wrap p-tags
             # a web-of-trust member (so WoT members can DM each other via NIP-17) OR one of our own
@@ -875,6 +877,12 @@ class RelayServer:
                     or self._dm_for_operator(ev) or self._dm_for_puppet(ev)):
                 self._refuse(conn, eid, ev, "blocked: zap/DM not for a web-of-trust member")
                 return
+        elif kind == 1059:
+            # Concord (CORD-01) reverses NIP-59's routing shape: a derived shared-stream
+            # key authors the wrap and its `p` tag is random cover traffic. Neither value
+            # can pass a WoT test. Since kind-1059 is opaque, accept every correctly
+            # signed, size-bounded wrap; retention/event caps remain the spam boundary.
+            pass
         elif kind == 9735:
             # NIP-57 zap receipt — authored by the zapper SERVICE (lnurl provider), not the zapper,
             # so the WoT gate can't apply to its author. Accept when it concerns (p-tags) a WoT

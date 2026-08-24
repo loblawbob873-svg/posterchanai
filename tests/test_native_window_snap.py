@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -75,6 +76,39 @@ def test_existing_identity_configs_receive_the_posterchan_native_chrome():
     for rule in ("titlebar_border_thickness 0", "titlebar_padding 8 6",
                  "client.focused #241438", "client.unfocused #100d18"):
         assert rule in ebuild
+
+
+def test_the_native_palette_is_applied_at_RUNTIME_not_only_from_a_config_file():
+    """Firefox and Telegram kept sway's own colours for days after the palette was "fixed".
+
+    The rules were only ever in sway.config (and os/gentoo.sh's copy of it). A config file is read
+    once, when the session starts, and portage does not silently replace an existing one on upgrade
+    — that is what etc-update is for. So every fix reached a freshly provisioned machine and no
+    other, which is exactly what "still missing the same window decorations, many days" describes.
+
+    swaymsg applies them to the RUNNING compositor, so an installed machine gets them on the next
+    shell start rather than the next reinstall."""
+    wm = (ROOT / "desktop/wm.js").read_text()
+    assert "async applyChrome()" in wm, "nothing applies the window chrome at runtime"
+    main = (ROOT / "desktop/main.js").read_text()
+    assert "applyChrome()" in main, "applyChrome exists but nothing ever calls it"
+
+
+def test_the_runtime_palette_matches_the_shipped_config():
+    """Two hand-maintained copies is how one of them ends up wrong — the recurring shape in this
+    repo. Every client.* line the shell sends must be a line the config also has."""
+    wm = (ROOT / "desktop/wm.js").read_text()
+    block = wm[wm.index("static CHROME = ["):wm.index("];", wm.index("static CHROME = ["))]
+    sent = [re.sub(r"\s+", " ", m.group(1)).strip()
+            for m in re.finditer(r"'([^']+)'", block)]
+    assert sent, "the CHROME list is empty — re-point this test"
+    cfg = re.sub(r"\s+", " ", (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config").read_text())
+    for line in sent:
+        if not line.startswith("client."):
+            continue
+        assert line in cfg, (
+            f"the shell sends {line!r} at runtime and the shipped sway.config does not say it — "
+            "a fresh install and an upgraded one would look different")
 
 
 def test_focusing_a_posterchan_window_parks_compositor_windows_above_it():

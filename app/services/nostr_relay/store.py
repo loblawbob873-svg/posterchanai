@@ -438,8 +438,12 @@ class RelayStore:
                         # event (it was the kind-5 author's own). Otherwise a kind-5 referencing ANOTHER
                         # author's event id leaves the event but wipes its tag rows → silently unqueryable
                         # by #e/#p/#t (a data-loss vector, since the firehose ingests every author's kind-5).
+                        # Concord's outer author is a shared stream key held by every member.
+                        # Author-gating kind-5 would therefore let any member erase the room.
+                        # Concord deletions travel inside a giftwrap and are folded by clients.
                         r = conn.execute(
-                            "DELETE FROM events WHERE id=? AND pubkey=? RETURNING id", (t[1], pubkey)).fetchone()
+                            "DELETE FROM events WHERE id=? AND pubkey=? AND kind<>1059 RETURNING id",
+                            (t[1], pubkey)).fetchone()
                         if r:
                             conn.execute("DELETE FROM event_tags WHERE event_id=?", (t[1],))
                     elif len(t) >= 2 and t[0] == "a":

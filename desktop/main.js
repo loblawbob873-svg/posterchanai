@@ -1249,8 +1249,14 @@ ipcMain.handle('pc:wm:hide', (e, id) => { fsGuard(e); return wm().hide(Number(id
 ipcMain.handle('pc:wm:show', (e, id) => { fsGuard(e); return wm().show(Number(id)); });
 ipcMain.handle('pc:wm:fullscreen', (e, id, on) => { fsGuard(e); return wm().fullscreen(Number(id), !!on); });
 ipcMain.handle('pc:wm:snap', (e, id, zone) => { fsGuard(e); return wm().snap(Number(id), String(zone||'')); });
-ipcMain.handle('pc:wm:decorate', (e, id) => {
+/* Decorating the FIRST native window is also when the palette is (re)applied: it is the earliest
+ * moment we know a compositor is there and something is about to be drawn with it, and it costs
+ * seven idempotent commands once per session. Without this the colours come only from a config file
+ * the machine may have been installed with months ago. */
+let _chromeDone = false;
+ipcMain.handle('pc:wm:decorate', async (e, id) => {
   fsGuard(e);
+  if(!_chromeDone){ _chromeDone = true; try{ await wm().applyChrome(); }catch(_){ _chromeDone = false; } }
   return wm().command('[con_id=' + Number(id) + '] border normal 3');
 });
 ipcMain.handle('pc:display:status', (e) => { fsGuard(e); return displays().status(); });
