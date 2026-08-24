@@ -1394,6 +1394,7 @@
          <span class="osw-ico">${iconSvg(icon)}</span>
          <span class="osw-title">${enc(label)}</span>
          <span class="osw-btns">
+           <button class="osw-b osw-ai" data-w="ai" draggable="true" title="Ask AI about this window" aria-label="Ask AI about this window">&#10024;</button>
            <button class="osw-b" data-w="min" title="Minimise" aria-label="Minimise">–</button>
            <button class="osw-b" data-w="max" title="Maximise" aria-label="Maximise">▢</button>
            <button class="osw-b osw-x" data-w="close" title="Close" aria-label="Close">✕</button>
@@ -1419,11 +1420,16 @@
     $$('.osw-b', el).forEach(b => b.onclick = (e) => {
       e.stopPropagation();
       const a = b.dataset.w;
-      if(a === 'close') closeWin(w);
+      if(a === 'ai') toggleWindowAI(w, b, e);
+      else if(a === 'close') closeWin(w);
       else if(a === 'max') toggleMax(w);
       else minimise(w);
     });
     const maxBtn = $('.osw-b[data-w="max"]', el);
+    const aiBtn = $('.osw-ai', el);
+    aiBtn.ondragstart=e=>{_aiDragWin=w;try{e.dataTransfer.setData('application/x-pc-ai-window',String(w.id));e.dataTransfer.effectAllowed='link';}catch(_){}};
+    el.addEventListener('dragover',e=>{try{if([...(e.dataTransfer.types||[])].includes('application/x-pc-ai-window')){e.preventDefault();e.dataTransfer.dropEffect='link';}}catch(_){}});
+    el.addEventListener('drop',e=>{if(!_aiDragWin||_aiDragWin===w)return;try{if(![...(e.dataTransfer.types||[])].includes('application/x-pc-ai-window'))return;}catch(_){return;}e.preventDefault();_aiContextAdd(_aiDragWin);_aiContextAdd(w);_aiDragWin=null;toggleWindowAI(w,aiBtn);});
     maxBtn.addEventListener('pointerenter', () => {
       clearTimeout(layoutT);
       layoutT = setTimeout(() => showLayouts(w, maxBtn), 380);
@@ -1448,6 +1454,71 @@
 
     focusWin(w);
     return w;
+  }
+
+  /* ✨ is a WINDOW-MANAGER capability, not another chatbot button.  Context is collected only after
+   * the person opens it, selection wins over whole-window text, and nothing leaves the window until
+   * they choose an action.  Native Wayland surfaces are intentionally metadata-only: the compositor
+   * can name Firefox or Telegram but must not silently screen-scrape them. */
+  const _aiContextWins=new Set(); let _aiDragWin=null;
+  function _aiContextAdd(w){
+    if(_aiContextWins.has(w))return;
+    while(_aiContextWins.size>=4){const old=_aiContextWins.values().next().value;_aiContextWins.delete(old);old.el.classList.remove('ai-context');}
+    _aiContextWins.add(w);w.el.classList.add('ai-context');
+  }
+  function windowAIContext(w){
+    let selection='';
+    try{ const s=window.getSelection(); if(s&&s.rangeCount&&w.el.contains(s.anchorNode)) selection=String(s).trim(); }catch(_){}
+    let visible='';
+    if(!selection && w.native==null){
+      try{ visible=String((w.body.innerText||w.slot.innerText)||'').replace(/\s+/g,' ').trim().slice(0,4000); }catch(_){}
+    }
+    return {title:String(w.title||'Window').slice(0,160),view:String(w.appView||w.view||'').slice(0,160),
+            kind:w.native!=null?'native app':'PosterChan app',selection:selection.slice(0,4000),text:visible};
+  }
+  function windowAISuggestions(w,ctx){
+    const key=(ctx.title+' '+ctx.view).toLowerCase();
+    if(ctx.selection) return [['Explain selection','Explain the selected content clearly.'],['Summarize selection','Summarize the selected content into concise bullets.'],['Rewrite selection','Rewrite the selected content for clarity while preserving its meaning.']];
+    if(/terminal|console|shell/.test(key)) return [['Explain output','Explain the terminal output and identify the likely cause.'],['Plan a fix','Propose a safe, step-by-step fix for what this terminal window shows.'],['Make a script','Turn the visible terminal task into a reusable script.']];
+    if(/firefox|browser|web/.test(key)) return [['Summarize page','Summarize the current page and list its key claims.'],['Research this','Identify questions worth verifying and make a research plan.'],['Extract tasks','Extract decisions, deadlines, and action items from this page.']];
+    if(/telegram|message|chat|mail/.test(key)) return [['Catch me up','Summarize the conversation and unresolved questions.'],['Draft reply','Draft a concise reply, but do not send it.'],['Extract tasks','Extract commitments, dates, and follow-ups.']];
+    if(/file|drive|folder/.test(key)) return [['Organize','Suggest a useful organization plan for these files.'],['Find patterns','Describe meaningful groups, duplicates, or naming problems.'],['Next action','Recommend the most useful next action for this window.']];
+    if(/settings/.test(key)) return [['Optimize','Recommend settings for a fast, quiet, privacy-conscious computer.'],['Explain options','Explain the visible settings and their tradeoffs.'],['Check setup','Review the visible configuration for likely omissions.']];
+    return [['Summarize','Summarize what is visible in this window.'],['What can I do?','Suggest three useful things AI can help accomplish in this window.'],['Extract tasks','Extract decisions and next actions from this window.']];
+  }
+  function closeWindowAI(w){ const p=w&&w.aiPanel;if(p){p.remove();w.aiPanel=null;} }
+  function toggleWindowAI(w,button,event){
+    if(event&&event.shiftKey){
+      if(_aiContextWins.has(w)){_aiContextWins.delete(w);w.el.classList.remove('ai-context');PC().toast('Window removed from AI context');}
+      else{_aiContextAdd(w);PC().toast('Window added to AI context');}
+      return;
+    }
+    if(w.aiPanel){closeWindowAI(w);return;}
+    wins.forEach(closeWindowAI);
+    w.el.classList.remove('ai-alert');
+    const related=[..._aiContextWins].filter(x=>wins.includes(x)&&x!==w), contexts=[w,...related].map(windowAIContext);
+    const ctx=contexts[0], panel=document.createElement('div'); panel.className='osw-ai-panel';w.aiPanel=panel;
+    const suggestions=windowAISuggestions(w,ctx);
+    const agentCapable=/terminal|console|shell|file|drive|folder/i.test(ctx.title+' '+ctx.view);
+    panel.innerHTML=`<header><span>✨</span><div><b>AI for ${enc(ctx.title)}</b><small>${ctx.selection?'Using your selection':ctx.kind==='native app'?'App name only · private by default':'Using visible window text'}</small></div><button data-ai-dismiss aria-label="Close">✕</button></header>
+      ${related.length?`<div class="osw-ai-context"><b>${contexts.length} connected windows</b><span>${contexts.map(x=>enc(x.title)).join(' → ')}</span><button data-ai-clear>Clear</button></div>`:'<div class="osw-ai-tip">Shift-click ✨ to collect windows, or drag one sparkle onto another.</div>'}
+      <div class="osw-ai-actions">${suggestions.map((x,i)=>`<button data-ai-action="${i}"><b>${enc(x[0])}</b><span>${enc(x[1])}</span></button>`).join('')}</div>
+      <label>Ask about this window<textarea rows="2" placeholder="What would you like PosterChan AI to do?"></textarea></label>
+      ${agentCapable?'<label class="osw-ai-agent"><input type="checkbox" data-ai-agent> Use the system agent to run commands or change files</label>':''}
+      ${w.native==null?`<label class="osw-ai-agent"><input type="checkbox" data-ai-watch ${w.aiWatch?'checked':''}> Watch this window and glow when its contents change</label>`:''}
+      <footer><span>Review before sending · no automatic changes</span><button class="btn btn-neon" data-ai-ask>Open in AI</button></footer>`;
+    w.el.appendChild(panel);
+    const launch=instruction=>{instruction=String(instruction||'').trim();if(!instruction)return;const agent=!!(panel.querySelector('[data-ai-agent]')||{}).checked;closeWindowAI(w);try{PC().askWindowContext({windows:contexts},instruction,{agent});}catch(_){try{PC().toast('AI is unavailable');}catch(__){}}};
+    panel.querySelector('[data-ai-dismiss]').onclick=()=>closeWindowAI(w);
+    const clear=panel.querySelector('[data-ai-clear]');if(clear)clear.onclick=()=>{_aiContextWins.forEach(x=>x.el.classList.remove('ai-context'));_aiContextWins.clear();closeWindowAI(w);toggleWindowAI(w,button);};
+    panel.querySelectorAll('[data-ai-action]').forEach(b=>b.onclick=()=>launch(suggestions[+b.dataset.aiAction][1]));
+    const ta=panel.querySelector('textarea');panel.querySelector('[data-ai-ask]').onclick=()=>launch(ta.value);
+    const watch=panel.querySelector('[data-ai-watch]');if(watch)watch.onchange=()=>{
+      if(w.aiWatch){w.aiWatch.disconnect();w.aiWatch=null;w.el.classList.remove('ai-watching','ai-alert');PC().toast('Stopped watching '+w.title);}
+      if(watch.checked){let timer=0;w.aiWatch=new MutationObserver(records=>{const meaningful=records.some(r=>!(r.type==='childList'&&r.target===w.body&&[...r.addedNodes,...r.removedNodes].every(n=>n===realFeed)));if(!meaningful)return;clearTimeout(timer);timer=setTimeout(()=>{if(!wins.includes(w))return;w.el.classList.add('ai-alert');try{PC().toast('✨ '+w.title+' changed');}catch(_){}},700);});w.aiWatch.observe(w.body,{subtree:true,childList:true,characterData:true});w.el.classList.add('ai-watching');PC().toast('Watching '+w.title);}
+    };
+    ta.onkeydown=e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();launch(ta.value);}};
+    setTimeout(()=>ta.focus(),0);
   }
 
   // A post opens in its OWN window on the desktop, instead of replacing the timeline underneath it
@@ -1880,16 +1951,31 @@
   let nativeMenuHidden = [];
   const _nativeDecorated = new Set();
 
+  /* AN OPEN MENU PUTS AWAY WHAT IT COVERS, AND NOTHING ELSE.
+   *
+   * This used to hide EVERY native window the moment the start menu opened, and show them all
+   * again on close — so a Telegram on the far side of the screen blinked out of existence because
+   * a menu opened in the opposite corner, and any `show` that failed left an app parked with
+   * nothing on screen to say so.
+   *
+   * It does not need to: an open overlay is handed to `nsync` as a rectangle at a z above every
+   * window (see overlayRects), so the ordinary placement pass already stashes exactly the apps the
+   * menu sits on top of and restores them when it closes. That is the same arithmetic windows use,
+   * it is rect-accurate, and it self-heals against sway rather than against a list kept here.
+   *
+   * What is still owned here is the KEYBOARD: opening a menu takes focus from a native app, and
+   * closing it should give it back. */
   async function _nativeMenuLayer(opening){
     if(!window.pcWM) return;
     if(opening){
-      nativeMenuHidden = nativeTasks.filter(w => !w.stashed)
-                                    .map(w => ({ id: Number(w.id), focused: !!w.focused }));
-      await Promise.all(nativeMenuHidden.map(w => Promise.resolve(pcWM.hide(w.id)).catch(() => {})));
+      nativeMenuHidden = nativeTasks.filter(w => !!w.focused && !w.stashed)
+                                    .map(w => ({ id: Number(w.id), focused: true }));
       return;
     }
     const restore = nativeMenuHidden.slice(); nativeMenuHidden = [];
-    for(const w of restore) try{ await pcWM.show(w.id); }catch(_){}
+    // Placed before focused: sway refuses to focus a container it is still holding in the
+    // scratchpad, and the menu's rectangle only stops covering anything once nsync has run.
+    try{ await nsync(); }catch(_){}
     const focused = restore.find(w => w.focused);
     if(focused) try{ await pcWM.focus(focused.id); }catch(_){}
   }
@@ -2268,6 +2354,7 @@
     const i = wins.indexOf(w);
     if(i < 0) return;
     wins.splice(i, 1);
+    _aiContextWins.delete(w);try{if(w.aiWatch)w.aiWatch.disconnect();}catch(_){}
     // If this window held the id, hand it back BEFORE removing the element, or `$('#feed')` briefly
     // resolves to nothing and whatever renders next paints into a detached node.
     const wasMusic = (w.view === 'doc:music');

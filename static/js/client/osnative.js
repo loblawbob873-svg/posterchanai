@@ -58,17 +58,38 @@
     && a.left < b.left + b.width && b.left < a.left + a.width
     && a.top < b.top + b.height && b.top < a.top + a.height;
 
-  /* WHICH NATIVE WINDOWS MUST GO AWAY RIGHT NOW.
-   * Only an explicit minimise (or a frame that genuinely has no area) may stash a native app.
-   * Overlap used to hide Firefox whenever another PosterChan window was selected. That attempted
-   * to emulate cross-surface z-order with disappearance, and made ordinary focus look like data
-   * loss. A real desktop keeps background windows mapped; focus never means minimise. */
+  /* WHICH NATIVE WINDOWS MUST GO AWAY RIGHT NOW — i.e. CLICKING A WINDOW PUTS IT IN FRONT.
+   *
+   * THE CONSTRAINT, because this rule has been written three ways and every rewrite starts by not
+   * knowing it: a native app is a FLOATING sway window and this whole desktop is the one TILED
+   * window. sway paints floating above tiled, always. So a PosterChan window can never be drawn in
+   * front of Firefox or Telegram — there is no shared stacking order to fix, and the only lever
+   * anything here has is whether the native surface is on the screen at all.
+   *
+   * Which means: "the window you clicked goes in front" and "the app behind it keeps its pixels on
+   * screen" cannot both be true. One of them has to give, and the desktop everybody already knows
+   * gives up the second one — a covered window is covered. So a native app is put away exactly
+   * when a PosterChan window that is ABOVE IT overlaps it, and comes straight back when that stops
+   * being true (focusing it raises it, so it un-covers itself on the very next pass).
+   *
+   * THE OTHER HALF OF THIS RULE IS IN THE STYLESHEET, and without it this is the bug rather than
+   * the fix. `.osw.native-stashed` used to be `visibility:hidden`, so putting the surface away
+   * ALSO took the title bar, the border and the whole frame off the screen: from the person's side
+   * the app had not gone behind, it had vanished — reported exactly that way, and answered by
+   * deleting this rule, which then left Telegram on top of everything for ever. The frame now
+   * stays, occluded by whatever covers it like any background window, and clicking it brings the
+   * app back. Do not restore one of these two halves without the other.
+   *
+   * Both directions of the comparison are load-bearing: a PosterChan window BELOW a native app
+   * must not touch it, or every window would stash everything it happens to share pixels with. */
   function stashPlan(items, htmlWins){
     const stash = [], show = [];
     for(const it of (items || [])){
       if(!it || it.native == null) continue;
+      const covered = (htmlWins || []).some(w => w && !w.minimised && w.z > (it.z || 0)
+                                               && overlaps(it.rect, w.rect));
       const hide = !!it.minimised || !it.rect || !(it.rect.width > 0) || !(it.rect.height > 0)
-                   ;
+                   || covered;
       (hide ? stash : show).push(it.native);
     }
     return { stash, show };

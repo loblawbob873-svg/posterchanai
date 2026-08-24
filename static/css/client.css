@@ -7318,6 +7318,14 @@ body.os-on #os-root{pointer-events:auto}
   font-size:13px;line-height:1}
 .osw-b:hover{background:rgba(255,255,255,.10);color:var(--text)}
 .osw-x:hover{background:#e81123;color:#fff}
+.osw-ai{position:relative;color:var(--accent);font-size:15px}.osw-ai:hover{background:rgba(var(--accent-rgb),.17);color:var(--text);text-shadow:0 0 10px var(--accent)}
+.osw.ai-context{box-shadow:0 0 0 2px rgba(var(--accent-rgb),.58),0 18px 50px rgba(0,0,0,.55)}.osw.ai-watching .osw-ai::after{content:'';position:absolute;width:5px;height:5px;margin:8px 0 0 -3px;border-radius:50%;background:var(--accent)}.osw.ai-alert .osw-ai{animation:os-ai-pulse 1.15s ease-in-out infinite}@keyframes os-ai-pulse{50%{background:rgba(var(--accent-rgb),.28);text-shadow:0 0 16px var(--accent);transform:scale(1.12)}}
+.osw-ai-panel{position:absolute;z-index:12;inset-inline-end:8px;top:40px;width:min(390px,calc(100% - 16px));padding:13px;border:1px solid rgba(var(--accent-rgb),.42);border-radius:14px;background:color-mix(in srgb,var(--panel2) 94%,transparent);box-shadow:0 20px 55px #000b,0 0 26px rgba(var(--accent-rgb),.12);backdrop-filter:blur(18px);color:var(--text)}
+.osw-ai-panel header{display:flex;align-items:center;gap:10px}.osw-ai-panel header>span{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;background:rgba(var(--accent-rgb),.16);font-size:18px}.osw-ai-panel header>div{display:flex;flex:1;min-width:0;flex-direction:column}.osw-ai-panel header b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.osw-ai-panel header small,.osw-ai-panel footer>span{color:var(--muted);font-size:11px}.osw-ai-panel header>button{border:0;background:none;color:var(--muted);cursor:pointer;font-size:15px}
+.osw-ai-actions{display:grid;gap:6px;margin:12px 0}.osw-ai-actions>button{display:flex;flex-direction:column;gap:2px;padding:9px 11px;border:1px solid var(--line);border-radius:9px;background:rgba(255,255,255,.035);color:var(--text);text-align:left;cursor:pointer}.osw-ai-actions>button:hover{border-color:rgba(var(--accent-rgb),.55);background:rgba(var(--accent-rgb),.10)}.osw-ai-actions span{color:var(--muted);font-size:11px}
+.osw-ai-tip{margin-top:10px;color:var(--muted);font-size:11px}.osw-ai-context{display:grid;grid-template-columns:1fr auto;gap:2px 8px;margin-top:10px;padding:8px 10px;border-radius:8px;background:rgba(var(--accent-rgb),.1)}.osw-ai-context>span{grid-column:1/2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11px}.osw-ai-context>button{grid-column:2;grid-row:1/3;border:0;background:none;color:var(--accent);cursor:pointer}
+.osw-ai-panel>label{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600}.osw-ai-panel textarea{box-sizing:border-box;width:100%;resize:vertical;padding:9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit;font-weight:400}.osw-ai-panel footer{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px}
+.osw-ai-panel .osw-ai-agent{flex-direction:row;align-items:center;margin-top:9px;padding:8px 9px;border-radius:8px;background:rgba(var(--accent-rgb),.08);font-weight:500}
 /* The window body IS the feature's container: while focused it carries id="feed", so it must scroll
    and size exactly like the real one. */
 /* The window body HOLDS the real feed element while focused (moved, not copied — see os.js), so it
@@ -7827,10 +7835,26 @@ html.os-on #upload-badge.upbadge{z-index:333}
   background:linear-gradient(var(--panel),var(--panel)), var(--bg);
   backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
   border:1px solid var(--line);box-shadow:0 20px 60px rgba(0,0,0,.6);z-index:320}
-/* A native app's pixels are a Wayland surface, not children of this HTML frame. When the compositor
-   parks that surface, showing its empty frame is a literal black rectangle. Keep the taskbar entry
-   (the app is still running), but never draw a window whose content is not on screen. */
-.osw.native-stashed{visibility:hidden;pointer-events:none}
+/* A NATIVE APP THAT IS BEHIND IS STILL A WINDOW ON THE DESKTOP.
+   This was `visibility:hidden;pointer-events:none`, and it is the whole of "Telegram disappeared":
+   when its Wayland surface was put away the FRAME went with it — title bar, border, the lot — so
+   an app that had merely gone behind another window left the screen entirely, with only a taskbar
+   button to prove it had ever been there. (The rule it replaced was written to stop the frame
+   showing as a black rectangle, which is a real thing to fix and not this way: the body is given
+   something to say instead.)
+   Now it behaves like any background window — visible, occluded by whatever is in front of it, and
+   clickable, which is what brings the app back. See stashPlan() in osnative.js; the two halves are
+   one fix. */
+.osw.native-stashed .osw-body{position:relative}
+.osw.native-stashed .osw-body::after{
+  content:'click to bring this window forward';
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  padding:12px;text-align:center;font-size:12.5px;letter-spacing:.02em;
+  color:var(--muted);background:var(--panel, #0b0a14);
+  border-top:1px solid var(--line)}
+/* A window BEING DRAGGED already suppresses pointer events in its body; a stashed one must not, or
+   the click that is supposed to raise it lands on nothing. */
+.osw.native-stashed{pointer-events:auto}
 .osw.native-fullscreen-frame{visibility:hidden;pointer-events:none}
 .osw.osw-handoff-preview{pointer-events:none;opacity:.82;border-style:dashed;
   box-shadow:0 0 0 2px color-mix(in srgb,var(--neon) 60%,transparent),0 24px 70px rgba(0,0,0,.7)}

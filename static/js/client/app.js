@@ -26004,6 +26004,17 @@
   function _aiLastConv(){ try{ return +(ClientSettings.get(_AI_CONV_KEY,0)||0)||0; }catch(_){ return 0; } }
   let _ai = { ws:null, convId:null, streamEl:null, streamBuf:"", attach:[], replyTo:null, fxImage:null, fxMedia:{}, pendingFx:null, pendingShare:null, awaiting:false,
               hist:[], histIdx:-1, histDraft:'', histApplying:false };
+  let _aiWindowDraft='';
+  function askWindowContext(ctx,instruction,opts){
+    ctx=ctx||{}; instruction=String(instruction||'').trim(); if(!instruction)return false;
+    const windows=Array.isArray(ctx.windows)&&ctx.windows.length?ctx.windows:[ctx];
+    const blocks=windows.map((x,i)=>{const excerpt=String(x.selection||x.text||'').trim();return 'Window '+(i+1)+':\n- Title: '+String(x.title||'Window')+'\n- App: '+String(x.view||x.kind||'unknown')+
+      (excerpt?'\n- '+(x.selection?'Selected content':'Visible content')+':\n'+excerpt:'\n- No page contents were shared; use only the app name and title.');});
+    _aiWindowDraft=((opts&&opts.agent)?'node agent local ':'')+instruction+'\n\nWindow context (user explicitly shared):\n'+blocks.join('\n\n');
+    switchView('ai');
+    let tries=0; const place=()=>{const ta=$('#ai-input');if(ta){ta.value=_aiWindowDraft;_aiWindowDraft='';ta.dispatchEvent(new Event('input'));ta.focus();return;}if(++tries<30)setTimeout(place,50);};
+    setTimeout(place,0); return true;
+  }
   function _cookie(name){ const m=document.cookie.match(new RegExp('(?:^|; )'+name+'=([^;]*)')); return m?decodeURIComponent(m[1]):''; }
 
   // ---- Node Control panel: a beginner-friendly launcher for the agentic `node` command --------------
@@ -33550,6 +33561,7 @@
      * are not client routes. Give the shared renderer a harmless sentinel while one owns it, so
      * timeline subscriptions cannot mistake that borrowed feed for Social and paint into it. */
     adoptView: (v) => { VIEW=String(v||''); },
+    askWindowContext,
     startRemoteDesktop,
     /* The one pass that fills every `.name[data-prof]` (and avatars, nip05s, @mentions) once a kind-0
      * arrives. A sub-module that paints author names MUST be able to call it, or its names are frozen

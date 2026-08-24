@@ -5,6 +5,7 @@ windows, and the real Wayland surface is held over that window's body. Every fai
 app somewhere wrong rather than throwing, which is why this is measured rather than eyeballed.
 """
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -75,15 +76,50 @@ class NativeWindowGeometry(unittest.TestCase):
         self.assertIsNotNone(out["c"])
 
     # ---- stashing ----------------------------------------------------------------------------
-    def test_higher_html_window_does_not_minimise_native(self):
-        """Changing focus/stacking must not make Firefox or Telegram disappear."""
+    def test_a_window_in_front_of_it_puts_it_away(self):
+        """CLICKING A WINDOW PUTS IT IN FRONT — which for a native app means its surface leaves the
+        screen, because there is no other lever.
+
+        A native app is a FLOATING sway window and this desktop is the one TILED window; sway paints
+        floating above tiled, always. So a PosterChan window can never be drawn in front of Telegram,
+        and the only way the window you clicked can be usable is for the app covering it to go.
+
+        This assertion was briefly inverted, to stop apps "disappearing". They were not disappearing
+        because of this rule — they were disappearing because `.osw.native-stashed` was
+        `visibility:hidden`, which took the FRAME off the screen too, so an app that had gone behind
+        left no window at all. Inverting this instead left Telegram on top of everything, for ever.
+        Both halves belong to one fix; see stashPlan() and the stylesheet rule it names."""
         out = self.js("""
           out.p = N.stashPlan(
             [{native: 7, z: 1, rect:{left:100, top:100, width:800, height:600}}],
             [{z: 2, rect:{left:400, top:300, width:500, height:400}}]);
         """)
-        self.assertEqual(out["p"]["stash"], [])
-        self.assertEqual(out["p"]["show"], [7])
+        self.assertEqual(out["p"]["stash"], [7])
+        self.assertEqual(out["p"]["show"], [])
+
+    def test_the_frame_of_a_stashed_app_stays_on_the_desktop(self):
+        """The other half, and without it the rule above IS the "Telegram disappeared" bug.
+
+        A background window in any desktop is still there: occluded, clickable, and one click from
+        the front. Read from the real stylesheet, because this is exactly the line somebody deletes
+        while fixing a black rectangle."""
+        css = open(os.path.join(ROOT, "static", "css", "client.css"), encoding="utf-8").read()
+        # EVERY RULE WHOSE SELECTOR NAMES IT, and nothing else. A fixed slice from the first match
+        # ran straight into `.osw.native-fullscreen-frame{visibility:hidden}` — a different rule
+        # that hides for a good reason — and reported this one as broken.
+        # COMMENTS STRIPPED FIRST. A rule's "selector" as matched below is everything since the
+        # previous `}`, comments included — so this test read the word `visibility:hidden` out of
+        # the paragraph explaining why it must not be there, and failed against a correct file.
+        css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+        rules = re.findall(r"([^{}]*)\{([^{}]*)\}", css)
+        block = "".join(f"{sel}{{{body}}}" for sel, body in rules
+                        if "native-stashed" in sel)
+        self.assertTrue(block, "no .osw.native-stashed rule at all — re-point this test")
+        self.assertNotIn("visibility:hidden", block,
+                         "a native app that went behind another window vanished from the desktop "
+                         "entirely — frame, title bar and all")
+        self.assertIn("pointer-events:auto", block,
+                      "the frame is what a person clicks to bring the app back")
 
     def test_a_window_behind_it_does_not(self):
         """Stacking is respected in both directions, or every native window would be stashed by

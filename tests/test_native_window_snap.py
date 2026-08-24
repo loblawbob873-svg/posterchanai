@@ -78,8 +78,32 @@ def test_existing_identity_configs_receive_the_posterchan_native_chrome():
 
 
 def test_focusing_a_posterchan_window_parks_compositor_windows_above_it():
+    """Clicking a PosterChan window puts it in front of Telegram/Firefox.
+
+    It cannot be done by stacking: a native app is a FLOATING sway window and this desktop is the
+    one TILED window, and sway paints floating above tiled. So the app covering the window you
+    clicked has to leave the screen, and the decision of WHICH apps those are is `stashPlan` — it
+    is not made in `focusWin`, which only assigns the new z-order that stashPlan then reads.
+
+    This test used to read `focusWin`'s first 6000 characters for `pcWM.hide`, which is wrong twice
+    over: the parking moved to the placement pass, and a fixed slice reports a function that merely
+    GREW as a function that lost its behaviour. Assert the contract where it actually lives."""
     src = (ROOT / "static/js/client/os.js").read_text()
     start = src.index("function focusWin(w, render)")
-    focus = src[start:start + 6000]
-    assert "nativeTasks" in focus
-    assert "pcWM.hide(n.id)" in focus
+    focus = src[start:src.index("\n  function ", start + 10)]
+    # Focus assigns the stacking order the plan is computed from, and asks for a re-plan.
+    assert "nextZ()" in focus
+    assert "nsync()" in focus
+
+    nat = (ROOT / "static/js/client/osnative.js").read_text()
+    plan = nat[nat.index("function stashPlan"):]
+    plan = plan[:plan.index("\n  }")]
+    assert "overlaps(it.rect, w.rect)" in plan, (
+        "stashPlan no longer puts away a native app that a PosterChan window covers, so Telegram "
+        "and Firefox sit on top of whatever you click"
+    )
+    assert "w.z > (it.z || 0)" in plan, (
+        "the comparison lost its direction — a window BEHIND a native app would stash it, which is "
+        "every window stashing everything it shares pixels with"
+    )
+    assert "pcWM.hide(it.native)" in src, "nothing carries the plan out"
