@@ -8060,6 +8060,7 @@ html.os-on #upload-badge.upbadge{z-index:333}
 .fx-used{ grid-column:1/-1; padding:2px 2px 6px; font-size:.9rem; color:var(--muted); }
 .fx-used b{ color:var(--text); font-size:1.05rem; }
 .fx-home-sec{ grid-column:1/-1; margin:6px 0 0; font-weight:600; opacity:.7; font-size:.85rem; }
+.fx-home-synced{display:contents}
 .fx-home-tile{ display:flex; flex-direction:column; align-items:flex-start; gap:2px;
   padding:14px; border-radius:12px; text-align:start; cursor:pointer;
   background:var(--panel, rgba(255,255,255,.04)); border:1px solid var(--line, rgba(255,255,255,.10));
@@ -8069,7 +8070,20 @@ html.os-on #upload-badge.upbadge{z-index:333}
 /* The name must not push the tile wider than its column — a long folder name would otherwise
  * stretch the grid track and misalign every other tile in the row. */
 .fx-home-name{ font-weight:600; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-@media (max-width:820px){ .fx-home{ grid-template-columns:repeat(auto-fill, minmax(132px, 1fr)); } }
+@media (max-width:820px){
+  /* The horizontal source strip already contains synced folders. Repeating each one as a large
+     landing-page tile made mobile Blossom look like two unrelated file managers stacked together.
+     Mobile uses one compact, conventional folder list; desktop retains its roomy tile dashboard. */
+  .fx-home{grid-template-columns:1fr;gap:5px;padding:8px 0}
+  .fx-home-synced{display:none}
+  .fx-home-tile{min-height:48px;padding:8px 10px;display:grid;
+    grid-template-columns:28px minmax(0,1fr) auto;align-items:center;column-gap:8px;border-radius:9px}
+  .fx-home-ic{font-size:1.25rem;grid-row:1;grid-column:1}
+  .fx-home-name{grid-row:1;grid-column:2}
+  .fx-home-sub{grid-row:1;grid-column:3;text-align:end;white-space:nowrap}
+  .fx-used{padding:2px 2px 8px}
+  .fx-home-sec{margin:8px 0 2px}
+}
 
 /* ---- A stream in its own window (?popout=1) ------------------------------------------------
  * Everything that navigates is gone: this window has one job, and a sidebar in it is a way to

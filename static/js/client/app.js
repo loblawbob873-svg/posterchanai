@@ -19571,7 +19571,10 @@
     grid.innerHTML = '<div class="fx-home">'
       + usedLine
       + folders
-      + (synced ? '<div class="fx-home-sec">Synced folders</div>' + synced : '')
+      /* Synced roots already live in the source strip immediately above this landing page. Keep
+       * the larger desktop shortcuts, but group them so mobile can avoid drawing the same folder
+       * twice — once in the top strip and again as a giant button in the middle. */
+      + (synced ? '<div class="fx-home-synced"><div class="fx-home-sec">Synced folders</div>' + synced + '</div>' : '')
       + '<div class="fx-home-sec">Everything</div>'
       + tile('🗂', 'All files', known ? ('at least ' + known + ' known') : 'browse the whole drive', 'data-folder=""')
       /* The machine's own disk, on the landing screen as well as in the sidebar — this is where
