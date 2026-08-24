@@ -25,6 +25,11 @@ botframework/bots_config_export.json
 # The image bakes its own at /etc/searxng (Dockerfile) and points SEARXNG_SETTINGS_PATH there, so
 # copying these in would achieve nothing except baking one node's cookie-signing key into an image.
 searxng/
+# `install.sh --office` downloads Collabora's CODE AppImage here — several hundred MB of
+# third-party binary, and per-architecture. The IMAGE does not use it at all: docker-compose runs
+# the `collabora/code` container instead (profile: office), so copying this in would bake a large
+# binary into every image built on a machine that happens to have installed the bare-metal editor.
+officeserver/
 
 # Editor / OS cruft
 .vscode/

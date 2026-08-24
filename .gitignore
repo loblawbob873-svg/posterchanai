@@ -104,6 +104,14 @@ turnserver/pion-turn
 # streamserver/ holds only generated artifacts (the MediaMTX binary, generated config, and MediaMTX's
 # auto-generated WebRTC/MoQ certs) — never track any of it.
 streamserver/
+# `install.sh --office` downloads Collabora's CODE AppImage in here — several hundred MB of
+# third-party binary, per node and per architecture. NOTHING in this directory is ours.
+#
+# It is not merely untidy to track it: the deploy is `git add -A` then `sync.sh`, so on any node
+# that installed the office editor the very next deploy would stage that AppImage and push it to
+# production over nostr. Every other downloaded binary here is ignored for the same reason —
+# turnserver/pion-turn, streamserver/, the searxng config.
+officeserver/
 # The bundled instance's GENERATED config (install.sh --searxng): a settings.yml with this node's
 # secret_key in it, plus the port marker and the branding copy. Per-node and secret — never track it.
 # ANCHORED: a bare `searxng/` also matches docker/searxng/, which is the settings TEMPLATE both
