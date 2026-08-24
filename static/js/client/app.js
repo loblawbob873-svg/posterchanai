@@ -322,6 +322,11 @@
    * one. Anyone who wants the rest can name an instance in Settings and they all come back. */
   const INSTANCE_VIEWS = new Set(['ai', 'translate', 'markets', 'news', 'torrents',
                                   'stats', 'meme', 'admin', 'websearch', 'terminal', 'calendar', 'contacts',
+                                  /* PosterChan Code edits files on a NODE, through /api/code, gated by
+                                   * the same allowlist as the terminal. With no instance there is no
+                                   * workspace to open, no formatter to call and nothing to save to —
+                                   * the whole screen is the server. */
+                                  'code',
                                   // Email is IMAP/SMTP through this instance's mail service — with no
                                   // instance there is nothing behind the screen at all.
                                   'mail',
@@ -3253,7 +3258,7 @@
       return true;
     }
     if(event && /^[0-9a-f]{64}$/i.test(event)){ _clean(); openThread(event); return true; }
-    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','markets','streams','communities','calls','settings','signer','translate','news','websearch','terminal','calendar','contacts','texts','notes','music']);
+    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','markets','streams','communities','calls','settings','signer','translate','news','websearch','terminal','code','calendar','contacts','texts','notes','music']);
     if(view && VALID.has(view)){ _clean(); switchView(view); return true; }
     return false;
   }
@@ -6243,6 +6248,10 @@
      * Saved on the way OUT, while the old view's nodes are still on screen and its scrollTop is
      * still real — after `VIEW = v` there is nothing left to measure. */
     if(VIEW !== v) _rememberTlScroll();
+    // Shorts is an APP entry, not a bookmark into its transient player. Tapping its launcher/nav
+    // icon again must always reopen the browse grid; renderShorts() itself never calls switchView,
+    // so scrolling/repainting inside the player still keeps the current short.
+    if(v==='shorts') _shortsAt=-1;
     _navView(v);    // top-level views have no address of their own — the entry names them in its state
     VIEW = v;
     if(v==='notifications'){ _notifShown = 25;   // fresh entry → collapse pagination back to one page
@@ -6253,7 +6262,7 @@
       _notifScrollTop = true; }
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     _syncRightbar();
-    $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', shorts:'Shorts 🎬', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', shorts:'Shorts 🎬', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', code:'PosterChan Code 💻', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     if(v==='signer') $('#view-title').textContent = 'Signer';
     // "New post" is a fixed sidebar button now, so it needs no per-view toggling — it never appears in a
     // view header again. (The ▦ media toggle moved into the timeline's tab row.)
@@ -6401,6 +6410,7 @@
     if(renderModuleView('news','news.js','PCNews','render')) return;
     if(renderModuleView('websearch','websearch.js','PCWebSearch','render')) return;
     if(renderModuleView('terminal','term.js','PCTerm','render')) return;
+    if(renderModuleView('code','code.js','PCCode','render')) return;
     if(renderModuleView('calendar','calendar.js','PCCalendar','render')) return;
     if(renderModuleView('contacts','contacts.js','PCContacts','render')) return;
     if(renderModuleView('markets','markets.js','PCMarkets','render')) return;
@@ -14574,7 +14584,7 @@
     // and it was buried in Discover → Streams where nobody found it. Mirrors the desktop sidebar item.
     // Icons come from the shared sprite via ICO() — the same glyphs the desktop sidebar uses, so the
     // phone and desktop navs never drift apart (and they take the theme's colour, unlike emoji).
-    const items=[['ai','ai','PosterChan AI'],['mail','mail','Email'],['websearch','search','Web Search'],['terminal','terminal','Terminal'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['texts','chat','Texts'],['__music','music','Music'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['repos','git','Git'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__bug','bug','Report a Bug'],['__accounts','user','Switch account'],['signer','key','Signer'],['settings','gear','Settings'],
+    const items=[['ai','ai','PosterChan AI'],['mail','mail','Email'],['websearch','search','Web Search'],['terminal','terminal','Terminal'],['code','terminal','PosterChan Code'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['texts','chat','Texts'],['__music','music','Music'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['repos','git','Git'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__bug','bug','Report a Bug'],['__accounts','user','Switch account'],['signer','key','Signer'],['settings','gear','Settings'],
       // Same button, same rule as the sidebar's: a guest is offered a way IN, not a second way out.
       (GUEST ? ['__login','user','Log in'] : ['logout','logout','Logout'])]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai')
@@ -16759,7 +16769,7 @@
       return `<div class="short-card" data-i="${i}" data-id="${s.e.id}">
         <div class="short-media">${s.poster?`<img src="${enc(s.poster)}" loading="lazy" onerror="this.remove()">`:''}</div>
         <div class="short-top">
-          <button class="mini short-back" title="Back to the grid">‹ All shorts</button>
+          <button class="mini short-back" title="Back to Shorts" aria-label="Back to Shorts">‹ Back to Shorts</button>
           <button class="mini short-mute" title="Sound">${_shortsMuted?'🔇':'🔊'}</button>
         </div>
         <div class="short-overlay">

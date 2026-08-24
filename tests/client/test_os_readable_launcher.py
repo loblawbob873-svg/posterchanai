@@ -39,4 +39,5 @@ def test_launcher_labels_survive_high_resolution_shell_scaling():
 def test_start_menu_has_room_for_larger_rows():
     menu = _rule(".os-startmenu")
     assert "width:min(780px" in menu
-    assert "max-height:min(84vh,760px)" in menu
+    assert "height:min(920px,calc(100vh - 78px))" in menu
+    assert "max-height:calc(100vh - 78px)" in menu

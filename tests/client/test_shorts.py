@@ -119,6 +119,23 @@ class RendererDiscipline(unittest.TestCase):
         self.assertIn("short-dur", gseg, "no duration badge on the tiles")
         self.assertIn("_shortsPlayer(host, _shortsAt)", gseg)
 
+    def test_reopening_shorts_returns_to_the_grid(self):
+        """The launcher opens the app, not the last transient video left in its player."""
+        a = APP.index("function switchView(")
+        seg = APP[a:APP.index("function renderModuleView", a)]
+        self.assertIn("if(v==='shorts') _shortsAt=-1", seg)
+
+    def test_player_has_an_obvious_way_back(self):
+        seg = self._seg()
+        self.assertIn('aria-label="Back to Shorts"', seg)
+        self.assertIn("_shortsAt=-1; _shortsGrid(host)", seg)
+
+    def test_short_video_fills_its_card(self):
+        css = open(os.path.join(ROOT, "static", "css", "client.css"), encoding="utf-8").read()
+        rule = css[css.index(".short-media,.short-media video"):]
+        rule = rule[:rule.index("}")]
+        self.assertIn("object-fit:cover", rule)
+
     def test_the_view_is_wired_into_nav_sheet_and_dispatch(self):
         self.assertIn("if (VIEW==='shorts') return renderShorts();", APP)
         self.assertIn("['shorts','tv','Shorts']", APP)
