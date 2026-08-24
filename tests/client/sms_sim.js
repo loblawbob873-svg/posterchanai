@@ -231,6 +231,8 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
   const S = global.PCSms;
   for(const step of (opt.steps || ['load'])){
     if(step === 'load'){ await S.load(true); }
+    else if(step === 'phoneLoad'){ await S.loadFromPhone(); }
+    else if(step === 'migrate'){ await S.mirror({ fullMigration:true, limit:Number(opt.migrationBatch)||60 }); }
     else if(step === 'mirror'){ await S.mirror(); }
     else if(step === 'drain'){ await S.drainOutbox(); }
     else if(step === 'allow'){ refusals = -1; }

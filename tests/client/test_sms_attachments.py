@@ -112,6 +112,18 @@ class TheArchive(unittest.TestCase):
                         "the existing high-water mark skipped the MMS migration")
         self.assertGreater(len(res["published"]), 0)
 
+    def test_the_complete_phone_history_is_migrated_across_bounded_batches(self):
+        """A successful recent pass is not a completed migration. 1.0.1512 marked it complete
+        after three recent rows on the reporter's phone, leaving every older provider row behind.
+        Completion now means the full local provider read has no unsealed row remaining."""
+        rows = [text(i, date=NOW - (500 + i) * 86400000) for i in range(1, 66)]
+        res = run(rows=rows, migrationBatch=60,
+                  storage={"pc_sms_hwm_me": NOW, "pc_sms_hwm_me_blossom_v1": "1"},
+                  steps=["phoneLoad", "migrate", "migrate"])
+        bodies = [f for f in res["drive"]["files"] if f["folder"] == "Messages"]
+        self.assertEqual(len(bodies), 65, "older provider rows were left outside Blossom")
+        self.assertEqual(len(res["published"]), 65)
+
     def test_body_and_picture_are_committed_to_encrypted_drive_folders(self):
         """A successful relay event is not enough: other devices find bytes through FilesIdx. The
         transaction must persist both folders before Android is free to freeze the WebView."""

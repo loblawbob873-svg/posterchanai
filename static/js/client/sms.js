@@ -40,7 +40,7 @@
    * inline Nostr events to encrypted Blossom the phone kept its high-water mark at "today" and
    * never revisited any of the rows that needed migrating. A schema migration needs its own marker;
    * otherwise a completed, unrelated migration silently opts the account out of this one. */
-  const HWM_BLOSSOM = () => HWM() + '_blossom_v1';
+  const HWM_BLOSSOM = () => HWM() + '_blossom_v2';
   let _messagesFolderReady = false;
 
   let PC = null;
@@ -610,9 +610,20 @@
     // MMS dates have one-second precision. Overlap the last second and deduplicate by document so
     // two messages filed in that second cannot be skipped by the strict provider predicate.
     const querySince = Math.max(0, since - 1000);
-    let rows = [];
-    try{ rows = ((await P.list({ since: querySince, limit: (opts && opts.limit) || 400 })) || {}).messages || []; }
-    catch(_){ return { published:0, skipped:'could not read the phone' }; }
+    let rows = [], migrationRemaining = 0;
+    if(opts && opts.fullMigration){
+      /* loadFromPhone has already read the complete provider into S. Use THAT set, not a `since`
+       * query: `since` deliberately reads forwards from the high-water mark and therefore cannot
+       * discover years of older history. `_local` is set only by fromRow, so a relay-only laptop
+       * can never mistake its cached archive for a phone provider. */
+      rows = Array.from(S.msgs.values()).filter(m => m && m._local && needsArchiveUpgrade(m, m))
+        .sort((a,b) => (a.date || 0) - (b.date || 0));
+      migrationRemaining = rows.length;
+      rows = rows.slice(0, Math.max(1, (opts && opts.limit) || 60));
+    }else{
+      try{ rows = ((await P.list({ since: querySince, limit: (opts && opts.limit) || 400 })) || {}).messages || []; }
+      catch(_){ return { published:0, skipped:'could not read the phone' }; }
+    }
 
     let n = 0, top = since, drive = null, archiveError = '';
     S.archive.running = true;
@@ -651,14 +662,15 @@
     /* Mark the migration only after the drive transaction itself committed. A failed signer,
      * upload, relay publish or index save leaves it unset, so the next foreground pass retries the
      * same rows instead of declaring a hollow archive complete. */
-    if(!archiveError){
+    if(!archiveError && opts && opts.fullMigration && migrationRemaining <= rows.length){
       try{ localStorage.setItem(HWM_BLOSSOM(), '1'); }catch(_){ }
     }
     S.archive.running = false;
     S.archive.published = n;
     S.archive.error = archiveError;
     if(PC && PC.VIEW === 'texts') paint();
-    return { published:n, skipped:archiveError || undefined };
+    return { published:n, remaining:Math.max(0, migrationRemaining - n),
+             skipped:archiveError || undefined };
   }
 
   /* ON THE PHONE, THE PHONE IS THE SOURCE. This is what an SMS app is.
@@ -1016,6 +1028,7 @@
   function fromRow(r){
     return { doc: r.doc, address: r.address, body: r.body, date: r.date,
              incoming: !!r.incoming, name: r.name || '',
+             _local: true,
              // Carried rather than inferred from `parts` being non-empty: a picture message whose
              // attachments could not be read is still a picture message.
              mms: !!r.mms, parts: cleanParts(r.parts) };
@@ -1048,6 +1061,26 @@
 
   function needsArchiveUpgrade(phone, archived){
     return !archived || !archived._blob || needsPartUpgrade(phone, archived);
+  }
+
+  let _fullMigration = null;
+  function migrateLocalHistory(){
+    if(_fullMigration) return _fullMigration;
+    try{ if(localStorage.getItem(HWM_BLOSSOM())) return Promise.resolve({published:0,remaining:0}); }
+    catch(_){ }
+    _fullMigration = (async () => {
+      let total = 0;
+      for(let batch=0; batch<1000; batch++){
+        const r = await mirror({fullMigration:true, limit:60});
+        total += Number(r && r.published) || 0;
+        if(!r || r.skipped || !r.remaining) return {published:total, remaining:(r&&r.remaining)||0,
+                                                     skipped:r&&r.skipped};
+        /* Let rendering/input and Android lifecycle callbacks run between upload batches. */
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+      return {published:total, remaining:1, skipped:'message migration safety limit reached'};
+    })().finally(() => { _fullMigration = null; });
+    return _fullMigration;
   }
 
   async function sha256hex(s){
@@ -1888,14 +1921,18 @@
        * one taken every time somebody opens Texts with the permission already granted — and
        * discarding the answer meant a provider refusal was silent on the one route almost everybody
        * takes. The button path had the message; the path to it did not. */
-      loadFromPhone().then((r) => {
-        if(r && r.refused && !S.msgs.size){
-          S.emptyWhy = 'This phone allowed the permission, but its message store still would not '
-                     + 'answer. Your messages have not been changed.';
-          S.emptyFix = '';
-        }
-        paint();
-      }, () => {});
+      const r = await loadFromPhone();
+      if(r && r.refused && !S.msgs.size){
+        S.emptyWhy = 'This phone allowed the permission, but its message store still would not '
+                   + 'answer. Your messages have not been changed.';
+        S.emptyFix = '';
+      }
+      paint();
+      /* Only now do we possess the phone's COMPLETE provider read. The old call to mirror()
+       * below can publish recent arrivals, but its forward-only query cannot migrate older
+       * history. Walk the local set in resumable encrypted-drive batches. Awaiting also prevents
+       * the recent sweep from uploading the same rows alongside this one. */
+      await migrateLocalHistory();
     }
     /* PUBLISHING needs to READ; performing a send another device asked for needs a RADIO. Two
      * jobs, two gates -- and this one used to name the role for the second, which contradicted the
@@ -1908,7 +1945,7 @@
      * unperformed on a phone perfectly able to send it, and the laptop said "waiting for your phone"
      * for ever, which is true and useless. The fix inside a function is not a fix while the only
      * thing that calls it disagrees. */
-    if(st.canRead) mirror();
+    if(st.canRead) await mirror();
     if(st.telephony) drainOutbox();
   }
 
