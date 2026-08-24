@@ -40,7 +40,7 @@ def test_concord_is_precached_and_old_bundles_self_heal_the_nav():
 def test_concord_owns_a_versioned_stylesheet_so_stale_shell_css_cannot_unstyle_it():
     assert 'static/css/concord.css' in HTML
     assert "data-concord-css" in CONCORD
-    assert "concord.css?v=4" in CONCORD
+    assert "concord.css?v=5" in CONCORD
     assert "'/static/css/concord.css'" in (ROOT / "static/js/client/sw.js").read_text()
     assert ".cc-app" in CONCORD_CSS and "grid-template-columns:68px 248px" in CONCORD_CSS
     assert CONCORD_CSS.count('{') == CONCORD_CSS.count('}'), "Concord CSS has an unclosed rule"
@@ -94,6 +94,16 @@ def test_concord_room_icons_can_be_set_on_create_and_edited_later():
     assert 'room.icon=normalizeIcon' in CONCORD
     assert "u.protocol==='https:'||u.protocol==='http:'" in CONCORD
     assert '.cc-server-img' in CONCORD_CSS
+
+
+def test_concord_standard_controls_are_wired_not_decorative():
+    assert 'id="cc-attach"' in CONCORD and 'file.onchange=async' in CONCORD
+    assert 'p.uploadBlob' in CONCORD
+    assert 'id="cc-emoji"' in CONCORD and 'p.openEmojiPopover' in CONCORD
+    assert 'id="cc-members"' in CONCORD and "members.onclick" in CONCORD
+    assert 'id="cc-notify"' in CONCORD and 'p.askOsNotify' in CONCORD
+    assert 'id="cc-call"' in CONCORD and 'p.startGroupCall' in CONCORD
+    assert 'startGroupCall,' in APP and 'uploadBlob,' in APP and 'openEmojiPopover,' in APP
 
 
 def test_invite_parser_requires_naddr_and_secret_fragment():
