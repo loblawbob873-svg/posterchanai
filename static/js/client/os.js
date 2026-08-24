@@ -4981,6 +4981,11 @@
     });
     $$('.os-task', bar).forEach(b => b.oncontextmenu = (e) => {
       e.preventDefault(); e.stopPropagation();
+      if(b.dataset.kind === 'native'){
+        const w=nativeTasks.find(x=>String(x.id)===b.dataset.id); if(!w) return;
+        showCtx(e.clientX,e.clientY,[{label:'Close',run:()=>Promise.resolve(pcWM.close(w.id)).catch(()=>{})}]);
+        return;
+      }
       let key = b.dataset.pin || '';
       if(!key && b.dataset.kind === 'web'){
         const w = wins.find(x => String(x.id) === b.dataset.id);

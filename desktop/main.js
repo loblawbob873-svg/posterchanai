@@ -996,6 +996,7 @@ function wm() {
 const _shellScopes = new Map();       // webContents.id -> { output, workspace }
 const _nativeOwners = new Map();      // con_id -> last ordinary workspace
 const _shellSurfaces = new Map();     // output name -> { browser, conId, assignment }
+const { recoverSurfaces } = require('./shell-recovery.js');
 let _displayReconcile = null;
 let _displayReconcileTimer = null;
 /* Recover the owner of a parked window after the shell process itself restarts.
@@ -1051,13 +1052,11 @@ async function wireShellRecovery(){
        * singleton socket is what turned Ctrl+Alt+Backspace into a permanent black screen. */
       try{
         if(win && !win.isDestroyed()){
-          for(const surface of _shellSurfaces.values()){
-            const browser = surface.browser;
-            if(browser && !browser.isDestroyed()){
-              browser.webContents.reloadIgnoringCache();
-              browser.show();
-            }
-          }
+          /* `reloadIgnoringCache()` only reloads the URL already present. A companion surface that
+           * lost its first navigation is still about:blank, so Ctrl+Alt+Backspace kept that monitor
+           * blank for ever. loadApp is the canonical proxy/Tor-aware navigation and repairs both a
+           * loaded client and a never-loaded renderer. */
+          recoverSurfaces(_shellSurfaces.values(), loadApp);
         }
       }catch(e){ console.warn('[shell restart]', e && e.message || e); }
     });
@@ -1196,6 +1195,7 @@ ipcMain.handle('pc:wm:handoff', async (e, id, direction) => {
   const target=record.assignment;
   await wm().finishMove(Number(id));
   await wm().command('[con_id='+Number(id)+'] move container to workspace number '+target.workspace);
+  await wm().placeOnOutput(Number(id), target.rect, String(direction||''));
   _nativeOwners.set(Number(id), String(target.workspace));
   await wm().focus(Number(id));
   return {output:target.output,workspace:target.workspace};

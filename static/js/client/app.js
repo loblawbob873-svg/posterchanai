@@ -16920,10 +16920,10 @@
         <div class="ma-art"><svg class="ic" aria-hidden="true"><use href="#i-music"></use></svg></div>
         <div class="ma-meta"><b id="ma-title">Nothing playing</b><span class="muted small" id="ma-sub"></span></div>
         <div class="ma-ctl">
+          <button class="btn btn-ghost small" id="ma-shuffle" title="Shuffle" aria-label="Shuffle"><svg class="ic b-ic" aria-hidden="true"><use href="#i-shuffle"></use></svg></button>
           <button class="btn btn-ghost small" id="ma-prev" title="Previous"><svg class="ic b-ic" aria-hidden="true"><use href="#i-prev"></use></svg></button>
           <button class="btn btn-neon" id="ma-play" title="Play / pause"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg></button>
           <button class="btn btn-ghost small" id="ma-next" title="Next"><svg class="ic b-ic" aria-hidden="true"><use href="#i-next"></use></svg></button>
-          <button class="btn btn-cyan small" id="ma-add" title="Add music"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Add music</button>
         </div>
         <!-- The scrubber gets its OWN row rather than sharing the control line, so it can be the
              full width of the panel at every size. On a phone .ma-now wraps to two or three lines,
@@ -16934,6 +16934,21 @@
           <div class="mp-seek ma-seek" id="ma-seek" role="slider" tabindex="0"
                aria-label="Seek" aria-valuemin="0" aria-valuemax="100" aria-valuetext="not playing"><div class="mp-seek-fill"></div></div>
           <span class="ma-t" id="ma-dur">0:00</span>
+        </div>
+        <div class="ma-tools">
+          <button class="btn btn-cyan small" id="ma-add" title="Add music"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Add music</button>
+          <button class="btn btn-ghost small" id="ma-eq-toggle" aria-expanded="false" aria-controls="ma-eq"><span aria-hidden="true">≋</span> Equalizer</button>
+        </div>
+        <div class="ma-eq hidden" id="ma-eq">
+          <div class="ma-eq-head"><b>Equalizer</b><span class="muted small">Saved on this device</span></div>
+          <div class="ma-eq-presets" role="group" aria-label="Equalizer presets">
+            <button class="ma-eq-preset" data-eq="flat">Flat</button><button class="ma-eq-preset" data-eq="bass">Bass</button><button class="ma-eq-preset" data-eq="vocal">Vocal</button><button class="ma-eq-preset" data-eq="bright">Bright</button>
+          </div>
+          <div class="ma-eq-bands">
+            <label><span>Bass <output id="ma-eq-low-v">0 dB</output></span><input id="ma-eq-low" data-band="low" type="range" min="-12" max="12" step="1" value="0"></label>
+            <label><span>Voice <output id="ma-eq-mid-v">0 dB</output></span><input id="ma-eq-mid" data-band="mid" type="range" min="-12" max="12" step="1" value="0"></label>
+            <label><span>Treble <output id="ma-eq-high-v">0 dB</output></span><input id="ma-eq-high" data-band="high" type="range" min="-12" max="12" step="1" value="0"></label>
+          </div>
         </div>
       </div>
       <div id="ma-plbar"></div>
@@ -16992,10 +17007,17 @@
     const b=(sel,fn)=>{ const el=$(sel,feed); if(el) el.onclick=fn; };
     b('#ma-prev',()=>MusicPlayer.prev());
     b('#ma-next',()=>MusicPlayer.next());
+    b('#ma-shuffle',()=>{ MusicPlayer.shuffle=!MusicPlayer.shuffle; MusicPlayer._render(); _musicAppNow(); });
     b('#ma-play',()=>{ if(MusicPlayer.cur) return MusicPlayer.toggle();
       const q=musicTracks(null); if(!q.length){ toast('no music yet — add some'); return; }
       MusicPlayer.refreshQueue(); MusicPlayer.play(q[0].sha); });
     b('#ma-add',()=>openMusicFolder());
+    b('#ma-eq-toggle',()=>{
+      const panel=$('#ma-eq',feed), toggle=$('#ma-eq-toggle',feed); if(!panel||!toggle) return;
+      const open=panel.classList.toggle('hidden')===false;
+      toggle.setAttribute('aria-expanded', open?'true':'false'); toggle.classList.toggle('on',open);
+    });
+    MusicPlayer.bindEqualizer(feed);
     /* The "⤒ Originals" one-pass repair is GONE. It existed for libraries uploaded while the Opus
      * transcode still ran: point it at your files and each one replaced its transcode in place,
      * playlists and all. Uploads have passed through untouched for a while now, so it only ever
@@ -17192,7 +17214,7 @@
     const sub=document.getElementById('ma-sub');
     const playing=_audioEl && !_audioEl.paused;
     if(sub) sub.textContent=MusicPlayer.cur ? (playing?'playing':'paused')+(MusicPlayer.shuffle?' · shuffle':'') : '';
-    const sh=document.getElementById('mus-shuffle'); if(sh) sh.classList.toggle('on', !!MusicPlayer.shuffle);
+    const sh=document.getElementById('ma-shuffle'); if(sh){ sh.classList.toggle('on', !!MusicPlayer.shuffle); sh.setAttribute('aria-pressed', MusicPlayer.shuffle?'true':'false'); }
     /* THE BUTTON HAS TO SAY WHICH IT IS. #ma-play was rendered once with a fixed ▶ and nothing ever
      * changed it, so the Music app's main control showed "play" while a track was playing — the one
      * piece of state a transport exists to report. (The floating widget rebuilds its whole innerHTML
@@ -21254,13 +21276,16 @@
   // EVERY view and keeps playing as you navigate. Minimizable to a mini bar; draggable anywhere.
   let _audioEl=null;
   const MusicPlayer = {
-    el:null, min:false, cur:null, queue:[], shuffle:false, _loading:false, _history:[], _search:'', _viz:{an:null,raf:0,failed:false,ro:null},
+    el:null, min:false, cur:null, queue:[], shuffle:false, _loading:false, _history:[], _search:'',
+    _eq:{low:0,mid:0,high:0}, _eqLoaded:false,
+    _viz:{an:null,raf:0,failed:false,ro:null,filters:null},
     ensure(){
       if(this.el) return this.el;
       // append to <html> NOT <body>: body has zoom:.85 on desktop, which throws off a fixed body child's
       // position (it would mis-overlap the sidebar + block its clicks). Same fix as the popovers.
       const d=document.createElement('div'); d.id='music-player'; d.className='mp hidden'; document.documentElement.appendChild(d); this.el=d;
       if(!_audioEl) _audioEl=new Audio();
+      this._loadEQ();
       _audioEl.ontimeupdate=()=>this._tick();
       _audioEl.onended=()=>this.next();
       _audioEl.onplay=()=>{ this._render(); this._startViz(); this._media(); };
@@ -21432,6 +21457,48 @@
       try{ localStorage.setItem('pc_music_autoplay_bt', on?'1':'0'); }catch(_){}
       const P=_capPlugin('MusicControls','setOptions'); if(!P) return;
       try{ const r=P.setOptions({autoplayBluetooth:!!on}); if(r&&r.catch) r.catch(()=>{}); }catch(_){}
+    },
+    /* ONE PLAYER, ONE AUDIO GRAPH. The equalizer belongs to MusicPlayer rather than the Music view,
+     * so changing apps or closing/reopening the window cannot reset the sound. Values are device
+     * preferences (headphones and speakers differ) and never need the signer or relay. */
+    _loadEQ(){
+      if(this._eqLoaded) return; this._eqLoaded=true;
+      try{ const v=JSON.parse(localStorage.getItem('pc_music_eq')||'null');
+        if(v) for(const k of ['low','mid','high']) if(isFinite(+v[k])) this._eq[k]=Math.max(-12,Math.min(12,+v[k]));
+      }catch(_){}
+    },
+    _saveEQ(){ try{ localStorage.setItem('pc_music_eq',JSON.stringify(this._eq)); }catch(_){} },
+    setEQ(band,value){
+      if(!['low','mid','high'].includes(band)) return;
+      this._loadEQ(); this._eq[band]=Math.max(-12,Math.min(12,Number(value)||0)); this._saveEQ();
+      /* AudioContext creation is allowed here because this is called from a user gesture. The same
+       * graph also feeds the visualizer; _setupViz is idempotent and never creates a second source. */
+      this._setupViz();
+      const f=this._viz.filters&&this._viz.filters[band]; if(f) f.gain.value=this._eq[band];
+      this._paintEQ();
+    },
+    setEQPreset(name){
+      const p={flat:[0,0,0],bass:[7,1,-2],vocal:[-2,5,2],bright:[-2,1,7]}[name]||[0,0,0];
+      ['low','mid','high'].forEach((b,i)=>{ this._eq[b]=p[i]; }); this._saveEQ(); this._setupViz();
+      if(this._viz.filters) for(const b of ['low','mid','high']) this._viz.filters[b].gain.value=this._eq[b];
+      this._paintEQ();
+    },
+    _paintEQ(root){
+      root=root||document;
+      for(const b of ['low','mid','high']){
+        const input=root.querySelector('#ma-eq-'+b), out=root.querySelector('#ma-eq-'+b+'-v');
+        if(input) input.value=String(this._eq[b]);
+        if(out) out.textContent=(this._eq[b]>0?'+':'')+this._eq[b]+' dB';
+      }
+      root.querySelectorAll('.ma-eq-preset').forEach(x=>{
+        const p={flat:[0,0,0],bass:[7,1,-2],vocal:[-2,5,2],bright:[-2,1,7]}[x.dataset.eq]||[];
+        x.classList.toggle('on',p.length===3&&p.every((v,i)=>v===this._eq[['low','mid','high'][i]]));
+      });
+    },
+    bindEqualizer(root){
+      if(!root) return; this._loadEQ(); this._paintEQ(root);
+      root.querySelectorAll('.ma-eq input[data-band]').forEach(x=>x.oninput=()=>this.setEQ(x.dataset.band,x.value));
+      root.querySelectorAll('.ma-eq-preset').forEach(x=>x.onclick=()=>this.setEQPreset(x.dataset.eq));
     },
     _nativePush(){
       /* Only once something is playing, and never after the player was closed. update() starts a
@@ -21794,7 +21861,12 @@
     _setupViz(){ const v=this._viz; if(v.an) return true; if(v.failed) return false;
       try{ const AC=window.AudioContext||window.webkitAudioContext; if(!AC){ v.failed=true; return false; }
         v.ctx=new AC(); v.src=v.ctx.createMediaElementSource(_audioEl); v.an=v.ctx.createAnalyser();
-        v.an.fftSize=128; v.an.smoothingTimeConstant=0.82; v.src.connect(v.an); v.an.connect(v.ctx.destination); return true;
+        const low=v.ctx.createBiquadFilter(), mid=v.ctx.createBiquadFilter(), high=v.ctx.createBiquadFilter();
+        low.type='lowshelf'; low.frequency.value=180; mid.type='peaking'; mid.frequency.value=1200; mid.Q.value=.8;
+        high.type='highshelf'; high.frequency.value=4200; v.filters={low,mid,high};
+        this._loadEQ(); for(const b of ['low','mid','high']) v.filters[b].gain.value=this._eq[b];
+        v.an.fftSize=128; v.an.smoothingTimeConstant=0.82;
+        v.src.connect(low); low.connect(mid); mid.connect(high); high.connect(v.an); v.an.connect(v.ctx.destination); return true;
       }catch(e){ v.failed=true; return false; } },
     /* THE SPECTRUM BARS, AND WHY THIS LOOP IS WRITTEN SO CAREFULLY.
      *

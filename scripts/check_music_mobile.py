@@ -130,6 +130,12 @@ DRIVE = r"""(async () => {
         out.appSeekOverflow = document.documentElement.scrollWidth > window.innerWidth + 1;
         // Both times must be present, or the bar is a position with no scale to read it against.
         out.appTimes = !!(document.getElementById('ma-cur') && document.getElementById('ma-dur'));
+        const eq = document.getElementById('ma-eq');
+        out.appEq = !!eq;
+        out.appEqBands = eq ? eq.querySelectorAll('input[data-band]').length : 0;
+        out.appEqPresets = eq ? eq.querySelectorAll('.ma-eq-preset').length : 0;
+        const ctl = document.querySelector('.ma-ctl');
+        out.appTransportOverflow = ctl ? ctl.scrollWidth > ctl.clientWidth + 1 : false;
       }
     }
   } catch (e) { out.appErr = String(e && e.message || e); }
@@ -276,6 +282,12 @@ async def drive(url):
                                      "the Music app has no seek bar — prev/play/next is not a way "
                                      "to move through a track"))
                 else:
+                    if not r.get("appEq") or r.get("appEqBands") != 3 or r.get("appEqPresets", 0) < 4:
+                        problems.append((label, "equalizer-missing",
+                                         "the unified player does not expose three EQ bands and presets"))
+                    if r.get("appTransportOverflow"):
+                        problems.append((label, "transport-overflow",
+                                         "the unified transport controls overflow their row"))
                     if not r.get("appSeekFill"):
                         problems.append((label, "no-app-scrubber",
                                          "the seek bar has no fill element, so it can show no position"))

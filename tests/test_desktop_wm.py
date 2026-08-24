@@ -206,6 +206,14 @@ class CompositorIPC(unittest.TestCase):
         cmds = [s["payload"] for s in out["seen"] if s["type"] == 0]
         self.assertEqual(cmds, ["[con_id=11] move absolute position 10 20"])
 
+    def test_handoff_places_the_real_window_fully_inside_destination_output(self):
+        out = self.run_js("""
+          out.at = await wm.placeOnOutput(11, {x:1920,y:120,width:1280,height:720}, 'right');
+        """)
+        self.assertEqual(out["at"], {"x":1932,"y":132,"w":1256,"h":696})
+        cmds = [s["payload"] for s in out["seen"] if s["type"] == 0]
+        self.assertIn("[con_id=11] move absolute position 1932 132", cmds)
+
     def test_events_arrive_on_their_own_socket(self):
         """sway will not answer ordinary requests on a subscribed connection, so a shell that
         subscribes on its command socket loses every reply after it."""

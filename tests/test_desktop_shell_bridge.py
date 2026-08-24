@@ -171,6 +171,7 @@ class Bridge(unittest.TestCase):
         self.assertIn("handoff:", self.pre)
         self.assertIn("move container to workspace number", self.main)
         self.assertIn("finishMove(Number(id))", self.main)
+        self.assertIn("placeOnOutput(Number(id), target.rect", self.main)
         client = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()
         self.assertIn("pcWM.handoff(id,handoff)", client)
         self.assertIn("killNative:false,preserveFocus:true", client)
@@ -197,6 +198,11 @@ class Bridge(unittest.TestCase):
         self.assertIn("pc:wm:decorate", self.main)
         self.assertIn("decorate:", self.pre)
         self.assertIn("pcWM.decorate(id)", client)
+
+    def test_native_taskbar_has_a_close_action(self):
+        client = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()
+        self.assertIn("label:'Close'", client)
+        self.assertIn("pcWM.close(w.id)", client)
 
     def test_terminal_handoff_keeps_the_same_pty(self):
         client = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()

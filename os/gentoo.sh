@@ -1702,6 +1702,7 @@ PROFILE
 	# -- so a floating app has no titlebar and can only be closed from inside itself, and not every
 	# app has a way.
 	bindsym $mod+q kill
+	bindsym Mod1+F4 kill
 
 	# THE DESKTOP ITSELF STAYS PUT. It is maximized on the output it started on, and `focus output`
 	# above can move the FOCUS to a second screen while the shell stays where it is -- which is what

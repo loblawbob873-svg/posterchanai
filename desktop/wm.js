@@ -234,6 +234,28 @@ class WM {
                         + Math.round(at.x) + ' ' + Math.round(at.y));
   }
 
+  /* Commit a cross-output handoff INSIDE the destination output. Moving a floating container to a
+   * workspace preserves its old absolute coordinates; on unequal or offset monitors that can leave
+   * Steam half outside the new output. This uses the destination explicitly (not nearest-output
+   * inference), clamps both size and position with a visible margin, and returns the final rect for
+   * regression tests and diagnostics. */
+  async placeOnOutput(id, outputRect, direction){
+    const b=outputRect||{}, l=Number(b.x)||0, t=Number(b.y)||0;
+    const ow=Math.max(1,Number(b.width)||1), oh=Math.max(1,Number(b.height)||1), gap=12;
+    let cur=(await this.windows()).find(x=>Number(x.id)===Number(id));
+    const r=(cur&&cur.rect)||{};
+    const w=Math.min(Math.max(320,Number(r.width)||Math.round(ow*.72)),Math.max(1,ow-gap*2));
+    const h=Math.min(Math.max(220,Number(r.height)||Math.round(oh*.72)),Math.max(1,oh-gap*2));
+    let x=Math.min(Math.max(Number(r.x)||l+gap,l+gap),l+ow-w-gap);
+    let y=Math.min(Math.max(Number(r.y)||t+gap,t+gap),t+oh-h-gap);
+    if(direction==='right') x=l+gap; else if(direction==='left') x=l+ow-w-gap;
+    else if(direction==='down') y=t+gap; else if(direction==='up') y=t+oh-h-gap;
+    await this.floating(id,true);
+    await this.command('[con_id='+Number(id)+'] resize set '+Math.round(w)+' '+Math.round(h));
+    await this.command('[con_id='+Number(id)+'] move absolute position '+Math.round(x)+' '+Math.round(y));
+    return {x:Math.round(x),y:Math.round(y),w:Math.round(w),h:Math.round(h)};
+  }
+
   /** Dragging changes position only, and LATEST WINS.
    *
    * Pointer frames arrive faster than sway IPC acknowledgements. Sending every one through the

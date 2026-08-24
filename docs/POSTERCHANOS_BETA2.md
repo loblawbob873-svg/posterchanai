@@ -31,6 +31,8 @@ and production deployment verification; those are release procedures, not open f
 
 ## Follow-up UI task
 
-- [ ] Consolidate Music into one unified player (remove the competing widget/player UI), with a
+- [x] Consolidate Music into one unified player (remove the competing widget/player UI), with a
   clearer playback-button arrangement and a useful, polished equalizer while preserving its queue,
-  background playback, cross-device handoff, and car autoplay.
+  background playback, cross-device handoff, and car autoplay
+  (`test_music_unified_equalizer.py`, `test_music_launcher_preserves_playback.py`,
+  `test_android_music_controls.py`, `check_music_mobile.py`).

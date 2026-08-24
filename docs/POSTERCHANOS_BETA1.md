@@ -7,7 +7,9 @@ present in a published PosterChan Desktop build before it counts as shipped.
   windows must move between outputs and the saved layout must be restored.
 - [ ] Restart the desktop safely with Ctrl+Alt+Backspace, and open Task Manager with Ctrl+Alt+Delete.
 - [ ] Keep native Firefox, Telegram, Steam, terminals, and VM viewers attached to their PosterChan
-  frames while opening, focusing, moving, and resizing them; no black background windows.
+  frames while opening, focusing, moving, and resizing them; no black background windows. Steam and
+  every other native window must retain a working close action and be clamped wholly inside the
+  destination monitor after a drag or cross-output handoff—never stranded partly off-screen.
 - [ ] Keep the Start menu focused and searchable from the Super key over both native and PosterChan
   windows, without also opening Terminal.
 - [ ] Keep the power, volume, network, Nostr, battery, and community panels inside the usable screen

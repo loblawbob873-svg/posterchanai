@@ -7657,7 +7657,10 @@ body.os-on #os-root{pointer-events:auto}
 .ma-art .ic{width:26px;height:26px;color:var(--neon)}
 .ma-meta{flex:1 1 170px;min-width:0}
 .ma-meta b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px}
-.ma-ctl{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.ma-ctl{display:flex;align-items:center;justify-content:center;gap:9px;flex-wrap:nowrap}
+.ma-ctl .btn{width:42px;height:42px;padding:0;justify-content:center;border-radius:50%}
+.ma-ctl #ma-play{width:52px;height:52px;box-shadow:0 0 18px rgba(var(--accent-rgb),.35)}
+.ma-tools{flex:1 1 100%;display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
 /* The Music app's seek row. Full width of the panel (flex-basis 100% in a wrapping .ma-now), so the
  * bar is never squeezed to a stub by the buttons beside it. `touch-action:none` is load-bearing on a
  * phone: without it the browser claims the gesture as a page scroll and the pointermove events that
@@ -7709,8 +7712,28 @@ body.os-on #os-root{pointer-events:auto}
   min-height:32px}
 .mp-pl:focus-visible{outline:2px solid var(--neon);outline-offset:2px}
 .ma-ctl .btn.on{border-color:var(--neon);color:var(--neon)}
+.ma-eq{flex:1 1 100%;padding:13px;border:1px solid var(--line);border-radius:12px;
+  background:linear-gradient(145deg,rgba(var(--accent-rgb),.10),var(--panel));min-width:0}
+.ma-eq-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px}
+.ma-eq-presets{display:flex;gap:7px;overflow-x:auto;padding-bottom:10px;scrollbar-width:none}
+.ma-eq-presets::-webkit-scrollbar{display:none}
+.ma-eq-preset{flex:0 0 auto;min-height:34px;padding:6px 12px;border-radius:999px;border:1px solid var(--line);
+  background:var(--panel2);color:var(--muted);font:600 12px inherit;cursor:pointer}
+.ma-eq-preset.on{color:#06010f;border-color:transparent;background:linear-gradient(135deg,var(--neon),var(--neon2))}
+.ma-eq-bands{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.ma-eq-bands label{display:flex;flex-direction:column;gap:7px;color:var(--muted);font-size:12px;min-width:0}
+.ma-eq-bands label>span{display:flex;justify-content:space-between;gap:6px}
+.ma-eq-bands output{color:var(--text);font-variant-numeric:tabular-nums}
+.ma-eq-bands input{width:100%;accent-color:var(--neon);min-height:24px}
 .ma-q{width:100%}
 .music-app .music-list{flex:1;min-height:0;overflow-y:auto}
+@media(max-width:560px){
+  .ma-now{justify-content:center;padding:12px 10px;gap:11px}
+  .ma-meta{flex-basis:calc(100% - 74px)}
+  .ma-ctl{flex:1 1 100%;order:3}
+  .ma-seek-row{order:4}.ma-tools{order:5;justify-content:center}.ma-eq{order:6}
+  .ma-eq-bands{grid-template-columns:1fr;gap:8px}
+}
 
 /* The account chip at the foot of the start menu — where Windows 11 keeps it. */
 .os-foot{display:flex;align-items:center;gap:8px;padding:9px 4px 2px;margin-top:8px;

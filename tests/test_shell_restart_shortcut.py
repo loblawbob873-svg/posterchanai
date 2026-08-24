@@ -1,4 +1,6 @@
 from pathlib import Path
+import json
+import subprocess
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,7 +45,7 @@ def test_shell_restart_is_serialized_and_targets_only_the_shell_process():
     assert "pattern='[/]opt/posterchan/'" in restart
     assert "send_tick pc:restart" in restart
     assert "pkill" not in restart
-    assert "reloadIgnoringCache" in main
+    assert "recoverSurfaces(_shellSurfaces.values(), loadApp)" in main
     assert "ev.payload !== 'pc:restart'" in main
     assert "exec /usr/local/bin/pc-shell-start" in restart
     assert "retries" in start and "exit 1" in start
@@ -82,6 +84,27 @@ def test_alt_tab_is_compositor_owned_and_migrated_to_existing_accounts():
     assert "Mod1+Shift+Tab exec /usr/local/bin/pc-window-cycle previous" in cfg
     assert "pc-window-cycle" in ebuild
     assert helper.exists()
+
+
+def test_native_windows_have_standard_close_shortcut_on_new_and_existing_accounts():
+    cfg = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config").read_text()
+    installer = (ROOT / "os/gentoo.sh").read_text()
+    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
+    assert "bindsym Mod1+F4 kill" in cfg
+    assert "bindsym Mod1+F4 kill" in installer
+    assert "grep -qF 'Mod1+F4 kill'" in ebuild
+
+
+def test_restart_navigates_a_secondary_surface_that_is_still_about_blank():
+    helper = ROOT / "desktop/shell-recovery.js"
+    code = f"""
+      const {{recoverSurfaces}}=require({json.dumps(str(helper))});
+      const b={{url:'about:blank',shown:false,isDestroyed:()=>false,show(){{this.shown=true}}}};
+      const n=recoverSurfaces([{{browser:b}}], x=>{{x.url='https://poster.place/client'}});
+      process.stdout.write(JSON.stringify({{n,url:b.url,shown:b.shown}}));
+    """
+    got=json.loads(subprocess.check_output(["node","-e",code],text=True))
+    assert got == {"n":1,"url":"https://poster.place/client","shown":True}
 
 
 def test_upgrade_restores_native_window_decorations_in_old_identity_configs():
