@@ -108,6 +108,9 @@ CHECKS = {
     "check_meme_mobile":               dict(group="ui", secs=600),
     "check_meme_render_match":         dict(group="ui", secs=600),
     "check_calendar_mobile":           dict(group="ui", secs=600),
+    # Both drive a local stub server and need no instance, so they are `ui`, not `live`.
+    "check_code_editor":               dict(group="ui", secs=420),
+    "check_sharelink":                 dict(group="ui", secs=420),
     "check_contacts_mobile":           dict(group="ui", secs=600),
     "check_vault_mobile":              dict(group="ui", secs=600),
     "check_websearch_mobile":          dict(group="ui", secs=600),

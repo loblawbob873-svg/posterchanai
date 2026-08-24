@@ -252,5 +252,52 @@ class TheStateRules(unittest.TestCase):
         self.assertNotIn("PC.loadModule", self.src)
 
 
+class TheViewIsWiredInEveryPlace(unittest.TestCase):
+    """A view is registered in SEVEN places and each omission fails differently and quietly.
+
+    This is the shape the repo already knows from commands ("a new command must be added BOTH to
+    COMMANDS and to the Telegram lists, or it works in the web UI and falls through to the LLM on
+    Telegram"). Here: no route and the screen is blank; missing from VALID and a deep link or a
+    restored session silently lands on Home; missing from the title map and the header reads `code`;
+    missing from the nav and there is no way in; missing from INSTANCE_VIEWS and a server-less
+    desktop build offers a screen that is entirely server; no <script> tag and the module never
+    loads; not precached and a cold offline load 404s.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        cls.app = open(os.path.join(root, "static", "js", "client", "app.js"),
+                       encoding="utf-8").read()
+        cls.html = open(os.path.join(root, "templates", "client.html"), encoding="utf-8").read()
+        cls.sw = open(os.path.join(root, "static", "js", "client", "sw.js"), encoding="utf-8").read()
+
+    def test_it_has_a_route(self):
+        self.assertIn("renderModuleView('code','code.js','PCCode','render')", self.app)
+
+    def test_a_deep_link_or_a_restored_session_can_reach_it(self):
+        i = self.app.index("const VALID = new Set([")
+        self.assertIn("'code'", self.app[i:i + 700])
+
+    def test_the_header_has_a_name_for_it(self):
+        i = self.app.index("$('#view-title').textContent")
+        self.assertIn("code:'PosterChan Code", self.app[i:i + 2000])
+
+    def test_there_is_a_way_in(self):
+        i = self.app.index("const items=[['ai','ai','PosterChan AI']")
+        self.assertIn("['code',", self.app[i:i + 1500])
+
+    def test_a_server_less_build_does_not_offer_it(self):
+        """The whole screen is the server: no workspace to open, no formatter, nothing to save to."""
+        i = self.app.index("const INSTANCE_VIEWS = new Set([")
+        self.assertIn("'code',", self.app[i:i + 1600])
+
+    def test_the_module_is_actually_loaded(self):
+        self.assertIn("/static/js/client/code.js", self.html)
+
+    def test_it_is_cached_with_its_siblings(self):
+        self.assertIn("'/static/js/client/code.js'", self.sw)
+
+
 if __name__ == "__main__":
     unittest.main()

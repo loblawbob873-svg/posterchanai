@@ -48,9 +48,13 @@ async def shared_file(request: Request, sha: str):
     sha = (sha or "").split(".")[0].lower()
     if not _SHA.match(sha):
         raise HTTPException(status_code=404, detail="Not found")
+    # (request, name, context) — the modern Starlette signature. The old (name, {"request": …})
+    # order still works and warns, and a deprecation that is merely tolerated becomes a broken node
+    # on whichever upgrade finally removes it.
     return _TEMPLATES.TemplateResponse(
+        request,
         "sharelink.html",
-        {"request": request, "blob_url": "/blossom/" + sha, "sha": sha},
+        {"blob_url": "/blossom/" + sha, "sha": sha},
         # The page holds no secret itself, but it is pointless to let a CDN or a proxy keep a copy
         # of a one-off transfer page, and `no-store` keeps the URL out of a shared cache index.
         headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
