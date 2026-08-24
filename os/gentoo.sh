@@ -1631,7 +1631,9 @@ PROFILE
 	# are therefore one object across resizing, maximising and monitor handoff.
 	default_border none
 	default_floating_border normal 3
-	font pango:Sans 10
+	font pango:Sans 11
+	titlebar_border_thickness 0
+	titlebar_padding 8 6
 	client.focused          #241438 #241438 #f7f4ff #16d9e3 #16d9e3
 	client.focused_inactive #171222 #171222 #bcb3cb #4b3a65 #4b3a65
 	client.unfocused        #100d18 #100d18 #8f879c #30263f #30263f
@@ -1698,7 +1700,7 @@ PROFILE
 	bindsym $mod+Left  exec /usr/local/bin/pc-window-snap left
 	bindsym $mod+Right exec /usr/local/bin/pc-window-snap right
 	bindsym $mod+Up    exec /usr/local/bin/pc-window-snap max
-	bindsym --release button1 exec /usr/local/bin/pc-window-snap edge
+	bindsym --border --release button1 exec /usr/local/bin/pc-window-snap edge
 	bindsym Ctrl+$mod+Left  focus output left
 	bindsym Ctrl+$mod+Right focus output right
 	bindsym Ctrl+$mod+Up    focus output up

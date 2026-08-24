@@ -62,10 +62,19 @@ def test_dragging_a_titlebar_to_an_output_edge_snaps_without_stealing_app_clicks
     for cfg in (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config",
                 ROOT / "os/gentoo.sh"):
         src = cfg.read_text()
-        assert "bindsym --release button1 exec /usr/local/bin/pc-window-snap edge" in src
-        assert "--whole-window" not in src[src.index("pc-window-snap edge") - 80:src.index("pc-window-snap edge")]
+        assert "bindsym --border --release button1 exec /usr/local/bin/pc-window-snap edge" in src
+        binding = src[src.index("pc-window-snap edge") - 100:src.index("pc-window-snap edge")]
+        assert "--border" in binding
+        assert "--whole-window" not in binding
     ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
     assert "pc-window-snap pc-key" in ebuild
+
+
+def test_existing_identity_configs_receive_the_posterchan_native_chrome():
+    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
+    for rule in ("titlebar_border_thickness 0", "titlebar_padding 8 6",
+                 "client.focused #241438", "client.unfocused #100d18"):
+        assert rule in ebuild
 
 
 def test_focusing_a_posterchan_window_parks_compositor_windows_above_it():

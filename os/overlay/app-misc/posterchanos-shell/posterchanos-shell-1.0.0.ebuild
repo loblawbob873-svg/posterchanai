@@ -123,6 +123,19 @@ pkg_postinst() {
 			'for_window [class="(?i)^(TelegramDesktop|telegram-desktop)$"] floating enable, border normal 3'; do
 			grep -qF "${native_rule}" "${cfg}" || echo "${native_rule}" >>"${cfg}"
 		done
+		# Private identity configs are copied from the image and do not inherit later changes to the
+		# system config. Install the same compact PosterChan chrome here so native Firefox/Telegram
+		# do not fall back to Sway's blue title bar after an update.
+		for chrome_rule in \
+			'font pango:Sans 11' \
+			'titlebar_border_thickness 0' \
+			'titlebar_padding 8 6' \
+			'client.focused #241438 #241438 #f7f4ff #16d9e3 #16d9e3' \
+			'client.focused_inactive #171222 #171222 #bcb3cb #4b3a65 #4b3a65' \
+			'client.unfocused #100d18 #100d18 #8f879c #30263f #30263f' \
+			'client.urgent #7a2145 #7a2145 #ffffff #ff4f8b #ff4f8b'; do
+			grep -qF "${chrome_rule}" "${cfg}" || echo "${chrome_rule}" >>"${cfg}"
+		done
 		# Super+Arrow is the familiar snap gesture. Older configs used it only to move keyboard focus
 		# between outputs, leaving native Firefox/Telegram/Steam with no snapping at all.
 		sed -i -E '/^bindsym[[:space:]]+\$mod\+(Left|Right|Up|Down)[[:space:]]+focus output/d' "${cfg}"
@@ -152,8 +165,8 @@ pkg_postinst() {
 		grep -qF 'Mod1+Shift+Tab exec /usr/local/bin/pc-window-cycle previous' "${cfg}" || \
 			echo 'bindsym --no-repeat Mod1+Shift+Tab exec /usr/local/bin/pc-window-cycle previous' >>"${cfg}"
 		grep -qF 'Mod1+F4 kill' "${cfg}" || echo 'bindsym Mod1+F4 kill' >>"${cfg}"
-		grep -qF 'pc-window-snap edge' "${cfg}" || \
-			echo 'bindsym --release button1 exec /usr/local/bin/pc-window-snap edge' >>"${cfg}"
+		sed -i -E '/bindsym .*button1 exec \/usr\/local\/bin\/pc-window-snap edge/d' "${cfg}"
+		echo 'bindsym --border --release button1 exec /usr/local/bin/pc-window-snap edge' >>"${cfg}"
 		cat >>"${cfg}" <<-'SWAY_RECOVERY'
 
 		# Screenshots work even while the desktop renderer is restarting.
