@@ -64,9 +64,8 @@
     const decoded=window.PosterCord.openInvite;
     /* openInvite validates the naddr and fragment; use its decoded bootstrap relays by first trying
        the shared CORD set plus the current pool. queryFrom covers relays outside the pool, query covers inside. */
-    const filter=[{kinds:[33301],authors:[window.NostrTools?naddrSigner(parts.naddr):undefined].filter(Boolean),'#d':[''],limit:1}];
-    let parsed; try{ parsed=window.PosterCord.inviteDetails?window.PosterCord.inviteDetails(url):null; }catch(_){}
-    const authors=parsed&&parsed.linkSigner?[parsed.linkSigner]:undefined; if(authors)filter[0].authors=authors; else delete filter[0].authors;
+    const parsed=window.PosterCord.inviteDetails(url);
+    const filter=[{kinds:[33301],authors:[parsed.linkSigner],'#d':[''],limit:1}];
     const relays=[...new Set([...(parsed&&parsed.bootstrapRelays||[]),...CORD_RELAYS])];
     const [pool,external]=await Promise.all([p.relayQuery?p.relayQuery(filter,6000):[],p.relayQueryFrom(relays,filter,{timeout:7000,max:8})]);
     const opened=decoded(url,[...(pool||[]),...(external||[])]),bundle=opened.bundle;
