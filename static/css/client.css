@@ -8004,7 +8004,7 @@ html.os-on #upload-badge.upbadge{z-index:333}
    the useful browsing facts, so keep those columns readable and omit Type/Modified in this pane. */
 #host-pane .fx-cols,
 #host-pane .files-grid.details .file-card.row{
-  grid-template-columns:minmax(140px,1fr) 88px var(--fx-acts)
+  grid-template-columns:24px minmax(140px,1fr) 88px var(--fx-acts)
 }
 #host-pane .fx-c-type,#host-pane .fx-c-modified,
 #host-pane .fx-type,#host-pane .fx-mod{display:none}

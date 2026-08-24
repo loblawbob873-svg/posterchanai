@@ -202,7 +202,10 @@
           <span class="fc-acts">${e.dir ? '' : H(fmt(e.size))}</span></div></div>`;
     }).join('');
 
-    return (details ? (u.cols ? u.cols(false) : '') : '') + cells;
+    /* These rows DO have a selection control.  Passing false used to omit its header cell while
+     * leaving the button in every row, shifting Name under the checkbox and making the first
+     * (apparently empty) column consume most of a narrow host pane. */
+    return (details ? (u.cols ? u.cols(true) : '') : '') + cells;
   }
 
   /* THE ROWS A DETAILS VIEW DRAWS carry `data-p` too, and `_fxDetailsRow` has no slot for it — it
@@ -265,7 +268,7 @@
              <button class="btn btn-ghost small hf-rename"${_sel.size === 1 ? '' : ' disabled'}>Rename</button>
              <button class="btn btn-ghost small hf-del">Move to trash</button>` : ''}
          </div>
-         <div class="files-grid${details ? ' details nosel' : ''}" id="hf-grid">${
+         <div class="files-grid${details ? ' details' : ''}" id="hf-grid">${
            q && !rows.length
              ? `<div class="empty">Nothing in ${H(pretty(_path, _home))} matches “${H(q)}”.</div>`
              : rowsHTML(rows, u)}</div>`;

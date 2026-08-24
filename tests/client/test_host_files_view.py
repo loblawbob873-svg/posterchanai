@@ -113,6 +113,21 @@ class HostFilesView(unittest.TestCase):
         self.assertIn("hf-paste", host)
         self.assertIn("HOST().transfer", host)
 
+    def test_details_name_stays_aligned_with_selectable_rows(self):
+        """This Computer rows carry a checkbox, so the header and CSS must reserve that same
+        column.  Calling the grid ``nosel`` made its flexible first column belong to the checkbox;
+        it looked empty and pushed the filename into the tiny Size column."""
+        host = open(MOD, encoding="utf-8").read()
+        css = open(os.path.join(ROOT, "static", "css", "client.css"), encoding="utf-8").read()
+        self.assertIn("u.cols(true)", host)
+        self.assertNotIn("details nosel", host)
+        host_rule = re.search(
+            r"#host-pane \.fx-cols,\s*#host-pane \.files-grid\.details \.file-card\.row\s*"
+            r"\{([^}]+)\}", css)
+        self.assertTrue(host_rule, "This Computer has no pane-width-aware details layout")
+        columns = re.sub(r"\s+", " ", host_rule.group(1))
+        self.assertIn("grid-template-columns:24px minmax(140px,1fr) 88px var(--fx-acts)", columns)
+
     def test_a_home_path_is_shortened_but_never_the_one_used(self):
         """`/home/npub1fdtthaq…/Documents` is unreadable and its leading two thirds never change."""
         out = self.js("out.a = F.pretty('/home/u/Documents', '/home/u');"
