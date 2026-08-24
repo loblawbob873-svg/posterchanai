@@ -27,6 +27,16 @@ assert.deepStrictEqual(negative.map(x=>[x.name,x.x,x.y]),[
 assert(commands(negative)[0].includes('pos 0 20'));
 assert(commands(negative)[1].includes('pos 3870 0'));
 
+const wideLive=[
+ {name:'DP-1',active:true,rect:{x:0,y:20,width:3840,height:2560},scale:1,modes:[]},
+ {name:'DP-2',active:true,rect:{x:3870,y:0,width:3840,height:2560},scale:1,modes:[]}
+];
+const joined=validate([
+ {name:'DP-1',enabled:true,x:0,y:20,scale:1,transform:'normal'},
+ {name:'DP-2',enabled:true,x:3870,y:0,scale:1,transform:'normal'}
+],wideLive);
+assert.strictEqual(joined[1].x,3840, 'small horizontal gaps become pointer walls');
+
 (async()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'pc-display-'));
  const seen=[]; const wm={outputs:async()=>JSON.parse(JSON.stringify(live)),command:async c=>seen.push(c)};

@@ -56,6 +56,34 @@ function validate(layout, actual){
   const minX=Math.min(...enabled.map(o=>o.x));
   const minY=Math.min(...enabled.map(o=>o.y));
   if(minX || minY) for(const o of enabled){ o.x-=minX; o.y-=minY; }
+  /* A small empty strip between otherwise-adjacent displays is an unreachable part of Sway's
+   * coordinate space, not useful spacing. The pointer stops there and a dragged native window can
+   * lose its destination and snap back. Snap nearby overlapping edges together; retain deliberate
+   * large arrangements and perpendicular offsets. */
+  const size=o=>{
+    const live=byName.get(o.name)||{}, rect=live.rect||{};
+    let w=Number(rect.width)||1, h=Number(rect.height)||1;
+    if(o.mode){ const m=/^(\d+)x(\d+)/.exec(o.mode); if(m){w=+m[1]/o.scale;h=+m[2]/o.scale;} }
+    return {w:Math.round(w),h:Math.round(h)};
+  };
+  const overlap=(a0,a1,b0,b1)=>Math.min(a1,b1)>Math.max(a0,b0);
+  for(const cur of enabled){
+    const cs=size(cur); let bestX=null,bestY=null;
+    for(const other of enabled){
+      if(other===cur) continue;
+      const os=size(other);
+      if(overlap(cur.y,cur.y+cs.h,other.y,other.y+os.h)){
+        const gap=cur.x-(other.x+os.w);
+        if(gap>0 && gap<=256 && (bestX===null || gap<bestX)) bestX=gap;
+      }
+      if(overlap(cur.x,cur.x+cs.w,other.x,other.x+os.w)){
+        const gap=cur.y-(other.y+os.h);
+        if(gap>0 && gap<=256 && (bestY===null || gap<bestY)) bestY=gap;
+      }
+    }
+    if(bestX!==null) cur.x-=bestX;
+    if(bestY!==null) cur.y-=bestY;
+  }
   return out;
 }
 
