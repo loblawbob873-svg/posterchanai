@@ -76,6 +76,40 @@ class FilesOpenInCode(unittest.TestCase):
                      "conf.yaml", "a.css", "a.txt"):
             self.assertIsNotNone(rx.search(text), f"Code will not open {text}")
 
+    def test_a_file_with_no_dot_can_still_be_opened(self):
+        """`_CODE_EXT` anchors on `\.`, so `Makefile`, `Dockerfile`, `README`, `LICENSE` and
+        `.gitignore` could never match it however they were spelled in the alternation — and those
+        are exactly the files somebody opens an editor for."""
+        self.assertIn("_CODE_BARE", self.app, "a file with no extension can never be opened")
+        m = re.search(r"const _CODE_BARE = (/[^\n]*?/i);", self.app)
+        self.assertTrue(m, "_CODE_BARE moved — re-point this test")
+        rx = re.compile(m.group(1)[1:-2], re.I)
+        for name in ("Makefile", "Dockerfile", "README", "LICENSE", ".gitignore", ".env"):
+            self.assertIsNotNone(rx.search(name), f"{name} is still unopenable")
+
+    def test_the_server_s_mime_is_believed_when_the_name_says_nothing(self):
+        """A file uploaded without an extension still has a type, and `text/*` is a better witness
+        than a name somebody typed."""
+        self.assertIn("_codeable", self.app)
+        i = self.app.index("const _codeable")
+        body = self.app[i:self.app.index(";", i)]
+        self.assertIn("text\\/", body, "the MIME type is ignored entirely")
+
+    def test_a_pdf_can_be_opened_in_office(self):
+        """Collabora opens and annotates PDFs, and a PDF is the document people actually have. It
+        was in NEITHER list, so the commonest case offered no button at all."""
+        m = re.search(r"const _OFFICE_EXT = (/[^\n]*?/i);", self.app)
+        rx = re.compile(m.group(1)[1:-2], re.I)
+        self.assertIsNotNone(rx.search("statement.pdf"), "a PDF still offers no way to open it")
+
+    def test_the_openers_are_styled_like_the_other_actions(self):
+        """With no rule they fall back to the browser's default <button>: a grey chunky control in a
+        dark theme beside three flat icon buttons — easy to miss, and it reads as debris."""
+        css = _read(os.path.join(ROOT, "static", "css", "client.css"))
+        self.assertIn(".fc-acts .officebtn", css)
+        self.assertIn(".fc-acts .codebtn", css)
+        self.assertIn(".fc-acts .codesync", css)
+
     def test_a_spreadsheet_belongs_to_office_not_to_code(self):
         self.assertIsNone(self._code_ext().search("sheet.csv"),
                           "csv is in _OFFICE_EXT; offering both makes the two buttons fight")

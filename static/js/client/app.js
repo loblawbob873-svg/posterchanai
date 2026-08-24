@@ -16001,11 +16001,22 @@
     const t = type || mimeForName(name);
     return t ? new File([bytes], name, { type: t }) : new File([bytes], name);
   }
-  const _OFFICE_EXT = /\.(doc|docx|odt|rtf|xls|xlsx|xlsm|ods|csv|ppt|pptx|odp)$/i;
+  const _OFFICE_EXT = /\.(doc|docx|odt|rtf|xls|xlsx|xlsm|ods|csv|ppt|pptx|odp|pdf|odg|otp|ots|ott)$/i;
+  const _officeable = (name, mime) => _OFFICE_EXT.test(name || '')
+    || /^application\/pdf/i.test(String(mime || ''))
+    || /officedocument|opendocument|msword|ms-excel|ms-powerpoint/i.test(String(mime || ''));
   /* WHAT POSTERCHAN CODE WILL OPEN FROM FILES. Text, by extension — the editor is a text editor and
    * a .png opened as text is a screenful of mojibake and a corrupted file the moment it is saved.
    * `.csv` is deliberately absent: it is in _OFFICE_EXT above, where a spreadsheet belongs. */
-  const _CODE_EXT = /\.(txt|md|markdown|json|jsonc|ya?ml|toml|ini|cfg|conf|env|log|xml|svg|html?|css|scss|less|js|mjs|cjs|jsx|ts|tsx|py|rb|php|go|rs|java|kt|swift|c|h|cpp|hpp|cs|sh|bash|zsh|fish|sql|diff|patch|gitignore|dockerfile|makefile)$/i;
+  const _CODE_EXT = /\.(txt|md|markdown|json|jsonc|ya?ml|toml|ini|cfg|conf|env|log|xml|svg|html?|css|scss|less|js|mjs|cjs|jsx|ts|tsx|py|rb|php|go|rs|java|kt|swift|c|h|cpp|hpp|cs|sh|bash|zsh|fish|sql|diff|patch)$/i;
+  /* FILES WITH NO DOT ARE STILL TEXT. `_CODE_EXT` anchors on `\.` — so `Makefile`, `Dockerfile`,
+   * `README`, `LICENSE` and `.gitignore` could never match it, however they were spelled in the
+   * alternation. These are exactly the files somebody opens an editor for. */
+  const _CODE_BARE = /^(makefile|dockerfile|licen[cs]e|readme|changelog|authors|notice|procfile|\.gitignore|\.gitattributes|\.env(\..+)?|\.editorconfig|\.dockerignore)$/i;
+  /* AND THE SERVER'S OWN ANSWER. A file uploaded without an extension still has a MIME type, and
+   * `text/*` is a better witness than a name somebody typed. */
+  const _codeable = (name, mime) => _CODE_EXT.test(name || '') || _CODE_BARE.test(String(name || '').trim())
+    || /^text\//i.test(String(mime || '')) || /^application\/(json|xml|x-sh|javascript)/i.test(String(mime || ''));
   // A text editor is not a place to open a 40 MB log, and the buffer is held in localStorage.
   const _CODE_MAX = 2 * 1024 * 1024;
   // NIP-92 source metadata for media we've uploaded this session, keyed by the exact URL we append to
@@ -19450,7 +19461,7 @@
       const act = (it.dir ? ''
         : `<button class="dlsync" data-sha="${enc(it.sha||'')}"${it.chunks?` data-chunks="${enc(it.chunks.join(','))}"`:''} data-name="${enc(it.name)}" data-path="${enc(it.path||'')}" title="Download (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button>`
           + `<button class="keepsync" data-sha="${enc(it.sha||'')}"${it.chunks?` data-chunks="${enc(it.chunks.join(','))}"`:''} data-name="${enc(it.name)}" title="Save a copy to your drive"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg></button>`
-          + (_CODE_EXT.test(it.name) ? `<button class="codesync" data-sha="${enc(it.sha||'')}"${it.chunks?` data-chunks="${enc(it.chunks.join(','))}"`:''} data-name="${enc(it.name)}" data-path="${enc(it.path||'')}" title="Edit in PosterChan Code — saves to every device">&lt;/&gt;</button>` : ''))
+          + (_codeable(it.name, '') ? `<button class="codesync" data-sha="${enc(it.sha||'')}"${it.chunks?` data-chunks="${enc(it.chunks.join(','))}"`:''} data-name="${enc(it.name)}" data-path="${enc(it.path||'')}" title="Edit in PosterChan Code — saves to every device">&lt;/&gt;</button>` : ''))
         + edits;
       const nav = it.dir ? ` data-dir="${enc(it.name)}"` : '';
       if(details) return _fxDetailsRow({ dir:!!it.dir, name:it.name, icon:icon, thumb:thumbAttrs,
@@ -20213,10 +20224,10 @@
       const m=FilesIdx.meta(b.sha256)||{}; const nm=m.name||b.name||_vodNameMap[b.sha256]||'';
       const ext=extOfBlob(b, m.name?m:{name:nm, mime:m.mime});
       const dlName=downloadName(b, nm, ext);
-      const office=!!CFG.office_enabled && _OFFICE_EXT.test(nm||dlName);
+      const office=!!CFG.office_enabled && _officeable(nm||dlName, m.mime||b.type);
       // Editable HERE, in PosterChan Code. Independent of office_enabled: the editor is this app,
       // not a Collabora container, so it works on a node that never installed one.
-      const code=_CODE_EXT.test(nm||dlName);
+      const code=_codeable(nm||dlName, m.mime||b.type);
       const sel=_filesSel.has(b.sha256)?' selected':'';
       const box=`<input type="checkbox" class="selbox" data-sha="${b.sha256}"${_filesSel.has(b.sha256)?' checked':''} title="Select">`;
       const del=`<button class="del" data-sha="${b.sha256}" aria-label="Delete"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>`;
