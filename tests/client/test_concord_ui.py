@@ -40,7 +40,7 @@ def test_concord_is_precached_and_old_bundles_self_heal_the_nav():
 def test_concord_owns_a_versioned_stylesheet_so_stale_shell_css_cannot_unstyle_it():
     assert 'static/css/concord.css' in HTML
     assert "data-concord-css" in CONCORD
-    assert "concord.css?v=8" in CONCORD
+    assert "concord.css?v=9" in CONCORD
     assert "'/static/css/concord.css'" in (ROOT / "static/js/client/sw.js").read_text()
     assert ".cc-app" in CONCORD_CSS and "grid-template-columns:68px 248px" in CONCORD_CSS
     assert CONCORD_CSS.count('{') == CONCORD_CSS.count('}'), "Concord CSS has an unclosed rule"
@@ -165,3 +165,14 @@ def test_concord_controls_are_phone_sized_and_single_column():
 def test_notification_copy_does_not_claim_server_can_read_room_messages():
     assert "Notification settings" in CONCORD
     assert "1059" in PUSH, "direct Concord invites must still use the giftwrap push path"
+
+
+def test_concord_messages_support_persisted_replies_and_reactions():
+    assert 'function messageId(m)' in CONCORD
+    assert 'data-cc-reply=' in CONCORD
+    assert 'reply:replyTarget?' in CONCORD
+    assert 'data-cc-react=' in CONCORD
+    assert 'data-cc-react-toggle=' in CONCORD
+    assert 'saveTestMessages(room.naddr,m)' in CONCORD
+    assert '.cc-message-reply' in CONCORD_CSS
+    assert '.cc-reaction-picker' in CONCORD_CSS

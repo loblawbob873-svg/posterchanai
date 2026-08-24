@@ -249,6 +249,52 @@ class OneFileCanBeSelected(unittest.TestCase):
         self.assertIn(".files-grid:not(.details) .selbox-gap", self.css)
 
 
+class TheOfficeEditorGetsTheScreen(unittest.TestCase):
+    """`modal()` caps its box at min(720px,96vw).
+
+    The office frame asked for `min(94vw,1400px)` INSIDE that, so the iframe was clipped to 720px
+    and the modal scrolled: a small white rectangle showing the top-left corner of a document —
+    "open in office on desktop was a tiny ass window that is white". A sheet that has to be bigger
+    than the default has to SAY so, the way the composer does with `.cmp-modal`.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _read(APP)
+        cls.css = _read(os.path.join(ROOT, "static", "css", "client.css"))
+
+    def test_the_sheet_asks_to_be_wide(self):
+        self.assertIn("office-modal", self.app, "the office sheet never marks itself")
+        # EVERY rule for that selector, not the last one — the last is the phone media query, which
+        # is narrow on purpose. Keeping only it reported the desktop sheet as too small.
+        rules = [body for sel, body in re.findall(r"([^{}]*)\{([^{}]*)\}",
+                                                  re.sub(r"/\*.*?\*/", "", self.css, flags=re.S))
+                 if sel.strip().endswith(".modal.office-modal")]
+        self.assertTrue(rules, "no .modal.office-modal rule, so the 720px cap still applies")
+        widths = [int(m.group(1)) for m in
+                  (re.search(r"width:min\((\d+)px", b) for b in rules) if m]
+        self.assertTrue(widths and max(widths) > 720,
+                        "the office sheet is no wider than an ordinary modal")
+
+    def test_the_frame_fills_the_sheet_instead_of_naming_its_own_size(self):
+        """Two elements naming their own width is how they disagree again the next time one moves."""
+        rule = None
+        for sel, body in re.findall(r"([^{}]*)\{([^{}]*)\}",
+                                    re.sub(r"/\*.*?\*/", "", self.css, flags=re.S)):
+            if sel.strip() == ".office-frame":
+                rule = body
+        self.assertIsNotNone(rule)
+        self.assertNotIn("vw", rule, "the frame still sizes itself against the viewport, not its box")
+        self.assertIn("flex:1 1 auto", rule, "the frame does not grow to fill the sheet")
+
+    def test_it_is_marked_before_the_editor_is_launched(self):
+        """The form submits into the iframe; sizing it afterwards reloads the layout under a
+        document that is already loading."""
+        i = self.app.index("root.classList.add('office-modal')")
+        j = self.app.index("$('.office-launch',root).submit()")
+        self.assertLess(i, j)
+
+
 class TheExplorerToolbarStaysLiftable(unittest.TestCase):
     """`_fxBarHTML` is pulled out of app.js BY NAME and evaluated on its own by
     scripts/check_files_explorer.py — that is what stops the check measuring a copy of the markup
