@@ -39,7 +39,7 @@ def test_concord_is_precached_and_old_bundles_self_heal_the_nav():
 def test_concord_owns_a_versioned_stylesheet_so_stale_shell_css_cannot_unstyle_it():
     assert 'static/css/concord.css' in HTML
     assert "data-concord-css" in CONCORD
-    assert "concord.css?v=3" in CONCORD
+    assert "concord.css?v=4" in CONCORD
     assert "'/static/css/concord.css'" in (ROOT / "static/js/client/sw.js").read_text()
     assert ".cc-app" in CONCORD_CSS and "grid-template-columns:68px 248px" in CONCORD_CSS
     assert CONCORD_CSS.count('{') == CONCORD_CSS.count('}'), "Concord CSS has an unclosed rule"
@@ -59,6 +59,15 @@ def test_concord_has_discord_style_panes_and_dm_style_composer():
         assert surface in CONCORD
     assert 'Message #${state.channel' in CONCORD
     assert "['concord','users','Concord']" in APP, "mobile Discover must expose Concord"
+
+
+def test_concord_has_honest_creation_and_public_discovery_empty_states():
+    assert 'Create community' in CONCORD
+    assert 'Create a test community' in CONCORD
+    assert 'local:true' in CONCORD
+    assert 'No public invites found' in CONCORD
+    assert 'not published to relays' in CONCORD
+    assert 'cc-public-room' in CONCORD_CSS
 
 
 def test_invite_parser_requires_naddr_and_secret_fragment():
