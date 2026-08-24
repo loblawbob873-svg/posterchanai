@@ -74,27 +74,30 @@ CHECKS = {
     "check_client_icon_themes":        dict(group="live", secs=600),
     "check_client_mobile":             dict(group="live", secs=600),
     "check_dm_video_live":             dict(group="live", secs=420),
-    "check_drive_blob_fetch":          dict(group="live", secs=420),
-    "check_music_mobile":              dict(group="live", secs=420),
-    "check_nip46_signer":              dict(group="live", secs=420),
+    "check_drive_blob_fetch":          dict(group="live", secs=420,
+                                              live_args=[], live_env={"PC_ORIGIN": "{live}"}),
+    "check_music_mobile":              dict(group="live", secs=420, serial=True),
     # Kills a relay under a live session and takes the signer away under a live request. Slow by
     # construction: the waits ARE the check (7s down is longer than the retry that used to be all
     # there was, and the "answered in under 55s" bound is what separates a re-send from the ceiling).
-    "check_nip46_reconnect":           dict(group="live", secs=600),
+    # These two create their own ws:// loopback relays. Running the page over HTTPS makes Chromium
+    # correctly block that mixed-content socket and reports the security policy as a signer fault.
+    "check_nip46_reconnect":           dict(group="ui", secs=600),
+    "check_nip46_signer":              dict(group="ui", secs=420),
+    "check_qr_scan":                   dict(group="ui", secs=900),
     "check_os_apps":                   dict(group="live", secs=900),
     # Two browsers, three pairings, and a clock-skew case that has to time out to prove it works.
-    "check_qr_device_login":           dict(group="live", secs=900),
-    # A fake camera (Chrome's --use-file-for-fake-video-capture) pointed at a real signer QR, in
-    # three framings. Needs node, to render the video through the client's own encoder.
-    "check_qr_scan":                   dict(group="live", secs=900),
+    "check_qr_device_login":           dict(group="live", secs=900, serial=True),
     "check_repo_view_mobile":          dict(group="live", secs=420),
-    "check_search_profile_stability":  dict(group="live", secs=1800),
+    "check_search_profile_stability":  dict(group="live", secs=1800,
+                                              live_args=["5", "{live}"]),
     "check_timeline_ghosts":           dict(group="live", secs=600),
     "check_websearch_pages":           dict(group="live", secs=420),
     "check_webxdc_gallery":            dict(group="live", secs=420),
-    "check_url_reading":               dict(group="live", secs=900),
+    "check_url_reading":               dict(group="live", secs=900,
+                                              live_args=["--base", "{live}"]),
     # Bundles the desktop app's www/ and then wants an instance for the non-standalone half.
-    "check_desktop_standalone":        dict(group="live", secs=600),
+    "check_desktop_standalone":        dict(group="ui", secs=600),
 
     # --- self-contained, but slower than the default ---------------------------------------------
     "check_os_desktop":                dict(group="ui", secs=900),
@@ -163,6 +166,8 @@ def discover():
         meta = dict(CHECKS.get(p.stem) or {})
         found.append(dict(name=p.stem, path=p, group=meta.get("group", "ui"),
                           secs=meta.get("secs", DEFAULT_SECS), why=meta.get("why", ""),
+                          live_args=meta.get("live_args"), live_env=meta.get("live_env", {}),
+                          serial=meta.get("serial", p.stem == "check_drive_fresh_pair"),
                           registered=p.stem in CHECKS))
     return found
 
@@ -195,7 +200,11 @@ def run_one(job, live, tmp, idx):
     env.setdefault("PYTHONUNBUFFERED", "1")
     argv = [PY, str(job["path"])]
     if job["group"] == "live":
-        argv.append(live)
+        spec = job.get("live_args")
+        argv.extend([str(x).replace("{live}", live) for x in
+                     ([live] if spec is None else spec)])
+        for key, value in (job.get("live_env") or {}).items():
+            env[key] = str(value).replace("{live}", live)
     t0 = time.time()
     try:
         r = subprocess.run(argv, cwd=ROOT, env=env, capture_output=True, text=True,
@@ -364,12 +373,18 @@ def main():
 
     jobs = args.jobs or max(1, min(6, (os.cpu_count() or 4) // 2))
     if runnable:
-        say(f"  {C['dim']}…{len(runnable)} browser check(s), {jobs} at a time{C['off']}")
+        serial = [c for c in runnable if c.get("serial")]
+        parallel = [c for c in runnable if not c.get("serial")]
+        say(f"  {C['dim']}…{len(runnable)} browser check(s), {jobs} at a time"
+            + (f", {len(serial)} memory-heavy check(s) serialized" if serial else "")
+            + f"{C['off']}")
         with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
             futs = {pool.submit(run_one, c, args.live, tmp, i): c
-                    for i, c in enumerate(runnable)}
+                    for i, c in enumerate(parallel)}
             for f in concurrent.futures.as_completed(futs):
                 report(f.result())
+        for i, c in enumerate(serial, start=len(parallel)):
+            report(run_one(c, args.live, tmp, i))
 
     took = time.time() - t0
     passed = [r for r in results if r["verdict"] == "PASS"]

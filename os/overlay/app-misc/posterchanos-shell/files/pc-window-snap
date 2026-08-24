@@ -23,8 +23,8 @@ def focused(node, output=None):
 
 def main():
     side = sys.argv[1] if len(sys.argv) > 1 else ""
-    if side not in ("left", "right", "max"):
-        raise SystemExit("usage: pc-window-snap left|right|max")
+    if side not in ("left", "right", "max", "edge"):
+        raise SystemExit("usage: pc-window-snap left|right|max|edge")
     hit = focused(json.loads(sway("-t", "get_tree", "-r")))
     if not hit:
         return
@@ -34,6 +34,18 @@ def main():
     box = out.get("rect") or {}
     x, y = int(box.get("x", 0)), int(box.get("y", 0))
     width, height = int(box.get("width", 1)), max(1, int(box.get("height", 1)) - 72)
+    if side == "edge":
+        r = win.get("rect") or {}
+        # This mode runs on a title-bar button release. A release away from an edge is deliberately
+        # a no-op; it must never turn an ordinary click or small move into a resize.
+        if int(r.get("y", y + 1000)) <= y + 60:
+            side = "max"
+        elif int(r.get("x", x + 1000)) <= x + 28:
+            side = "left"
+        elif int(r.get("x", x)) + int(r.get("width", 0)) >= x + width - 28:
+            side = "right"
+        else:
+            return
     if side == "max":
         nx, nw = x, width
     else:

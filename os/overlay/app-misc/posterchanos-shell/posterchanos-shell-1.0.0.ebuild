@@ -152,6 +152,8 @@ pkg_postinst() {
 		grep -qF 'Mod1+Shift+Tab exec /usr/local/bin/pc-window-cycle previous' "${cfg}" || \
 			echo 'bindsym --no-repeat Mod1+Shift+Tab exec /usr/local/bin/pc-window-cycle previous' >>"${cfg}"
 		grep -qF 'Mod1+F4 kill' "${cfg}" || echo 'bindsym Mod1+F4 kill' >>"${cfg}"
+		grep -qF 'pc-window-snap edge' "${cfg}" || \
+			echo 'bindsym --release button1 exec /usr/local/bin/pc-window-snap edge' >>"${cfg}"
 		cat >>"${cfg}" <<-'SWAY_RECOVERY'
 
 		# Screenshots work even while the desktop renderer is restarting.

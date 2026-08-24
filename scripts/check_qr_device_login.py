@@ -5,7 +5,7 @@
 
 Two independent browsers, two profiles, one relay: the "desktop" opens Sign in → Amber / remote
 signer → "Open in Amber / scan QR" and shows a nostrconnect:// link, and the "phone" — signed in with
-its own key — pastes that link into Settings → Log in another device. Nothing is stubbed: both sides
+its own key — pastes that link into Signer → Sign in another device. Nothing is stubbed: both sides
 are the shipped app, and the handshake goes over this node's own relay.
 
 WHY THIS EXISTS AS ITS OWN CHECK. check_nip46_signer.py drives the OTHER entry point (paste a
@@ -137,7 +137,12 @@ class Browser:
             pass
         if self.proc:
             self.proc.terminate()
-        subprocess.run(["rm", "-rf", self.profile], check=False)
+            try:
+                self.proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+                self.proc.wait(timeout=10)
+        shutil.rmtree(self.profile, ignore_errors=True)
 
 
 # --------------------------------------------------------------------------------------------
@@ -176,15 +181,15 @@ DESKTOP_SHOW_QR = r"""(async () => {
   return { uri:'', err:'the desktop never produced a nostrconnect link' };
 })()"""
 
-# Settings → Log in another device → Scan QR code → "paste link instead". The camera path needs a
+# Signer → Sign in another device → Scan QR code → "paste link instead". The camera path needs a
 # camera; the paste path is the same handler and is what a headless browser can reach.
 PHONE_SCAN = r"""(async (uri) => {
   const sleep = ms => new Promise(r=>setTimeout(r,ms));
   const $ = s => document.querySelector(s);
-  window.__PC.switchView('settings');
-  for (let i=0;i<60 && !$('#set-scan-qr'); i++) await sleep(200);
-  if (!$('#set-scan-qr')) return { ok:false, err:'Settings has no "Scan QR code" button' };
-  $('#set-scan-qr').click();
+  window.__PC.switchView('signer');
+  for (let i=0;i<60 && !$('#signer-scan-qr'); i++) await sleep(200);
+  if (!$('#signer-scan-qr')) return { ok:false, err:'Signer has no "Scan sign-in QR" button' };
+  $('#signer-scan-qr').click();
   for (let i=0;i<60 && !$('#qr-paste'); i++) await sleep(200);
   if (!$('#qr-paste')) return { ok:false, err:'the scanner offered no "paste link instead"' };
   $('#qr-paste').click();
@@ -209,9 +214,9 @@ PHONE_SCAN = r"""(async (uri) => {
 # relay nobody was listening on any more, and it waited on a signer that had stopped existing.
 PHONE_SCAN_AGAIN = """(async (uri) => {
   const sl=ms=>new Promise(r=>setTimeout(r,ms)); const $=s=>document.querySelector(s);
-  window.__PC.switchView('settings');
-  for(let i=0;i<60 && !$('#set-scan-qr'); i++) await sl(200);
-  $('#set-scan-qr').click();
+  window.__PC.switchView('signer');
+  for(let i=0;i<60 && !$('#signer-scan-qr'); i++) await sl(200);
+  $('#signer-scan-qr').click();
   for(let i=0;i<60 && !$('#qr-paste'); i++) await sl(200);
   $('#qr-paste').click();
   for(let i=0;i<60 && !$('#qr-paste-uri'); i++) await sl(200);

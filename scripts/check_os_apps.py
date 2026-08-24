@@ -180,7 +180,8 @@ ENTER = r"""(async () => {
    * #feed — a folder owns its own contents, and stealing the feed blanks whatever window was
    * actually showing something. */
   let folder = null;
-  const fbtn = [...document.querySelectorAll('.os-icon')].find(b => (b.dataset.view||'').startsWith('folder:'));
+  // Office is also a folder. Audit Games by identity instead of whichever folder rendered first.
+  const fbtn = [...document.querySelectorAll('.os-icon')].find(b => b.dataset.view === 'folder:games');
   if (fbtn) {
     const feedHome = (document.getElementById('feed')||{}).parentElement;
     fbtn.click(); await sleep(450);

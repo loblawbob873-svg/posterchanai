@@ -1698,6 +1698,7 @@ PROFILE
 	bindsym $mod+Left  exec /usr/local/bin/pc-window-snap left
 	bindsym $mod+Right exec /usr/local/bin/pc-window-snap right
 	bindsym $mod+Up    exec /usr/local/bin/pc-window-snap max
+	bindsym --release button1 exec /usr/local/bin/pc-window-snap edge
 	bindsym Ctrl+$mod+Left  focus output left
 	bindsym Ctrl+$mod+Right focus output right
 	bindsym Ctrl+$mod+Up    focus output up

@@ -8,7 +8,7 @@ def test_native_snap_helper_is_shipped_and_bound_in_both_os_configs():
     helper = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap"
     assert helper.exists()
     code = helper.read_text()
-    assert '"left", "right", "max"' in code
+    assert '"left", "right", "max", "edge"' in code
     assert '"move", "absolute", "position"' in code
     for cfg in (
         ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config",
@@ -53,3 +53,16 @@ def test_existing_private_configs_gain_explicit_native_window_rules():
     assert 'native_rule in' in ebuild
     assert '[app_id="firefox"] floating enable, border normal 3' in ebuild
     assert '[app_id="org.telegram.desktop"] floating enable, border normal 3' in ebuild
+
+
+def test_dragging_a_titlebar_to_an_output_edge_snaps_without_stealing_app_clicks():
+    helper = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap").read_text()
+    assert '"edge"' in helper
+    assert 'side = "left"' in helper and 'side = "right"' in helper
+    for cfg in (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config",
+                ROOT / "os/gentoo.sh"):
+        src = cfg.read_text()
+        assert "bindsym --release button1 exec /usr/local/bin/pc-window-snap edge" in src
+        assert "--whole-window" not in src[src.index("pc-window-snap edge") - 80:src.index("pc-window-snap edge")]
+    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
+    assert "pc-window-snap pc-key" in ebuild

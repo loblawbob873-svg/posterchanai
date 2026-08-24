@@ -3,7 +3,7 @@
 
     venv-unified/bin/python scripts/check_qr_scan.py [base_url]
 
-Settings → "Log in another device" → Scan QR code opens a camera and looks for a `nostrconnect://`
+Signer → "Sign in another device" → Scan QR code opens a camera and looks for a `nostrconnect://`
 code. Chrome can be handed a video file as its camera (`--use-file-for-fake-video-capture`), so this
 renders the QR the client itself would draw — through the client's own `qr.js` — into a Y4M, points
 Chrome at it, and drives the real scanner. A throwaway relay stands in for the far side, so a
@@ -182,10 +182,10 @@ LOGIN = """(async (nsec)=>{
 # so wrapping `window.toast` silently observes nothing.
 SCAN = """(async (seconds)=>{
   const sl=ms=>new Promise(r=>setTimeout(r,ms)); const $=s=>document.querySelector(s);
-  window.__PC.switchView('settings');
-  for(let i=0;i<60&&!$('#set-scan-qr');i++) await sl(200);
-  const b=$('#set-scan-qr');
-  if(!b) return {err:'Settings has no "Scan QR code" button'};
+  window.__PC.switchView('signer');
+  for(let i=0;i<60&&!$('#signer-scan-qr');i++) await sl(200);
+  const b=$('#signer-scan-qr');
+  if(!b) return {err:'Signer has no "Scan sign-in QR" button'};
   if(b.disabled) return {err:'the button is disabled for mode '+((window.__PC.me()||{}).mode)};
   b.click();
   /* Watch for the OUTCOME, not for the video element. A successful scan closes the modal, and on a

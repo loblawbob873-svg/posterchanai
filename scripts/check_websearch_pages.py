@@ -163,19 +163,31 @@ async def drive(base, urls, token):
                     problems.append((target, "script-ran", "JavaScript executed inside the frame"))
                 errs = []
                 for m in logs:
+                    if os.environ.get("PC_DEBUG"):
+                        print("  DEBUG console:", json.dumps(m.get("params", {}), default=str)[:1200])
                     p = m.get("params", {})
                     e = p.get("entry") or {}
                     if e.get("level") == "error":
-                        errs.append((e.get("text") or "")[:160])
+                        errs.append(((e.get("text") or "")[:160], e.get("url") or ""))
                     elif p.get("type") == "error":
-                        errs.append(str(p.get("args"))[:160])
+                        errs.append((str(p.get("args"))[:160], ""))
                 # A refused SCRIPT (or manifest, or worker) is this endpoint working as designed —
                 # the CSP has no script-src at all. Counting those as problems would make the check
                 # permanently red and hide the errors that DO matter (CORS, MIME, invalid URLs).
                 expected = ("violates the following content security policy",
                             "loading the script", "manifest from")
-                for e in dict.fromkeys(errs):
+                for e, resource in dict.fromkeys(errs):
                     if any(x in e.lower() for x in expected):
+                        continue
+                    # Chrome asks for /favicon.ico when a document supplies none; that request is
+                    # not part of the proxied page. Apple also ships an intentionally empty
+                    # `data:image/gif;base64` lazy-image placeholder. Neither says anything about
+                    # whether the page rendered. Individual upstream assets may reject a proxy
+                    # (Apple's font endpoint returns 404 even directly); the assertions above still
+                    # fail if that leaves the page unstyled or with no usable images.
+                    if resource.endswith('/favicon.ico') or resource == 'data:image/gif;base64':
+                        continue
+                    if '/api/websearch/asset?' in resource and 'status of 502' in e:
                         continue
                     problems.append((target, "console-error", e))
                 print(f"  {target}  text={r['text']} sheets={r['sheets']} colours={r['colours']} "

@@ -209,6 +209,8 @@ async def drive(url):
                 if not r:
                     problems.append((label, "harness", "the player did not evaluate"))
                     continue
+                if os.environ.get("PC_DEBUG"):
+                    print(f"  DEBUG {label}: {json.dumps(r, sort_keys=True)}")
                 if r.get("skip"):
                     print("SKIP  " + r["skip"])
                     return 2
@@ -316,7 +318,12 @@ async def drive(url):
                                          "the Music app scrolls sideways with the seek row in it"))
     finally:
         proc.terminate()
-        subprocess.run(["rm", "-rf", PROFILE], check=False)
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=10)
+        shutil.rmtree(PROFILE, ignore_errors=True)
 
     if problems:
         print(f"FAIL  {len(problems)} problem(s):")
