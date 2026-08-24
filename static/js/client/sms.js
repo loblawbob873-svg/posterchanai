@@ -65,6 +65,12 @@
     /* THE PICTURE-MESSAGE TABLE WOULD NOT ANSWER. A separate fact from `error`, because the texts
        can be on screen and complete while every photo is missing — see loadFromPhone. */
     mmsRefused: false,
+    /* AND THE PICTURE TABLE ANSWERED, BUT NOT ALL OF IT. A third fact, not a shade of the two
+       above: `MmsStore.MAX_ROWS` hands back the newest 2,000 picture messages and there is no way
+       to ask for the rest. Read as an exhausted store, the archive walks what it was given, finds
+       nothing left to do and reports that it has copied the phone — so the OLDEST pictures are not
+       slow to reach Blossom, they are never offered to it, and every screen says it finished. */
+    mmsCapped: false,
     lastRead: null,      // rows the provider returned on the last read — see countLine
     loading: false,
     error: '',
@@ -720,8 +726,15 @@
     /* Mark the migration only after the drive transaction itself committed. A failed signer,
      * upload, relay publish or index save leaves it unset, so the next foreground pass retries the
      * same rows instead of declaring a hollow archive complete. */
-    if(!archiveError && !rowErrors && !_migrationFailed.size && opts && opts.fullMigration
-       && migrationRemaining <= rows.length){
+    /* AND A TRUNCATED PROVIDER READ CANNOT COMPLETE A MIGRATION OF THE PHONE.
+     *
+     * Everything else in this condition is about whether the rows we WERE GIVEN landed. `mmsCapped`
+     * is about whether we were given the phone: past the ceiling the oldest picture messages are
+     * not in `S.msgs` at all, so the candidate set is empty for the honest reason that nothing
+     * asked for them. Marked complete on that, the migration never runs again and those pictures
+     * are never archived — with the screen saying it finished, which is the worst version of it. */
+    if(!archiveError && !rowErrors && !_migrationFailed.size && !S.mmsCapped
+       && opts && opts.fullMigration && migrationRemaining <= rows.length){
       try{ localStorage.setItem(HWM_BLOSSOM(), '1'); }catch(_){ }
     }
     S.archive.running = false;
@@ -774,7 +787,7 @@
     /* LOCAL, then assigned once at the end — it must describe THIS read. Latched on the state
        object it could only ever go true, so a phone whose picture table failed once wore the
        notice for the rest of the session with its photos on the screen underneath it. */
-    let mmsRef = false;
+    let mmsRef = false, mmsCap = false;
     for(let i = 0; i < STEPS.length; i++){
       try{
         const answer = (await P.list({ since: 0, limit: STEPS[i] })) || {};
@@ -789,6 +802,10 @@
          * messages", over a full inbox, which is the exact report this whole screen was rebuilt
          * for. Kept apart so the note can say which half did not answer. */
         if(answer.mmsRefused) mmsRef = true;
+        /* TRUNCATED IS NOT EXHAUSTED — the same distinction one step along, and the one the
+         * completion marker depends on. Older APKs never send it; absent is false, which is what
+         * those builds have always effectively claimed. */
+        if(answer.mmsCapped) mmsCap = true;
       }catch(_){ break; }
       // A short answer means the store is exhausted; a full one means there may be more behind it.
       if(rows.length < STEPS[i]) break;
@@ -812,6 +829,7 @@
       total++;
     }
     S.mmsRefused = mmsRef;
+    S.mmsCapped = mmsCap;
     if(total){
       S.localRead = true;          // rows came out of THIS device's store — see noteWhere
       rebuild();
@@ -1806,6 +1824,15 @@
       el.style.display = '';
       el.textContent = 'This phone would not let PosterChan read your picture messages, so only '
         + 'texts are shown here. The pictures are still on the phone.';
+      return;
+    }
+    /* AND THE CEILING, SAID OUT LOUD FOR THE SAME REASON. It is a smaller loss than a refusal and
+     * an identical silence: the newest picture messages are all present and correct, so nothing on
+     * the screen suggests the oldest ones were never asked for. */
+    if(S.mmsCapped){
+      el.style.display = '';
+      el.textContent = 'This phone has more picture messages than PosterChan can read in one pass, '
+        + 'so the newest 2,000 are shown and copied. The older ones are still on the phone.';
       return;
     }
     /* ON A PHONE THIS LINE SAYS NOTHING, because there is nothing to say.

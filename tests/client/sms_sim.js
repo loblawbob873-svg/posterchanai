@@ -76,6 +76,9 @@ const PLUGIN = {
     // have no messages", over a full inbox.
     const out = { messages: rows.filter(r => r.date > since).sort((x, y) => x.date - y.date) };
     if(opt.mmsRefused) out.mmsRefused = true;
+    // TRUNCATED, not exhausted — MmsStore.MAX_ROWS hands back the newest 2,000 and there is no way
+    // to ask for the rest. The stub reports it the way the plugin does, on every reply.
+    if(opt.mmsCapped) out.mmsCapped = true;
     return out;
   },
   async send(a){
@@ -271,6 +274,9 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
                                    order: t.msgs.map(m => m.doc),
                                    parts: t.msgs.map(m => (m.parts || []).length) })),
     mmsRefused: !!st.mmsRefused,
+    mmsCapped: !!st.mmsCapped,
+    blossomDone: !!global.localStorage._all[Object.keys(global.localStorage._all)
+                    .filter(k => k.indexOf('_blossom_v2') > 0)[0]],
     hwm: Object.keys(global.localStorage._all)
               .filter(k => k.indexOf('pc_sms_hwm') === 0)
               .map(k => Number(global.localStorage._all[k]))[0] || 0,

@@ -213,6 +213,31 @@ class TheArchive(unittest.TestCase):
         self.assertEqual(len([f for f in res["drive"]["files"] if f["folder"] == "MMS"]), 70,
                          "not every picture reached the encrypted MMS folder")
 
+    def test_a_truncated_picture_table_cannot_complete_the_migration(self):
+        """`MmsStore.MAX_ROWS` hands back the newest 2,000 picture messages and there is no way to
+        ask for the rest, so past the ceiling the oldest ones are not in the local set AT ALL. The
+        candidate queue is then empty for the honest reason that nothing asked for them — and every
+        other term in the completion test is about whether the rows we were GIVEN landed, so the
+        migration marked itself done, never ran again, and the screen said it had copied the phone.
+        Truncated is not exhausted, the same rule `refused` draws one step along."""
+        res = run(rows=[text(1), picture(2)], mmsCapped=True, migrationBatch=60,
+                  storage={"pc_sms_hwm_me": NOW + 60000,
+                           "pc_sms_hwm_me_oldest_first_v1": "1"},
+                  steps=["phoneLoad", "migrateAll"])
+        self.assertTrue(res["mmsCapped"], "the client dropped the picture-table ceiling")
+        self.assertFalse(res["blossomDone"],
+                         "a truncated provider read was recorded as a completed migration")
+
+    def test_an_untruncated_read_still_completes(self):
+        """The other half: a ceiling that is never reached must not leave every phone permanently
+        mid-migration, re-walking its whole history on every visit."""
+        res = run(rows=[text(1), picture(2)], migrationBatch=60,
+                  storage={"pc_sms_hwm_me": NOW + 60000,
+                           "pc_sms_hwm_me_oldest_first_v1": "1"},
+                  steps=["phoneLoad", "migrateAll"])
+        self.assertFalse(res["mmsCapped"])
+        self.assertTrue(res["blossomDone"], "an ordinary phone never finishes migrating")
+
     def test_body_and_picture_are_committed_to_encrypted_drive_folders(self):
         """A successful relay event is not enough: other devices find bytes through FilesIdx. The
         transaction must persist both folders before Android is free to freeze the WebView."""
