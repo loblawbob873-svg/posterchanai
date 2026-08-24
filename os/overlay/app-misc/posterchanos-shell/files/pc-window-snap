@@ -1,0 +1,49 @@
+#!/usr/bin/python3
+"""Snap the focused native Sway window without wrapping it in an HTML frame."""
+import json
+import subprocess
+import sys
+
+
+def sway(*args):
+    return subprocess.check_output(["swaymsg", *args], text=True)
+
+
+def focused(node, output=None):
+    if node.get("type") == "output":
+        output = node
+    if node.get("focused") and node.get("type") in ("con", "floating_con"):
+        return node, output
+    for child in node.get("nodes", []) + node.get("floating_nodes", []):
+        hit = focused(child, output)
+        if hit:
+            return hit
+    return None
+
+
+def main():
+    side = sys.argv[1] if len(sys.argv) > 1 else ""
+    if side not in ("left", "right", "max"):
+        raise SystemExit("usage: pc-window-snap left|right|max")
+    hit = focused(json.loads(sway("-t", "get_tree", "-r")))
+    if not hit:
+        return
+    win, out = hit
+    if not out or win.get("app_id") == "posterchan-desktop":
+        return
+    box = out.get("rect") or {}
+    x, y = int(box.get("x", 0)), int(box.get("y", 0))
+    width, height = int(box.get("width", 1)), max(1, int(box.get("height", 1)) - 72)
+    if side == "max":
+        nx, nw = x, width
+    else:
+        nw = width // 2
+        nx = x if side == "left" else x + width - nw
+    criteria = "[con_id=%d]" % int(win["id"])
+    subprocess.check_call(["swaymsg", criteria, "floating", "enable"], stdout=subprocess.DEVNULL)
+    subprocess.check_call(["swaymsg", criteria, "resize", "set", "width", str(nw), "px", "height", str(height), "px"], stdout=subprocess.DEVNULL)
+    subprocess.check_call(["swaymsg", criteria, "move", "absolute", "position", str(nx), str(y)], stdout=subprocess.DEVNULL)
+
+
+if __name__ == "__main__":
+    main()

@@ -17,6 +17,15 @@ assert(commands(validate(rows,live)).includes('workspace 1 output "eDP-1"'));
 assert(commands(validate(rows,live)).includes('focus output "eDP-1"'));
 assert.throws(()=>validate([{name:'DP-9'}],live),/unknown/);
 assert.throws(()=>validate(rows.map(x=>Object.assign({},x,{enabled:false})),live),/at least one/);
+const negative=validate([
+ {name:'eDP-1',enabled:true,x:-1530,y:290,scale:1,transform:'normal'},
+ {name:'DP-1',enabled:true,x:2340,y:270,scale:1,transform:'normal'}
+],live);
+assert.deepStrictEqual(negative.map(x=>[x.name,x.x,x.y]),[
+ ['eDP-1',0,20],['DP-1',3870,0]
+]);
+assert(commands(negative)[0].includes('pos 0 20'));
+assert(commands(negative)[1].includes('pos 3870 0'));
 
 (async()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'pc-display-'));

@@ -37,7 +37,7 @@ src_install() {
 	# The helpers. pc-key must obey the same limits as the on-screen controls; the repo's
 	# tests/test_pc_key_limits.py is what keeps the two in step, and it runs before this is built.
 	exeinto /usr/local/bin
-	for helper in pc-provision-user pc-session-switch pc-shell-start pc-shell-restart pc-window-cycle pc-key pc-idle pc-screenshot update-posterchan; do
+	for helper in pc-provision-user pc-session-switch pc-shell-start pc-shell-restart pc-window-cycle pc-window-snap pc-key pc-idle pc-screenshot update-posterchan; do
 		doexe "${FILESDIR}/${helper}"
 	done
 	# The installed recovery/LiveUSB tool is package-owned too. publish_overlay.sh injects the
@@ -112,6 +112,15 @@ pkg_postinst() {
 		# that copied setting leaves Firefox, Telegram and terminals with no title bar or resize border.
 		# This is a package default migration, while any other per-user Sway changes remain untouched.
 		sed -i -E 's/^default_floating_border[[:space:]]+none([[:space:]]*)$/default_floating_border normal 3\1/' "${cfg}"
+		# Super+Arrow is the familiar snap gesture. Older configs used it only to move keyboard focus
+		# between outputs, leaving native Firefox/Telegram/Steam with no snapping at all.
+		sed -i -E '/^bindsym[[:space:]]+\$mod\+(Left|Right|Up|Down)[[:space:]]+focus output/d' "${cfg}"
+		for snap in \
+			'bindsym $mod+Left exec /usr/local/bin/pc-window-snap left' \
+			'bindsym $mod+Right exec /usr/local/bin/pc-window-snap right' \
+			'bindsym $mod+Up exec /usr/local/bin/pc-window-snap max'; do
+			grep -qF "${snap}" "${cfg}" || echo "${snap}" >>"${cfg}"
+		done
 		# Options such as --no-repeat sit between `bindsym` and the key. The old expression did not
 		# allow that, so every package update appended another identical PrintScreen binding and Sway
 		# reported the private config as erroneous. Delete every historical form before adding one.

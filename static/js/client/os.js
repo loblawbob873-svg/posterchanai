@@ -2190,6 +2190,11 @@
       }else list = await pcWM.windows();
     }catch(_){ return false; }
     let rows = [];
+    /* Native task icons come from the installed application's .desktop entry. Populate that cache
+     * before mapping compositor rows: previously it was filled only after somebody opened Start,
+     * so Telegram/Firefox launched from a shortcut appeared as the generic grid until then. The
+     * scan is session-cached and concurrent callers share one promise. */
+    try{ if(PCOSShell.machineApps) await PCOSShell.machineApps(); }catch(_){}
     try{ rows = PCOSShell.taskbarRows(list); }catch(_){ rows = []; }
     let changed = JSON.stringify(nativeTasks.map(r => [r.id,r.title,r.focused,r.stashed]))
                !== JSON.stringify(rows.map(r => [r.id,r.title,r.focused,r.stashed]));

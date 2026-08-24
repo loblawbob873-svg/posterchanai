@@ -1688,10 +1688,13 @@ PROFILE
 	# Direction words, not output names. `focus output right` follows whatever the arrangement
 	# actually is, so it keeps working when a monitor is unplugged, moved, or was never there --
 	# where a binding naming HDMI-A-1 is dead on a laptop with nothing attached.
-	bindsym $mod+Left  focus output left
-	bindsym $mod+Right focus output right
-	bindsym $mod+Up    focus output up
-	bindsym $mod+Down  focus output down
+	bindsym $mod+Left  exec /usr/local/bin/pc-window-snap left
+	bindsym $mod+Right exec /usr/local/bin/pc-window-snap right
+	bindsym $mod+Up    exec /usr/local/bin/pc-window-snap max
+	bindsym Ctrl+$mod+Left  focus output left
+	bindsym Ctrl+$mod+Right focus output right
+	bindsym Ctrl+$mod+Up    focus output up
+	bindsym Ctrl+$mod+Down  focus output down
 	# The window goes with you: moved to the next screen AND followed, because a window that leaves
 	# the screen you are looking at with the focus staying behind reads as having closed it.
 	bindsym $mod+Shift+Left  move container to output left,  focus output left

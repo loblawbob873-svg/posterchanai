@@ -46,6 +46,16 @@ function validate(layout, actual){
   }
   if(!out.some(o=>o.enabled)) throw new Error('at least one display must remain enabled');
   if(out.filter(o=>o.primary && o.enabled).length>1) throw new Error('choose only one primary display');
+  /* Keep the compositor's global coordinate space non-negative. XWayland translates a client's
+   * surface through its legacy root window while Sway decorates it in compositor coordinates; a
+   * negative output origin makes those two disagree by exactly the origin offset. The visible
+   * result is Telegram/Steam content detached from its title bar, pointer walls, and windows that
+   * snap back while crossing monitors. Shifting every enabled output together preserves the user's
+   * arrangement and gaps while making (0,0) the desktop's top-left corner. */
+  const enabled=out.filter(o=>o.enabled);
+  const minX=Math.min(...enabled.map(o=>o.x));
+  const minY=Math.min(...enabled.map(o=>o.y));
+  if(minX || minY) for(const o of enabled){ o.x-=minX; o.y-=minY; }
   return out;
 }
 

@@ -17036,24 +17036,14 @@
           _renderMusicList(lib, null, _musicQ, sel ? _plTracks(_musicPl) : null); _musicAppNow(); }; } }
     MusicPlayer.onChange=_musicAppNow;   // the floating player is the single source of truth
   }
-  /* THE CAR ROW: the Bluetooth autoplay switch, and what the phone MEASURED.
-   *
-   * Drawn in the APK only — it is the only build with a native media session, and both halves of the
-   * row are about a service the others do not have. The diagnostic is here for the same reason the
-   * contacts sweep prints one: there is no device on this side of the work, and this feature fails by
-   * reporting success from every direction at once (the notification is up, the emit returned, no
-   * sound comes out). One line saying how long ago the player last answered the service, how many
-   * presses went unanswered and what the last Bluetooth connection did is the difference between a
-   * fix and a fourth guess.
-   */
+  /* The APK-only Bluetooth autoplay setting. Native counters remain available through the plugin
+   * for support logs; a normal player screen should not expose implementation diagnostics. */
   function _bindMusicCar(row){
     if(!row) return;
     if(!_capPlugin('MusicControls','setOptions')) return;   // browser / desktop: nothing to configure
     row.classList.remove('hidden');
     row.innerHTML=`<label class="ma-car-sw"><input type="checkbox" id="ma-autobt"${MusicPlayer.autoplayBT()?' checked':''}>
-        <span>Start playing when a Bluetooth device connects</span></label>
-      <button class="btn btn-ghost small" id="ma-cardiag" title="What the phone measured">Details</button>
-      <div class="muted small ma-car-note" id="ma-carnote"></div>`;
+        <span>Start playing when a Bluetooth device connects</span></label>`;
     const cb=$('#ma-autobt',row);
     if(cb) cb.onchange=()=>{ MusicPlayer.setAutoplayBT(cb.checked);
       // Said out loud, because the limitation is not guessable: the service only exists while the
@@ -17063,46 +17053,9 @@
        * wanted. With the listener moved to StayAwakeService it works closed — but only while "stay
        * connected" is on, and that is off by default. Naming the dependency is the difference
        * between a feature and a silent no-op. */
-      /* Stated unconditionally rather than branched on the live state: the honest way to read that
-       * is the async plugin call, and a toast that GUESSES would tell half the users the opposite of
-       * their situation. Details reports the real answer (`stayConnected` in status()). */
       toast(cb.checked ? 'Bluetooth autoplay on — needs “stay connected” on too, or nothing is '
                        + 'listening while the app is closed'
                        : 'Bluetooth autoplay off'); };
-    const out=$('#ma-carnote',row), d=$('#ma-cardiag',row);
-    if(d) d.onclick=()=>{
-      const S=_capPlugin('MusicControls','status');
-      if(!S || !out){ if(out) out.textContent='this build has no native media controls'; return; }
-      out.textContent='reading…';
-      Promise.resolve(S.status()).then(s=>{
-        s=s||{};
-        /* "not running" is NOT the same as "autoplay is dead", and conflating them is what made this
-         * panel useless in a car: the media-control service is created by something PLAYING, so with
-         * the app closed it is ALWAYS absent — which is exactly the state autoplay has to work in.
-         * What matters when it is absent is whether the listener that survives a closed app is there,
-         * which is StayAwakeService. So say that, and keep the Bluetooth counters visible either way,
-         * since they are the only record of what the car actually did. */
-        if(!s.running){
-          out.textContent='media controls: not running (nothing playing) — '
-            + (s.stayConnected ? 'Bluetooth autoplay IS armed via “stay connected”'
-                               : 'and “stay connected” is OFF, so nothing is listening for your car')
-            + ' · bluetooth '+(s.btConnects||0)+' connect/s, '+(s.btAutoplays||0)+' autoplay/s'
-            + ' · listener '+(s.listening?'armed':'NOT ARMED')+', '+(s.audioEvents||0)+' audio-device event/s'
-            + (s.lastDevices ? ' (last types: '+s.lastDevices+')' : '')
-            + ((s.btRefused||0) ? ', '+s.btRefused+' refused by Android' : '')
-            + ((s.blocked||0) ? ' · '+s.blocked+' playback(s) REFUSED by the WebView (no user gesture)' : '')
-            + (s.note ? ' · last: '+s.note : '');
-          return;
-        }
-        const sil=s.webSilenceMs;
-        out.textContent='media controls: running · '+(s.playing?'playing':'paused')
-          + ' · player last answered '+(sil==null||sil<0 ? 'never' : Math.round(sil/1000)+'s ago')
-          + (s.webGone ? ' · NOT RESPONDING' : '')
-          + ' · bluetooth '+(s.btConnects||0)+' connect/s, '+(s.btAutoplays||0)+' autoplay/s'
-          + ' · '+(s.unanswered||0)+' press/es unanswered, '+(s.revived||0)+' wake-up/s'
-          + (s.note ? ' · last: '+s.note : '');
-      }).catch(e=>{ out.textContent='could not read the media controls: '+((e&&e.message)||e); });
-    };
   }
   // Mirror the player's state into the app's header. Cheap, and it no-ops when the app isn't mounted
   // (the window may be closed while music keeps playing — that is the point of a floating player).

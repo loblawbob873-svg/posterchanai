@@ -13,9 +13,16 @@ def test_late_xwayland_metadata_gets_a_reconciliation_pass():
     assert "setTimeout(reconcile" in event
 
 
+def test_native_adoption_loads_installed_icons_before_building_task_rows():
+    """A machine app launched before Start opens still gets its real icon on the taskbar."""
+    start = OS.index("async function adoptAll()")
+    end = OS.index("function closeWin", start)
+    body = OS[start:end]
+    assert body.index("await PCOSShell.machineApps()") < body.index("PCOSShell.taskbarRows(list)")
+
+
 def test_hardware_watch_does_not_rebuild_the_start_button():
     """Battery/volume events update the tray without replacing the Start image DOM node."""
     watch = OS[OS.index("PCOSShell.watch(() =>") : OS.index("}).then(off =>", OS.index("PCOSShell.watch(() =>"))]
     assert "PCOSShell.paintTray(shell)" in watch
     assert "if(changed){ drawBar(); return; }" in watch
-

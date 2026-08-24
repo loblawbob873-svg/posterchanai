@@ -34,3 +34,8 @@ def test_phone_transport_and_equalizer_fit_without_horizontal_overflow():
 def test_desktop_does_not_show_the_competing_floating_player():
     assert "html.os-on #music-player{display:none}" in CSS
 
+
+def test_music_car_setting_does_not_expose_debug_details():
+    assert 'id="ma-cardiag"' not in APP
+    assert 'id="ma-carnote"' not in APP
+    assert ".ma-car-note" not in CSS
