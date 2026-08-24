@@ -100,14 +100,26 @@ class TheScreenSaysWhichKindOfEmpty(unittest.TestCase):
         phone_entry = self.src.index("if(st.canRead){")
         i = self.src.index("await load();", phone_entry)
         seg = self.src[i:i + 900]
-        self.assertIn("loadFromPhone().then((r)", seg,
-                      "the entry path throws away the loader's result")
+        # The RESULT MUST BE BOUND AND READ. Pinned to the `.then((r)` spelling this guard went red
+        # when the entry path was made `await`, which is the same code doing the same thing — a
+        # test that fails for a rewrite it does not care about teaches people to edit the test.
+        self.assertIn("await loadFromPhone()", seg,
+                      "the entry path no longer calls the loader")
+        self.assertRegex(seg, r"(const|let)\s+r\s*=\s*await loadFromPhone\(\)",
+                         "the entry path throws away the loader's result")
         self.assertIn("r.refused", seg)
 
     def test_it_does_not_overwrite_a_screen_that_has_messages(self):
         """A refusal on a later page of a sweep that already found messages must not blank the
         explanation over a list somebody is reading."""
-        i = self.src.index("loadFromPhone().then((r)")
+        # ANCHORED AT THE ENTRY PATH, the way its sibling above is. There are several callers of
+        # loadFromPhone and the first one in the file is the Allow BUTTON, which deliberately has no
+        # such guard: somebody who just pressed Allow is told the provider still refused either way,
+        # and `emptyWhy` is only ever drawn by the empty state (see the `No messages here yet`
+        # fallback), so it cannot cover a list. Taking whichever call site happened to come first
+        # made this guard assert the claim against the one place it was never about.
+        entry = self.src.index("if(st.canRead){")
+        i = self.src.index("const r = await loadFromPhone()", entry)
         self.assertIn("!S.msgs.size", self.src[i:i + 400])
 
     def test_granted_but_still_refused_is_its_own_message(self):

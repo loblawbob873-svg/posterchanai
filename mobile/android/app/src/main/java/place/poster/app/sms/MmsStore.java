@@ -88,9 +88,26 @@ public final class MmsStore {
     private MmsStore() { }
 
     private static volatile boolean refused = false;
+    private static volatile boolean capped = false;
 
     /** True when the last read could not be performed at all — never the same as "none found". */
     public static boolean refused() { return refused; }
+
+    /**
+     * True when the last read HIT THE CEILING — the caller asked for more picture messages than
+     * MAX_ROWS and was handed exactly MAX_ROWS.
+     *
+     * The same distinction `refused` draws, one step along: "your picture messages" and "2,000 of
+     * your picture messages" are different sentences, and without this the caller cannot tell them
+     * apart. It matters most to the archive, which walks the set it was given and reasonably
+     * concludes it has seen the phone — so on a store bigger than the ceiling, the oldest picture
+     * messages are not merely slow to reach encrypted storage, they are never offered to it, and
+     * every screen says the migration finished.
+     *
+     * Read immediately after the query, on the calling thread, like `refused`: it describes the
+     * read that just happened and the next one overwrites it.
+     */
+    public static boolean capped() { return capped; }
 
     public static List<SmsMsg> recent(Context ctx, int limit) {
         return query(ctx, null, null, "date DESC", limit);
@@ -107,15 +124,21 @@ public final class MmsStore {
 
     /**
      * Everything after a timestamp. THE ARGUMENT IS MILLISECONDS, like every other date in this app,
-     * and it is divided here — the column is in seconds. Passing a millisecond value straight into
-     * the WHERE clause matches nothing at all until the year 55000, so the archive would simply
-     * never publish a picture message and nothing would say why.
+     * and the column may be in either unit — see MmsWhen, which owns that rule for both the reader
+     * below and this selection.
+     *
+     * It used to divide by a thousand unconditionally, which is right by the specification and
+     * wrong on the OEM providers the reader has always known about. There the clause compared a
+     * millisecond column against a second-sized value, matched EVERY row, and `date ASC LIMIT n`
+     * handed back the OLDEST n picture messages on every sweep — the same n, for ever, because the
+     * mark can only land on the newest of what it was given. An archive pinned to the oldest corner
+     * of the store, with every picture message behind it unreachable and nothing logged.
      */
     public static List<SmsMsg> since(Context ctx, long dateMs, int limit) {
         // See SmsStore.since: paginate from the oldest pending row. Selecting the newest limited
         // slice first permanently strands the older part of a busy backlog behind the cursor.
-        return query(ctx, Telephony.Mms.DATE + ">?",
-                     new String[]{ String.valueOf(dateMs / 1000L) }, "date ASC", limit);
+        return query(ctx, MmsWhen.after(Telephony.Mms.DATE), MmsWhen.afterArgs(dateMs),
+                     "date ASC", limit);
     }
 
     public static List<SmsMsg> thread(Context ctx, long threadId, int limit) {
@@ -134,6 +157,7 @@ public final class MmsStore {
         List<SmsMsg> out = new ArrayList<SmsMsg>();
         if (ctx == null) return out;
         refused = false;
+        capped = false;
         int want = Math.max(1, Math.min(limit, MAX_ROWS));
         Cursor c = null;
         try {
@@ -170,10 +194,11 @@ public final class MmsStore {
                  * texts are pushed out of the window entirely. That reads as "my replies are
                  * missing" with the replies sitting in the store untouched.
                  *
-                 * Seconds now are ~1.8e9 and milliseconds ~1.8e12, so 1e11 separates them with room
-                 * either side: as seconds it is the year 5138, as milliseconds it is 1973. */
+                 * THE SAME RULE DECIDES WHICH ROWS ARE SELECTED (MmsWhen.after, used by since).
+                 * They are one function and its mirror image on purpose: when they drifted, the
+                 * query matched every row in the table and the archive stopped moving. */
                 long raw = c.getLong(2);
-                m.date = raw > 100000000000L ? raw : raw * 1000L;
+                m.date = MmsWhen.millis(raw);
                 m.type = box(c.getInt(3));
                 m.read = c.getInt(4) != 0;
                 String subject = str(c, 5);
@@ -188,6 +213,10 @@ public final class MmsStore {
         } finally {
             if (c != null) try { c.close(); } catch (Throwable ignored) { }
         }
+        // ASKED FOR MORE THAN THE CEILING AND GIVEN THE CEILING. Recorded rather than merely
+        // enforced -- see capped(). A caller that asked for no more than MAX_ROWS got what it
+        // asked for and nothing was withheld from it, so that is not a cap.
+        capped = limit > MAX_ROWS && out.size() >= MAX_ROWS;
         fillParts(ctx, out);
         fillAddresses(ctx, out);
         return out;

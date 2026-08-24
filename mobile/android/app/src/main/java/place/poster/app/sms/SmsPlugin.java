@@ -358,10 +358,17 @@ public class SmsPlugin extends Plugin {
         // refusal. Whichever is read second would otherwise overwrite the other's answer.
         boolean refused = SmsStore.refused();
         boolean mmsRefused = MmsStore.refused();
+        // AND WHETHER THE PICTURE TABLE WAS TRUNCATED RATHER THAN EXHAUSTED. Read on this thread
+        // with the other two and for the same reason -- see MmsStore.capped(). Without it a store
+        // larger than the ceiling is indistinguishable from one that fitted, so the archive walks
+        // the newest 2,000 picture messages, finds nothing left to do, and reports that it has
+        // copied the phone.
+        boolean mmsCapped = MmsStore.capped();
         JSObject o = new JSObject();
         o.put("messages", toJson(rows));
         o.put("refused", refused);
         o.put("mmsRefused", mmsRefused);
+        o.put("mmsCapped", mmsCapped);
         call.resolve(o);
     }
 
@@ -557,6 +564,22 @@ public class SmsPlugin extends Plugin {
             o.put("id", m.id);
             o.put("thread", m.threadId);
             o.put("address", m.address);
+            /* WHO THAT NUMBER IS, RESOLVED HERE BECAUSE ONLY HERE CAN IT BE.
+             *
+             * The archive's own comment has promised this for a while -- "the contact's name is
+             * resolved on the phone against the phone's OWN address book and carried, so a laptop,
+             * which has no phone book, shows a name instead of a number" -- and the client's
+             * fromRow duly reads `r.name`. Nothing ever put one here, so it read `undefined` on
+             * every row and every message published from this handset reached every other device
+             * carrying a bare number. The promise was kept in prose and in the reader, and broken
+             * in the one place that had the answer.
+             *
+             * `nameOf`, not `label`: an unknown number must come back EMPTY so the client falls
+             * back to its own formatting, where `label` would hand it the digits as though a person
+             * were called that -- and those digits then travel into the archive as a name.
+             * PhoneLookup is a cross-process query, so PhoneBook caches it per number; a thread
+             * list resolves the same twenty numbers on every draw. */
+            o.put("name", PhoneBook.nameOf(getContext(), m.address));
             o.put("body", m.body);
             o.put("date", m.date);
             o.put("type", m.type);

@@ -35,7 +35,7 @@ JAR = ac.android_jar()
 # Messages is compiled against the real android.jar (Context appears in its signatures) and is loaded
 # on a plain JVM, which is safe because `merge` touches none of it. MmsStore is deliberately NOT
 # here: its static initialiser calls Uri.parse, and android.jar's copy throws "Stub!" on load.
-SOURCES = ["SmsKeys.java", "SmsMsg.java", "SmsPart.java", "Messages.java"]
+SOURCES = ["SmsKeys.java", "SmsMsg.java", "SmsPart.java", "Messages.java", "MmsWhen.java"]
 
 HARNESS = r"""
 package place.poster.app.sms;
@@ -131,6 +131,17 @@ public class MmsHarness {
     for (SmsMsg m : Messages.merge(tieA, tieB, 10)) t1.append(m.id).append(',');
     for (SmsMsg m : Messages.merge(tieB, tieA, 10)) t2.append(m.id).append(',');
     say("stable-tie", t1.toString().equals(t2.toString()));
+
+    // THE DATE-UNIT RULE, RUN. The reader and the query predicate are one function and its mirror
+    // image; the whole point of MmsWhen is that they cannot drift, so both come out of here.
+    say("millis-from-seconds", MmsWhen.millis(1700000000L));
+    say("millis-already-ms", MmsWhen.millis(1700000000123L));
+    say("millis-zero", MmsWhen.millis(0L));
+    say("after-sql", MmsWhen.after("date"));
+    String[] aa = MmsWhen.afterArgs(1700000000123L);
+    say("after-args", aa[0] + "," + aa[1]);
+    String[] az = MmsWhen.afterArgs(-5L);
+    say("after-args-negative", az[0] + "," + az[1]);
   }
 }
 """
@@ -293,20 +304,24 @@ class MmsProvider(unittest.TestCase):
         # which made this file assert the absence of a string it had just deleted itself.
         return re.sub(r"(?<!:)//[^\n]*", " ", src)
 
-    def test_the_mms_table_is_read_in_seconds(self):
-        """`Telephony.Mms.DATE` IS IN SECONDS and `Telephony.Sms.DATE` is in milliseconds. Read as
-        milliseconds every picture message is dated 1970 and sorts to the bottom of every thread;
-        used in a WHERE clause the other way round, `since` matches nothing until the year 55000 and
-        the archive silently never publishes a picture at all."""
+    def test_the_mms_table_is_read_and_selected_by_the_same_rule(self):
+        """`Telephony.Mms.DATE` IS IN SECONDS by specification, `Telephony.Sms.DATE` is in
+        milliseconds, and several OEM providers keep milliseconds in the MMS table anyway. Read the
+        wrong way every picture message is dated 1970 and sorts to the bottom of every thread.
+
+        Asserted as DELEGATION rather than as two literals, because two literals is exactly what
+        went wrong: the reader learned about milliseconds providers and the WHERE clause did not,
+        and there is no way to see that by looking at either one on its own."""
         src = self._code("MmsStore.java")
-        self.assertIn("raw * 1000L", src, "the mms date is not converted to milliseconds")
-        # And multiplied only when it IS seconds. A provider that already stores milliseconds would
-        # otherwise put every picture message tens of thousands of years in the future, where it
-        # sorts ahead of everything and pushes the texts out of a conversation's newest N -- which
-        # reads as "my replies are missing" with the replies untouched in the store.
-        self.assertIn("raw > 100000000000L ? raw : raw * 1000L", src,
-                      "a milliseconds-storing provider is multiplied into the year 57000")
-        self.assertIn("dateMs / 1000L", src, "`since` compares milliseconds against a second column")
+        self.assertIn("MmsWhen.millis(raw)", src, "the reader does not use the shared rule")
+        self.assertIn("MmsWhen.after(", src, "`since` does not use the shared rule")
+        self.assertIn("MmsWhen.afterArgs(", src, "`since` does not bind the shared arguments")
+        # The old hand-rolled forms must be GONE, not merely joined by the new one -- a leftover
+        # copy is how they drifted in the first place.
+        self.assertNotIn("raw > 100000000000L ? raw", src, "a second copy of the unit rule survives")
+        self.assertNotIn("dateMs / 1000L", src,
+                         "`since` still divides unconditionally; on a milliseconds provider that "
+                         "matches every row and pins the archive to the oldest corner of the store")
 
     def test_every_message_box_is_mapped_explicitly(self):
         """AOSP happens to number the two tables' boxes identically. Relying on that means an OEM
@@ -415,7 +430,9 @@ class MmsAttachmentsTravelAcrossClients(unittest.TestCase):
         mms = open(os.path.join(SMS, "MmsStore.java"), encoding="utf-8").read()
         messages = open(os.path.join(SMS, "Messages.java"), encoding="utf-8").read()
         self.assertIn('new String[]{ String.valueOf(dateMs) }, "date ASC", limit)', sms)
-        self.assertIn('new String[]{ String.valueOf(dateMs / 1000L) }, "date ASC", limit)', mms)
+        # The MMS half binds through MmsWhen now (the reader and this clause must agree about the
+        # column's unit -- see TheArchiveCanReachEveryPictureMessage). The ORDER is the rule here.
+        self.assertIn('MmsWhen.afterArgs(dateMs),\n                     "date ASC", limit)', mms)
         self.assertIn("Collections.sort(out, OLDEST_FIRST)", messages)
 
     def test_fixed_cursor_recovers_rows_old_clients_skipped(self):
@@ -484,6 +501,131 @@ class OutgoingMms(unittest.TestCase):
         self.assertNotIn("archiveMessageBody(doc, { to, body, at, attachment })", js)
         self.assertIn("req = await openMessageBody(request)", js,
                       "new clients cannot drain older Blossom-backed remote-send requests")
+
+
+@unittest.skipIf(not JAVAC or not JAVARUN, "no JDK on this node")
+@unittest.skipIf(JAR is None, "no android.jar on this node")
+@unittest.skipIf(not os.path.isdir(SMS), "no android sources here")
+class TheArchiveCanReachEveryPictureMessage(unittest.TestCase):
+    """WHY THE OLD PICTURE MESSAGES NEVER REACHED ENCRYPTED STORAGE.
+
+    Two ceilings sat in front of them, both silent, and neither is a failure any log can show: a
+    WHERE clause that disagreed with the reader about what unit `mms.date` is in, and a row cap that
+    could not say it had been hit. Reported as "all the existing SMS media files are not syncing to
+    Blossom" from a phone whose Texts screen was full."""
+
+    out = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.out = _java()
+
+    @staticmethod
+    def _code(name):
+        return MmsProvider._code(name)
+
+    # ---- the unit rule, RUN ------------------------------------------------------------------
+
+    def test_a_seconds_column_is_read_as_milliseconds(self):
+        self.assertEqual(self.out["millis-from-seconds"], "1700000000000")
+
+    def test_a_milliseconds_column_is_left_alone(self):
+        """A provider that already stores milliseconds, multiplied blind, lands every picture
+        message tens of thousands of years in the future — where it sorts ahead of everything and
+        pushes the texts out of a conversation's newest N. That reads as "my replies are missing"
+        with the replies sitting untouched in the store."""
+        self.assertEqual(self.out["millis-already-ms"], "1700000000123")
+
+    def test_an_empty_date_stays_empty(self):
+        """0 is the one value both units agree on, and multiplying it must not invent a date."""
+        self.assertEqual(self.out["millis-zero"], "0")
+
+    def test_the_selection_never_binds_a_negative_argument(self):
+        """A clock that went backwards, or an unset mark read as -1, must not build a clause that
+        selects rows the caller has already archived."""
+        self.assertEqual(self.out["after-args-negative"], "0,0")
+
+    # ---- the predicate against REAL sqlite ----------------------------------------------------
+
+    def _select(self, unit_rows, since_ms):
+        """Run the generated WHERE against SQLite — the engine actually behind the provider.
+
+        A string assertion cannot tell a correct clause from one that parses and matches
+        everything, which is precisely the bug this exists for."""
+        import sqlite3
+        sql = self.out["after-sql"]
+        args = self.out["after-args"].split(",")
+        # The harness generated its args for one fixed timestamp; regenerate for this call the same
+        # way MmsWhen does, so the test drives the SHAPE from Java and the values from here.
+        ms = max(0, since_ms)
+        args = [str(ms), str(ms // 1000)]
+        db = sqlite3.connect(":memory:")
+        db.execute("CREATE TABLE pdu (_id INTEGER, date INTEGER)")
+        db.executemany("INSERT INTO pdu VALUES (?,?)", list(enumerate(unit_rows)))
+        got = db.execute("SELECT _id FROM pdu WHERE " + sql + " ORDER BY date ASC", args).fetchall()
+        db.close()
+        return [r[0] for r in got]
+
+    def test_the_clause_parses_and_selects_on_a_seconds_provider(self):
+        """The spec-compliant table, which has always worked and must keep working."""
+        rows = [1699999999, 1700000000, 1700000001, 1700000002]        # seconds
+        self.assertEqual(self._select(rows, 1700000000000), [2, 3])
+
+    def test_the_clause_selects_on_a_milliseconds_provider(self):
+        """THE BUG. Against `date > dateMs/1000` a millisecond column matches EVERY row, so
+        `date ASC LIMIT n` hands back the oldest n picture messages on every single sweep — they
+        archive once, become cheap skips, and the high-water mark can only ever land on the newest
+        of that same oldest slice. The archive pins itself to the oldest corner of the store and no
+        picture message behind it is ever offered to encrypted storage."""
+        rows = [1699999999000, 1700000000000, 1700000001000, 1700000002000]
+        self.assertEqual(self._select(rows, 1700000000000), [2, 3])
+        # And the specific shape of the old failure: it must NOT match everything.
+        self.assertNotEqual(self._select(rows, 1700000000000), [0, 1, 2, 3])
+
+    def test_a_table_holding_both_units_is_read_row_by_row(self):
+        """A restore that merged two phones, or an OEM that changed its mind across an upgrade. The
+        test is against each row's own magnitude, so a mixed table is still correct."""
+        rows = [1699999999, 1700000002, 1699999999000, 1700000002000]
+        self.assertEqual(sorted(self._select(rows, 1700000000000)), [1, 3])
+
+    # ---- the ceiling says it was hit ----------------------------------------------------------
+
+    def test_the_row_cap_is_reported_and_not_merely_enforced(self):
+        """"your picture messages" and "2,000 of your picture messages" are different sentences.
+        Without the flag the archive walks the newest 2,000, finds nothing left to do and reports
+        that it has copied the phone — so on a bigger store the oldest media is not slow to reach
+        Blossom, it is never offered to it."""
+        src = self._code("MmsStore.java")
+        self.assertIn("public static boolean capped()", src, "the ceiling cannot be reported")
+        self.assertIn("capped = limit > MAX_ROWS && out.size() >= MAX_ROWS", src)
+        # Cleared at the start of every read, like `refused` — a latched flag would wear the notice
+        # for the rest of the process with the whole store on the screen underneath it.
+        self.assertIn("capped = false;", src, "the flag latches across reads")
+
+    def test_the_plugin_hands_the_ceiling_to_the_client(self):
+        plugin = open(os.path.join(SMS, "SmsPlugin.java"), encoding="utf-8").read()
+        self.assertIn("MmsStore.capped()", plugin)
+        self.assertIn('o.put("mmsCapped", mmsCapped)', plugin,
+                      "the client cannot tell a truncated read from an exhausted one")
+
+    # ---- the name the archive already promised to carry ---------------------------------------
+
+    def test_every_published_row_carries_the_contact_name(self):
+        """The archive's own comment says the handset resolves the name against the phone's OWN
+        address book and carries it, and the client's `fromRow` duly reads `r.name`. Nothing put one
+        there, so every message published from this phone reached every other device as a bare
+        number — the promise kept in prose and in the reader, and broken in the one place that had
+        the answer."""
+        plugin = open(os.path.join(SMS, "SmsPlugin.java"), encoding="utf-8").read()
+        i = plugin.index("private JSONArray toJson(")
+        seg = plugin[i:i + 2500]
+        self.assertIn('o.put("name", PhoneBook.nameOf(getContext(), m.address))', seg,
+                      "published rows carry no contact name")
+        # `nameOf`, never `label`: label falls back to the digits, and those digits would then
+        # travel into the archive as though somebody were called that.
+        self.assertNotIn('o.put("name", PhoneBook.label(', seg)
+        js = open(SMSJS, encoding="utf-8").read()
+        self.assertIn("name: r.name || ''", js, "the client stopped reading the name")
 
 
 if __name__ == "__main__":
