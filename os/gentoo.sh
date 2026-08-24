@@ -213,7 +213,7 @@ gui-apps/grim gui-apps/slurp \
 x11-misc/xdg-utils \
 media-video/pipewire media-video/wireplumber gui-libs/gtk media-fonts/noto media-fonts/noto-emoji \
 www-client/firefox-bin \
-games-util/steam-launcher gui-wm/gamescope games-util/game-device-udev-rules \
+games-util/steam-launcher games-util/game-device-udev-rules \
 media-libs/mesa media-libs/vulkan-loader dev-util/vulkan-tools \
 sys-apps/xdg-desktop-portal gui-libs/xdg-desktop-portal-wlr sys-apps/xdg-desktop-portal-gtk \
 media-video/obs-studio \
@@ -1930,6 +1930,9 @@ PROFILE
 installSteam() {
 	# Native Steam, explicitly. Its 32-bit graphics stack is substantial on Gentoo, but it belongs to
 	# the machine rather than a Flatpak runtime and that is the PosterChanOS policy.
+	# Gamescope is deliberately not a dependency. Sway/XWayland provide the real desktop and pointer
+	# capture; inserting a nested compositor here adds package weight and does not repair shell-level
+	# capture bugs. Users may install it separately, but Steam must work without it.
 	# Do not patch systemd or replace Gentoo's os-release metadata to install a game launcher.
 	rm -f /etc/portage/patches/sys-apps/systemd/010-posterchanos-sbat-url.patch
 	# Steam/Proton still needs the real 32-bit graphics stack. A no-multilib profile cannot be made
@@ -1946,9 +1949,9 @@ installSteam() {
 	printf '%s\n' 'media-libs/mesa vulkan' > /etc/portage/package.use/posterchan-steam
 	mkdir -p /etc/portage/package.license
 	echo 'games-util/steam-launcher steam' >/etc/portage/package.license/posterchan-steam
-	emerge --autounmask-write games-util/steam-launcher gui-wm/gamescope media-libs/vulkan-loader dev-util/vulkan-tools || true
+	emerge --autounmask-write games-util/steam-launcher media-libs/vulkan-loader dev-util/vulkan-tools || true
 	etc-update -q --automode -5
-	emerge games-util/steam-launcher gui-wm/gamescope media-libs/vulkan-loader dev-util/vulkan-tools
+	emerge games-util/steam-launcher media-libs/vulkan-loader dev-util/vulkan-tools
 }
 
 locale() {

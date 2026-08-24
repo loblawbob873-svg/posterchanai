@@ -627,14 +627,15 @@ class PosterChanOSProfile(unittest.TestCase):
                               "the USE flags whatever the package list says")
 
     def test_native_steam_is_supported_on_first_boot(self):
-        """The regular PosterChanOS ISO is a gaming desktop, so native Steam, Gamescope and game
-        controller rules must be installed by the normal package pass."""
-        for atom in ("games-util/steam-launcher", "gui-wm/gamescope",
+        """The regular PosterChanOS ISO is a gaming desktop, so native Steam and its real runtime
+        dependencies must be installed without forcing a nested Gamescope compositor."""
+        for atom in ("games-util/steam-launcher",
                      "games-util/game-device-udev-rules", "media-libs/mesa",
                      "media-libs/vulkan-loader", "dev-util/vulkan-tools"):
             self.assertIn(atom, self.pkgs, f"{atom} is missing from the regular install")
         steam = self._fn("installSteam")
-        self.assertIn("gui-wm/gamescope", steam, "native Steam should include Gamescope")
+        self.assertNotIn("gui-wm/gamescope", self.pkgs, "Gamescope must not bloat every install")
+        self.assertNotIn("gui-wm/gamescope", steam, "Steam must work through Sway/XWayland directly")
         self.assertIn("games-util/steam-launcher", steam, "Steam must be installed by Portage")
         self.assertNotIn("com.valvesoftware.Steam", steam, "the Flatpak Steam path came back")
         self.assertNotIn("sbat-distro-url", steam, "Steam installation must not patch systemd")
