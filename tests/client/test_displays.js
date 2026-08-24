@@ -47,5 +47,13 @@ assert.strictEqual(joined[1].x,3840, 'small horizontal gaps become pointer walls
  assert(fs.readFileSync(path.join(dir,'outputs.conf'),'utf8').includes('2560x1440@144Hz'));
  const p2=await d.preview(rows); await d.revert(p2.token);
  assert(seen.slice(-4).some(x=>x.includes('pos 1920 0')));
+ const repairDir=fs.mkdtempSync(path.join(os.tmpdir(),'pc-display-repair-'));
+ const repairSeen=[];
+ const repairWm={outputs:async()=>JSON.parse(JSON.stringify(wideLive)),command:async c=>repairSeen.push(c)};
+ const repair=new Displays(repairWm,{file:path.join(repairDir,'outputs.conf')});
+ const fixed=await repair.repairPointerGaps();
+ assert.strictEqual(fixed.changed,true);
+ assert(repairSeen.some(x=>x.includes('"DP-2" enable pos 3840 0')));
+ assert(fs.readFileSync(path.join(repairDir,'outputs.conf'),'utf8').includes('"DP-2" enable pos 3840 0'));
  console.log('ALL OK');
 })().catch(e=>{console.error(e);process.exit(1)});

@@ -117,6 +117,18 @@ class Displays {
   constructor(wm, opts){ this.wm=wm; this.file=(opts&&opts.file)||path.join(process.env.HOME||'', '.config/sway/outputs.conf');
     this.ms=(opts&&opts.revertMs)||15000; this.pending=null; }
   async status(){ return (await this.wm.outputs()).map(publicOutput); }
+  async repairPointerGaps(){
+    const actual=await this.wm.outputs();
+    const before=snapshot(actual), rows=validate(before,actual);
+    const changed=rows.some((o,i)=>o.x!==before[i].x || o.y!==before[i].y);
+    if(!changed) return {ok:true,changed:false};
+    await this._run(rows);
+    fs.mkdirSync(path.dirname(this.file),{recursive:true});
+    const tmp=this.file+'.new';
+    fs.writeFileSync(tmp,'# PosterChanOS System Settings — generated; edit through Displays.\n'+commands(rows).join('\n')+'\n',{mode:0o600});
+    fs.renameSync(tmp,this.file);
+    return {ok:true,changed:true};
+  }
   async _run(rows){ for(const cmd of commands(rows)) await this.wm.command(cmd); }
   async preview(layout){
     if(this.pending) await this.revert(this.pending.token);

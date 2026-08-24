@@ -1930,6 +1930,10 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
     buildMenu();
     startHidden = background.launchedHidden();
     createWindow();
+    /* Upgrade old saved layouts before creating the per-output shell relationship. A small gap in
+     * outputs.conf is a real pointer wall; leaving it until somebody happens to open Displays keeps
+     * the broken drag/gaming geometry after an otherwise successful OS update. */
+    if(SHELL_MODE) await displays().repairPointerGaps();
     await reconcileShellDisplays();
     wireShellRecovery();
     background.init({
