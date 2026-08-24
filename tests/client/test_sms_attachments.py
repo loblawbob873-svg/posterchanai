@@ -96,6 +96,22 @@ class ThreadsHoldBothKinds(unittest.TestCase):
 @unittest.skipIf(shutil.which("node") is None, "node not installed")
 class TheArchive(unittest.TestCase):
 
+    def test_existing_sms_high_water_mark_does_not_skip_the_blossom_migration(self):
+        """The ordering repair shipped before encrypted Blossom storage. Phones therefore already
+        carry its marker and a high-water mark at today. Reusing that marker for the storage move
+        makes the provider query start at today, returns no historical rows, and leaves Blossom at
+        zero files forever on the exact accounts being migrated."""
+        mark = NOW + 60000
+        res = run(rows=[text(1), picture(2)], steps=["mirror"], storage={
+            "pc_sms_hwm_me": mark,
+            "pc_sms_hwm_me_oldest_first_v1": "1",
+        })
+        self.assertTrue(any(f["folder"] == "Messages" for f in res["drive"]["files"]),
+                        "the existing high-water mark skipped the message-body migration")
+        self.assertTrue(any(f["folder"] == "MMS" for f in res["drive"]["files"]),
+                        "the existing high-water mark skipped the MMS migration")
+        self.assertGreater(len(res["published"]), 0)
+
     def test_body_and_picture_are_committed_to_encrypted_drive_folders(self):
         """A successful relay event is not enough: other devices find bytes through FilesIdx. The
         transaction must persist both folders before Android is free to freeze the WebView."""
@@ -108,6 +124,21 @@ class TheArchive(unittest.TestCase):
         self.assertTrue(any(f["folder"] == "MMS" for f in res["drive"]["files"]),
                         "the MMS original/preview is not indexed")
         self.assertTrue(calls_of(res, "driveEnd"), "FilesIdx was never durably committed")
+
+    def test_native_attachment_chunks_are_reassembled_before_encrypted_upload(self):
+        """The Android bridge returns large MMS files in bounded pieces. Uploading one piece or
+        stopping after the first successful reply creates a valid encrypted file with silently
+        truncated media, which a thumbnail test alone would not expose."""
+        raw = b"one attachment, across several bridge replies"
+        row = picture(4, parts=[{"id": 904, "ct": "image/jpeg", "name": "whole.jpg",
+                                  "bytes": len(raw)}])
+        res = run(rows=[row], parts={"904": {"data": __import__("base64").b64encode(raw).decode()}},
+                  chunked=True, chunkSize=7, steps=["mirror"])
+        mms = [v for v in res["uploads"].values() if v["folder"] == "MMS"
+               and v["name"] == "whole.jpg"]
+        self.assertEqual(len(mms), 1)
+        self.assertEqual(mms[0]["text"], raw.decode())
+        self.assertGreater(len(calls_of(res, "attachment")), 1)
 
     def test_it_names_the_attachments_and_does_not_claim_to_hold_them(self):
         """A laptop that knows a message carried a photo can say where it is. What it must not do is

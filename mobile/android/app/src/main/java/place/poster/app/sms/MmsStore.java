@@ -418,6 +418,39 @@ public final class MmsStore {
         }
     }
 
+    /** A bounded slice for the WebView bridge. Large MMS media must not be converted into one giant
+     * base64 string: Android, Capacitor and JavaScript each retain a copy and can kill the app even
+     * when the raw file itself fits comfortably. The caller advances by the returned byte count. */
+    public static byte[] partChunk(Context ctx, long partId, long offset, int maxBytes) {
+        if (offset < 0 || maxBytes < 1) return null;
+        InputStream in = null;
+        try {
+            in = ctx.getContentResolver().openInputStream(
+                    Uri.withAppendedPath(PART_URI, String.valueOf(partId)));
+            if (in == null) return null;
+            long left = offset;
+            while (left > 0) {
+                long skipped = in.skip(left);
+                if (skipped > 0) { left -= skipped; continue; }
+                if (in.read() < 0) return new byte[0];
+                left--;
+            }
+            ByteArrayOutputStream out = new ByteArrayOutputStream(Math.min(maxBytes, 1024 * 1024));
+            byte[] buf = new byte[Math.min(16384, maxBytes)];
+            while (out.size() < maxBytes) {
+                int n = in.read(buf, 0, Math.min(buf.length, maxBytes - out.size()));
+                if (n < 0) break;
+                if (n > 0) out.write(buf, 0, n);
+            }
+            return out.toByteArray();
+        } catch (Throwable t) {
+            Log.w(TAG, "mms: could not read an attachment chunk", t);
+            return null;
+        } finally {
+            if (in != null) try { in.close(); } catch (Throwable ignored) { }
+        }
+    }
+
     /**
      * Is this attachment simply too large to hand through the bridge?
      *
@@ -432,7 +465,7 @@ public final class MmsStore {
     }
 
     /** How long a part is, or -1 when the provider would not say — which is never "empty". */
-    private static long sizeOf(Context ctx, long partId) {
+    public static long sizeOf(Context ctx, long partId) {
         android.content.res.AssetFileDescriptor fd = null;
         try {
             fd = ctx.getContentResolver().openAssetFileDescriptor(

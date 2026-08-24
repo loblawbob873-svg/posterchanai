@@ -33,6 +33,14 @@
   const FIRST_RUN_DAYS = 30;
   const HWM = () => 'pc_sms_hwm_' + (PC && PC.ME && PC.ME.pubkey ? PC.ME.pubkey.slice(0, 12) : 'anon');
   const HWM_FIX = () => HWM() + '_oldest_first_v1';
+  /* A SEPARATE MIGRATION MARKER FOR BLOSSOM STORAGE.
+   *
+   * Reusing HWM_FIX here was the reason an established phone showed zero Messages/MMS files. That
+   * flag had already been written by the older ordering repair, so when message bodies moved from
+   * inline Nostr events to encrypted Blossom the phone kept its high-water mark at "today" and
+   * never revisited any of the rows that needed migrating. A schema migration needs its own marker;
+   * otherwise a completed, unrelated migration silently opts the account out of this one. */
+  const HWM_BLOSSOM = () => HWM() + '_blossom_v1';
   let _messagesFolderReady = false;
 
   let PC = null;
@@ -49,6 +57,7 @@
     lastRead: null,      // rows the provider returned on the last read — see countLine
     loading: false,
     error: '',
+    archive: { running:false, published:0, error:'', attempted:false },
     scroll: 0,
     attach: null,         // File waiting in the open conversation's composer
     /* THE FLOOR FOR NOTIFICATIONS, set once when the module loads. A first sync pulls a phone's
@@ -588,6 +597,15 @@
         localStorage.setItem(HWM_FIX(), '1');
       }
     }catch(_){ }
+    /* Existing archives predate encrypted Blossom. Rewind once even when the ordering migration
+     * above has already run, so those provider rows are offered to needsArchiveUpgrade(), which can
+     * replace their inline/body-only documents and upload their MMS bytes. */
+    try{
+      if(!localStorage.getItem(HWM_BLOSSOM())){
+        since = Math.min(since || Date.now(), Date.now() - FIRST_RUN_DAYS * 86400000);
+        localStorage.setItem(HWM(), String(since));
+      }
+    }catch(_){ }
     if(!since) since = Date.now() - FIRST_RUN_DAYS * 86400000;
     // MMS dates have one-second precision. Overlap the last second and deduplicate by document so
     // two messages filed in that second cannot be skipped by the strict provider predicate.
@@ -597,8 +615,16 @@
     catch(_){ return { published:0, skipped:'could not read the phone' }; }
 
     let n = 0, top = since, drive = null, archiveError = '';
+    S.archive.running = true;
+    S.archive.attempted = true;
+    S.archive.error = '';
     try{ drive = await beginArchiveDrive(); }
-    catch(e){ return { published:0, skipped:String((e && e.message) || e) }; }
+    catch(e){
+      S.archive.running = false;
+      S.archive.error = String((e && e.message) || e);
+      if(PC && PC.VIEW === 'texts') paint();
+      return { published:0, skipped:S.archive.error };
+    }
     try{
       for(const r of rows){
         if(!r || !r.doc) continue;
@@ -622,6 +648,16 @@
     if(n){ rebuild(); }
     // Advanced only past messages that really landed. A partial batch resumes; it never skips.
     try{ if(top > since) localStorage.setItem(HWM(), String(top)); }catch(_){ }
+    /* Mark the migration only after the drive transaction itself committed. A failed signer,
+     * upload, relay publish or index save leaves it unset, so the next foreground pass retries the
+     * same rows instead of declaring a hollow archive complete. */
+    if(!archiveError){
+      try{ localStorage.setItem(HWM_BLOSSOM(), '1'); }catch(_){ }
+    }
+    S.archive.running = false;
+    S.archive.published = n;
+    S.archive.error = archiveError;
+    if(PC && PC.VIEW === 'texts') paint();
     return { published:n, skipped:archiveError || undefined };
   }
 
@@ -1328,9 +1364,35 @@
       return r;
     }
     let a = null;
-    try{ a = await P.attachment({ part: id }); }catch(_){ a = null; }
+    /* New APKs stream bounded pieces. Besides avoiding three simultaneous 16 MB+ copies across
+     * Java/base64/JS, this means one large video no longer blocks the migration high-water mark and
+     * every message behind it. Older APKs ignore/omit the chunk fields; fall back to their answer. */
+    try{
+      const chunks = [];
+      let offset = 0, chunked = false;
+      for(let guard = 0; guard < 256; guard++){
+        const q = await P.attachment({ part:id, offset, max:768 * 1024 });
+        if(!q || q.offset === undefined){ a = q; break; }
+        chunked = true;
+        if(q.error){ a = q; break; }
+        if(q.data){
+          const bin = atob(q.data), u8 = new Uint8Array(bin.length);
+          for(let i=0;i<bin.length;i++) u8[i] = bin.charCodeAt(i);
+          chunks.push(u8); offset += u8.length;
+        }
+        if(q.done){
+          const blob = new Blob(chunks, {type:p.ct || 'application/octet-stream'});
+          a = { blob, bytes:offset, chunked:true };
+          break;
+        }
+        if(!q.data) { a = q; break; }
+      }
+      if(chunked && !a) a = { error:'attachment exceeded the safe transfer limit' };
+    }catch(_){ a = null; }
     let r;
-    if(a && a.data){
+    if(a && a.blob){
+      r = { url: URL.createObjectURL(a.blob), blob:a.blob, ct:p.ct || '' };
+    } else if(a && a.data){
       try{
         const bin = atob(a.data);
         const buf = new Uint8Array(bin.length);
@@ -1441,6 +1503,7 @@
           <button class="btn btn-neon small" id="sms-new">${ICO('plus','b-ic')}New</button>
         </div>
         <div class="muted small" id="sms-note"></div>
+        <div class="muted small" id="sms-archive" style="display:none;margin-top:6px"></div>
         <!-- THE ROLE IS ASKED FOR HERE, WHERE IT IS ALWAYS REACHABLE.
              It used to live in the EMPTY state only, which is exactly backwards: reading works
              WITHOUT the role and sending does not, so the moment somebody's texts appeared — the
@@ -1514,6 +1577,10 @@
     /* Bound whether or not the bar is visible right now — `noteWhere` reveals it asynchronously,
        after this runs, and a button revealed with no handler is the dead-button bug one layer on. */
     { const rb = PC.$('#sms-role2'); if(rb) rb.onclick = () => askForRole(rb); }
+    { const retry = PC.$('#sms-archive-retry'); if(retry) retry.onclick = async () => {
+        retry.disabled = true;
+        await mirror();
+      }; }
     /* `#sms-deep` HAD NO HANDLER AT ALL. It was drawn in the empty state and bound nowhere, so
      * `importAll` — the only thing that fetches messages OLDER than the first sync — was defined,
      * exported, and called by nothing. Every message anybody had was whatever `mirror` published
@@ -1577,6 +1644,26 @@
     const el = PC.$('#sms-note');
     if(!el) return;
     const st = await phoneState();
+    const archive = PC.$('#sms-archive');
+    if(archive){
+      if(S.archive.running){
+        archive.style.display = '';
+        archive.textContent = 'Encrypting and copying messages to Blossom…';
+      }else if(S.archive.error){
+        archive.style.display = '';
+        archive.innerHTML = 'Message backup stopped: ' + PC.enc(S.archive.error)
+          + ' <button class="btn small" id="sms-archive-retry">Retry now</button>';
+        const retry = archive.querySelector('#sms-archive-retry');
+        if(retry) retry.onclick = async () => { retry.disabled = true; await mirror(); };
+      }else if(S.archive.attempted && S.archive.published){
+        archive.style.display = '';
+        archive.textContent = S.archive.published + ' message'
+          + (S.archive.published === 1 ? '' : 's') + ' copied to encrypted Blossom storage';
+      }else{
+        archive.style.display = 'none';
+        archive.textContent = '';
+      }
+    }
     /* WHAT ACTUALLY HAPPENED BEATS WHAT THE STATE SAYS.
      *
      * The last branch describes a device reading somebody ELSE'S phone over Nostr — "your phone has

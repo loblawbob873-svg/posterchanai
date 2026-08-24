@@ -108,6 +108,14 @@ const PLUGIN = {
     calls.push(['attachment', a && a.part]);
     const part = (opt.parts || {})[String(a && a.part)];
     const known = rows.some(r => (r.parts || []).some(p => Number(p.id) === Number(a && a.part)));
+    if(opt.chunked && a && a.offset !== undefined && (part || known)){
+      const all = Buffer.from((part && part.data) || 'eA==', 'base64');
+      const size = Math.max(1, Number(opt.chunkSize) || Number(a.max) || 1);
+      const at = Math.max(0, Number(a.offset) || 0);
+      const piece = all.subarray(at, at + size);
+      return { offset:at, data:piece.toString('base64'), bytes:piece.length,
+               total:all.length, done:at + piece.length >= all.length };
+    }
     if(!part && known) return { data: 'eA==', bytes: 1 };
     if(!part) return { data: '', tooBig: false };
     if(part.tooBig) return { data: '', tooBig: true };

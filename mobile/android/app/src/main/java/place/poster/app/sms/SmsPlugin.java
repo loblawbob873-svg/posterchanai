@@ -496,10 +496,30 @@ public class SmsPlugin extends Plugin {
      * anything is drawn.
      */
     private static final int MAX_ATTACHMENT = 12 * 1024 * 1024;
+    private static final int ATTACHMENT_CHUNK = 768 * 1024;
 
     @PluginMethod
     public void attachment(PluginCall call) {
         long id = call.getLong("part", 0L);
+        long offset = call.getLong("offset", -1L);
+        if (offset >= 0) {
+            int want = Math.max(1, Math.min(call.getInt("max", ATTACHMENT_CHUNK), ATTACHMENT_CHUNK));
+            JSObject o = new JSObject();
+            o.put("part", id);
+            o.put("offset", offset);
+            byte[] b = id > 0 ? MmsStore.partChunk(getContext(), id, offset, want) : null;
+            long total = id > 0 ? MmsStore.sizeOf(getContext(), id) : -1L;
+            if (b == null) {
+                o.put("data", ""); o.put("error", "provider refused attachment");
+                o.put("total", total); o.put("done", false); call.resolve(o); return;
+            }
+            o.put("data", android.util.Base64.encodeToString(b, android.util.Base64.NO_WRAP));
+            o.put("bytes", b.length);
+            o.put("total", total);
+            o.put("done", b.length < want || (total >= 0 && offset + b.length >= total));
+            call.resolve(o);
+            return;
+        }
         int max = Math.min(call.getInt("max", MAX_ATTACHMENT), MAX_ATTACHMENT);
         JSObject o = new JSObject();
         o.put("part", id);
