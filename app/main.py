@@ -24,6 +24,7 @@ from app.models import User, VerificationToken
 from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, media_api, news, mail, torrent, storage, files, music_api, video_api, voice_api, effects_api, search_api
 from app.auth import NATIVE_APP_ORIGINS as _NATIVE_ORIGINS
 from app.routers import youtube_thumb, bots, push, calls, streams, rss, markets, websearch, weather, ssh_term, mempool
+from app.routers import code as code_router      # PosterChan Code: /api/code/* (editor tree, read/write, beautify)
 from app.routers import admin_emoji
 from app.routers import git as git_router
 from app.routers.telegram import router as telegram_router
@@ -224,6 +225,7 @@ app.include_router(effects_api.router)
 app.include_router(media_api.router)
 app.include_router(news.router)
 app.include_router(websearch.router)  # /api/websearch/* (Web Search screen: SearXNG proxy, reader, AI overview)
+app.include_router(code_router.router)  # /api/code/* (PosterChan Code: jailed workspace tree + black/beautysh)
 # /api/calendar/* — GUARDED, like the mount below. `radicale` is a NEW requirement and sync.sh
 # deploys code, not dependencies (CLAUDE.md), so on the first deploy a node has this file and not the
 # library: imported unguarded at module top, uvicorn exits and the whole node is down — chat, relay,

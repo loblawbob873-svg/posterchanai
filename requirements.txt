@@ -238,3 +238,11 @@ certifi
 # SSH terminal (the client's Terminal app). Optional at runtime: ssh_service.available()
 # reports its absence rather than 500ing, because sync.sh deploys code and not packages.
 paramiko>=3.4
+
+# PosterChan Code's beautifiers (the editor's Format button). OPTIONAL AT RUNTIME, deliberately:
+# sync.sh deploys code and not packages, so a node gets app/routers/code.py before it gets these.
+# Both are imported INSIDE the format functions and probed with importlib.util.find_spec, so a node
+# without them serves the editor with Format reporting "no formatter on this node" — never a 500,
+# and never a uvicorn that will not start (the failure the radicale note above is about).
+black>=24.0
+beautysh>=6.2
