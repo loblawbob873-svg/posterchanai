@@ -79,6 +79,39 @@ class TheDefaultInstallShipsWhatItPromises(unittest.TestCase):
                 self.assertRegex(self.src, rf'"\$1"\s*=\s*"{re.escape(flag)}"',
                                  f"{flag} is gone, so a failed {fn} cannot be retried on its own")
 
+    def test_docker_starts_the_office_editor_too(self):
+        """`--profile office` made it opt-in TWICE — you had to know the profile existed AND set
+        POSTERCHANAI_OFFICE — and the 📝 button is hidden when the editor is absent, so a stack
+        without it simply had no office and nothing said why."""
+        import yaml
+        with open(os.path.join(ROOT, "docker-compose.yml"), encoding="utf-8") as fh:
+            compose = yaml.safe_load(fh)
+        office = compose["services"]["office"]
+        self.assertNotIn("profiles", office,
+                         "the office service is profile-gated, so a normal `docker compose up` "
+                         "brings up everything except the editor")
+        env = "\n".join(compose["x-common"]["environment"])
+        self.assertIn("POSTERCHANAI_OFFICE=${POSTERCHANAI_OFFICE:-1}", env,
+                      "the container runs but the client is told the editor is off, so the 📝 "
+                      "button is hidden and the editor is unreachable")
+
+    def test_the_listen_address_is_a_choice_not_a_hardcode(self):
+        """loopback is right when nginx and CODE share a box; on a split deployment the front end is
+        another machine and loopback means every document 502s. Neither can be the silent default
+        for the other, so it is named."""
+        with open(os.path.join(ROOT, "scripts", "install", "office.sh"), encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertIn("POSTERCHANAI_OFFICE_LISTEN", src)
+        self.assertIn("--o:net.listen=$listen", src)
+        # THE ExecStart LINE, not the file: the paragraph above it explains why `--port=9983` must
+        # not be passed, and a bare substring search reads its own explanation as the offence.
+        execs = [l for l in src.splitlines() if l.startswith("ExecStart=")]
+        self.assertEqual(len(execs), 1, f"expected one ExecStart, got {execs}")
+        self.assertNotIn("--port=", execs[0],
+                         "the AppImage's AppRun already passes --port, and coolwsd treats a repeat "
+                         "as fatal while still exiting 0 — systemd reports success and the unit is "
+                         "simply never up")
+
     def test_the_office_installer_is_sourced(self):
         """A call to a function from a file nobody sources is a command-not-found at install time."""
         self.assertIn('source "$INSTALL_DIR/office.sh"', self.src)

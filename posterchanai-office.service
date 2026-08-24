@@ -37,7 +37,21 @@ Environment=HOME=/path/to/posterchanai/data/office-home
 # free/MemAvailable do not report as reclaimable, re-spent on every restart. On disk it is ordinary
 # storage, and the extraction survives a restart instead of being redone.
 Environment=TMPDIR=/path/to/posterchanai/data/office-work
-ExecStart=/path/to/posterchanai/officeserver/Collabora_Online.AppImage --appimage-extract-and-run --port=9983 --o:ssl.enable=false --o:ssl.termination=true --o:net.proxy_prefix=true --o:security.capabilities=false --o:security.seccomp=false --o:welcome.enable=false
+# AND IPv4, or `listen=loopback` alone binds [::1] ONLY — coolwsd's `net.proto` defaults to "all"
+# and it picks the IPv6 loopback. Every nginx config that fronts this (nginx/posterchanai.conf.example
+# and docker/proxy/posterchanai.conf) says `server 127.0.0.1:9983`, which then cannot connect at all:
+# the editor is up, the port is bound, and every document 502s.
+#
+# LOOPBACK. coolwsd defaults to `net.listen = any` (its own coolwsd.xml says so), so without this
+# the editor binds *:9983 — an unauthenticated document server, and a converter that fetches URLs on
+# request, reachable from anything on the LAN. Nothing in front of it authenticates: the WOPI token
+# the app issues authorises a DOCUMENT, not the port. nginx publishes it under /office-code/.
+#
+# NO --port. The AppImage's AppRun already passes `--port=9983` (verified by extracting it), along
+# with ssl.enable, net.proxy_prefix, security.capabilities and security.seccomp — and coolwsd calls
+# a repeated option fatal: "Option must not be given more than once: port". It exits 0 doing it, so
+# systemd reports success and the unit is simply never up.
+ExecStart=/path/to/posterchanai/officeserver/Collabora_Online.AppImage --appimage-extract-and-run --o:net.proto=IPv4 --o:net.listen=loopback --o:ssl.termination=true --o:welcome.enable=false
 Restart=on-failure
 RestartSec=5
 # It unpacks itself before it serves anything; a short stop timeout kills it mid-extraction and

@@ -24,6 +24,21 @@ setup_office_server() {
     else install -m 0755 "$tmp/code.download" "$app"; fi
     rm -rf "$tmp"
     user="$(id -un)"; unit="/etc/systemd/system/posterchanai-office.service"
+    # WHERE IT LISTENS, and it is a real choice rather than a default worth hiding.
+    #
+    # `loopback` is right for the ordinary install, where nginx and CODE are the same machine — and
+    # it is what nginx/posterchanai.conf.example assumes (`server 127.0.0.1:9983`). But on a SPLIT
+    # deployment the front end is another box: bound to loopback it is up, listening, and every
+    # document 502s, because the proxy is on a different host entirely.
+    #
+    # So a node whose nginx lives elsewhere sets POSTERCHANAI_OFFICE_LISTEN=any. Nothing in front of
+    # CODE authenticates — the WOPI token the app issues authorises a DOCUMENT, not the port — so
+    # that is a decision about how much the LAN is trusted, and it is made deliberately, by name.
+    local listen="${POSTERCHANAI_OFFICE_LISTEN:-loopback}"
+    if [ "$listen" != "loopback" ] && [ "$listen" != "any" ]; then
+        print_error "POSTERCHANAI_OFFICE_LISTEN must be 'loopback' or 'any' (got '$listen')"; return 1
+    fi
+    [ "$listen" = "any" ] && print_warning "CODE will listen on ALL interfaces (POSTERCHANAI_OFFICE_LISTEN=any)" 
     sudo tee "$unit" >/dev/null <<EOF
 [Unit]
 Description=PosterChan built-in CODE office editor
@@ -40,7 +55,15 @@ Environment=HOME=$root/data/office-home
 # default spends hundreds of MB of unreclaimable RAM per restart. data/office-work was already
 # being created for this and was never wired up. See posterchanai-office.service.
 Environment=TMPDIR=$root/data/office-work
-ExecStart=$app --appimage-extract-and-run --port=9983 --o:ssl.enable=false --o:ssl.termination=true --o:net.proxy_prefix=true --o:security.capabilities=false --o:security.seccomp=false --o:welcome.enable=false
+# NO --port HERE. The AppImage's own AppRun already runs coolwsd with `--port=9983` (and with
+# ssl.enable, net.proxy_prefix, security.capabilities and security.seccomp), and coolwsd treats a
+# repeated option as fatal: "Option must not be given more than once: port". The unit started,
+# spent three seconds and 925 MB unpacking itself, printed that one line and exited 0 — a SUCCESS
+# exit code, so systemd reported nothing wrong and `is-active` simply said inactive.
+#
+# Only the two overrides that differ from AppRun's defaults are passed: ssl.termination, because
+# nginx terminates TLS in front of this, and welcome.enable, which AppRun sets to true.
+ExecStart=$app --appimage-extract-and-run --o:net.proto=IPv4 --o:net.listen=$listen --o:ssl.termination=true --o:welcome.enable=false
 Restart=on-failure
 RestartSec=5
 # It unpacks itself before it serves anything; a short stop timeout kills it mid-extraction and

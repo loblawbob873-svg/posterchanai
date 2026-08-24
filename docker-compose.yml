@@ -4,7 +4,8 @@
 #   docker compose --profile cuda  up -d --build   # NVIDIA  (needs nvidia-container-toolkit; Windows = WSL2 only)
 #   docker compose --profile rocm  up -d --build   # AMD     (needs host amdgpu driver) — LINUX ONLY
 #   docker compose --profile intel up -d --build   # Intel Arc (needs host i915 + /dev/dri) — LINUX ONLY
-#   POSTERCHANAI_OFFICE=1 docker compose --profile nostr --profile office up -d --build  # + DOCX/XLSX/PPTX
+# Office (DOCX/XLSX/PPTX) is part of every profile now — no extra flag. Set POSTERCHANAI_OFFICE=0
+# to hide the button, or `docker compose ... down --remove-orphans` after removing it to stop it.
 #
 # LINUX ONLY means it: `rocm` and `intel` pass through /dev/kfd and /dev/dri, which only exist on a
 # Linux host with the amdgpu/i915 kernel driver loaded. Docker Desktop (Windows/macOS) runs containers
@@ -139,7 +140,10 @@ x-common: &common
     - POSTERCHANAI_STREAM_DOMAIN=${POSTERCHANAI_STREAM_DOMAIN:-}
     # Built-in office editing. Bring up the `office` profile and set this to 1 (the office service
     # itself supplies these automatically through its profile-friendly defaults).
-    - POSTERCHANAI_OFFICE=${POSTERCHANAI_OFFICE:-0}
+    # Defaults ON, because the `office` service below now starts with everything else. It is the
+    # flag the CLIENT reads (via /client/config) to decide whether to draw the 📝 button, so with
+    # the container running and this at 0 the editor is up and unreachable.
+    - POSTERCHANAI_OFFICE=${POSTERCHANAI_OFFICE:-1}
     - POSTERCHANAI_CODE_URL=${POSTERCHANAI_CODE_URL:-http://office:9980}
     # Postgres is the ONLY database — it backs both the app and the built-in Nostr relay (one DB).
     # Points at the `postgres` service below. Override POSTGRES_PASSWORD in a .env for production.
@@ -167,7 +171,12 @@ services:
   # it below /office-code and PosterChan is its WOPI storage host. Intended for home/small-team use.
   office:
     image: collabora/code:${POSTERCHANAI_CODE_TAG:-latest}
-    profiles: ["office"]
+    # NO PROFILE: the office editor is part of the normal bring-up, the same way it is now part of
+    # the normal ./install.sh. Behind a profile it was opt-in twice over — you had to know the
+    # profile existed AND set POSTERCHANAI_OFFICE — and the 📝 button in Files is hidden when the
+    # editor is absent, so a stack without it simply had no office and nothing said why.
+    # `docker compose --profile <gpu> down --remove-orphans` is how somebody who does not want it
+    # stops it; POSTERCHANAI_OFFICE=0 hides the button without removing the container.
     restart: unless-stopped
     cap_add: [MKNOD]
     environment:
