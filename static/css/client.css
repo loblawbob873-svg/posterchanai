@@ -2419,6 +2419,14 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .file-card .meta .dlbtn{background:none;border:none;color:var(--muted);cursor:pointer;font-size:15px;padding:4px 6px;line-height:1}
 .file-card .meta .dlbtn:hover{color:var(--cyan,#5ff)}
 .file-icon{display:flex;flex-direction:column;align-items:center;justify-content:center;height:140px;gap:6px;font-size:42px;background:#120c24}
+/* A CARD WITH NOTHING TO SHOW DOES NOT RESERVE THE SPACE A PHOTOGRAPH NEEDS.
+   140px is right for an image or a video frame and wrong for a 42px glyph — a folder of documents
+   became a grid of empty boxes ("mostly wasted icon space"), which is what a SYNCED folder is made
+   of. Photographs are untouched, so the drive and a synced folder still look like one another.
+   `has-thumb` wins: a decrypted preview arriving late re-expands the card it belongs to. */
+.file-icon.noart{height:64px;font-size:26px;gap:2px}
+.file-icon.noart span{font-size:10px}
+.file-icon.noart.has-thumb{height:140px;font-size:42px}
 .file-icon span{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px}
 .file-card .del{position:absolute;top:6px;inset-inline-end:6px;background:rgba(8,5,18,.7);border:1px solid var(--line);border-radius:8px;color:var(--danger);cursor:pointer;padding:2px 8px}
 .file-card .copy{position:absolute;top:6px;inset-inline-end:38px;background:rgba(8,5,18,.7);border:1px solid var(--line);border-radius:8px;color:var(--cyan,#5ff);cursor:pointer;padding:2px 8px;font-size:13px}

@@ -16386,9 +16386,13 @@
     if(/image/.test(t)) return `<img class="ithumb" data-ext="${enc(ext)}" src="${enc(thumbUrl(b.url))}" loading="lazy">`;
     // video: ffmpeg frame thumbnail (server ?thumb=1); falls back to a 🎬 icon if it can't be decoded
     if(/video/.test(t)) return `<img class="vthumb" data-ext="${enc(ext)}" src="${enc(thumbUrl(b.url))}" loading="lazy">`;
-    if(/audio/.test(t)) return `<div class="file-icon">🎵<span>${enc(ext)}</span></div>`;
+    /* NO PREVIEW, NO 140px HOLE. An image or a video fills that block; everything else is a 42px
+     * glyph floating in an empty box, and a folder of documents is a grid of empty boxes — "mostly
+     * wasted icon space". `noart` makes those cards compact. A folder of photographs is untouched,
+     * so the two views still look like one another. */
+    if(/audio/.test(t)) return `<div class="file-icon noart">🎵<span>${enc(ext)}</span></div>`;
     const icon = /zip|compress|tar|gzip|7z|rar/.test(t)?'📦' : /pdf/.test(t)?'📕' : /text|json|xml|csv/.test(t)?'📄' : '📎';
-    return `<div class="file-icon">${icon}<span>${enc(ext)}</span></div>`;
+    return `<div class="file-icon noart">${icon}<span>${enc(ext)}</span></div>`;
   }
   // What a downloaded blob should be SAVED as. A blob is addressed by its hash, so with no name
   // anywhere the honest fallback is a short hash plus the real extension — never a bare 64-char hex.
@@ -19424,6 +19428,10 @@
                     && _THUMB_EXT.test(ext) && (it.size||0) <= _THUMB_MAX;
       const thumbAttrs = canThumb
         ? ` data-thumb="${enc(it.sha||'')}"${it.chunks?` data-thumb-chunks="${enc(it.chunks.join(','))}"`:''}` : '';
+      /* The same rule the drive uses (see blobThumb): a card with nothing to show does not reserve
+       * the space a photograph would need. A synced folder is mostly documents, so this is where it
+       * showed — a grid of 140px boxes each holding one small glyph. */
+      const artc = canThumb ? '' : ' noart';
       // The FULL path is what an edit needs — a manifest has no folders, only paths — and a directory
       // row has none of its own, so it is rebuilt from where we are standing.
       const full = it.dir ? ((_syncPath ? _syncPath + '/' : '') + it.name) : it.path;
@@ -19441,7 +19449,7 @@
         if(details) return _fxDetailsRow({ dir:!!it.dir, name:it.name, icon:icon, size:_fxBytes(it.size),
           type:type, when:_fxWhen(it.mtime), acts:tact });
         return `<div class="file-card${it.dir?' isdir':''}"${tnav}>
-          <div class="file-icon">${icon}<span>${enc(it.dir?'folder':(ext||'file'))}</span></div>
+          <div class="file-icon noart">${icon}<span>${enc(it.dir?'folder':(ext||'file'))}</span></div>
           <div class="meta"><span class="fname" title="${enc(it.name)}">${enc(fileLabel(it.name, ext, it.size))}</span>${tact?`<span class="fc-acts">${tact}</span>`:''}</div></div>`;
       }
       const edits = !canEdit ? ''
@@ -19456,7 +19464,7 @@
       if(details) return _fxDetailsRow({ dir:!!it.dir, name:it.name, icon:icon, thumb:thumbAttrs,
         size:_fxBytes(it.size), type:type, when:_fxWhen(it.mtime), acts:act });
       return `<div class="file-card${it.dir?' isdir':''}"${nav}>
-        <div class="file-icon"${thumbAttrs}>${icon}<span>${enc(it.dir?'folder':(ext||'file'))}</span></div>
+        <div class="file-icon${artc}"${thumbAttrs}>${icon}<span>${enc(it.dir?'folder':(ext||'file'))}</span></div>
         <div class="meta"><span class="fname" title="${enc(it.name)}">${enc(fileLabel(it.name, ext, it.size))}</span>${act?`<span class="fc-acts">${act}</span>`:''}</div></div>`;
     };
     const fileItems = items.filter(it => !it.dir);
