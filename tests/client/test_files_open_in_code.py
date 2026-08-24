@@ -202,6 +202,53 @@ class TheOpenersAreOnTheTileNotOnlyInDetails(unittest.TestCase):
         self.assertIn("codesync", src)
 
 
+class OneFileCanBeSelected(unittest.TestCase):
+    """A synced folder offered Select all and Select none and nothing between them.
+
+    "The select choices are all or none, no way to select 1 file like a regular file manager." The
+    drive already had a per-card checkbox; the synced view had none at all, so the smallest thing
+    you could act on was the whole directory.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _read(APP)
+        cls.css = _read(os.path.join(ROOT, "static", "css", "client.css"))
+
+    def test_a_synced_file_has_its_own_checkbox(self):
+        self.assertIn("syncbox", self.app, "there is still no way to pick a single synced file")
+        self.assertIn("$$('.syncbox', grid)", self.app, "the checkbox is drawn but not bound")
+
+    def test_it_uses_the_drive_s_grammar(self):
+        """One selection idiom for all of Files — same class, and having a selection IS the mode."""
+        self.assertIn('class="selbox syncbox"', self.app)
+        self.assertIn("grid.classList.toggle('selmode', _syncSel.size > 0)", self.app)
+
+    def test_toggling_one_file_does_not_redraw_the_view(self):
+        """A full re-render loses the scroll position on every click, which is what makes a picker
+        feel broken."""
+        i = self.app.index("$$('.syncbox', grid)")
+        body = self.app[i:i + 900]
+        self.assertNotIn("renderBlossom()", body,
+                         "picking one file re-renders the whole folder")
+        self.assertIn("_syncSel.add", body)
+        self.assertIn("_syncSel.delete", body)
+
+    def test_the_details_grid_keeps_its_columns(self):
+        """The details view is a GRID: a row with one more (or fewer) cell than the header shifts
+        every heading by a column. Adding the checkbox did exactly that, twice — once for files
+        (the grid still said `nosel`) and once for folders (which have no checkbox)."""
+        self.assertNotIn("' details nosel'", self.app,
+                         "the synced grid still declares it has no select column while its rows "
+                         "have one")
+        self.assertIn("selbox-gap", self.app, "a folder row has no cell for the checkbox column")
+        self.assertIn(".selbox-gap", self.css)
+
+    def test_the_placeholder_is_invisible_in_the_tile_view(self):
+        """It exists to hold a grid column open; in tiles there is no column to hold."""
+        self.assertIn(".files-grid:not(.details) .selbox-gap", self.css)
+
+
 class TheExplorerToolbarStaysLiftable(unittest.TestCase):
     """`_fxBarHTML` is pulled out of app.js BY NAME and evaluated on its own by
     scripts/check_files_explorer.py — that is what stops the check measuring a copy of the markup

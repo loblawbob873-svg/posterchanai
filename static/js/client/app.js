@@ -19337,7 +19337,11 @@
     pane.innerHTML = '<div class="fx-explorer">'
       + '<div class="fx-side">' + _fxSideHTML() + '</div>'
       + '<div class="fx-main">' + _fxBarHTML(_fxCrumbs(), _fxHist.length > 0) + head
-      + '<div class="files-grid' + (details?' details nosel':'') + '" id="bl-grid"><div class="spinner"></div></div>'
+      /* NOT `nosel` any more: a synced file can be picked one at a time, so this grid has the same
+       * checkbox column the drive's does. Left as `nosel` the header kept 5 cells while every row
+       * grew to 6, which puts every heading over the wrong column — caught by
+       * scripts/check_files_explorer.py's headings-misaligned assertion. */
+      + '<div class="files-grid' + (details?' details':'') + '" id="bl-grid"><div class="spinner"></div></div>'
       + '</div></div>';
     _fxBindSide(pane); _fxBindBar(pane);
     {
@@ -19461,12 +19465,24 @@
       const act = (it.dir ? ''
         : `<button class="dlsync" data-sha="${enc(it.sha||'')}"${it.chunks?` data-chunks="${enc(it.chunks.join(','))}"`:''} data-name="${enc(it.name)}" data-path="${enc(it.path||'')}" title="Download (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button>`
           + `<button class="keepsync" data-sha="${enc(it.sha||'')}"${it.chunks?` data-chunks="${enc(it.chunks.join(','))}"`:''} data-name="${enc(it.name)}" title="Save a copy to your drive"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg></button>`
+          + (!!CFG.office_enabled && _officeable(it.name, '') ? `<button class="officesync" data-sha="${enc(it.sha||'')}"${it.chunks?` data-chunks="${enc(it.chunks.join(','))}"`:''} data-name="${enc(it.name)}" data-path="${enc(it.path||'')}" title="Open in Office — saves to every device">📝</button>` : '')
           + (_codeable(it.name, '') ? `<button class="codesync" data-sha="${enc(it.sha||'')}"${it.chunks?` data-chunks="${enc(it.chunks.join(','))}"`:''} data-name="${enc(it.name)}" data-path="${enc(it.path||'')}" title="Edit in PosterChan Code — saves to every device">&lt;/&gt;</button>` : ''))
         + edits;
       const nav = it.dir ? ` data-dir="${enc(it.name)}"` : '';
-      if(details) return _fxDetailsRow({ dir:!!it.dir, name:it.name, icon:icon, thumb:thumbAttrs,
-        size:_fxBytes(it.size), type:type, when:_fxWhen(it.mtime), acts:act });
-      return `<div class="file-card${it.dir?' isdir':''}"${nav}>
+      /* ONE FILE AT A TIME, the way every file manager does it. The synced view had `Select all`
+       * and `Select none` and nothing between them — you could not pick a single file. The drive
+       * already had a per-card checkbox; this is the same control, the same class, the same
+       * grammar (having a selection IS select mode), keyed on the PATH because that is what a
+       * manifest edit takes. Folders are excluded: the actions the bar offers are per-file. */
+      /* A FOLDER GETS THE CELL BUT NOT THE CHECKBOX. The bar's action is per-file, so a folder is
+       * not selectable — but the details view is a GRID, and a row with one fewer cell than the
+       * header shifts every heading by a column. The placeholder holds the column open. */
+      const sbox = it.dir ? '<span class="selbox-gap"></span>' :
+        `<input type="checkbox" class="selbox syncbox" data-path="${enc(it.path||'')}"${_syncSel.has(it.path)?' checked':''} title="Select">`;
+      const selc = (!it.dir && _syncSel.has(it.path)) ? ' selected' : '';
+      if(details) return _fxDetailsRow({ dir:!!it.dir, name:it.name, icon:icon, thumb:thumbAttrs, box:sbox,
+        selected:!!selc, size:_fxBytes(it.size), type:type, when:_fxWhen(it.mtime), acts:act });
+      return `<div class="file-card${it.dir?' isdir':''}${selc}"${nav}>${sbox}
         <div class="file-icon"${thumbAttrs}>${icon}<span>${enc(it.dir?'folder':(ext||'file'))}</span></div>
         <div class="meta"><span class="fname" title="${enc(it.name)}">${enc(fileLabel(it.name, ext, it.size))}</span>${act?`<span class="fc-acts">${act}</span>`:''}</div></div>`;
     };
@@ -19490,7 +19506,7 @@
         <span class="muted small" style="margin-right:auto">${items.filter(i=>!i.dir).length} file${items.filter(i=>!i.dir).length===1?'':'s'} moved aside on this device \u2014 nothing here is on your other devices' screens.</span>
         <button class="btn btn-ghost small" id="tr-reconcile"><svg class="ic b-ic" aria-hidden="true"><use href="#i-restore"></use></svg>Reconcile Trash</button>
       </div>` : '';
-    grid.innerHTML = selbar + trashbar + (details ? _fxColsHTML(false) : '') + items.map(rowFor).join('');
+    grid.innerHTML = selbar + trashbar + (details ? _fxColsHTML(true) : '') + items.map(rowFor).join('');
     if(details) _fxBindCols(grid);
     /* The two verbs. Both go through PCSync so the sweep that follows is told what happened — a
      * restore that says nothing is re-derived as "this copy is the deleted version" and undone. */
@@ -19522,6 +19538,18 @@
         rc.disabled = true;
         try{ await S.reconcileTrash(row.id); } finally{ _trashCache = null; renderBlossom(); } };
     }
+    /* Toggling ONE file repaints that card and the bar, not the whole view — a re-render would
+     * lose the scroll position on every click, which is what makes a picker feel broken. */
+    $$('.syncbox', grid).forEach(cb=> cb.onclick=(e)=>{ e.stopPropagation();
+      const p2 = cb.dataset.path || '';
+      if(cb.checked) _syncSel.add(p2); else _syncSel.delete(p2);
+      const card = cb.closest('.file-card'); if(card) card.classList.toggle('selected', cb.checked);
+      grid.classList.toggle('selmode', _syncSel.size > 0);
+      _syncSelOn = _syncSel.size > 0;
+      const c = $('#ss-count', grid); if(c) c.textContent = _syncSel.size ? _syncSel.size + ' selected' : 'none selected';
+      const d2 = $('#ss-del', grid); if(d2) d2.disabled = !_syncSel.size;
+      const n2 = $('#ss-none', grid); if(n2) n2.disabled = !_syncSel.size;
+    });
     /* selmode follows the DRIVE's grammar: having a selection IS the mode — no toggle. */
     _syncSelOn = _syncSel.size > 0;
     if(_syncSelOn) grid.classList.add('selmode'); else grid.classList.remove('selmode');
@@ -19613,6 +19641,8 @@
       _syncDownload(b, b.dataset.sha, b.dataset.name, _chunksOf(b)); });
     $$('.codesync', grid).forEach(b=> b.onclick=(e)=>{ e.preventDefault(); e.stopPropagation();
       openSyncCodeFile(b.dataset); });
+    $$('.officesync', grid).forEach(b=> b.onclick=(e)=>{ e.preventDefault(); e.stopPropagation();
+      openSyncOfficeFile(b.dataset); });
     /* RENAME. The path is what changes, so a folder is renamed by renaming everything under it — one
      * write, one confirmation, and the devices move that many files. The box is seeded with the leaf
      * only: this is a rename, and offering the whole path invites someone to retype a directory by
@@ -20132,8 +20162,43 @@
     return newSha;
   }
 
-  async function openOfficeFile(d){
+  /* THE EDITOR ITSELF, WRITTEN ONCE. The drive and a synced folder fetch their bytes differently
+   * and write them back differently; everything in between — the WOPI session, the iframe, the
+   * launch form, Save and Close — is the same, and two copies of it is two places to leak a token
+   * or leave a session open. `saveBack(updatedFile)` is the only part that differs. */
+  async function _officeSession(file, saveBack){
     let session=null;
+    try{
+      const fd=new FormData(); fd.append('file',file,file.name); fd.append('mode','edit');
+      const r=await fetch('/client/office/session',{method:'POST',body:fd});
+      if(!r.ok) throw new Error((await r.json().catch(()=>null)||{}).detail||('office HTTP '+r.status));
+      session=await r.json();
+      const frameName='pc-office-'+session.id;
+      modal(`<div class="office-head"><h3>📝 ${enc(file.name)}</h3><span class="muted small">Changes are temporary until you tap Save.</span></div>
+        <iframe class="office-frame" name="${frameName}" title="Office editor"></iframe>
+        <form class="office-launch" method="post" action="${enc(session.editor_url)}" target="${frameName}">
+          <input type="hidden" name="access_token" value="${enc(session.token)}"><input type="hidden" name="access_token_ttl" value="${session.expires*1000}"></form>
+        <div class="row office-actions"><button class="btn btn-ghost" id="office-close">Close</button><button class="btn btn-neon" id="office-save">Save</button></div>`, root=>{
+          $('.office-launch',root).submit();
+          const drop=async()=>{ try{ await fetch('/client/office/session/'+session.id+'?access_token='+encodeURIComponent(session.token),{method:'DELETE'}); }catch(_){} };
+          $('#office-close',root).onclick=async()=>{ await drop(); closeModal(); };
+          $('#office-save',root).onclick=async e=>{
+            const b=e.currentTarget; b.disabled=true; b.textContent='Saving…';
+            try{
+              // CODE writes through PutFile; a short delay lets its final force-save settle.
+              await new Promise(res=>setTimeout(res,700));
+              const rr=await fetch('/client/office/session/'+session.id+'/contents?access_token='+encodeURIComponent(session.token));
+              if(!rr.ok) throw new Error('saved document HTTP '+rr.status);
+              await saveBack(fileFromBytes(await rr.arrayBuffer(),file.name,file.type));
+              await drop();
+              toast('document saved'); closeModal();
+            }catch(err){ toast('save failed: '+(err.message||err)); b.disabled=false; b.textContent='Save'; }
+          };
+        });
+    }catch(err){ toast('office unavailable: '+((err&&err.message)||err)); }
+  }
+
+  async function openOfficeFile(d){
     try{
       toast(d.enc==='1'?'decrypting document…':'opening office…');
       let blob;
@@ -20144,38 +20209,42 @@
         const r=await fetch(d.url); if(!r.ok) throw new Error('file HTTP '+r.status); blob=await r.blob();
       }
       const file=fileFromBytes(await blob.arrayBuffer(), d.name||'document', d.mime||blob.type);
-      const fd=new FormData(); fd.append('file',file,file.name); fd.append('mode','edit');
-      const r=await fetch('/client/office/session',{method:'POST',body:fd});
-      if(!r.ok) throw new Error((await r.json().catch(()=>null)||{}).detail||('office HTTP '+r.status));
-      session=await r.json();
-      const frameName='pc-office-'+session.id;
-      modal(`<div class="office-head"><h3>📝 ${enc(file.name)}</h3><span class="muted small">Changes are temporary until you tap Save to Files.</span></div>
-        <iframe class="office-frame" name="${frameName}" title="Office editor"></iframe>
-        <form class="office-launch" method="post" action="${enc(session.editor_url)}" target="${frameName}">
-          <input type="hidden" name="access_token" value="${enc(session.token)}"><input type="hidden" name="access_token_ttl" value="${session.expires*1000}"></form>
-        <div class="row office-actions"><button class="btn btn-ghost" id="office-close">Close</button><button class="btn btn-neon" id="office-save">Save to Files</button></div>`, root=>{
-          $('.office-launch',root).submit();
-          $('#office-close',root).onclick=async()=>{ try{ await fetch('/client/office/session/'+session.id+'?access_token='+encodeURIComponent(session.token),{method:'DELETE'}); }catch(_){} closeModal(); };
-          $('#office-save',root).onclick=async e=>{
-            const b=e.currentTarget; b.disabled=true; b.textContent='Saving…';
-            try{
-              // CODE writes through PutFile; a short delay lets its final force-save settle.
-              await new Promise(res=>setTimeout(res,700));
-              const rr=await fetch('/client/office/session/'+session.id+'/contents?access_token='+encodeURIComponent(session.token));
-              if(!rr.ok) throw new Error('saved document HTTP '+rr.status);
-              const updated=fileFromBytes(await rr.arrayBuffer(),file.name,file.type);
-              const old=FilesIdx.meta(d.sha)||{}, folder=old.folder||FilesIdx.folderOf(d.sha)||'';
-              let newSha='';
-              if(d.enc==='1') newSha=await uploadEncFile(updated,folder,null);
-              else { const url=await uploadBlob(updated,{noCompress:true}); newSha=_shaFromUrl(url);
-                FilesIdx.setFile(newSha,{name:file.name,folder,mime:updated.type||mimeForName(file.name),size:updated.size,ts:Math.floor(Date.now()/1000)}); }
-              if(newSha && newSha!==d.sha) FilesIdx.forget(d.sha); // old blob remains recoverable on Blossom
-              await fetch('/client/office/session/'+session.id+'?access_token='+encodeURIComponent(session.token),{method:'DELETE'}).catch(()=>{});
-              toast('document saved'); closeModal(); renderBlossom();
-            }catch(err){ toast('save failed: '+(err.message||err)); b.disabled=false; b.textContent='Save to Files'; }
-          };
-        });
-    }catch(err){ toast('office unavailable: '+(err.message||err)); }
+      await _officeSession(file, async (updated)=>{
+        const old=FilesIdx.meta(d.sha)||{}, folder=old.folder||FilesIdx.folderOf(d.sha)||'';
+        let newSha='';
+        if(d.enc==='1') newSha=await uploadEncFile(updated,folder,null);
+        else { const url=await uploadBlob(updated,{noCompress:true}); newSha=_shaFromUrl(url);
+          FilesIdx.setFile(newSha,{name:file.name,folder,mime:updated.type||mimeForName(file.name),size:updated.size,ts:Math.floor(Date.now()/1000)}); }
+        if(newSha && newSha!==d.sha) FilesIdx.forget(d.sha); // old blob remains recoverable on Blossom
+        renderBlossom();
+      });
+    }catch(err){ toast('office unavailable: '+((err&&err.message)||err)); }
+  }
+
+  /* THE SAME EDITOR, ON A FILE IN A SYNCED FOLDER. Bytes come the way Download gets them
+   * (`_syncFileBlob` — Blossom by sha or chunk list, decrypted with the drive key) and Save goes
+   * back through the FOLDER's own writer, so the edit reaches every device rather than landing on
+   * the drive as a copy. There was no Office button in a synced folder at all. */
+  async function openSyncOfficeFile(d){
+    const key=_syncRoot, full=d.path||d.name||'';
+    try{
+      const chunks = d.chunks ? String(d.chunks).split(',').filter(Boolean) : null;
+      if(!d.sha && !(chunks && chunks.length)){ toast('this file has no stored copy yet'); return; }
+      toast('decrypting document…');
+      const blob=await _syncFileBlob(d.sha, chunks);
+      const name=d.name||'document';
+      const file=fileFromBytes(await blob.arrayBuffer(), name, mimeForName(name)||blob.type);
+      await _officeSession(file, async (updated)=>{
+        if(!(window.PCSync && PCSync.edit && PCSync.edit.uploadMany))
+          throw new Error('this build cannot write to a synced folder');
+        const cut=full.lastIndexOf('/');
+        const dir=cut<0?'':full.slice(0,cut);
+        const r=await PCSync.edit.uploadMany(key, dir, [updated], { replace:true });
+        if(r && r.failed && r.failed.length) throw new Error('the folder refused the write');
+        try{ _syncManifests.delete(key); }catch(_){}
+        if(VIEW==='blossom' && _syncRoot===key) renderBlossom();
+      });
+    }catch(err){ toast('office unavailable: '+((err&&err.message)||err)); }
   }
 
   function _renderFilesGrid(grid, list){

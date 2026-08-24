@@ -128,16 +128,22 @@ function drive(){
        + '<button class="del">'+ICON+'</button>',
   })).join('');
 }
-// A synced folder: no checkbox column, and folder rows. The action counts here MUST match what
+// A synced folder: folder rows, and — since a synced file can be picked ONE AT A TIME like every
+// other file manager — the same checkbox the drive has. It genuinely had none while the view was
+// select-all-or-none, and a repro that keeps the old shape is how an added column passes a check
+// that no longer describes the screen. The action counts here MUST match what
 // _renderSyncedRoot emits — two buttons on a folder (rename, delete) and four on a file (download,
 // keep a copy, rename, delete). They were one and none while the view was read-only, and a repro
 // that keeps the old count is how a widened actions column passes a check it no longer describes.
 function synced(){
   const EDITS = '<button class="rnsync">'+ICON+'</button><button class="rmsync">'+ICON+'</button>';
   const rows = [
-    _fxDetailsRow({dir:true, name:'2026 receipts and invoices', icon:'📁', size:_fxBytes(41231), type:'38 items', when:_fxWhen(1786400000000), acts:EDITS}),
+    _fxDetailsRow({dir:true, name:'2026 receipts and invoices', icon:'📁', size:_fxBytes(41231), type:'38 items', when:_fxWhen(1786400000000),
+                   box:'<span class="selbox-gap"></span>', acts:EDITS}),
     _fxDetailsRow({name:'notes.md', icon:'📄', size:_fxBytes(1204), type:_fxType('md'), when:_fxWhen(1786400000000),
-                   acts:'<button class="dlsync">'+ICON+'</button><button class="keepsync">'+ICON+'</button>'+EDITS}),
+                   box:'<input type="checkbox" class="selbox syncbox" title="Select">',
+                   acts:'<button class="dlsync">'+ICON+'</button><button class="keepsync">'+ICON+'</button>'
+                       +'<button class="officesync">'+ICON+'</button><button class="codesync">'+ICON+'</button>'+EDITS}),
   ];
   return rows.join('');
 }
@@ -197,8 +203,8 @@ function paint(which){
     '<div class="fx-explorer"><div class="fx-side">' + side() + '</div>'
     + '<div class="fx-main">' + _fxBarHTML(CRUMBS)
     + DROP
-    + '<div class="files-grid details' + (nosel?' nosel':'') + '" id="bl-grid">'
-    + _fxColsHTML(!nosel) + (nosel ? synced() : drive()) + '</div></div></div>';
+    + '<div class="files-grid details" id="bl-grid">'
+    + _fxColsHTML(true) + (nosel ? synced() : drive()) + '</div></div></div>';
 }
 window.__paint = paint;
 paint('drive');

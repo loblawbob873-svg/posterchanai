@@ -2403,6 +2403,10 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .files-grid:not(.details) .file-card:hover{background:rgba(var(--accent-rgb),.07)}
 /* The checkbox sits ON the thumbnail, so it needs its own contrast rather than the page's — a bare
    checkbox over a light photo is invisible. Bigger than default: this is a touch target on mobile. */
+/* Holds the checkbox column open on a row that has no checkbox (a folder). Inert everywhere else:
+   in the tile view it is an empty inline element with no box of its own. */
+.selbox-gap{display:block;width:20px;height:1px}
+.files-grid:not(.details) .selbox-gap{display:none}
 .file-card .selbox{position:absolute;top:6px;inset-inline-start:6px;z-index:2;width:20px;height:20px;cursor:pointer;
   accent-color:var(--neon);border-radius:4px;box-shadow:0 0 0 2px rgba(0,0,0,.55);background:rgba(0,0,0,.35)}
 /* Selection is a FILL plus the border, the way every file manager marks it — a bare glow around a
@@ -8146,9 +8150,9 @@ html.os-on #upload-badge.upbadge{z-index:333}
 /* THE OPENERS LOOK LIKE THE OTHER ACTIONS. `.officebtn`, `.codebtn` and `.codesync` had NO rule at
    all, so they fell back to the browser's default <button> — a grey chunky control in a dark theme,
    beside three flat icon buttons. Easy to miss, and it reads as debris rather than an affordance. */
-.fc-acts .officebtn,.fc-acts .codebtn,.fc-acts .codesync{background:none;border:none;color:var(--muted);
+.fc-acts .officebtn,.fc-acts .codebtn,.fc-acts .codesync,.fc-acts .officesync{background:none;border:none;color:var(--muted);
   cursor:pointer;font-size:14px;line-height:1;padding:4px 5px;border-radius:6px;font-family:inherit}
-.fc-acts .officebtn:hover,.fc-acts .codebtn:hover,.fc-acts .codesync:hover{color:var(--cyan)}
+.fc-acts .officebtn:hover,.fc-acts .codebtn:hover,.fc-acts .codesync:hover,.fc-acts .officesync:hover{color:var(--cyan)}
 .fc-acts .dlsync,.fc-acts .keepsync,.fc-acts .rnsync,.fc-acts .rmsync{background:none;border:none;
   color:var(--muted);cursor:pointer;font-size:15px;padding:4px 6px;line-height:1}
 .fc-acts .dlsync:hover,.fc-acts .keepsync:hover,.fc-acts .rnsync:hover{color:var(--cyan)}

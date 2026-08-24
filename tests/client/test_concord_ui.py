@@ -121,6 +121,8 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert 'kinds:[13302]' in CONCORD and 'syncArmadaMemberships(p,viewer)' in CONCORD
     assert 'await p.nip44dec(viewer.pubkey,event.content)' in CONCORD
     assert 'cc-public-copy' in CONCORD and '.cc-public-copy' in CONCORD_CSS
+    assert 'function isUnread(room)' in CONCORD
+    assert '.cc-channel.unread' in CONCORD_CSS and '.cc-server.unread' in CONCORD_CSS
     assert 'notifyMentions(p,current,messages,viewer,me)' in CONCORD
     assert "route:'concord'" in CONCORD and 'concord-mention-' in CONCORD
     assert "search:'armada.buzz/invite'" in CONCORD and "search:'poster.place/invite'" in CONCORD
