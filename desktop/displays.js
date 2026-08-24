@@ -121,11 +121,14 @@ class Displays {
     const actual=await this.wm.outputs();
     const before=snapshot(actual), rows=validate(before,actual);
     const changed=rows.some((o,i)=>o.x!==before[i].x || o.y!==before[i].y);
-    if(!changed) return {ok:true,changed:false};
-    await this._run(rows);
+    const body='# PosterChanOS System Settings — generated; edit through Displays.\n'+commands(rows).join('\n')+'\n';
+    let saved=''; try{ saved=fs.readFileSync(this.file,'utf8'); }catch(_){}
+    const fileChanged=saved!==body;
+    if(!changed && !fileChanged) return {ok:true,changed:false};
+    if(changed) await this._run(rows);
     fs.mkdirSync(path.dirname(this.file),{recursive:true});
     const tmp=this.file+'.new';
-    fs.writeFileSync(tmp,'# PosterChanOS System Settings — generated; edit through Displays.\n'+commands(rows).join('\n')+'\n',{mode:0o600});
+    fs.writeFileSync(tmp,body,{mode:0o600});
     fs.renameSync(tmp,this.file);
     return {ok:true,changed:true};
   }

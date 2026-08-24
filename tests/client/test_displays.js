@@ -55,5 +55,17 @@ assert.strictEqual(joined[1].x,3840, 'small horizontal gaps become pointer walls
  assert.strictEqual(fixed.changed,true);
  assert(repairSeen.some(x=>x.includes('"DP-2" enable pos 3840 0')));
  assert(fs.readFileSync(path.join(repairDir,'outputs.conf'),'utf8').includes('"DP-2" enable pos 3840 0'));
+ /* A prior live repair can hide an old broken file until reboot. Reconcile the file even when the
+  * compositor is already correct, without needlessly reconfiguring active outputs. */
+ const savedDir=fs.mkdtempSync(path.join(os.tmpdir(),'pc-display-saved-'));
+ const savedFile=path.join(savedDir,'outputs.conf');
+ fs.writeFileSync(savedFile,'output "DP-2" enable pos 3870 0 scale 1 transform normal\n');
+ const goodLive=JSON.parse(JSON.stringify(wideLive)); goodLive[1].rect.x=3840;
+ const savedSeen=[];
+ const savedRepair=new Displays({outputs:async()=>goodLive,command:async c=>savedSeen.push(c)},{file:savedFile});
+ const savedFixed=await savedRepair.repairPointerGaps();
+ assert.strictEqual(savedFixed.changed,true);
+ assert.strictEqual(savedSeen.length,0, 'correct live outputs must not flicker during file migration');
+ assert(fs.readFileSync(savedFile,'utf8').includes('"DP-2" enable pos 3840 0'));
  console.log('ALL OK');
 })().catch(e=>{console.error(e);process.exit(1)});
