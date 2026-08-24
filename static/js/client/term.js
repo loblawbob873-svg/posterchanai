@@ -826,7 +826,10 @@
       if(go) go.classList.remove('hidden');
       if(stop) stop.classList.toggle('hidden', !on);
       if(kb) kb.classList.toggle('hidden', !on);
-      if(sel) sel.disabled = on;
+      /* This chooses the host for NEW TAB; it does not retarget the running PTY. Keep it usable
+       * while connected, or an automatically opened Local tab makes every saved server
+       * unreachable even though the New tab button is still visible. */
+      if(sel) sel.disabled = false;
       if(keys) keys.hidden = !on;
     }
 

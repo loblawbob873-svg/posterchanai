@@ -10,11 +10,9 @@ ROOT = Path(__file__).parents[2]
 def test_reopening_music_keeps_the_existing_track_and_position():
     start = APP.index("function openMusic()")
     body = APP[start:APP.index("\n  async function renderBlossom", start)]
-    guard = body.index("if(MusicPlayer.cur || (_audioEl && _audioEl.src))")
-    show = body.index("renderMusicApp();", guard)
-    choose = body.index("MusicPlayer.play(")
-    assert guard < show < choose
-    assert "return;" in body[show:choose]
+    assert "renderMusicApp();" in body
+    assert "MusicPlayer.play(" not in body
+    assert "MusicPlayer.shuffle" not in body
 
 
 def test_launcher_music_route_uses_the_non_restarting_entrypoint():

@@ -1161,6 +1161,19 @@
 
   function focusWin(w, render){
     if(!w) return;
+    /* A compositor-owned application always paints above this tiled Electron desktop, regardless
+     * of either side's CSS z-index. Therefore a visible Firefox/Telegram window cannot be put
+     * "behind" a PosterChan window by focusing the latter: without an explicit compositor action
+     * it stays on top and makes the taskbar appear to lie. Park visible native windows when a
+     * PosterChan window is selected. Their task buttons remain present and restore the exact live
+     * process from Sway's scratchpad, so this is ordinary window switching, not closing/reloading. */
+    if(w.native == null && window.pcWM && nativeTasks.length){
+      for(const n of nativeTasks){
+        if(n && !n.stashed) Promise.resolve(pcWM.hide(n.id)).then(()=>{
+          n.stashed=true; n.focused=false; drawBar();
+        }).catch(()=>{});
+      }
+    }
     /* CAPTURE WHAT THIS WINDOW IS SHOWING, BEFORE ANYTHING MOVES.
      *
      * If it already holds the live feed then the client's current VIEW *is* this window's view —
@@ -1183,6 +1196,10 @@
     if(w.native != null && !_natFocusHold){ try{ pcWM.focus(w.native); }catch(_){} }
     if(nativeWins().length) nsync();
     if(!w.noFeed) claimFeed(w);   // a folder owns its own contents and must never take the feed
+    if(w.isolated){
+      w.appView = w.view;
+      try{ PC().adoptView && PC().adoptView(w.view); }catch(_){}
+    }
     drawBar();
     // Re-render the feature into ITS window. Cheap for these modules — they hold their own state
     // and repaint from it, which is exactly what leaving and returning to a view already does.
@@ -1209,6 +1226,11 @@
          * so it is right for a document, and right for a feature window that was navigated inside
          * itself. Falling back to w.view covers a feature window parked before any of that. */
         w.restored = false;
+        if(w.isolated){
+          if(w.rerun) try{ w.render(); }catch(_){}
+          restoreScroll(w);
+          return;
+        }
         const adopt = w.appView || (w.view && w.view.indexOf('doc:') !== 0 ? w.view : null);
         if(adopt){
           repainting++;
@@ -1481,17 +1503,22 @@
   }
 
   function openSystemSettings(){
-    openDoc('os-settings', 'System Settings', 'i-gear', renderSystemSettings);
+    const w=openDoc('os-settings', 'System Settings', 'i-gear', renderSystemSettings, false, true);
+    if(w){ w.rerun=true; w.isolated=true; }
   }
 
   async function renderSystemSettings(){
     const host=document.getElementById('feed');
     if(!host || !window.pcDisplays){ if(host) host.innerHTML='<div class="empty">System settings are unavailable.</div>'; return; }
+    const owner=wins.find(w=>w.body===host.parentElement), token={}; host._pcOsSettings=token;
+    const alive=()=>host._pcOsSettings===token && (!owner || host.parentElement===owner.body);
     host.className='feed os-settings-feed';
     host.innerHTML='<div class="spinner"></div>';
     let outs=[], power={}; try{ outs=await pcDisplays.status(); }
-    catch(e){ host.innerHTML='<div class="empty">Could not read displays: '+enc(String(e&&e.message||e))+'</div>'; return; }
+    catch(e){ if(alive()) host.innerHTML='<div class="empty">Could not read displays: '+enc(String(e&&e.message||e))+'</div>'; return; }
+    if(!alive()) return;
     try{ power=window.pcPower?await pcPower.status():{}; }catch(_){ power={}; }
+    if(!alive()) return;
     const rows=outs.map(o=>{ const cur=(o.modes||[]).find(m=>m.current);
       const hz=m=>Math.round((+m.refresh||0)/1000*1000)/1000;
       return {name:o.name,label:[o.make,o.model].filter(Boolean).join(' ')||o.name,enabled:!!o.active,

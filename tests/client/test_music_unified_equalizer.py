@@ -35,6 +35,13 @@ def test_desktop_does_not_show_the_competing_floating_player():
     assert "html.os-on #music-player{display:none}" in CSS
 
 
+def test_android_uses_full_music_app_and_native_background_controls_only():
+    start = APP.index("_render(){", APP.index("const MusicPlayer"))
+    render = APP[start:APP.index("_wire(){", start)]
+    assert "_capPlugin('MusicControls','addListener')" in render
+    assert "d.classList.add('hidden')" in render
+
+
 def test_music_car_setting_does_not_expose_debug_details():
     assert 'id="ma-cardiag"' not in APP
     assert 'id="ma-carnote"' not in APP

@@ -2611,6 +2611,10 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .prof h2{margin:0} .prof .about{color:var(--text);margin:8px 0;line-height:1.45;white-space:pre-wrap}
 .npubrow{display:flex;align-items:center;gap:8px;margin:8px 0}
 .npubrow code{color:var(--cyan);font-size:12px}
+.prof-joined{display:inline-flex;align-items:center;gap:7px;margin:5px 0 7px;padding:7px 10px;
+  border:1px solid var(--line);border-radius:999px;background:var(--panel2);color:var(--muted);font-size:12px}
+.prof-joined .ic{width:14px;height:14px;color:var(--neon)}
+.prof-joined b{color:var(--text);font-weight:650}
 .ln-addr{background:transparent;border:1px solid var(--line);color:var(--amber);cursor:pointer;border-radius:9px;padding:6px 12px;font-size:13px;margin:6px 0;display:inline-flex;align-items:center;gap:4px;transition:.13s}
 .ln-addr:hover{border-color:var(--amber);box-shadow:0 0 12px rgba(255,207,43,.35)}
 /* Monero tips — Monero orange (#f60). ɱ action button + the QR box + the profile address pill. */
@@ -7738,10 +7742,10 @@ body.os-on #os-root{pointer-events:auto}
 .os-foot .spacer{flex:1}
 .os-foot .os-exit{flex:0 0 auto}
 .os-acct{display:flex;align-items:center;gap:9px;padding:6px 9px;border-radius:9px;border:0;
-  background:none;color:var(--text);cursor:pointer;font-family:inherit;font-size:13px;
+  background:none;color:var(--text);cursor:pointer;font-family:inherit;font-size:15px;min-height:48px;
   max-width:100%;min-width:0}
 .os-acct:hover{background:rgba(var(--accent-rgb),.12)}
-.os-acct img{width:28px;height:28px;border-radius:50%;object-fit:cover;flex:0 0 auto}
+.os-acct img{width:36px;height:36px;border-radius:50%;object-fit:cover;flex:0 0 auto}
 .os-acct > .ic{width:18px;height:18px;color:var(--muted);flex:0 0 auto}
 .os-acct span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .os-acct i{font-style:normal;color:var(--muted);font-size:10px;flex:0 0 auto}
@@ -7788,8 +7792,8 @@ html.os-on #upload-badge.upbadge{z-index:333}
    and `overscroll-behavior:contain` so a flick at the end of the list stops there instead of
    scrolling the desktop behind it, which is what "not scrollable" feels like from the other side. */
 .os-startmenu{position:absolute;inset-inline-start:10px;bottom:56px;
-  width:min(660px,86vw);max-height:min(74vh,620px);
-  display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:14px;
+  width:min(720px,calc(100vw - 20px));max-height:min(80vh,700px);
+  display:flex;flex-direction:column;gap:10px;padding:16px;border-radius:16px;
   /* --panel is translucent by design (rgba .72), which over a wallpaper leaves the app list reading
      through it. Paint the panel tint over an OPAQUE base so the menu keeps its colour and stops
      being see-through, with a blur behind for the frosted edge. */
@@ -7805,7 +7809,7 @@ html.os-on #upload-badge.upbadge{z-index:333}
   box-shadow:0 0 0 2px color-mix(in srgb,var(--neon) 60%,transparent),0 24px 70px rgba(0,0,0,.7)}
 .osw-transfer-mark{height:100%;display:grid;place-items:center;color:var(--neon);font-weight:700;
   background:linear-gradient(135deg,rgba(0,240,255,.08),rgba(145,70,255,.12))}
-.os-search{font-size:14px}
+.os-search{font-size:16px;min-height:46px;padding-inline:14px}
 .os-applist{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;display:grid;
   grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:4px;align-content:start}
 /* A HEADING SPANS THE WHOLE ROW. Without this it is a grid ITEM like any other and lands in one
@@ -7816,13 +7820,13 @@ html.os-on #upload-badge.upbadge{z-index:333}
 .os-applist::-webkit-scrollbar{width:10px}
 .os-applist::-webkit-scrollbar-thumb{background:var(--line);border-radius:6px}
 .os-applist::-webkit-scrollbar-thumb:hover{background:var(--muted)}
-.os-app{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:9px;border:0;
-  background:transparent;color:var(--text);cursor:pointer;text-align:start;font-size:13px;min-height:40px}
+.os-app{display:flex;align-items:center;gap:11px;padding:11px 12px;border-radius:10px;border:0;
+  background:transparent;color:var(--text);cursor:pointer;text-align:start;font-size:15px;min-height:48px}
 .os-app:hover{background:rgba(255,255,255,.09)}
-.os-app .ic{width:17px;height:17px;color:var(--neon);flex:0 0 auto}
+.os-app .ic{width:22px;height:22px;color:var(--neon);flex:0 0 auto}
 /* A program's REAL icon, at the same box as the sprite glyph beside it. `object-fit:contain` keeps
    a non-square icon from being stretched into a different logo. */
-.os-app-ic{width:18px;height:18px;flex:0 0 auto;object-fit:contain;image-rendering:auto}
+.os-app-ic{width:22px;height:22px;flex:0 0 auto;object-fit:contain;image-rendering:auto}
 .os-app span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* The logo is the way in, so it has to look like a control rather than decoration. */

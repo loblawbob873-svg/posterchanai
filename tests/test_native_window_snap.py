@@ -66,3 +66,11 @@ def test_dragging_a_titlebar_to_an_output_edge_snaps_without_stealing_app_clicks
         assert "--whole-window" not in src[src.index("pc-window-snap edge") - 80:src.index("pc-window-snap edge")]
     ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
     assert "pc-window-snap pc-key" in ebuild
+
+
+def test_focusing_a_posterchan_window_parks_compositor_windows_above_it():
+    src = (ROOT / "static/js/client/os.js").read_text()
+    start = src.index("function focusWin(w, render)")
+    focus = src[start:start + 6000]
+    assert "nativeTasks" in focus
+    assert "pcWM.hide(n.id)" in focus

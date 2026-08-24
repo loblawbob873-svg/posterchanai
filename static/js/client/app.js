@@ -17181,39 +17181,13 @@
     try{ _updateMusicListBtns(); }catch(_){}
   }
   function openMusic(){
-    /* OPENING AN APP IS NOT A TRANSPORT COMMAND. The Android launcher routes every PosterChan tile
-     * through the same warm MainActivity, and a repeated/late `__music` landing can arrive while a
-     * track is already alive in that WebView. This function used to choose a random queue entry with
-     * `{force:true}` every time it was reached, so merely moving between PosterChan launcher apps
-     * could restart the song (or replace it with another one). Preserve the one player and its
-     * position; explicit shuffle/next controls remain the only things that change a live track. */
-    if(MusicPlayer.cur || (_audioEl && _audioEl.src)){
-      renderMusicApp();
-      return;
-    }
-    FilesIdx.loadLocal();
-    const go=()=>{ const tracks=musicTracks(null);
-      if(!tracks.length){   // no music yet → open the Music folder + guide them
-        openMusicFolder();
-        modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-music"></use></svg>Your music library is empty</h3>
-          <p class="muted small">Add some songs to start playing:</p>
-          <div class="muted small" style="line-height:1.9;margin:10px 0">
-            1. You're now in <b>Files → 🎵 Music</b><br>
-            2. <b>Drag &amp; drop audio files</b> into the drop zone (or tap “choose files”)<br>
-            3. Each track is <b>Opus-compressed + encrypted</b> automatically<br>
-            4. Then the <b>🎵 Music</b> button shuffle-plays your whole library
-          </div>
-          <div class="row" style="justify-content:flex-end"><button class="btn btn-cyan" id="nm-ok">Got it</button></div>`,
-          root=>{ const b=$('#nm-ok',root); if(b) b.onclick=closeModal; });
-        return;
-      }
-      MusicPlayer.shuffle=true; MusicPlayer.refreshQueue();
-      // force: the random pick can be the track already playing, and play() reads that as pause.
-      MusicPlayer.play(MusicPlayer.queue[Math.floor(Math.random()*MusicPlayer.queue.length)], {force:true}); };
-    // Reconcile against the server before playing, so deleted songs can't be queued (and an emptied
-    // library correctly shows the "add some music" guide instead of failing track by track).
-    const ready = FilesIdx.ensure();
-    Promise.resolve(ready).then(_refreshBlobHave).then(go, go);
+    /* ONE ENTRY, ONE PLAYER. This name is kept because the Android launcher and older native widgets
+     * already call it, but opening Music is navigation, never an implicit shuffle/play command.
+     * Every entry point now lands on the same full Music screen; an explicit track or transport
+     * press is the only thing that changes playback. Most importantly, renderMusicApp does not
+     * recreate `_audioEl`, so returning from Home/Desktop or another PosterChan app reconnects to
+     * the exact live song, position, queue and equalizer. */
+    renderMusicApp();
   }
   async function renderBlossom(){
     const feed=$('#feed');
@@ -21725,7 +21699,14 @@
        * widget is a second copy of its own controls, which is what "it loads the new player and the
        * old one at the same time" was. Keyed on the app actually being MOUNTED rather than on a flag,
        * so the widget comes back by itself the moment the app's window loses the feed or closes. */
-      if(document.getElementById('ma-lib')){ d.classList.add('hidden'); return; } const m=this.cur?FilesIdx.meta(this.cur):null; const name=(m&&m.name)||'—';
+      /* In the packaged Android app the foreground MusicService notification/widget is the
+       * background transport. Drawing this legacy floating panel over whichever PosterChan app the
+       * person opens creates a SECOND player UI even though both drive the same audio element. Keep
+       * the engine alive, but keep its old browser widget out of the APK. Reopening Music paints the
+       * full app from this object's unchanged state. */
+      if(_capPlugin('MusicControls','addListener') || document.getElementById('ma-lib')){
+        d.classList.add('hidden'); return;
+      } const m=this.cur?FilesIdx.meta(this.cur):null; const name=(m&&m.name)||'—';
       const playing=_audioEl && !_audioEl.paused; const pl=this._loading?'…':(playing?'⏸':'▶');
       if(this.min){
         d.className='mp mp-mini'+(playing?' playing':'');
@@ -25068,6 +25049,12 @@
       if(!await _loadNotes()) return;
     }
     const p=Store.profile(pk)||{}; const mine=pk===ME.pubkey;
+    /* Nostr has no account-registration event. The earliest signed event this client currently
+     * knows is the only honest join signal available, so label the uncertainty in the tooltip
+     * instead of presenting a profile-update timestamp as an exact creation date. */
+    const _seenEvents=Store.feed(e=>e.pubkey===pk);
+    const _joinedTs=_seenEvents.reduce((n,e)=>e&&e.created_at&&(!n||e.created_at<n)?e.created_at:n,0);
+    const _joinedLabel=_joinedTs ? new Date(_joinedTs*1000).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'}) : '';
     const npub=NT().nip19.npubEncode(pk);
     feed.innerHTML=`<div class="prof"><div class="banner">${p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''}</div>
       <div class="phead"><img class="pav" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
@@ -25083,6 +25070,7 @@
         ${p.lud16?`<button class="ln-addr" id="prof-ln" title="send a zap"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>${enc(p.lud16)}</button>`:''}
         ${isXmrAddr(xmrOf(p))?`<button class="ln-addr xmr" id="prof-xmr" title="tip Monero (XMR)">ɱ ${enc(xmrOf(p).slice(0,10))}…${enc(xmrOf(p).slice(-6))}</button>`:''}
         ${isBchAddr(bchOf(p))?`<button class="ln-addr bch" id="prof-bch" title="tip Bitcoin Cash (BCH)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-coin"></use></svg>${enc(bchOf(p).slice(0,14))}…${enc(bchOf(p).slice(-6))}</button>`:''}
+        ${_joinedLabel?`<div class="prof-joined" title="Based on the earliest signed event currently available from this account"><svg class="ic" aria-hidden="true"><use href="#i-clock"></use></svg><span>Joined Nostr</span><b>${enc(_joinedLabel)}</b></div>`:''}
         <div class="about">${linkify(p.about||'')}</div>
         <div class="follow-stats"><button class="statbtn" id="show-posts"><b>·</b> Posts</button><button class="statbtn" id="show-following"><b>·</b> Following</button><button class="statbtn" id="show-followers"><b>·</b> Followers</button></div>
       </div></div>
@@ -33349,6 +33337,10 @@
      * holds and nothing else can fetch. */
     saveBlobAs,
     ensureProfile: _ensureProfile, NT, compose, switchView,   // compose → News "Share as note"; switchView → nav
+    /* Desktop-only document windows (System Settings, Task Manager, VM manager) borrow #feed but
+     * are not client routes. Give the shared renderer a harmless sentinel while one owns it, so
+     * timeline subscriptions cannot mistake that borrowed feed for Social and paint into it. */
+    adoptView: (v) => { VIEW=String(v||''); },
     startRemoteDesktop,
     /* The one pass that fills every `.name[data-prof]` (and avatars, nip05s, @mentions) once a kind-0
      * arrives. A sub-module that paints author names MUST be able to call it, or its names are frozen

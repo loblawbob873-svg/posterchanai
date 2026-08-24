@@ -174,6 +174,13 @@ class LocalTerminal(unittest.TestCase):
         ready = src[src.index("if(m.t === 'ready')"):src.index("if(m.t === 'gone')")]
         self.assertIn("_sessions();", ready)
 
+    def test_host_picker_stays_enabled_while_a_local_tab_is_connected(self):
+        """The picker selects the host for New tab; an active local PTY must not lock it."""
+        src = open(CLIENT, encoding="utf-8").read()
+        chrome = src[src.index("function _chrome(on)"):src.index("function _focus()")]
+        self.assertIn("sel.disabled = false", chrome)
+        self.assertNotIn("sel.disabled = on", chrome)
+
     def test_a_fresh_local_tab_replays_bytes_produced_before_attach(self):
         """Posterfetch and a fast prompt exist before the renderer subscribes; dropping that backlog
         makes a distinct new PTY look like a blank copy of the active tab."""
