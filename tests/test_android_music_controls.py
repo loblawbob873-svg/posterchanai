@@ -386,8 +386,8 @@ def test_a_press_that_could_not_be_performed_still_lands_somewhere():
     assert consume, "MusicPlayer.consumeLaunch() moved — re-point this test"
     body = consume.group(1)
     assert "renderMusicApp();" in body
-    assert body.index("if(done){ this._render(); return; }") < body.index("renderMusicApp();"), \
-        "the Music screen must remain the fallback for a press nothing could perform"
+    assert "if(done){ this._render(); renderMusicApp(); return; }" in body, \
+        "a successful widget press left the confusing floating player over an unrelated screen"
 
 
 def test_the_widget_gets_the_same_receipt_check_as_every_other_surface():
@@ -675,4 +675,3 @@ def test_the_widget_touch_targets_stay_big_enough():
         block = block[:block.index("/>")]
         m = re.search(r'android:layout_width="(\d+)dp"', block)
         assert m and int(m.group(1)) >= 44, f"{wid} is smaller than 44dp"
-

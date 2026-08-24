@@ -105,7 +105,7 @@ class VmBackend(unittest.TestCase):
         self.assertIn("['change-media',d.name,cd.target,'--eject','--config']", backend)
         self.assertIn("pc:vm:eject-iso", preload)
         self.assertIn("pc:vm:eject-iso", main)
-        self.assertIn('data-vme-eject>Eject ISO', ui)
+        self.assertIn('data-vme-eject>Eject installer', ui)
 
     def test_boot_drive_can_be_selected_and_eject_makes_disk_first(self):
         backend = (ROOT / "desktop" / "vm.js").read_text()
@@ -124,19 +124,19 @@ class VmBackend(unittest.TestCase):
         self.assertIn("mounted?ejectIso(d.name):setBootOrder(d.name,'disk')", backend)
         self.assertIn("pc:vm:boot-disk", preload)
         self.assertIn("pc:vm:boot-disk", main)
-        self.assertIn("Startup disk: installed system", ui)
+        self.assertIn("Use installed system", ui)
         self.assertIn("Preparing installed system", ui)
         self.assertIn("await new Promise(resolve=>setTimeout(resolve,1000))", backend)
-        self.assertIn("Choose startup disk / edit hardware", ui)
+        self.assertIn('data-vm-edit-open', ui)
         self.assertIn("await pcVM.bootDisk(n)", ui)
         self.assertNotIn('p.canceled||!p.path', ui, "the ISO picker returns a path string")
 
     def test_editor_keeps_the_common_path_simple(self):
         ui = (ROOT / "static" / "js" / "client" / "os.js").read_text()
         self.assertIn('<section class="vmui-section"><h3>Performance</h3>', ui)
-        self.assertIn('<section class="vmui-section"><h3>Installation disc</h3>', ui)
+        self.assertIn('<section class="vmui-section"><h3>Startup and installation media</h3>', ui)
         self.assertIn('<details class="vmui-advanced">', ui)
-        self.assertIn('Eject ISO and boot from disk', ui)
+        self.assertIn('Eject installer and use installed system', ui)
 
     def test_viewer_cannot_pin_itself_over_the_desktop(self):
         sway = (ROOT / "os" / "overlay" / "app-misc" / "posterchanos-shell" / "files" / "sway.config").read_text()
@@ -146,7 +146,7 @@ class VmBackend(unittest.TestCase):
     def test_new_vm_uses_the_shared_plus_icon(self):
         src = (ROOT / "static/js/client/os.js").read_text()
         self.assertIn('data-vm-new><svg class="ic b-ic"', src)
-        self.assertIn('<use href="#i-plus"></use></svg>New VM', src)
+        self.assertIn('<use href="#i-plus"></use></svg>Create a virtual machine', src)
 
 
 if __name__ == "__main__":

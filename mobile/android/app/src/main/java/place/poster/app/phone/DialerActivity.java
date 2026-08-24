@@ -31,6 +31,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import place.poster.app.R;
+import place.poster.app.MainActivity;
+import place.poster.app.home.LaunchView;
 import place.poster.app.sms.PhoneBook;
 import place.poster.app.ui.PcActivity;
 import place.poster.app.ui.Skin;
@@ -69,6 +71,16 @@ public class DialerActivity extends PcActivity {
     private String typed = "";
     private int tab = TAB_KEYPAD;
     private final Handler main = new Handler(Looper.getMainLooper());
+
+    /** Open this person in PosterChan's Contacts screen, not in a second platform contacts UI. */
+    private void openPosterContact(Row r) {
+        if (r == null || r.number == null || r.number.trim().isEmpty()) return;
+        LaunchView.request("contact:" + Uri.encode(r.number.trim()), System.currentTimeMillis());
+        Intent i = new Intent(this, MainActivity.class);
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        try { startActivity(i); }
+        catch (Throwable t) { say(getString(R.string.home_cannot_open)); }
+    }
 
     /** One row of the list, whichever tab produced it. */
     static final class Row {
@@ -441,8 +453,7 @@ public class DialerActivity extends PcActivity {
                                     } catch (Throwable ignored) { }
                                     break;
                                 case 3:
-                                    try { startActivity(ContactList.view(r.contactId)); }
-                                    catch (Throwable t) { say(getString(R.string.home_cannot_open)); }
+                                    openPosterContact(r);
                                     break;
                                 case 4:
                                     CallLogStore.delete(DialerActivity.this, r.entry.id);
@@ -495,8 +506,7 @@ public class DialerActivity extends PcActivity {
             card.setOnClickListener(new View.OnClickListener() {
                 @Override public void onClick(View x) {
                     if (r.contactId >= 0) {
-                        try { startActivity(ContactList.view(r.contactId)); }
-                        catch (Throwable t) { say(getString(R.string.home_cannot_open)); }
+                        openPosterContact(r);
                     } else rowMenu(r);
                 }
             });

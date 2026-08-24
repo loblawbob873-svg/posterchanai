@@ -440,6 +440,24 @@
       });
     }
 
+    async function openPhone(number){
+      const wanted = _numKey(number);
+      if(!wanted) return false;
+      if(!S.ready || S.error) await load();
+      if(!inView()) return false;
+      const card = cards().find(c => (c.tels || []).some(t => _numKey(t && t.value) === wanted));
+      if(!card){ S.q = String(number || ''); paint(); return false; }
+      editCard(card);
+      return true;
+    }
+
+    function consumePhoneLanding(){
+      const number = window.__PC_CONTACT_PHONE;
+      if(!number) return;
+      window.__PC_CONTACT_PHONE = '';
+      openPhone(number).catch(()=>{});
+    }
+
     // ---- this phone's own Contacts app (Android only) ------------------------------------------
     /* THE PHONE BOOK. Android can show these people in the dialer, the share sheet and every
      * messaging app — but only if they are in ContactsContract, which is a native database no
@@ -1257,8 +1275,10 @@
          * happened, so one blip — the app opening before wifi associates, a 502 while the node
          * restarts — pinned this screen to "could not load your contacts" for the life of the page,
          * and the only way back was a full reload. Coming back to the screen retries. */
-        if(!S.loading && (!S.ready || S.error)) load();
+        if(!S.loading && (!S.ready || S.error)) load().then(consumePhoneLanding);
+        else consumePhoneLanding();
       },
+      openPhone,
       reload: load,
       /* ⋯ → Addressbooks, reachable without the DOM. The row that decides whether this phone can
        * sync to its own Contacts app is inside it, and "it renders nothing at all" is precisely the

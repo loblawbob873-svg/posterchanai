@@ -22,6 +22,14 @@ def test_launcher_music_route_uses_the_non_restarting_entrypoint():
     assert "PC.openMusic()" in phone
 
 
+def test_widget_success_opens_regular_music_interface_without_restarting_track():
+    start = APP.index("consumeLaunch(){")
+    body = APP[start:APP.index("\n    _media(){", start)]
+    assert "if(done){ this._render(); renderMusicApp(); return; }" in body
+    assert "MusicPlayer.play(" not in body
+    assert "_audioEl =" not in body
+
+
 def test_switching_posterchan_views_never_stops_the_player():
     start = APP.index("function switchView(v, quiet)")
     body = APP[start:APP.index("\n  function ", start + 20)]

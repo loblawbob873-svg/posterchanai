@@ -70,13 +70,28 @@ src_install() {
 }
 
 pkg_postinst() {
-	# Repair images published while gentoo.poster.place was mistakenly treated as a full Gentoo
-	# releases mirror. It is our overlay/distfiles host; that binpackages path returns 404. Existing
-	# machines need the migration here because updating gentoo.sh alone only fixes future installs.
+	# One repository endpoint on every PosterChanOS machine. The NAS maintains the local mirror and
+	# gentoo.poster.place serves it over HTTPS; clients consume Gentoo's signed webrsync snapshot.
+	# Keep this in pkg_postinst as well as gentoo.sh so a normal OS update repairs existing installs.
+	local repodir="${EROOT%/}/etc/portage/repos.conf"
 	local binrepo="${EROOT%/}/etc/portage/binrepos.conf/gentoobinhost.conf"
-	if [[ -f ${binrepo} ]]; then
-		sed -i 's#https://gentoo\.poster\.place/releases/amd64/binpackages/23\.0/x86-64/#https://distfiles.gentoo.org/releases/amd64/binpackages/23.0/x86-64/#g' "${binrepo}"
-	fi
+	local makeconf="${EROOT%/}/etc/portage/make.conf"
+	install -d -m 0755 "${repodir}" "${binrepo%/*}"
+	cat >"${repodir}/gentoo-mirror.conf" <<-'REPO'
+		[gentoo]
+		location = /var/db/repos/gentoo
+		sync-type = webrsync
+		sync-uri = https://gentoo.poster.place
+		sync-webrsync-verify-signature = true
+	REPO
+	cat >"${binrepo}" <<-'BINREPO'
+		[binhost]
+		priority = 9999
+		sync-type = webrsync
+		sync-uri = https://gentoo.poster.place/releases/amd64/binpackages/23.0/x86-64/
+	BINREPO
+	sed -i '/^[[:space:]]*GENTOO_MIRRORS=/d' "${makeconf}"
+	echo 'GENTOO_MIRRORS="https://gentoo.poster.place"' >>"${makeconf}"
 	# Identity accounts receive a private Sway config when they are provisioned. Keep the recovery
 	# binding available to accounts created by an older image without replacing any personal Sway
 	# customizations they may have made since. The live IPC binding is installed by the updater;

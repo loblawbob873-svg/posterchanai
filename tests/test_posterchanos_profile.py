@@ -512,6 +512,27 @@ class PosterChanOSProfile(unittest.TestCase):
                              "the installer still writes a LAN-only host into portage's config: "
                              + bare.strip())
 
+    def test_repo_repair_targets_the_running_os_and_syncs_it(self):
+        """`gentoo.sh repo` is the recovery path for an installed PosterChanOS machine. The
+        script-wide TARGET points at the installer staging directory, so the dispatch arm must
+        explicitly select `/` before writing anything and must prove the new endpoint can sync."""
+        marker = 'elif [ "$1" = "repo" ]; then'
+        arm = self.src[self.src.index(marker):]
+        arm = arm[:arm.index('\nelif ', len(marker))]
+        self.assertIn("export TARGET=/", arm)
+        self.assertIn("gentooRepo", arm)
+        self.assertIn("emerge --sync", arm)
+
+    def test_os_update_migrates_existing_repo_configuration(self):
+        package = os.path.join(ROOT, "os", "overlay", "app-misc",
+                               "posterchanos-shell", "posterchanos-shell-1.0.0.ebuild")
+        with open(package, encoding="utf-8") as source:
+            postinst = source.read().split("pkg_postinst()", 1)[1]
+        self.assertIn("sync-type = webrsync", postinst)
+        self.assertIn("sync-uri = https://gentoo.poster.place", postinst)
+        self.assertIn("sync-webrsync-verify-signature = true", postinst)
+        self.assertIn('GENTOO_MIRRORS="https://gentoo.poster.place"', postinst)
+
     def test_the_shell_itself_is_installed(self):
         """sway's config execs `posterchan`. Nothing else in this installer puts it on the disk, so
         without this step the machine boots into an empty compositor with no way to do anything —

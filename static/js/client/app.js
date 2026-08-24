@@ -21452,7 +21452,11 @@
           if(this.cur && a==='next'){ this.next(); done=true; }
           else if(this.cur && a==='prev'){ this.prev(); done=true; }
           else done=this._resumeOrPlay();
-          if(done){ this._render(); return; }
+          /* A WIDGET TAP THAT SUCCEEDS STILL OPENS THE REGULAR MUSIC APP. Returning here left the
+           * person on whatever PosterChan screen happened to be open with only the floating mini
+           * player over it. Rendering the library does not recreate `_audioEl`, so playback keeps
+           * the current track and position. */
+          if(done){ this._render(); renderMusicApp(); return; }
         }
         renderMusicApp();
       }).catch(()=>{});
