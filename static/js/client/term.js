@@ -954,8 +954,15 @@
       window.addEventListener('resize', _fit);
     }
 
-    async function render(){
-      const feed = $('#feed'); if(!feed) return;
+    /* `host` is optional and is how PosterChan Code puts a real shell in its bottom panel.
+     *
+     * Default `$('#feed')` keeps the Terminal VIEW byte-identical in behaviour. What an embedder
+     * gets is the same singleton, not a second one: there is one xterm, one PTY and one session id
+     * here, and two live mounts would share `term`/`ws`/`sid` and write every keystroke twice (the
+     * exact failure `renderEpoch` exists for). So whoever renders last owns it — which is correct
+     * on the desktop, where only the FOCUSED window is ever rendered. */
+    async function render(host){
+      const feed = host || $('#feed'); if(!feed) return;
       // NOT `PC.VIEW = 'terminal'` — the bridge exposes VIEW as a getter with no setter, so that
       // assignment silently does nothing. renderView() has already set it before dispatching here;
       // every other module only ever READS it.

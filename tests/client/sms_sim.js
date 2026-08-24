@@ -153,6 +153,10 @@ global.localStorage = (() => {
   const m = Object.assign({}, opt.storage || {});
   return { getItem: k => (k in m ? String(m[k]) : null),
            setItem: (k, v) => { m[k] = String(v); },
+           // A REAL localStorage HAS THIS, and the archive's re-scan clears its latches with it.
+           // Absent from the stub, `removeItem` threw into the client's own catch and the reset was
+           // a silent no-op -- the sim agreeing with a bug rather than showing it.
+           removeItem: k => { delete m[k]; },
            _all: m };
 })();
 
@@ -238,6 +242,8 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
     else if(step === 'migrate'){ await S.mirror({ fullMigration:true, limit:Number(opt.migrationBatch)||60 }); }
     // The whole batched loop, the way render() drives it — the only way to see it converge (or not).
     else if(step === 'migrateAll'){ calls.push(['migrateAll', await S.migrateAll()]); }
+    // The deliberate, person-pressed re-read: clears the archive's latches and walks the phone again.
+    else if(step === 'rescan'){ calls.push(['rescan', await S.rescan()]); }
     else if(step === 'mirror'){ await S.mirror(); }
     else if(step === 'drain'){ await S.drainOutbox(); }
     else if(step === 'allow'){ refusals = -1; }
@@ -277,8 +283,12 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
     mmsCapped: !!st.mmsCapped,
     blossomDone: !!global.localStorage._all[Object.keys(global.localStorage._all)
                     .filter(k => k.indexOf('_blossom_v2') > 0)[0]],
+    /* THE MARK ITSELF, not whichever `pc_sms_hwm*` key happens to come first. The marker keys are
+     * siblings of it (`_blossom_v2`, `_blossom_rewound_v2`, `_oldest_first_v1`) and all hold "1",
+     * so an unanchored filter reported a high-water mark of 1 -- a plausible-looking number that
+     * makes any "did the mark move" assertion pass for the wrong reason. */
     hwm: Object.keys(global.localStorage._all)
-              .filter(k => k.indexOf('pc_sms_hwm') === 0)
+              .filter(k => /^pc_sms_hwm_[^_]+$/.test(k))
               .map(k => Number(global.localStorage._all[k]))[0] || 0,
   }));
 })().catch(e => { console.error(e && e.stack || e); process.exit(1); });

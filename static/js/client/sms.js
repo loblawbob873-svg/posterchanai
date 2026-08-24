@@ -51,6 +51,49 @@
    * restarts at the same point, hits the same row, and republishes the same thirty days for ever.
    * Keyed on having rewound, the mark moves forward the way it is documented to. */
   const HWM_REWOUND = () => HWM() + '_blossom_rewound_v2';
+  /* AND A WAY BACK OUT OF "DONE", because every one of these markers is a LATCH and a latch that
+   * was set wrongly is permanent.
+   *
+   * `HWM_BLOSSOM` is read at the top of migrateLocalHistory and returns immediately when set, so a
+   * phone that once decided it had copied everything never walks its history again — no matter how
+   * many bugs are fixed underneath it afterwards. Every fix so far has been to the code that DECIDES
+   * to set it; none of them helps a device that already did. That device installs the new build,
+   * opens Texts, sees a full screen of messages and a migration that does nothing, and there is
+   * nothing on screen to say why or to press.
+   *
+   * Clearing the high-water mark too, not just the completion flag: the mark is what makes the
+   * ordinary sweep start at "now" rather than at the beginning, so leaving it would re-run a
+   * migration that still could not reach anything old. */
+  function resetArchiveMarkers(){
+    /* CLEARED AND THEN CHECKED, because this is the one control whose whole job is to unstick a
+     * device and a silent no-op here leaves the person pressing a button that does nothing.
+     *
+     * `removeItem` is the right call and every real browser has it, but this app also runs inside
+     * two WebViews and a bundled desktop shell, and a storage shim that implements only
+     * get/set is not hypothetical -- the test harness itself was one, which is how a reset that
+     * cleared nothing passed as working. An empty string reads back falsy through `getItem`, so the
+     * fallback satisfies every check that guards these latches. */
+    for(const key of [HWM_BLOSSOM(), HWM_REWOUND(), HWM_FIX(), HWM()]){
+      try{ localStorage.removeItem(key); }catch(_){ }
+      try{ if(localStorage.getItem(key)) localStorage.setItem(key, ''); }catch(_){ }
+    }
+    _migrationFailed.clear();
+  }
+
+  /* Re-read the phone and re-publish anything the archive is missing. The deliberate, person-pressed
+   * version of what every visit does quietly -- offered because the failure this exists for is
+   * SILENT: the screen is full, the status line says nothing is wrong, and the pictures are simply
+   * not on the other devices. */
+  async function rescan(){
+    resetArchiveMarkers();
+    S.archive.error = '';
+    S.archive.published = 0;
+    await loadFromPhone();
+    const r = await migrateLocalHistory();
+    await mirror();
+    return r;
+  }
+
   let _messagesFolderReady = false;
   const _migrationFailed = new Set();
 
@@ -1791,6 +1834,32 @@
         archive.style.display = 'none';
         archive.textContent = '';
       }
+      /* THE RE-SCAN IS OFFERED EVEN WHEN NOTHING LOOKS WRONG, and that is the point of it.
+       *
+       * The failure it answers -- a completion marker set by an older build -- shows as a full
+       * Texts screen, no error, and pictures that never reach the other devices. Attached only to
+       * the error branch it would be invisible in exactly the state it exists for. Only on a device
+       * that can read this phone's store: a laptop re-scanning somebody else's phone is a button
+       * that cannot do anything. */
+      if(st.canRead && !S.archive.running){
+        archive.style.display = '';
+        if(!archive.querySelector('#sms-rescan')){
+          const b = document.createElement('button');
+          b.className = 'btn small';
+          b.id = 'sms-rescan';
+          b.textContent = 'Re-scan phone messages';
+          b.title = 'Read the whole phone again and copy anything the archive is missing';
+          archive.appendChild(document.createTextNode(' '));
+          archive.appendChild(b);
+        }
+        const b = archive.querySelector('#sms-rescan');
+        if(b) b.onclick = async () => {
+          b.disabled = true;
+          b.textContent = 'Re-scanning\u2026';
+          try{ await rescan(); }
+          finally{ paint(); }
+        };
+      }
     }
     /* WHAT ACTUALLY HAPPENED BEATS WHAT THE STATE SAYS.
      *
@@ -2072,6 +2141,8 @@
   init();
 
   window.PCSms = { render, mirror, importAll, loadFromPhone, emptyWhy, ensureRead, phoneState,
+                   // Clear the archive's latches and walk the whole phone again -- see rescan().
+                   rescan, resetArchiveMarkers,
                    drainOutbox, send, remove, load,
                    // The real batched migration loop, for tests/client/test_sms_attachments.py —
                    // its convergence is the property that matters and it is invisible from a single
