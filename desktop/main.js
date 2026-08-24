@@ -1216,6 +1216,10 @@ ipcMain.handle('pc:wm:handoff-frame', async (e, payload, direction) => {
     overflow:Number(p.overflow)||0,
     scrollTop:Math.max(0,Number(p.scrollTop)||0),
     terminalSid:String(p.terminalSid||''),
+    ui:(()=>{ try{
+      const s=p.ui==null?null:JSON.parse(JSON.stringify(p.ui));
+      return s!=null && JSON.stringify(s).length<=512*1024 ? s : null;
+    }catch(_){ return null; } })(),
     state:(()=>{ try{
       const s=p.state==null?null:JSON.parse(JSON.stringify(p.state));
       return s!=null && JSON.stringify(s).length<=512*1024 ? s : null;

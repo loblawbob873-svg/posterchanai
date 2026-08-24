@@ -24,3 +24,14 @@ def test_system_settings_rerenders_cleanly_after_focus_and_ignores_stale_async_r
     assert "w.rerun=true" in opened and "w.isolated=true" in opened
     assert "host._pcOsSettings=token" in render
     assert render.count("if(!alive()) return") >= 2
+
+
+def test_system_settings_exposes_the_native_power_controls_and_system_info():
+    render = OS[OS.index("async function renderSystemSettings()"):
+                OS.index("function openTaskManager", OS.index("async function renderSystemSettings()"))]
+    for control in ("data-brightness", "data-power-profile", "data-keep-awake",
+                    "data-idle-timeout", "data-about"):
+        assert control in render
+    for method in ("pcPower.setBrightness", "pcPower.setProfile", "pcPower.setKeepAwake",
+                   "pcPower.setIdleTimeout", "pcSystem.snapshot(false)"):
+        assert method in render

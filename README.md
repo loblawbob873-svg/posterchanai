@@ -201,6 +201,10 @@ A companion **browser extension** (Firefox, and Chrome / Brave via MV3) makes yo
 - **To-do**: quick personal task list from chat (`todo`)
 - **Torrents**: built-in torrent client plus **TorrentGalaxy** search and **nyaa.si** anime search (`torrents`, `nyaa`)
 - **File storage** per user and per conversation; file manager in the UI
+- **Office documents**: optional built-in Collabora CODE editor for DOCX/XLSX/PPTX and OpenDocument
+  files on desktop and mobile. Docker: `POSTERCHANAI_OFFICE=1 docker compose --profile nostr
+  --profile office up -d`; bare metal: `./install.sh --office`. Encrypted files are decrypted in the
+  browser into an expiring edit session, then encrypted again when saved back to Files.
 - **Media tools**: upload a file and `compress` it (image/video — H.264 with GPU acceleration when available), `clip <start> <end>` a video to a time span, or `convert` images↔PDF — all shared across the web UI and Telegram
 - **Flashcards (study tool)**: upload a **PDF, image, slide deck (PPTX) or Word doc (DOCX)** and send `flashcards` (or `cards`/`study`/`quiz`) to generate an **interactive multiple-choice quiz** — the LLM writes the questions, options and explanations (math problems include worked steps). The web UI shows animated cards with instant ✓/✗ feedback and KaTeX-rendered math; Telegram shows image cards with answer buttons (tap **🎴 Flashcards** after uploading) and a running score. Text PDFs/slides work best; image OCR is weaker (on Telegram, send screenshots as a *file*, not a compressed photo)
 - **Reminders** (`remind`): set a reminder in plain language — `remind open the oven in 10m`, `remind me next tuesday to call mom` — and the LLM parses the time (exact relative phrases like `in 10s` are parsed directly). A background scheduler alerts you in the **web UI** (a full-screen pop-up + beep if you're online, plus a dedicated "⏰ Reminders" conversation) and on **Telegram** if linked. `reminders` lists your pending ones, each with a clickable **Cancel**. Your timezone is **auto-detected from the browser** (IANA zone, DST-aware) — no setup — so times follow you when you travel.

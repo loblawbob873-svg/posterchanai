@@ -192,6 +192,26 @@ class Bridge(unittest.TestCase):
         self.assertIn("state:", client, "the destination redraws module-local apps from scratch")
         self.assertIn("PCWebSearch.handoffState()", client)
         self.assertIn("PCWebSearch.acceptHandoff(p.state)", client)
+        self.assertIn("ui:captureHandoffUI(w)", client)
+        self.assertIn("restoreHandoffUI(w,p.ui)", client)
+
+    def test_every_posterchan_app_uses_the_generic_state_preserving_handoff(self):
+        """There must be no view whitelist: every sidebar app, including ones added later, carries
+        forms, selections, scroll positions and media state through the same payload."""
+        client = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()
+        html = open(os.path.join(ROOT, "templates/client.html"), encoding="utf-8").read()
+        views = set(re.findall(r'data-view=["\']([^"\']+)', html))
+        self.assertGreater(len(views), 20, "the exhaustive app matrix did not find the real sidebar")
+        payload = client[client.index("const payload={view:"):client.index("Promise.resolve(pcWM.handoffFrame", client.index("const payload={view:"))]
+        receive = client[client.index("pcWM.onHandoffFrame"):client.index("pcWM.onPreviewFrame", client.index("pcWM.onHandoffFrame"))]
+        self.assertIn("ui:captureHandoffUI(w)", payload)
+        self.assertIn("restoreHandoffUI(w,p.ui)", receive)
+        for view in views:
+            self.assertNotIn("p.view==='" + view + "'&&p.ui", receive,
+                             view + " fell back to a one-off handoff instead of the generic path")
+        # openApp performs the destination's one render. A second focusWin used to reload all apps.
+        after_open = receive[receive.index("const w=openApp"):]
+        self.assertNotIn("focusWin(w);", after_open)
 
     def test_native_apps_receive_real_decorations(self):
         client = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()
@@ -203,6 +223,12 @@ class Bridge(unittest.TestCase):
         client = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()
         self.assertIn("label:'Close'", client)
         self.assertIn("pcWM.close(w.id)", client)
+
+    def test_native_taskbar_has_visible_window_controls(self):
+        client = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()
+        self.assertIn("os-native-max", client)
+        self.assertIn("os-native-close", client)
+        self.assertNotIn("if(w.native == null && window.pcWM && nativeTasks.length)", client)
 
     def test_terminal_handoff_keeps_the_same_pty(self):
         client = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()

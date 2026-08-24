@@ -254,6 +254,9 @@ async def client_config(request: Request, db: Session = Depends(get_db)):
         # Whether this node runs the built-in media server. The client uses it only to decide whether
         # to SHOW the "Go Live" entry points — /api/streams/* still gates the real thing.
         "stream_enabled": _setting(db, "stream_enabled", "false").lower() == "true",
+        # Optional local Collabora CODE/WOPI editor. The client leaves Office files as ordinary
+        # downloads when disabled, so adding the code has zero effect on lightweight nodes.
+        "office_enabled": os.getenv("POSTERCHANAI_OFFICE", "0").lower() in {"1", "true", "yes", "on"},
         # GRASP git host for the client's "Create repo" flow. A node can HOST git (git_server_enabled)
         # OR PROXY it to the hosting node (git_server_proxy_url) — the node serving /client is usually the
         # PROXY (e.g. server1 → nas), which has no local public_base. So expose the base when known AND a

@@ -169,7 +169,8 @@ async def _client(r: asyncio.StreamReader, w: asyncio.StreamWriter) -> None:
             cursor = sess.seq if cursor is None else max(0, min(int(cursor), sess.seq))
             if cursor < have:
                 cursor = have
-            await _send(w, {"t": "ready", "sid": sess.sid, "host": sess.host_name, "resumed": True})
+            await _send(w, {"t": "ready", "sid": sess.sid, "host": sess.host_name,
+                            "label": sess.label, "resumed": True})
             attached = True
         elif op == "open":
             h = req.get("host") or {}
@@ -185,7 +186,8 @@ async def _client(r: asyncio.StreamReader, w: asyncio.StreamWriter) -> None:
                 # The KIND of failure, classified by the app — the keeper hands back the exception's
                 # type name and lets the router turn it into words, so there is one such table.
                 return await _send(w, {"t": "err", "kind": type(e).__name__, "m": str(e)})
-            await _send(w, {"t": "ready", "sid": sess.sid, "host": sess.host_name})
+            await _send(w, {"t": "ready", "sid": sess.sid, "host": sess.host_name,
+                            "label": sess.label})
             sess.attach()
             attached = True
             cursor = 0

@@ -39,6 +39,20 @@ belongs to the server, not to the tab you are looking at it through.
 If you want bounds back (a shared node), Admin → Nodes has three, all blank by default: how long a
 detached session is held, an idle timeout while attached, and a hard ceiling on age.
 
+### Tabs are separate shells, and the label is what makes them separate
+
+The strip above the screen is tabs, not a recovery list: every entry is a distinct PTY, and `+` opens
+another one. On a remote host each tab carries a **label** — `main`, then `2`, `3`, … — chosen by the
+client as the first one no session of yours is using on that host, and the tab is named after it
+(`server1`, `server1 2`). The label is half of the remote tmux session's name, so it is what decides
+which shell you get.
+
+That is not cosmetic. `tmux new-session -A` is attach-or-**create**, so two tabs sharing a label are
+two SSH connections onto one shell — same screen, same keystrokes, same scrollback — and it looks
+exactly like a New tab button that does nothing: the prompt you were already at comes back, and the
+connection count climbs by one per press. Reattaching therefore names the label as well as the
+session id, because a resume whose session has gone falls through to *opening* one.
+
 ### Surviving a restart of this app
 
 There are two independent mechanisms, and they compose:

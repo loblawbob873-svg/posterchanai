@@ -2122,6 +2122,23 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .modal{max-height:92dvh}
 .modal.cmp-drop{outline:2px dashed var(--neon,#0ff);outline-offset:-8px;background:rgba(0,240,255,.06)}
 .modal h3{margin:0 0 12px;letter-spacing:1px;font-size:20px}
+/* A SHEET THAT REFUSES THE BACKDROP MUST SHOW ITS OWN WAY OUT. `.modal-sticky` (the composer) does
+   not close when the backdrop is clicked, so the ✕ in its title row is the only pointer-driven exit
+   on a phone with no hardware Back — it is part of the same change, not decoration. */
+.cmp-hd{display:flex;align-items:center;gap:10px}
+.modal-x{margin-inline-start:auto;flex:0 0 auto;background:none;border:1px solid transparent;
+  color:var(--muted);font-size:24px;line-height:1;width:34px;height:34px;border-radius:10px;
+  cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+.modal-x:hover{color:var(--text);border-color:var(--line);background:rgba(255,255,255,.05)}
+/* THE FLINCH. A backdrop click that is silently ignored reads as a frozen app — worse than the
+   dismissal it replaces — so the sheet says it heard you and stayed. Short, and it never moves the
+   box far enough to disturb a cursor in the textarea. */
+@keyframes modalNudge{0%,100%{transform:translateX(0)}
+  20%{transform:translateX(-5px)}45%{transform:translateX(4px)}70%{transform:translateX(-2px)}}
+.modal-nudge{animation:modalNudge .22s ease-in-out 1}
+@media (prefers-reduced-motion: reduce){
+  .modal-nudge{animation:none;outline:2px solid var(--accent);outline-offset:-2px}
+}
 .modal textarea{min-height:220px;resize:vertical;font-size:15px}
 .cmp-tabs{display:flex;gap:6px;margin-bottom:6px}
 /* inline-flex, not the default block: the Preview tab carries a label icon, and the icon-gap rule is a
@@ -8768,10 +8785,11 @@ audio.sms-att-img{min-width:220px}
 .os-display-controls{display:grid;grid-template-columns:repeat(2,minmax(180px,1fr));gap:13px;padding:16px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.025)}
 .os-display-controls label{display:flex;align-items:center;justify-content:space-between;gap:12px}.os-display-controls select{min-width:145px;background:#111722;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:7px}
 .os-set-actions{display:flex;align-items:center;gap:10px;margin-top:16px}
+.os-set-control{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:15px 17px;border:1px solid var(--line)}.os-set-control>div{display:flex;flex-direction:column;gap:4px}.os-set-control>div>span,.os-set-control output{color:var(--muted);font-size:12px}.os-set-control>label{display:flex;align-items:center;gap:10px}.os-set-control input[type=range]{width:min(240px,28vw)}.os-set-control select{min-width:150px;padding:8px;background:#111722;color:var(--text);border:1px solid var(--line);border-radius:7px}.os-set-switch span{min-width:24px}.os-about-grid{display:grid;grid-template-columns:repeat(2,minmax(140px,1fr));gap:1px;padding:0;overflow:hidden;background:var(--line)}.os-about-grid>div{display:flex;flex-direction:column;gap:5px;padding:16px;background:var(--panel)}.os-about-grid span{color:var(--muted);font-size:12px}
 .os-liveusb{margin-top:26px;padding:18px;border:1px solid var(--line);border-radius:12px;background:#11151d}
 .os-liveusb-head{display:flex;align-items:center;justify-content:space-between;gap:16px}.os-liveusb-head>div{display:flex;flex-direction:column;gap:4px}.os-liveusb-head span{color:var(--muted);font-size:12px}
 .os-liveusb-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}.os-liveusb-grid>div{display:flex;flex-direction:column;gap:12px;padding:15px;border:1px solid #2a303c;border-radius:10px;background:#0b0e14}.os-liveusb-grid h3{margin:0;font-size:16px}.os-liveusb-grid label{display:flex;flex-direction:column;gap:6px;color:var(--muted);font-size:12px}.os-liveusb-grid label:has(input[type=checkbox]){display:block}.os-liveusb-grid select{width:100%;padding:8px;background:#111722;color:var(--text);border:1px solid var(--line);border-radius:6px}.os-path-pick{display:flex;gap:7px}.os-path-pick input{flex:1;min-width:0}.os-liveusb .danger{border-color:#9b4050;color:#ff91a5}.os-liveusb-status{min-height:38px;max-height:120px;margin:14px 0 0;padding:10px;overflow:auto;white-space:pre-wrap;background:#080a0f;border:1px solid #252a35;border-radius:7px;color:#aab3c4}
-@media(max-width:760px){.os-settings{grid-template-columns:1fr}.os-set-nav{display:none}.os-display-controls{grid-template-columns:1fr}}
+@media(max-width:760px){.os-settings{grid-template-columns:1fr}.os-set-nav{display:none}.os-display-controls{grid-template-columns:1fr}.os-set-control{align-items:flex-start;flex-direction:column}.os-set-control input[type=range]{width:min(360px,70vw)}.os-about-grid{grid-template-columns:1fr}}
 @media(max-width:900px){.os-liveusb-grid{grid-template-columns:1fr}}
 
 /* ═══ PosterChan Code ═════════════════════════════════════════════════════════════════════════
@@ -8912,3 +8930,9 @@ audio.sms-att-img{min-width:220px}
   .pcc-side{width:150px;flex-basis:150px}
   .pcc-grip-v{display:none}
 }
+/* Built-in CODE editor: fill the modal on desktop and mobile without giving the iframe page scroll. */
+.office-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px}.office-head h3{margin:0}
+.office-frame{display:block;width:min(94vw,1400px);height:calc(100dvh - 150px);min-height:420px;border:1px solid var(--border);background:#fff}
+.office-launch{display:none}.office-actions{justify-content:flex-end;margin-top:8px}
+@media(max-width:640px){.office-head{display:block}.office-frame{width:96vw;height:calc(100dvh - 165px);min-height:360px}}
+.os-native-controls{display:inline-flex;align-items:center;gap:1px}.os-native-controls button{width:22px;height:22px;padding:0;border:0;border-radius:4px;background:transparent;color:inherit;line-height:20px}.os-native-controls button:hover{background:rgba(255,255,255,.14)}.os-native-close:hover{background:#c42b1c!important;color:#fff}

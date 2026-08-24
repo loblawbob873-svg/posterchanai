@@ -25,6 +25,7 @@ from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, medi
 from app.auth import NATIVE_APP_ORIGINS as _NATIVE_ORIGINS
 from app.routers import youtube_thumb, bots, push, calls, streams, rss, markets, websearch, weather, ssh_term, mempool
 from app.routers import code as code_router      # PosterChan Code: /api/code/* (editor tree, read/write, beautify)
+from app.routers import office as office_router  # built-in CODE + WOPI document editing
 from app.routers import sharelink as sharelink_router   # /f/<sha> — a shared encrypted file, decrypted in the recipient's browser
 from app.routers import admin_emoji
 from app.routers import git as git_router
@@ -227,6 +228,7 @@ app.include_router(media_api.router)
 app.include_router(news.router)
 app.include_router(websearch.router)  # /api/websearch/* (Web Search screen: SearXNG proxy, reader, AI overview)
 app.include_router(code_router.router)  # /api/code/* (PosterChan Code: jailed workspace tree + black/beautysh)
+app.include_router(office_router.router)  # /client/office/* + /wopi/*
 app.include_router(sharelink_router.router)  # /f/<sha> (no auth by design — the key is in the fragment)
 # /api/calendar/* — GUARDED, like the mount below. `radicale` is a NEW requirement and sync.sh
 # deploys code, not dependencies (CLAUDE.md), so on the first deploy a node has this file and not the

@@ -87,11 +87,23 @@ def utf8_take(b: bytes) -> int:
     return n
 
 
+def mux_label(label: str) -> str:
+    """A tab's name, sanitised. It is half of the tmux session name, so it decides WHICH SHELL you
+    get — and a client that sends nothing gets `main`, which is right for the first tab and wrong
+    for every one after it (see _mux_name)."""
+    return re.sub(r"[^A-Za-z0-9_-]", "", str(label or "")[:24]) or "main"
+
+
 def _mux_name(user_id, label: str) -> str:
     """The tmux session name. DETERMINISTIC, because it is the only thing that reconnects a person to
-    their shell once this process has forgotten every id it ever issued."""
-    lab = re.sub(r"[^A-Za-z0-9_-]", "", str(label or "")[:24]) or "main"
-    return f"pcai-{user_id or 0}-{lab}"
+    their shell once this process has forgotten every id it ever issued.
+
+    IT IS ALSO WHAT MAKES A TAB A TAB. `new-session -A` is attach-or-create, so two sessions built
+    with the same label are two SSH connections onto ONE shell — same screen, same keystrokes, same
+    scrollback. That is not a second tab, it is a mirror, and it is indistinguishable from a broken
+    New-tab button: the shell you are already in reappears, and the connection count climbs. So the
+    LABEL is per tab and the client picks a free one; only a resume may reuse the label it names."""
+    return f"pcai-{user_id or 0}-{mux_label(label)}"
 
 
 def _mux_command(name: str) -> str:
@@ -272,6 +284,9 @@ class SshSession:
         self.killed = False
         self.mux = False
         self.mux_name = ""
+        # WHICH TAB THIS IS. Reported to the client so a new tab can pick a label nobody is using —
+        # kept even when multiplexing is off, where it is merely a name.
+        self.label = "main"
         self._idle, self._max, self._grace = limits()
 
     # ---- lifetime ------------------------------------------------------------------------------
@@ -340,6 +355,7 @@ class SshSession:
                       label: str = "main") -> None:
         import paramiko
 
+        self.label = mux_label(label)
         self.mux_name = _mux_name(self.user_id, label) if multiplex_enabled() else ""
         mux = _mux_command(self.mux_name) if self.mux_name else ""
         self.mux = bool(mux)
@@ -486,7 +502,7 @@ def sessions_for(user_id):
     """What this account has open — including detached ones, which is what a client needs in order to
     offer 'you have a shell still running' rather than silently starting a second one."""
     now = time.time()
-    return [{"sid": s.sid, "host": s.host_name, "detached": s.detached,
+    return [{"sid": s.sid, "host": s.host_name, "label": s.label, "detached": s.detached,
              "age": int(now - s.started),
              "idle": int(now - s.detached_at) if s.detached_at else 0,
              "bytes": s.seq}

@@ -44,6 +44,7 @@ map $http_upgrade $connection_upgrade {
 
 upstream posterchanai_app   { server 127.0.0.1:3051; }
 upstream posterchanai_relay { server 127.0.0.1:3052; }
+upstream posterchanai_office { server 127.0.0.1:9983; }
 
 # --- HTTP -> HTTPS redirect --------------------------------------------------
 server {
@@ -105,6 +106,17 @@ server {
     proxy_set_header Upgrade           $http_upgrade;
     proxy_set_header Connection        $connection_upgrade;
     proxy_buffering off;
+
+    # ---- Optional built-in CODE office editor --------------------------------
+    # Installed by `./install.sh --office`, or Docker's `--profile office`. CODE stays on loopback;
+    # this same-origin prefix carries its assets, WOPI UI and long-lived editing WebSocket.
+    location ^~ /office-code/ {
+        rewrite ^/office-code/(.*)$ /$1 break;
+        proxy_pass http://posterchanai_office;
+        proxy_set_header X-Forwarded-Prefix /office-code;
+        proxy_read_timeout 36000s;
+        proxy_send_timeout 36000s;
+    }
 
     # ---- Built-in Nostr relay (wss://example.com/relay) --------------------
     # The relay listens on ws://127.0.0.1:3052/relay. This makes it reachable as a normal

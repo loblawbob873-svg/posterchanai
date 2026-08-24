@@ -4,6 +4,7 @@
 #   docker compose --profile cuda  up -d --build   # NVIDIA  (needs nvidia-container-toolkit; Windows = WSL2 only)
 #   docker compose --profile rocm  up -d --build   # AMD     (needs host amdgpu driver) — LINUX ONLY
 #   docker compose --profile intel up -d --build   # Intel Arc (needs host i915 + /dev/dri) — LINUX ONLY
+#   POSTERCHANAI_OFFICE=1 docker compose --profile nostr --profile office up -d --build  # + DOCX/XLSX/PPTX
 #
 # LINUX ONLY means it: `rocm` and `intel` pass through /dev/kfd and /dev/dri, which only exist on a
 # Linux host with the amdgpu/i915 kernel driver loaded. Docker Desktop (Windows/macOS) runs containers
@@ -136,6 +137,10 @@ x-common: &common
     # (binary baked into the image). Forward 1935 (RTMP). Set STREAM_DOMAIN to the host OBS pushes to.
     - POSTERCHANAI_STREAM=${POSTERCHANAI_STREAM:-0}
     - POSTERCHANAI_STREAM_DOMAIN=${POSTERCHANAI_STREAM_DOMAIN:-}
+    # Built-in office editing. Bring up the `office` profile and set this to 1 (the office service
+    # itself supplies these automatically through its profile-friendly defaults).
+    - POSTERCHANAI_OFFICE=${POSTERCHANAI_OFFICE:-0}
+    - POSTERCHANAI_CODE_URL=${POSTERCHANAI_CODE_URL:-http://office:9980}
     # Postgres is the ONLY database — it backs both the app and the built-in Nostr relay (one DB).
     # Points at the `postgres` service below. Override POSTGRES_PASSWORD in a .env for production.
     - DATABASE_URL=postgresql+psycopg2://posterchan:${POSTGRES_PASSWORD:-posterchan_local}@postgres:5432/posterchan_relay
@@ -158,6 +163,24 @@ x-common: &common
     #   - /var/run/docker.sock:/var/run/docker.sock
 
 services:
+  # Turnkey Collabora Online Development Edition. It is private on the compose network; nginx serves
+  # it below /office-code and PosterChan is its WOPI storage host. Intended for home/small-team use.
+  office:
+    image: collabora/code:${POSTERCHANAI_CODE_TAG:-latest}
+    profiles: ["office"]
+    restart: unless-stopped
+    cap_add: [MKNOD]
+    environment:
+      - extra_params=--o:ssl.enable=false --o:ssl.termination=true --o:net.proxy_prefix=true --o:security.capabilities=false --o:security.seccomp=false --o:welcome.enable=false
+      - username=${POSTERCHANAI_CODE_ADMIN_USER:-admin}
+      - password=${POSTERCHANAI_CODE_ADMIN_PASSWORD:-posterchan}
+    expose: ["9980"]
+    ports:
+      # Loopback publication lets a host nginx use the same sample config. Override if 9983 is taken.
+      - "127.0.0.1:${POSTERCHANAI_CODE_PORT:-9983}:9980"
+    tmpfs:
+      - /tmp:size=1g,mode=1777
+
   # The one and only database — backs the app AND the built-in Nostr relay. No profile, so it
   # starts under every GPU profile; the app services wait for its healthcheck (depends_on above).
   postgres:

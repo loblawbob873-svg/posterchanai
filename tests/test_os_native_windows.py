@@ -75,15 +75,15 @@ class NativeWindowGeometry(unittest.TestCase):
         self.assertIsNotNone(out["c"])
 
     # ---- stashing ----------------------------------------------------------------------------
-    def test_higher_html_window_occludes_native_without_blending(self):
-        """The shell cannot z-order DOM over a compositor surface, so overlap parks the surface."""
+    def test_higher_html_window_does_not_minimise_native(self):
+        """Changing focus/stacking must not make Firefox or Telegram disappear."""
         out = self.js("""
           out.p = N.stashPlan(
             [{native: 7, z: 1, rect:{left:100, top:100, width:800, height:600}}],
             [{z: 2, rect:{left:400, top:300, width:500, height:400}}]);
         """)
-        self.assertEqual(out["p"]["stash"], [7])
-        self.assertEqual(out["p"]["show"], [])
+        self.assertEqual(out["p"]["stash"], [])
+        self.assertEqual(out["p"]["show"], [7])
 
     def test_a_window_behind_it_does_not(self):
         """Stacking is respected in both directions, or every native window would be stashed by

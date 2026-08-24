@@ -34,6 +34,18 @@ def test_remote_desktop_sends_a_screen_and_no_guest_media():
     assert "remoteDesktop:!!msg.remoteDesktop" in APP
 
 
+def test_stopping_browser_screen_share_ends_the_remote_desktop_session():
+    assert "screen.addEventListener('ended'" in APP
+    assert "_call.local===local && _call.remoteDesktop" in APP
+    assert "_hangup(false)" in APP
+
+
+def test_remote_desktop_viewer_has_a_real_fullscreen_control():
+    assert "act('call-full','⛶','Fullscreen')" in APP
+    assert "await el.requestFullscreen()" in APP
+    assert "await document.exitFullscreen()" in APP
+
+
 def test_launcher_tiles_leave_desktop_without_forgetting_the_preference():
     assert "mobileLanding: () => { if(on) exit(false); }" in OS
     # Both cold/resume paths go through the one boot-ordered landing function.

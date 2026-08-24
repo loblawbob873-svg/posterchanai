@@ -41,6 +41,7 @@ source "$INSTALL_DIR/stream.sh"
 source "$INSTALL_DIR/sandbox.sh"
 source "$INSTALL_DIR/searxng.sh"
 source "$INSTALL_DIR/webxdc.sh"
+source "$INSTALL_DIR/office.sh"
 
 # Handle --help and --packages options
 if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
@@ -91,6 +92,12 @@ fi
 # Add-on: install the built-in MediaMTX media server for OBS streaming (downloads a prebuilt binary).
 if [ "$1" = "--stream" ]; then
     setup_stream_server
+    exit $?
+fi
+
+# Add-on: install the Nextcloud-style single-AppImage CODE office editor.
+if [ "$1" = "--office" ]; then
+    setup_office_server
     exit $?
 fi
 

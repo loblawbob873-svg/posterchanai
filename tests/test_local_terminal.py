@@ -217,7 +217,11 @@ class LocalTerminal(unittest.TestCase):
     def test_an_empty_terminal_starts_its_first_session(self):
         """Configured SSH hosts must not turn PosterChanOS Terminal into an inert host picker."""
         src = open(CLIENT, encoding="utf-8").read()
-        render = src[src.index("async function render()") : src.index("function unmount()")]
+        # `async function render(`, NOT `render()`. It took a `host` argument when desktop windows
+        # started rendering it into their own element, and this slice went on naming the old
+        # signature — so both of these tests raised ValueError instead of asserting anything, which
+        # is a test that does not exist, only quieter.
+        render = src[src.index("async function render(") : src.index("function unmount()")]
         self.assertIn("if(!live.length && hosts.length) connect();", render)
 
     def test_repeated_terminal_shortcuts_do_not_create_duplicate_tabs(self):
@@ -228,7 +232,11 @@ class LocalTerminal(unittest.TestCase):
         opened = src[start : src.index("window.PCTerm", start)]
         self.assertIn("if(term) _focus();", opened)
         self.assertNotIn("connect();", opened)
-        render = src[src.index("async function render()") : src.index("function unmount()")]
+        # `async function render(`, NOT `render()`. It took a `host` argument when desktop windows
+        # started rendering it into their own element, and this slice went on naming the old
+        # signature — so both of these tests raised ValueError instead of asserting anything, which
+        # is a test that does not exist, only quieter.
+        render = src[src.index("async function render(") : src.index("function unmount()")]
         start = render.index("if(_want === 'local'")
         wanted = render[start : render.index("if(!XT())", start)]
         self.assertIn("existing", wanted)

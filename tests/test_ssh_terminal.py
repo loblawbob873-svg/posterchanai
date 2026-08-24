@@ -15,6 +15,8 @@ purpose). So what is tested here is not that a shell works; it is that a shell i
 
 The PTY itself is not exercised — that needs a real sshd — but nothing above depends on it.
 """
+import re
+
 import pytest
 
 from app.services import ssh_service
@@ -273,3 +275,99 @@ def test_the_trust_list_is_shared_with_the_api():
     from app.routers import ssh_term
 
     assert "NATIVE_APP_ORIGINS" in inspect.getsource(ssh_term._origin_ok)
+
+
+# ── A TAB IS A LABEL ──────────────────────────────────────────────────────────────────────────
+#
+# A remote shell runs inside `tmux new-session -A -s pcai-<uid>-<label>`, which is attach-or-CREATE.
+# So the label is not a name for a session — it is the CHOICE of session, and two opens sharing one
+# are two SSH connections onto a single shell: same screen, same keystrokes, same scrollback.
+#
+# That is what "I can never start a new tab on a remote connection. I have 3 server1 connections
+# now" was. Nothing failed and nothing logged: the button worked, the session was created, the
+# router logged `opened a terminal on server1`, and the prompt that came back was the one already on
+# screen. Measured on the live node: three sessions, two of them holding 567,559 and 567,518 bytes.
+#
+# The client had no `label` anywhere; the keeper path forwarded one that was never sent, and the
+# in-process path did not forward it at all.
+
+
+def test_two_labels_are_two_shells_and_one_label_is_one_shell():
+    """The whole mechanism in one assertion: the tmux name is what makes tabs distinct."""
+    a = ssh_service._mux_name(7, "main")
+    b = ssh_service._mux_name(7, "2")
+    assert a != b, "two tabs would share a tmux session — the same shell twice"
+    assert ssh_service._mux_name(7, "2") == b, "a resume must be able to name its own shell again"
+    # And it is per ACCOUNT: one person's `main` is never another's.
+    assert ssh_service._mux_name(8, "main") != a
+
+
+def test_a_label_is_sanitised_and_never_empty():
+    """It lands in a shell command (quoted, but still), and an empty one must not collapse every
+    tab into the same unnamed session."""
+    assert ssh_service.mux_label("") == "main"
+    assert ssh_service.mux_label(None) == "main"
+    assert ssh_service.mux_label("2") == "2"
+    assert ssh_service.mux_label("a b; rm -rf /") == "abrm-rf"
+    assert len(ssh_service.mux_label("x" * 90)) <= 24
+
+
+def test_a_session_reports_which_tab_it_is():
+    """`/api/ssh/sessions` is where the client learns which labels are taken, and it cannot pick a
+    free one from a list that does not say. Without this every new tab picks `main`."""
+    s = ssh_service.SshSession(user_id=3, host_name="server1")
+    assert s.label == "main"                     # before connect, and it is never None
+    s.label = "2"
+    ssh_service._sessions[s.sid] = s
+    try:
+        row = [r for r in ssh_service.sessions_for(3) if r["sid"] == s.sid]
+        assert row and row[0]["label"] == "2"
+    finally:
+        ssh_service._sessions.pop(s.sid, None)
+
+
+def test_connect_records_the_label_it_was_given():
+    """`self.label` is what the session list reports, so it must be set from the ARGUMENT rather
+    than left at the default — the mux name and the reported name cannot be allowed to disagree."""
+    import inspect
+
+    src = inspect.getsource(ssh_service.SshSession.connect)
+    assert "self.label = mux_label(label)" in src
+    assert "self.mux_name = _mux_name(self.user_id, label)" in src
+
+
+def test_both_open_paths_forward_the_client_s_label():
+    """The keeper path already did; the in-process fallback did not, so a node without the keeper
+    had this bug on its own — and that path is the one a fresh install runs."""
+    import inspect
+
+    from app.routers import ssh_term
+
+    keeper = inspect.getsource(ssh_term._via_keeper)
+    assert 'first.get("label")' in keeper
+    assert '"label": label' in keeper
+
+    ws = inspect.getsource(ssh_term.websocket_ssh)
+    assert 'label=str(first.get("label") or "main")' in ws, (
+        "the in-process open path drops the label, so every new tab takes the server's `main` "
+        "default and attaches to the shell already on screen"
+    )
+
+
+def test_every_ready_frame_says_which_tab_it_is():
+    """A reconnect has to name the label it was opened under — a resume whose session is gone falls
+    through to OPENING one, and an unnamed fallback lands in whichever tab holds `main`."""
+    import inspect
+
+    from app.routers import ssh_term
+    from app.services import ssh_keeper
+
+    seen = 0
+    for src in (inspect.getsource(ssh_term.websocket_ssh),
+                inspect.getsource(ssh_term._via_keeper),
+                inspect.getsource(ssh_keeper._client)):
+        for frame in re.findall(r'\{"t": "ready".*?\}', src, re.S):
+            seen += 1
+            assert '"label"' in frame, f"a ready frame that does not name its tab: {frame}"
+    # A regex that matches nothing passes every assertion it never runs.
+    assert seen >= 3, f"only {seen} ready frames found — re-point this test"

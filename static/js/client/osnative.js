@@ -67,10 +67,8 @@
     const stash = [], show = [];
     for(const it of (items || [])){
       if(!it || it.native == null) continue;
-      const covered = (htmlWins || []).some(w => w && !w.minimised && w.z > (it.z || 0)
-                                               && overlaps(it.rect, w.rect));
       const hide = !!it.minimised || !it.rect || !(it.rect.width > 0) || !(it.rect.height > 0)
-                   || covered;
+                   ;
       (hide ? stash : show).push(it.native);
     }
     return { stash, show };

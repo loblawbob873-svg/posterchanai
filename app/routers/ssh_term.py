@@ -359,7 +359,7 @@ async def websocket_ssh(websocket: WebSocket):
             await sess.resize(cols, rows)
             logger.info("[ssh] %s reattached to %s (%s)", who, sess.sid, sess.host_name)
             await websocket.send_json({"t": "ready", "host": sess.host_name, "sid": sess.sid,
-                                       "resumed": True})
+                                       "label": sess.label, "resumed": True})
             # What they missed while they were away, from their own cursor.
             cur0 = first.get("cursor")
             have = sess.seq - len(sess.buf)
@@ -376,7 +376,11 @@ async def websocket_ssh(websocket: WebSocket):
                 return
             sess = ssh_service.SshSession(user_id=getattr(user, "id", None), host_name=h.name)
             try:
-                await sess.connect(h, password=str(first.get("password") or ""), cols=cols, rows=rows)
+                # THE LABEL IS WHICH TAB THIS IS, and dropping it here opened every new tab into the
+                # same tmux session — see _mux_name. The keeper path already forwarded it; this one
+                # took the "main" default, so the in-process fallback had the bug on its own.
+                await sess.connect(h, password=str(first.get("password") or ""), cols=cols, rows=rows,
+                                   label=str(first.get("label") or "main"))
             except Exception as e:
                 # The KIND of failure matters -- "auth failed" and "no route to host" send you to
                 # completely different places, and this is the one screen where a person can act on
@@ -388,7 +392,8 @@ async def websocket_ssh(websocket: WebSocket):
                 return
             sess.attach()
             logger.info("[ssh] %s opened a terminal on %s (%s@%s)", who, h.name, h.user, h.host)
-            await websocket.send_json({"t": "ready", "host": h.name, "sid": sess.sid})
+            await websocket.send_json({"t": "ready", "host": h.name, "sid": sess.sid,
+                                       "label": sess.label})
 
         # FORWARD FROM THE SESSION'S BUFFER, never from the channel directly.
         #

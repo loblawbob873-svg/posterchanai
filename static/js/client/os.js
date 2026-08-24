@@ -1161,19 +1161,9 @@
 
   function focusWin(w, render){
     if(!w) return;
-    /* A compositor-owned application always paints above this tiled Electron desktop, regardless
-     * of either side's CSS z-index. Therefore a visible Firefox/Telegram window cannot be put
-     * "behind" a PosterChan window by focusing the latter: without an explicit compositor action
-     * it stays on top and makes the taskbar appear to lie. Park visible native windows when a
-     * PosterChan window is selected. Their task buttons remain present and restore the exact live
-     * process from Sway's scratchpad, so this is ordinary window switching, not closing/reloading. */
-    if(w.native == null && window.pcWM && nativeTasks.length){
-      for(const n of nativeTasks){
-        if(n && !n.stashed) Promise.resolve(pcWM.hide(n.id)).then(()=>{
-          n.stashed=true; n.focused=false; drawBar();
-        }).catch(()=>{});
-      }
-    }
+    /* Focusing another window is not minimising Firefox/Telegram. Older builds parked every native
+     * surface in Sway's scratchpad here; from the user's perspective the app simply disappeared.
+     * Only the explicit minimise/taskbar toggle paths are allowed to hide a native window. */
     /* CAPTURE WHAT THIS WINDOW IS SHOWING, BEFORE ANYTHING MOVES.
      *
      * If it already holds the live feed then the client's current VIEW *is* this window's view —
@@ -1514,10 +1504,12 @@
     const alive=()=>host._pcOsSettings===token && (!owner || host.parentElement===owner.body);
     host.className='feed os-settings-feed';
     host.innerHTML='<div class="spinner"></div>';
-    let outs=[], power={}; try{ outs=await pcDisplays.status(); }
+    let outs=[], power={}, system={}; try{ outs=await pcDisplays.status(); }
     catch(e){ if(alive()) host.innerHTML='<div class="empty">Could not read displays: '+enc(String(e&&e.message||e))+'</div>'; return; }
     if(!alive()) return;
     try{ power=window.pcPower?await pcPower.status():{}; }catch(_){ power={}; }
+    if(!alive()) return;
+    try{ system=window.pcSystem?await pcSystem.snapshot(false):{}; }catch(_){ system={}; }
     if(!alive()) return;
     const rows=outs.map(o=>{ const cur=(o.modes||[]).find(m=>m.current);
       const hz=m=>Math.round((+m.refresh||0)/1000*1000)/1000;
@@ -1539,6 +1531,7 @@
         <button data-jump="network">${iconSvg('wifi')} Network</button>
         <button data-jump="bluetooth">${iconSvg('bluetooth')} Bluetooth</button>
         <button data-jump="power">${iconSvg('power')} Power &amp; brightness</button>
+        <button data-jump="about">${iconSvg('chart')} About</button>
         ${window.pcLiveUSB?`<button data-jump="liveusb">${iconSvg('drive')} LiveUSB</button>`:''}
       </aside><main class="os-set-main"><header class="os-set-pagehead"><div>${iconSvg('monitor')}</div><span><h2>Displays</h2><p>Arrange monitors, choose resolution and scaling, then preview safely before saving.</p></span></header>
         <section class="os-set-card"><div class="os-set-cardhead"><b>Monitor arrangement</b><span>Drag each numbered screen to match its physical position on your desk.</span></div>
@@ -1550,12 +1543,22 @@
         <div class="os-set-actions"><button class="btn" data-detect>Detect displays</button>
           <button class="btn primary" data-apply>Preview and apply</button><span class="muted" data-status></span></div></section>
         <div class="os-set-section-title"><h3>Power and sleep</h3><p>These changes apply to this PosterChanOS computer.</p></div>
+        ${power.brightness&&power.brightness.available?`<section class="os-setting-row os-set-control"><div><b>Brightness</b><span>${enc(power.brightness.name||'Built-in display')}</span></div><label><output data-bright-value>${enc(power.brightness.percent)}%</output><input data-brightness type="range" min="1" max="100" value="${enc(power.brightness.percent)}" aria-label="Display brightness"></label></section>`:''}
+        ${power.profiles&&power.profiles.available?`<section class="os-setting-row os-set-control"><div><b>Power mode</b><span>Balance speed, heat, and battery use.</span></div><select data-power-profile aria-label="Power mode">${power.profiles.list.map(n=>`<option ${n===power.profiles.active?'selected':''}>${enc(n)}</option>`).join('')}</select></section>`:''}
+        <section class="os-setting-row os-set-control"><div><b>Keep awake</b><span>Prevent automatic display-off during presentations and long tasks.</span></div><label class="os-set-switch"><input data-keep-awake type="checkbox" ${power.keepAwake?'checked':''}><span>${power.keepAwake?'On':'Off'}</span></label></section>
         <section class="os-hibernate os-setting-row"><div><b>Hibernation</b><span>${power.hibernateConfigured?'Enabled and ready to use.':'Save open apps to disk before the computer powers down.'}</span></div>
           ${power.hibernateConfigured?'<span class="os-set-ready">Ready</span>':'<button class="btn" data-enable-hibernate>Enable hibernation</button>'}</section>
         <section class="os-hibernate os-setting-row"><div><b>Turn display off when idle</b><span>The computer stays running; only its displays switch off.</span></div>
           <select data-idle-timeout aria-label="Display idle timeout">
             ${[[60,'1 minute'],[120,'2 minutes'],[300,'5 minutes'],[600,'10 minutes'],[1800,'30 minutes'],[0,'Never']].map(([n,label])=>`<option value="${n}" ${Number(power.idleSeconds)===n?'selected':''}>${label}</option>`).join('')}
           </select></section>
+        <div class="os-set-section-title" data-about><h3>About this computer</h3><p>Live hardware and session information.</p></div>
+        <section class="os-set-card os-about-grid">
+          <div><span>System</span><b>PosterChanOS</b></div>
+          <div><span>Processors</span><b>${enc((system.cpu&&system.cpu.cores)||'—')} logical cores</b></div>
+          <div><span>Memory</span><b>${system.memory&&system.memory.total?enc((system.memory.total/1073741824).toFixed(1))+' GB':'—'}</b></div>
+          <div><span>Up time</span><b>${Number.isFinite(system.uptime)?enc(Math.floor(system.uptime/3600))+'h '+enc(Math.floor(system.uptime/60)%60)+'m':'—'}</b></div>
+        </section>
         ${window.pcLiveUSB?`<section class="os-liveusb" data-liveusb><div class="os-liveusb-head"><div><b>PosterChanOS LiveUSB</b><span>Build a recovery/installer ISO or write one to removable media.</span></div><button class="btn" data-live-refresh>Refresh</button></div>
           <div class="os-liveusb-grid"><div><h3>Build an ISO</h3><label>Output folder<div class="os-path-pick"><input class="input" data-live-out readonly placeholder="Choose a folder"><button class="btn" data-live-dir>Choose…</button></div></label><label><input type="checkbox" data-live-home> Include personal home files <small>(recovery media only)</small></label><button class="btn primary" data-live-build>Build ISO</button></div>
           <div><h3>Write a USB drive</h3><label>ISO file<div class="os-path-pick"><input class="input" data-live-iso readonly placeholder="Choose an ISO"><button class="btn" data-live-pick>Choose…</button></div></label><label>Removable drive<select data-live-disk><option value="">Scanning…</option></select></label><button class="btn danger" data-live-burn>Write USB…</button></div></div>
@@ -1609,6 +1612,16 @@
         catch(e){PC().toast(String(e&&e.message||e));}
         finally{idle.disabled=false;}
       };
+      const bright=host.querySelector('[data-brightness]'); if(bright){
+        bright.oninput=()=>{const o=host.querySelector('[data-bright-value]');if(o)o.textContent=bright.value+'%'};
+        bright.onchange=async()=>{bright.disabled=true;try{await pcPower.setBrightness(Number(bright.value));PC().toast('Brightness updated');}catch(e){PC().toast(String(e&&e.message||e));}finally{bright.disabled=false;}};
+      }
+      const profile=host.querySelector('[data-power-profile]'); if(profile)profile.onchange=async()=>{
+        profile.disabled=true;try{await pcPower.setProfile(profile.value);PC().toast('Power mode updated');}catch(e){PC().toast(String(e&&e.message||e));}finally{profile.disabled=false;}
+      };
+      const awake=host.querySelector('[data-keep-awake]'); if(awake)awake.onchange=async()=>{
+        awake.disabled=true;try{await pcPower.setKeepAwake(awake.checked);const s=awake.parentElement.querySelector('span');if(s)s.textContent=awake.checked?'On':'Off';PC().toast(awake.checked?'Computer will stay awake':'Normal sleep behavior restored');}catch(e){awake.checked=!awake.checked;PC().toast(String(e&&e.message||e));}finally{awake.disabled=false;}
+      };
       const live=host.querySelector('[data-liveusb]');
       if(live){
         const out=live.querySelector('[data-live-out]'), iso=live.querySelector('[data-live-iso]');
@@ -1632,6 +1645,7 @@
       host.querySelectorAll('[data-jump]').forEach(b=>b.onclick=()=>{
         const k=b.dataset.jump;
         if(k==='liveusb'){ const sec=host.querySelector('[data-liveusb]'); if(sec)sec.scrollIntoView({behavior:'smooth',block:'start'}); return; }
+        if(k==='about'){ const sec=host.querySelector('[data-about]'); if(sec)sec.scrollIntoView({behavior:'smooth',block:'start'}); return; }
         if(k==='network'||k==='bluetooth'||k==='sound'||k==='power')
           try{ Promise.resolve(PCOSShell.openControl(k,b)).catch(e=>PC().toast(String(e&&e.message||e))); }
           catch(e){ try{PC().toast(String(e&&e.message||e))}catch(_){} }
@@ -2065,10 +2079,8 @@
       const items = nativeWins().map(w => ({ native: w.native, z: _zOf(w),
                                              minimised: !!w.min,
                                              rect: _frameRect(w), w }));
-      /* A native surface is compositor-level and therefore always above this HTML surface. A
-       * higher-z PosterChan window which physically overlaps it must park it, otherwise Firefox
-       * draws through that window and the two appear blended together. Non-overlapping windows do
-       * nothing, so ordinary focus is not mistaken for minimise. */
+      /* Native windows remain mapped during ordinary focus changes. Only explicit minimise/zero
+       * geometry may park one; treating overlap as minimise made Firefox and Telegram disappear. */
       const htmls = wins.filter(w => w.native == null)
         .map(w => ({z:_zOf(w), minimised:!!w.min, rect:_frameRect(w)}));
       const plan = NAT().stashPlan(items, htmls.concat(overlayRects()));
@@ -2456,6 +2468,70 @@
     m.addEventListener('pointerleave', () => { layoutT = setTimeout(hideLayouts, 260); });
   }
 
+  /* State that belongs to a WINDOW, not to a particular monitor's DOM.
+   *
+   * Outputs use separate Electron renderers, so a node cannot cross the seam. Previously only
+   * Terminal and Web Search transferred state; every other app was reconstructed from defaults and
+   * visibly reloaded. Capture the browser-owned interaction state generically so every current and
+   * future app gets the same handoff contract without joining a whitelist. Module-specific state
+   * can ride beside this snapshot (Web Search does); live resources such as Terminal use their own
+   * stable session id. */
+  function _handoffRoot(w){
+    return realFeed && realFeed.parentElement===w.body ? realFeed : (w.slot||w.body);
+  }
+  function captureHandoffUI(w){
+    const root=_handoffRoot(w); if(!root) return null;
+    const fields=[]; let fieldBytes=0;
+    root.querySelectorAll('input,textarea,select').forEach((el,i)=>{
+      if(el.type==='file'||fields.length>=160)return;
+      const value=String(el.value==null?'':el.value).slice(0,Math.max(0,384*1024-fieldBytes));
+      fieldBytes+=value.length;
+      const x={i,tag:el.tagName,type:el.type||'',id:el.id||'',name:el.name||'',
+               checked:!!el.checked,value};
+      if(typeof el.selectionStart==='number'){x.a=el.selectionStart;x.b=el.selectionEnd;}
+      fields.push(x);
+    });
+    const scroll=[];
+    [root,...root.querySelectorAll('*')].forEach((el,i)=>{
+      if(scroll.length>=100)return;
+      if((el.scrollTop||el.scrollLeft) && (el.scrollHeight>el.clientHeight||el.scrollWidth>el.clientWidth))
+        scroll.push({i,id:el.id||'',top:el.scrollTop||0,left:el.scrollLeft||0});
+    });
+    const media=[];
+    root.querySelectorAll('audio,video').forEach((el,i)=>media.push({i,id:el.id||'',time:el.currentTime||0,
+      paused:!!el.paused,volume:el.volume,muted:!!el.muted,rate:el.playbackRate||1}));
+    const active=document.activeElement;
+    return {fields,scroll,media,active:active&&root.contains(active)?{id:active.id||'',
+      field:[...root.querySelectorAll('input,textarea,select')].indexOf(active)}:null};
+  }
+  function restoreHandoffUI(w,snap){
+    if(!snap||typeof snap!=='object')return;
+    const pending={fields:(snap.fields||[]).slice(),scroll:(snap.scroll||[]).slice(),media:(snap.media||[]).slice()};
+    let tries=0, timer=0;
+    const byId=(root,id)=>id?[...root.querySelectorAll('[id]')].find(el=>el.id===id)||null:null;
+    const find=(root,x,sel)=>byId(root,x.id)||root.querySelectorAll(sel)[x.i]||null;
+    const apply=()=>{
+      if(!wins.includes(w))return;
+      const root=_handoffRoot(w); if(!root)return;
+      pending.fields=pending.fields.filter(x=>{const el=find(root,x,'input,textarea,select');if(!el)return true;
+        if(x.type==='checkbox'||x.type==='radio')el.checked=!!x.checked;else el.value=x.value;
+        try{el.dispatchEvent(new Event('input',{bubbles:true}));}catch(_){}
+        try{if(typeof x.a==='number'&&el.setSelectionRange)el.setSelectionRange(x.a,x.b);}catch(_){} return false;});
+      const all=[root,...root.querySelectorAll('*')];
+      pending.scroll=pending.scroll.filter(x=>{const el=byId(root,x.id)||all[x.i];if(!el)return true;
+        el.scrollTop=x.top||0;el.scrollLeft=x.left||0;return false;});
+      pending.media=pending.media.filter(x=>{const el=find(root,x,'audio,video');if(!el)return true;
+        try{el.currentTime=x.time||0;el.volume=x.volume==null?el.volume:x.volume;el.muted=!!x.muted;el.playbackRate=x.rate||1;if(!x.paused)el.play().catch(()=>{});}catch(_){} return false;});
+      if(snap.active){const el=byId(root,snap.active.id)||root.querySelectorAll('input,textarea,select')[snap.active.field];try{if(el)el.focus({preventScroll:true});}catch(_){}}
+      if((pending.fields.length||pending.scroll.length||pending.media.length)&&++tries<30)timer=setTimeout(apply,50);
+    };
+    // Async views paint a spinner first. Observe briefly as well as retrying, but coalesce mutations.
+    let queued=false; const obs=new MutationObserver(()=>{if(queued)return;queued=true;requestAnimationFrame(()=>{queued=false;apply();});});
+    try{obs.observe(w.body,{childList:true,subtree:true});}catch(_){}
+    setTimeout(()=>{obs.disconnect();if(timer)clearTimeout(timer);apply();},1600);
+    apply();
+  }
+
   function startDrag(w, ev){
     // Dragging used to write style.left/top on every pointermove. The window CONTAINS the live feed
     // — thousands of nodes — so each move forced a full layout of it, plus a getComputedStyle() for
@@ -2618,6 +2694,9 @@
                          ? realFeed.scrollTop : w.slot&&w.parked ? w.slot.scrollTop : w.scrollTop)||0),
                        terminalSid:w.view==='terminal'&&window.PCTerm&&PCTerm.sessionId
                          ? PCTerm.sessionId() : '',
+                       /* Generic UI and module state have separate size budgets in main.js. A large
+                        * Web Search result set must not cause the compose draft/caret to be dropped. */
+                       ui:captureHandoffUI(w),
                        state:w.view==='websearch'&&window.PCWebSearch&&PCWebSearch.handoffState
                          ? PCWebSearch.handoffState() : null};
         Promise.resolve(pcWM.handoffFrame(payload,handoff)).then(result=>{
@@ -4930,7 +5009,9 @@
          + nativeTasks.map(w =>
          `<button class="os-task${w.focused && !w.stashed ? ' on' : ''}"
                   data-id="${w.id}" data-kind="native" title="${enc(w.title)}">
-            ${appIcon(w)}<span>${enc(w.title)}</span></button>`).join('')}</div>
+            ${appIcon(w)}<span>${enc(w.title)}</span></button><span class="os-native-controls">
+              <button class="os-native-max" data-id="${w.id}" title="Maximize ${enc(w.title)}">□</button>
+              <button class="os-native-close" data-id="${w.id}" title="Close ${enc(w.title)}">×</button></span>`).join('')}</div>
        <div class="os-tray">
          <div class="os-sys" id="os-shell"></div>
          <button class="os-net net-${netNow.level}${netOpen ? ' on' : ''}" id="os-net"
@@ -5034,6 +5115,8 @@
       showCtx(e.clientX, e.clientY, [{ label: pinned ? 'Unpin from taskbar' : 'Pin to taskbar',
         run: () => setPinned(key.slice(0, cut), key.slice(cut + 1), !pinned) }]);
     });
+    $$('.os-native-max',bar).forEach(b=>b.onclick=e=>{ e.stopPropagation(); Promise.resolve(pcWM.snap(Number(b.dataset.id),'max')).catch(()=>{}); });
+    $$('.os-native-close',bar).forEach(b=>b.onclick=e=>{ e.stopPropagation(); Promise.resolve(pcWM.close(Number(b.dataset.id))).catch(()=>{}); });
   }
 
   // ---- notification centre ---------------------------------------------------------------------
@@ -5926,7 +6009,9 @@
             w.el.style.top=Math.round(/up|down/.test(dir)
               ? (dir==='up' ? Math.max(12,vhL()-TASKBAR-hh-12) : 12)
               : Math.max(12,Math.min(vhL()-TASKBAR-hh-12,parseInt(w.el.style.top,10)||12)))+'px';
-            focusWin(w);
+            /* openApp already focused and rendered it. Calling focusWin again here re-ran every
+             * renderer a second time: two fetches, two spinners and iframe apps visibly restarting. */
+            restoreHandoffUI(w,p.ui);
             /* openApp has to render the feature in this renderer. Restore only after that render
              * has produced height; bounded retries handle the relay-backed timeline without
              * letting a late timer scroll whichever app is focused next. */

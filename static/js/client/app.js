@@ -15073,7 +15073,8 @@
         +`${body?`<div class="txt">${linkify(body)}</div>`:(media?'':'<div class="txt"><span class="muted small">(no text)</span></div>')}${media}</div></div>`;
     };
     let qhtml = quote ? _cmpCtx(quote,'Quoting') : (reply ? _cmpCtx(reply,'Replying to') : '');
-    modal(`<h3>${title}</h3>${qhtml}
+    modal(`<h3 class="cmp-hd">${title}<button class="modal-x" id="cmp-close" title="Close"
+              aria-label="Close">&#215;</button></h3>${qhtml}
       <div class="cmp-tabs"><button class="cmp-tab active" data-t="write">Write</button><button class="cmp-tab" data-t="preview"><svg class="ic b-ic" aria-hidden="true"><use href="#i-eye"></use></svg>Preview</button></div>
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
       <div class="muted small mention-hint hidden" id="cmp-mentions"></div>
@@ -15095,7 +15096,11 @@
       // top of a 220px textarea and two button rows), so it lays out as a flex COLUMN instead of a
       // single scroll box — otherwise the overflow comes off the bottom, i.e. off Post. See the
       // `.modal.cmp-modal` block in client.css; modal() has no class hook, so it goes on here.
-      root.classList.add('cmp-modal');
+      /* STICKY: a stray click on the backdrop must not throw away a half-written post — see
+       * modal(). The ✕ added to the title row is what keeps that honest, because a composer with no
+       * visible way out is a trap on any phone without a hardware Back button. */
+      root.classList.add('cmp-modal', 'modal-sticky');
+      { const x=$('#cmp-close',root); if(x) x.onclick=()=>closeModal(); }
       const ta=$('#cmp',root); attachMentionAutocomplete(ta); if(text) ta.value=text;
       // Files shared IN from another app (OS share sheet → _consumeSharedFiles): upload each to Blossom
       // and append its URL, exactly like paste/attach. Runs async so the composer paints immediately.
@@ -15920,6 +15925,12 @@
       opus:'audio/ogg', oga:'audio/ogg', m4b:'audio/mp4', wma:'audio/x-ms-wma', aif:'audio/aiff',
       aiff:'audio/aiff', ape:'audio/x-ape', mka:'audio/x-matroska',
       pdf:'application/pdf', txt:'text/plain', md:'text/markdown', csv:'text/csv',
+      doc:'application/msword', docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      odt:'application/vnd.oasis.opendocument.text', rtf:'application/rtf',
+      xls:'application/vnd.ms-excel', xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      xlsm:'application/vnd.ms-excel.sheet.macroEnabled.12', ods:'application/vnd.oasis.opendocument.spreadsheet',
+      ppt:'application/vnd.ms-powerpoint', pptx:'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      odp:'application/vnd.oasis.opendocument.presentation',
       json:'application/json', xml:'application/xml', html:'text/html', htm:'text/html',
       zip:'application/zip', gz:'application/gzip', tar:'application/x-tar', '7z':'application/x-7z-compressed',
       rar:'application/vnd.rar', epub:'application/epub+zip',
@@ -15935,6 +15946,7 @@
     const t = type || mimeForName(name);
     return t ? new File([bytes], name, { type: t }) : new File([bytes], name);
   }
+  const _OFFICE_EXT = /\.(doc|docx|odt|rtf|xls|xlsx|xlsm|ods|csv|ppt|pptx|odp)$/i;
   // NIP-92 source metadata for media we've uploaded this session, keyed by the exact URL we append to
   // a note. Lets imetaTagsFor() emit `imeta` tags so other clients render our art inline at the right
   // aspect ratio (dim), verify it (x = sha256) and know its type (m). Session-scoped, never persisted.
@@ -19896,6 +19908,55 @@
     toast(skipped? ('downloaded '+n+' · skipped '+skipped+' (encrypted — use the per-file ⬇)') : ('downloaded '+n));
   }
 
+  /* Open an Office document through the node's built-in CODE server.  The working copy is always
+   * assembled in this browser: encrypted drive files are decrypted here, and no key is sent to the
+   * WOPI host. Saving pulls CODE's current bytes back through the ordinary drive upload pipeline. */
+  async function openOfficeFile(d){
+    let session=null;
+    try{
+      toast(d.enc==='1'?'decrypting document…':'opening office…');
+      let blob;
+      if(d.enc==='1'){
+        const u=await encFileUrl(d.sha, d.mime||mimeForName(d.name));
+        blob=await fetch(u).then(r=>r.blob());
+      }else{
+        const r=await fetch(d.url); if(!r.ok) throw new Error('file HTTP '+r.status); blob=await r.blob();
+      }
+      const file=fileFromBytes(await blob.arrayBuffer(), d.name||'document', d.mime||blob.type);
+      const fd=new FormData(); fd.append('file',file,file.name); fd.append('mode','edit');
+      const r=await fetch('/client/office/session',{method:'POST',body:fd});
+      if(!r.ok) throw new Error((await r.json().catch(()=>null)||{}).detail||('office HTTP '+r.status));
+      session=await r.json();
+      const frameName='pc-office-'+session.id;
+      modal(`<div class="office-head"><h3>📝 ${enc(file.name)}</h3><span class="muted small">Changes are temporary until you tap Save to Files.</span></div>
+        <iframe class="office-frame" name="${frameName}" title="Office editor"></iframe>
+        <form class="office-launch" method="post" action="${enc(session.editor_url)}" target="${frameName}">
+          <input type="hidden" name="access_token" value="${enc(session.token)}"><input type="hidden" name="access_token_ttl" value="${session.expires*1000}"></form>
+        <div class="row office-actions"><button class="btn btn-ghost" id="office-close">Close</button><button class="btn btn-neon" id="office-save">Save to Files</button></div>`, root=>{
+          $('.office-launch',root).submit();
+          $('#office-close',root).onclick=async()=>{ try{ await fetch('/client/office/session/'+session.id+'?access_token='+encodeURIComponent(session.token),{method:'DELETE'}); }catch(_){} closeModal(); };
+          $('#office-save',root).onclick=async e=>{
+            const b=e.currentTarget; b.disabled=true; b.textContent='Saving…';
+            try{
+              // CODE writes through PutFile; a short delay lets its final force-save settle.
+              await new Promise(res=>setTimeout(res,700));
+              const rr=await fetch('/client/office/session/'+session.id+'/contents?access_token='+encodeURIComponent(session.token));
+              if(!rr.ok) throw new Error('saved document HTTP '+rr.status);
+              const updated=fileFromBytes(await rr.arrayBuffer(),file.name,file.type);
+              const old=FilesIdx.meta(d.sha)||{}, folder=old.folder||FilesIdx.folderOf(d.sha)||'';
+              let newSha='';
+              if(d.enc==='1') newSha=await uploadEncFile(updated,folder,null);
+              else { const url=await uploadBlob(updated,{noCompress:true}); newSha=_shaFromUrl(url);
+                FilesIdx.setFile(newSha,{name:file.name,folder,mime:updated.type||mimeForName(file.name),size:updated.size,ts:Math.floor(Date.now()/1000)}); }
+              if(newSha && newSha!==d.sha) FilesIdx.forget(d.sha); // old blob remains recoverable on Blossom
+              await fetch('/client/office/session/'+session.id+'?access_token='+encodeURIComponent(session.token),{method:'DELETE'}).catch(()=>{});
+              toast('document saved'); closeModal(); renderBlossom();
+            }catch(err){ toast('save failed: '+(err.message||err)); b.disabled=false; b.textContent='Save to Files'; }
+          };
+        });
+    }catch(err){ toast('office unavailable: '+(err.message||err)); }
+  }
+
   function _renderFilesGrid(grid, list){
     if(!grid) return;
     _filesGridList = list;
@@ -19942,6 +20003,7 @@
       const m=FilesIdx.meta(b.sha256)||{}; const nm=m.name||b.name||_vodNameMap[b.sha256]||'';
       const ext=extOfBlob(b, m.name?m:{name:nm, mime:m.mime});
       const dlName=downloadName(b, nm, ext);
+      const office=!!CFG.office_enabled && _OFFICE_EXT.test(nm||dlName);
       const sel=_filesSel.has(b.sha256)?' selected':'';
       const box=`<input type="checkbox" class="selbox" data-sha="${b.sha256}"${_filesSel.has(b.sha256)?' checked':''} title="Select">`;
       const del=`<button class="del" data-sha="${b.sha256}" aria-label="Delete"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>`;
@@ -19959,14 +20021,14 @@
         href: m.enc ? '#' : b.url, encOpen: !!m.enc, mime: m.enc ? undefined : (b.type||''),
         icon: m.enc ? '🔒' : _fxIcon(ext, b.type), name: nm || (m.enc ? 'encrypted' : dlName), title: nm || dlName,
         size:_fxBytes(b.size), type:(m.enc?'🔒 ':'')+_fxType(ext), when:_fxWhen(b.uploaded),
-        acts: (m.enc ? '' : `<button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button>`) + dl + ren + move + del,
+        acts: (office ? `<button class="officebtn" data-sha="${b.sha256}" data-url="${enc(b.url)}" data-name="${enc(nm||dlName)}" data-mime="${enc(m.mime||b.type||'')}" data-enc="${m.enc?'1':'0'}" title="Open in Office">📝</button>` : '') + (m.enc ? '' : `<button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button>`) + dl + ren + move + del,
       });
       if(m.enc){   // encrypted file — lock card; opening decrypts in-browser (never exposes the ciphertext URL)
-        return `<div class="file-card enc${sel}" draggable="true" data-sha="${b.sha256}"><a href="#" class="enc-open" data-sha="${b.sha256}"><div class="file-icon">🔒<span>${enc(ext||'enc')}</span></div></a>
+        return `<div class="file-card enc${sel}" draggable="true" data-sha="${b.sha256}"><a href="#" class="${office?'office-open':'enc-open'}" data-sha="${b.sha256}" data-name="${enc(nm||dlName)}" data-mime="${enc(m.mime||'')}" data-enc="1"><div class="file-icon">🔒<span>${enc(ext||'enc')}</span></div></a>
           ${box}${del}
           <div class="meta"><span class="fname" title="${enc(nm)}">${nm?enc(fileLabel(nm,ext,b.size)):'encrypted'}</span><span class="fc-acts">${dl}${ren}${move}</span></div></div>`;
       }
-      return `<div class="file-card${sel}" draggable="true" data-sha="${b.sha256}"><a href="${enc(b.url)}" data-mime="${enc(b.type||'')}" target="_blank">${blobThumb(b, ext)}</a>
+      return `<div class="file-card${sel}" draggable="true" data-sha="${b.sha256}"><a href="${office?'#':enc(b.url)}" class="${office?'office-open':''}" data-url="${enc(b.url)}" data-name="${enc(nm||dlName)}" data-sha="${b.sha256}" data-mime="${enc(b.type||'')}" data-enc="0"${office?'':' target="_blank"'}>${blobThumb(b, ext)}</a>
         ${box}
         <button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button>${del}
         <div class="meta"><span class="fname" title="${enc(nm||dlName)}">${enc(fileLabel(nm,ext,b.size))}</span><span class="fc-acts">${dl}${ren}${move}</span></div></div>`;
@@ -19977,6 +20039,7 @@
     if(details) _fxBindCols(grid);
     { const mb=$('.bl-more',grid); if(mb) mb.onclick=()=>{ _filesShown+=_FILES_PAGE; _renderFilesGrid(grid, list); }; }
     $$('.enc-open',grid).forEach(a=> a.onclick=async e=>{ e.preventDefault(); try{ toast('decrypting…'); const u=await trackUrl(a.dataset.sha); window.open(u,'_blank'); }catch(err){ toast('decrypt failed: '+(err.message||'')); } });
+    $$('.office-open,.officebtn',grid).forEach(a=> a.onclick=async e=>{ e.preventDefault(); e.stopPropagation(); await openOfficeFile(a.dataset); });
     _bindThumbFallback(grid);
     // Encrypted files can't be downloaded by URL (that would save the ciphertext) — decrypt in the
     // browser first, then save the plaintext under its real name.
@@ -30792,7 +30855,29 @@
     };
     document.addEventListener('keydown', onKey, true);
   }
-  function modal(html, onMount){ const bg=document.createElement('div'); bg.className='modal-bg'; bg.innerHTML=`<div class="modal glass neon-border">${html}</div>`; bg.onclick=e=>{ if(e.target===bg){ e.preventDefault(); e.stopPropagation(); closeModal(); } }; $('#modal-root').appendChild(bg); document.body.classList.add('modal-open'); const _box=bg.querySelector('.modal'); if(onMount)onMount(_box); _trapFocus(_box);
+  /* A CLICK ON THE BACKDROP CLOSES A SHEET — EXCEPT ONE HOLDING WORK YOU TYPED.
+   *
+   * Dismiss-on-backdrop is right for a picker or a menu: there is nothing to lose and the whole
+   * screen is a cancel button. It is wrong for a composer, where the same gesture that dismisses a
+   * menu throws away a post you were half way through — and the miss is EASY, because the composer
+   * is the one modal whose own content is a big target you are aiming at. Autosaving a draft was the
+   * previous answer and it is not enough: a draft you have to go and find is not the post you were
+   * writing, and the recovery is invisible at the moment it matters.
+   *
+   * So a box marked `.modal-sticky` refuses the backdrop and says so by flinching — a click that is
+   * silently ignored reads as a frozen app, which is a worse bug than the one being fixed. Escape,
+   * the Android back button and the sheet's own ✕ all still close it: this removes the ACCIDENTAL
+   * way out, never the deliberate ones. */
+  function modal(html, onMount){ const bg=document.createElement('div'); bg.className='modal-bg'; bg.innerHTML=`<div class="modal glass neon-border">${html}</div>`; bg.onclick=e=>{ if(e.target!==bg) return; e.preventDefault(); e.stopPropagation();
+      const box=bg.querySelector('.modal');
+      if(box && box.classList.contains('modal-sticky')){
+        box.classList.remove('modal-nudge');
+        // Reflow between the remove and the add, or a second click inside the animation does nothing.
+        void box.offsetWidth;
+        box.classList.add('modal-nudge');
+        return;
+      }
+      closeModal(); }; $('#modal-root').appendChild(bg); document.body.classList.add('modal-open'); const _box=bg.querySelector('.modal'); if(onMount)onMount(_box); _trapFocus(_box);
     // More / Files / Discover / Games are all the same shape: a .more-grid of .more-item buttons. Tab and
     // Escape they already had; this gives them the grid cursor the effects and emoji pickers use (arrows,
     // and hjkl with Vim keys on). Done here rather than in each of the four, so a fifth sheet gets it free.
@@ -32727,6 +32812,15 @@
     try{ local = await _getMedia(video, remoteDesktop, false); }catch(e){ toast(remoteDesktop && e&&e.name==='NotAllowedError'?'screen sharing cancelled':_mediaErrMsg(e)); _callTeardown(); return; }
     if(!_call){ local.getTracks().forEach(t=>t.stop()); return; }   // hung up while prompting
     _call.local = local;
+    /* The browser's native "Stop sharing" button ends the capture track without touching our call
+     * state.  Treat that as an intentional hangup: otherwise the viewer is left on a frozen last
+     * frame and the host still sees a misleading "connected" overlay. */
+    if(remoteDesktop){
+      const screen=local.getVideoTracks()[0];
+      if(screen) screen.addEventListener('ended',()=>{
+        if(_call && _call.local===local && _call.remoteDesktop) _hangup(false);
+      },{once:true});
+    }
     const ice = await _fetchIceServers();
     if(!_call){ local.getTracks().forEach(t=>t.stop()); return; }
     const pc = _newPc(ice.iceServers); _call.pc = pc;
@@ -33134,6 +33228,7 @@
     const html = (_call.state==='ringing' && !_call.caller)
       ? act('call-accept',_call.remoteDesktop?'🖥':'📞',_call.remoteDesktop?'View':'Answer','accept')+act('call-decline','✕','Decline','decline')
       : act('call-min','▁','Minimize')
+        +(_call.remoteDesktop&&!_call.caller?act('call-full','⛶','Fullscreen'):'')
         +(_call.remoteDesktop?'':act('call-mute', _call.muted?'🔇':'🎙️', _call.muted?'Unmute':'Mute'))
         +(!_call.remoteDesktop&&canVid?act('call-cam', sendingVid?'🚫':'📷', sendingVid?'Stop video':'Start video'):'')
         +act('call-hang','📵',_call.remoteDesktop&&_call.caller?'Stop sharing':'End','hang');
@@ -33143,6 +33238,10 @@
       if(b('call-decline')) b('call-decline').onclick=_declineCall;
       if(b('call-hang')) b('call-hang').onclick=()=>_hangup(false);
       if(b('call-min')) b('call-min').onclick=e=>{ e.stopPropagation(); _setOverlayMini('call-overlay', true); };
+      if(b('call-full')) b('call-full').onclick=async()=>{ try{
+        if(document.fullscreenElement) await document.exitFullscreen();
+        else await el.requestFullscreen();
+      }catch(_){ toast('fullscreen is unavailable in this window'); } };
       if(b('call-mute')) b('call-mute').onclick=()=>{ if(_call&&_call.local){ _call.muted=!_call.muted; _call.local.getAudioTracks().forEach(t=>t.enabled=!_call.muted); _callUI(); } };
       if(b('call-cam')) b('call-cam').onclick=()=>_toggleVideo();
     }

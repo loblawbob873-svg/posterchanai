@@ -65,6 +65,11 @@
     let _want = '';
 
     let term = null, fit = null, ws = null, link = null, host = null, ro = null;
+    /* WHICH TAB THIS IS, on the host. It is half of the remote tmux session's name, so it is what
+     * decides whether a new tab is a new shell or a second view of the one you are already in —
+     * see _mux_name in app/services/ssh_service.py. Carried on every open frame, including a
+     * resume, because a resume whose session has gone falls through to opening one. */
+    let label = '';
     let hosts = [], connected = false, ctrl = false, mounted = null;
     let sid = '', cursor = 0, retry = 0, retryT = null, want = false, live = [];
     let findHits = [], findAt = -1;
@@ -474,6 +479,31 @@
       return base + '/ws/ssh';
     }
 
+    /* LABELS ALREADY SPOKEN FOR ON THIS PAGE. `live` is refreshed on `ready`, which is AFTER the
+     * open frame has gone out — so two quick presses of + would both read the same list, pick the
+     * same label, and land in the same shell, which is the bug this whole mechanism exists to fix.
+     * Requested labels are remembered here and never re-offered. */
+    const asked = new Set();
+
+    /* A LABEL NOBODY IS USING ON THIS HOST. `main` first, so the ordinary single-tab case keeps the
+     * name a shell already has and reattaches to it across a restart of this node; then 2, 3, …
+     *
+     * Per HOST, because the tmux session's name is per (account, label) and two hosts are two
+     * machines — `main` on server1 and `main` on nas are already different shells. */
+    function _freeLabel(hostName){
+      const taken = new Set();
+      for(const x of live)
+        if(x && String(x.host || '') === String(hostName || '') && x.label) taken.add(String(x.label));
+      for(const k of asked){
+        const i = k.indexOf('\u0000');
+        if(i > 0 && k.slice(0, i) === String(hostName || '')) taken.add(k.slice(i + 1));
+      }
+      let pick = 'main';
+      for(let n = 2; taken.has(pick); n++) pick = String(n);
+      asked.add(String(hostName || '') + '\u0000' + pick);
+      return pick;
+    }
+
     async function connect(){
       const sel = $('#tty-host'); if(!sel) return;
       host = sel.value;
@@ -487,21 +517,40 @@
         password = await PC.uiPrompt(`Password for ${h.label}`, { password: true, ok: 'Connect' });
         if(password === null) return;
       }
+      /* ASK WHO IS RUNNING BEFORE NAMING THIS TAB. The label has to miss every session this
+       * ACCOUNT holds on that host, and one of them can have been opened on another device since
+       * the strip was last painted — a stale list picks a name that is taken, and a taken name is
+       * the same shell all over again. */
+      try{ await _sessions(); }catch(_){}
       _remember('');                       // a fresh connect is a NEW session, not the old one
       cursor = 0;
       if(term) term.reset();
-      _open({ host, password });
+      /* A NEW TAB NAMES ITSELF, and this line is the whole of "New tab actually opens a new shell".
+       * With no label the server takes `main` for every one of them, and `tmux new-session -A` is
+       * attach-or-create — so pressing + made a SECOND SSH CONNECTION ONTO THE SHELL ALREADY ON
+       * SCREEN. Nothing failed, nothing logged: the same prompt came back, and the connection count
+       * climbed by one per press (measured: three `server1` sessions, two of them replaying the
+       * same 567 KB pane). */
+      /* A shell on THIS machine takes no label: there is no tmux on the far end because there is
+       * no far end, and giving one would name a local tab after a session that does not exist. */
+      label = h.local ? '' : _freeLabel(host);
+      _open({ host, password, label });
     }
 
     /* Reattach to a shell that is already running. No password is asked for and none is needed: the
      * login happened when the session was opened, and it is still open. */
-    function attach(id, hostName){
+    function attach(id, hostName, labelName){
       host = hostName || host;
+      /* THE LABEL TRAVELS WITH THE RESUME even though the session is named by id. A resume whose
+       * session is gone (this node restarted, the keeper was replaced) does not fail — it falls
+       * through to OPENING one — and without the label that fallback lands in `main`, i.e. in
+       * whichever tab happens to hold that name. */
+      label = labelName || '';
       _remember(id);
       cursor = 0;                          // no local scrollback for it — replay from the start of
                                            // what the server still holds
       if(term) term.reset();
-      _open({ resume: id, host: hostName || '' });
+      _open({ resume: id, host: hostName || '', label });
     }
 
     function _open(frame){
@@ -658,6 +707,10 @@
             provenT = setTimeout(function(){ provenT = null; retry = 0; }, 5000);
             _remember(m.sid || '');
             if(m.host) host = m.host;
+            // WHAT THE SERVER USED, not what was asked for — a resume answers with the label the
+            // session was opened under, which is the one a reconnect has to name.
+            if(m.label) label = m.label;
+            if(label) asked.add(String(host || '') + '\u0000' + String(label));
             _state((m.resumed ? 'reattached to ' : 'connected to ') + host, 'ok');
             _chrome(true); _fit(); _focus();
             /* A NEW PTY IS A NEW TAB. Starting one used to update `sid` but never repaint the tab
@@ -718,7 +771,7 @@
       retryT = setTimeout(() => {
         retryT = null;
         if(!want || !sid) return;
-        _open({ resume: sid, host });
+        _open({ resume: sid, host, label });
       }, wait);
     }
 
@@ -728,7 +781,7 @@
       if(document.visibilityState !== 'visible') return;
       if(!want || !sid || connected || !mounted) return;
       if(retryT){ clearTimeout(retryT); retryT = null; }
-      retry = 0; _open({ resume: sid, host });
+      retry = 0; _open({ resume: sid, host, label });
     }
 
     function _bye(){
@@ -798,14 +851,25 @@
        * “still running” diagnostic people quite reasonably did not recognize as tab support. */
       const tabs = live.slice();
       if(sid && !tabs.some(x => x.sid === sid))
-        tabs.unshift({ sid, host:host || 'local', age:0, alive:true });
+        tabs.unshift({ sid, host:host || 'local', label, age:0, alive:true });
       box.hidden = false;
-      box.innerHTML = '<span class="tty-sess-lbl">tabs</span>' + tabs.map((x, n) =>
-        `<span class="tty-sess tty-tab${x.sid === sid ? ' active' : ''}" data-tab="${enc(x.sid)}"
-               data-host="${enc(x.host || '')}"><b>${enc(x.host || 'terminal')} ${n + 1}</b>`
+      /* NAMED BY ITS LABEL, NEVER BY ITS POSITION. `${host} ${n+1}` renumbers every tab the moment
+       * one of them is closed, so the tab you were in changes its name while you are looking at it —
+       * and it says nothing about WHICH shell it is, which was invisible for as long as they were
+       * all secretly the same one. The label IS the remote tmux session, so it is the honest name.
+       * `main` is left implicit: one tab should read `server1`, not `server1 main`. */
+      box.innerHTML = '<span class="tty-sess-lbl">tabs</span>' + tabs.map((x, n) => {
+        /* A local PTY carries no label — it is a process on this machine, not a tmux session —
+         * and several of them are genuinely distinct, so those keep the positional number. */
+        const lab = String(x.label || '');
+        const nm = (x.host || 'terminal') + (lab ? (lab === 'main' ? '' : ' ' + lab) : ' ' + (n + 1));
+        return `<span class="tty-sess tty-tab${x.sid === sid ? ' active' : ''}" data-tab="${enc(x.sid)}"
+               data-host="${enc(x.host || '')}" data-label="${enc(lab)}"
+               title="${enc(nm)}"><b>${enc(nm)}</b>`
         + `<i>${_ago(x.age)}</i>`
         + `<button data-kill="${enc(x.sid)}" class="tty-kill" title="Close tab"
-                   aria-label="Close terminal tab">×</button></span>`).join('')
+                   aria-label="Close terminal tab">×</button></span>`;
+      }).join('')
         + '<button class="tty-tab-new" id="tty-tab-new" title="New terminal tab">+</button>';
     }
 
@@ -926,7 +990,7 @@
           const k = ev.target.closest('[data-kill]'); if(k){ ev.stopPropagation(); return kill(k.dataset.kill); }
           const add = ev.target.closest('#tty-tab-new'); if(add) return connect();
           const a = ev.target.closest('[data-tab]');
-          if(a && a.dataset.tab !== sid) return attach(a.dataset.tab, a.dataset.host); }; }
+          if(a && a.dataset.tab !== sid) return attach(a.dataset.tab, a.dataset.host, a.dataset.label); }; }
       { const k = $('#tty-keys'); if(k) k.onclick = (ev) => {
           const b = ev.target.closest('[data-k]'); if(!b) return;
           ev.preventDefault(); _key(b.dataset.k); }; }
@@ -1035,7 +1099,7 @@
         if(prev && live.some(x => x.sid === prev)){
           const s0 = live.find(x => x.sid === prev);
           if(s0 && $('#tty-host')) $('#tty-host').value = s0.host || '';
-          attach(prev, s0 && s0.host);
+          attach(prev, s0 && s0.host, s0 && s0.label);
         }else{
           if(prev) _remember('');   // it is gone; do not offer to reattach to nothing
           /* AN EMPTY TERMINAL STARTS A SESSION. Previously this happened only when `local` was the
