@@ -42,6 +42,7 @@
    * otherwise a completed, unrelated migration silently opts the account out of this one. */
   const HWM_BLOSSOM = () => HWM() + '_blossom_v2';
   let _messagesFolderReady = false;
+  const _migrationFailed = new Set();
 
   let PC = null;
   const S = {
@@ -616,7 +617,8 @@
        * query: `since` deliberately reads forwards from the high-water mark and therefore cannot
        * discover years of older history. `_local` is set only by fromRow, so a relay-only laptop
        * can never mistake its cached archive for a phone provider. */
-      rows = Array.from(S.msgs.values()).filter(m => m && m._local && needsArchiveUpgrade(m, m))
+      rows = Array.from(S.msgs.values()).filter(m => m && m._local
+          && !_migrationFailed.has(m.doc) && needsArchiveUpgrade(m, m))
         .sort((a,b) => (a.date || 0) - (b.date || 0));
       migrationRemaining = rows.length;
       rows = rows.slice(0, Math.max(1, (opts && opts.limit) || 60));
@@ -625,7 +627,7 @@
       catch(_){ return { published:0, skipped:'could not read the phone' }; }
     }
 
-    let n = 0, top = since, drive = null, archiveError = '';
+    let n = 0, top = since, drive = null, archiveError = '', rowErrors = 0;
     S.archive.running = true;
     S.archive.attempted = true;
     S.archive.error = '';
@@ -647,7 +649,19 @@
         let ok = false;
         try{ ok = await publishOne(m); }
         catch(e){ archiveError = String((e && e.message) || e); ok = false; }
-        if(!ok) break;                 // the relay stopped taking them; the mark stays where it was
+        if(!ok){
+          if(opts && opts.fullMigration){
+            /* ONE MMS THE PROVIDER WILL NOT HAND OVER MUST NOT BLOCK THE REST OF THE PHONE FOR
+             * EVER. Keep it pending (never publish a hollow message), quarantine it for this run,
+             * and continue. A fresh foreground/app run retries it; every later row can meanwhile
+             * reach encrypted storage. */
+            _migrationFailed.add(r.doc);
+            rowErrors++;
+            archiveError = '';
+            continue;
+          }
+          break;                       // recent sweep: the mark stays behind the failed row
+        }
         S.msgs.set(m.doc, m);
         n++;
         if(r.date > top) top = r.date;
@@ -662,15 +676,19 @@
     /* Mark the migration only after the drive transaction itself committed. A failed signer,
      * upload, relay publish or index save leaves it unset, so the next foreground pass retries the
      * same rows instead of declaring a hollow archive complete. */
-    if(!archiveError && opts && opts.fullMigration && migrationRemaining <= rows.length){
+    if(!archiveError && !rowErrors && !_migrationFailed.size && opts && opts.fullMigration
+       && migrationRemaining <= rows.length){
       try{ localStorage.setItem(HWM_BLOSSOM(), '1'); }catch(_){ }
     }
     S.archive.running = false;
     S.archive.published = n;
-    S.archive.error = archiveError;
+    S.archive.error = archiveError || (rowErrors || _migrationFailed.size
+      ? _migrationFailed.size + ' MMS attachment' + (_migrationFailed.size === 1 ? '' : 's')
+        + ' could not be read; the other messages were copied'
+      : '');
     if(PC && PC.VIEW === 'texts') paint();
-    return { published:n, remaining:Math.max(0, migrationRemaining - n),
-             skipped:archiveError || undefined };
+    return { published:n, remaining:Math.max(0, migrationRemaining - rows.length),
+             failed:_migrationFailed.size, skipped:archiveError || undefined };
   }
 
   /* ON THE PHONE, THE PHONE IS THE SOURCE. This is what an SMS app is.
@@ -1074,7 +1092,7 @@
         const r = await mirror({fullMigration:true, limit:60});
         total += Number(r && r.published) || 0;
         if(!r || r.skipped || !r.remaining) return {published:total, remaining:(r&&r.remaining)||0,
-                                                     skipped:r&&r.skipped};
+                                                     failed:(r&&r.failed)||0, skipped:r&&r.skipped};
         /* Let rendering/input and Android lifecycle callbacks run between upload batches. */
         await new Promise(resolve => setTimeout(resolve, 0));
       }

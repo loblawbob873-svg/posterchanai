@@ -124,6 +124,22 @@ class TheArchive(unittest.TestCase):
         self.assertEqual(len(bodies), 65, "older provider rows were left outside Blossom")
         self.assertEqual(len(res["published"]), 65)
 
+    def test_one_unreadable_mms_does_not_block_every_message_after_it(self):
+        """The reporter consistently got three files because row four was an MMS whose provider
+        part could not cross the bridge. The old loop broke there on every run, so rows five onward
+        were unreachable forever. The bad MMS must remain pending without making the good rows
+        behind it collateral damage."""
+        rows = [text(i, date=NOW - (20 - i) * 1000) for i in range(1, 11)]
+        rows[3] = picture(4, date=rows[3]["date"],
+                          parts=[{"id": 904, "ct": "image/jpeg", "name": "blocked.jpg",
+                                  "bytes": 20 * 1024 * 1024}])
+        res = run(rows=rows, parts={"904": {"tooBig": True}}, migrationBatch=60,
+                  steps=["phoneLoad", "migrate"])
+        bodies = [f for f in res["drive"]["files"] if f["folder"] == "Messages"]
+        self.assertEqual(len(bodies), 9, "the unreadable fourth row blocked later messages")
+        self.assertEqual(len(res["published"]), 9)
+        self.assertIsNone(published(res, rows[3]["doc"]), "a hollow MMS was published")
+
     def test_body_and_picture_are_committed_to_encrypted_drive_folders(self):
         """A successful relay event is not enough: other devices find bytes through FilesIdx. The
         transaction must persist both folders before Android is free to freeze the WebView."""
