@@ -2688,7 +2688,7 @@
 
   // Icon tile geometry, in LAYOUT pixels — the same space style.left/width live in. Kept here
   // rather than only in the stylesheet because the column count is computed, not authored.
-  const ICON_W = 108, ICON_H = 88, ICON_GAP = 4, ICON_PAD = 14;  // matches .os-icon in the stylesheet
+  const ICON_W = 120, ICON_H = 100, ICON_GAP = 6, ICON_PAD = 14;  // matches .os-icon in the stylesheet
 
   // How many columns it takes to fit EVERY app in the height available. A fixed three columns fits
   // a 900px laptop and cuts the last rows off a tablet in landscape, where the desktop is short —
