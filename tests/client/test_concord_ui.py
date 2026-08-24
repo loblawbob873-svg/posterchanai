@@ -40,7 +40,7 @@ def test_concord_is_precached_and_old_bundles_self_heal_the_nav():
 def test_concord_owns_a_versioned_stylesheet_so_stale_shell_css_cannot_unstyle_it():
     assert 'static/css/concord.css' in HTML
     assert "data-concord-css" in CONCORD
-    assert "concord.css?v=7" in CONCORD
+    assert "concord.css?v=8" in CONCORD
     assert "'/static/css/concord.css'" in (ROOT / "static/js/client/sw.js").read_text()
     assert ".cc-app" in CONCORD_CSS and "grid-template-columns:68px 248px" in CONCORD_CSS
     assert CONCORD_CSS.count('{') == CONCORD_CSS.count('}'), "Concord CSS has an unclosed rule"
@@ -118,6 +118,9 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert 'await hydrateInvite(p,raw)' in CONCORD
     assert 'decrypting saved community' in CONCORD
     assert 'kinds:[33301]' in CONCORD
+    assert 'kinds:[13302]' in CONCORD and 'syncArmadaMemberships(p,viewer)' in CONCORD
+    assert 'await p.nip44dec(viewer.pubkey,event.content)' in CONCORD
+    assert 'cc-public-copy' in CONCORD and '.cc-public-copy' in CONCORD_CSS
     assert 'notifyMentions(p,current,messages,viewer,me)' in CONCORD
     assert "route:'concord'" in CONCORD and 'concord-mention-' in CONCORD
     assert "search:'armada.buzz/invite'" in CONCORD and "search:'poster.place/invite'" in CONCORD
