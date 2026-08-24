@@ -17,18 +17,21 @@ function control(id){
 }
 const dollar = selector => selector === '#feed' ? feed : control(selector.slice(1));
 const dollars = () => [];
-const calls = {toasts:[], notified:0, group:0};
+const calls = {toasts:[], notified:0, group:0, mentions:[]};
 
 globalThis.window = globalThis;
 window.__PC = {
   $:dollar, $$:dollars, enc:s=>String(s), niceNip05:s=>s,
-  viewer:()=>({npub:'npub1testidentity',profile:{display_name:'Test User'}}),
+  viewer:()=>({pubkey:'a'.repeat(64),npub:'npub1testidentity',profile:{name:'tester',display_name:'Test User'}}),
   toast:s=>calls.toasts.push(String(s)),
   openEmojiPopover:(_anchor,pick)=>pick('😀',()=>{}),
   insertAt:(input,value)=>{ input.value+=value; },
   uploadBlob:async file=>'https://files.example/'+file.name,
   askOsNotify:async()=>{ calls.notified++; return 'granted'; },
   startGroupCall:()=>{ calls.group++; },
+  copyValue:value=>{ calls.copied=value; },
+  osNotify:(title,body,opts)=>{ calls.mentions.push({title,body,opts}); },
+  relaySubscribe:()=>({close(){}}),
   profOf:()=>({}), LOGO:'', linkify:s=>String(s), linkCardHtml:()=>'', hydrateLinkCards:()=>{},
 };
 globalThis.document = {
@@ -40,6 +43,8 @@ globalThis.document = {
 
 vm.runInThisContext(fs.readFileSync(new URL('../../static/js/client/concord.js', import.meta.url), 'utf8'),
                     {filename:'concord.js'});
+const publicLinks=PCConcord.discoverInvites('Join us https://armada.buzz/invite/naddr1qqqq#abc_DEF',{created_at:1});
+if(publicLinks.length!==1 || publicLinks[0].name!=='Join us') throw new Error('public discovery parser failed');
 PCConcord.render();
 
 control('cc-community-name').value='Runtime Test';
@@ -55,9 +60,16 @@ const edited=JSON.parse(data.get('pc.concord.invites'));
 if(edited[0].icon!=='https://example.test/room.png') throw new Error('icon edit flow failed');
 control('cc-description-value').value='Editable room description';
 control('cc-settings-icon').value='🌌';
+control('cc-channel-visibility').value='private';
 control('cc-settings-save').click();
 const configured=JSON.parse(data.get('pc.concord.invites'));
-if(configured[0].description!=='Editable room description' || configured[0].icon!=='🌌') throw new Error('community settings flow failed');
+if(configured[0].description!=='Editable room description' || configured[0].icon!=='🌌' || configured[0].channels[0].private!==true) throw new Error('private channel settings flow failed');
+control('cc-channel-visibility').value='public';
+control('cc-settings-save').click();
+const madePublic=JSON.parse(data.get('pc.concord.invites'));
+if(madePublic[0].channels[0].private!==false) throw new Error('public channel settings flow failed');
+control('cc-copy-link').click();
+if(!calls.toasts.some(x=>x.includes('do not have a relay invite'))) throw new Error('local invite link state failed');
 
 const input=control('cc-input');
 control('cc-emoji').click();
@@ -81,4 +93,10 @@ input.onkeydown({key:'Enter',ctrlKey:true,metaKey:false,preventDefault(){prevent
 const messages=JSON.parse(data.get('pc.concord.test.'+rooms[0].naddr));
 if(!prevented || messages.length!==1 || messages[0].text!=='hello concord' || messages[0].by!=='Test User')
   throw new Error('Ctrl+Enter send flow failed');
+data.set('pc.concord.seen.'+rooms[0].naddr,'1');
+data.set('pc.concord.test.'+rooms[0].naddr,JSON.stringify([{by:'Other User',pubkey:'b'.repeat(64),text:'hey @tester',at:2}]));
+PCConcord.render();
+if(calls.mentions.length!==1 || !calls.mentions[0].title.includes('#general') || calls.mentions[0].opts.route!=='concord') throw new Error('mention notification failed');
+PCConcord.render();
+if(calls.mentions.length!==1) throw new Error('mention notification was not deduplicated');
 console.log('concord runtime flow ok');

@@ -123,6 +123,96 @@ class FilesOpenInCode(unittest.TestCase):
                         "hydrate reaches the workspace fetch before it checks for a blob buffer")
 
 
+class TheOpenersAreOnTheTileNotOnlyInDetails(unittest.TestCase):
+    """The DEFAULT Files view is tiles, and the buttons were only in the details row.
+
+    `_fxView()` defaults to 'tiles'. Both openers went into the `acts:` string that only
+    `_fxDetailsRow` consumes, so on the view almost everybody is looking at there was no way to open
+    anything in Code, and Office was reachable only by clicking the tile — which nothing says.
+    Reported as "why no way to open any blossom file in posterchan code or office yet".
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _read(APP)
+        cls.grid = _decomment(_fn(cls.app, "function _renderFilesGrid("))
+
+    def test_tiles_is_the_default_view(self):
+        """If this stops being true, this whole class is measuring the less-used screen."""
+        self.assertIn("ClientSettings.get('filesView','tiles')", self.app,
+                      "the default Files view changed — re-read this test")
+
+    def test_both_openers_render_on_a_tile(self):
+        # The tile branch is the one that is NOT behind `if(details)`.
+        tile = self.grid[self.grid.index("if(m.enc){"):]
+        self.assertIn("openbtns", tile, "the tile has no opener buttons at all")
+        self.assertEqual(tile.count("${openbtns}"), 2,
+                         "only one of the two tile shapes (encrypted / plain) got the openers")
+
+    def test_the_openers_are_built_once_for_both_shapes(self):
+        """Two hand-written copies is how the encrypted tile ends up missing one."""
+        self.assertEqual(self.grid.count("const openbtns"), 1)
+        self.assertIn("officebtn", self.grid)
+        self.assertIn("codebtn", self.grid)
+
+    def test_the_same_handlers_bind_them(self):
+        """A button drawn in a second place with no handler is worse than no button."""
+        self.assertIn("$$('.office-open,.officebtn',grid)", self.app)
+        self.assertIn("$$('.codebtn',grid)", self.app)
+
+    def test_a_synced_row_offers_it_in_both_view_modes(self):
+        """The synced list builds ONE `act` string and uses it for the details row and the card, so
+        it never had this split — assert that it stays that way."""
+        body = _decomment(_fn(self.app, "function _syncPaneRender(")) if "_syncPaneRender(" in self.app else None
+        src = body or self.app
+        self.assertIn("codesync", src)
+
+
+class TheExplorerToolbarStaysLiftable(unittest.TestCase):
+    """`_fxBarHTML` is pulled out of app.js BY NAME and evaluated on its own by
+    scripts/check_files_explorer.py — that is what stops the check measuring a copy of the markup
+    that has drifted from the real screen.
+
+    So it must not close over runtime state. Reading a module variable from it made the whole check
+    SKIP with "the page never rendered": not a failure anybody would notice in a green run, just a
+    layout check that had quietly stopped checking. Everything it needs is an argument.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _read(APP)
+        cls.bar = _decomment(_fn(cls.app, "function _fxBarHTML("))
+
+    def test_it_takes_what_it_needs_as_arguments(self):
+        sig = self.bar[:self.bar.index(")") + 1]
+        self.assertIn("crumbs", sig)
+        self.assertIn("canBack", sig, "the Back state is read from module scope, not passed")
+
+    def test_it_reads_no_navigation_state_of_its_own(self):
+        for leak in ("_fxHist", "_syncRoot", "_syncPath", "_filesFolder", "_hostOn"):
+            self.assertNotIn(leak, self.bar,
+                             f"_fxBarHTML closes over {leak}, so check_files_explorer.py cannot "
+                             "evaluate it and skips instead of measuring")
+
+    def test_back_and_up_exist_and_are_disabled_rather_than_hidden(self):
+        """A toolbar whose buttons appear and disappear reflows the breadcrumbs under the cursor."""
+        self.assertIn('id="fx-back"', self.bar)
+        self.assertIn('id="fx-up"', self.bar)
+        self.assertEqual(self.bar.count("disabled"), 3,
+                         "Back, Up and the last crumb are the three that disable in place")
+
+    def test_every_move_is_remembered_so_back_means_something(self):
+        """Back that only undoes crumb clicks is the half of browsing nobody uses."""
+        self.assertIn("_fxRemember()", self.app)
+        self.assertGreaterEqual(self.app.count("_fxRemember()"), 4,
+                                "some navigation paths do not record where they came from")
+
+    def test_one_router_serves_crumbs_back_and_up(self):
+        """Two copies of 'where does this go' is how they start disagreeing about `up`."""
+        self.assertIn("function _fxRoute(", self.app)
+        self.assertIn("_fxRoute(to)", self.app)
+
+
 class SyncedFoldersOpenInCodeToo(unittest.TestCase):
     """A file in a SYNCED folder opens in Code, and saving reaches every device.
 

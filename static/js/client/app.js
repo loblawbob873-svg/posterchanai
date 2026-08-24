@@ -18099,9 +18099,26 @@
   /* Breadcrumbs + the tiles/details switch. A crumb's target is a string the one handler below can
    * parse: `b:<folder>` for the drive, `s:<pairkey>/<subdir>` for a synced folder — one place that
    * knows how to get anywhere, rather than a click handler per crumb. */
-  function _fxBarHTML(crumbs){
+  /* `canBack` is PASSED, not read from module state. This function is lifted out of app.js by name
+   * and evaluated on its own by scripts/check_files_explorer.py — that is what stops the check
+   * measuring a copy of the markup that has drifted from the real one — so it must not close over
+   * anything that only exists at runtime. Reading `_fxHist` here made the whole check SKIP with
+   * "the page never rendered", which is a check that cannot run rather than one that passes. */
+  function _fxBarHTML(crumbs, canBack){
     const v = _fxView();
-    return `<div class="fx-bar"><nav class="fx-crumbs">${crumbs.map((c, i) => (i ? '<span class="fx-sep">›</span>' : '')
+    /* BACK AND UP — the two controls every file manager has and this one did not.
+     *
+     * Browsing was breadcrumbs only, which can go UP but never BACK: walking into a folder, into a
+     * synced folder, then wanting the previous place meant re-reading the trail and picking the
+     * right crumb. `Up` is the last crumb's parent (disabled at the root, rather than absent, so
+     * the toolbar does not reflow as you navigate); `Back` is a history this pane keeps for itself,
+     * because the app's own history is view-level and a folder is not a view. */
+    const up = crumbs.length > 1 ? crumbs[crumbs.length - 2].to : '';
+    return `<div class="fx-bar">
+      <div class="fx-nav">
+        <button class="fx-nb" id="fx-back" title="Back" aria-label="Back"${canBack ? '' : ' disabled'}>‹</button>
+        <button class="fx-nb" id="fx-up" title="Up one folder" aria-label="Up one folder"${up || crumbs.length > 1 ? '' : ' disabled'} data-to="${enc(up)}">↑</button>
+      </div><nav class="fx-crumbs">${crumbs.map((c, i) => (i ? '<span class="fx-sep">›</span>' : '')
         + `<button class="fx-crumb${i === crumbs.length-1 ? ' on' : ''}" data-crumb="${enc(c.to)}"`
         + `${i === crumbs.length-1 ? ' disabled' : ''}>${enc(c.label)}</button>`).join('')}</nav>
       <input class="input fx-find" id="fx-find" type="search" autocomplete="off"
@@ -18169,8 +18186,25 @@
         f.onkeydown = e => { if(e.key === 'Escape'){ e.stopPropagation(); f.value=''; f.oninput(); } };
       } }
     $$('.fx-vw', pane).forEach(b => b.onclick = () => { ClientSettings.set('filesView', b.dataset.view); renderBlossom(); });
-    $$('.fx-crumb[data-crumb]', pane).forEach(b => b.onclick = () => {
-      const to = b.dataset.crumb || '';
+    /* ONE ROUTER FOR EVERY WAY OF MOVING. A crumb, Up and Back all mean "go to this place", and the
+     * place is one of three sources (drive folder, synced folder, this computer). A second copy of
+     * this switch is how two of them start disagreeing about what `up` means. */
+    const _fxGo = (to, remember) => {
+      to = to || '';
+      if(remember !== false){ const here = _fxWhere(); if(here !== to) _fxHist.push(here); }
+      if(_fxHist.length > 40) _fxHist.shift();
+      _fxRoute(to);
+      renderBlossom();
+    };
+    { const bb = $('#fx-back', pane);
+      if(bb) bb.onclick = () => { const to = _fxHist.pop(); if(to == null) return; _fxRoute(to); renderBlossom(); }; }
+    { const ub = $('#fx-up', pane);
+      if(ub) ub.onclick = () => _fxGo(ub.dataset.to || ''); }
+    $$('.fx-crumb[data-crumb]', pane).forEach(b => b.onclick = () => _fxGo(b.dataset.crumb || ''));
+    /* WHERE a `to` string points, applied. The three prefixes are the three sources Files shows;
+     * `f:` (or anything else) is a drive folder, which is why the fallback is not an error. */
+    function _fxRoute(to){
+      to = to || '';
       if(to.charAt(0) === 'h'){
         /* `h:<abs path>` — THIS COMPUTER. The host source shares this toolbar, so it has to share
          * its crumb router; a second one is how two breadcrumb trails start disagreeing about what
@@ -18182,8 +18216,7 @@
         _syncRoot = cut < 0 ? rest : rest.slice(0, cut); _syncPath = cut < 0 ? '' : rest.slice(cut+1);
         _syncSel.clear(); _syncSelOn = false; }
       else { _syncRoot = ''; _syncPath = ''; _filesFolder = to.slice(2); _hostOn = false; }
-      renderBlossom();
-    });
+    }
   }
 
   /* null = the drive's HOME: the list of folders, nothing else. '' = All files. 'X' = that folder.
@@ -18242,6 +18275,23 @@
       }, () => {});
     }
     renderBlossom();
+  }
+  /* WHERE FILES HAS BEEN, for the Back button. Its own stack rather than the app's history: that
+   * one is view-level, and walking between folders never leaves the Files view — pushing a history
+   * entry per folder would make the app's Back walk folders instead of screens, which is the same
+   * mistake the thread view made. Bounded, because a long browse is not a thing to keep for ever. */
+  let _fxHist = [];
+  /* Push where we are, unless we are already there. Called by every navigation; the crumb/Up router
+   * does it itself so the two cannot double-push. */
+  function _fxRemember(){
+    try{ const here = _fxWhere(); if(_fxHist[_fxHist.length-1] !== here) _fxHist.push(here);
+         if(_fxHist.length > 40) _fxHist.shift(); }catch(_){}
+  }
+  /* The current location as a `to` string, in the same grammar the crumbs use. */
+  function _fxWhere(){
+    if(_hostOn){ const H = _hostFs(); return 'h:' + ((H && H.at()) || ''); }
+    if(_syncRoot) return 's:' + _syncRoot + (_syncPath ? '/' + _syncPath : '');
+    return 'f:' + (_filesFolder || '');
   }
   let _syncRoot = '';                 // the pair key being browsed ('' = the drive, not a synced folder)
   let _syncPath = '';                 // subdirectory inside it ('' = its root)
@@ -19025,8 +19075,10 @@
   }
   function _fxBindSide(root){
     const r = root || document;
-    $$('.folder-chip[data-folder]', r).forEach(b=> b.onclick=()=>{ _syncRoot=''; _syncPath=''; _hostOn=false; _filesFolder=b.dataset.folder; renderBlossom(); });
-    $$('.folder-chip[data-synckey]', r).forEach(b=> b.onclick=()=>{ _syncRoot=b.dataset.synckey; _syncPath=''; _hostOn=false; renderBlossom(); });
+    /* EVERY move remembers where it came from, or Back only undoes the ones made from the crumbs —
+     * which is the half of browsing nobody uses. */
+    $$('.folder-chip[data-folder]', r).forEach(b=> b.onclick=()=>{ _fxRemember(); _syncRoot=''; _syncPath=''; _hostOn=false; _filesFolder=b.dataset.folder; renderBlossom(); });
+    $$('.folder-chip[data-synckey]', r).forEach(b=> b.onclick=()=>{ _fxRemember(); _syncRoot=b.dataset.synckey; _syncPath=''; _hostOn=false; renderBlossom(); });
     $$('.folder-chip[data-host]', r).forEach(b=> b.onclick=_openHostFiles);
     /* The trash's own bindings live with the LISTING now that it is a folder, not here beside the
      * chips — a set of handlers left behind for markup that no longer renders is how a dead control
@@ -19273,7 +19325,7 @@
         <div class="up-queue" id="sf-queue"></div></div>`;
     pane.innerHTML = '<div class="fx-explorer">'
       + '<div class="fx-side">' + _fxSideHTML() + '</div>'
-      + '<div class="fx-main">' + _fxBarHTML(_fxCrumbs()) + head
+      + '<div class="fx-main">' + _fxBarHTML(_fxCrumbs(), _fxHist.length > 0) + head
       + '<div class="files-grid' + (details?' details nosel':'') + '" id="bl-grid"><div class="spinner"></div></div>'
       + '</div></div>';
     _fxBindSide(pane); _fxBindBar(pane);
@@ -19535,6 +19587,7 @@
     }
     $$('.file-card[data-dir]', grid).forEach(c=> c.onclick=(e)=>{
       if(e.target.closest('.fc-acts')) return;
+      _fxRemember();
       _syncPath = _syncPath ? _syncPath + '/' + c.dataset.dir : c.dataset.dir; renderBlossom();
     });
     // Clicking a FILE downloads it, the same as pressing its ⬇. A row you can click that does
@@ -19799,7 +19852,7 @@
      * column on a phone, where a 220px sidebar would leave nothing for the files. */
     pane.innerHTML = '<div class="fx-explorer">'
       + '<div class="fx-side">' + _fxSideHTML() + '</div>'
-      + '<div class="fx-main">' + _fxBarHTML(_fxCrumbs()) + head
+      + '<div class="fx-main">' + _fxBarHTML(_fxCrumbs(), _fxHist.length > 0) + head
       + '<div class="files-selbar" id="bl-selbar"></div>'
       + '<div class="files-grid" id="bl-grid"><div class="spinner"></div></div></div></div>';
     _fxBindSide(pane); _fxBindBar(pane);
@@ -20184,15 +20237,25 @@
         acts: (office ? `<button class="officebtn" data-sha="${b.sha256}" data-url="${enc(b.url)}" data-name="${enc(nm||dlName)}" data-mime="${enc(m.mime||b.type||'')}" data-enc="${m.enc?'1':'0'}" title="Open in Office">📝</button>` : '')
              + (code ? `<button class="codebtn" data-sha="${b.sha256}" data-url="${enc(b.url)}" data-name="${enc(nm||dlName)}" data-mime="${enc(m.mime||b.type||'')}" data-enc="${m.enc?'1':'0'}" title="Edit in PosterChan Code">&lt;/&gt;</button>` : '') + (m.enc ? '' : `<button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button>`) + dl + ren + move + del,
       });
+      /* THE OPENERS, ON THE TILE ITSELF.
+       *
+       * These lived only in the DETAILS row, and the default view is tiles — so on the screen
+       * almost everybody is looking at there was no way to open anything in Code, and Office was
+       * reachable only by clicking the tile, which nothing says. Reported exactly that way: "why no
+       * way to open any blossom file in posterchan code or office yet". Same buttons, same
+       * dataset, same handlers as the details row; only the place they are drawn is new. */
+      const openbtns =
+        (office ? `<button class="officebtn" data-sha="${b.sha256}" data-url="${enc(b.url)}" data-name="${enc(nm||dlName)}" data-mime="${enc(m.mime||b.type||'')}" data-enc="${m.enc?'1':'0'}" title="Open in Office">📝</button>` : '')
+      + (code ? `<button class="codebtn" data-sha="${b.sha256}" data-url="${enc(b.url)}" data-name="${enc(nm||dlName)}" data-mime="${enc(m.mime||b.type||'')}" data-enc="${m.enc?'1':'0'}" title="Edit in PosterChan Code">&lt;/&gt;</button>` : '');
       if(m.enc){   // encrypted file — lock card; opening decrypts in-browser (never exposes the ciphertext URL)
         return `<div class="file-card enc${sel}" draggable="true" data-sha="${b.sha256}"><a href="#" class="${office?'office-open':'enc-open'}" data-sha="${b.sha256}" data-name="${enc(nm||dlName)}" data-mime="${enc(m.mime||'')}" data-enc="1"><div class="file-icon">🔒<span>${enc(ext||'enc')}</span></div></a>
           ${box}${del}
-          <div class="meta"><span class="fname" title="${enc(nm)}">${nm?enc(fileLabel(nm,ext,b.size)):'encrypted'}</span><span class="fc-acts">${dl}${ren}${move}</span></div></div>`;
+          <div class="meta"><span class="fname" title="${enc(nm)}">${nm?enc(fileLabel(nm,ext,b.size)):'encrypted'}</span><span class="fc-acts">${openbtns}${dl}${ren}${move}</span></div></div>`;
       }
       return `<div class="file-card${sel}" draggable="true" data-sha="${b.sha256}"><a href="${office?'#':enc(b.url)}" class="${office?'office-open':''}" data-url="${enc(b.url)}" data-name="${enc(nm||dlName)}" data-sha="${b.sha256}" data-mime="${enc(b.type||'')}" data-enc="0"${office?'':' target="_blank"'}>${blobThumb(b, ext)}</a>
         ${box}
         <button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button>${del}
-        <div class="meta"><span class="fname" title="${enc(nm||dlName)}">${enc(fileLabel(nm,ext,b.size))}</span><span class="fc-acts">${dl}${ren}${move}</span></div></div>`;
+        <div class="meta"><span class="fname" title="${enc(nm||dlName)}">${enc(fileLabel(nm,ext,b.size))}</span><span class="fc-acts">${openbtns}${dl}${ren}${move}</span></div></div>`;
     }).join('') + (_more>0 ? `<button class="btn btn-ghost bl-more" data-id="bl-more" style="grid-column:1/-1;justify-self:center;margin:10px 0"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-down"></use></svg>Load ${Math.min(_more,_FILES_PAGE)} more · ${_more} left</button>` : '')) : (_filesQ.trim()
         ? '<div class="empty">Nothing'+(_filesFolder?(' in '+enc(_filesFolder)):' on your drive')
           +' matches “'+enc(_filesQ.trim())+'”.</div>'
@@ -33642,6 +33705,7 @@
        shell (the APK's WebView and the desktop's app:// origin both refuse it), so a module that
        calls it directly has a copy button that silently does nothing on two of three platforms. */
     copyValue,
+    relaySubscribe: (filters, handlers) => Relay.subscribe(filters, handlers),
     /* THE ONE PLACE AN OS NOTIFICATION IS RAISED, for the sub-modules. It is not a convenience: it
        carries the permission check, the click-to-focus, the icon, AND the fact that Android's WebView
        does not implement the Notifications API at all — `new Notification(...)` there is silence, not

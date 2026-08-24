@@ -7981,6 +7981,15 @@ html.os-on #upload-badge.upbadge{z-index:333}
    Every colour is a theme token, so all seven themes get it for free. */
 .fx-explorer{display:grid;grid-template-columns:220px minmax(0,1fr);gap:0;
   border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--panel)}
+/* BACK AND UP. Square, quiet, and always PRESENT — disabled rather than removed, because a toolbar
+   whose buttons appear and disappear as you navigate reflows the breadcrumbs under the cursor. Same
+   size as the view toggles beside them so the bar reads as one row of controls. */
+.fx-nav{display:flex;gap:4px;flex:0 0 auto}
+.fx-nb{width:30px;height:30px;padding:0;border:1px solid var(--line);border-radius:8px;
+  background:var(--panel);color:var(--text);font-size:16px;line-height:1;cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center}
+.fx-nb:hover:not(:disabled){border-color:var(--neon);color:var(--neon)}
+.fx-nb:disabled{opacity:.35;cursor:default}
 .fx-side{border-inline-end:1px solid var(--line);background:var(--panel2);padding:10px;min-width:0;
   max-height:70vh;overflow-y:auto}
 .fx-main{min-width:0;padding:12px;display:flex;flex-direction:column;gap:10px}

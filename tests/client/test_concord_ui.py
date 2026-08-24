@@ -40,7 +40,7 @@ def test_concord_is_precached_and_old_bundles_self_heal_the_nav():
 def test_concord_owns_a_versioned_stylesheet_so_stale_shell_css_cannot_unstyle_it():
     assert 'static/css/concord.css' in HTML
     assert "data-concord-css" in CONCORD
-    assert "concord.css?v=5" in CONCORD
+    assert "concord.css?v=6" in CONCORD
     assert "'/static/css/concord.css'" in (ROOT / "static/js/client/sw.js").read_text()
     assert ".cc-app" in CONCORD_CSS and "grid-template-columns:68px 248px" in CONCORD_CSS
     assert CONCORD_CSS.count('{') == CONCORD_CSS.count('}'), "Concord CSS has an unclosed rule"
@@ -66,7 +66,7 @@ def test_concord_has_honest_creation_and_public_discovery_empty_states():
     assert 'Create community' in CONCORD
     assert 'Create a test community' in CONCORD
     assert 'local:true' in CONCORD
-    assert 'No public invites found' in CONCORD
+    assert 'No public communities found' in CONCORD
     assert 'not published to relays' in CONCORD
     assert 'cc-public-room' in CONCORD_CSS
 
@@ -106,7 +106,14 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert 'startGroupCall,' in APP and 'uploadBlob,' in APP and 'openEmojiPopover,' in APP
     assert 'cc-members-dialog' in CONCORD and 'cc-member-list' in CONCORD_CSS
     assert 'cc-description-value' in CONCORD and 'room.description=String' in CONCORD
+    assert 'cc-channel-visibility' in CONCORD and "channel.private=$('#cc-channel-visibility').value==='private'" in CONCORD
+    assert '.cc-visibility.public' in CONCORD_CSS and '.cc-visibility.private' in CONCORD_CSS
     assert 'p.linkify' in CONCORD and 'p.linkCardHtml' in CONCORD
+    assert 'id="cc-copy-link"' in CONCORD and 'p.copyValue(room.url)' in CONCORD
+    assert 'notifyMentions(p,current,messages,viewer,me)' in CONCORD
+    assert "route:'concord'" in CONCORD and 'concord-mention-' in CONCORD
+    assert "search:'armada.buzz/invite'" in CONCORD and "search:'poster.place/invite'" in CONCORD
+    assert 'data-cc-discover' in CONCORD and 'relaySubscribe:' in APP
     assert 'linkify, linkCardHtml, hydrateLinkCards' in APP
 
 
