@@ -1,4 +1,4 @@
-"""Profiles show the earliest honest Nostr activity date without breaking narrow screens."""
+"""Profiles never invent an account-registration date from a partial relay cache."""
 
 from pathlib import Path
 
@@ -8,14 +8,13 @@ APP = (ROOT / "static/js/client/app.js").read_text()
 CSS = (ROOT / "static/css/client.css").read_text()
 
 
-def test_profile_uses_earliest_known_signed_event_and_labels_the_limit():
+def test_profile_does_not_present_partial_history_as_a_joined_date():
     body = APP[APP.index("async function renderProfileView(pk){"):
                APP.index("function editProfile", APP.index("async function renderProfileView(pk){"))]
-    assert "_seenEvents.reduce" in body
-    assert "Joined Nostr" in body
-    assert "earliest signed event currently available" in body
+    assert "_seenEvents.reduce" not in body
+    assert "Joined Nostr" not in body
+    assert "account-registration event" in body
 
 
-def test_joined_date_is_a_compact_wrapping_safe_chip():
-    assert ".prof-joined{display:inline-flex;align-items:center" in CSS
-    assert "border-radius:999px" in CSS
+def test_no_joined_date_markup_remains_in_profile_styles():
+    assert ".prof-joined{" not in CSS

@@ -2611,10 +2611,6 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .prof h2{margin:0} .prof .about{color:var(--text);margin:8px 0;line-height:1.45;white-space:pre-wrap}
 .npubrow{display:flex;align-items:center;gap:8px;margin:8px 0}
 .npubrow code{color:var(--cyan);font-size:12px}
-.prof-joined{display:inline-flex;align-items:center;gap:7px;margin:5px 0 7px;padding:7px 10px;
-  border:1px solid var(--line);border-radius:999px;background:var(--panel2);color:var(--muted);font-size:12px}
-.prof-joined .ic{width:14px;height:14px;color:var(--neon)}
-.prof-joined b{color:var(--text);font-weight:650}
 .ln-addr{background:transparent;border:1px solid var(--line);color:var(--amber);cursor:pointer;border-radius:9px;padding:6px 12px;font-size:13px;margin:6px 0;display:inline-flex;align-items:center;gap:4px;transition:.13s}
 .ln-addr:hover{border-color:var(--amber);box-shadow:0 0 12px rgba(255,207,43,.35)}
 /* Monero tips — Monero orange (#f60). ɱ action button + the QR box + the profile address pill. */

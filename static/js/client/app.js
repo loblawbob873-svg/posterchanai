@@ -25049,12 +25049,9 @@
       if(!await _loadNotes()) return;
     }
     const p=Store.profile(pk)||{}; const mine=pk===ME.pubkey;
-    /* Nostr has no account-registration event. The earliest signed event this client currently
-     * knows is the only honest join signal available, so label the uncertainty in the tooltip
-     * instead of presenting a profile-update timestamp as an exact creation date. */
-    const _seenEvents=Store.feed(e=>e.pubkey===pk);
-    const _joinedTs=_seenEvents.reduce((n,e)=>e&&e.created_at&&(!n||e.created_at<n)?e.created_at:n,0);
-    const _joinedLabel=_joinedTs ? new Date(_joinedTs*1000).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'}) : '';
+    /* Nostr has no account-registration event. Do not infer a "joined" date from the oldest event
+     * currently cached: that only says how far this relay/device happened to backfill and made old
+     * accounts appear to have joined yesterday after a fresh login. */
     const npub=NT().nip19.npubEncode(pk);
     feed.innerHTML=`<div class="prof"><div class="banner">${p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''}</div>
       <div class="phead"><img class="pav" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
@@ -25070,7 +25067,6 @@
         ${p.lud16?`<button class="ln-addr" id="prof-ln" title="send a zap"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>${enc(p.lud16)}</button>`:''}
         ${isXmrAddr(xmrOf(p))?`<button class="ln-addr xmr" id="prof-xmr" title="tip Monero (XMR)">ɱ ${enc(xmrOf(p).slice(0,10))}…${enc(xmrOf(p).slice(-6))}</button>`:''}
         ${isBchAddr(bchOf(p))?`<button class="ln-addr bch" id="prof-bch" title="tip Bitcoin Cash (BCH)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-coin"></use></svg>${enc(bchOf(p).slice(0,14))}…${enc(bchOf(p).slice(-6))}</button>`:''}
-        ${_joinedLabel?`<div class="prof-joined" title="Based on the earliest signed event currently available from this account"><svg class="ic" aria-hidden="true"><use href="#i-clock"></use></svg><span>Joined Nostr</span><b>${enc(_joinedLabel)}</b></div>`:''}
         <div class="about">${linkify(p.about||'')}</div>
         <div class="follow-stats"><button class="statbtn" id="show-posts"><b>·</b> Posts</button><button class="statbtn" id="show-following"><b>·</b> Following</button><button class="statbtn" id="show-followers"><b>·</b> Followers</button></div>
       </div></div>
