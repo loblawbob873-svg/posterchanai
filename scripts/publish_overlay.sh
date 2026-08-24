@@ -76,7 +76,20 @@ if [ -n "${LIVE:-}" ]; then
 fi
 
 TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
+OVERLAY_TMP_ROOT="$TMP"
+trap 'rm -rf "$OVERLAY_TMP_ROOT"' EXIT
+# Continue the published repository's history. Re-initialising a brand-new repository for every
+# release and force-pushing it made `emaint sync` attempt to merge unrelated histories on every
+# PosterChanOS machine. Portage recovered only because its sync backend happened to hard-reset after
+# printing a fatal error. Clone first, replace only the checked-out overlay files, and push a normal
+# fast-forward commit instead.
+if ! git clone -q "$URL" "$TMP/repo" 2>/dev/null; then
+	mkdir -p "$TMP/repo"
+	git -C "$TMP/repo" init -q -b main
+fi
+STAGE="$TMP/repo"
+find "$STAGE" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf -- {} +
+TMP="$STAGE"
 cp -r "$SRC/." "$TMP/"
 
 # ONE CANONICAL INSTALLER. Keeping a second 3,000-line gentoo.sh under FILESDIR guarantees drift;
@@ -96,7 +109,6 @@ mv "$SHELL_EBUILD" "$SHELL_DIR/posterchanos-shell-${SHELL_VER}.ebuild"
 echo "[overlay] staging $(find "$TMP" -type f | wc -l) files (shell $SHELL_VER)"
 
 cd "$TMP"
-git init -q -b main
 git add -A
 git -c user.email=os@poster.place -c user.name=PosterChanOS \
     commit -q -m "overlay $(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -108,7 +120,7 @@ echo "[overlay] publishing to $NAS:$DEST"
 # that bounded path to the publishing account so the SSH git transport can update it normally.
 ssh "$NAS" "sudo -n install -d -o \$(id -un) -g \$(id -gn) '$DEST' \
     && cd '$DEST' && (git rev-parse --git-dir >/dev/null 2>&1 || git init -q --bare)"
-git push -q --force "ssh://$NAS$DEST" main
+git push -q "ssh://$NAS$DEST" HEAD:main
 # Dumb HTTP needs this, and it is the step whose absence looks like a working publish: the files are
 # all there, the URL returns 200 for the directory, and `emerge --sync` says the repo is empty.
 # HEAD MUST NAME THE BRANCH WE PUSH. `git init --bare` points HEAD at refs/heads/master; pushing
