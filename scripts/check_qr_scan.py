@@ -368,6 +368,11 @@ async def run(url):
                         print(f"  DEBUG {name}: decoded and acked ({info})", flush=True)
             finally:
                 proc.terminate()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=5)
     finally:
         subprocess.run(["rm", "-rf", PROFILE], check=False)
         shutil.rmtree(tmp, ignore_errors=True)

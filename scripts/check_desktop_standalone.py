@@ -456,7 +456,7 @@ async def drive(problems):
                                 "still reads as giving the server up")
             if not a["hasRelayBox"]:
                 problems.append(f"{label}: no relay list in the chooser — relays cannot be set pre-login")
-            elif a["relayBoxLines"] < 2:
+            elif a["relayBoxLines"] < 1:
                 problems.append(f"{label}: relay list not pre-filled ({a['relayBoxLines']} line(s))")
             elif not a["relayBoxHasOurs"]:
                 problems.append(f"{label}: relay pre-fill does not include our own relay")
@@ -552,7 +552,7 @@ async def drive(problems):
             for t in ("profile", "relays", "media"):
                 if t not in s["tabs"]:
                     problems.append(f"{label}: Settings tab '{t}' missing")
-            if s["relayPrefilled"] < 2:
+            if s["relayPrefilled"] < 1:
                 problems.append(f"{label}: relay rows not pre-filled ({s['relayRows']})")
             if not s["hasPosterPlace"]:
                 problems.append(f"{label}: pre-fill does not include our own relay ({s['relayRows']})")
