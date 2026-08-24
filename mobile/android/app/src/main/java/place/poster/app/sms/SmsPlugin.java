@@ -6,6 +6,8 @@ import android.provider.Telephony;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.util.Base64;
+import android.os.Bundle;
+import android.telephony.SmsManager;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -481,6 +483,41 @@ public class SmsPlugin extends Plugin {
         call.resolve(o);
     }
 
+    /**
+     * HOW BIG AN MMS THIS CARRIER WILL ACTUALLY CARRY — asked, not guessed.
+     *
+     * Every published figure for this is folklore: 300KB, 600KB, 1MB, "about a megabyte". The real
+     * number is per-carrier and the platform knows it, because the MMS stack has to. It sits in the
+     * carrier config the same code path uses to send, so this is the same answer the transport will
+     * apply -- rather than a constant compiled into an app that has never met this SIM.
+     *
+     * It matters because of what failure looks like. An oversized MMS is not refused with an error a
+     * person can act on: the carrier's MMSC re-compresses it into mush, or accepts it and delivers
+     * nothing, or the transaction times out minutes later with the message sitting in the thread
+     * looking sent. Knowing the ceiling BEFORE sending is what lets the client offer a link instead,
+     * which is a thing that works, rather than a photo that silently does not arrive.
+     *
+     * `measured` rides with the number for the usual reason: 300KB because AOSP says so and 300KB
+     * because THIS carrier says so are the same integer and different facts, and only one of them is
+     * worth overriding a person's choice with.
+     */
+    @PluginMethod
+    public void mmsLimit(PluginCall call) {
+        JSObject o = new JSObject();
+        int bytes = 0;
+        try {
+            Bundle cfg = SmsManager.getDefault().getCarrierConfigValues();
+            // "maxMessageSize" — SmsManager.MMS_CONFIG_MAX_MESSAGE_SIZE, which is @hide on some
+            // builds, so the documented string constant is used rather than the symbol.
+            if (cfg != null) bytes = cfg.getInt("maxMessageSize", 0);
+        } catch (Throwable ignored) {
+            // No SIM, no telephony, a tablet, an OEM that guards the config: all "we could not ask".
+        }
+        o.put("bytes", bytes > 0 ? bytes : DEFAULT_MMS_MAX);
+        o.put("measured", bytes > 0);
+        call.resolve(o);
+    }
+
     /** Who a number belongs to, from the phone's whole address book — never a second contact store. */
     @PluginMethod
     public void nameFor(PluginCall call) {
@@ -503,6 +540,12 @@ public class SmsPlugin extends Plugin {
      * anything is drawn.
      */
     private static final int MAX_ATTACHMENT = 12 * 1024 * 1024;
+
+    /**
+     * What AOSP's own MmsConfig uses when nothing else says otherwise. A FLOOR TO FALL BACK ON, not
+     * a belief about this network -- see mmsLimit(), which reports whether it had to be used.
+     */
+    private static final int DEFAULT_MMS_MAX = 300 * 1024;
     private static final int ATTACHMENT_CHUNK = 768 * 1024;
 
     @PluginMethod

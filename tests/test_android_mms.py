@@ -610,6 +610,26 @@ class TheArchiveCanReachEveryPictureMessage(unittest.TestCase):
 
     # ---- the name the archive already promised to carry ---------------------------------------
 
+    def test_the_mms_ceiling_is_asked_of_the_carrier(self):
+        """Every published figure for the MMS size limit is folklore — 300KB, 600KB, "about a
+        megabyte" — and the real number is per-carrier. The platform knows it because the MMS stack
+        has to, so it is read from the same carrier config the transport applies rather than compiled
+        into an app that has never met this SIM.
+
+        `measured` rides with it for the usual reason: 300KB because AOSP says so and 300KB because
+        THIS carrier says so are the same integer and different facts, and only one of them is worth
+        overriding somebody's choice with."""
+        plugin = open(os.path.join(SMS, "SmsPlugin.java"), encoding="utf-8").read()
+        self.assertIn("public void mmsLimit(", plugin)
+        self.assertIn("getCarrierConfigValues()", plugin,
+                      "the limit is guessed rather than asked")
+        self.assertIn('cfg.getInt("maxMessageSize"', plugin)
+        self.assertIn('o.put("measured", bytes > 0)', plugin,
+                      "a fallback is indistinguishable from a real carrier answer")
+        # The fallback must exist, so a tablet or a config that cannot be read still yields a number
+        # rather than throwing on the send path.
+        self.assertIn("DEFAULT_MMS_MAX", plugin)
+
     def test_every_published_row_carries_the_contact_name(self):
         """The archive's own comment says the handset resolves the name against the phone's OWN
         address book and carries it, and the client's `fromRow` duly reads `r.name`. Nothing put one

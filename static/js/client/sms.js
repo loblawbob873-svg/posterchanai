@@ -967,6 +967,121 @@
     return btoa(s);
   }
 
+  /* ── A FILE TOO BIG FOR A PICTURE MESSAGE GOES AS A LINK ─────────────────────────────────────
+   *
+   * An oversized MMS does not fail in a way anybody can act on. The carrier's MMSC re-compresses it
+   * into mush, or accepts it and delivers nothing, or the transaction times out minutes later with
+   * the message sitting in the thread looking sent. There is no error to show and nothing to retry.
+   *
+   * So the size is checked BEFORE sending, against the number this carrier actually published
+   * (SmsPlugin.mmsLimit → the platform's own MMS carrier config, the same one the transport applies)
+   * rather than against a constant compiled into an app that has never met this SIM.
+   *
+   * Over the line, the file is encrypted under a FRESH RANDOM KEY, the ciphertext is uploaded, and
+   * what goes out is a text message with a link whose FRAGMENT carries the key. A fragment is never
+   * transmitted to a server, so the node holds ciphertext it cannot read; `/f/<sha>` is a page that
+   * decrypts in the recipient's own browser, which is what makes this work for somebody who has
+   * never heard of this app. The honest limit of it is that the link IS the secret — anyone holding
+   * it can open the file — and a text message is not a confidential channel. The page says so, and
+   * so does the note appended to the message.
+   *
+   * Plaintext was the obvious alternative and is worse than it looks: Blossom has no read
+   * authorization at all and `GET /list/<pubkey>` enumerates a sender's blobs, so an unencrypted
+   * attachment is not merely guessable by URL, it is LISTABLE by anyone who knows the sender. */
+  const MMS_HEADROOM = 8 * 1024;      // PDU headers, the text part, and the carrier's own slack
+  const MMS_FLOOR = 64 * 1024;        // below this a "limit" is a misreport, not a policy
+
+  let _mmsLimit = null;
+  async function mmsLimit(){
+    if(_mmsLimit) return _mmsLimit;
+    const P = plug('mmsLimit');
+    let bytes = 0, measured = false;
+    if(P && P.mmsLimit){
+      try{
+        const r = (await P.mmsLimit()) || {};
+        bytes = Number(r.bytes) || 0;
+        measured = !!r.measured;
+      }catch(_){ /* an older APK has no such method — fall through to the floor */ }
+    }
+    // A carrier that reports something absurd is not obeyed: a 4KB "limit" would send every photo
+    // as a link, which is a worse outcome than one oversized MMS.
+    if(!(bytes > MMS_FLOOR)){ bytes = 300 * 1024; measured = false; }
+    _mmsLimit = { bytes, measured };
+    return _mmsLimit;
+  }
+
+  /* Build the recipient's link out of what uploadSharedEnc produced.
+   *
+   * It returns a reference to the BLOSSOM blob (`https://…/<sha>.enc#pcenc1=<meta>`), which only
+   * this client understands. The page that anyone can open lives on THIS instance at `/f/<sha>`, so
+   * the sha is lifted out and the fragment carried across untouched — the fragment is the key and
+   * must never be regenerated, logged, or round-tripped through anything that could alter it.
+   *
+   * When the blob did NOT land on this instance (the account points at somebody else's media
+   * server) the page has nowhere to fetch it from, so the blob's own URL is added to the meta as
+   * `u`. That is still inside the fragment, so it stays off the server — and it is only added when
+   * it is needed, because every character here is one more chance for a linkifier to clip the link. */
+  function shareLinkFor(ref){
+    const cut = String(ref || '').split('#pcenc1=');
+    if(cut.length !== 2) return '';
+    const head = cut[0];
+    let meta = cut[1];
+    const sha = (head.match(/([0-9a-f]{64})/i) || [])[1];
+    if(!sha) return '';
+    const base = String((typeof window !== 'undefined' && window.__PC_API_BASE__) || '')
+                 || (typeof location !== 'undefined' ? location.origin : '');
+    if(!base) return '';
+    let sameHost = false;
+    try{ sameHost = new URL(head, base).origin === new URL(base).origin; }catch(_){ sameHost = false; }
+    if(!sameHost){
+      try{
+        const dec = JSON.parse(new TextDecoder().decode(_b64uDec(meta)));
+        dec.u = head;
+        meta = _b64u(new TextEncoder().encode(JSON.stringify(dec)));
+      }catch(_){ return ''; }     // an unreadable descriptor must not become a half-formed link
+    }
+    return base.replace(/\/+$/, '') + '/f/' + sha.toLowerCase() + '#pcenc1=' + meta;
+  }
+  const _b64u = b => btoa(String.fromCharCode.apply(null, b))
+                       .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  function _b64uDec(str){
+    let t = String(str || '').replace(/-/g, '+').replace(/_/g, '/');
+    while(t.length % 4) t += '=';
+    const raw = atob(t), out = new Uint8Array(raw.length);
+    for(let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+
+  /* Send `file` as a link instead of as an attachment. Returns null when it cannot, so the caller
+   * can fall back to trying the MMS rather than refusing to send anything at all. */
+  async function sendAsLink(to, body, file, limit){
+    if(!PC.uploadSharedEnc) return null;
+    let ref = '';
+    try{ ref = await PC.uploadSharedEnc(file); }
+    catch(e){ return { ok:false, error:'could not upload the file: ' + String(e && e.message || e) }; }
+    const link = shareLinkFor(ref);
+    if(!link) return null;
+    const P = plug('send');
+    if(!P || !P.send) return null;
+    const note = (body ? body + '\n\n' : '')
+               + (file.name ? file.name + ' \u00b7 ' : '')
+               + fmtBytes(file.size) + ' \u2014 too big to send as a picture message, so here it is '
+               + 'as a private link:\n' + link;
+    try{
+      const r = await P.send({ to, body: note });
+      if(!r || !r.ok) return { ok:false, error:(r && r.error) || 'the phone would not send it' };
+    }catch(e){ return { ok:false, error:String(e) }; }
+    return { ok:true, where:'link', link, limit: limit && limit.bytes };
+  }
+
+  function fmtBytes(n){
+    n = Number(n) || 0;
+    const u = ['B', 'KB', 'MB', 'GB'];
+    let i = 0;
+    while(n >= 1024 && i < u.length - 1){ n /= 1024; i++; }
+    return (i ? n.toFixed(1) : String(n)) + ' ' + u[i];
+  }
+
   async function send(to, body, file){
     if(!to || (!body && !file)) return { ok:false, error:'nothing to send' };
     /* THE RADIO IS IN THIS DEVICE OR IT IS NOT — the ROLE is a different question.
@@ -986,6 +1101,18 @@
      * a message on a network. Gating on `present` sent a laptop's text down the radio path, which
      * the archive test caught by name. */
     if(st0.telephony){
+      /* CHECKED BEFORE THE ATTEMPT, not after a failure — see sendAsLink. There is no "after" worth
+       * having here: an oversized MMS is accepted and silently not delivered far more often than it
+       * is refused, so a fallback that waits for an error would never run. */
+      if(file){
+        const limit = await mmsLimit();
+        if(file.size > Math.max(MMS_FLOOR, limit.bytes - MMS_HEADROOM)){
+          const viaLink = await sendAsLink(to, body, file, limit);
+          // `null` means the link route was not available on this build/account. Falling through to
+          // try the MMS anyway beats refusing to send: an oversized MMS sometimes does arrive.
+          if(viaLink) return viaLink;
+        }
+      }
       const P = plug(file ? 'sendMms' : 'send');
       if(!P) return { ok:false, error:'no messages plugin' };
       let r = null;
@@ -2143,6 +2270,8 @@
   window.PCSms = { render, mirror, importAll, loadFromPhone, emptyWhy, ensureRead, phoneState,
                    // Clear the archive's latches and walk the whole phone again -- see rescan().
                    rescan, resetArchiveMarkers,
+                   // The oversized-attachment fallback — see sendAsLink.
+                   mmsLimit, shareLinkFor,
                    drainOutbox, send, remove, load,
                    // The real batched migration loop, for tests/client/test_sms_attachments.py —
                    // its convergence is the property that matters and it is invisible from a single

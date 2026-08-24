@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shared file</title>
+<!-- NOTHING IS LOADED FROM ANYWHERE. One page, no scripts, no fonts, no analytics: this page is
+     handed to people over SMS, opened on a phone with no account here, and it is the only thing
+     standing between them and a file they were sent. It is also the page that HOLDS A DECRYPTION
+     KEY in its URL, so the fewer parties involved the better. -->
+<style>
+  :root{color-scheme:light dark}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100dvh;display:flex;align-items:center;justify-content:center;
+       padding:20px;font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+       background:#0f1016;color:#e9eaf2}
+  @media (prefers-color-scheme:light){body{background:#f5f6fa;color:#1d2030}}
+  .card{width:100%;max-width:520px;background:rgba(127,127,150,.10);border:1px solid rgba(127,127,150,.28);
+        border-radius:14px;padding:22px;text-align:center}
+  h1{margin:0 0 4px;font-size:19px}
+  .name{font-weight:600;word-break:break-all;margin:10px 0 2px}
+  .meta,.note{opacity:.72;font-size:13px}
+  .note{margin-top:14px}
+  a.btn,button.btn{display:inline-block;margin-top:16px;padding:11px 20px;border-radius:10px;
+        background:#3ce8ff;color:#07202a;border:0;font:inherit;font-weight:600;cursor:pointer;
+        text-decoration:none}
+  .err{color:#ff8098}
+  img,video{max-width:100%;border-radius:10px;margin-top:16px;display:block}
+  .bar{height:4px;border-radius:4px;background:rgba(127,127,150,.3);overflow:hidden;margin-top:16px}
+  .bar i{display:block;height:100%;width:35%;background:#3ce8ff;animation:s 1.1s infinite}
+  @keyframes s{0%{margin-left:-35%}100%{margin-left:100%}}
+</style>
+</head><body>
+<div class="card" id="card">
+  <h1>Shared file</h1>
+  <div class="meta" id="msg">Opening…</div>
+  <div class="bar" id="bar"><i></i></div>
+</div>
+<script>
+/* DECRYPTED HERE, IN THIS BROWSER, AND NOWHERE ELSE.
+ *
+ * The key travels in the URL FRAGMENT, and a fragment is never transmitted to a server — not in the
+ * request line, not in a Referer. So the node serving this page stores only ciphertext and has never
+ * seen the key, and that stays true however many times the link is opened. It also means the link is
+ * the secret in its entirety: whoever holds it can read the file, which is exactly the property a
+ * text message needs and is stated plainly at the bottom of the card.
+ *
+ * Everything here is deliberately boring, because the audience is a stranger's phone browser:
+ * WebCrypto (universal since 2017), no modules, no fetch streaming, no service worker. */
+(function(){
+  var card = document.getElementById('card');
+  var msg  = document.getElementById('msg');
+  var bar  = document.getElementById('bar');
+
+  function fail(text, detail){
+    bar.remove();
+    msg.className = 'meta err';
+    msg.textContent = text;
+    if(detail){ var d = document.createElement('div'); d.className='note'; d.textContent = detail; card.appendChild(d); }
+  }
+  function b64uDec(s){
+    s = String(s||'').replace(/-/g,'+').replace(/_/g,'/');
+    while(s.length % 4) s += '=';
+    var raw = atob(s), out = new Uint8Array(raw.length);
+    for(var i=0;i<raw.length;i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+  function human(n){
+    if(!n && n !== 0) return '';
+    var u = ['B','KB','MB','GB'], i = 0;
+    while(n >= 1024 && i < u.length-1){ n /= 1024; i++; }
+    return (i ? n.toFixed(1) : n) + ' ' + u[i];
+  }
+
+  /* THE MARKER MUST SURVIVE WHATEVER CARRIED THE LINK. A messaging app may percent-encode the
+   * fragment, and some linkifiers swallow a trailing `=`; matching loosely here costs nothing and a
+   * link that "does not work" in one app and works in another is the least diagnosable bug there is. */
+  var hash = location.hash || '';
+  try{ if(hash.indexOf('%') >= 0) hash = decodeURIComponent(hash); }catch(e){}
+  var at = hash.indexOf('pcenc1=');
+  if(at < 0){
+    return fail('This link is incomplete.',
+                'The part after the # is missing — it carries the key that unlocks the file, and it '
+                + 'is the only copy. Ask the sender to send the whole link again.');
+  }
+  var meta;
+  try{
+    meta = JSON.parse(new TextDecoder().decode(b64uDec(hash.slice(at + 7))));
+  }catch(e){ return fail('This link is damaged.', 'The key on the end of it could not be read.'); }
+
+  var name = meta.n || 'file';
+  var mime = meta.m || 'application/octet-stream';
+
+  /* WHERE THE BYTES ARE. Normally on this node, at /blossom/<sha>. When the sender's account points
+   * at somebody else's media server the blob is there instead, and the client puts that URL in the
+   * fragment as `u` — inside the fragment, so it never reaches this server either.
+   *
+   * IT IS ONLY HONOURED IF IT NAMES THIS SAME BLOB. A link is a thing strangers send each other, so
+   * an unchecked `u` would turn this page into a request-anywhere gadget aimed at whoever opens it.
+   * Tying it to the sha in the path means it can only ever point at the file the link is already
+   * about, and http(s) only. */
+  var src = {{ blob_url|tojson }};
+  if(meta.u && /^https?:\/\//i.test(meta.u) && String(meta.u).toLowerCase().indexOf({{ sha|tojson }}) >= 0)
+    src = meta.u.split('#')[0];
+
+  fetch(src, {cache:'no-store'}).then(function(r){
+    /* 404 IS THE EXPECTED FAILURE HERE and it is not an error to apologise for: these blobs are
+     * kept, but a sender can delete their own files. Saying which is the difference between "try
+     * again" and "ask them to resend". */
+    if(r.status === 404 || r.status === 410) throw new Error('gone');
+    if(!r.ok) throw new Error('http ' + r.status);
+    return r.arrayBuffer();
+  }).then(function(buf){
+    var blob = new Uint8Array(buf);
+    if(blob.length < 13) throw new Error('short');
+    return crypto.subtle.importKey('raw', b64uDec(meta.k), 'AES-GCM', false, ['decrypt'])
+      .then(function(ck){
+        return crypto.subtle.decrypt({name:'AES-GCM', iv: blob.slice(0,12)}, ck, blob.slice(12));
+      });
+  }).then(function(plain){
+    var out = new Blob([plain], {type: mime});
+    var url = URL.createObjectURL(out);
+    bar.remove();
+    msg.remove();
+    var n = document.createElement('div'); n.className = 'name'; n.textContent = name;
+    var s = document.createElement('div'); s.className = 'meta'; s.textContent = human(out.size);
+    card.appendChild(n); card.appendChild(s);
+
+    // Shown inline when it is something a browser can show; always downloadable either way.
+    if(/^image\//.test(mime)){
+      var img = document.createElement('img'); img.src = url; img.alt = name; card.appendChild(img);
+    }else if(/^video\//.test(mime)){
+      var v = document.createElement('video'); v.src = url; v.controls = true; card.appendChild(v);
+    }else if(/^audio\//.test(mime)){
+      var a = document.createElement('audio'); a.src = url; a.controls = true;
+      a.style.marginTop = '16px'; a.style.width = '100%'; card.appendChild(a);
+    }
+    var dl = document.createElement('a');
+    dl.className = 'btn'; dl.href = url; dl.download = name; dl.textContent = 'Save file';
+    card.appendChild(dl);
+    var note = document.createElement('div');
+    note.className = 'note';
+    note.textContent = 'Decrypted in your browser. The key is in the link itself and was never sent '
+                     + 'to the server — so anyone with this link can open the file.';
+    card.appendChild(note);
+  }).catch(function(e){
+    var why = String(e && e.message || e);
+    if(why === 'gone') return fail('This file is no longer available.',
+                                   'The sender deleted it, or it expired.');
+    if(/OperationError|decrypt/i.test(why))
+      return fail('This link could not unlock the file.',
+                  'The key on the end of the link does not match these bytes — usually a link that '
+                  + 'was cut short somewhere on its way here.');
+    fail('The file could not be downloaded.', why);
+  });
+})();
+</script>
+</body></html>

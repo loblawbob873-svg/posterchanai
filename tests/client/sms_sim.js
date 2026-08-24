@@ -81,6 +81,18 @@ const PLUGIN = {
     if(opt.mmsCapped) out.mmsCapped = true;
     return out;
   },
+  /* WHAT THIS CARRIER SAYS AN MMS MAY WEIGH. `opt.mmsLimit` sets it; `opt.noMmsLimit` models an
+   * older APK with no such method, which must fall back rather than refuse to send. */
+  async mmsLimit(){
+    calls.push(['mmsLimit']);
+    if(opt.noMmsLimit) throw new Error('no such method');
+    return { bytes: Number(opt.mmsLimit) || 300 * 1024, measured: opt.mmsMeasured !== false };
+  },
+  async sendMms(a){
+    calls.push(['sendMms', a.to, a.body, (a.data || '').length, a.mime, a.name]);
+    if(opt.sendFails) return { ok:false, error:'radio said no' };
+    return { ok:true, error:'', stored: opt.mmsStored !== false, row:'content://mms/1' };
+  },
   async send(a){
     calls.push(['send', a.to, a.body]);
     if(opt.sendFails) return { ok:false, error:'radio said no', parts:1, row:'' };
@@ -183,6 +195,8 @@ const filesIdx = {
   beginBatch(){ driveBatch++; calls.push(['driveBegin', driveBatch]); },
   async endBatch(){ driveBatch--; calls.push(['driveEnd', driveBatch]); return true; },
 };
+global.window = global.window || {};
+global.window.__PC_API_BASE__ = (opt.apiBase === undefined ? 'https://node.example' : opt.apiBase);
 global.__PC = {
   VIEW: 'timeline',                 // NOT texts, so paint() is a no-op and needs no DOM
   ME: { pubkey: 'me' },
@@ -206,6 +220,20 @@ global.__PC = {
     return sha;
   },
   encFileUrl: async sha => 'blob:' + sha,
+  /* Encrypt-and-upload for somebody who is NOT us. The real one (app.js) mints a random AES key,
+     uploads the ciphertext and returns `<blobUrl>#pcenc1=<b64u(JSON{k,m,n})>`. The sim reproduces
+     the SHAPE exactly -- the shape is what sms.js parses to build the recipient's link -- with a
+     fixed key, because what is under test is the link, not the cipher. */
+  uploadSharedEnc: async (file) => {
+    calls.push(['uploadSharedEnc', file.name, file.size]);
+    if(opt.uploadFails) throw new Error('blossom said no');
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const sha = Buffer.from(await webcrypto.subtle.digest('SHA-256', bytes)).toString('hex');
+    const meta = Buffer.from(JSON.stringify({ k:'a'.repeat(43), m:file.type || '', n:file.name || '' }))
+                   .toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+    const host = opt.blobHost || 'https://node.example';
+    return host + '/blossom/' + sha + '.enc#pcenc1=' + meta;
+  },
   // A transparent "encryption": the sim is about the protocol, not the cipher, and a readable
   // transcript is what makes a wrong body visible in a failure message.
   nip44enc: async (pk, s) => 'enc:' + s,
@@ -247,6 +275,15 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
     else if(step === 'mirror'){ await S.mirror(); }
     else if(step === 'drain'){ await S.drainOutbox(); }
     else if(step === 'allow'){ refusals = -1; }
+    /* `sendfile:<to>:<bytes>` — a send with an attachment of a given size, which is the only input
+       the oversized-link decision actually turns on. */
+    else if(step.slice(0, 9) === 'sendfile:'){
+      const [to, size, ...rest] = step.slice(9).split(':');
+      const bytes = new Uint8Array(Number(size) || 0);
+      const f = new File([bytes], 'photo.jpg', { type:'image/jpeg' });
+      const r = await S.send(to, rest.join(':'), f);
+      calls.push(['sendFileResult', r.ok, r.where || r.error || '', r.link || '']);
+    }
     else if(step.slice(0, 5) === 'send:'){
       const [to, ...rest] = step.slice(5).split(':');
       const r = await S.send(to, rest.join(':'));
