@@ -16,12 +16,18 @@ function control(id){
 }
 const dollar = selector => selector === '#feed' ? feed : control(selector.slice(1));
 const dollars = () => [];
+const calls = {toasts:[], notified:0, group:0};
 
 globalThis.window = globalThis;
 window.__PC = {
   $:dollar, $$:dollars, enc:s=>String(s), niceNip05:s=>s,
   viewer:()=>({npub:'npub1testidentity',profile:{display_name:'Test User'}}),
-  toast:()=>{},
+  toast:s=>calls.toasts.push(String(s)),
+  openEmojiPopover:(_anchor,pick)=>pick('😀',()=>{}),
+  insertAt:(input,value)=>{ input.value+=value; },
+  uploadBlob:async file=>'https://files.example/'+file.name,
+  askOsNotify:async()=>{ calls.notified++; return 'granted'; },
+  startGroupCall:()=>{ calls.group++; },
 };
 globalThis.document = {
   body:{classList}, head:{appendChild(){}}, documentElement:{appendChild(){}},
@@ -47,6 +53,19 @@ const edited=JSON.parse(data.get('pc.concord.invites'));
 if(edited[0].icon!=='https://example.test/room.png') throw new Error('icon edit flow failed');
 
 const input=control('cc-input');
+control('cc-emoji').click();
+if(input.value!=='😀') throw new Error('emoji control failed');
+input.value='';
+const file=control('cc-file'); file.files=[{name:'photo.png',size:1000}];
+await file.onchange();
+if(input.value!=='https://files.example/photo.png') throw new Error('attachment control failed');
+input.value='';
+control('cc-members').click();
+if(!calls.toasts.some(x=>x.startsWith('Members:'))) throw new Error('members control failed');
+await control('cc-notify').onclick();
+if(calls.notified!==1) throw new Error('notification control failed');
+control('cc-call').click();
+if(!calls.toasts.some(x=>x.includes('No other community members'))) throw new Error('empty call state failed');
 input.value='hello concord';
 let prevented=false;
 input.onkeydown({key:'Enter',ctrlKey:false,metaKey:false,preventDefault(){prevented=true;}});

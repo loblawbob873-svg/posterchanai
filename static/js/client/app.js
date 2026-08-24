@@ -389,7 +389,7 @@
    * So the rows a view NEEDS are asserted here rather than assumed from the markup. Idempotent: an
    * up-to-date shell already has them and nothing happens. */
   const _NAV_REQUIRED = [
-    { view:'concord', into:'#disc-sub', icon:'#i-users', label:'Concord' },
+    { view:'concord', into:'#disc-sub', icon:'#i-concord', label:'Concord' },
     { view:'sync', into:'#files-sub', icon:'#i-refresh', label:'Folder Sync' },
     { view:'xdc', into:'#games-sub', icon:'#i-gamepad', label:'Webxdc' },
     { view:'signer', after:'settings', icon:'#i-key', label:'Signer' },
@@ -14734,7 +14734,7 @@
   }
   function discoverMenu(){   // mobile Discover sub-sheet — mirrors the desktop sidebar's Discover group (incl. Market)
     const _off=navHiddenSet();
-    const items=[['news','news','News'],['markets','chart','Markets'],['budget','bars','Budget'],['calls','phone','Calls'],['articles','article','Articles'],['market','bag','Shopping'],['streams','tv','Streams'],['shorts','tv','Shorts'],['communities','users','Communities'],['concord','users','Concord'],['chat','chat','Chat'],['torrents','magnet','Torrents'],['repos','git','Git'],['stats','bars','Server Stats']]
+    const items=[['news','news','News'],['markets','chart','Markets'],['budget','bars','Budget'],['calls','phone','Calls'],['articles','article','Articles'],['market','bag','Shopping'],['streams','tv','Streams'],['shorts','tv','Shorts'],['communities','users','Communities'],['concord','concord','Concord'],['chat','chat','Chat'],['torrents','magnet','Torrents'],['repos','git','Git'],['stats','bars','Server Stats']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='markets')     // Markets needs the AI backend (Budget is client-only, so it stays)
                    && !_off.has(v));                              // …and the user's own Settings → Sidebar choices
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-compass"></use></svg> Discover</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}${v==='chat'?'<i id="chat-badge-m" class="badge hidden"></i>':''}</span>${v==='news'?'<span class="news-badge" style="display:none"></span>':''}</button>`).join('')}</div>`, root=>{

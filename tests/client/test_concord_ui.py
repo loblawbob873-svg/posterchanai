@@ -59,7 +59,7 @@ def test_concord_has_discord_style_panes_and_dm_style_composer():
     for surface in ('cc-communities', 'cc-channels', 'cc-conversation', 'cc-messages', 'cc-compose'):
         assert surface in CONCORD
     assert 'Message #${state.channel' in CONCORD
-    assert "['concord','users','Concord']" in APP, "mobile Discover must expose Concord"
+    assert "['concord','concord','Concord']" in APP, "mobile Discover must expose Concord"
 
 
 def test_concord_has_honest_creation_and_public_discovery_empty_states():
@@ -104,6 +104,16 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert 'id="cc-notify"' in CONCORD and 'p.askOsNotify' in CONCORD
     assert 'id="cc-call"' in CONCORD and 'p.startGroupCall' in CONCORD
     assert 'startGroupCall,' in APP and 'uploadBlob,' in APP and 'openEmojiPopover,' in APP
+
+
+def test_concord_dove_icon_reaches_sidebar_mobile_and_desktop_launcher():
+    sprite = (ROOT / 'static/js/client/sprite.js').read_text()
+    assert 'id="i-concord"' in sprite
+    assert 'data-view="concord"><svg class="ic"><use href="#i-concord"' in HTML
+    assert "icon:'#i-concord', label:'Concord'" in APP
+    # os.js derives desktop/start-menu icons from the sidebar <use href>, so this is the desktop source.
+    os_js = (ROOT / 'static/js/client/os.js').read_text()
+    assert "btn.querySelector('svg use')" in os_js
 
 
 def test_invite_parser_requires_naddr_and_secret_fragment():

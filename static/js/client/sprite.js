@@ -183,6 +183,8 @@
   <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M6 3.6v6M6 14.4v6M12 3.6v10.8M12 19.2v1.2M18 3.6v2.4M18 10.8v9.6"/><circle cx="6" cy="12" r="2.2"/><circle cx="12" cy="16.8" r="2.2"/><circle cx="18" cy="8.4" r="2.2"/></symbol>
   <symbol id="i-screenshot" viewBox="0 0 24 24"><path d="M3.4 8.6V5.6a2 2 0 0 1 2-2h3"/><path d="M15.6 3.6h3a2 2 0 0 1 2 2v3"/><path d="M20.6 15.4v3a2 2 0 0 1-2 2h-3"/><path d="M8.4 20.4h-3a2 2 0 0 1-2-2v-3"/><circle cx="12" cy="12" r="3.2"/></symbol>
   <symbol id="i-smile" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.8"/><path d="M8.6 14.2a4.4 4.4 0 006.8 0"/><circle cx="9.3" cy="9.8" r=".95" fill="currentColor" stroke="none"/><circle cx="14.7" cy="9.8" r=".95" fill="currentColor" stroke="none"/></symbol>
+  <!-- Concord: a small dove in flight, used by the sidebar, desktop launcher and start menu. -->
+  <symbol id="i-concord" viewBox="0 0 24 24"><path d="M3.2 13.1c3.1.2 5.2-.8 6.6-3.1L12 6.4c.5 2.4 1.6 4 3.5 4.8 1.7.8 3.6.6 5.3-.4-1 3.5-3.2 5.6-6.4 6.3-2.5.5-4.8.1-6.8-1.2L4.4 18l1.5-3.4c-1-.3-1.9-.8-2.7-1.5z"/><path d="M14.8 10.8c.7-2.8 2-4.7 4-5.7-.1 2.3-.7 4.1-1.9 5.5"/><circle cx="13.9" cy="8.6" r=".7" fill="currentColor" stroke="none"/></symbol>
 </defs></svg>`;
   function inject(){
     var host = document.body || document.documentElement;
