@@ -24979,6 +24979,37 @@
     const h2=feed.querySelector('.prof .pbody h2'); if(h2){ const vchk=h2.querySelector('.vchk'); h2.innerHTML=emojiName(pk,p.name||p.display_name||'anon'); if(vchk) h2.appendChild(vchk); }
     const ab=feed.querySelector('.prof .about'); if(ab) ab.innerHTML=linkify(p.about||'');
   }
+
+  /* A profile page normally loads only the newest handful of notes, so its local cache cannot tell
+   * when an account first appeared. Search the relay's HISTORY instead: "has any event at or before
+   * T" is monotonic, which lets us locate the first hour with ~16 tiny queries rather than download
+   * somebody's entire publishing history. Results are public, cached per pubkey for 30 days, and an
+   * incomplete/timed-out relay answer produces NO date rather than another confident wrong date. */
+  async function _nostrFirstSeen(pk){
+    const key='pc_first_seen_v2_'+pk, now=Math.floor(Date.now()/1000), ttl=30*86400;
+    try{ const c=JSON.parse(localStorage.getItem(key)||'null');
+      if(c && c.ts>0 && now-c.checked<ttl) return c.ts;
+    }catch(_){}
+    const hasBefore=async until=>{
+      const r=await Relay.query([{authors:[pk],until,limit:1}],4500);
+      if(!r.length && r.complete===false) throw new Error('incomplete historical lookup');
+      return r.length>0;
+    };
+    try{
+      if(!await hasBefore(now)) return 0;
+      // Nostr was introduced in 2019. Starting there also catches deliberately backdated events in
+      // the final result without making the binary-search interval needlessly enormous.
+      let lo=1546300800-1, hi=now;
+      while(hi-lo>3600){ const mid=Math.floor((lo+hi)/2);
+        if(await hasBefore(mid)) hi=mid; else lo=mid;
+      }
+      const r=await Relay.query([{authors:[pk],until:hi,limit:500}],6000);
+      if(!r.length || r.complete===false) return 0;
+      const ts=r.reduce((n,e)=>e&&e.created_at&&(!n||e.created_at<n)?e.created_at:n,0);
+      if(ts>0) try{ localStorage.setItem(key,JSON.stringify({ts,checked:now})); }catch(_){}
+      return ts;
+    }catch(_){ return 0; }
+  }
   async function renderProfileView(pk){
     _rememberTlScroll();          // opening a profile is leaving the feed — see _rememberTlScroll
     // PosterChan OS: a profile opens in its OWN window, for the same reason a post does — opening
@@ -25049,9 +25080,8 @@
       if(!await _loadNotes()) return;
     }
     const p=Store.profile(pk)||{}; const mine=pk===ME.pubkey;
-    /* Nostr has no account-registration event. Do not infer a "joined" date from the oldest event
-     * currently cached: that only says how far this relay/device happened to backfill and made old
-     * accounts appear to have joined yesterday after a fresh login. */
+    /* Nostr has no registration event. The date is filled asynchronously from a historical relay
+     * search below; never derive it from this page's recent-note cache. */
     const npub=NT().nip19.npubEncode(pk);
     feed.innerHTML=`<div class="prof"><div class="banner">${p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''}</div>
       <div class="phead"><img class="pav" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
@@ -25067,11 +25097,19 @@
         ${p.lud16?`<button class="ln-addr" id="prof-ln" title="send a zap"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>${enc(p.lud16)}</button>`:''}
         ${isXmrAddr(xmrOf(p))?`<button class="ln-addr xmr" id="prof-xmr" title="tip Monero (XMR)">ɱ ${enc(xmrOf(p).slice(0,10))}…${enc(xmrOf(p).slice(-6))}</button>`:''}
         ${isBchAddr(bchOf(p))?`<button class="ln-addr bch" id="prof-bch" title="tip Bitcoin Cash (BCH)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-coin"></use></svg>${enc(bchOf(p).slice(0,14))}…${enc(bchOf(p).slice(-6))}</button>`:''}
+        <div class="prof-joined" id="prof-joined" hidden><svg class="ic" aria-hidden="true"><use href="#i-clock"></use></svg><span>Joined Nostr</span><b></b></div>
         <div class="about">${linkify(p.about||'')}</div>
         <div class="follow-stats"><button class="statbtn" id="show-posts"><b>·</b> Posts</button><button class="statbtn" id="show-following"><b>·</b> Following</button><button class="statbtn" id="show-followers"><b>·</b> Followers</button></div>
       </div></div>
       <div class="prof-tabs"><button class="prof-tab active" data-tab="notes">Notes</button><button class="prof-tab" data-tab="replies">Replies</button><button class="prof-tab" data-tab="media">Media</button><button class="prof-tab" data-tab="articles">Articles</button><button class="prof-tab" data-tab="streams">Streams</button></div>
       <div id="prof-list"></div>`;
+    _nostrFirstSeen(pk).then(ts=>{
+      if(!ts || VIEW!=='profile' || myGen!==_profGen || _prof.pk!==pk) return;
+      const el=$('#prof-joined'); if(!el) return;
+      const b=el.querySelector('b');
+      if(b) b.textContent=new Date(ts*1000).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'});
+      el.hidden=false;
+    });
     let pinnedHtml = '';   // filled by the deferred pinned query below; listFor() reads it live
     // Ids shown in the Pinned section, so the timeline below can leave them out. Without this every
     // pinned note renders TWICE on the profile — once pinned, once in its chronological place — which
