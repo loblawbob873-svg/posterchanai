@@ -25,6 +25,10 @@ const SYS = process.env.PC_SYSFS || '/sys';
 const BACKLIGHT = path.join(SYS, 'class', 'backlight');
 const POWER_SUPPLY = path.join(SYS, 'class', 'power_supply');
 const MIN_PERCENT = 1;          // never off — see above
+/* DDC touches GPU I2C/AUX kernel paths. Some AMD display stacks fault inside dal_ddc_open and leave
+ * IRQs disabled; polling it as routine tray status can therefore freeze the compositor. External
+ * monitor brightness is opt-in until the administrator has verified DDC/CI on that hardware. */
+const DDC_ENABLED = process.env.PC_ENABLE_DDC === '1';
 
 function run(bin, args, ms) {
   return new Promise((resolve, reject) => {
@@ -64,6 +68,7 @@ function brightness() {
  * hardware brightness control and ddcutil is the small, standard userspace client for it. Kept
  * separate from brightness() so the synchronous sysfs tests and fast laptop path stay unchanged. */
 async function ddcBrightness() {
+  if(!DDC_ENABLED) return { available:false };
   try {
     const out = await run('ddcutil', ['getvcp', '10', '--brief'], 5000);
     const m = out.match(/VCP\s+10\s+[^\d]*([0-9]+)\s+([0-9]+)/i);
@@ -77,6 +82,7 @@ async function setBrightness(percent) {
   const p = panel();
   const want = Math.max(MIN_PERCENT, Math.min(100, Math.round(Number(percent) || 0)));
   if (!p) {
+    if(!DDC_ENABLED) throw new Error('external-monitor brightness is disabled for safety; set PC_ENABLE_DDC=1 after verifying DDC/CI');
     try { await run('ddcutil', ['setvcp', '10', String(want)], 8000); return {percent:want,ddc:true}; }
     catch (_) { throw new Error('no controllable backlight — enable DDC/CI in the monitor menu'); }
   }
@@ -231,7 +237,7 @@ async function setIdleTimeout(seconds) {
 /** Everything the shell needs to draw the panel, in one call. */
 async function status() {
   let bright = brightness();
-  if(!bright.available) bright = await ddcBrightness();
+  if(!bright.available && DDC_ENABLED) bright = await ddcBrightness();
   return {
     brightness: bright,
     battery: battery(),
@@ -246,4 +252,4 @@ async function status() {
 module.exports = { brightness, ddcBrightness, setBrightness, battery, profiles, setProfile,
                    suspend, hibernate, poweroff, reboot, hibernateReady, hibernateConfigured,
                    enableHibernation, keepAwakeStatus,
-                   setKeepAwake, idleTimeout, setIdleTimeout, status, MIN_PERCENT };
+                   setKeepAwake, idleTimeout, setIdleTimeout, status, MIN_PERCENT, DDC_ENABLED };

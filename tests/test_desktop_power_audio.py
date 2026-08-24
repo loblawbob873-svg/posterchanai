@@ -59,6 +59,12 @@ class Power(unittest.TestCase):
         out = self.run_js("out.b = P.brightness();")
         self.assertFalse(out["b"]["available"])
 
+    def test_external_ddc_brightness_is_not_polled_by_default(self):
+        """Routine tray repaint must not enter fragile GPU I2C paths on AMD multi-monitor hosts."""
+        out = self.run_js("out.enabled=P.DDC_ENABLED; out.ddc=await P.ddcBrightness();")
+        self.assertFalse(out["enabled"])
+        self.assertFalse(out["ddc"]["available"])
+
     def test_brightness_is_a_percentage_of_this_panel(self):
         """max_brightness is 255 on one panel and 96000 on another. A UI storing raw values gives a
         different screen on every machine."""
