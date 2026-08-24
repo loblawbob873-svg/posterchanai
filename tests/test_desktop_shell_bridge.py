@@ -188,6 +188,15 @@ class Bridge(unittest.TestCase):
         self.assertIn("onPreviewFrame:", self.pre)
         self.assertIn("pcWM.onPreviewFrame", client)
         self.assertIn("closeWin(w,{preserveFocus:true})", client)
+        self.assertIn("state:", client, "the destination redraws module-local apps from scratch")
+        self.assertIn("PCWebSearch.handoffState()", client)
+        self.assertIn("PCWebSearch.acceptHandoff(p.state)", client)
+
+    def test_native_apps_receive_real_decorations(self):
+        client = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()
+        self.assertIn("pc:wm:decorate", self.main)
+        self.assertIn("decorate:", self.pre)
+        self.assertIn("pcWM.decorate(id)", client)
 
     def test_terminal_handoff_keeps_the_same_pty(self):
         client = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()

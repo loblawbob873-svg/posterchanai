@@ -149,6 +149,32 @@ class HostFs(unittest.TestCase):
         self.assertNotIn("ok2", out)
         self.assertFalse(os.path.exists(os.path.join(os.path.dirname(self.d), "escaped")))
 
+    def test_copy_and_move_preserve_contents_and_refuse_collisions(self):
+        """Paste must never replace an existing file silently, and move must remove its source."""
+        os.mkdir(os.path.join(self.d, "from"))
+        os.mkdir(os.path.join(self.d, "to"))
+        open(os.path.join(self.d, "from", "copy.txt"), "w").write("copy bytes")
+        open(os.path.join(self.d, "from", "move.txt"), "w").write("move bytes")
+        out = self.js("""
+          out.c = H.transfer([D + '/from/copy.txt'], D + '/to', false);
+          out.m = H.transfer([D + '/from/move.txt'], D + '/to', true);
+          try { H.transfer([D + '/from/copy.txt'], D + '/to', false); out.overwrote = true; }
+          catch (e) { out.why = e.message; }
+        """)
+        self.assertEqual(open(os.path.join(self.d, "to", "copy.txt")).read(), "copy bytes")
+        self.assertEqual(open(os.path.join(self.d, "to", "move.txt")).read(), "move bytes")
+        self.assertFalse(os.path.exists(os.path.join(self.d, "from", "move.txt")))
+        self.assertNotIn("overwrote", out)
+        self.assertIn("already", out["why"])
+
+    def test_a_folder_cannot_be_pasted_inside_itself(self):
+        os.mkdir(os.path.join(self.d, "tree"))
+        os.mkdir(os.path.join(self.d, "tree", "child"))
+        out = self.js("try { H.transfer([D + '/tree'], D + '/tree/child', false); out.ok=true; }"
+                      "catch (e) { out.why=e.message; }")
+        self.assertNotIn("ok", out)
+        self.assertIn("inside itself", out["why"])
+
     # ---- the places to start from --------------------------------------------------------------
     def test_home_is_offered_first_and_the_root_last(self):
         """Home is where somebody's own files are; `/` is offered because this is the machine's own

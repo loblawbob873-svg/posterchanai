@@ -46,7 +46,8 @@ def test_taskbar_is_icon_only():
 
 def test_native_task_buttons_have_an_existing_fallback_icon():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
-    assert "iconSvg('i-grid')" in src
+    assert "${appIcon(w)}" in src
+    assert "(a && a.icon) || 'i-grid'" in src
     assert 'data-kind="native"' in src
 
 
@@ -57,6 +58,14 @@ def test_native_programs_are_not_mirrored_into_fake_html_frames():
     assert "nativeTasks = rows" in adopt
     assert "openApp(" not in adopt
     assert "pcWM.place" not in adopt
+
+
+def test_maximise_is_geometry_only_and_never_recreates_the_app():
+    src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+    block = src[src.index("function snapTo"):src.index("// The Snap Layouts flyout")]
+    for destructive in ("renderView(", "openApp(", "closeWin(", "innerHTML"):
+        assert destructive not in block, f"maximise/restore recreates app state through {destructive}"
+    assert "Object.assign(w.el.style" in block
 
 
 def test_native_apps_inherit_the_dark_gtk_chrome():

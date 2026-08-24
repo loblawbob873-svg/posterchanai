@@ -585,6 +585,24 @@
 
     window.PCWebSearch = {
       render,
+      handoffState(){
+        return { q:S.q, category:S.category, time:S.time, key:S.key, results:S.results,
+          answers:S.answers, suggestions:S.suggestions, error:S.error, page:S.page, more:S.more,
+          overview:S.overview, ovError:S.ovError, summaries:S.summaries, scroll:S.scroll,
+          reader:S.reader ? Object.assign({},S.reader,{loading:false}) : null };
+      },
+      acceptHandoff(x){
+        if(!x || typeof x!=='object') return false;
+        for(const k of ['q','category','time','key','results','answers','suggestions','error','page',
+                         'more','overview','ovError','summaries','scroll','reader'])
+          if(Object.prototype.hasOwnProperty.call(x,k)) S[k]=x[k];
+        S.results=Array.isArray(S.results)?S.results:[];
+        S.answers=Array.isArray(S.answers)?S.answers:[];
+        S.suggestions=Array.isArray(S.suggestions)?S.suggestions:[];
+        S.summaries=S.summaries&&typeof S.summaries==='object'?S.summaries:{};
+        S.loading=false; S.ovLoading=false; S.gen++;
+        return true;
+      },
       // The Android/Electron back button walks the view stack; the reader is a sub-screen INSIDE
       // this view, so it has to be closed first or Back leaves Web Search with the article still up.
       readerOpen: () => !!S.reader,

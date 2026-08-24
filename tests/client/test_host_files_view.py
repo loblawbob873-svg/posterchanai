@@ -104,6 +104,15 @@ class HostFilesView(unittest.TestCase):
         self.assertIn("noCompress:true", share, "sharing silently rewrites images or video")
         self.assertIn("copyValue(url", share, "the resulting public URL never reaches the clipboard")
 
+    def test_touch_users_can_select_and_copy_move_paste(self):
+        host = open(MOD, encoding="utf-8").read()
+        self.assertIn('class="selbox hf-select"', host,
+                      "selection still requires Ctrl/right-click and is unusable on touch")
+        self.assertIn("hf-copy", host)
+        self.assertIn("hf-cut", host)
+        self.assertIn("hf-paste", host)
+        self.assertIn("HOST().transfer", host)
+
     def test_a_home_path_is_shortened_but_never_the_one_used(self):
         """`/home/npub1fdtthaq…/Documents` is unreadable and its leading two thirds never change."""
         out = self.js("out.a = F.pretty('/home/u/Documents', '/home/u');"

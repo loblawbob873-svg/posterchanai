@@ -25,6 +25,9 @@ const calls = [];        // every plugin call, in order
 const published = [];    // every event handed to publish(), in order
 const notified = [];
 const uploads = Object.create(null);
+const driveFolders = new Set();
+const driveFiles = [];
+let driveBatch = 0;
 
 /* ---- the stub phone -------------------------------------------------------------------------- */
 
@@ -158,6 +161,13 @@ global.Relay = {
   close(){},
 };
 
+const filesIdx = {
+  async pull(){ calls.push(['drivePull']); },
+  folders(){ return Array.from(driveFolders); },
+  addFolder(name, enc){ driveFolders.add(String(name)); calls.push(['folder', name, enc]); },
+  beginBatch(){ driveBatch++; calls.push(['driveBegin', driveBatch]); },
+  async endBatch(){ driveBatch--; calls.push(['driveEnd', driveBatch]); return true; },
+};
 global.__PC = {
   VIEW: 'timeline',                 // NOT texts, so paint() is a no-op and needs no DOM
   ME: { pubkey: 'me' },
@@ -169,13 +179,15 @@ global.__PC = {
   switchView(){},
   capPlugin: (name, method) => (name === 'Sms' && PLUGIN[method || 'status']) ? PLUGIN : null,
   osNotify: (title, body) => { notified.push([String(title), String(body)]); },
-  filesIdx: () => ({ async pull(){}, addFolder(name, enc){ calls.push(['folder', name, enc]); } }),
+  filesIdx: () => filesIdx,
   uploadEncFile: async (file, folder) => {
     calls.push(['uploadEncFile', file.name, folder]);
     const bytes = new Uint8Array(await file.arrayBuffer());
     const sha = Buffer.from(await webcrypto.subtle.digest('SHA-256', bytes)).toString('hex');
     uploads[sha] = { folder, name:file.name, type:file.type,
                      text:Buffer.from(bytes).toString('utf8') };
+    driveFolders.add(String(folder));
+    driveFiles.push({ sha, folder:String(folder), name:String(file.name) });
     return sha;
   },
   encFileUrl: async sha => 'blob:' + sha,
@@ -234,6 +246,7 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
   const st = S._state();
   console.log(JSON.stringify({
     calls, published, notified, uploads,
+    drive: { folders:Array.from(driveFolders).sort(), files:driveFiles, batch:driveBatch },
     rows: rows.map(r => r.doc),
     relay: Array.from(relay.keys()).sort(),
     // LIVE documents only. A tombstone is kept in the map as a marker (see sms.js absorb) so an

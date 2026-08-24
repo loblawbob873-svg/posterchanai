@@ -212,6 +212,39 @@ function rename(from, to) {
   return { path: p };
 }
 
+/* COPY/MOVE INTO A DIRECTORY. Refuse collisions instead of silently replacing data. `fs.cpSync`
+ * handles directory trees; a cross-device move falls back to copy + remove, just like trash(). */
+function transfer(items, destination, move) {
+  const dest = clean(destination);
+  if (!dest || !fs.statSync(dest).isDirectory()) throw new Error('destination is not a folder');
+  const sources = Array.from(new Set((items || []).map(clean).filter(Boolean)));
+  if (!sources.length) throw new Error('nothing selected');
+  const planned = sources.map(from => {
+    fs.lstatSync(from);
+    const to = path.join(dest, path.basename(from));
+    if (to === from) throw new Error('source and destination are the same');
+    if (dest === from || dest.startsWith(from + path.sep))
+      throw new Error('a folder cannot be copied inside itself');
+    try { fs.lstatSync(to); throw new Error('there is already something called ' + path.basename(to)); }
+    catch (e) { if (e && /^there is already/.test(e.message || '')) throw e; }
+    return { from, to };
+  });
+  const done = [];
+  for (const x of planned) {
+    if (!move) fs.cpSync(x.from, x.to, { recursive: true, errorOnExist: true, force: false });
+    else {
+      try { fs.renameSync(x.from, x.to); }
+      catch (e) {
+        if (!e || e.code !== 'EXDEV') throw e;
+        fs.cpSync(x.from, x.to, { recursive: true, errorOnExist: true, force: false });
+        fs.rmSync(x.from, { recursive: true });
+      }
+    }
+    done.push(x);
+  }
+  return { moved: !!move, items: done };
+}
+
 /* OPENING A FILE IS THE MACHINE'S JOB, not ours. xdg-open consults the same associations every
  * other application does, so a PDF opens in whatever this person set as their PDF reader — and the
  * window it makes is adopted into a PosterChan frame like any other, because it is an ordinary
@@ -278,5 +311,5 @@ function search(query, opts) {
   return out;
 }
 
-module.exports = { list, roots, search, trash, mkdir, rename, open, clean, parentOf, shape,
+module.exports = { list, roots, search, trash, mkdir, rename, transfer, open, clean, parentOf, shape,
                    trashInfo, freeName, trashDir };

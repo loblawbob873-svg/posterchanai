@@ -438,24 +438,40 @@
 
   // ---------------------------------------------------------------- publishing (the phone only)
 
+  /* MESSAGE ARCHIVING IS A DRIVE TRANSACTION. Each encrypted upload mutates FilesIdx, whose normal
+   * save is deliberately debounced. Android may freeze the WebView as soon as the user leaves
+   * Texts; a debounce that has not fired then leaves the ciphertext on Blossom but no folder/file
+   * entry pointing at it — exactly "no Messages/MMS folder" despite successful uploads. Pull once
+   * before the transaction, batch every body/attachment, and await endBatch before reporting the
+   * mirror pass complete. FilesIdx batches are counted, so this composes safely with another import. */
+  async function beginArchiveDrive(){
+    const fi = PC.filesIdx ? PC.filesIdx() : null;
+    if(!fi || !fi.addFolder || !fi.beginBatch || !fi.endBatch)
+      throw new Error('encrypted message storage is unavailable');
+    if(fi.pull) await fi.pull();
+    fi.beginBatch();
+    return fi;
+  }
+
+  async function endArchiveDrive(fi){
+    if(!fi) return false;
+    const ok = await fi.endBatch();
+    if(!ok) throw new Error('could not save the Messages/MMS file index');
+    return true;
+  }
+
   async function ensureMmsFolder(){
     const fi = PC.filesIdx ? PC.filesIdx() : null;
-    if(!fi || !fi.addFolder) return;
-    try{
-      if(fi.pull) await fi.pull();
-      fi.addFolder('MMS', true);
-    }catch(_){ }
+    if(!fi || !fi.addFolder) throw new Error('encrypted message storage is unavailable');
+    if(!fi.folders || !fi.folders().includes('MMS')) fi.addFolder('MMS', true);
   }
 
   async function ensureMessagesFolder(){
     if(_messagesFolderReady) return;
     const fi = PC.filesIdx ? PC.filesIdx() : null;
-    if(!fi || !fi.addFolder) return;
-    try{
-      if(fi.pull) await fi.pull();
-      fi.addFolder('Messages', true);
-      _messagesFolderReady = true;
-    }catch(_){ }
+    if(!fi || !fi.addFolder) throw new Error('encrypted message storage is unavailable');
+    if(!fi.folders || !fi.folders().includes('Messages')) fi.addFolder('Messages', true);
+    _messagesFolderReady = true;
   }
 
   /* Message bodies belong in the encrypted Blossom drive too. The relay keeps the small encrypted
@@ -580,25 +596,33 @@
     try{ rows = ((await P.list({ since: querySince, limit: (opts && opts.limit) || 400 })) || {}).messages || []; }
     catch(_){ return { published:0, skipped:'could not read the phone' }; }
 
-    let n = 0, top = since;
-    for(const r of rows){
-      if(!r || !r.doc) continue;
-      const old = S.msgs.get(r.doc);
-      if(old && !needsArchiveUpgrade(r, old)) { if(r.date > top) top = r.date; continue; }
-      // The contact's name is resolved on the phone against the phone's OWN address book and
-      // carried, so a laptop — which has no phone book — shows a name instead of a number.
-      const m = fromRow(r);
-      let ok = false;
-      try{ ok = await publishOne(m); }catch(_){ ok = false; }
-      if(!ok) break;                 // the relay stopped taking them; the mark stays where it was
-      S.msgs.set(m.doc, m);
-      n++;
-      if(r.date > top) top = r.date;
+    let n = 0, top = since, drive = null, archiveError = '';
+    try{ drive = await beginArchiveDrive(); }
+    catch(e){ return { published:0, skipped:String((e && e.message) || e) }; }
+    try{
+      for(const r of rows){
+        if(!r || !r.doc) continue;
+        const old = S.msgs.get(r.doc);
+        if(old && !needsArchiveUpgrade(r, old)) { if(r.date > top) top = r.date; continue; }
+        // The contact's name is resolved on the phone against the phone's OWN address book and
+        // carried, so a laptop — which has no phone book — shows a name instead of a number.
+        const m = fromRow(r);
+        let ok = false;
+        try{ ok = await publishOne(m); }
+        catch(e){ archiveError = String((e && e.message) || e); ok = false; }
+        if(!ok) break;                 // the relay stopped taking them; the mark stays where it was
+        S.msgs.set(m.doc, m);
+        n++;
+        if(r.date > top) top = r.date;
+      }
+    }finally{
+      try{ await endArchiveDrive(drive); }
+      catch(e){ archiveError = String((e && e.message) || e); }
     }
     if(n){ rebuild(); }
     // Advanced only past messages that really landed. A partial batch resumes; it never skips.
     try{ if(top > since) localStorage.setItem(HWM(), String(top)); }catch(_){ }
-    return { published:n };
+    return { published:n, skipped:archiveError || undefined };
   }
 
   /* ON THE PHONE, THE PHONE IS THE SOURCE. This is what an SMS app is.

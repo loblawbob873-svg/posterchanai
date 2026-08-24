@@ -96,6 +96,19 @@ class ThreadsHoldBothKinds(unittest.TestCase):
 @unittest.skipIf(shutil.which("node") is None, "node not installed")
 class TheArchive(unittest.TestCase):
 
+    def test_body_and_picture_are_committed_to_encrypted_drive_folders(self):
+        """A successful relay event is not enough: other devices find bytes through FilesIdx. The
+        transaction must persist both folders before Android is free to freeze the WebView."""
+        res = run(rows=[picture(2)], steps=["load", "mirror"])
+        self.assertEqual(res["drive"]["batch"], 0, "the drive transaction was left open")
+        self.assertIn("Messages", res["drive"]["folders"])
+        self.assertIn("MMS", res["drive"]["folders"])
+        self.assertTrue(any(f["folder"] == "Messages" for f in res["drive"]["files"]),
+                        "the encrypted message body is not indexed")
+        self.assertTrue(any(f["folder"] == "MMS" for f in res["drive"]["files"]),
+                        "the MMS original/preview is not indexed")
+        self.assertTrue(calls_of(res, "driveEnd"), "FilesIdx was never durably committed")
+
     def test_it_names_the_attachments_and_does_not_claim_to_hold_them(self):
         """A laptop that knows a message carried a photo can say where it is. What it must not do is
         draw an empty bubble — and what it must not carry is the handset's provider row id, which

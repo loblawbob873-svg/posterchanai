@@ -93,6 +93,16 @@ class Shell(unittest.TestCase):
         self.assertLessEqual(len(rows[0]["label"]), 48)
         self.assertTrue(rows[0]["label"].endswith("…"))
 
+    def test_native_taskbar_uses_the_installed_apps_real_icon(self):
+        bridges = """{ pcWM: { windows: async () => [], focus: async () => true },
+                       pcApps: { list: async () => ({ apps: [
+                         { id:'firefox-bin', name:'Firefox', match:'firefox-bin',
+                           argv:['/usr/bin/firefox-bin'], iconUri:'data:image/png;base64,REAL' }
+                       ] }) } }"""
+        out = self.run_js("await S.machineApps(); out.r=S.taskbarRows(["
+                          "{id:7,app:'firefox',title:'Firefox'}]);", bridges)
+        self.assertEqual(out["r"][0]["iconUri"], "data:image/png;base64,REAL")
+
     def test_the_machines_own_apps_join_the_launcher(self):
         """"Should be able to manage/open any game/app under PosterChan Desktop." The built-in list
         is three entries; everything else installed on the machine comes from the .desktop scan."""

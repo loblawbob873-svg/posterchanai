@@ -108,7 +108,7 @@
    * comparator, the view mode, the byte formatter, the prompts. Reaching back into app.js for those
    * is how a module ends up depending on a private name that gets renamed.
    */
-  let _path = '', _sel = new Set(), _hidden = false, _home = '';
+  let _path = '', _sel = new Set(), _hidden = false, _home = '', _clipboard = null;
 
   const state = () => ({ path: _path, hidden: _hidden });
   const at = () => _path;
@@ -186,13 +186,17 @@
       if(details) return (u.row || (() => ''))({
         dir: e.dir, selected: sel, name: e.name + (e.link ? ' ↗' : ''), title: e.path,
         icon: ic, size: e.dir ? '' : fmt(e.size), type: e.dir ? 'Folder' : typeName(ext),
-        when: when(e.mtime), box: '', acts: '',
+        when: when(e.mtime),
+        box: `<button class="selbox hf-select" type="button" aria-label="${sel ? 'Deselect' : 'Select'} ${H(e.name)}"
+          aria-pressed="${sel ? 'true' : 'false'}">${sel ? '✓' : ''}</button>`, acts: '',
       });
       /* TILES use the drive's own `.file-card` + `.file-icon` + `.meta` shape. The `data-p`/`data-d`
        * attributes are this source's own and are what the handlers below select on — the drive keys
        * its cards on a hash, and a path is not one. */
       return `<div class="file-card${sel ? ' selected' : ''}${e.dir ? ' isdir' : ''}"
            data-p="${H(e.path)}" data-d="${e.dir ? '1' : ''}" title="${H(e.path)}">
+        <button class="selbox hf-select" type="button" aria-label="${sel ? 'Deselect' : 'Select'} ${H(e.name)}"
+          aria-pressed="${sel ? 'true' : 'false'}">${sel ? '✓' : ''}</button>
         <div class="file-icon">${ic}<span>${H(e.dir ? 'folder' : (ext || ''))}</span></div>
         <div class="meta"><span class="fname" title="${H(e.name)}">${H(e.name)}</span>
           <span class="fc-acts">${e.dir ? '' : H(fmt(e.size))}</span></div></div>`;
@@ -250,11 +254,14 @@
       + `<div class="fx-actions">
            <button class="btn btn-ghost small hf-up"${listing.parent ? '' : ' disabled'}>Up</button>
            <button class="btn btn-ghost small hf-new">New folder</button>
+           ${_clipboard ? `<button class="btn btn-cyan small hf-paste">${_clipboard.move ? 'Move' : 'Paste'} here</button>` : ''}
            <button class="btn btn-ghost small hf-hidden">${_hidden ? 'Hide dotfiles' : 'Show dotfiles'}</button>
            <span class="spacer"></span>
            ${_sel.size ? `<span class="muted small">${_sel.size} selected</span>
              ${oneSelected && typeof u.shareFile === 'function'
                ? '<button class="btn btn-cyan small hf-share">Share with Blossom</button>' : ''}
+             <button class="btn btn-ghost small hf-copy">Copy</button>
+             <button class="btn btn-ghost small hf-cut">Cut</button>
              <button class="btn btn-ghost small hf-rename"${_sel.size === 1 ? '' : ' disabled'}>Rename</button>
              <button class="btn btn-ghost small hf-del">Move to trash</button>` : ''}
          </div>
@@ -275,6 +282,15 @@
 
     if(listing.parent){ const up = $('.hf-up'); if(up) up.onclick = () => { enter(listing.parent); again(); }; }
     $('.hf-hidden').onclick = () => { _hidden = !_hidden; again(); };
+    const paste = $('.hf-paste');
+    if(paste) paste.onclick = async () => {
+      paste.disabled = true;
+      try{
+        await HOST().transfer(_clipboard.paths, _path, _clipboard.move);
+        _clipboard = null;
+      }catch(e){ u.toast(String((e && e.message) || e)); }
+      again();
+    };
     $('.hf-new').onclick = async () => {
       let name = '';
       try{ name = await u.prompt('Name for the new folder', { ok: 'Create' }); }catch(_){ return; }
@@ -286,6 +302,12 @@
     const byPath = new Map(rows.map(r => [r.path, r]));
     $$('#hf-grid .file-card[data-p]').forEach(el => {
       const p = el.dataset.p;
+      const select = el.querySelector('.hf-select');
+      if(select) select.onclick = (ev) => {
+        ev.preventDefault(); ev.stopPropagation();
+        if(_sel.has(p)) _sel.delete(p); else _sel.add(p);
+        again();
+      };
       el.onclick = (ev) => {
         /* A MODIFIER SELECTS, A PLAIN CLICK OPENS. On a folder "open" means walk into it; on a file
          * it means hand it to whatever this machine opens that kind of file with. */
@@ -307,6 +329,9 @@
     });
 
     if(_sel.size){
+      const remember = (move) => { _clipboard = { paths:[..._sel], move:!!move }; _sel = new Set(); again(); };
+      $('.hf-copy').onclick = () => remember(false);
+      $('.hf-cut').onclick = () => remember(true);
       const sh = $('.hf-share');
       if(sh && oneSelected) sh.onclick = async () => {
         sh.disabled = true;

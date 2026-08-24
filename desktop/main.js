@@ -1214,7 +1214,11 @@ ipcMain.handle('pc:wm:handoff-frame', async (e, payload, direction) => {
     width:Number(p.width)||0, height:Number(p.height)||0, direction:String(direction||''),
     overflow:Number(p.overflow)||0,
     scrollTop:Math.max(0,Number(p.scrollTop)||0),
-    terminalSid:String(p.terminalSid||'')
+    terminalSid:String(p.terminalSid||''),
+    state:(()=>{ try{
+      const s=p.state==null?null:JSON.parse(JSON.stringify(p.state));
+      return s!=null && JSON.stringify(s).length<=512*1024 ? s : null;
+    }catch(_){ return null; } })()
   });
   await wm().focus(Number(record.conId));
   return {output:record.assignment.output,workspace:record.assignment.workspace};
@@ -1230,6 +1234,10 @@ ipcMain.handle('pc:wm:preview-frame', (e, payload, direction) => {
 ipcMain.handle('pc:wm:hide', (e, id) => { fsGuard(e); return wm().hide(Number(id)); });
 ipcMain.handle('pc:wm:show', (e, id) => { fsGuard(e); return wm().show(Number(id)); });
 ipcMain.handle('pc:wm:fullscreen', (e, id, on) => { fsGuard(e); return wm().fullscreen(Number(id), !!on); });
+ipcMain.handle('pc:wm:decorate', (e, id) => {
+  fsGuard(e);
+  return wm().command('[con_id=' + Number(id) + '] border normal 3');
+});
 ipcMain.handle('pc:display:status', (e) => { fsGuard(e); return displays().status(); });
 ipcMain.handle('pc:display:preview', (e, rows) => { fsGuard(e); return displays().preview(rows); });
 ipcMain.handle('pc:display:confirm', (e, token) => { fsGuard(e); return displays().confirm(token); });
@@ -1357,20 +1365,26 @@ ipcMain.handle('pc:apps:list', (e) => {
    * Cached by NAME across the loop: a desktop full of one toolkit's apps shares icons, and this is
    * called every time the start menu is opened. */
   const iconCache = new Map();
-  const uriFor = (n) => {
-    if (!n) return '';
-    if (!iconCache.has(n)) {
+  const uriFor = (a) => {
+    const argv0 = a && a.argv && a.argv[0] ? path.basename(a.argv[0]) : '';
+    const candidates = [a && a.icon, argv0, String(argv0).replace(/-bin$/i, ''),
+      String(a && a.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-')].filter(Boolean);
+    const key = candidates.join('\n');
+    if (!iconCache.has(key)) {
       let u = '';
-      try { u = A.iconDataUri(n); } catch (_) { u = ''; }
-      iconCache.set(n, u);
+      for (const n of candidates) {
+        try { u = A.iconDataUri(n); } catch (_) { u = ''; }
+        if (u) break;
+      }
+      iconCache.set(key, u);
     }
-    return iconCache.get(n);
+    return iconCache.get(key);
   };
   for (const a of scanned.apps) {
     if (a.terminal && !term) continue;   // nothing could run it, so offering it is a dead button
     apps.push(Object.assign({}, a, {
       argv: a.terminal ? term.concat(a.argv) : a.argv,
-      iconUri: uriFor(a.icon),
+      iconUri: uriFor(a),
     }));
   }
   /* `skipped` is carried, counted rather than listed: "why is Foo not in my menu" is a real
@@ -1405,6 +1419,10 @@ ipcMain.handle('pc:host:rename', (e, from, to) => {
   fsGuard(e); return hostfs().rename(String(from || ''), String(to || ''));
 });
 ipcMain.handle('pc:host:trash', (e, target) => { fsGuard(e); return hostfs().trash(String(target || '')); });
+ipcMain.handle('pc:host:transfer', (e, items, destination, move) => {
+  fsGuard(e);
+  return hostfs().transfer(Array.isArray(items) ? items.map(String) : [], String(destination || ''), !!move);
+});
 ipcMain.handle('pc:host:read', (e, target, max) => {
   fsGuard(e);
   const p = hostfs().clean(String(target || ''));

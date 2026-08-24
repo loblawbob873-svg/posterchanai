@@ -126,6 +126,7 @@ if (isOurPage) {
     hide: (id) => ipcRenderer.invoke('pc:wm:hide', Number(id)),
     show: (id) => ipcRenderer.invoke('pc:wm:show', Number(id)),
     fullscreen: (id, on) => ipcRenderer.invoke('pc:wm:fullscreen', Number(id), !!on),
+    decorate: (id) => ipcRenderer.invoke('pc:wm:decorate', Number(id)),
     /* An ARGV ARRAY, never a command string — a string would have to reach a shell to be useful,
      * and then a file name with a space in it is an injection. */
     launch: (argv, opts) => ipcRenderer.invoke('pc:wm:launch', (argv || []).map(String), opts || {}),
@@ -259,6 +260,8 @@ if (isOurPage) {
     mkdir: (dir, name) => ipcRenderer.invoke('pc:host:mkdir', String(dir || ''), String(name || '')),
     rename: (from, to) => ipcRenderer.invoke('pc:host:rename', String(from || ''), String(to || '')),
     trash: (target) => ipcRenderer.invoke('pc:host:trash', String(target || '')),
+    transfer: (items, destination, move) => ipcRenderer.invoke('pc:host:transfer',
+      Array.isArray(items) ? items.map(String) : [], String(destination || ''), !!move),
     read: (target, max) => ipcRenderer.invoke('pc:host:read', String(target || ''), Number(max) || 0)
       .then((b) => new Uint8Array(b)),
     open: (target) => ipcRenderer.invoke('pc:host:open', String(target || '')),

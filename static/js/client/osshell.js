@@ -179,7 +179,12 @@
       if(!app || /^posterchan(-desktop)?$/.test(app)) continue;
       const title = String(w.title || '').trim();
       if(!title) continue;
+      const low=app.toLowerCase();
+      const same=(x,y)=>x===y || x.startsWith(y+'-') || x.startsWith(y+'.') || x.startsWith(y+'_')
+                              || y.startsWith(x+'-') || y.startsWith(x+'.') || y.startsWith(x+'_');
+      const meta=(_apps||[]).find(a=>same(String(a.match||'').toLowerCase(),low));
       rows.push({ id: w.id, app, title, focused: !!w.focused, stashed: !!w.stashed,
+                  iconUri:meta ? String(meta.iconUri||'') : '', icon:'grid',
                   workspace: String(w.workspace || ''), xwayland: !!w.xwayland,
                   /* The label a person recognises: the window's own title, which is the page or the
                    * document — the app name is what the ICON says. */

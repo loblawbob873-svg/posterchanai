@@ -951,7 +951,7 @@
      * is one of the few places a stray value turns into a request — an http(s) one from the app://
      * origin would be a menu that phones out because somebody's .desktop file said so. */
     if(u.slice(0, 5) === 'data:') return `<img class="os-app-ic" src="${enc(u)}" alt="" loading="lazy">`;
-    return iconSvg((a && a.icon) || 'grid');
+    return iconSvg((a && a.icon) || 'i-grid');
   }
 
   /* The sidebar's own <use href> values carry the '#', but every hand-written call site here passes
@@ -1835,6 +1835,7 @@
    * compositor's task metadata; Sway owns geometry, decoration, input, and monitor handoff. */
   let nativeTasks = [];
   let nativeMenuHidden = [];
+  const _nativeDecorated = new Set();
 
   async function _nativeMenuLayer(opening){
     if(!window.pcWM) return;
@@ -2191,6 +2192,13 @@
     let changed = JSON.stringify(nativeTasks.map(r => [r.id,r.title,r.focused,r.stashed]))
                !== JSON.stringify(rows.map(r => [r.id,r.title,r.focused,r.stashed]));
     nativeTasks = rows;
+    const alive = new Set(rows.map(r => Number(r.id)));
+    for(const id of [..._nativeDecorated]) if(!alive.has(id)) _nativeDecorated.delete(id);
+    if(pcWM.decorate) for(const r of rows){
+      const id=Number(r.id); if(!id || _nativeDecorated.has(id)) continue;
+      _nativeDecorated.add(id);
+      Promise.resolve(pcWM.decorate(id)).catch(()=>_nativeDecorated.delete(id));
+    }
     /* Remove frames created by an older renderer without touching their real applications. This
      * also makes Ctrl+Alt+Backspace a safe migration path during an update. */
     for(const w of nativeWins().slice()){
@@ -2575,7 +2583,9 @@
                        scrollTop:Math.max(0,Number(realFeed&&realFeed.parentElement===w.body
                          ? realFeed.scrollTop : w.slot&&w.parked ? w.slot.scrollTop : w.scrollTop)||0),
                        terminalSid:w.view==='terminal'&&window.PCTerm&&PCTerm.sessionId
-                         ? PCTerm.sessionId() : ''};
+                         ? PCTerm.sessionId() : '',
+                       state:w.view==='websearch'&&window.PCWebSearch&&PCWebSearch.handoffState
+                         ? PCWebSearch.handoffState() : null};
         Promise.resolve(pcWM.handoffFrame(payload,handoff)).then(result=>{
           if(result) closeWin(w,{preserveFocus:true});
           else { keepFrameReachable(w); _natGesture(w,false); if(nativeWins().length)nsync(); }
@@ -4886,7 +4896,7 @@
          + nativeTasks.map(w =>
          `<button class="os-task${w.focused && !w.stashed ? ' on' : ''}"
                   data-id="${w.id}" data-kind="native" title="${enc(w.title)}">
-            ${iconSvg('i-grid')}<span>${enc(w.title)}</span></button>`).join('')}</div>
+            ${appIcon(w)}<span>${enc(w.title)}</span></button>`).join('')}</div>
        <div class="os-tray">
          <div class="os-sys" id="os-shell"></div>
          <button class="os-net net-${netNow.level}${netOpen ? ' on' : ''}" id="os-net"
@@ -5854,6 +5864,8 @@
             if(!p || !p.view) return;
             if(p.view==='terminal' && p.terminalSid && window.PCTerm && PCTerm.adoptSession)
               PCTerm.adoptSession(p.terminalSid);
+            if(p.view==='websearch' && p.state && window.PCWebSearch && PCWebSearch.acceptHandoff)
+              PCWebSearch.acceptHandoff(p.state);
             const w=openApp(String(p.view), String(p.title||''), String(p.icon||''));
             if(!w) return;
             const ww=Math.max(MIN_W,Math.min(vwL()-24,Number(p.width)||w.el.offsetWidth));
