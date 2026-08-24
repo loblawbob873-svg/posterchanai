@@ -1473,7 +1473,7 @@
           if(done) return;
           if(ws && ws.readyState !== 1){ try{ ws.onopen=ws.onerror=ws.onmessage=null; ws.close(); }catch(_){} }
           fin(rej, new Error('signer relay timed out'));
-        }, 9000);
+        }, 20000);
       });
       this._opening[relay] = p;
       return p;
@@ -1502,7 +1502,7 @@
           clearTimeout(to);
           rej(new Error('no signer relay is reachable right now — try again in a minute')); };
         const to=setTimeout(()=>{ if(!opened)
-          rej(new Error('signer relays timed out')); }, ms||9000);
+          rej(new Error('signer relays timed out')); }, ms||20000);
         urls.forEach(url=>{
           this._want(url);
           // A relay that fails HERE is retried too. It is in the session's list either because the
@@ -2341,7 +2341,7 @@
           if(!this.list().some(s => s.relay === relay)) return;
           this._reopen(relay);
         };
-        setTimeout(()=>{ if(!done){ done=true; rej(new Error('relay timed out')); } }, 9000);
+        setTimeout(()=>{ if(!done){ done=true; rej(new Error('relay timed out')); } }, 20000);
       });
     },
     /* Keep trying, with backoff, for as long as a pairing still needs this relay.

@@ -93,8 +93,12 @@ CHECKS = {
                                               live_args=["5", "{live}"]),
     "check_timeline_ghosts":           dict(group="live", secs=600),
     "check_websearch_pages":           dict(group="live", secs=420),
-    "check_webxdc_gallery":            dict(group="live", secs=420),
-    "check_url_reading":               dict(group="live", secs=900,
+    # Both checks put sustained pressure on resources shared by the production instance. Running
+    # them beside the other Chrome drivers made Webxdc inspect a route before it rendered and made
+    # URL reading receive a partial profile body. Each passes repeatedly in isolation, so serialize
+    # the resource-heavy integration work instead of publishing from a race-prone gate.
+    "check_webxdc_gallery":            dict(group="live", secs=420, serial=True),
+    "check_url_reading":               dict(group="live", secs=900, serial=True,
                                               live_args=["--base", "{live}"]),
     # Bundles the desktop app's www/ and then wants an instance for the non-standalone half.
     "check_desktop_standalone":        dict(group="ui", secs=600),

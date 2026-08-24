@@ -62,6 +62,12 @@ DRIVE = r"""(async () => {
 
   const grid = feed.querySelector('.xdc-grid');
   const tiles = [...feed.querySelectorAll('.xdc-tile')];
+  /* The real route renderer is asynchronous and may replace #feed while this harness deliberately
+   * waits for a dead cover's onerror. That is neither a layout result nor an exception: tell the
+   * driver to inject and measure again once the route has settled. */
+  if (!grid || tiles.length < 3 || !tiles[0].querySelector('.xdc-cover')
+      || !tiles[2].querySelector('.xdc-tmeta b') || !tiles[0].querySelector('.xdc-tplay'))
+    return { retry:true };
   const gs = getComputedStyle(grid);
   // How many tiles share the topmost row — the honest way to count columns, since the
   // grid-template-columns string is the unresolved `repeat(auto-fill, …)` on some engines.
@@ -156,7 +162,12 @@ async def drive(url):
                 if not ok:
                     print("SKIP  the client never exposed PCWebxdc.__galTile")
                     return 2
-                r = await js(DRIVE, awaited=True)
+                r = None
+                for _ in range(6):
+                    r = await js(DRIVE, awaited=True)
+                    if r and not r.get("retry"):
+                        break
+                    await asyncio.sleep(0.35)
                 if not r:
                     problems.append((label, "harness", "the grid did not evaluate"))
                     continue
@@ -208,6 +219,11 @@ async def drive(url):
                     problems.append((label, "no-play", f"Play is {r['playW']}px wide"))
     finally:
         proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
         subprocess.run(["rm", "-rf", PROFILE], check=False)
 
     if problems:
