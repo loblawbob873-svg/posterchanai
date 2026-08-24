@@ -170,15 +170,29 @@ DESKTOP_SHOW_QR = r"""(async () => {
   document.body.classList.remove('guest');
   $('#auth-gate').classList.remove('hidden'); $('#app').classList.add('hidden');
   $('#auth-login').classList.remove('hidden');
-  $('#btn-amber').click(); await sleep(60);
-  $('#btn-amber-nc').click();
+  /* The HTML exists before initAuth wires its handlers. Waiting only for #btn-amber made a fast
+   * headless run click a perfectly real but inert button and then blame the signer 25 seconds
+   * later. Readiness here means the shipped handler is attached. */
+  for (let i=0;i<80 && typeof $('#btn-amber').onclick !== 'function';i++) await sleep(100);
+  if(typeof $('#btn-amber').onclick !== 'function')
+    return {uri:'', err:'the sign-in controls never became interactive'};
+  $('#btn-amber').click();
+  for (let i=0;i<40;i++){ await sleep(100);
+    const b=$('#btn-amber-nc');
+    /* The auth card is fixed-position, for which Chromium may report offsetParent=null even while
+     * it is visible. Handler + enabled is the reliable readiness signal. */
+    if(b && typeof b.onclick === 'function' && !b.disabled){ b.click(); break; }
+  }
   for (let i=0;i<100;i++){ await sleep(250);
     const u = ($('#amber-nc-uri')||{}).textContent||'';
     if (u) return { uri:u, err:'' };
     const e = ($('#amber-error')||{}).textContent||'';
     if (e) return { uri:'', err:e };
   }
-  return { uri:'', err:'the desktop never produced a nostrconnect link' };
+  const b=$('#btn-amber-nc'), p=$('#amber-nc-pane');
+  return { uri:'', err:'the desktop never produced a nostrconnect link',
+    button:!!b, visible:!!(b&&b.offsetParent!==null), disabled:!!(b&&b.disabled),
+    pane:!!p, paneHidden:!!(p&&p.classList.contains('hidden')) };
 })()"""
 
 # Signer → Sign in another device → Scan QR code → "paste link instead". The camera path needs a
@@ -444,7 +458,8 @@ async def run_two_apps(desktop, phone, url, problems):
                 break
             await asyncio.sleep(3)
         if not q.get("uri"):
-            problems.append(("two-apps", q.get("err") or "no nostrconnect link", f"app {i}"))
+            problems.append(("two-apps", q.get("err") or "no nostrconnect link",
+                             f"app {i}; ui={json.dumps(q, sort_keys=True)}"))
             return None
         uris.append(q["uri"])
         s = await phone.js(f"({PHONE_SCAN_AGAIN})({json.dumps(q['uri'])})") or {}
