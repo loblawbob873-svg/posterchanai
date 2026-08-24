@@ -7654,8 +7654,9 @@ body.os-on #os-root{pointer-events:auto}
 
 /* The Music APP — a player, not the file manager's Music folder. */
 .music-app{display:flex;flex-direction:column;gap:9px;padding:10px 12px;min-height:0;height:100%}
-.ma-now{display:flex;align-items:center;gap:9px 11px;flex-wrap:wrap;padding:10px 12px;border-radius:14px;
-  background:var(--panel2);border:1px solid var(--line)}
+.ma-now{position:relative;isolation:isolate;overflow:hidden;display:flex;align-items:center;gap:9px 11px;
+  flex-wrap:wrap;padding:10px 12px;border-radius:14px;background:var(--panel2);border:1px solid var(--line)}
+.ma-now>*:not(.ma-viz){position:relative;z-index:1}
 .ma-art{width:44px;height:44px;border-radius:10px;flex:0 0 auto;display:flex;align-items:center;
   justify-content:center;background:linear-gradient(135deg,rgba(var(--accent-rgb),.28),transparent);
   border:1px solid var(--line)}
@@ -7665,9 +7666,8 @@ body.os-on #os-root{pointer-events:auto}
 .ma-ctl{display:flex;align-items:center;justify-content:center;gap:9px;flex-wrap:nowrap}
 .ma-ctl .btn{width:36px;height:36px;padding:0;justify-content:center;border-radius:50%}
 .ma-ctl #ma-play{width:44px;height:44px;box-shadow:0 0 18px rgba(var(--accent-rgb),.35)}
-.ma-viz{display:block;flex:1 1 100%;width:100%;height:38px;min-height:38px;border-radius:8px;
-  background:radial-gradient(ellipse at bottom,rgba(0,240,255,.12),transparent 72%);
-  border:1px solid rgba(0,240,255,.14)}
+.ma-viz{display:block;position:absolute;z-index:0;inset:0;width:100%;height:100%;opacity:.34;
+  pointer-events:none;background:radial-gradient(ellipse at bottom,rgba(0,240,255,.13),transparent 72%)}
 .ma-tools{flex:1 1 100%;display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap}
 /* The Music app's seek row. Full width of the panel (flex-basis 100% in a wrapping .ma-now), so the
  * bar is never squeezed to a stub by the buttons beside it. `touch-action:none` is load-bearing on a
@@ -7734,11 +7734,14 @@ body.os-on #os-root{pointer-events:auto}
 .music-app .music-list{flex:1;min-height:0;overflow-y:auto}
 @media(max-width:560px){
   .music-app{padding:7px 8px;gap:7px}
-  .ma-now{justify-content:center;padding:8px;gap:7px 9px}
-  .ma-meta{flex-basis:calc(100% - 55px)}
-  .ma-ctl{flex:1 1 100%;order:3}
-  .ma-viz{order:4;height:34px;min-height:34px}.ma-seek-row{order:5}
-  .ma-tools{order:6;justify-content:center}.ma-eq{order:7}
+  .ma-now{justify-content:center;padding:7px 8px;gap:6px 7px}
+  .ma-art{display:none}
+  .ma-meta{flex:1 1 76px}.ma-meta b{font-size:13px}.ma-meta .small{font-size:10px}
+  .ma-ctl{flex:0 0 auto;order:2;gap:4px}
+  .ma-ctl .btn{width:32px;height:32px}.ma-ctl #ma-play{width:38px;height:38px}
+  .ma-viz{order:0}.ma-seek-row{order:5}
+  .ma-tools{order:6;justify-content:center}.ma-tools .btn{min-height:32px;padding:5px 9px}
+  .ma-eq{order:7}
   .ma-eq-bands{grid-template-columns:1fr;gap:8px}
 }
 
@@ -7798,7 +7801,8 @@ html.os-on #upload-badge.upbadge{z-index:333}
    and `overscroll-behavior:contain` so a flick at the end of the list stops there instead of
    scrolling the desktop behind it, which is what "not scrollable" feels like from the other side. */
 .os-startmenu{position:absolute;inset-inline-start:10px;bottom:56px;
-  width:min(780px,calc(100vw - 20px));max-height:min(84vh,760px);
+  width:min(780px,calc(100vw - 20px));height:min(920px,calc(100vh - 78px));
+  max-height:calc(100vh - 78px);
   display:flex;flex-direction:column;gap:10px;padding:16px;border-radius:16px;
   /* --panel is translucent by design (rgba .72), which over a wallpaper leaves the app list reading
      through it. Paint the panel tint over an OPAQUE base so the menu keeps its colour and stops
@@ -8302,7 +8306,7 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
 .short-card{position:relative;height:100%;scroll-snap-align:start;scroll-snap-stop:always;
   background:#000;overflow:hidden;border-radius:14px;margin-bottom:10px}
 .short-media,.short-media video,.short-media img{position:absolute;inset:0;width:100%;height:100%;
-  object-fit:contain;background:#000}
+  object-fit:cover;background:#000}
 .short-top{position:absolute;top:10px;right:10px;z-index:3}
 .short-top .short-mute{background:rgba(0,0,0,.55);color:#fff;border:none;border-radius:50%;
   width:38px;height:38px;font-size:16px}
@@ -8338,7 +8342,8 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
   text-shadow:0 1px 3px rgba(0,0,0,.85)}
 .short-tile-a img{width:16px;height:16px;border-radius:50%;flex:none}
 .short-top{display:flex;justify-content:space-between;left:10px;right:10px;position:absolute;top:10px;z-index:3}
-.short-back{background:rgba(0,0,0,.55);color:#fff;border:none;border-radius:10px;padding:6px 12px}
+.short-back{background:rgba(18,10,35,.92);color:#fff;border:1px solid var(--neon);border-radius:10px;
+  min-height:42px;padding:8px 14px;font-weight:800;box-shadow:0 0 16px rgba(var(--accent-rgb),.42)}
 
 /* Files → the per-device trash block: subordinate to the folder chips, never dressed like them */
 /* The .fx-trash block is gone: the trash is browsed as a folder in the ordinary listing now,
@@ -8768,3 +8773,142 @@ audio.sms-att-img{min-width:220px}
 .os-liveusb-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}.os-liveusb-grid>div{display:flex;flex-direction:column;gap:12px;padding:15px;border:1px solid #2a303c;border-radius:10px;background:#0b0e14}.os-liveusb-grid h3{margin:0;font-size:16px}.os-liveusb-grid label{display:flex;flex-direction:column;gap:6px;color:var(--muted);font-size:12px}.os-liveusb-grid label:has(input[type=checkbox]){display:block}.os-liveusb-grid select{width:100%;padding:8px;background:#111722;color:var(--text);border:1px solid var(--line);border-radius:6px}.os-path-pick{display:flex;gap:7px}.os-path-pick input{flex:1;min-width:0}.os-liveusb .danger{border-color:#9b4050;color:#ff91a5}.os-liveusb-status{min-height:38px;max-height:120px;margin:14px 0 0;padding:10px;overflow:auto;white-space:pre-wrap;background:#080a0f;border:1px solid #252a35;border-radius:7px;color:#aab3c4}
 @media(max-width:760px){.os-settings{grid-template-columns:1fr}.os-set-nav{display:none}.os-display-controls{grid-template-columns:1fr}}
 @media(max-width:900px){.os-liveusb-grid{grid-template-columns:1fr}}
+
+/* ═══ PosterChan Code ═════════════════════════════════════════════════════════════════════════
+ *
+ * NOT ONE HARD-CODED COLOUR IN HERE, and that is not tidiness — this client ships seven-plus themes
+ * (cherryblossom and professional are LIGHT, win98 has no glow and no radius), and each redefines
+ * the same palette variables. A literal hex here would look correct on the dark flagship and wrong
+ * everywhere else, which is precisely how a feature ends up "broken" only for the people who
+ * changed the theme.
+ *
+ * The syntax colours are derived from that same palette rather than being a set of their own, so a
+ * new theme themes the editor for free and can never leave a token unreadable against its own
+ * background. */
+:root{
+  --code-com: var(--muted);
+  --code-str: var(--green);
+  --code-kw:  var(--neon2);
+  --code-num: var(--amber);
+  --code-fn:  var(--neon);
+  --code-var: var(--cyan);
+  --code-key: var(--neon);
+  --code-op:  var(--text);
+}
+
+.feed-code{display:flex;flex-direction:column;min-height:0;padding:0;overflow:hidden}
+.pcc{display:flex;flex-direction:column;flex:1;min-height:0;background:var(--bg2);color:var(--text)}
+.pcc-main{display:flex;flex:1;min-height:0}
+
+/* ---- file tree ---- */
+.pcc-side{width:var(--pcc-side,250px);flex:0 0 var(--pcc-side,250px);min-width:0;
+  display:flex;flex-direction:column;background:var(--panel);border-right:1px solid var(--line)}
+.pcc-crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:2px;padding:var(--sp-2);
+  border-bottom:1px solid var(--line);font-size:var(--fs-0)}
+.pcc-crumb{background:none;border:0;color:var(--neon);cursor:pointer;padding:2px 4px;
+  border-radius:var(--r-sm);font-size:var(--fs-0);font-family:inherit}
+.pcc-crumb:hover{background:var(--panel2)}
+.pcc-sep{color:var(--muted);opacity:.6}
+.pcc-tree{flex:1;min-height:0;overflow:auto;padding:var(--sp-1)}
+.pcc-item{display:flex;align-items:center;gap:var(--sp-2);width:100%;text-align:left;
+  background:none;border:0;color:var(--text);cursor:pointer;padding:5px var(--sp-2);
+  border-radius:var(--r-sm);font-size:var(--fs-1);font-family:inherit}
+.pcc-item:hover{background:var(--panel2)}
+.pcc-item.on{color:var(--neon)}
+.pcc-nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pcc-ic{flex:none}
+.pcc-root{padding:var(--sp-2);border-top:1px solid var(--line);color:var(--muted);
+  font-size:var(--fs-0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+.pcc-note{padding:var(--sp-3);color:var(--muted);font-size:var(--fs-1)}
+.pcc-note.err{color:var(--danger)}
+
+/* ---- drag handles ---- */
+.pcc-grip{flex:none;background:transparent;position:relative;z-index:2}
+.pcc-grip-v{width:6px;cursor:col-resize;margin:0 -3px}
+.pcc-grip-h{height:6px;cursor:row-resize;margin:-3px 0}
+.pcc-grip:hover{background:rgba(var(--accent-rgb),.35)}
+
+/* ---- editor pane ---- */
+.pcc-pane{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0}
+.pcc-tabs{display:flex;gap:2px;overflow-x:auto;background:var(--panel);border-bottom:1px solid var(--line)}
+.pcc-tab{display:flex;align-items:center;gap:var(--sp-1);padding:var(--sp-2) var(--sp-3);
+  cursor:pointer;font-size:var(--fs-1);color:var(--muted);border-right:1px solid var(--line);
+  white-space:nowrap;flex:none}
+.pcc-tab.on{color:var(--text);background:var(--bg2)}
+/* The unsaved dot: a MARK, never colour alone — win98's palette has no reliable accent and a
+   colour-only cue is invisible to a good share of people in any theme. */
+.pcc-tab.dirty .pcc-tabname::after{content:' \25CF';color:var(--amber)}
+.pcc-x{background:none;border:0;color:inherit;cursor:pointer;font-size:var(--fs-2);line-height:1;
+  padding:0 2px;border-radius:var(--r-sm);opacity:.6}
+.pcc-x:hover{opacity:1;background:var(--panel2)}
+.pcc-bar{display:flex;align-items:center;gap:var(--sp-2);padding:var(--sp-2);
+  background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+.pcc-b{font-size:var(--fs-0);padding:4px 10px}
+.pcc-grow{flex:1}
+.pcc-lang{color:var(--muted);font-size:var(--fs-0);font-family:var(--mono)}
+.pcc-blank{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:var(--sp-2);color:var(--muted)}
+.pcc-blank b{color:var(--text);font-size:var(--fs-3)}
+
+/* ---- the two stacked layers ----
+ * EVERY METRIC THAT AFFECTS GLYPH POSITION IS DECLARED ONCE, on the class BOTH layers carry. Font,
+ * size, line-height, letter-spacing, tab-size, padding, white-space and word-break: if the <pre>
+ * and the <textarea> disagree about any single one of them, the colours slide off the letters —
+ * progressively, so it looks fine on line 1 and is a mess by line 60. */
+.pcc-editwrap{flex:1;min-height:0;display:flex;overflow:hidden;background:var(--bg)}
+.pcc-layer{
+  margin:0;
+  padding:var(--sp-2) var(--sp-3);
+  font-family:var(--mono);
+  font-size:13px;
+  line-height:1.5;
+  letter-spacing:0;
+  tab-size:4;
+  -moz-tab-size:4;
+  white-space:pre;
+  word-break:normal;
+  overflow-wrap:normal;
+  border:0;
+}
+.pcc-edit{position:relative;flex:1;min-width:0}
+.pcc-hl{position:absolute;inset:0;overflow:hidden;pointer-events:none;color:var(--text);
+  background:var(--bg)}
+.pcc-ta{position:absolute;inset:0;width:100%;height:100%;overflow:auto;resize:none;
+  background:transparent;
+  /* Transparent text over the coloured layer, with a caret that is still visible. `-webkit-text-fill
+     -color` is the one the WebView honours; `color` alone leaves the text painted on some builds,
+     which shows as a doubled, slightly-offset ghost of every line. */
+  color:transparent;-webkit-text-fill-color:transparent;
+  caret-color:var(--neon);outline:none}
+/* A translucent selection, so the coloured text underneath still reads through it. */
+.pcc-ta::selection{background:rgba(var(--accent-rgb),.30);-webkit-text-fill-color:transparent}
+.pcc-gutter{flex:none;text-align:right;color:var(--muted);background:var(--panel);
+  border-right:1px solid var(--line);overflow:hidden;user-select:none;min-width:3.5em}
+
+/* token colours — see the note at the top of this block */
+.pcc-hl .t-com{color:var(--code-com);font-style:italic}
+.pcc-hl .t-str{color:var(--code-str)}
+.pcc-hl .t-kw{color:var(--code-kw)}
+.pcc-hl .t-num{color:var(--code-num)}
+.pcc-hl .t-fn{color:var(--code-fn)}
+.pcc-hl .t-var{color:var(--code-var)}
+.pcc-hl .t-key{color:var(--code-key)}
+.pcc-hl .t-dec,.pcc-hl .t-ann{color:var(--code-num)}
+.pcc-hl .t-op{color:var(--code-op);opacity:.75}
+
+/* ---- status + terminal ---- */
+.pcc-foot{display:flex;align-items:center;gap:var(--sp-2);padding:3px var(--sp-3);
+  background:var(--panel);border-top:1px solid var(--line);font-size:var(--fs-0);color:var(--muted)}
+.pcc-status.ok{color:var(--green)}
+.pcc-status.err{color:var(--danger)}
+.pcc-status.warn{color:var(--amber)}
+.pcc-pos{font-family:var(--mono)}
+.pcc-term{height:var(--pcc-term,260px);flex:0 0 var(--pcc-term,260px);min-height:0;
+  border-top:1px solid var(--line);background:var(--bg)}
+
+/* Narrow screens: the tree becomes a strip rather than eating the editor. The desktop shell is
+   desktop-only anyway, but the view itself is reachable in a phone browser. */
+@media (max-width:720px){
+  .pcc-side{width:150px;flex-basis:150px}
+  .pcc-grip-v{display:none}
+}
