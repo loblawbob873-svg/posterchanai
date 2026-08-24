@@ -54,7 +54,7 @@ def test_native_task_buttons_have_an_existing_fallback_icon():
 def test_native_programs_are_not_mirrored_into_fake_html_frames():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
     assert "function adoptNative(){ return null; }" in src
-    adopt = src[src.index("async function adoptAll"):src.index("function closeWin")]
+    adopt = src[src.index("async function adoptAll"):src.index("function closeWin(w, opts)")]
     assert "nativeTasks = rows" in adopt
     assert "openApp(" not in adopt
     assert "pcWM.place" not in adopt

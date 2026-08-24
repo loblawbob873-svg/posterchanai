@@ -16,7 +16,7 @@ def test_late_xwayland_metadata_gets_a_reconciliation_pass():
 def test_native_adoption_loads_installed_icons_before_building_task_rows():
     """A machine app launched before Start opens still gets its real icon on the taskbar."""
     start = OS.index("async function adoptAll()")
-    end = OS.index("function closeWin", start)
+    end = OS.index("function closeWin(w, opts)", start)
     body = OS[start:end]
     assert body.index("await PCOSShell.machineApps()") < body.index("PCOSShell.taskbarRows(list)")
 

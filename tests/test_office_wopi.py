@@ -74,8 +74,19 @@ def test_distribution_wiring_is_present():
     install = (root / "install.sh").read_text()
     nginx = (root / "nginx/posterchanai.conf.example").read_text()
     client = (root / "static/js/client/app.js").read_text()
-    assert 'profiles: ["office"]' in compose
+    # NO PROFILE. The office editor is part of the normal bring-up now, the same way it is part of
+    # the normal ./install.sh — behind a profile it was opt-in twice over (you had to know the
+    # profile existed AND set POSTERCHANAI_OFFICE), and the 📝 button is hidden when the editor is
+    # absent, so a stack without it simply had no office and nothing said why.
+    assert 'profiles: ["office"]' not in compose, (
+        "the office service is profile-gated again, so a normal `docker compose up` brings up "
+        "everything except the editor")
     assert 'collabora/code:' in compose
+    assert 'POSTERCHANAI_OFFICE=${POSTERCHANAI_OFFICE:-1}' in compose, (
+        "the container runs but the client is told the editor is off")
     assert '"--office"' in install
+    # …and it also runs in the DEFAULT install, not only behind that flag.
+    assert 'setup_office_server ||' in install, (
+        "office is no longer installed by a plain ./install.sh, so a fresh node has no editor")
     assert "location ^~ /office-code/" in nginx
     assert "openOfficeFile" in client and "Save to Files" in client

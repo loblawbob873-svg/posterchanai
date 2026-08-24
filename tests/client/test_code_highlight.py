@@ -284,8 +284,21 @@ class TheViewIsWiredInEveryPlace(unittest.TestCase):
         self.assertIn("code:'PosterChan Code", self.app[i:i + 2000])
 
     def test_there_is_a_way_in(self):
-        i = self.app.index("const items=[['ai','ai','PosterChan AI']")
-        self.assertIn("['code',", self.app[i:i + 1500])
+        """THE SIDEBAR, not the mobile More sheet — and that is the stronger door, not a weaker one.
+
+        This used to look in the ☰ More sheet, which is a PHONE menu, and Code had no sidebar row at
+        all. The desktop shell builds its start menu and app grid by reading the sidebar
+        (`$$('.sidebar .nav .nav-item[data-view]')` in os.js), so a view with a More entry and no
+        sidebar row is reachable on a phone and NOWHERE ELSE — reported as "I don't even see it on
+        the web version". An editor for a node's files is desktop work; it belongs beside the
+        Terminal, which is the other half of the same job."""
+        self.assertIn('data-view="code"', self.html,
+                      "no sidebar row: Code is missing from the web sidebar, the desktop start menu "
+                      "and the desktop app grid all at once")
+        # Beside the Terminal, because they share a node and a gate.
+        i = self.html.index('data-view="terminal"')
+        self.assertIn('data-view="code"', self.html[i:i + 1400],
+                      "the Code row drifted away from the Terminal it belongs with")
 
     def test_a_server_less_build_does_not_offer_it(self):
         """The whole screen is the server: no workspace to open, no formatter, nothing to save to."""

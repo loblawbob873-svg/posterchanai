@@ -21,6 +21,7 @@ Two defects, and either alone reproduces it.
    refused `show` left the shell believing the window was placed. That is a latch set before the
    attempt it describes, which this codebase has been bitten by before.
 """
+import re
 import unittest
 from pathlib import Path
 
@@ -95,12 +96,32 @@ class NothingIsRecordedBeforeItSucceeds(unittest.TestCase):
 
 
 class AStashedSurfaceIsNotDrawnAsABlackWindow(unittest.TestCase):
-    def test_the_empty_frame_is_hidden_and_restored_with_the_surface(self):
+    def test_the_frame_of_a_stashed_app_stays_on_the_desktop(self):
+        """THIS ASSERTION USED TO BE ITS OWN OPPOSITE, and both versions were bugs.
+
+        A native app is a floating sway window and this desktop is the one tiled window; sway paints
+        floating above tiled, always. So the only way a PosterChan window can be usable is for the
+        app covering it to leave the screen — and its FRAME was going with it, because
+        `.osw.native-stashed` was `visibility:hidden`. An app that had merely gone behind another
+        window vanished entirely, leaving a taskbar button and nothing else: "Telegram and Firefox
+        disappear when you choose other windows".
+
+        That was then fixed by removing the covering rule instead, which left Telegram on top of
+        everything you clicked. The frame staying visible is what makes putting the surface away
+        survivable: occluded like any background window, clickable, one click from the front."""
         raw = OS_JS.read_text()
         css = (ROOT / "static" / "css" / "client.css").read_text()
         self.assertIn("it.w.el.classList.add('native-stashed')", raw)
         self.assertIn("it.w.el.classList.remove('native-stashed')", raw)
-        self.assertIn(".osw.native-stashed{visibility:hidden", css)
+        rules = "".join(f"{sel}{{{body_}}}" for sel, body_ in
+                        re.findall(r"([^{}]*)\{([^{}]*)\}", re.sub(r"/\*.*?\*/", "", css, flags=re.S))
+                        if "native-stashed" in sel)
+        self.assertTrue(rules, "no .osw.native-stashed rule at all — re-point this test")
+        self.assertNotIn("visibility:hidden", rules,
+                         "a native app that went behind another window vanished from the desktop "
+                         "entirely — frame, title bar and all")
+        self.assertIn("pointer-events:auto", rules,
+                      "the frame is what a person clicks to bring the app back")
 
     def test_application_fullscreen_is_not_cancelled_by_frame_placement(self):
         raw = OS_JS.read_text()

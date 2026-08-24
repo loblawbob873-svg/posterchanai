@@ -335,10 +335,26 @@ def test_the_more_sheet_offers_every_view_the_sidebar_does():
     assert m, "the More sheet's item list moved — re-point this test"
     sheet = set(re.findall(r"\['([a-z0-9_]+)'", m.group(1)))
 
-    missing = sorted(v for v in sidebar - bottom - sheet if not v.startswith("__"))
+    # DESKTOP-ONLY BY DECISION, and it has to be written down somewhere or this test is simply
+    # wrong about them. A view here is one whose absence from the phone is deliberate — not an
+    # oversight this guard exists to catch. Keep the list short and say why for each.
+    DESKTOP_ONLY = {
+        # An editor for the files of a NODE, beside the Terminal. Asked for explicitly: "posterchan
+        # code is for all … not on mobile classic of course". It edits this node's own checkout on a
+        # 4-inch screen otherwise, which is not a thing anybody wants.
+        "code",
+    }
+
+    missing = sorted(v for v in sidebar - bottom - sheet - DESKTOP_ONLY
+                     if not v.startswith("__"))
     assert not missing, (
         f"these views are in the sidebar but not in the ☰ More sheet, so they cannot be opened on a "
-        f"phone: {missing}")
+        f"phone: {missing}. If that is deliberate, add it to DESKTOP_ONLY above with the reason.")
+
+    # And the exemption must stay honest: a view listed there and ALSO in the sheet is a stale entry
+    # that would hide a real regression the day somebody removes it from the sheet.
+    stale = sorted(v for v in DESKTOP_ONLY if v in sheet)
+    assert not stale, f"these are exempted as desktop-only but ARE in the More sheet: {stale}"
 
 
 def test_every_view_a_sub_module_sets_can_actually_be_set():

@@ -294,13 +294,21 @@ class TheOffsetIsTakenBeforeTheFeedIsBlanked(unittest.TestCase):
     def test_it_only_captures_for_a_timeline(self):
         """#feed is shared. Saving a Notes or Mail offset under a timeline key would restore into
         the wrong view."""
+        # ANCHORED ON THE CAPTURE, not on a distance from the spinner. It was `src[blank-500:blank]`,
+        # and a comment written above that line pushed the guard out of the window — the test then
+        # reported a rule that is right there as missing.
         blank = self.src.index("""feed.innerHTML = '<div class="spinner"></div>'""")
-        blk = self.src[blank - 500:blank]
+        cap = self.src.rindex("_tlScrollMemo[VIEW] = at", 0, blank)
+        blk = self.src[cap - 400:blank]
         self.assertIn("_TL_TABS.indexOf(VIEW) >= 0", blk)
 
     def test_it_only_captures_on_a_reset(self):
         """A non-reset render leaves the feed alone, so there is nothing to preserve against and the
         live offset is still correct."""
+        # ANCHORED ON THE CAPTURE, not on a distance from the spinner. It was `src[blank-500:blank]`,
+        # and a comment written above that line pushed the guard out of the window — the test then
+        # reported a rule that is right there as missing.
         blank = self.src.index("""feed.innerHTML = '<div class="spinner"></div>'""")
-        blk = self.src[blank - 500:blank]
+        cap = self.src.rindex("_tlScrollMemo[VIEW] = at", 0, blank)
+        blk = self.src[cap - 400:blank]
         self.assertIn("if(reset &&", blk)

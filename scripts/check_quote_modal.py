@@ -82,8 +82,14 @@ def _resolve(html: str, keep_branches: bool) -> str:
 
 
 def _template(src: str) -> str:
-    """The literal passed to modal() inside compose() — the composer's real markup."""
-    start = src.index("modal(`<h3>${title}</h3>${qhtml}")
+    """The literal passed to modal() inside compose() — the composer's real markup.
+
+    ANCHORED ON compose() AND THE modal( CALL, not on the heading's exact text. It used to look for
+    `modal(`<h3>${title}</h3>${qhtml}` verbatim, so adding a ✕ button to that heading turned this
+    check into `ValueError: substring not found` — a check that cannot RUN, reported as a failure of
+    the thing it checks. The markup inside is what this measures; the first line of it is not."""
+    fn = src.index("function compose({")
+    start = src.index("modal(`", fn)
     i = src.index("`", start) + 1
     j = src.index("`, root=>{", i)
     return src[i:j]

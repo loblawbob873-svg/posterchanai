@@ -127,7 +127,7 @@ class MovingBetweenOutputsDoesNotCloseTheApplication(unittest.TestCase):
         self.assertNotIn("pcWM.place", adopt)
 
     def test_detaching_skips_the_compositor_close(self):
-        close = body(self.src, "function closeWin")
+        close = body(self.src, "function closeWin(w, opts)")
         self.assertIn("opts.killNative !== false", close)
         self.assertIn("pcWM.close", close)
 

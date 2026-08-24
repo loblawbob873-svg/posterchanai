@@ -389,6 +389,7 @@
    * So the rows a view NEEDS are asserted here rather than assumed from the markup. Idempotent: an
    * up-to-date shell already has them and nothing happens. */
   const _NAV_REQUIRED = [
+    { view:'concord', into:'#disc-sub', icon:'#i-users', label:'Concord' },
     { view:'sync', into:'#files-sub', icon:'#i-refresh', label:'Folder Sync' },
     { view:'xdc', into:'#games-sub', icon:'#i-gamepad', label:'Webxdc' },
     { view:'signer', after:'settings', icon:'#i-key', label:'Signer' },
@@ -6254,6 +6255,9 @@
     if(v==='shorts') _shortsAt=-1;
     _navView(v);    // top-level views have no address of their own — the entry names them in its state
     VIEW = v;
+    /* Concord is an application workspace, not a prose-width timeline. Set this before paint so its
+     * own sheet can remove the right rail and width cap without a one-frame layout jump. */
+    document.body.classList.toggle('concord-view', v==='concord');
     if(v==='notifications'){ _notifShown = 25;   // fresh entry → collapse pagination back to one page
       // ...and land at the TOP. #feed is one scroll container shared by every view, and nothing reset
       // it on a view switch, so opening Notifications kept whatever offset the previous view had left
@@ -6262,7 +6266,7 @@
       _notifScrollTop = true; }
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     _syncRightbar();
-    $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', shorts:'Shorts 🎬', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', code:'PosterChan Code 💻', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', concord:'Concord', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', shorts:'Shorts 🎬', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', code:'PosterChan Code 💻', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     if(v==='signer') $('#view-title').textContent = 'Signer';
     // "New post" is a fixed sidebar button now, so it needs no per-view toggling — it never appears in a
     // view header again. (The ▦ media toggle moved into the timeline's tab row.)
@@ -6326,7 +6330,7 @@
     if(VIEW!=='home' && VIEW!=='global') _hidePill();
     // Full-height layout: the same one Messages uses. Email is a two-pane mail client with its
     // own scrolling regions, so it must not sit inside the timeline's scroll container either.
-    feed.classList.toggle('feed-dm', VIEW==='messages' || VIEW==='mail');
+    feed.classList.toggle('feed-dm', VIEW==='messages' || VIEW==='concord' || VIEW==='mail');
     feed.classList.toggle('feed-ai', VIEW==='ai');         // full-height chat layout (msgs scroll inside)
     // Texts is a thread list and a conversation, both of which scroll INSIDE themselves — the same
     // shape Messages has. Without the modifier #feed stays the timeline's scroll container and the
@@ -6399,6 +6403,7 @@
     if (VIEW==='trending') return renderTrending();
     if (VIEW==='notifications') return renderNotifications();
     if (VIEW==='messages') return renderMessages();
+    if(renderModuleView('concord','concord.js','PCConcord','render')) return;
     if (VIEW==='mail') return renderMailView();
     if (VIEW==='drafts'){ Drafts.pull(); return renderDrafts(); }   // re-sync from the relay on each entry
     if (VIEW==='bookmarks') return renderBookmarks();
@@ -14709,7 +14714,7 @@
   }
   function discoverMenu(){   // mobile Discover sub-sheet — mirrors the desktop sidebar's Discover group (incl. Market)
     const _off=navHiddenSet();
-    const items=[['news','news','News'],['markets','chart','Markets'],['budget','bars','Budget'],['calls','phone','Calls'],['articles','article','Articles'],['market','bag','Shopping'],['streams','tv','Streams'],['shorts','tv','Shorts'],['communities','users','Communities'],['chat','chat','Chat'],['torrents','magnet','Torrents'],['repos','git','Git'],['stats','bars','Server Stats']]
+    const items=[['news','news','News'],['markets','chart','Markets'],['budget','bars','Budget'],['calls','phone','Calls'],['articles','article','Articles'],['market','bag','Shopping'],['streams','tv','Streams'],['shorts','tv','Shorts'],['communities','users','Communities'],['concord','users','Concord'],['chat','chat','Chat'],['torrents','magnet','Torrents'],['repos','git','Git'],['stats','bars','Server Stats']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='markets')     // Markets needs the AI backend (Budget is client-only, so it stays)
                    && !_off.has(v));                              // …and the user's own Settings → Sidebar choices
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-compass"></use></svg> Discover</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}${v==='chat'?'<i id="chat-badge-m" class="badge hidden"></i>':''}</span>${v==='news'?'<span class="news-badge" style="display:none"></span>':''}</button>`).join('')}</div>`, root=>{
@@ -15977,6 +15982,12 @@
     return t ? new File([bytes], name, { type: t }) : new File([bytes], name);
   }
   const _OFFICE_EXT = /\.(doc|docx|odt|rtf|xls|xlsx|xlsm|ods|csv|ppt|pptx|odp)$/i;
+  /* WHAT POSTERCHAN CODE WILL OPEN FROM FILES. Text, by extension — the editor is a text editor and
+   * a .png opened as text is a screenful of mojibake and a corrupted file the moment it is saved.
+   * `.csv` is deliberately absent: it is in _OFFICE_EXT above, where a spreadsheet belongs. */
+  const _CODE_EXT = /\.(txt|md|markdown|json|jsonc|ya?ml|toml|ini|cfg|conf|env|log|xml|svg|html?|css|scss|less|js|mjs|cjs|jsx|ts|tsx|py|rb|php|go|rs|java|kt|swift|c|h|cpp|hpp|cs|sh|bash|zsh|fish|sql|diff|patch|gitignore|dockerfile|makefile)$/i;
+  // A text editor is not a place to open a 40 MB log, and the buffer is held in localStorage.
+  const _CODE_MAX = 2 * 1024 * 1024;
   // NIP-92 source metadata for media we've uploaded this session, keyed by the exact URL we append to
   // a note. Lets imetaTagsFor() emit `imeta` tags so other clients render our art inline at the right
   // aspect ratio (dim), verify it (x = sha256) and know its type (m). Session-scoped, never persisted.
@@ -19941,6 +19952,58 @@
   /* Open an Office document through the node's built-in CODE server.  The working copy is always
    * assembled in this browser: encrypted drive files are decrypted here, and no key is sent to the
    * WOPI host. Saving pulls CODE's current bytes back through the ordinary drive upload pipeline. */
+  /* OPEN A FILE FROM Files → Blossom IN POSTERCHAN CODE.
+   *
+   * Same shape as openOfficeFile below — fetch, decrypt if it is one of ours, hand it over — except
+   * the editor is ours and takes text rather than a WOPI session. Binary is refused by looking at
+   * the BYTES rather than trusting the name: a .txt that is actually a zip would otherwise open as
+   * mojibake and be saved back as a broken file. */
+  async function openCodeFile(d){
+    try{
+      toast(d.enc === '1' ? 'decrypting…' : 'opening…');
+      let blob;
+      if(d.enc === '1'){
+        const u = await encFileUrl(d.sha, d.mime || mimeForName(d.name));
+        blob = await fetch(u).then(r => r.blob());
+      }else{
+        const r = await fetch(d.url); if(!r.ok) throw new Error('file HTTP ' + r.status);
+        blob = await r.blob();
+      }
+      if(blob.size > _CODE_MAX) throw new Error('that file is too big to edit here');
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      // A NUL byte is the oldest and most reliable "this is not text" there is.
+      if(bytes.indexOf(0) !== -1) throw new Error('that looks like a binary file');
+      const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+      if(!(window.PCCode && PCCode.openBlob)) throw new Error('the editor did not load');
+      PCCode.openBlob({ sha: d.sha, name: d.name || 'document', mime: d.mime || blob.type,
+                        enc: d.enc || '0', text });
+      switchView('code');
+    }catch(err){ toast('could not open: ' + ((err && err.message) || err)); }
+  }
+
+  /* SAVE A CODE BUFFER BACK TO Files. Content addressing means an edit is a NEW blob, so this
+   * mirrors the office save exactly: upload, re-point the drive index at the new hash under the same
+   * name and folder, and forget the old entry — the old blob itself stays on Blossom, recoverable.
+   * Lives here rather than in code.js because the index, the encryption and the folder all do. */
+  async function saveBlobDoc(desc, text){
+    if(!desc || !desc.sha) throw new Error('nothing to save');
+    const name = desc.name || 'document';
+    const mime = desc.mime || mimeForName(name) || 'text/plain';
+    const updated = fileFromBytes(new TextEncoder().encode(text), name, mime);
+    const old = FilesIdx.meta(desc.sha) || {}, folder = old.folder || FilesIdx.folderOf(desc.sha) || '';
+    let newSha = '';
+    if(desc.enc === '1') newSha = await uploadEncFile(updated, folder, null);
+    else {
+      const url = await uploadBlob(updated, { noCompress: true });
+      newSha = _shaFromUrl(url);
+      FilesIdx.setFile(newSha, { name, folder, mime, size: updated.size,
+                                 ts: Math.floor(Date.now() / 1000) });
+    }
+    if(newSha && newSha !== desc.sha) FilesIdx.forget(desc.sha);
+    try{ if(VIEW === 'blossom') renderBlossom(); }catch(_){}
+    return newSha;
+  }
+
   async function openOfficeFile(d){
     let session=null;
     try{
@@ -20034,6 +20097,9 @@
       const ext=extOfBlob(b, m.name?m:{name:nm, mime:m.mime});
       const dlName=downloadName(b, nm, ext);
       const office=!!CFG.office_enabled && _OFFICE_EXT.test(nm||dlName);
+      // Editable HERE, in PosterChan Code. Independent of office_enabled: the editor is this app,
+      // not a Collabora container, so it works on a node that never installed one.
+      const code=_CODE_EXT.test(nm||dlName);
       const sel=_filesSel.has(b.sha256)?' selected':'';
       const box=`<input type="checkbox" class="selbox" data-sha="${b.sha256}"${_filesSel.has(b.sha256)?' checked':''} title="Select">`;
       const del=`<button class="del" data-sha="${b.sha256}" aria-label="Delete"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>`;
@@ -20051,7 +20117,8 @@
         href: m.enc ? '#' : b.url, encOpen: !!m.enc, mime: m.enc ? undefined : (b.type||''),
         icon: m.enc ? '🔒' : _fxIcon(ext, b.type), name: nm || (m.enc ? 'encrypted' : dlName), title: nm || dlName,
         size:_fxBytes(b.size), type:(m.enc?'🔒 ':'')+_fxType(ext), when:_fxWhen(b.uploaded),
-        acts: (office ? `<button class="officebtn" data-sha="${b.sha256}" data-url="${enc(b.url)}" data-name="${enc(nm||dlName)}" data-mime="${enc(m.mime||b.type||'')}" data-enc="${m.enc?'1':'0'}" title="Open in Office">📝</button>` : '') + (m.enc ? '' : `<button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button>`) + dl + ren + move + del,
+        acts: (office ? `<button class="officebtn" data-sha="${b.sha256}" data-url="${enc(b.url)}" data-name="${enc(nm||dlName)}" data-mime="${enc(m.mime||b.type||'')}" data-enc="${m.enc?'1':'0'}" title="Open in Office">📝</button>` : '')
+             + (code ? `<button class="codebtn" data-sha="${b.sha256}" data-url="${enc(b.url)}" data-name="${enc(nm||dlName)}" data-mime="${enc(m.mime||b.type||'')}" data-enc="${m.enc?'1':'0'}" title="Edit in PosterChan Code">&lt;/&gt;</button>` : '') + (m.enc ? '' : `<button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button>`) + dl + ren + move + del,
       });
       if(m.enc){   // encrypted file — lock card; opening decrypts in-browser (never exposes the ciphertext URL)
         return `<div class="file-card enc${sel}" draggable="true" data-sha="${b.sha256}"><a href="#" class="${office?'office-open':'enc-open'}" data-sha="${b.sha256}" data-name="${enc(nm||dlName)}" data-mime="${enc(m.mime||'')}" data-enc="1"><div class="file-icon">🔒<span>${enc(ext||'enc')}</span></div></a>
@@ -20070,6 +20137,7 @@
     { const mb=$('.bl-more',grid); if(mb) mb.onclick=()=>{ _filesShown+=_FILES_PAGE; _renderFilesGrid(grid, list); }; }
     $$('.enc-open',grid).forEach(a=> a.onclick=async e=>{ e.preventDefault(); try{ toast('decrypting…'); const u=await trackUrl(a.dataset.sha); window.open(u,'_blank'); }catch(err){ toast('decrypt failed: '+(err.message||'')); } });
     $$('.office-open,.officebtn',grid).forEach(a=> a.onclick=async e=>{ e.preventDefault(); e.stopPropagation(); await openOfficeFile(a.dataset); });
+    $$('.codebtn',grid).forEach(a=> a.onclick=async e=>{ e.preventDefault(); e.stopPropagation(); await openCodeFile(a.dataset); });
     _bindThumbFallback(grid);
     // Encrypted files can't be downloaded by URL (that would save the ciphertext) — decrypt in the
     // browser first, then save the plaintext under its real name.
@@ -33502,6 +33570,10 @@
     // automatically after a relay change). Exposed for the sub-modules and for the console.
     carryPrivateToRelays,
     $, $$, enc, publish, sendDm, safePk, nip05Resolve, profOf, needProfile, niceNip05, LOGO, toast,
+    viewer: () => {
+      const profile = ME && ME.pubkey ? (profOf(ME.pubkey) || {}) : {};
+      return { pubkey:(ME&&ME.pubkey)||'', npub:(ME&&ME.npub)||'', profile };
+    },
     /* The clipboard, for the sub-modules. `navigator.clipboard` works in a browser and in NEITHER
        shell (the APK's WebView and the desktop's app:// origin both refuse it), so a module that
        calls it directly has a copy button that silently does nothing on two of three platforms. */
@@ -33530,6 +33602,9 @@
      * holds and nothing else can fetch. */
     saveBlobAs,
     ensureProfile: _ensureProfile, NT, compose, switchView,   // compose → News "Share as note"; switchView → nav
+    /* PosterChan Code saves a Files document back to Files. The editor holds the text; the drive
+     * index, the encryption and the folder all live here, so the round trip does too. */
+    saveBlobDoc,
     /* HOW TO REOPEN WHAT THIS WINDOW IS SHOWING, as a path — the desktop's monitor handoff needs it.
      *
      * The two monitors are separate Electron renderers, so no module state crosses the seam and the

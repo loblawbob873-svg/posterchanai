@@ -399,6 +399,30 @@
       if(inView()) paint();
     }
 
+    /* A DOCUMENT THAT IS NOT A FILE ON THIS NODE.
+     *
+     * Files → Blossom holds content-addressed BLOBS, not paths: there is nothing for `/api/code/file`
+     * to open and nothing for it to save to. So a blob rides in as a buffer with a `blob` descriptor
+     * instead of a workspace path, and saving it goes back the way it came — re-uploaded, with the
+     * drive index re-pointed at the new hash. Everything else about the buffer (highlighting, tabs,
+     * the caret, dirty tracking) is the same object the rest of this file already understands.
+     *
+     * The editor knows nothing about Blossom: the round trip lives in app.js beside the drive index
+     * (`PC.saveBlobDoc`), which is where the encryption, the folder and the index all are. */
+    function openBlob(desc){
+      if(!desc || !desc.sha) return false;
+      const name = desc.name || 'document';
+      const at = S.open.findIndex(d => d.blob && d.blob.sha === desc.sha);
+      if(at >= 0){ S.active = at; save(); if(inView()) paint(); return true; }
+      const text = String(desc.text == null ? '' : desc.text);
+      S.open.push({ path: name, blob: { sha: desc.sha, name, mime: desc.mime || '', enc: desc.enc || '0' },
+                    lang: langOf(name), text, disk: text, mtime: 0, sel: { s: 0, e: 0 }, scroll: 0 });
+      S.active = S.open.length - 1;
+      status('');
+      save(); if(inView()) paint();
+      return true;
+    }
+
     async function openPath(path){
       const at = S.open.findIndex(d => d.path === path);
       if(at >= 0){ S.active = at; save(); paint(); return; }
@@ -418,6 +442,10 @@
      * restore: reopening a window with nine tabs should cost one request, not nine. */
     async function hydrate(d){
       if(!d || d.text !== null) return;
+      /* A BLOB HAS NO PATH TO RE-READ. Asked for one, `/api/code/file?path=<a file name>` resolves
+       * against the workspace and 400s — so a restored blob buffer would come back as an error
+       * about a file that was never on this node. Its text was persisted with it, or it is gone. */
+      if(d.blob){ d.text = d.text || ''; d.disk = d.text; return; }
       try{
         const f = await api('/file?path=' + encodeURIComponent(d.path));
         d.text = f.text; d.disk = f.text; d.mtime = f.mtime || 0;
@@ -435,6 +463,18 @@
       if(!dirty(d)){ status('No changes to save'); return; }
       S.busy = true; status('Saving…');
       try{
+        if(d.blob){
+          /* Back to the drive it came from. A new hash is a NEW BLOB — content addressing means an
+           * edit cannot overwrite the old bytes — so app.js re-points the index and the old blob is
+           * left recoverable, exactly as the office editor's save does. */
+          const saver = (window.__PC && window.__PC.saveBlobDoc);
+          if(!saver) throw new Error('this build cannot save back to Files');
+          const sha = await saver(d.blob, d.text);
+          if(sha) d.blob.sha = sha;
+          d.disk = d.text;
+          status('Saved ' + d.blob.name + ' to Files', 'ok');
+          S.busy = false; save(); paint(); return;
+        }
         const r = await post('/file', { path: d.path, text: d.text, mtime: d.mtime });
         d.disk = d.text; d.mtime = r.mtime || 0;
         status('Saved ' + d.path, 'ok');
@@ -958,6 +998,7 @@
       render,
       // For tests and for anything that wants to open a file from elsewhere in the app.
       open: openPath,
+      openBlob,
       _state: S,
       _highlight: highlight,
       _langOf: langOf,
