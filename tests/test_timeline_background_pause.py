@@ -79,3 +79,19 @@ def test_returning_resumes_it_and_cancels_a_pending_pause():
     assert "clearTimeout(_tlHideTimer)" in body, (
         "a pause armed just before returning would fire after you are back")
     assert "_tlResume" in body
+
+
+def test_returning_queries_the_missed_interval_and_reconciles_in_order():
+    """Reopening a live subscription is not catch-up: its generic limit can omit the beginning of
+    a long sleep and its arrival order is relay-dependent. Resume must query from the first pause,
+    deduplicate through Store, then redraw from Store's timestamp-ordered feed without moving the
+    card currently being read."""
+    start = APPJS.index("_tlResume = ()=>{")
+    body = APPJS[start:APPJS.index("// Phase 2 (NIP-77)", start)]
+    assert "_tlPausedAt" in body
+    assert "since" in body
+    assert "Relay.query(catchFilters)" in body
+    assert "Store.saveEvent(ev)" in body
+    assert "_drawTimeline(true)" in body
+    assert body.index("fullSub()") < body.index("Relay.query(catchFilters)"), (
+        "live delivery is not reopened until after catch-up, leaving a second missing interval")

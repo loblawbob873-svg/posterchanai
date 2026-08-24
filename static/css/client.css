@@ -4313,8 +4313,12 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
   .mail-read-hd{position:sticky;top:0;z-index:3;background:color-mix(in srgb,var(--panel) 96%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
   .mail-html{height:auto;min-height:62dvh;border-radius:0}
   .mail-back{display:inline-flex}
-  .mail-actions{padding:9px 12px;gap:8px;display:flex;overflow-x:auto;scrollbar-width:none;background:var(--panel);border-bottom:1px solid var(--line)}
-  .mail-actions::-webkit-scrollbar{display:none}.mail-actions .btn{flex:0 0 44px;width:44px;min-height:44px;font-size:14px;padding:8px}
+  /* Seven icon actions fit as a 4+3 grid. The old 44px horizontal strip needed 380px including
+     gaps/padding, so the final action was physically outside a 360px phone and the hidden
+     scrollbar made it unreachable. */
+  .mail-actions{padding:9px 12px;gap:8px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));
+    overflow:visible;background:var(--panel);border-bottom:1px solid var(--line)}
+  .mail-actions .btn{width:auto;min-width:0;min-height:44px;font-size:14px;padding:8px}
   .mail-read-hd{padding:14px 12px 11px;gap:10px;align-items:flex-start}
   .mr-subj{font-size:20px;line-height:1.25;font-weight:750;white-space:normal;overflow:visible}
   .mail-msg-hd{padding:14px 14px;min-height:62px;align-items:center}.mm-who b{font-size:15px}.mm-who .muted{margin-top:3px;font-size:12px}

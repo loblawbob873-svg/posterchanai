@@ -1,4 +1,4 @@
-# PosterChanOS Beta 2 completion record
+# PosterChanOS Beta 2 completion record and follow-up
 
 The Beta 2 backlog is complete. LiveUSB acceptance is tracked separately and was removed from this
 list after successful hardware testing. A feature counts here only when its shipped entry point and
@@ -28,3 +28,9 @@ failure-prone behavior have regression coverage.
 
 Release gates still include the complete test suite, Android Java/Gradle build, desktop packaging,
 and production deployment verification; those are release procedures, not open feature tasks.
+
+## Follow-up UI task
+
+- [ ] Consolidate Music into one unified player (remove the competing widget/player UI), with a
+  clearer playback-button arrangement and a useful, polished equalizer while preserving its queue,
+  background playback, cross-device handoff, and car autoplay.

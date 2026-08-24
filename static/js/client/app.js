@@ -208,7 +208,7 @@
   };
 
   // Timeline pause/resume while backgrounded — set by watchTimeline for the CURRENT view.
-  let _tlPause = null, _tlResume = null, _tlPaused = false, _tlHideTimer = null;
+  let _tlPause = null, _tlResume = null, _tlPaused = false, _tlPausedAt = 0, _tlHideTimer = null;
   // Short enough to get the CLOSE frame out before the OS freezes the socket (after that the relay
   // keeps streaming regardless), long enough to absorb a glance at the notification shade.
   const _TL_HIDE_AFTER = 20000;
@@ -6711,8 +6711,36 @@
      * Resuming is the same fullSub() a reconnect already runs, and markEosed only draws on the FIRST
      * EOSE, so coming back cannot wipe the feed. The generation token makes a resume that lands after
      * the user navigated a no-op rather than a leaked subscription for a dead view. */
-    _tlPause = ()=>{ const cur=subs[view]; if(cur && myGen===_tlGen){ try{ Relay.close(cur); }catch(_){} subs[view]=null; } _tlPaused=true; };
-    _tlResume = ()=>{ if(!_tlPaused) return; _tlPaused=false; if(myGen===_tlGen && VIEW===view && !subs[view]) fullSub(); };
+    _tlPause = ()=>{
+      const cur=subs[view];
+      if(cur && myGen===_tlGen){ try{ Relay.close(cur); }catch(_){} subs[view]=null; }
+      /* Keep the FIRST instant. Android can report both visibilitychange and appStateChange; moving
+       * this timestamp forward on the second signal would leave a gap between the two. */
+      if(!_tlPausedAt) _tlPausedAt=Math.floor(Date.now()/1000);
+      _tlPaused=true;
+    };
+    _tlResume = ()=>{
+      if(!_tlPaused) return;
+      _tlPaused=false;
+      const since=Math.max(0,(_tlPausedAt||Math.floor(Date.now()/1000))-120);
+      _tlPausedAt=0;
+      if(myGen!==_tlGen || VIEW!==view || subs[view]) return;
+      /* Re-open live delivery immediately, then explicitly fetch the interval the phone missed.
+       * Relying on a subscription's generic `limit` made catch-up depend on relay ordering and could
+       * leave the feed minutes behind after a long sleep. Store deduplicates by event id;
+       * _drawTimeline reads its timestamp-sorted feed and preserves the visible-card anchor. */
+      fullSub();
+      const catchFilters=timelineFilter().map(f=>Object.assign({},f,{since,
+        limit:Math.max(Number(f.limit)||0,500)}));
+      Relay.query(catchFilters).then(evs=>{
+        if(myGen!==_tlGen || VIEW!==view) return;
+        let changed=false;
+        for(const ev of (evs||[])){
+          if(Store.saveEvent(ev)){ changed=true; needProfile(ev.pubkey); }
+        }
+        if(changed) _drawTimeline(true);
+      }).catch(()=>{});
+    };
     // Phase 2 (NIP-77): reconcile the HOME feed with the relay via negentropy and fetch ONLY the events
     // we're missing, then keep a live-only sub — far less bandwidth than re-pulling the page every
     // reconnect. Gated on a WARM cache: negentropy is bounded to a recent window, so a cold/low-volume

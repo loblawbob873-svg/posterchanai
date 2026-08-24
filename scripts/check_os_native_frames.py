@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PosterChanOS — a Linux app inside a PosterChan window, driven against a stub compositor.
+"""PosterChanOS — a Linux app tracked by PosterChan and owned by the compositor.
 
     venv-unified/bin/python scripts/check_os_native_frames.py
 
@@ -13,7 +13,10 @@ machine rather than assumed: **focusing a native window takes the keyboard away 
 `pcWM.focus(id)` → `document.hasFocus()` goes true → false and a `blur` event arrives ~1ms later.
 Every desktop does this; it is what focus means. What it costs is below.
 
-Assertions, each a way a framed app breaks:
+The legacy framed path remains exercised for compatibility, while current builds assert that a
+compositor-owned application is tracked exactly once and does not regain an HTML shadow frame.
+
+Assertions on the legacy path, each a way a framed app breaks:
 
   native-drag-dead    A native window cannot be dragged. Pressing its title bar focuses the app,
                       which BLURS this window, and `blur` is one of the ways a drag ends (alt-tabbed
@@ -188,8 +191,18 @@ DRIVE = r"""(async () => {
     return { l: Math.round(r.left), t: Math.round(r.top),
              w: Math.round(r.width), h: Math.round(r.height) }; };
 
-  if (!frame()) { bad('native-not-framed', 'the compositor window was never given a window here');
-                  PCOS.exit(); return out; }
+  if (!frame()) {
+    /* Native applications are compositor-owned now. Older builds wrapped them in an HTML frame,
+     * which created two independent windows and caused black surfaces/reloads during monitor moves.
+     * With no legacy frame, prove the compositor window is still represented in the task model. */
+    const rows = PCOSShell.taskbarRows(await pcWM.windows());
+    const firefox = rows.find(r => Number(r.id) === 2);
+    if (!firefox) bad('native-not-tracked', 'Firefox has neither a compositor task nor a legacy frame');
+    if (document.querySelector('.osw.osw-native'))
+      bad('native-double-framed', 'a compositor-owned app also gained a legacy HTML frame');
+    out.compositorOwned = !!firefox;
+    PCOS.exit(); return out;
+  }
   out.framed = true;
 
   /* ── the drag ──────────────────────────────────────────────────────────────────────────────── */
@@ -381,7 +394,10 @@ async def drive(url):
                     print(f"  {k}: {json.dumps(out[k])}")
             problems = out.get("problems") or []
             if not problems:
-                print("PASS  a Linux app is framed, dragged, resized, covered, listed and not killed")
+                if out.get("compositorOwned"):
+                    print("PASS  a compositor-owned Linux app is tracked once without a shadow frame")
+                else:
+                    print("PASS  a legacy framed Linux app is dragged, resized, covered and not killed")
                 return 0
             for p in problems:
                 print(f"FAIL  {p['k']}: {p['d']}")

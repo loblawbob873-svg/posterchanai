@@ -125,8 +125,14 @@ async def drive(url):
                 print("SKIP  could not plant events (Store not reachable)")
                 return 2
             await js("window.__PC.switchView('shorts')")
-            await asyncio.sleep(2.5)
-            g = await js(f"({GRID})()") or {}
+            # Under the full release suite dozens of browsers contend for CPU. Wait for the
+            # observable result instead of assuming the async relay refresh painted in 2.5s.
+            g = {}
+            for _ in range(40):
+                await asyncio.sleep(0.5)
+                g = await js(f"({GRID})()") or {}
+                if g.get("grid") and (g.get("tiles") or 0) >= 2:
+                    break
             print("  grid:", json.dumps(g))
             if not g.get("grid"):
                 problems.append("the browse grid never rendered — Shorts opens on nothing")
@@ -142,8 +148,12 @@ async def drive(url):
                 problems.append("the grid scrolls horizontally on a phone")
             # tap the first tile → the full-screen player
             await js("document.querySelector('#shorts-host .short-tile').click()")
-            await asyncio.sleep(1.5)
-            out = await js(f"({SURVEY})()") or {}
+            out = {}
+            for _ in range(30):
+                await asyncio.sleep(0.5)
+                out = await js(f"({SURVEY})()") or {}
+                if out.get("wrap") and (out.get("cards") or 0) >= 2:
+                    break
             print("  player:", json.dumps(out))
             if not out.get("wrap"):
                 problems.append("tapping a tile never opened the player")

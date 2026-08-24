@@ -73,7 +73,9 @@ AUDIT = r"""(() => {
     // WRAPPED is measured as "the name and the time are on different rows", not as a height
     // threshold — a two-line name would fail a height test while being perfectly uniform.
     if (nm && tm && Math.abs(nm.getBoundingClientRect().y - tm.getBoundingClientRect().y) > 3)
-      out.wrapped.push(who);
+      out.wrapped.push(who + ' — ' + Math.round(nm.getBoundingClientRect().y) + '/' +
+                       Math.round(tm.getBoundingClientRect().y) + ' — ' +
+                       String(hd.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 100));
     [nm, tm, hd.querySelector('.handle')].forEach(el => {
       if (!el) return;
       const b = el.getBoundingClientRect();

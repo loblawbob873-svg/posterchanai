@@ -199,7 +199,7 @@
   async function stepNetwork(blocked){
     const net = NET();
     if(blocked || !net){
-      shell('network', 'The network service did not start',
+      shell('network', 'Cannot see the network service',
             'NetworkManager did not answer. Nothing after this can work, so setup stops here '
             + 'rather than reporting four more failures with the same cause.',
             '', `<button class="btn btn-ghost" data-fr="retry">Try again</button>`);

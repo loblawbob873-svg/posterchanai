@@ -3,8 +3,6 @@
 Beta 1 is a stability cutoff. A checked item must have an automated regression test and must be
 present in a published PosterChan Desktop build before it counts as shipped.
 
-- [ ] Install from the current LiveUSB into an encrypted disk, reboot twice, and reach the graphical
-  sign-in without maintenance mode, a recreated welcome flow, or a missing home directory.
 - [ ] Keep every active monitor usable across login, hotplug, layout changes, and reboot; native
   windows must move between outputs and the saved layout must be restored.
 - [ ] Restart the desktop safely with Ctrl+Alt+Backspace, and open Task Manager with Ctrl+Alt+Delete.

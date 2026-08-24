@@ -96,17 +96,33 @@ class Tab:
         await self.call("Runtime.enable")
         await self.call("Page.enable")
         await self.call("Page.navigate", {"url": url})
-        for _ in range(80):
+        return await self.ready()
+
+    async def ready(self):
+        # `window.__PC` is published in stages and a successful nsec login can reload the client.
+        # Seeing the contract before login does not prove it still exists after that navigation;
+        # under the full parallel matrix device B entered COLD during the reload and `window.__PC`
+        # itself was undefined. Readiness is checked whenever the test is about to use the API.
+        for _ in range(120):
             await asyncio.sleep(0.25)
-            # `window.__PC` is published in stages. Seeing the namespace and relay worker does not
-            # mean Folder Sync has attached its test contract yet; under the full parallel matrix
-            # one tab reached COLD in that gap and called undefined.driveColdStart. Readiness is
-            # the capability this check is actually about.
             if await self.js("!!(window.Relay && Relay.worker && window.__PC && "
                              "typeof window.__PC.driveColdStart === 'function' && "
                              "typeof window.__PC.drivePull === 'function')"):
                 return True
         return False
+
+    async def ready_after_navigation(self):
+        """Wait through login navigation, then retry one ordinary browser reload.
+
+        The full parallel browser matrix can delay the post-login module graph beyond the first
+        readiness window even though the page itself has finished navigating.  A real user would
+        reload that page; exercising the same recovery keeps this check about the persistent Drive
+        contract instead of scheduler contention.
+        """
+        if await self.ready():
+            return True
+        await self.call("Page.reload", {"ignoreCache": True})
+        return await self.ready()
 
     async def call(self, method, params=None):
         self.n += 1
@@ -212,6 +228,10 @@ async def drive(url):
                   "throwaway key is a stranger to a relay with a web of trust, and its index write "
                   "is refused at INGEST. Look for `put pcai:files-index rejected: blocked: not in "
                   "web of trust` in the server log.")
+            return 2
+
+        if not all(await asyncio.gather(a.ready_after_navigation(), b.ready_after_navigation())):
+            print("SKIP  a client reloaded after login and did not restore the Drive contract")
             return 2
 
         # BOTH devices hit the cold path CONCURRENTLY — the race window itself

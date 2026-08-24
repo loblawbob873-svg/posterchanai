@@ -9,8 +9,7 @@ def test_mobile_reader_uses_readable_type_and_measure():
     assert '.mr-subj{font-size:20px;line-height:1.25' in CSS
 
 
-def test_mobile_actions_are_thumb_sized_and_scroll_instead_of_crushing():
-    assert '.mail-actions .btn{flex:0 0 44px;width:44px;min-height:44px' in CSS
-    assert 'overflow-x:auto' in CSS
+def test_mobile_actions_are_thumb_sized_and_fit_without_hidden_scrolling():
+    assert 'grid-template-columns:repeat(4,minmax(0,1fr))' in CSS
+    assert '.mail-actions .btn{width:auto;min-width:0;min-height:44px' in CSS
     assert '.mail-att{min-height:44px' in CSS
-
