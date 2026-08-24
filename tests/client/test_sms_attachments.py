@@ -173,8 +173,12 @@ class TheArchive(unittest.TestCase):
                   steps=["mirror", "mirror"])
         asked = [c[1] for c in calls_of(res, "list")]
         self.assertEqual(len(asked), 2, asked)
-        self.assertGreater(asked[1], asked[0],
-                           "the second sweep was dragged back to the same starting point")
+        # The first sweep rewinds to the documented first-run boundary; the second must start from
+        # where the first finished. Compared against the boundary rather than against each other,
+        # because two rewinds a millisecond apart are two rewinds.
+        self.assertLess(asked[0], NOW - 29 * 86400000, "the first sweep did not rewind at all")
+        self.assertGreater(asked[1], NOW - 29 * 86400000,
+                           "the second sweep was dragged back to the boundary again")
 
     def test_a_picture_with_no_usable_preview_is_archived_once_not_for_ever(self):
         """A thumbnail is a bandwidth saving, not part of being archived. Read as a missing piece,
@@ -198,14 +202,15 @@ class TheArchive(unittest.TestCase):
         """Every batch PULLS and SAVES the encrypted file index. A queue that has stopped shrinking
         used to run the full thousand-pass safety limit — a thousand rewrites of a replaceable
         document for one opening of the Texts screen."""
-        rows = [text(i, date=NOW - (200 + i) * 86400000) for i in range(1, 40)]
-        rows += [picture(100 + i, date=NOW - (100 + i) * 86400000) for i in range(1, 40)]
+        # MORE PICTURES THAN ONE BATCH HOLDS, so a queue that stops shrinking still reports rows
+        # remaining on every pass — the state the old loop answered by running to its safety limit.
+        rows = [picture(100 + i, date=NOW - (100 + i) * 86400000) for i in range(1, 71)]
         res = run(rows=rows, migrationBatch=60,
                   storage={"pc_sms_hwm_me": NOW, "pc_sms_hwm_me_oldest_first_v1": "1"},
                   steps=["phoneLoad", "migrateAll"])
         self.assertLessEqual(len(calls_of(res, "drivePull")), 4,
                              "the migration kept re-opening the drive after it stopped progressing")
-        self.assertEqual(len([f for f in res["drive"]["files"] if f["folder"] == "MMS"]), 39,
+        self.assertEqual(len([f for f in res["drive"]["files"] if f["folder"] == "MMS"]), 70,
                          "not every picture reached the encrypted MMS folder")
 
     def test_body_and_picture_are_committed_to_encrypted_drive_folders(self):

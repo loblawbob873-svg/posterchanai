@@ -41,6 +41,16 @@
    * never revisited any of the rows that needed migrating. A schema migration needs its own marker;
    * otherwise a completed, unrelated migration silently opts the account out of this one. */
   const HWM_BLOSSOM = () => HWM() + '_blossom_v2';
+  /* AND A SEPARATE MARKER FOR THE REWIND ITSELF, because rewinding is a ONE-TIME ACT and finishing
+   * the migration is a different question entirely.
+   *
+   * The rewind below used to be keyed on HWM_BLOSSOM — "have we finished?" — so every ordinary
+   * sweep taken before the migration completed dragged the high-water mark back to the thirty-day
+   * boundary again. On a phone where the migration cannot complete (one attachment the provider
+   * will not hand over is enough) that is not a slow start, it is a PERMANENT LOOP: every sweep
+   * restarts at the same point, hits the same row, and republishes the same thirty days for ever.
+   * Keyed on having rewound, the mark moves forward the way it is documented to. */
+  const HWM_REWOUND = () => HWM() + '_blossom_rewound_v2';
   let _messagesFolderReady = false;
   const _migrationFailed = new Set();
 
@@ -509,7 +519,7 @@
    * water mark stays behind it and the next sweep retries instead of permanently archiving a hollow
    * attachment. */
   async function archivePart(p){
-    if(p.sha && (p.thumb || !isImage(p.ct))) return p.sha;
+    if(p.sha && (p.thumb || p.nothumb || !isImage(p.ct))) return p.sha;
     const d = await partData(p);
     if(!d || !d.blob) throw new Error((d && d.why) || 'could not read MMS attachment');
     if(!PC.uploadEncFile) throw new Error('encrypted file storage is unavailable');
@@ -520,7 +530,19 @@
     /* A thread needs a picture, not the original camera file.  Archive one small encrypted preview
      * beside it so every laptop/tablet does not download several megabytes merely by opening the
      * conversation.  The original is fetched only when the thumbnail is tapped. */
-    if(isImage(p.ct) && !p.thumb){
+    /* A PREVIEW THAT COULD NOT BE MADE IS RECORDED AS A FACT, not left as an unmet requirement.
+     *
+     * The original is stored and the message is complete; only the bandwidth saving is missing. But
+     * `needsPartUpgrade` read a missing thumbnail as "this MMS is not archived yet", so a picture
+     * the WebView cannot decode — a format it has no decoder for, a truncated part, a decode that
+     * lost a race with memory pressure — was NEVER done: offered again on every migration batch,
+     * republished on every pass, blocking the completion marker, and so dragging the high-water
+     * mark back thirty days on every sweep behind it. Nothing was logged, because from each pass's
+     * own point of view the upload succeeded.
+     *
+     * `nothumb` rides with the attachment and is published, so the other devices agree rather than
+     * each re-deriving "incomplete" from the same absence. */
+    if(isImage(p.ct) && !p.thumb && !p.nothumb){
       try{
         const bm = await createImageBitmap(d.blob);
         const scale = Math.min(1, 512 / Math.max(bm.width, bm.height));
@@ -533,7 +555,12 @@
         if(preview) p.thumb = await PC.uploadEncFile(
           new File([preview], 'thumb-' + name.replace(/\.[^.]*$/, '') + '.jpg', {type:'image/jpeg'}),
           'MMS');
-      }catch(_){ /* The original is still complete; a thumbnail failure must not hollow the MMS. */ }
+        else p.nothumb = 1;
+      }catch(_){
+        /* The original is still complete; a thumbnail failure must not hollow the MMS — nor make it
+         * eternally pending. */
+        p.nothumb = 1;
+      }
     }
     return p.sha;
   }
@@ -551,7 +578,11 @@
       body.att = [];
       for(const p of m.parts){
         const sha = await archivePart(p);
-        body.att.push({ ct: p.ct, name: p.name, bytes: p.bytes, sha, thumb: p.thumb || '' });
+        const att = { ct: p.ct, name: p.name, bytes: p.bytes, sha, thumb: p.thumb || '' };
+        // Only when it is true: an absent key keeps an ordinary picture message's document
+        // byte-identical to the one every earlier build published.
+        if(p.nothumb) att.nt = 1;
+        body.att.push(att);
       }
     }
 
@@ -602,9 +633,10 @@
      * above has already run, so those provider rows are offered to needsArchiveUpgrade(), which can
      * replace their inline/body-only documents and upload their MMS bytes. */
     try{
-      if(!localStorage.getItem(HWM_BLOSSOM())){
+      if(!localStorage.getItem(HWM_BLOSSOM()) && !localStorage.getItem(HWM_REWOUND())){
         since = Math.min(since || Date.now(), Date.now() - FIRST_RUN_DAYS * 86400000);
         localStorage.setItem(HWM(), String(since));
+        localStorage.setItem(HWM_REWOUND(), '1');
       }
     }catch(_){ }
     if(!since) since = Date.now() - FIRST_RUN_DAYS * 86400000;
@@ -628,6 +660,9 @@
     }
 
     let n = 0, top = since, drive = null, archiveError = '', rowErrors = 0;
+    /* ONCE A ROW HAS FAILED, THE MARK STOPS MOVING — but the sweep carries on. See the failure
+     * branch below: those are two separate promises and they used to be made with one `break`. */
+    let stuck = false;
     S.archive.running = true;
     S.archive.attempted = true;
     S.archive.error = '';
@@ -642,7 +677,7 @@
       for(const r of rows){
         if(!r || !r.doc) continue;
         const old = S.msgs.get(r.doc);
-        if(old && !needsArchiveUpgrade(r, old)) { if(r.date > top) top = r.date; continue; }
+        if(old && !needsArchiveUpgrade(r, old)) { if(!stuck && r.date > top) top = r.date; continue; }
         // The contact's name is resolved on the phone against the phone's OWN address book and
         // carried, so a laptop — which has no phone book — shows a name instead of a number.
         const m = fromRow(r);
@@ -650,21 +685,30 @@
         try{ ok = await publishOne(m); }
         catch(e){ archiveError = String((e && e.message) || e); ok = false; }
         if(!ok){
-          if(opts && opts.fullMigration){
-            /* ONE MMS THE PROVIDER WILL NOT HAND OVER MUST NOT BLOCK THE REST OF THE PHONE FOR
-             * EVER. Keep it pending (never publish a hollow message), quarantine it for this run,
-             * and continue. A fresh foreground/app run retries it; every later row can meanwhile
-             * reach encrypted storage. */
-            _migrationFailed.add(r.doc);
-            rowErrors++;
-            archiveError = '';
-            continue;
-          }
-          break;                       // recent sweep: the mark stays behind the failed row
+          /* ONE MMS THE PROVIDER WILL NOT HAND OVER MUST NOT BLOCK THE REST OF THE PHONE FOR EVER,
+           * AND THAT IS TRUE OF THIS SWEEP TOO.
+           *
+           * The migration path was taught this and the ORDINARY sweep — the one that actually runs,
+           * on every visit and every foreground — kept its `break`. Two facts turn that into a
+           * total, permanent stop rather than a delay: the provider answers `since` queries OLDEST
+           * FIRST, so the wall stands in front of everything newer than the bad row; and the sweep
+           * restarts before it every time, because the mark stays behind it by design. One picture
+           * message the provider will not hand over therefore froze the whole archive at that date
+           * — texts included — with a full Texts screen in front of the person, and the reason none
+           * of the media reached Blossom was that nothing after that row was ever offered to it.
+           *
+           * The mark still stays behind the failed row, which is the promise that matters: no
+           * message is ever skipped and the next run retries this one. What changes is that the
+           * rows behind the wall are no longer collateral. */
+          _migrationFailed.add(r.doc);
+          rowErrors++;
+          archiveError = '';
+          stuck = true;                // the mark freezes here; the rest of the batch still lands
+          continue;
         }
         S.msgs.set(m.doc, m);
         n++;
-        if(r.date > top) top = r.date;
+        if(!stuck && r.date > top) top = r.date;
       }
     }finally{
       try{ await endArchiveDrive(drive); }
@@ -762,6 +806,7 @@
         if(!old.parts[i]) continue;
         if(old.parts[i].sha) local.parts[i].sha = old.parts[i].sha;
         if(old.parts[i].thumb) local.parts[i].thumb = old.parts[i].thumb;
+        if(old.parts[i].nothumb) local.parts[i].nothumb = 1;
       }
       S.msgs.set(r.doc, Object.assign({}, old || {}, local));
       total++;
@@ -1062,7 +1107,9 @@
                                      sha: /^[0-9a-f]{64}$/i.test(String(p.sha || ''))
                                        ? String(p.sha).toLowerCase() : '',
                                      thumb: /^[0-9a-f]{64}$/i.test(String(p.thumb || ''))
-                                       ? String(p.thumb).toLowerCase() : '' }));
+                                       ? String(p.thumb).toLowerCase() : '',
+                                     // `nt` on the wire, `nothumb` in memory — see archivePart.
+                                     nothumb: (p.nothumb || p.nt) ? 1 : 0 }));
   }
 
   /* An archived MMS is complete only when every attachment has a portable encrypted-store address.
@@ -1074,7 +1121,7 @@
     const dst = (archived && archived.parts) || [];
     return dst.length !== src.length || dst.some(p =>
       !/^[0-9a-f]{64}$/i.test(String(p.sha || '')) ||
-      (isImage(p.ct) && !/^[0-9a-f]{64}$/i.test(String(p.thumb || ''))));
+      (isImage(p.ct) && !p.nothumb && !/^[0-9a-f]{64}$/i.test(String(p.thumb || ''))));
   }
 
   function needsArchiveUpgrade(phone, archived){
@@ -1087,12 +1134,24 @@
     try{ if(localStorage.getItem(HWM_BLOSSOM())) return Promise.resolve({published:0,remaining:0}); }
     catch(_){ }
     _fullMigration = (async () => {
-      let total = 0;
+      let total = 0, lastRemaining = Infinity;
       for(let batch=0; batch<1000; batch++){
         const r = await mirror({fullMigration:true, limit:60});
         total += Number(r && r.published) || 0;
         if(!r || r.skipped || !r.remaining) return {published:total, remaining:(r&&r.remaining)||0,
                                                      failed:(r&&r.failed)||0, skipped:r&&r.skipped};
+        /* A BATCH THAT DID NOT SHORTEN THE QUEUE WILL NOT SHORTEN IT NEXT TIME EITHER.
+         *
+         * Loop-until-dry, never loop-until-the-safety-limit. Every pass PULLS and SAVES the
+         * encrypted file index (see beginArchiveDrive), so a queue that has stopped moving used to
+         * cost a thousand rewrites of a replaceable document for one opening of the Texts screen —
+         * on a phone, on a radio, while the person waits for the screen. Anything that can make a
+         * row perpetually pending (the thumbnail rule was one, for years of somebody's pictures)
+         * turns that safety limit into the ordinary path rather than the impossible one. */
+        if(r.remaining >= lastRemaining)
+          return {published:total, remaining:r.remaining, failed:(r && r.failed) || 0,
+                  skipped:'message migration stopped making progress'};
+        lastRemaining = r.remaining;
         /* Let rendering/input and Android lifecycle callbacks run between upload batches. */
         await new Promise(resolve => setTimeout(resolve, 0));
       }
@@ -1987,6 +2046,10 @@
 
   window.PCSms = { render, mirror, importAll, loadFromPhone, emptyWhy, ensureRead, phoneState,
                    drainOutbox, send, remove, load,
+                   // The real batched migration loop, for tests/client/test_sms_attachments.py —
+                   // its convergence is the property that matters and it is invisible from a single
+                   // mirror() call.
+                   migrateAll: migrateLocalHistory,
                    // Contacts can finish after Texts has already painted on a desktop. Rebuild the
                    // thread labels from the same messages; no relay or phone read is necessary.
                    refreshNames: () => { rebuild(); if(PC && PC.VIEW==='texts') paint(); },

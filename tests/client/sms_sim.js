@@ -233,6 +233,8 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
     if(step === 'load'){ await S.load(true); }
     else if(step === 'phoneLoad'){ await S.loadFromPhone(); }
     else if(step === 'migrate'){ await S.mirror({ fullMigration:true, limit:Number(opt.migrationBatch)||60 }); }
+    // The whole batched loop, the way render() drives it — the only way to see it converge (or not).
+    else if(step === 'migrateAll'){ calls.push(['migrateAll', await S.migrateAll()]); }
     else if(step === 'mirror'){ await S.mirror(); }
     else if(step === 'drain'){ await S.drainOutbox(); }
     else if(step === 'allow'){ refusals = -1; }
