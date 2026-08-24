@@ -81,6 +81,33 @@ class TheIconViewLooksLikeOne(unittest.TestCase):
         glyph and the filename did not."""
         self.assertIn(".files-grid:not(.details) .file-icon span", self.css)
 
+    def test_there_is_no_box_around_a_file(self):
+        """A bordered, filled card per item is a web design. A file manager draws the icon and the
+        name on the background and nothing else — asked for in as many words: "i don't want a box
+        around folders and files"."""
+        body = _rule(self.css, ".file-card")
+        self.assertIsNotNone(body, "the .file-card rule moved — re-point this test")
+        self.assertNotIn("background:var(", body,
+                         "every file still sits on a filled panel")
+        self.assertNotIn("border:1px solid var(", body,
+                         "every file still sits inside a drawn border")
+        self.assertIn("border:1px solid transparent", body,
+                      "the border must stay reserved and transparent, or hover shifts every tile "
+                      "in the row by a pixel")
+
+    def test_the_glyph_has_no_panel_behind_it_either(self):
+        """A 96px dark rectangle behind the icon is the same box, one element in."""
+        self.assertNotIn("background:#120c24", _rule(self.css, ".file-icon") or "",
+                         "the icon still has its own filled box")
+
+    def test_selection_and_hover_are_what_draw_a_surface(self):
+        """Which is exactly when an OS draws one. Without a fill, a selected file is
+        indistinguishable from a hovered one."""
+        sel = _rule(self.css, ".file-card.selected") or ""
+        self.assertIn("background:", sel, "a selected file gets no fill")
+        self.assertIn("border-color:", sel)
+        self.assertIn(".files-grid:not(.details) .file-card:hover", self.css)
+
     def test_the_details_view_keeps_its_own_icon_size(self):
         """The list view has its own small icon (.fx-ic); this must not have touched it."""
         self.assertIsNotNone(_rule(self.css, ".fx-ic") or _rule(self.css, ".fx-ic.has-thumb"),

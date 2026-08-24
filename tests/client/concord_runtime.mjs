@@ -33,7 +33,7 @@ window.__PC = {
   osNotify:(title,body,opts)=>{ calls.mentions.push({title,body,opts}); },
   relaySubscribe:()=>({close(){}}),
   relayUrls:()=>['wss://relay.example'], signTemplate:async template=>template,
-  relayPublish:async()=>({ok:true}),
+  relayPublish:async()=>({ok:true}), relayPublishTo:async()=>1,
   publish:async()=>({}),
   profOf:()=>({}), LOGO:'', linkify:s=>String(s), linkCardHtml:()=>'', hydrateLinkCards:()=>{},
 };
@@ -75,6 +75,8 @@ const madePublic=JSON.parse(data.get('pc.concord.invites'));
 if(madePublic[0].channels[0].private!==false) throw new Error('public channel settings flow failed');
 control('cc-copy-link').click();
 if(calls.copied!=='https://poster.place/invite/naddr1qqqq#abc_DEF') throw new Error('relay invite copy failed');
+await control('cc-publish-listing').click();
+if(!calls.toasts.some(x=>x.includes('published to Armada Discover'))) throw new Error('Armada listing publish failed');
 
 const input=control('cc-input');
 control('cc-emoji').click();

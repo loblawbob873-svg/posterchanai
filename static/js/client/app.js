@@ -33707,6 +33707,9 @@
     copyValue,
     relaySubscribe: (filters, handlers) => Relay.subscribe(filters, handlers),
     relayPublish: ev => Relay.publish(ev),
+    relayPublishTo: (relays, ev) => Relay.publishTo(relays, ev),
+    relayQuery: (filters, timeout) => Relay.query(filters, timeout),
+    relayQueryFrom: (relays, filters, opts) => Relay.queryFrom(relays, filters, opts),
     relayUrls: () => _writeRelays().slice(),
     signTemplate: template => signer.signEvent(template),
     /* THE ONE PLACE AN OS NOTIFICATION IS RAISED, for the sub-modules. It is not a convenience: it

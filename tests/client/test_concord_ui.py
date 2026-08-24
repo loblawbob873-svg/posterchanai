@@ -68,6 +68,8 @@ def test_concord_has_honest_creation_and_public_discovery_empty_states():
     assert 'window.PosterCord.createCommunity' in CONCORD
     assert 'p.relayPublish(ev)' in CONCORD
     assert "await p.publish(1,`${name}" in CONCORD
+    assert 'id="cc-publish-listing"' in CONCORD and 'DISCOVER_RELAYS' in CONCORD
+    assert 'p.relayPublishTo(CORD_RELAYS,ev)' in CONCORD
     assert 'No public communities found' in CONCORD
     assert 'cc-public-room' in CONCORD_CSS
 
@@ -111,6 +113,8 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert '.cc-visibility.public' in CONCORD_CSS and '.cc-visibility.private' in CONCORD_CSS
     assert 'p.linkify' in CONCORD and 'p.linkCardHtml' in CONCORD
     assert 'id="cc-copy-link"' in CONCORD and 'p.copyValue(room.url)' in CONCORD
+    assert 'upgrading this room to a public relay community' in CONCORD
+    assert 'mintPublicRoom(p,room.name,room.icon)' in CONCORD
     assert 'notifyMentions(p,current,messages,viewer,me)' in CONCORD
     assert "route:'concord'" in CONCORD and 'concord-mention-' in CONCORD
     assert "search:'armada.buzz/invite'" in CONCORD and "search:'poster.place/invite'" in CONCORD

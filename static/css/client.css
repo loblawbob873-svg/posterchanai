@@ -2393,17 +2393,26 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
    scroll a long folder picking files — otherwise you select, scroll down, and the buttons are gone. */
 .files-selbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 4px;position:sticky;top:0;z-index:3;background:var(--bg)}
 .files-selbar:empty{display:none}
-.file-card{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--panel2);position:relative}
+/* NO BOX AROUND A FILE. A bordered, filled card per item is a web design; a file manager draws the
+   ICON and the NAME on the desktop background and nothing else. The border and the panel fill were
+   the "box around folders and files".
+   The border stays as `transparent` rather than being removed: hover and selection colour it, and a
+   border that appears on hover shifts every tile in the row by a pixel. Only what is SELECTED or
+   under the pointer gets a surface, which is exactly when an OS draws one. */
+.file-card{border:1px solid transparent;border-radius:10px;overflow:hidden;background:none;position:relative}
+.files-grid:not(.details) .file-card:hover{background:rgba(var(--accent-rgb),.07)}
 /* The checkbox sits ON the thumbnail, so it needs its own contrast rather than the page's — a bare
    checkbox over a light photo is invisible. Bigger than default: this is a touch target on mobile. */
 .file-card .selbox{position:absolute;top:6px;inset-inline-start:6px;z-index:2;width:20px;height:20px;cursor:pointer;
   accent-color:var(--neon);border-radius:4px;box-shadow:0 0 0 2px rgba(0,0,0,.55);background:rgba(0,0,0,.35)}
-.file-card.selected{border-color:var(--neon);box-shadow:0 0 0 2px rgba(var(--accent-rgb),.45)}
+/* Selection is a FILL plus the border, the way every file manager marks it — a bare glow around a
+   transparent tile reads as a hover, not a choice. */
+.file-card.selected{border-color:var(--neon);background:rgba(var(--accent-rgb),.16)}
 /* While a selection is active the grid is in SELECT mode — a tap picks rather than opens, so show a
    pointer on the whole card instead of the link's "this will open" affordance. */
 .files-grid.selmode .file-card a{cursor:pointer}
 /* THE SAME BOX a glyph gets — a photograph and a document are one cell tall. */
-.file-card img,.file-card video{width:100%;height:96px;object-fit:cover;display:block;background:#120c24}
+.file-card img,.file-card video{width:100%;height:96px;object-fit:cover;display:block;border-radius:8px;background:#120c24}
 /* THE NAME GETS ITS OWN LINE. Exactly the music-row bug (see .track below): one flex line held the
    filename and a row of flex:none icon buttons, so the NAME absorbed the entire squeeze. Measured on
    a synced folder at every width: a 150px tile, ~110px of buttons, and 10-25px left for the name —
@@ -2414,6 +2423,9 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
    beside a full-width item, so they start line two on their own. */
 .file-card .meta{padding:8px;font-size:11px;color:var(--muted);display:flex;flex-wrap:wrap;
   justify-content:space-between;align-items:center;gap:4px 6px}
+/* Centred under the icon — a desktop label, not a list row. */
+.files-grid:not(.details) .file-card .meta{justify-content:center;text-align:center}
+.files-grid:not(.details) .file-card .meta .fc-acts{margin:0 auto}
 .file-card .meta .fname{flex:1 1 100%;min-width:0;overflow:hidden;line-height:1.35;
   white-space:normal;overflow-wrap:anywhere;word-break:break-word;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
@@ -2427,7 +2439,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
    AND SMALLER. 140px with a 42px glyph is a billboard with a dot in the middle: that is the "wasted
    icon space". 96px with a 56px glyph is the proportion an OS icon has — the art fills its box, and
    a row holds more files. */
-.file-icon{display:flex;flex-direction:column;align-items:center;justify-content:center;height:96px;gap:2px;font-size:56px;background:#120c24}
+.file-icon{display:flex;flex-direction:column;align-items:center;justify-content:center;height:96px;gap:2px;font-size:56px;background:none}
 /* NO TYPE CAPTION UNDER THE ICON. No OS prints "PDF" beneath a document; the glyph says what it is
    and the filename carries the extension. It cost a line of every tile and said nothing new. */
 .files-grid:not(.details) .file-icon span{display:none}
