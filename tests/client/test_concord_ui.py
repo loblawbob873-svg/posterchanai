@@ -1,6 +1,7 @@
 """The browser must expose Concord, keep invite secrets client-side, and fit phones."""
 
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -75,6 +76,15 @@ def test_concord_ctrl_or_cmd_enter_sends_without_breaking_plain_enter():
     assert "e.key==='Enter'&&(e.ctrlKey||e.metaKey)" in CONCORD
     assert 'e.preventDefault(); send.click()' in CONCORD
     assert "e.key==='Enter'&&!e.shiftKey" not in CONCORD
+
+
+def test_concord_create_and_send_flow_executes_without_runtime_errors():
+    run = subprocess.run(
+        ["node", str(ROOT / "tests/client/concord_runtime.mjs")],
+        cwd=ROOT, capture_output=True, text=True, timeout=10,
+    )
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "concord runtime flow ok" in run.stdout
 
 
 def test_invite_parser_requires_naddr_and_secret_fragment():
