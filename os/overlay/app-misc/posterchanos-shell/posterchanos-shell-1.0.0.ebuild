@@ -112,6 +112,17 @@ pkg_postinst() {
 		# that copied setting leaves Firefox, Telegram and terminals with no title bar or resize border.
 		# This is a package default migration, while any other per-user Sway changes remain untouched.
 		sed -i -E 's/^default_floating_border[[:space:]]+none([[:space:]]*)$/default_floating_border normal 3\1/' "${cfg}"
+		# Do not rely only on the catch-all rule for the two native applications users interact with
+		# most. Old private configs may predate it or override it later; these last matching rules
+		# guarantee a compositor frame and a floating container, which are the prerequisites for
+		# dragging and pc-window-snap.
+		for native_rule in \
+			'for_window [app_id="firefox"] floating enable, border normal 3' \
+			'for_window [class="(?i)^firefox$"] floating enable, border normal 3' \
+			'for_window [app_id="org.telegram.desktop"] floating enable, border normal 3' \
+			'for_window [class="(?i)^(TelegramDesktop|telegram-desktop)$"] floating enable, border normal 3'; do
+			grep -qF "${native_rule}" "${cfg}" || echo "${native_rule}" >>"${cfg}"
+		done
 		# Super+Arrow is the familiar snap gesture. Older configs used it only to move keyboard focus
 		# between outputs, leaving native Firefox/Telegram/Steam with no snapping at all.
 		sed -i -E '/^bindsym[[:space:]]+\$mod\+(Left|Right|Up|Down)[[:space:]]+focus output/d' "${cfg}"

@@ -1622,8 +1622,10 @@ PROFILE
 
 	# A floating window with no geometry of its own gets something usable rather than whatever the
 	# client asked for, which for a browser is often a 200x200 stub until it finishes starting.
-	for_window [app_id="firefox"] resize set 1400 900, move position center
-	for_window [class="firefox"] resize set 1400 900, move position center
+	for_window [app_id="firefox"] floating enable, border normal 3, resize set 1400 900, move position center
+	for_window [class="(?i)^firefox$"] floating enable, border normal 3, resize set 1400 900, move position center
+	for_window [app_id="org.telegram.desktop"] floating enable, border normal 3
+	for_window [class="(?i)^(TelegramDesktop|telegram-desktop)$"] floating enable, border normal 3
 
 	# Real applications keep compositor title bars and borders. Their visible frame and input surface
 	# are therefore one object across resizing, maximising and monitor handoff.
