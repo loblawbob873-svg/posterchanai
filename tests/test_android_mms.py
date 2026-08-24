@@ -397,7 +397,10 @@ class MmsAttachmentsTravelAcrossClients(unittest.TestCase):
     def test_threads_use_an_encrypted_thumbnail_until_the_picture_is_opened(self):
         js = open(SMSJS, encoding="utf-8").read()
         self.assertIn("createImageBitmap(d.blob)", js)
-        self.assertIn("body.att.push({ ct: p.ct, name: p.name, bytes: p.bytes, sha, thumb:", js)
+        # The FIELD, not the exact call: what matters is that the published attachment carries the
+        # preview hash beside the original. Pinning the whole expression made an unrelated addition
+        # to the same object look like the thumbnail had been dropped.
+        self.assertIn("thumb: p.thumb || ''", js)
         self.assertIn("const previewSha = isImage(p.ct) && p.thumb ? p.thumb : sha", js)
         self.assertIn("if(d.preview && p.sha && PC.encFileUrl)", js,
                       "the full picture is not deferred until the thumbnail is tapped")

@@ -140,6 +140,74 @@ class TheArchive(unittest.TestCase):
         self.assertEqual(len(res["published"]), 9)
         self.assertIsNone(published(res, rows[3]["doc"]), "a hollow MMS was published")
 
+    def test_one_unreadable_mms_does_not_wall_off_the_ordinary_sweep(self):
+        """THE SAME FAULT AS THE MIGRATION'S, IN THE PATH THAT ACTUALLY RUNS.
+
+        The provider answers a `since` query OLDEST FIRST, so a row the loop stops at is in front of
+        everything newer than it — and the sweep restarts before that row every time, by design,
+        because the mark must stay behind a message that did not land. `break` therefore was not a
+        pause: one picture message whose bytes the provider would not hand over froze the entire
+        archive at that date, texts included, on every sweep for ever. The photos never reached
+        Blossom because nothing after that row was ever offered to it."""
+        rows = [text(i, date=NOW - (20 - i) * 1000) for i in range(1, 11)]
+        rows[3] = picture(4, date=rows[3]["date"],
+                          parts=[{"id": 904, "ct": "image/jpeg", "name": "blocked.jpg",
+                                  "bytes": 20 * 1024 * 1024}])
+        res = run(rows=rows, parts={"904": {"tooBig": True}}, steps=["mirror", "mirror"])
+        landed = {p["d"] for p in res["published"]}
+        for r in rows:
+            if r is rows[3]:
+                continue
+            self.assertIn(r["doc"], landed,
+                          "the unreadable picture message walled off the ordinary sweep")
+        self.assertNotIn(rows[3]["doc"], landed, "a hollow MMS was published")
+
+    def test_the_high_water_mark_is_rewound_once_and_not_on_every_sweep(self):
+        """The rewind was keyed on the MIGRATION being finished rather than on having rewound. Any
+        phone the migration cannot finish on — one attachment the provider refuses is enough — had
+        its mark dragged back to the thirty-day boundary on every single sweep, so it republished
+        the same month for ever and never moved forward."""
+        rows = [text(i, date=NOW - (20 - i) * 1000) for i in range(1, 6)]
+        res = run(rows=rows, storage={"pc_sms_hwm_me": NOW + 60000,
+                                      "pc_sms_hwm_me_oldest_first_v1": "1"},
+                  steps=["mirror", "mirror"])
+        asked = [c[1] for c in calls_of(res, "list")]
+        self.assertEqual(len(asked), 2, asked)
+        self.assertGreater(asked[1], asked[0],
+                           "the second sweep was dragged back to the same starting point")
+
+    def test_a_picture_with_no_usable_preview_is_archived_once_not_for_ever(self):
+        """A thumbnail is a bandwidth saving, not part of being archived. Read as a missing piece,
+        an image the WebView cannot decode was never `done`: republished on every migration batch,
+        blocking the completion marker, and so dragging the mark back on every sweep behind it. Node
+        has no `createImageBitmap`, which is exactly the shape of that failure."""
+        rows = [text(1), picture(2), picture(3)]
+        res = run(rows=rows, storage={"pc_sms_hwm_me": NOW + 60000,
+                                      "pc_sms_hwm_me_oldest_first_v1": "1"},
+                  steps=["phoneLoad", "migrate", "migrate", "migrate"])
+        seen = [p["d"] for p in res["published"]]
+        self.assertEqual(len(seen), len(set(seen)),
+                         "a picture with no preview was published again on every pass: %r" % seen)
+        body = published(res, rows[1]["doc"])
+        self.assertRegex(body["att"][0]["sha"], r"^[0-9a-f]{64}$",
+                         "the original was not archived")
+        self.assertEqual(body["att"][0].get("nt"), 1,
+                         "the impossible preview was not recorded, so it will be retried for ever")
+
+    def test_the_migration_loop_is_bounded_by_progress_not_by_its_safety_limit(self):
+        """Every batch PULLS and SAVES the encrypted file index. A queue that has stopped shrinking
+        used to run the full thousand-pass safety limit — a thousand rewrites of a replaceable
+        document for one opening of the Texts screen."""
+        rows = [text(i, date=NOW - (200 + i) * 86400000) for i in range(1, 40)]
+        rows += [picture(100 + i, date=NOW - (100 + i) * 86400000) for i in range(1, 40)]
+        res = run(rows=rows, migrationBatch=60,
+                  storage={"pc_sms_hwm_me": NOW, "pc_sms_hwm_me_oldest_first_v1": "1"},
+                  steps=["phoneLoad", "migrateAll"])
+        self.assertLessEqual(len(calls_of(res, "drivePull")), 4,
+                             "the migration kept re-opening the drive after it stopped progressing")
+        self.assertEqual(len([f for f in res["drive"]["files"] if f["folder"] == "MMS"]), 39,
+                         "not every picture reached the encrypted MMS folder")
+
     def test_body_and_picture_are_committed_to_encrypted_drive_folders(self):
         """A successful relay event is not enough: other devices find bytes through FilesIdx. The
         transaction must persist both folders before Android is free to freeze the WebView."""
