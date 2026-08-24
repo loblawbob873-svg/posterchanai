@@ -14,6 +14,8 @@ def test_music_app_has_one_transport_and_equalizer():
     assert all(f'data-band="{band}"' in body for band in ("low", "mid", "high"))
     assert all(f'data-eq="{preset}"' in body for preset in ("flat", "bass", "vocal", "bright"))
     assert "MusicPlayer.bindEqualizer(feed)" in body
+    assert 'id="ma-viz"' in body
+    assert "MusicPlayer._startViz()" in body
 
 
 def test_equalizer_is_persistent_and_part_of_the_single_audio_graph():
@@ -22,6 +24,14 @@ def test_equalizer_is_persistent_and_part_of_the_single_audio_graph():
     assert "createBiquadFilter()" in APP
     assert "v.src.connect(low); low.connect(mid); mid.connect(high); high.connect(v.an)" in APP
     assert "if(v.an) return true" in APP, "the player must not create a second MediaElementSource"
+    assert "const appCv=document.getElementById('ma-viz')" in APP
+    assert "const cv=appCv || floating" in APP
+
+
+def test_visualizer_is_compact_so_the_library_keeps_the_screen():
+    assert ".ma-viz{display:block;flex:1 1 100%;width:100%;height:38px" in CSS
+    assert ".music-app{display:flex;flex-direction:column;gap:9px" in CSS
+    assert ".music-app .music-list{flex:1;min-height:0;overflow-y:auto}" in CSS
 
 
 def test_phone_transport_and_equalizer_fit_without_horizontal_overflow():

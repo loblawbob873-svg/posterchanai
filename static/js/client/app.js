@@ -16925,6 +16925,7 @@
           <button class="btn btn-neon" id="ma-play" title="Play / pause"><svg class="ic b-ic" aria-hidden="true"><use href="#i-play"></use></svg></button>
           <button class="btn btn-ghost small" id="ma-next" title="Next"><svg class="ic b-ic" aria-hidden="true"><use href="#i-next"></use></svg></button>
         </div>
+        <canvas class="ma-viz" id="ma-viz" aria-label="Audio spectrum"></canvas>
         <!-- The scrubber gets its OWN row rather than sharing the control line, so it can be the
              full width of the panel at every size. On a phone .ma-now wraps to two or three lines,
              and a bar sharing a row with four buttons is left a stub too short to aim with — the
@@ -17028,6 +17029,9 @@
     // The same scrubber the floating widget uses — one implementation, so the two cannot drift.
     MusicPlayer.bindSeek($('#ma-seek',feed));
     MusicPlayer._tickApp();   // paint the position immediately: entering mid-track must not read 0:00
+    // The app and floating widget share the analyser/audio graph. Opening Music in the middle of a
+    // song must move the live spectrum here without creating a second AudioContext or restarting it.
+    if(_audioEl && !_audioEl.paused) MusicPlayer._startViz();
     { const qi=$('#ma-q',feed);
       if(qi){ qi.value=_musicQ;
         // Re-render the LIST only. Repainting the whole app would take the caret out of this box.
@@ -21858,8 +21862,13 @@
       };
       const stop=()=>{ v.raf=0; canvas=null; if(v.ro){ try{ v.ro.disconnect(); }catch(_){} v.ro=null; } };
       let last=-1e9;
-      const loop=(ts)=>{ const cv=this.el&&this.el.querySelector('.mp-viz');
-        if(!cv || this.el.classList.contains('hidden') || this.min || !_audioEl || _audioEl.paused) return stop();
+      const loop=(ts)=>{ const appCv=document.getElementById('ma-viz');
+        const floating=this.el && !this.el.classList.contains('hidden') && !this.min
+          ? this.el.querySelector('.mp-viz') : null;
+        // Music's full app takes ownership while mounted; otherwise the exact same analyser paints
+        // the persistent player. No duplicate graph, decoder, song, or animation loop.
+        const cv=appCv || floating;
+        if(!cv || !_audioEl || _audioEl.paused) return stop();
         v.raf=requestAnimationFrame(loop);
         const now=ts||0;
         if(now-last < 32) return;                 // ~30fps

@@ -7653,24 +7653,27 @@ body.os-on #os-root{pointer-events:auto}
 }
 
 /* The Music APP — a player, not the file manager's Music folder. */
-.music-app{display:flex;flex-direction:column;gap:14px;padding:14px 12px;min-height:0}
-.ma-now{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px;border-radius:14px;
+.music-app{display:flex;flex-direction:column;gap:9px;padding:10px 12px;min-height:0;height:100%}
+.ma-now{display:flex;align-items:center;gap:9px 11px;flex-wrap:wrap;padding:10px 12px;border-radius:14px;
   background:var(--panel2);border:1px solid var(--line)}
-.ma-art{width:58px;height:58px;border-radius:12px;flex:0 0 auto;display:flex;align-items:center;
+.ma-art{width:44px;height:44px;border-radius:10px;flex:0 0 auto;display:flex;align-items:center;
   justify-content:center;background:linear-gradient(135deg,rgba(var(--accent-rgb),.28),transparent);
   border:1px solid var(--line)}
 .ma-art .ic{width:26px;height:26px;color:var(--neon)}
 .ma-meta{flex:1 1 170px;min-width:0}
 .ma-meta b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px}
 .ma-ctl{display:flex;align-items:center;justify-content:center;gap:9px;flex-wrap:nowrap}
-.ma-ctl .btn{width:42px;height:42px;padding:0;justify-content:center;border-radius:50%}
-.ma-ctl #ma-play{width:52px;height:52px;box-shadow:0 0 18px rgba(var(--accent-rgb),.35)}
-.ma-tools{flex:1 1 100%;display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.ma-ctl .btn{width:36px;height:36px;padding:0;justify-content:center;border-radius:50%}
+.ma-ctl #ma-play{width:44px;height:44px;box-shadow:0 0 18px rgba(var(--accent-rgb),.35)}
+.ma-viz{display:block;flex:1 1 100%;width:100%;height:38px;min-height:38px;border-radius:8px;
+  background:radial-gradient(ellipse at bottom,rgba(0,240,255,.12),transparent 72%);
+  border:1px solid rgba(0,240,255,.14)}
+.ma-tools{flex:1 1 100%;display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap}
 /* The Music app's seek row. Full width of the panel (flex-basis 100% in a wrapping .ma-now), so the
  * bar is never squeezed to a stub by the buttons beside it. `touch-action:none` is load-bearing on a
  * phone: without it the browser claims the gesture as a page scroll and the pointermove events that
  * drag the handle simply stop arriving mid-drag. */
-.ma-seek-row{flex:1 1 100%;display:flex;align-items:center;gap:10px;margin-top:2px}
+.ma-seek-row{flex:1 1 100%;display:flex;align-items:center;gap:10px;margin-top:0}
 /* APK-only Bluetooth autoplay: one compact setting, not a debug panel. */
 .ma-car{display:flex;align-items:center;margin:6px 0 0}
 .ma-car-sw{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);cursor:pointer}
@@ -7730,10 +7733,12 @@ body.os-on #os-root{pointer-events:auto}
 .ma-q{width:100%}
 .music-app .music-list{flex:1;min-height:0;overflow-y:auto}
 @media(max-width:560px){
-  .ma-now{justify-content:center;padding:12px 10px;gap:11px}
-  .ma-meta{flex-basis:calc(100% - 74px)}
+  .music-app{padding:7px 8px;gap:7px}
+  .ma-now{justify-content:center;padding:8px;gap:7px 9px}
+  .ma-meta{flex-basis:calc(100% - 55px)}
   .ma-ctl{flex:1 1 100%;order:3}
-  .ma-seek-row{order:4}.ma-tools{order:5;justify-content:center}.ma-eq{order:6}
+  .ma-viz{order:4;height:34px;min-height:34px}.ma-seek-row{order:5}
+  .ma-tools{order:6;justify-content:center}.ma-eq{order:7}
   .ma-eq-bands{grid-template-columns:1fr;gap:8px}
 }
 
