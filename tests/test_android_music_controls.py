@@ -451,11 +451,11 @@ def test_a_parked_press_goes_stale_rather_than_replaying():
 
 
 def test_the_phone_reports_what_it_measured():
-    """Four APK builds went on guesses last time this file's neighbour was wrong. status() is the
-    counters the service keeps; the Music screen is where they are read."""
+    """Support diagnostics remain measurable without frightening users in the Music player."""
     for key in ("webSilenceMs", "webGone", "btConnects", "btAutoplays", "unanswered", "revived", "note"):
         assert f'"{key}"' in PLUGIN, f"status() does not report {key}"
-        assert key in APPJS, f"nothing on screen reads {key}"
+    assert 'id="ma-cardiag"' not in APPJS
+    assert 'id="ma-carnote"' not in APPJS
 
 
 # ---- Bluetooth autoplay with the app CLOSED ----------------------------------------------------

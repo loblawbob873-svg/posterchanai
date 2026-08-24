@@ -58,6 +58,9 @@ const server = net.createServer((c) => {
         const fail = /THIS_WILL_FAIL/.test(payload);
         c.write(frame(0, fail ? [{ success:false, error:'no such container' }] : [{ success:true }]));
       } else if(type === 4){ c.write(frame(4, TREE)); }   // GET_TREE
+      else if(type === 3){ c.write(frame(3, [
+        {name:'HDMI-A-1',active:true,rect:{x:0,y:0,width:1920,height:1080}}
+      ])); }
       else if(type === 7){ c.write(frame(7, { human_readable:'fake 1.9' })); }
       else if(type === 2){                                // SUBSCRIBE, then push an event
         c.write(frame(2, { success:true }));
@@ -213,6 +216,13 @@ class CompositorIPC(unittest.TestCase):
         self.assertEqual(out["at"], {"x":1932,"y":132,"w":1256,"h":696})
         cmds = [s["payload"] for s in out["seen"] if s["type"] == 0]
         self.assertIn("[con_id=11] move absolute position 1932 132", cmds)
+
+    def test_native_window_snaps_to_the_current_outputs_usable_half(self):
+        out = self.run_js("out.ok = await wm.snap(11, 'right');")
+        self.assertTrue(out["ok"])
+        cmds = [s["payload"] for s in out["seen"] if s["type"] == 0]
+        self.assertIn("[con_id=11] resize set 960 1008", cmds)
+        self.assertIn("[con_id=11] move absolute position 960 0", cmds)
 
     def test_events_arrive_on_their_own_socket(self):
         """sway will not answer ordinary requests on a subscribed connection, so a shell that

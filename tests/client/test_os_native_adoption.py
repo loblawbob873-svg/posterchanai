@@ -21,6 +21,13 @@ def test_native_adoption_loads_installed_icons_before_building_task_rows():
     assert body.index("await PCOSShell.machineApps()") < body.index("PCOSShell.taskbarRows(list)")
 
 
+def test_native_taskbar_menu_has_the_same_snap_layouts_as_posterchan_windows():
+    assert "{label:'Snap left'" in OS
+    assert "{label:'Snap right'" in OS
+    assert "{label:'Maximize'" in OS
+    assert "pcWM.snap(w.id,'left')" in OS
+
+
 def test_hardware_watch_does_not_rebuild_the_start_button():
     """Battery/volume events update the tray without replacing the Start image DOM node."""
     watch = OS[OS.index("PCOSShell.watch(() =>") : OS.index("}).then(off =>", OS.index("PCOSShell.watch(() =>"))]

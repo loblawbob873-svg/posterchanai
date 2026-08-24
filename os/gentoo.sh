@@ -1629,6 +1629,11 @@ PROFILE
 	# are therefore one object across resizing, maximising and monitor handoff.
 	default_border none
 	default_floating_border normal 3
+	font pango:Sans 10
+	client.focused          #241438 #241438 #f7f4ff #16d9e3 #16d9e3
+	client.focused_inactive #171222 #171222 #bcb3cb #4b3a65 #4b3a65
+	client.unfocused        #100d18 #100d18 #8f879c #30263f #30263f
+	client.urgent           #7a2145 #7a2145 #ffffff #ff4f8b #ff4f8b
 	gaps inner 0
 	gaps outer 0
 

@@ -45,7 +45,7 @@ def test_shell_restart_is_serialized_and_targets_only_the_shell_process():
     assert "pattern='[/]opt/posterchan/'" in restart
     assert "send_tick pc:restart" in restart
     assert "pkill" not in restart
-    assert "recoverSurfaces(_shellSurfaces.values(), loadApp)" in main
+    assert "recoverSurfaces(_shellSurfaces.values(), loadApp).catch" in main
     assert "ev.payload !== 'pc:restart'" in main
     assert "exec /usr/local/bin/pc-shell-start" in restart
     assert "retries" in start and "exit 1" in start
@@ -99,12 +99,35 @@ def test_restart_navigates_a_secondary_surface_that_is_still_about_blank():
     helper = ROOT / "desktop/shell-recovery.js"
     code = f"""
       const {{recoverSurfaces}}=require({json.dumps(str(helper))});
-      const b={{url:'about:blank',shown:false,isDestroyed:()=>false,show(){{this.shown=true}}}};
-      const n=recoverSurfaces([{{browser:b}}], x=>{{x.url='https://poster.place/client'}});
-      process.stdout.write(JSON.stringify({{n,url:b.url,shown:b.shown}}));
+      (async()=>{{
+        const b={{url:'about:blank',shown:false,isDestroyed:()=>false,show(){{this.shown=true}}}};
+        const n=await recoverSurfaces([{{browser:b}}], x=>{{x.url='https://poster.place/client'}});
+        process.stdout.write(JSON.stringify({{n,url:b.url,shown:b.shown}}));
+      }})().catch(e=>{{console.error(e);process.exit(1)}});
     """
     got=json.loads(subprocess.check_output(["node","-e",code],text=True))
     assert got == {"n":1,"url":"https://poster.place/client","shown":True}
+
+
+def test_restart_reloads_two_live_monitors_sequentially():
+    helper = ROOT / "desktop/shell-recovery.js"
+    code = f"""
+      const {{recoverSurfaces}}=require({json.dumps(str(helper))});
+      let active=0,max=0,order=[];
+      function browser(name){{
+        const listeners={{}};
+        return {{isDestroyed:()=>false,show(){{order.push('show-'+name)}},webContents:{{
+          getURL:()=> 'https://poster.place/client',
+          once:(ev,fn)=>{{listeners[ev]=fn}},
+          reloadIgnoringCache:()=>{{active++;max=Math.max(max,active);order.push('load-'+name);
+            setTimeout(()=>{{active--;listeners['did-finish-load']()}},5)}}
+        }}}};
+      }}
+      (async()=>{{const n=await recoverSurfaces([{{browser:browser('a')}},{{browser:browser('b')}}],()=>{{}});
+        process.stdout.write(JSON.stringify({{n,max,order}}));}})();
+    """
+    got=json.loads(subprocess.check_output(["node","-e",code],text=True))
+    assert got == {"n":2,"max":1,"order":["load-a","show-a","load-b","show-b"]}
 
 
 def test_upgrade_restores_native_window_decorations_in_old_identity_configs():

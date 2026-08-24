@@ -256,6 +256,27 @@ class WM {
     return {x:Math.round(x),y:Math.round(y),w:Math.round(w),h:Math.round(h)};
   }
 
+  /* PosterChan's taskbar can offer the same layouts for compositor-owned applications without
+   * constructing a second HTML frame around them. Geometry is based on the output containing the
+   * window centre and reserves the shell taskbar at the bottom. */
+  async snap(id, zone){
+    const row=(await this.windows()).find(w=>Number(w.id)===Number(id));
+    if(!row || !row.rect) return false;
+    const outputs=(await this.outputs()).filter(o=>o&&o.active!==false&&o.rect);
+    const cx=Number(row.rect.x)+(Number(row.rect.width)||0)/2;
+    const cy=Number(row.rect.y)+(Number(row.rect.height)||0)/2;
+    let out=outputs.find(o=>cx>=o.rect.x&&cx<o.rect.x+o.rect.width&&cy>=o.rect.y&&cy<o.rect.y+o.rect.height);
+    if(!out) out=outputs[0];
+    if(!out) return false;
+    const b=out.rect, h=Math.max(1,Number(b.height)-72), half=Math.floor(Number(b.width)/2);
+    let x=Number(b.x), w=Number(b.width);
+    if(zone==='left') w=half;
+    else if(zone==='right'){ w=Number(b.width)-half; x+=half; }
+    else if(zone!=='max') return false;
+    await this.command('[con_id='+Number(id)+'] floating enable');
+    return this.place(id,x,Number(b.y),w,h);
+  }
+
   /** Dragging changes position only, and LATEST WINS.
    *
    * Pointer frames arrive faster than sway IPC acknowledgements. Sending every one through the

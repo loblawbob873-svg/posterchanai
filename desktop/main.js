@@ -1056,7 +1056,8 @@ async function wireShellRecovery(){
            * lost its first navigation is still about:blank, so Ctrl+Alt+Backspace kept that monitor
            * blank for ever. loadApp is the canonical proxy/Tor-aware navigation and repairs both a
            * loaded client and a never-loaded renderer. */
-          recoverSurfaces(_shellSurfaces.values(), loadApp);
+          recoverSurfaces(_shellSurfaces.values(), loadApp).catch(e =>
+            console.warn('[shell restart]', e && e.message || e));
         }
       }catch(e){ console.warn('[shell restart]', e && e.message || e); }
     });
@@ -1234,6 +1235,7 @@ ipcMain.handle('pc:wm:preview-frame', (e, payload, direction) => {
 ipcMain.handle('pc:wm:hide', (e, id) => { fsGuard(e); return wm().hide(Number(id)); });
 ipcMain.handle('pc:wm:show', (e, id) => { fsGuard(e); return wm().show(Number(id)); });
 ipcMain.handle('pc:wm:fullscreen', (e, id, on) => { fsGuard(e); return wm().fullscreen(Number(id), !!on); });
+ipcMain.handle('pc:wm:snap', (e, id, zone) => { fsGuard(e); return wm().snap(Number(id), String(zone||'')); });
 ipcMain.handle('pc:wm:decorate', (e, id) => {
   fsGuard(e);
   return wm().command('[con_id=' + Number(id) + '] border normal 3');

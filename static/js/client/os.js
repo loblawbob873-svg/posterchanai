@@ -4988,7 +4988,13 @@
       e.preventDefault(); e.stopPropagation();
       if(b.dataset.kind === 'native'){
         const w=nativeTasks.find(x=>String(x.id)===b.dataset.id); if(!w) return;
-        showCtx(e.clientX,e.clientY,[{label:'Close',run:()=>Promise.resolve(pcWM.close(w.id)).catch(()=>{})}]);
+        showCtx(e.clientX,e.clientY,[
+          {label:'Snap left',run:()=>Promise.resolve(pcWM.snap(w.id,'left')).catch(()=>{})},
+          {label:'Snap right',run:()=>Promise.resolve(pcWM.snap(w.id,'right')).catch(()=>{})},
+          {label:'Maximize',run:()=>Promise.resolve(pcWM.snap(w.id,'max')).catch(()=>{})},
+          {sep:true},
+          {label:'Close',run:()=>Promise.resolve(pcWM.close(w.id)).catch(()=>{})}
+        ]);
         return;
       }
       let key = b.dataset.pin || '';
