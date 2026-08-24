@@ -6121,12 +6121,13 @@
   function onResize(){
     if(!on) return;
     if(!fits()){
-      /* READ WITH THE SAME DEFAULT `restore()` USES, and that matters now the desktop is the default.
+      /* Read with the same default as restore(). An absent preference means Classic on the web;
+       * only PosterChanOS itself forces the desktop, above.
      * This is an INVOLUNTARY exit -- the screen got too narrow, or a login gate needs the page --
      * and it re-sets the flag afterwards so the desktop comes back. Read with a default of false,
      * a user who had never toggled it (because they never had to) counted as "did not want it", so
      * `exit()` wrote false and one rotation, or one sign-in, turned the default off for good. */
-    const remember = settings().get(KEY, true);
+    const remember = settings().get(KEY, false);
       exit();
       if(remember) settings().set(KEY, true);
       try{ PC().toast && PC().toast('Turn the device sideways for the desktop'); }catch(_){}
@@ -6270,19 +6271,12 @@
     try{
       if(window.PCOSShell && PCOSShell.available()){ enter(); return; }
     }catch(_){}
-    /* THE DESKTOP IS THE DEFAULT ON A SCREEN THAT FITS -- note the `true`.
-     *
-     * It used to default to false, so the windowed desktop was something you had to find and then
-     * re-enter after every sign-in: `on` is remembered, but only once you had turned it on at least
-     * once. On anything wide enough that is the wrong way round -- the desktop IS the product on a
-     * big screen, and the single column is the phone layout being shown to a monitor.
-     *
-     * "Until they change it" is what `exit()` writes: leaving the desktop sets the flag false and it
-     * stays false. So this is a DEFAULT, not a forced mode.
-     *
-     * `fits()` still gates it, so nothing changes below 1024px -- a phone, or a tablet held upright,
-     * never lands here. */
-    try{ if(settings().get(KEY, true) && fits()) enter(); }catch(_){}
+    /* A PUBLIC WEBSITE OPENS AS A WEBSITE. A first-time visitor has no `osMode` preference and must
+     * see the ordinary client: its welcome card explains PosterChan and offers Sign up / Log in.
+     * Dropping that person into a simulated desktop gave them icons and a Start button before they
+     * knew what the product was. An explicit Desktop choice is still remembered as true. The real
+     * PosterChanOS machine returned above and therefore remains a desktop unconditionally. */
+    try{ if(settings().get(KEY, false) && fits()) enter(); }catch(_){}
   }
 
   /* A BARE SUPER PRESS OPENS THE START MENU — the other half of the tick above, for the press made
@@ -6359,12 +6353,12 @@
    * restores it (`restore()` reads the preference this deliberately leaves set). */
   function suspend(){
     if(!on) return false;
-    /* READ WITH THE SAME DEFAULT `restore()` USES, and that matters now the desktop is the default.
+    /* Read with the same browser-safe default as restore().
      * This is an INVOLUNTARY exit -- the screen got too narrow, or a login gate needs the page --
      * and it re-sets the flag afterwards so the desktop comes back. Read with a default of false,
      * a user who had never toggled it (because they never had to) counted as "did not want it", so
      * `exit()` wrote false and one rotation, or one sign-in, turned the default off for good. */
-    const remember = settings().get(KEY, true);
+    const remember = settings().get(KEY, false);
     exit();
     if(remember) settings().set(KEY, true);
     return true;
