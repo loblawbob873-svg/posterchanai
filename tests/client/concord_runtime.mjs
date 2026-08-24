@@ -12,7 +12,7 @@ const classList = makeClassList();
 const feed = { innerHTML:'', classList, insertAdjacentHTML(){} };
 const controls = new Map();
 function control(id){
-  if(!controls.has(id)) controls.set(id, { id, value:'', classList:makeClassList(), focus(){}, click(){ this.onclick?.(); } });
+  if(!controls.has(id)) controls.set(id, { id, value:'', classList:makeClassList(), focus(){}, click(){ return this.onclick?.(); } });
   return controls.get(id);
 }
 const dollar = selector => selector === '#feed' ? feed : control(selector.slice(1));
@@ -32,8 +32,13 @@ window.__PC = {
   copyValue:value=>{ calls.copied=value; },
   osNotify:(title,body,opts)=>{ calls.mentions.push({title,body,opts}); },
   relaySubscribe:()=>({close(){}}),
+  relayUrls:()=>['wss://relay.example'], signTemplate:async template=>template,
+  relayPublish:async()=>({ok:true}),
+  publish:async()=>({}),
   profOf:()=>({}), LOGO:'', linkify:s=>String(s), linkCardHtml:()=>'', hydrateLinkCards:()=>{},
 };
+globalThis.location={origin:'https://poster.place'};
+window.PosterCord={createCommunity:async()=>({communityId:'c'.repeat(64),generalChannelId:'d'.repeat(64),events:[{}],url:'https://poster.place/invite/naddr1qqqq#abc_DEF',secrets:{}})};
 globalThis.document = {
   body:{classList}, head:{appendChild(){}}, documentElement:{appendChild(){}},
   createElement:()=>({dataset:{}}),
@@ -49,9 +54,9 @@ PCConcord.render();
 
 control('cc-community-name').value='Runtime Test';
 control('cc-community-icon').value='🚀';
-control('cc-create-go').click();
+await control('cc-create-go').click();
 const rooms=JSON.parse(data.get('pc.concord.invites'));
-if(rooms.length!==1 || !rooms[0].local || !rooms[0].channels || rooms[0].channels[0].private!==false || rooms[0].name!=='Runtime Test' || rooms[0].icon!=='🚀') throw new Error('create flow failed');
+if(rooms.length!==1 || rooms[0].local || !rooms[0].url || !rooms[0].channels || rooms[0].channels[0].private!==false || rooms[0].name!=='Runtime Test' || rooms[0].icon!=='🚀') throw new Error('relay create flow failed');
 
 control('cc-edit-icon').click();
 control('cc-icon-value').value='https://example.test/room.png';
@@ -69,7 +74,7 @@ control('cc-settings-save').click();
 const madePublic=JSON.parse(data.get('pc.concord.invites'));
 if(madePublic[0].channels[0].private!==false) throw new Error('public channel settings flow failed');
 control('cc-copy-link').click();
-if(!calls.toasts.some(x=>x.includes('do not have a relay invite'))) throw new Error('local invite link state failed');
+if(calls.copied!=='https://poster.place/invite/naddr1qqqq#abc_DEF') throw new Error('relay invite copy failed');
 
 const input=control('cc-input');
 control('cc-emoji').click();

@@ -40,7 +40,7 @@ def test_concord_is_precached_and_old_bundles_self_heal_the_nav():
 def test_concord_owns_a_versioned_stylesheet_so_stale_shell_css_cannot_unstyle_it():
     assert 'static/css/concord.css' in HTML
     assert "data-concord-css" in CONCORD
-    assert "concord.css?v=6" in CONCORD
+    assert "concord.css?v=7" in CONCORD
     assert "'/static/css/concord.css'" in (ROOT / "static/js/client/sw.js").read_text()
     assert ".cc-app" in CONCORD_CSS and "grid-template-columns:68px 248px" in CONCORD_CSS
     assert CONCORD_CSS.count('{') == CONCORD_CSS.count('}'), "Concord CSS has an unclosed rule"
@@ -64,10 +64,11 @@ def test_concord_has_discord_style_panes_and_dm_style_composer():
 
 def test_concord_has_honest_creation_and_public_discovery_empty_states():
     assert 'Create community' in CONCORD
-    assert 'Create a test community' in CONCORD
-    assert 'local:true' in CONCORD
+    assert 'Create a public community' in CONCORD
+    assert 'window.PosterCord.createCommunity' in CONCORD
+    assert 'p.relayPublish(ev)' in CONCORD
+    assert "await p.publish(1,`${name}" in CONCORD
     assert 'No public communities found' in CONCORD
-    assert 'not published to relays' in CONCORD
     assert 'cc-public-room' in CONCORD_CSS
 
 
@@ -114,6 +115,7 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert "route:'concord'" in CONCORD and 'concord-mention-' in CONCORD
     assert "search:'armada.buzz/invite'" in CONCORD and "search:'poster.place/invite'" in CONCORD
     assert 'data-cc-discover' in CONCORD and 'relaySubscribe:' in APP
+    assert 'class="cc-message-avatar"' in CONCORD and '.cc-message-avatar' in CONCORD_CSS
     assert 'linkify, linkCardHtml, hydrateLinkCards' in APP
 
 

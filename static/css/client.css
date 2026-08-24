@@ -2382,7 +2382,8 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .dm-tools .btn{padding:10px 20px;font-size:17px}
 
 /* blossom files */
-.files-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;padding:18px}
+/* Narrower cells now the art is 96px rather than 140px — an icon view shows MANY files. */
+.files-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(126px,1fr));gap:10px;padding:16px}
 /* Leftover artifacts from deleted chats: a size + a one-tap clean-up. Wraps on a phone. */
 .files-orphans{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:14px 18px 0;padding:10px 14px;
   border:1px dashed var(--line);border-radius:12px;font-size:13px;background:rgba(var(--accent2-rgb),.05)}
@@ -2401,7 +2402,8 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 /* While a selection is active the grid is in SELECT mode — a tap picks rather than opens, so show a
    pointer on the whole card instead of the link's "this will open" affordance. */
 .files-grid.selmode .file-card a{cursor:pointer}
-.file-card img,.file-card video{width:100%;height:140px;object-fit:cover;display:block;background:#120c24}
+/* THE SAME BOX a glyph gets — a photograph and a document are one cell tall. */
+.file-card img,.file-card video{width:100%;height:96px;object-fit:cover;display:block;background:#120c24}
 /* THE NAME GETS ITS OWN LINE. Exactly the music-row bug (see .track below): one flex line held the
    filename and a row of flex:none icon buttons, so the NAME absorbed the entire squeeze. Measured on
    a synced folder at every width: a 150px tile, ~110px of buttons, and 10-25px left for the name —
@@ -2418,15 +2420,17 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .file-card .meta .fc-acts{flex:none;margin-inline-start:auto;display:flex;align-items:center;gap:2px}
 .file-card .meta .dlbtn{background:none;border:none;color:var(--muted);cursor:pointer;font-size:15px;padding:4px 6px;line-height:1}
 .file-card .meta .dlbtn:hover{color:var(--cyan,#5ff)}
-.file-icon{display:flex;flex-direction:column;align-items:center;justify-content:center;height:140px;gap:6px;font-size:42px;background:#120c24}
-/* A CARD WITH NOTHING TO SHOW DOES NOT RESERVE THE SPACE A PHOTOGRAPH NEEDS.
-   140px is right for an image or a video frame and wrong for a 42px glyph — a folder of documents
-   became a grid of empty boxes ("mostly wasted icon space"), which is what a SYNCED folder is made
-   of. Photographs are untouched, so the drive and a synced folder still look like one another.
-   `has-thumb` wins: a decrypted preview arriving late re-expands the card it belongs to. */
-.file-icon.noart{height:64px;font-size:26px;gap:2px}
-.file-icon.noart span{font-size:10px}
-.file-icon.noart.has-thumb{height:140px;font-size:42px}
+/* AN ICON VIEW, THE WAY EVERY FILE MANAGER DRAWS ONE.
+   UNIFORM — a folder, a document and a photograph occupy the same cell. Mixed heights are the one
+   thing no OS does, and doing it here (a short cell for anything with no preview) is what turned a
+   tidy grid into a ragged one.
+   AND SMALLER. 140px with a 42px glyph is a billboard with a dot in the middle: that is the "wasted
+   icon space". 96px with a 56px glyph is the proportion an OS icon has — the art fills its box, and
+   a row holds more files. */
+.file-icon{display:flex;flex-direction:column;align-items:center;justify-content:center;height:96px;gap:2px;font-size:56px;background:#120c24}
+/* NO TYPE CAPTION UNDER THE ICON. No OS prints "PDF" beneath a document; the glyph says what it is
+   and the filename carries the extension. It cost a line of every tile and said nothing new. */
+.files-grid:not(.details) .file-icon span{display:none}
 .file-icon span{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px}
 .file-card .del{position:absolute;top:6px;inset-inline-end:6px;background:rgba(8,5,18,.7);border:1px solid var(--line);border-radius:8px;color:var(--danger);cursor:pointer;padding:2px 8px}
 .file-card .copy{position:absolute;top:6px;inset-inline-end:38px;background:rgba(8,5,18,.7);border:1px solid var(--line);border-radius:8px;color:var(--cyan,#5ff);cursor:pointer;padding:2px 8px;font-size:13px}
