@@ -3312,6 +3312,11 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-inline-end:4px;
 
 /* ===== Streams (NIP-53) ===== */
 .stream-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:16px;padding:18px}
+/* The public room list's heading in Chat. A SECTION, not a second screen: the grid above it is what
+   is active, joined or yours, and this is everything else the relay knows about — so it reads as
+   subordinate to that rather than as a competing list. Padded to line up with .stream-grid. */
+.chat-sec{margin:22px 0 2px;padding:0 18px;font-size:15px;letter-spacing:.4px}
+.chat-sec-note{padding:0 18px;margin:0 0 6px}
 .stream-card{background:var(--panel2);border:1px solid var(--line);border-radius:16px;overflow:hidden;cursor:pointer;transition:.16s;animation:fade .25s}
 .stream-card:hover{border-color:var(--neon);box-shadow:var(--glow),0 0 24px rgba(var(--accent2-rgb),.2);transform:translateY(-3px)}
 .prof-streams .stream-card{animation:none}   /* profile Streams tab re-renders on lazy-fetch; suppress fade re-run to avoid flicker */

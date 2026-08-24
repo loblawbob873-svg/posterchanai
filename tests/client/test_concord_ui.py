@@ -70,6 +70,13 @@ def test_concord_has_honest_creation_and_public_discovery_empty_states():
     assert 'cc-public-room' in CONCORD_CSS
 
 
+def test_concord_ctrl_or_cmd_enter_sends_without_breaking_plain_enter():
+    assert 'bind(me);' in CONCORD and 'function bind(me)' in CONCORD
+    assert "e.key==='Enter'&&(e.ctrlKey||e.metaKey)" in CONCORD
+    assert 'e.preventDefault(); send.click()' in CONCORD
+    assert "e.key==='Enter'&&!e.shiftKey" not in CONCORD
+
+
 def test_invite_parser_requires_naddr_and_secret_fragment():
     assert "/\\/invite\\/(naddr1" in CONCORD
     assert "m&&u.hash.length>3" in CONCORD

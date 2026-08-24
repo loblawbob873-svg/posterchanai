@@ -10966,12 +10966,32 @@
     const active=new Map(); msgs.forEach(m=>{ const r=_chatRoot(m); if(r) active.set(r, Math.max(active.get(r)||0, m.created_at)); });
     // A JOINED channel always lists, even with no local activity — you asked to be told about it, so it
     // must not vanish from the one screen where you'd go to turn that off.
-    const shown=chans.filter(c=> !_isChanDeleted(c) && (active.has(c.id) || PUBCHATS.has(c.id) || (ME && c.pubkey===ME.pubkey)))
+    const live=chans.filter(c=> !_isChanDeleted(c));
+    const shown=live.filter(c=> active.has(c.id) || PUBCHATS.has(c.id) || (ME && c.pubkey===ME.pubkey))
       .sort((a,b)=> (active.get(b.id)||b.created_at) - (active.get(a.id)||a.created_at));
+    /* THE PUBLIC ROOM LIST — every other channel definition the relay holds.
+     *
+     * These were fetched and then thrown away. The reasoning was sound as far as it went ("showing
+     * 50 empty foreign channels is noise") but it left the screen with no way to find a room you
+     * have not already been in: a channel appeared only once it had messages HERE, which is a
+     * chicken and egg — somebody has to be the first to speak in it, and nobody could get to it.
+     *
+     * So they are not mixed into the grid above, which stays what it was: what is active, joined or
+     * yours. They go underneath, named for what they are and counted, newest first — discovery
+     * without turning the first screen into a directory. Costs no extra query; this is the same
+     * kind-40 result the list above is built from. */
+    const seen=new Set(shown.map(c=>c.id));
+    const rest=live.filter(c=> !seen.has(c.id)).sort((a,b)=> b.created_at - a.created_at);
+    const REST_MAX=60;
+    const restShown=rest.slice(0, REST_MAX);
     feed.innerHTML=`<div class="chat-list">
       <div class="row" style="margin-bottom:12px"><button class="btn btn-neon small" id="ch-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New channel</button></div>
       ${shown.length?`<div class="stream-grid">${shown.map(channelCard).join('')}</div>`
-        :'<div class="empty">No active channels yet. Tap ＋ New channel to start one — channels appear here once they have messages on this instance.</div>'}
+        :'<div class="empty">Nothing active yet — start one with ＋ New channel, or open a public room below.</div>'}
+      ${restShown.length?`<h3 class="chat-sec">Public rooms<span class="muted small"> · ${rest.length}</span></h3>
+        <div class="muted small chat-sec-note">Channels this relay knows about that have no messages here yet. Say something and it moves up top.</div>
+        <div class="stream-grid">${restShown.map(channelCard).join('')}</div>
+        ${rest.length>REST_MAX?`<div class="muted small chat-sec-note">…and ${rest.length-REST_MAX} more.</div>`:''}`:''}
       <div id="nip29-groups"></div></div>`;
     decorateProfiles();
     { const b=$('#ch-new'); if(b) b.onclick=createChannel; }
