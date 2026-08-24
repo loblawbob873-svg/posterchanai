@@ -33569,6 +33569,11 @@
     // uiPrompt for the same reason (meme.js: naming a saved project) — window.prompt wedges focus
     // exactly like window.confirm, and it is the ONLY way a sub-module can ask for a line of text.
     uploadBlob, selfProof, uiConfirm, uiPrompt,
+    /* ENCRYPT-AND-UPLOAD FOR SOMEBODY WHO IS NOT US, for the sub-modules. There must be exactly one
+     * implementation of this wire format: the bytes it writes are read back by a page (and by older
+     * builds) that cannot be updated in step with a second copy of it. sms.js needs it for a file
+     * too big for MMS, which it sends as a link instead. */
+    uploadSharedEnc,
     /* Sign an event WITHOUT publishing it. The webxdc realtime channel needs this: its packets go to
      * one relay by hand (Relay.publishFast) rather than through publish()'s fan-out, because a game
      * sends tens a second and federating those is a flood with no recipient. */
