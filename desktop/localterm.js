@@ -43,14 +43,21 @@ function start(opts) {
   const cmd = `stty cols ${cols} rows ${rows} 2>/dev/null; exec ${shell} -l`;
   const proc = spawn('script', ['-qfc', cmd, '/dev/null'], {
     cwd: o.cwd || process.env.HOME || '/',
-    env: Object.assign({}, process.env, { TERM: 'xterm-256color' }),
+    /* COLORTERM, because the far end of this PTY is xterm.js and xterm.js does 24-bit colour. It is
+     * the flag every tool checks before it commits to a gradient, and without it a shell here
+     * quantises to the 256-colour cube on a terminal that never needed to. */
+    env: Object.assign({}, process.env, { TERM: 'xterm-256color', COLORTERM: 'truecolor' }),
     stdio: ['pipe', 'pipe', 'pipe'],
   });
 
   const id = String(nextId++);
   /* The welcome is part of this tab's buffered output, so it appears exactly once even though the
    * renderer attaches after start and can later reload/reconnect. */
-  const welcome = posterfetch.render(process.env);
+  /* Rendered at the tab's REAL width: the banner drops its logo rather than wrapping, and it can
+   * only do that if it is told. A wrapped banner is nineteen columns of debris in front of the
+   * first prompt, which is exactly the state a narrow pane on a tiling desktop starts in. */
+  const welcome = posterfetch.render(
+    Object.assign({}, process.env, { COLORTERM: 'truecolor' }), cols);
   const s = { id, proc, buf: welcome, seq: welcome.length, subs: new Set(), alive: true, at: Date.now() };
   sessions.set(id, s);
 

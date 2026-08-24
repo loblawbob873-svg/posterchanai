@@ -6389,6 +6389,11 @@
       try{ const at = feed ? feed.scrollTop : 0;
            if(at > 0) _tlScrollMemo[VIEW] = at; }catch(_){ }
     }
+    /* WHAT WAS ON SCREEN BEFORE THE SPINNER REPLACED IT — see the fallthrough at the end of this
+     * function. renderView(true) is also called INCIDENTALLY (an outbox flush, a relay reconnect)
+     * with no check on which view is open, so a fallthrough must be able to put back what it blanked
+     * rather than leaving a spinner OR an error where somebody's thread was. */
+    const _was = reset && feed ? feed.innerHTML : '';
     if (reset && VIEW!=='admin') feed.innerHTML = '<div class="spinner"></div>';
     if (VIEW==='home' || VIEW==='global') return renderTimeline(VIEW, reset);
     if (VIEW==='trending') return renderTrending();
@@ -6444,6 +6449,30 @@
     if (VIEW==='translate') return renderTranslate();
     if (VIEW==='admin') return renderAdmin();
     if (VIEW==='profile') return renderProfile(ME.pubkey);
+    /* NOTHING MATCHED, AND THE SPINNER IS ALREADY ON SCREEN.
+     *
+     * This chain is `if(VIEW===x) return render_x()` all the way down and then it simply ENDS, so a
+     * VIEW no branch knows leaves the `<div class="spinner">` painted at the top of this function
+     * standing for ever. Reported as "moving git from one monitor to the other makes git infinite
+     * load in a black screen with circle": the desktop's monitor handoff carries `w.appView`, which
+     * is the LIVE VIEW — and git.js sets `S.VIEW='repo'` when you open one, a name reachable only
+     * through openRepo(event) and routed by nothing here. Same shape for any module that names a
+     * sub-view: the window arrives, the feed is cleared, and the app "never loads".
+     *
+     * A spinner is a PROMISE that something is coming. Where nothing is, say so and offer the way
+     * back — never leave the promise standing. */
+    if (reset && VIEW!=='admin' && feed){
+      console.warn('[view] nothing renders', VIEW);
+      /* PUT BACK WHAT WAS THERE, when there was something. An incidental repaint of a view this
+       * chain does not route (a thread, a repo) must be a NO-OP, not a blank screen with an
+       * apology on it — the screen was correct and nothing asked to leave it. Only a feed that was
+       * already empty gets the message, which is the handoff case: a brand-new window on another
+       * monitor, told to show a view whose name reaches nothing. */
+      if(_was && _was.indexOf('spinner') < 0){ feed.innerHTML = _was; return; }
+      feed.innerHTML = '<div class="empty">Nothing here can show <b>' + enc(VIEW || '(none)')
+        + '</b>.<br><button class="btn btn-neon small" id="view-home">Go home</button></div>';
+      const b0=$('#view-home'); if(b0) b0.onclick=()=>switchView('home');
+    }
   }
 
   // ---------- timeline ----------
@@ -33489,6 +33518,34 @@
      * holds and nothing else can fetch. */
     saveBlobAs,
     ensureProfile: _ensureProfile, NT, compose, switchView,   // compose → News "Share as note"; switchView → nav
+    /* HOW TO REOPEN WHAT THIS WINDOW IS SHOWING, as a path — the desktop's monitor handoff needs it.
+     *
+     * The two monitors are separate Electron renderers, so no module state crosses the seam and the
+     * destination can only rebuild from a NAME. For a screen that is not an entity that name is the
+     * view, and `switchView` is enough. For a repo, an article, a stream, a listing or a thread it
+     * is not: those set a sub-view (git.js sets VIEW='repo') that nothing routes, so the window
+     * arrived and span for ever.
+     *
+     * Every one of those screens ALREADY publishes its own re-openable address — openRepo calls
+     * `_navUrl('/'+naddr)` — so the answer was in the URL the whole time, and routing it is code
+     * that already exists and is used by every shared link. Nothing view-specific is added here,
+     * and a screen that keeps its URL in step gets a correct handoff for free. */
+    viewPath: () => { try{ const p=location.pathname+location.search;
+                            return p && p !== '/' ? p : ''; }catch(_){ return ''; } },
+    routePath: async (path) => {
+      const p=String(path||'');
+      // SAME-ORIGIN PATH ONLY. This goes to history.replaceState, and `//host` is a different
+      // origin wearing a path's clothes. Checked here too, not only at the IPC boundary: this is
+      // reachable from any caller on the PC surface, not just the one that added it.
+      if(!p || p === '/' || !/^\/(?!\/)/.test(p) || p.length > 2048) return false;
+      try{
+        // history.replaceState, never assign: this renderer is already on its own page and a
+        // navigation would reload the whole client to move one window.
+        history.replaceState({}, '', p);
+        await routeFromPath();
+        return true;
+      }catch(_){ return false; }
+    },
     /* Desktop-only document windows (System Settings, Task Manager, VM manager) borrow #feed but
      * are not client routes. Give the shared renderer a harmless sentinel while one owns it, so
      * timeline subscriptions cannot mistake that borrowed feed for Social and paint into it. */

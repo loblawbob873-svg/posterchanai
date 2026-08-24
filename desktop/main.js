@@ -1216,6 +1216,15 @@ ipcMain.handle('pc:wm:handoff-frame', async (e, payload, direction) => {
     overflow:Number(p.overflow)||0,
     scrollTop:Math.max(0,Number(p.scrollTop)||0),
     terminalSid:String(p.terminalSid||''),
+    /* THIS LIST IS AN ALLOWLIST, so a field the renderer sends and this does not name is dropped
+     * in silence — the payload arrives, looks complete, and one thing is simply missing.
+     *
+     * `path` is how the destination reopens a repo/article/stream rather than a bare view name.
+     * It is a SAME-ORIGIN PATH and is checked as one here as well as at both ends: it is handed to
+     * history.replaceState, and a protocol-relative `//host` would be an origin the user never
+     * navigated to. Must start with exactly one slash; bounded, because a URL is not a payload. */
+    path:(()=>{ const v=String(p.path||'');
+      return /^\/(?!\/)/.test(v) && v.length<=2048 ? v : ''; })(),
     ui:(()=>{ try{
       const s=p.ui==null?null:JSON.parse(JSON.stringify(p.ui));
       return s!=null && JSON.stringify(s).length<=512*1024 ? s : null;

@@ -34,8 +34,22 @@ class TheDriveSearchIsReachable(unittest.TestCase):
 
     def setUp(self):
         self.src = APP.read_text()
+        # THE WHOLE OBJECT, BY MATCHING BRACES — never a fixed slice. It was `[i:i + 6000]`, and
+        # adding two entries near the top of the surface pushed `driveSearch` past the end: the test
+        # then reported that a function which had been exported for months was missing. A guard that
+        # fails when somebody writes a paragraph is a guard people learn to edit rather than believe.
         i = self.src.index("window.__PC = {")
-        self.surface = self.src[i:i + 6000]
+        j = self.src.index("{", i)
+        depth, k = 0, j
+        while k < len(self.src):
+            if self.src[k] == "{":
+                depth += 1
+            elif self.src[k] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            k += 1
+        self.surface = self.src[i:k + 1]
 
     def test_both_functions_exist(self):
         self.assertIn("function driveSearch(", self.src)

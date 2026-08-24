@@ -2694,6 +2694,16 @@
                          ? realFeed.scrollTop : w.slot&&w.parked ? w.slot.scrollTop : w.scrollTop)||0),
                        terminalSid:w.view==='terminal'&&window.PCTerm&&PCTerm.sessionId
                          ? PCTerm.sessionId() : '',
+                       /* HOW THE DESTINATION REOPENS WHAT THIS WINDOW IS SHOWING.
+                        *
+                        * `view` above is `w.appView||w.view` — the LIVE view, which for a repo is
+                        * `repo`: a name git.js sets and nothing routes, so the window landed on the
+                        * other monitor, cleared the feed and span for ever ("git infinite load in a
+                        * black screen with circle"). The path is the address that screen already
+                        * publishes for itself, and routing it is the same code every shared link
+                        * uses — so this is not a git special case, it is every entity view. */
+                       path:(()=>{ try{ return PC().viewPath ? PC().viewPath() : ''; }
+                                   catch(_){ return ''; } })(),
                        /* Generic UI and module state have separate size budgets in main.js. A large
                         * Web Search result set must not cause the compose draft/caret to be dropped. */
                        ui:captureHandoffUI(w),
@@ -5996,6 +6006,12 @@
               PCWebSearch.acceptHandoff(p.state);
             const w=openApp(String(p.view), String(p.title||''), String(p.icon||''));
             if(!w) return;
+            /* AND THEN PUT IT BACK ON THE SCREEN IT WAS ON. openApp can only open what a view NAME
+             * reaches; the path is what reaches a particular repo/article/stream/thread. Routed
+             * after the window exists so it renders into this window's feed, and only when it says
+             * something — a bare '/' is every non-entity screen and re-routing it would throw the
+             * window back to Social. */
+            if(p.path) try{ PC().routePath && PC().routePath(String(p.path)); }catch(_){}
             const ww=Math.max(MIN_W,Math.min(vwL()-24,Number(p.width)||w.el.offsetWidth));
             const hh=Math.max(MIN_H,Math.min(vhL()-TASKBAR-24,Number(p.height)||w.el.offsetHeight));
             w.el.style.width=Math.round(ww)+'px'; w.el.style.height=Math.round(hh)+'px';
