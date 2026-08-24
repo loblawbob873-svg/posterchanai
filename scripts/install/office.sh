@@ -35,9 +35,17 @@ Type=simple
 User=$user
 WorkingDirectory=$root
 Environment=HOME=$root/data/office-home
+# TMPDIR: --appimage-extract-and-run unpacks the whole AppImage into it on EVERY start, and CODE
+# keeps per-document working files there. server1's /tmp is a tmpfs on a box with no swap, so the
+# default spends hundreds of MB of unreclaimable RAM per restart. data/office-work was already
+# being created for this and was never wired up. See posterchanai-office.service.
+Environment=TMPDIR=$root/data/office-work
 ExecStart=$app --appimage-extract-and-run --port=9983 --o:ssl.enable=false --o:ssl.termination=true --o:net.proxy_prefix=true --o:security.capabilities=false --o:security.seccomp=false --o:welcome.enable=false
 Restart=on-failure
 RestartSec=5
+# It unpacks itself before it serves anything; a short stop timeout kills it mid-extraction and
+# leaves a half-written tree in TMPDIR for the next start to trip over.
+TimeoutStopSec=60
 PrivateTmp=true
 NoNewPrivileges=true
 

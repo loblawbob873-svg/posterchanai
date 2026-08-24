@@ -44,6 +44,10 @@ map $http_upgrade $connection_upgrade {
 
 upstream posterchanai_app   { server 127.0.0.1:3051; }
 upstream posterchanai_relay { server 127.0.0.1:3052; }
+# CODE, if this node runs it. 127.0.0.1 ASSUMES NGINX AND CODE ARE THE SAME MACHINE, which is the
+# single-box case this file is written for — but on a split deployment (this one: nginx on the
+# router, the app and CODE on another host) it must name that HOST, e.g. `server 192.168.0.2:9983;`.
+# Pointed at loopback from a separate front end it resolves, starts, and 502s every document.
 upstream posterchanai_office { server 127.0.0.1:9983; }
 
 # --- HTTP -> HTTPS redirect --------------------------------------------------
@@ -110,6 +114,12 @@ server {
     # ---- Optional built-in CODE office editor --------------------------------
     # Installed by `./install.sh --office`, or Docker's `--profile office`. CODE stays on loopback;
     # this same-origin prefix carries its assets, WOPI UI and long-lived editing WebSocket.
+    #
+    # ADD IT ONLY ONCE CODE IS ACTUALLY INSTALLED SOMEWHERE. The editor is opt-in and ships off, so
+    # on a node that never ran `--office` this block is a location that can only 502 — and the
+    # 📝 button it serves is hidden anyway (the client gates it on `office_enabled`, which the app
+    # reports from POSTERCHANAI_OFFICE). Adding it "ready for later" buys nothing and gives a
+    # support question a wrong answer.
     location ^~ /office-code/ {
         rewrite ^/office-code/(.*)$ /$1 break;
         proxy_pass http://posterchanai_office;

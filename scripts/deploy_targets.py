@@ -49,12 +49,19 @@ SHELL = "posterchanai-shell.service"
 # which is the exact failure this file exists to prevent. Restarting it costs in-flight searches
 # and nothing else.
 SEARXNG = "posterchanai-searxng.service"
+# The built-in Collabora (CODE) office editor. LIKE SHELL, DELIBERATELY NOT IN `ALL` — and for a
+# stronger reason than the keeper's: it runs NONE of our code. It is a third-party server (a whole
+# LibreOffice in an AppImage) that the app talks to over WOPI, so a deploy of this repo has nothing
+# whatever to give it, and restarting it costs every document somebody has open. Named here so the
+# table can say that out loud rather than by omission — an absent unit and a deliberately excluded
+# one look identical in a file that lists neither.
+OFFICE = "posterchanai-office.service"
 ALL = (APP, RELAY, WORKER, MEDIA, TOR, PROXY, GIT, SEARXNG)
 # Every unit this file may name. `ALL` is the "restart everything" SET, which SHELL is deliberately
 # not in (see above); this is the list of units that EXIST, and it is what "a mapping must not name a
 # unit that does not exist" is checked against. Two different questions, and conflating them is what
 # made adding a deliberately-excluded unit look like a typo.
-UNITS = ALL + (SHELL,)
+UNITS = ALL + (SHELL, OFFICE)
 
 # (prefix, units) — longest prefix wins. Only paths whose owners are KNOWN belong here.
 #

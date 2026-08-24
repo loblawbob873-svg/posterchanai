@@ -1,0 +1,50 @@
+# Posterchan AI — the built-in Collabora Online (CODE) office editor, as its OWN unit.
+#
+# Template. scripts/install/office.sh writes the real file with this node's user and paths, the
+# same way scripts/install/searxng.sh does — this copy is here to be READ and reviewed, because
+# every line below is a decision.
+#
+# WHY IT IS A UNIT AT ALL: CODE is a third-party server (a whole LibreOffice, shipped as an
+# AppImage) and it is what actually edits a DOCX. The app is only its WOPI storage host — it hands
+# CODE a token and a file and gets the edited bytes back — so the two have separate lifetimes on
+# purpose. The app restarts several times a day; a document being edited must not.
+#
+# AND WHY IT IS NOT IN `ALL` IN scripts/deploy_targets.py: a deploy has nothing to give it. It runs
+# none of our code, so restarting it on a push buys exactly nothing and costs whatever anybody had
+# open. Same reasoning as posterchanai-shell.service, and stronger — the keeper at least runs code
+# from this repo.
+#
+# LOOPBACK ONLY. There is no authentication in front of CODE itself; the WOPI token is what
+# authorises a document, and it is issued by the app. Bound to 0.0.0.0 this would be an unauthenticated
+# document server (and a converter that fetches URLs) on the box. nginx publishes it under
+# /office-code/ — see nginx/posterchanai.conf.example and docker/proxy/posterchanai.conf.
+
+[Unit]
+Description=PosterChan built-in CODE office editor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=REPLACE_USER
+WorkingDirectory=/path/to/posterchanai
+Environment=HOME=/path/to/posterchanai/data/office-home
+# TMPDIR, AND IT IS LOAD-BEARING ON THIS DEPLOYMENT. `--appimage-extract-and-run` unpacks the whole
+# AppImage — several hundred MB of LibreOffice — into TMPDIR on EVERY start, and CODE keeps its
+# per-document working files there afterwards. server1's /tmp is a TMPFS and the box has no swap
+# (see the tmpfs OOM note in scripts/deploy_targets.py's neighbours and posterchanai-searxng.service,
+# which sets TMPDIR for the same reason): left at the default this is hundreds of MB of RAM that
+# free/MemAvailable do not report as reclaimable, re-spent on every restart. On disk it is ordinary
+# storage, and the extraction survives a restart instead of being redone.
+Environment=TMPDIR=/path/to/posterchanai/data/office-work
+ExecStart=/path/to/posterchanai/officeserver/Collabora_Online.AppImage --appimage-extract-and-run --port=9983 --o:ssl.enable=false --o:ssl.termination=true --o:net.proxy_prefix=true --o:security.capabilities=false --o:security.seccomp=false --o:welcome.enable=false
+Restart=on-failure
+RestartSec=5
+# It unpacks itself before it serves anything; a short stop timeout kills it mid-extraction and
+# leaves a half-written tree in TMPDIR for the next start to trip over.
+TimeoutStopSec=60
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
