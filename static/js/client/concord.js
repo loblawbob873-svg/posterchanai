@@ -78,7 +78,13 @@
     const filter=[{kinds:[33301],authors:[parsed.linkSigner],'#d':[''],limit:1}];
     const relays=[...new Set([...(parsed&&parsed.bootstrapRelays||[]),...CORD_RELAYS])];
     const [pool,external]=await Promise.all([p.relayQuery?p.relayQuery(filter,6000):[],p.relayQueryFrom(relays,filter,{timeout:7000,max:8})]);
-    const opened=decoded(url,[...(pool||[]),...(external||[])]),bundle=opened.bundle;
+    /* A link signer may issue many bundles with the same replaceable d-tag. The invite fragment opens
+       exactly one of them, which is not necessarily the newest. Try every relay result instead of
+       handing openInvite the set (whose legacy implementation picked index zero). */
+    const candidates=[...(pool||[]),...(external||[])].filter((ev,i,a)=>ev&&a.findIndex(x=>x&&x.id===ev.id)===i).sort((a,b)=>Number(b.created_at)-Number(a.created_at));
+    let opened,lastError; for(const ev of candidates){ try{ opened=decoded(url,[ev]); break; }catch(e){ lastError=e; } }
+    if(!opened)throw lastError||new Error('invite bundle was not found on its bootstrap relays');
+    const bundle=opened.bundle;
     return {url,naddr:parts.naddr,name:bundle.name||'Concord community',description:'',channels:[{name:'general',private:false}],local:false,cord:{bundle,parsed:opened.parsed}};
   }
   function inviteRefUrl(ref){ const s=String(ref||''); if(/^https?:/i.test(s))return s; const [naddr,frag]=s.split('#'); return naddr&&frag?`https://armada.buzz/invite/${naddr}#${frag}`:''; }

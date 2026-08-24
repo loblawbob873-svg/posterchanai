@@ -118,6 +118,8 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert 'await hydrateInvite(p,raw)' in CONCORD
     assert 'decrypting saved community' in CONCORD
     assert 'kinds:[33301]' in CONCORD
+    assert 'for(const ev of candidates)' in CONCORD
+    assert "opened=decoded(url,[ev])" in CONCORD
     assert 'kinds:[13302]' in CONCORD and 'syncArmadaMemberships(p,viewer)' in CONCORD
     assert 'await p.nip44dec(viewer.pubkey,event.content)' in CONCORD
     assert 'cc-public-copy' in CONCORD and '.cc-public-copy' in CONCORD_CSS

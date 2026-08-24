@@ -52,10 +52,13 @@ class FilesOpenInCode(unittest.TestCase):
         cls.code = _read(CODE)
 
     # ---- the way in -------------------------------------------------------------------------
-    def test_there_is_a_button_and_it_is_bound(self):
-        self.assertIn('class="codebtn"', self.app, "no way to open a Files document in Code")
-        self.assertIn("$$('.codebtn',grid)", self.app, "the button is drawn but nothing binds it")
-        self.assertIn("openCodeFile(a.dataset)", self.app)
+    def test_there_is_one_open_door_and_it_is_bound(self):
+        """ONE control per file. Two small icon buttons crowded a card that is meant to be an icon
+        and a name, and forced the choice before you had said "open" at all. A file manager asks
+        AFTER: you open a thing, and if more than one program handles it, it asks which."""
+        self.assertIn('class="openbtn"', self.app, "no way to open a Files document")
+        self.assertIn("$$('.openbtn',grid)", self.app, "the button is drawn but nothing binds it")
+        self.assertIn("_openWithSheet", self.app)
 
     def _code_ext(self):
         """The SHIPPED regex, compiled and run against real names. Splitting the alternation on `|`
@@ -106,9 +109,8 @@ class FilesOpenInCode(unittest.TestCase):
         """With no rule they fall back to the browser's default <button>: a grey chunky control in a
         dark theme beside three flat icon buttons — easy to miss, and it reads as debris."""
         css = _read(os.path.join(ROOT, "static", "css", "client.css"))
-        self.assertIn(".fc-acts .officebtn", css)
-        self.assertIn(".fc-acts .codebtn", css)
-        self.assertIn(".fc-acts .codesync", css)
+        self.assertIn(".fc-acts .openbtn", css)
+        self.assertIn(".fc-acts .opensync", css)
 
     def test_a_spreadsheet_belongs_to_office_not_to_code(self):
         self.assertIsNone(self._code_ext().search("sheet.csv"),
@@ -183,23 +185,23 @@ class TheOpenersAreOnTheTileNotOnlyInDetails(unittest.TestCase):
         self.assertEqual(tile.count("${openbtns}"), 2,
                          "only one of the two tile shapes (encrypted / plain) got the openers")
 
-    def test_the_openers_are_built_once_for_both_shapes(self):
+    def test_the_opener_is_built_once_for_both_shapes(self):
         """Two hand-written copies is how the encrypted tile ends up missing one."""
         self.assertEqual(self.grid.count("const openbtns"), 1)
-        self.assertIn("officebtn", self.grid)
-        self.assertIn("codebtn", self.grid)
+        self.assertIn("openbtn", self.grid)
 
-    def test_the_same_handlers_bind_them(self):
-        """A button drawn in a second place with no handler is worse than no button."""
-        self.assertIn("$$('.office-open,.officebtn',grid)", self.app)
-        self.assertIn("$$('.codebtn',grid)", self.app)
+    def test_the_same_handler_binds_it(self):
+        """A button drawn in a second place with no handler is worse than no button. The tile's
+        own link keeps its Office shortcut (`.office-open`), which is separate."""
+        self.assertIn("$$('.openbtn',grid)", self.app)
+        self.assertIn("$$('.office-open',grid)", self.app)
 
     def test_a_synced_row_offers_it_in_both_view_modes(self):
         """The synced list builds ONE `act` string and uses it for the details row and the card, so
         it never had this split — assert that it stays that way."""
         body = _decomment(_fn(self.app, "function _syncPaneRender(")) if "_syncPaneRender(" in self.app else None
         src = body or self.app
-        self.assertIn("codesync", src)
+        self.assertIn("opensync", src)
 
 
 class OneFileCanBeSelected(unittest.TestCase):
@@ -247,6 +249,47 @@ class OneFileCanBeSelected(unittest.TestCase):
     def test_the_placeholder_is_invisible_in_the_tile_view(self):
         """It exists to hold a grid column open; in tiles there is no column to hold."""
         self.assertIn(".files-grid:not(.details) .selbox-gap", self.css)
+
+
+class TheOpenWithChooser(unittest.TestCase):
+    """Asked for: "an open file that lets you choose, open as office document or open in PosterChan
+    code, a nice splash screen"."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _read(APP)
+        cls.css = _read(os.path.join(ROOT, "static", "css", "client.css"))
+
+    def test_one_handler_opens_straight_away(self):
+        """A chooser with a single choice is a dialog that wastes a click."""
+        body = _decomment(_fn(self.app, "function _openWithSheet("))
+        self.assertIn("handlers.length === 1", body)
+        self.assertIn("handlers[0].run()", body)
+
+    def test_nothing_openable_says_so_rather_than_showing_an_empty_sheet(self):
+        body = _decomment(_fn(self.app, "function _openWithSheet("))
+        self.assertIn("if(!handlers.length)", body)
+
+    def test_the_sheet_closes_before_the_handler_opens_its_own(self):
+        """Both are modals in one #modal-root; opening the second under the first leaves a chooser
+        stacked behind a document editor."""
+        body = _decomment(_fn(self.app, "function _openWithSheet("))
+        self.assertLess(body.index("closeModal()"), body.index("h.run()"))
+
+    def test_both_sources_offer_the_same_menu_for_the_same_file(self):
+        """The drive and a synced folder must not disagree about what can open a .docx."""
+        body = _decomment(_fn(self.app, "function _handlersFor("))
+        self.assertIn("opts.sync ? openSyncOfficeFile", body)
+        self.assertIn("opts.sync ? openSyncCodeFile", body)
+        self.assertIn("_officeable", body)
+        self.assertIn("_codeable", body)
+
+    def test_each_choice_explains_itself(self):
+        """The point of asking is that the answer is obvious, so it is not a list of two words."""
+        body = _fn(self.app, "function _openWithSheet(")
+        self.assertIn("ow-t", body)
+        self.assertIn("h.hint", body)
+        self.assertIn(".ow-opt", self.css, "the chooser has no styling")
 
 
 class TheOfficeEditorGetsTheScreen(unittest.TestCase):
@@ -354,8 +397,10 @@ class SyncedFoldersOpenInCodeToo(unittest.TestCase):
         cls.app = _read(APP)
 
     def test_a_synced_file_can_be_opened(self):
-        self.assertIn('class="codesync"', self.app, "no way to open a synced file in Code")
-        self.assertIn("openSyncCodeFile(b.dataset)", self.app, "the button is drawn but not bound")
+        self.assertIn('class="opensync"', self.app, "no way to open a synced file")
+        self.assertIn("$$('.opensync', grid)", self.app, "the button is drawn but not bound")
+        self.assertIn("openSyncCodeFile", self.app)
+        self.assertIn("openSyncOfficeFile", self.app)
 
     def test_it_reuses_the_same_fetch_the_download_uses(self):
         """Blossom by sha OR chunk list, decrypted with the drive key. A file over ~16 MB has no

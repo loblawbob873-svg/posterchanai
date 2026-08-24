@@ -19465,8 +19465,8 @@
       const act = (it.dir ? ''
         : `<button class="dlsync" data-sha="${enc(it.sha||'')}"${it.chunks?` data-chunks="${enc(it.chunks.join(','))}"`:''} data-name="${enc(it.name)}" data-path="${enc(it.path||'')}" title="Download (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button>`
           + `<button class="keepsync" data-sha="${enc(it.sha||'')}"${it.chunks?` data-chunks="${enc(it.chunks.join(','))}"`:''} data-name="${enc(it.name)}" title="Save a copy to your drive"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg></button>`
-          + (!!CFG.office_enabled && _officeable(it.name, '') ? `<button class="officesync" data-sha="${enc(it.sha||'')}"${it.chunks?` data-chunks="${enc(it.chunks.join(','))}"`:''} data-name="${enc(it.name)}" data-path="${enc(it.path||'')}" title="Open in Office — saves to every device">📝</button>` : '')
-          + (_codeable(it.name, '') ? `<button class="codesync" data-sha="${enc(it.sha||'')}"${it.chunks?` data-chunks="${enc(it.chunks.join(','))}"`:''} data-name="${enc(it.name)}" data-path="${enc(it.path||'')}" title="Edit in PosterChan Code — saves to every device">&lt;/&gt;</button>` : ''))
+          + (((!!CFG.office_enabled && _officeable(it.name, '')) || _codeable(it.name, ''))
+              ? `<button class="opensync" data-sha="${enc(it.sha||'')}"${it.chunks?` data-chunks="${enc(it.chunks.join(','))}"`:''} data-name="${enc(it.name)}" data-path="${enc(it.path||'')}" title="Open…">▸</button>` : ''))
         + edits;
       const nav = it.dir ? ` data-dir="${enc(it.name)}"` : '';
       /* ONE FILE AT A TIME, the way every file manager does it. The synced view had `Select all`
@@ -19639,10 +19639,8 @@
     const _chunksOf = (b) => (b.dataset.chunks ? b.dataset.chunks.split(',').filter(Boolean) : null);
     $$('.dlsync', grid).forEach(b=> b.onclick=(e)=>{ e.preventDefault(); e.stopPropagation();
       _syncDownload(b, b.dataset.sha, b.dataset.name, _chunksOf(b)); });
-    $$('.codesync', grid).forEach(b=> b.onclick=(e)=>{ e.preventDefault(); e.stopPropagation();
-      openSyncCodeFile(b.dataset); });
-    $$('.officesync', grid).forEach(b=> b.onclick=(e)=>{ e.preventDefault(); e.stopPropagation();
-      openSyncOfficeFile(b.dataset); });
+    $$('.opensync', grid).forEach(b=> b.onclick=(e)=>{ e.preventDefault(); e.stopPropagation();
+      _openWithSheet(b.dataset.name||'this file', _handlersFor(b.dataset, { sync:true })); });
     /* RENAME. The path is what changes, so a folder is renamed by renaming everything under it — one
      * write, one confirmation, and the devices move that many files. The box is seeded with the leaf
      * only: this is a rename, and offering the whole path invites someone to retype a directory by
@@ -20162,6 +20160,50 @@
     return newSha;
   }
 
+  /* OPEN WITH… — one door, and the choice is made where you can see the file's name.
+   *
+   * Two small icon buttons per tile was the wrong shape twice over: they are easy to miss, they
+   * crowd a card that is meant to be an icon and a name, and they force the decision before you
+   * have said "open" at all. A file manager asks AFTER: you open a thing, and if more than one
+   * program handles it you are asked which.
+   *
+   * `handlers` is a list of {id,label,hint,run}. With one handler this opens it and shows nothing —
+   * a chooser with a single choice is a dialog that wastes a click. */
+  function _openWithSheet(name, handlers){
+    handlers = (handlers || []).filter(Boolean);
+    if(!handlers.length){ toast('nothing here can open that file'); return; }
+    if(handlers.length === 1){ handlers[0].run(); return; }
+    modal(`<h3 class="cmp-hd">Open “${enc(name)}”<button class="modal-x" id="ow-x" title="Close" aria-label="Close">&#215;</button></h3>
+      <div class="openwith">${handlers.map(h =>
+        `<button class="ow-opt" data-ow="${enc(h.id)}"><span class="ow-ic">${h.icon}</span>
+           <span class="ow-t"><b>${enc(h.label)}</b><i>${enc(h.hint||'')}</i></span></button>`).join('')}</div>`,
+      root => {
+        { const x = $('#ow-x', root); if(x) x.onclick = () => closeModal(); }
+        $$('.ow-opt', root).forEach(b => b.onclick = () => {
+          const h = handlers.find(x => x.id === b.dataset.ow);
+          closeModal();                       // close FIRST: the handler opens a sheet of its own
+          if(h) h.run();
+        });
+      });
+  }
+
+  /* What can open this file, in the order somebody would want them. Shared by the drive and by a
+   * synced folder so the two offer the same menu for the same file. */
+  function _handlersFor(d, opts){
+    opts = opts || {};
+    const name = d.name || '', mime = d.mime || '';
+    const out = [];
+    if(!!CFG.office_enabled && _officeable(name, mime))
+      out.push({ id:'office', icon:'📝', label:'Office document',
+                 hint:'Writer, Calc or Impress — edits and saves back',
+                 run:() => (opts.sync ? openSyncOfficeFile(d) : openOfficeFile(d)) });
+    if(_codeable(name, mime))
+      out.push({ id:'code', icon:'&lt;/&gt;', label:'PosterChan Code',
+                 hint:'The text editor, with highlighting',
+                 run:() => (opts.sync ? openSyncCodeFile(d) : openCodeFile(d)) });
+    return out;
+  }
+
   /* THE EDITOR ITSELF, WRITTEN ONCE. The drive and a synced folder fetch their bytes differently
    * and write them back differently; everything in between — the WOPI session, the iframe, the
    * launch form, Save and Close — is the same, and two copies of it is two places to leak a token
@@ -20179,6 +20221,12 @@
         <form class="office-launch" method="post" action="${enc(session.editor_url)}" target="${frameName}">
           <input type="hidden" name="access_token" value="${enc(session.token)}"><input type="hidden" name="access_token_ttl" value="${session.expires*1000}"></form>
         <div class="row office-actions"><button class="btn btn-ghost" id="office-close">Close</button><button class="btn btn-neon" id="office-save">Save</button></div>`, root=>{
+          /* A DOCUMENT EDITOR NEEDS THE SCREEN. `modal()` caps its box at 720px, and the office
+           * frame asked for `min(94vw,1400px)` INSIDE that — so the iframe was clipped to 720px of a
+           * modal that then scrolled, which on a desktop reads as "a tiny ass window that is white":
+           * a small viewport showing the top-left corner of a spreadsheet. The composer solves this
+           * with `.cmp-modal`; this is the same trick, and `modal()` has no class hook of its own. */
+          root.classList.add('office-modal');
           $('.office-launch',root).submit();
           const drop=async()=>{ try{ await fetch('/client/office/session/'+session.id+'?access_token='+encodeURIComponent(session.token),{method:'DELETE'}); }catch(_){} };
           $('#office-close',root).onclick=async()=>{ await drop(); closeModal(); };
@@ -20314,8 +20362,7 @@
         href: m.enc ? '#' : b.url, encOpen: !!m.enc, mime: m.enc ? undefined : (b.type||''),
         icon: m.enc ? '🔒' : _fxIcon(ext, b.type), name: nm || (m.enc ? 'encrypted' : dlName), title: nm || dlName,
         size:_fxBytes(b.size), type:(m.enc?'🔒 ':'')+_fxType(ext), when:_fxWhen(b.uploaded),
-        acts: (office ? `<button class="officebtn" data-sha="${b.sha256}" data-url="${enc(b.url)}" data-name="${enc(nm||dlName)}" data-mime="${enc(m.mime||b.type||'')}" data-enc="${m.enc?'1':'0'}" title="Open in Office">📝</button>` : '')
-             + (code ? `<button class="codebtn" data-sha="${b.sha256}" data-url="${enc(b.url)}" data-name="${enc(nm||dlName)}" data-mime="${enc(m.mime||b.type||'')}" data-enc="${m.enc?'1':'0'}" title="Edit in PosterChan Code">&lt;/&gt;</button>` : '') + (m.enc ? '' : `<button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button>`) + dl + ren + move + del,
+        acts: openbtns + (m.enc ? '' : `<button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button>`) + dl + ren + move + del,
       });
       /* THE OPENERS, ON THE TILE ITSELF.
        *
@@ -20324,9 +20371,10 @@
        * reachable only by clicking the tile, which nothing says. Reported exactly that way: "why no
        * way to open any blossom file in posterchan code or office yet". Same buttons, same
        * dataset, same handlers as the details row; only the place they are drawn is new. */
-      const openbtns =
-        (office ? `<button class="officebtn" data-sha="${b.sha256}" data-url="${enc(b.url)}" data-name="${enc(nm||dlName)}" data-mime="${enc(m.mime||b.type||'')}" data-enc="${m.enc?'1':'0'}" title="Open in Office">📝</button>` : '')
-      + (code ? `<button class="codebtn" data-sha="${b.sha256}" data-url="${enc(b.url)}" data-name="${enc(nm||dlName)}" data-mime="${enc(m.mime||b.type||'')}" data-enc="${m.enc?'1':'0'}" title="Edit in PosterChan Code">&lt;/&gt;</button>` : '');
+      /* ONE door per file. Which programs handle it is decided when you press it — see
+       * _openWithSheet — so a card carries one control rather than a row of them. */
+      const openbtns = (office || code)
+        ? `<button class="openbtn" data-sha="${b.sha256}" data-url="${enc(b.url)}" data-name="${enc(nm||dlName)}" data-mime="${enc(m.mime||b.type||'')}" data-enc="${m.enc?'1':'0'}" title="Open…">▸</button>` : '';
       if(m.enc){   // encrypted file — lock card; opening decrypts in-browser (never exposes the ciphertext URL)
         return `<div class="file-card enc${sel}" draggable="true" data-sha="${b.sha256}"><a href="#" class="${office?'office-open':'enc-open'}" data-sha="${b.sha256}" data-name="${enc(nm||dlName)}" data-mime="${enc(m.mime||'')}" data-enc="1"><div class="file-icon">🔒<span>${enc(ext||'enc')}</span></div></a>
           ${box}${del}
@@ -20343,8 +20391,9 @@
     if(details) _fxBindCols(grid);
     { const mb=$('.bl-more',grid); if(mb) mb.onclick=()=>{ _filesShown+=_FILES_PAGE; _renderFilesGrid(grid, list); }; }
     $$('.enc-open',grid).forEach(a=> a.onclick=async e=>{ e.preventDefault(); try{ toast('decrypting…'); const u=await trackUrl(a.dataset.sha); window.open(u,'_blank'); }catch(err){ toast('decrypt failed: '+(err.message||'')); } });
-    $$('.office-open,.officebtn',grid).forEach(a=> a.onclick=async e=>{ e.preventDefault(); e.stopPropagation(); await openOfficeFile(a.dataset); });
-    $$('.codebtn',grid).forEach(a=> a.onclick=async e=>{ e.preventDefault(); e.stopPropagation(); await openCodeFile(a.dataset); });
+    $$('.office-open',grid).forEach(a=> a.onclick=async e=>{ e.preventDefault(); e.stopPropagation(); await openOfficeFile(a.dataset); });
+    $$('.openbtn',grid).forEach(a=> a.onclick=e=>{ e.preventDefault(); e.stopPropagation();
+      _openWithSheet(a.dataset.name||'this file', _handlersFor(a.dataset, {})); });
     _bindThumbFallback(grid);
     // Encrypted files can't be downloaded by URL (that would save the ciphertext) — decrypt in the
     // browser first, then save the plaintext under its real name.

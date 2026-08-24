@@ -69,7 +69,7 @@ def _root() -> str:
     return os.path.realpath(base)
 
 
-def _resolve(rel: str, must_exist: bool = True) -> str:
+def _resolve(rel: str, root: str, must_exist: bool = True) -> str:
     """A relative path from the client turned into an absolute one INSIDE the workspace, or 400.
 
     Resolved with `realpath` FIRST and containment checked SECOND. The other order -- reject `..`,
@@ -79,7 +79,7 @@ def _resolve(rel: str, must_exist: bool = True) -> str:
     `os.path.commonpath` rather than `startswith`: a root of `/srv/app` and a target of
     `/srv/app-secrets` share a string prefix and are different directories.
     """
-    root = _root()
+    root = os.path.realpath(root)
     rel = (rel or "").replace("\\", "/").strip("/")
     if "\x00" in rel:
         raise HTTPException(status_code=400, detail="Invalid path")
@@ -95,9 +95,8 @@ def _resolve(rel: str, must_exist: bool = True) -> str:
     return target
 
 
-def _rel(abs_path: str) -> str:
-    root = _root()
-    rel = os.path.relpath(abs_path, root)
+def _rel(abs_path: str, root: str) -> str:
+    rel = os.path.relpath(abs_path, os.path.realpath(root))
     return "" if rel == "." else rel.replace("\\", "/")
 
 
@@ -105,12 +104,38 @@ def _lang(name: str) -> str:
     return LANGS.get(os.path.splitext(name)[1].lower(), "text")
 
 
-def _guard(db: Session, user: User):
-    """The terminal's gate, not a second one of our own. See the module docstring."""
-    if not node_service.user_allowed(db, user):
-        raise HTTPException(status_code=403,
-                            detail="PosterChan Code is limited to administrators and the node "
-                                   "allowlist (Admin → Nodes).")
+def _user_root(user: User) -> str:
+    """One person's own workspace, made on demand.
+
+    Keyed on the numeric id, never the username: a name can be changed and a display name can
+    contain a slash, and either would move somebody else's files or escape the base directory.
+    """
+    base = (settings_store.get("code_user_root") or "").strip()
+    if not base:
+        base = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))), "data", "code-workspaces")
+    path = os.path.realpath(os.path.join(os.path.realpath(base), str(int(getattr(user, "id", 0) or 0))))
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _guard(db: Session, user: User) -> str:
+    """WHICH TREE THIS PERSON MAY EDIT — the whole of the access decision, in one place.
+
+    PosterChan Code is for everybody: it was gated to the terminal's allowlist, so an ordinary
+    account got "limited to administrators" and no editor at all. That gate was not arbitrary,
+    though, and removing it alone would have been the worst possible fix: `_root()` defaults to the
+    app's OWN CHECKOUT, so write access there is write access to the code this node runs — handing
+    every signed-up account remote code execution, on a public instance, in one line.
+
+    So the gate became a ROUTE. An operator (admin, or the Admin → Nodes allowlist — the same people
+    who may open a shell here) still edits the node's tree, which is what the feature was built for.
+    Everybody else gets a directory of their own, created on first use, jailed exactly the same way.
+    Both are real editors; they differ only in what they can see.
+    """
+    if node_service.user_allowed(db, user):
+        return _root()
+    return _user_root(user)
 
 
 # --------------------------------------------------------------------------------------------
@@ -178,7 +203,7 @@ async def format_source(body: FormatBody, db: Session = Depends(get_db),
 
     Formatting an unsaved buffer is the whole point (you tidy, look, then save), so this must not
     touch the file. It also means a formatter that throws costs the person nothing."""
-    _guard(db, current_user)
+    _guard(db, current_user)          # everyone has an editor; this endpoint touches no file
     lang = (body.language or "text").lower()
     src = body.source or ""
     if len(src.encode("utf-8", "ignore")) > MAX_BYTES:
@@ -206,15 +231,18 @@ async def format_source(body: FormatBody, db: Session = Depends(get_db),
 
 @router.get("/config")
 async def config(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    _guard(db, current_user)
-    return {"root": _root(), "engines": _engines(), "maxBytes": MAX_BYTES}
+    root = _guard(db, current_user)
+    # `own` is what lets the editor say WHOSE tree this is. An operator editing the node and a
+    # person editing their own directory are both real editors, and confusing the two is how
+    # somebody edits a config file they think is theirs.
+    return {"root": root, "own": root != _root(), "engines": _engines(), "maxBytes": MAX_BYTES}
 
 
 @router.get("/tree")
 async def tree(path: str = Query(""), db: Session = Depends(get_db),
                current_user: User = Depends(get_current_user)):
-    _guard(db, current_user)
-    target = _resolve(path)
+    root = _guard(db, current_user)
+    target = _resolve(path, root)
     if not os.path.isdir(target):
         raise HTTPException(status_code=400, detail="Not a directory")
     entries, truncated = [], False
@@ -239,14 +267,14 @@ async def tree(path: str = Query(""), db: Session = Depends(get_db),
         entries.append({"name": name, "dir": is_dir, "size": 0 if is_dir else st.st_size,
                         "mtime": int(st.st_mtime), "lang": "" if is_dir else _lang(name)})
     entries.sort(key=lambda e: (not e["dir"], e["name"].lower()))
-    return {"path": _rel(target), "entries": entries, "truncated": truncated}
+    return {"path": _rel(target, root), "entries": entries, "truncated": truncated}
 
 
 @router.get("/file")
 async def read_file(path: str = Query(...), db: Session = Depends(get_db),
                     current_user: User = Depends(get_current_user)):
-    _guard(db, current_user)
-    target = _resolve(path)
+    root = _guard(db, current_user)
+    target = _resolve(path, root)
     if os.path.isdir(target):
         raise HTTPException(status_code=400, detail="That is a directory")
     size = os.path.getsize(target)
@@ -262,7 +290,7 @@ async def read_file(path: str = Query(...), db: Session = Depends(get_db),
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
         raise HTTPException(status_code=415, detail="That file is not UTF-8 text")
-    return {"path": _rel(target), "text": text, "lang": _lang(target), "size": size,
+    return {"path": _rel(target, root), "text": text, "lang": _lang(target), "size": size,
             "mtime": int(os.path.getmtime(target))}
 
 
@@ -282,8 +310,8 @@ async def write_file(body: WriteBody, db: Session = Depends(get_db),
     atomic, so the file is either the old one or the new one and never a half of either.
 
     `mtime` is a compare-and-swap, not decoration -- see below."""
-    _guard(db, current_user)
-    target = _resolve(body.path, must_exist=False)
+    root = _guard(db, current_user)
+    target = _resolve(body.path, root, must_exist=False)
     if os.path.isdir(target):
         raise HTTPException(status_code=400, detail="That is a directory")
     data = (body.text or "").encode("utf-8")
@@ -314,5 +342,5 @@ async def write_file(body: WriteBody, db: Session = Depends(get_db),
         except OSError:
             pass
         raise HTTPException(status_code=500, detail="Could not save: " + str(e))
-    return {"ok": True, "path": _rel(target), "bytes": len(data),
+    return {"ok": True, "path": _rel(target, root), "bytes": len(data),
             "mtime": int(os.path.getmtime(target))}

@@ -8150,9 +8150,20 @@ html.os-on #upload-badge.upbadge{z-index:333}
 /* THE OPENERS LOOK LIKE THE OTHER ACTIONS. `.officebtn`, `.codebtn` and `.codesync` had NO rule at
    all, so they fell back to the browser's default <button> — a grey chunky control in a dark theme,
    beside three flat icon buttons. Easy to miss, and it reads as debris rather than an affordance. */
-.fc-acts .officebtn,.fc-acts .codebtn,.fc-acts .codesync,.fc-acts .officesync{background:none;border:none;color:var(--muted);
+.fc-acts .openbtn,.fc-acts .opensync{background:none;border:none;color:var(--muted);
   cursor:pointer;font-size:14px;line-height:1;padding:4px 5px;border-radius:6px;font-family:inherit}
-.fc-acts .officebtn:hover,.fc-acts .codebtn:hover,.fc-acts .codesync:hover,.fc-acts .officesync:hover{color:var(--cyan)}
+.fc-acts .openbtn:hover,.fc-acts .opensync:hover{color:var(--cyan)}
+/* THE CHOOSER. Big targets with a name and a line of what each one is — the point of asking is that
+   the answer is obvious, so it is not a list of two words. */
+.openwith{display:flex;flex-direction:column;gap:8px;margin-top:4px}
+.ow-opt{display:flex;align-items:center;gap:12px;width:100%;padding:12px 14px;cursor:pointer;
+  border:1px solid var(--line);border-radius:12px;background:var(--panel2);color:var(--text);
+  font-family:inherit;text-align:start}
+.ow-opt:hover{border-color:var(--neon);background:rgba(var(--accent-rgb),.10)}
+.ow-ic{font-size:26px;line-height:1;flex:0 0 auto;width:34px;text-align:center}
+.ow-t{display:flex;flex-direction:column;gap:2px;min-width:0}
+.ow-t b{font-size:15px}
+.ow-t i{font-style:normal;font-size:12px;color:var(--muted)}
 .fc-acts .dlsync,.fc-acts .keepsync,.fc-acts .rnsync,.fc-acts .rmsync{background:none;border:none;
   color:var(--muted);cursor:pointer;font-size:15px;padding:4px 6px;line-height:1}
 .fc-acts .dlsync:hover,.fc-acts .keepsync:hover,.fc-acts .rnsync:hover{color:var(--cyan)}
@@ -9019,7 +9030,15 @@ audio.sms-att-img{min-width:220px}
 /* var(--line), not var(--border) — this stylesheet has no `--border` token and never has (483
    uses of `--line` against one of `--border`). An undefined custom property makes the whole
    declaration invalid at computed-value time, so the office frame drew an unthemed border. */
-.office-frame{display:block;width:min(94vw,1400px);height:calc(100dvh - 150px);min-height:420px;border:1px solid var(--line);background:#fff}
+/* THE SHEET, NOT JUST THE FRAME. `.modal` is min(720px,96vw); a frame asking for 94vw inside that
+   was clipped to 720px and the modal scrolled — a small white rectangle showing the corner of a
+   document. The editor gets the screen, and the frame FILLS the sheet rather than naming its own
+   size, so the two cannot disagree again. */
+.modal.office-modal{width:min(1560px,97vw);max-width:97vw;height:94dvh;max-height:94dvh;
+  display:flex;flex-direction:column;gap:8px;padding:14px}
+.office-modal > *{flex:0 0 auto}
+.office-frame{display:block;flex:1 1 auto;width:100%;height:auto;min-height:0;
+  border:1px solid var(--line);border-radius:8px;background:#fff}
 .office-launch{display:none}.office-actions{justify-content:flex-end;margin-top:8px}
-@media(max-width:640px){.office-head{display:block}.office-frame{width:96vw;height:calc(100dvh - 165px);min-height:360px}}
+@media(max-width:640px){.office-head{display:block}.modal.office-modal{width:98vw;height:96dvh;padding:8px}}
 .os-native-controls{display:inline-flex;align-items:center;gap:1px}.os-native-controls button{width:22px;height:22px;padding:0;border:0;border-radius:4px;background:transparent;color:inherit;line-height:20px}.os-native-controls button:hover{background:rgba(255,255,255,.14)}.os-native-close:hover{background:#c42b1c!important;color:#fff}
