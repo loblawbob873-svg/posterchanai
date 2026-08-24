@@ -301,6 +301,42 @@
       return LOCAL() ? [LOCAL_HOST].concat(rest) : rest;
     }
 
+    /* The host picker, repainted from `hosts` without disturbing a live session. Split out of
+     * _wire so a server list that arrives LATE can be shown without re-binding the whole screen. */
+    function _paintHosts(){
+      const sel = $('#tty-host'); if(!sel) return;
+      const keep = sel.value;
+      sel.innerHTML = hosts.length
+        ? hosts.map(h => `<option value="${enc(h.name)}">${enc(h.name)} — ${enc(h.label)}</option>`).join('')
+        : '<option value="">no hosts configured</option>';
+      if(keep && hosts.some(h => h.name === keep)) sel.value = keep;
+    }
+
+    /* THE OTHER HOSTS, FETCHED BEHIND THE LOCAL ONE. Never awaited by anything that opens a shell —
+     * see loadHosts. Bounded, because the failure this exists for is a request that never answers. */
+    let _hostsAsked = false;
+    async function _hostsRefresh(){
+      if(_hostsAsked) return; _hostsAsked = true;
+      try{
+        await _bounded(PC.ensureAiSession && PC.ensureAiSession(), 6000);
+        const r = await _bounded(authFetch('/api/ssh/hosts'), 8000);
+        if(!r || r.status === 403) return;
+        const d = await r.json();
+        const more = (d && d.hosts) || [];
+        if(!more.length) return;
+        hosts = _withLocal(more);
+        _paintHosts();
+      }catch(_){ /* a node that cannot be reached is not a machine without a shell */ }
+    }
+
+    /* A PROMISE THAT CANNOT HANG FOR EVER. `ensureAiSession` can be waiting on a SIGNER, and a
+     * signer is a phone that may be asleep — there is no answer coming and no error either. */
+    function _bounded(p, ms){
+      if(!p || typeof p.then !== 'function') return Promise.resolve(p);
+      return Promise.race([p, new Promise((_res, rej) =>
+        setTimeout(() => rej(new Error('timed out')), ms || 8000))]);
+    }
+
     async function loadHosts(){
       /* WITH NO SERVER THERE IS STILL A TERMINAL. PosterChanOS runs with no instance configured, and
        * every line below this asks a server something. Answering "the SSH terminal is switched off"
@@ -309,13 +345,26 @@
       if(!(window.__PC_API_BASE__ === undefined ? true : window.__PC_API_BASE__) && LOCAL()){
         hosts = _withLocal([]); return true;
       }
+      /* A MACHINE THAT IS ITS OWN SHELL NEVER WAITS FOR A SERVER TO OPEN IT.
+       *
+       * Everything below asks the instance something, and the two things it asks are the two most
+       * likely to be broken at the moment somebody wants a terminal: `ensureAiSession` can be
+       * waiting on a SIGNER (a phone that may be asleep — no answer coming, and no error either)
+       * and the fetch can be waiting on a network that is down. Neither FAILS; both HANG, and
+       * render() awaits this before it opens anything, so the local shell — a PTY already running
+       * on this very machine, needing no key and no network — never appeared at all.
+       *
+       * On PosterChanOS the terminal is how somebody fixes a broken machine. It must not depend on
+       * the parts that are broken. So the local host stands alone immediately, and the rest of the
+       * list arrives behind it if it ever does. */
+      if(LOCAL()){ hosts = _withLocal([]); _hostsRefresh(); return true; }
       try{
         // The bundled apps authenticate with a BEARER, not a cookie (they are cross-origin to the
         // instance), and that token is minted lazily. Without this the first visit to the Terminal
         // is a 401 that reads as "you are not allowed" — see the same call in every other authed
         // screen. It is a no-op once the session exists.
-        try{ await PC.ensureAiSession(); }catch(_){}
-        const r = await authFetch('/api/ssh/hosts');
+        try{ await _bounded(PC.ensureAiSession && PC.ensureAiSession(), 6000); }catch(_){}
+        const r = await _bounded(authFetch('/api/ssh/hosts'), 8000);
         if(r.status === 403){
           hosts = _withLocal([]);
           if(!hosts.length){ _state('the SSH terminal is switched off, or you are not on its list', 'err'); return false; }
@@ -968,10 +1017,7 @@
     }
 
     function _wire(){
-      const sel = $('#tty-host');
-      if(sel) sel.innerHTML = hosts.length
-        ? hosts.map(h => `<option value="${enc(h.name)}">${enc(h.name)} — ${enc(h.label)}</option>`).join('')
-        : '<option value="">no hosts configured</option>';
+      _paintHosts();
       { const b = $('#tty-go'); if(b) b.onclick = () => connect(); }
       { const b = $('#tty-stop'); if(b) b.onclick = () => detach(); }
       { const b = $('#tty-kill'); if(b) b.onclick = () => kill(); }
