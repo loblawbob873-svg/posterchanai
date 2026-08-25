@@ -15479,6 +15479,7 @@
       opus:'audio/ogg', oga:'audio/ogg', m4b:'audio/mp4', wma:'audio/x-ms-wma', aif:'audio/aiff',
       aiff:'audio/aiff', ape:'audio/x-ape', mka:'audio/x-matroska',
       pdf:'application/pdf', txt:'text/plain', md:'text/markdown', csv:'text/csv',
+      conf:'text/plain', cfg:'text/plain', ini:'text/plain', env:'text/plain', log:'text/plain',
       doc:'application/msword', docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       odt:'application/vnd.oasis.opendocument.text', rtf:'application/rtf',
       xls:'application/vnd.ms-excel', xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -19716,9 +19717,26 @@
 
   /* What can open this file, in the order somebody would want them. Shared by the drive and by a
    * synced folder so the two offer the same menu for the same file. */
-  const _previewable = (name, mime) => {
-    try{ return !!(window.PCPreview && PCPreview.handles(name, mime)); }catch(_){ return false; }
-  };
+  /* Do not ask the LAZILY LOADED preview module whether the chooser should show Preview. On a
+   * fresh page `PCPreview` does not exist yet, which hid this option for PDFs/images/video/audio and
+   * let the ordinary link navigate away. openPreviewFile already loads the module on demand. */
+  const _PREVIEW_EXT = /\.(png|jpe?g|jfif|gif|webp|avif|bmp|ico|svg|heic|heif|mp4|m4v|mov|webm|mkv|ogv|avi|3gp|mp3|m4a|aac|ogg|oga|opus|wav|flac|pdf)$/i;
+  const _previewable = (name, mime) => _PREVIEW_EXT.test(name || '')
+    || /^(image|video|audio)\//i.test(String(mime || ''))
+    || /^application\/pdf/i.test(String(mime || ''));
+  /* Blossom implementations disagree about where an upload's original filename is returned. Some
+   * put it in `name`, some only preserve it as the final URL component, and a few return that
+   * component percent-encoded. The Open With gate must inspect the human filename, not a blob hash
+   * or an encoded `server.conf`; otherwise text formats such as .conf fall through to the browser
+   * even though PosterChan Code supports them. */
+  function _openFileName(d){
+    let name=String((d&&d.name)||'').trim();
+    if(!name && d && d.url){
+      try{ name=new URL(d.url, location.href).pathname.split('/').filter(Boolean).pop()||''; }catch(_){}
+    }
+    try{ name=decodeURIComponent(name); }catch(_){}
+    return name;
+  }
   /* BYTES, FROM WHICHEVER OF THE THREE SOURCES THIS FILE CAME FROM. Preview renders from a Blob and
    * fetches nothing itself, which is what lets it show an ENCRYPTED file without that file's
    * plaintext ever going near the network — and what makes it work on a build with no instance. */
@@ -19745,7 +19763,10 @@
 
   function _handlersFor(d, opts){
     opts = opts || {};
-    const name = d.name || '', mime = d.mime || '';
+    const name = _openFileName(d), mime = d.mime || '';
+    /* Hand the recovered name to the opener too. Recognition without propagation would show Code
+     * in the chooser and then open an anonymous `document`, losing syntax mode and save filename. */
+    if(name && !d.name) d = Object.assign({}, d, { name });
     const out = [];
     /* FIRST, because looking at a file is the lightest thing you can do with it and it is what
      * somebody clicking a photograph or a video meant. The editors come after. */

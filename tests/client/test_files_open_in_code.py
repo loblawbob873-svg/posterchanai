@@ -78,8 +78,21 @@ class FilesOpenInCode(unittest.TestCase):
                        "song.mp3", "doc.pdf", "bundle.zip", "game.xdc"):
             self.assertIsNone(rx.search(binary), f"Code offers to edit {binary} as text")
         for text in ("notes.md", "a.json", "s.py", "a.js", "run.sh", "conf.yml",
-                     "conf.yaml", "a.css", "a.txt"):
+                     "conf.yaml", "server.conf", "a.css", "a.txt"):
             self.assertIsNotNone(rx.search(text), f"Code will not open {text}")
+
+    def test_conf_rebuilt_from_bytes_has_a_text_mime(self):
+        """Saving/reopening a .conf must not turn it into an untyped octet-stream blob."""
+        table = self.app[self.app.index("const _EXT_MIME"):self.app.index("function mimeForName")]
+        self.assertIn("conf:'text/plain'", table)
+
+    def test_encoded_blossom_filename_is_recovered_for_the_chooser(self):
+        """Some Blossom servers expose only an encoded final URL component."""
+        body = _decomment(_fn(self.app, "function _openFileName("))
+        self.assertIn("decodeURIComponent", body)
+        handlers = _decomment(_fn(self.app, "function _handlersFor("))
+        self.assertIn("_openFileName(d)", handlers)
+        self.assertIn("Object.assign({}, d, { name })", handlers)
 
     def test_a_file_with_no_dot_can_still_be_opened(self):
         """`_CODE_EXT` anchors on `\.`, so `Makefile`, `Dockerfile`, `README`, `LICENSE` and

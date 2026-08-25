@@ -44,6 +44,16 @@ class PreviewIsReachable(unittest.TestCase):
         block = self.app[i:self.app.index("return out;", i)]
         self.assertIn("id:'preview'", block, "clicking a photograph offers no way to look at it")
 
+    def test_pdf_preview_is_offered_on_a_cold_start(self):
+        """The module is lazy. Its missing global must not make Preview disappear before first use."""
+        i = self.app.index("const _previewable")
+        block = self.app[i:self.app.index(";", i) + 1]
+        self.assertNotIn("PCPreview", block)
+        self.assertIn("_PREVIEW_EXT", block)
+        rx = re.search(r"const _PREVIEW_EXT = (/[^\n]*?/i);", self.app)
+        self.assertTrue(rx)
+        self.assertRegex("manual.pdf", re.compile(rx.group(1)[1:-2], re.I))
+
     def test_it_is_offered_before_the_editors(self):
         """Looking at a file is the lightest thing you can do with it, and it is what somebody
         clicking a photograph meant. An editor first is a chooser that leads with the wrong answer."""
