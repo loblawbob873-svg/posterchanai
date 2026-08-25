@@ -4,6 +4,7 @@
   "private": true,
   "description": "PosterChan native Android app (Capacitor) — bundles the web client, talks to poster.place",
   "scripts": {
+    "postinstall": "node scripts/patch-capacitor-tar.cjs",
     "build": "bash build-www.sh",
     "sync": "npx cap sync android"
   },
