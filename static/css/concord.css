@@ -59,6 +59,11 @@ body.concord-view .cc-reaction-picker{display:grid!important;grid-template-colum
   body.concord-view .cc-app.show-chat .cc-conversation{display:flex!important;position:absolute!important;inset:0!important;width:100%!important;height:100%!important;max-width:none!important}
   body.concord-view .cc-app.show-chat .cc-communities,body.concord-view .cc-app.show-chat .cc-channels{display:none!important}
   body.concord-view .cc-app.home-view #cc-back-channels{display:none!important}
+  /* The community finder is a destination inside Discover, not a modal chat
+     drill-down.  Keep Classic's top and bottom navigation reachable here or
+     entering Concord traps the user above every other Discover view. */
+  body.concord-view .cc-app.home-view{inset:calc(58px + env(safe-area-inset-top)) 0 calc(61px + env(safe-area-inset-bottom)) 0!important;z-index:39!important;height:auto!important}
+  body.concord-view .cc-app.home-view .cc-conversation{position:absolute!important;inset:0!important;height:100%!important}
   body.concord-view .cc-conversation>header{flex:0 0 auto!important;min-height:calc(54px + env(safe-area-inset-top))!important;padding:env(safe-area-inset-top) 7px 0!important;gap:5px!important}
   body.concord-view .cc-conversation>header .cc-hash,body.concord-view .cc-conversation>header .cc-visibility,body.concord-view #cc-publish-listing{display:none!important}
   body.concord-view .cc-conversation>header>b{min-width:0!important;max-width:34vw!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;font-size:16px!important}

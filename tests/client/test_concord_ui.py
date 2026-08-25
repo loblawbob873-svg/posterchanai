@@ -46,13 +46,15 @@ def test_classic_phone_concord_is_a_full_screen_drilldown_not_squeezed_desktop_c
     assert 'body.concord-view .cc-app{position:fixed!important' in CONCORD_CSS
     assert 'flex-direction:row!important' in CONCORD_CSS
     assert 'body.concord-view .cc-app.show-chat{inset:0!important' in CONCORD_CSS
+    assert 'body.concord-view .cc-app.home-view{inset:calc(58px + env(safe-area-inset-top)) 0 calc(61px + env(safe-area-inset-bottom)) 0!important' in CONCORD_CSS
+    assert 'body.concord-view .cc-app.home-view{inset:0!important' not in CONCORD_CSS
     assert 'body.concord-view .cc-message-actions .cc-quick-react' in CONCORD_CSS
 
 
 def test_concord_owns_a_versioned_stylesheet_so_stale_shell_css_cannot_unstyle_it():
     assert 'static/css/concord.css' in HTML
     assert "data-concord-css" in CONCORD
-    assert "concord.css?v=14" in CONCORD
+    assert "concord.css?v=15" in CONCORD
     assert '.cc-compose textarea:focus' in CONCORD_CSS
     assert 'box-shadow:none!important' in CONCORD_CSS
     assert "'/static/css/concord.css'" in (ROOT / "static/js/client/sw.js").read_text()
