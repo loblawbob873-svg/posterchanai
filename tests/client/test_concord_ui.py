@@ -127,6 +127,7 @@ def test_desktop_members_are_a_right_column_and_mobile_uses_the_dialog():
     assert 'grid-template-columns:68px 248px minmax(0,1fr) 220px!important' in CONCORD_CSS
     assert 'class="cc-members-pane${membersHidden?' in CONCORD
     assert 'pc.concord.members.hidden' in CONCORD
+    assert '.cc-app:not(:has(>.cc-members-pane)),.cc-app:has(>.cc-members-pane.hidden){grid-template-columns:68px 248px minmax(0,1fr)!important}' in CONCORD_CSS
     assert "!window.matchMedia||window.matchMedia('(max-width:820px)').matches" in CONCORD
     assert '@media(max-width:820px){.cc-members-pane{display:none!important}}' in CONCORD_CSS
 
