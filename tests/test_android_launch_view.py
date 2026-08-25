@@ -314,7 +314,7 @@ class DoubleHomeRuns(unittest.TestCase):
         self.assertIn("v === '__feed_top'", phone)
         self.assertIn("PC.timelineTop()", phone)
         self.assertNotIn("PC.timelineTop('global')", phone)
-        self.assertIn("_TL_TABS.includes(VIEW) ? VIEW : 'home'", app)
+        self.assertIn("_TL_TABS.includes(VIEW) ? VIEW : _startTimeline()", app)
         self.assertIn("if(hidden.has(v))", app)
         self.assertIn("delete _tlScrollMemo[v]", app)
 
