@@ -721,6 +721,24 @@ class LauncherSources(unittest.TestCase):
         self.assertIn("android.intent.category.HOME", block)
         self.assertIn("android.intent.category.DEFAULT", block)
 
+    def test_an_apk_upgrade_restores_a_previous_launcher_opt_in(self):
+        """An OEM package installer may re-apply HomeActivity's disabled manifest default while
+        replacing the APK. The HOME role is package-scoped there, so HOME otherwise opens the
+        ordinary WebView activity instead of the native launcher."""
+        man = open(os.path.join(ROOT, "mobile", "android", "app", "src", "main",
+                                "AndroidManifest.xml")).read()
+        roles = _code(open(os.path.join(HOME, "HomeRoles.java")).read())
+        recv = _code(open(os.path.join(HOME, "LauncherRepairReceiver.java")).read())
+        main = _code(open(os.path.join(JAVA, "place", "poster", "app", "MainActivity.java")).read())
+        self.assertIn(".home.LauncherRepairReceiver", man)
+        self.assertIn("android.intent.action.MY_PACKAGE_REPLACED", man)
+        self.assertIn('android:exported="false"', man[man.index(".home.LauncherRepairReceiver"):])
+        self.assertIn("new LauncherPrefs(ctx).optedIn()", roles)
+        self.assertIn("enableLauncherComponent(ctx, true)", roles)
+        self.assertIn("ACTION_MY_PACKAGE_REPLACED", recv)
+        self.assertIn("HomeRoles.repairOptedInLauncher(context)", recv)
+        self.assertIn("HomeRoles.repairOptedInLauncher(this)", main)
+
     def test_the_native_tiles_point_at_classes_that_exist(self):
         """The Phone and Messages tiles start a native screen BY NAME, so this file compiles whether
         or not those halves are in the build. The cost of that is that a typo is a toast instead of a

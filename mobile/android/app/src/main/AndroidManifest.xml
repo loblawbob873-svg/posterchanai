@@ -119,6 +119,18 @@
             </intent-filter>
         </activity>
 
+        <!-- Package replacement can re-apply HomeActivity's disabled-by-default manifest state on
+             some OEMs. Only a previously persisted launcher opt-in is restored; fresh installs stay
+             out of Android's Home chooser. MainActivity repeats the repair as a defensive path. -->
+        <receiver
+            android:name=".home.LauncherRepairReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
         <!-- MESSAGES (opt-in). Android requires ALL FOUR of the components below before this app
              may even be OFFERED as the default SMS app; a role that cannot be granted is a feature
              that silently does not exist, so each one is here for that reason as well as its own.

@@ -63,6 +63,23 @@ public final class HomeRoles {
         } catch (Throwable t) { return false; }
     }
 
+    /** Restore the native launcher component after an APK replacement.
+     *
+     * The manifest keeps HomeActivity disabled so a normal PosterChan install never volunteers to
+     * replace somebody's launcher.  Android/OEM package installers can, however, re-apply that
+     * manifest default while replacing an APK even when this install was explicitly opted in.  The
+     * HOME role is package-scoped on those devices, so Android then falls through to the package's
+     * ordinary LAUNCHER activity: pressing Home opens the WebView/mobile app and the native desktop
+     * appears to have vanished.  The persisted opt-in is the authority; repairing it is not a new
+     * role request and never affects an install that did not opt in. */
+    public static void repairOptedInLauncher(Context ctx) {
+        try {
+            if (new LauncherPrefs(ctx).optedIn() && !launcherComponentEnabled(ctx)) {
+                enableLauncherComponent(ctx, true);
+            }
+        } catch (Throwable ignored) { }
+    }
+
     public static boolean isDefaultHome(Context ctx) {
         try {
             Intent probe = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME);

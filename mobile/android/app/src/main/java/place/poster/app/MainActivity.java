@@ -43,6 +43,10 @@ public class MainActivity extends BridgeActivity {
     // it has to be declared here, before super.onCreate() builds the bridge, or JS never sees it.
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        // An OEM installer may re-apply HomeActivity's opt-in manifest default during an update.
+        // If Android consequently routes HOME to this ordinary launcher activity, repair the
+        // person's persisted choice immediately so the next Home press returns to the native desk.
+        place.poster.app.home.HomeRoles.repairOptedInLauncher(this);
         registerPlugin(ScreenSharePlugin.class);
         registerPlugin(ShareTargetPlugin.class);
         registerPlugin(Nip55Plugin.class);
