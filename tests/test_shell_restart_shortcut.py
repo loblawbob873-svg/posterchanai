@@ -131,6 +131,42 @@ def test_restart_reloads_two_live_monitors_sequentially():
     assert got == {"n":2,"max":1,"order":["load-a","show-a","load-b","show-b"]}
 
 
+def test_a_failed_reload_is_canonically_navigated_before_the_surface_is_shown():
+    helper = ROOT / "desktop/shell-recovery.js"
+    code = f"""
+      const {{recoverSurfaces}}=require({json.dumps(str(helper))});
+      let failed;
+      const listeners={{}}, order=[];
+      const b={{isDestroyed:()=>false,show:()=>order.push('show'),webContents:{{
+        getURL:()=> 'https://poster.place/client',
+        once:(ev,fn)=>{{listeners[ev]=fn}},
+        reloadIgnoringCache:()=>setTimeout(()=>listeners['did-fail-load'](),1)
+      }}}};
+      (async()=>{{const n=await recoverSurfaces([{{browser:b}}],async()=>{{
+        order.push('navigate-start'); await new Promise(r=>setTimeout(r,5)); order.push('navigate-end');
+      }}); process.stdout.write(JSON.stringify({{n,order}}));}})();
+    """
+    got=json.loads(subprocess.check_output(["node","-e",code],text=True))
+    assert got == {"n":1,"order":["navigate-start","navigate-end","show"]}
+
+
+def test_a_failed_canonical_navigation_never_claims_the_black_surface_recovered():
+    helper = ROOT / "desktop/shell-recovery.js"
+    code = f"""
+      const {{recoverSurfaces}}=require({json.dumps(str(helper))});
+      const b={{url:'about:blank',shown:false,isDestroyed:()=>false,show(){{this.shown=true}}}};
+      (async()=>{{const n=await recoverSurfaces([{{browser:b}}],()=>Promise.reject(new Error('no paint')));
+        process.stdout.write(JSON.stringify({{n,shown:b.shown}}));}})();
+    """
+    got=json.loads(subprocess.check_output(["node","-e",code],text=True))
+    assert got == {"n":0,"shown":False}
+
+
+def test_the_canonical_shell_navigation_is_awaited():
+    main = (ROOT / "desktop/main.js").read_text()
+    assert "await target.loadURL(APP_URL);" in main
+
+
 def test_upgrade_restores_native_window_decorations_in_old_identity_configs():
     ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
     assert "default_floating_border[[:space:]]+none" in ebuild

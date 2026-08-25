@@ -13,21 +13,29 @@ async function recoverSurfaces(surfaces, navigate){
     /* Reload working surfaces in place, one at a time. Navigating every monitor concurrently made
      * both renderer processes rebuild the full client together; under real load one GPU surface
      * remained mapped but black. Only a genuinely uninitialised surface needs canonical navigation. */
+    let loaded=false;
     if(url && url!=='about:blank' && wc && typeof wc.reloadIgnoringCache==='function'){
-      await new Promise(resolve=>{
+      loaded=await new Promise(resolve=>{
         let done=false;
-        const finish=()=>{ if(done)return; done=true; clearTimeout(timer); resolve(); };
-        const timer=setTimeout(finish,15000);
+        const finish=ok=>{ if(done)return; done=true; clearTimeout(timer); resolve(Boolean(ok)); };
+        const timer=setTimeout(()=>finish(false),15000);
         if(typeof wc.once==='function'){
-          wc.once('did-finish-load',finish);
-          wc.once('did-fail-load',finish);
-          wc.once('render-process-gone',finish);
+          wc.once('did-finish-load',()=>finish(true));
+          wc.once('did-fail-load',()=>finish(false));
+          wc.once('render-process-gone',()=>finish(false));
         }
-        try{ wc.reloadIgnoringCache(); }catch(_){ finish(); }
+        try{ wc.reloadIgnoringCache(); }catch(_){ finish(false); }
       });
-    }else{
-      try{ await Promise.resolve(navigate(browser)); }catch(_){}
     }
+    /* A mapped surface is not a healthy surface. The old implementation treated timeout,
+     * did-fail-load and render-process-gone as success, then showed the failed renderer. On a
+     * two-monitor shell that is literally one working desktop and one permanent black monitor.
+     * Canonical navigation is the recovery path for both an uninitialised renderer and a reload
+     * that did not finish; it is awaited so "shown" means the navigation settled. */
+    if(!loaded){
+      try{ await Promise.resolve(navigate(browser)); loaded=true; }catch(_){ loaded=false; }
+    }
+    if(!loaded) continue;
     browser.show();
     count++;
   }

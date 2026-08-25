@@ -700,7 +700,11 @@ async function loadApp(target) {
   }
   await applyProxy();
   if (!current()) return;
-  target.loadURL(APP_URL);
+  /* BrowserWindow.loadURL is a promise. Await it: shell recovery must not mark a mapped secondary
+   * surface healthy while its renderer is still about:blank (the visible result is a black
+   * monitor after Ctrl+Alt+Backspace). Normal callers already await loadApp, so this makes the
+   * existing contract true instead of changing it. */
+  await target.loadURL(APP_URL);
 }
 function loadAllApps(){
   /* Native pickers are BrowserWindows too, but they are not app surfaces. Reloading one as the
