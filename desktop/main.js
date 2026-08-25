@@ -1045,13 +1045,39 @@ function scopedWindows(e, rows){
   });
 }
 let _shellRecoveryWired = false;
+async function forwardShellTick(ev){
+  let targets=BrowserWindow.getAllWindows();
+  /* One desktop renderer exists per output. A global key belongs to the focused output only;
+   * close is intentionally broadcast so an old menu cannot remain stranded on another screen. */
+  if(ev && ev.payload !== 'pc:start:close'){
+    try{
+      const active=(await wm().workspaces()).find(x=>x && x.focused);
+      if(active) targets=targets.filter(target=>{
+        const scope=_shellScopes.get(target.webContents.id);
+        return !scope || String(scope.workspace)===String(active.name);
+      });
+    }catch(_){}
+  }
+  for(const target of targets){
+    try{ target.webContents.send('pc:wm:event',
+      {name:'tick',change:ev&&ev.change,payload:ev&&ev.payload,window:null}); }catch(_){}
+  }
+}
 async function wireShellRecovery(){
   if(!SHELL_MODE || _shellRecoveryWired || !wm().available()) return;
   _shellRecoveryWired = true;
   try{
     await wm().subscribe(['window','workspace','output','tick']);
     wm().on('tick', (ev) => {
-      if(!ev || ev.payload !== 'pc:restart') return;
+      if(!ev) return;
+      if(ev.payload !== 'pc:restart'){
+        /* Keyboard events cannot depend on a renderer first asking to receive them. On the laptop,
+         * Sway ran the physical Super binding but a slow renderer startup had never armed the
+         * forwarding handler, so the tick died here in the main process. This subscription is
+         * always installed for shell recovery; it is therefore the authoritative keyboard path. */
+        forwardShellTick(ev).catch(()=>{});
+        return;
+      }
       /* Keep the Wayland surface mapped. Killing Electron and racing its replacement against the
        * singleton socket is what turned Ctrl+Alt+Backspace into a permanent black screen. */
       try{
@@ -1504,7 +1530,9 @@ ipcMain.handle('pc:wm:subscribe', async (e) => {
    * subscriber. That is what makes the Super key open the start menu even while FIREFOX has the
    * keyboard, which is the case that matters: a key handler in this page only ever fires when this
    * page is focused, and the moment you want a start menu is usually the moment something else is. */
-  const NAMES = ['window', 'workspace', 'output', 'tick'];
+  /* Tick forwarding is owned by wireShellRecovery(), whose lifetime is the shell process rather
+   * than a renderer's startup. Keeping it here too would toggle Start twice. */
+  const NAMES = ['window', 'workspace', 'output'];
   await w.subscribe(NAMES);
   for (const name of NAMES) {
     w.on(name, (ev) => {

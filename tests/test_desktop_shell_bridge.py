@@ -245,6 +245,15 @@ class Bridge(unittest.TestCase):
         self.assertIn("(await wm().workspaces()).find(x=>x && x.focused)", self.main)
         self.assertIn("ev.payload !== 'pc:start:close'", self.main)
 
+    def test_global_shell_keys_are_forwarded_by_the_always_on_main_subscription(self):
+        recovery = self.main[self.main.index("async function wireShellRecovery"):
+                             self.main.index("async function reconcileShellDisplays")]
+        self.assertIn("forwardShellTick(ev)", recovery)
+        handler = self.main[self.main.index("ipcMain.handle('pc:wm:subscribe'"):
+                            self.main.index("/* Power, brightness", self.main.index("ipcMain.handle('pc:wm:subscribe'"))]
+        self.assertIn("const NAMES = ['window', 'workspace', 'output']", handler)
+        self.assertNotIn("const NAMES = ['window', 'workspace', 'output', 'tick']", handler)
+
     def test_it_is_absent_rather_than_broken_without_a_compositor(self):
         """A desktop install that is not PosterChanOS has no sway. The page must be able to ask,
         rather than discovering it through a thrown error on every call."""
