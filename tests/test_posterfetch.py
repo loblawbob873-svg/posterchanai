@@ -61,10 +61,17 @@ class PosterfetchTests(unittest.TestCase):
     def test_a_narrow_tab_drops_the_logo_and_keeps_the_facts(self):
         """Dropping the FACTS instead would be the wrong half: they are what somebody reads."""
         narrow = ANSI.sub("", _render(ENV, cols=44)["out"])
-        self.assertNotIn("▄█████████▄", narrow, "the logo survived into a tab too narrow for it")
+        self.assertNotIn("/  \\_/  \\", narrow, "the logo survived into a tab too narrow for it")
         self.assertIn("kernel", narrow)
         wide = ANSI.sub("", _render(ENV, cols=120)["out"])
-        self.assertIn("▄█████████▄", wide, "a wide tab lost the logo")
+        self.assertIn("/  \\_/  \\", wide, "a wide tab lost the logo")
+
+    def test_the_logo_is_the_posterchan_anime_mascot_not_the_old_circle_mark(self):
+        wide = ANSI.sub("", _render(ENV_TRUE, cols=120)["out"])
+        self.assertIn("/\\   /\\", wide, "the mascot lost her cat ears")
+        self.assertIn("^   ^", wide, "the mascot lost her closed-eye anime expression")
+        self.assertIn("/~~~", wide, "the mascot lost the long-hair silhouette")
+        self.assertNotIn("▄████", wide, "the old cross-circle mark came back")
 
     def test_the_logo_rows_are_all_one_width(self):
         """A row that is one cell short shears the fact column beside it, and only on the machine

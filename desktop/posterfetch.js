@@ -96,19 +96,23 @@ function meter(env, used, total, width) {
        + `${col}${String(Math.round(frac * 100)).padStart(3)}%${R}`;
 }
 
-/* The mark. Nine rows, nineteen columns, every row the same display width so the fact column cannot
- * ragged itself when a row happens to be shorter. Single-width block glyphs only — a half-block or
- * a box-drawing character that a font renders at 1.5 cells shears the whole banner. */
+/* A terminal portrait of the PosterChan mascot: cat ears, long hair, closed-eye smile and hoodie.
+ * It deliberately uses plain ASCII rather than trying to print the PNG itself — local shells also
+ * open over SSH/serial where sixel/kitty graphics are unavailable, while these cells remain the
+ * same likeness and width everywhere. Eleven rows, nineteen columns, every row the same display
+ * width so the fact column cannot rag itself when a row happens to be shorter. */
 const LOGO = [
-  '       ▄▄▄▄▄       ',
-  '    ▄█████████▄    ',
-  '  ▄████▀   ▀████▄  ',
-  ' ████▀  ███  ▀████ ',
-  ' ███▌  █████  ▐███ ',
-  ' ████▄  ███  ▄████ ',
-  '  ▀████▄   ▄████▀  ',
-  '    ▀█████████▀    ',
-  '       ▀▀▀▀▀       ',
+  '      /\\   /\\      ',
+  '     /  \\_/  \\     ',
+  '    / /~~~~~\\ \\    ',
+  '   | | ^   ^ | |   ',
+  '   | |   ^   | |   ',
+  '   |  \\ \\_/ /  |   ',
+  '    \\  `---\'  /    ',
+  '     `-. | .-\'     ',
+  '       /|||\\       ',
+  '      / ||| \\      ',
+  '     /__|||__\\     ',
 ];
 const LOGO_W = 19;
 
