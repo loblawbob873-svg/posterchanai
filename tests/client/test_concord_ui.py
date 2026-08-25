@@ -190,6 +190,15 @@ def test_created_and_joined_communities_survive_browser_storage_loss():
     assert "item.source.pubkey!==viewer.pubkey" in CONCORD
 
 
+def test_leaving_a_community_publishes_a_membership_tombstone_before_removal():
+    assert 'async function leaveArmadaMembership(p,room)' in CONCORD
+    assert "tombs.set(room.communityId,{community_id:room.communityId,removed_at:Date.now()})" in CONCORD
+    assert "await p.publish(13302,content,[])" in CONCORD
+    handler = CONCORD.split("const leave=$('#cc-leave-community')", 1)[1].split("const settingsSave", 1)[0]
+    assert handler.index('await leaveArmadaMembership(p,room)') < handler.index('rooms.splice(index,1)')
+    assert "roomInvite.title='Invite people'" in CONCORD
+
+
 def test_send_is_optimistic_and_does_not_wait_for_relays_to_paint():
     handler = CONCORD.split("send.onclick=async()=>", 1)[1].split("input.onkeydown", 1)[0]
     assert "pending:!room.local" in handler
