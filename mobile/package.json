@@ -19,5 +19,9 @@
     "@capacitor/filesystem": "^6.0.3",
     "@capacitor/share": "^6.0.3",
     "send-intent": "^6.0.0"
+  },
+  "overrides": {
+    "brace-expansion": "2.1.4",
+    "tar": "7.5.21"
   }
 }
