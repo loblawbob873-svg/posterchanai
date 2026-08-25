@@ -960,6 +960,16 @@
 
     Session.prototype.destroy = function(){
       this.dead = true;
+      /* A first-person game may own the browser's pointer lock. Removing its iframe first leaves
+       * cursor restoration to browser/WebView timing; on desktop that can retain the hidden/game
+       * cursor until another window is focused. Release while the owning frame still exists. Never
+       * release somebody else's lock: multiple PosterChan windows may be open. */
+      try{
+        if(this.frame && document.pointerLockElement === this.frame && document.exitPointerLock)
+          document.exitPointerLock();
+      }catch(_){}
+      if(this._onPointerLock) document.removeEventListener('pointerlockchange', this._onPointerLock);
+      this._onPointerLock = null;
       // Relay.subscribe hands back an ID, and Relay.close takes it — a live REQ left open for a game
       // nobody has on screen is the cost the Notes subscription audit was about.
       try{ if(this.sub) Relay.close(this.sub); }catch(_){}
@@ -1277,6 +1287,10 @@
       f.src = this.origin + '/__sandbox__/?__xdc=' + encodeURIComponent(this.token)
             + (this.reset ? '&__reset=1' : '');
       this.frame = f;
+      /* Track this session's lock so teardown can restore the ordinary cursor deterministically.
+       * The top document reports the cross-origin iframe element as pointerLockElement. */
+      this._onPointerLock = () => { this.pointerLocked = document.pointerLockElement === f; };
+      document.addEventListener('pointerlockchange', this._onPointerLock);
 
       this._onMsg = (ev) => {
         if(this.dead || !this.frame) return;
