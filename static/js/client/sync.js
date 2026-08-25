@@ -2990,6 +2990,7 @@
    * tests/client/test_sync_repaint.py through a fixed window from its opening brace, and seven lines
    * of prose pushed the coalescing out of view. */
   function paint(){
+    if(!PC.isView || !PC.isView('sync')) return;
     try{ if(FS()) startAll(); }catch(_){}
     if(_paintT || _editing()){ _paintQ = true; if(!_paintT) _arm(); return; }
     _paintNow();

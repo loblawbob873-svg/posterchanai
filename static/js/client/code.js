@@ -324,7 +324,7 @@
   function init(){
     const PC = window.__PC;
     if(!PC){ return setTimeout(init, 50); }
-    const { $, enc, toast, authFetch, ensureAiSession } = PC;
+    const { $, enc, toast, authFetch, ensureAiSession, uiPrompt } = PC;
     const inView = () => window.__PC.VIEW === 'code';
 
     // ---- server ------------------------------------------------------------------------------
@@ -969,7 +969,8 @@
          * to its configured workspace, so accept a workspace-relative directory and let /tree
          * validate it. Empty means the workspace root. */
         const current=S.cwd||'';
-        const picked=window.prompt('Working directory (relative to the workspace root)',current);
+        const picked=await uiPrompt('Working directory (relative to the workspace root)',
+                                    {value:current, ok:'Open folder'});
         if(picked===null)return;
         S.hostRoot='';S.gitOpen=false;S.gitDiff=null;
         await loadTree(String(picked).trim().replace(/^\/+|\/+$/g,''));save(true);

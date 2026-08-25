@@ -3903,6 +3903,7 @@
   }
 
   function render(){
+    if(!PC || !PC.isView || !PC.isView('meme')) return;
     const feed=document.getElementById('feed'); if(!feed) return;
     if(_playT){ clearInterval(_playT); _playT=null; }
     // Keep the playhead where it was. A rebuild used to snap back to t=0, so any edit (Fill, restack,

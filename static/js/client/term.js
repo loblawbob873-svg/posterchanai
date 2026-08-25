@@ -1072,6 +1072,9 @@
      * exact failure `renderEpoch` exists for). So whoever renders last owns it — which is correct
      * on the desktop, where only the FOCUSED window is ever rendered. */
     async function render(host){
+      // An explicit host is a desktop-owned terminal window. With no host this is the shared feed,
+      // and a deferred mount must not replace whichever app owns it now.
+      if(!host && (!PC.isView || !PC.isView('terminal'))) return;
       const feed = host || $('#feed'); if(!feed) return;
       // NOT `PC.VIEW = 'terminal'` — the bridge exposes VIEW as a getter with no setter, so that
       // assignment silently does nothing. renderView() has already set it before dispatching here;

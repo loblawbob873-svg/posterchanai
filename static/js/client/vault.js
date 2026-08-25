@@ -758,12 +758,14 @@
   // ---------------------------------------------------------------- render
 
   async function render(){
+    if(!PC.isView || !PC.isView('vault')) return;
     const feed = $('#feed');
     if(!feed) return;
     if(!_lib){
       feed.innerHTML = '<div class="pv-wrap"><div class="spinner"></div></div>';
       try{ await load(); }
       catch(e){
+        if(!PC.isView('vault')) return;
         feed.innerHTML = `<div class="pv-wrap"><div class="empty pv-locked">
           <svg class="ic" aria-hidden="true"><use href="#i-key"></use></svg>
           <b>Your vault didn’t open</b>
@@ -773,6 +775,7 @@
         return;
       }
     }
+    if(!PC.isView('vault')) return;
     _paint();
     watch();
     refresh();

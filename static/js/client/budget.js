@@ -373,6 +373,7 @@
   }
 
   function render(){
+    if(!PC.isView || !PC.isView('budget')) return;
     const feed = $('#feed'); if(!feed) return;
     if(!ME()){ feed.innerHTML = '<div class="bg-wrap"><div class="muted" style="padding:24px">Sign in to use Budget.</div></div>'; return; }
     if(!_doc){
