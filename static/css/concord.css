@@ -69,7 +69,11 @@ body.concord-view .cc-reaction-picker{display:grid!important;grid-template-colum
   body.concord-view .cc-conversation>header .cc-hash,body.concord-view .cc-conversation>header .cc-visibility,body.concord-view #cc-publish-listing{display:none!important}
   body.concord-view .cc-conversation>header>b{min-width:0!important;max-width:34vw!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;font-size:16px!important}
   body.concord-view .cc-head-btn,body.concord-view .cc-mobile-back{flex:0 0 38px!important;width:38px!important;min-width:38px!important;height:38px!important}
-  body.concord-view .cc-messages{padding:12px 9px 8px!important;overscroll-behavior:contain!important}
+  body.concord-view .cc-conversation{min-width:0!important;max-width:100vw!important;overflow:hidden!important}
+  body.concord-view .cc-messages{width:100%!important;max-width:100%!important;padding:12px 9px 8px!important;overflow-x:hidden!important;overscroll-behavior:contain!important}
+  body.concord-view .cc-message-list,body.concord-view .cc-message,body.concord-view .cc-message-body{width:100%!important;max-width:100%!important;min-width:0!important}
+  body.concord-view .cc-message-body a,body.concord-view .cc-message-body p,body.concord-view .cc-message-body pre{max-width:100%!important;overflow-wrap:anywhere!important;word-break:break-word!important}
+  body.concord-view .cc-message-body img,body.concord-view .cc-message-body video,body.concord-view .cc-message-body iframe,body.concord-view .cc-message-body .link-card,body.concord-view .cc-message-body .xdc-card{max-width:100%!important}
   body.concord-view .cc-message{gap:8px!important;padding:7px 2px!important;background:transparent!important}
   body.concord-view .cc-message-avatar{flex-basis:30px!important;width:30px!important;height:30px!important}
   body.concord-view .cc-message p{font-size:15px!important;line-height:1.42!important}

@@ -267,6 +267,10 @@ def test_concord_controls_are_phone_sized_and_single_column():
     assert '.cc-head-btn,.cc-compose-btn,.cc-mobile-back{min-width:44px' in phone_all
     assert 'body.concord-view .cc-conversation{width:100vw' in CONCORD_CSS
     assert 'body.concord-view .cc-message-actions button::after{content:none' in CONCORD_CSS
+    assert 'body.concord-view .cc-messages{width:100%!important;max-width:100%!important' in CONCORD_CSS
+    assert 'overflow-x:hidden!important;overscroll-behavior:contain!important' in CONCORD_CSS
+    assert 'body.concord-view .cc-message-body a' in CONCORD_CSS and 'overflow-wrap:anywhere!important' in CONCORD_CSS
+    assert 'body.concord-view .cc-message-body .xdc-card{max-width:100%!important}' in CONCORD_CSS
     assert "document.getElementById('rb-toggle')" in APP
 
 
