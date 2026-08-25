@@ -280,8 +280,10 @@ public class DoubleHarness {
     ok(HomeDoublePress.arrived(t+300), "intentional pair did not fire");
     ok(!HomeDoublePress.arrived(t+500), "third press replayed the pair");
     HomeDoublePress.clear(); ok(!HomeDoublePress.arrived(t), "first fired");
-    ok(!HomeDoublePress.arrived(t+20), "duplicate intent fired");
-    ok(!HomeDoublePress.arrived(t+1800), "two ordinary visits became a pair");
+    ok(HomeDoublePress.arrived(t+1), "batched physical presses did not fire");
+    ok(!HomeDoublePress.arrived(t+500), "batched pair replayed");
+    HomeDoublePress.clear(); ok(!HomeDoublePress.arrived(t), "first ordinary visit fired");
+    ok(!HomeDoublePress.arrived(t+2500), "two ordinary visits became a pair");
     HomeDoublePress.clear(); ok(!HomeDoublePress.arrived(t), "first fired again");
     ok(!HomeDoublePress.arrived(t-1), "backwards clock fired");
     System.out.println("ALL OK");
@@ -292,7 +294,7 @@ public class DoubleHarness {
 
 @unittest.skipUnless(HAVE_JDK, "javac/java not installed")
 class DoubleHomeRuns(unittest.TestCase):
-    def test_single_double_bounce_stale_and_backwards_time(self):
+    def test_single_double_batched_stale_and_backwards_time(self):
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
             pkg = d / "place/poster/app/home"
