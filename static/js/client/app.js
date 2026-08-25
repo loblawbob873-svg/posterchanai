@@ -15464,7 +15464,13 @@
     const t = type || mimeForName(name);
     return t ? new File([bytes], name, { type: t }) : new File([bytes], name);
   }
-  const _OFFICE_EXT = /\.(doc|docx|odt|rtf|xls|xlsx|xlsm|ods|csv|ppt|pptx|odp|pdf|odg|otp|ots|ott)$/i;
+  /* WHAT THE OFFICE EDITOR OPENS. Kept in step with app/routers/office.py's `_EXTS_FALLBACK`, which
+   * is itself only the fallback — the server asks CODE's own discovery, which advertises ninety-odd
+   * formats. This list must stay a SUBSET of that one: an extension offered here and refused there
+   * is a button that produces an error naming the file, which is how a PDF ended up being blamed
+   * for a gate in front of a server that opens PDFs perfectly well.
+   * tests/test_office_wopi.py fails if this drifts out of the server's set. */
+  const _OFFICE_EXT = /\.(doc|docx|odt|rtf|xls|xlsx|xlsm|ods|csv|ppt|pptx|odp|pdf|odg|otp|ots|ott|otg|fodt|fods|fodp|fodg|sxw|sxc|sxi)$/i;
   const _officeable = (name, mime) => _OFFICE_EXT.test(name || '')
     || /^application\/pdf/i.test(String(mime || ''))
     || /officedocument|opendocument|msword|ms-excel|ms-powerpoint/i.test(String(mime || ''));

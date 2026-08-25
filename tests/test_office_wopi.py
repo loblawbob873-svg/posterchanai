@@ -157,3 +157,32 @@ def test_discovery_is_asked_under_the_service_root_first():
     assert 'for root in (_SERVICE_ROOT, "")' in body, (
         "the bare path is tried first, so a correctly configured node's 4xx under the root would "
         "be reported as 'office unavailable'")
+
+
+def test_a_pdf_is_accepted():
+    """"pdf: unsuported office document" - refused by a gate in front of a server that opens PDFs
+    in Draw, with a message that blamed the document."""
+    assert "pdf" in office._EXTS_FALLBACK
+
+
+def test_the_client_never_offers_what_the_server_would_refuse():
+    """THE BUG, GENERALISED. Two hand-written lists - one in the page, one in the router - and the
+    page's had five extensions the router did not. Every one of them is a button that produces an
+    error naming the file. The page's list must be a SUBSET: the server may accept more (it asks
+    CODE, which advertises ninety-odd), never fewer."""
+    import re as _re
+    app = _read("static/js/client/app.js")
+    m = _re.search(r"const _OFFICE_EXT = /\\\.\(([^)]*)\)\$/i;", app)
+    assert m, "_OFFICE_EXT moved - re-point this test"
+    offered = set(m.group(1).split("|"))
+    extra = offered - office._EXTS_FALLBACK
+    assert not extra, f"the page offers the office editor for {sorted(extra)}, which it would refuse"
+
+
+def test_the_accepted_set_is_asked_of_code_not_kept_here():
+    """The static set is the fallback for a CODE that cannot be reached, not the answer."""
+    src = _read("app/routers/office.py")
+    body = src[src.index("async def _accepted_exts("):src.index("def enabled(")]
+    assert "_discover(" in body, "the accepted set is not asked of CODE"
+    assert "_EXTS_FALLBACK" in body, "there is no fallback for an unreachable CODE"
+    assert "if found:" in body, "an empty discovery would be taken as 'nothing is supported'"

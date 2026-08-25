@@ -47,8 +47,47 @@ _TTL = int(os.getenv("POSTERCHANAI_OFFICE_SESSION_TTL", "21600"))
 _SECRET = os.getenv("POSTERCHANAI_OFFICE_SECRET") or secrets.token_hex(32)
 _LOCKS: dict[str, tuple[str, float]] = {}
 _MU = threading.Lock()
-_EXTS = {"doc", "docx", "odt", "rtf", "txt", "xls", "xlsx", "xlsm", "ods", "csv",
-         "ppt", "pptx", "odp"}
+# WHAT CAN BE OPENED IS CODE'S ANSWER, NOT A LIST KEPT HERE.
+#
+# This was a hand-written set of thirteen, and CODE advertises NINETY-TWO in its own discovery. So
+# "pdf: unsuported office document" — a format LibreOffice opens in Draw, refused by a gate in front
+# of a server that supports it, with a message that blamed the document. Same for odg, otp, ots, ott
+# and seventy more. `_action_url` ALREADY refuses anything CODE does not advertise, with a message
+# that names the extension, so this second list could only ever be wrong in the strict direction.
+#
+# It is still a real guard — an upload is rejected before any bytes are written — it is just asked
+# of the server that will actually do the work. The static set below is the FALLBACK for a CODE that
+# cannot be reached; erring narrow there is right, because the alternative is writing a file to disk
+# for an editor that is not answering.
+_EXTS_FALLBACK = {"doc", "docx", "odt", "rtf", "txt", "xls", "xlsx", "xlsm", "ods", "csv",
+                  "ppt", "pptx", "odp", "pdf", "odg", "otp", "ots", "ott", "otg", "fodt",
+                  "fods", "fodp", "fodg", "odm", "oth", "otm", "sxw", "sxc", "sxi", "sxd"}
+_EXTS_TTL = 300
+_exts_cache: tuple[float, frozenset[str]] | None = None
+
+
+async def _accepted_exts() -> frozenset[str]:
+    """The extensions CODE advertises, cached briefly; the static set if it cannot be asked.
+
+    Cached because this is on the path of every document that is opened, and discovery is a whole
+    XML document listing ninety-odd formats — but only briefly, so a CODE that gains a filter after
+    an upgrade is picked up without anybody restarting anything.
+    """
+    global _exts_cache
+    now = time.time()
+    if _exts_cache and now - _exts_cache[0] < _EXTS_TTL:
+        return _exts_cache[1]
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await _discover(client)
+        root = ET.fromstring(response.content)
+        found = {a.attrib["ext"].lower() for a in root.iter("action") if a.attrib.get("ext")}
+        if found:                       # an empty answer is not an answer; keep what we had
+            _exts_cache = (now, frozenset(found))
+            return _exts_cache[1]
+    except Exception:
+        pass
+    return frozenset(_EXTS_FALLBACK)
 
 
 def enabled() -> bool:
@@ -155,8 +194,8 @@ async def create_session(request: Request, file: UploadFile = File(...), mode: s
         raise HTTPException(404, "built-in office support is disabled")
     name = Path(file.filename or "document").name[:240]
     ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
-    if ext not in _EXTS:
-        raise HTTPException(415, "unsupported office document")
+    if ext not in await _accepted_exts():
+        raise HTTPException(415, f"the office editor does not open .{ext} files")
     data = await file.read(_MAX + 1)
     if len(data) > _MAX:
         raise HTTPException(413, "office document is too large")
