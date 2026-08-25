@@ -157,33 +157,33 @@ public class LauncherDeviceTest {
         HomeRoles.enableLauncherComponent(ctx, true);
         Instrumentation inst = InstrumentationRegistry.getInstrumentation();
         Instrumentation.ActivityMonitor web = inst.addMonitor(MainActivity.class.getName(), null, false);
-        ActivityScenario<HomeActivity> s = ActivityScenario.launch(HomeActivity.class);
+        Intent launch = new Intent(ctx, HomeActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        HomeActivity homeActivity = (HomeActivity) inst.startActivitySync(launch);
+        inst.waitForIdleSync();
         try {
             HomeDoublePress.clear();
-            s.onActivity(a -> {
-                a.onStop();
-                a.onStart();
-                a.onNewIntent(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME));
+            inst.runOnMainSync(() -> {
+                homeActivity.onStop();
+                homeActivity.onStart();
+                homeActivity.onNewIntent(
+                        new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME));
             });
             assertEquals("one HOME lifecycle pair reopened PosterChan", null,
                     inst.waitForMonitorWithTimeout(web, 500));
 
             HomeDoublePress.clear();
-            s.onActivity(a -> {
+            inst.runOnMainSync(() -> {
                 Intent home = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME);
-                a.onNewIntent(home);
-                a.onNewIntent(new Intent(home));
+                homeActivity.onNewIntent(home);
+                homeActivity.onNewIntent(new Intent(home));
             });
             android.app.Activity opened = inst.waitForMonitorWithTimeout(web, 1500);
             assertNotNull("two HOME intents did not open the active feed", opened);
             inst.runOnMainSync(opened::finish);
         } finally {
             inst.removeMonitor(web);
-            /* HomeActivity intentionally ignores Back and is stateNotNeeded; after MainActivity was
-             * launched ActivityScenario cannot infer its destruction. Finish it explicitly so the
-             * assertion result is not replaced by a teardown timeout. */
-            try { s.onActivity(android.app.Activity::finish); } catch (Throwable ignored) { }
-            s.close();
+            inst.runOnMainSync(homeActivity::finish);
+            inst.waitForIdleSync();
             HomeDoublePress.clear();
         }
     }
