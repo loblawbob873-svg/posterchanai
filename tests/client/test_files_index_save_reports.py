@@ -61,7 +61,8 @@ const sleep = ms => new Promise(r=>setTimeout(r,ms));
 const toasts = [];
 const toast = m => toasts.push(String(m));
 let ME = { pubkey: 'ab'.repeat(32) };
-let signOk = true, fetchStatus = 200, signs = 0, bodies = [], confirmAnswer = true, asked = 0;
+let signOk = true, fetchStatus = 200, fetchWhy = 'refused: 3990 entries -> 1568';
+let signs = 0, bodies = [], confirmAnswer = true, asked = 0, pulls = 0, restoreOnPull = false;
 const sign = async () => { signs++; if (!signOk) throw new Error('signer request timed out'); return {id:'e'}; };
 // Production routes every proof through this helper. Keep the extracted method's real dependency
 // instead of accidentally turning every save into a caught ReferenceError.
@@ -74,7 +75,7 @@ const fetch = async (u, o) => {
   // The real server refuses a collapsing write UNLESS the request carries force.
   if (fetchStatus === 409)
     return last.force ? { ok:true, status:200, json: async () => ({}) }
-                      : { ok:false, status:409, json: async () => ({error:'refused: 3990 entries -> 1568'}) };
+                      : { ok:false, status:409, json: async () => ({error:fetchWhy}) };
   return { ok: fetchStatus < 400, status: fetchStatus, json: async () => ({}) };
 };
 const uploadBlob = async () => 'https://x/' + 'cd'.repeat(32);
@@ -92,7 +93,7 @@ function makeIdx(){
     _synced(){ this._syncedAt = 1; },
     _norm(){ return this.data; },
     saveLocal(){},
-    async pull(){ return this.data; },
+    async pull(){ pulls++; if(restoreOnPull){ this.data.files={server:{name:'protected'}}; this._pullOk=true; } return this.data; },
     async _ensureMK(){ return new Uint8Array(32); },
     __SAVE__,
   };
@@ -115,6 +116,7 @@ function makeIdx(){
   //     "This removes most of your file list" in front of someone uploading a music folder.
   {
     const idx = makeIdx(); signOk = true; fetchStatus = 409; confirmAnswer = false;
+    fetchWhy = 'refused: 3990 entries -> 1568';
     idx.data.deleted = {}; for (let i = 0; i < 2422; i++) idx.data.deleted['t'+i] = 1;
     asked = 0; bodies.length = 0;
     out.explainedSaved = await idx._save();
@@ -129,6 +131,17 @@ function makeIdx(){
     asked = 0;
     out.unexplainedSaved = await idx._save();
     out.unexplainedAsked = asked;
+  }
+  // 0d. An unexplained TOTAL wipe is not confirmable. A real delete-all has tombstones and took
+  // the auto-force path above; zero without them is the offline/empty-index corruption case.
+  {
+    const idx = makeIdx(); signOk = true; fetchStatus = 409; fetchWhy = 'refused: 5968 entries -> 0';
+    idx.data.files = {}; idx.data.deleted = {}; asked = 0; pulls = 0; restoreOnPull = true;
+    out.zeroSaved = await idx._save();
+    out.zeroAsked = asked;
+    out.zeroPulled = pulls;
+    out.zeroRestored = Object.keys(idx.data.files).length;
+    restoreOnPull = false; fetchWhy = 'refused: 3990 entries -> 1568';
   }
   // 1. the signer will not answer — the exact shape of the reported failure
   {
@@ -267,6 +280,12 @@ class FilesIndexSaveReports(unittest.TestCase):
         No tombstones, no explanation, so it asks (and here the answer is no)."""
         self.assertEqual(self.r["unexplainedAsked"], 1)
         self.assertIs(self.r["unexplainedSaved"], False)
+
+    def test_an_unexplained_zero_list_is_never_offered_a_force_button(self):
+        self.assertIs(self.r["zeroSaved"], False)
+        self.assertEqual(self.r["zeroAsked"], 0)
+        self.assertGreaterEqual(self.r["zeroPulled"], 1)
+        self.assertGreater(self.r["zeroRestored"], 0)
 
     def test_answering_no_never_forces(self):
         self.assertIs(self.r["refusedSaved"], False)

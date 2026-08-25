@@ -17342,11 +17342,27 @@
           // back into a dialog nobody can answer.
           const m = /(\d+)\D+?(\d+)\s*$/.exec(String(why||'').trim());
           const shrink = m ? (+m[1] - +m[2]) : 0;
+          const oldCount = m ? +m[1] : 0, newCount = m ? +m[2] : -1;
           const tombs = Object.keys((this.data && this.data.deleted) || {}).length;
           if(shrink > 0 && tombs >= shrink){
             console.warn('files-index: shrink of ' + shrink + ' is covered by ' + tombs
                          + ' deletions made here — forcing without asking');
             this._forceOk = true;
+          }
+          /* ZERO WITH NO TOMBSTONES IS NEVER A QUESTION.
+           *
+           * A disconnected phone just produced 5968 -> 0 and the guard asked the user whether to
+           * continue. There is no informed "yes" to that dialog: deleting every file through our
+           * UI creates one tombstone per entry and was accepted by the branch above. An unexplained
+           * zero can therefore only be an unread/cleared local index, and offering Force turns a
+           * connection failure into permanent metadata loss. Refuse it, invalidate the read proof,
+           * and pull the protected server copy back under the empty local copy. */
+          if(!this._forceOk && oldCount > 0 && newCount === 0){
+            console.error('files-index: refused unexplained zero-list; restoring the server copy');
+            this._dirty=false; this._forceOk=false; this._pullOk=false;
+            try{ await this.pull(); }catch(_){}
+            try{ toast('Your file list was not deleted. This device lost its connection, so the protected server copy is being restored.'); }catch(_){ }
+            return false;
           }
           const intended = this._forceOk || await uiConfirm('This removes most of your file list ('+(why.replace(/^refused: /,'')||'large drop')+
             ').\n\nIf you just deleted a folder, that\'s expected — continue?\n\nIf you did NOT expect this, cancel: '+
