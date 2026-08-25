@@ -84,7 +84,7 @@ def test_web_concord_removes_the_timeline_shell_gutter_and_width_cap():
 def test_concord_owns_a_versioned_stylesheet_so_stale_shell_css_cannot_unstyle_it():
     assert 'static/css/concord.css' in HTML
     assert "data-concord-css" in CONCORD
-    assert "concord.css?v=15" in CONCORD
+    assert "concord.css?v=16" in CONCORD
     assert '.cc-compose textarea:focus' in CONCORD_CSS
     assert 'box-shadow:none!important' in CONCORD_CSS
     assert "'/static/css/concord.css'" in (ROOT / "static/js/client/sw.js").read_text()
@@ -407,6 +407,15 @@ def test_concord_webxdc_mentions_live_sync_and_scroll_are_integrated():
     assert 'mentionBox' not in CONCORD
     assert 'refreshActiveChannel(p)' in CONCORD and 'setInterval(()=>refreshActiveChannel(p),4000)' in CONCORD
     assert 'scrollStates' in CONCORD and 'st.pinned' in CONCORD and 'preserveChatScroll' in CONCORD
+
+
+def test_armada_encrypted_attachments_are_decrypted_before_media_rendering():
+    assert "f['encryption-algorithm']" in CONCORD
+    assert "crypto.subtle.decrypt({name:'AES-GCM'" in CONCORD
+    assert "hash!==file.hash" in CONCORD
+    assert 'messageContentHtml(p,m)' in CONCORD
+    assert 'hydrateEncryptedAttachments(messages)' in CONCORD
+    assert 'data-cc-attachment-index' in CONCORD
 
 
 def test_concord_brand_always_returns_to_discovery():
