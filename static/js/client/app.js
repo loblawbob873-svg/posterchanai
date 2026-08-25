@@ -18344,8 +18344,12 @@
 
       modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Drive check</h3>`
         + lines.join('')
-        + (reallyGone.length ? `<div class="row" style="margin-top:12px"><button class="btn btn-red small" id="fx-ck-clear">Clear ${reallyGone.length} dead entr${reallyGone.length===1?'y':'ies'}</button></div>` : ''),
+        + `<div class="row" style="margin-top:12px">`
+        + (reallyGone.length ? `<button class="btn btn-red small" id="fx-ck-clear">Clear ${reallyGone.length} dead entr${reallyGone.length===1?'y':'ies'}</button>` : '')
+        + `<button class="btn btn-ghost small" id="fx-ck-history">Review retained folder lists…</button></div>`,
         r => {
+          const hist = $('#fx-ck-history', r);
+          if(hist) hist.onclick = () => _showFilesHistory(hist);
           const rc = $('#fx-ck-reclaim', r);
           if(rc) rc.onclick = async () => {
             const gb = reclaim.reduce((n, b) => n + (b.size || 0), 0);
@@ -19359,6 +19363,29 @@
     for(const sha in files){ const f = files[sha].folder || ''; out[f] = (out[f] || 0) + 1; }
     _fxCountsRev=FilesIdx._rev; _fxCountsCache=out; return out;
   }
+  /* Disaster recovery lives under Drive check, not in the ordinary Files toolbar. A healthy drive
+   * should never ask its owner to think about retained metadata generations; the check is where a
+   * mismatch is diagnosed and therefore the only context in which this control makes sense. */
+  async function _showFilesHistory(trigger){
+    const old=trigger&&trigger.textContent;
+    if(trigger){ trigger.disabled=true; trigger.textContent='Waiting for signer…'; }
+    try{
+      const rows=await FilesIdx.history();
+      if(!rows.length){ if(trigger){ trigger.disabled=false; trigger.textContent=old; } toast('No older folder-list versions are stored yet.'); return; }
+      modal(`<h3>Recover folder list</h3><p class="muted small">The server retains five earlier versions of your folder names and file metadata. Restoring one does not delete or re-upload any Blossom bytes, and the current version is retained so this can be undone.</p>
+        <div class="fx-history-list">${rows.map(x=>`<button class="btn btn-ghost fx-history-row" data-slot="${Number(x.slot)}"><b>${x.n==null?'older version':(Number(x.n).toLocaleString()+' files')}</b><span class="muted small">${enc(new Date(Number(x.created_at||0)*1000).toLocaleString())}</span></button>`).join('')}</div>
+        <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn btn-ghost" id="fx-history-cancel">Cancel</button></div>`, root=>{
+        const cancel=$('#fx-history-cancel',root); if(cancel) cancel.onclick=closeModal;
+        $$('.fx-history-row',root).forEach(b=>b.onclick=async()=>{
+          const label=(b.querySelector('b')||{}).textContent||'this version';
+          if(!await uiConfirm('Restore '+label+'?\n\nOnly folder names and file metadata change. Your current list is retained as another backup, and no stored files are deleted.')) return;
+          closeModal(); toast('restoring folder list…');
+          try{ await FilesIdx.restore(b.dataset.slot); _filesFolder=null; renderBlossom(); toast('folder list restored'); }
+          catch(e){ toast('could not restore: '+String(e&&e.message||e)); }
+        });
+      });
+    }catch(e){ if(trigger){ trigger.disabled=false; trigger.textContent='Try recovery again'; } toast('could not load folder-list history: '+String(e&&e.message||e)); }
+  }
   function _renderDriveHome(pane){
     const counts = _fxFolderCounts();
     const known = Object.keys(counts).reduce((n, k) => n + counts[k], 0);
@@ -19392,8 +19419,7 @@
     const usedLine = `<div class="fx-used"><b>${enc(used)}</b> stored`
       + (_blobHave ? ` · ${_blobHave.size} file${_blobHave.size===1?'':'s'}` : ' · counting…')
       + ` <button class="btn btn-ghost small fx-refresh" title="Refresh encrypted drive metadata using your signer.">Refresh</button>`
-      + ` <button class="btn btn-ghost small fx-check" title="Check every file in your drive against what the server actually holds. Changes nothing.">Check my drive</button>`
-      + ` <button class="btn btn-ghost small fx-history" title="Review the five retained folder-list versions and restore one if metadata went missing.">Recover folder list…</button></div>`;
+      + ` <button class="btn btn-ghost small fx-check" title="Check every file in your drive against what the server actually holds. Changes nothing.">Check my drive</button></div>`;
     grid.innerHTML = '<div class="fx-home">'
       + usedLine
       + folders
@@ -19410,25 +19436,6 @@
                    + tile('💻', 'Files on this computer', 'browse this machine', 'data-hosthome="1"') : '')
       + '</div>';
     { const cb = $('.fx-check', pane); if(cb) cb.onclick = () => driveCheck(cb); }
-    { const hb = $('.fx-history', pane); if(hb) hb.onclick = async()=>{
-      hb.disabled=true; hb.textContent='Waiting for signer…';
-      try{
-        const rows=await FilesIdx.history();
-        if(!rows.length){ hb.disabled=false; hb.textContent='Recover folder list…'; toast('No older folder-list versions are stored yet.'); return; }
-        modal(`<h3>Recover folder list</h3><p class="muted small">The server retains five earlier versions of your folder names and file metadata. Restoring one does not delete or re-upload any Blossom bytes, and the current version is retained so this can be undone.</p>
-          <div class="fx-history-list">${rows.map(x=>`<button class="btn btn-ghost fx-history-row" data-slot="${Number(x.slot)}"><b>${x.n==null?'older version':(Number(x.n).toLocaleString()+' files')}</b><span class="muted small">${enc(new Date(Number(x.created_at||0)*1000).toLocaleString())}</span></button>`).join('')}</div>
-          <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn btn-ghost" id="fx-history-cancel">Cancel</button></div>`, root=>{
-          const cancel=$('#fx-history-cancel',root); if(cancel) cancel.onclick=closeModal;
-          $$('.fx-history-row',root).forEach(b=>b.onclick=async()=>{
-            const label=(b.querySelector('b')||{}).textContent||'this version';
-            if(!await uiConfirm('Restore '+label+'?\n\nOnly folder names and file metadata change. Your current list is retained as another backup, and no stored files are deleted.')) return;
-            closeModal(); toast('restoring folder list…');
-            try{ await FilesIdx.restore(b.dataset.slot); _filesFolder=null; renderBlossom(); toast('folder list restored'); }
-            catch(e){ toast('could not restore: '+String(e&&e.message||e)); }
-          });
-        });
-      }catch(e){ hb.disabled=false; hb.textContent='Try recovery again'; toast('could not load folder-list history: '+String(e&&e.message||e)); }
-    }; }
     { const rb = $('.fx-refresh', pane); if(rb) rb.onclick = async()=>{
       rb.disabled=true; rb.textContent='Waiting for signer…';
       try{ await FilesIdx.ensure(); await _ensureSyncPairs(); renderBlossom(); }
