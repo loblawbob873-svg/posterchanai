@@ -100,6 +100,14 @@ class TheIconViewLooksLikeOne(unittest.TestCase):
         self.assertNotIn("background:#120c24", _rule(self.css, ".file-icon") or "",
                          "the icon still has its own filled box")
 
+    def test_encryption_does_not_put_the_boxes_back(self):
+        """Most real drives are encrypted. A clean generic tile rule is meaningless if `.enc`
+        overrides every tile back to a bordered, filled card."""
+        card = _rule(self.css, ".files-grid:not(.details) .file-card.enc") or ""
+        icon = _rule(self.css, ".files-grid:not(.details) .file-card.enc .file-icon") or ""
+        self.assertIn("border-color:transparent", card)
+        self.assertIn("background:none", icon)
+
     def test_selection_and_hover_are_what_draw_a_surface(self):
         """Which is exactly when an OS draws one. Without a fill, a selected file is
         indistinguishable from a hovered one."""

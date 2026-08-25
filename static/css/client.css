@@ -2389,6 +2389,11 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .file-card .copy:hover{border-color:var(--cyan,#5ff)}
 .file-card.enc{border-color:rgba(255,210,90,.45)}
 .file-card.enc .file-icon{background:radial-gradient(ellipse at center,rgba(255,210,90,.10),#120c24)}
+/* Encryption is already communicated by the lock glyph. In icon view a gold rim + dark radial
+   panel recreates the exact boxed-card UI removed above, and on an encrypted drive that means every
+   single file is boxed. Details rows keep their subtle encrypted separator; tiles stay clean. */
+.files-grid:not(.details) .file-card.enc{border-color:transparent}
+.files-grid:not(.details) .file-card.enc .file-icon{background:none}
 .file-card.enc .enc-open{cursor:pointer;display:block}
 .nf-opt{display:block;margin:8px 0;padding:10px 12px;border:1px solid var(--line);border-radius:10px;cursor:pointer;font-size:15px;text-transform:none;letter-spacing:0;font-weight:500}
 .nf-opt:hover{border-color:var(--cyan)}
@@ -7311,6 +7316,9 @@ body.os-on #os-root{pointer-events:auto}
 .osw-body > #feed{flex:1;min-height:0}
 .osw-slot{flex:1;min-height:0;overflow:auto;padding:8px 10px 14px;opacity:.72}
 .osw-slot:empty{display:none}
+/* A parked Terminal/Code window is still a live application, not a dimmed snapshot. os.js mirrors
+   the feed layout class while its nodes are parked; keep the full-height flex contract intact. */
+.osw-slot.feed-term,.osw-slot.feed-code{display:flex;flex-direction:column;padding:0;overflow:hidden;opacity:1}
 .osw-grip{position:absolute;inset-inline-end:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;
   touch-action:none;background:linear-gradient(135deg,transparent 50%,var(--line) 50%)}
 
@@ -8872,7 +8880,7 @@ audio.sms-att-img{min-width:220px}
 .pcc-git-head{display:flex;flex-direction:column;gap:3px;padding:10px;border-bottom:1px solid var(--line)}
 .pcc-git-head small{overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
 .pcc-git-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:8px}.pcc-git-actions button,.pcc-git-commit button,.pcc-git-file>button{min-height:34px;border:1px solid var(--line);border-radius:7px;background:var(--panel2);color:var(--text);cursor:pointer}
-.pcc-git-file{display:grid;grid-template-columns:minmax(0,1fr) 36px;gap:4px;padding:2px 6px}.pcc-git-file>button:first-child{display:flex;align-items:center;gap:7px;min-width:0;padding:5px 7px;text-align:left}.pcc-git-file code{color:var(--neon)}.pcc-git-file span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pcc-git-file{display:grid;grid-template-columns:minmax(0,1fr) 36px 36px;gap:4px;padding:2px 6px}.pcc-git-file>button:first-child{display:flex;align-items:center;gap:7px;min-width:0;padding:5px 7px;text-align:left}.pcc-git-file code{color:var(--neon)}.pcc-git-file span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pcc-git-commit{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px;padding:9px 7px}.pcc-git-commit input{min-width:0;padding:8px;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--text)}
 .pcc-diff-view{display:flex;flex:1;min-height:0;flex-direction:column;background:var(--bg)}
 .pcc-diff-view>header{display:flex;align-items:center;gap:10px;min-height:38px;padding:0 10px;border-bottom:1px solid var(--line)}

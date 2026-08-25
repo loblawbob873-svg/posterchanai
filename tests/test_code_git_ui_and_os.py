@@ -54,3 +54,17 @@ def test_modified_file_opens_diff_in_the_editor_pane():
     assert 'aria-label="Diff for ' in CODE
     assert "on('#pcc-diff-close'" in CODE
     assert ".pcc-diff-view" in CSS
+
+
+def test_each_changed_file_has_a_confirmed_discard_action():
+    assert 'data-git-restore="' in CODE
+    assert "Discard every change" in CODE
+    assert "await gitAct('restore',[path])" in CODE
+    assert "grid-template-columns:minmax(0,1fr) 36px 36px" in CSS
+
+
+def test_background_terminal_and_code_keep_their_full_height_layout():
+    os_js = (ROOT / "static/js/client/os.js").read_text()
+    assert "slot.className = 'osw-slot ' + realFeed.className" in os_js
+    assert "w.slot.className = 'osw-slot'" in os_js
+    assert ".osw-slot.feed-term,.osw-slot.feed-code" in CSS

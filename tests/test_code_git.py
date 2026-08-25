@@ -46,6 +46,16 @@ def test_status_diff_stage_unstage_and_commit(repo):
     assert not run(C.git_status(db=None, current_user=User()))["files"]
 
 
+def test_restore_discards_one_tracked_or_untracked_file(repo):
+    with open(os.path.join(repo, "a.txt"), "a") as fh: fh.write("changed\n")
+    with open(os.path.join(repo, "new.txt"), "w") as fh: fh.write("untracked\n")
+    run(C.git_action(C.GitBody(action="restore", paths=["a.txt"]), None, User()))
+    assert open(os.path.join(repo, "a.txt")).read() == "one\n"
+    assert os.path.exists(os.path.join(repo, "new.txt"))
+    run(C.git_action(C.GitBody(action="restore", paths=["new.txt"]), None, User()))
+    assert not os.path.exists(os.path.join(repo, "new.txt"))
+
+
 def test_git_paths_cannot_escape_or_become_options(repo):
     with pytest.raises(HTTPException):
         run(C.git_action(C.GitBody(action="stage", paths=["../outside"]), None, User()))
@@ -64,4 +74,3 @@ def test_nostr_remote_is_recognized_without_special_user_setup(repo):
     subprocess.run(["git", "-C", repo, "remote", "add", "origin", "nostr://npub1example/repo"], check=True)
     st = run(C.git_status(db=None, current_user=User()))
     assert st["nostr"] is True
-

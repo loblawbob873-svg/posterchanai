@@ -668,7 +668,7 @@
       return '<div class="pcc-git-head"><b>' + enc(g.branch||'Git') + '</b><small>' +
         (g.nostr?'Nostr remote · built in':enc(g.origin||'local repository')) + '</small></div>' +
         '<div class="pcc-git-actions"><button data-git-act="pull">Pull</button><button data-git-act="push">Push</button></div>' +
-        (files.length?files.map(f=>'<div class="pcc-git-file"><button data-git-diff="'+enc(f.path)+'"><code>'+enc(f.xy)+'</code><span>'+enc(f.path)+'</span></button><button title="'+(f.xy[0]!==' '?'Unstage':'Stage')+'" data-git-act="'+(f.xy[0]!==' '?'unstage':'stage')+'" data-git-path="'+enc(f.path)+'">'+(f.xy[0]!==' '?'−':'+')+'</button></div>').join(''):'<div class="pcc-note">Working tree clean</div>') +
+        (files.length?files.map(f=>'<div class="pcc-git-file"><button data-git-diff="'+enc(f.path)+'"><code>'+enc(f.xy)+'</code><span>'+enc(f.path)+'</span></button><button title="'+(f.xy[0]!==' '?'Unstage':'Stage')+'" data-git-act="'+(f.xy[0]!==' '?'unstage':'stage')+'" data-git-path="'+enc(f.path)+'">'+(f.xy[0]!==' '?'−':'+')+'</button><button title="Discard changes" aria-label="Discard changes in '+enc(f.path)+'" data-git-restore="'+enc(f.path)+'">↶</button></div>').join(''):'<div class="pcc-note">Working tree clean</div>') +
         '<div class="pcc-git-commit"><input id="pcc-git-message" placeholder="Commit message" maxlength="5000"><button data-git-act="commit">Commit</button></div>';
     }
 
@@ -997,6 +997,12 @@
         try{ const d=await api('/git/diff?path='+encodeURIComponent(path)); S.gitDiff={path,text:d.diff||'',error:'',busy:false}; }
         catch(e){ S.gitDiff={path,text:'',error:e.message||String(e),busy:false}; }
         paint();
+      }));
+      document.querySelectorAll('[data-git-restore]').forEach(b=>b.addEventListener('click',async()=>{
+        const path=b.dataset.gitRestore;
+        if(!await uiConfirm('Discard every change to “'+path+'”?\n\nThis cannot be undone.')) return;
+        await gitAct('restore',[path]);
+        if(S.gitDiff && S.gitDiff.path===path) S.gitDiff=null;
       }));
       on('#pcc-diff-close','click',()=>{S.gitDiff=null;paint();});
 

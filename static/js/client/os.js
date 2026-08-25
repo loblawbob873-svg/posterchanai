@@ -1008,6 +1008,12 @@
       el.dataset.osParking='1';
     }
     w.feedClass = realFeed.className;      // .feed-ai/.feed-chat etc. decide how it scrolls
+    /* The children are about to lose #feed as their parent. Terminal and Code are full-height flex
+       applications whose sizing comes from `.feed-term` / `.feed-code`; moving only their children
+       into a plain padded `.osw-slot` collapses the terminal/editor to its intrinsic little box as
+       soon as another window takes focus. Mirror the live feed's layout classes onto the parked
+       slot so a background window keeps the exact same content rectangle. */
+    slot.className = 'osw-slot ' + realFeed.className;
     /* …and WHICH VIEW the client believes it is showing, so refocusing can hand that back.
      *
      * The client keeps ONE `VIEW` global and every painter keys on it — flushLive, _drawTimeline
@@ -1147,9 +1153,10 @@
       realFeed.innerHTML = '';
       while(w.slot.firstChild) realFeed.appendChild(w.slot.firstChild);
       if(w.feedClass) realFeed.className = w.feedClass;
+      w.slot.className = 'osw-slot';
       w.parked = false;
       w.restored = true;                            // → focusWin skips the repaint entirely
-    } else if(w.slot) w.slot.innerHTML = '';
+    } else if(w.slot){ w.slot.innerHTML = ''; w.slot.className = 'osw-slot'; }
   }
 
   /* Send the live feed back to the CLASSIC container.

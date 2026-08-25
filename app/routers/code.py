@@ -370,6 +370,24 @@ async def git_action(body: GitBody, db: Session = Depends(get_db),
         paths.append(_rel(target, repo))
     if action == "stage" and paths: args = ["add", "--", *paths]
     elif action == "unstage" and paths: args = ["restore", "--staged", "--", *paths]
+    elif action == "restore" and paths:
+        # VS Code's “Discard Changes” semantics. Tracked files are restored from HEAD (including a
+        # staged copy); an untracked file has no HEAD copy, so discarding it means deleting that one
+        # explicitly resolved file. Never pass an untracked path to `git clean`: its directory-level
+        # behavior is broader than the item the person confirmed in the UI.
+        for rel in paths:
+            tracked = _git(repo, ["ls-files", "--error-unmatch", "--", rel])
+            if tracked.returncode == 0:
+                p = _git(repo, ["restore", "--staged", "--worktree", "--", rel])
+                if p.returncode:
+                    raise HTTPException(status_code=409, detail=(p.stderr or "Git restore failed").strip())
+            else:
+                target = _resolve(rel, repo, must_exist=False)
+                if os.path.isfile(target) or os.path.islink(target):
+                    os.unlink(target)
+                elif os.path.exists(target):
+                    raise HTTPException(status_code=409, detail="Refusing to discard a directory")
+        return {"ok": True, "output": "Changes discarded"}
     elif action == "commit":
         msg = body.message.strip()
         if not msg or len(msg) > 5000: raise HTTPException(status_code=400, detail="Enter a commit message")
