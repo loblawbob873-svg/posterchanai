@@ -45,3 +45,11 @@ def test_android_home_and_launcher_tiles_reuse_the_live_webview():
     landing = landing[: landing.index("startActivity(i)") + len("startActivity(i)")]
     assert "Intent.FLAG_ACTIVITY_SINGLE_TOP" in landing
     assert "Intent.FLAG_ACTIVITY_CLEAR_TOP" not in landing
+
+
+def test_closing_desktop_music_window_does_not_kill_background_playback():
+    os_src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+    start = os_src.index("function closeWin(w, opts)")
+    body = os_src[start:os_src.index("\n  function minimise", start)]
+    assert "PC().stopMusic" not in body
+    assert "PC().syncPlayer" in body

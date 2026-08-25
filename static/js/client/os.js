@@ -2394,7 +2394,6 @@
     _aiContextWins.delete(w);try{if(w.aiWatch)w.aiWatch.disconnect();}catch(_){}
     // If this window held the id, hand it back BEFORE removing the element, or `$('#feed')` briefly
     // resolves to nothing and whatever renders next paints into a detached node.
-    const wasMusic = (w.view === 'doc:music');
     // Closing the Terminal window is what ends its SSH session — renderView deliberately does not,
     // because on the desktop a background window is parked and still running (see the note there).
     if(w.view === 'terminal'){ try{ if(window.PCTerm) PCTerm.unmount(); }catch(_){} }
@@ -2416,14 +2415,12 @@
     }
     if(realFeed && realFeed.parentElement === w.body) releaseFeed();
     w.el.remove();
-    if(wasMusic){
-      // Closing the Music window closes the PLAYER. Anything else and shutting the app just replaces
-      // it with the smaller floating one, still playing — which is not what "close" means.
-      try{ PC().stopMusic && PC().stopMusic(); }catch(_){}
-    }else{
-      // Some other window closed; if the music app happened to be inside it the transport comes back.
-      try{ PC().syncPlayer && PC().syncPlayer(); }catch(_){}
-    }
+    /* Music playback belongs to the phone/session, not to the window that happens to display its
+       library.  Closing that window (or changing between Classic and Desktop) must leave the live
+       audio element, queue and Android media session alone.  The old stopMusic call made the exact
+       background-player path look dead after entering Desktop.  Reopening Music reconnects to the
+       same player; an explicit Pause remains the way to stop playback. */
+    try{ PC().syncPlayer && PC().syncPlayer(); }catch(_){}
     /* Monitor handoff already focused the destination renderer/native surface. Focusing the next
      * source window here steals input back across displays, leaving Firefox painted but inert and
      * making a moved Terminal maximise back on monitor one. Ordinary closes retain normal focus. */
