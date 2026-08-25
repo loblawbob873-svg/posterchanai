@@ -182,7 +182,8 @@ class EveryRouteOutOfTheFeedRemembers(unittest.TestCase):
         """The user's own spec for when it SHOULD reset. Dropping the scroll without dropping the
         memo would restore the position they just discarded, on the next return."""
         i = self.src.index("function activateNavView(v){")
-        blk = self.src[i:i + 900]
+        end = self.src.index("function setMobileNav", i)
+        blk = self.src[i:end]
         self.assertIn("delete _tlScrollMemo[v]", blk)
         self.assertIn("f.scrollTop=0", blk)
         self.assertIn("_tlForceTop=v", blk)
