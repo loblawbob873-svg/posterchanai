@@ -12,6 +12,7 @@ mkdir -p www/static/js/client www/static/css www/static/fonts
 
 cp "$SRC"/static/js/client/*.js       www/static/js/client/
 cp "$SRC"/static/css/client.css       www/static/css/
+cp "$SRC"/static/css/concord.css      www/static/css/
 cp "$SRC"/static/css/rtl.css          www/static/css/
 # The translation catalogues. i18n.js fetches /static/i18n/<lang>.json at runtime, and in a bundle
 # that request is served by the bundle — so without this the language picker offers Arabic and
