@@ -310,6 +310,7 @@
    * network costs nothing to keep open, and — now that it can live in the tray — being out of sight
    * is its normal working state rather than a signal that nobody is looking. */
   function _isDesktopApp(){ return !!window.pcShell; }
+  function _ownsBackgroundWork(){ return !window.pcShell || window.pcShell.backgroundOwner !== false; }
 
   /* Views that CANNOT work without an instance, because the server does the work: AI, media
    * rendering, RSS/scraping proxies, the torrent client, the node's own stats. Everything absent from
@@ -4165,7 +4166,7 @@
      * is a worse failure than a dead feed because it looks like the phone's fault. Both halves:
      * Nip46 is this page asking a signer, Nip46Signer is this page BEING one for another device. */
     try{ Nip46.revive(); }catch(_){}
-    try{ Nip46Signer.revive(); }catch(_){}
+    try{ if(_ownsBackgroundWork()) Nip46Signer.revive(); }catch(_){}
     // …and once a socket can actually answer again, re-ask for whatever is still a placeholder on
     // screen. Waiting for `ready` rather than firing straight away is the point: wake() has just torn
     // every socket down, so asking now would go nowhere and merely spend the retry budget again.
@@ -4189,7 +4190,7 @@
      * extension or a remote signer keeps the key somewhere this page cannot reach, so there is
      * nothing here to sign with. Fire-and-forget: a dead relay must not hold up the app. */
     try{
-      if(!GUEST && ME && ME.mode === 'local') Nip46Signer.resume().catch(()=>{});
+      if(!GUEST && ME && ME.mode === 'local' && _ownsBackgroundWork()) Nip46Signer.resume().catch(()=>{});
     }catch(_){}
     try{ _signerBatteryCheck(); }catch(_){}
     /* ON POSTERCHANOS, SIGNING IN IS ALSO GETTING A UNIX ACCOUNT.

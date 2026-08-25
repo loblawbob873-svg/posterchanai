@@ -1899,7 +1899,12 @@
     if(!on || !view) return false;
     if(!apps().some(a => a.view === view)) return false;
     const w = wins.find(x => x.view === view);
-    if(w){ focusWin(w, false); return false; }   // already open: claim the feed, let the caller paint
+    if(w){
+      // An app-icon click names the app to open. A parked window can carry a stale appView captured
+      // from the one global VIEW while another window was active; restoring that value made clicking
+      // Texts repaint Concord (and vice versa). Its original app identity wins for explicit routing.
+      w.appView=view; w.appPath=''; focusWin(w, false); return false;
+    }   // already open: claim the feed, let the caller paint
     // Back/forward passes focusOnly: it may bring a window forward, never conjure one.
     if(focusOnly) return false;
     return !!openApp(view);                       // creates it AND repaints through focusWin

@@ -551,5 +551,18 @@ class SyncedFoldersOpenInCodeToo(unittest.TestCase):
         self.assertIn("_CODE_MAX", body)
 
 
+class DesktopCodeOpensProjects(unittest.TestCase):
+    def test_native_picker_and_code_workspace_are_wired_end_to_end(self):
+        code = _read(CODE)
+        preload = _read(os.path.join(ROOT, "desktop", "preload.js"))
+        main = _read(os.path.join(ROOT, "desktop", "main.js"))
+        self.assertIn("id=\"pcc-open-folder\"", code)
+        self.assertIn("h.pickDirectory()", code)
+        self.assertIn("if(S.hostRoot) return openHostFile({path})", code)
+        self.assertIn("pickDirectory: () => ipcRenderer.invoke('pc:host:pickDirectory')", preload)
+        self.assertIn("ipcMain.handle('pc:host:pickDirectory'", main)
+        self.assertIn("properties: ['openDirectory']", main)
+
+
 if __name__ == "__main__":
     unittest.main()

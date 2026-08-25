@@ -23,6 +23,7 @@ import json
 import shutil
 import subprocess
 import time
+from pathlib import Path
 import unittest
 from pathlib import Path
 
@@ -76,6 +77,13 @@ def published(res, doc):
 
 @unittest.skipIf(shutil.which("node") is None, "node not installed")
 class ThreadsHoldBothKinds(unittest.TestCase):
+
+    def test_remote_send_keeps_the_uploaded_attachment_in_pending_and_ack_bubbles(self):
+        src = Path(ROOT, "static/js/client/sms.js").read_text()
+        self.assertIn("const sentParts=sent.attachment?", src)
+        self.assertIn("parts:sentParts, pending:true", src)
+        self.assertIn("parts:sentParts, _at:ev.created_at", src)
+        self.assertIn("parts:attachment?[{id:0", src)
 
     def test_texts_and_pictures_are_one_conversation(self):
         """A conversation is texts AND pictures and has always been read as one thing. Two threads

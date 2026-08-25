@@ -1424,6 +1424,12 @@ const hostfs = () => (_hostfs || (_hostfs = require('./hostfs.js')));
 
 ipcMain.handle('pc:host:list', (e, dir) => { fsGuard(e); return hostfs().list(String(dir || '')); });
 ipcMain.handle('pc:host:roots', (e) => { fsGuard(e); return hostfs().roots(); });
+ipcMain.handle('pc:host:pickDirectory', async (e) => {
+  fsGuard(e);
+  const owner = BrowserWindow.fromWebContents(e.sender) || win;
+  const r = await dialog.showOpenDialog(owner, { title: 'Open project folder', properties: ['openDirectory'] });
+  return r.canceled || !r.filePaths || !r.filePaths[0] ? null : hostfs().clean(r.filePaths[0]);
+});
 /* PosterChan Code editing a file on THIS computer. The guards (size, NUL bytes, atomic rename,
  * mtime compare-and-swap) are in hostfs.js, where a bridge cannot be talked out of them. */
 ipcMain.handle('pc:host:readText', (e, p) => { fsGuard(e); return hostfs().readText(String(p || '')); });

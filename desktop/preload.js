@@ -255,6 +255,7 @@ if (isOurPage) {
    * the encrypted drive and a synced folder. Absent everywhere else, which is how the client
    * feature-detects it — a browser tab has no filesystem at all. */
   contextBridge.exposeInMainWorld('pcHost', {
+    pickDirectory: () => ipcRenderer.invoke('pc:host:pickDirectory'),
     list: (dir) => ipcRenderer.invoke('pc:host:list', String(dir || '')),
     roots: () => ipcRenderer.invoke('pc:host:roots'),
     // PosterChan Code, editing a file on this computer.

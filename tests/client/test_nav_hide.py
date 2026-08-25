@@ -412,6 +412,11 @@ class DesktopWiringTests(unittest.TestCase):
         apply_fn = apply_fn[:apply_fn.index("\n  function ")]
         self.assertIn("PCOS.navChanged", apply_fn)
 
+    def test_explicit_app_routing_cannot_restore_another_windows_stale_view(self):
+        route = self.os_js[self.os_js.index("function routeView(view, focusOnly)"):]
+        route = route[:route.index("\n  /* CLOSE")]
+        self.assertIn("w.appView=view; w.appPath=''; focusWin(w, false)", route)
+
 
 if __name__ == "__main__":
     unittest.main()

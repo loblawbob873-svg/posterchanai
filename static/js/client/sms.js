@@ -307,15 +307,16 @@
             const at = Number(sent.at) || Number(ev.created_at || 0) * 1000 || Date.now();
             const md = await docIdFor(sent.to, at, sent.body || '', false);
             const have = S.msgs.get(md);
+            const sentParts=sent.attachment?[{id:0,ct:sent.attachment.mime||'application/octet-stream',name:sent.attachment.name||'',bytes:Number(sent.attachment.bytes)||-1,sha:String(sent.attachment.sha||''),thumb:'',nothumb:1}]:[];
             if(!ack.done){
               if(!have || !Number(have._at) || have._at < ev.created_at)
                 S.msgs.set(md, { doc:md, address:sent.to, body:sent.body || '', date:at,
-                                 incoming:false, name:'', pending:true, outbox:d,
+                                 incoming:false, name:'', parts:sentParts, pending:true, outbox:d,
                                  _at:ev.created_at });
             }else if(ack.done && ack.ok){
               if(!have || have.pending || have.failed || !Number(have._at) || have._at < ev.created_at)
                 S.msgs.set(md, { doc:md, address:sent.to, body:sent.body || '', date:at,
-                                 incoming:false, name:'', _at:ev.created_at });
+                                 incoming:false, name:'', parts:sentParts, _at:ev.created_at });
             }else if(have && have.pending){
               have.pending = false; have.failed = true; have.error = String(ack.error || 'not sent');
               have._at = ev.created_at;
@@ -1195,6 +1196,7 @@
     if(r && r.ok){
       const md = await docIdFor(to, at, body || '', false);
       S.msgs.set(md, { doc:md, address:to, body:body || '', date:at, incoming:false, name:'',
+                       parts:attachment?[{id:0,ct:attachment.mime,name:attachment.name,bytes:attachment.bytes,sha:attachment.sha,thumb:'',nothumb:1}]:[],
                        pending:true, outbox:doc, _at:Number((r.ev && r.ev.created_at) || now()) });
       rebuild();
       return { ok:true, where:'queued', doc };

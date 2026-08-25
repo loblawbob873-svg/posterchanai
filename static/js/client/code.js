@@ -240,7 +240,7 @@
 
   const S = {
     ready: false,
-    root: '', engines: {}, gate: '',        // gate: why the screen is unavailable, if it is
+    root: '', hostRoot: '', engines: {}, gate: '', // hostRoot: desktop project chosen by native picker
     cwd: '', tree: [], treeErr: '', treeBusy: false,
     expanded: {},                            // dir path → true (the tree remembers what you opened)
     open: [],                                // [{path, lang, text, disk, mtime, sel, scroll}]
@@ -272,7 +272,7 @@
      * window being LOOKED AT is the one that writes, and the last write wins — which is what the
      * person means by "this is where I was". */
     try{
-      const slim = { cwd: S.cwd, active: S.active, termOpen: S.termOpen, termH: S.termH,
+      const slim = { cwd: S.cwd, hostRoot:S.hostRoot, active: S.active, termOpen: S.termOpen, termH: S.termH,
                      sideW: S.sideW, expanded: S.expanded, open: [] };
       let budget = PERSIST_MAX;
       // Unsaved buffers first — see PERSIST_MAX.
@@ -285,6 +285,7 @@
       }
       slim.open = S.open.map((d, i) => ({
         path: d.path, lang: d.lang, mtime: d.mtime, sel: d.sel, scroll: d.scroll,
+        host: d.host || null,
         // `text:null` means "reload me from disk". Recorded explicitly so restore() can tell it
         // from an empty file, which is a real thing somebody may be editing.
         text: keep[i] ? d.text : null,
@@ -305,6 +306,7 @@
       const v = JSON.parse(raw);
       if(!v || typeof v !== 'object') return;
       S.cwd = typeof v.cwd === 'string' ? v.cwd : '';
+      S.hostRoot = typeof v.hostRoot === 'string' ? v.hostRoot : '';
       S.termOpen = !!v.termOpen;
       S.termH = Math.max(120, Math.min(900, Number(v.termH) || 260));
       S.sideW = Math.max(150, Math.min(600, Number(v.sideW) || 250));
@@ -312,6 +314,7 @@
       S.open = Array.isArray(v.open) ? v.open.filter(d => d && typeof d.path === 'string').map(d => ({
         path: d.path, lang: d.lang || langOf(d.path), text: typeof d.text === 'string' ? d.text : null,
         disk: typeof d.disk === 'string' ? d.disk : null, mtime: Number(d.mtime) || 0,
+        host: d.host && typeof d.host.path === 'string' ? {path:d.host.path} : null,
         sel: d.sel && typeof d.sel === 'object' ? d.sel : { s: 0, e: 0 }, scroll: Number(d.scroll) || 0,
       })) : [];
       S.active = (Number.isInteger(v.active) && v.active >= 0 && v.active < S.open.length) ? v.active : (S.open.length ? 0 : -1);
@@ -386,10 +389,17 @@
     async function loadTree(path){
       S.treeBusy = true; S.treeErr = '';
       try{
+        if(S.hostRoot){
+          const h=window.pcHost;if(!h||!h.list)throw new Error('this desktop build cannot browse projects');
+          const t=await h.list(path||S.hostRoot);S.cwd=t.path||S.hostRoot;
+          S.tree=(t.entries||[]).map(e=>({name:e.name,path:e.path,dir:!!e.dir,lang:langOf(e.name)}));
+          S.root=S.hostRoot; S.gate='';
+        }else{
         const t = await api('/tree?path=' + encodeURIComponent(path || ''));
         S.cwd = t.path || '';
         S.tree = t.entries || [];
         if(t.truncated) status('This folder has more files than the tree will show', 'warn');
+        }
       }catch(e){
         // A FAILED LISTING KEEPS THE LAST GOOD ONE. Blanking the tree on a transient error makes an
         // unreachable node look like an empty workspace — the same rule the file screens follow.
@@ -463,6 +473,7 @@
     }
 
     async function openPath(path){
+      if(S.hostRoot) return openHostFile({path});
       const at = S.open.findIndex(d => d.path === path);
       if(at >= 0){ S.active = at; save(); paint(); return; }
       status('Opening ' + path + '…');
@@ -620,6 +631,12 @@
       html:'🌐', css:'🎨', markdown:'📝', java:'☕', yaml:'⚙️', sql:'🗃️' }[e.lang] || '📄');
 
     function crumbs(){
+      if(S.hostRoot){
+        const root=S.hostRoot.replace(/\/+$/,''),rel=S.cwd.slice(root.length).split('/').filter(Boolean);
+        let acc=root,out=['<button class="pcc-crumb" data-go="'+enc(root)+'">'+enc(root.split('/').pop()||root)+'</button>'];
+        for(const p of rel){acc+='/'+p;out.push('<span class="pcc-sep">/</span><button class="pcc-crumb" data-go="'+enc(acc)+'">'+enc(p)+'</button>');}
+        return out.join('');
+      }
       const parts = S.cwd ? S.cwd.split('/') : [];
       let acc = '';
       const out = ['<button class="pcc-crumb" data-go="">workspace</button>'];
@@ -634,7 +651,7 @@
       if(S.treeErr) return '<div class="pcc-note err">' + enc(S.treeErr) + '</div>';
       if(!S.tree.length) return '<div class="pcc-note">This folder is empty</div>';
       return S.tree.map(e => {
-        const path = S.cwd ? S.cwd + '/' + e.name : e.name;
+        const path = e.path || (S.cwd ? S.cwd + '/' + e.name : e.name);
         const isOpen = S.open.some(d => d.path === path);
         return '<button class="pcc-item' + (isOpen ? ' on' : '') + '" data-' + (e.dir ? 'dir' : 'file') +
                '="' + enc(path) + '" title="' + enc(path) + '">' +
@@ -691,6 +708,7 @@
       const d = doc();
       const eng = d ? (S.engines[d.lang] || (d.lang === 'json' ? 'json' : '')) : '';
       return '<div class="pcc-bar">' +
+        (window.pcHost&&window.pcHost.pickDirectory?'<button class="btn btn-ghost pcc-b" id="pcc-open-folder">Open Folder</button>':'') +
         '<button class="btn pcc-b" id="pcc-save"' + (d && dirty(d) ? '' : ' disabled') + '>Save</button>' +
         '<button class="btn btn-ghost pcc-b" id="pcc-fmt"' + (d && eng ? '' : ' disabled') + ' title="' +
           (eng ? 'Beautify with ' + enc(eng) : 'No formatter on this node for this language') + '">Format</button>' +
@@ -925,6 +943,7 @@
       });
 
       on('#pcc-save', 'click', saveDoc);
+      on('#pcc-open-folder', 'click', async()=>{ const h=window.pcHost;if(!h||!h.pickDirectory)return;const picked=await h.pickDirectory();if(!picked)return;S.hostRoot=picked;S.cwd=picked;S.open=[];S.active=-1;S.gitOpen=false;await loadTree(picked);save(true); });
       on('#pcc-fmt', 'click', formatDoc);
       on('#pcc-reload', 'click', reloadDoc);
       on('#pcc-git', 'click', () => { S.gitOpen=!S.gitOpen; paint(); if(S.gitOpen)loadGit(); });
@@ -1080,6 +1099,7 @@
          * says "loading" about something that already gave up. */
         try{
           await loadConfig();
+          if(S.gate && window.pcHost && window.pcHost.pickDirectory){ S.gate=''; S.root='Open a project folder'; }
           if(!S.gate) await loadTree(S.cwd);
         }catch(e){
           S.ready = true;

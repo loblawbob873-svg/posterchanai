@@ -173,6 +173,8 @@ def test_sessions_are_restored_on_sign_in():
     boot = src[src.index("  function startApp(){"): src.index("  function startApp(){") + 1600]
     assert "Nip46Signer.resume()" in boot, \
         "the resume is not on the path every login funnels through"
+    assert "ME.mode === 'local' && _ownsBackgroundWork()" in boot, \
+        "every desktop renderer resumes the same signer sessions and competes for requests"
 
 
 def test_a_failed_scan_does_not_tear_down_working_pairings():
