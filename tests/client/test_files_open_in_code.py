@@ -183,6 +183,28 @@ class FilesOpenInCode(unittest.TestCase):
         self.assertLess(body.index("d.blob"), body.index("api("),
                         "hydrate reaches the workspace fetch before it checks for a blob buffer")
 
+    def test_a_fresh_files_handoff_wins_over_the_old_editor_tab(self):
+        """Files calls openBlob and immediately switches windows.  A first Code render used to
+        restore yesterday's localStorage over that in-memory buffer, so selecting mutes.csv opened
+        an unrelated service file.  The incoming latch must be set before the synchronous switch,
+        and the fallback persistence cannot be debounced."""
+        opened = _decomment(_fn(self.code, "function openBlob("))
+        rendered = _decomment(_fn(self.code, "async function render("))
+        self.assertIn("_incoming = true", opened)
+        self.assertIn("save(true)", opened)
+        self.assertIn("if(!_incoming) restore()", rendered)
+
+    def test_a_synced_buffer_keeps_the_folder_path_it_saves_back_to(self):
+        """Two paths may contain identical bytes and therefore the same sha.  Identity and Save
+        must use the synced folder key/path, not accidentally turn the edit into a drive upload."""
+        opened = _decomment(_fn(self.code, "function openBlob("))
+        self.assertIn("sync },", opened)
+        self.assertIn("d.blob.sync.key === sync.key", opened)
+        persist = _decomment(_fn(self.code, "function persist("))
+        restore = _decomment(_fn(self.code, "function restore("))
+        self.assertIn("blob: d.blob || null", persist)
+        self.assertIn("sync:d.blob.sync", restore)
+
 
 class ClickingTheFileIsHowYouOpenIt(unittest.TestCase):
     """There is no Open button. "just click on the icon or double click".

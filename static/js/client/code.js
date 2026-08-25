@@ -266,6 +266,9 @@
   };
 
   let _saveT = null;
+  /* A file handed in by Files is already the authoritative in-memory state.  On the first Code
+   * paint, restore() must not replace it with whichever tab localStorage held yesterday. */
+  let _incoming = false;
   function persist(){
     /* Written whole, never merged. Two renderers of the same origin can both hold this key during a
      * monitor handoff, and a read-modify-write between them would interleave two editors' tabs. The
@@ -286,6 +289,7 @@
       slim.open = S.open.map((d, i) => ({
         path: d.path, lang: d.lang, mtime: d.mtime, sel: d.sel, scroll: d.scroll,
         host: d.host || null,
+        blob: d.blob || null,
         // `text:null` means "reload me from disk". Recorded explicitly so restore() can tell it
         // from an empty file, which is a real thing somebody may be editing.
         text: keep[i] ? d.text : null,
@@ -315,6 +319,12 @@
         path: d.path, lang: d.lang || langOf(d.path), text: typeof d.text === 'string' ? d.text : null,
         disk: typeof d.disk === 'string' ? d.disk : null, mtime: Number(d.mtime) || 0,
         host: d.host && typeof d.host.path === 'string' ? {path:d.host.path} : null,
+        blob: d.blob && typeof d.blob.sha === 'string' ? {
+          sha:d.blob.sha, name:String(d.blob.name||d.path), mime:String(d.blob.mime||''),
+          enc:String(d.blob.enc||'0'),
+          sync:d.blob.sync && typeof d.blob.sync.key === 'string'
+            ? {key:d.blob.sync.key, path:String(d.blob.sync.path||'')} : null,
+        } : null,
         sel: d.sel && typeof d.sel === 'object' ? d.sel : { s: 0, e: 0 }, scroll: Number(d.scroll) || 0,
       })) : [];
       S.active = (Number.isInteger(v.active) && v.active >= 0 && v.active < S.open.length) ? v.active : (S.open.length ? 0 : -1);
@@ -455,14 +465,21 @@
     function openBlob(desc){
       if(!desc || !desc.sha) return false;
       const name = desc.name || 'document';
-      const at = S.open.findIndex(d => d.blob && d.blob.sha === desc.sha);
-      if(at >= 0){ S.active = at; save(); if(inView()) paint(); return true; }
+      const sync = desc.sync && typeof desc.sync.key === 'string'
+        ? { key:desc.sync.key, path:String(desc.sync.path||'') } : null;
+      const at = S.open.findIndex(d => d.blob && (sync
+        ? d.blob.sync && d.blob.sync.key === sync.key && d.blob.sync.path === sync.path
+        : !d.blob.sync && d.blob.sha === desc.sha));
+      if(at >= 0){ S.active = at; _incoming = true; save(true); if(inView()) paint(); return true; }
       const text = String(desc.text == null ? '' : desc.text);
-      S.open.push({ path: name, blob: { sha: desc.sha, name, mime: desc.mime || '', enc: desc.enc || '0' },
+      S.open.push({ path: name, blob: { sha: desc.sha, name, mime: desc.mime || '', enc: desc.enc || '0', sync },
                     lang: langOf(name), text, disk: text, mtime: 0, sel: { s: 0, e: 0 }, scroll: 0 });
       S.active = S.open.length - 1;
+      _incoming = true;
       status('');
-      save(); if(inView()) paint();
+      // The view switch follows synchronously. A debounced write lets its first render restore a
+      // stale tab before this buffer reaches storage; flush now as the cross-renderer fallback.
+      save(true); if(inView()) paint();
       return true;
     }
 
@@ -481,6 +498,7 @@
         S.open.push({ path: name, host: { path: f.path || desc.path }, lang: langOf(name),
                       text: f.text, disk: f.text, mtime: f.mtime || 0, sel: { s:0, e:0 }, scroll: 0 });
         S.active = S.open.length - 1;
+        _incoming = true;
         status('');
       }catch(e){ status((e && e.message) || 'Could not open that file', 'err'); return false; }
       save(); if(inView()) paint();
@@ -1153,7 +1171,8 @@
     async function render(){
       hooks();
       if(!S.ready){
-        restore();                 // ← the half that survives a different Electron renderer
+        if(!_incoming) restore();  // ← never overwrite a file Files just handed us with an old tab
+        _incoming = false;
         paint();                   // spinner, from the same paint path as everything else
         /* AND THE LAST PAINT ALWAYS HAPPENS. Even with the awaits bounded above, anything that
          * throws between the spinner and the repaint leaves the spinner standing — the screen then

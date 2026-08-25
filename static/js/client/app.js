@@ -19433,7 +19433,8 @@
       openFile: (path, name, openHere) => _openWithSheet(name || path, [{
         id:'code', icon:'&lt;/&gt;', label:'PosterChan Code',
         hint:'Edit it here — saves straight back to this computer',
-        run:() => { if(window.PCCode && PCCode.openHostFile){ PCCode.openHostFile({ path }); switchView('code'); }
+        run:async() => { if(window.PCCode && PCCode.openHostFile){
+                      if(await PCCode.openHostFile({ path })) switchView('code'); }
                     else toast('the editor did not load'); } },
         /* Last on the list, and never absent: this is what clicking the file did before the editor
          * existed, and for most files it is still the answer. */
