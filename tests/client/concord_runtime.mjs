@@ -58,6 +58,10 @@ vm.runInThisContext(fs.readFileSync(new URL('../../static/js/client/concord.js',
                     {filename:'concord.js'});
 const publicLinks=PCConcord.discoverInvites('Join us https://armada.buzz/invite/naddr1qqqq#abc_DEF',{created_at:1});
 if(publicLinks.length!==1 || publicLinks[0].name!=='Join us') throw new Error('public discovery parser failed');
+const alice={id:'root',pubkey:'b'.repeat(64),tags:[]};
+const bob={id:'child',pubkey:'c'.repeat(64),reply:{id:'root'},tags:[['e','root']]};
+const participants=PCConcord.threadParticipants([alice,bob],bob,'a'.repeat(64));
+if(participants.length!==2 || !participants.includes(alice.pubkey) || !participants.includes(bob.pubkey)) throw new Error('thread participant inheritance failed');
 PCConcord.render();
 
 control('cc-community-name').value='Runtime Test';

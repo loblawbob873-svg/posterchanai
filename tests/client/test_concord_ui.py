@@ -121,6 +121,24 @@ def test_concord_has_discord_style_panes_and_dm_style_composer():
     assert "['concord','concord','Concord']" in APP, "mobile Discover must expose Concord"
 
 
+def test_channels_can_be_starred_without_merging_concord_into_direct_messages():
+    assert 'channelStarKey(room,name)' in CONCORD
+    assert 'data-cc-star=' in CONCORD
+    assert 'aria-pressed="${channelStarred(current,c.name)}"' in CONCORD
+    assert 'orderedChannels(current)' in CONCORD
+    assert '.cc-channel-star[aria-pressed="true"]' in CONCORD_CSS
+    assert "VIEW==='messages' || VIEW==='concord'" in APP
+    assert 'data-view="chat"' not in HTML
+
+
+def test_thread_replies_tag_every_participant_once_but_never_the_sender():
+    assert 'function threadParticipants(messages,target,viewerPubkey)' in CONCORD
+    assert 'node.pubkey!==viewerPubkey' in CONCORD
+    assert 'seen.has(messageId(node))' in CONCORD
+    assert "replyTags.push(['P',pk],['p',pk])" in CONCORD
+    assert "filter(t=>['K','E'].includes(t[0]))" in CONCORD
+
+
 def test_concord_has_honest_creation_and_public_discovery_empty_states():
     assert 'Create community' in CONCORD
     assert 'Create a public community' in CONCORD
