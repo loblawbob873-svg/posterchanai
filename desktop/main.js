@@ -1424,6 +1424,11 @@ const hostfs = () => (_hostfs || (_hostfs = require('./hostfs.js')));
 
 ipcMain.handle('pc:host:list', (e, dir) => { fsGuard(e); return hostfs().list(String(dir || '')); });
 ipcMain.handle('pc:host:roots', (e) => { fsGuard(e); return hostfs().roots(); });
+/* PosterChan Code editing a file on THIS computer. The guards (size, NUL bytes, atomic rename,
+ * mtime compare-and-swap) are in hostfs.js, where a bridge cannot be talked out of them. */
+ipcMain.handle('pc:host:readText', (e, p) => { fsGuard(e); return hostfs().readText(String(p || '')); });
+ipcMain.handle('pc:host:writeText', (e, p, text, mtime) => { fsGuard(e);
+  return hostfs().writeText(String(p || ''), String(text == null ? '' : text), Number(mtime) || 0); });
 /* Searched from the start menu, so it is called while somebody is typing. Every bound lives in
  * hostfs.search; the only thing decided here is that the renderer does not get to raise them —
  * `limit` and `ms` are clamped there, and a page asking for a 10-minute walk of the whole disk on

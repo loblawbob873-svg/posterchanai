@@ -311,5 +311,52 @@ function search(query, opts) {
   return out;
 }
 
+/* READING AND WRITING ONE FILE'S CONTENTS — what PosterChan Code needs to edit a file on THIS
+ * computer, and the one thing this bridge could not do. Browsing, moving and trashing were all
+ * here; opening a file meant handing it to the OS.
+ *
+ * NO PATH ALLOWLIST, for the reason at the top of this file: this is the person's own machine and
+ * their own session. What IS enforced is that a text editor only ever sees text — a size ceiling
+ * and a NUL-byte check, so a 4 GB disk image or a JPEG cannot be loaded into a buffer and saved
+ * back mangled. The same two rules the drive and the synced-folder openers apply, made here as well
+ * because a bridge must not trust its caller.
+ */
+const TEXT_MAX = 2 * 1024 * 1024;
+
+function readText(p){
+  const abs = path.resolve(String(p || ''));
+  const st = fs.statSync(abs);
+  if(st.isDirectory()) throw new Error('that is a folder');
+  if(st.size > TEXT_MAX) throw new Error('that file is too big to edit here');
+  const buf = fs.readFileSync(abs);
+  if(buf.includes(0)) throw new Error('that looks like a binary file');
+  return { path: abs, text: buf.toString('utf8'), size: st.size, mtime: Math.round(st.mtimeMs) };
+}
+
+/* WRITTEN THROUGH A TEMPORARY FILE IN THE SAME DIRECTORY, then renamed over the original — a rename
+ * within one filesystem is atomic, so a crash or a full disk leaves the OLD file intact rather than
+ * a truncated one. Writing in place is how an editor destroys the thing it was editing.
+ *
+ * `mtime` is a compare-and-swap: if the file changed since it was opened the write is refused, and
+ * the editor says so. A terminal sitting beside the editor is the likeliest thing to have changed it.
+ */
+function writeText(p, text, mtime){
+  const abs = path.resolve(String(p || ''));
+  if(mtime){
+    let cur = 0;
+    try{ cur = Math.round(fs.statSync(abs).mtimeMs); }catch(_){ cur = 0; }
+    if(cur && Math.abs(cur - Number(mtime)) > 1000) throw new Error('changed-on-disk');
+  }
+  const data = Buffer.from(String(text == null ? '' : text), 'utf8');
+  if(data.length > TEXT_MAX) throw new Error('that file is too big to save here');
+  const tmp = path.join(path.dirname(abs), '.pc-' + path.basename(abs) + '.tmp');
+  fs.writeFileSync(tmp, data);
+  try{ fs.renameSync(tmp, abs); }
+  catch(e){ try{ fs.unlinkSync(tmp); }catch(_){} throw e; }
+  const st = fs.statSync(abs);
+  return { path: abs, size: st.size, mtime: Math.round(st.mtimeMs) };
+}
+
 module.exports = { list, roots, search, trash, mkdir, rename, transfer, open, clean, parentOf, shape,
+  readText, writeText,
                    trashInfo, freeName, trashDir };

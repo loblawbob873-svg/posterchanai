@@ -257,6 +257,10 @@ if (isOurPage) {
   contextBridge.exposeInMainWorld('pcHost', {
     list: (dir) => ipcRenderer.invoke('pc:host:list', String(dir || '')),
     roots: () => ipcRenderer.invoke('pc:host:roots'),
+    // PosterChan Code, editing a file on this computer.
+    readText: (p) => ipcRenderer.invoke('pc:host:readText', String(p || '')),
+    writeText: (p, text, mtime) => ipcRenderer.invoke('pc:host:writeText', String(p || ''),
+                                                      String(text == null ? '' : text), Number(mtime) || 0),
     search: (q, opts) => ipcRenderer.invoke('pc:host:search', String(q || ''), opts || {}),
     mkdir: (dir, name) => ipcRenderer.invoke('pc:host:mkdir', String(dir || ''), String(name || '')),
     rename: (from, to) => ipcRenderer.invoke('pc:host:rename', String(from || ''), String(to || '')),

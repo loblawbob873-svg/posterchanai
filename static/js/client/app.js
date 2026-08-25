@@ -18095,8 +18095,11 @@
                 + (o.draggable ? ' draggable="true"' : '');
     const inner = `<span class="fx-ic"${o.thumb || ''}>${o.icon || '📎'}</span>`
                 + `<span class="fname" title="${enc(o.title || o.name)}">${enc(o.name)}</span>`;
+    /* `o.data` is the file's whole dataset, verbatim, so the row's LINK can be opened the same way
+     * the tile's is. It used to carry only a sha and a mime and lean on an Open button beside it;
+     * clicking the name is the door now, and a door needs the name and the url too. */
     const name = o.href
-      ? `<a href="${enc(o.href)}" class="fx-name${o.encOpen ? ' enc-open' : ''}"${o.sha && o.encOpen ? ` data-sha="${enc(o.sha)}"` : ''}${o.mime !== undefined ? ` data-mime="${enc(o.mime||'')}"` : ''}${o.encOpen ? '' : ' target="_blank"'}>${inner}</a>`
+      ? `<a href="${enc(o.href)}" class="fx-name${o.encOpen ? ' enc-open' : ''}"${o.sha && o.encOpen ? ` data-sha="${enc(o.sha)}"` : ''}${o.mime !== undefined ? ` data-mime="${enc(o.mime||'')}"` : ''}${o.data || ''}${o.encOpen ? '' : ' target="_blank"'}>${inner}</a>`
       : `<span class="fx-name">${inner}</span>`;
     return `<div class="${cls}"${attrs}>${o.box || ''}${name}`
       + `<span class="fx-size">${enc(o.size)}</span>`
@@ -19465,8 +19468,7 @@
       const act = (it.dir ? ''
         : `<button class="dlsync" data-sha="${enc(it.sha||'')}"${it.chunks?` data-chunks="${enc(it.chunks.join(','))}"`:''} data-name="${enc(it.name)}" data-path="${enc(it.path||'')}" title="Download (decrypts first)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg></button>`
           + `<button class="keepsync" data-sha="${enc(it.sha||'')}"${it.chunks?` data-chunks="${enc(it.chunks.join(','))}"`:''} data-name="${enc(it.name)}" title="Save a copy to your drive"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg></button>`
-          + (((!!CFG.office_enabled && _officeable(it.name, '')) || _codeable(it.name, ''))
-              ? `<button class="opensync" data-sha="${enc(it.sha||'')}"${it.chunks?` data-chunks="${enc(it.chunks.join(','))}"`:''} data-name="${enc(it.name)}" data-path="${enc(it.path||'')}" title="Open…">▸</button>` : ''))
+          )
         + edits;
       const nav = it.dir ? ` data-dir="${enc(it.name)}"` : '';
       /* ONE FILE AT A TIME, the way every file manager does it. The synced view had `Select all`
@@ -19633,14 +19635,20 @@
     // nothing is the thing that makes a list feel broken, and a synced file has no URL to open —
     // the bytes are ciphertext, so opening one IS decrypting and saving it.
     $$('.file-card:not(.isdir)', grid).forEach(c=> c.onclick=(e)=>{
-      if(e.target.closest('.fc-acts')) return;
-      const b = c.querySelector('.dlsync'); if(b) b.click();
+      if(e.target.closest('.fc-acts') || e.target.closest('.selbox')) return;
+      const b = c.querySelector('.dlsync'); if(!b) return;
+      /* Ask when something of ours can open it, and keep Download as the last choice — that is what
+       * this click did before, and a synced file has no URL to open any other way. */
+      const hs = _handlersFor(b.dataset, { sync:true });
+      if(!hs.length){ b.click(); return; }
+      hs.push({ id:'dl', icon:'⬇', label:'Download', hint:'Decrypts and saves it to this device',
+                run:()=>b.click() });
+      _openWithSheet(b.dataset.name||'this file', hs);
     });
     const _chunksOf = (b) => (b.dataset.chunks ? b.dataset.chunks.split(',').filter(Boolean) : null);
     $$('.dlsync', grid).forEach(b=> b.onclick=(e)=>{ e.preventDefault(); e.stopPropagation();
       _syncDownload(b, b.dataset.sha, b.dataset.name, _chunksOf(b)); });
-    $$('.opensync', grid).forEach(b=> b.onclick=(e)=>{ e.preventDefault(); e.stopPropagation();
-      _openWithSheet(b.dataset.name||'this file', _handlersFor(b.dataset, { sync:true })); });
+
     /* RENAME. The path is what changes, so a folder is renamed by renaming everything under it — one
      * write, one confirmation, and the devices move that many files. The box is seeded with the leaf
      * only: this is a rename, and offering the whole path invites someone to retype a directory by
@@ -19818,6 +19826,19 @@
       bindCols: _fxBindCols,
       query: () => _filesQ,
       shareFile: _shareHostFile,
+      /* WHAT POSTERCHAN CODE CAN OPEN, answered by the same function the drive and the synced
+       * folders use. hostfiles.js must not grow a second opinion about what "a text file" is. */
+      openable: (name, mime) => _codeable(name, mime),
+      openFile: (path, name, openHere) => _openWithSheet(name || path, [{
+        id:'code', icon:'&lt;/&gt;', label:'PosterChan Code',
+        hint:'Edit it here — saves straight back to this computer',
+        run:() => { if(window.PCCode && PCCode.openHostFile){ PCCode.openHostFile({ path }); switchView('code'); }
+                    else toast('the editor did not load'); } },
+        /* Last on the list, and never absent: this is what clicking the file did before the editor
+         * existed, and for most files it is still the answer. */
+        { id:'host', icon:'🖥', label:'This computer',
+          hint:'Hand it to whatever this machine opens that with',
+          run:() => { if(openHere) openHere(); } }]),
       toast, prompt: uiPrompt, confirm: uiConfirm,
     });
   }
@@ -20210,10 +20231,24 @@
    * or leave a session open. `saveBack(updatedFile)` is the only part that differs. */
   async function _officeSession(file, saveBack){
     let session=null;
+    /* THE INSTANCE, EXPLICITLY. A bundled app (desktop `app://posterchan`, the APK's
+     * `https://localhost`) has no server on its own origin, so a bare `/client/office/...` resolves
+     * against the BUNDLE and fails — and every failure in this function said the same six words,
+     * "office unavailable", whatever went wrong. */
+    const B = _instanceBase();
     try{
       const fd=new FormData(); fd.append('file',file,file.name); fd.append('mode','edit');
-      const r=await fetch('/client/office/session',{method:'POST',body:fd});
-      if(!r.ok) throw new Error((await r.json().catch(()=>null)||{}).detail||('office HTTP '+r.status));
+      let r;
+      try{ r=await fetch(B + '/client/office/session',{method:'POST',body:fd}); }
+      catch(e){ throw new Error('could not reach ' + (B || 'this node') + ' — ' + ((e&&e.message)||e)); }
+      if(!r.ok){
+        const said=(await r.json().catch(()=>null)||{}).detail||'';
+        // 404 here means the router is not mounted; 502 means CODE itself is not running behind
+        // /office-code. Those send you to completely different places.
+        throw new Error(said || (r.status===404 ? 'this node has no office editor installed'
+                               : r.status===502 ? 'the office editor is not running on this node'
+                               : 'office HTTP '+r.status));
+      }
       session=await r.json();
       const frameName='pc-office-'+session.id;
       modal(`<div class="office-head"><h3>📝 ${enc(file.name)}</h3><span class="muted small">Changes are temporary until you tap Save.</span></div>
@@ -20228,14 +20263,14 @@
            * with `.cmp-modal`; this is the same trick, and `modal()` has no class hook of its own. */
           root.classList.add('office-modal');
           $('.office-launch',root).submit();
-          const drop=async()=>{ try{ await fetch('/client/office/session/'+session.id+'?access_token='+encodeURIComponent(session.token),{method:'DELETE'}); }catch(_){} };
+          const drop=async()=>{ try{ await fetch(B + '/client/office/session/'+session.id+'?access_token='+encodeURIComponent(session.token),{method:'DELETE'}); }catch(_){} };
           $('#office-close',root).onclick=async()=>{ await drop(); closeModal(); };
           $('#office-save',root).onclick=async e=>{
             const b=e.currentTarget; b.disabled=true; b.textContent='Saving…';
             try{
               // CODE writes through PutFile; a short delay lets its final force-save settle.
               await new Promise(res=>setTimeout(res,700));
-              const rr=await fetch('/client/office/session/'+session.id+'/contents?access_token='+encodeURIComponent(session.token));
+              const rr=await fetch(B + '/client/office/session/'+session.id+'/contents?access_token='+encodeURIComponent(session.token));
               if(!rr.ok) throw new Error('saved document HTTP '+rr.status);
               await saveBack(fileFromBytes(await rr.arrayBuffer(),file.name,file.type));
               await drop();
@@ -20341,10 +20376,6 @@
       const m=FilesIdx.meta(b.sha256)||{}; const nm=m.name||b.name||_vodNameMap[b.sha256]||'';
       const ext=extOfBlob(b, m.name?m:{name:nm, mime:m.mime});
       const dlName=downloadName(b, nm, ext);
-      const office=!!CFG.office_enabled && _officeable(nm||dlName, m.mime||b.type);
-      // Editable HERE, in PosterChan Code. Independent of office_enabled: the editor is this app,
-      // not a Collabora container, so it works on a node that never installed one.
-      const code=_codeable(nm||dlName, m.mime||b.type);
       const sel=_filesSel.has(b.sha256)?' selected':'';
       const box=`<input type="checkbox" class="selbox" data-sha="${b.sha256}"${_filesSel.has(b.sha256)?' checked':''} title="Select">`;
       const del=`<button class="del" data-sha="${b.sha256}" aria-label="Delete"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>`;
@@ -20360,9 +20391,11 @@
       if(details) return _fxDetailsRow({
         sha:b.sha256, draggable:true, selected:_filesSel.has(b.sha256), enc:!!m.enc, box:box,
         href: m.enc ? '#' : b.url, encOpen: !!m.enc, mime: m.enc ? undefined : (b.type||''),
+        data: ` data-sha="${b.sha256}" data-url="${enc(b.url)}" data-name="${enc(nm||dlName)}"`
+            + ` data-mime="${enc(m.mime||b.type||'')}" data-enc="${m.enc?'1':'0'}"`,
         icon: m.enc ? '🔒' : _fxIcon(ext, b.type), name: nm || (m.enc ? 'encrypted' : dlName), title: nm || dlName,
         size:_fxBytes(b.size), type:(m.enc?'🔒 ':'')+_fxType(ext), when:_fxWhen(b.uploaded),
-        acts: openbtns + (m.enc ? '' : `<button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button>`) + dl + ren + move + del,
+        acts: (m.enc ? '' : `<button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button>`) + dl + ren + move + del,
       });
       /* THE OPENERS, ON THE TILE ITSELF.
        *
@@ -20371,29 +20404,47 @@
        * reachable only by clicking the tile, which nothing says. Reported exactly that way: "why no
        * way to open any blossom file in posterchan code or office yet". Same buttons, same
        * dataset, same handlers as the details row; only the place they are drawn is new. */
-      /* ONE door per file. Which programs handle it is decided when you press it — see
-       * _openWithSheet — so a card carries one control rather than a row of them. */
-      const openbtns = (office || code)
-        ? `<button class="openbtn" data-sha="${b.sha256}" data-url="${enc(b.url)}" data-name="${enc(nm||dlName)}" data-mime="${enc(m.mime||b.type||'')}" data-enc="${m.enc?'1':'0'}" title="Open…">▸</button>` : '';
       if(m.enc){   // encrypted file — lock card; opening decrypts in-browser (never exposes the ciphertext URL)
-        return `<div class="file-card enc${sel}" draggable="true" data-sha="${b.sha256}"><a href="#" class="${office?'office-open':'enc-open'}" data-sha="${b.sha256}" data-name="${enc(nm||dlName)}" data-mime="${enc(m.mime||'')}" data-enc="1"><div class="file-icon">🔒<span>${enc(ext||'enc')}</span></div></a>
+        return `<div class="file-card enc${sel}" draggable="true" data-sha="${b.sha256}"><a href="#" class="enc-open" data-sha="${b.sha256}" data-name="${enc(nm||dlName)}" data-mime="${enc(m.mime||'')}" data-enc="1"><div class="file-icon">🔒<span>${enc(ext||'enc')}</span></div></a>
           ${box}${del}
-          <div class="meta"><span class="fname" title="${enc(nm)}">${nm?enc(fileLabel(nm,ext,b.size)):'encrypted'}</span><span class="fc-acts">${openbtns}${dl}${ren}${move}</span></div></div>`;
+          <div class="meta"><span class="fname" title="${enc(nm)}">${nm?enc(fileLabel(nm,ext,b.size)):'encrypted'}</span><span class="fc-acts">${dl}${ren}${move}</span></div></div>`;
       }
-      return `<div class="file-card${sel}" draggable="true" data-sha="${b.sha256}"><a href="${office?'#':enc(b.url)}" class="${office?'office-open':''}" data-url="${enc(b.url)}" data-name="${enc(nm||dlName)}" data-sha="${b.sha256}" data-mime="${enc(b.type||'')}" data-enc="0"${office?'':' target="_blank"'}>${blobThumb(b, ext)}</a>
+      return `<div class="file-card${sel}" draggable="true" data-sha="${b.sha256}"><a href="${enc(b.url)}" data-url="${enc(b.url)}" data-name="${enc(nm||dlName)}" data-sha="${b.sha256}" data-mime="${enc(b.type||'')}" data-enc="0" target="_blank">${blobThumb(b, ext)}</a>
         ${box}
         <button class="copy" data-url="${enc(b.url)}" title="Copy URL">⧉</button>${del}
-        <div class="meta"><span class="fname" title="${enc(nm||dlName)}">${enc(fileLabel(nm,ext,b.size))}</span><span class="fc-acts">${openbtns}${dl}${ren}${move}</span></div></div>`;
+        <div class="meta"><span class="fname" title="${enc(nm||dlName)}">${enc(fileLabel(nm,ext,b.size))}</span><span class="fc-acts">${dl}${ren}${move}</span></div></div>`;
     }).join('') + (_more>0 ? `<button class="btn btn-ghost bl-more" data-id="bl-more" style="grid-column:1/-1;justify-self:center;margin:10px 0"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-down"></use></svg>Load ${Math.min(_more,_FILES_PAGE)} more · ${_more} left</button>` : '')) : (_filesQ.trim()
         ? '<div class="empty">Nothing'+(_filesFolder?(' in '+enc(_filesFolder)):' on your drive')
           +' matches “'+enc(_filesQ.trim())+'”.</div>'
         : '<div class="empty">No files'+(_filesFolder?(' in '+enc(_filesFolder)):'')+' yet — drop some above.</div>');
     if(details) _fxBindCols(grid);
     { const mb=$('.bl-more',grid); if(mb) mb.onclick=()=>{ _filesShown+=_FILES_PAGE; _renderFilesGrid(grid, list); }; }
-    $$('.enc-open',grid).forEach(a=> a.onclick=async e=>{ e.preventDefault(); try{ toast('decrypting…'); const u=await trackUrl(a.dataset.sha); window.open(u,'_blank'); }catch(err){ toast('decrypt failed: '+(err.message||'')); } });
-    $$('.office-open',grid).forEach(a=> a.onclick=async e=>{ e.preventDefault(); e.stopPropagation(); await openOfficeFile(a.dataset); });
-    $$('.openbtn',grid).forEach(a=> a.onclick=e=>{ e.preventDefault(); e.stopPropagation();
-      _openWithSheet(a.dataset.name||'this file', _handlersFor(a.dataset, {})); });
+    /* CLICKING THE FILE OPENS IT — there is no Open button any more.
+     *
+     * ONE binding for every door on this screen, tile and details row alike, because they are the
+     * same element: `.file-card > a`. Three separate handlers used to be assigned to it (encrypted,
+     * office, and an Open button's), and two of them were `a.onclick = …` on the SAME anchor, where
+     * the last assignment silently wins and the earlier one is simply gone. So the decision is made
+     * ONCE, here, from the file itself.
+     *
+     * What a click did before is always the LAST entry on the list rather than a thing this replaces:
+     * a plain blob still opens in a tab, an encrypted one still decrypts in the browser. And a file
+     * nothing of ours can open keeps its old one-click behaviour exactly — no sheet, no extra step. */
+    $$('.file-card[data-sha] > a', grid).forEach(a=> a.onclick=async e=>{
+      const d=a.dataset, hs=_handlersFor(d, {});
+      const encd = d.enc==='1';
+      if(!hs.length && !encd) return;              // an ordinary link with nothing to choose: let it work
+      e.preventDefault(); e.stopPropagation();
+      const plain = encd
+        ? { id:'plain', icon:'🔓', label:'Decrypt and open', hint:'Hands the plaintext to this browser',
+            run:async()=>{ try{ toast('decrypting…'); window.open(await trackUrl(d.sha),'_blank'); }
+                           catch(err){ toast('decrypt failed: '+((err&&err.message)||'')); } } }
+        : { id:'plain', icon:'🌐', label:'Open in a new tab', hint:'However this browser handles it',
+            run:()=>{ try{ window.open(d.url,'_blank'); }catch(_){} } };
+      if(!hs.length){ await plain.run(); return; } // encrypted, nothing of ours: decrypt, as before
+      hs.push(plain);
+      _openWithSheet(d.name||'this file', hs);
+    });
     _bindThumbFallback(grid);
     // Encrypted files can't be downloaded by URL (that would save the ciphertext) — decrypt in the
     // browser first, then save the plaintext under its real name.

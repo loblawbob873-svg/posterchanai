@@ -176,6 +176,9 @@
     const details = u.view === 'details';
     if(!entries.length) return '<div class="empty">This folder is empty.</div>';
 
+    /* CAN POSTERCHAN CODE OPEN THIS? Decided by the caller, which owns the answer for every source
+     * in Files — this module must not grow a second opinion about what "a text file" is. */
+    const openable = u.openable || (() => false);
     const cells = entries.map(e => {
       const ext = extOf(e);
       const sel = _sel.has(e.path);
@@ -188,7 +191,8 @@
         icon: ic, size: e.dir ? '' : fmt(e.size), type: e.dir ? 'Folder' : typeName(ext),
         when: when(e.mtime),
         box: `<button class="selbox hf-select" type="button" aria-label="${sel ? 'Deselect' : 'Select'} ${H(e.name)}"
-          aria-pressed="${sel ? 'true' : 'false'}">${sel ? '✓' : ''}</button>`, acts: '',
+          aria-pressed="${sel ? 'true' : 'false'}">${sel ? '✓' : ''}</button>`,
+        acts: '',
       });
       /* TILES use the drive's own `.file-card` + `.file-icon` + `.meta` shape. The `data-p`/`data-d`
        * attributes are this source's own and are what the handlers below select on — the drive keys
@@ -321,8 +325,20 @@
           return;
         }
         if(el.dataset.d){ enter(p); again(); return; }
-        HOST().open(p).then(r => { if(r && r.ok === false) u.toast(r.why); },
-                            e => u.toast(String((e && e.message) || e)));
+        /* CLICKING THE FILE IS THE OPEN. When PosterChan Code can edit it you are asked which —
+         * and handing it to the machine stays on that list, because that is what this click has
+         * always done and it is still the right answer for most files. */
+        const openHere = () => HOST().open(p).then(r => { if(r && r.ok === false) u.toast(r.why); },
+                                                   e => u.toast(String((e && e.message) || e)));
+        const nm = (byPath.get(p) || {}).name || p;
+        /* CLICKING THE FILE IS THE OPEN. When PosterChan Code can edit it you are asked which —
+         * and `openHere` goes on that list, because handing it to the machine is what this click
+         * has always done and is still the right answer for most files. The bridge call is built
+         * HERE rather than in the caller: this is the only file that knows about the bridge. */
+        if(u.openFile && openable(nm, (byPath.get(p) || {}).mime || '')){
+          ev.preventDefault(); u.openFile(p, nm, openHere); return;
+        }
+        openHere();
       };
       el.oncontextmenu = (ev) => {
         ev.preventDefault();
@@ -370,7 +386,19 @@
     }
   }
 
-  Object.assign(API, { render, rowsHTML, roots, read, enter, leave, at, state,
+  /* ONE FILE'S CONTENTS, for PosterChan Code. Thin on purpose: every guard (the size ceiling, the
+   * NUL-byte check, the atomic rename, the mtime compare-and-swap) is in desktop/hostfs.js, because
+   * a bridge must not be talked out of them by whoever is calling. */
+  async function readText(p){
+    const h = HOST(); if(!h || !h.readText) throw new Error('this build cannot open a local file');
+    return h.readText(p);
+  }
+  async function writeText(p, text, mtime){
+    const h = HOST(); if(!h || !h.writeText) throw new Error('this build cannot save a local file');
+    return h.writeText(p, text, mtime || 0);
+  }
+
+  Object.assign(API, { render, rowsHTML, roots, read, readText, writeText, enter, leave, at, state,
                        home: () => _home, selection: () => [..._sel] });
   root.PCHostFiles = API;
   if(typeof module !== 'undefined' && module.exports) module.exports = API;

@@ -423,6 +423,27 @@
       return true;
     }
 
+    /* A FILE ON THIS COMPUTER, opened in the editor. Same buffer shape as everything else — the
+     * only difference is where its bytes came from and where Save puts them back. */
+    async function openHostFile(desc){
+      if(!desc || !desc.path) return false;
+      const at = S.open.findIndex(d => d.host && d.host.path === desc.path);
+      if(at >= 0){ S.active = at; save(); if(inView()) paint(); return true; }
+      const H = window.PCHostFiles;
+      if(!H || !H.readText){ status('this build cannot open a local file', 'err'); return false; }
+      status('Opening ' + desc.path + '…');
+      try{
+        const f = await H.readText(desc.path);
+        const name = String(desc.path).split('/').pop() || desc.path;
+        S.open.push({ path: name, host: { path: f.path || desc.path }, lang: langOf(name),
+                      text: f.text, disk: f.text, mtime: f.mtime || 0, sel: { s:0, e:0 }, scroll: 0 });
+        S.active = S.open.length - 1;
+        status('');
+      }catch(e){ status((e && e.message) || 'Could not open that file', 'err'); return false; }
+      save(); if(inView()) paint();
+      return true;
+    }
+
     async function openPath(path){
       const at = S.open.findIndex(d => d.path === path);
       if(at >= 0){ S.active = at; save(); paint(); return; }
@@ -446,6 +467,15 @@
        * against the workspace and 400s — so a restored blob buffer would come back as an error
        * about a file that was never on this node. Its text was persisted with it, or it is gone. */
       if(d.blob){ d.text = d.text || ''; d.disk = d.text; return; }
+      /* A LOCAL FILE IS RE-READ FROM THE DISK, not from `/api/code/file` — that resolves against the
+       * server's workspace and would answer about a different file, or 400. */
+      if(d.host){
+        try{ const H = window.PCHostFiles;
+             const f = H && H.readText ? await H.readText(d.host.path) : null;
+             d.text = f ? f.text : ''; d.disk = d.text; d.mtime = (f && f.mtime) || 0; }
+        catch(_){ d.text = ''; d.disk = ''; status('Could not re-open ' + d.path, 'err'); }
+        return;
+      }
       try{
         const f = await api('/file?path=' + encodeURIComponent(d.path));
         d.text = f.text; d.disk = f.text; d.mtime = f.mtime || 0;
@@ -463,6 +493,25 @@
       if(!dirty(d)){ status('No changes to save'); return; }
       S.busy = true; status('Saving…');
       try{
+        if(d.host){
+          /* A FILE ON THIS COMPUTER. Straight back to the disk it came from — no Blossom, no
+           * manifest, no server. `mtime` is a compare-and-swap in the bridge: a terminal sitting
+           * beside this editor is the likeliest thing to have changed the file, and overwriting
+           * that silently is how somebody loses work they did in the other window. */
+          const H = window.PCHostFiles;
+          if(!H || !H.writeText) throw new Error('this build cannot save a local file');
+          let r;
+          try{ r = await H.writeText(d.host.path, d.text, d.mtime || 0); }
+          catch(e){
+            const m = String((e && e.message) || e);
+            if(m.indexOf('changed-on-disk') >= 0)
+              throw new Error(d.path + ' changed on disk since you opened it — reload it to see the new version');
+            throw e;
+          }
+          d.disk = d.text; d.mtime = (r && r.mtime) || 0;
+          status('Saved ' + d.path, 'ok');
+          S.busy = false; save(); paint(); return;
+        }
         if(d.blob){
           /* Back to the drive it came from. A new hash is a NEW BLOB — content addressing means an
            * edit cannot overwrite the old bytes — so app.js re-points the index and the old blob is
@@ -999,6 +1048,7 @@
       // For tests and for anything that wants to open a file from elsewhere in the app.
       open: openPath,
       openBlob,
+      openHostFile,
       _state: S,
       _highlight: highlight,
       _langOf: langOf,

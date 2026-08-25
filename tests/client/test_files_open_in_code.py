@@ -161,49 +161,123 @@ class FilesOpenInCode(unittest.TestCase):
                         "hydrate reaches the workspace fetch before it checks for a blob buffer")
 
 
-class TheOpenersAreOnTheTileNotOnlyInDetails(unittest.TestCase):
-    """The DEFAULT Files view is tiles, and the buttons were only in the details row.
+class ClickingTheFileIsHowYouOpenIt(unittest.TestCase):
+    """There is no Open button. "just click on the icon or double click".
 
-    `_fxView()` defaults to 'tiles'. Both openers went into the `acts:` string that only
-    `_fxDetailsRow` consumes, so on the view almost everybody is looking at there was no way to open
-    anything in Code, and Office was reachable only by clicking the tile — which nothing says.
-    Reported as "why no way to open any blossom file in posterchan code or office yet".
+    It went the other way first: an opener button was added to the tile (the details row already had
+    one), and its glyph was a `\u25b8` — which reads as PLAY, a claim about the KIND of file rather
+    than the act. "a play button is not the right icon for opening something". A control that means
+    "open", sitting beside a file name that already means it, is clutter no file manager has, so the
+    door is the file itself, and which program gets it is asked at the moment of the click.
+
+    THE RULE THIS CLASS EXISTS FOR: the chooser only ever ADDS a choice. Whatever the click did
+    before is still on the list, and a file nothing of ours can open still opens in exactly one
+    click, with no sheet in the way.
     """
 
     @classmethod
     def setUpClass(cls):
         cls.app = _read(APP)
         cls.grid = _decomment(_fn(cls.app, "function _renderFilesGrid("))
+        cls.host = _decomment(_read(os.path.join(ROOT, "static", "js", "client", "hostfiles.js")))
 
     def test_tiles_is_the_default_view(self):
         """If this stops being true, this whole class is measuring the less-used screen."""
         self.assertIn("ClientSettings.get('filesView','tiles')", self.app,
-                      "the default Files view changed — re-read this test")
+                      "the default Files view changed \u2014 re-read this test")
 
-    def test_both_openers_render_on_a_tile(self):
-        # The tile branch is the one that is NOT behind `if(details)`.
+    def test_no_open_button_survives_anywhere(self):
+        """All three sources had one. A button left in one of them is the inconsistency that made
+        the screen feel hand-made in the first place."""
+        for src, where in ((self.app, "app.js"), (self.host, "hostfiles.js")):
+            for cls_ in ("openbtn", "opensync", "openhost"):
+                self.assertNotIn(cls_, src, f"{where} still draws an Open button ({cls_})")
+
+    def test_no_play_glyph_is_used_for_opening(self):
+        """The specific complaint. \u25b8 means play; it must not come back as an open affordance."""
+        self.assertNotIn("\u25b8", self.grid, "a play glyph is back on a file card")
+        self.assertNotIn("\u25b8", self.host, "a play glyph is back on a local file row")
+
+    def test_the_card_s_own_link_is_the_door(self):
+        """Tile and details row are the same element \u2014 `.file-card > a` \u2014 so one binding covers
+        both. Without `> ` this also matches the checkbox label and the action buttons' children."""
+        self.assertIn("$$('.file-card[data-sha] > a', grid)", self.app,
+                      "nothing binds the card's link, so clicking a file does nothing")
+
+    def test_exactly_one_handler_is_assigned_to_that_anchor(self):
+        """THE BUG THIS REPLACED. `.enc-open`, `.office-open` and the Open button's handler were all
+        `a.onclick = \u2026` on the SAME anchor for an encrypted office document \u2014 the last assignment
+        silently wins and the earlier ones are simply gone, with nothing logged."""
+        for sel in ("$$('.enc-open',grid)", "$$('.office-open',grid)"):
+            self.assertNotIn(sel, self.app,
+                             f"{sel} assigns onclick to an anchor the new door also binds")
+
+    def test_a_plain_file_nothing_of_ours_opens_keeps_its_one_click(self):
+        """No sheet, no preventDefault \u2014 the browser follows the link exactly as before."""
+        body = _decomment(_fn(self.app, "function _renderFilesGrid("))
+        i = body.index("$$('.file-card[data-sha] > a', grid)")
+        seg = body[i:i + 1400]
+        self.assertIn("if(!hs.length && !encd) return;", seg,
+                      "an ordinary file now costs a chooser it has nothing to put in")
+        self.assertLess(seg.index("if(!hs.length && !encd) return;"), seg.index("preventDefault"),
+                        "the early return must come BEFORE the link is cancelled")
+
+    def test_an_encrypted_file_still_decrypts_in_one_click_when_nothing_else_can_open_it(self):
+        """It used to be `.enc-open`'s whole job. Removing that binding must not remove the act."""
+        body = _decomment(_fn(self.app, "function _renderFilesGrid("))
+        seg = body[body.index("$$('.file-card[data-sha] > a', grid)"):][:1400]
+        self.assertIn("if(!hs.length){ await plain.run(); return; }", seg)
+        self.assertIn("trackUrl(d.sha)", seg, "the ciphertext URL would be handed to the browser")
+
+    def test_what_the_click_did_before_is_always_on_the_list(self):
+        """The chooser adds a choice; it never takes the old one away."""
+        seg = _decomment(_fn(self.app, "function _renderFilesGrid("))
+        seg = seg[seg.index("$$('.file-card[data-sha] > a', grid)"):][:1400]
+        self.assertIn("hs.push(plain);", seg)
+        self.assertLess(seg.index("hs.push(plain);"), seg.index("_openWithSheet"),
+                        "the sheet is built before the fallback is added to it")
+
+    def test_a_details_row_carries_the_whole_dataset(self):
+        """The row's link used to carry a sha and a mime and lean on the button beside it. With the
+        button gone, `_handlersFor` reads name/url/enc off that same anchor \u2014 absent, an office
+        document in details view silently offers nothing."""
+        row = _decomment(_fn(self.app, "function _fxDetailsRow("))
+        self.assertIn("${o.data || ''}", row, "the row link takes no dataset")
+        grid = self.grid
+        for k in ("data-name=", "data-url=", "data-enc="):
+            self.assertIn(k, grid[grid.index("if(details) return _fxDetailsRow({"):][:600],
+                          f"the drive's details row passes no {k}")
+
+    def test_an_office_document_tile_keeps_a_real_href(self):
+        """It was `href="#"` for anything Office could take, which killed middle-click and "open in
+        new tab" on exactly the files people most want a second tab for. The handler cancels the
+        click anyway, so the dead href bought nothing."""
         tile = self.grid[self.grid.index("if(m.enc){"):]
-        self.assertIn("openbtns", tile, "the tile has no opener buttons at all")
-        self.assertEqual(tile.count("${openbtns}"), 2,
-                         "only one of the two tile shapes (encrypted / plain) got the openers")
+        self.assertNotIn("href=\"${office?'#':enc(b.url)}\"", tile)
+        self.assertIn('<a href="${enc(b.url)}"', tile, "the plain tile lost its real link")
 
-    def test_the_opener_is_built_once_for_both_shapes(self):
-        """Two hand-written copies is how the encrypted tile ends up missing one."""
-        self.assertEqual(self.grid.count("const openbtns"), 1)
-        self.assertIn("openbtn", self.grid)
+    def test_a_synced_file_still_downloads_from_one_click(self):
+        """A synced file has no URL to open \u2014 the bytes are ciphertext \u2014 so Download IS what the
+        click meant, and it must stay both the fallback and the last entry on the sheet."""
+        i = self.app.index("$$('.file-card:not(.isdir)', grid)")
+        seg = _decomment(self.app[i:i + 1200])
+        self.assertIn("if(!hs.length){ b.click(); return; }", seg,
+                      "a synced file nothing of ours opens now costs an extra step")
+        self.assertIn("label:'Download'", seg, "Download fell off the synced chooser")
 
-    def test_the_same_handler_binds_it(self):
-        """A button drawn in a second place with no handler is worse than no button. The tile's
-        own link keeps its Office shortcut (`.office-open`), which is separate."""
-        self.assertIn("$$('.openbtn',grid)", self.app)
-        self.assertIn("$$('.office-open',grid)", self.app)
+    def test_a_local_file_can_still_be_handed_to_the_machine(self):
+        """`openFile` replaced a call to the host bridge. If the bridge call is not passed through,
+        a local text file can ONLY be opened in the editor \u2014 which is a removal, not an addition."""
+        self.assertIn("u.openFile(p, nm, openHere)", self.host,
+                      "hostfiles does not pass the machine-open through to the chooser")
+        self.assertIn("openFile: (path, name, openHere) =>", self.app)
+        seg = self.app[self.app.index("openFile: (path, name, openHere) =>"):][:900]
+        self.assertIn("id:'host'", seg, "the chooser for a local file offers only the editor")
 
-    def test_a_synced_row_offers_it_in_both_view_modes(self):
-        """The synced list builds ONE `act` string and uses it for the details row and the card, so
-        it never had this split — assert that it stays that way."""
-        body = _decomment(_fn(self.app, "function _syncPaneRender(")) if "_syncPaneRender(" in self.app else None
-        src = body or self.app
-        self.assertIn("opensync", src)
+    def test_the_bridge_call_lives_in_the_file_that_knows_the_bridge(self):
+        """app.js must not learn how to open a local path; it takes a callback."""
+        seg = self.app[self.app.index("openFile: (path, name, openHere) =>"):][:900]
+        self.assertNotIn("HOST()", seg)
 
 
 class OneFileCanBeSelected(unittest.TestCase):

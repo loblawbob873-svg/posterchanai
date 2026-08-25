@@ -8147,12 +8147,6 @@ html.os-on #upload-badge.upbadge{z-index:333}
    chrome beside three that don't reads as a different KIND of control, which is how "Save a copy"
    looked next to Download. Both views put these inside .fc-acts, so one selector covers tiles and
    rows alike. */
-/* THE OPENERS LOOK LIKE THE OTHER ACTIONS. `.officebtn`, `.codebtn` and `.codesync` had NO rule at
-   all, so they fell back to the browser's default <button> — a grey chunky control in a dark theme,
-   beside three flat icon buttons. Easy to miss, and it reads as debris rather than an affordance. */
-.fc-acts .openbtn,.fc-acts .opensync{background:none;border:none;color:var(--muted);
-  cursor:pointer;font-size:14px;line-height:1;padding:4px 5px;border-radius:6px;font-family:inherit}
-.fc-acts .openbtn:hover,.fc-acts .opensync:hover{color:var(--cyan)}
 /* THE CHOOSER. Big targets with a name and a line of what each one is — the point of asking is that
    the answer is obvious, so it is not a list of two words. */
 .openwith{display:flex;flex-direction:column;gap:8px;margin-top:4px}
