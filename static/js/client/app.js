@@ -3104,7 +3104,7 @@
       if(e.kind==='concord-invite'){
         switchView('concord');
         const open=()=>{ if(window.PCConcord&&PCConcord.openInvite)PCConcord.openInvite(e.q,true); };
-        if(window.PCConcord)open(); else _withModule('/static/js/client/concord.js','PCConcord',open);
+        if(window.PCConcord)open(); else _withModule('concord.js','PCConcord',open);
         return;
       } else if(e.kind==='user'){
         let pk = safePk(e.q);

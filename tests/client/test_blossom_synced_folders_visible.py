@@ -31,3 +31,10 @@ def test_local_folder_without_remote_count_does_not_claim_zero_files():
     synced = APP[APP.index("function _fxSyncedHTML()"):APP.index("function _syncManifest(")]
     assert "Number.isFinite(f.n)" in synced
     assert "synced on this device" in synced
+
+
+def test_files_home_does_not_render_an_unknown_sync_count_as_null_files():
+    home = APP[APP.index("function _renderDriveHome("):APP.index("async function _renderHostRoot(")]
+    assert "Number.isFinite(f.n)" in home
+    assert "synced on this device" in home
+    assert "tile('🔄', f.key, f.n" not in home

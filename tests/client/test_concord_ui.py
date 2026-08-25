@@ -374,6 +374,8 @@ def test_direct_invite_route_opens_concord_with_the_fragment_intact():
     routed = APP[APP.index("async function routeFromPath()"):APP.index("// PWA launch params")]
     assert "switchView('concord')" in routed
     assert "PCConcord.openInvite(e.q,true)" in routed
+    assert "_withModule('concord.js','PCConcord',open)" in routed
+    assert "_withModule('/static/js/client/concord.js'" not in routed
 
 
 def test_concord_controls_are_phone_sized_and_single_column():
