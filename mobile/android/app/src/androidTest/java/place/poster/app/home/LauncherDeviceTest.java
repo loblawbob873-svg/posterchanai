@@ -174,10 +174,15 @@ public class LauncherDeviceTest {
                 a.onNewIntent(home);
                 a.onNewIntent(new Intent(home));
             });
-            assertNotNull("two HOME intents did not open the active feed",
-                    inst.waitForMonitorWithTimeout(web, 1500));
+            android.app.Activity opened = inst.waitForMonitorWithTimeout(web, 1500);
+            assertNotNull("two HOME intents did not open the active feed", opened);
+            inst.runOnMainSync(opened::finish);
         } finally {
             inst.removeMonitor(web);
+            /* HomeActivity intentionally ignores Back and is stateNotNeeded; after MainActivity was
+             * launched ActivityScenario cannot infer its destruction. Finish it explicitly so the
+             * assertion result is not replaced by a teardown timeout. */
+            try { s.onActivity(android.app.Activity::finish); } catch (Throwable ignored) { }
             s.close();
             HomeDoublePress.clear();
         }
