@@ -17843,6 +17843,34 @@
   const _syncManifests = new Map();   // pair key -> {at, paths:{path:{sha,size,mtime,deletedAt}}}
   const _SYNC_TTL = 60000;   // how long a decrypted manifest is reused while walking its subfolders
 
+  /* Draw what this device already knows without asking the signer. A package update exposed a bad
+   * split: sync.js had the device-local mappings (and often an already-fetched account list), while
+   * Files kept a second null cache and therefore showed NO synced folders until its own Load button
+   * was pressed. The folders were never gone; the file manager declined to read the cache beside it.
+   * Local mappings win only as presence information; an account result supplies the real counts. */
+  function _adoptSyncPairs(){
+    const S = window.PCSync;
+    if(!S) return false;
+    const before = JSON.stringify(_syncPairs);
+    let remote = null, local = [];
+    try{ remote = S.acct && S.acct(); }catch(_){}
+    try{ local = (S.folders && S.folders() || []).map(f => ({ key:String(f.key || f.name || '').trim(), n:null, local:true })).filter(f=>f.key); }catch(_){}
+    if(Array.isArray(remote)){
+      const by = new Map(remote.filter(f=>f&&f.key).map(f=>[String(f.key),Object.assign({},f)]));
+      local.forEach(f=>{ if(!by.has(f.key)) by.set(f.key,f); });
+      _syncPairs = [...by.values()];
+    }else if(local.length){
+      _syncPairs = local;                 // never hide a folder mapped on this very device
+    }else if(remote === 'error') _syncPairs = 'error';
+    return before !== JSON.stringify(_syncPairs);
+  }
+  if(!window.__pcFilesSyncFoldersBound){
+    window.__pcFilesSyncFoldersBound = true;
+    window.addEventListener('pc:sync-folders', () => {
+      if(_adoptSyncPairs() && VIEW==='blossom' && _filesTab==='public') renderBlossom();
+    });
+  }
+
   /* Which folders this ACCOUNT syncs. The fetch, the TTL and the cache all live in sync.js — the
    * Folder Sync screen asks the same question to offer an unmapped folder back to a device that lost
    * its mapping, and two caches would mean two answers and two requests per visit. A 503 there means
@@ -17869,6 +17897,7 @@
      * own 120s ceiling rejects, `accountFolders` catches it into 'error', and the section then says
      * "couldn't be loaded just now" — which is the honest end state, and was also unreachable. */
     _syncPairs = S.acct();
+    _adoptSyncPairs();
     return changed;
   }
   function _fxSyncedHTML(){
@@ -17882,7 +17911,7 @@
     if(!p.length) return '';        // nothing synced — Folder Sync is its own screen; no empty shelf here
     return '<div class="fx-sec"><b>Synced folders</b>' + p.map(f =>
       `<span class="fx-syncwrap"><button class="folder-chip syncroot${_syncRoot===f.key?' active':''}" data-synckey="${enc(f.key)}"
-         title="${enc(f.key)} — ${f.n} file${f.n===1?'':'s'}">🔄 ${enc(f.key)}<span class="fx-n">${f.n}</span></button>`
+         title="${enc(f.key)}${Number.isFinite(f.n)?` — ${f.n} file${f.n===1?'':'s'}`:' — synced on this device'}">🔄 ${enc(f.key)}${Number.isFinite(f.n)?`<span class="fx-n">${f.n}</span>`:''}</button>`
       /* Removing a folder from every device leaves its shared record behind for ever — keyed on the
          NAME, so the pair goes on existing with all its history and any device that pairs that name
          later inherits it. There was no way to clear it from anywhere in the app. */
@@ -19393,6 +19422,7 @@
   async function renderPublicFiles(pane){
     const server=mediaServer();
     if(!server){ pane.innerHTML='<div class="empty">Blossom server not configured.</div>'; return; }
+    _adoptSyncPairs();
     /* One visit can repaint several times while permission, remote-index and synced-folder probes
      * settle. Re-parsing a large local index for each repaint freezes Electron's only UI thread.
      * Other callers keep loadLocal's ordinary fresh-read semantics; only this repaint loop is

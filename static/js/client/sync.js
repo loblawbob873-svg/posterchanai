@@ -1262,6 +1262,10 @@
       _acct = (j && Array.isArray(j.folders)) ? j.folders : 'error';
     }catch(_){ _acct = 'error'; }
     _acctBusy = false;
+    /* Files owns a separate screen and must repaint when this background/account cache resolves.
+     * Without the signal it stays on the null state until the user leaves and re-enters, making a
+     * successful folder read look exactly like lost folders. No detail is exposed in the event. */
+    try{ window.dispatchEvent(new CustomEvent('pc:sync-folders')); }catch(_){}
     return true;
   }
   /* ---- EDITING A SYNCED FOLDER FROM A DEVICE THAT DOES NOT HOLD IT ----------------------------
