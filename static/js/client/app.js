@@ -33537,6 +33537,13 @@
      * holds and nothing else can fetch. */
     saveBlobAs,
     ensureProfile: _ensureProfile, NT, compose, switchView,   // compose → News "Share as note"; switchView → nav
+    timelineTop: (view) => {
+      const v=_TL_TABS.includes(String(view||''))?String(view):'global';
+      delete _tlScrollMemo[v];
+      if(VIEW!==v) switchView(v);
+      const top=()=>{ if(VIEW===v){ const f=$('#feed'); if(f) f.scrollTop=0; } };
+      top(); requestAnimationFrame(()=>requestAnimationFrame(top)); setTimeout(top,250);
+    },
     /* PosterChan Code saves a Files document back to Files. The editor holds the text; the drive
      * index, the encryption and the folder all live here, so the round trip does too. */
     saveBlobDoc,

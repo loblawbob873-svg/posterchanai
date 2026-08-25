@@ -270,5 +270,51 @@ class EveryTileNamesAViewTheClientHas(unittest.TestCase):
                 self.assertIn(v, known)
 
 
+DOUBLE_HARNESS = r"""
+import place.poster.app.home.HomeDoublePress;
+public class DoubleHarness {
+  static void ok(boolean b, String m){ if(!b) throw new AssertionError(m); }
+  public static void main(String[] x){
+    HomeDoublePress.clear(); long t=100000;
+    ok(!HomeDoublePress.arrived(t), "one press fired");
+    ok(HomeDoublePress.arrived(t+300), "intentional pair did not fire");
+    ok(!HomeDoublePress.arrived(t+500), "third press replayed the pair");
+    HomeDoublePress.clear(); ok(!HomeDoublePress.arrived(t), "first fired");
+    ok(!HomeDoublePress.arrived(t+20), "duplicate intent fired");
+    ok(!HomeDoublePress.arrived(t+900), "two ordinary visits became a pair");
+    HomeDoublePress.clear(); ok(!HomeDoublePress.arrived(t), "first fired again");
+    ok(!HomeDoublePress.arrived(t-1), "backwards clock fired");
+    System.out.println("ALL OK");
+  }
+}
+"""
+
+
+@unittest.skipUnless(HAVE_JDK, "javac/java not installed")
+class DoubleHomeRuns(unittest.TestCase):
+    def test_single_double_bounce_stale_and_backwards_time(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            pkg = d / "place/poster/app/home"
+            pkg.mkdir(parents=True)
+            shutil.copy(HOME / "HomeDoublePress.java", pkg / "HomeDoublePress.java")
+            (d / "DoubleHarness.java").write_text(DOUBLE_HARNESS)
+            c = subprocess.run(["javac", "-d", str(d), str(pkg / "HomeDoublePress.java"),
+                                str(d / "DoubleHarness.java")], capture_output=True, text=True)
+            self.assertEqual(c.returncode, 0, c.stderr)
+            r = subprocess.run(["java", "-cp", str(d), "DoubleHarness"],
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_native_pair_routes_to_one_shot_feed_top_and_client_clears_scroll_memory(self):
+        home = (HOME / "HomeActivity.java").read_text()
+        phone = (ROOT / "static/js/client/phoneshell.js").read_text()
+        app = (ROOT / "static/js/client/app.js").read_text()
+        self.assertIn('openApp("__feed_top")', home)
+        self.assertIn("v === '__feed_top'", phone)
+        self.assertIn("PC.timelineTop('global')", phone)
+        self.assertIn("delete _tlScrollMemo[v]", app)
+
+
 if __name__ == "__main__":
     unittest.main()

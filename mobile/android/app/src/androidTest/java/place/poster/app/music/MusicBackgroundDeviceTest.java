@@ -1,0 +1,111 @@
+package place.poster.app.music;
+
+import static org.junit.Assert.assertTrue;
+
+import android.content.Context;
+import android.content.Intent;
+import android.os.SystemClock;
+import android.view.KeyEvent;
+import android.view.View;
+import android.view.ViewGroup;
+import android.webkit.WebView;
+
+import androidx.core.content.ContextCompat;
+import androidx.lifecycle.Lifecycle;
+import androidx.test.core.app.ActivityScenario;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
+import androidx.test.platform.app.InstrumentationRegistry;
+
+import org.junit.Test;
+import org.junit.runner.RunWith;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+
+import place.poster.app.MainActivity;
+
+/** The reported failure: a playing track stopped as soon as Android Home was pressed. */
+@RunWith(AndroidJUnit4.class)
+public class MusicBackgroundDeviceTest {
+
+    @Test
+    public void aPlayingWebViewTrackKeepsAdvancingAfterHome() throws Exception {
+        Context ctx = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class);
+        try {
+            AtomicReference<WebView> ref = new AtomicReference<WebView>();
+            scenario.onActivity(a -> ref.set(findWebView(a.findViewById(android.R.id.content))));
+            WebView web = waitForWebView(ref, scenario);
+
+            // A small generated WAV avoids network, account and Blossom dependencies. Looping it
+            // exercises Chromium's real media clock while MusicService reproduces production's
+            // foreground-playback condition.
+            String start = "(()=>{const n=32000,b=new ArrayBuffer(44+n),v=new DataView(b);"
+                    + "const s=(o,x)=>{for(let i=0;i<x.length;i++)v.setUint8(o+i,x.charCodeAt(i))};"
+                    + "s(0,'RIFF');v.setUint32(4,36+n,true);s(8,'WAVEfmt ');v.setUint32(16,16,true);"
+                    + "v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,8000,true);"
+                    + "v.setUint32(28,8000,true);v.setUint16(32,1,true);v.setUint16(34,8,true);"
+                    + "s(36,'data');v.setUint32(40,n,true);for(let i=44;i<44+n;i++)v.setUint8(i,128);"
+                    + "let a=new Audio(URL.createObjectURL(new Blob([b],{type:'audio/wav'})));"
+                    + "a.loop=true;window.__pcBackgroundAudio=a;return a.play().then(()=>a.currentTime)})()";
+            eval(web, start);
+            SystemClock.sleep(700);
+            double before = number(eval(web, "window.__pcBackgroundAudio.currentTime"));
+            assertTrue("the injected track never began playing: " + before, before > 0.15);
+
+            Intent service = new Intent(ctx, MusicService.class).setAction(MusicService.ACTION_UPDATE)
+                    .putExtra(MusicService.EXTRA_TITLE, "background-device-test")
+                    .putExtra(MusicService.EXTRA_ARTIST, "PosterChan")
+                    .putExtra(MusicService.EXTRA_PLAYING, true)
+                    .putExtra(MusicService.EXTRA_POSITION, before)
+                    .putExtra(MusicService.EXTRA_DURATION, 4.0);
+            ContextCompat.startForegroundService(ctx, service);
+            SystemClock.sleep(500);
+
+            InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_HOME);
+            SystemClock.sleep(1600);
+            double after = number(eval(web, "window.__pcBackgroundAudio.currentTime"));
+            assertTrue("audio stopped on Home (before=" + before + ", after=" + after + ")",
+                    after > before + 0.7);
+        } finally {
+            try { ctx.startService(new Intent(ctx, MusicService.class).setAction(MusicService.ACTION_STOP)); }
+            catch (Throwable ignored) { }
+            scenario.close();
+        }
+    }
+
+    private static WebView waitForWebView(AtomicReference<WebView> ref,
+                                          ActivityScenario<MainActivity> scenario) throws Exception {
+        for (int i = 0; i < 80; i++) {
+            scenario.onActivity(a -> ref.set(findWebView(a.findViewById(android.R.id.content))));
+            if (ref.get() != null) return ref.get();
+            SystemClock.sleep(100);
+        }
+        throw new AssertionError("MainActivity never created its WebView");
+    }
+
+    private static WebView findWebView(View v) {
+        if (v instanceof WebView) return (WebView) v;
+        if (!(v instanceof ViewGroup)) return null;
+        ViewGroup g = (ViewGroup) v;
+        for (int i = 0; i < g.getChildCount(); i++) {
+            WebView found = findWebView(g.getChildAt(i));
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    private static String eval(WebView web, String js) throws Exception {
+        CountDownLatch done = new CountDownLatch(1);
+        AtomicReference<String> result = new AtomicReference<String>("null");
+        web.post(() -> web.evaluateJavascript(js, value -> { result.set(value); done.countDown(); }));
+        assertTrue("WebView did not answer JavaScript", done.await(15, TimeUnit.SECONDS));
+        return result.get();
+    }
+
+    private static double number(String json) {
+        try { return Double.parseDouble(json == null ? "0" : json.replace("\"", "")); }
+        catch (Exception ignored) { return 0; }
+    }
+}

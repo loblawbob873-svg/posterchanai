@@ -9,6 +9,7 @@ import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -105,6 +106,8 @@ public class HomeActivity extends Activity implements DeskView.Host {
     @Override
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
+        // A cold first HOME has no onNewIntent; it is still the first half of a possible pair.
+        if (saved == null) HomeDoublePress.arrived(SystemClock.elapsedRealtime());
         repo = new AppRepo(this);
         prefs = new LauncherPrefs(this);
         widgets = new Widgets(this);
@@ -340,6 +343,9 @@ public class HomeActivity extends Activity implements DeskView.Host {
         setIntent(intent);
         closeDrawer();
         if (desk != null) desk.clearEditing();
+        // One HOME remains an ordinary launcher action. A quick second one explicitly opens Social
+        // at its top through the same consume-once carrier every launcher tile uses.
+        if (HomeDoublePress.arrived(SystemClock.elapsedRealtime())) openApp("__feed_top");
     }
 
     /**
