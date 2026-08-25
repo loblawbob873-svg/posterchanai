@@ -27,6 +27,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.util.List;
 
+import place.poster.app.MainActivity;
 import place.poster.app.ui.PcTheme;
 import place.poster.app.ui.PcThemeStore;
 
@@ -143,6 +144,42 @@ public class LauncherDeviceTest {
             });
         } finally {
             s.close();
+        }
+    }
+
+    @Test
+    public void oneHomeLifecyclePairDoesNotReopenPosterChanButTwoIntentsDo() throws Exception {
+        /* A real OEM reported one physical HOME as onStart -> onNewIntent. Counting both callbacks
+         * reopened MainActivity immediately, so sending PosterChan to the background appeared to
+         * replace the launcher with PosterChan. Exercise the real Activity/Looper here: the pending
+         * onStart count must be cancelled by its paired intent, while two actual intent deliveries
+         * must still activate the double-HOME shortcut. */
+        HomeRoles.enableLauncherComponent(ctx, true);
+        Instrumentation inst = InstrumentationRegistry.getInstrumentation();
+        Instrumentation.ActivityMonitor web = inst.addMonitor(MainActivity.class.getName(), null, false);
+        ActivityScenario<HomeActivity> s = ActivityScenario.launch(HomeActivity.class);
+        try {
+            HomeDoublePress.clear();
+            s.onActivity(a -> {
+                a.onStop();
+                a.onStart();
+                a.onNewIntent(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME));
+            });
+            assertEquals("one HOME lifecycle pair reopened PosterChan", null,
+                    inst.waitForMonitorWithTimeout(web, 500));
+
+            HomeDoublePress.clear();
+            s.onActivity(a -> {
+                Intent home = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME);
+                a.onNewIntent(home);
+                a.onNewIntent(new Intent(home));
+            });
+            assertNotNull("two HOME intents did not open the active feed",
+                    inst.waitForMonitorWithTimeout(web, 1500));
+        } finally {
+            inst.removeMonitor(web);
+            s.close();
+            HomeDoublePress.clear();
         }
     }
 
