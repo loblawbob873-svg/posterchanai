@@ -108,6 +108,17 @@ class TheFeedWaitsForASocketThatCanAnswer(unittest.TestCase):
                       "ready() no longer repairs a zombie, so waiting on it fixes less than this "
                       "test claims")
 
+    def test_a_connecting_socket_cannot_leave_android_offline_forever(self):
+        body = _decomment(_fn(self.relay, "reviveStale(){"))
+        self.assertIn("c._openingAt", body)
+        self.assertIn("stuck", body)
+        self.assertIn("10000", body)
+
+    def test_publish_uses_connection_recovery_before_reporting_offline(self):
+        body = _decomment(_fn(self.relay, "async publish(event"))
+        self.assertIn("await this.ready", body)
+        self.assertIn("msg:'offline'", body)
+
     # ---- the fix ----------------------------------------------------------------------------
     def test_the_subscription_waits_on_ready(self):
         """Measured on CONTROL FLOW, not on the order the lines happen to be written in: the REQ

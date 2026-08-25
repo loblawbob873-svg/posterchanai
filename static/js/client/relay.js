@@ -57,9 +57,11 @@
         this._setStatus('off');
         return;
       }
-      try { this.ws = new WebSocket(this.url); } catch(e){ this._setStatus('off'); this._retry(); return; }
+      try { this.ws = new WebSocket(this.url); this._openingAt = Date.now(); }
+      catch(e){ this._openingAt = 0; this._setStatus('off'); this._retry(); return; }
       this._setStatus('connecting');
       this.ws.onopen = () => {
+        this._openingAt = 0;
         this._backoff = 600;                       // reset reconnect backoff on a good connection
         this._lastRx = Date.now();
         this._setStatus('ok');
@@ -84,6 +86,7 @@
     // drop the ref, and stop the beat. One place, reused by destroy()/wake()/the zombie branch.
     _teardownSocket(){
       this._stopHeartbeat();
+      this._openingAt = 0;
       if (this.ws){ this.ws.onclose = this.ws.onerror = this.ws.onmessage = null; try{ this.ws.close(); }catch(_){} this.ws = null; }
     }
     // Keep the socket alive AND detect a zombie. On a high-latency / proxied link (e.g. Cloudflare in
@@ -411,10 +414,16 @@
     reviveStale(){
       for (const c of this._conns.values()){
         const st = c.ws ? c.ws.readyState : 3;                 // no socket → treat as CLOSED
-        if (st === 0) continue;                                // CONNECTING → a reconnect is already in flight
+        /* CONNECTING is only evidence of progress for a bounded time. Android WebView can leave a
+         * WebSocket handshake in readyState 0 forever after a radio handoff: no open, no error,
+         * therefore no Conn retry. The old unconditional `continue` made the client say Offline
+         * indefinitely while the relay was healthy. Give a real handshake ten seconds, then try a
+         * fresh network path just like a dead socket. */
+        const stuck = st === 0 && c._openingAt && Date.now() - c._openingAt > 10000;
+        if (st === 0 && !stuck) continue;
         const dead = (st === 2 || st === 3);                   // CLOSING / CLOSED
         const zombie = (st === 1 && c._lastRx && Date.now() - c._lastRx > 30000);  // OPEN but silent
-        if (dead || zombie){
+        if (dead || zombie || stuck){
           c._teardownSocket(); clearTimeout(c._rt); c._backoff = 600; try{ c._open(); }catch(_){}
         }
       }
@@ -515,7 +524,11 @@
       });
     },
     // publish to every connected relay; resolves on the first relay that accepts (OK true)
-    publish(event, timeout=8000){
+    async publish(event, timeout=8000){
+      /* A post is an interaction, hence a reliable recovery trigger. On a resumed phone the pool
+       * may say off/connecting even though the relay is healthy. ready() repairs dead, zombie and
+       * overlong-CONNECTING sockets before the acknowledgement timeout starts. */
+      if(!await this.ready(Math.min(3000, timeout))) return { ok:false, msg:'offline' };
       return new Promise((res)=>{
         let settled = false;
         const w = { settle: (r)=>{ if(!settled){ settled = true; clearTimeout(t); this._okWaiters.delete(event.id); res(r); } } };
