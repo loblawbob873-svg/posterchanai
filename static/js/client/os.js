@@ -1911,6 +1911,18 @@
     if(w){ w.appView = v; try{ w.appPath = (PC().viewPath && PC().viewPath()) || ''; }catch(_){} }
   }
 
+  /* A shared-feed painter needs stronger proof than the client's one global VIEW string. A
+   * no-feed folder/native window may be focused while that string still names the last feature;
+   * allowing a relay callback to paint then mutates the parked app behind the focused window.
+   * Require the live feed, its owning window and desktop focus to agree. */
+  function ownsFeedView(v){
+    if(!on) return true;
+    if(!v || !realFeed) return false;
+    const w=wins.find(x=>realFeed.parentElement===x.body);
+    return !!(w && !w.noFeed && w.el.classList.contains('focused') &&
+              String(w.appView||w.view||'')===String(v));
+  }
+
   function routeView(view, focusOnly){
     if(!on || !view) return false;
     if(!apps().some(a => a.view === view)) return false;
@@ -6677,7 +6689,7 @@
                    * would cost a round trip per switch flip. It also closes a folder window whose
                    * members have all just gone, which is the visible half of hiding a group. */
                   navChanged: refreshIcons,
-                  isRepainting: () => repainting > 0, parkedSlot, noteScroll,
+                  isRepainting: () => repainting > 0, ownsFeedView, parkedSlot, noteScroll,
                   windows: () => wins.map(w => ({ view: w.view, title: w.title, min: w.min })),
                   /* The layout arithmetic, exposed so tests/test_desktop_layout.py can run the
                    * SHIPPED code against a list of apps and a document. Everything it decides fails

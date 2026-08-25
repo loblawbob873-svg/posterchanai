@@ -40,6 +40,8 @@ def test_concord_never_repaints_another_app_shared_feed():
     render = CONCORD[CONCORD.index('function render(){'):CONCORD.index('const returning=', CONCORD.index('function render(){'))]
     assert "p.isView('concord')" in render
     assert render.index("p.isView('concord')") < render.index("p.$('#feed')")
+    assert "PCOS.ownsFeedView('concord')" in render
+    assert render.index("PCOS.ownsFeedView('concord')") < render.index("p.$('#feed')")
     assert "document.addEventListener('click'" not in CONCORD, (
         "an out-of-band click handler can repaint Concord after Code owns the feed")
     assert "isView: view => VIEW === view" in APP

@@ -329,6 +329,8 @@
      * to whichever request finished last. This guard protects Code and every other shared-feed view
      * from relay/discovery/deferred Concord work completing after navigation. */
     if(!p || typeof p.isView!=='function' || !p.isView('concord')) return;
+    if(window.PCOS && PCOS.isOn && PCOS.isOn() &&
+       (!PCOS.ownsFeedView || !PCOS.ownsFeedView('concord'))) return;
     const feed=p.$('#feed'); if(!feed) return;
     const returning=!feed.querySelector||!feed.querySelector('.cc-app');
     startDiscovery(p);
