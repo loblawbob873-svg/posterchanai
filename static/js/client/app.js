@@ -30620,8 +30620,13 @@
      * Only ever REPLACES the result when the retry did better: an answered reply (even an empty one is
      * a real "nothing matches") beats an unanswered one, and a longer list beats a shorter. So this can
      * turn a wrong empty screen into results and can never turn results into an empty screen. */
-    if(postEvs && postEvs.complete === false){
-      await new Promise(r => setTimeout(r, 900));
+    /* A single retry still missed in 1/5 cold live sessions while every warm/profile query in the
+     * same session worked. Give the opening relay flood two bounded chances to drain. This is not
+     * an endless retry loop: after three total attempts the honest manual Retry state remains. */
+    for(let retry=0; postEvs && postEvs.complete === false && retry<2; retry++){
+      await new Promise(r => setTimeout(r, 900 * (retry + 1)));
+      if(VIEW!=='search') return;
+      try{ if(Relay.ready) await Relay.ready(4000); }catch(_){}
       if(VIEW!=='search') return;
       try{
         const again = await Relay.query([{ kinds:[1], search:q, limit:40 }]);
