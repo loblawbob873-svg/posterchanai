@@ -1,5 +1,7 @@
 /* Concord's self-contained workspace skin. Kept separate so stale PWA shell CSS cannot unstyle it. */
+.cc-message-actions{gap:2px!important;padding:3px!important;border-radius:9px!important}.cc-message-actions button{display:grid!important;width:32px!important;min-width:32px!important;height:30px!important;padding:0!important;font-size:16px!important;font-weight:750!important}.cc-message-actions button::after{content:none!important}.cc-reaction{min-height:28px!important;padding:3px 8px!important;border-color:rgba(88,101,242,.48)!important;background:rgba(88,101,242,.13)!important}.cc-reaction:hover{border-color:var(--neon)!important;background:rgba(45,212,191,.12)!important}
 .cc-public-icon{overflow:hidden!important}.cc-public-icon img{display:block!important;width:100%!important;height:100%!important;object-fit:cover!important}.cc-public-icon>span{display:grid!important;place-items:center!important;width:100%!important;height:100%!important}
+.cc-member .cc-ban{margin-inline-start:auto!important;color:#ff7b91!important;border-color:rgba(255,70,105,.35)!important}.cc-member .cc-ban:hover{background:rgba(255,70,105,.12)!important;border-color:#ff4669!important}
 body.concord-view .app{grid-template-columns:300px minmax(0,1fr)!important;max-width:none!important;margin:0!important;padding-inline-end:0!important}
 body.concord-view .rightbar,body.concord-view .rb-toggle{display:none!important}
 body.concord-view .main{min-width:0!important}

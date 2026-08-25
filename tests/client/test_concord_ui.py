@@ -82,6 +82,20 @@ def test_concord_ctrl_or_cmd_enter_sends_without_breaking_plain_enter():
     assert "e.key==='Enter'&&!e.shiftKey" not in CONCORD
 
 
+def test_authors_can_delete_their_own_messages_after_relay_acceptance():
+    assert 'data-cc-delete' in CONCORD
+    assert "found.pubkey!==viewer.pubkey" in CONCORD
+    assert "[['e',id],['k',String(found.kind||9)]],5" in CONCORD
+    assert "messages.filter(m=>messageId(m)!==id)" in CONCORD
+
+
+def test_owner_can_publish_an_interoperable_cord_ban():
+    assert 'data-cc-ban' in CONCORD
+    assert 'reader.createBanWrap' in CONCORD
+    assert 'community relays rejected the ban' in CONCORD
+    assert 'room.banned=made.banned' in CONCORD
+
+
 def test_concord_create_and_send_flow_executes_without_runtime_errors():
     run = subprocess.run(
         ["node", str(ROOT / "tests/client/concord_runtime.mjs")],

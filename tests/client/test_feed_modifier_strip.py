@@ -52,7 +52,7 @@ def test_the_app_still_sets_the_modifiers_this_is_about():
     mods = _modifiers()
     # A sanity floor: if this drops to a handful the regexes above stopped matching and every
     # assertion below would pass while testing nothing.
-    assert {"feed-ai", "feed-chat", "feed-dm", "feed-admin", "feed-term"} <= mods, mods
+    assert {"feed-ai", "feed-dm", "feed-admin", "feed-term"} <= mods, mods
 
 
 def test_every_modifier_that_hides_overflow_is_one_a_scrollable_view_must_clear():

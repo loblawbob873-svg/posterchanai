@@ -9347,6 +9347,7 @@ var PosterCordReader = (() => {
   // pc-cord-reader.ts
   var pc_cord_reader_exports = {};
   __export(pc_cord_reader_exports, {
+    createBanWrap: () => createBanWrap,
     createChatWrap: () => createChatWrap,
     inspectChat: () => inspectChat,
     inspectControl: () => inspectControl
@@ -26631,8 +26632,23 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       icon: folded.metadata?.picture || folded.metadata?.icon || "",
       relays: community.relays,
       controlPubkeys: groups.map((g) => g.pk),
+      banned: [...folded.banned],
       channels: channels.map((ch) => ({ id: ch.idHex, name: ch.name, private: ch.isPrivate, streamPubkeys: ch.streams.map((s) => s.group.pk) }))
     };
+  }
+  async function createBanWrap(bundle, controlWraps, targetPubkey, pubkey, signEvent) {
+    if (!/^[0-9a-f]{64}$/i.test(targetPubkey) || !/^[0-9a-f]{64}$/i.test(pubkey)) throw new Error("invalid member pubkey");
+    const { community, groups, folded } = control(bundle, controlWraps);
+    if (pubkey.toLowerCase() !== community.owner.toLowerCase()) throw new Error("only the community owner can ban members");
+    if (targetPubkey.toLowerCase() === community.owner.toLowerCase()) throw new Error("the community owner cannot be banned");
+    const entityId = banlistLocator(community.id), entityHex = bytesToHex2(entityId), head = folded.heads.get(entityHex);
+    const version2 = head ? head.version + 1n : 1n, prevHash = head ? head.hash : void 0;
+    const banned = [...new Set([...folded.banned, targetPubkey.toLowerCase()])].sort();
+    const tags = [[TAG_SUBKIND, VSK_BANLIST], [TAG_ENTITY, entityHex], [TAG_EVERSION, version2.toString()]];
+    if (prevHash) tags.push([TAG_EPREV, bytesToHex2(prevHash)]);
+    const rumor = buildRumor({ kind: KIND_CONTROL, content: JSON.stringify(banned), pubkey, ms: Date.now(), tags });
+    const group = groups[groups.length - 1], seal = await sealRumor(rumor, KIND_SEAL_PLAINTEXT, group, { signEvent });
+    return { rumorId: rumor.id, wrap: wrapSeal(seal, group), banned };
   }
   async function inspectChat(bundle, controlWraps, channelId, chatWraps) {
     const { channels } = control(bundle, controlWraps);

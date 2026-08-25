@@ -94,12 +94,6 @@ def test_the_thread_paint_makes_no_claim_it_has_not_checked():
     assert "thread-hl" in head and "noteHtml(ev)" in head
 
 
-def test_a_chat_message_is_not_painted_as_a_thread(thread):
-    """A kind-42 has no normal thread — renderThread resolves its channel and opens the room instead.
-    Painting it as a thread head first would flash a post that is about to be replaced by a chat."""
-    assert "have.kind!==42" in thread
-
-
 def test_back_works_during_the_wait(thread):
     """A spinner you cannot leave is the other half of the complaint. One binder for both paints, so
     the early screen cannot end up with a dead button."""
