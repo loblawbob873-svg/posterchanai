@@ -3479,6 +3479,9 @@ async def stream_request(data: StreamRequestReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
     if not _verify_self_auth(data.auth, pk):
         return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
+    if sum((data.index is not None, bool(data.history), data.restore is not None)) > 1:
+        return JSONResponse({"ok": False, "error": "choose load, save, history, or restore"},
+                            status_code=400)
     u = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
     if not u:
         return JSONResponse({"ok": False, "error": "sign in first"}, status_code=404)
@@ -4874,6 +4877,8 @@ class FilesIndexReq(BaseModel):
     auth: str
     index: dict | None = None   # present → save; absent → load
     force: bool = False         # override the collapse guard — a deliberate mass-delete
+    history: bool = False       # list retained versions; explicit because ordinary pulls stay cheap
+    restore: int | None = None  # restore one of the five server-held backup slots
 
 
 @router.post("/files-index")
@@ -4900,6 +4905,46 @@ async def files_index(data: FilesIndexReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": True, "index": {}})
     sk = store.user_storage_seckey(db, user)
     port = int(_setting(db, "nostr_relay_port", "3052"))
+    if data.restore is not None:
+        slot = int(data.restore)
+        if slot < 1 or slot > _FILES_INDEX_BAKS:
+            return JSONResponse({"ok": False, "error": "invalid backup slot"}, status_code=400)
+        tag = f"pcai:files-index-bak:{slot}"
+        try:
+            docs = await store.get_docs(port, ["pcai:files-index", tag], seckey=sk, strict=True)
+            prev, target = docs.get("pcai:files-index"), docs.get(tag)
+        except Exception as e:
+            logger.warning("[client] files-index: restore read failed for %s: %s", pk[:12], e)
+            return JSONResponse({"ok": False, "error": "backup unavailable"}, status_code=503)
+        if not isinstance(target, dict) or not target:
+            return JSONResponse({"ok": False, "error": "backup not found"}, status_code=404)
+        # A historical pointer must never roll the account's canonical drive key backwards. Older
+        # versions normally carry the same key, but first-writer-wins remains the authority here too.
+        target = dict(target)
+        if isinstance(prev, dict) and prev.get("mk"):
+            target["mk"] = prev["mk"]
+        # Keep the state being replaced in ANOTHER slot, so Restore is itself undoable. Excluding the
+        # chosen slot is essential: overwriting the requested backup before the live write succeeds
+        # turns one failed relay publish into losing both states.
+        if isinstance(prev, dict) and prev:
+            try:
+                await _files_index_backup(store, port, sk, prev, True, exclude={tag}, strict=True)
+            except Exception as e:
+                logger.warning("[client] files-index: could not safeguard current version before "
+                               "restore for %s: %s", pk[:12], e)
+                return JSONResponse({"ok": False, "error": "current folder list could not be backed "
+                                                               "up; restore was not attempted"},
+                                    status_code=503)
+        if not await store.put_doc(port, sk, "pcai:files-index", target):
+            return JSONResponse({"ok": False, "error": "relay rejected restore"}, status_code=503)
+        _expire_unreferenced_index(db, target.get("indexSha"), 0)
+        return JSONResponse({"ok": True, "restored": slot, "n": _files_index_count(target)})
+    if data.history:
+        try:
+            return JSONResponse({"ok": True, "backups": await _files_index_history(store, port, sk)})
+        except Exception as e:
+            logger.warning("[client] files-index: history unavailable for %s: %s", pk[:12], e)
+            return JSONResponse({"ok": False, "error": "backup history unavailable"}, status_code=503)
     if data.index is not None:
         # Read the CURRENT index first — strict, so an unreachable relay raises instead of looking
         # like "there was nothing there", which is the read that makes a destructive write look safe.
@@ -5065,7 +5110,36 @@ def _files_index_collapse(prev, new) -> str | None:
     return None
 
 
-async def _files_index_backup(store, port: int, sk: bytes, prev: dict, shrinking: bool):
+async def _files_index_history(store, port: int, sk: bytes):
+    """Small, non-secret descriptions of retained index pointers, newest first.
+
+    The index bodies are encrypted Blossom blobs; the server can safely report only their retained
+    time and plaintext entry magnitude. Restoring remains server-side, so this endpoint never hands
+    wrapped keys or storage addresses to JavaScript merely to populate a menu.
+    """
+    from app.services.nostr import bip340
+    slots = [f"pcai:files-index-bak:{i}" for i in range(1, _FILES_INDEX_BAKS + 1)]
+    pk = bip340.pubkey_from_seckey(sk).hex()
+    evs = await store._ws_query(port, [{"authors": [pk], "kinds": [store.APP_KIND],
+                                        "#d": slots, "limit": _FILES_INDEX_BAKS * 2}], strict=True)
+    newest = {}
+    for ev in evs:
+        tag = next((t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "d"), None)
+        if tag in slots and (tag not in newest or int(ev.get("created_at") or 0) > newest[tag][0]):
+            newest[tag] = (int(ev.get("created_at") or 0), ev)
+    docs = await store.get_docs(port, newest.keys(), seckey=sk, strict=True)
+    out = []
+    for tag, (created, _ev) in newest.items():
+        doc = docs.get(tag)
+        if not isinstance(doc, dict) or not doc:
+            continue
+        out.append({"slot": int(tag.rsplit(":", 1)[1]), "created_at": created,
+                    "n": _files_index_count(doc)})
+    return sorted(out, key=lambda x: x["created_at"], reverse=True)
+
+
+async def _files_index_backup(store, port: int, sk: bytes, prev: dict, shrinking: bool,
+                              exclude: set | None = None, strict: bool = False):
     """Keep the replaced index in one of _FILES_INDEX_BAKS fixed slots, overwriting the oldest.
 
     FIXED SLOTS, not timestamped d-tags. A timestamped scheme has to enumerate what exists to prune
@@ -5082,7 +5156,11 @@ async def _files_index_backup(store, port: int, sk: bytes, prev: dict, shrinking
     from app.services.nostr import bip340
     try:
         pk = bip340.pubkey_from_seckey(sk).hex()
-        slots = [f"pcai:files-index-bak:{i}" for i in range(1, _FILES_INDEX_BAKS + 1)]
+        excluded = set(exclude or ())
+        slots = [f"pcai:files-index-bak:{i}" for i in range(1, _FILES_INDEX_BAKS + 1)
+                 if f"pcai:files-index-bak:{i}" not in excluded]
+        if not slots:
+            return
         evs = await store._ws_query(port, [{"authors": [pk], "kinds": [store.APP_KIND],
                                             "#d": slots, "limit": _FILES_INDEX_BAKS}])
         seen = {}
@@ -5107,10 +5185,13 @@ async def _files_index_backup(store, port: int, sk: bytes, prev: dict, shrinking
                     evicted = old_doc.get("indexSha")
             except Exception:
                 evicted = None
-        await store.put_doc(port, sk, target, prev)
+        if not await store.put_doc(port, sk, target, prev):
+            raise RuntimeError("relay rejected backup write")
         return evicted
     except Exception as e:
         logger.warning("[client] files-index: backup failed (save continues): %s", e)
+        if strict:
+            raise
     return None
 
 

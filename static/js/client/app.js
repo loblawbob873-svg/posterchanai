@@ -17168,6 +17168,27 @@
       }
       return this._ensuring;
     },
+    async history(){
+      const auth=await selfProof();
+      const r=await fetch('/client/files-index',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({pubkey:ME.pubkey,auth,history:true})});
+      const j=await r.json().catch(()=>({}));
+      if(!r.ok || !j.ok) throw new Error(j.error||('history HTTP '+r.status));
+      return Array.isArray(j.backups)?j.backups:[];
+    },
+    async restore(slot){
+      const auth=await selfProof();
+      const r=await fetch('/client/files-index',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({pubkey:ME.pubkey,auth,restore:Number(slot)})});
+      const j=await r.json().catch(()=>({}));
+      if(!r.ok || !j.ok) throw new Error(j.error||('restore HTTP '+r.status));
+      // Throw away every in-memory proof about the version we just replaced. The normal pull then
+      // decrypts and materialises the selected version through the exact same path as a fresh login.
+      this._pullDone=false; this._pullOk=false; this._pullBlocked=false; this._dirty=false;
+      await this.pull();
+      if(!this._pullOk) throw new Error('the backup was restored but could not be opened on this device');
+      return j;
+    },
     async pull(){
       this._pulling = true;
       /* `_pulling` is cleared in a FINALLY, not at the end of the try.
@@ -19371,7 +19392,8 @@
     const usedLine = `<div class="fx-used"><b>${enc(used)}</b> stored`
       + (_blobHave ? ` · ${_blobHave.size} file${_blobHave.size===1?'':'s'}` : ' · counting…')
       + ` <button class="btn btn-ghost small fx-refresh" title="Refresh encrypted drive metadata using your signer.">Refresh</button>`
-      + ` <button class="btn btn-ghost small fx-check" title="Check every file in your drive against what the server actually holds. Changes nothing.">Check my drive</button></div>`;
+      + ` <button class="btn btn-ghost small fx-check" title="Check every file in your drive against what the server actually holds. Changes nothing.">Check my drive</button>`
+      + ` <button class="btn btn-ghost small fx-history" title="Review the five retained folder-list versions and restore one if metadata went missing.">Recover folder list…</button></div>`;
     grid.innerHTML = '<div class="fx-home">'
       + usedLine
       + folders
@@ -19388,6 +19410,25 @@
                    + tile('💻', 'Files on this computer', 'browse this machine', 'data-hosthome="1"') : '')
       + '</div>';
     { const cb = $('.fx-check', pane); if(cb) cb.onclick = () => driveCheck(cb); }
+    { const hb = $('.fx-history', pane); if(hb) hb.onclick = async()=>{
+      hb.disabled=true; hb.textContent='Waiting for signer…';
+      try{
+        const rows=await FilesIdx.history();
+        if(!rows.length){ hb.disabled=false; hb.textContent='Recover folder list…'; toast('No older folder-list versions are stored yet.'); return; }
+        modal(`<h3>Recover folder list</h3><p class="muted small">The server retains five earlier versions of your folder names and file metadata. Restoring one does not delete or re-upload any Blossom bytes, and the current version is retained so this can be undone.</p>
+          <div class="fx-history-list">${rows.map(x=>`<button class="btn btn-ghost fx-history-row" data-slot="${Number(x.slot)}"><b>${x.n==null?'older version':(Number(x.n).toLocaleString()+' files')}</b><span class="muted small">${enc(new Date(Number(x.created_at||0)*1000).toLocaleString())}</span></button>`).join('')}</div>
+          <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn btn-ghost" id="fx-history-cancel">Cancel</button></div>`, root=>{
+          const cancel=$('#fx-history-cancel',root); if(cancel) cancel.onclick=closeModal;
+          $$('.fx-history-row',root).forEach(b=>b.onclick=async()=>{
+            const label=(b.querySelector('b')||{}).textContent||'this version';
+            if(!await uiConfirm('Restore '+label+'?\n\nOnly folder names and file metadata change. Your current list is retained as another backup, and no stored files are deleted.')) return;
+            closeModal(); toast('restoring folder list…');
+            try{ await FilesIdx.restore(b.dataset.slot); _filesFolder=null; renderBlossom(); toast('folder list restored'); }
+            catch(e){ toast('could not restore: '+String(e&&e.message||e)); }
+          });
+        });
+      }catch(e){ hb.disabled=false; hb.textContent='Try recovery again'; toast('could not load folder-list history: '+String(e&&e.message||e)); }
+    }; }
     { const rb = $('.fx-refresh', pane); if(rb) rb.onclick = async()=>{
       rb.disabled=true; rb.textContent='Waiting for signer…';
       try{ await FilesIdx.ensure(); await _ensureSyncPairs(); renderBlossom(); }
