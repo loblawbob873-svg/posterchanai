@@ -30,6 +30,8 @@ def test_stale_pwa_controller_cannot_restore_the_previous_screen_over_concord():
     assert "[data-view=\"concord\"]" in CONCORD
     assert "setTimeout" in CONCORD
     assert "feed.classList.add('feed-dm'); render()" in CONCORD
+    entry = CONCORD[CONCORD.index("document.addEventListener('click'"):]
+    assert 'mobileChatOpen=false;' in entry, "reopening Concord must restore top navigation and rooms"
 
 
 def test_concord_is_precached_and_old_bundles_self_heal_the_nav():
@@ -48,6 +50,7 @@ def test_classic_phone_concord_is_a_full_screen_drilldown_not_squeezed_desktop_c
     assert 'body.concord-view .cc-app.show-chat{inset:0!important' in CONCORD_CSS
     assert 'body.concord-view .cc-app.home-view{inset:calc(58px + env(safe-area-inset-top)) 0 calc(61px + env(safe-area-inset-bottom)) 0!important' in CONCORD_CSS
     assert 'body.concord-view .cc-app.home-view{inset:0!important' not in CONCORD_CSS
+    assert 'body.concord-view .cc-app.home-view #cc-back-channels{display:grid!important}' in CONCORD_CSS
     assert 'body.concord-view .cc-message-actions .cc-quick-react' in CONCORD_CSS
 
 
@@ -106,6 +109,8 @@ def test_mobile_reopens_the_last_server_then_drills_into_a_channel_like_discord(
     assert "return channels.length?channels:[{name:'general',private:false}]" in CONCORD
     assert 'visibleChannels.map(c=>' in CONCORD
     assert 'room.channels=hydratedChannels' in CONCORD
+    assert "if(state.community==null){ const rooms=saved(),wanted=Number(localStorage.getItem('pc.concord.active')" in CONCORD
+    assert "state.community==null?'Back to rooms':'Channels'" in CONCORD
 
 
 def test_created_and_joined_communities_survive_browser_storage_loss():
