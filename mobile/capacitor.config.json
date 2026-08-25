@@ -5,6 +5,9 @@
   "android": {
     "allowMixedContent": true
   },
+  "server": {
+    "allowNavigation": ["poster.place"]
+  },
   "plugins": {
     "CapacitorHttp": { "enabled": false }
   }

@@ -73,6 +73,7 @@
     let hosts = [], connected = false, ctrl = false, mounted = null;
     let sid = '', cursor = 0, retry = 0, retryT = null, want = false, live = [];
     let findHits = [], findAt = -1;
+    let followBottom = true, scrollingByUs = false;
     /* A mount can cross awaits (host list, session list). Raising the same Terminal window twice
      * starts a second render before the first resumes; without a generation token BOTH continuations
      * mount xterm and attach input, so every physical key is written twice. */
@@ -402,6 +403,12 @@
       }catch(_){ fit = null; }
       term.open(box);
       _fit();
+      /* Follow a live prompt until the person deliberately scrolls up. Reopening/attaching always
+       * starts at the current prompt; after that, reading old output is never yanked back down. */
+      try{ term.onScroll((y) => {
+        if(scrollingByUs)return;
+        const b=term.buffer&&term.buffer.active;followBottom=!!b && y>=b.baseY;
+      }); }catch(_){}
 
       /* FIND LIVES IN THE RENDERER, not in the shell. Sending Ctrl+F into readline searches command
        * history; Ctrl+Shift+F searches everything xterm still holds, including program output and
@@ -598,6 +605,7 @@
       _remember(id);
       cursor = 0;                          // no local scrollback for it — replay from the start of
                                            // what the server still holds
+      followBottom = true;
       if(term) term.reset();
       _open({ resume: id, host: hostName || '', label });
     }
@@ -735,7 +743,10 @@
              * pushed event wins the race, its cumulative sequence makes the later snapshot old;
              * discard that snapshot instead of drawing the prompt/echo twice. */
             if(typeof m.seq === 'number' && m.seq <= cursor) return;
-            term.write(m.d);
+            term.write(m.d, function(){
+              if(!followBottom)return;
+              try{scrollingByUs=true;term.scrollToBottom();setTimeout(()=>{scrollingByUs=false;},0);}catch(_){scrollingByUs=false;}
+            });
             _histSaw(m.d);
             // The CURSOR is what a reconnect resumes from, so it advances only for bytes that reached
             // the screen. Trusting a locally counted length instead would drift the first time a
@@ -762,6 +773,8 @@
             if(label) asked.add(String(host || '') + '\u0000' + String(label));
             _state((m.resumed ? 'reattached to ' : 'connected to ') + host, 'ok');
             _chrome(true); _fit(); _focus();
+            followBottom=true;
+            try{scrollingByUs=true;term.scrollToBottom();setTimeout(()=>{scrollingByUs=false;},0);}catch(_){scrollingByUs=false;}
             /* A NEW PTY IS A NEW TAB. Starting one used to update `sid` but never repaint the tab
              * strip, so the shell existed while the only visible tab was still the previous one.
              * The next press appeared to do nothing useful and switching was impossible until a

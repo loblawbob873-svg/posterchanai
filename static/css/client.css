@@ -9000,7 +9000,19 @@ audio.sms-att-img{min-width:220px}
 .office-win{display:flex;flex-direction:column;height:100%;min-height:0;padding:10px;gap:8px}
 .office-win > *{flex:0 0 auto}
 .office-win .office-frame{flex:1 1 auto;width:100%;height:auto;min-height:0;border:0}
-@media(max-width:640px){.office-head{display:block}.modal.office-modal{width:98vw;height:96dvh;padding:8px}}
+@media(max-width:900px){
+  /* Office is an application on a phone/tablet, not a little dialog over Files. `inset:0` also
+     avoids the browser toolbar/dynamic-vh black strip that a centred 96dvh box left behind. */
+  .modal.office-modal{position:fixed;inset:0;margin:0;width:100vw;max-width:none;height:100dvh;
+    max-height:none;border:0;border-radius:0;padding:max(6px,env(safe-area-inset-top))
+    max(6px,env(safe-area-inset-right)) max(6px,env(safe-area-inset-bottom))
+    max(6px,env(safe-area-inset-left));gap:5px}
+  .office-head{display:flex;align-items:center;gap:8px;min-width:0}
+  .office-head h3{font-size:1rem;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .office-head .muted{display:none}
+  .office-actions{margin-top:2px;gap:6px}
+  .office-actions .btn{min-height:38px}
+}
 .os-native-controls{display:inline-flex;align-items:center;gap:1px}.os-native-controls button{width:22px;height:22px;padding:0;border:0;border-radius:4px;background:transparent;color:inherit;line-height:20px}.os-native-controls button:hover{background:rgba(255,255,255,.14)}.os-native-close:hover{background:#c42b1c!important;color:#fff}
 
 /* PREVIEW — the picture/video/PDF viewer (static/js/client/preview.js).

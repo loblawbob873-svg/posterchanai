@@ -24,6 +24,13 @@ def test_find_searches_xterm_scrollback_and_selects_the_match():
     assert "term.scrollToLine(h.row)" in TERM
 
 
+def test_attach_starts_at_live_prompt_then_respects_manual_scrolling():
+    assert "term.onScroll" in TERM
+    assert "followBottom=!!b && y>=b.baseY" in TERM
+    assert "followBottom = true" in TERM
+    assert "term.scrollToBottom()" in TERM
+
+
 def test_find_navigation_and_close_are_wired():
     assert "_findMove(ev.shiftKey ? -1 : 1)" in TERM
     assert "if(ev.key === 'Escape')" in TERM

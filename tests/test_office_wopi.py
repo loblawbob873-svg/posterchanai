@@ -141,7 +141,8 @@ def test_office_can_be_embedded_only_by_our_web_and_packaged_clients():
         assert "proxy_hide_header Content-Security-Policy" in block
         policy = block.split('add_header Content-Security-Policy "', 1)[1].split('" always;', 1)[0]
         ancestors = policy.split("frame-ancestors ", 1)[1]
-        for origin in ("'self'", "app:", "capacitor:", "https://localhost"):
+        for origin in ("'self'", "app:", "capacitor:", "https://localhost", "https://localhost:*",
+                       "http://localhost"):
             assert origin in ancestors, f"{rel} excludes {origin}"
         assert "$http_origin" not in block
         assert "frame-ancestors *" not in policy
@@ -243,3 +244,11 @@ def test_edit_still_wins_where_a_format_offers_it(monkeypatch):
     monkeypatch.setattr(office, "_discover", disc)
     assert asyncio.run(office._action_url("docx", "edit")) == "http://code/edit?"
     assert asyncio.run(office._action_url("docx", "view")) == "http://code/view?"
+
+
+def test_mobile_office_is_an_edge_to_edge_workspace():
+    css = _read("static/css/client.css")
+    block = css[css.index("@media(max-width:900px)"):]
+    assert ".modal.office-modal{position:fixed;inset:0" in block
+    assert "width:100vw" in block and "height:100dvh" in block
+    assert "safe-area-inset-bottom" in block
