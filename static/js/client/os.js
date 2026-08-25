@@ -2807,13 +2807,14 @@
      * an ordinary app makes routeFromPath create a second Social window on the destination output.
      * Only deeper paths identify content that the view name cannot restore by itself. */
     const appPath = terminal ? '' : String(w.appPath || '');
+    const topPath = appPath==='/' || appPath==='/index.html';
     return {view:handoffIdentity(w),title:w.title||'',icon:w.icon||'',
       width:w.el.offsetWidth,height:w.el.offsetHeight,overflow:Number(overflow)||0,
       scrollTop:Math.max(0,Number(realFeed&&realFeed.parentElement===w.body
         ? realFeed.scrollTop : w.slot&&w.parked ? w.slot.scrollTop : w.scrollTop)||0),
       terminalSid:terminal&&window.PCTerm&&PCTerm.sessionId
         ? PCTerm.sessionId() : '',
-      path:appPath==='/' ? '' : appPath,ui:captureHandoffUI(w),
+      path:topPath ? '' : appPath,ui:captureHandoffUI(w),
       state:w.view==='websearch'&&window.PCWebSearch&&PCWebSearch.handoffState
         ? PCWebSearch.handoffState() : null};
   }
@@ -6314,7 +6315,8 @@
              * window back to Social. */
             /* Old senders can still supply `/`; defend here as well as in handoffPayload so mixed
              * package versions across a rolling update cannot recreate the unwanted Social window. */
-            if(p.path && p.path!=='/') try{ PC().routePath && PC().routePath(String(p.path)); }catch(_){}
+            if(p.path && p.path!=='/' && p.path!=='/index.html')
+              try{ PC().routePath && PC().routePath(String(p.path)); }catch(_){}
             const ww=Math.max(MIN_W,Math.min(vwL()-24,Number(p.width)||w.el.offsetWidth));
             const hh=Math.max(MIN_H,Math.min(vhL()-TASKBAR-24,Number(p.height)||w.el.offsetHeight));
             w.el.style.width=Math.round(ww)+'px'; w.el.style.height=Math.round(hh)+'px';

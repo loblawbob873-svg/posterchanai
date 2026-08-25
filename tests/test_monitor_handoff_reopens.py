@@ -77,8 +77,10 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
                       "the other monitor as a view nothing can route")
         self.assertIn("appPath", payload,
                       "the path must be the WINDOW's, captured when it was focused/parked")
-        self.assertIn("appPath==='/' ? '' : appPath", payload,
-                      "the page root is not an entity address and would open an extra Social window")
+        self.assertIn("appPath==='/' || appPath==='/index.html'", payload,
+                      "web and packaged page roots are not entity addresses; either would open an "
+                      "extra Social window")
+        self.assertIn("path:topPath ? '' : appPath", payload)
 
     def test_the_path_belongs_to_THE_WINDOW_not_to_the_page(self):
         """`location.pathname` is a property of the PAGE. Read at drag time it hands whichever
@@ -164,9 +166,9 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
         i = self.os.index("onHandoffFrame")
         body = self.os[i:i + 3000]
         self.assertIn("routePath", body, "the destination never acts on the path it was sent")
-        self.assertIn("if(p.path && p.path!=='/')", body,
-                      "a bare '/' is every non-entity screen; routing it would create an extra "
-                      "Social window beside the app that was moved")
+        self.assertIn("p.path!=='/' && p.path!=='/index.html'", body,
+                      "web and packaged roots are non-entity screens; routing either would create "
+                      "an extra Social window beside the app that was moved")
 
     def test_the_client_exposes_both_halves(self):
         """os.js can only reach what is on `window.__PC` — the recurring `PC.x is not a function`."""
