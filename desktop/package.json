@@ -3,6 +3,7 @@
   "version": "1.0.3",
   "private": true,
   "description": "PosterChan desktop app (Electron) — a native window onto a PosterChan instance",
+  "desktopName": "PosterChan",
   "main": "main.js",
   "scripts": {
     "start": "npm run www && electron .",
@@ -17,8 +18,11 @@
     "electron-updater": "^6.3.9"
   },
   "devDependencies": {
-    "electron": "^33.2.0",
-    "electron-builder": "^25.1.8"
+    "electron": "^44.0.0",
+    "electron-builder": "^26.15.3"
+  },
+  "overrides": {
+    "js-yaml": "4.3.1"
   },
   "build": {
     "appId": "place.poster.desktop",
@@ -56,6 +60,7 @@
     "linux": {
       "icon": "build/icon.png",
       "category": "Network",
+      "syncDesktopName": true,
       "synopsis": "PosterChan — Nostr client, chat and media",
       "target": [{ "target": "AppImage", "arch": ["x64"] }],
       "artifactName": "PosterChan.AppImage"

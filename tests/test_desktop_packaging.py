@@ -29,6 +29,8 @@ DESKTOP = os.path.join(ROOT, "desktop")
 
 with open(os.path.join(DESKTOP, "package.json"), encoding="utf-8") as fh:
     PKG = json.load(fh)
+with open(os.path.join(DESKTOP, "package-lock.json"), encoding="utf-8") as fh:
+    LOCK = json.load(fh)
 PATTERNS = PKG["build"]["files"]
 
 REQUIRE = re.compile(r"""require\(\s*['"](\./[^'"]+)['"]\s*\)""")
@@ -112,3 +114,20 @@ def test_no_comment_keys_in_the_build_config():
     assert not bad, (
         f"comment keys in build config: {bad} — electron-builder validates its schema strictly and "
         "will refuse to build")
+
+
+def test_desktop_dependencies_do_not_regress_below_security_floors():
+    """These floors close published Electron, builder and YAML vulnerabilities. Keep the assertion
+    on the resolved lockfile: a permissive package.json range is not what CI actually ships."""
+    def version(path):
+        return tuple(int(x) for x in LOCK["packages"][path]["version"].split("-")[0].split("."))
+
+    assert version("node_modules/electron") >= (44, 0, 0)
+    assert version("node_modules/electron-builder") >= (26, 15, 3)
+    assert version("node_modules/js-yaml") >= (4, 3, 1)
+
+
+def test_linux_window_identity_is_synchronised_with_its_desktop_entry():
+    """Without this, Linux shells may not associate the running window with its launcher icon."""
+    assert PKG.get("desktopName") == "PosterChan"
+    assert PKG["build"]["linux"].get("syncDesktopName") is True
