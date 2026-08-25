@@ -10,4 +10,8 @@ package androidx.core.content;
 public final class ContextCompat {
   private ContextCompat() { }
   public static android.graphics.drawable.Drawable getDrawable(android.content.Context c, int res) { return null; }
+  public static android.content.ComponentName startForegroundService(
+      android.content.Context c, android.content.Intent intent) {
+    return c.startForegroundService(intent);
+  }
 }

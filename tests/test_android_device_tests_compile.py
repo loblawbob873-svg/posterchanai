@@ -89,7 +89,14 @@ public abstract class MmsReceivedReceiver extends android.content.BroadcastRecei
             "place/poster/app/music/MusicService.java": """
 package place.poster.app.music;
 public class MusicService {
+  public static final String ACTION_UPDATE = "update";
   public static final String ACTION_TOGGLE = "x";
+  public static final String ACTION_STOP = "stop";
+  public static final String EXTRA_TITLE = "title";
+  public static final String EXTRA_ARTIST = "artist";
+  public static final String EXTRA_PLAYING = "playing";
+  public static final String EXTRA_POSITION = "position";
+  public static final String EXTRA_DURATION = "duration";
   public interface Watcher { void onNowPlaying(String t, String a, boolean p); }
   public static void setWatcher(Watcher w) { }
   public static String nowTitle() { return ""; }
