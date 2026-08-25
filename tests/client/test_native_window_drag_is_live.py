@@ -88,6 +88,5 @@ def test_resized_and_rejected_handoff_windows_stay_inside_the_desktop():
     resize = src[src.index("function startResize"):src.index("// ---- desktop, taskbar")]
     assert "vwL()-left-12" in resize
     assert "vhL()-TASKBAR-top-12" in resize
-    handoff = src[src.index("if(handoff && w.native == null"):src.index("_natGesture(w, false)",
-                                                                          src.index("if(handoff && w.native == null"))]
-    assert "keepFrameReachable(w)" in handoff
+    send = src[src.index("function sendFrameHandoff"):src.index("/* A cross-output drag", src.index("function sendFrameHandoff"))]
+    assert "keepFrameReachable(w)" in send

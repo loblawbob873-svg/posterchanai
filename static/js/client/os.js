@@ -2715,13 +2715,17 @@
   }
 
   function handoffPayload(w, overflow){
-    return {view:w.appView||w.view,title:w.title||'',icon:w.icon||'',
+    /* A terminal is a live PTY, not a route inside the shared social feed. The page-wide VIEW can
+     * change while another window has focus; never let that stale route turn a moved terminal into
+     * a Social window (or route the receiving renderer away after it adopts the PTY). */
+    const terminal = w.view === 'terminal';
+    return {view:terminal ? 'terminal' : w.appView||w.view,title:w.title||'',icon:w.icon||'',
       width:w.el.offsetWidth,height:w.el.offsetHeight,overflow:Number(overflow)||0,
       scrollTop:Math.max(0,Number(realFeed&&realFeed.parentElement===w.body
         ? realFeed.scrollTop : w.slot&&w.parked ? w.slot.scrollTop : w.scrollTop)||0),
-      terminalSid:w.view==='terminal'&&window.PCTerm&&PCTerm.sessionId
+      terminalSid:terminal&&window.PCTerm&&PCTerm.sessionId
         ? PCTerm.sessionId() : '',
-      path:String(w.appPath || ''),ui:captureHandoffUI(w),
+      path:terminal ? '' : String(w.appPath || ''),ui:captureHandoffUI(w),
       state:w.view==='websearch'&&window.PCWebSearch&&PCWebSearch.handoffState
         ? PCWebSearch.handoffState() : null};
   }

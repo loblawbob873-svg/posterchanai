@@ -350,6 +350,27 @@ class DoubleHomeRuns(unittest.TestCase):
         self.assertIn("if(forceTop){", app)
         self.assertIn("_tlForceTop=''", app)
 
+    def test_native_duplicate_carriers_land_only_once(self):
+        phone = (ROOT / "static/js/client/phoneshell.js").read_text()
+        consume = method(strip_comments(phone), "function consumeLaunchView")
+        init = method(strip_comments(phone), "function init")
+        self.assertIn("_launchQueue.then(run, run)", consume)
+        self.assertIn("direct || parked", consume)
+        self.assertIn("v === _lastLaunchView", consume)
+        launched = init[init.index("const launched"):]
+        self.assertIn("consumeLaunchView(v)", launched)
+        self.assertNotIn("landView(v);", launched,
+                         "onNewIntent lands directly and then its parked copy lands a second time")
+
+    def test_home_top_cancels_an_older_scroll_restore_and_holds_past_its_retry_window(self):
+        app = (ROOT / "static/js/client/app.js").read_text()
+        top = method(strip_comments(app), "function timelineTop")
+        restore = method(strip_comments(app), "function _putScroll")
+        self.assertIn("++_scrollRestoreGen", top)
+        self.assertIn("mine !== _scrollRestoreGen", restore)
+        self.assertIn("1600", top)
+        self.assertIn("pointerdown", top)
+
 
 if __name__ == "__main__":
     unittest.main()

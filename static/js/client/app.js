@@ -670,6 +670,7 @@
     let v=_TL_TABS.includes(asked) ? asked : (_TL_TABS.includes(VIEW) ? VIEW : _startTimeline());
     if(hidden.has(v)) v=_TL_TABS.find(x=>!hidden.has(x)) || 'global';
     _tlForceTop=v;
+    ++_scrollRestoreGen;             // cancel a previous view/thread restore before it can fight us
     delete _tlScrollMemo[v];
     /* Home twice is a REFRESH, not merely a scroll command. Reuse the exact pull-to-refresh path:
      * recover a carrier-stalled relay, reset the active timeline subscription/page state, redraw,
@@ -679,8 +680,17 @@
     else renderView(true);
     // Home/global consume this in renderTimeline; Trending has its own painter.
     if(_tlForceTop===v) _tlForceTop='';
-    const top=()=>{ if(VIEW===v){ const f=$('#feed'); if(f) f.scrollTop=0; } };
-    top(); requestAnimationFrame(()=>requestAnimationFrame(top)); setTimeout(top,250);
+    const hold = _scrollRestoreGen;
+    const top=()=>{ if(hold===_scrollRestoreGen && VIEW===v){ const f=$('#feed'); if(f) f.scrollTop=0; } };
+    top(); requestAnimationFrame(()=>requestAnimationFrame(top));
+    // A prior restore retries for up to one second while cards gain height. Stay authoritative
+    // beyond that window; a real pointer/touch/wheel starts a new generation and immediately wins.
+    [80,250,600,1100,1600].forEach(ms=>setTimeout(top,ms));
+    const f=$('#feed');
+    if(f){ const release=()=>{ if(hold===_scrollRestoreGen)++_scrollRestoreGen; };
+      f.addEventListener('pointerdown',release,{once:true});
+      f.addEventListener('touchstart',release,{once:true,passive:true});
+      f.addEventListener('wheel',release,{once:true,passive:true}); }
   }
   function setMobileNav(views){
     const list = [];
@@ -6272,6 +6282,9 @@
   // one navigation it requested. Without this latch renderTimeline sees VIEW already changed,
   // mistakes the previous screen's shared #feed offset for a timeline repaint, and restores it.
   let _tlForceTop = '';
+  // Every delayed scroll restore carries this generation. A deliberate Home-to-top invalidates
+  // an older restore that may still be retrying against a feed whose layout was not ready.
+  let _scrollRestoreGen = 0;
 
   /* REMEMBER WHERE THEY WERE READING. Called by every route that leaves a timeline, which is more
    * than switchView: renderThread and renderProfileView set VIEW themselves and never go through it,
@@ -6298,10 +6311,11 @@
    * lesson, in the classic client. */
   function _putScroll(want, ok, budget){
     if(!(want > 0)) return;
+    const mine = ++_scrollRestoreGen;
     let tries = 0, last = -1;
     const cap = budget || 40;
     const put = () => {
-      if(++tries > cap) return;
+      if(++tries > cap || mine !== _scrollRestoreGen) return;
       let f = null;
       try{ f = $('#feed'); }catch(_){ f = null; }
       if(!f || (ok && !ok())) return;                       // they moved on; leave them alone

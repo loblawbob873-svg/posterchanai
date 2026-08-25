@@ -70,21 +70,32 @@
    * It goes through switchView, which is the same function the sidebar uses — including its instance
    * gating, so a tile for a server-backed screen on a server-less install lands where that gating
    * sends it rather than on a blank page. */
-  async function consumeLaunchView(){
-    const P = plug('consumeLaunchView');
-    if(!P) return '';
-    let v = '';
-    try{ v = ((await P.consumeLaunchView()) || {}).view || ''; }catch(_){ return ''; }
-    if(!v) return '';
+  /* Android can report one foregrounding through onNewIntent, App.resume AND visibilitychange.
+   * Serialize the native take so those signals cannot all perform the same parked request. */
+  let _launchQueue = Promise.resolve();
+  let _lastLaunchView = '', _lastLaunchAt = 0;
+  function consumeLaunchView(preferred){
+    const direct = typeof preferred === 'string' ? preferred.trim() : '';
+    const run = async () => {
+      const P = plug('consumeLaunchView');
+      if(!P) return '';
+      let parked = '';
+      try{ parked = ((await P.consumeLaunchView()) || {}).view || ''; }catch(_){ parked = ''; }
+      const v = direct || parked;
+      if(!v) return '';
+      const now = Date.now();
+      if(v === _lastLaunchView && now - _lastLaunchAt < 2500) return v;
+      _lastLaunchView = v; _lastLaunchAt = now;
     /* THE PLAYER IS NOT A VIEW. app.js's own More menu spells it `__music` and opens it with
      * `openMusic()`; `switchView('__music')` would fall through to the default screen, which is
      * exactly what "clicking play on music widget opens up default posterchan app page instead of
      * music" looked like from the other end. One name, used by both. */
-    if(v === '__music'){
-      landView(v); return v;
-    }
-    landView(v);
-    return v;
+      landView(v);
+      return v;
+    };
+    const next = _launchQueue.then(run, run);
+    _launchQueue = next.catch(() => '');
+    return next;
   }
 
   async function status(){
@@ -389,10 +400,7 @@
      * remains the cold-start fallback, where no JS listener exists yet. */
     const launched = (e) => {
       const v = e && typeof e.view === 'string' ? e.view.trim() : '';
-      if(v && document.querySelector('#feed')){
-        landView(v);
-      }
-      consumeLaunchView();                 // consume the duplicate parked/intent carrier exactly once
+      if(document.querySelector('#feed')) consumeLaunchView(v);
     };
     document.addEventListener('visibilitychange', () => {
       if(document.visibilityState === 'visible') again();

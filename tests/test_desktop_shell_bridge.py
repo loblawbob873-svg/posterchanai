@@ -196,7 +196,7 @@ class Bridge(unittest.TestCase):
         self.assertIn("restoreHandoffUI(w,p.ui)", client)
         self.assertIn('data-w="monitor"', client)
         self.assertIn("for(const direction of ['right','left','down','up'])", client)
-        self.assertIn("terminalSid:w.view==='terminal'", client)
+        self.assertIn("terminalSid:terminal", client)
 
     def test_every_posterchan_app_uses_the_generic_state_preserving_handoff(self):
         """There must be no view whitelist: every sidebar app, including ones added later, carries
@@ -237,7 +237,7 @@ class Bridge(unittest.TestCase):
     def test_terminal_handoff_keeps_the_same_pty(self):
         client = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()
         term = open(os.path.join(ROOT, "static/js/client/term.js"), encoding="utf-8").read()
-        self.assertIn("terminalSid:w.view==='terminal'", client)
+        self.assertIn("terminalSid:terminal", client)
         self.assertIn("PCTerm.adoptSession(p.terminalSid)", client)
         self.assertIn("function adoptSession(id)", term)
 

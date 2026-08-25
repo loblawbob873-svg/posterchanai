@@ -94,6 +94,14 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
                          "the payload reads the live page URL at drag time, so every window is "
                          "handed whatever address the page happens to be on")
 
+    def test_terminal_identity_cannot_be_replaced_by_the_global_social_route(self):
+        i = self.os.index("function handoffPayload(")
+        payload = self.os[i:self.os.index("function sendFrameHandoff", i)]
+        self.assertIn("const terminal = w.view === 'terminal'", payload)
+        self.assertIn("view:terminal ? 'terminal'", payload)
+        self.assertIn("path:terminal ? ''", payload,
+                      "the destination would adopt the PTY and then route it back to Social")
+
     def test_every_place_that_captures_appView_captures_appPath(self):
         """They are one fact about a window — which screen it is showing — and a site that records
         half of it leaves the other half stale. That is the same drift that makes two
