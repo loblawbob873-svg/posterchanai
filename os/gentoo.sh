@@ -1618,6 +1618,7 @@ PROFILE
 	for_window [app_id=".*"] floating enable
 	for_window [class=".*"] floating enable
 	for_window [app_id="posterchan-desktop"] floating disable, border none
+	for_window [app_id="PosterChan"] floating disable, border none
 	for_window [class="posterchan-desktop"] floating disable, border none
 
 	# A floating window with no geometry of its own gets something usable rather than whatever the

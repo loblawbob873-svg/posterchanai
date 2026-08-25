@@ -86,7 +86,16 @@ class TheStartScriptStillDisablesIt(unittest.TestCase):
 
     def test_and_tiles_the_window(self):
         """`floating disable` is what makes it fill the workspace without being fullscreen."""
-        self.assertIn("floating disable", START.read_text())
+        src = START.read_text()
+        self.assertIn("floating disable", src)
+        # Electron's Wayland app id changed case in 44. Matching only the historical spelling
+        # leaves the process healthy but floating/hidden, which is a black OS desktop.
+        self.assertIn('[app_id="PosterChan"]', src)
+
+    def test_shell_mode_can_never_start_hidden(self):
+        """A hidden normal desktop app is fine; a hidden OS shell is an empty compositor."""
+        src = MAIN.read_text()
+        self.assertIn('startHidden = !SHELL_MODE && background.launchedHidden()', src)
 
     def test_recovery_launch_recovers_the_wayland_display(self):
         """An SSH/recovery shell lacks Sway's environment; `auto` must not fall through to X11."""

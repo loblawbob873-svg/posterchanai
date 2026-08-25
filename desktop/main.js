@@ -1999,7 +1999,10 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
     wireDownloads();
     wirePermissions();
     buildMenu();
-    startHidden = background.launchedHidden();
+    // The OS shell is the desktop itself and must never honor Electron's login-item "hidden"
+    // state. Electron 44 can report wasOpenedAsHidden on a recovery launch even without --hidden;
+    // hiding the only desktop surface leaves a healthy Sway session as a permanent black screen.
+    startHidden = !SHELL_MODE && background.launchedHidden();
     createWindow();
     /* Upgrade old saved layouts before creating the per-output shell relationship. A small gap in
      * outputs.conf is a real pointer wall; leaving it until somebody happens to open Displays keeps

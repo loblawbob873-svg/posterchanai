@@ -563,6 +563,8 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertIn('for_window [app_id="posterchan-desktop"] floating disable', cfg[i:],
                       "the shell is floated by the catch-all and never un-floated — later rules win, "
                       "so the exclusion has to come after")
+        self.assertIn('for_window [app_id="PosterChan"] floating disable', cfg[i:],
+                      "Electron 44's Wayland app id is not excluded from the catch-all float rule")
 
     def test_the_shell_is_tiled_and_never_fullscreen(self):
         """A fullscreen window in sway covers the whole workspace INCLUDING floating windows. With
@@ -588,7 +590,8 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertTrue(os.path.exists(p), "the launcher is not shipped")
         body = open(p, encoding="utf-8").read()
         self.assertIn("get_tree", body, "it pins whatever is there rather than waiting for ours")
-        for spelling in ('class="posterchan-desktop"', 'app_id="posterchan-desktop"'):
+        for spelling in ('class="posterchan-desktop"', 'app_id="posterchan-desktop"',
+                         'app_id="PosterChan"'):
             self.assertIn(spelling, body,
                           "only one of app_id/class is handled — the other silently does nothing")
 
