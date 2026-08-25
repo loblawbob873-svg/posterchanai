@@ -77,6 +77,16 @@ fi
 WAYLAND_DISPLAY=${wayland_socket##*/}
 export WAYLAND_DISPLAY
 
+# Portage owns /usr/bin/posterchan. Older LiveOS images and the standalone updater installed the
+# wrapper in /usr/local/bin instead; keep that as a fallback, but never let a stale local copy
+# shadow the package that was just upgraded. That stale wrapper reset Wayland to `auto`, which is
+# why a direct launch fixed the laptop Super key and the normal launcher broke it again.
+if [ -x /usr/bin/posterchan ]; then
+  PC_DESKTOP_LAUNCHER=/usr/bin/posterchan
+else
+  PC_DESKTOP_LAUNCHER=/usr/local/bin/posterchan
+fi
+
 # In a SPICE guest the viewer and guest must agree on one framebuffer size. Without the guest agent
 # virt-viewer scales the picture locally while the emulated USB tablet still reports coordinates in
 # the guest's old geometry: the cursor is visibly over one button and clicks another place. The
@@ -140,7 +150,7 @@ clear_dead_locks
 # FD 9 is the launcher mutex, not part of the desktop environment. Close it in Electron: otherwise
 # every app Electron launches (Firefox, Steam, terminals) inherits the lock and a shell restart can
 # never acquire it again until all of those unrelated apps exit.
-/usr/local/bin/posterchan --shell --ozone-platform=wayland 9>&- &
+"$PC_DESKTOP_LAUNCHER" --shell --ozone-platform=wayland 9>&- &
 shell_pid=$!
 retries=0
 
@@ -171,7 +181,7 @@ while [ $i -lt 120 ]; do
     clear_dead_locks
     retries=$((retries + 1))
     sleep 1
-    /usr/local/bin/posterchan --shell --ozone-platform=wayland 9>&- &
+    "$PC_DESKTOP_LAUNCHER" --shell --ozone-platform=wayland 9>&- &
     shell_pid=$!
   fi
   i=$((i + 1))
