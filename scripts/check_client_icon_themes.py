@@ -91,10 +91,14 @@ async def drive():
         await asyncio.sleep(12)
 
         for theme in THEMES:
-            # seed the theme the way the app itself does, then reload so :root[data-theme] applies
-            await js(f"localStorage.setItem('pc_theme','{theme}')")
-            await call("Page.navigate", {"url": BASE + "/client"})
-            await asyncio.sleep(8)
+            # Theme CSS is selected by the root data attribute; it does not require a navigation.
+            # Reloading once per theme made this compare nine DIFFERENT live timelines. The first
+            # relay fill had 466 icons and the last 1019, which was reported as a theme layout
+            # failure even though every rendered icon had a valid size. Audit one frozen DOM and
+            # change only the variable under test.
+            await js(f"(() => {{ localStorage.setItem('pc_theme','{theme}'); "
+                     f"document.documentElement.dataset.theme='{theme}'; return true; }})()")
+            await asyncio.sleep(0.25)
             res = await js(AUDIT)
             if res is None:
                 print(f"SKIP  {theme}: page did not evaluate (site unreachable?)")
