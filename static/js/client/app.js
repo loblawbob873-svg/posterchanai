@@ -20376,6 +20376,23 @@
       URL.revokeObjectURL(u); delete _encUrls[old];
     }
   }
+  /* Where a selected directory lands in the drive.
+   *
+   * A directory chosen from Files home/All has to remain a directory. The old importer always
+   * removed the first component of `webkitRelativePath`, so choosing `Pictures/a.jpg` at home
+   * uploaded the bytes but indexed `a.jpg` in All. The chooser closed, no Pictures folder appeared,
+   * and the operation looked as if it had disappeared. Inside an existing drive folder we still
+   * discard that outer chooser name: selecting `Camera` while standing in `Photos` means import its
+   * contents into Photos, with Camera's real subdirectories preserved below it.
+   */
+  function _uploadTargetFolder(current, relative){
+    const rel=String(relative||'').replace(/^\/+|\/+$/g,'');
+    if(!rel.includes('/')) return current;
+    const parts=rel.split('/').filter(Boolean), selected=parts.shift()||'';
+    const below=parts.slice(0,-1).join('/');
+    if(current) return below ? (current+'/'+below) : current;
+    return below ? (selected+'/'+below) : selected;
+  }
   async function uploadFilesSeq(files){
     files=files.filter(Boolean); if(!files.length) return;
     const folder=_filesFolder, music=folder==='Music';   // capture: navigating mid-upload won't misfile
@@ -20383,17 +20400,11 @@
     // Preserve that structure instead of flattening everything into one folder: each file lands in a
     // folder derived from its subpath. Capture the paths NOW — compressImage() below returns a fresh File
     // that has NO webkitRelativePath, and the batch may reorder-replace `files`, so read them up front and
-    // index-align. _subFolder drops the selected top-level dir (a flat folder still lands in the current
-    // folder) and nests any real subfolders under wherever you are. Only the plain path uses it; Music /
+    // index-align. At Files home/All, the chosen top-level directory becomes a real drive folder; inside
+    // an existing folder, only its subdirectories are nested there. Only the plain path uses it; Music /
     // encrypted folders keep their single-folder behavior.
     const _relPaths=files.map(f=>(f&&f.webkitRelativePath)||'');
-    const _subFolder=(i)=>{
-      const rel=_relPaths[i]||''; if(!rel.includes('/')) return folder;
-      const parts=rel.split('/'); parts.shift();          // drop the selected top folder name
-      const dir=parts.slice(0,-1).join('/');              // subdir path (minus the filename)
-      if(!dir) return folder;                             // file was directly in the top folder
-      return folder ? (folder+'/'+dir) : dir;             // nest the uploaded subfolders under the current one
-    };
+    const _subFolder=(i)=>_uploadTargetFolder(folder,_relPaths[i]);
     // FAIL-CLOSED: never upload into a NAMED folder before the index has loaded. If the folder's
     // encrypted flag isn't known yet, uploading would silently take the PLAINTEXT path and put a
     // world-readable blob on Blossom (the leaked-file bug). Refuse until we know the folder's status.
