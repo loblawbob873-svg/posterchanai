@@ -92,6 +92,16 @@ const Outbox = global.window.Outbox;
   out.autoRetried = Outbox.count() === 0;
   out.reviveCalls = revived;
 
+  // 5. Discard is a local operation. It must work even when the pool claims `ok` but cannot carry
+  // a publish—the stale-status state that made the UI force Retry forever.
+  result = { ok: false, msg: 'offline' };
+  const ev4 = { id: 'd'.repeat(64), kind: 1, content: 'discard', sig: 'c'.repeat(128),
+                created_at: Math.floor(Date.now()/1000) };
+  Outbox.add(ev4);
+  const beforeDiscardPublishes = published;
+  out.localDiscard = Outbox.remove(ev4.id) && Outbox.count() === 0;
+  out.discardPublished = published - beforeDiscardPublishes;
+
   console.log(JSON.stringify(out));
 })();
 """
@@ -135,6 +145,10 @@ class OutboxStrikeTests(unittest.TestCase):
     def test_an_ok_but_stale_phone_connection_retries_without_a_status_change(self):
         self.assertTrue(self.r["autoRetried"])
         self.assertGreaterEqual(self.r["reviveCalls"], 1)
+
+    def test_discard_never_needs_the_relay(self):
+        self.assertTrue(self.r["localDiscard"])
+        self.assertEqual(self.r["discardPublished"], 0)
 
 
 if __name__ == "__main__":

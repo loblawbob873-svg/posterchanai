@@ -62,6 +62,16 @@ class QueuedDraftTests(unittest.TestCase):
         self.assertNotIn("Drafts.remove", drop,
                          "the recovery copy is deleted for an item that was given up on")
 
+    def test_pending_menu_always_offers_retry_and_local_discard(self):
+        src = _src()
+        start = src.index("const b = e.target && e.target.closest && e.target.closest('[data-pending]')")
+        block = src[start:start + 1800]
+        self.assertIn("['retry','Retry delivery']", block)
+        self.assertIn("['discard','Discard pending copy'", block)
+        self.assertIn("Outbox.remove(id)", block)
+        self.assertNotIn("Relay.status === 'ok'", block,
+                         "a stale ok socket still hides the local discard action")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5401,12 +5401,19 @@
     if(!b || !window.Outbox) return;
     e.preventDefault(); e.stopPropagation();
     const id = b.getAttribute('data-pending');
-    if(window.Relay && Relay.status === 'ok'){ toast('sending…'); _flushOutbox(); return; }
-    uiConfirm('This post is waiting to send.\n\nDiscard it?').then(yes=>{
-      if(!yes) return;
-      Outbox.remove(id);
-      try{ Store.removeEvent(id); }catch(_){}
-      invalidateCounts(); renderView(true);
+    /* A pool saying `ok` is not proof that this particular write can reach it—the entire stale-
+     * Pending bug is a lost acknowledgement on a zombie socket. The old branch forced Retry in
+     * that state and made Discard literally inaccessible. Both actions are local choices and must
+     * always be available; removing an Outbox entry never needs the relay. */
+    openMenuPopover(b, [['retry','Retry delivery'], ['discard','Discard pending copy','danger']], a=>{
+      if(a==='retry'){ toast('sending…'); try{ Relay.reviveStale(); }catch(_){} _flushOutbox(); return; }
+      if(a!=='discard') return;
+      uiConfirm('Discard this pending copy?\n\nIts draft is kept. If a relay already received the post, it may appear again.').then(yes=>{
+        if(!yes) return;
+        Outbox.remove(id); _qDraftTake(id);
+        try{ Store.removeEvent(id); }catch(_){}
+        invalidateCounts(); renderView(true);
+      });
     });
   }, true);
   // Sidebar community stats under ONLINE: network size (WoT) + who's using the site right now.
