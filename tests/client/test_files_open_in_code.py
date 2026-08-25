@@ -495,6 +495,16 @@ class TheOfficeEditorGetsTheScreen(unittest.TestCase):
         self.assertTrue(call.rstrip().endswith(", true);"),
                         f"the office window joins the feed hand-off: {call}")
 
+    def test_the_desktop_office_editor_uses_the_shared_document_window_policy(self):
+        i = self.app.index("PCOS.openDoc('office:'")
+        self.assertIn("PCOS.documentWindow(w)", self.app[i:i + 300])
+
+
+class EmailGetsTheSameNeutralWorkspace(unittest.TestCase):
+    def test_email_is_maximised_by_the_window_manager_not_by_its_renderer(self):
+        osjs = _read(os.path.join(ROOT, "static", "js", "client", "os.js"))
+        self.assertIn("else if(view==='mail') documentWindow(w)", osjs)
+
 
 class TheExplorerToolbarStaysLiftable(unittest.TestCase):
     """`_fxBarHTML` is pulled out of app.js BY NAME and evaluated on its own by

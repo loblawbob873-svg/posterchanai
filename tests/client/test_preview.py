@@ -91,6 +91,17 @@ class PreviewIsReachable(unittest.TestCase):
         for sel in (".pv-host{", ".pv-win{", ".pv-sheet{", ".pv-vid{", ".pv-img{", ".pv-pdf-page{"):
             self.assertIn(sel, self.css, f"{sel} has no rule")
 
+    def test_desktop_preview_uses_the_whole_neutral_document_window(self):
+        src = _read("static/js/client/preview.js")
+        osjs = _read("static/js/client/os.js")
+        self.assertIn("root.PCOS.documentWindow(w)", src)
+        self.assertIn("function documentWindow(w)", osjs)
+        self.assertIn("w.el.classList.add('osw-document')", osjs)
+        self.assertIn("snapTo(w, 'max')", osjs)
+        self.assertIn(".osw.osw-document", self.css)
+        self.assertIn(".pc-document-focus .scanlines", self.css)
+        self.assertIn("classList.remove('pc-document-focus')", osjs)
+
     def test_android_pdfs_use_the_bundled_renderer(self):
         src = _read("static/js/client/preview.js")
         self.assertIn("/static/vendor/pdfjs/pdf.min.js", src)

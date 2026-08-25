@@ -20005,6 +20005,7 @@
        * server-side document, or an editor closed by its ✕ leaks a session for the whole TTL. */
       if(window.PCOS && PCOS.isOn() && PCOS.openDoc){
         const w = PCOS.openDoc('office:'+session.id, file.name, 'i-doc', () => {}, true);
+        if(w && PCOS.documentWindow) PCOS.documentWindow(w);
         const host = w && (w.slot || w.body);
         if(host){
           host.classList.add('office-win');

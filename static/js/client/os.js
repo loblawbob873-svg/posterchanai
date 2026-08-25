@@ -1217,6 +1217,11 @@
       }
     }catch(_){}
     wins.forEach(x => x.el.classList.toggle('focused', x === w));
+    /* A document must not have the theme's CRT scanline sheet painted over its white page. Keep
+     * the user's theme everywhere else; suppress only page-wide decorative effects while a neutral
+     * document application owns focus. */
+    document.documentElement.classList.toggle('pc-document-focus',
+      !!(w.el && w.el.classList.contains('osw-document')));
     w.el.style.zIndex = String(nextZ());
     if(w.min){ w.min = false; w.el.classList.remove('minimised'); }
     /* FOCUS IS TWO THINGS FOR A NATIVE WINDOW: our stacking order changed, so what has to be
@@ -1504,7 +1509,9 @@
     /* Concord is a three-pane workspace. Opening it in the generic reading-column geometry wastes
        the channel/member space and exposes the desktop behind its bottom edge, so it starts in the
        same full-workspace geometry the Maximise button provides. */
-    if(view==='concord') snapTo(w,'max'); else focusWin(w);
+    if(view==='concord') snapTo(w,'max');
+    else if(view==='mail') documentWindow(w);
+    else focusWin(w);
     return w;
   }
 
@@ -2501,7 +2508,10 @@
     if(opts && opts.preserveFocus) drawBar();
     else{
       const next = wins.filter(x => !x.min).pop();
-      if(next) focusWin(next); else drawBar();
+      if(next) focusWin(next); else{
+        document.documentElement.classList.remove('pc-document-focus');
+        drawBar();
+      }
     }
   }
 
@@ -2615,6 +2625,16 @@
       _natSent.delete(Number(w.native));
       requestAnimationFrame(() => requestAnimationFrame(nsync));
     }else if(nativeWins().length) nsync();
+  }
+
+  /* Preview, Office and Email are workspaces, not decorative cards. They share one window policy:
+   * neutral chrome and all usable desktop space on first open. Keeping this in the window manager
+   * prevents three callers from approximating maximise with conflicting widths/heights. */
+  function documentWindow(w){
+    if(!w || !w.el) return w;
+    w.el.classList.add('osw-document');
+    snapTo(w, 'max');
+    return w;
   }
 
   function unsnap(w){
@@ -6691,7 +6711,7 @@
                    * Leave the windowed desktop for this session without changing the user's saved
                    * desktop preference; an ordinary later launch may restore it. */
                   mobileLanding: () => { if(on) exit(false); },
-                  isOn: () => on, openDoc, focusDoc, closeDoc, routeView, snapTo, osToast,
+                  isOn: () => on, openDoc, focusDoc, closeDoc, routeView, snapTo, documentWindow, osToast,
                   // app.js calls this when the player's state changes — the Now-playing widget has
                   // nothing to subscribe to, and polling an element we could be told about is the
                   // mistake the games were just fixed for.

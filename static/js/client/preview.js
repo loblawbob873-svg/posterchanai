@@ -244,6 +244,7 @@
      * timeline into this one and the repaint destroys the frame. */
     if (root.PCOS && root.PCOS.isOn && root.PCOS.isOn() && root.PCOS.openDoc) {
       var w = root.PCOS.openDoc(key, name, 'i-eye', function () {}, true);
+      if (w && root.PCOS.documentWindow) root.PCOS.documentWindow(w);
       var host = w && (w.slot || w.body);
       if (host) {
         host.classList.add('pv-host', 'pv-win');
