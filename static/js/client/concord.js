@@ -14,8 +14,10 @@
   let replyTarget=null, reactionTarget=null;
   let discovered=[], discoveryStarted=false, discoveryLoaded=false, membershipStarted=false;
   const roomLoads=new Map();
+  const roomControls=new Map();
   function saved(){ try{ const v=JSON.parse(localStorage.getItem('pc.concord.invites')||'[]'); return Array.isArray(v)?v:[]; }catch(_){ return []; } }
   function save(v){ try{ localStorage.setItem('pc.concord.invites',JSON.stringify(v.slice(0,50))); }catch(_){} }
+  function scrollChatBottom(){ const later=window.requestAnimationFrame||((fn)=>setTimeout(fn,0)); later(()=>{ const box=document.querySelector('.cc-messages'); if(box)box.scrollTop=box.scrollHeight; }); }
   function roomName(r,i){ return (r&&r.name)||`Encrypted community ${i+1}`; }
   function normalizeIcon(raw){
     const v=String(raw||'').trim(); if(!v)return '';
@@ -78,9 +80,9 @@
     /* openInvite validates the naddr and fragment; use its decoded bootstrap relays by first trying
        the shared CORD set plus the current pool. queryFrom covers relays outside the pool, query covers inside. */
     const parsed=window.PosterCord.inviteDetails(url);
-    const filter=[{kinds:[33301],authors:[parsed.linkSigner],'#d':[''],limit:1}];
+    const filter=[{kinds:[33301],authors:[parsed.linkSigner],'#d':[''],limit:100}];
     const relays=[...new Set([...(parsed&&parsed.bootstrapRelays||[]),...CORD_RELAYS])];
-    const [pool,external]=await Promise.all([p.relayQuery?p.relayQuery(filter,6000):[],p.relayQueryFrom(relays,filter,{timeout:7000,max:8})]);
+    const [pool,external]=await Promise.all([p.relayQuery?p.relayQuery(filter,8000):[],p.relayQueryFrom(relays,filter,{timeout:10000,max:200})]);
     /* A link signer may issue many bundles with the same replaceable d-tag. The invite fragment opens
        exactly one of them, which is not necessarily the newest. Try every relay result instead of
        handing openInvite the set (whose legacy implementation picked index zero). */
@@ -113,19 +115,33 @@
       const seed=reader.inspectControl(bundle,[]), relays=[...new Set([...(bundle.relays||[]),...CORD_RELAYS])].slice(0,8);
       const controlWraps=await p.relayQueryFrom(relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8});
       const info=reader.inspectControl(bundle,controlWraps||[]);
+      roomControls.set(loadKey,controlWraps||[]);
       room.name=info.name||room.name; room.description=info.description||room.description;
       const icon=info.icon; if(icon)room.icon=typeof icon==='string'?icon:(icon.url||room.icon);
       room.channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys}));
       if(!room.channels.length)throw new Error('the control stream returned no readable channels');
-      room.cord.hydrated=true; rooms[index]=room; save(rooms);
+      rooms[index]=room; save(rooms);
       for(const channel of room.channels){
         const wraps=await p.relayQueryFrom(relays,[{kinds:[1059],authors:channel.streamPubkeys,limit:1000}],{timeout:10000,max:8});
         const opened=await reader.inspectChat(bundle,controlWraps||[],channel.id,wraps||[]);
         const reactions=new Map(opened.reactions||[]),msgs=(opened.messages||[]).map(m=>{ const pr=p.profOf?p.profOf(m.pubkey):{}; const rs={}; for(const [emoji,people] of reactions.get(m.id)||[])rs[emoji]=people; return {id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:m.text,at:m.at,reactions:rs,remote:true}; });
         saveTestMessages(channelStoreId(room,channel.name),msgs);
       }
+      room.cord.hydrated=true; rooms[index]=room; save(rooms);
       render();
+      scrollChatBottom();
     })().finally(()=>roomLoads.delete(loadKey)); roomLoads.set(loadKey,job); return job;
+  }
+  async function publishCordMessage(p,room,channelName,text){
+    const viewer=p.viewer?p.viewer():{},reader=window.PosterCordReader,bundle=room&&room.cord&&room.cord.bundle;
+    if(!viewer.pubkey||!reader||!reader.createChatWrap||!bundle)throw new Error('CORD publishing is unavailable');
+    const channel=(room.channels||[]).find(c=>c.name===channelName); if(!channel||!channel.id)throw new Error('channel key is unavailable');
+    const loadKey=room.communityId||room.naddr,relays=[...new Set([...(bundle.relays||[]),...CORD_RELAYS])].slice(0,8);
+    let controlWraps=roomControls.get(loadKey);
+    if(!controlWraps){ const seed=reader.inspectControl(bundle,[]); controlWraps=await p.relayQueryFrom(relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8}); roomControls.set(loadKey,controlWraps||[]); }
+    const made=await reader.createChatWrap(bundle,controlWraps||[],channel.id,text,viewer.pubkey,p.signTemplate);
+    const accepted=await p.relayPublishTo(relays,made.wrap); if(!accepted)throw new Error('community relays rejected the message');
+    return made;
   }
   async function mintPublicRoom(p,name,icon){
     const viewer=p.viewer?p.viewer():{}; if(!viewer.pubkey||!window.PosterCord)throw new Error('sign in before creating a relay community');
@@ -194,15 +210,15 @@
     const call=$('#cc-call'); if(call)call.onclick=()=>{ const room=saved()[state.community], peers=[...new Set(activeMessages(room).map(m=>m.pubkey).filter(pk=>pk&&pk!==(p.viewer&&p.viewer().pubkey)))]; if(!peers.length){ p.toast('No other community members are available to call yet'); return; } p.startGroupCall(peers,false); };
     const cancel=$('#cc-join-cancel'); if(cancel) cancel.onclick=()=>$('#cc-join').classList.add('hidden');
     const go=$('#cc-join-go'); if(go) go.onclick=async()=>{ const raw=String($('#cc-invite-url').value||'').trim(),v=inviteParts(raw); if(!v){ p.toast('that is not a Concord invite link'); return; } go.disabled=true; try{ p.toast('fetching and decrypting community…'); const room=await hydrateInvite(p,raw),a=saved(),i=a.findIndex(x=>x.naddr===v.naddr); if(i<0)a.push(room);else a[i]={...a[i],...room}; save(a); state.community=i<0?a.length-1:i; state.channel='general'; render(); p.toast('community joined'); }catch(e){ go.disabled=false; p.toast('could not join: '+(e&&e.message||e)); } };
-    $$('[data-cc-server]').forEach(b=>b.onclick=async()=>{ const i=+b.dataset.ccServer,a=saved(),room=a[i]; state.community=i; state.channel='general'; render(); try{ let loaded=room; if(room&&room.url&&!room.cord){ p.toast('decrypting saved community…'); loaded={...room,...await hydrateInvite(p,room.url)}; a[i]=loaded; save(a); render(); } if(loaded&&loaded.cord&&!loaded.cord.hydrated){ p.toast('loading room channels and history…'); await hydrateRoomStreams(p,i); p.toast('community loaded'); } }catch(e){ p.toast('could not load community: '+(e&&e.message||e)); } });
-    $$('[data-cc-discover]').forEach(b=>b.onclick=()=>{ const v=discovered[+b.dataset.ccDiscover]; if(!v)return; const a=saved(); if(!a.some(x=>x.naddr===v.naddr))a.push(v); save(a); state.community=a.findIndex(x=>x.naddr===v.naddr); state.channel='general'; render(); p.toast('public invite saved — fetching encrypted community'); });
-    $$('[data-cc-channel]').forEach(b=>b.onclick=()=>{ state.channel=b.dataset.ccChannel; render(); });
+    $$('[data-cc-server]').forEach(b=>b.onclick=async()=>{ const i=+b.dataset.ccServer,a=saved(),room=a[i]; state.community=i; state.channel='general'; render(); scrollChatBottom(); try{ let loaded=room; if(room&&room.url&&(!room.cord||room.cord.armadaList)){ p.toast('decrypting saved community…'); loaded={...room,...await hydrateInvite(p,room.url)}; a[i]=loaded; save(a); render(); } if(loaded&&loaded.cord){ p.toast('refreshing room channels and history…'); await hydrateRoomStreams(p,i); p.toast('community loaded'); } }catch(e){ if(loaded&&loaded.cord)loaded.cord.hydrated=false; save(a); p.toast('could not load community: '+(e&&e.message||e)); } });
+    $$('[data-cc-discover]').forEach(b=>b.onclick=async()=>{ const v=discovered[+b.dataset.ccDiscover]; if(!v)return; const a=saved(); let i=a.findIndex(x=>x.naddr===v.naddr); if(i<0){a.push(v);i=a.length-1;} save(a); state.community=i; state.channel='general'; render(); p.toast('fetching and decrypting community…'); try{ a[i]={...a[i],...await hydrateInvite(p,v.url)}; save(a); await hydrateRoomStreams(p,i); p.toast('community joined'); }catch(e){ p.toast('could not load community: '+(e&&e.message||e)); } });
+    $$('[data-cc-channel]').forEach(b=>b.onclick=()=>{ state.channel=b.dataset.ccChannel; render(); scrollChatBottom(); });
     const bc=$('#cc-back-communities'); if(bc)bc.onclick=()=>{ state.community=null; state.channel=null; render(); };
     const bh=$('#cc-back-channels'); if(bh)bh.onclick=()=>{ document.querySelector('.cc-app').classList.remove('show-chat'); };
     $$('[data-cc-channel]').forEach(b=>b.addEventListener('click',()=>{ const a=document.querySelector('.cc-app'); if(a)a.classList.add('show-chat'); }));
     const send=$('#cc-send'); if(send&&input){
-      send.onclick=()=>{ const text=String(input.value||'').trim(); const a=saved(), room=a[state.community],storeId=channelStoreId(room,state.channel); if(!text)return; if(!room||(!room.local&&!room.cord)){ p.toast('relay messaging becomes available after the invite is decrypted'); return; } const m=testMessages(storeId), viewer=p.viewer?p.viewer():{}, at=Date.now(); m.push({id:(crypto.randomUUID?crypto.randomUUID():`${at}-${Math.random().toString(36).slice(2)}`),by:me,pubkey:viewer.pubkey||'',text,at,reply:replyTarget?{id:messageId(replyTarget),by:replyTarget.by,text:replyTarget.text}:null,reactions:{}}); replyTarget=null; saveTestMessages(storeId,m); render(); };
-      input.onkeydown=e=>{ if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){ e.preventDefault(); send.click(); } };
+      send.onclick=async()=>{ const text=String(input.value||'').trim(); const a=saved(), room=a[state.community],storeId=channelStoreId(room,state.channel); if(!text)return; if(!room||(!room.local&&!room.cord)){ p.toast('relay messaging becomes available after the invite is decrypted'); return; } send.disabled=true; try{ const viewer=p.viewer?p.viewer():{}, made=room.local?null:await publishCordMessage(p,room,state.channel,text),at=made?made.ms:Date.now(),m=testMessages(storeId); m.push({id:made?made.rumorId:(crypto.randomUUID?crypto.randomUUID():`${at}-${Math.random().toString(36).slice(2)}`),by:me,pubkey:viewer.pubkey||'',text,at,reply:replyTarget?{id:messageId(replyTarget),by:replyTarget.by,text:replyTarget.text}:null,reactions:{},remote:!!made}); input.value=''; replyTarget=null; saveTestMessages(storeId,m); render(); scrollChatBottom(); }catch(e){ p.toast('message was not sent: '+(e&&e.message||e)); }finally{ send.disabled=false; } };
+      input.onkeydown=e=>{ if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){ e.preventDefault(); return send.click(); } };
     }
     const replyCancel=$('#cc-reply-cancel'); if(replyCancel)replyCancel.onclick=()=>{ replyTarget=null; render(); };
     $$('[data-cc-reply]').forEach(b=>b.onclick=()=>{ const room=saved()[state.community],m=activeMessages(room),found=m.find(x=>messageId(x)===b.dataset.ccReply); if(!found)return; replyTarget=found; render(); const box=$('#cc-input'); if(box)box.focus(); });

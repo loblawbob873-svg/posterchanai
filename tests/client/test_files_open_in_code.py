@@ -53,11 +53,13 @@ class FilesOpenInCode(unittest.TestCase):
 
     # ---- the way in -------------------------------------------------------------------------
     def test_there_is_one_open_door_and_it_is_bound(self):
-        """ONE control per file. Two small icon buttons crowded a card that is meant to be an icon
-        and a name, and forced the choice before you had said "open" at all. A file manager asks
-        AFTER: you open a thing, and if more than one program handles it, it asks which."""
-        self.assertIn('class="openbtn"', self.app, "no way to open a Files document")
-        self.assertIn("$$('.openbtn',grid)", self.app, "the button is drawn but nothing binds it")
+        """ONE door per file, and it is the FILE. Two small icon buttons crowded a card that is
+        meant to be an icon and a name, and forced the choice before you had said "open" at all;
+        collapsing them to one still left a control that means "open" beside a name that already
+        means it. A file manager asks AFTER: you open a thing, and if more than one program handles
+        it, it asks which. See ClickingTheFileIsHowYouOpenIt for the whole contract."""
+        self.assertIn("$$('.file-card[data-sha] > a', grid)", self.app,
+                      "nothing binds the card's link, so no way to open a Files document")
         self.assertIn("_openWithSheet", self.app)
 
     def _code_ext(self):
@@ -105,12 +107,12 @@ class FilesOpenInCode(unittest.TestCase):
         rx = re.compile(m.group(1)[1:-2], re.I)
         self.assertIsNotNone(rx.search("statement.pdf"), "a PDF still offers no way to open it")
 
-    def test_the_openers_are_styled_like_the_other_actions(self):
-        """With no rule they fall back to the browser's default <button>: a grey chunky control in a
-        dark theme beside three flat icon buttons — easy to miss, and it reads as debris."""
+    def test_no_stylesheet_rule_outlives_the_buttons(self):
+        """The Open buttons are gone (they became the card's own click). A rule for a class nothing
+        draws is the debris that makes the next person believe the control still exists."""
         css = _read(os.path.join(ROOT, "static", "css", "client.css"))
-        self.assertIn(".fc-acts .openbtn", css)
-        self.assertIn(".fc-acts .opensync", css)
+        for cls_ in (".openbtn", ".opensync", ".openhost"):
+            self.assertNotIn(cls_, css, f"{cls_} is styled but never drawn")
 
     def test_a_spreadsheet_belongs_to_office_not_to_code(self):
         self.assertIsNone(self._code_ext().search("sheet.csv"),
@@ -397,8 +399,11 @@ class SyncedFoldersOpenInCodeToo(unittest.TestCase):
         cls.app = _read(APP)
 
     def test_a_synced_file_can_be_opened(self):
-        self.assertIn('class="opensync"', self.app, "no way to open a synced file")
-        self.assertIn("$$('.opensync', grid)", self.app, "the button is drawn but not bound")
+        """Clicking the row is the door here too \u2014 there is no button. The row already had a click
+        (it downloaded), so the sheet has to keep Download on it; that is asserted next door in
+        ClickingTheFileIsHowYouOpenIt."""
+        self.assertIn("$$('.file-card:not(.isdir)', grid)", self.app,
+                      "nothing binds a synced row, so no way to open a synced file")
         self.assertIn("openSyncCodeFile", self.app)
         self.assertIn("openSyncOfficeFile", self.app)
 

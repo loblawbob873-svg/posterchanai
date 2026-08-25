@@ -77,7 +77,7 @@ def test_concord_has_honest_creation_and_public_discovery_empty_states():
 def test_concord_ctrl_or_cmd_enter_sends_without_breaking_plain_enter():
     assert 'bind(me);' in CONCORD and 'function bind(me)' in CONCORD
     assert "e.key==='Enter'&&(e.ctrlKey||e.metaKey)" in CONCORD
-    assert 'e.preventDefault(); send.click()' in CONCORD
+    assert 'e.preventDefault(); return send.click()' in CONCORD
     assert "e.key==='Enter'&&!e.shiftKey" not in CONCORD
 
 
@@ -118,11 +118,17 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert 'await hydrateInvite(p,raw)' in CONCORD
     assert 'decrypting saved community' in CONCORD
     assert 'kinds:[33301]' in CONCORD
+    assert "'#d':[''],limit:100" in CONCORD and 'max:200' in CONCORD
     assert 'for(const ev of candidates)' in CONCORD
     assert "opened=decoded(url,[ev])" in CONCORD
     assert 'kinds:[13302,33302]' in CONCORD and 'syncArmadaMemberships(p,viewer)' in CONCORD
     assert 'window.PosterCordReader' in CONCORD and 'hydrateRoomStreams(p,i)' in CONCORD
     assert 'kinds:[1059]' in CONCORD and 'reader.inspectChat' in CONCORD
+    assert 'reader.createChatWrap' in CONCORD and 'await p.relayPublishTo(relays,made.wrap)' in CONCORD
+    assert 'scrollChatBottom()' in CONCORD
+    assert "if(file&&input)file.onchange=async()=>" in CONCORD
+    assert 'room.cord.hydrated=true' in CONCORD
+    assert "if(loaded&&loaded.cord)" in CONCORD
     assert 'await p.nip44dec(viewer.pubkey,event.content)' in CONCORD
     assert 'cc-public-copy' in CONCORD and '.cc-public-copy' in CONCORD_CSS
     assert 'function isUnread(room)' in CONCORD

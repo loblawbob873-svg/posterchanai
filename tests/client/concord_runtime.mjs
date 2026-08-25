@@ -32,13 +32,18 @@ window.__PC = {
   copyValue:value=>{ calls.copied=value; },
   osNotify:(title,body,opts)=>{ calls.mentions.push({title,body,opts}); },
   relaySubscribe:()=>({close(){}}),
+  relayQueryFrom:async()=>[],
   relayUrls:()=>['wss://relay.example'], signTemplate:async template=>template,
   relayPublish:async()=>({ok:true}), relayPublishTo:async()=>1,
   publish:async()=>({}),
   profOf:()=>({}), LOGO:'', linkify:s=>String(s), linkCardHtml:()=>'', hydrateLinkCards:()=>{},
 };
 globalThis.location={origin:'https://poster.place'};
-window.PosterCord={createCommunity:async()=>({communityId:'c'.repeat(64),generalChannelId:'d'.repeat(64),events:[{}],url:'https://poster.place/invite/naddr1qqqq#abc_DEF',secrets:{}})};
+window.PosterCord={createCommunity:async()=>({communityId:'c'.repeat(64),generalChannelId:'d'.repeat(64),events:[{}],url:'https://poster.place/invite/naddr1qqqq#abc_DEF',secrets:{},bundle:{relays:['wss://relay.example']}})};
+window.PosterCordReader={
+  inspectControl:()=>({controlPubkeys:[],channels:[]}),
+  createChatWrap:async()=>({rumorId:'f'.repeat(64),wrap:{kind:1059},ms:1234}),
+};
 globalThis.document = {
   body:{classList}, head:{appendChild(){}}, documentElement:{appendChild(){}},
   createElement:()=>({dataset:{}}),
@@ -96,7 +101,7 @@ input.value='hello concord';
 let prevented=false;
 input.onkeydown({key:'Enter',ctrlKey:false,metaKey:false,preventDefault(){prevented=true;}});
 if(prevented || data.has('pc.concord.test.'+rooms[0].naddr)) throw new Error('plain Enter sent a message');
-input.onkeydown({key:'Enter',ctrlKey:true,metaKey:false,preventDefault(){prevented=true;}});
+await input.onkeydown({key:'Enter',ctrlKey:true,metaKey:false,preventDefault(){prevented=true;}});
 const messages=JSON.parse(data.get('pc.concord.test.'+rooms[0].naddr));
 if(!prevented || messages.length!==1 || messages[0].text!=='hello concord' || messages[0].by!=='Test User')
   throw new Error('Ctrl+Enter send flow failed');
