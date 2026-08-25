@@ -78,7 +78,8 @@ class Shell(unittest.TestCase):
         rows = self.run_js("""out.r = S.taskbarRows([
             {id:1, app:'posterchan-desktop', title:'PosterChan'},
             {id:2, app:'posterchan', title:'PosterChan'},
-            {id:3, app:'firefox', title:'Gentoo Wiki'}]);""")["r"]
+            {id:3, app:'firefox', title:'Gentoo Wiki'},
+            {id:4, app:'PosterChan', title:'PosterChan · Nostr'}]);""")["r"]
         self.assertEqual([r["app"] for r in rows], ["firefox"])
 
     def test_a_window_with_no_title_yet_is_not_shown(self):

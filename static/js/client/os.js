@@ -2235,7 +2235,7 @@
           list = Array.isArray(snap && snap.windows) ? snap.windows : [];
           allIds = new Set(Array.isArray(snap && snap.allIds) ? snap.allIds.map(Number) : []);
         }else list = await pcWM.windows();
-        _natShell = list.find(x => /^posterchan(-desktop)?$/.test(String(x.app || ''))) || null;
+        _natShell = list.find(x => /^posterchan(-desktop)?$/i.test(String(x.app || ''))) || null;
         _natShellAt = now;
         /* A native window the compositor no longer has is one the app closed by itself — from its
          * own File menu, or by crashing. Our frame has to go with it, or the desktop keeps a window
@@ -5921,7 +5921,7 @@
       const wm = window.pcWM;
       if(!wm || typeof wm.windows !== 'function' || typeof wm.focus !== 'function') return false;
       const list = await wm.windows();
-      const me = (list || []).find(w => /^posterchan(-desktop)?$/.test(String((w && w.app) || '')));
+      const me = (list || []).find(w => /^posterchan(-desktop)?$/i.test(String((w && w.app) || '')));
       if(!me || me.id == null) return false;
       await wm.focus(Number(me.id));
       return true;
@@ -6281,7 +6281,7 @@
               /* The tick arrives even while Firefox/a VM owns compositor focus. The Task Manager
                * is DOM inside the shell, so bring that shell surface forward after drawing it. */
               Promise.resolve(pcWM.windows()).then(list=>{
-                const sh=(list||[]).find(x=>/^posterchan(-desktop)?$/.test(String(x.app||'')));
+                const sh=(list||[]).find(x=>/^posterchan(-desktop)?$/i.test(String(x.app||'')));
                 if(sh) return pcWM.focus(sh.id);
               }).catch(()=>{});
             }

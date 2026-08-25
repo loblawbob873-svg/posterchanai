@@ -176,7 +176,11 @@
     const rows = [];
     for(const w of (windows || [])){
       const app = String(w.app || '');
-      if(!app || /^posterchan(-desktop)?$/.test(app)) continue;
+      // Electron 44 changed Wayland's app_id from `posterchan-desktop` to `PosterChan`. This is
+      // still our compositor surface, never a hosted native app. Treating it as a task creates a
+      // recursive black "PosterChan · Nostr" window inside the desktop and closing it can remove
+      // the only visible surface.
+      if(!app || /^posterchan(-desktop)?$/i.test(app)) continue;
       const title = String(w.title || '').trim();
       if(!title) continue;
       const low=app.toLowerCase();

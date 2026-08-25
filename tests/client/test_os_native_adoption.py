@@ -6,6 +6,11 @@ ROOT = Path(__file__).resolve().parents[2]
 OS = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
 
 
+def test_every_shell_lookup_accepts_electron_44_wayland_app_id_case():
+    """Otherwise the shell adopts itself as a recursive black native window."""
+    assert OS.count("/^posterchan(-desktop)?$/i") == 3
+
+
 def test_late_xwayland_metadata_gets_a_reconciliation_pass():
     """Firefox may have no class/title in window::new; a later event must still frame it."""
     event = OS[OS.index("if(ev.name === 'window')") : OS.index("if(ev.name !== 'tick')")]
