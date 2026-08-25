@@ -328,7 +328,13 @@ async function cacheFirstMedia(req){
   // Origin:* → a real 200 we CAN cache. Fall back to the normal (opaque) fetch when the host sends no CORS,
   // so it still displays (just uncached). credentials:'omit' — never send our cookies to third-party hosts.
   try {
-    if (req.destination === 'image' && new URL(req.url).origin !== self.location.origin) {
+    /* A custom-scheme desktop origin (`app://posterchan`) cannot receive a CORS-readable response
+     * from ordinary https media even when that host allows web origins. Chromium logs every failed
+     * probe as an error before our no-cors fallback succeeds, flooding the shell log and obscuring
+     * real attachment failures. Only make the cacheable CORS probe from an HTTP(S) worker; bundled
+     * apps go directly to the display-safe opaque request below. */
+    const webOrigin = /^https?:$/.test(self.location.protocol);
+    if (webOrigin && req.destination === 'image' && new URL(req.url).origin !== self.location.origin) {
       const c = await fetch(req.url, { mode: 'cors', credentials: 'omit' });
       if (c && c.status === 200) res = c;
     }
