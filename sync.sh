@@ -51,6 +51,16 @@ if [ -z "$SKIP_LINT" ] && [ -x venv-unified/bin/python ]; then
     echo "[sync] bot entrypoint OK (starts and parses arguments)"
 fi
 
+# Desktop CI publishes an immutable desktop-v<version> release after the source commit lands.  That
+# necessarily happens AFTER the deploy which triggered it, so the committed Gentoo ebuild cannot
+# already know that run number.  Reconcile against completed releases before every later deploy;
+# otherwise the overlay publisher below is never entered (no os/ diff) and installed PosterChanOS
+# machines remain pinned to an arbitrarily old desktop indefinitely.
+if [ -x .venv/bin/python ] && ! .venv/bin/python scripts/bump_desktop_overlay.py --check >/tmp/pc-overlay-check.log 2>&1; then
+    echo "[sync] completed desktop release is newer — updating the Gentoo package"
+    .venv/bin/python scripts/bump_desktop_overlay.py
+fi
+
 # What are THIS node's services actually running? That -- not "HEAD before the commit below" -- is the
 # base the restart set has to be computed from, and the two are only the same when sync.sh created the
 # commit itself.
