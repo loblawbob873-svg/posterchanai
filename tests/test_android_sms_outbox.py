@@ -110,8 +110,13 @@ class TheDrainRefusesWhatItMustRefuse(unittest.TestCase):
     def test_a_send_is_marked_even_when_it_failed(self):
         """A text that went out and whose marker did not is a text that goes out AGAIN, and that is
         the one mistake with no undo. A failure is recorded rather than retried blindly."""
-        i = self.src.index("SmsSender.Result r = SmsSender.send")
-        after = self.src[i:i + 400]
+        # SMS and MMS now share the same result/marker path, so `r` is declared before the branch
+        # and assigned by either sender. Keep checking the safety property instead of requiring the
+        # older SMS-only declaration spelling.
+        i = self.src.index("SmsSender.Result r;")
+        after = self.src[i:i + 2200]
+        self.assertIn("r = SmsSender.send", after)
+        self.assertIn("r = MmsSender.send", after)
         self.assertIn("return marker(", after)
         self.assertNotIn("if (r != null && r.ok) return marker", after)
 
