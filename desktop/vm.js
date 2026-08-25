@@ -22,6 +22,23 @@ async function available(){
   const r=await virsh(['version']);
   return {available:r.ok, uri:URI, error:r.ok?'':r.error};
 }
+async function successorInstaller(source){
+  /* PosterChanOS puts dated Live images beside one another. An update may replace
+   * posterchan-live-YYYYMMDD.iso while an existing libvirt definition still names yesterday's
+   * file. Repair only this unambiguous first-party sequence: never guess that an unrelated Ubuntu,
+   * Windows, or rescue ISO is the replacement for somebody's chosen installer. */
+  const old=path.basename(String(source||''));
+  if(!/^posterchan-live-\d{8}(?:-[A-Za-z0-9._-]+)?\.iso$/i.test(old))return '';
+  const dir=path.dirname(String(source||''));
+  let names;try{names=await fs.promises.readdir(dir);}catch(_){return '';}
+  const candidates=names.filter(n=>/^posterchan-live-\d{8}(?:-[A-Za-z0-9._-]+)?\.iso$/i.test(n)&&n>old)
+    .sort().reverse();
+  for(const name of candidates){
+    const file=path.join(dir,name);
+    try{if((await fs.promises.stat(file)).isFile())return file;}catch(_){}
+  }
+  return '';
+}
 async function list(){
   const a=await available(); if(!a.available) return Object.assign(a,{machines:[]});
   const r=await virsh(['list','--all','--name']);
@@ -44,8 +61,16 @@ async function action(name, what){
   const map={start:['start'],shutdown:['shutdown'],reboot:['reboot'],stop:['destroy']};
   if(!map[what]) return {ok:false,error:'unknown action'};
   if(what==='start'){
-    const d=await details(name);if(!d.ok)return d;
-    const missing=d.disks.find(x=>x.source&&x.source!=='-'&&!fs.existsSync(x.source));
+    let d=await details(name);if(!d.ok)return d;
+    let missing=d.disks.find(x=>x.source&&x.source!=='-'&&!fs.existsSync(x.source));
+    if(missing&&missing.device==='cdrom'){
+      const next=await successorInstaller(missing.source);
+      if(next){
+        const changed=await changeIso(d.name,next);if(!changed.ok)return changed;
+        d=await details(name);if(!d.ok)return d;
+        missing=d.disks.find(x=>x.source&&x.source!=='-'&&!fs.existsSync(x.source));
+      }
+    }
     if(missing)return {ok:false,error:'Attached media is missing: '+missing.source+'. Replace or eject it in VM Settings.'};
   }
   return virsh(map[what].concat(name),30000);
@@ -250,4 +275,4 @@ async function view(name){
   }
   const p=spawn(bin,args,{detached:true,stdio:'ignore'}); p.unref(); return {ok:true};
 }
-module.exports={available,list,details,update,addDisk,changeIso,ejectIso,bootDisk,addNetwork,gamingMouse,create,action,remove,view,cleanName};
+module.exports={available,list,details,update,addDisk,changeIso,ejectIso,bootDisk,addNetwork,gamingMouse,create,action,remove,view,cleanName,successorInstaller};

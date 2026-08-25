@@ -115,6 +115,23 @@ class VmBackend(unittest.TestCase):
         self.assertIn("missingMedia", backend)
         self.assertIn("Installer media moved or is missing", ui)
 
+    def test_start_recovers_only_a_newer_posterchan_live_iso(self):
+        js = r"""
+const fs=require('fs'),os=require('os'),path=require('path'),v=require('./desktop/vm');
+(async()=>{const d=fs.mkdtempSync(path.join(os.tmpdir(),'pc-vm-'));
+  fs.writeFileSync(path.join(d,'posterchan-live-20260825.iso'),'new');
+  fs.writeFileSync(path.join(d,'ubuntu.iso'),'other');
+  const pc=await v.successorInstaller(path.join(d,'posterchan-live-20260821.iso'));
+  const arbitrary=await v.successorInstaller(path.join(d,'missing-windows.iso'));
+  console.log(JSON.stringify([path.basename(pc),arbitrary]));
+  fs.rmSync(d,{recursive:true,force:true});})();
+"""
+        self.assertEqual(json.loads(self.node(js)), ["posterchan-live-20260825.iso", ""])
+        backend = (ROOT / "desktop" / "vm.js").read_text()
+        start = backend[backend.index("async function action("):backend.index("async function details(")]
+        self.assertIn("successorInstaller(missing.source)", start)
+        self.assertIn("await changeIso(d.name,next)", start)
+
     def test_boot_drive_can_be_selected_and_eject_makes_disk_first(self):
         backend = (ROOT / "desktop" / "vm.js").read_text()
         ui = (ROOT / "static" / "js" / "client" / "os.js").read_text()
