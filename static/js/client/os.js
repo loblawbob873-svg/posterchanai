@@ -1005,6 +1005,7 @@
     for(const [key,selector] of [['ai-msgs','#ai-msgs'],['dm-msgs','#dm-msgs'],['cc-messages','.cc-messages']]){
       const el=realFeed.querySelector(selector); if(!el)continue;
       w.innerChatScroll[key]={top:el.scrollTop,bottom:el.scrollHeight-el.scrollTop-el.clientHeight<80};
+      el.dataset.osParking='1';
     }
     w.feedClass = realFeed.className;      // .feed-ai/.feed-chat etc. decide how it scrolls
     /* …and WHICH VIEW the client believes it is showing, so refocusing can hand that back.
@@ -1025,6 +1026,17 @@
     slot.innerHTML = '';
     while(realFeed.firstChild) slot.appendChild(realFeed.firstChild);
     slot.scrollTop = w.scrollTop;
+    /* Reparenting a scroll box can reset its offset even though its DOM and listeners survive.
+       Restore it in the parked slot as well as on focus, and keep Concord's scroll listener from
+       treating that synthetic reset as a user decision. */
+    const parkInner=()=>{
+      for(const [key,pos] of Object.entries(w.innerChatScroll||{})){
+        const el=slot.querySelector(key==='cc-messages'?'.cc-messages':'#'+key); if(!el)continue;
+        el.scrollTop=pos.bottom?el.scrollHeight:Number(pos.top)||0;
+        setTimeout(()=>{ if(el.dataset)delete el.dataset.osParking; },80);
+      }
+    };
+    parkInner(); requestAnimationFrame(parkInner);
     w.parked = true;
   }
 

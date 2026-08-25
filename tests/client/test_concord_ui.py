@@ -41,7 +41,7 @@ def test_concord_is_precached_and_old_bundles_self_heal_the_nav():
 def test_concord_owns_a_versioned_stylesheet_so_stale_shell_css_cannot_unstyle_it():
     assert 'static/css/concord.css' in HTML
     assert "data-concord-css" in CONCORD
-    assert "concord.css?v=11" in CONCORD
+    assert "concord.css?v=12" in CONCORD
     assert '.cc-compose textarea:focus' in CONCORD_CSS
     assert 'box-shadow:none!important' in CONCORD_CSS
     assert "'/static/css/concord.css'" in (ROOT / "static/js/client/sw.js").read_text()
@@ -98,6 +98,8 @@ def test_chat_scroll_is_keyed_by_room_and_survives_profile_link_navigation():
     assert "w.innerChatScroll={}" in os_js
     assert "['cc-messages','.cc-messages']" in os_js
     assert "el.scrollTop=pos.bottom?el.scrollHeight" in os_js
+    assert "el.dataset.osParking='1'" in os_js
+    assert 'scroller.dataset.osParking' in CONCORD
 
 
 def test_concord_ctrl_or_cmd_enter_sends_without_breaking_plain_enter():
@@ -148,6 +150,9 @@ def test_public_community_cards_resolve_cord_icons():
 def test_concord_standard_controls_are_wired_not_decorative():
     assert 'id="cc-attach"' in CONCORD and 'file.onchange=async' in CONCORD
     assert 'p.uploadBlob' in CONCORD
+    assert 'p.blossomPicker(null,insertBlossomAttachment' in CONCORD
+    assert '🌸 Blossom folders' in CONCORD
+    assert 'pendingAttachments.set(url,tag)' in CONCORD
     assert 'id="cc-emoji"' in CONCORD and 'p.openEmojiPopover' in CONCORD
     assert 'id="cc-members"' in CONCORD and "members.onclick" in CONCORD
     assert 'id="cc-notify"' in CONCORD and 'p.askOsNotify' in CONCORD
