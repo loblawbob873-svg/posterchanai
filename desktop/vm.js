@@ -30,8 +30,12 @@ async function list(){
   for(const name of names){
     const i=await virsh(['dominfo',name]);
     const get=k => ((i.out.match(new RegExp('^'+k+':\\s*(.*)$','mi'))||[])[1]||'').trim();
+    const blocks=await virsh(['domblklist',name,'--details']);
+    const missingMedia=blocks.ok?blocks.out.split(/\r?\n/).slice(2).map(x=>x.trim().split(/\s+/))
+      .filter(x=>x.length>=4&&x[1]==='cdrom').map(x=>x.slice(3).join(' '))
+      .filter(source=>source&&source!=='-'&&!fs.existsSync(source)):[];
     machines.push({name,state:get('State').toLowerCase(),memoryKiB:Number((get('Max memory').match(/\d+/)||[0])[0]),
-      cpus:Number(get('CPU\\(s\\)'))||0,autostart:/enable/i.test(get('Autostart'))});
+      cpus:Number(get('CPU\\(s\\)'))||0,autostart:/enable/i.test(get('Autostart')),missingMedia});
   }
   return {available:true,uri:URI,machines};
 }
@@ -39,6 +43,11 @@ async function action(name, what){
   name=cleanName(name); if(!name) return {ok:false,error:'invalid VM name'};
   const map={start:['start'],shutdown:['shutdown'],reboot:['reboot'],stop:['destroy']};
   if(!map[what]) return {ok:false,error:'unknown action'};
+  if(what==='start'){
+    const d=await details(name);if(!d.ok)return d;
+    const missing=d.disks.find(x=>x.source&&x.source!=='-'&&!fs.existsSync(x.source));
+    if(missing)return {ok:false,error:'Attached media is missing: '+missing.source+'. Replace or eject it in VM Settings.'};
+  }
   return virsh(map[what].concat(name),30000);
 }
 async function details(name){
@@ -105,7 +114,10 @@ async function changeIso(name, iso){
   const d=await details(name);if(!d.ok)return d; iso=path.resolve(String(iso||''));
   try{if(!(await fs.promises.stat(iso)).isFile())throw Error();}catch(_){return {ok:false,error:'ISO file was not found'};}
   const cd=d.disks.find(x=>x.device==='cdrom'); if(!cd)return {ok:false,error:'This VM has no CD/DVD device'};
-  return virsh(['change-media',d.name,cd.target,iso,'--insert','--config'],30000);
+  /* --insert only works for an empty tray. A configured source (even a moved/missing file) must
+   * be replaced with --update or libvirt leaves the VM permanently unable to start. */
+  const mode=cd.source&&cd.source!=='-'?'--update':'--insert';
+  return virsh(['change-media',d.name,cd.target,iso,mode,'--config'],30000);
 }
 async function ejectIso(name){
   const d=await details(name);if(!d.ok)return d;

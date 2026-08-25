@@ -107,6 +107,14 @@ class VmBackend(unittest.TestCase):
         self.assertIn("pc:vm:eject-iso", main)
         self.assertIn('data-vme-eject>Eject installer', ui)
 
+    def test_an_attached_iso_can_be_replaced_after_its_old_path_moved(self):
+        backend = (ROOT / "desktop" / "vm.js").read_text()
+        ui = (ROOT / "static" / "js" / "client" / "os.js").read_text()
+        self.assertIn("?'--update':'--insert'", backend)
+        self.assertIn("Attached media is missing:", backend)
+        self.assertIn("missingMedia", backend)
+        self.assertIn("Installer media moved or is missing", ui)
+
     def test_boot_drive_can_be_selected_and_eject_makes_disk_first(self):
         backend = (ROOT / "desktop" / "vm.js").read_text()
         ui = (ROOT / "static" / "js" / "client" / "os.js").read_text()
