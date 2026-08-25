@@ -53,9 +53,13 @@ function same(got, want, label) {
 }
 // No PCPreview global exists: this exercises the fresh-session regression.
 same(context.route({ name:'manual.pdf', mime:'application/pdf', url:'https://b/x' }),
-     ['preview', 'office'], 'cold-start PDF');
+     ['preview', 'office', 'code'], 'cold-start PDF');
 same(context.route({ name:'server.conf', mime:'application/octet-stream', url:'https://b/x' }),
      ['code'], '.conf by indexed name');
 same(context.route({ name:'', mime:'application/octet-stream', url:'https://b/f/nginx%2Econf' }),
      ['code'], '.conf by encoded Blossom URL');
+same(context.route({ name:'firmware.bin', mime:'application/octet-stream', url:'https://b/x' }),
+     ['code'], 'unknown binary can still be inspected');
+same(context.route({ name:'README', mime:'application/octet-stream', url:'https://b/x' }),
+     ['code'], 'extensionless project file can still be inspected');
 console.log('open-with selector holds');

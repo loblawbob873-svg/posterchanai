@@ -131,6 +131,17 @@ def test_parking_moves_the_nodes_rather_than_copying_them():
         "park is serialising the feed again — a parked window would be a dead copy"
 
 
+def test_every_click_focuses_its_window_before_the_apps_handler_runs():
+    """`.click()`, keyboard activation and accessibility tools can fire click without pointerdown.
+    Capture is load-bearing: a bubbling app handler may render immediately, and while another
+    window owns the shared feed that turns Terminal/Code into Blossom or Concord."""
+    needle = "el.addEventListener('click', () => {"
+    start = OS_JS.index(needle, OS_JS.index("function openApp("))
+    body = OS_JS[start:OS_JS.index("}, true);", start) + len("}, true);")]
+    assert "focusWin(w)" in body
+    assert body.endswith("}, true);"), "the focus fallback must run in capture before app handlers"
+
+
 def test_the_slot_is_the_scroller():
     """_prependLive measures scrollTop/scrollHeight on the element it is handed. If .osw-slot stops
     being the overflow box, the scroll-stability correction silently applies to the wrong element."""

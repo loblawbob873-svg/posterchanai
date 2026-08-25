@@ -129,6 +129,25 @@ def test_nginx_passes_the_prefix_through_instead_of_stripping_it():
         assert "proxy_pass" in block
 
 
+def test_office_can_be_embedded_only_by_our_web_and_packaged_clients():
+    """Collabora knows the public host but not Electron/Capacitor's local origins. Appending another
+    policy cannot loosen CSP—the browser intersects both—so the upstream header must be hidden and
+    replaced with an explicit ancestor list. Never reflect Origin here: that makes WOPI clickjacking
+    protection equivalent to no protection at all."""
+    for rel in ("nginx/posterchanai.conf.example", "docker/proxy/posterchanai.conf"):
+        conf = _read(rel)
+        i = conf.index("location ^~ /office-code/")
+        block = conf[i:conf.index("\n    }", i)]
+        assert "proxy_hide_header Content-Security-Policy" in block
+        policy = block.split('add_header Content-Security-Policy "', 1)[1].split('" always;', 1)[0]
+        ancestors = policy.split("frame-ancestors ", 1)[1]
+        for origin in ("'self'", "app:", "capacitor:", "https://localhost"):
+            assert origin in ancestors, f"{rel} excludes {origin}"
+        assert "$http_origin" not in block
+        assert "frame-ancestors *" not in policy
+        assert "script-src 'self' 'unsafe-eval'" in policy
+
+
 def test_the_service_root_is_joined_exactly_once(tmp_path, monkeypatch):
     """Doubling it produces /office-code/office-code/browser/… — a 404 that looks nothing like its
     cause. Adding it when CODE did not is what keeps this working against an office server that has

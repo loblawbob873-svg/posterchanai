@@ -128,6 +128,13 @@ server {
         # log, since cool.html itself had been served perfectly.
         proxy_pass http://posterchanai_office;
         proxy_set_header X-Forwarded-Prefix /office-code;
+        # CODE derives frame-ancestors from the public web host. That permits an ordinary browser
+        # and rejects the two bundled clients which embed this SAME authenticated WOPI session:
+        # Electron is app://posterchan and Capacitor is https://localhost (older builds use
+        # capacitor://localhost). Two CSP headers are intersected, not overridden, so hide CODE's
+        # generated header before adding the complete constrained replacement.
+        proxy_hide_header Content-Security-Policy;
+        add_header Content-Security-Policy "default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self'; img-src 'self' data: blob: https://www.collaboraoffice.com; font-src 'self'; media-src 'self' blob:; object-src 'self'; connect-src 'self' wss:; frame-src 'self' blob: https://rating.collaboraonline.com; frame-ancestors 'self' app: capacitor: https://localhost" always;
         proxy_read_timeout 36000s;
         proxy_send_timeout 36000s;
     }

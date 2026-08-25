@@ -1492,6 +1492,12 @@
       if(_gesturePress(e)) _natFocusHold = true;
       if(!el.classList.contains('focused')) focusWin(w);
     }, true);
+    /* Keyboard activation, assistive technology and code-driven `.click()` do not emit a
+     * pointerdown.  Focus during CAPTURE so an app handler can never repaint the shared workspace
+     * while some other window still owns it (the Terminal-turns-into-Blossom regression). */
+    el.addEventListener('click', () => {
+      if(!el.classList.contains('focused')) focusWin(w);
+    }, true);
 
     /* Concord is a three-pane workspace. Opening it in the generic reading-column geometry wastes
        the channel/member space and exposes the desktop behind its bottom edge, so it starts in the

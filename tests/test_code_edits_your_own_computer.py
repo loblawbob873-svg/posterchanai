@@ -131,7 +131,7 @@ class TheEditorOpensAndSavesThem(unittest.TestCase):
         """One answer for every source in Files, or the drive and this computer disagree about the
         same filename."""
         self.assertIn("u.openable", self.host)
-        self.assertIn("openable: (name, mime) => _codeable(name, mime)", self.app)
+        self.assertIn("openable: () => true", self.app)
         self.assertNotIn("_CODE_EXT", self.host, "hostfiles.js grew its own opinion")
 
 

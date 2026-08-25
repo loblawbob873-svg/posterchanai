@@ -19373,7 +19373,10 @@
       shareFile: _shareHostFile,
       /* WHAT POSTERCHAN CODE CAN OPEN, answered by the same function the drive and the synced
        * folders use. hostfiles.js must not grow a second opinion about what "a text file" is. */
-      openable: (name, mime) => _codeable(name, mime),
+      /* Code is the safe fallback for every regular file.  Unknown and binary files may not be
+       * pleasant to edit, but hiding the editor entirely made .conf files, PDFs and extensionless
+       * project files impossible to inspect from the machine picker. */
+      openable: () => true,
       openFile: (path, name, openHere) => _openWithSheet(name || path, [{
         id:'code', icon:'&lt;/&gt;', label:'PosterChan Code',
         hint:'Edit it here — saves straight back to this computer',
@@ -19817,10 +19820,10 @@
       out.push({ id:'office', icon:'📝', label:'Office document',
                  hint:'Writer, Calc or Impress — edits and saves back',
                  run:() => (opts.sync ? openSyncOfficeFile(d) : openOfficeFile(d)) });
-    if(_codeable(name, mime))
-      out.push({ id:'code', icon:'&lt;/&gt;', label:'PosterChan Code',
-                 hint:'The text editor, with highlighting',
-                 run:() => (opts.sync ? openSyncCodeFile(d) : openCodeFile(d)) });
+    out.push({ id:'code', icon:'&lt;/&gt;', label:'PosterChan Code',
+               hint:_codeable(name,mime) ? 'The text editor, with highlighting'
+                                         : 'Inspect or edit the raw file',
+               run:() => (opts.sync ? openSyncCodeFile(d) : openCodeFile(d)) });
     return out;
   }
 
