@@ -324,7 +324,7 @@
   function init(){
     const PC = window.__PC;
     if(!PC){ return setTimeout(init, 50); }
-    const { $, enc, toast, authFetch, ensureAiSession, uiPrompt } = PC;
+    const { $, enc, toast, authFetch, ensureAiSession, uiPrompt, uiConfirm } = PC;
     const inView = () => window.__PC.VIEW === 'code';
 
     // ---- server ------------------------------------------------------------------------------
@@ -417,6 +417,13 @@
     }
 
     async function loadGit(){
+      // A native desktop has no implicit workspace. Calling gitStatus("") makes Electron fall back
+      // to its own process cwd, which exposed PosterChan's repository as if the person had opened
+      // it. Source Control, Explorer and the terminal must all belong to the folder they chose.
+      if(window.pcHost&&pcHost.pickDirectory&&!S.hostRoot){
+        S.git=null;S.gitBusy=false;status('Choose a working directory to use Source Control','');
+        paint();return;
+      }
       S.gitBusy = true; paint();
       try{ S.git = S.hostRoot&&window.pcHost&&pcHost.gitStatus
           ? await pcHost.gitStatus(S.hostRoot) : await api('/git/status'); status('Git status refreshed'); }
@@ -670,7 +677,7 @@
     function gitHtml(){
       if(S.gitBusy) return '<div class="pcc-note"><div class="spinner"></div></div>';
       const g=S.git;
-      if(!g) return '<div class="pcc-note">Open Source Control to inspect this repository.</div>';
+      if(!g) return '<div class="pcc-note">Choose a working directory to use Source Control.</div>';
       if(g.error) return '<div class="pcc-note err">' + enc(g.error) + '</div>';
       const files=g.files||[];
       return '<div class="pcc-git-head"><b>' + enc(g.branch||'Git') + '</b><small>' +

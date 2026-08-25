@@ -246,6 +246,18 @@ class TheStateRules(unittest.TestCase):
         for bad in ("window.confirm(", "window.alert(", "window.prompt("):
             self.assertNotIn(bad, self.src)
 
+    def test_discard_uses_the_shared_non_native_confirmation(self):
+        self.assertIn("ensureAiSession, uiPrompt, uiConfirm } = PC", self.src)
+        self.assertIn("if(!await uiConfirm('Discard every change", self.src)
+
+    def test_native_source_control_never_falls_back_to_posterchans_own_repository(self):
+        """With no selected folder Electron's process cwd is the application source tree."""
+        self.assertIn("if(window.pcHost&&pcHost.pickDirectory&&!S.hostRoot)", self.src)
+        self.assertIn("Choose a working directory to use Source Control", self.src)
+        guard = self.src.index("if(window.pcHost&&pcHost.pickDirectory&&!S.hostRoot)")
+        query = self.src.index("pcHost.gitStatus(S.hostRoot)")
+        self.assertLess(guard, query)
+
     def test_it_does_not_reach_for_a_bridge_helper_that_does_not_exist(self):
         """`PC.loadModule` looks like it should be on the bridge and is not — app.js keeps its loader
         private. Reaching for one is the `PC._fmtBytes is not a function` trap."""
