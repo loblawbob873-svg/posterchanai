@@ -15,9 +15,15 @@
   let discovered=[], discoveryStarted=false, discoveryLoaded=false, membershipStarted=false;
   const roomLoads=new Map();
   const roomControls=new Map();
+  const pendingAttachments=new Map();
+  const scrollStates=new Map();
+  let liveTimer=null,liveBusy=false;
   function saved(){ try{ const v=JSON.parse(localStorage.getItem('pc.concord.invites')||'[]'); return Array.isArray(v)?v:[]; }catch(_){ return []; } }
   function save(v){ try{ localStorage.setItem('pc.concord.invites',JSON.stringify(v.slice(0,50))); }catch(_){} }
-  function scrollChatBottom(){ const later=window.requestAnimationFrame||((fn)=>setTimeout(fn,0)); later(()=>{ const box=document.querySelector('.cc-messages'); if(box)box.scrollTop=box.scrollHeight; }); }
+  function scrollKey(){ return `${state.community==null?'home':state.community}:${state.channel||'general'}`; }
+  function scrollChatBottom(){ const key=scrollKey(),st=scrollStates.get(key)||{}; st.pinned=true; scrollStates.set(key,st); const later=window.requestAnimationFrame||((fn)=>setTimeout(fn,0)); later(()=>{ const box=document.querySelector('.cc-messages'); if(box){box.scrollTop=box.scrollHeight;st.top=box.scrollTop;st.height=box.scrollHeight;} }); }
+  function preserveChatScroll(fn){ const key=scrollKey(),old=document.querySelector('.cc-messages'),st=scrollStates.get(key)||{pinned:true},top=old?old.scrollTop:Number(st.top)||0,height=old?old.scrollHeight:Number(st.height)||0; fn(); const later=window.requestAnimationFrame||((f)=>setTimeout(f,0)); later(()=>{ const box=document.querySelector('.cc-messages'); if(box){box.scrollTop=st.pinned!==false?box.scrollHeight:top+(box.scrollHeight-height);st.top=box.scrollTop;st.height=box.scrollHeight;scrollStates.set(key,st);} }); }
+  function restoreChatScroll(){ const key=scrollKey(),st=scrollStates.get(key)||{pinned:true},later=window.requestAnimationFrame||((f)=>setTimeout(f,0)); later(()=>{ const box=document.querySelector('.cc-messages'); if(box){box.scrollTop=st.pinned!==false?box.scrollHeight:Number(st.top)||0;st.top=box.scrollTop;st.height=box.scrollHeight;scrollStates.set(key,st);} }); }
   function roomName(r,i){ return (r&&r.name)||`Encrypted community ${i+1}`; }
   function normalizeIcon(raw){
     const v=String(raw||'').trim(); if(!v)return '';
@@ -38,6 +44,12 @@
   function markRead(room){ if(room&&room.naddr)localStorage.setItem('pc.concord.read.'+room.naddr,String(Date.now())); }
   function isUnread(room){ return lastActivity(room)>seenAt(room); }
   function messageId(m){ return String((m&&m.id)||`${Number(m&&m.at)||0}:${String(m&&m.pubkey||'')}`); }
+  function webxdcOf(m){
+    for(const t of (m&&m.tags||[])){ if(t[0]!=='imeta')continue; const f={}; for(let i=1;i<t.length;i++){ const s=String(t[i]||''),j=s.indexOf(' '); if(j>0)f[s.slice(0,j)]=s.slice(j+1); } if((f.m||'').toLowerCase()==='application/x-webxdc'&&/^https?:\/\//i.test(f.url||''))return {url:f.url,sha:f.x||'',uuid:f.webxdc||messageId(m),name:(f.summary||f.name||'Mini app').slice(0,80)}; }
+    const url=(String(m&&m.text||'').match(/https?:\/\/[^\s<>]+\.xdc(?:\?[^\s<>]*)?/i)||[])[0]; return url?{url,sha:'',uuid:messageId(m),name:'Mini app'}:null;
+  }
+  function webxdcHtml(m){ const app=webxdcOf(m); return app&&window.PCWebxdc&&PCWebxdc.cardHtml?PCWebxdc.cardHtml(app):''; }
+  function hydrateWebxdcCards(room){ if(!window.PCWebxdc||!PCWebxdc.cardHtml||!document.querySelectorAll)return; const byId=new Map(activeMessages(room).map(m=>[messageId(m),m])); document.querySelectorAll('.cc-message[data-message-id]').forEach(el=>{ const m=byId.get(el.dataset.messageId),html=m&&webxdcHtml(m),body=el.querySelector('.cc-message-body'); if(html&&body&&!body.querySelector('.xdc-card'))body.insertAdjacentHTML('beforeend',html); }); }
   function hexBytes(s){ const h=String(s||''); if(!/^[0-9a-f]+$/i.test(h)||h.length%2)throw new Error('invalid encrypted image key'); return new Uint8Array(h.match(/../g).map(x=>parseInt(x,16))); }
   function bytesHex(a){ return [...new Uint8Array(a)].map(x=>x.toString(16).padStart(2,'0')).join(''); }
   function imageMime(a){ return a[0]===0x89&&a[1]===0x50?'image/png':a[0]===0xff&&a[1]===0xd8?'image/jpeg':a[0]===0x47&&a[1]===0x49?'image/gif':a[0]===0x52&&a[1]===0x49&&a[8]===0x57?'image/webp':'image/*'; }
@@ -134,7 +146,8 @@
       for(const channel of room.channels){
         const wraps=await p.relayQueryFrom(relays,[{kinds:[1059],authors:channel.streamPubkeys,limit:1000}],{timeout:10000,max:8});
         const opened=await reader.inspectChat(bundle,controlWraps||[],channel.id,wraps||[]);
-        const reactions=new Map(opened.reactions||[]),msgs=(opened.messages||[]).map(m=>{ const pr=p.profOf?p.profOf(m.pubkey):{}; const rs={}; for(const [emoji,people] of reactions.get(m.id)||[])rs[emoji]=people; return {id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:m.text,at:m.at,reactions:rs,remote:true}; });
+        const reactions=new Map(opened.reactions||[]),reactionIds=new Map(opened.reactionIds||[]),msgs=(opened.messages||[]).map(m=>{ const pr=p.profOf?p.profOf(m.pubkey):{},rs={},ri={}; for(const [emoji,people] of reactions.get(m.id)||[])rs[emoji]=people;for(const [emoji,entries] of reactionIds.get(m.id)||[])ri[emoji]=Object.fromEntries(entries); return {id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:m.text,at:m.at,kind:m.kind,tags:m.tags||[],reactions:rs,reactionIds:ri,remote:true}; });
+        const msgById=new Map(msgs.map(m=>[m.id,m])); for(const m of msgs){if(m.kind!==1111)continue;const parentId=((m.tags||[]).find(t=>t[0]==='e')||[])[1],parent=msgById.get(parentId);if(parent)m.reply={id:parent.id,by:parent.by,text:parent.text};}
         saveTestMessages(channelStoreId(room,channel.name),msgs);
       }
       room.cord.hydrated=true; rooms[index]=room; save(rooms);
@@ -142,17 +155,23 @@
       scrollChatBottom();
     })().finally(()=>roomLoads.delete(loadKey)); roomLoads.set(loadKey,job); return job;
   }
-  async function publishCordMessage(p,room,channelName,text){
+  async function publishCordMessage(p,room,channelName,text,extraTags=[],kind=9){
     const viewer=p.viewer?p.viewer():{},reader=window.PosterCordReader,bundle=room&&room.cord&&room.cord.bundle;
     if(!viewer.pubkey||!reader||!reader.createChatWrap||!bundle)throw new Error('CORD publishing is unavailable');
     const channel=(room.channels||[]).find(c=>c.name===channelName); if(!channel||!channel.id)throw new Error('channel key is unavailable');
     const loadKey=room.communityId||room.naddr,relays=[...new Set([...(bundle.relays||[]),...CORD_RELAYS])].slice(0,8);
     let controlWraps=roomControls.get(loadKey);
     if(!controlWraps){ const seed=reader.inspectControl(bundle,[]); controlWraps=await p.relayQueryFrom(relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8}); roomControls.set(loadKey,controlWraps||[]); }
-    const made=await reader.createChatWrap(bundle,controlWraps||[],channel.id,text,viewer.pubkey,p.signTemplate);
+    const made=await reader.createChatWrap(bundle,controlWraps||[],channel.id,text,viewer.pubkey,p.signTemplate,extraTags,kind);
     const accepted=await p.relayPublishTo(relays,made.wrap); if(!accepted)throw new Error('community relays rejected the message');
     return made;
   }
+  async function refreshActiveChannel(p){
+    if(liveBusy||state.community==null||!document.body.classList.contains('concord-view'))return; liveBusy=true;
+    try{ const rooms=saved(),room=rooms[state.community],channel=room&&(room.channels||[]).find(c=>c.name===(state.channel||'general')),bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader;if(!room||!channel||!bundle||!reader)return; const loadKey=room.communityId||room.naddr,controlWraps=roomControls.get(loadKey);if(!controlWraps)return; const relays=[...new Set([...(bundle.relays||[]),...CORD_RELAYS])].slice(0,8),storeId=channelStoreId(room,channel.name),prior=testMessages(storeId),since=Math.max(0,Math.floor((prior.reduce((n,m)=>Math.max(n,Number(m.at)||0),0)-10000)/1000)),wraps=await p.relayQueryFrom(relays,[{kinds:[1059],authors:channel.streamPubkeys,since,limit:250}],{timeout:6000,max:8}),opened=await reader.inspectChat(bundle,controlWraps,channel.id,wraps||[]),byId=new Map(prior.map(m=>[messageId(m),m])); let changed=false; for(const m of opened.messages||[]){if(byId.has(m.id))continue;const pr=p.profOf?p.profOf(m.pubkey):{};byId.set(m.id,{id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:m.text,at:m.at,kind:m.kind,tags:m.tags||[],reactions:{},remote:true});changed=true;} for(const [target,groups] of opened.reactions||[]){const m=byId.get(target);if(!m)continue;const next={};for(const [emoji,people] of groups)next[emoji]=people;if(JSON.stringify(m.reactions||{})!==JSON.stringify(next)){m.reactions=next;changed=true;}} if(changed){const merged=[...byId.values()].sort((a,b)=>Number(a.at)-Number(b.at));preserveChatScroll(()=>{saveTestMessages(storeId,merged);render();});}
+    }catch(e){console.warn('Concord live sync failed',e);}finally{liveBusy=false;}
+  }
+  function startLiveSync(p){ if(liveTimer||!document.body.classList.contains)return; liveTimer=setInterval(()=>refreshActiveChannel(p),4000); }
   async function mintPublicRoom(p,name,icon){
     const viewer=p.viewer?p.viewer():{}; if(!viewer.pubkey||!window.PosterCord)throw new Error('sign in before creating a relay community');
     const relays=[...new Set([...CORD_RELAYS,...(p.relayUrls?p.relayUrls():[])])].slice(0,8);
@@ -164,7 +183,9 @@
   }
   function render(){
     const p=PC(), feed=p&&p.$('#feed'); if(!feed) return;
+    const returning=!feed.querySelector||!feed.querySelector('.cc-app');
     startDiscovery(p);
+    startLiveSync(p);
     // Covers the stale-service-worker compatibility entry too, which does not run switchView().
     document.body.classList.add('concord-view','rb-off');
     const rooms=saved();
@@ -193,10 +214,13 @@
       feed.insertAdjacentHTML('beforeend',`<div class="cc-join hidden" id="cc-members-dialog"><div class="cc-join-card"><h2>Members <span class="muted">${memberPks.length}</span></h2><div class="cc-member-list">${memberPks.map((pk,i)=>{ const pr=p.profOf?p.profOf(pk):{}; const name=pk===viewer.pubkey?me:(pr.display_name||pr.name||pk.slice(0,12)+'…'); return `<div class="cc-member"><img src="${p.enc(pr.picture||p.LOGO||'')}" alt=""><div><b>${p.enc(name)}</b><small>${i===0&&current.local?'Owner':'Member'}</small></div></div>`; }).join('')}</div><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-members-close">Close</button><button class="btn btn-neon" id="cc-members-invite">Invite people</button></div></div></div><div class="cc-join hidden" id="cc-settings-dialog"><div class="cc-join-card"><h2>Community settings</h2><label class="cc-label" for="cc-description-value">Description</label><textarea class="input cc-settings-description" id="cc-description-value" maxlength="1000" rows="3" placeholder="What is this community about?">${p.enc(current.description||'')}</textarea><label class="cc-label" for="cc-settings-icon">Icon</label><input class="input" id="cc-settings-icon" maxlength="2048" value="${p.enc(current.icon||'')}" placeholder="🌌 or https://…/icon.png"><label class="cc-label" for="cc-channel-visibility">#${p.enc(state.channel||'general')} visibility</label><select class="input cc-visibility-select" id="cc-channel-visibility"><option value="public"${channelPrivate?'':' selected'}>Public — all community members</option><option value="private"${channelPrivate?' selected':''}>Private — invited members only</option></select><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-settings-cancel">Cancel</button><button class="btn btn-neon" id="cc-settings-save">Save changes</button></div></div></div>`);
     }
     if(p.hydrateLinkCards)p.hydrateLinkCards(feed);
+    hydrateWebxdcCards(current);
     bind(me);
+    if(returning&&current)restoreChatScroll();
   }
   function bind(me){
     const p=PC(), $=p.$, $$=p.$$;
+    const scroller=document.querySelector('.cc-messages'); if(scroller)scroller.onscroll=()=>{ const key=scrollKey(),st=scrollStates.get(key)||{}; st.top=scroller.scrollTop;st.height=scroller.scrollHeight;st.pinned=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;scrollStates.set(key,st); };
     const openJoin=()=>{ $('#cc-join').classList.remove('hidden'); setTimeout(()=>$('#cc-invite-url').focus(),20); };
     const home=$('#cc-home'); if(home)home.onclick=()=>{ state.community=null; state.channel=null; render(); };
     ['#cc-add','#cc-invite','#cc-welcome-join'].forEach(s=>{ const b=$(s); if(b)b.onclick=openJoin; });
@@ -207,8 +231,14 @@
     const iconCancel=$('#cc-icon-cancel'); if(iconCancel)iconCancel.onclick=()=>$('#cc-icon-dialog').classList.add('hidden');
     const iconSave=$('#cc-icon-save'); if(iconSave)iconSave.onclick=()=>{ const a=saved(), room=a[state.community]; if(!room)return; room.icon=normalizeIcon($('#cc-icon-value').value); save(a); render(); p.toast('community icon updated'); };
     const emoji=$('#cc-emoji'), input=$('#cc-input'); if(emoji&&input)emoji.onclick=()=>{ if(p.openEmojiPopover)p.openEmojiPopover(emoji,(value,close)=>{ if(close)close(); if(p.insertAt)p.insertAt(input,value); else input.value+=value; input.focus(); }); };
+    let mentionChoices=[],mentionIndex=0,mentionBox=null;
+    const closeMentions=()=>{ if(mentionBox)mentionBox.remove(); mentionBox=null; mentionChoices=[]; };
+    const mentionToken=()=>{ const before=input.value.slice(0,input.selectionStart); return before.match(/(?:^|\s)@([\w.-]*)$/); };
+    const drawMentions=()=>{ const match=mentionToken(); if(!match){closeMentions();return;} const room=saved()[state.community],viewer=p.viewer?p.viewer():{},pks=[...new Set([viewer.pubkey,...activeMessages(room).map(m=>m.pubkey)].filter(Boolean))],q=match[1].toLowerCase(); mentionChoices=pks.map(pk=>{const pr=p.profOf?p.profOf(pk):{};return {pk,name:String(pr.display_name||pr.name||(pk===viewer.pubkey?me:pk.slice(0,12)))};}).filter(x=>!q||x.name.toLowerCase().includes(q)).slice(0,8); if(!mentionChoices.length){closeMentions();return;} mentionIndex=Math.min(mentionIndex,mentionChoices.length-1); if(!mentionBox){mentionBox=document.createElement('div');mentionBox.className='cc-mention-menu';input.closest('.cc-compose').appendChild(mentionBox);} mentionBox.innerHTML=mentionChoices.map((x,i)=>`<button type="button" class="${i===mentionIndex?'active':''}" data-mention="${i}"><b>@${p.enc(x.name)}</b><small>${p.enc(x.pk.slice(0,12))}…</small></button>`).join(''); mentionBox.querySelectorAll('button').forEach(b=>b.onmousedown=e=>{e.preventDefault();acceptMention(+b.dataset.mention);}); };
+    const acceptMention=(i=mentionIndex)=>{ const match=mentionToken(),choice=mentionChoices[i]; if(!match||!choice)return false; const end=input.selectionStart,start=end-match[1].length-1; input.setRangeText('@'+choice.name.replace(/\s+/g,'_')+' ',start,end,'end'); closeMentions(); input.focus(); return true; };
+    if(input&&input.addEventListener)input.addEventListener('input',drawMentions);
     const attach=$('#cc-attach'), file=$('#cc-file'); if(attach&&file)attach.onclick=()=>file.click();
-    if(file&&input)file.onchange=async()=>{ const files=[...file.files]; for(const f of files){ if(f.size>20*1024*1024){ p.toast(f.name+' is too large (20 MB max)'); continue; } try{ p.toast('uploading '+f.name+'…'); const url=await p.uploadBlob(f,{keep:true}); input.value+=(input.value&&!/\s$/.test(input.value)?' ':'')+url; input.dispatchEvent(new Event('input',{bubbles:true})); }catch(e){ p.toast('could not attach '+f.name); } } file.value=''; };
+    if(file&&input)file.onchange=async()=>{ const files=[...file.files]; for(const f of files){ if(f.size>20*1024*1024){ p.toast(f.name+' is too large (20 MB max)'); continue; } try{ p.toast('uploading '+f.name+'…'); const isXdc=/\.xdc$/i.test(f.name)||f.type==='application/x-webxdc',bytes=isXdc?new Uint8Array(await f.arrayBuffer()):null,url=await p.uploadBlob(f,{keep:true}); if(isXdc){ const sha=bytesHex(await crypto.subtle.digest('SHA-256',bytes)),uuid=crypto.randomUUID?crypto.randomUUID():`${Date.now()}-${Math.random().toString(36).slice(2)}`,name=f.name.replace(/\.xdc$/i,'').slice(0,80); pendingAttachments.set(url,['imeta',`url ${url}`,'m application/x-webxdc',`x ${sha}`,`webxdc ${uuid}`,`summary ${name}`,`name ${f.name.slice(0,120)}`]); } input.value+=(input.value&&!/\s$/.test(input.value)?' ':'')+url; input.dispatchEvent(new Event('input',{bubbles:true})); }catch(e){ p.toast('could not attach '+f.name); } } file.value=''; };
     const members=$('#cc-members'); if(members)members.onclick=()=>$('#cc-members-dialog').classList.remove('hidden');
     const membersClose=$('#cc-members-close'); if(membersClose)membersClose.onclick=()=>$('#cc-members-dialog').classList.add('hidden');
     const membersInvite=$('#cc-members-invite'); if(membersInvite)membersInvite.onclick=()=>{ $('#cc-members-dialog').classList.add('hidden'); $('#cc-join').classList.remove('hidden'); };
@@ -227,12 +257,12 @@
     const bh=$('#cc-back-channels'); if(bh)bh.onclick=()=>{ document.querySelector('.cc-app').classList.remove('show-chat'); };
     $$('[data-cc-channel]').forEach(b=>b.addEventListener('click',()=>{ const a=document.querySelector('.cc-app'); if(a)a.classList.add('show-chat'); }));
     const send=$('#cc-send'); if(send&&input){
-      send.onclick=async()=>{ const text=String(input.value||'').trim(); const a=saved(), room=a[state.community],storeId=channelStoreId(room,state.channel); if(!text)return; if(!room||(!room.local&&!room.cord)){ p.toast('relay messaging becomes available after the invite is decrypted'); return; } send.disabled=true; try{ const viewer=p.viewer?p.viewer():{}, made=room.local?null:await publishCordMessage(p,room,state.channel,text),at=made?made.ms:Date.now(),m=testMessages(storeId); m.push({id:made?made.rumorId:(crypto.randomUUID?crypto.randomUUID():`${at}-${Math.random().toString(36).slice(2)}`),by:me,pubkey:viewer.pubkey||'',text,at,reply:replyTarget?{id:messageId(replyTarget),by:replyTarget.by,text:replyTarget.text}:null,reactions:{},remote:!!made}); input.value=''; replyTarget=null; saveTestMessages(storeId,m); render(); scrollChatBottom(); }catch(e){ p.toast('message was not sent: '+(e&&e.message||e)); }finally{ send.disabled=false; } };
-      input.onkeydown=e=>{ if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){ e.preventDefault(); return send.click(); } };
+      send.onclick=async()=>{ const text=String(input.value||'').trim(); const a=saved(), room=a[state.community],storeId=channelStoreId(room,state.channel); if(!text)return; if(!room||(!room.local&&!room.cord)){ p.toast('relay messaging becomes available after the invite is decrypted'); return; } const used=[...pendingAttachments].filter(([url])=>text.includes(url)),attachmentTags=used.map(([,tag])=>tag),target=replyTarget,replyTags=[]; if(target){const inherited=(target.tags||[]).filter(t=>['K','E','P'].includes(t[0]));if(inherited.length)replyTags.push(...inherited);else replyTags.push(['K',String(target.kind||9)],['E',messageId(target),'',target.pubkey||''],['P',target.pubkey||'']);replyTags.push(['k',String(target.kind||9)],['e',messageId(target),'',target.pubkey||''],['p',target.pubkey||'']);} const extraTags=[...attachmentTags,...replyTags],wireKind=target?1111:9; send.disabled=true; try{ const viewer=p.viewer?p.viewer():{}, made=room.local?null:await publishCordMessage(p,room,state.channel,text,extraTags,wireKind),at=made?made.ms:Date.now(),m=testMessages(storeId); m.push({id:made?made.rumorId:(crypto.randomUUID?crypto.randomUUID():`${at}-${Math.random().toString(36).slice(2)}`),by:me,pubkey:viewer.pubkey||'',text,at,kind:wireKind,tags:extraTags,reply:target?{id:messageId(target),by:target.by,text:target.text}:null,reactions:{},remote:!!made}); for(const [url] of used)pendingAttachments.delete(url); input.value=''; replyTarget=null; saveTestMessages(storeId,m); render(); scrollChatBottom(); }catch(e){ p.toast('message was not sent: '+(e&&e.message||e)); }finally{ send.disabled=false; } };
+      input.onkeydown=e=>{ if(mentionChoices.length){ if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();mentionIndex=(mentionIndex+(e.key==='ArrowDown'?1:-1)+mentionChoices.length)%mentionChoices.length;drawMentions();return;} if(e.key==='Tab'||(e.key==='Enter'&&!e.ctrlKey&&!e.metaKey)){e.preventDefault();acceptMention();return;} if(e.key==='Escape'){e.preventDefault();closeMentions();return;} } if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){ e.preventDefault(); return send.click(); } };
     }
     const replyCancel=$('#cc-reply-cancel'); if(replyCancel)replyCancel.onclick=()=>{ replyTarget=null; render(); };
     $$('[data-cc-reply]').forEach(b=>b.onclick=()=>{ const room=saved()[state.community],m=activeMessages(room),found=m.find(x=>messageId(x)===b.dataset.ccReply); if(!found)return; replyTarget=found; render(); const box=$('#cc-input'); if(box)box.focus(); });
-    const toggleReaction=(id,emoji)=>{ const room=saved()[state.community],storeId=channelStoreId(room,state.channel),m=testMessages(storeId),found=m.find(x=>messageId(x)===id),viewer=p.viewer?p.viewer():{},who=viewer.pubkey||'local-user'; if(!found)return; if(!found.reactions||typeof found.reactions!=='object')found.reactions={}; const people=Array.isArray(found.reactions[emoji])?found.reactions[emoji]:[]; const i=people.indexOf(who); if(i<0)people.push(who);else people.splice(i,1); if(people.length)found.reactions[emoji]=people;else delete found.reactions[emoji]; saveTestMessages(storeId,m); reactionTarget=null; render(); };
+    const toggleReaction=async(id,emoji)=>{ const room=saved()[state.community],storeId=channelStoreId(room,state.channel),m=testMessages(storeId),found=m.find(x=>messageId(x)===id),viewer=p.viewer?p.viewer():{},who=viewer.pubkey||'local-user'; if(!found)return; if(!found.reactions||typeof found.reactions!=='object')found.reactions={}; const people=Array.isArray(found.reactions[emoji])?found.reactions[emoji]:[],i=people.indexOf(who); try{if(!room.local){if(i<0)await publishCordMessage(p,room,state.channel,emoji,[['e',id],['p',found.pubkey||''],['k',String(found.kind||9)]],7);else{const rid=found.reactionIds&&found.reactionIds[emoji]&&found.reactionIds[emoji][who];if(!rid)throw new Error('refresh the room before removing this reaction');await publishCordMessage(p,room,state.channel,'',[['e',rid],['k','7']],5);}}}catch(e){p.toast('reaction was not sent: '+(e&&e.message||e));return;} if(i<0)people.push(who);else people.splice(i,1); if(people.length)found.reactions[emoji]=people;else delete found.reactions[emoji]; saveTestMessages(storeId,m); reactionTarget=null; preserveChatScroll(()=>render()); };
     $$('[data-cc-react-toggle]').forEach(b=>b.onclick=()=>toggleReaction(b.dataset.ccReactToggle,b.dataset.ccEmoji));
     $$('[data-cc-react]').forEach(b=>b.onclick=()=>{ reactionTarget=b.dataset.ccReact; const choices=['👍','❤️','😂','😮','😢','😡','🎉','💯']; const old=document.querySelector('.cc-reaction-picker'); if(old)old.remove(); const pop=document.createElement('div'); pop.className='cc-reaction-picker'; pop.innerHTML=choices.map(x=>`<button data-emoji="${x}">${x}</button>`).join(''); b.closest('.cc-message-body').appendChild(pop); pop.querySelectorAll('button').forEach(x=>x.onclick=e=>{ e.stopPropagation(); toggleReaction(reactionTarget,x.dataset.emoji); }); });
   }
@@ -245,6 +275,6 @@
     const b=e.target.closest&&e.target.closest('[data-view="concord"]'); if(!b) return;
     setTimeout(()=>{ const title=document.getElementById('view-title'); if(title) title.textContent='Concord';
       document.body.classList.add('concord-view','rb-off');
-      const feed=document.getElementById('feed'); if(feed){ feed.classList.add('feed-dm'); render(); } },0);
+      const feed=document.getElementById('feed'); if(feed){ feed.classList.add('feed-dm'); render(); restoreChatScroll(); } },0);
   });
 })();

@@ -26641,15 +26641,16 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const timeline = foldTimeline(await openChatBatch(chatWraps || [], channel));
     return {
       messages: timeline.messages.map((m) => ({ id: m.rumorId, pubkey: m.author, text: m.content, at: m.ms, kind: m.kind, tags: m.tags })),
-      reactions: [...timeline.reactions].map(([target, byEmoji]) => [target, [...byEmoji].map(([emoji3, entry]) => [emoji3, [...entry.reactors.keys()]])])
+      reactions: [...timeline.reactions].map(([target, byEmoji]) => [target, [...byEmoji].map(([emoji3, entry]) => [emoji3, [...entry.reactors.keys()]])]),
+      reactionIds: [...timeline.reactions].map(([target, byEmoji]) => [target, [...byEmoji].map(([emoji3, entry]) => [emoji3, [...entry.reactors.entries()]])])
     };
   }
-  async function createChatWrap(bundle, controlWraps, channelId, content, pubkey, signEvent) {
+  async function createChatWrap(bundle, controlWraps, channelId, content, pubkey, signEvent, extraTags = [], kind = KIND_MESSAGE) {
     const { channels } = control(bundle, controlWraps);
     const channel = channels.find((ch) => ch.idHex === channelId);
     if (!channel) throw new Error("channel is not writable with this membership");
     const ms = Date.now();
-    const rumor = buildRumor({ kind: KIND_MESSAGE, content, pubkey, ms, tags: channelBindingTags(channel.idHex, channel.current.epoch) });
+    const rumor = buildRumor({ kind, content, pubkey, ms, tags: [...channelBindingTags(channel.idHex, channel.current.epoch), ...extraTags] });
     const seal = await sealRumor(rumor, 20013, channel.current.group, { signEvent });
     return { rumorId: rumor.id, wrap: wrapSeal(seal, channel.current.group), ms };
   }

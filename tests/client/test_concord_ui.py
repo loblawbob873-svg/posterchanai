@@ -186,12 +186,24 @@ def test_notification_copy_does_not_claim_server_can_read_room_messages():
 def test_concord_messages_support_persisted_replies_and_reactions():
     assert 'function messageId(m)' in CONCORD
     assert 'data-cc-reply=' in CONCORD
-    assert 'reply:replyTarget?' in CONCORD
+    assert 'wireKind=target?1111:9' in CONCORD
+    assert "['E',messageId(target)" in CONCORD
     assert 'data-cc-react=' in CONCORD
     assert 'data-cc-react-toggle=' in CONCORD
     assert 'saveTestMessages(storeId,m)' in CONCORD
     assert '.cc-message-reply' in CONCORD_CSS
     assert '.cc-reaction-picker' in CONCORD_CSS
+    assert "publishCordMessage(p,room,state.channel,emoji" in CONCORD
+
+
+def test_concord_webxdc_mentions_live_sync_and_scroll_are_integrated():
+    assert "application/x-webxdc" in CONCORD and "pendingAttachments.set(url,['imeta'" in CONCORD
+    assert 'hydrateWebxdcCards(current)' in CONCORD and 'PCWebxdc.cardHtml(app)' in CONCORD
+    assert 'reactionIds:' in CORD_READER and 'extraTags' in CORD_READER
+    assert 'mentionToken' in CONCORD and "e.key==='Tab'" in CONCORD
+    assert '.cc-mention-menu' in CONCORD_CSS
+    assert 'refreshActiveChannel(p)' in CONCORD and 'setInterval(()=>refreshActiveChannel(p),4000)' in CONCORD
+    assert 'scrollStates' in CONCORD and 'st.pinned' in CONCORD and 'preserveChatScroll' in CONCORD
 
 
 def test_concord_brand_always_returns_to_discovery():
