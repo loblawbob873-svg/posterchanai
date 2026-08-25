@@ -60,6 +60,8 @@ def test_shell_restart_is_serialized_and_targets_only_the_shell_process():
     assert "ELECTRON_OZONE_PLATFORM_HINT=wayland" in start
     assert 'while [ "$display_tries" -lt 100 ]' in start
     assert '[ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ]' in start
+    assert '[ -S "$XDG_RUNTIME_DIR/bus" ]' in start
+    assert 'DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"' in start
     assert "could not find Sway's Wayland display socket" in start
     assert "ulimit -S -c 0" in start
     assert "ulimit -c 0\n" not in start

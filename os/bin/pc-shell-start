@@ -77,6 +77,15 @@ fi
 WAYLAND_DISPLAY=${wayland_socket##*/}
 export WAYLAND_DISPLAY
 
+# Recovery launches commonly come from SSH and therefore do not inherit the user's D-Bus session.
+# The original Sway boot does, which made a fresh boot and a remote shell restart behave
+# differently even with the same binary and Wayland socket. Reattach only to this user's standard
+# bus socket; never invent an address when it does not exist.
+if [ -z "$DBUS_SESSION_BUS_ADDRESS" ] && [ -S "$XDG_RUNTIME_DIR/bus" ]; then
+  DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+  export DBUS_SESSION_BUS_ADDRESS
+fi
+
 # Portage owns /usr/bin/posterchan. Older LiveOS images and the standalone updater installed the
 # wrapper in /usr/local/bin instead; keep that as a fallback, but never let a stale local copy
 # shadow the package that was just upgraded. That stale wrapper reset Wayland to `auto`, which is
