@@ -65,10 +65,11 @@ def test_concord_owns_a_versioned_stylesheet_so_stale_shell_css_cannot_unstyle_i
     assert CONCORD_CSS.count('{') == CONCORD_CSS.count('}'), "Concord CSS has an unclosed rule"
 
 
-def test_android_bundle_packages_the_concord_stylesheet():
-    """The native shell loads local /static assets, so a server copy cannot hide this omission."""
-    build = (ROOT / "mobile/build-www.sh").read_text()
-    assert 'static/css/concord.css' in build
+def test_native_bundles_package_the_concord_stylesheet():
+    """Native shells load local /static assets, so a server copy cannot hide this omission."""
+    for bundle in ("mobile/build-www.sh", "desktop/build-www.sh"):
+        build = (ROOT / bundle).read_text()
+        assert 'static/css/concord.css' in build, bundle
 
 
 def test_concord_fills_workspace_and_identifies_the_signed_in_user():
