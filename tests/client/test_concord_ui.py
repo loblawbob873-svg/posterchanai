@@ -41,7 +41,9 @@ def test_concord_is_precached_and_old_bundles_self_heal_the_nav():
 def test_concord_owns_a_versioned_stylesheet_so_stale_shell_css_cannot_unstyle_it():
     assert 'static/css/concord.css' in HTML
     assert "data-concord-css" in CONCORD
-    assert "concord.css?v=9" in CONCORD
+    assert "concord.css?v=10" in CONCORD
+    assert '.cc-compose textarea:focus' in CONCORD_CSS
+    assert 'box-shadow:none!important' in CONCORD_CSS
     assert "'/static/css/concord.css'" in (ROOT / "static/js/client/sw.js").read_text()
     assert ".cc-app" in CONCORD_CSS and "grid-template-columns:68px 248px" in CONCORD_CSS
     assert CONCORD_CSS.count('{') == CONCORD_CSS.count('}'), "Concord CSS has an unclosed rule"
@@ -92,6 +94,10 @@ def test_chat_scroll_is_keyed_by_room_and_survives_profile_link_navigation():
     assert "['ai-msgs','dm-msgs']" in APP
     assert "inner['cc-messages']" in APP
     assert "pos&&pos.bottom?el.scrollHeight" in APP
+    os_js = (ROOT / 'static/js/client/os.js').read_text()
+    assert "w.innerChatScroll={}" in os_js
+    assert "['cc-messages','.cc-messages']" in os_js
+    assert "el.scrollTop=pos.bottom?el.scrollHeight" in os_js
 
 
 def test_concord_ctrl_or_cmd_enter_sends_without_breaking_plain_enter():

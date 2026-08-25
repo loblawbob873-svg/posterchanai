@@ -998,6 +998,14 @@
     const slot = w.slot;
     if(!slot) return;
     w.scrollTop = realFeed.scrollTop || 0;
+    /* Full-height chat apps own INNER scrollers, so moving #feed between desktop windows cannot use
+       feed.scrollTop to remember them. Capture both the offset and bottom-pin before layout changes
+       in the parked slot can fire a misleading scroll event. */
+    w.innerChatScroll={};
+    for(const [key,selector] of [['ai-msgs','#ai-msgs'],['dm-msgs','#dm-msgs'],['cc-messages','.cc-messages']]){
+      const el=realFeed.querySelector(selector); if(!el)continue;
+      w.innerChatScroll[key]={top:el.scrollTop,bottom:el.scrollHeight-el.scrollTop-el.clientHeight<80};
+    }
     w.feedClass = realFeed.className;      // .feed-ai/.feed-chat etc. decide how it scrolls
     /* …and WHICH VIEW the client believes it is showing, so refocusing can hand that back.
      *
@@ -1057,15 +1065,21 @@
   function restoreScroll(w){
     // The slot's own offset wins while it is parked: it is the one that has been kept up to date.
     const want = (w && w.parked && w.slot ? w.slot.scrollTop : 0) || (w && w.scrollTop) || 0;
-    if(!want || !realFeed) return;
+    if(!realFeed) return;
+    const inner=w&&w.innerChatScroll||{};
     let tries = 0;
     const put = () => {
       if(++tries > 40 || !realFeed || realFeed.parentElement !== w.body) return;
-      if(realFeed.scrollHeight > realFeed.clientHeight){
+      if(want&&realFeed.scrollHeight > realFeed.clientHeight){
         realFeed.scrollTop = want;
-        if(Math.abs(realFeed.scrollTop - want) <= 2) return;   // landed (or clamped to the bottom)
       }
-      setTimeout(put, 25);
+      let pending=false;
+      for(const [key,pos] of Object.entries(inner)){
+        const el=realFeed.querySelector(key==='cc-messages'?'.cc-messages':'#'+key);
+        if(!el){pending=true;continue;}
+        el.scrollTop=pos.bottom?el.scrollHeight:Number(pos.top)||0;
+      }
+      if(pending||(want&&Math.abs(realFeed.scrollTop-want)>2))setTimeout(put,25);
     };
     put();
   }
