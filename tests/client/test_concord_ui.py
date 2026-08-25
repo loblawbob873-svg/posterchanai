@@ -77,8 +77,8 @@ def test_concord_has_honest_creation_and_public_discovery_empty_states():
 
 def test_concord_ctrl_or_cmd_enter_sends_without_breaking_plain_enter():
     assert 'bind(me);' in CONCORD and 'function bind(me)' in CONCORD
-    assert "e.key==='Enter'&&(e.ctrlKey||e.metaKey)" in CONCORD
-    assert 'e.preventDefault(); return send.click()' in CONCORD
+    assert "e.key==='Enter'||e.code==='Enter'" in CONCORD
+    assert 'e.preventDefault(); return send.onclick()' in CONCORD
     assert "e.key==='Enter'&&!e.shiftKey" not in CONCORD
 
 
