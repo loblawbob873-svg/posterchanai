@@ -408,10 +408,47 @@ class TheOfficeEditorGetsTheScreen(unittest.TestCase):
 
     def test_it_is_marked_before_the_editor_is_launched(self):
         """The form submits into the iframe; sizing it afterwards reloads the layout under a
-        document that is already loading."""
-        i = self.app.index("root.classList.add('office-modal')")
-        j = self.app.index("$('.office-launch',root).submit()")
-        self.assertLess(i, j)
+        document that is already loading.
+
+        MEASURED AS RUNTIME ORDER, NOT TEXT ORDER. The submit moved into `wire()` when the editor
+        gained a second host (a desktop window), and `wire` is DEFINED above the modal call and
+        CALLED below it — so a raw index comparison started reading the definition site and failed
+        while the shipped ordering was still correct. What has to hold is that the class is on the
+        box before `wire` is invoked, which is what this reads now."""
+        cb = self.app[self.app.index("modal(bodyHTML, root=>{"):]
+        cb = cb[:cb.index("});")]
+        self.assertIn("root.classList.add('office-modal')", cb)
+        self.assertIn("wire(root, closeModal)", cb)
+        self.assertLess(cb.index("root.classList.add('office-modal')"),
+                        cb.index("wire(root, closeModal)"),
+                        "the iframe is launched before the box it lives in has been sized")
+
+    def test_the_editor_body_is_built_once_for_both_hosts(self):
+        """Two copies of the launch form and the Save handler is two places to leak a token or
+        leave a server-side session open. The window and the modal mount the SAME markup."""
+        self.assertEqual(self.app.count("const bodyHTML = "), 1)
+        self.assertEqual(self.app.count(".office-launch',root).submit()"), 1,
+                         "the launch form is submitted from more than one place")
+
+    def test_the_desktop_window_owns_its_session(self):
+        """Closing an editor by the window's own X must drop the server-side document, or a session
+        is leaked for the whole six-hour TTL — and CODE holds the file open the entire time."""
+        i = self.app.index("PCOS.openDoc('office:'")
+        seg = self.app[i:i + 700]
+        self.assertIn("w.onClose", seg, "closing the window leaks the office session")
+        self.assertIn("drop()", seg)
+
+    def test_the_office_window_does_not_join_the_shared_feed(self):
+        """noFeed. Without it, clicking any OTHER window pulls the timeline out of this one and
+        repaints it — and a repaint around a live iframe reloads the editor and loses the edit.
+        webxdc learned this first and its comment says so."""
+        i = self.app.index("PCOS.openDoc('office:'")
+        seg = self.app[i:i + 200]
+        # `[^)]*` cannot cross the `)` in the `() => {}` render argument, so match the last
+        # argument directly instead of trying to parse the call.
+        call = seg[:seg.index(");") + 2]
+        self.assertTrue(call.rstrip().endswith(", true);"),
+                        f"the office window joins the feed hand-off: {call}")
 
 
 class TheExplorerToolbarStaysLiftable(unittest.TestCase):
