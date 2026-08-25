@@ -69,6 +69,17 @@ def test_each_changed_file_has_a_confirmed_discard_action():
     assert 'data-git-restore="' in CODE
     assert "Discard every change" in CODE
     assert "await gitAct('restore',[path])" in CODE
+
+
+def test_discard_closes_the_visible_diff_before_the_git_refresh_repaints():
+    """The restore can succeed on disk while its discarded diff remains on screen.
+
+    ``gitAct`` ends with ``loadGit`` and therefore a repaint.  The matching diff must be cleared
+    before that awaited action, otherwise no later paint reflects the cleared state.
+    """
+    handler = CODE[CODE.index("document.querySelectorAll('[data-git-restore]')"):]
+    handler = handler[:handler.index("on('#pcc-diff-close'")]
+    assert handler.index("S.gitDiff=null") < handler.index("await gitAct('restore',[path])")
     assert "grid-template-columns:minmax(0,1fr) 36px 36px" in CSS
 
 

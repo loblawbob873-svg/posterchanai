@@ -1035,8 +1035,13 @@
       document.querySelectorAll('[data-git-restore]').forEach(b=>b.addEventListener('click',async()=>{
         const path=b.dataset.gitRestore;
         if(!await uiConfirm('Discard every change to “'+path+'”?\n\nThis cannot be undone.')) return;
-        await gitAct('restore',[path]);
+        /* Clear the diff BEFORE gitAct: gitAct finishes by loadGit(), and loadGit's paint is the
+         * final repaint for this action. Clearing it afterwards changed state but left the old diff
+         * visibly mounted until somebody clicked Explorer or another file. The disk restore had
+         * succeeded while Code still showed the discarded patch — exactly the kind of stale UI
+         * that makes a destructive Source Control button impossible to trust. */
         if(S.gitDiff && S.gitDiff.path===path) S.gitDiff=null;
+        await gitAct('restore',[path]);
       }));
       on('#pcc-diff-close','click',()=>{S.gitDiff=null;paint();});
 
