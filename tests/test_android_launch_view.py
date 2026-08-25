@@ -329,12 +329,24 @@ class DoubleHomeRuns(unittest.TestCase):
         stop = method(home, "protected void onStop")
         new_intent = method(home, "protected void onNewIntent")
         create = method(home, "protected void onCreate")
-        self.assertIn("HomeDoublePress.arrived", start)
+        self.assertIn("main.post(countHomeStart)", start)
         self.assertIn("!homeIntentBeforeStart", start)
         self.assertIn("homeVisible = false", stop)
         self.assertIn("homeIntentBeforeStart = true", new_intent)
+        self.assertIn("main.removeCallbacks(countHomeStart)", new_intent)
+        self.assertIn("HomeDoublePress.arrived", method(home, "public void run"))
         self.assertNotIn("HomeDoublePress.arrived", create,
                          "onCreate plus onStart can turn one slow cold launch into a double press")
+
+    def test_one_home_cannot_be_counted_by_start_then_new_intent(self):
+        """OEMs may order one HOME as onStart -> onNewIntent, opposite the original guard."""
+        home = strip_comments((HOME / "HomeActivity.java").read_text())
+        start = method(home, "protected void onStart")
+        new_intent = method(home, "protected void onNewIntent")
+        self.assertIn("homeStartPending = true", start)
+        self.assertIn("if (homeStartPending)", new_intent)
+        self.assertIn("homeStartPending = false", new_intent)
+        self.assertIn("main.removeCallbacks(countHomeStart)", new_intent)
 
     def test_feed_top_reloads_the_active_timeline_before_scrolling(self):
         app = (ROOT / "static/js/client/app.js").read_text()

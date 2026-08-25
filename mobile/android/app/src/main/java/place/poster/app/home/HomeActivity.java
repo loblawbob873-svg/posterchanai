@@ -103,6 +103,14 @@ public class HomeActivity extends Activity implements DeskView.Host {
      * onStart for the same press.  Track the visible transition so both shapes count ONE press. */
     private boolean homeVisible = false;
     private boolean homeIntentBeforeStart = false;
+    private boolean homeStartPending = false;
+    private final Runnable countHomeStart = new Runnable() {
+        @Override public void run() {
+            if (!homeStartPending) return;
+            homeStartPending = false;
+            HomeDoublePress.arrived(SystemClock.elapsedRealtime());
+        }
+    };
 
     private List<AppShelf.Entry> installed = new ArrayList<AppShelf.Entry>();
     private List<AppShelf.Entry> ourTiles = new ArrayList<AppShelf.Entry>();
@@ -271,7 +279,11 @@ public class HomeActivity extends Activity implements DeskView.Host {
         // existing activity without onNewIntent.  If onNewIntent already reported this same
         // transition, do not manufacture a second press from one physical tap.
         if (!homeVisible && !homeIntentBeforeStart) {
-            HomeDoublePress.arrived(SystemClock.elapsedRealtime());
+            /* Some Android builds deliver ONE physical HOME as onStart followed by onNewIntent.
+             * Count on the next loop turn so that echo can cancel this pending count; two genuine
+             * onNewIntent deliveries still pass through independently and remain a double press. */
+            homeStartPending = true;
+            main.post(countHomeStart);
         }
         homeVisible = true;
         homeIntentBeforeStart = false;
@@ -302,6 +314,8 @@ public class HomeActivity extends Activity implements DeskView.Host {
         super.onStop();
         homeVisible = false;
         homeIntentBeforeStart = false;
+        homeStartPending = false;
+        main.removeCallbacks(countHomeStart);
         LauncherState.homeHidden();
         repo.stopWatching();
         MusicService.setWatcher(null);
@@ -357,8 +371,14 @@ public class HomeActivity extends Activity implements DeskView.Host {
         setIntent(intent);
         closeDrawer();
         if (desk != null) desk.clearEditing();
-        // Remember that onStart, if it follows, belongs to this same physical Home press.
-        if (!homeVisible) homeIntentBeforeStart = true;
+        // onStart and onNewIntent may describe the same physical HOME in either order. Suppress the
+        // pending onStart count when it came first; suppress the later onStart when this came first.
+        if (homeStartPending) {
+            homeStartPending = false;
+            main.removeCallbacks(countHomeStart);
+        } else if (!homeVisible) {
+            homeIntentBeforeStart = true;
+        }
         // One HOME remains an ordinary launcher action. A quick second one explicitly opens Social
         // at its top through the same consume-once carrier every launcher tile uses.
         if (HomeDoublePress.arrived(SystemClock.elapsedRealtime())) {
