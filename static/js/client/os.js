@@ -2803,13 +2803,17 @@
      * change while another window has focus; never let that stale route turn a moved terminal into
      * a Social window (or route the receiving renderer away after it adopts the PTY). */
     const terminal = w.view === 'terminal';
+    /* `/` is not an address. It is the page-global fallback route, and replaying it after opening
+     * an ordinary app makes routeFromPath create a second Social window on the destination output.
+     * Only deeper paths identify content that the view name cannot restore by itself. */
+    const appPath = terminal ? '' : String(w.appPath || '');
     return {view:handoffIdentity(w),title:w.title||'',icon:w.icon||'',
       width:w.el.offsetWidth,height:w.el.offsetHeight,overflow:Number(overflow)||0,
       scrollTop:Math.max(0,Number(realFeed&&realFeed.parentElement===w.body
         ? realFeed.scrollTop : w.slot&&w.parked ? w.slot.scrollTop : w.scrollTop)||0),
       terminalSid:terminal&&window.PCTerm&&PCTerm.sessionId
         ? PCTerm.sessionId() : '',
-      path:terminal ? '' : String(w.appPath || ''),ui:captureHandoffUI(w),
+      path:appPath==='/' ? '' : appPath,ui:captureHandoffUI(w),
       state:w.view==='websearch'&&window.PCWebSearch&&PCWebSearch.handoffState
         ? PCWebSearch.handoffState() : null};
   }
@@ -6308,7 +6312,9 @@
              * after the window exists so it renders into this window's feed, and only when it says
              * something — a bare '/' is every non-entity screen and re-routing it would throw the
              * window back to Social. */
-            if(p.path) try{ PC().routePath && PC().routePath(String(p.path)); }catch(_){}
+            /* Old senders can still supply `/`; defend here as well as in handoffPayload so mixed
+             * package versions across a rolling update cannot recreate the unwanted Social window. */
+            if(p.path && p.path!=='/') try{ PC().routePath && PC().routePath(String(p.path)); }catch(_){}
             const ww=Math.max(MIN_W,Math.min(vwL()-24,Number(p.width)||w.el.offsetWidth));
             const hh=Math.max(MIN_H,Math.min(vhL()-TASKBAR-24,Number(p.height)||w.el.offsetHeight));
             w.el.style.width=Math.round(ww)+'px'; w.el.style.height=Math.round(hh)+'px';

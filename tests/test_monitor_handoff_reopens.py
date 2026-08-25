@@ -77,6 +77,8 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
                       "the other monitor as a view nothing can route")
         self.assertIn("appPath", payload,
                       "the path must be the WINDOW's, captured when it was focused/parked")
+        self.assertIn("appPath==='/' ? '' : appPath", payload,
+                      "the page root is not an entity address and would open an extra Social window")
 
     def test_the_path_belongs_to_THE_WINDOW_not_to_the_page(self):
         """`location.pathname` is a property of the PAGE. Read at drag time it hands whichever
@@ -99,7 +101,7 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
         payload = self.os[i:self.os.index("function sendFrameHandoff", i)]
         self.assertIn("const terminal = w.view === 'terminal'", payload)
         self.assertIn("view:handoffIdentity(w)", payload)
-        self.assertIn("path:terminal ? ''", payload,
+        self.assertIn("const appPath = terminal ? ''", payload,
                       "the destination would adopt the PTY and then route it back to Social")
 
     @unittest.skipUnless(NODE, "node is not installed")
@@ -162,9 +164,9 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
         i = self.os.index("onHandoffFrame")
         body = self.os[i:i + 3000]
         self.assertIn("routePath", body, "the destination never acts on the path it was sent")
-        self.assertIn("if(p.path)", body,
-                      "a bare '/' is every non-entity screen; routing it unconditionally would throw "
-                      "the window back to Social")
+        self.assertIn("if(p.path && p.path!=='/')", body,
+                      "a bare '/' is every non-entity screen; routing it would create an extra "
+                      "Social window beside the app that was moved")
 
     def test_the_client_exposes_both_halves(self):
         """os.js can only reach what is on `window.__PC` — the recurring `PC.x is not a function`."""
