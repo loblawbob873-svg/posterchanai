@@ -417,8 +417,17 @@ public class LauncherDeviceTest {
         s.moveToState(androidx.lifecycle.Lifecycle.State.CREATED);
         String power = shell("dumpsys power");
         s.close();
+        String ownUid = "uid=" + ctx.getApplicationInfo().uid;
         for (String line : power.split("\n")) {
-            if (line.contains("WAKE_LOCK") && line.contains(ctx.getPackageName())) {
+            if (!line.contains("WAKE_LOCK")) continue;
+            // WorkSource may list us as a beneficiary of somebody else's lock. Google Play's
+            // `Icing` lock does exactly that while indexing an installed package; the owner UID is
+            // the first `(uid=...)`, before `ws=WorkSource`. Calling that a launcher-held lock made
+            // an otherwise green 68-test device run fail nondeterministically. Our own locks use a
+            // posterchan:* tag, and a direct owner UID appears before any WorkSource payload.
+            int ws = line.indexOf("ws=WorkSource");
+            String owner = ws < 0 ? line : line.substring(0, ws);
+            if (line.contains("'posterchan:") || owner.contains("(" + ownUid)) {
                 throw new AssertionError("the launcher is holding a wake lock: " + line.trim());
             }
         }

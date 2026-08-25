@@ -71,9 +71,17 @@ trap 'rm -rf "$OVERLAY_TMP_ROOT"' EXIT
 # PosterChanOS machine. Portage recovered only because its sync backend happened to hard-reset after
 # printing a fatal error. Clone first, replace only the checked-out overlay files, and push a normal
 # fast-forward commit instead.
+# The public URL can briefly race the NFS/nginx view immediately after a publish.  Treating one
+# transient 404 as "there is no repository" created an unrelated history and made every installed
+# machine print a fatal merge error on its next sync.  The NAS SSH repository is authoritative and
+# is the safe fallback; only initialise when neither endpoint has any history yet.
 if ! git clone -q "$URL" "$TMP/repo" 2>/dev/null; then
-	mkdir -p "$TMP/repo"
-	git -C "$TMP/repo" init -q -b main
+    rm -rf "$TMP/repo"
+    if ! git clone -q "ssh://$NAS$DEST" "$TMP/repo" 2>/dev/null; then
+        rm -rf "$TMP/repo"
+        mkdir -p "$TMP/repo"
+        git -C "$TMP/repo" init -q -b main
+    fi
 fi
 STAGE="$TMP/repo"
 find "$STAGE" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf -- {} +

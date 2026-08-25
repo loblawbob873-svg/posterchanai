@@ -18,3 +18,11 @@ def test_overlay_publisher_never_downgrades_from_the_mutable_rolling_feed():
     assert "latest-linux.yml" not in publish
     assert 'desktop-v${LIVE}' in publish
     assert "LIVE=$(basename \"$CUR\"" in publish
+
+
+def test_overlay_publisher_preserves_history_when_public_http_briefly_404s():
+    publish = (ROOT / "scripts/publish_overlay.sh").read_text()
+    public = publish.index('git clone -q "$URL" "$TMP/repo"')
+    authoritative = publish.index('git clone -q "ssh://$NAS$DEST" "$TMP/repo"')
+    initialise = publish.index('git -C "$TMP/repo" init -q -b main')
+    assert public < authoritative < initialise
