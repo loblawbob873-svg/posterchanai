@@ -11,3 +11,10 @@ def test_deploy_reconciles_completed_desktop_release_before_commit_and_publish()
     publish = sync.index("./scripts/publish_overlay.sh")
     assert check < commit < publish
     assert "scripts/bump_desktop_overlay.py\n" in sync
+
+
+def test_overlay_publisher_never_downgrades_from_the_mutable_rolling_feed():
+    publish = (ROOT / "scripts/publish_overlay.sh").read_text()
+    assert "latest-linux.yml" not in publish
+    assert 'desktop-v${LIVE}' in publish
+    assert "LIVE=$(basename \"$CUR\"" in publish

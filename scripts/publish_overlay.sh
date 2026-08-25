@@ -21,26 +21,14 @@ URL="https://gentoo.poster.place/posterchan-overlay.git"
 [ -d "$SRC" ] || { echo "no overlay at $SRC" >&2; exit 1; }
 [ -f "$SRC/profiles/repo_name" ] || { echo "$SRC is not a portage repository" >&2; exit 1; }
 
-# THE EBUILD VERSION MUST FOLLOW THE DESKTOP BUILD, or the overlay is a package manager pointed at
-# a rolling URL: SRC_URI always fetches the newest AppImage, portage sees the same version number it
-# already has installed, and `emerge -u` reports nothing to do — for ever. The version is read from
-# the update feed the desktop app itself uses, so there is one source of truth for "what is current".
-# The website route is intentionally not a directory listing and may return 404. The rolling
-# GitHub release is the artifact source used below, so read its Linux update manifest directly.
-LIVE=$({ curl -sSfL --max-time 20 \
-       https://github.com/loblawbob873-svg/posterchanai/releases/download/desktop-latest/latest-linux.yml \
-       2>/dev/null || true; } | sed -n 's/^version: *//p' | head -1)
-if [ -n "${LIVE:-}" ]; then
-    EB_DIR="$SRC/app-misc/posterchan-desktop"
-    CUR=$(ls "$EB_DIR"/posterchan-desktop-*.ebuild 2>/dev/null | head -1)
-    if [ -n "$CUR" ] && [ "$(basename "$CUR")" != "posterchan-desktop-${LIVE}.ebuild" ]; then
-        echo "[overlay] desktop build is $LIVE (ebuild was $(basename "$CUR" .ebuild | sed 's/.*-//'))"
-        git mv "$CUR" "$EB_DIR/posterchan-desktop-${LIVE}.ebuild" 2>/dev/null \
-            || mv "$CUR" "$EB_DIR/posterchan-desktop-${LIVE}.ebuild"
-    fi
-else
-    echo "[overlay] could not read the desktop version — publishing the ebuild as it stands" >&2
-fi
+# bump_desktop_overlay.py has already selected and verified an IMMUTABLE desktop-v release before
+# sync.sh commits.  The rolling desktop-latest feed can briefly lag a completed immutable release;
+# consulting it here used to downgrade the source tree during publication and could delete the valid
+# Manifest.  The committed ebuild is the sole package version authority.
+EB_DIR="$SRC/app-misc/posterchan-desktop"
+CUR=$(find "$EB_DIR" -maxdepth 1 -name 'posterchan-desktop-*.ebuild' -print -quit)
+[ -n "$CUR" ] || { echo "[overlay] no desktop ebuild" >&2; exit 1; }
+LIVE=$(basename "$CUR" .ebuild | sed 's/^posterchan-desktop-//')
 
 # ---------------------------------------------------------------- the Manifest
 #
@@ -58,7 +46,7 @@ fi
 if [ -n "${LIVE:-}" ]; then
     EB_DIR="$SRC/app-misc/posterchan-desktop"
     ASSET="PosterChan-${LIVE}-linux-x64.tar.zst"
-    GH="https://github.com/loblawbob873-svg/posterchanai/releases/download/desktop-latest"
+    GH="https://github.com/loblawbob873-svg/posterchanai/releases/download/desktop-v${LIVE}"
     DL="$(mktemp)"
     if curl -fsSL --retry 2 --max-time 900 -o "$DL" "$GH/$ASSET"; then
         printf 'DIST posterchan-desktop-%s.tar.zst %s BLAKE2B %s SHA512 %s\n' \
