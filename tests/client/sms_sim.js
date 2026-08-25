@@ -160,7 +160,17 @@ let refusals = Number(opt.refuseAfter != null ? opt.refuseAfter : -1);
 
 global.window = global;
 global.crypto = webcrypto;
-global.document = { addEventListener(){}, querySelector(){ return null; } };
+const documentListeners = new Map();
+global.document = {
+  visibilityState: 'visible',
+  addEventListener(name, fn){
+    const a = documentListeners.get(name) || []; a.push(fn); documentListeners.set(name, a);
+  },
+  async _fire(name){
+    for(const fn of (documentListeners.get(name) || []).slice()) await fn();
+  },
+  querySelector(){ return null; }
+};
 global.localStorage = (() => {
   const m = Object.assign({}, opt.storage || {});
   return { getItem: k => (k in m ? String(m[k]) : null),
@@ -275,6 +285,10 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
     else if(step === 'mirror'){ await S.mirror(); }
     else if(step === 'drain'){ await S.drainOutbox(); }
     else if(step === 'allow'){ refusals = -1; }
+    // Resume the real foreground handler. This is deliberately not a direct migrateAll call: the
+    // regression was that visibility only ran the recent timestamp sweep after an interrupted
+    // historical migration, so the older tail could never be reached again.
+    else if(step === 'foreground'){ await document._fire('visibilitychange'); }
     /* `sendfile:<to>:<bytes>` — a send with an attachment of a given size, which is the only input
        the oversized-link decision actually turns on. */
     else if(step.slice(0, 9) === 'sendfile:'){

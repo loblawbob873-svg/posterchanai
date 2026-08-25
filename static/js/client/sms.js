@@ -636,11 +636,18 @@
       }
     }
 
-    const envelope = await archiveMessageBody(m.doc, body);
+    /* Uploads can succeed before the relay publish fails. Keep that encrypted pointer on the local
+     * pending row so a reconnect retries the small event instead of creating another encrypted
+     * body (and another copy of every MMS attachment) on Blossom. `_pendingBlob` is never put on
+     * the wire; `_blob` still means the relay-backed archive is complete. */
+    const envelope = m._pendingBlob || await archiveMessageBody(m.doc, body);
+    m._pendingBlob = envelope;
     m._blob = envelope.blob;
     const ct = await PC.nip44enc(ME().pubkey, JSON.stringify(envelope));
     const r = await PC.publish(KIND, ct, [['d', m.doc], ['l', L_TAG]], {quiet:true, noQueue:true});
-    return !!(r && r.ok);
+    const ok = !!(r && r.ok);
+    if(ok) delete m._pendingBlob;
+    return ok;
   }
 
   /* PUBLISH WHAT THE PHONE HAS AND THE ARCHIVE DOES NOT.
@@ -751,6 +758,10 @@
            * message is ever skipped and the next run retries this one. What changes is that the
            * rows behind the wall are no longer collateral. */
           _migrationFailed.add(r.doc);
+          /* Retain successful encrypted uploads for the next foreground retry, but do not retain
+           * `_blob`: that field means a relay document points at the body, which is not true yet. */
+          delete m._blob;
+          S.msgs.set(m.doc, Object.assign({}, old || {}, m));
           rowErrors++;
           archiveError = '';
           stuck = true;                // the mark freezes here; the rest of the batch still lands
@@ -2272,7 +2283,21 @@
       const st = await phoneState();
       if(!st.canRead && !st.telephony) return;
       await load();
-      if(st.canRead) mirror();
+      /* A foreground is also the retry boundary for the COMPLETE archive, not merely its recent
+       * high-water sweep. A phone can be suspended, lose its signer, or go offline half-way through
+       * migrating years of messages. The old path only called mirror(), whose timestamp cursor
+       * walks forward and can never discover that older tail again. Re-read the provider, then let
+       * the resumable full migration drain before the recent sweep. migrateLocalHistory coalesces
+       * concurrent callers, and its completion latch makes this cheap after convergence. */
+      if(st.canRead){
+        await loadFromPhone();
+        /* The set prevents one unreadable attachment from spinning the current migration loop.
+         * It must not become a session-long blacklist: a relay/signing/upload failure is often
+         * transient, and the documented retry boundary is this foreground. */
+        _migrationFailed.clear();
+        await migrateLocalHistory();
+        await mirror();
+      }
       if(st.telephony) drainOutbox();
     });
   }

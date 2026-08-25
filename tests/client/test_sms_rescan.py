@@ -96,6 +96,23 @@ class AStuckCompletionMarker(unittest.TestCase):
         self.assertEqual(len(mms_files(twice)), len(mms_files(once)),
                          "a second re-scan re-uploaded everything")
 
+    def test_foreground_resumes_an_interrupted_complete_history_migration(self):
+        """The ordinary foreground path used to run only mirror(), whose high-water cursor moves
+        forward. Once an old-history upload was interrupted, returning online could sync new texts
+        forever while the older tail stayed absent forever."""
+        rows = [picture(i, NOW - (100 + i) * 86400000) for i in range(1, 6)]
+        payload = {"rows": rows, "storage": {}, "steps":
+                   ["phoneLoad", "migrateAll", "allow", "foreground"],
+                   "now": NOW, "canRead": True, "refuseAfter": 0}
+        proc = subprocess.run([NODE, SIM, json.dumps(payload)], capture_output=True, text=True,
+                              timeout=180)
+        self.assertEqual(proc.returncode, 0, proc.stderr[-4000:])
+        result = json.loads(proc.stdout.strip().splitlines()[-1])
+        self.assertEqual(len(mms_files(result)), 5,
+                         "foreground sync left the interrupted historical tail behind")
+        self.assertTrue(result["blossomDone"],
+                        "the resumed full-history migration did not converge")
+
 
 if __name__ == "__main__":
     unittest.main()
