@@ -201,7 +201,7 @@ def test_concord_webxdc_mentions_live_sync_and_scroll_are_integrated():
     assert 'hydrateWebxdcCards(current)' in CONCORD and 'PCWebxdc.cardHtml(app)' in CONCORD
     assert 'reactionIds:' in CORD_READER and 'extraTags' in CORD_READER
     assert 'mentionToken' in CONCORD and "e.key==='Tab'" in CONCORD
-    assert '.cc-mention-menu' in CONCORD_CSS
+    assert 'mentionBox' not in CONCORD
     assert 'refreshActiveChannel(p)' in CONCORD and 'setInterval(()=>refreshActiveChannel(p),4000)' in CONCORD
     assert 'scrollStates' in CONCORD and 'st.pinned' in CONCORD and 'preserveChatScroll' in CONCORD
 
