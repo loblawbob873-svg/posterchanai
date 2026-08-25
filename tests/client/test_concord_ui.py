@@ -25,6 +25,17 @@ def test_concord_is_a_separate_discover_view_not_public_chat():
     assert 'data-view="chat"' not in HTML, "legacy Nostr Chat navigation must stay removed"
 
 
+def test_concord_cannot_be_hidden_out_of_classic_and_desktop_launchers():
+    locked = APP.split("const NAV_LOCKED = new Set(", 1)[1].split(");", 1)[0]
+    assert "'concord'" in locked
+
+
+def test_packaged_shell_loads_the_complete_concord_surface():
+    for asset in ("concord.css", "cord-reader.js", "concord.js"):
+        assert asset in HTML
+    assert 'data-view="concord"' in HTML
+
+
 def test_stale_pwa_controller_cannot_restore_the_previous_screen_over_concord():
     assert "previous service worker" in CONCORD
     assert "[data-view=\"concord\"]" in CONCORD

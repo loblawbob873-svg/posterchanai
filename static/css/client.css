@@ -8832,6 +8832,16 @@ audio.sms-att-img{min-width:220px}
 .pcc{display:flex;flex-direction:column;flex:1;min-height:0;background:var(--bg2);color:var(--text)}
 .pcc-main{display:flex;flex:1;min-height:0}
 
+/* VS Code-shaped activity rail: switching tools never replaces or strands the sidebar controls. */
+.pcc-activity{width:48px;flex:0 0 48px;display:flex;flex-direction:column;align-items:stretch;
+  background:var(--bg);border-right:1px solid var(--line)}
+.pcc-activity button{position:relative;height:48px;border:0;border-left:2px solid transparent;
+  background:transparent;color:var(--muted);cursor:pointer}
+.pcc-activity button:hover{color:var(--text);background:var(--panel2)}
+.pcc-activity button.on{color:var(--text);border-left-color:var(--neon)}
+.pcc-activity .ic{width:22px;height:22px}.pcc-activity em{position:absolute;right:4px;bottom:4px;min-width:16px;
+  padding:1px 4px;border-radius:9px;background:var(--neon);color:var(--bg);font:700 10px/14px var(--sans);font-style:normal}
+
 /* ---- file tree ---- */
 .pcc-side{width:var(--pcc-side,250px);flex:0 0 var(--pcc-side,250px);min-width:0;
   display:flex;flex-direction:column;background:var(--panel);border-right:1px solid var(--line)}
@@ -8858,7 +8868,11 @@ audio.sms-att-img{min-width:220px}
 .pcc-git-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:8px}.pcc-git-actions button,.pcc-git-commit button,.pcc-git-file>button{min-height:34px;border:1px solid var(--line);border-radius:7px;background:var(--panel2);color:var(--text);cursor:pointer}
 .pcc-git-file{display:grid;grid-template-columns:minmax(0,1fr) 36px;gap:4px;padding:2px 6px}.pcc-git-file>button:first-child{display:flex;align-items:center;gap:7px;min-width:0;padding:5px 7px;text-align:left}.pcc-git-file code{color:var(--neon)}.pcc-git-file span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pcc-git-commit{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px;padding:9px 7px}.pcc-git-commit input{min-width:0;padding:8px;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--text)}
-.pcc-git-diff{max-height:42vh;margin:6px;padding:8px;overflow:auto;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--text);font:11px/1.35 var(--mono);white-space:pre-wrap}
+.pcc-diff-view{display:flex;flex:1;min-height:0;flex-direction:column;background:var(--bg)}
+.pcc-diff-view>header{display:flex;align-items:center;gap:10px;min-height:38px;padding:0 10px;border-bottom:1px solid var(--line)}
+.pcc-diff-view>header b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pcc-diff-view>header span{color:var(--muted);font-size:11px}
+.pcc-diff-view>header button{margin-left:auto;border:0;background:none;color:var(--muted);font-size:20px;cursor:pointer}
+.pcc-git-diff{flex:1;min-height:0;margin:0;padding:12px 16px;overflow:auto;background:var(--bg);color:var(--text);font:12px/1.5 var(--mono);white-space:pre;tab-size:4}
 
 /* ---- drag handles ---- */
 .pcc-grip{flex:none;background:transparent;position:relative;z-index:2}

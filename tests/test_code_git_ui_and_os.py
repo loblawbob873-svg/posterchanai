@@ -29,3 +29,28 @@ def test_posterchanos_installs_ngit_and_the_git_remote_helper_automatically():
 def test_git_ui_uses_json_api_not_shell_text():
     assert "post('/git/action'" in CODE
     assert "exec(" not in CODE[CODE.index("async function gitAct"):CODE.index("/* A DOCUMENT", CODE.index("async function gitAct"))]
+
+
+def test_code_activity_rail_can_always_return_to_working_directory():
+    assert 'data-code-view="explorer"' in CODE
+    assert 'data-code-view="git"' in CODE
+    assert 'aria-label="Working Directory"' in CODE
+    assert "S.gitOpen=git" in CODE
+    assert "if(!git)S.gitDiff=null" in CODE
+    assert ".pcc-activity" in CSS
+
+
+def test_working_directory_can_be_changed_on_desktop_and_browser():
+    assert 'Change Working Directory' in CODE
+    assert "if(h&&h.pickDirectory)" in CODE
+    assert "window.prompt('Working directory (relative to the workspace root)'" in CODE
+    assert "await loadTree(String(picked).trim()" in CODE
+
+
+def test_modified_file_opens_diff_in_the_editor_pane():
+    assert 'data-git-diff="' in CODE
+    assert "S.gitDiff={path,text:'',error:'',busy:true}" in CODE
+    assert "(S.gitDiff?diffHtml():editorHtml())" in CODE
+    assert 'aria-label="Diff for ' in CODE
+    assert "on('#pcc-diff-close'" in CODE
+    assert ".pcc-diff-view" in CSS

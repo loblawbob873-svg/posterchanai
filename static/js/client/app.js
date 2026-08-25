@@ -480,7 +480,10 @@
    * `nostr_only` mean the list of rows differs per node, so the editor keeps every stored key it did
    * not offer a switch for (see the change handler) — otherwise saving the list on a nostr-only node
    * would quietly un-hide Email, Terminal and the rest everywhere else. */
-  const NAV_LOCKED = new Set(['settings', 'bookmarks', 'blossom']);
+  /* Concord is a core destination now that legacy NIP-28 Chat is gone. If an older synced sidebar
+   * preference hides it, both Classic and PosterChanOS lose their only room UI because the desktop
+   * launcher is derived from these rows. Keep its door present just like Settings. */
+  const NAV_LOCKED = new Set(['settings', 'bookmarks', 'blossom', 'concord']);
   const NAV_OFF = 'nav-off';        // ours; NEVER `hidden`, which applyInstanceGating owns and resets
   function _navKey(el){
     if(!el) return '';

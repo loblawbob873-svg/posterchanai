@@ -246,7 +246,7 @@
     open: [],                                // [{path, lang, text, disk, mtime, sel, scroll}]
     active: -1,
     termOpen: false, termH: 260, sideW: 250,
-    gitOpen: false, git: null, gitBusy: false,
+    gitOpen: false, git: null, gitBusy: false, gitDiff: null,
     status: '', statusKind: '',
     busy: false,
   };
@@ -669,8 +669,23 @@
         (g.nostr?'Nostr remote · built in':enc(g.origin||'local repository')) + '</small></div>' +
         '<div class="pcc-git-actions"><button data-git-act="pull">Pull</button><button data-git-act="push">Push</button></div>' +
         (files.length?files.map(f=>'<div class="pcc-git-file"><button data-git-diff="'+enc(f.path)+'"><code>'+enc(f.xy)+'</code><span>'+enc(f.path)+'</span></button><button title="'+(f.xy[0]!==' '?'Unstage':'Stage')+'" data-git-act="'+(f.xy[0]!==' '?'unstage':'stage')+'" data-git-path="'+enc(f.path)+'">'+(f.xy[0]!==' '?'−':'+')+'</button></div>').join(''):'<div class="pcc-note">Working tree clean</div>') +
-        '<div class="pcc-git-commit"><input id="pcc-git-message" placeholder="Commit message" maxlength="5000"><button data-git-act="commit">Commit</button></div>' +
-        '<pre class="pcc-git-diff hidden" id="pcc-git-diff"></pre>';
+        '<div class="pcc-git-commit"><input id="pcc-git-message" placeholder="Commit message" maxlength="5000"><button data-git-act="commit">Commit</button></div>';
+    }
+
+    function diffHtml(){
+      const d=S.gitDiff;
+      if(!d) return editorHtml();
+      const body=d.busy?'Loading diff…':d.error?d.error:(d.text||'No changes to display');
+      return '<section class="pcc-diff-view" aria-label="Diff for '+enc(d.path)+'">' +
+        '<header><b>'+enc(d.path)+'</b><span>Working Tree</span><button id="pcc-diff-close" title="Close diff" aria-label="Close diff">×</button></header>' +
+        '<pre class="pcc-git-diff">'+enc(body)+'</pre></section>';
+    }
+
+    function activityHtml(){
+      return '<nav class="pcc-activity" aria-label="Code views">' +
+        '<button data-code-view="explorer" class="'+(S.gitOpen?'':'on')+'" title="Working Directory" aria-label="Working Directory"><svg class="ic"><use href="#i-folder"></use></svg></button>' +
+        '<button data-code-view="git" class="'+(S.gitOpen?'on':'')+'" title="Source Control" aria-label="Source Control"><svg class="ic"><use href="#i-git"></use></svg>' +
+          (S.git&&S.git.files&&S.git.files.length?'<em>'+S.git.files.length+'</em>':'')+'</button></nav>';
     }
 
     function tabsHtml(){
@@ -708,12 +723,11 @@
       const d = doc();
       const eng = d ? (S.engines[d.lang] || (d.lang === 'json' ? 'json' : '')) : '';
       return '<div class="pcc-bar">' +
-        (window.pcHost&&window.pcHost.pickDirectory?'<button class="btn btn-ghost pcc-b" id="pcc-open-folder">Open Folder</button>':'') +
+        '<button class="btn btn-ghost pcc-b" id="pcc-open-folder">Change Working Directory</button>' +
         '<button class="btn pcc-b" id="pcc-save"' + (d && dirty(d) ? '' : ' disabled') + '>Save</button>' +
         '<button class="btn btn-ghost pcc-b" id="pcc-fmt"' + (d && eng ? '' : ' disabled') + ' title="' +
           (eng ? 'Beautify with ' + enc(eng) : 'No formatter on this node for this language') + '">Format</button>' +
         '<button class="btn btn-ghost pcc-b" id="pcc-reload"' + (d ? '' : ' disabled') + '>Reload</button>' +
-        '<button class="btn btn-ghost pcc-b" id="pcc-git">' + (S.gitOpen?'Explorer':'Source Control') + '</button>' +
         '<span class="pcc-grow"></span>' +
         '<span class="pcc-lang">' + enc(d ? d.lang : '') + (eng ? ' · ' + enc(eng) : '') + '</span>' +
         '<button class="btn btn-ghost pcc-b" id="pcc-term">' + (S.termOpen ? 'Hide' : 'Show') + ' terminal</button>' +
@@ -738,6 +752,7 @@
       feed.innerHTML =
         '<div class="pcc" style="--pcc-side:' + S.sideW + 'px;--pcc-term:' + S.termH + 'px">' +
           '<div class="pcc-main">' +
+            activityHtml() +
             '<aside class="pcc-side" id="pcc-side">' +
               '<div class="pcc-crumbs">' + (S.gitOpen?'Source Control':crumbs()) + '</div>' +
               '<div class="pcc-tree" id="pcc-tree">' + (S.gitOpen?gitHtml():treeHtml()) + '</div>' +
@@ -747,7 +762,7 @@
             '<section class="pcc-pane">' +
               '<div class="pcc-tabs" id="pcc-tabs">' + tabsHtml() + '</div>' +
               toolbarHtml() +
-              editorHtml() +
+              (S.gitDiff?diffHtml():editorHtml()) +
               '<div class="pcc-foot"><span class="pcc-status ' + enc(S.statusKind) + '" id="pcc-status">' +
                 enc(S.status) + '</span><span class="pcc-grow"></span><span class="pcc-pos" id="pcc-pos"></span></div>' +
             '</section>' +
@@ -943,10 +958,31 @@
       });
 
       on('#pcc-save', 'click', saveDoc);
-      on('#pcc-open-folder', 'click', async()=>{ const h=window.pcHost;if(!h||!h.pickDirectory)return;const picked=await h.pickDirectory();if(!picked)return;S.hostRoot=picked;S.cwd=picked;S.open=[];S.active=-1;S.gitOpen=false;await loadTree(picked);save(true); });
+      on('#pcc-open-folder', 'click', async()=>{
+        const h=window.pcHost;
+        if(h&&h.pickDirectory){
+          const picked=await h.pickDirectory();if(!picked)return;
+          S.hostRoot=picked;S.cwd=picked;S.open=[];S.active=-1;S.gitOpen=false;S.gitDiff=null;
+          await loadTree(picked);save(true);return;
+        }
+        /* Browser builds cannot invoke an OS folder picker. The server API already confines paths
+         * to its configured workspace, so accept a workspace-relative directory and let /tree
+         * validate it. Empty means the workspace root. */
+        const current=S.cwd||'';
+        const picked=window.prompt('Working directory (relative to the workspace root)',current);
+        if(picked===null)return;
+        S.hostRoot='';S.gitOpen=false;S.gitDiff=null;
+        await loadTree(String(picked).trim().replace(/^\/+|\/+$/g,''));save(true);
+      });
       on('#pcc-fmt', 'click', formatDoc);
       on('#pcc-reload', 'click', reloadDoc);
-      on('#pcc-git', 'click', () => { S.gitOpen=!S.gitOpen; paint(); if(S.gitOpen)loadGit(); });
+      document.querySelectorAll('[data-code-view]').forEach(b=>b.addEventListener('click',()=>{
+        const git=b.dataset.codeView==='git';
+        S.gitOpen=git;
+        if(!git)S.gitDiff=null;
+        paint();
+        if(git)loadGit();
+      }));
       on('#pcc-term', 'click', () => { S.termOpen = !S.termOpen; save(); paint(); });
 
       document.querySelectorAll('[data-git-act]').forEach(b=>b.addEventListener('click',()=>{
@@ -955,11 +991,13 @@
         gitAct(a,path?[path]:[],msg);
       }));
       document.querySelectorAll('[data-git-diff]').forEach(b=>b.addEventListener('click',async()=>{
-        const out=$('#pcc-git-diff'); if(!out)return;
-        out.classList.remove('hidden'); out.textContent='Loading diff…';
-        try{ const d=await api('/git/diff?path='+encodeURIComponent(b.dataset.gitDiff)); out.textContent=d.diff||'No unstaged diff'; }
-        catch(e){ out.textContent=e.message||String(e); }
+        const path=b.dataset.gitDiff;
+        S.gitDiff={path,text:'',error:'',busy:true}; paint();
+        try{ const d=await api('/git/diff?path='+encodeURIComponent(path)); S.gitDiff={path,text:d.diff||'',error:'',busy:false}; }
+        catch(e){ S.gitDiff={path,text:'',error:e.message||String(e),busy:false}; }
+        paint();
       }));
+      on('#pcc-diff-close','click',()=>{S.gitDiff=null;paint();});
 
       const ta = $('#pcc-ta');
       if(ta){
