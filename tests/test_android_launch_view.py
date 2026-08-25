@@ -311,12 +311,19 @@ class DoubleHomeRuns(unittest.TestCase):
         phone = (ROOT / "static/js/client/phoneshell.js").read_text()
         app = (ROOT / "static/js/client/app.js").read_text()
         self.assertIn('openApp("__feed_top")', home)
+        checks = (ROOT / "scripts/android_device_checks.sh").read_text()
+        self.assertIn("double HOME took the native feed-top path", checks)
+        self.assertIn("home double press: opening active feed at top", checks)
         self.assertIn("v === '__feed_top'", phone)
         self.assertIn("PC.timelineTop()", phone)
         self.assertNotIn("PC.timelineTop('global')", phone)
         self.assertIn("_TL_TABS.includes(VIEW) ? VIEW : _startTimeline()", app)
         self.assertIn("if(hidden.has(v))", app)
         self.assertIn("delete _tlScrollMemo[v]", app)
+        self.assertIn("_tlForceTop=v", app)
+        self.assertIn("if(VIEW === view && !forceTop)", app)
+        self.assertIn("if(forceTop){", app)
+        self.assertIn("_tlForceTop=''", app)
 
 
 if __name__ == "__main__":

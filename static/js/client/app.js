@@ -659,11 +659,21 @@
   }
   function activateNavView(v){
     if(v === VIEW && _TL_TABS.indexOf(v) >= 0){
-      delete _tlScrollMemo[v];
-      const f = $('#feed'); if(f) f.scrollTop = 0;
+      timelineTop(v);
       return;
     }
     switchView(v);
+  }
+
+  function timelineTop(view){
+    const asked=String(view||''), hidden=tlHiddenSet();
+    let v=_TL_TABS.includes(asked) ? asked : (_TL_TABS.includes(VIEW) ? VIEW : _startTimeline());
+    if(hidden.has(v)) v=_TL_TABS.find(x=>!hidden.has(x)) || 'global';
+    _tlForceTop=v;
+    delete _tlScrollMemo[v];
+    if(VIEW!==v) switchView(v);
+    const top=()=>{ if(VIEW===v){ const f=$('#feed'); if(f) f.scrollTop=0; } };
+    top(); requestAnimationFrame(()=>requestAnimationFrame(top)); setTimeout(top,250);
   }
   function setMobileNav(views){
     const list = [];
@@ -6251,6 +6261,10 @@
    * moment ago", and a scroll position from a previous session is a position in a feed that no
    * longer exists. */
   const _tlScrollMemo = Object.create(null);
+  // A deliberate Home/Social shortcut outranks the generic "return where I was" machinery for the
+  // one navigation it requested. Without this latch renderTimeline sees VIEW already changed,
+  // mistakes the previous screen's shared #feed offset for a timeline repaint, and restores it.
+  let _tlForceTop = '';
 
   /* REMEMBER WHERE THEY WERE READING. Called by every route that leaves a timeline, which is more
    * than switchView: renderThread and renderProfileView set VIEW themselves and never go through it,
@@ -6785,7 +6799,9 @@
     /* A repaint that did NOT come through renderView still has its offset here — renderView's own
      * capture (above the spinner) covers the reset path, because by the time this runs on that path
      * the feed has already been blanked and scrollTop is 0. Both are needed; neither is enough. */
-    if(VIEW === view){
+    const forceTop = _tlForceTop === view;
+    if(forceTop) delete _tlScrollMemo[view];
+    if(VIEW === view && !forceTop){
       try{ const f0 = $('#feed'); const at = (f0 && f0.scrollTop) || 0;
            if(at > 0 && !(_tlScrollMemo[view] > 0)) _tlScrollMemo[view] = at; }catch(_){ }
     }
@@ -6804,7 +6820,11 @@
      * restore silently lands near the top. */
     try{
       const want = _tlScrollMemo[view];
-      if(want > 0){
+      if(forceTop){
+        delete _tlScrollMemo[view];
+        _tlForceTop='';
+        const f=$('#feed');if(f)f.scrollTop=0;
+      }else if(want > 0){
         delete _tlScrollMemo[view];
         _putScroll(want, () => VIEW === view);
       }
@@ -33581,19 +33601,7 @@
      * holds and nothing else can fetch. */
     saveBlobAs,
     ensureProfile: _ensureProfile, NT, compose, switchView,   // compose → News "Share as note"; switchView → nav
-    timelineTop: (view) => {
-      const asked=String(view||''), hidden=tlHiddenSet();
-      /* No named target is the Android launcher's "Home twice" action. Keep the timeline already
-       * on screen; from another app use the person's configured landing timeline. `_startTimeline`
-       * is the one existing authority for Home-vs-Nostrverse, guest mode, and hidden tabs — spelling
-       * a second fallback here would make this shortcut disagree with the app's Home setting. */
-      let v=_TL_TABS.includes(asked) ? asked : (_TL_TABS.includes(VIEW) ? VIEW : _startTimeline());
-      if(hidden.has(v)) v=_TL_TABS.find(x=>!hidden.has(x)) || 'global';
-      delete _tlScrollMemo[v];
-      if(VIEW!==v) switchView(v);
-      const top=()=>{ if(VIEW===v){ const f=$('#feed'); if(f) f.scrollTop=0; } };
-      top(); requestAnimationFrame(()=>requestAnimationFrame(top)); setTimeout(top,250);
-    },
+    timelineTop,
     /* PosterChan Code saves a Files document back to Files. The editor holds the text; the drive
      * index, the encryption and the folder all live here, so the round trip does too. */
     saveBlobDoc,

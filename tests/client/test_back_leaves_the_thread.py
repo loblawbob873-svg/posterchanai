@@ -182,9 +182,10 @@ class EveryRouteOutOfTheFeedRemembers(unittest.TestCase):
         """The user's own spec for when it SHOULD reset. Dropping the scroll without dropping the
         memo would restore the position they just discarded, on the next return."""
         i = self.src.index("function activateNavView(v){")
-        blk = self.src[i:i + 500]
+        blk = self.src[i:i + 900]
         self.assertIn("delete _tlScrollMemo[v]", blk)
-        self.assertIn("f.scrollTop = 0", blk)
+        self.assertIn("f.scrollTop=0", blk)
+        self.assertIn("_tlForceTop=v", blk)
 
     def test_mobile_bar_uses_the_same_repeat_tap_behavior(self):
         i = self.src.index("function applyMobileNav(){")
@@ -252,7 +253,7 @@ class RepaintingTheCurrentTimelineKeepsThePlace(unittest.TestCase):
     def test_a_repaint_of_the_current_timeline_captures_the_offset_itself(self):
         i = self.src.index("function renderTimeline(view, reset){")
         blk = self.src[i:i + 2200]
-        self.assertIn("if(VIEW === view){", blk,
+        self.assertIn("if(VIEW === view && !forceTop){", blk,
                       "renderTimeline cannot tell a repaint of the current feed from an arrival")
         self.assertIn("_tlScrollMemo[view] = at", blk)
 

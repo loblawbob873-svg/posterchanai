@@ -345,7 +345,10 @@ public class HomeActivity extends Activity implements DeskView.Host {
         if (desk != null) desk.clearEditing();
         // One HOME remains an ordinary launcher action. A quick second one explicitly opens Social
         // at its top through the same consume-once carrier every launcher tile uses.
-        if (HomeDoublePress.arrived(SystemClock.elapsedRealtime())) openApp("__feed_top");
+        if (HomeDoublePress.arrived(SystemClock.elapsedRealtime())) {
+            Log.i(TAG, "home double press: opening active feed at top");
+            openApp("__feed_top");
+        }
     }
 
     /**

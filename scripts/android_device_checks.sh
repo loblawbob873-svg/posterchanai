@@ -285,6 +285,27 @@ if [ -n "$HOLDER" ]; then
   esac
   crash_scan launcher
 
+  # THE ACTUAL SHORTCUT, THROUGH ANDROID'S HOME DELIVERY — not a unit call to its timer. A wait
+  # longer than the pair window clears any HOME used to reach this section; the next two key/start
+  # deliveries are the person's gesture. It must launch MainActivity and record the exact branch.
+  say "double HOME opens the active feed at its top"
+  sleep 2
+  adb logcat -c
+  to_home
+  sleep 0.3
+  to_home
+  sleep 3
+  TOP=$(adb shell dumpsys activity activities 2>/dev/null | grep -m1 -E 'mResumedActivity|topResumedActivity' | tr -d '\r')
+  echo "    after double HOME: $TOP"
+  if echo "$TOP" | grep -q "MainActivity" && adb logcat -d 2>/dev/null | grep -q "home double press: opening active feed at top"; then
+    ok "double HOME took the native feed-top path"
+  else
+    fail "double HOME did not launch the feed-top path"
+    adb logcat -d 2>/dev/null | grep -E "PosterChan|HomeActivity|ActivityTaskManager" | tail -80
+  fi
+  to_home
+  sleep 2
+
   # PRESSING HOME WHILE ALREADY HOME, and BACK. Both are swallowed by a launcher; a launcher that
   # finishes on back leaves the phone showing whatever is behind it, which on a fresh boot is
   # nothing at all.
