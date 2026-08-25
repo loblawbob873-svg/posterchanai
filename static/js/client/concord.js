@@ -27,10 +27,13 @@
   const recoveredOwnedInvites=new Set();
   const roomLoads=new Map();
   const roomControls=new Map();
+  /* Blob URLs die with their renderer. Keep encrypted icon pointer identity in memory so a saved
+   * room never suppresses re-decryption after the next browser/native-shell launch. */
+  const roomIconRefs=new Map();
   const pendingAttachments=new Map();
   const attachmentCache=new Map(),attachmentLoads=new Map();
   const scrollStates=new Map();
-  let liveTimer=null,liveBusy=false;
+  let liveTimer=null,liveBusy=false,metadataBusy=false,metadataCursor=0;
   function saved(){ try{ const v=JSON.parse(localStorage.getItem('pc.concord.invites')||'[]'); return Array.isArray(v)?v:[]; }catch(_){ return []; } }
   function save(v){ try{ localStorage.setItem('pc.concord.invites',JSON.stringify(v.slice(0,50))); }catch(_){} }
   function scrollKey(){ const room=state.community==null?null:saved()[state.community]; return `${room&&(room.communityId||room.naddr||room.url)||'home'}:${state.channel||'general'}`; }
@@ -353,7 +356,34 @@
     try{ const rooms=saved(),room=rooms[state.community],channel=room&&(room.channels||[]).find(c=>c.name===(state.channel||'general')),bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader;if(!room||!channel||!bundle||!reader)return; const loadKey=room.communityId||room.naddr,controlWraps=roomControls.get(loadKey);if(!controlWraps)return; const relays=[...new Set([...(bundle.relays||[]),...CORD_RELAYS])].slice(0,8),storeId=channelStoreId(room,channel.name),prior=testMessages(storeId),since=Math.max(0,Math.floor((prior.reduce((n,m)=>Math.max(n,Number(m.at)||0),0)-60000)/1000)),wraps=await cordQuery(p,relays,[{kinds:[1059],authors:channel.streamPubkeys,since,limit:500}],{timeout:6000,max:8}),opened=await reader.inspectChat(bundle,controlWraps,channel.id,wraps||[]),byId=new Map(prior.map(m=>[messageId(m),m])); let changed=false; for(const m of opened.messages||[]){if(byId.has(m.id))continue;const pr=p.profOf?p.profOf(m.pubkey):{};byId.set(m.id,{id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:m.text,at:m.at,kind:m.kind,tags:m.tags||[],reactions:{},remote:true});changed=true;} for(const [target,groups] of opened.reactions||[]){const m=byId.get(target);if(!m)continue;const next={};for(const [emoji,people] of groups)next[emoji]=people;if(JSON.stringify(m.reactions||{})!==JSON.stringify(next)){m.reactions=next;changed=true;}} if(changed){const merged=[...byId.values()].sort((a,b)=>Number(a.at)-Number(b.at));preserveChatScroll(()=>{saveTestMessages(storeId,merged);render();});}
     }catch(e){console.warn('Concord live sync failed',e);}finally{liveBusy=false;}
   }
-  function startLiveSync(p){ if(liveTimer||!document.body.classList.contains)return; liveTimer=setInterval(()=>refreshActiveChannel(p),4000); }
+  async function refreshRoomMetadata(p){
+    if(metadataBusy||!document.body.classList.contains('concord-view')||!window.PosterCordReader)return;
+    const rooms=saved(),eligible=rooms.map((room,index)=>({room,index})).filter(x=>x.room&&!x.room.local&&x.room.cord&&x.room.cord.bundle);
+    if(!eligible.length)return; metadataBusy=true;
+    try{
+      /* Rotate through every joined community. Metadata belongs to the community rail as much as
+       * the active header, so refreshing only state.community leaves all other icons stale until
+       * somebody navigates away and back. */
+      const selected=eligible[metadataCursor++%eligible.length],room=selected.room,bundle=room.cord.bundle,
+        reader=window.PosterCordReader,loadKey=room.communityId||room.naddr,
+        seed=reader.inspectControl(bundle,[]),relays=[...new Set([...(bundle.relays||[]),...CORD_RELAYS])].slice(0,8),
+        wraps=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:6000,max:8}),
+        info=reader.inspectControl(bundle,wraps||[]);
+      roomControls.set(loadKey,wraps||[]);
+      let changed=false;
+      const assign=(key,value)=>{if(value!==undefined&&JSON.stringify(room[key])!==JSON.stringify(value)){room[key]=value;changed=true;}};
+      assign('name',info.name||room.name); assign('description',info.description===undefined?room.description:info.description);
+      assign('banned',Array.isArray(info.banned)?info.banned:room.banned||[]);
+      if(Object.prototype.hasOwnProperty.call(info,'icon')){
+        const ref=typeof info.icon==='string'?info.icon:JSON.stringify(info.icon||null);
+        if(roomIconRefs.get(loadKey)!==ref){roomIconRefs.set(loadKey,ref);room.icon=info.icon?(typeof info.icon==='string'?info.icon:await decryptImagePointer(info.icon)):'';changed=true;}
+      }
+      const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);
+      if(channels.length)assign('channels',channels);
+      if(changed){rooms[selected.index]=room;save(rooms);preserveChatScroll(()=>render());}
+    }catch(e){console.warn('Concord metadata sync failed',e);}finally{metadataBusy=false;}
+  }
+  function startLiveSync(p){ if(liveTimer||!document.body.classList.contains)return; liveTimer=setInterval(()=>{refreshRoomMetadata(p);refreshActiveChannel(p);},4000); }
   async function mintPublicRoom(p,name,icon){
     const viewer=p.viewer?p.viewer():{}; if(!viewer.pubkey||!window.PosterCord)throw new Error('sign in before creating a relay community');
     const relays=[...new Set([...CORD_RELAYS,...(p.relayUrls?p.relayUrls():[])])].slice(0,8);

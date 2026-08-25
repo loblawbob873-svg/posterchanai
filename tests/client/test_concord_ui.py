@@ -405,8 +405,19 @@ def test_concord_webxdc_mentions_live_sync_and_scroll_are_integrated():
     assert 'reactionIds:' in CORD_READER and 'extraTags' in CORD_READER
     assert 'mentionToken' in CONCORD and "e.key==='Tab'" in CONCORD
     assert 'mentionBox' not in CONCORD
-    assert 'refreshActiveChannel(p)' in CONCORD and 'setInterval(()=>refreshActiveChannel(p),4000)' in CONCORD
+    assert 'refreshActiveChannel(p)' in CONCORD and 'setInterval(()=>{refreshRoomMetadata(p);refreshActiveChannel(p);},4000)' in CONCORD
     assert 'scrollStates' in CONCORD and 'st.pinned' in CONCORD and 'preserveChatScroll' in CONCORD
+
+
+def test_all_joined_community_metadata_repaints_live_without_moving_chat():
+    block = CONCORD.split('async function refreshRoomMetadata(p)', 1)[1].split('function startLiveSync', 1)[0]
+    assert 'eligible[metadataCursor++%eligible.length]' in block
+    assert 'roomControls.set(loadKey,wraps||[])' in block
+    assert "assign('name'" in block and "assign('description'" in block
+    assert "roomIconRefs.get(loadKey)!==ref" in block
+    assert 'const roomIconRefs=new Map()' in CONCORD
+    assert 'rooms[selected.index]=room;save(rooms);preserveChatScroll(()=>render())' in block
+    assert 'scrollChatBottom' not in block
 
 
 def test_armada_encrypted_attachments_are_decrypted_before_media_rendering():
