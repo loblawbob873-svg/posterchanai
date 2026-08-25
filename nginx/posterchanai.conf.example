@@ -121,7 +121,11 @@ server {
     # reports from POSTERCHANAI_OFFICE). Adding it "ready for later" buys nothing and gives a
     # support question a wrong answer.
     location ^~ /office-code/ {
-        rewrite ^/office-code/(.*)$ /$1 break;
+        # NO REWRITE. The prefix is passed through UNTOUCHED, because CODE is started with
+        # `--o:net.service_root=/office-code` and therefore both serves and ADVERTISES every path
+        # under it. Stripping it here made cool.html load and then ask for /browser/<hash>/global.js
+        # at the site root — a white document frame, four 404s in the console, and nothing in any
+        # log, since cool.html itself had been served perfectly.
         proxy_pass http://posterchanai_office;
         proxy_set_header X-Forwarded-Prefix /office-code;
         proxy_read_timeout 36000s;

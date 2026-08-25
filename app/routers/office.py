@@ -29,6 +29,19 @@ router = APIRouter(tags=["office"])
 
 _ROOT = Path(os.getenv("POSTERCHANAI_OFFICE_WORK_DIR", "/tmp/posterchanai-office"))
 _CODE = os.getenv("POSTERCHANAI_CODE_URL", "http://127.0.0.1:9983").rstrip("/")
+# THE SUB-PATH CODE LIVES UNDER, and all three halves of the deployment must agree on it:
+# coolwsd is started with `--o:net.service_root=<this>` (posterchanai-office.service and
+# scripts/install/office.sh), nginx publishes `location ^~ <this>/` WITHOUT rewriting the prefix
+# away (nginx/posterchanai.conf.example, docker/proxy/posterchanai.conf), and this module joins it.
+#
+# WHY IT CANNOT JUST BE nginx's JOB. coolwsd writes its OWN absolute URLs — the `<script src>` tags
+# inside cool.html (via %SERVICE_ROOT%), the editing WebSocket, and the discovery `urlsrc`. Told
+# nothing, it writes them at the site ROOT, so nginx stripped the prefix on the way in and the page
+# then asked for `/browser/<hash>/global.js` at the top level, which is not a route this site has.
+# The document frame loaded and stayed WHITE, with four 404s in the console and nothing server-side
+# to say so — cool.html itself had been served perfectly. `service_root` is the setting that exists
+# for exactly this, and its own comment in coolwsd.xml describes this deployment.
+_SERVICE_ROOT = "/office-code"
 _MAX = int(os.getenv("POSTERCHANAI_OFFICE_MAX_BYTES", str(128 * 1024 * 1024)))
 _TTL = int(os.getenv("POSTERCHANAI_OFFICE_SESSION_TTL", "21600"))
 _SECRET = os.getenv("POSTERCHANAI_OFFICE_SECRET") or secrets.token_hex(32)
@@ -93,12 +106,32 @@ def _public_base(request: Request) -> str:
     return f"{proto}://{host}"
 
 
+async def _discover(client: httpx.AsyncClient) -> httpx.Response:
+    """Fetch discovery, under the service root or at the origin — whichever this CODE answers.
+
+    A configured `service_root` moves EVERY path, including this one and including on loopback, so
+    the prefixed URL is asked first. The bare one is not a fallback for a misconfigured server: it
+    is what makes the two restarts ORDER-INDEPENDENT. `sync.sh` restarts the app and deliberately
+    never restarts the office unit (a document somebody has open must not be closed by a deploy), so
+    for as long as it takes a person to run `systemctl restart posterchanai-office` there is a new
+    app talking to an old CODE — and it is a 404 that would otherwise read as "office unavailable".
+    """
+    last: Exception | None = None
+    for root in (_SERVICE_ROOT, ""):
+        try:
+            response = await client.get(f"{_CODE}{root}/hosting/discovery")
+            response.raise_for_status()
+            return response
+        except Exception as exc:                        # 404 here means "not under that root"
+            last = exc
+    raise last if last else RuntimeError("no discovery endpoint answered")
+
+
 async def _action_url(ext: str, mode: str) -> str:
     """Resolve CODE's versioned browser URL from WOPI discovery; never hard-code it."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.get(f"{_CODE}/hosting/discovery")
-            response.raise_for_status()
+            response = await _discover(client)
         root = ET.fromstring(response.content)
         wanted = "edit" if mode == "edit" else "view"
         fallback = None
@@ -142,7 +175,14 @@ async def create_session(request: Request, file: UploadFile = File(...), mode: s
     # Discovery is fetched over the private container/loopback address.  The browser must use the
     # same-origin proxy, never that unreachable address.  Preserve CODE's versioned path/query.
     parsed = urllib.parse.urlsplit(urlsrc)
-    urlsrc = _public_base(request) + "/office-code" + parsed.path
+    # The service root goes on EXACTLY ONCE. With `service_root` configured, CODE already wrote it
+    # into the path it advertises, and adding it again produced /office-code/office-code/browser/…
+    # — a 404 that looks nothing like its cause. Adding it when CODE did not is the other half, and
+    # is what keeps this working against a CODE that has not been restarted yet (see _discover).
+    path = parsed.path
+    if not (path == _SERVICE_ROOT or path.startswith(_SERVICE_ROOT + "/")):
+        path = _SERVICE_ROOT + path
+    urlsrc = _public_base(request) + path
     if parsed.query:
         urlsrc += "?" + parsed.query
     sep = "&" if "?" in urlsrc else "?"

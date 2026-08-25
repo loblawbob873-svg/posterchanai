@@ -51,7 +51,14 @@ Environment=TMPDIR=/path/to/posterchanai/data/office-work
 # with ssl.enable, net.proxy_prefix, security.capabilities and security.seccomp — and coolwsd calls
 # a repeated option fatal: "Option must not be given more than once: port". It exits 0 doing it, so
 # systemd reports success and the unit is simply never up.
-ExecStart=/path/to/posterchanai/officeserver/Collabora_Online.AppImage --appimage-extract-and-run --o:net.proto=IPv4 --o:net.listen=loopback --o:ssl.termination=true --o:welcome.enable=false
+# AND THE SUB-PATH IT IS PUBLISHED UNDER. coolwsd writes its OWN absolute URLs — the <script src>
+# tags inside cool.html (via %SERVICE_ROOT%), the editing WebSocket, and the discovery `urlsrc`.
+# Told nothing, it writes them at the site ROOT: nginx stripped /office-code on the way in, the page
+# then asked for /browser/<hash>/global.js at the top level, and the document frame loaded and stayed
+# WHITE with four 404s in the console and nothing server-side to say so. `service_root` exists for
+# exactly this, and nginx must stop rewriting the prefix away — see app/routers/office.py, which
+# owns the value, and nginx/posterchanai.conf.example.
+ExecStart=/path/to/posterchanai/officeserver/Collabora_Online.AppImage --appimage-extract-and-run --o:net.proto=IPv4 --o:net.listen=loopback --o:ssl.termination=true --o:welcome.enable=false --o:net.service_root=/office-code
 Restart=on-failure
 RestartSec=5
 # It unpacks itself before it serves anything; a short stop timeout kills it mid-extraction and

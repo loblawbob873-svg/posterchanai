@@ -63,7 +63,7 @@ Environment=TMPDIR=$root/data/office-work
 #
 # Only the two overrides that differ from AppRun's defaults are passed: ssl.termination, because
 # nginx terminates TLS in front of this, and welcome.enable, which AppRun sets to true.
-ExecStart=$app --appimage-extract-and-run --o:net.proto=IPv4 --o:net.listen=$listen --o:ssl.termination=true --o:welcome.enable=false
+ExecStart=$app --appimage-extract-and-run --o:net.proto=IPv4 --o:net.listen=$listen --o:ssl.termination=true --o:welcome.enable=false --o:net.service_root=/office-code
 Restart=on-failure
 RestartSec=5
 # It unpacks itself before it serves anything; a short stop timeout kills it mid-extraction and
