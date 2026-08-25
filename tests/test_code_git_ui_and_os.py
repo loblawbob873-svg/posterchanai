@@ -19,6 +19,7 @@ def test_posterchanos_installs_ngit_and_the_git_remote_helper_automatically():
     assert "dev-vcs/ngit" in SHELL
     assert "dobin ngit git-remote-nostr" in NGIT
     assert "x86_64-unknown-linux-gnu.2.17" in NGIT
+    assert "-> ${P}.tar.gz" in NGIT
     manifest = (ROOT / "os/overlay/dev-vcs/ngit/Manifest").read_text().split()
     assert manifest[:2] == ["DIST", "ngit-2.6.3.tar.gz"]
     assert int(manifest[2]) > 1_000_000
@@ -28,4 +29,3 @@ def test_posterchanos_installs_ngit_and_the_git_remote_helper_automatically():
 def test_git_ui_uses_json_api_not_shell_text():
     assert "post('/git/action'" in CODE
     assert "exec(" not in CODE[CODE.index("async function gitAct"):CODE.index("/* A DOCUMENT", CODE.index("async function gitAct"))]
-

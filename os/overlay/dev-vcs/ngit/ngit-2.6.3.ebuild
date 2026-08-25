@@ -5,7 +5,7 @@ EAPI=8
 
 DESCRIPTION="Nostr-native Git client and remote helper"
 HOMEPAGE="https://github.com/DanConwayDev/ngit-cli"
-SRC_URI="https://github.com/DanConwayDev/ngit-cli/releases/download/v${PV}/ngit-v${PV}-x86_64-unknown-linux-gnu.2.17.tar.gz"
+SRC_URI="https://github.com/DanConwayDev/ngit-cli/releases/download/v${PV}/ngit-v${PV}-x86_64-unknown-linux-gnu.2.17.tar.gz -> ${P}.tar.gz"
 S="${WORKDIR}"
 
 LICENSE="MIT"
