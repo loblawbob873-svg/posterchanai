@@ -112,6 +112,12 @@ DRIVE = r"""(async () => {
      sharing a line with four buttons. Measured here rather than reasoned about. */
   try {
     if (P.renderMusicApp) {
+      /* A signed-out phone keeps the classic app root hidden behind its landing surface. This
+       * check calls the internal renderer directly (there is intentionally no guest navigation
+       * path to Music), so expose that real root before measuring it; otherwise every descendant
+       * has a 0x0 rect and the result says nothing about the scrubber CSS. */
+      const app = document.getElementById('app');
+      if (app) app.classList.remove('hidden');
       P.renderMusicApp();
       await sleep(150);
       const bar = document.getElementById('ma-seek');
