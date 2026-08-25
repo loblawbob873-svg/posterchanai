@@ -57,11 +57,16 @@ if [ -n "$pids" ]; then
 	# it outright leaves the lock for the launcher to clean up as a "dead" one it has to guess about.
 	kill $pids 2>/dev/null
 	n=0
-	while [ "$n" -lt 50 ] && pgrep -f "$pattern" >/dev/null 2>&1; do
+	while [ "$n" -lt 50 ]; do
+		alive=0
+		for pid in $pids; do kill -0 "$pid" 2>/dev/null && alive=1; done
+		[ "$alive" -eq 1 ] || break
 		sleep 0.1
 		n=$((n + 1))
 	done
-	pkill -KILL -f "$pattern" 2>/dev/null
+	# Only the exact shell processes measured above. A pattern kill can catch a newly launched
+	# replacement (or an unrelated command line containing /opt/posterchan) during this window.
+	for pid in $pids; do kill -KILL "$pid" 2>/dev/null; done
 fi
 
 # No shell exists to receive the recovery tick. The full launcher owns stale-lock cleanup,

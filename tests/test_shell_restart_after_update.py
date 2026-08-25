@@ -34,8 +34,9 @@ PACKAGED = os.path.join(ROOT, "os", "overlay", "app-misc", "posterchanos-shell",
                         "files", "pc-shell-restart")
 
 # A tiny real program to BE the desktop: it must outlive the script's own run so that
-# /proc/<pid>/exe is a live link to look at.
-SLEEPER = "import time\ntime.sleep(120)\n"
+# /proc/<pid>/exe is a live link to look at. `/bin/sleep` does not re-exec a canonical interpreter
+# path (some Python distributions do), so the copied inode really is the process executable.
+SLEEPER = shutil.which("sleep") or "/bin/sleep"
 
 
 @unittest.skipUnless(sys.platform.startswith("linux") and os.path.isdir("/proc"),
@@ -73,13 +74,21 @@ class ShellRestartTellsAReloadFromAReplacement(unittest.TestCase):
     def _start_desktop(self):
         """A real process running a real binary we own, so it can really be replaced."""
         exe = os.path.join(self.tmp, "posterchan-desktop")
-        shutil.copy2(sys.executable, exe)
-        proc = subprocess.Popen([exe, "-c", SLEEPER],
+        shutil.copy2(SLEEPER, exe)
+        proc = subprocess.Popen([exe, "120"],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.proc = proc
-        for _ in range(100):                       # wait for /proc/<pid>/exe to exist
-            if os.path.exists(f"/proc/{proc.pid}/exe"):
-                break
+        # Popen returns before the child has necessarily crossed execve(). Merely seeing the proc
+        # link can still mean the parent's interpreter; wait until it names the copied executable
+        # or the replacement test races the very transition it is trying to measure.
+        for _ in range(100):
+            try:
+                running = os.stat(f"/proc/{proc.pid}/exe")
+                installed = os.stat(exe)
+                if (running.st_dev, running.st_ino) == (installed.st_dev, installed.st_ino):
+                    break
+            except OSError:
+                pass
             time.sleep(0.02)
         self._pids(str(proc.pid))
         return exe, proc
@@ -130,7 +139,7 @@ class ShellRestartTellsAReloadFromAReplacement(unittest.TestCase):
         case a "does the file still exist?" check answers wrongly, because it does."""
         exe, _ = self._start_desktop()
         fresh = exe + ".new"
-        shutil.copy2(sys.executable, fresh)
+        shutil.copy2(SLEEPER, fresh)
         os.rename(fresh, exe)                       # new inode at the same path
         self._run()
         self.assertFalse(self._ticked(), "a replaced desktop was reloaded rather than restarted")

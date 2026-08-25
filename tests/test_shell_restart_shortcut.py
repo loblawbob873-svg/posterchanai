@@ -47,7 +47,8 @@ def test_shell_restart_is_serialized_and_targets_only_the_shell_process():
     assert "pkill" not in restart
     assert "recoverSurfaces(_shellSurfaces.values(), loadApp).catch" in main
     assert "ev.payload !== 'pc:restart'" in main
-    assert "exec /usr/local/bin/pc-shell-start" in restart
+    assert 'PC_SHELL_START:=/usr/local/bin/pc-shell-start' in restart
+    assert 'exec "$PC_SHELL_START"' in restart
     assert "retries" in start and "exit 1" in start
     assert "$USER_HOME/SingletonLock" in start
     assert "clear_dead_locks" in start
