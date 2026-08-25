@@ -33,3 +33,35 @@ def test_hardware_watch_does_not_rebuild_the_start_button():
     watch = OS[OS.index("PCOSShell.watch(() =>") : OS.index("}).then(off =>", OS.index("PCOSShell.watch(() =>"))]
     assert "PCOSShell.paintTray(shell)" in watch
     assert "if(changed){ drawBar(); return; }" in watch
+
+
+def test_firefox_quit_removes_its_frame_in_the_window_event_reconciliation():
+    """There must be no four-second black placeholder after the compositor closes Firefox."""
+    start = OS.index("async function adoptAll()")
+    end = OS.index("function closeWin(w, opts)", start)
+    adopt = OS[start:end]
+    assert "if(!r){" in adopt
+    assert "closeWin(w, { killNative:false" in adopt
+    assert adopt.index("closeWin(w, { killNative:false") < adopt.index("return changed;")
+
+
+def test_cancelled_native_folder_chooser_uses_the_same_immediate_close_cleanup():
+    """Blossom's webkitdirectory chooser is native too; Cancel must not leave a black frame."""
+    event = OS[OS.index("if(ev.name === 'window')") : OS.index("if(ev.name !== 'tick')")]
+    start = OS.index("async function adoptAll()")
+    end = OS.index("function closeWin(w, opts)", start)
+    adopt = OS[start:end]
+    assert "reconcile()" in event
+    assert "if(ev.change === 'new')" in event
+    # Close events take the immediate pass; they do not depend on the delayed metadata retry.
+    assert event.index("reconcile();") < event.index("if(ev.change === 'new')")
+    assert "closeWin(w, { killNative:false" in adopt
+
+
+def test_cross_monitor_disappearance_detaches_without_killing_or_stealing_focus():
+    """Scoped rows omit a window during handoff; global ids distinguish that from Quit."""
+    start = OS.index("async function adoptAll()")
+    end = OS.index("function closeWin(w, opts)", start)
+    adopt = OS[start:end]
+    assert "allIds.has(Number(w.native))" in adopt
+    assert "preserveFocus:!!(allIds && allIds.has(Number(w.native)))" in adopt

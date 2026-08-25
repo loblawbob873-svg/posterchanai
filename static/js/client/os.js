@@ -2429,7 +2429,20 @@
       adoptNative(r); changed=true;
     }
     for(const w of nativeWins()){
-      const r=rows.find(x=>Number(x.id)===Number(w.native)); if(!r) continue;
+      const r=rows.find(x=>Number(x.id)===Number(w.native));
+      if(!r){
+        /* `window::close` is the authoritative moment the native pixels disappear. Waiting for
+         * nsync's four-second shell refresh leaves this HTML frame over the desktop with nothing
+         * behind it — Firefox → hamburger → Quit visibly becomes a black window. Remove the frame
+         * in this reconciliation pass. A window dragged to another monitor is absent only from
+         * this surface's scoped rows but remains in allIds; detach without killing it and without
+         * stealing focus back across outputs. A truly closed app is also already gone, so neither
+         * case should issue a redundant compositor close. */
+        closeWin(w, { killNative:false,
+                      preserveFocus:!!(allIds && allIds.has(Number(w.native))) });
+        changed=true;
+        continue;
+      }
       if(r.title && r.title!==w.title){ w.title=r.title; const t=$('.osw-title',w.el); if(t)t.textContent=r.title; changed=true; }
       w.nativeFullscreen=!!r.fullscreen;
     }
