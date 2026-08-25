@@ -80,7 +80,9 @@ class PosterChanOSProfile(unittest.TestCase):
         shell_start = open(os.path.join(ROOT, "os", "bin", "pc-shell-start"), encoding="utf-8").read()
         self.assertNotIn("--ozone-platform=x11", shell_start,
                          "the shell backend must match the booted reference LiveOS auto choice")
-        self.assertIn("/usr/local/bin/posterchan --shell", shell_start)
+        self.assertIn('PC_DESKTOP_LAUNCHER=/usr/bin/posterchan', shell_start,
+                      "the installed Portage wrapper must win over a stale local updater copy")
+        self.assertIn('"$PC_DESKTOP_LAUNCHER" --shell --ozone-platform=wayland', shell_start)
 
     def test_screen_capture_has_all_three_halves(self):
         """Wayland has no "read the screen" call by design, so a recorder gets frames through the
@@ -165,6 +167,7 @@ class PosterChanOSProfile(unittest.TestCase):
         "bluetoothctl": "base:net-wireless/bluez",
         "ddcutil": "app-misc/ddcutil",
         "sudo": "base:app-admin/sudo",
+        "git": "dev-vcs/git",
         # Windows-only, and never run on this profile.
         "attrib": "base:n/a", "icacls": "base:n/a",
     }
