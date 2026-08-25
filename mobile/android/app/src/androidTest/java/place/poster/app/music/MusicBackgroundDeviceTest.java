@@ -37,6 +37,7 @@ public class MusicBackgroundDeviceTest {
             AtomicReference<WebView> ref = new AtomicReference<WebView>();
             scenario.onActivity(a -> ref.set(findWebView(a.findViewById(android.R.id.content))));
             WebView web = waitForWebView(ref, scenario);
+            waitForClientPage(web);
 
             // A small generated WAV avoids network, account and Blossom dependencies. Looping it
             // exercises Chromium's real media clock while MusicService reproduces production's
@@ -83,6 +84,22 @@ public class MusicBackgroundDeviceTest {
             SystemClock.sleep(100);
         }
         throw new AssertionError("MainActivity never created its WebView");
+    }
+
+    /** A WebView object exists before Capacitor navigates it away from about:blank. Injecting the
+     * test audio into that provisional document makes it disappear during the real navigation, so
+     * currentTime reads as zero and the test fails before it ever presses Home. Wait for the bundled
+     * origin and a completed document, then prove it stayed there across a scheduling turn. */
+    private static void waitForClientPage(WebView web) throws Exception {
+        String prior = "";
+        for (int i = 0; i < 120; i++) {
+            String state = eval(web, "location.href+'|'+document.readyState");
+            boolean client = state.contains("https://localhost/") || state.contains("capacitor://localhost/");
+            if (client && state.contains("|complete") && state.equals(prior)) return;
+            prior = state;
+            SystemClock.sleep(100);
+        }
+        throw new AssertionError("bundled client page never became stable: " + prior);
     }
 
     private static WebView findWebView(View v) {
