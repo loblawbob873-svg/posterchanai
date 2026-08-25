@@ -74,6 +74,11 @@ def test_tablet_concord_consumes_the_full_shell_width():
     assert 'grid-template-columns:62px 220px minmax(0,1fr)!important' in tablet
 
 
+def test_web_concord_removes_the_timeline_shell_gutter_and_width_cap():
+    assert 'body.concord-view .app{grid-template-columns:300px minmax(0,1fr)!important;width:100%!important;max-width:none!important;margin:0!important;padding:0!important;column-gap:0!important}' in CONCORD_CSS
+    assert 'body.concord-view .main,body.concord-view .feed.feed-dm{width:100%!important;max-width:none!important' in CONCORD_CSS
+
+
 def test_concord_owns_a_versioned_stylesheet_so_stale_shell_css_cannot_unstyle_it():
     assert 'static/css/concord.css' in HTML
     assert "data-concord-css" in CONCORD
