@@ -13,11 +13,15 @@ as the office save does.
 """
 import os
 import re
+import shutil
+import subprocess
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(ROOT, "static", "js", "client", "app.js")
 CODE = os.path.join(ROOT, "static", "js", "client", "code.js")
+SELECTOR_SIM = os.path.join(ROOT, "tests", "client", "open_with_selector_sim.js")
+NODE = shutil.which("node") or shutil.which("nodejs")
 
 
 def _read(p):
@@ -93,6 +97,12 @@ class FilesOpenInCode(unittest.TestCase):
         handlers = _decomment(_fn(self.app, "function _handlersFor("))
         self.assertIn("_openFileName(d)", handlers)
         self.assertIn("Object.assign({}, d, { name })", handlers)
+
+    @unittest.skipIf(not NODE, "node is unavailable")
+    def test_the_shipped_selector_routes_pdf_and_conf(self):
+        r = subprocess.run([NODE, SELECTOR_SIM], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("open-with selector holds", r.stdout)
 
     def test_a_file_with_no_dot_can_still_be_opened(self):
         """`_CODE_EXT` anchors on `\.`, so `Makefile`, `Dockerfile`, `README`, `LICENSE` and
