@@ -50,6 +50,15 @@
 
   let items = _load();
   let _flushing = false;
+  let _retryT = null;
+  function _retrySoon(ms){
+    if(_retryT || !items.length) return;
+    _retryT=setTimeout(function(){_retryT=null;
+      if(typeof document!=='undefined' && document.hidden)return;
+      try{if(window.Relay&&Relay.reviveStale)Relay.reviveStale();}catch(_){}
+      Outbox.flush();
+    },ms||1500);
+  }
 
   // Drop anything past MAX_AGE on load. Done here rather than at flush time so a stale entry never
   // survives long enough to be sent — and so the count the user sees is the count that will actually go.
@@ -76,6 +85,10 @@
       if (items.length >= MAX) return false;                  // refuse rather than silently evict a post
       items.push({ ev, at: Math.floor(Date.now()/1000), tries: 0 });
       _save(items); _changed();
+      /* A publish can time out while the pool still reports `ok` (the phone resumed with a zombie
+       * socket). There will be no reconnect transition to trigger app.js's drain, so schedule one
+       * ourselves. Re-sending this identical event id is a Nostr no-op. */
+      if(window.Relay && Relay.status === 'ok') _retrySoon(1500);
       return true;
     },
 
@@ -135,6 +148,7 @@
             else _save(items);
           } else {
             _save(items);            // unchanged tries: a busy relay must not spend the budget
+            _retrySoon(12000);       // status may remain `ok`, so no reconnect callback is coming
           }
           break;
         }

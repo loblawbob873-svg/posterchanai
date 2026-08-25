@@ -650,9 +650,20 @@
           + (v === 'notifications' ? '<i id="notif-badge-m" class="badge hidden"></i>' : '')
           + (v === 'messages' ? '<i id="dm-badge-m" class="badge hidden"></i>' : '');
         btn.classList.toggle('active', v === cur);
-        btn.onclick = () => switchView(v);
+        /* Keep the phone bar on the exact same activation path as the sidebar. Rebuilding this
+         * bar used to overwrite the sidebar's "tap the active timeline again = top" handler with
+         * a bare switchView(), so the control people actually touch on a phone could never do it. */
+        btn.onclick = () => activateNavView(v);
       });
     }catch(_){}
+  }
+  function activateNavView(v){
+    if(v === VIEW && _TL_TABS.indexOf(v) >= 0){
+      delete _tlScrollMemo[v];
+      const f = $('#feed'); if(f) f.scrollTop = 0;
+      return;
+    }
+    switchView(v);
   }
   function setMobileNav(views){
     const list = [];
@@ -4394,15 +4405,7 @@
      *
      * The memo is dropped as well as the scroll, or the next return would restore a position they
      * have just told us to forget. */
-    $$('.nav-item[data-view]').forEach(b=> b.onclick = ()=>{
-      const v = b.dataset.view;
-      if(v === VIEW && _TL_TABS.indexOf(v) >= 0){
-        delete _tlScrollMemo[v];
-        const f = $('#feed'); if(f) f.scrollTop = 0;
-        return;
-      }
-      switchView(v);
-    });
+    $$('.nav-item[data-view]').forEach(b=> b.onclick = ()=>activateNavView(b.dataset.view));
     // …and AFTER the injection, or a row this shell was too old to carry arrives un-hidden. Boot
     // already ran this once via applyInstanceGating; it is idempotent and reads localStorage, so the
     // sidebar is tidy before the relay has answered rather than reshuffling once it does.

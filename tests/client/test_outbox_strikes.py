@@ -35,9 +35,10 @@ global.localStorage = {
 };
 let result = { ok: false, msg: 'timeout' };
 let published = 0;
+let revived = 0;
 global.window = {
   addEventListener(){},
-  Relay: { status: 'ok', async publish(){ published++; return result; } },
+  Relay: { status: 'ok', reviveStale(){ revived++; }, async publish(){ published++; return result; } },
 };
 global.self = global.window;
 // flush() reads the BARE global `Relay` (a browser page has one); node needs it hung on globalThis
@@ -81,6 +82,16 @@ const Outbox = global.window.Outbox;
   out.refusedDropped = dropped.length;
   out.afterRefusals = Outbox.count();
 
+  // 4. A queued event cannot depend on a future relay status transition: a resumed phone can have
+  // an `ok` pool containing a dead socket. add() itself must wake/retry it.
+  const ev3 = { id: 'c'.repeat(64), kind: 1, content: 'resume', sig: 'd'.repeat(128),
+                created_at: Math.floor(Date.now()/1000) };
+  result = { ok: true };
+  Outbox.add(ev3);
+  await new Promise(resolve => setTimeout(resolve, 1700));
+  out.autoRetried = Outbox.count() === 0;
+  out.reviveCalls = revived;
+
   console.log(JSON.stringify(out));
 })();
 """
@@ -120,6 +131,10 @@ class OutboxStrikeTests(unittest.TestCase):
         never accept should not be retried for a week."""
         self.assertEqual(self.r["refusedDropped"], 1, "a genuinely refused event was retried for ever")
         self.assertEqual(self.r["afterRefusals"], 0)
+
+    def test_an_ok_but_stale_phone_connection_retries_without_a_status_change(self):
+        self.assertTrue(self.r["autoRetried"])
+        self.assertGreaterEqual(self.r["reviveCalls"], 1)
 
 
 if __name__ == "__main__":

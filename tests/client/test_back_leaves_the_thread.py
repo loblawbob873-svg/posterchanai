@@ -181,10 +181,15 @@ class EveryRouteOutOfTheFeedRemembers(unittest.TestCase):
     def test_tapping_the_view_you_are_on_gives_up_the_saved_place(self):
         """The user's own spec for when it SHOULD reset. Dropping the scroll without dropping the
         memo would restore the position they just discarded, on the next return."""
-        i = self.src.index("$$('.nav-item[data-view]').forEach(b=> b.onclick = ()=>{")
-        blk = self.src[i:i + 700]
+        i = self.src.index("function activateNavView(v){")
+        blk = self.src[i:i + 500]
         self.assertIn("delete _tlScrollMemo[v]", blk)
         self.assertIn("f.scrollTop = 0", blk)
+
+    def test_mobile_bar_uses_the_same_repeat_tap_behavior(self):
+        i = self.src.index("function applyMobileNav(){")
+        blk = self.src[i:i + 2400]
+        self.assertIn("btn.onclick = () => activateNavView(v)", blk)
 
 
 class CommentingDoesNotThrowYouToTheTop(unittest.TestCase):
