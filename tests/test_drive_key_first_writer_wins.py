@@ -22,8 +22,11 @@ class FirstWriterWins(unittest.TestCase):
         self.assertIn('data.index["mk"] = prev["mk"]', src,
                       "a save carrying a different mk re-keys the whole account")
         # the guard must run BEFORE the doc is stored
-        self.assertLess(src.index('data.index["mk"] = prev["mk"]'),
-                        src.index('put_doc(port, sk, "pcai:files-index"'))
+        guard = src.index('data.index["mk"] = prev["mk"]')
+        # Restore has its own earlier put_doc and its own first-writer-wins guard. Compare this
+        # ordinary-save guard with the write that follows it, not with the first write anywhere in
+        # the whole endpoint.
+        self.assertLess(guard, src.index('put_doc(port, sk, "pcai:files-index"', guard))
 
     def test_the_loser_is_told_in_the_answer(self):
         src = self._src()

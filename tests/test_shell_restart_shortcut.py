@@ -71,7 +71,9 @@ def test_shell_restart_is_serialized_and_targets_only_the_shell_process():
 
 def test_desktop_wrapper_preserves_the_shells_wayland_backend():
     wrapper = (ROOT / "os/bin/posterchan-wrapper").read_text()
-    ebuild = (ROOT / "os/overlay/app-misc/posterchan-desktop/posterchan-desktop-1.0.948.ebuild").read_text()
+    ebuilds = sorted((ROOT / "os/overlay/app-misc/posterchan-desktop").glob("posterchan-desktop-*.ebuild"))
+    assert len(ebuilds) == 1, "the overlay should expose one immutable desktop version"
+    ebuild = ebuilds[0].read_text()
     updater = (ROOT / "os/bin/update-posterchan").read_text()
     for source in (wrapper, ebuild, updater):
         assert '${ELECTRON_OZONE_PLATFORM_HINT:=auto}' in source

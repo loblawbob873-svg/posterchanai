@@ -48,6 +48,7 @@ import os
 import pathlib
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -202,6 +203,46 @@ def git_head():
         return "unknown"
 
 
+def _captured(argv, cwd, env, timeout, output_path):
+    """Run without a captured PIPE that grandchildren can keep open forever.
+
+    Several browser checks launch Chrome and then exit. If Chrome inherits subprocess.PIPE,
+    `communicate()` waits for Chrome to close the pipe even though the check process has already
+    finished; the full suite then appears hung after pytest. A real file has no EOF handshake, so
+    the parent result is available the instant the process exits. A timed-out job owns a process
+    group so its browser children are stopped with it instead of leaking into later checks.
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w+", encoding="utf-8", errors="replace") as out:
+        kwargs = dict(cwd=cwd, env=env, stdout=out, stderr=subprocess.STDOUT)
+        if os.name == "nt":
+            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            kwargs["start_new_session"] = True
+        p = subprocess.Popen(argv, **kwargs)
+        timed_out = False
+        try:
+            p.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            try:
+                if os.name == "nt":
+                    subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+                else:
+                    os.killpg(p.pid, signal.SIGKILL)
+            except Exception:
+                p.kill()
+            p.wait()
+        out.flush()
+        out.seek(0)
+        text = out.read()
+    if timed_out:
+        text += f"\n[checkall] killed after {timeout}s"
+        return 124, text
+    return p.returncode, text
+
+
 def run_one(job, live, tmp, idx):
     """Run one check in its own process, with its own port, profile and clock."""
     env = dict(os.environ)
@@ -216,16 +257,7 @@ def run_one(job, live, tmp, idx):
         for key, value in (job.get("live_env") or {}).items():
             env[key] = str(value).replace("{live}", live)
     t0 = time.time()
-    try:
-        r = subprocess.run(argv, cwd=ROOT, env=env, capture_output=True, text=True,
-                           timeout=job["secs"])
-        out = (r.stdout or "") + (r.stderr or "")
-        code = r.returncode
-    except subprocess.TimeoutExpired as e:
-        out = ((e.stdout or b"").decode("utf8", "replace") if isinstance(e.stdout, bytes)
-               else (e.stdout or ""))
-        out += f"\n[checkall] killed after {job['secs']}s"
-        code = 124
+    code, out = _captured(argv, ROOT, env, job["secs"], tmp / (job["name"] + ".log"))
     return dict(job, secs_took=time.time() - t0, code=code, out=out.strip(),
                 cmd=" ".join(argv[1:]))
 
@@ -233,12 +265,7 @@ def run_one(job, live, tmp, idx):
 def run_suite(suite, tmp):
     t0 = time.time()
     argv = [PY] + suite["argv"]
-    try:
-        r = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True, timeout=suite["secs"])
-        out = (r.stdout or "") + (r.stderr or "")
-        code = r.returncode
-    except subprocess.TimeoutExpired:
-        out, code = f"[checkall] killed after {suite['secs']}s", 124
+    code, out = _captured(argv, ROOT, None, suite["secs"], tmp / (suite["name"] + ".log"))
     return dict(suite, secs_took=time.time() - t0, code=code, out=out.strip(),
                 cmd=" ".join(argv[1:]), name=suite["name"], registered=True)
 
