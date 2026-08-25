@@ -79,7 +79,9 @@ class NothingIsRecordedBeforeItSucceeds(unittest.TestCase):
         """Clearing the record here would be worse than leaving it: with no entry the show branch is
         never reached again and the window is parked for good."""
         i = self.sync.index("pcWM.show(")
-        seg = self.sync[i:self.sync.index("_natSent.delete(it.native)", i)]
+        # The successful fallback deliberately clears `hidden` before `place`; inspect through the
+        # enclosing catch instead of stopping at that success-only delete.
+        seg = self.sync[i:self.sync.index("if(!pcWM.restore", i)]
         self.assertIn("catch", seg)
         self.assertIn("continue", seg)
         self.assertIn("_natSent.set(it.native", seg)

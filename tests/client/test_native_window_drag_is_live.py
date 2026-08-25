@@ -51,12 +51,16 @@ def test_native_task_buttons_have_an_existing_fallback_icon():
     assert 'data-kind="native"' in src
 
 
-def test_native_programs_are_not_mirrored_into_fake_html_frames():
+def test_native_programs_are_adopted_once_into_real_posterchan_frames():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
-    assert "function adoptNative(){ return null; }" in src
+    native = src[src.index("function adoptNative(nw)"):src.index("async function adoptAll()")]
+    assert "openApp(view" in native
+    assert "w.native=id" in native
+    assert "osw-native" in native
     adopt = src[src.index("async function adoptAll"):src.index("function closeWin(w, opts)")]
     assert "nativeTasks = rows" in adopt
-    assert "openApp(" not in adopt
+    assert "adoptNative(r)" in adopt
+    assert "nativeTasks=rows.filter" in adopt
     assert "pcWM.place" not in adopt
 
 

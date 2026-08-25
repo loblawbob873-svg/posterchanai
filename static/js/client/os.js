@@ -2287,12 +2287,20 @@
            * rectangle. A failed placement is retried against a visible surface on the next pass. */
           if(was === 'hidden'){
             try{
-              if(pcWM.restore) await pcWM.restore(it.native,rect.x,rect.y,rect.w,rect.h);
-              else await pcWM.show(it.native);
+              if(pcWM.restore){
+                await pcWM.restore(it.native,rect.x,rect.y,rect.w,rect.h);
+                /* `restore` is atomic: the surface is visible at this rectangle now. */
+                _natSent.set(it.native, rect);
+                was = rect;
+              }else{
+                /* `show` only leaves the scratchpad. It has not placed the surface, so do not
+                 * record the requested rectangle until the `place` below succeeds. */
+                await pcWM.show(it.native);
+                _natSent.delete(it.native);
+                was = null;
+              }
             }
             catch(_){ _natSent.set(it.native, 'hidden'); continue; }
-            _natSent.set(it.native, rect);
-            was = rect;
           }
           try{ if(!pcWM.restore || was !== rect) await pcWM.place(it.native, rect.x, rect.y, rect.w, rect.h); }
           catch(_){ _natSent.delete(it.native); continue; }
