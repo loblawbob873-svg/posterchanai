@@ -33567,7 +33567,12 @@
     saveBlobAs,
     ensureProfile: _ensureProfile, NT, compose, switchView,   // compose → News "Share as note"; switchView → nav
     timelineTop: (view) => {
-      const v=_TL_TABS.includes(String(view||''))?String(view):'global';
+      const asked=String(view||''), hidden=tlHiddenSet();
+      /* No named target is the Android launcher's "Home twice" action. Keep the timeline already
+       * on screen; from another app land on Social/Home, not the old arbitrary Nostrverse tab. A
+       * hidden configured tab can never be a useful destination, so choose the first visible one. */
+      let v=_TL_TABS.includes(asked) ? asked : (_TL_TABS.includes(VIEW) ? VIEW : 'home');
+      if(hidden.has(v)) v=_TL_TABS.find(x=>!hidden.has(x)) || 'global';
       delete _tlScrollMemo[v];
       if(VIEW!==v) switchView(v);
       const top=()=>{ if(VIEW===v){ const f=$('#feed'); if(f) f.scrollTop=0; } };

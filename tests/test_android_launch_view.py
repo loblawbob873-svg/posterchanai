@@ -312,7 +312,10 @@ class DoubleHomeRuns(unittest.TestCase):
         app = (ROOT / "static/js/client/app.js").read_text()
         self.assertIn('openApp("__feed_top")', home)
         self.assertIn("v === '__feed_top'", phone)
-        self.assertIn("PC.timelineTop('global')", phone)
+        self.assertIn("PC.timelineTop()", phone)
+        self.assertNotIn("PC.timelineTop('global')", phone)
+        self.assertIn("_TL_TABS.includes(VIEW) ? VIEW : 'home'", app)
+        self.assertIn("if(hidden.has(v))", app)
         self.assertIn("delete _tlScrollMemo[v]", app)
 
 

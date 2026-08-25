@@ -24,7 +24,11 @@
     const go = () => {
       try{ if(window.PCOS && PCOS.mobileLanding) PCOS.mobileLanding(); }catch(_){}
       if(v === '__feed_top'){
-        try{ if(typeof PC.timelineTop === 'function') PC.timelineTop('global'); }catch(_){}
+        /* "Home twice" means the feed the person was actually using.  Hard-coding `global`
+         * silently switched a Home/Social user to Nostrverse (or targeted a hidden tab), which on
+         * a warm app looked exactly like the shortcut did nothing.  With no explicit view,
+         * timelineTop keeps the active timeline or falls back to the visible Home timeline. */
+        try{ if(typeof PC.timelineTop === 'function') PC.timelineTop(); }catch(_){}
       } else if(v.indexOf('post:') === 0){
         const id=v.slice(5);
         try{ if(/^[0-9a-f]{64}$/i.test(id)) PC.openThread(id); }catch(_){}
