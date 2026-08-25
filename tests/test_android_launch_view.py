@@ -317,6 +317,15 @@ class DoubleHomeRuns(unittest.TestCase):
         self.assertIn("v === '__feed_top'", phone)
         self.assertIn("PC.timelineTop()", phone)
         self.assertNotIn("PC.timelineTop('global')", phone)
+
+    def test_feed_top_reloads_the_active_timeline_before_scrolling(self):
+        app = (ROOT / "static/js/client/app.js").read_text()
+        start = app.index("function timelineTop(view)")
+        end = app.index("function setMobileNav", start)
+        body = app[start:end]
+        self.assertIn("Relay.reviveStale()", body)
+        self.assertIn("else renderView(true)", body)
+        self.assertLess(body.index("renderView(true)"), body.index("f.scrollTop=0"))
         self.assertIn("_TL_TABS.includes(VIEW) ? VIEW : _startTimeline()", app)
         self.assertIn("if(hidden.has(v))", app)
         self.assertIn("delete _tlScrollMemo[v]", app)

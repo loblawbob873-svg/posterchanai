@@ -671,7 +671,14 @@
     if(hidden.has(v)) v=_TL_TABS.find(x=>!hidden.has(x)) || 'global';
     _tlForceTop=v;
     delete _tlScrollMemo[v];
+    /* Home twice is a REFRESH, not merely a scroll command. Reuse the exact pull-to-refresh path:
+     * recover a carrier-stalled relay, reset the active timeline subscription/page state, redraw,
+     * and let the force-top latch prevent the generic repaint machinery restoring the old offset. */
+    try{ Relay.reviveStale(); }catch(_){ }
     if(VIEW!==v) switchView(v);
+    else renderView(true);
+    // Home/global consume this in renderTimeline; Trending has its own painter.
+    if(_tlForceTop===v) _tlForceTop='';
     const top=()=>{ if(VIEW===v){ const f=$('#feed'); if(f) f.scrollTop=0; } };
     top(); requestAnimationFrame(()=>requestAnimationFrame(top)); setTimeout(top,250);
   }
