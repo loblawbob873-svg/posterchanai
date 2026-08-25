@@ -98,9 +98,37 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
         i = self.os.index("function handoffPayload(")
         payload = self.os[i:self.os.index("function sendFrameHandoff", i)]
         self.assertIn("const terminal = w.view === 'terminal'", payload)
-        self.assertIn("view:terminal ? 'terminal'", payload)
+        self.assertIn("view:handoffIdentity(w)", payload)
         self.assertIn("path:terminal ? ''", payload,
                       "the destination would adopt the PTY and then route it back to Social")
+
+    @unittest.skipUnless(NODE, "node is not installed")
+    def test_simple_app_identity_cannot_be_replaced_by_global_social_view(self):
+        """The reported case: Server Stats is visible, but the page-global view says Home."""
+        start = self.os.index("function handoffIdentity(")
+        brace = self.os.index("{", start)
+        depth = 0
+        end = None
+        for pos in range(brace, len(self.os)):
+            if self.os[pos] == "{":
+                depth += 1
+            elif self.os[pos] == "}":
+                depth -= 1
+                if depth == 0:
+                    end = pos + 1
+                    break
+        self.assertIsNotNone(end)
+        fn = self.os[start:end]
+        cases = [
+            {"view": "stats", "appView": "home", "appPath": ""},
+            {"view": "terminal", "appView": "home", "appPath": "/"},
+            {"view": "repos", "appView": "repo", "appPath": "/naddr1repo"},
+            {"view": "settings", "appView": "admin", "appPath": ""},
+        ]
+        script = fn + "\nconsole.log(JSON.stringify(" + json.dumps(cases) + ".map(handoffIdentity)))"
+        got = json.loads(subprocess.run([NODE, "-e", script], capture_output=True, text=True,
+                                        check=True).stdout)
+        self.assertEqual(got, ["stats", "terminal", "repo", "admin"])
 
     def test_every_place_that_captures_appView_captures_appPath(self):
         """They are one fact about a window — which screen it is showing — and a site that records

@@ -2785,12 +2785,25 @@
     apply();
   }
 
+  /* A window's OPENED identity wins unless it carries an address for a deeper screen. The client
+   * has one page-global VIEW shared by every desktop window; an incidental repaint can make that
+   * global say `home` while a simple Server Stats window still visibly contains Stats. Using
+   * appView unconditionally then recreates the moved window as Social on the other monitor.
+   * Addressed screens deliberately use their current view, and Admin is the one address-less
+   * in-place route reached from Settings. */
+  function handoffIdentity(w){
+    const opened=String(w&&w.view||''), current=String(w&&w.appView||opened);
+    if(opened==='terminal') return 'terminal';
+    if(String(w&&w.appPath||'') || (opened==='settings'&&current==='admin')) return current;
+    return opened||current;
+  }
+
   function handoffPayload(w, overflow){
     /* A terminal is a live PTY, not a route inside the shared social feed. The page-wide VIEW can
      * change while another window has focus; never let that stale route turn a moved terminal into
      * a Social window (or route the receiving renderer away after it adopts the PTY). */
     const terminal = w.view === 'terminal';
-    return {view:terminal ? 'terminal' : w.appView||w.view,title:w.title||'',icon:w.icon||'',
+    return {view:handoffIdentity(w),title:w.title||'',icon:w.icon||'',
       width:w.el.offsetWidth,height:w.el.offsetHeight,overflow:Number(overflow)||0,
       scrollTop:Math.max(0,Number(realFeed&&realFeed.parentElement===w.body
         ? realFeed.scrollTop : w.slot&&w.parked ? w.slot.scrollTop : w.scrollTop)||0),
