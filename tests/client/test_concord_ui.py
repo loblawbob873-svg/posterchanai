@@ -106,9 +106,14 @@ def test_mobile_reopens_the_last_server_then_drills_into_a_channel_like_discord(
     assert "discoveryOpen=true; state.community=null" in CONCORD
     assert "state.channel=b.dataset.ccChannel; mobileChatOpen=true" in CONCORD
     assert "mobileChatOpen=false; render()" in CONCORD
+    assert 'id="cc-home" title="Your rooms"' in CONCORD
+    assert 'id="cc-discovery" title="Discover public communities"' in CONCORD
+    assert "discoveryOpen=!rooms.length" in CONCORD
     assert "return channels.length?channels:[{name:'general',private:false}]" in CONCORD
     assert 'visibleChannels.map(c=>' in CONCORD
     assert 'room.channels=hydratedChannels' in CONCORD
+    assert "if(room&&room.cord&&!room.cord.hydrated)" in CONCORD
+    assert "await hydrateRoomStreams(p,state.community)" in CONCORD
     assert "if(state.community==null){ const rooms=saved(),wanted=Number(localStorage.getItem('pc.concord.active')" in CONCORD
     assert "state.community==null?'Back to rooms':'Channels'" in CONCORD
 
@@ -269,6 +274,9 @@ def test_concord_controls_are_phone_sized_and_single_column():
     assert 'body.concord-view .cc-message-actions button::after{content:none' in CONCORD_CSS
     assert 'body.concord-view .cc-messages{width:100%!important;max-width:100%!important' in CONCORD_CSS
     assert 'overflow-x:hidden!important;overscroll-behavior:contain!important' in CONCORD_CSS
+    assert 'html:has(body.concord-view),body.concord-view' in CONCORD_CSS
+    assert 'overflow-x:clip!important' in CONCORD_CSS
+    assert 'overscroll-behavior-x:none!important;touch-action:pan-y!important' in CONCORD_CSS
     assert 'body.concord-view .cc-message-body a' in CONCORD_CSS and 'overflow-wrap:anywhere!important' in CONCORD_CSS
     assert 'body.concord-view .cc-message-body .xdc-card{max-width:100%!important}' in CONCORD_CSS
     assert "document.getElementById('rb-toggle')" in APP
