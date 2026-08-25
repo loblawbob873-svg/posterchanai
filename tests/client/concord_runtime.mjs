@@ -72,7 +72,7 @@ if(rooms.length!==1 || rooms[0].local || !rooms[0].url || !rooms[0].channels || 
 
 control('cc-edit-icon').click();
 control('cc-icon-value').value='https://example.test/room.png';
-control('cc-icon-save').click();
+await control('cc-icon-save').click();
 const edited=JSON.parse(data.get('pc.concord.invites'));
 if(edited[0].icon!=='https://example.test/room.png') throw new Error('icon edit flow failed');
 control('cc-description-value').value='Editable room description';

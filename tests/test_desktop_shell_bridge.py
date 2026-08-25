@@ -182,7 +182,7 @@ class Bridge(unittest.TestCase):
         self.assertIn("handoffFrame:", self.pre)
         self.assertIn("onHandoffFrame:", self.pre)
         client = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()
-        self.assertIn("pcWM.handoffFrame(payload,handoff)", client)
+        self.assertIn("pcWM.handoffFrame(handoffPayload(w,overflow),direction)", client)
         self.assertIn("pcWM.onHandoffFrame", client)
         self.assertIn("'pc:wm:preview-frame'", self.main)
         self.assertIn("previewFrame:", self.pre)
@@ -194,6 +194,9 @@ class Bridge(unittest.TestCase):
         self.assertIn("PCWebSearch.acceptHandoff(p.state)", client)
         self.assertIn("ui:captureHandoffUI(w)", client)
         self.assertIn("restoreHandoffUI(w,p.ui)", client)
+        self.assertIn('data-w="monitor"', client)
+        self.assertIn("for(const direction of ['right','left','down','up'])", client)
+        self.assertIn("terminalSid:w.view==='terminal'", client)
 
     def test_every_posterchan_app_uses_the_generic_state_preserving_handoff(self):
         """There must be no view whitelist: every sidebar app, including ones added later, carries
@@ -202,7 +205,8 @@ class Bridge(unittest.TestCase):
         html = open(os.path.join(ROOT, "templates/client.html"), encoding="utf-8").read()
         views = set(re.findall(r'data-view=["\']([^"\']+)', html))
         self.assertGreater(len(views), 20, "the exhaustive app matrix did not find the real sidebar")
-        payload = client[client.index("const payload={view:"):client.index("Promise.resolve(pcWM.handoffFrame", client.index("const payload={view:"))]
+        start = client.index("function handoffPayload(")
+        payload = client[start:client.index("function sendFrameHandoff", start)]
         receive = client[client.index("pcWM.onHandoffFrame"):client.index("pcWM.onPreviewFrame", client.index("pcWM.onHandoffFrame"))]
         self.assertIn("ui:captureHandoffUI(w)", payload)
         self.assertIn("restoreHandoffUI(w,p.ui)", receive)

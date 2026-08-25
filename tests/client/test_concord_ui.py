@@ -249,7 +249,8 @@ def test_concord_room_icons_can_be_set_on_create_and_edited_later():
     assert 'cc-community-icon' in CONCORD
     assert 'id="cc-edit-icon"' in CONCORD
     assert 'id="cc-icon-save"' in CONCORD
-    assert 'room.icon=normalizeIcon' in CONCORD
+    assert "target.value=normalizeIcon($('#cc-icon-value').value)" in CONCORD
+    assert 'return saveButton.click()' in CONCORD
     assert 'reader.createMetadataWrap' in CONCORD
     assert 'community relays rejected the profile update' in CONCORD
     assert 'createMetadataWrap: () => createMetadataWrap' in CORD_READER

@@ -70,8 +70,8 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
         # Anchored on the payload LITERAL and read forward to the call — the first mention of
         # `pcWM.handoffFrame` in this file is inside a comment, and searching back from it lands
         # before the object exists.
-        i = self.os.index("const payload={")
-        payload = self.os[i:self.os.index("pcWM.handoffFrame(payload", i)]
+        i = self.os.index("function handoffPayload(")
+        payload = self.os[i:self.os.index("function sendFrameHandoff", i)]
         self.assertIn("path:", payload,
                       "the monitor handoff sends only a view NAME, so a repo/article/stream lands on "
                       "the other monitor as a view nothing can route")
@@ -86,8 +86,8 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
 
         The previous version of this test asserted only that the payload carried a path, which that
         bug satisfies perfectly. What has to be true is where the path comes FROM."""
-        i = self.os.index("const payload={")
-        payload = self.os[i:self.os.index("pcWM.handoffFrame(payload", i)]
+        i = self.os.index("function handoffPayload(")
+        payload = self.os[i:self.os.index("function sendFrameHandoff", i)]
         self.assertIn("w.appPath", payload,
                       "the payload does not use the window's own captured path")
         self.assertNotIn("viewPath()", payload,

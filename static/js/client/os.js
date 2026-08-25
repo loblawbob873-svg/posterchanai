@@ -1436,6 +1436,7 @@
          <span class="osw-title">${enc(label)}</span>
          <span class="osw-btns">
            <button class="osw-b osw-ai" data-w="ai" draggable="true" title="Ask AI about this window" aria-label="Ask AI about this window">&#10024;</button>
+           ${window.pcWM&&pcWM.handoffFrame?'<button class="osw-b osw-monitor" data-w="monitor" title="Move to other monitor" aria-label="Move to other monitor">&#8644;</button>':''}
            <button class="osw-b" data-w="min" title="Minimise" aria-label="Minimise">–</button>
            <button class="osw-b" data-w="max" title="Maximise" aria-label="Maximise">▢</button>
            <button class="osw-b osw-x" data-w="close" title="Close" aria-label="Close">✕</button>
@@ -1462,6 +1463,7 @@
       e.stopPropagation();
       const a = b.dataset.w;
       if(a === 'ai') toggleWindowAI(w, b, e);
+      else if(a === 'monitor') moveToOtherMonitor(w, b);
       else if(a === 'close') closeWin(w);
       else if(a === 'max') toggleMax(w);
       else minimise(w);
@@ -2700,6 +2702,46 @@
     apply();
   }
 
+  function handoffPayload(w, overflow){
+    return {view:w.appView||w.view,title:w.title||'',icon:w.icon||'',
+      width:w.el.offsetWidth,height:w.el.offsetHeight,overflow:Number(overflow)||0,
+      scrollTop:Math.max(0,Number(realFeed&&realFeed.parentElement===w.body
+        ? realFeed.scrollTop : w.slot&&w.parked ? w.slot.scrollTop : w.scrollTop)||0),
+      terminalSid:w.view==='terminal'&&window.PCTerm&&PCTerm.sessionId
+        ? PCTerm.sessionId() : '',
+      path:String(w.appPath || ''),ui:captureHandoffUI(w),
+      state:w.view==='websearch'&&window.PCWebSearch&&PCWebSearch.handoffState
+        ? PCWebSearch.handoffState() : null};
+  }
+
+  function sendFrameHandoff(w,direction,overflow){
+    if(!w || !wins.includes(w) || !window.pcWM || !pcWM.handoffFrame)return Promise.resolve(false);
+    return Promise.resolve(pcWM.handoffFrame(handoffPayload(w,overflow),direction)).then(result=>{
+      if(result && wins.includes(w))closeWin(w,{preserveFocus:true});
+      else if(!result){keepFrameReachable(w);_natGesture(w,false);if(nativeWins().length)nsync();}
+      return result;
+    }).catch(()=>{keepFrameReachable(w);_natGesture(w,false);if(nativeWins().length)nsync();return false;});
+  }
+
+  /* A cross-output drag is convenient when Chromium reports virtual-desktop pointer coordinates.
+   * Some Wayland/Electron combinations clamp them at the renderer edge, making an overflow gesture
+   * physically impossible. The title-bar control is the deterministic path: try every adjacent
+   * direction and stop as soon as the desktop main process identifies another shell surface. */
+  async function moveToOtherMonitor(w,button){
+    if(button)button.disabled=true;
+    try{
+      for(const direction of ['right','left','down','up']){
+        const result=w.native!=null&&pcWM.handoff
+          ? await Promise.resolve(pcWM.handoff(w.native,direction)).catch(()=>false)
+          : await sendFrameHandoff(w,direction,0);
+        if(result&&w.native!=null&&wins.includes(w))closeWin(w,{killNative:false,preserveFocus:true});
+        if(result)return true;
+      }
+      try{PC().toast('No other monitor is available');}catch(_){}
+      return false;
+    }finally{if(button&&button.isConnected)button.disabled=false;}
+  }
+
   function startDrag(w, ev){
     // Dragging used to write style.left/top on every pointermove. The window CONTAINS the live feed
     // — thousands of nodes — so each move forced a full layout of it, plus a getComputedStyle() for
@@ -2852,34 +2894,7 @@
         return;
       }
       if(handoff && w.native == null && pcWM.handoffFrame){
-        const payload={view:w.appView||w.view,title:w.title||'',icon:w.icon||'',
-                       width:w.el.offsetWidth,height:w.el.offsetHeight,
-                       overflow:edgeOverflow(endEvent||lastMove,handoff),
-                       /* A renderer cannot move its DOM to another monitor, but it can transfer
-                        * the reading position. Use the live feed when this is the focused window
-                        * and its parked slot otherwise; `w.scrollTop` is the last-resort snapshot. */
-                       scrollTop:Math.max(0,Number(realFeed&&realFeed.parentElement===w.body
-                         ? realFeed.scrollTop : w.slot&&w.parked ? w.slot.scrollTop : w.scrollTop)||0),
-                       terminalSid:w.view==='terminal'&&window.PCTerm&&PCTerm.sessionId
-                         ? PCTerm.sessionId() : '',
-                       /* HOW THE DESTINATION REOPENS WHAT THIS WINDOW IS SHOWING.
-                        *
-                        * `view` above is `w.appView||w.view` — the LIVE view, which for a repo is
-                        * `repo`: a name git.js sets and nothing routes, so the window landed on the
-                        * other monitor, cleared the feed and span for ever ("git infinite load in a
-                        * black screen with circle"). The path is the address that screen already
-                        * publishes for itself, and routing it is the same code every shared link
-                        * uses — so this is not a git special case, it is every entity view. */
-                       path:String(w.appPath || ''),
-                       /* Generic UI and module state have separate size budgets in main.js. A large
-                        * Web Search result set must not cause the compose draft/caret to be dropped. */
-                       ui:captureHandoffUI(w),
-                       state:w.view==='websearch'&&window.PCWebSearch&&PCWebSearch.handoffState
-                         ? PCWebSearch.handoffState() : null};
-        Promise.resolve(pcWM.handoffFrame(payload,handoff)).then(result=>{
-          if(result) closeWin(w,{preserveFocus:true});
-          else { keepFrameReachable(w); _natGesture(w,false); if(nativeWins().length)nsync(); }
-        }).catch(()=>{ keepFrameReachable(w); _natGesture(w,false); if(nativeWins().length)nsync(); });
+        sendFrameHandoff(w,handoff,edgeOverflow(endEvent||lastMove,handoff));
         if(nativeWins().length) nsync();
         return;
       }

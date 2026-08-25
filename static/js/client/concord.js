@@ -362,7 +362,11 @@
     const createGo=$('#cc-create-go'); if(createGo)createGo.onclick=async()=>{ const name=String($('#cc-community-name').value||'').trim(); if(!name){ p.toast('name your community'); return; } createGo.disabled=true; try{ p.toast('creating encrypted community…'); const room=await mintPublicRoom(p,name,normalizeIcon($('#cc-community-icon').value)); const a=saved(); a.push(room); save(a); state.community=a.length-1; state.channel='general'; render(); await persistArmadaMembership(p,room); p.copyValue(room.url); p.toast('public community created — invite link copied'); }catch(e){ createGo.disabled=false; p.toast('community creation failed: '+(e&&e.message||e)); } };
     const editIcon=$('#cc-edit-icon'); if(editIcon)editIcon.onclick=()=>{ $('#cc-settings-dialog').classList.remove('hidden'); setTimeout(()=>$('#cc-description-value').focus(),20); };
     const iconCancel=$('#cc-icon-cancel'); if(iconCancel)iconCancel.onclick=()=>$('#cc-icon-dialog').classList.add('hidden');
-    const iconSave=$('#cc-icon-save'); if(iconSave)iconSave.onclick=()=>{ const a=saved(), room=a[state.community]; if(!room)return; room.icon=normalizeIcon($('#cc-icon-value').value); save(a); render(); p.toast('community icon updated'); };
+    /* The compact icon dialog used to mutate only this renderer's localStorage and immediately say
+       "updated". The next control-stream hydration correctly restored relay metadata, so the icon
+       appeared to randomly disappear (and another device never saw it at all). Funnel both icon
+       entry points through the authoritative Community settings publisher. */
+    const iconSave=$('#cc-icon-save'); if(iconSave)iconSave.onclick=()=>{ const target=$('#cc-settings-icon'),saveButton=$('#cc-settings-save'); if(!target||!saveButton)return; target.value=normalizeIcon($('#cc-icon-value').value); $('#cc-icon-dialog').classList.add('hidden'); return saveButton.click(); };
     const emoji=$('#cc-emoji'), input=$('#cc-input'); if(emoji&&input)emoji.onclick=()=>{ if(p.openEmojiPopover)p.openEmojiPopover(emoji,(value,close)=>{ if(close)close(); if(p.insertAt)p.insertAt(input,value); else input.value+=value; input.focus(); }); };
     let mentionChoices=[],mentionIndex=0;
     const closeMentions=()=>{ mentionChoices=[]; };
