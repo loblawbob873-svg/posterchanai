@@ -2286,12 +2286,15 @@
            * exact con_id first, forget the hidden latch immediately, then commit the clamped final
            * rectangle. A failed placement is retried against a visible surface on the next pass. */
           if(was === 'hidden'){
-            try{ await pcWM.show(it.native); }
+            try{
+              if(pcWM.restore) await pcWM.restore(it.native,rect.x,rect.y,rect.w,rect.h);
+              else await pcWM.show(it.native);
+            }
             catch(_){ _natSent.set(it.native, 'hidden'); continue; }
-            _natSent.delete(it.native);
-            was = null;
+            _natSent.set(it.native, rect);
+            was = rect;
           }
-          try{ await pcWM.place(it.native, rect.x, rect.y, rect.w, rect.h); }
+          try{ if(!pcWM.restore || was !== rect) await pcWM.place(it.native, rect.x, rect.y, rect.w, rect.h); }
           catch(_){ _natSent.delete(it.native); continue; }
           _natSent.set(it.native, rect);
           it.w.el.classList.remove('native-stashed');
@@ -2343,7 +2346,20 @@
 
   /* Adopt a compositor window into a PosterChan window. Called when one appears, whether the
    * launcher started it or the app opened a second window of its own. */
-  function adoptNative(){ return null; } // compatibility for older callers; see adoptAll
+  function adoptNative(nw){
+    if(!nw || nw.id == null) return null;
+    const id=Number(nw.id), view='native:'+id;
+    let w=wins.find(x=>x.native===id || x.view===view);
+    if(w) return w;
+    w=openApp(view, nw.title||nw.name||nw.app||'App', '#i-window', null, true, true);
+    if(!w) return null;
+    w.native=id; w.nativeFullscreen=!!nw.fullscreen; w.machineApp=nw;
+    w.el.classList.add('osw-native');
+    if(w.slot) w.slot.innerHTML='<div class="osw-nat-note">'+enc(nw.app||'application')+'</div>';
+    _natSent.delete(id);
+    requestAnimationFrame(()=>requestAnimationFrame(nsync));
+    return w;
+  }
 
   /* Whatever the compositor has that we have not framed yet. */
   async function adoptAll(){
@@ -2374,12 +2390,16 @@
       _nativeDecorated.add(id);
       Promise.resolve(pcWM.decorate(id)).catch(()=>_nativeDecorated.delete(id));
     }
-    /* Remove frames created by an older renderer without touching their real applications. This
-     * also makes Ctrl+Alt+Backspace a safe migration path during an update. */
-    for(const w of nativeWins().slice()){
-      closeWin(w, { killNative: false, preserveFocus: true });
-      changed = true;
+    for(const r of rows) if(!nativeWins().some(w=>Number(w.native)===Number(r.id))){
+      adoptNative(r); changed=true;
     }
+    for(const w of nativeWins()){
+      const r=rows.find(x=>Number(x.id)===Number(w.native)); if(!r) continue;
+      if(r.title && r.title!==w.title){ w.title=r.title; const t=$('.osw-title',w.el); if(t)t.textContent=r.title; changed=true; }
+      w.nativeFullscreen=!!r.fullscreen;
+    }
+    /* Adopted apps already have an ordinary PosterChan task button through `wins`. */
+    nativeTasks=rows.filter(r=>!nativeWins().some(w=>Number(w.native)===Number(r.id)));
     /* WHAT TO ADOPT AND WHAT IS STILL ALIVE ARE DIFFERENT QUESTIONS, and answering both with
      * `taskbarRows` is how an app gets KILLED.
      *

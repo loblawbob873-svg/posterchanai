@@ -1247,6 +1247,9 @@ ipcMain.handle('pc:wm:preview-frame', (e, payload, direction) => {
 });
 ipcMain.handle('pc:wm:hide', (e, id) => { fsGuard(e); return wm().hide(Number(id)); });
 ipcMain.handle('pc:wm:show', (e, id) => { fsGuard(e); return wm().show(Number(id)); });
+ipcMain.handle('pc:wm:restore', (e, id, x, y, w, h) => {
+  fsGuard(e); return wm().restore(Number(id),Number(x),Number(y),Number(w),Number(h));
+});
 ipcMain.handle('pc:wm:fullscreen', (e, id, on) => { fsGuard(e); return wm().fullscreen(Number(id), !!on); });
 ipcMain.handle('pc:wm:snap', (e, id, zone) => { fsGuard(e); return wm().snap(Number(id), String(zone||'')); });
 /* Decorating the FIRST native window is also when the palette is (re)applied: it is the earliest
@@ -1257,7 +1260,9 @@ let _chromeDone = false;
 ipcMain.handle('pc:wm:decorate', async (e, id) => {
   fsGuard(e);
   if(!_chromeDone){ _chromeDone = true; try{ await wm().applyChrome(); }catch(_){ _chromeDone = false; } }
-  return wm().command('[con_id=' + Number(id) + '] border normal 3');
+  /* The PosterChan HTML frame is the only chrome. A second Sway titlebar is the mismatched
+   * Firefox/Telegram decoration users were seeing around it. */
+  return wm().command('[con_id=' + Number(id) + '] border none');
 });
 ipcMain.handle('pc:display:status', (e) => { fsGuard(e); return displays().status(); });
 ipcMain.handle('pc:display:preview', (e, rows) => { fsGuard(e); return displays().preview(rows); });

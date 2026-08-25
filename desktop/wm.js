@@ -253,6 +253,16 @@ class WM {
    * several are hidden — so both are addressed by con_id, never by the bare command. */
   hide(id){ return this.command('[con_id=' + Number(id) + '] move scratchpad'); }
   show(id){ return this.command('[con_id=' + Number(id) + '] scratchpad show'); }
+  /* Restore in ONE compositor transaction. `scratchpad show` on its own briefly gives some clients
+   * scratchpad geometry; terminals receive that resize and redraw as a tiny rectangle before the
+   * later place() expands them. One chained criterion preserves the hosted body rectangle. */
+  async restore(id, x, y, w, h){
+    let at={x,y,w,h};
+    try{ at=clampRectToOutputs(at,await this.outputs()); }catch(_){}
+    return this.command('[con_id='+Number(id)+'] scratchpad show, floating enable, resize set '
+      +Math.round(at.w)+' '+Math.round(at.h)+', move absolute position '
+      +Math.round(at.x)+' '+Math.round(at.y));
+  }
 
   /* Placement only means anything for a FLOATING window — a tiled one is positioned by the layout,
    * and moving it is silently a no-op. A desktop that places windows makes them floating first. */

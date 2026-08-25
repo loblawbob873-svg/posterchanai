@@ -183,6 +183,24 @@ class NativeWindowGeometry(unittest.TestCase):
         self.assertTrue(out["first"])
         self.assertFalse(out["none"])
 
+    def test_native_apps_are_adopted_into_real_posterchan_frames(self):
+        """A compositor-only task is exactly the regression: different chrome, floating forever,
+        and no HTML drag path to show the snap ghost."""
+        src = open(os.path.join(ROOT, "static", "js", "client", "os.js"), encoding="utf-8").read()
+        block = src[src.index("function adoptNative(nw)"):src.index("async function adoptAll()")]
+        self.assertIn("openApp(view", block)
+        self.assertIn("w.native=id", block)
+        self.assertIn("osw-native", block)
+        self.assertNotIn("return null; } // compatibility", block)
+
+    def test_adopted_apps_do_not_get_duplicate_taskbar_controls(self):
+        src = open(os.path.join(ROOT, "static", "js", "client", "os.js"), encoding="utf-8").read()
+        self.assertIn("nativeTasks=rows.filter", src)
+
+    def test_hidden_terminal_surface_is_restored_atomically(self):
+        src = open(os.path.join(ROOT, "static", "js", "client", "os.js"), encoding="utf-8").read()
+        self.assertIn("pcWM.restore(it.native,rect.x,rect.y,rect.w,rect.h)", src)
+
 
 if __name__ == "__main__":
     unittest.main()

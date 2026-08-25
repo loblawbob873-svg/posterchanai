@@ -176,6 +176,16 @@ class CompositorIPC(unittest.TestCase):
         self.assertIn("[con_id=11] resize set 800 600", cmds)
         self.assertIn("[con_id=11] move absolute position 100 50", cmds)
 
+    def test_restoring_a_hidden_terminal_is_one_atomic_geometry_command(self):
+        """A show followed by three separate placement commands exposes scratchpad geometry to
+        foot/xterm and collapses the terminal before expanding it again."""
+        out = self.run_js("await wm.restore(11, 100, 50, 800, 600);")
+        cmds = [s["payload"] for s in out["seen"] if s["type"] == 0]
+        geometry = [c for c in cmds if "con_id=11" in c]
+        self.assertEqual(len(geometry), 1, geometry)
+        self.assertIn("scratchpad show, floating enable, resize set 800 600", geometry[0])
+        self.assertIn("move absolute position 100 50", geometry[0])
+
     def test_final_placement_is_clamped_inside_the_destination_monitor(self):
         """A stale frame may ask for a window whose bottom/title bar is outside the output."""
         out = self.run_js("""

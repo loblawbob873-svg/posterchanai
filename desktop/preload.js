@@ -125,6 +125,8 @@ if (isOurPage) {
      * running, and comes back where it was. */
     hide: (id) => ipcRenderer.invoke('pc:wm:hide', Number(id)),
     show: (id) => ipcRenderer.invoke('pc:wm:show', Number(id)),
+    restore: (id,x,y,w,h) => ipcRenderer.invoke('pc:wm:restore',Number(id),Number(x),Number(y),
+                                                 Number(w),Number(h)),
     fullscreen: (id, on) => ipcRenderer.invoke('pc:wm:fullscreen', Number(id), !!on),
     snap: (id, zone) => ipcRenderer.invoke('pc:wm:snap', Number(id), String(zone||'')),
     decorate: (id) => ipcRenderer.invoke('pc:wm:decorate', Number(id)),
