@@ -64,7 +64,7 @@ class Workspace(unittest.TestCase):
         for bad in ("../etc/passwd", "sub/../../etc/passwd", "....//etc/passwd", "/etc/passwd"):
             with self.subTest(path=bad):
                 try:
-                    got = C._resolve(bad, must_exist=False)
+                    got = C._resolve(bad, self.tmp, must_exist=False)
                 except HTTPException as e:
                     self.assertIn(e.status_code, (400, 403))
                     continue
@@ -83,7 +83,7 @@ class Workspace(unittest.TestCase):
         link = os.path.join(self.tmp, "innocent.txt")
         os.symlink(outside, link)
         with self.assertRaises(HTTPException) as cm:
-            C._resolve("innocent.txt")
+            C._resolve("innocent.txt", self.tmp)
         self.assertEqual(cm.exception.status_code, 403)
 
     def test_a_sibling_directory_sharing_a_prefix_is_not_inside(self):
@@ -95,7 +95,7 @@ class Workspace(unittest.TestCase):
         with open(os.path.join(sib, "k.txt"), "w") as f:
             f.write("x")
         with self.assertRaises(HTTPException):
-            C._resolve(os.path.join("..", os.path.basename(sib), "k.txt"))
+            C._resolve(os.path.join("..", os.path.basename(sib), "k.txt"), self.tmp)
 
     # ---- reading ----------------------------------------------------------------------------
 
@@ -151,21 +151,19 @@ class Workspace(unittest.TestCase):
 
     # ---- the gate ---------------------------------------------------------------------------
 
-    def test_every_endpoint_shares_the_terminals_gate(self):
-        """Editing a node's files and running commands on it are the same privilege. Two gates is
-        how one of them ends up quietly wider than anybody meant."""
+    def test_non_operators_are_routed_to_their_own_workspace(self):
+        """Removing the terminal gate must never expose the node checkout to an ordinary user."""
+        own = os.path.join(self.tmp, "ordinary-user")
         with mock.patch.object(C.node_service, "user_allowed", lambda db, user: False):
-            for call in (lambda: run(C.tree(path="", db=None, current_user=_User())),
-                         lambda: run(C.read_file(path="hello.py", db=None, current_user=_User())),
-                         lambda: run(C.config(db=None, current_user=_User())),
-                         lambda: run(C.write_file(body=C.WriteBody(path="a.py", text="x"),
-                                                  db=None, current_user=_User())),
-                         lambda: run(C.format_source(body=C.FormatBody(language="python",
-                                                                       source="x=1"),
-                                                     db=None, current_user=_User()))):
-                with self.assertRaises(HTTPException) as cm:
-                    call()
-                self.assertEqual(cm.exception.status_code, 403)
+            with mock.patch.object(C, "_user_root", lambda user: own):
+                os.makedirs(own)
+                got = run(C.config(db=None, current_user=_User()))
+                self.assertEqual(got["root"], own)
+                self.assertTrue(got["own"])
+                run(C.write_file(body=C.WriteBody(path="a.py", text="x"),
+                                 db=None, current_user=_User()))
+                self.assertTrue(os.path.exists(os.path.join(own, "a.py")))
+                self.assertFalse(os.path.exists(os.path.join(self.tmp, "a.py")))
 
 
 class Beautifiers(unittest.TestCase):

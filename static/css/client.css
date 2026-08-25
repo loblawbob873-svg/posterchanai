@@ -8974,11 +8974,11 @@ audio.sms-att-img{min-width:220px}
    Both are a column whose BODY takes everything the bar does not, so the media is sized by the
    window rather than by the viewport — a viewer that ignores its window is the "tiny white box"
    the office editor was. */
-.pv-host{display:flex;flex-direction:column;min-height:0;background:var(--bg);color:var(--fg)}
+.pv-host{display:flex;flex-direction:column;min-height:0;background:var(--bg);color:var(--text)}
 .pv-win{height:100%}
 .pv-sheet{position:fixed;inset:0;z-index:1200}
 .pv-bar{display:flex;align-items:center;gap:10px;padding:8px 10px;flex:0 0 auto;
-  border-bottom:1px solid var(--border);background:var(--panel)}
+  border-bottom:1px solid var(--line);background:var(--panel)}
 .pv-name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .pv-size{flex:0 0 auto}
 .pv-acts{margin-left:auto;display:flex;gap:6px;flex:0 0 auto}

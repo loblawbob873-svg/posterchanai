@@ -70,6 +70,7 @@ const SHELL = [
   '/static/js/client/urlclean.js',
   '/static/js/client/app.js',
   '/static/js/client/concord.js',
+  '/static/js/client/cord-protocol.js',
   '/static/js/client/cord-reader.js',
   '/static/js/client/news.js',
   '/static/js/client/websearch.js',

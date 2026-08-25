@@ -38,7 +38,7 @@ WANTED = [
     "ai", "bell", "globe", "speech", "user", "users", "clock", "mail", "bookmark", "phone",
     "translate", "note", "key", "draft", "tv", "git", "news", "chart", "bars", "article",
     "bag", "chat", "magnet", "pawn", "hash", "target", "discs", "cards", "spade", "gamepad",
-    "flower", "refresh", "gear", "folder", "music", "calendar", "terminal", "compass",
+    "flower", "refresh", "gear", "folder", "music", "calendar", "terminal", "compass", "concord",
     # sms
     "send", "plus", "arrow-left", "trash", "paperclip", "image", "check", "close",
     "cloud", "shield", "warn", "reply", "star", "smile",
