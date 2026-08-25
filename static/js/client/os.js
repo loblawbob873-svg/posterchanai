@@ -6268,6 +6268,14 @@
               }).catch(()=>{});
             }
           });
+          /* Arm compositor delivery immediately. PCOSShell.watch() also subscribes, but only after
+           * its first hardware/status refresh has completed. A slow or stuck NetworkManager,
+           * PipeWire or power query therefore left the listener above installed while main.js was
+           * never asked to forward Sway events: the active Super binding emitted `pc:start`, Sway
+           * accepted it, and nothing reached this renderer. subscribe() is idempotent in main, so
+           * doing it here makes the keyboard path independent of tray startup without creating a
+           * second compositor socket. */
+          Promise.resolve(pcWM.subscribe()).catch(()=>{});
         }catch(_){}
         /* A PosterChan window released through another monitor's edge is recreated here. The two
          * monitors are separate Electron renderers, so no DOM node can literally cross between

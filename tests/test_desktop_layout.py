@@ -405,6 +405,13 @@ class TheStartMenuTakesTyping(unittest.TestCase):
         self.assertIn("wm.windows()", body, "the window id is remembered rather than asked for")
         self.assertIn("posterchan", body)
 
+    def test_super_tick_subscription_is_not_blocked_by_tray_refresh(self):
+        """The tray subscribes only after an async hardware refresh. Start cannot depend on it."""
+        i = self.src.index("_tickOff = pcWM.onEvent")
+        j = self.src.index("\n        PCOSShell.watch(", i)
+        self.assertIn("pcWM.subscribe()", self.src[i:j],
+                      "Super forwarding still waits for the tray's initial hardware refresh")
+
     def test_no_compositor_is_not_a_failure(self):
         """In a browser tab the question is meaningless and the DOM already has the keys."""
         i = self.src.index("async function _raiseShell()")
