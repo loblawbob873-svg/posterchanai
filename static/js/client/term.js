@@ -74,6 +74,36 @@
     let sid = '', cursor = 0, retry = 0, retryT = null, want = false, live = [];
     let findHits = [], findAt = -1;
     let followBottom = true, scrollingByUs = false;
+    /* xterm's write callback means that its parser consumed the bytes; it does NOT mean Chromium
+     * has finished laying out the enlarged scrollback element.  A large reattach measured in the
+     * packaged desktop landed at scrollTop 2224 with an actual maximum of 3824 even though the
+     * callback had called scrollToBottom().  Keep one generation of post-layout pinning alive until
+     * the newest write has crossed two paint frames and a short layout quiescence.  Older callbacks
+     * may never release the guard underneath a newer write. */
+    let bottomPinEpoch = 0, bottomPinT = null;
+
+    function _pinBottomAfterLayout(){
+      if(!term) return;
+      const mine = ++bottomPinEpoch;
+      scrollingByUs = true;
+      const settle = () => {
+        if(mine !== bottomPinEpoch || !term) return;
+        try{ term.scrollToBottom(); }catch(_){}
+        if(bottomPinT) clearTimeout(bottomPinT);
+        bottomPinT = setTimeout(() => {
+          if(mine !== bottomPinEpoch || !term) return;
+          try{ term.scrollToBottom(); }catch(_){}
+          scrollingByUs = false;
+          bottomPinT = null;
+        }, 80);
+      };
+      /* Two frames are intentional: the first commits xterm's canvas/row update and the second sees
+       * the resulting viewport height. Backgrounded renderers may not deliver RAF promptly, so the
+       * timer is also a bounded fallback rather than leaving user scrolling disabled forever. */
+      try{ requestAnimationFrame(() => requestAnimationFrame(settle)); }
+      catch(_){ settle(); }
+      setTimeout(settle, 120);
+    }
     /* A mount can cross awaits (host list, session list). Raising the same Terminal window twice
      * starts a second render before the first resumes; without a generation token BOTH continuations
      * mount xterm and attach input, so every physical key is written twice. */
@@ -751,10 +781,7 @@
             const followThisWrite=followBottom;
             if(followThisWrite) scrollingByUs=true;
             term.write(m.d, function(){
-              if(followThisWrite){
-                try{term.scrollToBottom();}catch(_){}
-                setTimeout(()=>{scrollingByUs=false;},0);
-              }
+              if(followThisWrite) _pinBottomAfterLayout();
             });
             _histSaw(m.d);
             // The CURSOR is what a reconnect resumes from, so it advances only for bytes that reached
@@ -783,7 +810,7 @@
             _state((m.resumed ? 'reattached to ' : 'connected to ') + host, 'ok');
             _chrome(true); _fit(); _focus();
             followBottom=true;
-            try{scrollingByUs=true;term.scrollToBottom();setTimeout(()=>{scrollingByUs=false;},0);}catch(_){scrollingByUs=false;}
+            _pinBottomAfterLayout();
             /* A NEW PTY IS A NEW TAB. Starting one used to update `sid` but never repaint the tab
              * strip, so the shell existed while the only visible tab was still the previous one.
              * The next press appeared to do nothing useful and switching was impossible until a
@@ -1196,6 +1223,9 @@
       document.removeEventListener('visibilitychange', _wake);
       if(ro){ try{ ro.disconnect(); }catch(_){} ro = null; }
       if(term){ try{ term.dispose(); }catch(_){} term = null; fit = null; }
+      ++bottomPinEpoch;
+      if(bottomPinT){ clearTimeout(bottomPinT); bottomPinT = null; }
+      scrollingByUs = false;
       _fitPixels = '';
       if(_fitT){ clearTimeout(_fitT); _fitT = null; }
       window.removeEventListener('resize', _fit);

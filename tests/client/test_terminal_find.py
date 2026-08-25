@@ -37,6 +37,20 @@ def test_attach_starts_at_live_prompt_then_respects_manual_scrolling():
     assert "const followThisWrite=followBottom" in out
 
 
+def test_large_replay_stays_pinned_until_chromium_finishes_layout():
+    """A write callback can precede the final scrollHeight in packaged Electron."""
+    pin = TERM[TERM.index("function _pinBottomAfterLayout"):
+               TERM.index("function pageZoom")]
+    assert "const mine = ++bottomPinEpoch" in pin
+    assert "requestAnimationFrame(() => requestAnimationFrame(settle))" in pin
+    assert "setTimeout(settle, 120)" in pin
+    assert "if(mine !== bottomPinEpoch" in pin
+    assert pin.count("term.scrollToBottom()") >= 2
+
+    out = TERM[TERM.index("if(m.t === 'out')"):TERM.index("if(m.t === 'ready')")]
+    assert "if(followThisWrite) _pinBottomAfterLayout()" in out
+
+
 def test_find_navigation_and_close_are_wired():
     assert "_findMove(ev.shiftKey ? -1 : 1)" in TERM
     assert "if(ev.key === 'Escape')" in TERM
