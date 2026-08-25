@@ -362,6 +362,20 @@ def test_invite_parser_requires_naddr_and_secret_fragment():
     assert "fetch(" not in invite_loader, "invite fragments must never be posted to PosterChan"
 
 
+def test_linkified_invites_stay_inside_concord_instead_of_opening_classic_ui():
+    assert "function openInviteLink(raw,autoJoin=true)" in CONCORD
+    assert "e.target.closest('a[href]')" in CONCORD
+    assert "e.preventDefault();e.stopPropagation();openInviteLink(a.href,true)" in CONCORD
+    assert "openInvite:openInviteLink" in CONCORD
+
+
+def test_direct_invite_route_opens_concord_with_the_fragment_intact():
+    assert "kind:'concord-invite', q:location.href" in APP
+    routed = APP[APP.index("async function routeFromPath()"):APP.index("// PWA launch params")]
+    assert "switchView('concord')" in routed
+    assert "PCConcord.openInvite(e.q,true)" in routed
+
+
 def test_concord_controls_are_phone_sized_and_single_column():
     phone = re.search(r"@media\(max-width:600px\)\{(.*?)\n\}", CSS, re.S)
     assert phone, "missing phone breakpoint"

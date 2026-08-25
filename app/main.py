@@ -1552,6 +1552,19 @@ _NOSTR_ENTITY_RE = _re_entity.compile(
     r"^(?:npub1|nprofile1|note1|nevent1|naddr1)[023456789acdefghjklmnpqrstuvwxyz]+$", _re_entity.IGNORECASE)
 
 
+@app.get("/invite/{entity}", response_class=HTMLResponse)
+async def concord_invite_page(entity: str, request: Request):
+    """Load Concord for a CORD invite while the URL fragment remains in the browser.
+
+    The secret after ``#`` is intentionally unavailable to this server.  The client reads it from
+    ``location.href`` and resolves the encrypted kind-33301 bundle from the invite's relay hints.
+    """
+    if not entity.lower().startswith("naddr1") or not _NOSTR_ENTITY_RE.match(entity):
+        raise StarletteHTTPException(status_code=404)
+    from app.routers.client import client_app
+    return await client_app(request)
+
+
 @app.get("/{entity}", response_class=HTMLResponse)
 async def nostr_entity_page(entity: str, request: Request):
     """Serve the Nostr client for /<npub|nprofile|note|nevent|naddr>."""

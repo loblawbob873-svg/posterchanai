@@ -3085,6 +3085,13 @@
     if(!p) return _entityFromQuery();
     const seg = p.split('/');
     if(/^users$/i.test(seg[0]) && seg[1]) return { kind:'user', q: seg[1] };
+    /* Concord invite URLs are client routes too.  The # fragment never reaches the server, so keep
+     * location.href here and hand it directly to Concord; treating the naddr as an ordinary entity
+     * opens a kind-33301 event reader (or a 404 page) and loses the join action entirely. */
+    if(/^invite$/i.test(seg[0]) && seg[1]
+       && /^naddr1[023456789acdefghjklmnpqrstuvwxyz]+$/i.test(seg[1])
+       && String(location.hash||'').length>3)
+      return { kind:'concord-invite', q:location.href };
     const m = seg[0].match(/^(?:nostr:)?((?:npub1|nprofile1|note1|nevent1|naddr1)[023456789acdefghjklmnpqrstuvwxyz]+)$/i);
     if(m) return { kind:'bech32', q: m[1] };
     return _entityFromQuery();
@@ -3094,7 +3101,12 @@
     if(!e){ switchView(_startTimeline()); return; }   // the root path IS "back to my timeline"
     _routing = true;
     try{
-      if(e.kind==='user'){
+      if(e.kind==='concord-invite'){
+        switchView('concord');
+        const open=()=>{ if(window.PCConcord&&PCConcord.openInvite)PCConcord.openInvite(e.q,true); };
+        if(window.PCConcord)open(); else _withModule('/static/js/client/concord.js','PCConcord',open);
+        return;
+      } else if(e.kind==='user'){
         let pk = safePk(e.q);
         if(!pk){ const name = e.q.includes('@') ? e.q : (e.q + '@' + location.host); pk = await nip05Resolve(name.toLowerCase()); }
         if(pk){ await renderProfileView(pk); return; }
@@ -19402,8 +19414,16 @@
      * the fact that one is a Blossom folder and the other a sync manifest is our problem, not theirs.
      * `_syncPairs` may still be loading; the sidebar says so and this shelf just fills in on repaint. */
     const pairs = Array.isArray(_syncPairs) ? _syncPairs : [];
-    const synced = pairs.map(f =>
-      tile('🔄', f.key, f.n + ' file' + (f.n === 1 ? '' : 's'), 'data-synckey="' + enc(f.key) + '"')).join('');
+    /* A device-local mapping deliberately carries n:null until the account manifest has been
+     * fetched.  String concatenation turned that honest unknown into the broken-looking
+     * "null files" on the Files home screen.  Match the sidebar: show a count only when one was
+     * actually supplied, and otherwise say why the folder is present. */
+    const synced = pairs.map(f => {
+      const count = Number.isFinite(f.n)
+        ? (f.n + ' file' + (f.n === 1 ? '' : 's'))
+        : 'synced on this device';
+      return tile('🔄', f.key, count, 'data-synckey="' + enc(f.key) + '"');
+    }).join('');
     const grid = $('#bl-grid', pane); if(!grid) return;
     /* HOW MUCH OF THE DRIVE YOU ARE USING, said plainly and at the top. The number was reachable
      * only by opening All files and adding up tiles, which for a drive that Folder Sync files

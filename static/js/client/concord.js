@@ -166,6 +166,19 @@
     const m=u.pathname.match(/\/invite\/(naddr1[023456789acdefghjklmnpqrstuvwxyz]+)\/?$/i);
     return m&&u.hash.length>3 ? {url:u.href,naddr:m[1],secret:u.hash.slice(1)} : null;
   }
+  /* An invite is an in-app Concord action, not a web page.  Linkified chat text gives every URL a
+   * normal anchor; on desktop a same-instance /invite link was therefore allowed through Electron
+   * and opened the server's Classic UI in another PosterChan window.  Keep the complete URL (the
+   * fragment is the decryption secret), show it in the existing join surface, and use the exact same
+   * join button as a pasted invite so the two paths cannot drift. */
+  function openInviteLink(raw,autoJoin=true){
+    const parsed=inviteParts(raw); if(!parsed)return false;
+    const panel=document.querySelector('#cc-join'),input=document.querySelector('#cc-invite-url');
+    if(!panel||!input)return false;
+    panel.classList.remove('hidden'); input.value=parsed.url; input.focus();
+    if(autoJoin)setTimeout(()=>{const go=document.querySelector('#cc-join-go');if(go&&!go.disabled)go.click();},0);
+    return true;
+  }
   function discoverInvites(text,source){
     const matches=String(text||'').match(/https?:\/\/[^\s<>]+\/invite\/naddr1[023456789acdefghjklmnpqrstuvwxyz]+#[A-Za-z0-9_-]+/gi)||[];
     return matches.map(url=>url.replace(/[),.;!?]+$/,'' )).map(url=>{ const parsed=inviteParts(url); if(!parsed)return null; const blurb=String(text).replace(url,'').replace(/#[\w-]+/g,'').replace(/\s+/g,' ').trim(); return {...parsed,name:blurb.slice(0,80)||'Public Concord community',description:blurb,source}; }).filter(Boolean);
@@ -476,7 +489,7 @@
   }
   function bind(me){
     const p=PC(), $=p.$, $$=p.$$;
-    const scroller=document.querySelector('.cc-messages'); if(scroller){ scroller.onscroll=()=>{ if(scroller.dataset.osParking||!scroller.isConnected||!document.body.classList.contains('concord-view'))return; const key=scrollKey(),st=readScroll(key); st.top=scroller.scrollTop;st.height=scroller.scrollHeight;st.pinned=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;writeScroll(key,st); }; scroller.querySelectorAll('a').forEach(a=>a.addEventListener('pointerdown',()=>{ const key=scrollKey(),st=readScroll(key); st.top=scroller.scrollTop;st.height=scroller.scrollHeight;st.pinned=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;writeScroll(key,st); },{passive:true})); }
+    const scroller=document.querySelector('.cc-messages'); if(scroller){ scroller.onscroll=()=>{ if(scroller.dataset.osParking||!scroller.isConnected||!document.body.classList.contains('concord-view'))return; const key=scrollKey(),st=readScroll(key); st.top=scroller.scrollTop;st.height=scroller.scrollHeight;st.pinned=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;writeScroll(key,st); }; scroller.querySelectorAll('a').forEach(a=>a.addEventListener('pointerdown',()=>{ const key=scrollKey(),st=readScroll(key); st.top=scroller.scrollTop;st.height=scroller.scrollHeight;st.pinned=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;writeScroll(key,st); },{passive:true})); scroller.addEventListener('click',e=>{const a=e.target&&e.target.closest&&e.target.closest('a[href]');if(!a||!inviteParts(a.href))return;e.preventDefault();e.stopPropagation();openInviteLink(a.href,true);},true); }
     const openJoin=()=>{ $('#cc-join').classList.remove('hidden'); setTimeout(()=>$('#cc-invite-url').focus(),20); };
     const home=$('#cc-home'); if(home)home.onclick=()=>{ const rooms=saved(),wanted=Number(localStorage.getItem('pc.concord.active')||0); discoveryOpen=!rooms.length; state.community=rooms.length&&wanted>=0&&wanted<rooms.length?wanted:(rooms.length?0:null); state.channel=state.community==null?null:'general'; mobileChatOpen=false; render(); };
     const discovery=$('#cc-discovery'); if(discovery)discovery.onclick=()=>{ discoveryOpen=true; state.community=null; state.channel=null; mobileChatOpen=false; render(); };
@@ -534,5 +547,5 @@
     $$('[data-cc-react-toggle]').forEach(b=>b.onclick=()=>toggleReaction(b.dataset.ccReactToggle,b.dataset.ccEmoji));
     $$('[data-cc-react]').forEach(b=>b.onclick=()=>{ reactionTarget=b.dataset.ccReact; const choices=['👍','❤️','😂','😮','😢','😡','🎉','💯']; const old=document.querySelector('.cc-reaction-picker'); if(old)old.remove(); const pop=document.createElement('div'); pop.className='cc-reaction-picker'; pop.innerHTML=choices.map(x=>`<button data-emoji="${x}">${x}</button>`).join(''); b.closest('.cc-message-body').appendChild(pop); pop.querySelectorAll('button').forEach(x=>x.onclick=e=>{ e.stopPropagation(); toggleReaction(reactionTarget,x.dataset.emoji); }); });
   }
-  window.PCConcord={render,inviteParts,normalizeIcon,notifyMentions,discoverInvites,threadParticipants,encryptedAttachments,messageContentHtml};
+  window.PCConcord={render,openInvite:openInviteLink,inviteParts,normalizeIcon,notifyMentions,discoverInvites,threadParticipants,encryptedAttachments,messageContentHtml};
 })();
