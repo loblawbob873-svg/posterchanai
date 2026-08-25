@@ -130,6 +130,7 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert "if(file&&input)file.onchange=async()=>" in CONCORD
     assert 'room.cord.hydrated=true' in CONCORD
     assert "if(loaded&&loaded.cord)" in CONCORD
+    assert 'let loaded=room; state.community=i' in CONCORD
     assert 'await p.nip44dec(viewer.pubkey,event.content)' in CONCORD
     assert 'cc-public-copy' in CONCORD and '.cc-public-copy' in CONCORD_CSS
     assert 'function isUnread(room)' in CONCORD
