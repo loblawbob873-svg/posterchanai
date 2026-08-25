@@ -84,7 +84,10 @@ CHECKS = {
     # These two create their own ws:// loopback relays. Running the page over HTTPS makes Chromium
     # correctly block that mixed-content socket and reports the security policy as a signer fault.
     "check_nip46_reconnect":           dict(group="ui", secs=600),
-    "check_nip46_signer":              dict(group="ui", secs=420),
+    # Four complete remote-signer negotiations, including a deliberately 16s approval. Running it
+    # beside six Chrome-heavy UI checks starves its timers and produced two false login failures;
+    # alone it repeatedly passes. This is a protocol timing test, not a CPU contention benchmark.
+    "check_nip46_signer":              dict(group="ui", secs=420, serial=True),
     "check_qr_scan":                   dict(group="ui", secs=900),
     "check_os_apps":                   dict(group="live", secs=900),
     # Two browsers, three pairings, and a clock-skew case that has to time out to prove it works.

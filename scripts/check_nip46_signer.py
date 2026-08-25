@@ -393,7 +393,24 @@ async def drive(url):
         await relay_a.stop()
         await relay_b.stop()
         proc.terminate()
-        subprocess.run(["rm", "-rf", PROFILE], check=False)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+        # Chrome can finish writing profile bookkeeping just after its browser process exits.
+        # shutil retries neither a racing directory nor an antivirus/indexer handle, so give that
+        # harmless cleanup a short bounded retry instead of printing a scary rm error after PASS.
+        for attempt in range(5):
+            try:
+                shutil.rmtree(PROFILE)
+                break
+            except FileNotFoundError:
+                break
+            except OSError:
+                if attempt == 4:
+                    break
+                await asyncio.sleep(0.1 * (attempt + 1))
 
     if problems:
         print(f"FAIL  {len(problems)} problem(s):")
