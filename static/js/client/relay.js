@@ -318,6 +318,18 @@
       let m; try { m = JSON.parse(raw); } catch(_){ return; }
       const typ = m[0];
       if (typ === 'EVENT'){
+        /* A trusted relay echoing the exact signed id is delivery evidence even if its separate OK
+         * frame was lost during a phone radio handoff. Settle the active publish before looking up
+         * the subscription: the echo can arrive on any live REQ, and delivery must not depend on
+         * which screen happens to be open. This also lets an Outbox retry clear a stale Pending
+         * badge for a post other people already received. Untrusted relays do not get this shortcut;
+         * their EVENT still has to pass verification below. */
+        const wireEv = m[2];
+        if(conn.trusted && wireEv && wireEv.id){
+          const ack = this._okWaiters.get(wireEv.id);
+          if(ack){ this._okWaiters.delete(wireEv.id); ack.settle({ ok:true, msg:'relay echo' }); }
+          try{ if(window.Outbox && Outbox.has(wireEv.id)) Outbox.remove(wireEv.id); }catch(_){}
+        }
         const sub = this._subs.get(m[1]); if (!sub || !sub.onEvent) return;
         const ev = this._normTags(m[2]); if (!ev || sub.seen.has(ev.id)) return;   // dedup across relays
         if (conn.trusted){ this._seenAdd(sub, ev.id); sub.onEvent(ev); }

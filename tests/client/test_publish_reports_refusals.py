@@ -92,6 +92,17 @@ const EV = { id: 'a'.repeat(64), kind: 1, content: 'hi', sig: 'f'.repeat(128),
     out.quietMsg = r.msg;
   }
 
+  // 4. A relay may store+echo an event while its separate OK frame is lost. Other clients already
+  // have the post in that case, so the sender must not leave it marked Pending.
+  {
+    const p = Relay.publish(EV, 5000);
+    await new Promise(r => setTimeout(r, 10));
+    socks[0].reply(['EVENT', 'any-live-sub', EV]);
+    const r = await p;
+    out.echoAck = r.ok;
+    out.echoMsg = r.msg;
+  }
+
   console.log(JSON.stringify(out));
   process.exit(0);
 })();
@@ -132,6 +143,10 @@ class PublishRefusalTests(unittest.TestCase):
     def test_silence_is_still_reported_as_a_timeout(self):
         self.assertIs(self.r["quietOk"], False)
         self.assertEqual(self.r["quietMsg"], "timeout")
+
+    def test_a_trusted_event_echo_clears_a_lost_ok_acknowledgement(self):
+        self.assertTrue(self.r["echoAck"])
+        self.assertEqual(self.r["echoMsg"], "relay echo")
 
 
 if __name__ == "__main__":
