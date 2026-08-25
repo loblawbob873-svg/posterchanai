@@ -29,10 +29,16 @@ def _default_ingest_kinds() -> set[int]:
     return {int(k) for k in m.group(1).split(",") if k.strip()}
 
 
-def test_ingest_kinds_carry_the_whole_nip28_set():
+def test_ingest_kinds_exclude_retired_nip28_chat():
     kinds = _default_ingest_kinds()
-    for k, why in ((40, "channel definitions"), (41, "channel metadata EDITS"), (42, "channel messages")):
-        assert k in kinds, f"kind {k} ({why}) missing — NIP-28 state would not sync between nodes"
+    assert not kinds.intersection(range(40, 45))
+
+
+def test_relay_rejects_nip28_but_keeps_concord_wraps():
+    server = (THREAD.parent / "server.py").read_text()
+    assert 'if 40 <= kind <= 44:' in server
+    assert 'NIP-28 chat is not supported; use Concord' in server
+    assert 'elif kind in (1059, 21059):' in server
 
 
 def test_ingest_kinds_carry_the_joined_channel_list():

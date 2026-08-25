@@ -395,14 +395,11 @@ def _read_config() -> dict:
             # ingested+firehosed for the Discover → Git view. Collaboration kinds (1617/1621/…) are
             # accepted repo-SCOPED (see _firehose_event) so it's NOT an open spam firehose. All git kinds
             # are kept forever (see store._GIT_KINDS: never pruned, never expired).
-            # 41 is the NIP-28 channel-METADATA edit (a kind-40 is immutable, so a rename/picture is a
-            # separate event). Without it, 40 and 42 sync but every channel edit stops at the node it was
-            # made on — the channel would show its ORIGINAL name/picture everywhere else, forever.
             # 10005 is the NIP-51 "public chats" join list. Each node's push watcher reads it to decide
             # whose devices to notify about a channel message, so a list published on one node has to
             # reach the others or that user gets chat pushes from one node only.
-            "ingest_kinds": [int(k) for k in (g("nostr_relay_ingest_kinds", "0,1,3,5,6,7,21,22,40,41,42,1063,1068,1111,9735,10000,10001,10002,10003,10005,10007,10050,10063,2003,2004,30000,30001,30003,30023,30311,34235,34236,34550,30402,30017,30018,30617,30618,1617,1621,1622,1623,1630,1631,1632,1633,31922,31923,31924,31925")
-                             .replace(" ", "").split(",")) if k.strip().lstrip("-").isdigit()],
+            "ingest_kinds": [int(k) for k in (g("nostr_relay_ingest_kinds", "0,1,3,5,6,7,21,22,1063,1068,1111,9735,10000,10001,10002,10003,10005,10007,10050,10063,2003,2004,30000,30001,30003,30023,30311,34235,34236,34550,30402,30017,30018,30617,30618,1617,1621,1622,1623,1630,1631,1632,1633,31922,31923,31924,31925")
+                             .replace(" ", "").split(",")) if k.strip().lstrip("-").isdigit() and int(k) not in range(40,45)],
             "author_batch": gi("nostr_relay_author_batch", 200),
             # Politeness / anti-blast: pace upstream requests and outbox publishes so we don't
             # hammer the public relays and get rate-limited or blocked.
@@ -795,6 +792,8 @@ async def _main(cfg: dict) -> None:
         if cfg.get("block_bridged") and is_bridged_post(ev) and not gate.is_operator(ev.get("pubkey", "")):
             return
         _kind = int(ev.get("kind", 1))
+        if 40 <= _kind <= 44:
+            return  # retired NIP-28 chat must not re-enter through upstream ingestion
         if _kind in (9735, 1059):
             # Zap receipts (9735) are authored by the LNURL zap SERVICE and gift wraps (1059) by a
             # throwaway ephemeral key — neither author is in the WoT, so gate on the RECIPIENT p-tag

@@ -808,6 +808,11 @@ class RelayServer:
             self._refuse(conn, eid, ev, "invalid: bad id or signature")
             return
         kind = int(ev.get("kind", 1))
+        # PosterChan's public-room protocol is Concord/CORD (opaque kind-1059 wraps). The retired
+        # NIP-28 client is gone, so do not keep accepting or storing its channel event family.
+        if 40 <= kind <= 44:
+            self._refuse(conn, eid, ev, "blocked: NIP-28 chat is not supported; use Concord")
+            return
         # Reject EMPTY text notes (kind-1 with blank/whitespace-only content) — pure spam/noise with
         # nothing to render. Other kinds legitimately have empty content (kind-3 follows, kind-6 reposts,
         # kind-7 reactions, kind-5 deletes), so this is scoped to kind 1 only.

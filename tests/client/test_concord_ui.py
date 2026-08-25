@@ -41,7 +41,7 @@ def test_concord_is_precached_and_old_bundles_self_heal_the_nav():
 def test_concord_owns_a_versioned_stylesheet_so_stale_shell_css_cannot_unstyle_it():
     assert 'static/css/concord.css' in HTML
     assert "data-concord-css" in CONCORD
-    assert "concord.css?v=12" in CONCORD
+    assert "concord.css?v=13" in CONCORD
     assert '.cc-compose textarea:focus' in CONCORD_CSS
     assert 'box-shadow:none!important' in CONCORD_CSS
     assert "'/static/css/concord.css'" in (ROOT / "static/js/client/sw.js").read_text()
@@ -250,6 +250,19 @@ def test_concord_messages_support_persisted_replies_and_reactions():
     assert '.cc-message-reply' in CONCORD_CSS
     assert '.cc-reaction-picker' in CONCORD_CSS
     assert "publishCordMessage(p,room,state.channel,emoji" in CONCORD
+    assert 'data-cc-quick-react=' in CONCORD
+    assert 'cc-reaction${mine?' in CONCORD and 'aria-pressed="${mine}"' in CONCORD
+    assert '.cc-reaction.mine' in CONCORD_CSS
+    assert '.cc-action-sep' in CONCORD_CSS
+
+
+def test_room_history_reads_pool_and_external_relays_without_erasing_cached_messages():
+    assert 'async function cordQuery(' in CONCORD
+    assert 'if(p.relayQuery)jobs.push' in CONCORD
+    assert 'if(p.relayQueryFrom)jobs.push' in CONCORD
+    assert 'const storeId=channelStoreId(room,channel.name),prior=testMessages(storeId)' in CONCORD
+    assert 'for(const m of msgs)merged.set' in CONCORD
+    assert 'since,limit:500' in CONCORD
 
 
 def test_concord_webxdc_mentions_live_sync_and_scroll_are_integrated():
