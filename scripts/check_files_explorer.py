@@ -60,7 +60,7 @@ PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-files-explorer-check"
 # The functions lifted out of app.js. Each is matched from `function <name>(` to the line that closes
 # it at the same indentation — app.js indents module-level functions by two spaces, so the closing
 # brace is the first line that is exactly "  }".
-LIFT = ["_fxDetailsRow", "_fxColsHTML", "_fxBarHTML", "_fxBytes", "_fxWhen", "_fxType", "_fxIcon",
+LIFT = ["_fxDetailsRow", "_fxColsHTML", "_fxBarHTML", "_fxBytes", "_fxWhen", "_fxType", "_fxFileGlyph", "_fxIcon",
         "_fxView", "_fxSort", "_fxCompare"]
 # Data the lifted functions close over. Same rule: taken verbatim, never restated here.
 LIFT_CONST = ["_FX_COLS", "_FX_KINDS"]
@@ -99,6 +99,8 @@ PAGE_TMPL = r"""<!doctype html><html><head><meta charset="utf-8">
 <nav class="mobilenav glass"><button class="nav-item"><b>Home</b></button></nav>
 <script src="/static/js/client/sprite.js"></script>
 <script>
+window.__errors=[];
+window.addEventListener('error', e=>window.__errors.push(String((e&&e.message)||e)));
 const enc = s => String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 // The drive's search box is part of the lifted toolbar, and its query is module state in app.js.
 // Empty here: this harness measures LAYOUT, and every assertion is about an unfiltered drive.
@@ -378,7 +380,8 @@ async def drive_browser(url):
                             ok = True
                             break
                     if not ok:
-                        print(f"SKIP  {label}: the page never rendered")
+                        errors = await js("window.__errors || []")
+                        print(f"SKIP  {label}: the page never rendered ({errors})")
                         return 2
                     await js(f"window.__paint({json.dumps(which)})")
                     await asyncio.sleep(0.15)

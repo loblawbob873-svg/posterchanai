@@ -73,6 +73,7 @@ localStorage.setItem('pc_meme_project', JSON.stringify({
 // enough to lay the whole builder out. Everything here is either a no-op or a constant.
 window.__toasts = [];
 window.__PC = {
+  isView(v){ return v === 'meme'; },
   toast(m){ window.__toasts.push(String(m)); },
   async uploadBlob(){ return 'https://example.invalid/voice.wav'; },
   async selfProof(){ return 'proof'; },

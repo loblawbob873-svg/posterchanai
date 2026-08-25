@@ -43,7 +43,7 @@ def test_code_activity_rail_can_always_return_to_working_directory():
 def test_working_directory_can_be_changed_on_desktop_and_browser():
     assert 'Change Working Directory' in CODE
     assert "if(h&&h.pickDirectory)" in CODE
-    assert "window.prompt('Working directory (relative to the workspace root)'" in CODE
+    assert "uiPrompt('Working directory (relative to the workspace root)'" in CODE
     assert "await loadTree(String(picked).trim()" in CODE
 
 

@@ -221,6 +221,7 @@ window.fetch = (u, o) => {
     {status: 503, headers: {'Content-Type': 'application/json'}}));
 };
 window.__PC = {
+  isView(v){ return v === 'meme'; },
   toast(){}, async uploadBlob(){ return ''; }, async selfProof(){ return 'p'; },
   async uiConfirm(){ return false; }, async uiPrompt(){ return null; },
   modal(){}, closeModal(){}, blossomPicker(){}, openGenStudio(){}, openVoiceStudio(){},

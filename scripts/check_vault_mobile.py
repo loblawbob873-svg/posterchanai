@@ -98,6 +98,7 @@ window.Relay = {
 window.Session = { load: () => ({mode:'local', sk:'a'.repeat(64)}), save(){}, clear(){} };
 window.__PC = {
   $, $$, enc,
+  isView: v => v === 'vault',
   toast: m => { window.__toasts = (window.__toasts||[]).concat([m]); },
   uiConfirm: async () => true,
   uiPrompt: async () => 'x',

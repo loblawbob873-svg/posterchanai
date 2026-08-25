@@ -341,14 +341,14 @@ def test_the_overlay_is_published_when_its_inputs_change():
 
 
 def test_the_overlay_ebuild_tracks_the_desktop_build():
-    """SRC_URI points at a ROLLING url — `desktop-latest` — so it always fetches the newest
-    AppImage. If the ebuild's version never changes, portage sees the version it already has
-    installed and `emerge -u` reports nothing to do, for ever: a package manager pointed at a moving
-    target, reporting success. The version is read from the same update feed the desktop app uses."""
+    """The deploy reconciles to a checksummed immutable release before publishing the overlay."""
+    sync = open(SYNC, encoding="utf-8").read()
     pub = open(os.path.join(REPO, "scripts", "publish_overlay.sh"), encoding="utf-8").read()
-    assert "latest-linux.yml" in pub, "the ebuild version is never bumped — updates can never be seen"
-    assert "|| true; }" in pub, (
-        "an unavailable desktop release manifest aborts the entire overlay publish under pipefail")
-    assert "posterchan-desktop-${LIVE}.ebuild" in pub
-    assert "could not read the desktop version" in pub, (
-        "a failed version read is silent; it would publish a stale version number as though current")
+    bump = open(os.path.join(REPO, "scripts", "bump_desktop_overlay.py"), encoding="utf-8").read()
+    assert "bump_desktop_overlay.py --check" in sync
+    assert "scripts/bump_desktop_overlay.py" in sync
+    assert "desktop-v{want}" in bump and "_audit_payload(blob)" in bump
+    assert "hashlib.sha512(blob)" in bump and "hashlib.blake2b(blob)" in bump
+    assert "The committed ebuild is the sole package version authority" in pub
+    assert 'ASSET="PosterChan-${LIVE}-linux-x64.tar.zst"' in pub
+    assert "DIST posterchan-desktop-%s.tar.zst" in pub

@@ -243,6 +243,12 @@ DRIVE = r"""(async () => {
   }
 
   {
+    /* The drag above intentionally moves the frame toward the bottom edge. Leave enough legal
+     * height for this probe before asking the bottom-right grip to grow: otherwise the desktop's
+     * correct keep-on-screen clamp wins and a geometry test reports that as a dead blur gesture. */
+    const f = frame();
+    f.style.height = Math.max(420, f.offsetHeight - 180) + 'px';
+    await sleep(120);
     const g = await gesture('.osw-grip', 120, 90);
     out.resize = { grew: [g.after.w - g.before.w, g.after.h - g.before.h], want: [120, 90] };
     if (Math.abs(g.after.w - g.before.w) < 90 || Math.abs(g.after.h - g.before.h) < 65)

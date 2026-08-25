@@ -140,6 +140,10 @@ async def drive():
             await call("Page.navigate", {"url": f"{BASE}/client"})
             for _ in range(40):
                 await asyncio.sleep(1)
+                # A fresh browser profile correctly starts in Classic mode now. This check is
+                # specifically about Desktop semantics, so enter that mode explicitly instead of
+                # depending on an old persisted preference that the profile intentionally lacks.
+                await js("(() => { if(window.PCOS && !PCOS.isOn()) PCOS.enter(); return true; })()")
                 if await js("!!(window.PCOS && window.PCOS.isOn())"):
                     # A view switch only becomes a history entry once a person has touched the app.
                     await js("document.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))")
