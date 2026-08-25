@@ -247,6 +247,23 @@ jobs:
           echo "::error::${{ matrix.script }} failed five times"
           exit 1
 
+      # Test the bytes that electron-builder is about to package, not merely the checkout. A missing
+      # copy line in build-www.sh previously produced a successful installer with Concord absent or
+      # completely unstyled even though every source-level Concord test passed.
+      - name: Audit bundled Concord surface
+        working-directory: desktop
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s www/static/css/concord.css
+          test -s www/static/js/client/concord.js
+          test -s www/static/js/client/cord-reader.js
+          test -s www/static/js/client/cord-protocol.js
+          grep -q 'data-view="concord"' www/index.html
+          grep -q 'static/css/concord.css' www/index.html
+          grep -q 'static/js/client/concord.js' www/index.html
+          grep -q 'static/js/client/cord-reader.js' www/index.html
+
       # Insurance: `--publish never` means electron-builder doesn't run its publisher, and whether it
       # still writes the update feed varies by version. Generate it from the built bytes when missing —
       # a shipped app with no feed silently never updates.

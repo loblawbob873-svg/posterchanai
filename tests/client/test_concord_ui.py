@@ -97,6 +97,14 @@ def test_native_bundles_package_the_concord_stylesheet():
         assert 'static/css/concord.css' in build, bundle
 
 
+def test_desktop_release_audits_the_built_payload_not_only_source():
+    workflow = (ROOT / ".github/workflows/desktop.yml").read_text()
+    gate = workflow[workflow.index("name: Audit bundled Concord surface"):]
+    for asset in ("concord.css", "concord.js", "cord-reader.js", "cord-protocol.js"):
+        assert f"www/static/" in gate and asset in gate
+    assert 'grep -q \'data-view="concord"\' www/index.html' in gate
+
+
 def test_concord_fills_workspace_and_identifies_the_signed_in_user():
     assert "classList.toggle('concord-view', v==='concord')" in APP
     assert 'body.concord-view .rightbar,body.concord-view .rb-toggle,body.concord-view #rb-toggle{display:none!important' in CONCORD_CSS

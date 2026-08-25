@@ -69,3 +69,18 @@ def test_the_check_can_fail():
     """The pre-fix line, through the same rule."""
     bad = re.findall(r"\.onsuccess\s*=\s*async\b", _strip("          q.onsuccess = async () => {"))
     assert bad, "the pattern no longer matches the code that shipped — the guard above is inert"
+
+
+def test_cord_reader_cursor_is_the_idb_library_async_iterator_not_an_event_callback():
+    """The generated CORD reader contains idb's supported async-iterator implementation:
+    ``await cursor.continue()`` awaits the promise for the *new pending IDB request*. It is not the
+    broken application shape (awaiting unrelated work inside ``onsuccess`` and continuing later).
+    Keep the distinction explicit so a line-number report does not prompt us to patch vendored code
+    or remove the real callback guard above again.
+    """
+    src = (CLIENT / "cord-reader.js").read_text(encoding="utf-8")
+    needle = "cursor = await (advanceResults.get(proxiedCursor) || cursor.continue());"
+    assert needle in src
+    around = src[max(0, src.index(needle) - 700):src.index(needle) + len(needle)]
+    assert "async function* iterate" in around
+    assert ".onsuccess = async" not in around
