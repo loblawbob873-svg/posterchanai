@@ -41,6 +41,7 @@ APPS = {
     # activity to alias, so it is a `.shortcut.Email` alias over the view trampoline. Same plate,
     # its own glyph, for the same reason: a drawer must show three different things.
     "email": ("mail", "#0E2A33"),
+    "concord": ("concord", "#0E2A33"),
 }
 GLYPH = "#3CE8FF"
 DENSITIES = {"mdpi": 48, "hdpi": 72, "xhdpi": 96, "xxhdpi": 144, "xxxhdpi": 192}

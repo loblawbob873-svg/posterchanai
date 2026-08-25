@@ -22,6 +22,7 @@
     <string name="home_all_apps">All apps</string>
     <string name="home_swipe_hint">Swipe up for all apps</string>
     <string name="app_email_title">Email</string>
+    <string name="app_concord_title">Concord</string>
     <!-- A WIDGET'S LABEL IS THE RECEIVER'S LABEL, and without one `loadLabel` falls back to the
          APPLICATION label — which is why both of ours listed as "PosterChan / PosterChan" in the
          picker on a real device while every other app's read "Clock / Analog". Measured, not

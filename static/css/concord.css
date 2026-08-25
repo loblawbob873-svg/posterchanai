@@ -1,4 +1,5 @@
 /* Concord's self-contained workspace skin. Kept separate so stale PWA shell CSS cannot unstyle it. */
+.cc-public-icon{overflow:hidden!important}.cc-public-icon img{display:block!important;width:100%!important;height:100%!important;object-fit:cover!important}.cc-public-icon>span{display:grid!important;place-items:center!important;width:100%!important;height:100%!important}
 body.concord-view .app{grid-template-columns:300px minmax(0,1fr)!important;max-width:none!important;margin:0!important;padding-inline-end:0!important}
 body.concord-view .rightbar,body.concord-view .rb-toggle{display:none!important}
 body.concord-view .main{min-width:0!important}

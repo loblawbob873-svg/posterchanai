@@ -21,8 +21,8 @@ def test_concord_is_a_separate_discover_view_not_public_chat():
     assert 'data-view="concord"' in discover
     assert 'static/js/client/concord.js' in HTML
     assert "renderModuleView('concord','concord.js','PCConcord','render')" in APP
-    chat = APP.split('async function renderChatrooms()', 1)[1].split('function channelCard', 1)[0]
-    assert 'concord' not in chat.lower(), "Concord belongs in Discover, not the public Chat screen"
+    assert 'async function renderChatrooms()' not in APP
+    assert 'data-view="chat"' not in HTML, "legacy Nostr Chat navigation must stay removed"
 
 
 def test_stale_pwa_controller_cannot_restore_the_previous_screen_over_concord():
@@ -96,6 +96,12 @@ def test_concord_room_icons_can_be_set_on_create_and_edited_later():
     assert 'id="cc-edit-icon"' in CONCORD
     assert 'id="cc-icon-save"' in CONCORD
     assert 'room.icon=normalizeIcon' in CONCORD
+
+
+def test_public_community_cards_resolve_cord_icons():
+    assert 'hydrateDiscoveredIcon(p,item)' in CONCORD
+    assert 'publicRoomIcon(p,r)' in CONCORD
+    assert '.cc-public-icon img' in CONCORD_CSS
     assert "u.protocol==='https:'||u.protocol==='http:'" in CONCORD
     assert '.cc-server-img' in CONCORD_CSS
 

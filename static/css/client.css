@@ -1680,40 +1680,7 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .ptr-ind.ready{color:#04222a;background:linear-gradient(135deg,#0bb6cf,var(--cyan));border-color:transparent}
 .ptr-ind.spin{animation:ptr-spin .6s linear infinite}
 @keyframes ptr-spin{to{transform:translateX(-50%) translateY(8px) rotate(360deg)}}
-.feed.feed-dm,.feed.feed-ai,.feed.feed-chat,.feed.feed-translate,.feed.feed-texts{padding:0;overflow:hidden}
-/* NIP-28 public chat room — full-height, internally-scrolling message list + sticky compose */
-.chatroom{display:flex;flex-direction:column;min-height:0;height:100%}
-.concord-hub{display:flex;align-items:center;gap:12px;margin:0 18px 14px;padding:14px;border:1px solid color-mix(in srgb,var(--neon) 45%,var(--line));border-radius:14px;background:linear-gradient(135deg,color-mix(in srgb,var(--neon) 10%,var(--panel)),var(--panel));box-shadow:0 0 24px color-mix(in srgb,var(--neon) 8%,transparent)}
-.concord-mark{display:grid;place-items:center;flex:0 0 42px;width:42px;height:42px;border-radius:13px;background:var(--neon);color:var(--bg);font-size:23px;font-weight:900}
-.concord-copy{flex:1;min-width:0}.concord-title{font-size:16px;font-weight:800;color:var(--text);margin-bottom:3px}.concord-title .pill{font-size:10px;vertical-align:2px;margin-inline-start:5px;padding:2px 6px;border:1px solid var(--neon);border-radius:8px;color:var(--neon)}
-.concord-sheet{max-width:560px}.concord-sheet-head{display:flex;align-items:center;gap:12px;margin-bottom:18px}.concord-sheet-head h3{margin:0 0 3px}.concord-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}.concord-features{display:flex;flex-wrap:wrap;gap:7px;margin-top:18px}.concord-features span{padding:5px 9px;border:1px solid var(--line);border-radius:12px;background:var(--panel2);font-size:12px;color:var(--muted)}
-.concord-notice{display:flex;align-items:flex-start;gap:9px;margin-top:12px;padding:10px 12px;border-radius:10px;background:var(--panel2);color:var(--muted);font-size:12px;line-height:1.4}.concord-notice .ic{flex:0 0 18px;width:18px;height:18px;color:var(--neon)}.concord-notice b{color:var(--text)}
-/* Concord: Discord/Matrix-shaped workspace. Separate view from public Chat. */
-.cc-app{display:grid;grid-template-columns:72px 252px minmax(0,1fr);height:100%;min-height:0;background:var(--bg);overflow:hidden}.cc-communities{display:flex;flex-direction:column;align-items:center;gap:10px;padding:12px 8px;background:color-mix(in srgb,var(--panel2) 75%,#000);overflow-y:auto}.cc-brand,.cc-server{display:grid;place-items:center;flex:0 0 46px;width:46px;height:46px;border:0;border-radius:15px;background:var(--panel);color:var(--text);font-weight:800;cursor:pointer;transition:.15s}.cc-brand{background:var(--neon);color:var(--bg);font-size:23px}.cc-server:hover,.cc-server.active{border-radius:11px;background:var(--neon);color:var(--bg)}.cc-add{font-size:25px;color:var(--neon)}
-.cc-channels{display:flex;flex-direction:column;min-width:0;background:var(--panel);border-inline-end:1px solid var(--line)}.cc-channels>header,.cc-conversation>header{display:flex;align-items:center;gap:9px;flex:0 0 54px;padding:0 12px;border-bottom:1px solid var(--line);box-shadow:0 2px 5px rgba(0,0,0,.12)}.cc-channels>header>div{flex:1;min-width:0}.cc-channels header b,.cc-identity b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.cc-channels header small,.cc-identity small{display:block;color:var(--muted);font-size:11px}.cc-channel-list{flex:1;min-height:0;overflow-y:auto;padding:12px 8px}.cc-section{padding:10px 8px 5px;color:var(--muted);font-size:11px;font-weight:800;letter-spacing:.5px}.cc-channel{display:flex;align-items:center;gap:8px;width:100%;min-height:38px;padding:7px 9px;border:0;border-radius:7px;background:transparent;color:var(--muted);font-size:15px;text-align:start;cursor:pointer}.cc-channel span{font-size:21px}.cc-channel .ic{width:18px;height:18px}.cc-channel:hover,.cc-channel.active{background:var(--panel2);color:var(--text)}.cc-empty-side{padding:20px 10px;color:var(--muted);text-align:center;font-size:13px}.cc-identity{display:flex;align-items:center;gap:8px;flex:0 0 54px;padding:7px 10px;background:var(--panel2)}.cc-identity>div{flex:1;min-width:0}.cc-status{width:10px;height:10px;border-radius:50%;background:#2ecc71}.cc-head-btn,.cc-compose-btn,.cc-mobile-back{display:grid;place-items:center;flex:0 0 36px;width:36px;height:36px;border:0;border-radius:8px;background:transparent;color:var(--muted);cursor:pointer}.cc-head-btn:hover,.cc-compose-btn:hover{background:var(--panel2);color:var(--text)}.cc-head-btn .ic,.cc-compose-btn .ic{width:19px;height:19px}.cc-mobile-back{display:none;font-size:28px}
-.cc-conversation{display:flex;flex-direction:column;min-width:0;min-height:0}.cc-conversation>header .cc-hash{font-size:24px;color:var(--muted)}.cc-topic{padding-inline-start:10px;border-inline-start:1px solid var(--line);color:var(--muted);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.cc-spacer{flex:1}.cc-messages{flex:1;min-height:0;overflow-y:auto;padding:18px}.cc-welcome{max-width:560px;margin:auto;text-align:center;color:var(--muted)}.cc-welcome .concord-mark,.cc-welcome-hash{margin:0 auto 15px}.cc-welcome h2{margin:0 0 8px;color:var(--text)}.cc-welcome p{line-height:1.55}.cc-welcome-hash{display:grid;place-items:center;width:62px;height:62px;border-radius:50%;background:var(--panel2);font-size:36px;font-weight:800;color:var(--text)}.cc-compose{display:flex;align-items:flex-end;gap:7px;margin:0 14px 14px;padding:7px;background:var(--panel2);border:1px solid var(--line);border-radius:12px}.cc-compose textarea{flex:1;min-width:0;max-height:140px;resize:none;border:0;outline:0;background:transparent;color:var(--text);font:inherit;padding:9px 4px}.cc-compose textarea:disabled{opacity:.5}.cc-reply{margin:0 14px;padding:8px 12px;background:var(--panel);border:1px solid var(--line);border-bottom:0;border-radius:9px 9px 0 0}.cc-join{position:absolute;inset:0;z-index:6;display:grid;place-items:center;padding:18px;background:rgba(0,0,0,.68);backdrop-filter:blur(5px)}.cc-join.hidden{display:none}.cc-join-card{width:min(480px,100%);padding:24px;border:1px solid var(--line);border-radius:16px;background:var(--panel);box-shadow:0 18px 60px rgba(0,0,0,.45)}.cc-join-card .concord-mark{margin-bottom:14px}.cc-join-card h2{margin:0 0 8px}.cc-join-card .input{width:100%;box-sizing:border-box;margin-top:10px;font-size:16px}.cc-join-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
-.chatroom-head{display:flex;align-items:center;gap:10px;padding:10px 12px 8px;flex:0 0 auto;border-bottom:1px solid var(--line)}
-.chatroom-head .btn{flex:0 0 auto;min-height:38px}
-.chatroom-pic{flex:0 0 auto;width:32px;height:32px;border-radius:8px;object-fit:cover;border:1px solid var(--line)}
-/* unread pill on a channel card's thumb + the "you joined this" tick on its title */
-.chat-unread{position:absolute;top:8px;inset-inline-end:8px;min-width:20px;padding:1px 6px;border-radius:11px;background:var(--danger,#e0245e);color:#fff;font-size:12px;font-weight:800;text-align:center;line-height:18px}
-.chat-joined{color:var(--neon)}
-.chatroom-title{flex:1 1 auto;min-width:0;font-weight:800;color:var(--neon);font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.chatroom-about{flex:0 0 auto;padding:8px 12px;color:var(--text);opacity:.8;font-size:13px;border-bottom:1px solid var(--line)}
-.chatroom-msgs{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding:14px 12px}
-.chat-msg{display:flex;gap:10px;align-items:flex-start}
-.chat-av{width:34px;height:34px;border-radius:50%;object-fit:cover;border:1px solid var(--neon);flex:0 0 auto;cursor:pointer}
-.chat-body{min-width:0;flex:1}
-.chat-by{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;margin-bottom:2px}
-.chat-by .name{font-weight:700;color:var(--cyan);cursor:pointer}
-.chat-txt{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.45;font-size:15px}
-.chat-msg.mine .chat-by .name{color:var(--neon2)}
-.chat-reacts{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px}
-.chat-react{display:inline-flex;align-items:center;gap:4px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:12px;padding:2px 8px;font-size:13px;line-height:1.45;cursor:pointer}
-.chat-react:hover{border-color:var(--neon)}
-.chat-react.on{border-color:var(--neon);box-shadow:0 0 0 1px var(--neon) inset}
-.chat-react .n{opacity:.8;font-weight:700}
-.chat-react-img{width:17px;height:17px;object-fit:contain;vertical-align:middle;display:inline-block}
+.feed.feed-dm,.feed.feed-ai,.feed.feed-translate,.feed.feed-texts{padding:0;overflow:hidden}
 /* NIP-30 custom emoji rendered inline in note text, names and notifications (sized to the line). */
 .emoji-inline{height:1.4em;width:auto;max-width:none;vertical-align:-0.28em;display:inline-block;margin:0 1px}
 /* public read-only (guest) mode: no write affordances (the CTA is the guest card up top) */
@@ -1726,43 +1693,6 @@ body.embed .app{display:block !important;height:auto !important}
 body.embed .sidebar,body.embed .rightbar,body.embed .topbar,body.embed .mobilenav{display:none !important}
 body.embed .main{margin:0 !important;width:100% !important;height:auto !important;overflow:visible !important}
 body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !important;overflow:visible !important}
-.chat-zap{display:inline-flex;align-items:center;gap:4px;color:var(--neon2);font-size:13px;font-weight:700}
-/* filled like the reaction pills (was transparent + muted + opacity:.55 → barely visible) so the
-   reply/react/translate actions read as real, tappable buttons; slightly bigger for a mobile tap target. */
-.chat-mini{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:26px;padding:0 8px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);color:var(--text);cursor:pointer;font-size:15px}
-.chat-mini:hover{border-color:var(--neon);color:var(--neon)}
-/* reply context quote above a message + the live reply-target bar above the compose box */
-.chat-replyq{display:block;max-width:100%;margin:1px 0 4px;padding:2px 8px;border-inline-start:2px solid var(--neon);background:var(--panel2);color:var(--muted);border-radius:0 8px 8px 0;font-size:12px;text-align:start;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.chat-replyq:hover{color:var(--text)}
-.chat-reply-bar{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid var(--line);background:var(--panel2)}
-.chat-reply-bar.hidden{display:none}
-.chat-reply-bar span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.chat-reply-x{flex:0 0 auto;background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:15px}
-.chat-reply-x:hover{color:var(--neon)}
-.chat-msg.flash{animation:chatflash 1.3s ease-out}
-@keyframes chatflash{0%,30%{background:rgba(var(--accent-rgb),.14)}100%{background:transparent}}
-.chatroom-compose{flex:0 0 auto;display:flex;gap:8px;align-items:flex-end;padding:10px 12px;border-top:1px solid var(--line);background:var(--bg)}
-.chatroom-compose textarea{flex:1;resize:none;max-height:120px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:14px;padding:10px 14px;font-family:inherit;font-size:15px;line-height:1.45}
-.chatroom-compose textarea:focus{border-color:var(--neon);outline:none}
-.chatroom-compose .btn{flex:0 0 auto;min-height:42px}
-/* the attach 📎 / translate 🌐 buttons use the global .mini (tiny 12px) — enlarge them in the compose
-   bar so they match the Send button height and are an easy tap target (mirrors .dm-tools .mini). */
-.chatroom-compose .mini{flex:0 0 auto;font-size:20px;line-height:1;padding:0 12px;min-height:42px}
-.chatroom-compose.readonly{justify-content:center;align-items:center;text-align:center;min-height:44px}
-.channel-card .stream-play{font-size:30px}
-@media(max-width:820px){
-  /* the fixed .mobilenav overlays the bottom ~62px; reserve it so the compose bar isn't hidden */
-  .feed.feed-chat{box-sizing:border-box;padding-bottom:calc(62px + env(safe-area-inset-bottom))}
-  .chat-av{width:30px;height:30px}
-  .chat-txt{font-size:15px}
-  .chatroom-msgs{padding:12px 10px}
-  .chatroom-compose{padding:10px}
-  .chatroom-compose textarea{font-size:17px}   /* ≥16px stops iOS zoom-on-focus */
-  /* bigger per-message reply/react/translate buttons + reaction pills for a comfortable touch target */
-  .chat-mini{min-width:34px;height:32px;font-size:17px}
-  .chat-reacts{gap:8px}
-  .chat-react{font-size:15px;padding:4px 10px}
-}
 .act.actq .q-ico{width:22px;height:22px}   /* quote: no idle colour — uniform --muted like every .act / .nav-item */
 .act .rp-ico{width:20px;height:20px}
 /* No visible scrollbar on the timeline: a 14px magenta bar down the side of the feed read as chrome
@@ -3340,11 +3270,6 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-inline-end:4px;
 
 /* ===== Streams (NIP-53) ===== */
 .stream-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:16px;padding:18px}
-/* The public room list's heading in Chat. A SECTION, not a second screen: the grid above it is what
-   is active, joined or yours, and this is everything else the relay knows about — so it reads as
-   subordinate to that rather than as a competing list. Padded to line up with .stream-grid. */
-.chat-sec{margin:22px 0 2px;padding:0 18px;font-size:15px;letter-spacing:.4px}
-.chat-sec-note{padding:0 18px;margin:0 0 6px}
 .stream-card{background:var(--panel2);border:1px solid var(--line);border-radius:16px;overflow:hidden;cursor:pointer;transition:.16s;animation:fade .25s}
 .stream-card:hover{border-color:var(--neon);box-shadow:var(--glow),0 0 24px rgba(var(--accent2-rgb),.2);transform:translateY(-3px)}
 .prof-streams .stream-card{animation:none}   /* profile Streams tab re-renders on lazy-fetch; suppress fade re-run to avoid flicker */

@@ -78,7 +78,7 @@ public final class HomeTiles {
         new Tile("signer",        "Signer",        "key",      false),
         new Tile("drafts",        "Drafts",        "draft",    false),
         new Tile("sync",          "Folder Sync",   "refresh",  false),
-        new Tile("chat",          "Chat",          "chat",     false),
+        new Tile("concord",       "Concord",       "concord",  false),
         new Tile("communities",   "Communities",   "users",    false),
         new Tile("articles",      "Articles",      "article",  false),
         new Tile("news",          "News",          "news",     false),
