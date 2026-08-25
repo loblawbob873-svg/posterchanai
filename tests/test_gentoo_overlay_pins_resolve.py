@@ -92,6 +92,19 @@ class TheOverlayPinsSomethingThatExists(unittest.TestCase):
         move = bump.index('subprocess.run(["git", "mv"')
         self.assertLess(audit, move, "the overlay moves before the downloaded package is audited")
 
+    def test_bump_audits_the_recovered_files_and_code_runtime_too(self):
+        """The archive can contain Concord while silently shipping yesterday's Files or Code."""
+        with open(os.path.join(ROOT, "scripts", "bump_desktop_overlay.py"), encoding="utf-8") as fh:
+            bump = fh.read()
+        for marker in (
+            "openHostFile", "gitAct('restore'", "openSyncCodeFile", "openSyncOfficeFile",
+            "PCPreview", ".files-grid:not(.details) .file-card.enc",
+            ".osw-slot.feed-term,.osw-slot.feed-code",
+        ):
+            self.assertIn(marker, bump)
+        self.assertIn("already current; published payload audited", bump,
+                      "an already-current overlay must not skip auditing its remote archive")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -100,12 +100,27 @@ def _audit_payload(blob):
         required = (
             "www/static/css/concord.css", "www/static/js/client/concord.js",
             "www/static/js/client/cord-reader.js", "www/static/js/client/cord-protocol.js",
+            "www/static/js/client/code.js", "www/static/js/client/hostfiles.js",
+            "www/static/js/client/preview.js",
+            "www/static/css/client.css",
         )
         missing = [path for path in required if not present(path)]
         if b'data-view="concord"' not in payload:
             missing.append('index.html Concord navigation entry')
+        # These are behavior-bearing package markers, not cosmetic labels.  Checking the source tree
+        # did not catch several releases whose generated app.asar silently lagged behind it.
+        markers = {
+            b"openHostFile": "desktop local-file bridge",
+            b"gitAct('restore'": "Code per-file discard/restore",
+            b"openSyncCodeFile": "synced-folder Code routing",
+            b"openSyncOfficeFile": "synced-folder Office routing",
+            b"PCPreview": "built-in file Preview",
+            b".files-grid:not(.details) .file-card.enc{border-color:transparent": "borderless encrypted file tiles",
+            b".osw-slot.feed-term,.osw-slot.feed-code": "stable parked Terminal/Code sizing",
+        }
+        missing.extend(label for marker, label in markers.items() if marker not in payload)
         if missing:
-            raise RuntimeError("desktop payload is missing Concord: " + ", ".join(missing))
+            raise RuntimeError("desktop payload is missing required runtime surfaces: " + ", ".join(missing))
 
 
 def main():
@@ -117,12 +132,10 @@ def main():
 
     print(f"overlay pins : {cur}")
     print(f"newest build : {want}")
-    if cur == want:
-        print("OK  already current")
-        return 0
     if check_only:
-        print(f"BEHIND  run without --check to move it to {want}")
-        return 1
+        if cur != want:
+            print(f"BEHIND  run without --check to move it to {want}")
+            return 1
 
     name = f"PosterChan-{want}-linux-x64.tar.zst"
     url = f"{BASE}/desktop-v{want}/{name}"
@@ -148,6 +161,10 @@ def main():
         sys.exit(f"FAIL  refusing to publish incomplete desktop payload: {e}")
     print(f"size {len(blob)}  sha512 verified against the published checksum"
           if published else f"size {len(blob)}  (no published .sha512 to cross-check)")
+
+    if cur == want:
+        print("OK  already current; published payload audited")
+        return 0
 
     new_file = f"posterchan-desktop-{want}.ebuild"
     subprocess.run(["git", "mv", os.path.join(PKG, cur_file), os.path.join(PKG, new_file)],
