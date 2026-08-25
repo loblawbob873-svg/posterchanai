@@ -27,6 +27,15 @@ def test_remote_desktop_resolves_ip_without_trusting_it_as_identity():
     assert "const pk=names[0].pk" in APP
 
 
+def test_multi_user_address_has_an_explicit_continue_action():
+    """The first option is selected before the picker appears, so onchange cannot be the only way
+    forward. Screen capture also needs a direct user gesture; keep an actual continuation button."""
+    assert "data-rd-continue>Share with this user" in OS
+    assert "continueButton.onclick=()=>" in OS
+    assert "input.value=choice.value" in OS
+    assert "choose.hidden=true;go()" in OS
+
+
 def test_remote_desktop_sends_a_screen_and_no_guest_media():
     assert "navigator.mediaDevices.getDisplayMedia" in APP
     assert "if(remoteGuest) return Promise.resolve(new MediaStream())" in APP
