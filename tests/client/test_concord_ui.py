@@ -376,6 +376,11 @@ def test_direct_invite_route_opens_concord_with_the_fragment_intact():
     assert "PCConcord.openInvite(e.q,true)" in routed
     assert "_withModule('concord.js','PCConcord',open)" in routed
     assert "_withModule('/static/js/client/concord.js'" not in routed
+    boot_start = APP.index("const _deepLink = _entityFromPath()")
+    boot = APP[boot_start:APP.index("// Drain a file/text shared IN", boot_start)]
+    assert "_deepLink.kind==='concord-invite'" in boot
+    assert "_deepLinkRouted=true; routeFromPath()" in boot
+    assert "_entityFromPath() && !_deepLinkRouted" in boot
 
 
 def test_concord_controls_are_phone_sized_and_single_column():

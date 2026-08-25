@@ -4507,6 +4507,7 @@
     // Run initial queries only once the relay socket is open (otherwise the REQs are dropped
     // and profiles/follows never resolve — names would show as raw npubs).
     const _deepLink = _entityFromPath();   // /<npub>, /<nevent>, /users/<name> → open it once the relay's up
+    let _deepLinkRouted = false;
     // Per-user data load (mutes/follows/pins/bookmarks/profile + notification & deletion subs).
     // CRITICAL: onReady fires only ONCE per page load. The page connects to the relay while you're
     // still a GUEST (to show the public feed), so onReady fires THEN — with GUEST=true, which skips
@@ -4545,7 +4546,7 @@
     Relay.onReady = ()=>{
       hydrateUser();
       setTimeout(()=>{ _rbBooted=true; loadRightbar(); }, 1500);
-      if(_entityFromPath()) routeFromPath(); };   // deep-link needs relay data (profile/thread fetch)
+      if(_entityFromPath() && !_deepLinkRouted){ _deepLinkRouted=true; routeFromPath(); } };   // deep-link needs relay data (profile/thread fetch)
     // Is the user mid-input? Focus in any field counts — and so does text still sitting in either
     // composer that lives INSIDE #feed, because those are rebuilt empty by a repaint even when focus
     // has moved on (tapping 📎 to attach, say). Cheap enough to call on every reconnect.
@@ -4592,7 +4593,13 @@
     renderMe();
     // Deep-linked entity: spinner until onReady routes it (the relay must be connected to fetch the
     // profile/note); otherwise land on the global feed immediately.
-    if(_deepLink){ VIEW='thread'; $('#feed').innerHTML='<div class="spinner"></div>'; }
+    /* A CORD invite carries its own bootstrap relays in the fragment. Waiting for the shared relay
+     * pool's one-shot onReady before even opening it strands fresh/guest sessions when that callback
+     * has already fired. Route this one immediately and mark it consumed; profiles/posts still wait
+     * because their fetch really does use the shared pool. */
+    if(_deepLink && _deepLink.kind==='concord-invite'){
+      _deepLinkRouted=true; routeFromPath();
+    } else if(_deepLink){ VIEW='thread'; $('#feed').innerHTML='<div class="spinner"></div>'; }
     // PWA shortcut/share, else land on the user's chosen timeline (Nostrverse by default, Home if set).
     // _onLandingView is set AFTER the switch — switchView clears it, so it must be armed last.
     /* STARTING THE DESKTOP IS NOT OPENING AN APP.
