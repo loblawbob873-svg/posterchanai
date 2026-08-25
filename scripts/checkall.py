@@ -106,6 +106,9 @@ CHECKS = {
     # --- self-contained, but slower than the default ---------------------------------------------
     "check_os_desktop":                dict(group="ui", secs=900),
     "check_meme_mobile":               dict(group="ui", secs=600),
+    # Opens a 100-video player after its grid. Running beside five other Chromium instances can
+    # delay the player repaint past the probe and report its already-rendered Back button missing.
+    "check_shorts_mobile":             dict(group="ui", secs=600, serial=True),
     "check_meme_render_match":         dict(group="ui", secs=600),
     "check_calendar_mobile":           dict(group="ui", secs=600),
     # Both drive a local stub server and need no instance, so they are `ui`, not `live`.
