@@ -139,8 +139,18 @@ def test_created_and_joined_communities_survive_browser_storage_loss():
     assert "item.source.pubkey!==viewer.pubkey" in CONCORD
 
 
+def test_send_is_optimistic_and_does_not_wait_for_relays_to_paint():
+    handler = CONCORD.split("send.onclick=async()=>", 1)[1].split("input.onkeydown", 1)[0]
+    assert "pending:!room.local" in handler
+    assert handler.index("saveTestMessages(storeId,m)") < handler.index("await publishCordMessage")
+    assert "failed.pending=false;failed.failed=true" in handler
+
+
 def test_desktop_recovery_merges_armada_list_shards_and_retries_early_empty_queries():
-    assert "limit:100" in CONCORD
+    assert "function membershipEvents(p,pubkey)" in CONCORD
+    assert "{kinds:[13302],authors:[pubkey],limit:1}" in CONCORD
+    assert "{kinds:[33302],authors:[pubkey],'#d':[''],limit:20}" in CONCORD
+    assert "kinds:[13302,33302]" not in CONCORD
     assert "for(const event of candidates)" in CONCORD
     assert "const entries=new Map(),tombs=new Map()" in CONCORD
     assert "Math.max(Number(tombs.get(t.community_id))" in CONCORD
@@ -239,7 +249,7 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert "'#d':[''],limit:100" in CONCORD and 'max:200' in CONCORD
     assert 'for(const ev of candidates)' in CONCORD
     assert "opened=decoded(url,[ev])" in CONCORD
-    assert 'kinds:[13302,33302]' in CONCORD and 'syncArmadaMemberships(p,viewer)' in CONCORD
+    assert 'kinds:[13302]' in CONCORD and 'kinds:[33302]' in CONCORD and 'syncArmadaMemberships(p,viewer)' in CONCORD
     assert 'window.PosterCordReader' in CONCORD and 'hydrateRoomStreams(p,i)' in CONCORD
     assert 'kinds:[1059]' in CONCORD and 'reader.inspectChat' in CONCORD
     assert 'reader.createChatWrap' in CONCORD and 'await p.relayPublishTo(relays,made.wrap)' in CONCORD

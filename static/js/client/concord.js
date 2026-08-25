@@ -161,14 +161,27 @@
     }catch(_){} finally{ discoveryIconLoads.delete(item.naddr); }
   }
   function inviteRefUrl(ref){ const s=String(ref||''); if(/^https?:/i.test(s))return s; const [naddr,frag]=s.split('#'); return naddr&&frag?`https://armada.buzz/invite/${naddr}#${frag}`:''; }
+  async function membershipEvents(p,pubkey){
+    /* Match Armada's wire query exactly. A mixed [13302,33302] request looks harmless, but several
+       relays close the WHOLE subscription when one kind is unsupported/blocked. That made a valid
+       13302 vault look absent and a fresh browser showed no communities. 13302 is CORD-02's released
+       replaceable vault; the addressable migration is queried separately as a compatibility source. */
+    const query=async filter=>{
+      const [pool,external]=await Promise.all([
+        p.relayQuery?Promise.resolve(p.relayQuery([filter],8000)).catch(()=>[]):[],
+        p.relayQueryFrom?Promise.resolve(p.relayQueryFrom(CORD_RELAYS,[filter],{timeout:8000,max:4})).catch(()=>[]):[],
+      ]);
+      return [...new Map([...(pool||[]),...(external||[])].filter(e=>e&&e.id).map(e=>[e.id,e])).values()];
+    };
+    const released=await query({kinds:[13302],authors:[pubkey],limit:1});
+    const migrated=await query({kinds:[33302],authors:[pubkey],'#d':[''],limit:20});
+    return [...new Map([...released,...migrated].map(e=>[e.id,e])).values()].sort((a,b)=>Number(b.created_at)-Number(a.created_at));
+  }
   async function syncArmadaMemberships(p,viewer){
     if(membershipBusy||!viewer.pubkey||!p.nip44dec)return; membershipBusy=true;
     let recovered=false;
     try{
-      // 13302 is the released replaceable list; accept the addressable 33302 migration too.
-      const filters=[{kinds:[13302,33302],authors:[viewer.pubkey],limit:100}];
-      const [pool,external]=await Promise.all([p.relayQuery?p.relayQuery(filters,7000):[],p.relayQueryFrom?p.relayQueryFrom(CORD_RELAYS,filters,{timeout:8000,max:4}):[]]);
-      const candidates=[...new Map([...(pool||[]),...(external||[])].filter(e=>e&&e.id).map(e=>[e.id,e])).values()].sort((a,b)=>Number(b.created_at)-Number(a.created_at));
+      const candidates=await membershipEvents(p,viewer.pubkey);
       // Armada has emitted both kinds and may leave several list shards on relays. Decode every
       // valid snapshot: choosing one newest event can hide communities stored in another shard.
       const entries=new Map(),tombs=new Map();
@@ -194,17 +207,15 @@
   async function persistArmadaMembership(p,room){
     const viewer=p.viewer?p.viewer():{};
     if(!viewer.pubkey||!p.nip44enc||!room||!room.communityId||!room.url)return false;
-    const filters=[{kinds:[13302,33302],authors:[viewer.pubkey],limit:20}];
     let list={entries:[],tombstones:[]};
     try{
-      const [pool,external]=await Promise.all([p.relayQuery?p.relayQuery(filters,5000):[],p.relayQueryFrom?p.relayQueryFrom(CORD_RELAYS,filters,{timeout:6000,max:4}):[]]);
-      const prior=[...(pool||[]),...(external||[])].sort((a,b)=>Number(b.created_at)-Number(a.created_at))[0];
+      const prior=(await membershipEvents(p,viewer.pubkey))[0];
       if(prior&&p.nip44dec)list=JSON.parse(await p.nip44dec(viewer.pubkey,prior.content));
     }catch(_){}
     if(!Array.isArray(list.entries))list.entries=[];
     if(!Array.isArray(list.tombstones))list.tombstones=[];
     const now=Date.now(),current={...(room.cord&&room.cord.bundle||{}),name:room.name,invite_ref:room.url};
-    const entry={community_id:room.communityId,added_at:now,current};
+    const entry={community_id:room.communityId,seed:current,added_at:now,current,invite_ref:room.url};
     const i=list.entries.findIndex(e=>e&&e.community_id===room.communityId);
     if(i<0)list.entries.push(entry); else list.entries[i]={...list.entries[i],...entry};
     list.tombstones=list.tombstones.filter(t=>t&&t.community_id!==room.communityId);
@@ -361,7 +372,7 @@
     const bc=$('#cc-back-communities'); if(bc)bc.onclick=()=>{ discoveryOpen=true; state.community=null; state.channel=null; render(); };
     const bh=$('#cc-back-channels'); if(bh)bh.onclick=()=>{ if(state.community==null){ const rooms=saved(),wanted=Number(localStorage.getItem('pc.concord.active')||0); discoveryOpen=false; state.community=rooms.length&&wanted>=0&&wanted<rooms.length?wanted:(rooms.length?0:null); state.channel=state.community==null?null:'general'; } mobileChatOpen=false; render(); };
     const send=$('#cc-send'); if(send&&input){
-      send.onclick=async()=>{ const text=String(input.value||'').trim(); const a=saved(), room=a[state.community],storeId=channelStoreId(room,state.channel); if(!text)return; if(!room||(!room.local&&!room.cord)){ p.toast('relay messaging becomes available after the invite is decrypted'); return; } const used=[...pendingAttachments].filter(([url])=>text.includes(url)),attachmentTags=used.map(([,tag])=>tag),target=replyTarget,replyTags=[]; if(target){const inherited=(target.tags||[]).filter(t=>['K','E','P'].includes(t[0]));if(inherited.length)replyTags.push(...inherited);else replyTags.push(['K',String(target.kind||9)],['E',messageId(target),'',target.pubkey||''],['P',target.pubkey||'']);replyTags.push(['k',String(target.kind||9)],['e',messageId(target),'',target.pubkey||''],['p',target.pubkey||'']);} const extraTags=[...attachmentTags,...replyTags],wireKind=target?1111:9; send.disabled=true; try{ const viewer=p.viewer?p.viewer():{}, made=room.local?null:await publishCordMessage(p,room,state.channel,text,extraTags,wireKind),at=made?made.ms:Date.now(),m=testMessages(storeId); m.push({id:made?made.rumorId:(crypto.randomUUID?crypto.randomUUID():`${at}-${Math.random().toString(36).slice(2)}`),by:me,pubkey:viewer.pubkey||'',text,at,kind:wireKind,tags:extraTags,reply:target?{id:messageId(target),by:target.by,text:target.text}:null,reactions:{},remote:!!made}); for(const [url] of used)pendingAttachments.delete(url); input.value=''; replyTarget=null; saveTestMessages(storeId,m); render(); scrollChatBottom(); }catch(e){ p.toast('message was not sent: '+(e&&e.message||e)); }finally{ send.disabled=false; } };
+      send.onclick=async()=>{ const text=String(input.value||'').trim(); const a=saved(), room=a[state.community],storeId=channelStoreId(room,state.channel); if(!text)return; if(!room||(!room.local&&!room.cord)){ p.toast('relay messaging becomes available after the invite is decrypted'); return; } const used=[...pendingAttachments].filter(([url])=>text.includes(url)),attachmentTags=used.map(([,tag])=>tag),target=replyTarget,replyTags=[]; if(target){const inherited=(target.tags||[]).filter(t=>['K','E','P'].includes(t[0]));if(inherited.length)replyTags.push(...inherited);else replyTags.push(['K',String(target.kind||9)],['E',messageId(target),'',target.pubkey||''],['P',target.pubkey||'']);replyTags.push(['k',String(target.kind||9)],['e',messageId(target),'',target.pubkey||''],['p',target.pubkey||'']);} const extraTags=[...attachmentTags,...replyTags],wireKind=target?1111:9,viewer=p.viewer?p.viewer():{},at=Date.now(),tempId='pending-'+(crypto.randomUUID?crypto.randomUUID():`${at}-${Math.random().toString(36).slice(2)}`),m=testMessages(storeId),optimistic={id:tempId,by:me,pubkey:viewer.pubkey||'',text,at,kind:wireKind,tags:extraTags,reply:target?{id:messageId(target),by:target.by,text:target.text}:null,reactions:{},pending:!room.local,remote:false}; m.push(optimistic); saveTestMessages(storeId,m); for(const [url] of used)pendingAttachments.delete(url); input.value=''; replyTarget=null; render(); scrollChatBottom(); if(room.local)return; try{ const made=await publishCordMessage(p,room,state.channel,text,extraTags,wireKind),latest=testMessages(storeId),sent=latest.find(x=>x.id===tempId); if(sent){sent.id=made.rumorId;sent.at=made.ms;sent.pending=false;sent.remote=true;saveTestMessages(storeId,latest);preserveChatScroll(()=>render());} }catch(e){ const latest=testMessages(storeId),failed=latest.find(x=>x.id===tempId);if(failed){failed.pending=false;failed.failed=true;saveTestMessages(storeId,latest);preserveChatScroll(()=>render());} p.toast('message was not sent: '+(e&&e.message||e)); } };
       input.onkeydown=e=>{ const enter=e.key==='Enter'||e.code==='Enter'; if(mentionChoices.length){ if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();mentionIndex=(mentionIndex+(e.key==='ArrowDown'?1:-1)+mentionChoices.length)%mentionChoices.length;drawMentions();return;} if(e.key==='Tab'||(enter&&!e.ctrlKey&&!e.metaKey)){e.preventDefault();acceptMention();return;} if(e.key==='Escape'){e.preventDefault();closeMentions();return;} } if(enter&&(e.ctrlKey||e.metaKey)){ e.preventDefault(); return send.onclick(); } };
     }
     const replyCancel=$('#cc-reply-cancel'); if(replyCancel)replyCancel.onclick=()=>{ replyTarget=null; render(); };
