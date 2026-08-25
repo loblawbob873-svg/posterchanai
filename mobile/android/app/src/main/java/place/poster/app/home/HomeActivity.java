@@ -104,6 +104,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
     private boolean homeVisible = false;
     private boolean homeIntentBeforeStart = false;
     private boolean homeStartPending = false;
+    private static final long HOME_START_ECHO_MS = 120L;
     private final Runnable countHomeStart = new Runnable() {
         @Override public void run() {
             if (!homeStartPending) return;
@@ -283,7 +284,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
              * Count on the next loop turn so that echo can cancel this pending count; two genuine
              * onNewIntent deliveries still pass through independently and remain a double press. */
             homeStartPending = true;
-            main.post(countHomeStart);
+            main.postDelayed(countHomeStart, HOME_START_ECHO_MS);
         }
         homeVisible = true;
         homeIntentBeforeStart = false;

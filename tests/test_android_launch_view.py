@@ -329,7 +329,7 @@ class DoubleHomeRuns(unittest.TestCase):
         stop = method(home, "protected void onStop")
         new_intent = method(home, "protected void onNewIntent")
         create = method(home, "protected void onCreate")
-        self.assertIn("main.post(countHomeStart)", start)
+        self.assertIn("main.postDelayed(countHomeStart, HOME_START_ECHO_MS)", start)
         self.assertIn("!homeIntentBeforeStart", start)
         self.assertIn("homeVisible = false", stop)
         self.assertIn("homeIntentBeforeStart = true", new_intent)

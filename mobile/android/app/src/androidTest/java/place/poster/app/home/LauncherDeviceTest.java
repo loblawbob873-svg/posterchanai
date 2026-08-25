@@ -152,8 +152,8 @@ public class LauncherDeviceTest {
         /* A real OEM reported one physical HOME as onStart -> onNewIntent. Counting both callbacks
          * reopened MainActivity immediately, so sending PosterChan to the background appeared to
          * replace the launcher with PosterChan. Exercise the real Activity/Looper here: the pending
-         * onStart count must be cancelled by its paired intent, while two actual intent deliveries
-         * must still activate the double-HOME shortcut. */
+         * onStart count must be cancelled by its paired intent, while an onStart-only first press
+         * followed later by a second intent must still activate the double-HOME shortcut. */
         HomeRoles.enableLauncherComponent(ctx, true);
         Instrumentation inst = InstrumentationRegistry.getInstrumentation();
         Instrumentation.ActivityMonitor web = inst.addMonitor(MainActivity.class.getName(), null, false);
@@ -173,12 +173,14 @@ public class LauncherDeviceTest {
 
             HomeDoublePress.clear();
             inst.runOnMainSync(() -> {
-                Intent home = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME);
-                homeActivity.onNewIntent(home);
-                homeActivity.onNewIntent(new Intent(home));
+                homeActivity.onStop();
+                homeActivity.onStart();
             });
+            Thread.sleep(250); // beyond HOME_START_ECHO_MS: the first physical press is now counted
+            inst.runOnMainSync(() -> homeActivity.onNewIntent(
+                    new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)));
             android.app.Activity opened = inst.waitForMonitorWithTimeout(web, 1500);
-            assertNotNull("two HOME intents did not open the active feed", opened);
+            assertNotNull("an onStart-only first HOME plus a second HOME did not open the feed", opened);
             inst.runOnMainSync(opened::finish);
         } finally {
             inst.removeMonitor(web);
