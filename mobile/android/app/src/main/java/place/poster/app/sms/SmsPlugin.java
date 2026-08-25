@@ -414,8 +414,18 @@ public class SmsPlugin extends Plugin {
     public void send(PluginCall call) {
         String to = call.getString("to", "");
         String body = call.getString("body", "");
+        String outbox = call.getString("outbox", "");
+        if (!outbox.isEmpty() && !SmsOutbox.claim(getContext(), outbox)) {
+            JSObject o = new JSObject();
+            o.put("ok", false);
+            o.put("claimed", false);
+            o.put("error", "outbox request is already being handled");
+            call.resolve(o);
+            return;
+        }
         SmsSender.Result r = SmsSender.send(getContext(), to, body);
         JSObject o = new JSObject();
+        o.put("claimed", true);
         o.put("ok", r.ok);
         o.put("error", r.error);
         o.put("parts", r.parts);

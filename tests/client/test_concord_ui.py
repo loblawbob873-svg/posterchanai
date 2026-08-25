@@ -196,7 +196,7 @@ def test_desktop_recovery_merges_armada_list_shards_and_retries_early_empty_quer
     assert "Math.max(Number(tombs.get(t.community_id))" in CONCORD
     assert "membershipRetryTimer=setTimeout" in CONCORD
     assert "recovered?60000:5000" in CONCORD
-    assert "window.PosterCordReader.inspectControl(m,[])" in CONCORD
+    assert "window.PosterCordReader.inspectControl(bundle,[])" in CONCORD
 
 
 def test_chat_scroll_is_keyed_by_room_and_survives_profile_link_navigation():
@@ -243,6 +243,13 @@ def test_concord_create_and_send_flow_executes_without_runtime_errors():
     )
     assert run.returncode == 0, run.stdout + run.stderr
     assert "concord runtime flow ok" in run.stdout
+
+
+def test_armada_membership_snapshot_is_resolved_through_its_invite_bundle():
+    assert "Armada's vault `current` is a CONTROL SNAPSHOT" in CONCORD
+    assert "hydrated=await hydrateInvite(p,url)" in CONCORD
+    assert "bundle=hydrated.cord.bundle" in CONCORD
+    assert "catch(__){continue;}" in CONCORD
 
 
 def test_concord_room_icons_can_be_set_on_create_and_edited_later():

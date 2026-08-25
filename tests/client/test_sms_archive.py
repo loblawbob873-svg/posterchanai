@@ -180,6 +180,18 @@ class Deleting(unittest.TestCase):
 @unittest.skipIf(shutil.which("node") is None, "node not installed")
 class SendingFromAnotherDevice(unittest.TestCase):
 
+    def test_foreground_and_background_drains_share_one_persistent_atomic_claim(self):
+        """Opening Android must not let JS and its relay service transmit one request twice."""
+        js = (ROOT / "static/js/client/sms.js").read_text()
+        plugin = (ROOT / "mobile/android/app/src/main/java/place/poster/app/sms/SmsPlugin.java").read_text()
+        outbox = (ROOT / "mobile/android/app/src/main/java/place/poster/app/sms/SmsOutbox.java").read_text()
+        self.assertIn("outbox:d", js)
+        self.assertIn("if(r && r.claimed === false) continue", js)
+        self.assertIn("SmsOutbox.claim(getContext(), outbox)", plugin)
+        self.assertIn("public static synchronized boolean claim", outbox)
+        self.assertIn("getSharedPreferences(CLAIMS, Context.MODE_PRIVATE)", outbox)
+        self.assertIn("if (!claim(ctx, doc)) return null", outbox)
+
     def test_a_success_marker_carries_the_sent_message_back_to_the_desktop(self):
         """A radio success with no address/body/time leaves the web thread blank forever."""
         src = (ROOT / "mobile/android/app/src/main/java/place/poster/app/sms/SmsOutbox.java").read_text()

@@ -209,7 +209,34 @@
       }
       const live=[...entries.values()].filter(e=>Number(e.added_at||0)>Number(tombs.get(e.community_id)||0)); if(!live.length)return;
       const rooms=saved(); let changed=false;
-      for(const e of live){ const m=e.current,url=inviteRefUrl(e.invite_ref);try{if(!window.PosterCordReader||!window.PosterCordReader.inspectControl)continue;window.PosterCordReader.inspectControl(m,[]);}catch(_){continue;}const i=rooms.findIndex(r=>r.communityId===e.community_id||r.url===url); const room={communityId:e.community_id,name:m.name||'Concord community',description:'',channels:[{name:'general',private:false},...(m.channels||[]).map(c=>({name:c.name||'private',private:true,id:c.id}))],local:false,naddr:url?(inviteParts(url)||{}).naddr:'community-'+e.community_id,url,cord:{bundle:m,armadaList:true}}; if(i<0){rooms.push(room);changed=true;}else if(!rooms[i].cord||rooms[i].cord.armadaList){rooms[i]={...rooms[i],...room};changed=true;} }
+      for(const e of live){
+        const current=e.current||{},url=inviteRefUrl(e.invite_ref),
+              i=rooms.findIndex(r=>r.communityId===e.community_id||r.url===url);
+        // Armada's vault `current` is a CONTROL SNAPSHOT (owner/root/relays/name), not the complete
+        // join bundle. Passing it to inspectControl rejects with "invalid Concord join material";
+        // the catch used to `continue`, silently hiding every otherwise valid Armada membership on
+        // a fresh device. Existing hydrated rooms need no work. For a missing room, resolve the
+        // invite_ref exactly as Armada does and use the bundle carried by that invite.
+        if(i>=0&&rooms[i].cord&&!rooms[i].cord.armadaList)continue;
+        let hydrated=null,bundle=current;
+        try{
+          if(!window.PosterCordReader||!window.PosterCordReader.inspectControl)continue;
+          window.PosterCordReader.inspectControl(bundle,[]);
+        }catch(_){
+          if(!url)continue;
+          try{hydrated=await hydrateInvite(p,url);bundle=hydrated.cord.bundle;}
+          catch(__){continue;}
+        }
+        const channels=(bundle.channels||[]).map(c=>({name:c.name||'private',private:true,id:c.id}))
+          .filter(c=>c.name!=='general');
+        const room={...(hydrated||{}),communityId:e.community_id,
+          name:current.name||(hydrated&&hydrated.name)||'Concord community',description:'',
+          channels:[{name:'general',private:false},...channels],local:false,
+          naddr:url?(inviteParts(url)||{}).naddr:'community-'+e.community_id,url,
+          cord:{bundle,armadaList:true}};
+        if(i<0){rooms.push(room);changed=true;}
+        else if(!rooms[i].cord||rooms[i].cord.armadaList){rooms[i]={...rooms[i],...room};changed=true;}
+      }
       if(changed){save(rooms);render();}
     }catch(e){ console.warn('Concord membership sync failed',e); }
     finally{

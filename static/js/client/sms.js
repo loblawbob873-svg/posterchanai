@@ -1421,8 +1421,11 @@
           const blob = await fetch(u).then(x=>x.blob());
           r = await P.sendMms({to:req.to, body:req.body||'', data:await fileB64(blob),
                                mime:req.attachment.mime, name:req.attachment.name});
-        }else r = await P.send({ to:req.to, body:req.body });
+        }else r = await P.send({ to:req.to, body:req.body, outbox:d });
       }catch(_){ r = null; }
+      // The background service won the device-local atomic claim. It owns both the radio send and
+      // the durable completion marker; publishing another marker here can race its result.
+      if(r && r.claimed === false) continue;
       // MARKED BEFORE ANYTHING ELSE, and marked even when the send FAILED. A text that went out and
       // whose marker did not is a text that goes out again on the next drain; there is no undo for
       // that, so a failed send is reported in the marker rather than retried blindly.

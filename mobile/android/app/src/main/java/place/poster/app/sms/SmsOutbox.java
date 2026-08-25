@@ -44,6 +44,7 @@ import place.poster.app.signer.SignerKey;
  * because a retry of a send that already reached the network is the one mistake with no undo.
  */
 public final class SmsOutbox {
+    private static final String CLAIMS = "poster_sms_outbox_claims";
 
     private static final String TAG = "PosterChan";
     private static final int KIND = 30078;
@@ -121,6 +122,20 @@ public final class SmsOutbox {
     }
 
     /**
+     * Atomically reserve an outbox document before touching the radio.  Both the foreground
+     * Capacitor plugin and the background relay service run in this process, so synchronizing this
+     * persisted ledger closes the onResume/onPause race without making delivery depend on timing.
+     * Claims deliberately survive process death: after SmsManager has accepted a message it is
+     * safer to report an interrupted receipt than to transmit that message a second time.
+     */
+    public static synchronized boolean claim(Context ctx, String doc) {
+        if (doc == null || !doc.startsWith("pcai:smsout:")) return false;
+        android.content.SharedPreferences p = ctx.getSharedPreferences(CLAIMS, Context.MODE_PRIVATE);
+        if (p.contains(doc)) return false;
+        return p.edit().putLong(doc, System.currentTimeMillis()).commit();
+    }
+
+    /**
      * Perform one request. Returns the EVENT to publish (the done marker), or null when there is
      * nothing to do -- already done, too old, not for us, or the app is on screen and its own drain
      * owns this.
@@ -149,6 +164,8 @@ public final class SmsOutbox {
             if (System.currentTimeMillis() - asked > MAX_AGE_MS) {
                 return marker(ctx, sec, me, doc, false, "too old", to, body, asked);
             }
+
+            if (!claim(ctx, doc)) return null;
 
             SmsSender.Result r = SmsSender.send(ctx, to, body);
             /* MARKED WHETHER IT WENT OR NOT. A text that went out and whose marker did not is a text
