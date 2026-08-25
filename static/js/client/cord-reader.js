@@ -12931,7 +12931,7 @@ var PosterCordReader = (() => {
             })));
           }
         }
-        
+
         if (${id}.value === undefined) {
           if (${k} in input) {
             newResult[${k}] = undefined;
@@ -12939,7 +12939,7 @@ var PosterCordReader = (() => {
         } else {
           newResult[${k}] = ${id}.value;
         }
-        
+
       `);
         } else if (!isOptionalIn) {
           doc.write(`
@@ -12976,7 +12976,7 @@ var PosterCordReader = (() => {
             path: iss.path ? [${k}, ...iss.path] : [${k}]
           })));
         }
-        
+
         if (${id}.value === undefined) {
           if (${k} in input) {
             newResult[${k}] = undefined;
@@ -12984,7 +12984,7 @@ var PosterCordReader = (() => {
         } else {
           newResult[${k}] = ${id}.value;
         }
-        
+
       `);
         }
       }

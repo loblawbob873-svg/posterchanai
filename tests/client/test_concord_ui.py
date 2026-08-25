@@ -117,7 +117,7 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert 'upgrading this room to a public relay community' in CONCORD
     assert 'mintPublicRoom(p,room.name,room.icon)' in CONCORD
     assert 'await hydrateInvite(p,raw)' in CONCORD
-    assert 'decrypting saved community' in CONCORD
+    assert 'refreshing room channels and history' not in CONCORD
     assert 'kinds:[33301]' in CONCORD
     assert "'#d':[''],limit:100" in CONCORD and 'max:200' in CONCORD
     assert 'for(const ev of candidates)' in CONCORD
@@ -138,6 +138,8 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert 'notifyMentions(p,current,messages,viewer,me)' in CONCORD
     assert "route:'concord'" in CONCORD and 'concord-mention-' in CONCORD
     assert 'import_meta.env' not in CORD_READER
+    assert 'CapacitorException' not in CORD_READER and 'registerPlugin' not in CORD_READER
+    assert 'decryptImagePointer(icon)' in CONCORD and "crypto.subtle.decrypt({name:'AES-GCM'" in CONCORD
     assert "search:'armada.buzz/invite'" in CONCORD and "search:'poster.place/invite'" in CONCORD
     assert 'data-cc-discover' in CONCORD and 'relaySubscribe:' in APP
     assert 'class="cc-message-avatar"' in CONCORD and '.cc-message-avatar' in CONCORD_CSS
@@ -158,7 +160,8 @@ def test_invite_parser_requires_naddr_and_secret_fragment():
     assert "/\\/invite\\/(naddr1" in CONCORD
     assert "m&&u.hash.length>3" in CONCORD
     assert "secret:u.hash.slice(1)" in CONCORD
-    assert "fetch(" not in CONCORD, "invite fragments must never be posted to PosterChan"
+    invite_loader = CONCORD[CONCORD.index("async function hydrateInvite"):CONCORD.index("function inviteRefUrl")]
+    assert "fetch(" not in invite_loader, "invite fragments must never be posted to PosterChan"
 
 
 def test_concord_controls_are_phone_sized_and_single_column():

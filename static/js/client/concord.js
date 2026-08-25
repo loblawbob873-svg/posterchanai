@@ -21,12 +21,12 @@
   function roomName(r,i){ return (r&&r.name)||`Encrypted community ${i+1}`; }
   function normalizeIcon(raw){
     const v=String(raw||'').trim(); if(!v)return '';
-    try{ const u=new URL(v); if(u.protocol==='https:'||u.protocol==='http:')return u.href; }catch(_){}
+    try{ const u=new URL(v); if(u.protocol==='https:'||u.protocol==='http:'||u.protocol==='blob:')return u.href; }catch(_){}
     return Array.from(v).slice(0,4).join('');
   }
   function roomIcon(p,r,i){
     const icon=normalizeIcon(r&&r.icon);
-    if(/^https?:\/\//i.test(icon)) return `<img class="cc-server-img" src="${p.enc(icon)}" alt="">`;
+    if(/^(https?:\/\/|blob:)/i.test(icon)) return `<img class="cc-server-img" src="${p.enc(icon)}" alt="">`;
     return `<span class="cc-server-glyph">${p.enc(icon||roomName(r,i).slice(0,2).toUpperCase())}</span>`;
   }
   function testMessages(id){ try{ const v=JSON.parse(localStorage.getItem('pc.concord.test.'+id)||'[]'); return Array.isArray(v)?v:[]; }catch(_){ return []; } }
@@ -38,6 +38,16 @@
   function markRead(room){ if(room&&room.naddr)localStorage.setItem('pc.concord.read.'+room.naddr,String(Date.now())); }
   function isUnread(room){ return lastActivity(room)>seenAt(room); }
   function messageId(m){ return String((m&&m.id)||`${Number(m&&m.at)||0}:${String(m&&m.pubkey||'')}`); }
+  function hexBytes(s){ const h=String(s||''); if(!/^[0-9a-f]+$/i.test(h)||h.length%2)throw new Error('invalid encrypted image key'); return new Uint8Array(h.match(/../g).map(x=>parseInt(x,16))); }
+  function bytesHex(a){ return [...new Uint8Array(a)].map(x=>x.toString(16).padStart(2,'0')).join(''); }
+  function imageMime(a){ return a[0]===0x89&&a[1]===0x50?'image/png':a[0]===0xff&&a[1]===0xd8?'image/jpeg':a[0]===0x47&&a[1]===0x49?'image/gif':a[0]===0x52&&a[1]===0x49&&a[8]===0x57?'image/webp':'image/*'; }
+  async function decryptImagePointer(pointer){
+    const res=await fetch(pointer.url); if(!res.ok)throw new Error('community icon download failed');
+    const key=await crypto.subtle.importKey('raw',hexBytes(pointer.key),'AES-GCM',false,['decrypt']);
+    const plain=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:hexBytes(pointer.nonce)},key,await res.arrayBuffer()));
+    const hash=bytesHex(await crypto.subtle.digest('SHA-256',plain)); if(hash!==String(pointer.hash).toLowerCase())throw new Error('community icon failed integrity check');
+    return URL.createObjectURL(new Blob([plain],{type:imageMime(plain)}));
+  }
   function reactionSummary(p,m){
     const reactions=m&&m.reactions&&typeof m.reactions==='object'?m.reactions:{};
     return Object.entries(reactions).map(([emoji,people])=>{ const n=Array.isArray(people)?people.length:0; return n?`<button class="cc-reaction" data-cc-react-toggle="${p.enc(messageId(m))}" data-cc-emoji="${p.enc(emoji)}" title="${n} reaction${n===1?'':'s'}"><span>${p.enc(emoji)}</span><b>${n}</b></button>`:''; }).join('');
@@ -117,7 +127,7 @@
       const info=reader.inspectControl(bundle,controlWraps||[]);
       roomControls.set(loadKey,controlWraps||[]);
       room.name=info.name||room.name; room.description=info.description||room.description;
-      const icon=info.icon; if(icon)room.icon=typeof icon==='string'?icon:(icon.url||room.icon);
+      const icon=info.icon; if(icon)room.icon=typeof icon==='string'?icon:await decryptImagePointer(icon);
       room.channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys}));
       if(!room.channels.length)throw new Error('the control stream returned no readable channels');
       rooms[index]=room; save(rooms);
@@ -210,7 +220,7 @@
     const call=$('#cc-call'); if(call)call.onclick=()=>{ const room=saved()[state.community], peers=[...new Set(activeMessages(room).map(m=>m.pubkey).filter(pk=>pk&&pk!==(p.viewer&&p.viewer().pubkey)))]; if(!peers.length){ p.toast('No other community members are available to call yet'); return; } p.startGroupCall(peers,false); };
     const cancel=$('#cc-join-cancel'); if(cancel) cancel.onclick=()=>$('#cc-join').classList.add('hidden');
     const go=$('#cc-join-go'); if(go) go.onclick=async()=>{ const raw=String($('#cc-invite-url').value||'').trim(),v=inviteParts(raw); if(!v){ p.toast('that is not a Concord invite link'); return; } go.disabled=true; try{ p.toast('fetching and decrypting community…'); const room=await hydrateInvite(p,raw),a=saved(),i=a.findIndex(x=>x.naddr===v.naddr); if(i<0)a.push(room);else a[i]={...a[i],...room}; save(a); state.community=i<0?a.length-1:i; state.channel='general'; render(); p.toast('community joined'); }catch(e){ go.disabled=false; p.toast('could not join: '+(e&&e.message||e)); } };
-    $$('[data-cc-server]').forEach(b=>b.onclick=async()=>{ const i=+b.dataset.ccServer,a=saved(),room=a[i]; let loaded=room; state.community=i; state.channel='general'; render(); scrollChatBottom(); try{ if(room&&room.url&&(!room.cord||room.cord.armadaList)){ p.toast('decrypting saved community…'); loaded={...room,...await hydrateInvite(p,room.url)}; a[i]=loaded; save(a); render(); } if(loaded&&loaded.cord){ p.toast('refreshing room channels and history…'); await hydrateRoomStreams(p,i); p.toast('community loaded'); } }catch(e){ if(loaded&&loaded.cord)loaded.cord.hydrated=false; save(a); p.toast('could not load community: '+(e&&e.message||e)); } });
+    $$('[data-cc-server]').forEach(b=>b.onclick=async()=>{ const i=+b.dataset.ccServer,a=saved(),room=a[i]; let loaded=room; state.community=i; state.channel='general'; render(); scrollChatBottom(); try{ if(room&&room.url&&(!room.cord||room.cord.armadaList)){ loaded={...room,...await hydrateInvite(p,room.url)}; a[i]=loaded; save(a); render(); } if(loaded&&loaded.cord)await hydrateRoomStreams(p,i); }catch(e){ if(loaded&&loaded.cord)loaded.cord.hydrated=false; save(a); p.toast('could not load community: '+(e&&e.message||e)); } });
     $$('[data-cc-discover]').forEach(b=>b.onclick=async()=>{ const v=discovered[+b.dataset.ccDiscover]; if(!v)return; const a=saved(); let i=a.findIndex(x=>x.naddr===v.naddr); if(i<0){a.push(v);i=a.length-1;} save(a); state.community=i; state.channel='general'; render(); p.toast('fetching and decrypting community…'); try{ a[i]={...a[i],...await hydrateInvite(p,v.url)}; save(a); await hydrateRoomStreams(p,i); p.toast('community joined'); }catch(e){ p.toast('could not load community: '+(e&&e.message||e)); } });
     $$('[data-cc-channel]').forEach(b=>b.onclick=()=>{ state.channel=b.dataset.ccChannel; render(); scrollChatBottom(); });
     const bc=$('#cc-back-communities'); if(bc)bc.onclick=()=>{ state.community=null; state.channel=null; render(); };
