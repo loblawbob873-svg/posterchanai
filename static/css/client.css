@@ -8853,6 +8853,12 @@ audio.sms-att-img{min-width:220px}
   font-size:var(--fs-0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
 .pcc-note{padding:var(--sp-3);color:var(--muted);font-size:var(--fs-1)}
 .pcc-note.err{color:var(--danger)}
+.pcc-git-head{display:flex;flex-direction:column;gap:3px;padding:10px;border-bottom:1px solid var(--line)}
+.pcc-git-head small{overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
+.pcc-git-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:8px}.pcc-git-actions button,.pcc-git-commit button,.pcc-git-file>button{min-height:34px;border:1px solid var(--line);border-radius:7px;background:var(--panel2);color:var(--text);cursor:pointer}
+.pcc-git-file{display:grid;grid-template-columns:minmax(0,1fr) 36px;gap:4px;padding:2px 6px}.pcc-git-file>button:first-child{display:flex;align-items:center;gap:7px;min-width:0;padding:5px 7px;text-align:left}.pcc-git-file code{color:var(--neon)}.pcc-git-file span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pcc-git-commit{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px;padding:9px 7px}.pcc-git-commit input{min-width:0;padding:8px;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--text)}
+.pcc-git-diff{max-height:42vh;margin:6px;padding:8px;overflow:auto;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--text);font:11px/1.35 var(--mono);white-space:pre-wrap}
 
 /* ---- drag handles ---- */
 .pcc-grip{flex:none;background:transparent;position:relative;z-index:2}

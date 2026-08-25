@@ -19,6 +19,7 @@ KEYWORDS="amd64"
 # Everything the session needs to be a desktop rather than a compositor with one window in it.
 RDEPEND="
 	app-misc/posterchan-desktop
+	dev-vcs/ngit
 	gui-wm/sway
 	gui-apps/swayidle
 	gui-apps/foot

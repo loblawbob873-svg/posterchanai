@@ -246,6 +246,7 @@
     open: [],                                // [{path, lang, text, disk, mtime, sel, scroll}]
     active: -1,
     termOpen: false, termH: 260, sideW: 250,
+    gitOpen: false, git: null, gitBusy: false,
     status: '', statusKind: '',
     busy: false,
   };
@@ -397,6 +398,23 @@
       S.treeBusy = false;
       save();
       if(inView()) paint();
+    }
+
+    async function loadGit(){
+      S.gitBusy = true; paint();
+      try{ S.git = await api('/git/status'); status('Git status refreshed'); }
+      catch(e){ S.git = { error: e.message || String(e), files: [] }; }
+      S.gitBusy = false; paint();
+    }
+
+    async function gitAct(action, paths, message){
+      try{
+        status(action + '…');
+        await post('/git/action', { action, paths: paths || [], message: message || '' });
+        await loadGit();
+        if(action === 'pull') await loadTree(S.cwd);
+        status(action + ' complete', 'ok');
+      }catch(e){ status((e && e.message) || (action + ' failed'), 'err'); }
     }
 
     /* A DOCUMENT THAT IS NOT A FILE ON THIS NODE.
@@ -624,6 +642,20 @@
       }).join('');
     }
 
+    function gitHtml(){
+      if(S.gitBusy) return '<div class="pcc-note"><div class="spinner"></div></div>';
+      const g=S.git;
+      if(!g) return '<div class="pcc-note">Open Source Control to inspect this repository.</div>';
+      if(g.error) return '<div class="pcc-note err">' + enc(g.error) + '</div>';
+      const files=g.files||[];
+      return '<div class="pcc-git-head"><b>' + enc(g.branch||'Git') + '</b><small>' +
+        (g.nostr?'Nostr remote · built in':enc(g.origin||'local repository')) + '</small></div>' +
+        '<div class="pcc-git-actions"><button data-git-act="pull">Pull</button><button data-git-act="push">Push</button></div>' +
+        (files.length?files.map(f=>'<div class="pcc-git-file"><button data-git-diff="'+enc(f.path)+'"><code>'+enc(f.xy)+'</code><span>'+enc(f.path)+'</span></button><button title="'+(f.xy[0]!==' '?'Unstage':'Stage')+'" data-git-act="'+(f.xy[0]!==' '?'unstage':'stage')+'" data-git-path="'+enc(f.path)+'">'+(f.xy[0]!==' '?'−':'+')+'</button></div>').join(''):'<div class="pcc-note">Working tree clean</div>') +
+        '<div class="pcc-git-commit"><input id="pcc-git-message" placeholder="Commit message" maxlength="5000"><button data-git-act="commit">Commit</button></div>' +
+        '<pre class="pcc-git-diff hidden" id="pcc-git-diff"></pre>';
+    }
+
     function tabsHtml(){
       if(!S.open.length) return '';
       return S.open.map((d, i) => {
@@ -663,6 +695,7 @@
         '<button class="btn btn-ghost pcc-b" id="pcc-fmt"' + (d && eng ? '' : ' disabled') + ' title="' +
           (eng ? 'Beautify with ' + enc(eng) : 'No formatter on this node for this language') + '">Format</button>' +
         '<button class="btn btn-ghost pcc-b" id="pcc-reload"' + (d ? '' : ' disabled') + '>Reload</button>' +
+        '<button class="btn btn-ghost pcc-b" id="pcc-git">' + (S.gitOpen?'Explorer':'Source Control') + '</button>' +
         '<span class="pcc-grow"></span>' +
         '<span class="pcc-lang">' + enc(d ? d.lang : '') + (eng ? ' · ' + enc(eng) : '') + '</span>' +
         '<button class="btn btn-ghost pcc-b" id="pcc-term">' + (S.termOpen ? 'Hide' : 'Show') + ' terminal</button>' +
@@ -688,8 +721,8 @@
         '<div class="pcc" style="--pcc-side:' + S.sideW + 'px;--pcc-term:' + S.termH + 'px">' +
           '<div class="pcc-main">' +
             '<aside class="pcc-side" id="pcc-side">' +
-              '<div class="pcc-crumbs">' + crumbs() + '</div>' +
-              '<div class="pcc-tree" id="pcc-tree">' + treeHtml() + '</div>' +
+              '<div class="pcc-crumbs">' + (S.gitOpen?'Source Control':crumbs()) + '</div>' +
+              '<div class="pcc-tree" id="pcc-tree">' + (S.gitOpen?gitHtml():treeHtml()) + '</div>' +
               '<div class="pcc-root" title="' + enc(S.root) + '">' + enc(S.root) + '</div>' +
             '</aside>' +
             '<div class="pcc-grip pcc-grip-v" id="pcc-gripv" role="separator" aria-label="Resize file tree"></div>' +
@@ -894,7 +927,20 @@
       on('#pcc-save', 'click', saveDoc);
       on('#pcc-fmt', 'click', formatDoc);
       on('#pcc-reload', 'click', reloadDoc);
+      on('#pcc-git', 'click', () => { S.gitOpen=!S.gitOpen; paint(); if(S.gitOpen)loadGit(); });
       on('#pcc-term', 'click', () => { S.termOpen = !S.termOpen; save(); paint(); });
+
+      document.querySelectorAll('[data-git-act]').forEach(b=>b.addEventListener('click',()=>{
+        const a=b.dataset.gitAct, path=b.dataset.gitPath;
+        const msg=a==='commit'?(($('#pcc-git-message')||{}).value||''):'';
+        gitAct(a,path?[path]:[],msg);
+      }));
+      document.querySelectorAll('[data-git-diff]').forEach(b=>b.addEventListener('click',async()=>{
+        const out=$('#pcc-git-diff'); if(!out)return;
+        out.classList.remove('hidden'); out.textContent='Loading diff…';
+        try{ const d=await api('/git/diff?path='+encodeURIComponent(b.dataset.gitDiff)); out.textContent=d.diff||'No unstaged diff'; }
+        catch(e){ out.textContent=e.message||String(e); }
+      }));
 
       const ta = $('#pcc-ta');
       if(ta){

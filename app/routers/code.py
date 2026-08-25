@@ -21,6 +21,7 @@ missed. Every endpoint here goes through it; none of them joins a path itself.
 import os
 import logging
 import importlib.util
+import subprocess
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -298,6 +299,87 @@ class WriteBody(BaseModel):
     path: str
     text: str
     mtime: int = 0
+
+
+class GitBody(BaseModel):
+    action: str
+    paths: list[str] = []
+    message: str = ""
+
+
+def _git(root: str, args: list[str], timeout: int = 30) -> subprocess.CompletedProcess:
+    """Run Git without a shell, prompts, hooks, pager, or an attacker-controlled executable path."""
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_PAGER": "cat",
+           "GIT_CONFIG_NOSYSTEM": "1"}
+    try:
+        return subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-C", root, *args],
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                              timeout=timeout, env=env, check=False)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise HTTPException(status_code=503, detail="Git is unavailable: " + str(e))
+
+
+def _repo(root: str) -> str:
+    p = _git(root, ["rev-parse", "--show-toplevel"])
+    if p.returncode:
+        raise HTTPException(status_code=404, detail="This workspace is not a Git repository")
+    repo = os.path.realpath(p.stdout.strip())
+    if os.path.commonpath([os.path.realpath(root), repo]) != os.path.realpath(root):
+        raise HTTPException(status_code=403, detail="The repository is outside this workspace")
+    return repo
+
+
+@router.get("/git/status")
+async def git_status(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    root = _guard(db, current_user); repo = _repo(root)
+    p = _git(repo, ["status", "--porcelain=v1", "--branch", "-z", "--untracked-files=all"])
+    if p.returncode:
+        raise HTTPException(status_code=400, detail=(p.stderr or "git status failed").strip())
+    rows = p.stdout.split("\0"); head = rows.pop(0) if rows else ""
+    files = []
+    for row in rows:
+        if not row: continue
+        files.append({"xy": row[:2], "path": row[3:]})
+    remote = _git(repo, ["remote", "get-url", "origin"])
+    return {"repo": _rel(repo, root), "branch": head[3:] if head.startswith("## ") else head,
+            "files": files, "origin": remote.stdout.strip() if remote.returncode == 0 else "",
+            "nostr": remote.returncode == 0 and remote.stdout.strip().startswith("nostr://")}
+
+
+@router.get("/git/diff")
+async def git_diff(path: str = Query(""), staged: bool = Query(False),
+                   db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    root = _guard(db, current_user); repo = _repo(root)
+    args = ["diff", "--no-ext-diff", "--no-color"] + (["--cached"] if staged else [])
+    if path:
+        target = _resolve(path, root, must_exist=False)
+        args += ["--", _rel(target, repo)]
+    p = _git(repo, args)
+    if p.returncode:
+        raise HTTPException(status_code=400, detail=(p.stderr or "git diff failed").strip())
+    return {"diff": p.stdout[:500_000], "truncated": len(p.stdout) > 500_000}
+
+
+@router.post("/git/action")
+async def git_action(body: GitBody, db: Session = Depends(get_db),
+                     current_user: User = Depends(get_current_user)):
+    root = _guard(db, current_user); repo = _repo(root); action = body.action.strip().lower()
+    paths = []
+    for path in body.paths[:500]:
+        target = _resolve(path, root, must_exist=False)
+        paths.append(_rel(target, repo))
+    if action == "stage" and paths: args = ["add", "--", *paths]
+    elif action == "unstage" and paths: args = ["restore", "--staged", "--", *paths]
+    elif action == "commit":
+        msg = body.message.strip()
+        if not msg or len(msg) > 5000: raise HTTPException(status_code=400, detail="Enter a commit message")
+        args = ["commit", "--no-verify", "-m", msg]
+    elif action in ("pull", "push"): args = [action, "--no-rebase"] if action == "pull" else ["push"]
+    else: raise HTTPException(status_code=400, detail="Unsupported Git action")
+    p = _git(repo, args, 120 if action in ("pull", "push") else 30)
+    if p.returncode:
+        raise HTTPException(status_code=409, detail=(p.stderr or p.stdout or "Git action failed").strip()[-4000:])
+    return {"ok": True, "output": (p.stdout or p.stderr).strip()[-4000:]}
 
 
 @router.post("/file")
