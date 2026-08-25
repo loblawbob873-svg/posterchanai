@@ -103,6 +103,9 @@ def test_mobile_reopens_the_last_server_then_drills_into_a_channel_like_discord(
     assert "discoveryOpen=true; state.community=null" in CONCORD
     assert "state.channel=b.dataset.ccChannel; mobileChatOpen=true" in CONCORD
     assert "mobileChatOpen=false; render()" in CONCORD
+    assert "return channels.length?channels:[{name:'general',private:false}]" in CONCORD
+    assert 'visibleChannels.map(c=>' in CONCORD
+    assert 'room.channels=hydratedChannels' in CONCORD
 
 
 def test_created_and_joined_communities_survive_browser_storage_loss():

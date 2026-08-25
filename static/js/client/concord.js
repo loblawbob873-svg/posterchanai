@@ -57,8 +57,12 @@
   function testMessages(id){ try{ const v=JSON.parse(localStorage.getItem('pc.concord.test.'+id)||'[]'); return Array.isArray(v)?v:[]; }catch(_){ return []; } }
   function saveTestMessages(id,v){ try{ localStorage.setItem('pc.concord.test.'+id,JSON.stringify(v.slice(-200))); }catch(_){} }
   function channelStoreId(room,name){ const channel=name||'general',c=room&&Array.isArray(room.channels)&&room.channels.find(x=>x.name===channel); return room&&room.naddr+(channel!=='general'&&c&&c.id?'.'+c.id:''); }
+  function channelsOf(room){
+    const channels=room&&Array.isArray(room.channels)?room.channels.filter(c=>c&&c.name):[];
+    return channels.length?channels:[{name:'general',private:false}];
+  }
   function activeMessages(room){ return testMessages(channelStoreId(room,state.channel)); }
-  function lastActivity(room){ return (room&&room.channels||[{name:'general'}]).reduce((n,c)=>Math.max(n,...testMessages(channelStoreId(room,c.name)).map(x=>Number(x.at)||0)),0); }
+  function lastActivity(room){ return channelsOf(room).reduce((n,c)=>Math.max(n,...testMessages(channelStoreId(room,c.name)).map(x=>Number(x.at)||0)),0); }
   function seenAt(room){ return Number(localStorage.getItem('pc.concord.read.'+(room&&room.naddr||''))||0); }
   function markRead(room){ if(room&&room.naddr)localStorage.setItem('pc.concord.read.'+room.naddr,String(Date.now())); }
   function isUnread(room){ return lastActivity(room)>seenAt(room); }
@@ -205,8 +209,9 @@
       room.name=info.name||room.name; room.description=info.description||room.description;
       room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];
       const icon=info.icon; if(icon)room.icon=typeof icon==='string'?icon:await decryptImagePointer(icon);
-      room.channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys}));
-      if(!room.channels.length)throw new Error('the control stream returned no readable channels');
+      const hydratedChannels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);
+      if(!hydratedChannels.length)throw new Error('the control stream returned no readable channels');
+      room.channels=hydratedChannels;
       rooms[index]=room; save(rooms);
       for(const channel of room.channels){
         const wraps=await cordQuery(p,relays,[{kinds:[1059],authors:channel.streamPubkeys,limit:1000}],{timeout:10000,max:8});
@@ -270,7 +275,9 @@
     const me=profile.display_name||profile.name||(profile.nip05&&p.niceNip05(profile.nip05))||(viewer.npub?viewer.npub.slice(0,12)+'…':'You');
     const current=state.community==null?null:rooms[state.community];
     if(current)markRead(current);
-    const currentChannel=current&&Array.isArray(current.channels)?current.channels.find(c=>c.name===(state.channel||'general')):null;
+    const visibleChannels=current?channelsOf(current):[];
+    if(current&&visibleChannels.length&&!visibleChannels.some(c=>c.name===(state.channel||'general')))state.channel=visibleChannels[0].name;
+    const currentChannel=current?visibleChannels.find(c=>c.name===(state.channel||'general')):null;
     const channelPrivate=!!(currentChannel&&currentChannel.private);
     const messages=current&&(current.local||current.cord)?activeMessages(current):[];
     const joinedRooms=''; // Active communities use the server rail/channel navigator, not home-page cards.
@@ -278,7 +285,7 @@
     feed.innerHTML=`<div class="cc-app${mobileChatOpen||state.community==null?' show-chat':''}${state.community==null?' home-view':''}">
       <aside class="cc-communities"><button class="cc-brand" id="cc-home" title="Find communities" aria-label="Find communities"><span aria-hidden="true">🕊</span></button>${rooms.map((r,i)=>`<button class="cc-server${state.community===i?' active':''}${isUnread(r)?' unread':''}" data-cc-server="${i}" title="${p.enc(roomName(r,i))}">${roomIcon(p,r,i)}</button>`).join('')}<button class="cc-server cc-add" id="cc-add" title="Join a community">+</button></aside>
       <aside class="cc-channels"><header><button class="cc-mobile-back" id="cc-back-communities" aria-label="Communities">‹</button><div><b>${state.community==null?'Concord':p.enc(roomName(current,state.community))}</b><small>${current&&current.local?'Local test community':'End-to-end encrypted'}</small></div>${current?'<button class="cc-head-btn" id="cc-edit-icon" title="Set community icon" aria-label="Set community icon"><svg class="ic"><use href="#i-image"></use></svg></button>':''}<button class="cc-head-btn" id="cc-invite" title="Join with invite">+</button></header>
-        <div class="cc-channel-list">${state.community==null?'<div class="cc-empty-side">Choose or join a community</div>':`<div class="cc-section">TEXT CHANNELS</div>${(current.channels||[{name:'general'}]).map(c=>`<button class="cc-channel${(state.channel||'general')===c.name?' active':''}${testMessages(channelStoreId(current,c.name)).some(m=>(Number(m.at)||0)>seenAt(current))?' unread':''}" data-cc-channel="${p.enc(c.name)}"><span>#</span> ${p.enc(c.name)}</button>`).join('')}`}</div>
+        <div class="cc-channel-list">${state.community==null?'<div class="cc-empty-side">Choose or join a community</div>':`<div class="cc-section">TEXT CHANNELS</div>${visibleChannels.map(c=>`<button class="cc-channel${(state.channel||'general')===c.name?' active':''}${testMessages(channelStoreId(current,c.name)).some(m=>(Number(m.at)||0)>seenAt(current))?' unread':''}" data-cc-channel="${p.enc(c.name)}"><span>#</span> ${p.enc(c.name)}</button>`).join('')}`}</div>
         <footer class="cc-identity"><span class="cc-status"></span><div><b>${p.enc(me)}</b><small>You</small></div><button class="cc-head-btn" id="cc-notify" title="Notification settings"><svg class="ic"><use href="#i-bell"></use></svg></button></footer>
       </aside>
       <main class="cc-conversation"><header><button class="cc-mobile-back" id="cc-back-channels" aria-label="Channels">‹</button><span class="cc-hash">#</span><b>${state.channel||'general'}</b><span class="cc-visibility ${channelPrivate?'private':'public'}">${channelPrivate?'Private':'Public'}</span><span class="cc-topic">${p.enc((current&&current.description)||(channelPrivate?'Invite-only channel':'Visible to all community members'))}</span><span class="cc-spacer"></span>${current?'<button class="cc-head-btn" id="cc-publish-listing" title="Publish to Armada Discover" aria-label="Publish to Armada Discover"><svg class="ic"><use href="#i-share"></use></svg></button><button class="cc-head-btn" id="cc-copy-link" title="Copy room invite link" aria-label="Copy room invite link"><svg class="ic"><use href="#i-link"></use></svg></button><button class="cc-head-btn" id="cc-call" title="Start voice call"><svg class="ic"><use href="#i-phone"></use></svg></button>':''}<button class="cc-head-btn" id="cc-members" title="Members"><svg class="ic"><use href="#i-users"></use></svg></button></header>
