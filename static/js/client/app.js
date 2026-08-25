@@ -16147,10 +16147,11 @@
         return true;
       });
       const grid=bg.querySelector('#bp-grid'), fbar=bg.querySelector('#bp-folders');
-      // Only folders that actually hold something visible here, so you can't tap into an empty one.
-      const used=new Set(list.map(b=>FilesIdx.folderOf(b.sha256)||''));
+      // The folder bar represents the encrypted index, not this request's filtered blob listing.
+      // Hiding a folder with no currently selectable public blob made real folders (for example a
+      // Social folder containing encrypted items) appear deleted after a partial list or filter.
       const folders=[['','🗂 All']].concat(
-        FilesIdx.folders().filter(f=>!FilesIdx.isEncFolder(f) && used.has(f)).map(f=>[f,'📁 '+f]));
+        FilesIdx.folders().filter(f=>!FilesIdx.isEncFolder(f)).map(f=>[f,'📁 '+f]));
       let cur='';
       const draw=()=>{
         const shown=list.filter(b=> cur==='' || (FilesIdx.folderOf(b.sha256)||'')===cur);

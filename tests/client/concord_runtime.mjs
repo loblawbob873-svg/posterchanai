@@ -42,6 +42,7 @@ globalThis.location={origin:'https://poster.place'};
 window.PosterCord={createCommunity:async()=>({communityId:'c'.repeat(64),generalChannelId:'d'.repeat(64),events:[{}],url:'https://poster.place/invite/naddr1qqqq#abc_DEF',secrets:{},bundle:{relays:['wss://relay.example']}})};
 window.PosterCordReader={
   inspectControl:()=>({controlPubkeys:[],channels:[]}),
+  createMetadataWrap:async()=>({wrap:{kind:1059}}),
   createChatWrap:async()=>({rumorId:'f'.repeat(64),wrap:{kind:1059},ms:1234}),
 };
 globalThis.document = {
@@ -71,11 +72,11 @@ if(edited[0].icon!=='https://example.test/room.png') throw new Error('icon edit 
 control('cc-description-value').value='Editable room description';
 control('cc-settings-icon').value='🌌';
 control('cc-channel-visibility').value='private';
-control('cc-settings-save').click();
+await control('cc-settings-save').click();
 const configured=JSON.parse(data.get('pc.concord.invites'));
 if(configured[0].description!=='Editable room description' || configured[0].icon!=='🌌' || configured[0].channels[0].private!==true) throw new Error('private channel settings flow failed');
 control('cc-channel-visibility').value='public';
-control('cc-settings-save').click();
+await control('cc-settings-save').click();
 const madePublic=JSON.parse(data.get('pc.concord.invites'));
 if(madePublic[0].channels[0].private!==false) throw new Error('public channel settings flow failed');
 control('cc-copy-link').click();

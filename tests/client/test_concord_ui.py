@@ -128,6 +128,16 @@ def test_created_and_joined_communities_survive_browser_storage_loss():
     assert "item.source.pubkey!==viewer.pubkey" in CONCORD
 
 
+def test_desktop_recovery_merges_armada_list_shards_and_retries_early_empty_queries():
+    assert "limit:100" in CONCORD
+    assert "for(const event of candidates)" in CONCORD
+    assert "const entries=new Map(),tombs=new Map()" in CONCORD
+    assert "Math.max(Number(tombs.get(t.community_id))" in CONCORD
+    assert "membershipRetryTimer=setTimeout" in CONCORD
+    assert "recovered?60000:5000" in CONCORD
+    assert "window.PosterCordReader.inspectControl(m,[])" in CONCORD
+
+
 def test_chat_scroll_is_keyed_by_room_and_survives_profile_link_navigation():
     assert "sessionStorage.getItem('pc.concord.scroll.'+key)" in CONCORD
     assert "room&&(room.communityId||room.naddr||room.url)" in CONCORD
@@ -179,6 +189,10 @@ def test_concord_room_icons_can_be_set_on_create_and_edited_later():
     assert 'id="cc-edit-icon"' in CONCORD
     assert 'id="cc-icon-save"' in CONCORD
     assert 'room.icon=normalizeIcon' in CONCORD
+    assert 'reader.createMetadataWrap' in CONCORD
+    assert 'community relays rejected the profile update' in CONCORD
+    assert 'createMetadataWrap: () => createMetadataWrap' in CORD_READER
+    assert '[TAG_SUBKIND, VSK_METADATA]' in CORD_READER
 
 
 def test_public_community_cards_resolve_cord_icons():
@@ -201,7 +215,7 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert 'id="cc-call"' in CONCORD and 'p.startGroupCall' in CONCORD
     assert 'startGroupCall,' in APP and 'uploadBlob,' in APP and 'openEmojiPopover,' in APP
     assert 'cc-members-dialog' in CONCORD and 'cc-member-list' in CONCORD_CSS
-    assert 'cc-description-value' in CONCORD and 'room.description=String' in CONCORD
+    assert 'cc-description-value' in CONCORD and 'room.description=description' in CONCORD
     assert 'cc-channel-visibility' in CONCORD and "channel.private=$('#cc-channel-visibility').value==='private'" in CONCORD
     assert '.cc-visibility.public' in CONCORD_CSS and '.cc-visibility.private' in CONCORD_CSS
     assert 'p.linkify' in CONCORD and 'p.linkCardHtml' in CONCORD

@@ -9349,6 +9349,7 @@ var PosterCordReader = (() => {
   __export(pc_cord_reader_exports, {
     createBanWrap: () => createBanWrap,
     createChatWrap: () => createChatWrap,
+    createMetadataWrap: () => createMetadataWrap,
     inspectChat: () => inspectChat,
     inspectControl: () => inspectControl
   });
@@ -26649,6 +26650,20 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const rumor = buildRumor({ kind: KIND_CONTROL, content: JSON.stringify(banned), pubkey, ms: Date.now(), tags });
     const group = groups[groups.length - 1], seal = await sealRumor(rumor, KIND_SEAL_PLAINTEXT, group, { signEvent });
     return { rumorId: rumor.id, wrap: wrapSeal(seal, group), banned };
+  }
+  async function createMetadataWrap(bundle, controlWraps, metadata, pubkey, signEvent) {
+    if (!/^[0-9a-f]{64}$/i.test(pubkey)) throw new Error("invalid member pubkey");
+    const { community, groups, folded } = control(bundle, controlWraps);
+    if (pubkey.toLowerCase() !== community.owner.toLowerCase()) throw new Error("only the community owner can edit its profile");
+    const entityHex = bytesToHex2(community.id), head = folded.heads.get(entityHex);
+    const version2 = head ? head.version + 1n : 1n, prevHash = head ? head.hash : void 0;
+    const body = { name: String(metadata && metadata.name || community.name).slice(0, 64), description: String(metadata && metadata.description || "").slice(0, 1000), relays: community.relays };
+    if (metadata && metadata.icon) body.picture = String(metadata.icon).slice(0, 2048);
+    const tags = [[TAG_SUBKIND, VSK_METADATA], [TAG_ENTITY, entityHex], [TAG_EVERSION, version2.toString()]];
+    if (prevHash) tags.push([TAG_EPREV, bytesToHex2(prevHash)]);
+    const rumor = buildRumor({ kind: KIND_CONTROL, content: JSON.stringify(body), pubkey, ms: Date.now(), tags });
+    const group = groups[groups.length - 1], seal = await sealRumor(rumor, KIND_SEAL_PLAINTEXT, group, { signEvent });
+    return { rumorId: rumor.id, wrap: wrapSeal(seal, group), metadata: body };
   }
   async function inspectChat(bundle, controlWraps, channelId, chatWraps) {
     const { channels } = control(bundle, controlWraps);

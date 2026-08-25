@@ -36,6 +36,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from pathlib import Path
 import unittest
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -140,6 +141,10 @@ function makeIdx(opts){
 
 
 class FilesIndexPullRetries(unittest.TestCase):
+    def test_picker_keeps_indexed_folders_even_when_current_blob_filter_is_empty(self):
+        app = (Path(__file__).resolve().parents[2] / "static/js/client/app.js").read_text()
+        self.assertIn("FilesIdx.folders().filter(f=>!FilesIdx.isEncFolder(f)).map", app)
+
     @classmethod
     def setUpClass(cls):
         chrome = (shutil.which("google-chrome-stable") or shutil.which("chromium")

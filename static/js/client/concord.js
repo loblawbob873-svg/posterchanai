@@ -22,7 +22,7 @@
   }
   const state={ community:null, channel:null };
   let replyTarget=null, reactionTarget=null, mobileChatOpen=false, discoveryOpen=false;
-  let discovered=[], discoveryStarted=false, discoveryLoaded=false, membershipStarted=false;
+  let discovered=[], discoveryStarted=false, discoveryLoaded=false, membershipBusy=false, membershipRetryTimer=null;
   const discoveryIconLoads=new Set();
   const recoveredOwnedInvites=new Set();
   const roomLoads=new Map();
@@ -162,18 +162,34 @@
   }
   function inviteRefUrl(ref){ const s=String(ref||''); if(/^https?:/i.test(s))return s; const [naddr,frag]=s.split('#'); return naddr&&frag?`https://armada.buzz/invite/${naddr}#${frag}`:''; }
   async function syncArmadaMemberships(p,viewer){
-    if(membershipStarted||!viewer.pubkey||!p.nip44dec)return; membershipStarted=true;
+    if(membershipBusy||!viewer.pubkey||!p.nip44dec)return; membershipBusy=true;
+    let recovered=false;
     try{
       // 13302 is the released replaceable list; accept the addressable 33302 migration too.
-      const filters=[{kinds:[13302,33302],authors:[viewer.pubkey],limit:20}];
+      const filters=[{kinds:[13302,33302],authors:[viewer.pubkey],limit:100}];
       const [pool,external]=await Promise.all([p.relayQuery?p.relayQuery(filters,7000):[],p.relayQueryFrom?p.relayQueryFrom(CORD_RELAYS,filters,{timeout:8000,max:4}):[]]);
-      const event=[...(pool||[]),...(external||[])].sort((a,b)=>b.created_at-a.created_at)[0]; if(!event)return;
-      const list=JSON.parse(await p.nip44dec(viewer.pubkey,event.content)),tombs=new Map((list.tombstones||[]).map(t=>[t.community_id,Number(t.removed_at)||0]));
-      const live=(list.entries||[]).filter(e=>e&&e.current&&Number(e.added_at||0)>Number(tombs.get(e.community_id)||0)); if(!live.length)return;
+      const candidates=[...new Map([...(pool||[]),...(external||[])].filter(e=>e&&e.id).map(e=>[e.id,e])).values()].sort((a,b)=>Number(b.created_at)-Number(a.created_at));
+      // Armada has emitted both kinds and may leave several list shards on relays. Decode every
+      // valid snapshot: choosing one newest event can hide communities stored in another shard.
+      const entries=new Map(),tombs=new Map();
+      for(const event of candidates){
+        try{
+          const list=JSON.parse(await p.nip44dec(viewer.pubkey,event.content)); recovered=true;
+          for(const t of Array.isArray(list.tombstones)?list.tombstones:[]){if(t&&t.community_id)tombs.set(t.community_id,Math.max(Number(tombs.get(t.community_id))||0,Number(t.removed_at)||0));}
+          for(const e of Array.isArray(list.entries)?list.entries:[]){if(!e||!e.community_id||!e.current)continue;const old=entries.get(e.community_id);if(!old||Number(e.added_at||0)>Number(old.added_at||0))entries.set(e.community_id,e);}
+        }catch(_){}
+      }
+      const live=[...entries.values()].filter(e=>Number(e.added_at||0)>Number(tombs.get(e.community_id)||0)); if(!live.length)return;
       const rooms=saved(); let changed=false;
-      for(const e of live){ const m=e.current,url=inviteRefUrl(e.invite_ref),i=rooms.findIndex(r=>r.communityId===e.community_id||r.url===url); const room={communityId:e.community_id,name:m.name||'Concord community',description:'',channels:[{name:'general',private:false},...(m.channels||[]).map(c=>({name:c.name||'private',private:true,id:c.id}))],local:false,naddr:url?(inviteParts(url)||{}).naddr:'community-'+e.community_id,url,cord:{bundle:m,armadaList:true}}; if(i<0){rooms.push(room);changed=true;}else if(!rooms[i].cord||rooms[i].cord.armadaList){rooms[i]={...rooms[i],...room};changed=true;} }
+      for(const e of live){ const m=e.current,url=inviteRefUrl(e.invite_ref);try{if(!window.PosterCordReader||!window.PosterCordReader.inspectControl)continue;window.PosterCordReader.inspectControl(m,[]);}catch(_){continue;}const i=rooms.findIndex(r=>r.communityId===e.community_id||r.url===url); const room={communityId:e.community_id,name:m.name||'Concord community',description:'',channels:[{name:'general',private:false},...(m.channels||[]).map(c=>({name:c.name||'private',private:true,id:c.id}))],local:false,naddr:url?(inviteParts(url)||{}).naddr:'community-'+e.community_id,url,cord:{bundle:m,armadaList:true}}; if(i<0){rooms.push(room);changed=true;}else if(!rooms[i].cord||rooms[i].cord.armadaList){rooms[i]={...rooms[i],...room};changed=true;} }
       if(changed){save(rooms);render();}
     }catch(e){ console.warn('Concord membership sync failed',e); }
+    finally{
+      membershipBusy=false;
+      // Native desktop starts with an empty origin and relays may not be connected on first paint.
+      // Retry a failed/empty recovery instead of permanently hiding the user's Armada rooms.
+      clearTimeout(membershipRetryTimer); membershipRetryTimer=setTimeout(()=>syncArmadaMemberships(p,p.viewer?p.viewer():viewer),recovered?60000:5000);
+    }
   }
   async function persistArmadaMembership(p,room){
     const viewer=p.viewer?p.viewer():{};
@@ -334,7 +350,7 @@
     const copyLink=$('#cc-copy-link'); if(copyLink)copyLink.onclick=async()=>{ const a=saved(),room=a[state.community]; if(!room)return; if(room.url){ p.copyValue(room.url); return; } copyLink.disabled=true; try{ p.toast('upgrading this room to a public relay community…'); const priorMessages=testMessages(room.naddr), upgraded=await mintPublicRoom(p,room.name,room.icon); upgraded.description=room.description||''; a[state.community]=upgraded; save(a); if(priorMessages.length)saveTestMessages(upgraded.naddr,priorMessages); render(); p.copyValue(upgraded.url); p.toast('room upgraded — invite link copied'); }catch(e){ copyLink.disabled=false; p.toast('could not create invite: '+(e&&e.message||e)); } };
     const publishListing=$('#cc-publish-listing'); if(publishListing)publishListing.onclick=async()=>{ const room=saved()[state.community]; if(!room||!room.url||!room.cord||!Array.isArray(room.cord.events)){ p.toast('This is an old local sandbox; create a relay community to list it'); return; } publishListing.disabled=true; try{ p.toast('publishing to Armada relays…'); for(const ev of room.cord.events)await p.relayPublishTo(CORD_RELAYS,ev); const announcement=await p.publish(1,`${room.name}\n\n${room.url}`,[['t','concord'],['t','community']]); const accepted=await p.relayPublishTo(DISCOVER_RELAYS,announcement.ev); if(!accepted)throw new Error('Armada discovery relays rejected the listing'); p.toast('published to Armada Discover'); }catch(e){ p.toast('could not publish listing: '+(e&&e.message||e)); }finally{ publishListing.disabled=false; } };
     const settingsCancel=$('#cc-settings-cancel'); if(settingsCancel)settingsCancel.onclick=()=>$('#cc-settings-dialog').classList.add('hidden');
-    const settingsSave=$('#cc-settings-save'); if(settingsSave)settingsSave.onclick=()=>{ const a=saved(),room=a[state.community]; if(!room)return; room.description=String($('#cc-description-value').value||'').trim().slice(0,1000); room.icon=normalizeIcon($('#cc-settings-icon').value); if(!Array.isArray(room.channels))room.channels=[]; let channel=room.channels.find(c=>c.name===(state.channel||'general')); if(!channel){ channel={name:state.channel||'general'}; room.channels.push(channel); } channel.private=$('#cc-channel-visibility').value==='private'; save(a); render(); p.toast(`#${channel.name} is now ${channel.private?'private':'public to community members'}`); };
+    const settingsSave=$('#cc-settings-save'); if(settingsSave)settingsSave.onclick=async()=>{ const a=saved(),room=a[state.community]; if(!room)return; const description=String($('#cc-description-value').value||'').trim().slice(0,1000),icon=normalizeIcon($('#cc-settings-icon').value); settingsSave.disabled=true; try{ if(!room.local){const viewer=p.viewer?p.viewer():{},reader=window.PosterCordReader,bundle=room.cord&&room.cord.bundle,loadKey=room.communityId||room.naddr,relays=[...new Set([...(bundle&&bundle.relays||[]),...CORD_RELAYS])].slice(0,8);if(!reader||!reader.createMetadataWrap||!bundle)throw new Error('community profile is not ready');let wraps=roomControls.get(loadKey);if(!wraps){const seed=reader.inspectControl(bundle,[]);wraps=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8});}const made=await reader.createMetadataWrap(bundle,wraps||[],{name:room.name,description,icon},viewer.pubkey,p.signTemplate),accepted=await p.relayPublishTo(relays,made.wrap);if(!accepted)throw new Error('community relays rejected the profile update');roomControls.set(loadKey,[...(wraps||[]),made.wrap]);} room.description=description; room.icon=icon; if(!Array.isArray(room.channels))room.channels=[]; let channel=room.channels.find(c=>c.name===(state.channel||'general')); if(!channel){ channel={name:state.channel||'general'}; room.channels.push(channel); } channel.private=$('#cc-channel-visibility').value==='private'; save(a); render(); p.toast('community profile updated'); }catch(e){settingsSave.disabled=false;p.toast('community profile was not updated: '+(e&&e.message||e));} };
     const notify=$('#cc-notify'); if(notify)notify.onclick=async()=>{ const result=p.askOsNotify?await p.askOsNotify():'unsupported'; p.toast(result==='granted'?'community notifications enabled':result==='denied'?'notifications were denied':'notifications are unavailable here'); };
     const call=$('#cc-call'); if(call)call.onclick=()=>{ const room=saved()[state.community], peers=[...new Set(activeMessages(room).map(m=>m.pubkey).filter(pk=>pk&&pk!==(p.viewer&&p.viewer().pubkey)))]; if(!peers.length){ p.toast('No other community members are available to call yet'); return; } p.startGroupCall(peers,false); };
     const cancel=$('#cc-join-cancel'); if(cancel) cancel.onclick=()=>$('#cc-join').classList.add('hidden');
