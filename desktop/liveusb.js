@@ -6,7 +6,7 @@ const path = require('path');
 
 const LSBLK = process.env.PC_LSBLK || 'lsblk';
 const SUDO = process.env.PC_SUDO || 'sudo';
-let job = { kind:'', running:false, ok:false, message:'', started:0, finished:0, output:'' };
+let job = { kind:'', running:false, ok:false, message:'', started:0, finished:0, output:'', path:'' };
 
 function run(bin,args,ms){ return new Promise((resolve,reject)=>execFile(bin,args,{timeout:ms||8000},(e,out,err)=>{
   if(e)return reject(new Error(String(err||e.message||e).trim().split('\n').pop())); resolve(String(out||''));
@@ -23,9 +23,9 @@ async function devices(){
       mounted:flatten([x]).some(y=>(y.mountpoints||[]).some(Boolean))}));
 }
 function append(s){ job.output=(job.output+String(s||'')).slice(-24000); }
-function launch(kind,bin,args,env){
+function launch(kind,bin,args,env,meta){
   if(job.running)throw new Error('another LiveUSB job is already running');
-  job={kind,running:true,ok:false,message:kind==='build'?'Building ISO…':'Writing USB…',started:Date.now(),finished:0,output:''};
+  job=Object.assign({kind,running:true,ok:false,message:kind==='build'?'Building ISO…':'Writing USB…',started:Date.now(),finished:0,output:'',path:''},meta||{});
   const p=spawn(bin,args,{env:Object.assign({},process.env,env||{}),stdio:['ignore','pipe','pipe']});
   p.stdout.on('data',append); p.stderr.on('data',append);
   p.on('error',e=>{job.running=false;job.finished=Date.now();job.message=e.message;});
@@ -38,8 +38,10 @@ function build(outDir,includeHome){
   const out=path.resolve(String(outDir));
   if(!fs.existsSync(out)||!fs.statSync(out).isDirectory())throw new Error('choose an existing output folder');
   fs.accessSync(out,fs.constants.W_OK);
+  const now=new Date(), stamp=String(now.getFullYear())+String(now.getMonth()+1).padStart(2,'0')+String(now.getDate()).padStart(2,'0');
+  const image=path.join(out,'posterchan-live-'+stamp+'.iso');
   return launch('build',SUDO,['-n','env','PC_ISO_OUT='+out,'PC_ISO_HOME='+(includeHome?'y':'n'),
-    'PC_ISO_CLEAN='+(includeHome?'n':'y'),'/usr/bin/gentoo.sh','livecd']);
+    'PC_ISO_CLEAN='+(includeHome?'n':'y'),'/usr/bin/gentoo.sh','livecd'],null,{path:image});
 }
 async function burn(iso,target){
   const image=path.resolve(String(iso||''));

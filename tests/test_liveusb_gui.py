@@ -18,6 +18,27 @@ def test_settings_exposes_build_pick_burn_and_confirmation():
     assert "pc:liveusb:burn" in PRELOAD and "pc:liveusb:burn" in MAIN
 
 
+def test_built_iso_path_flows_straight_into_the_usb_writer():
+    """Building and writing are adjacent steps, not two unrelated file pickers."""
+    assert "{path:image}" in (ROOT / "desktop/liveusb.js").read_text()
+    assert "if(s&&s.path)iso.value=s.path" in UI
+    assert "if(s.kind==='build'&&s.path&&(s.running||s.ok))iso.value=s.path" in UI
+
+
+def test_backend_returns_the_exact_iso_path_when_build_starts(tmp_path):
+    sudo = tmp_path / "sudo"
+    sudo.write_text("#!/bin/sh\nexit 0\n")
+    sudo.chmod(0o755)
+    out = tmp_path / "images"
+    out.mkdir()
+    js = "process.stdout.write(JSON.stringify(require('./desktop/liveusb').build(process.argv[1],false)))"
+    env = {**os.environ, "PC_SUDO": str(sudo)}
+    got = json.loads(subprocess.check_output(["node", "-e", js, str(out)], cwd=ROOT, env=env))
+    assert Path(got["path"]).parent == out
+    assert Path(got["path"]).name.startswith("posterchan-live-")
+    assert Path(got["path"]).suffix == ".iso"
+
+
 def test_device_scan_excludes_system_disk_and_marks_mounted_usb(tmp_path):
     fake = tmp_path / "lsblk"
     data = {"blockdevices": [
@@ -43,4 +64,3 @@ def test_backend_uses_argument_arrays_not_a_shell():
     assert "another LiveUSB job is already running" in src
     assert "the selected removable disk is no longer available" in src
     assert "of='+target" in src
-

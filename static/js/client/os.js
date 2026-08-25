@@ -1651,6 +1651,13 @@
     let selected=rows.findIndex(x=>x.primary); if(selected<0) selected=0;
     const modeText=m=>m.width+'x'+m.height+(m.refresh?'@'+(Math.round(m.refresh/1000*1000)/1000)+'Hz':'');
     const draw=()=>{
+      const deskWidgets=(layout().widgets||[]).filter(w=>w&&w.id);
+      const widgetRows=deskWidgets.map(w=>{const d=WIDGETS[w.type];return `<div class="os-setting-row os-set-control os-set-widget" data-widget-id="${enc(w.id)}">
+        <div><b>${enc(d?d.label:w.type)}</b><span>${enc(d?d.blurb:'This widget comes from a newer PosterChan build.')}</span></div>
+        <label>Size <select data-widget-size="${enc(w.id)}">${[['s','Small'],['m','Medium'],['l','Large']].map(([v,n])=>`<option value="${v}" ${w.size===v?'selected':''}>${n}</option>`).join('')}</select>
+          <button class="btn btn-ghost danger" data-widget-remove="${enc(w.id)}">Remove</button></label></div>`}).join('');
+      const widgetChoices=Object.keys(WIDGETS).map(k=>{const d=WIDGETS[k];return `<button class="os-wgt-pick" data-widget-add="${enc(k)}">
+        <svg class="ic" aria-hidden="true"><use href="${enc(d.icon)}"></use></svg><span class="os-wgt-pl">${enc(d.label)}</span><span class="os-wgt-pb">${enc(d.blurb)}</span></button>`}).join('');
       const minX=Math.min(...rows.filter(x=>x.enabled).map(x=>x.x),0), minY=Math.min(...rows.filter(x=>x.enabled).map(x=>x.y),0);
       const maxX=Math.max(...rows.filter(x=>x.enabled).map(x=>x.x+x.w),1920), maxY=Math.max(...rows.filter(x=>x.enabled).map(x=>x.y+x.h),1080);
       const scale=Math.min(620/Math.max(1,maxX-minX),300/Math.max(1,maxY-minY));
@@ -1661,6 +1668,7 @@
         <button data-jump="network">${iconSvg('wifi')} Network</button>
         <button data-jump="bluetooth">${iconSvg('bluetooth')} Bluetooth</button>
         <button data-jump="power">${iconSvg('power')} Power &amp; brightness</button>
+        <button data-jump="widgets">${iconSvg('grid')} Widgets</button>
         <button data-jump="about">${iconSvg('chart')} About</button>
         ${window.pcLiveUSB?`<button data-jump="liveusb">${iconSvg('drive')} LiveUSB</button>`:''}
       </aside><main class="os-set-main"><header class="os-set-pagehead"><div>${iconSvg('monitor')}</div><span><h2>Displays</h2><p>Arrange monitors, choose resolution and scaling, then preview safely before saving.</p></span></header>
@@ -1682,6 +1690,13 @@
           <select data-idle-timeout aria-label="Display idle timeout">
             ${[[60,'1 minute'],[120,'2 minutes'],[300,'5 minutes'],[600,'10 minutes'],[1800,'30 minutes'],[0,'Never']].map(([n,label])=>`<option value="${n}" ${Number(power.idleSeconds)===n?'selected':''}>${label}</option>`).join('')}
           </select></section>
+        <div class="os-set-section-title" data-widgets><h3>Desktop widgets</h3><p>Add useful live panels to this desktop, resize them here, or remove ones you no longer use.</p></div>
+        <section class="os-set-card os-set-widgets">
+          <div class="os-set-cardhead"><b>On this desktop</b><span>Widget placement and settings stay synchronized with your PosterChan desktop.</span></div>
+          <div class="os-set-widget-list">${widgetRows||'<div class="pcc-note">No widgets on this desktop yet.</div>'}</div>
+          <div class="os-set-cardhead os-set-widget-addhead"><b>Add a widget</b><span>You can add more than one of the same kind.</span></div>
+          <div class="os-set-widget-grid">${widgetChoices}</div>
+        </section>
         <div class="os-set-section-title" data-about><h3>About this computer</h3><p>Live hardware and session information.</p></div>
         <section class="os-set-card os-about-grid">
           <div><span>System</span><b>PosterChanOS</b></div>
@@ -1752,6 +1767,23 @@
       const awake=host.querySelector('[data-keep-awake]'); if(awake)awake.onchange=async()=>{
         awake.disabled=true;try{await pcPower.setKeepAwake(awake.checked);const s=awake.parentElement.querySelector('span');if(s)s.textContent=awake.checked?'On':'Off';PC().toast(awake.checked?'Computer will stay awake':'Normal sleep behavior restored');}catch(e){awake.checked=!awake.checked;PC().toast(String(e&&e.message||e));}finally{awake.disabled=false;}
       };
+      host.querySelectorAll('[data-widget-add]').forEach(b=>b.onclick=async()=>{
+        b.disabled=true;
+        try{if(await addWidget(b.dataset.widgetAdd))renderSystemSettings();}
+        catch(e){PC().toast(String(e&&e.message||e));b.disabled=false;}
+      });
+      host.querySelectorAll('[data-widget-size]').forEach(s=>s.onchange=async()=>{
+        s.disabled=true;
+        try{await sizeWidget(s.dataset.widgetSize,s.value);renderSystemSettings();}
+        catch(e){PC().toast(String(e&&e.message||e));s.disabled=false;}
+      });
+      host.querySelectorAll('[data-widget-remove]').forEach(b=>b.onclick=async()=>{
+        const id=b.dataset.widgetRemove,row=(layout().widgets||[]).find(w=>w.id===id),d=row&&WIDGETS[row.type];
+        if(!await PC().uiConfirm('Remove the '+(d?d.label:'widget')+' from this desktop?',{ok:'Remove widget'}))return;
+        b.disabled=true;
+        try{await removeWidget(id);renderSystemSettings();}
+        catch(e){PC().toast(String(e&&e.message||e));b.disabled=false;}
+      });
       const live=host.querySelector('[data-liveusb]');
       if(live){
         const out=live.querySelector('[data-live-out]'), iso=live.querySelector('[data-live-iso]');
@@ -1761,12 +1793,17 @@
           disk.innerHTML='<option value="">Choose a removable drive</option>'+ds.map(d=>
             `<option value="${enc(d.path)}" ${d.mounted?'disabled':''}>${enc(d.path+' · '+(d.model||'USB drive')+' · '+Math.round(d.size/1073741824)+' GB'+(d.mounted?' · mounted':''))}</option>`).join('');
           const s=await pcLiveUSB.status(); stat.textContent=(s.message||'Ready')+(s.output?'\n\n'+s.output.slice(-5000):'');
+          /* The builder and writer are one workflow. Keep the exact backend-selected output path in
+           * the write field so finishing an ISO does not make somebody browse back to the folder
+           * they selected a few minutes earlier. It is still never written until a removable disk
+           * is selected and the destructive confirmation is accepted. */
+          if(s.kind==='build'&&s.path&&(s.running||s.ok))iso.value=s.path;
           if(s.running) setTimeout(()=>{if(live.isConnected)refresh()},2000);
         }catch(e){stat.textContent=String(e&&e.message||e)} };
         live.querySelector('[data-live-refresh]').onclick=refresh;
         live.querySelector('[data-live-dir]').onclick=async()=>{const p=await pcLiveUSB.pickDir();if(p)out.value=p};
         live.querySelector('[data-live-pick]').onclick=async()=>{const p=await pcLiveUSB.pickISO();if(p)iso.value=p};
-        live.querySelector('[data-live-build]').onclick=async e=>{try{e.target.disabled=true;await pcLiveUSB.build(out.value,live.querySelector('[data-live-home]').checked);stat.textContent='Building ISO…';}catch(x){PC().toast(String(x&&x.message||x))}finally{e.target.disabled=false}};
+        live.querySelector('[data-live-build]').onclick=async e=>{try{e.target.disabled=true;const s=await pcLiveUSB.build(out.value,live.querySelector('[data-live-home]').checked);if(s&&s.path)iso.value=s.path;stat.textContent='Building ISO…';refresh();}catch(x){PC().toast(String(x&&x.message||x))}finally{e.target.disabled=false}};
         live.querySelector('[data-live-burn]').onclick=async e=>{if(!iso.value||!disk.value)return PC().toast('Choose an ISO and an unmounted USB drive');
           const ok=await PC().uiConfirm('Everything on '+disk.value+' will be overwritten. Write this ISO?',{ok:'Erase and write USB'});if(!ok)return;
           try{e.target.disabled=true;await pcLiveUSB.burn(iso.value,disk.value);stat.textContent='Writing USB… do not unplug it';}catch(x){PC().toast(String(x&&x.message||x))}finally{e.target.disabled=false}};
@@ -1774,6 +1811,7 @@
       }
       host.querySelectorAll('[data-jump]').forEach(b=>b.onclick=()=>{
         const k=b.dataset.jump;
+        if(k==='widgets'){ const sec=host.querySelector('[data-widgets]'); if(sec)sec.scrollIntoView({behavior:'smooth',block:'start'}); return; }
         if(k==='liveusb'){ const sec=host.querySelector('[data-liveusb]'); if(sec)sec.scrollIntoView({behavior:'smooth',block:'start'}); return; }
         if(k==='about'){ const sec=host.querySelector('[data-about]'); if(sec)sec.scrollIntoView({behavior:'smooth',block:'start'}); return; }
         if(k==='network'||k==='bluetooth'||k==='sound'||k==='power')

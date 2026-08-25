@@ -35,3 +35,15 @@ def test_system_settings_exposes_the_native_power_controls_and_system_info():
     for method in ("pcPower.setBrightness", "pcPower.setProfile", "pcPower.setKeepAwake",
                    "pcPower.setIdleTimeout", "pcSystem.snapshot(false)"):
         assert method in render
+
+
+def test_system_settings_manages_real_desktop_widgets():
+    render = OS[OS.index("async function renderSystemSettings()"):
+                OS.index("function openTaskManager", OS.index("async function renderSystemSettings()"))]
+    for marker in ('data-jump="widgets"', "data-widgets", "data-widget-add",
+                   "data-widget-size", "data-widget-remove"):
+        assert marker in render
+    for action in ("addWidget(b.dataset.widgetAdd)",
+                   "sizeWidget(s.dataset.widgetSize,s.value)", "removeWidget(id)"):
+        assert action in render
+    assert "Remove widget" in render
