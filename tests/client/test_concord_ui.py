@@ -120,7 +120,9 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert 'kinds:[33301]' in CONCORD
     assert 'for(const ev of candidates)' in CONCORD
     assert "opened=decoded(url,[ev])" in CONCORD
-    assert 'kinds:[13302]' in CONCORD and 'syncArmadaMemberships(p,viewer)' in CONCORD
+    assert 'kinds:[13302,33302]' in CONCORD and 'syncArmadaMemberships(p,viewer)' in CONCORD
+    assert 'window.PosterCordReader' in CONCORD and 'hydrateRoomStreams(p,i)' in CONCORD
+    assert 'kinds:[1059]' in CONCORD and 'reader.inspectChat' in CONCORD
     assert 'await p.nip44dec(viewer.pubkey,event.content)' in CONCORD
     assert 'cc-public-copy' in CONCORD and '.cc-public-copy' in CONCORD_CSS
     assert 'function isUnread(room)' in CONCORD
@@ -175,6 +177,11 @@ def test_concord_messages_support_persisted_replies_and_reactions():
     assert 'reply:replyTarget?' in CONCORD
     assert 'data-cc-react=' in CONCORD
     assert 'data-cc-react-toggle=' in CONCORD
-    assert 'saveTestMessages(room.naddr,m)' in CONCORD
+    assert 'saveTestMessages(storeId,m)' in CONCORD
     assert '.cc-message-reply' in CONCORD_CSS
     assert '.cc-reaction-picker' in CONCORD_CSS
+
+
+def test_concord_brand_always_returns_to_discovery():
+    assert 'id="cc-home"' in CONCORD
+    assert "state.community=null; state.channel=null; render()" in CONCORD

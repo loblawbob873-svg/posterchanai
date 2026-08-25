@@ -13,6 +13,7 @@
   const state={ community:null, channel:null };
   let replyTarget=null, reactionTarget=null;
   let discovered=[], discoveryStarted=false, discoveryLoaded=false, membershipStarted=false;
+  const roomLoads=new Map();
   function saved(){ try{ const v=JSON.parse(localStorage.getItem('pc.concord.invites')||'[]'); return Array.isArray(v)?v:[]; }catch(_){ return []; } }
   function save(v){ try{ localStorage.setItem('pc.concord.invites',JSON.stringify(v.slice(0,50))); }catch(_){} }
   function roomName(r,i){ return (r&&r.name)||`Encrypted community ${i+1}`; }
@@ -28,7 +29,9 @@
   }
   function testMessages(id){ try{ const v=JSON.parse(localStorage.getItem('pc.concord.test.'+id)||'[]'); return Array.isArray(v)?v:[]; }catch(_){ return []; } }
   function saveTestMessages(id,v){ try{ localStorage.setItem('pc.concord.test.'+id,JSON.stringify(v.slice(-200))); }catch(_){} }
-  function lastActivity(room){ return (room&&room.naddr?testMessages(room.naddr):[]).reduce((n,x)=>Math.max(n,Number(x.at)||0),0); }
+  function channelStoreId(room,name){ const channel=name||'general',c=room&&Array.isArray(room.channels)&&room.channels.find(x=>x.name===channel); return room&&room.naddr+(channel!=='general'&&c&&c.id?'.'+c.id:''); }
+  function activeMessages(room){ return testMessages(channelStoreId(room,state.channel)); }
+  function lastActivity(room){ return (room&&room.channels||[{name:'general'}]).reduce((n,c)=>Math.max(n,...testMessages(channelStoreId(room,c.name)).map(x=>Number(x.at)||0)),0); }
   function seenAt(room){ return Number(localStorage.getItem('pc.concord.read.'+(room&&room.naddr||''))||0); }
   function markRead(room){ if(room&&room.naddr)localStorage.setItem('pc.concord.read.'+room.naddr,String(Date.now())); }
   function isUnread(room){ return lastActivity(room)>seenAt(room); }
@@ -91,7 +94,8 @@
   async function syncArmadaMemberships(p,viewer){
     if(membershipStarted||!viewer.pubkey||!p.nip44dec)return; membershipStarted=true;
     try{
-      const filters=[{kinds:[13302],authors:[viewer.pubkey],limit:1}];
+      // 13302 is the released replaceable list; accept the addressable 33302 migration too.
+      const filters=[{kinds:[13302,33302],authors:[viewer.pubkey],limit:20}];
       const [pool,external]=await Promise.all([p.relayQuery?p.relayQuery(filters,7000):[],p.relayQueryFrom?p.relayQueryFrom(CORD_RELAYS,filters,{timeout:8000,max:4}):[]]);
       const event=[...(pool||[]),...(external||[])].sort((a,b)=>b.created_at-a.created_at)[0]; if(!event)return;
       const list=JSON.parse(await p.nip44dec(viewer.pubkey,event.content)),tombs=new Map((list.tombstones||[]).map(t=>[t.community_id,Number(t.removed_at)||0]));
@@ -100,6 +104,28 @@
       for(const e of live){ const m=e.current,url=inviteRefUrl(e.invite_ref),i=rooms.findIndex(r=>r.communityId===e.community_id||r.url===url); const room={communityId:e.community_id,name:m.name||'Concord community',description:'',channels:[{name:'general',private:false},...(m.channels||[]).map(c=>({name:c.name||'private',private:true,id:c.id}))],local:false,naddr:url?(inviteParts(url)||{}).naddr:'community-'+e.community_id,url,cord:{bundle:m,armadaList:true}}; if(i<0){rooms.push(room);changed=true;}else if(!rooms[i].cord||rooms[i].cord.armadaList){rooms[i]={...rooms[i],...room};changed=true;} }
       if(changed){save(rooms);render();}
     }catch(e){ console.warn('Concord membership sync failed',e); }
+  }
+  async function hydrateRoomStreams(p,index){
+    const rooms=saved(),room=rooms[index],reader=window.PosterCordReader,bundle=room&&room.cord&&room.cord.bundle;
+    if(!room||!bundle||!reader||!p.relayQueryFrom)return;
+    const loadKey=room.communityId||room.naddr; if(roomLoads.has(loadKey))return roomLoads.get(loadKey);
+    const job=(async()=>{
+      const seed=reader.inspectControl(bundle,[]), relays=[...new Set([...(bundle.relays||[]),...CORD_RELAYS])].slice(0,8);
+      const controlWraps=await p.relayQueryFrom(relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8});
+      const info=reader.inspectControl(bundle,controlWraps||[]);
+      room.name=info.name||room.name; room.description=info.description||room.description;
+      const icon=info.icon; if(icon)room.icon=typeof icon==='string'?icon:(icon.url||room.icon);
+      room.channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys}));
+      if(!room.channels.length)throw new Error('the control stream returned no readable channels');
+      room.cord.hydrated=true; rooms[index]=room; save(rooms);
+      for(const channel of room.channels){
+        const wraps=await p.relayQueryFrom(relays,[{kinds:[1059],authors:channel.streamPubkeys,limit:1000}],{timeout:10000,max:8});
+        const opened=await reader.inspectChat(bundle,controlWraps||[],channel.id,wraps||[]);
+        const reactions=new Map(opened.reactions||[]),msgs=(opened.messages||[]).map(m=>{ const pr=p.profOf?p.profOf(m.pubkey):{}; const rs={}; for(const [emoji,people] of reactions.get(m.id)||[])rs[emoji]=people; return {id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:m.text,at:m.at,reactions:rs,remote:true}; });
+        saveTestMessages(channelStoreId(room,channel.name),msgs);
+      }
+      render();
+    })().finally(()=>roomLoads.delete(loadKey)); roomLoads.set(loadKey,job); return job;
   }
   async function mintPublicRoom(p,name,icon){
     const viewer=p.viewer?p.viewer():{}; if(!viewer.pubkey||!window.PosterCord)throw new Error('sign in before creating a relay community');
@@ -124,12 +150,12 @@
     if(current)markRead(current);
     const currentChannel=current&&Array.isArray(current.channels)?current.channels.find(c=>c.name===(state.channel||'general')):null;
     const channelPrivate=!!(currentChannel&&currentChannel.private);
-    const messages=current&&(current.local||current.cord)?testMessages(current.naddr):[];
+    const messages=current&&(current.local||current.cord)?activeMessages(current):[];
     notifyMentions(p,current,messages,viewer,me);
     feed.innerHTML=`<div class="cc-app">
-      <aside class="cc-communities"><div class="cc-brand" title="Concord" aria-label="Concord"><span aria-hidden="true">🕊</span></div>${rooms.map((r,i)=>`<button class="cc-server${state.community===i?' active':''}${isUnread(r)?' unread':''}" data-cc-server="${i}" title="${p.enc(roomName(r,i))}">${roomIcon(p,r,i)}</button>`).join('')}<button class="cc-server cc-add" id="cc-add" title="Join a community">+</button></aside>
+      <aside class="cc-communities"><button class="cc-brand" id="cc-home" title="Find communities" aria-label="Find communities"><span aria-hidden="true">🕊</span></button>${rooms.map((r,i)=>`<button class="cc-server${state.community===i?' active':''}${isUnread(r)?' unread':''}" data-cc-server="${i}" title="${p.enc(roomName(r,i))}">${roomIcon(p,r,i)}</button>`).join('')}<button class="cc-server cc-add" id="cc-add" title="Join a community">+</button></aside>
       <aside class="cc-channels"><header><button class="cc-mobile-back" id="cc-back-communities" aria-label="Communities">‹</button><div><b>${state.community==null?'Concord':p.enc(roomName(current,state.community))}</b><small>${current&&current.local?'Local test community':'End-to-end encrypted'}</small></div>${current?'<button class="cc-head-btn" id="cc-edit-icon" title="Set community icon" aria-label="Set community icon"><svg class="ic"><use href="#i-image"></use></svg></button>':''}<button class="cc-head-btn" id="cc-invite" title="Join with invite">+</button></header>
-        <div class="cc-channel-list">${state.community==null?'<div class="cc-empty-side">Choose or join a community</div>':`<div class="cc-section">TEXT CHANNELS</div><button class="cc-channel active${isUnread(current)?' unread':''}" data-cc-channel="general"><span>#</span> general</button>`}</div>
+        <div class="cc-channel-list">${state.community==null?'<div class="cc-empty-side">Choose or join a community</div>':`<div class="cc-section">TEXT CHANNELS</div>${(current.channels||[{name:'general'}]).map(c=>`<button class="cc-channel${(state.channel||'general')===c.name?' active':''}${testMessages(channelStoreId(current,c.name)).some(m=>(Number(m.at)||0)>seenAt(current))?' unread':''}" data-cc-channel="${p.enc(c.name)}"><span>#</span> ${p.enc(c.name)}</button>`).join('')}`}</div>
         <footer class="cc-identity"><span class="cc-status"></span><div><b>${p.enc(me)}</b><small>You</small></div><button class="cc-head-btn" id="cc-notify" title="Notification settings"><svg class="ic"><use href="#i-bell"></use></svg></button></footer>
       </aside>
       <main class="cc-conversation"><header><button class="cc-mobile-back" id="cc-back-channels" aria-label="Channels">‹</button><span class="cc-hash">#</span><b>${state.channel||'general'}</b><span class="cc-visibility ${channelPrivate?'private':'public'}">${channelPrivate?'Private':'Public'}</span><span class="cc-topic">${p.enc((current&&current.description)||(channelPrivate?'Invite-only channel':'Visible to all community members'))}</span><span class="cc-spacer"></span>${current?'<button class="cc-head-btn" id="cc-publish-listing" title="Publish to Armada Discover" aria-label="Publish to Armada Discover"><svg class="ic"><use href="#i-share"></use></svg></button><button class="cc-head-btn" id="cc-copy-link" title="Copy room invite link" aria-label="Copy room invite link"><svg class="ic"><use href="#i-link"></use></svg></button><button class="cc-head-btn" id="cc-call" title="Start voice call"><svg class="ic"><use href="#i-phone"></use></svg></button>':''}<button class="cc-head-btn" id="cc-members" title="Members"><svg class="ic"><use href="#i-users"></use></svg></button></header>
@@ -146,6 +172,7 @@
   function bind(me){
     const p=PC(), $=p.$, $$=p.$$;
     const openJoin=()=>{ $('#cc-join').classList.remove('hidden'); setTimeout(()=>$('#cc-invite-url').focus(),20); };
+    const home=$('#cc-home'); if(home)home.onclick=()=>{ state.community=null; state.channel=null; render(); };
     ['#cc-add','#cc-invite','#cc-welcome-join'].forEach(s=>{ const b=$(s); if(b)b.onclick=openJoin; });
     const create=$('#cc-create'); if(create)create.onclick=()=>{ $('#cc-create-dialog').classList.remove('hidden'); setTimeout(()=>$('#cc-community-name').focus(),20); };
     const createCancel=$('#cc-create-cancel'); if(createCancel)createCancel.onclick=()=>$('#cc-create-dialog').classList.add('hidden');
@@ -164,22 +191,22 @@
     const settingsCancel=$('#cc-settings-cancel'); if(settingsCancel)settingsCancel.onclick=()=>$('#cc-settings-dialog').classList.add('hidden');
     const settingsSave=$('#cc-settings-save'); if(settingsSave)settingsSave.onclick=()=>{ const a=saved(),room=a[state.community]; if(!room)return; room.description=String($('#cc-description-value').value||'').trim().slice(0,1000); room.icon=normalizeIcon($('#cc-settings-icon').value); if(!Array.isArray(room.channels))room.channels=[]; let channel=room.channels.find(c=>c.name===(state.channel||'general')); if(!channel){ channel={name:state.channel||'general'}; room.channels.push(channel); } channel.private=$('#cc-channel-visibility').value==='private'; save(a); render(); p.toast(`#${channel.name} is now ${channel.private?'private':'public to community members'}`); };
     const notify=$('#cc-notify'); if(notify)notify.onclick=async()=>{ const result=p.askOsNotify?await p.askOsNotify():'unsupported'; p.toast(result==='granted'?'community notifications enabled':result==='denied'?'notifications were denied':'notifications are unavailable here'); };
-    const call=$('#cc-call'); if(call)call.onclick=()=>{ const room=saved()[state.community], peers=[...new Set(testMessages(room&&room.naddr).map(m=>m.pubkey).filter(pk=>pk&&pk!==(p.viewer&&p.viewer().pubkey)))]; if(!peers.length){ p.toast('No other community members are available to call yet'); return; } p.startGroupCall(peers,false); };
+    const call=$('#cc-call'); if(call)call.onclick=()=>{ const room=saved()[state.community], peers=[...new Set(activeMessages(room).map(m=>m.pubkey).filter(pk=>pk&&pk!==(p.viewer&&p.viewer().pubkey)))]; if(!peers.length){ p.toast('No other community members are available to call yet'); return; } p.startGroupCall(peers,false); };
     const cancel=$('#cc-join-cancel'); if(cancel) cancel.onclick=()=>$('#cc-join').classList.add('hidden');
     const go=$('#cc-join-go'); if(go) go.onclick=async()=>{ const raw=String($('#cc-invite-url').value||'').trim(),v=inviteParts(raw); if(!v){ p.toast('that is not a Concord invite link'); return; } go.disabled=true; try{ p.toast('fetching and decrypting community…'); const room=await hydrateInvite(p,raw),a=saved(),i=a.findIndex(x=>x.naddr===v.naddr); if(i<0)a.push(room);else a[i]={...a[i],...room}; save(a); state.community=i<0?a.length-1:i; state.channel='general'; render(); p.toast('community joined'); }catch(e){ go.disabled=false; p.toast('could not join: '+(e&&e.message||e)); } };
-    $$('[data-cc-server]').forEach(b=>b.onclick=async()=>{ const i=+b.dataset.ccServer,a=saved(),room=a[i]; state.community=i; state.channel='general'; render(); if(room&&room.url&&!room.cord){ try{ p.toast('decrypting saved community…'); a[i]={...room,...await hydrateInvite(p,room.url)}; save(a); render(); p.toast('community loaded'); }catch(e){ p.toast('could not load community: '+(e&&e.message||e)); } } });
+    $$('[data-cc-server]').forEach(b=>b.onclick=async()=>{ const i=+b.dataset.ccServer,a=saved(),room=a[i]; state.community=i; state.channel='general'; render(); try{ let loaded=room; if(room&&room.url&&!room.cord){ p.toast('decrypting saved community…'); loaded={...room,...await hydrateInvite(p,room.url)}; a[i]=loaded; save(a); render(); } if(loaded&&loaded.cord&&!loaded.cord.hydrated){ p.toast('loading room channels and history…'); await hydrateRoomStreams(p,i); p.toast('community loaded'); } }catch(e){ p.toast('could not load community: '+(e&&e.message||e)); } });
     $$('[data-cc-discover]').forEach(b=>b.onclick=()=>{ const v=discovered[+b.dataset.ccDiscover]; if(!v)return; const a=saved(); if(!a.some(x=>x.naddr===v.naddr))a.push(v); save(a); state.community=a.findIndex(x=>x.naddr===v.naddr); state.channel='general'; render(); p.toast('public invite saved — fetching encrypted community'); });
     $$('[data-cc-channel]').forEach(b=>b.onclick=()=>{ state.channel=b.dataset.ccChannel; render(); });
     const bc=$('#cc-back-communities'); if(bc)bc.onclick=()=>{ state.community=null; state.channel=null; render(); };
     const bh=$('#cc-back-channels'); if(bh)bh.onclick=()=>{ document.querySelector('.cc-app').classList.remove('show-chat'); };
     $$('[data-cc-channel]').forEach(b=>b.addEventListener('click',()=>{ const a=document.querySelector('.cc-app'); if(a)a.classList.add('show-chat'); }));
     const send=$('#cc-send'); if(send&&input){
-      send.onclick=()=>{ const text=String(input.value||'').trim(); const a=saved(), room=a[state.community]; if(!text)return; if(!room||(!room.local&&!room.cord)){ p.toast('relay messaging becomes available after the invite is decrypted'); return; } const m=testMessages(room.naddr), viewer=p.viewer?p.viewer():{}, at=Date.now(); m.push({id:(crypto.randomUUID?crypto.randomUUID():`${at}-${Math.random().toString(36).slice(2)}`),by:me,pubkey:viewer.pubkey||'',text,at,reply:replyTarget?{id:messageId(replyTarget),by:replyTarget.by,text:replyTarget.text}:null,reactions:{}}); replyTarget=null; saveTestMessages(room.naddr,m); render(); };
+      send.onclick=()=>{ const text=String(input.value||'').trim(); const a=saved(), room=a[state.community],storeId=channelStoreId(room,state.channel); if(!text)return; if(!room||(!room.local&&!room.cord)){ p.toast('relay messaging becomes available after the invite is decrypted'); return; } const m=testMessages(storeId), viewer=p.viewer?p.viewer():{}, at=Date.now(); m.push({id:(crypto.randomUUID?crypto.randomUUID():`${at}-${Math.random().toString(36).slice(2)}`),by:me,pubkey:viewer.pubkey||'',text,at,reply:replyTarget?{id:messageId(replyTarget),by:replyTarget.by,text:replyTarget.text}:null,reactions:{}}); replyTarget=null; saveTestMessages(storeId,m); render(); };
       input.onkeydown=e=>{ if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){ e.preventDefault(); send.click(); } };
     }
     const replyCancel=$('#cc-reply-cancel'); if(replyCancel)replyCancel.onclick=()=>{ replyTarget=null; render(); };
-    $$('[data-cc-reply]').forEach(b=>b.onclick=()=>{ const room=saved()[state.community],m=testMessages(room&&room.naddr),found=m.find(x=>messageId(x)===b.dataset.ccReply); if(!found)return; replyTarget=found; render(); const box=$('#cc-input'); if(box)box.focus(); });
-    const toggleReaction=(id,emoji)=>{ const room=saved()[state.community],m=testMessages(room&&room.naddr),found=m.find(x=>messageId(x)===id),viewer=p.viewer?p.viewer():{},who=viewer.pubkey||'local-user'; if(!found)return; if(!found.reactions||typeof found.reactions!=='object')found.reactions={}; const people=Array.isArray(found.reactions[emoji])?found.reactions[emoji]:[]; const i=people.indexOf(who); if(i<0)people.push(who);else people.splice(i,1); if(people.length)found.reactions[emoji]=people;else delete found.reactions[emoji]; saveTestMessages(room.naddr,m); reactionTarget=null; render(); };
+    $$('[data-cc-reply]').forEach(b=>b.onclick=()=>{ const room=saved()[state.community],m=activeMessages(room),found=m.find(x=>messageId(x)===b.dataset.ccReply); if(!found)return; replyTarget=found; render(); const box=$('#cc-input'); if(box)box.focus(); });
+    const toggleReaction=(id,emoji)=>{ const room=saved()[state.community],storeId=channelStoreId(room,state.channel),m=testMessages(storeId),found=m.find(x=>messageId(x)===id),viewer=p.viewer?p.viewer():{},who=viewer.pubkey||'local-user'; if(!found)return; if(!found.reactions||typeof found.reactions!=='object')found.reactions={}; const people=Array.isArray(found.reactions[emoji])?found.reactions[emoji]:[]; const i=people.indexOf(who); if(i<0)people.push(who);else people.splice(i,1); if(people.length)found.reactions[emoji]=people;else delete found.reactions[emoji]; saveTestMessages(storeId,m); reactionTarget=null; render(); };
     $$('[data-cc-react-toggle]').forEach(b=>b.onclick=()=>toggleReaction(b.dataset.ccReactToggle,b.dataset.ccEmoji));
     $$('[data-cc-react]').forEach(b=>b.onclick=()=>{ reactionTarget=b.dataset.ccReact; const choices=['👍','❤️','😂','😮','😢','😡','🎉','💯']; const old=document.querySelector('.cc-reaction-picker'); if(old)old.remove(); const pop=document.createElement('div'); pop.className='cc-reaction-picker'; pop.innerHTML=choices.map(x=>`<button data-emoji="${x}">${x}</button>`).join(''); b.closest('.cc-message-body').appendChild(pop); pop.querySelectorAll('button').forEach(x=>x.onclick=e=>{ e.stopPropagation(); toggleReaction(reactionTarget,x.dataset.emoji); }); });
   }
