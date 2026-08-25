@@ -104,7 +104,9 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
 
     @unittest.skipUnless(NODE, "node is not installed")
     def test_simple_app_identity_cannot_be_replaced_by_global_social_view(self):
-        """The reported case: Server Stats is visible, but the page-global view says Home."""
+        """Every ordinary app keeps its opened identity when another window changes the page-global
+        route.  Stats was only the first report; testing the complete launcher surface prevents the
+        same class of bug being reintroduced one app at a time."""
         start = self.os.index("function handoffIdentity(")
         brace = self.os.index("{", start)
         depth = 0
@@ -119,8 +121,17 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
                     break
         self.assertIsNotNone(end)
         fn = self.os[start:end]
+        simple_views = [
+            "ai", "articles", "blackjack", "blossom", "bookmarks", "budget", "calendar",
+            "calls", "chess", "code", "communities", "concord", "connect4", "contacts",
+            "details", "drafts", "global", "hangman", "holdem", "home", "mail", "market",
+            "markets", "meme", "messages", "news", "notes", "notifications", "repos",
+            "shorts", "signer", "stats", "streams", "sync", "texts", "tiles", "torrents",
+            "translate", "ttt", "vault", "websearch", "xdc",
+        ]
         cases = [
-            {"view": "stats", "appView": "home", "appPath": ""},
+            *({"view": view, "appView": "home" if view != "home" else "global", "appPath": ""}
+              for view in simple_views),
             {"view": "terminal", "appView": "home", "appPath": "/"},
             {"view": "repos", "appView": "repo", "appPath": "/naddr1repo"},
             {"view": "settings", "appView": "admin", "appPath": ""},
@@ -128,7 +139,7 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
         script = fn + "\nconsole.log(JSON.stringify(" + json.dumps(cases) + ".map(handoffIdentity)))"
         got = json.loads(subprocess.run([NODE, "-e", script], capture_output=True, text=True,
                                         check=True).stdout)
-        self.assertEqual(got, ["stats", "terminal", "repo", "admin"])
+        self.assertEqual(got, simple_views + ["terminal", "repo", "admin"])
 
     def test_every_place_that_captures_appView_captures_appPath(self):
         """They are one fact about a window — which screen it is showing — and a site that records
