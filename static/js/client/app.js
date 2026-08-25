@@ -20026,7 +20026,9 @@
      * implementation of the drive. */
     const details = _fxView()==='details';
     grid.className = 'files-grid' + (details ? ' details' : '') + (grid.classList.contains('selmode') ? ' selmode' : '');
-    grid.innerHTML = inFolder.length ? ((details ? _fxColsHTML() : '') + _shown.map(b=>{
+    grid.innerHTML = inFolder.length ? ((details ? _fxColsHTML() : '')
+      + `<div class="files-page-count" style="grid-column:1/-1" aria-live="polite">Showing ${_shown.length} of ${inFolder.length}</div>`
+      + _shown.map(b=>{
       // Name: ours (Files index) → the server's stored upload name → a VOD label. The last two are why
       // a file uploaded from another device/client isn't an anonymous "412KB" tile any more.
       const m=FilesIdx.meta(b.sha256)||{}; const nm=m.name||b.name||_vodNameMap[b.sha256]||'';
@@ -20074,7 +20076,20 @@
           +' matches “'+enc(_filesQ.trim())+'”.</div>'
         : '<div class="empty">No files'+(_filesFolder?(' in '+enc(_filesFolder)):'')+' yet — drop some above.</div>');
     if(details) _fxBindCols(grid);
-    { const mb=$('.bl-more',grid); if(mb) mb.onclick=()=>{ _filesShown+=_FILES_PAGE; _renderFilesGrid(grid, list); }; }
+    { const mb=$('.bl-more',grid); if(mb){
+      mb.onclick=()=>{ _filesShown+=_FILES_PAGE; _renderFilesGrid(grid, list); };
+      /* The page button remains available to keyboard and assistive-tech users. For ordinary
+       * scrolling, advance automatically before the sentinel reaches the viewport: a folder with
+       * 1,972 indexed files must not look like a 60-file folder merely because its paging control
+       * is several screens below the last visible row. One page per intersection keeps initial DOM
+       * work bounded; scrolling further progressively reveals the whole folder. */
+      if(window.IntersectionObserver){
+        const observer=new IntersectionObserver(entries=>{ if(entries.some(x=>x.isIntersecting)){
+          observer.disconnect(); if(mb.isConnected)mb.click();
+        } },{root:mb.closest('.fx-main'),rootMargin:'600px 0px'});
+        observer.observe(mb);
+      }
+    } }
     /* CLICKING THE FILE OPENS IT — there is no Open button any more.
      *
      * ONE binding for every door on this screen, tile and details row alike, because they are the
