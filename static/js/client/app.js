@@ -6708,7 +6708,19 @@
      * through renderView, os.js closes a window without one, and any view added later may do the
      * same — so the decision is also taken here, where the waste actually shows up, off the same
      * function so the two answers cannot differ. One event is the entire cost of being late. */
-    const onEvent = ev => { if(VIEW!==view && !_parkedSlot(view)) _parkOffscreenTimelines();
+    const onEvent = ev => {
+      /* AN ARRIVING EVENT IS THE ONE PROOF OF BEING ONLINE THAT IS MEASURED RATHER THAN RETOLD.
+       *
+       * The banner is driven by Relay's STATUS stream, which reports CHANGES — so a socket that
+       * died while the phone was asleep and was quietly replaced never announces itself, and the
+       * banner latches on over a feed that is loading perfectly. Reported as "I can pull up another
+       * app or webpage, but the app registers as offline". A relay just pushed us a note down a
+       * socket; there is nothing left to argue about.
+       *
+       * Gated on the banner actually being up, because this runs once per event on a firehose and
+       * the call is only ever worth making when it changes something on screen. */
+      if(document.body.classList.contains('is-offline')){ try{ updateOfflineBar('ok'); }catch(_){} }
+      if(VIEW!==view && !_parkedSlot(view)) _parkOffscreenTimelines();
       if (Store.saveEvent(ev)){ invalidateCounts(); applySobLive(ev); needProfile(ev.pubkey);
       // Only prepend as "live" if it's genuinely new — NOT a backfilled/synced event with an old
       // created_at (those jump to the top as if new). kind-5 deletions are NOT posts (render blank) —
@@ -6731,7 +6743,34 @@
      *
      * Only a fresh ENTRY to a timeline starts at the top (renderTimeline), and only a deliberate
      * change of what is shown does (the media toggle). Everything else redraws where they are. */
-    const markEosed = ()=>{ if(VIEW===view && !_tl.eosed){ _tl.eosed=true; _drawTimeline(true); } };
+    const markEosed = ()=>{
+      /* NOT the place to declare us online, however tempting: `Relay.subscribe` fires onEose from a
+       * 12-SECOND BACKSTOP when no relay answers at all (so callers that use EOSE as the
+       * backlog→live boundary cannot freeze). Clearing the banner here would therefore announce a
+       * connection precisely when there is none. The proof lives in onEvent, above. */
+      clearTimeout(_eoseWatch); _eoseWatch=null;
+      if(VIEW===view && !_tl.eosed){ _tl.eosed=true; _drawTimeline(true); }
+    };
+    /* NOBODY ANSWERED. A REQ written to a socket that cannot carry it is dropped in silence by
+     * `relay.js _send` — no error, no event, no EOSE — and one dropped REQ freezes this timeline for
+     * the whole visit: `_tl.eosed` never becomes true, and `_bufferLive` is gated on it, so the live
+     * posts that DO arrive are discarded as well. That is the whole of "if I close and reopen the
+     * app it shows new posts from a minute ago": a fresh boot is the only thing that ever asked
+     * again. So ask again, once, on a socket `ready()` has had a chance to repair.
+     *
+     * Once. A second silence is a relay that is not answering, which is a fact about the network and
+     * not something more asking will fix — the cached feed stays on screen, which is honest. */
+    let _eoseWatch=null, _eoseRetried=false;
+    const _watchEose = ()=>{
+      clearTimeout(_eoseWatch);
+      _eoseWatch=setTimeout(()=>{
+        _eoseWatch=null;
+        if(_eoseRetried || _tl.eosed || myGen!==_tlGen || VIEW!==view) return;
+        _eoseRetried=true;
+        if(subs[view]){ try{ Relay.close(subs[view]); }catch(_){} subs[view]=null; }
+        fullSub();
+      }, 7000);
+    };
     // Re-entrancy token: a slow async negSync that resolves AFTER the user re-navigated (or re-rendered)
     // must not install — and leak — a subscription for a superseded render. setSub closes such orphans.
     const myGen = ++_tlGen;
@@ -6743,9 +6782,28 @@
       if(subs[view] && subs[view]!==s){ try{ Relay.close(subs[view]); }catch(_){} }
       subs[view]=s;
     };
+    /* OPENING THE FEED ASKS A SOCKET THAT CAN ANSWER — `await Relay.ready()`.
+     *
+     * This is the rule Trending was fixed with and the timeline itself never got, which is worse:
+     * a REQ written to a CONNECTING socket is dropped with nothing said, and the moment a timeline
+     * is most likely to be opened against one is right after a resume or a login. `ready()` also
+     * REVIVES a zombie — a socket the browser still reports OPEN that has delivered nothing for
+     * 30 seconds, which is exactly what a phone comes back from sleep holding. Without it the feed
+     * subscribes into a dead pipe and sits there looking connected.
+     *
+     * The PAINT is untouched and still happens first, from the Store, above — only the network half
+     * waits. Nothing on screen is delayed by this; what changes is that the ask actually lands. */
     const fullSub = ()=>{
       if(document.hidden && _tlPaused) return;   // stay paused; _tlResume re-arms on return
-      setSub(Relay.subscribe(timelineFilter(), { onEvent, onEose: markEosed }));
+      const go = ()=>{
+        if(myGen!==_tlGen || VIEW!==view) return;
+        if(document.hidden && _tlPaused) return;
+        setSub(Relay.subscribe(timelineFilter(), { onEvent, onEose: markEosed }));
+        _watchEose();
+      };
+      // Both arms run `go`: a pool that never came up still deserves the REQ (a relay may connect a
+      // moment later and the subscription is already installed), and never asking is the bug.
+      try{ Relay.ready(8000).then(go, go); }catch(_){ go(); }
     };
     /* Backgrounded, the timeline is pure waste: the relay keeps PUSHING every matching event down the
      * socket — on a busy web-of-trust relay that is the firehose — and the phone wakes its radio to

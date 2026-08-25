@@ -47,9 +47,18 @@ class CodeIsReachable(unittest.TestCase):
                       "the desktop start menu and the desktop app grid all at once")
 
     def test_code_is_not_in_the_mobile_more_sheet(self):
-        """A node's file editor is not a phone screen."""
-        self.assertNotIn("'PosterChan Code'", self.app,
+        """A node's file editor is not a phone screen.
+
+        MEASURED ON THE SHEET'S OWN LIST, not on the whole file. This read `'PosterChan Code'`
+        anywhere in a 2 MB app.js, which is a different question and started answering it wrongly
+        the moment the open-chooser grew a button by that name \u2014 a sheet entry and a label in a
+        dialog are not the same claim."""
+        items = self.app[self.app.index("function moreMenu("):]
+        items = items[items.index("const items=["):]
+        items = items[:items.index("\n")]
+        self.assertNotIn("PosterChan Code", items,
                          "Code is still listed in the mobile More sheet")
+        self.assertIn("'Terminal'", items, "the More sheet list moved \u2014 re-point this test")
 
     def test_it_is_gated_like_the_terminal_not_more_loosely(self):
         """The jail defaults to the app's OWN checkout, so write access there is write access to the

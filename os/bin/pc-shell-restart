@@ -1,10 +1,69 @@
 #!/bin/sh
 # Reload the PosterChan renderer without unmapping the desktop Wayland surface.
+#
+# EXCEPT AFTER AN UPDATE, WHICH IS A DIFFERENT ACT AND HAS TO BE TOLD APART.
+#
+# The tick below reloads the PAGE inside a process that keeps running. That is right for a wedged
+# renderer and wrong the moment the code on disk is no longer the code this process started from:
+# `update-posterchan` renames /opt/posterchan aside and deletes it, and `emerge` replaces the files
+# in place, so a reload then loads the NEW bundle into the OLD main process — a mismatched preload,
+# a protocol handler reading an archive whose header it has already cached — and both monitors go
+# black with nothing in any log. Reported exactly that way: "ctrl alt backspace after update always
+# shows 2 black screens". A stale process cannot be reloaded, only replaced.
+#
+# HOW STALENESS IS MEASURED: /proc/<pid>/exe is a magic link to the INODE the process is running,
+# which survives the file being renamed or unlinked. Stat it, stat the path it names, and compare.
+# Different (or the path is gone) means the desktop was replaced underneath this process.
+#
+# AND WHEN IT CANNOT BE MEASURED, IT IS NOT STALE. A restart closes every window the person has
+# open; a reload costs a second. So no /proc, no stat, no readable link — reload. The only thing
+# that earns the expensive answer is positive evidence, never the absence of it.
 set -u
 pattern='[/]opt/posterchan/'
-if pgrep -f "$pattern" >/dev/null 2>&1; then
-  exec swaymsg -t send_tick pc:restart
+# The launcher's path, overridable so this script can be RUN by a test rather than read by one.
+# The default is absolute on purpose: this is driven from a key binding and from sway, neither of
+# which is guaranteed a useful PATH.
+: "${PC_SHELL_START:=/usr/local/bin/pc-shell-start}"
+pids=$(pgrep -f "$pattern" 2>/dev/null)
+
+if [ -n "$pids" ]; then
+	stale=0
+	for pid in $pids; do
+		link=$(readlink "/proc/$pid/exe" 2>/dev/null) || continue
+		[ -n "$link" ] || continue
+		# A deleted binary says so in the link itself on every kernel that has /proc.
+		case "$link" in
+		*' (deleted)')
+			stale=1
+			break
+			;;
+		esac
+		running=$(stat -Lc '%d:%i' "/proc/$pid/exe" 2>/dev/null) || continue
+		ondisk=$(stat -Lc '%d:%i' "$link" 2>/dev/null) || { stale=1; break; }
+		[ -n "$running" ] && [ -n "$ondisk" ] || continue
+		if [ "$running" != "$ondisk" ]; then
+			stale=1
+			break
+		fi
+	done
+
+	if [ "$stale" -eq 0 ]; then
+		exec swaymsg -t send_tick pc:restart
+	fi
+
+	# REPLACED ON DISK. Stop it and fall through to the full launcher, which owns stale-lock
+	# cleanup, environment recovery, retries and the proof that a replacement surface mapped.
+	# TERM first and a bounded wait: Electron writes its singleton lock on the way out, and killing
+	# it outright leaves the lock for the launcher to clean up as a "dead" one it has to guess about.
+	kill $pids 2>/dev/null
+	n=0
+	while [ "$n" -lt 50 ] && pgrep -f "$pattern" >/dev/null 2>&1; do
+		sleep 0.1
+		n=$((n + 1))
+	done
+	pkill -KILL -f "$pattern" 2>/dev/null
 fi
+
 # No shell exists to receive the recovery tick. The full launcher owns stale-lock cleanup,
 # environment recovery, retries, serialization and proof that a replacement surface mapped.
-exec /usr/local/bin/pc-shell-start
+exec "$PC_SHELL_START"
