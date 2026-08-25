@@ -2817,7 +2817,7 @@
     let ssx = gxOf(ev), ssy = gyOf(ev);
     let ox = parseInt(w.el.style.left, 10), oy = parseInt(w.el.style.top, 10);
     let curX = ox, curY = oy, zone = '', handoff = '', raf = 0, lastMove = ev,
-        previewDir='', previewAt=0;
+        previewDir='', previewAt=0,edgeHoldDir='',edgeHoldAt=0;
     hideLayouts();
     /* Native apps follow the frame with position-only compositor moves. Resizing/re-floating on
      * every frame is still avoided; `_natGesture` makes nsync choose pcWM.move until release. */
@@ -2859,7 +2859,14 @@
     };
     const handoffDirection = (e) => {
       const dir=edgeDirection(e);
-      return dir && edgeOverflow(e,dir)>8 ? dir : '';
+      if(dir!==edgeHoldDir){edgeHoldDir=dir;edgeHoldAt=dir?Date.now():0;}
+      if(!dir)return '';
+      /* Wayland often clamps screenX/clientX at this renderer's last pixel. There is then no
+       * measurable overflow, so the native Firefox/Telegram surface follows the moving HTML frame
+       * onto another output but ownership never transfers: the two visibly separate. Holding a
+       * native titlebar at the edge is the unambiguous cross-monitor gesture; a quick release still
+       * performs ordinary edge snap. */
+      return edgeOverflow(e,dir)>8||(w.native!=null&&edgeHoldAt&&Date.now()-edgeHoldAt>=280)?dir:'';
     };
     const preview = (e) => {
       if(!window.pcWM || !pcWM.previewFrame) return;

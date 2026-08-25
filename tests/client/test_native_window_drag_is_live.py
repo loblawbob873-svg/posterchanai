@@ -38,6 +38,15 @@ def test_snapping_ends_move_only_mode_before_the_full_native_resize():
     assert "requestAnimationFrame(() => requestAnimationFrame(nsync))" in snap
 
 
+def test_wayland_edge_clamping_still_hands_native_windows_to_the_other_monitor():
+    src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+    drag = src[src.index("function startDrag"):src.index("function startResize")]
+    assert "edgeHoldDir='',edgeHoldAt=0" in drag
+    assert "w.native!=null&&edgeHoldAt&&Date.now()-edgeHoldAt>=280" in drag
+    assert "edgeOverflow(e,dir)>8||" in drag
+    assert "if(handoff && w.native != null && pcWM.handoff)" in drag
+
+
 def test_taskbar_is_icon_only():
     css = (ROOT / "static/css/client.css").read_text(encoding="utf-8")
     assert ".os-task span{display:none}" in css
