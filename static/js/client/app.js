@@ -6326,6 +6326,11 @@
     /* Concord is an application workspace, not a prose-width timeline. Set this before paint so its
      * own sheet can remove the right rail and width cap without a one-frame layout jump. */
     document.body.classList.toggle('concord-view', v==='concord');
+    for(const el of [document.querySelector('.rightbar'),document.getElementById('rb-toggle')]){
+      if(!el) continue;
+      if(v==='concord') el.style.setProperty('display','none','important');
+      else el.style.removeProperty('display');
+    }
     if(v==='notifications'){ _notifShown = 25;   // fresh entry → collapse pagination back to one page
       // ...and land at the TOP. #feed is one scroll container shared by every view, and nothing reset
       // it on a view switch, so opening Notifications kept whatever offset the previous view had left
