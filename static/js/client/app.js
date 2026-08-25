@@ -15877,10 +15877,10 @@
    * which renders the identical markup. */
   function _bindThumbFallback(root){
     if(!root) return;
-    const swap=(im, glyph, dflt)=>{ const d=document.createElement('div'); d.className='file-icon';
-      d.innerHTML=glyph+'<span>'+enc(im.dataset.ext||dflt)+'</span>'; im.replaceWith(d); };
-    $$('.vthumb',root).forEach(im=> im.onerror=()=>swap(im,'🎬','video'));
-    $$('.ithumb',root).forEach(im=> im.onerror=()=>swap(im,'📎','file'));
+    const swap=(im, kind, dflt)=>{ const d=document.createElement('div'); d.className='file-icon';
+      d.innerHTML=_fxFileGlyph(kind)+'<span>'+enc(im.dataset.ext||dflt)+'</span>'; im.replaceWith(d); };
+    $$('.vthumb',root).forEach(im=> im.onerror=()=>swap(im,'video','video'));
+    $$('.ithumb',root).forEach(im=> im.onerror=()=>swap(im,'file','file'));
   }
   function blobThumb(b, ext){
     let t=b.type||'';
@@ -15903,9 +15903,9 @@
     if(/image/.test(t)) return `<img class="ithumb" data-ext="${enc(ext)}" src="${enc(thumbUrl(b.url))}" loading="lazy">`;
     // video: ffmpeg frame thumbnail (server ?thumb=1); falls back to a 🎬 icon if it can't be decoded
     if(/video/.test(t)) return `<img class="vthumb" data-ext="${enc(ext)}" src="${enc(thumbUrl(b.url))}" loading="lazy">`;
-    if(/audio/.test(t)) return `<div class="file-icon">🎵<span>${enc(ext)}</span></div>`;
-    const icon = /zip|compress|tar|gzip|7z|rar/.test(t)?'📦' : /pdf/.test(t)?'📕' : /text|json|xml|csv/.test(t)?'📄' : '📎';
-    return `<div class="file-icon">${icon}<span>${enc(ext)}</span></div>`;
+    const kind = /audio/.test(t) ? 'audio' : /zip|compress|tar|gzip|7z|rar/.test(t) ? 'archive'
+      : /pdf/.test(t) ? 'pdf' : /text|json|xml|csv/.test(t) ? 'document' : 'file';
+    return `<div class="file-icon">${_fxFileGlyph(kind)}<span>${enc(ext)}</span></div>`;
   }
   // What a downloaded blob should be SAVED as. A blob is addressed by its hash, so with no name
   // anywhere the honest fallback is a short hash plus the real extension — never a bare 64-char hex.
@@ -17566,15 +17566,24 @@
     for(const [rx, word] of _FX_KINDS) if(rx.test(ext)) return ext.toUpperCase() + ' ' + word;
     return ext.toUpperCase() + ' file';
   }
+  /* File icons must not depend on an emoji font. Minimal Gentoo/Electron installations commonly
+   * have no colour-emoji face, which turned the Files grid into blank squares even though every
+   * file and folder was still present. The client sprite ships in every web, desktop and Android
+   * bundle, so these icons are deterministic and themeable everywhere. */
+  function _fxFileGlyph(kind){
+    const icon = { image:'image', video:'film', audio:'music', pdf:'article', archive:'folder',
+                   document:'text', folder:'folder', file:'paperclip' }[kind] || 'paperclip';
+    return `<svg class="fx-file-ic fx-file-${enc(kind||'file')}" aria-hidden="true"><use href="#i-${icon}"></use></svg>`;
+  }
   function _fxIcon(ext, type){
     const t = String(type || ''), e = String(ext || '').toLowerCase();
-    if(/image/.test(t) || /^(jpg|jpeg|png|gif|webp|avif|bmp|svg|heic)$/.test(e)) return '🖼️';
-    if(/video/.test(t) || /^(mp4|webm|mkv|mov|avi|m4v)$/.test(e)) return '🎬';
-    if(/audio/.test(t) || /^(mp3|m4a|aac|flac|wav|ogg|opus)$/.test(e)) return '🎵';
-    if(/pdf/.test(t) || e === 'pdf') return '📕';
-    if(/zip|compress|tar|gzip|7z|rar/.test(t) || /^(zip|7z|rar|tar|gz|xz|zst)$/.test(e)) return '📦';
-    if(/text|json|xml|csv/.test(t) || /^(txt|md|log|csv|json|xml|yml|yaml|doc|docx|odt)$/.test(e)) return '📄';
-    return '📎';
+    if(/image/.test(t) || /^(jpg|jpeg|png|gif|webp|avif|bmp|svg|heic)$/.test(e)) return _fxFileGlyph('image');
+    if(/video/.test(t) || /^(mp4|webm|mkv|mov|avi|m4v)$/.test(e)) return _fxFileGlyph('video');
+    if(/audio/.test(t) || /^(mp3|m4a|aac|flac|wav|ogg|opus)$/.test(e)) return _fxFileGlyph('audio');
+    if(/pdf/.test(t) || e === 'pdf') return _fxFileGlyph('pdf');
+    if(/zip|compress|tar|gzip|7z|rar/.test(t) || /^(zip|7z|rar|tar|gz|xz|zst)$/.test(e)) return _fxFileGlyph('archive');
+    if(/text|json|xml|csv/.test(t) || /^(txt|md|log|csv|json|xml|yml|yaml|doc|docx|odt)$/.test(e)) return _fxFileGlyph('document');
+    return _fxFileGlyph('file');
   }
   /* The column header. It is rendered INSIDE the grid rather than above it because it carries the
    * sort arrow, so it has to repaint when the sort changes — and the grid is what repaints. */

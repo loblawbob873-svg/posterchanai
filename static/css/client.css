@@ -2374,6 +2374,12 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
    icon space". 96px with a 56px glyph is the proportion an OS icon has — the art fills its box, and
    a row holds more files. */
 .file-icon{display:flex;flex-direction:column;align-items:center;justify-content:center;height:96px;gap:2px;font-size:56px;background:none}
+.fx-file-ic{width:58px;height:58px;fill:none;stroke:currentColor;stroke-width:1.55;stroke-linecap:round;stroke-linejoin:round;
+  color:var(--cyan,#5ff);filter:drop-shadow(0 0 8px rgba(0,240,255,.22));pointer-events:none}
+.fx-file-image{color:#72e6ff}.fx-file-video{color:#c592ff}.fx-file-audio{color:#ff70c8}
+.fx-file-pdf{color:#ff657f}.fx-file-archive{color:#ffc65c}.fx-file-document{color:#9db9ff}
+.fx-file-folder{color:#ffc65c}.fx-file-file{color:var(--muted)}
+.fx-ic .fx-file-ic{width:22px;height:22px;filter:none}
 /* NO TYPE CAPTION UNDER THE ICON. No OS prints "PDF" beneath a document; the glyph says what it is
    and the filename carries the extension. It cost a line of every tile and said nothing new. */
 .files-grid:not(.details) .file-icon span{display:none}
