@@ -75,6 +75,25 @@ def test_concord_has_honest_creation_and_public_discovery_empty_states():
     assert 'cc-public-room' in CONCORD_CSS
 
 
+def test_created_and_joined_communities_survive_browser_storage_loss():
+    assert 'async function persistArmadaMembership(p,room)' in CONCORD
+    assert 'await p.nip44enc(viewer.pubkey,JSON.stringify(list))' in CONCORD
+    assert 'await p.publish(13302,content,[])' in CONCORD
+    assert 'await persistArmadaMembership(p,room)' in CONCORD
+    assert 'recoverOwnedInvite(p,item)' in CONCORD
+    assert "item.source.pubkey!==viewer.pubkey" in CONCORD
+
+
+def test_chat_scroll_is_keyed_by_room_and_survives_profile_link_navigation():
+    assert "sessionStorage.getItem('pc.concord.scroll.'+key)" in CONCORD
+    assert "room&&(room.communityId||room.naddr||room.url)" in CONCORD
+    assert "scroller.querySelectorAll('a')" in CONCORD
+    assert "!document.body.classList.contains('concord-view')" in CONCORD
+    assert "['ai-msgs','dm-msgs']" in APP
+    assert "inner['cc-messages']" in APP
+    assert "pos&&pos.bottom?el.scrollHeight" in APP
+
+
 def test_concord_ctrl_or_cmd_enter_sends_without_breaking_plain_enter():
     assert 'bind(me);' in CONCORD and 'function bind(me)' in CONCORD
     assert "e.key==='Enter'||e.code==='Enter'" in CONCORD

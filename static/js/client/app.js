@@ -2954,23 +2954,25 @@
    * Inventing a URL for every view would put forty private paths in the address bar and in the PWA's
    * scope. The screen rides in the entry's STATE instead, beside the feed offset — invisible, exact,
    * and popped back by the handler in bindGlobalsOnce. */
-  function _navState(view){
-    let top = 0;
-    try{ const f = $('#feed'); top = (f && f.scrollTop) || 0; }catch(_){ }
-    const inner = {};
-    /* Chat-style apps scroll inside #feed. Persist those panes in the history entry too; recording
-       only feed.scrollTop (always zero there) made a profile/link round-trip return halfway through
-       Concord, DMs, and AI conversations. IDs are deliberate stable restore points. */
+  function _innerChatScrollState(){
+    const inner={};
     try{
       ['ai-msgs','dm-msgs'].forEach(id=>{ const el=document.getElementById(id); if(!el)return; inner[id]={top:el.scrollTop,bottom:el.scrollHeight-el.scrollTop-el.clientHeight<80}; });
       const cc=document.querySelector('.cc-messages'); if(cc)inner['cc-messages']={top:cc.scrollTop,bottom:cc.scrollHeight-cc.scrollTop-cc.clientHeight<80};
     }catch(_){}
+    return inner;
+  }
+  function _navState(view){
+    let top = 0;
+    try{ const f = $('#feed'); top = (f && f.scrollTop) || 0; }catch(_){ }
     let anchor = null;
     /* Pixels are only a fallback for a timeline. Between opening a post and pressing Back, a live
      * event or a newly-resolved card can change everything above the reader. Preserve the keyed
      * first-visible post as well, so Back returns to the same post rather than merely reusing an
      * offset in a changed list. `_tlAnchor` is a function declaration and is available here. */
     try{ if(_TL_TABS.indexOf(view) >= 0) anchor = _tlAnchor($('#feed')); }catch(_){ }
+    /* Chat apps scroll inside #feed, so feed.scrollTop cannot preserve their position. */
+    const inner=_innerChatScrollState();
     return { pcv: view || null, top, anchor, inner };
   }
   // Stamp the entry we are LEAVING. The empty url argument keeps the current one — this must never
