@@ -136,14 +136,16 @@ class TooBigForMms(unittest.TestCase):
         self.assertTrue(ok, "an older build could not send at all")
         self.assertTrue(calls_of(res, "sendMms"))
 
-    def test_a_failed_upload_is_reported_and_nothing_is_sent(self):
-        """The one thing that must never happen is a message the sender believes went and did not.
-        A link that was never uploaded is exactly that, so the failure is surfaced instead."""
+    def test_a_disconnected_file_store_does_not_disable_carrier_mms(self):
+        """Blossom and the carrier are independent networks. An ordinary camera photo exceeds the
+        conservative MMS threshold, but losing the optional encrypted-link upload must not disable
+        the phone radio too. Fall through to the real MMS transport and let it resize or report its
+        own carrier error."""
         res = run(steps=["sendfile:+15550100:%d" % (900 * KB)], mmsLimit=300 * KB, uploadFails=True)
-        ok, why = result(res)[1], result(res)[2]
-        self.assertFalse(ok, "a failed upload was reported as sent")
-        self.assertIn("upload", why.lower())
-        self.assertFalse(calls_of(res, "send"), "a link to nothing was texted anyway")
+        self.assertTrue(calls_of(res, "sendMms"),
+                        "an offline file store prevented the carrier MMS attempt")
+        self.assertFalse(calls_of(res, "send"), "a link to nothing was texted")
+        self.assertTrue(result(res)[1], result(res))
 
 
 if __name__ == "__main__":

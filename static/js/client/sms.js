@@ -1073,7 +1073,16 @@
     if(!PC.uploadSharedEnc) return null;
     let ref = '';
     try{ ref = await PC.uploadSharedEnc(file); }
-    catch(e){ return { ok:false, error:'could not upload the file: ' + String(e && e.message || e) }; }
+    catch(_){
+      /* OFFLINE MUST NOT DISABLE THE PHONE'S RADIO. A normal camera photo is almost always larger
+       * than a carrier MMS ceiling, so the preferred encrypted-link route is attempted first. But
+       * Blossom/relay connectivity and carrier connectivity are independent: rejecting here made
+       * Add photo silently depend on the account being online even while SMS itself worked. `null`
+       * means "this optional route is unavailable" and makes send() try the actual MMS transport.
+       * The MMS library will resize for the carrier; if that transport rejects it, its own error is
+       * the one the person needs to see. */
+      return null;
+    }
     const link = shareLinkFor(ref);
     if(!link) return null;
     const P = plug('send');
