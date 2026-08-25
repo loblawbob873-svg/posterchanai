@@ -10,6 +10,16 @@
   const PC=()=>window.__PC;
   const CORD_RELAYS=['wss://jskitty.com/nostr','wss://asia.vectorapp.io/nostr','wss://relay.ditto.pub','wss://relay.dreamith.to'];
   const DISCOVER_RELAYS=['wss://relay.ditto.pub','wss://relay.dreamith.to'];
+  async function cordQuery(p,relays,filters,{timeout=8000,max=8}={}){
+    /* queryFrom intentionally skips relays already owned by the shared pool. Always ask both paths:
+       otherwise opening a room can silently omit the newest wraps from whichever relay is connected. */
+    const jobs=[];
+    if(p.relayQuery)jobs.push(Promise.resolve(p.relayQuery(filters,timeout)).catch(()=>[]));
+    if(p.relayQueryFrom)jobs.push(Promise.resolve(p.relayQueryFrom(relays,filters,{timeout,max})).catch(()=>[]));
+    const batches=await Promise.all(jobs),byId=new Map();
+    for(const ev of batches.flat())if(ev&&ev.id)byId.set(ev.id,ev);
+    return [...byId.values()];
+  }
   const state={ community:null, channel:null };
   let replyTarget=null, reactionTarget=null;
   let discovered=[], discoveryStarted=false, discoveryLoaded=false, membershipStarted=false;
@@ -138,7 +148,7 @@
     try{
       const room=await hydrateInvite(p,item.url),bundle=room.cord.bundle,reader=window.PosterCordReader;
       const seed=reader.inspectControl(bundle,[]),relays=[...new Set([...(bundle.relays||[]),...CORD_RELAYS])].slice(0,8);
-      const wraps=await p.relayQueryFrom(relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8});
+      const wraps=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8});
       const info=reader.inspectControl(bundle,wraps||[]);
       item.name=info.name||item.name; item.description=info.description||item.description;
       if(info.icon)item.icon=typeof info.icon==='string'?info.icon:await decryptImagePointer(info.icon);
@@ -188,7 +198,7 @@
     const loadKey=room.communityId||room.naddr; if(roomLoads.has(loadKey))return roomLoads.get(loadKey);
     const job=(async()=>{
       const seed=reader.inspectControl(bundle,[]), relays=[...new Set([...(bundle.relays||[]),...CORD_RELAYS])].slice(0,8);
-      const controlWraps=await p.relayQueryFrom(relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8});
+      const controlWraps=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8});
       const info=reader.inspectControl(bundle,controlWraps||[]);
       roomControls.set(loadKey,controlWraps||[]);
       room.name=info.name||room.name; room.description=info.description||room.description;
@@ -198,11 +208,13 @@
       if(!room.channels.length)throw new Error('the control stream returned no readable channels');
       rooms[index]=room; save(rooms);
       for(const channel of room.channels){
-        const wraps=await p.relayQueryFrom(relays,[{kinds:[1059],authors:channel.streamPubkeys,limit:1000}],{timeout:10000,max:8});
+        const wraps=await cordQuery(p,relays,[{kinds:[1059],authors:channel.streamPubkeys,limit:1000}],{timeout:10000,max:8});
         const opened=await reader.inspectChat(bundle,controlWraps||[],channel.id,wraps||[]);
         const reactions=new Map(opened.reactions||[]),reactionIds=new Map(opened.reactionIds||[]),msgs=(opened.messages||[]).map(m=>{ const pr=p.profOf?p.profOf(m.pubkey):{},rs={},ri={}; for(const [emoji,people] of reactions.get(m.id)||[])rs[emoji]=people;for(const [emoji,entries] of reactionIds.get(m.id)||[])ri[emoji]=Object.fromEntries(entries); return {id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:m.text,at:m.at,kind:m.kind,tags:m.tags||[],reactions:rs,reactionIds:ri,remote:true}; });
         const msgById=new Map(msgs.map(m=>[m.id,m])); for(const m of msgs){if(m.kind!==1111)continue;const parentId=((m.tags||[]).find(t=>t[0]==='e')||[])[1],parent=msgById.get(parentId);if(parent)m.reply={id:parent.id,by:parent.by,text:parent.text};}
-        saveTestMessages(channelStoreId(room,channel.name),msgs);
+        const storeId=channelStoreId(room,channel.name),prior=testMessages(storeId),merged=new Map(prior.map(m=>[messageId(m),m]));
+        for(const m of msgs)merged.set(m.id,{...(merged.get(m.id)||{}),...m});
+        saveTestMessages(storeId,[...merged.values()].sort((a,b)=>Number(a.at)-Number(b.at)));
       }
       room.cord.hydrated=true; rooms[index]=room; save(rooms);
       render();
@@ -215,14 +227,14 @@
     const channel=(room.channels||[]).find(c=>c.name===channelName); if(!channel||!channel.id)throw new Error('channel key is unavailable');
     const loadKey=room.communityId||room.naddr,relays=[...new Set([...(bundle.relays||[]),...CORD_RELAYS])].slice(0,8);
     let controlWraps=roomControls.get(loadKey);
-    if(!controlWraps){ const seed=reader.inspectControl(bundle,[]); controlWraps=await p.relayQueryFrom(relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8}); roomControls.set(loadKey,controlWraps||[]); }
+    if(!controlWraps){ const seed=reader.inspectControl(bundle,[]); controlWraps=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8}); roomControls.set(loadKey,controlWraps||[]); }
     const made=await reader.createChatWrap(bundle,controlWraps||[],channel.id,text,viewer.pubkey,p.signTemplate,extraTags,kind);
     const accepted=await p.relayPublishTo(relays,made.wrap); if(!accepted)throw new Error('community relays rejected the message');
     return made;
   }
   async function refreshActiveChannel(p){
     if(liveBusy||state.community==null||!document.body.classList.contains('concord-view'))return; liveBusy=true;
-    try{ const rooms=saved(),room=rooms[state.community],channel=room&&(room.channels||[]).find(c=>c.name===(state.channel||'general')),bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader;if(!room||!channel||!bundle||!reader)return; const loadKey=room.communityId||room.naddr,controlWraps=roomControls.get(loadKey);if(!controlWraps)return; const relays=[...new Set([...(bundle.relays||[]),...CORD_RELAYS])].slice(0,8),storeId=channelStoreId(room,channel.name),prior=testMessages(storeId),since=Math.max(0,Math.floor((prior.reduce((n,m)=>Math.max(n,Number(m.at)||0),0)-10000)/1000)),wraps=await p.relayQueryFrom(relays,[{kinds:[1059],authors:channel.streamPubkeys,since,limit:250}],{timeout:6000,max:8}),opened=await reader.inspectChat(bundle,controlWraps,channel.id,wraps||[]),byId=new Map(prior.map(m=>[messageId(m),m])); let changed=false; for(const m of opened.messages||[]){if(byId.has(m.id))continue;const pr=p.profOf?p.profOf(m.pubkey):{};byId.set(m.id,{id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:m.text,at:m.at,kind:m.kind,tags:m.tags||[],reactions:{},remote:true});changed=true;} for(const [target,groups] of opened.reactions||[]){const m=byId.get(target);if(!m)continue;const next={};for(const [emoji,people] of groups)next[emoji]=people;if(JSON.stringify(m.reactions||{})!==JSON.stringify(next)){m.reactions=next;changed=true;}} if(changed){const merged=[...byId.values()].sort((a,b)=>Number(a.at)-Number(b.at));preserveChatScroll(()=>{saveTestMessages(storeId,merged);render();});}
+    try{ const rooms=saved(),room=rooms[state.community],channel=room&&(room.channels||[]).find(c=>c.name===(state.channel||'general')),bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader;if(!room||!channel||!bundle||!reader)return; const loadKey=room.communityId||room.naddr,controlWraps=roomControls.get(loadKey);if(!controlWraps)return; const relays=[...new Set([...(bundle.relays||[]),...CORD_RELAYS])].slice(0,8),storeId=channelStoreId(room,channel.name),prior=testMessages(storeId),since=Math.max(0,Math.floor((prior.reduce((n,m)=>Math.max(n,Number(m.at)||0),0)-60000)/1000)),wraps=await cordQuery(p,relays,[{kinds:[1059],authors:channel.streamPubkeys,since,limit:500}],{timeout:6000,max:8}),opened=await reader.inspectChat(bundle,controlWraps,channel.id,wraps||[]),byId=new Map(prior.map(m=>[messageId(m),m])); let changed=false; for(const m of opened.messages||[]){if(byId.has(m.id))continue;const pr=p.profOf?p.profOf(m.pubkey):{};byId.set(m.id,{id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:m.text,at:m.at,kind:m.kind,tags:m.tags||[],reactions:{},remote:true});changed=true;} for(const [target,groups] of opened.reactions||[]){const m=byId.get(target);if(!m)continue;const next={};for(const [emoji,people] of groups)next[emoji]=people;if(JSON.stringify(m.reactions||{})!==JSON.stringify(next)){m.reactions=next;changed=true;}} if(changed){const merged=[...byId.values()].sort((a,b)=>Number(a.at)-Number(b.at));preserveChatScroll(()=>{saveTestMessages(storeId,merged);render();});}
     }catch(e){console.warn('Concord live sync failed',e);}finally{liveBusy=false;}
   }
   function startLiveSync(p){ if(liveTimer||!document.body.classList.contains)return; liveTimer=setInterval(()=>refreshActiveChannel(p),4000); }
