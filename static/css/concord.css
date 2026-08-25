@@ -40,3 +40,46 @@ body.concord-view .cc-reaction:hover{border-color:rgba(88,101,242,.7)!important;
 body.concord-view .cc-reaction.mine{border-color:#7785ff!important;background:rgba(88,101,242,.25)!important;color:#fff!important}
 body.concord-view .cc-reaction-picker{display:grid!important;grid-template-columns:repeat(4,32px)!important;width:auto!important;gap:2px!important;padding:6px!important;border-radius:11px!important;background:#20232d!important}
 @media(max-width:820px),(hover:none){body.concord-view .cc-message-actions{position:static!important;float:none!important;width:max-content!important;margin:7px 0 0 auto!important;opacity:1!important;visibility:visible!important;transform:none!important;box-shadow:none!important;background:rgba(255,255,255,.035)!important}body.concord-view .cc-message-actions button{width:34px!important;min-width:34px!important;max-width:34px!important;height:34px!important}body.concord-view .cc-reaction-picker{position:fixed!important;inset:auto 10px calc(74px + env(safe-area-inset-bottom)) auto!important;grid-template-columns:repeat(4,40px)!important}body.concord-view .cc-reaction-picker button{width:40px!important;height:40px!important}}
+
+/* Classic-mode phone shell: one real screen at a time, with a horizontal community switcher. */
+@media(max-width:820px){
+  body.concord-view .feed.feed-dm:has(.cc-app){padding:0!important;overflow:hidden!important}
+  body.concord-view .cc-app{position:fixed!important;z-index:39!important;inset:calc(58px + env(safe-area-inset-top)) 0 calc(61px + env(safe-area-inset-bottom)) 0!important;width:100vw!important;height:auto!important;min-height:0!important;display:flex!important;flex-direction:column!important;background:var(--cc-side)!important}
+  body.concord-view .cc-communities{display:flex!important;flex-direction:row!important;align-items:center!important;flex:0 0 62px!important;width:100%!important;max-width:none!important;height:62px!important;padding:7px 10px!important;gap:8px!important;overflow-x:auto!important;overflow-y:hidden!important;border:0!important;border-bottom:1px solid rgba(255,255,255,.07)!important;scrollbar-width:none!important}
+  body.concord-view .cc-communities::-webkit-scrollbar{display:none!important}
+  body.concord-view .cc-brand,body.concord-view .cc-server{flex:0 0 46px!important;width:46px!important;height:46px!important}
+  body.concord-view .cc-server.active:before{inset:auto auto -7px 6px!important;width:34px!important;height:3px!important;border-radius:3px 3px 0 0!important}
+  body.concord-view .cc-server.unread:after{inset:3px 3px auto auto!important;width:8px!important;height:8px!important;border-radius:50%!important}
+  body.concord-view .cc-channels{display:flex!important;flex:1 1 auto!important;width:100%!important;max-width:none!important;min-height:0!important;border:0!important}
+  body.concord-view .cc-channel-list{padding:8px 10px 12px!important}
+  body.concord-view .cc-channel{min-height:50px!important;padding:10px 12px!important;border-radius:10px!important;font-size:16px!important}
+  body.concord-view .cc-section{padding:10px 11px 6px!important}
+  body.concord-view .cc-identity{padding-bottom:calc(8px + env(safe-area-inset-bottom))!important}
+  body.concord-view .cc-app.show-chat{inset:0!important;z-index:45!important;height:100dvh!important;background:var(--cc-main)!important}
+  body.concord-view .cc-app.show-chat .cc-conversation{display:flex!important;position:absolute!important;inset:0!important;width:100%!important;height:100%!important;max-width:none!important}
+  body.concord-view .cc-app.show-chat .cc-communities,body.concord-view .cc-app.show-chat .cc-channels{display:none!important}
+  body.concord-view .cc-app.home-view #cc-back-channels{display:none!important}
+  body.concord-view .cc-conversation>header{flex:0 0 auto!important;min-height:calc(54px + env(safe-area-inset-top))!important;padding:env(safe-area-inset-top) 7px 0!important;gap:5px!important}
+  body.concord-view .cc-conversation>header .cc-hash,body.concord-view .cc-conversation>header .cc-visibility,body.concord-view #cc-publish-listing{display:none!important}
+  body.concord-view .cc-conversation>header>b{min-width:0!important;max-width:34vw!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;font-size:16px!important}
+  body.concord-view .cc-head-btn,body.concord-view .cc-mobile-back{flex:0 0 38px!important;width:38px!important;min-width:38px!important;height:38px!important}
+  body.concord-view .cc-messages{padding:12px 9px 8px!important;overscroll-behavior:contain!important}
+  body.concord-view .cc-message{gap:8px!important;padding:7px 2px!important;background:transparent!important}
+  body.concord-view .cc-message-avatar{flex-basis:30px!important;width:30px!important;height:30px!important}
+  body.concord-view .cc-message p{font-size:15px!important;line-height:1.42!important}
+  body.concord-view .cc-message-actions{gap:0!important;margin:4px 0 0 auto!important;padding:0!important;border:0!important;background:transparent!important}
+  body.concord-view .cc-message-actions .cc-quick-react,body.concord-view .cc-message-actions .cc-action-sep{display:none!important}
+  body.concord-view .cc-message-actions button{width:38px!important;min-width:38px!important;max-width:38px!important;height:34px!important;background:rgba(255,255,255,.045)!important}
+  body.concord-view .cc-compose{gap:2px!important;margin:0 6px calc(6px + env(safe-area-inset-bottom))!important;padding:4px!important;border-radius:14px!important}
+  body.concord-view .cc-compose-btn{flex-basis:40px!important;width:40px!important;min-width:40px!important;height:42px!important}
+  body.concord-view .cc-compose textarea{min-height:42px!important;padding:10px 4px!important;font-size:16px!important}
+  body.concord-view .cc-compose .btn{min-width:58px!important;padding:0 10px!important}
+  body.concord-view .cc-discover{align-self:flex-start!important;margin:0 auto!important;padding:8px 4px 18px!important}
+  body.concord-view .cc-discover>.concord-mark{width:48px!important;height:48px!important;border-radius:14px!important}
+  body.concord-view .cc-discover h2{font-size:22px!important}
+  body.concord-view .cc-primary-actions{margin:14px 0 22px!important;flex-wrap:wrap!important}
+  body.concord-view .cc-primary-actions .btn{flex:1 1 145px!important;min-height:44px!important}
+  body.concord-view .cc-public-room{grid-template-columns:42px minmax(0,1fr)!important;padding:10px!important}
+  body.concord-view .cc-public-room>strong{display:none!important}
+}
+@media(max-width:370px){body.concord-view #cc-call{display:none!important}body.concord-view .cc-conversation>header>b{max-width:30vw!important}body.concord-view .cc-compose #cc-emoji{display:none!important}}

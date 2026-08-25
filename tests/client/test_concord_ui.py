@@ -38,10 +38,21 @@ def test_concord_is_precached_and_old_bundles_self_heal_the_nav():
     assert "{ view:'concord', into:'#disc-sub'" in APP
 
 
+def test_classic_phone_concord_is_a_full_screen_drilldown_not_squeezed_desktop_columns():
+    assert "mobileChatOpen=false" in CONCORD
+    assert "mobileChatOpen||state.community==null?' show-chat'" in CONCORD
+    assert "mobileChatOpen=true; render(); scrollChatBottom()" in CONCORD
+    assert "mobileChatOpen=false; render()" in CONCORD
+    assert 'body.concord-view .cc-app{position:fixed!important' in CONCORD_CSS
+    assert 'flex-direction:row!important' in CONCORD_CSS
+    assert 'body.concord-view .cc-app.show-chat{inset:0!important' in CONCORD_CSS
+    assert 'body.concord-view .cc-message-actions .cc-quick-react' in CONCORD_CSS
+
+
 def test_concord_owns_a_versioned_stylesheet_so_stale_shell_css_cannot_unstyle_it():
     assert 'static/css/concord.css' in HTML
     assert "data-concord-css" in CONCORD
-    assert "concord.css?v=13" in CONCORD
+    assert "concord.css?v=14" in CONCORD
     assert '.cc-compose textarea:focus' in CONCORD_CSS
     assert 'box-shadow:none!important' in CONCORD_CSS
     assert "'/static/css/concord.css'" in (ROOT / "static/js/client/sw.js").read_text()

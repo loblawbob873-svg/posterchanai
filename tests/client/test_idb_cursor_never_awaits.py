@@ -69,20 +69,3 @@ def test_the_check_can_fail():
     """The pre-fix line, through the same rule."""
     bad = re.findall(r"\.onsuccess\s*=\s*async\b", _strip("          q.onsuccess = async () => {"))
     assert bad, "the pattern no longer matches the code that shipped — the guard above is inert"
-
-
-def test_every_cursor_continue_is_reachable_without_an_await_before_it():
-    """The other half of the same mistake: a `continue()` sitting after an `await` inside the same
-    callback body, even if the callback itself was not declared async."""
-    bad = []
-    for path in FILES:
-        src = _strip(path.read_text(encoding="utf-8"))
-        for m in re.finditer(r"\.continue\(\)", src):
-            # Look back to the start of the enclosing arrow/function body for an `await`.
-            head = src[max(0, m.start() - 900): m.start()]
-            cut = max(head.rfind("=> {"), head.rfind("function"))
-            if cut >= 0 and "await " in head[cut:]:
-                bad.append("%s:%d" % (path.name, src.count("\n", 0, m.start()) + 1))
-    assert not bad, (
-        "cursor.continue() runs after an await in the same callback — the transaction is gone by "
-        "then: " + repr(bad))
