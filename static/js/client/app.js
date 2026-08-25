@@ -991,6 +991,69 @@
     const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(ser));
     return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
   }
+  /* EVERY QUESTION THIS PAGE ASKS A NIP-07 EXTENSION GOES THROUGH HERE.
+   *
+   * THE BUG: signing in restores everything sealed to your own key AT ONCE — the notes library, the
+   * theme, the client prefs, the settings — which is dozens of `nip44.decrypt` calls in the same
+   * tick. They went straight at `window.nostr` with no queue, no coalescing and no timeout. An
+   * extension caps how many approval windows it will open (OURS at three: `open >= 3 return 'deny'`
+   * in extension/background.js) and past the cap it answers DENY WITHOUT OPENING A PROMPT. Three
+   * were asked about; everything else was refused invisibly. The result is a login where nothing
+   * arrives — no notes, the default theme — which reads exactly like a broken signer.
+   *
+   * THE SAME LESSON WAS ALREADY LEARNED ON THE OTHER TRANSPORT AND NEVER APPLIED HERE. Nip46 has
+   * carried a concurrency cap for a long time, with a comment saying "not hundreds, which is what
+   * made Amber drop requests". A browser extension is the same kind of peer: one process, a human
+   * behind it, and its own limits. This is that cap, for the transport that never got one.
+   *
+   * FIXING IT IN THE EXTENSION IS NOT ENOUGH, WHICH IS WHY IT IS FIXED HERE. That fix ships through
+   * AMO review, so a Firefox user runs the OLD extension for as long as the queue takes — and
+   * people use nos2x, Alby and others we do not ship at all. The page is the half we control.
+   *
+   * ONE IN FLIGHT UNTIL THE FIRST ANSWER, then six. The first call is the one that may open a
+   * window, so while it is outstanding exactly one question can be pending and no cap anywhere can
+   * be exceeded; the user sees ONE prompt instead of three plus silence. Once any call has come
+   * back, the permission is remembered and the rest no longer open windows, so the queue widens.
+   *
+   * IDENTICAL READS ARE ASKED ONCE. A decrypt is a pure function of (peer, ciphertext), so a
+   * hundred copies of one question is one call. Signing and ENCRYPTING are deliberately NOT
+   * coalesced: two identical-looking sign requests are two events that must each be signed, and an
+   * encrypt is randomised, so sharing an answer would be wrong rather than merely slower.
+   *
+   * AND EVERY CALL IS BOUNDED. A promise that never settles is not a rejection — the failure this
+   * whole file keeps re-learning — so a wedged extension would hang the login with nothing to
+   * catch. The bound sits ABOVE the extension's own 115s prompt timeout, so a human taking their
+   * time still wins and only a genuinely dead extension trips it. */
+  const _extGate = {
+    _cap: 1, _busy: 0, _q: [], _same: new Map(), _MS: 130000,
+    _pump(){
+      while(this._busy < this._cap && this._q.length){
+        const job = this._q.shift();
+        this._busy++;
+        let done = false;
+        const settle = (fn) => (v) => { if(done) return; done = true; this._busy--; fn(v); this._pump(); };
+        const to = setTimeout(settle(job.rej), this._MS,
+                              new Error('the signer extension did not answer'));
+        let p; try{ p = Promise.resolve(job.run()); }catch(e){ p = Promise.reject(e); }
+        p.then(v => { clearTimeout(to); settle(job.res)(v); },
+               e => { clearTimeout(to); settle(job.rej)(e); });
+      }
+    },
+    call(key, run){
+      if(key){ const hit = this._same.get(key); if(hit) return hit; }
+      let p = new Promise((res, rej) => { this._q.push({ run, res, rej }); this._pump(); });
+      // Widen on the first ANSWER, not on the first success: a remembered `deny` comes back as a
+      // rejection and is just as good a proof that no window is being opened any more.
+      p = p.then(v => { if(this._cap < 6) this._cap = 6; return v; },
+                 e => { if(this._cap < 6) this._cap = 6; throw e; });
+      if(key){
+        this._same.set(key, p);
+        p.catch(()=>{}).then(()=>{ if(this._same.get(key) === p) this._same.delete(key); });
+      }
+      return p;
+    },
+  };
+
   async function _nip17wrapVia(myPk, nip44enc, signEvent, peer, text){
     if(!InstEmoji.loaded && InstEmoji.SC_RE.test(text||'')) { try{ await InstEmoji.load(); }catch(_){ } }
     const now = Math.floor(Date.now()/1000);
@@ -1106,18 +1169,23 @@
       };
     }
     if (mode === 'nip07'){
+      const X = _extGate;
       const s = {
         mode, pubkey,
-        signEvent: (tpl) => window.nostr.signEvent(tpl),
-        nip04enc: (peer, txt) => window.nostr.nip04.encrypt(peer, txt),
-        nip04dec: (peer, ct) => window.nostr.nip04.decrypt(peer, ct),
+        signEvent: (tpl) => X.call(null, () => window.nostr.signEvent(tpl)),
+        nip04enc: (peer, txt) => X.call(null, () => window.nostr.nip04.encrypt(peer, txt)),
+        nip04dec: (peer, ct) => X.call('4d\u0000'+peer+'\u0000'+ct,
+                                       () => window.nostr.nip04.decrypt(peer, ct)),
       };
       if (window.nostr && window.nostr.nip44){   // gift-wrapped DMs via the extension's NIP-44
-        s.nip17wrap = (peer, text) => _nip17wrapVia(pubkey, (r,pt)=>window.nostr.nip44.encrypt(r,pt),
-                                                    (tpl)=>window.nostr.signEvent(tpl), peer, text);
-        s.nip17unwrap = (wrap) => _nip17unwrapVia((p,ct)=>window.nostr.nip44.decrypt(p,ct), wrap);
-        s.nip44dec = (peer, ct) => window.nostr.nip44.decrypt(peer, ct);
-        s.nip44enc = (peer, text) => window.nostr.nip44.encrypt(peer, text);
+        const dec = (p2, ct) => X.call('44d\u0000'+p2+'\u0000'+ct,
+                                       () => window.nostr.nip44.decrypt(p2, ct));
+        const enc = (r, pt) => X.call(null, () => window.nostr.nip44.encrypt(r, pt));
+        s.nip17wrap = (peer, text) => _nip17wrapVia(pubkey, enc,
+                                                    (tpl)=>s.signEvent(tpl), peer, text);
+        s.nip17unwrap = (wrap) => _nip17unwrapVia(dec, wrap);
+        s.nip44dec = dec;
+        s.nip44enc = enc;
       }
       return s;
     }
@@ -4385,7 +4453,7 @@
       restoreClientPrefsNostr();   // restore Nostr-synced client prefs (data-saver / tap-to-load images)
       Promise.allSettled([fetchFollows(), fetchMutes(), fetchPins(), fetchBookmarks(), fetchMyProfile()])
         .then(()=>{ if(!GUEST && ['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
-      watchNotifications(); watchDeletions(); startCallSignaling(); loadPubChats();
+      watchNotifications(); watchDeletions(); startCallSignaling();
       // Folder sync: attach the watchers for any folder this device maps. Deliberately NOT a timer —
       // the adapter notifies, and shouldSync decides whether that is worth a sweep right now. On a
       // platform with no watcher (Android's SAF has none worth having) this is a no-op and sync
@@ -6266,7 +6334,7 @@
       _notifScrollTop = true; }
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     _syncRightbar();
-    $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', concord:'Concord', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', shorts:'Shorts 🎬', communities:'Communities', calls:'Calls 📞', pics:'Pics', chat:'Chat', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', code:'PosterChan Code 💻', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', concord:'Concord', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', shorts:'Shorts 🎬', communities:'Communities', calls:'Calls 📞', pics:'Pics', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', code:'PosterChan Code 💻', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     if(v==='signer') $('#view-title').textContent = 'Signer';
     // "New post" is a fixed sidebar button now, so it needs no per-view toggling — it never appears in a
     // view header again. (The ▦ media toggle moved into the timeline's tab row.)
@@ -6320,13 +6388,9 @@
     // j/k/Enter belong to the mail list. Left bound, they act on a screen that is no longer there —
     // this used to be released when the Email TAB lost focus, and the tab is gone.
     if(VIEW!=='mail' && _mailKeysOff) _mailKeysOff();
-    if(VIEW!=='channel' && _chatSub){ try{ Relay.close(_chatSub); }catch(_){} _chatSub=null; }   // leaving a chat room → drop its live sub
-    if(VIEW!=='channel' && _chatReactPoll){ clearTimeout(_chatReactPoll); _chatReactPoll=null; }   // …and its reaction poll
-    if(VIEW!=='group' && _groupPoll){ clearTimeout(_groupPoll); _groupPoll=null; }   // leaving a NIP-29 group → stop polling its relay
     if(VIEW!=='stream' && _streamChatSub){ _closeStreamChat(); }   // leaving a live stream → drop its 1311 chat sub (+ its buffers)
     _parkOffscreenTimelines();   // …and leaving the timeline drops the firehose — see the function
 
-    feed.classList.toggle('feed-chat', VIEW==='channel' || VIEW==='group');   // never true here (both opened directly) → clears on leave
     if(VIEW!=='home' && VIEW!=='global') _hidePill();
     // Full-height layout: the same one Messages uses. Email is a two-pane mail client with its
     // own scrolling regions, so it must not sit inside the timeline's scroll container either.
@@ -6414,7 +6478,6 @@
     if (VIEW==='communities') return renderCommunities();
     if (VIEW==='pics') return renderPics();
     if (VIEW==='shorts') return renderShorts();
-    if (VIEW==='chat') return renderChatrooms();
     if (VIEW==='torrents') return renderTorrents();
     if (VIEW==='repos') return renderRepos();
     if(renderModuleView('news','news.js','PCNews','render')) return;
@@ -6491,8 +6554,8 @@
     // Community DEFINITIONS (34550) belong in Communities, not Social. One prolific creator can
     // otherwise turn Nostrverse into a wall of directory-cover images. Channel messages (42) stay
     // out too; channel definitions are compact enough to remain discoverable here.
-    if (VIEW==='home') return [{ kinds:[1,6,1068,5,30023,40], authors:[...FOLLOWS], limit:_flim(80) }];
-    return [{ kinds:[1,6,1068,5,30023,40], limit:_flim(120) }];
+    if (VIEW==='home') return [{ kinds:[1,6,1068,5,30023], authors:[...FOLLOWS], limit:_flim(80) }];
+    return [{ kinds:[1,6,1068,5,30023], limit:_flim(120) }];
   }
   // NIP-09: a kind-5 removes the AUTHOR'S OWN events it e-tags. Drop them from the cache, the feed,
   // AND notifications (a deleted bot post/reply must stop showing as a notification too).
@@ -6533,7 +6596,7 @@
   const _NEG_WINDOW = 3*24*3600;   // negentropy reconciles the home feed over this recent window (bounded)
   const _NEG_MAX_FETCH = 800;      // if the delta exceeds this (cold cache), use the plain limit pull instead
   let _tlGen = 0;                  // render generation — invalidates a slow async sync from a superseded render
-  const _TL_KINDS = [1,6,1068,5,30023,40];
+  const _TL_KINDS = [1,6,1068,5,30023];
   // The two views that hold a firehose subscription in `subs` — the whole set _parkOffscreenTimelines
   // is allowed to touch. Named once so "which subs may be closed" is a fact of the file rather than a
   // literal repeated at the one call site that could quietly grow to include somebody's DMs.
@@ -7936,8 +7999,8 @@
     if(_tl.loading || _tl.done || !_tl.oldest) return;
     _tl.loading=true; const view=VIEW; const feed=$('#feed'); loadSentinel(feed);
     const until=_tl.oldest;
-    const filt = view==='home' ? [{ kinds:[1,6,1068,30023,40], authors:[...FOLLOWS], until:until-1, limit:_flim(50) }]
-                               : [{ kinds:[1,6,1068,30023,40], until:until-1, limit:_flim(60) }];
+    const filt = view==='home' ? [{ kinds:[1,6,1068,30023], authors:[...FOLLOWS], until:until-1, limit:_flim(50) }]
+                               : [{ kinds:[1,6,1068,30023], until:until-1, limit:_flim(60) }];
     let evs=[], complete=false; try{ evs=await Relay.query(filt); complete=(evs.complete!==false); }catch(_){}
     clearSentinel(feed);
     if(VIEW!==view){ _tl.loading=false; return; }   // user navigated away mid-fetch
@@ -10834,662 +10897,6 @@
     box.innerHTML = posts.length ? posts.map(x=>noteCard(x)).join('') : '<div class="empty">No posts in this community yet.</div>';
     decorateProfiles();
   }
-  // ---------- public chat (NIP-28: kind 40 channel · 41 metadata · 42 message) ----------
-  // Pure Nostr, NO DB: a channel IS a kind-40 event (its id = the channel id); messages are kind-42
-  // with a root `e`-tag to that id. Instance-local — only WoT members' channels/messages reach our
-  // relay. Live messages kept in _chatMsgs (Store.feed() is kind-1/6 only, so we hold our own set).
-  let _chatSub=null, _chatId=null, _chatMsgs=new Map();
-  // Engagement on chat messages, shared by NIP-28 channels + NIP-29 groups:
-  //  _chatReacts:  targetMsgId → Map(emoji → Set(reactor-pubkey))  ('+'/'' → ❤️, '-' → 👎)
-  //  _chatZaps:    targetMsgId → { sats, n }   (kind-9735 zap receipts)
-  //  _chatDeleted: targetMsgId → Set(deleter-pubkey)  (kind-5; honoured only when deleter == author)
-  //  _chatAuxSeen: processed kind-5/9735 ids, so re-polls don't double-count zaps
-  //  _chatReplyTo: id of the message the compose box is replying to (null = top-level)
-  let _chatReacts=new Map(), _chatZaps=new Map(), _chatDeleted=new Map(), _chatAuxSeen=new Set();
-  let _chatReactPoll=null, _chatReplyTo=null;
-  // A kind-42's root channel. Prefer the "root"-marked `e` tag: a REPLY inside a channel carries a second
-  // `e` (the message replied to), so taking tags[0] blindly attributes it to whichever came first.
-  function _chatRoot(ev){ const es=(ev.tags||[]).filter(t=>t[0]==='e'&&t[1]); return ((es.find(t=>t[3]==='root')||es[0]||[])[1])||''; }
-
-  // ---------- joined channels (NIP-51 kind-10005 "public chats") + unread badges ----------
-  // Notifications on Nostr are just a subscription: our notification subs all filter on '#p':[me], so a
-  // channel message only reaches you if the sender TAGGED you. To be told about ordinary chatter you
-  // subscribe to the CHANNEL instead — which needs a durable answer to "which channels do I care about".
-  // That's kind 10005: e-tags of the kind-40s you've joined, so the list follows you across devices.
-  let PUBCHATS=new Set();          // channel ids joined
-  let _pubChatsReady=false;        // a COMPLETE read landed → safe to publish an edited list
-  let _chatUnreadIds=new Map();    // channel id → Set(unread message ids)   (ids, not a counter: re-polls double-count)
-  let _chatJoinSub=null;
-  // Read state is per DEVICE (localStorage), deliberately: it changes on every glance at a room, and
-  // syncing it would mean a relay write per read — the DM unread counter works the same way.
-  // Held in memory and written through on a timer: ClientSettings.get/set JSON-parses (and re-stringifies)
-  // the WHOLE settings blob per call, and this is touched once per arriving message. A tab closed inside
-  // the write window re-shows a message as unread — the cheapest possible way to be wrong.
-  let _chatSeenMem=null, _chatSeenWT=null;
-  function _chatSeen(){ if(!_chatSeenMem){ try{ _chatSeenMem=ClientSettings.get('chatSeen',{})||{}; }catch(_){ _chatSeenMem={}; } } return _chatSeenMem; }
-  function _setChatSeen(id, ts){
-    const m=_chatSeen(); if((m[id]||0)>=ts) return; m[id]=ts;
-    if(_chatSeenWT) return;
-    _chatSeenWT=setTimeout(()=>{ _chatSeenWT=null; try{ ClientSettings.set('chatSeen', _chatSeenMem); }catch(_){} }, 1000);
-  }
-  async function loadPubChats(){
-    if(GUEST || !ME) return;
-    let evs=[]; try{ evs=await Relay.query([{ kinds:[10005], authors:[ME.pubkey], limit:1 }]); }catch(_){ return; }
-    // A PARTIAL read (some relay never EOSE'd) is indistinguishable from "you've joined nothing" by
-    // length alone — and publishing an edit on the strength of that is exactly how the follows/mute
-    // lists got erased before. Stay un-ready instead: reads still work, only writes are blocked.
-    if(!evs.complete) return;
-    const ev=[...evs].sort((a,b)=>b.created_at-a.created_at)[0];
-    PUBCHATS=new Set(ev?ev.tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1]):[]);
-    _pubChatsReady=true;
-    try{ ClientSettings.set('pubChatsCount', PUBCHATS.size); }catch(_){}   // feeds publish()'s shrink guard
-    // A channel joined on ANOTHER device has no read stamp here, and without one it would count its
-    // entire backlog as unread the first time this device sees it. Stamp only those — stamping every
-    // joined channel would mark everything read on each launch, which is precisely the messages you
-    // opened the app to find.
-    { const now=Math.floor(Date.now()/1000), seen=_chatSeen(); PUBCHATS.forEach(id=>{ if(!seen[id]) _setChatSeen(id, now); }); }
-    _watchJoinedChats();
-  }
-  async function savePubChats(){
-    if(!_pubChatsReady) return false;   // callers ensure readiness first (see toggleJoinChannel)
-    const rurl=(CFG&&CFG.relay_url)||'';
-    try{ const r=await publish(10005, '', [...PUBCHATS].map(id=>['e', id, rurl]));   // failure toast by publish()
-      if(r && r.ok){ try{ ClientSettings.set('pubChatsCount', PUBCHATS.size); }catch(_){} return true; }
-      return false; }
-    catch(e){ return false; }
-  }
-  async function toggleJoinChannel(e){
-    // Get a trustworthy list FIRST, then apply the toggle on top of it. Retrying inside savePubChats
-    // instead would be a wipe: the reload would return the channels you joined elsewhere and the
-    // optimistic local set — built while we had no list at all — would overwrite them.
-    if(!_pubChatsReady) await loadPubChats();   // a flaky relay at boot must not leave Join dead all session
-    if(!_pubChatsReady){ toast('still loading your channel list — try again in a moment'); _paintChanHead(e); return; }
-    const joined=PUBCHATS.has(e.id);
-    if(joined) PUBCHATS.delete(e.id); else { PUBCHATS.add(e.id); _setChatSeen(e.id, Math.floor(Date.now()/1000)); }
-    const ok=await savePubChats();
-    if(!ok){ if(joined) PUBCHATS.add(e.id); else PUBCHATS.delete(e.id); }   // publish failed → don't lie about the state
-    else { toast(joined?'left the channel':'joined — you’ll be told about new messages'); _watchJoinedChats(); }
-    _paintChanHead(e);
-  }
-  // ONE live subscription across every joined channel, re-armed whenever the set changes. `since` is the
-  // oldest read stamp, so a room you haven't opened in a while still reports what you missed.
-  function _watchJoinedChats(){
-    if(_chatJoinSub){ try{ Relay.close(_chatJoinSub); }catch(_){} _chatJoinSub=null; }
-    const ids=[...PUBCHATS];
-    _chatUnreadIds.clear(); bumpChat(); _paintChatUnreadPills();   // the sub below refills it; until then the badge must not show a stale count
-    if(!ids.length) return;
-    const seen=_chatSeen(), now=Math.floor(Date.now()/1000);
-    const since=Math.min(...ids.map(id=>seen[id]||now));
-    const take=ev=>{
-      if(!ev || ev.kind!==42 || ev.pubkey===ME.pubkey) return;              // your own message isn't news
-      const root=_chatRoot(ev); if(!root || !PUBCHATS.has(root)) return;
-      if(VIEW==='channel' && _chatId===root){ _setChatSeen(root, ev.created_at); return; }   // you're reading it right now
-      if(ev.created_at<=(_chatSeen()[root]||0) || isMutedView(ev)) return;
-      let s=_chatUnreadIds.get(root); if(!s){ s=new Set(); _chatUnreadIds.set(root, s); }
-      if(s.has(ev.id)) return; s.add(ev.id);
-      bumpChat(); _paintChatUnreadPills();
-    };
-    try{ _chatJoinSub=Relay.subscribe([{ kinds:[42], '#e':ids, since }], { onEvent:take, live:true }); }catch(_){}
-  }
-  function _chatUnreadTotal(){ let n=0; _chatUnreadIds.forEach(s=>n+=s.size); return n; }
-  function _chatUnreadOf(id){ const s=_chatUnreadIds.get(id); return s?s.size:0; }
-  // Patch the pills on the cards already on screen. renderChatrooms() is a full rebuild behind THREE relay
-  // queries, so re-running it per arriving message would hammer the relay over a number that changed by one.
-  function _paintChatUnreadPills(){
-    if(VIEW!=='chat') return;
-    $$('.channel-card').forEach(card=>{
-      const thumb=card.querySelector('.stream-thumb'); if(!thumb) return;
-      const n=_chatUnreadOf(card.dataset.id); let pill=thumb.querySelector('.chat-unread');
-      if(!n){ if(pill) pill.remove(); return; }
-      if(!pill){ pill=document.createElement('span'); pill.className='chat-unread'; thumb.appendChild(pill); }
-      pill.textContent=n>99?'99+':n;
-    });
-  }
-  function bumpChat(){
-    const n=_chatUnreadTotal();
-    $$('#chat-badge,#chat-badge-m').forEach(b=>{ if(n){ b.textContent=n>99?'99+':n; b.classList.remove('hidden'); } else b.classList.add('hidden'); });
-    // Discover starts COLLAPSED, so a badge on the Chat sub-item alone is invisible to most people — an
-    // unread count you can't see isn't one. Roll it onto the group header while the group is closed.
-    const b=$('#chat-badge-d'), sub=$('#disc-sub');
-    if(b){ if(n && sub && sub.classList.contains('collapsed')){ b.textContent=n>99?'99+':n; b.classList.remove('hidden'); }
-           else b.classList.add('hidden'); }
-  }
-  // ---------- deleting a channel (NIP-09) ----------
-  // A channel IS an event, so its creator deletes it with a kind-5 — the relay author-gates that, so
-  // nobody can delete someone else's. PERSISTED locally as well, for the same reason streams are: a
-  // kind-40 also arrives from the firehose/other relays, which may lag or ignore the kind-5, and
-  // renderChatrooms re-queries them — without a tombstone the room simply comes back.
-  // What a kind-5 CANNOT do is remove the messages: those are other people's events. Deleting a room
-  // orphans them rather than erasing them, and the confirm text says so instead of implying otherwise.
-  let _deletedChans=new Set((()=>{ try{ return ClientSettings.get('deletedChans', []) || []; }catch(_){ return []; } })());
-  function _isChanDeleted(e){ return !!(e && _deletedChans.has(e.id)); }
-  async function _deleteChannel(e){
-    if(!ME || e.pubkey!==ME.pubkey){ toast('you can only delete a channel you created'); return; }
-    if(!await uiConfirm('Delete this channel? It’s removed from Nostr for everyone. Messages already posted in it are other people’s events and stay on the relays — they just won’t be reachable.',
-                        {ok:'Delete', danger:true})) return;
-    // Delete our own kind-41 edits alongside the kind-40, or the rename/picture we published outlives
-    // the channel it described.
-    const tags=[['e', e.id], ['k','40']];
-    { const mine=(_chan41.get(e.id)||new Map()).get(ME.pubkey); if(mine) tags.push(['e', mine.id]); }
-    try{
-      const r=await publish(5, '', tags, {quiet:true});
-      if(!(r && r.ok)){ toast('couldn’t reach the relay — the channel was NOT deleted, try again'); return; }
-      _deletedChans.add(e.id);
-      try{ ClientSettings.set('deletedChans', [..._deletedChans].slice(-300)); }catch(_){}
-      try{ if(Store.removeEvent) Store.removeEvent(e.id); }catch(_){}
-      _chan41.delete(e.id);
-      // You can't stay joined to a room that no longer exists — drop it from the list and re-arm the
-      // watcher, else it keeps a live sub open on a dead channel and counts unread for it forever.
-      if(PUBCHATS.delete(e.id)){ await savePubChats(); }
-      if(_chatUnreadIds.delete(e.id)) bumpChat();
-      if(_chatSub){ try{ Relay.close(_chatSub); }catch(_){} _chatSub=null; }
-      _watchJoinedChats();
-      toast('channel deleted'); switchView('chat');
-    }catch(_){ toast('couldn’t delete the channel'); }
-  }
-  // Clear a room's unread the moment you look at it, and remember how far you read.
-  function _markChatRead(id, msgs){
-    const top=(msgs||[]).reduce((a,x)=>Math.max(a, x.created_at||0), Math.floor(Date.now()/1000));
-    _setChatSeen(id, top);
-    if(_chatUnreadIds.delete(id)) bumpChat();
-  }
-  // A kind-40 is IMMUTABLE — NIP-28 edits are a separate kind-41 whose root `e` tag points at it, so a
-  // channel's live metadata is "the kind-40 content, overridden by the newest kind-41 BY ITS CREATOR".
-  // Kept PER AUTHOR rather than one-newest-per-channel: anyone may publish a 41 for anyone's channel, so
-  // a stranger's newer 41 would evict the owner's — and since the read below only trusts the owner's, the
-  // channel would silently snap back to its original name/picture for everybody.
-  let _chan41=new Map();   // channel id → Map(author pubkey → their newest kind-41)
-  function _recordChan41(ev){
-    const root=(ev.tags.find(t=>t[0]==='e')||[])[1]; if(!root) return;
-    let by=_chan41.get(root); if(!by){ by=new Map(); _chan41.set(root, by); }
-    const prev=by.get(ev.pubkey); if(prev && prev.created_at>=ev.created_at) return;
-    by.set(ev.pubkey, ev);
-  }
-  function _chanMeta(e){
-    let m={}; try{ m=JSON.parse(e.content||'{}')||{}; }catch(_){}
-    const up=(_chan41.get(e.id)||new Map()).get(e.pubkey);   // only the CREATOR's edit counts
-    if(up && up.created_at>=e.created_at){ try{ m={...m, ...(JSON.parse(up.content||'{}')||{})}; }catch(_){} }
-    return { name:(m.name||'').trim()||'(unnamed)', about:m.about||'', picture:m.picture||'' };
-  }
-  async function renderChatrooms(){
-    const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
-    // Instance-local: the relay holds many synced channel DEFINITIONS (kind-40) but only messages
-    // (kind-42) from WoT members. Showing 50 empty foreign channels is noise — list only channels
-    // that have activity HERE, plus your own, newest-active first.
-    let chans=[], msgs=[], metas=[];
-    try{ [chans, msgs, metas] = await Promise.all([ Relay.query([{ kinds:[40], limit:200 }]), Relay.query([{ kinds:[42], limit:500 }]), Relay.query([{ kinds:[41], limit:200 }]) ]); }catch(_){}
-    (metas||[]).forEach(_recordChan41);   // apply channel edits BEFORE any card is built
-    chans.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
-    if(VIEW!=='chat') return;
-    const active=new Map(); msgs.forEach(m=>{ const r=_chatRoot(m); if(r) active.set(r, Math.max(active.get(r)||0, m.created_at)); });
-    // A JOINED channel always lists, even with no local activity — you asked to be told about it, so it
-    // must not vanish from the one screen where you'd go to turn that off.
-    const live=chans.filter(c=> !_isChanDeleted(c));
-    const shown=live.filter(c=> active.has(c.id) || PUBCHATS.has(c.id) || (ME && c.pubkey===ME.pubkey))
-      .sort((a,b)=> (active.get(b.id)||b.created_at) - (active.get(a.id)||a.created_at));
-    /* THE PUBLIC ROOM LIST — every other channel definition the relay holds.
-     *
-     * These were fetched and then thrown away. The reasoning was sound as far as it went ("showing
-     * 50 empty foreign channels is noise") but it left the screen with no way to find a room you
-     * have not already been in: a channel appeared only once it had messages HERE, which is a
-     * chicken and egg — somebody has to be the first to speak in it, and nobody could get to it.
-     *
-     * So they are not mixed into the grid above, which stays what it was: what is active, joined or
-     * yours. They go underneath, named for what they are and counted, newest first — discovery
-     * without turning the first screen into a directory. Costs no extra query; this is the same
-     * kind-40 result the list above is built from. */
-    const seen=new Set(shown.map(c=>c.id));
-    const rest=live.filter(c=> !seen.has(c.id)).sort((a,b)=> b.created_at - a.created_at);
-    const REST_MAX=60;
-    const restShown=rest.slice(0, REST_MAX);
-    feed.innerHTML=`<div class="chat-list">
-      <div class="row" style="margin-bottom:12px"><button class="btn btn-neon small" id="ch-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New channel</button></div>
-      ${shown.length?`<div class="stream-grid">${shown.map(channelCard).join('')}</div>`
-        :'<div class="empty">Nothing active yet — start one with ＋ New channel, or open a public room below.</div>'}
-      ${restShown.length?`<h3 class="chat-sec">Public rooms<span class="muted small"> · ${rest.length}</span></h3>
-        <div class="muted small chat-sec-note">Channels this relay knows about that have no messages here yet. Say something and it moves up top.</div>
-        <div class="stream-grid">${restShown.map(channelCard).join('')}</div>
-        ${rest.length>REST_MAX?`<div class="muted small chat-sec-note">…and ${rest.length-REST_MAX} more.</div>`:''}`:''}
-      <div id="nip29-groups"></div></div>`;
-    decorateProfiles();
-    { const b=$('#ch-new'); if(b) b.onclick=createChannel; }
-    $$('.channel-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const x=Store.get(c.dataset.id); if(x) openChannel(x); });
-    loadNip29Groups();   // async-append the NIP-29 (0xchat) groups section — read-only browse
-  }
-  function channelCard(e){
-    const p=profOf(e.pubkey); needProfile(e.pubkey); const m=_chanMeta(e);
-    const unread=_chatUnreadOf(e.id);
-    return `<article class="stream-card channel-card" data-id="${e.id}" data-pk="${e.pubkey}">
-      <div class="stream-thumb">${m.picture?_hold(`<img src="${enc(m.picture)}" loading="lazy" onerror="this.parentElement.classList.add('noimg')">`, m.picture):'<span class="stream-play">✺</span>'}${unread?`<span class="chat-unread">${unread>99?'99+':unread}</span>`:''}</div>
-      <div class="stream-meta"><div class="stream-title">${PUBCHATS.has(e.id)?'<span class="chat-joined" title="Joined — you get unread counts for this channel">✓</span> ':''}${enc(m.name)}</div>
-        ${m.about?`<div class="muted small">${enc(m.about.slice(0,120))}</div>`:''}
-        <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span></div>
-      </div></article>`;
-  }
-  // One form for both "New channel" and "Edit channel" — the only difference is the event we publish
-  // at the end (kind 40 creates, kind 41 edits). It's a modal, not a chain of uiPrompts, because a
-  // picture needs an Upload button next to the URL field: with prompts alone the `picture` field
-  // channelCard/openChannel already render was unreachable, so every channel was iconless.
-  function channelForm(cur, onSave){
-    const c=cur||{name:'',about:'',picture:''};
-    modal(`<h3>${cur?'Edit channel':'New channel'}</h3>
-      <label class="fld">Name<input class="input" id="cf-name" placeholder="channel name" value="${enc(c.name==='(unnamed)'?'':c.name)}"></label>
-      <label class="fld">Description<textarea id="cf-about" placeholder="what's this channel about?">${enc(c.about||'')}</textarea></label>
-      <label class="fld">Picture URL<input class="input" id="cf-pic" placeholder="https://…" value="${enc(c.picture||'')}"></label>
-      <div class="row"><button class="btn btn-cyan small" id="cf-up"><svg class="ic b-ic" aria-hidden="true"><use href="#i-image"></use></svg>Upload picture</button><input type="file" id="cf-file" accept="image/*" hidden><span class="spacer"></span><button class="btn btn-neon" id="cf-save">${cur?'Save':'Create'}</button></div>`, root=>{
-      $('#cf-up',root).onclick=()=>$('#cf-file',root).click();
-      $('#cf-file',root).onchange=async ev=>{
-        const f=ev.target.files[0]; ev.target.value=''; if(!f) return;
-        const b=$('#cf-up',root); b.disabled=true;
-        try{ const url=await uploadBlob(f); $('#cf-pic',root).value=url;
-          // Index it under Files too, same as a profile picture — otherwise it lands on Blossom and
-          // never appears in the user's own file list.
-          try{ const sha=_shaFromUrl(url); if(sha) FilesIdx.setFile(sha,{name:f.name||'channel-pic', folder:'', mime:f.type||'', size:f.size, ts:Math.floor(Date.now()/1000)}); }catch(_){}
-          toast('uploaded'); }
-        catch(err){ if(_blossomDenied(err)){ requestBlossomAccess(); toast('🔒 No upload access — requested it from the admin.'); }
-          else toast('upload failed: '+((err&&err.message)||err)); }
-        b.disabled=false;
-      };
-      $('#cf-save',root).onclick=async()=>{
-        const name=$('#cf-name',root).value.trim();
-        if(!name){ toast('give the channel a name'); $('#cf-name',root).focus(); return; }   // keep the modal open → the other fields aren't lost
-        const meta={ name, about:$('#cf-about',root).value.trim(), picture:$('#cf-pic',root).value.trim() };
-        closeModal(); onSave(meta);
-      };
-      setTimeout(()=>{ try{ $('#cf-name',root).focus(); }catch(_){} },20);
-    });
-  }
-  function createChannel(){
-    channelForm(null, async meta=>{
-      try{ const r=await publish(40, JSON.stringify(meta), []);   // failure toast by publish()
-        if(r && r.ok && r.ev){ Store.saveEvent(r.ev); toast('channel created'); openChannel(r.ev); } }
-      catch(e){ toast('create failed: '+((e&&e.message)||e)); }
-    });
-  }
-  // NIP-28 edit: kind 41, same JSON, root `e` tag → the kind-40. Only the channel's creator's 41 is
-  // honoured on read (_chanMeta), so don't offer this on someone else's channel.
-  function editChannel(e){
-    channelForm(_chanMeta(e), async meta=>{
-      try{ const r=await publish(41, JSON.stringify(meta), [['e', e.id, CFG.relay_url||'', 'root']]);
-        // Repaint the header only — reopening the room would drop the loaded messages and scroll
-        // position to re-fetch what we already have.
-        if(r && r.ok && r.ev){ _recordChan41(r.ev); toast('channel updated'); _paintChanHead(e); } }
-      catch(err){ toast('update failed: '+((err&&err.message)||err)); }
-    });
-  }
-  // Header is painted separately from the room shell because an edit (kind 41) can arrive AFTER the
-  // room is on screen — deep-linking straight into a channel means its metadata hasn't been read yet.
-  function _paintChanHead(e){
-    const head=$('#ch-head'); if(!head) return;
-    const m=_chanMeta(e), mine=!!(ME && e.pubkey===ME.pubkey);
-    // Data saver falls back to the ✺ glyph rather than _hold()'s "tap to load image" chip — that chip is
-    // sized for a feed image and would eat the header next to the title.
-    const pic=m.picture && !NO_IMAGES;
-    $('#view-title').textContent=m.name;
-    head.innerHTML=`<button class="btn btn-ghost small" id="ch-back" aria-label="Back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg></button>`
-      +(pic?`<img class="chatroom-pic" src="${enc(m.picture)}" alt="" loading="lazy" onerror="this.remove()">`:'')
-      +`<span class="chatroom-title">${pic?'':'✺ '}${enc(m.name)}</span>`
-      // Every label is wrapped so it can be shed on phones (the .lbl convention the profile header uses).
-      // Four controls plus a picture squeezed the channel NAME down to 10px at 360px — the one thing on
-      // the bar nobody can do without.
-      +(GUEST?'':(inList=>`<button class="btn ${inList?'btn-ghost':'btn-neon'} small" id="ch-join" title="${inList?'Stop being notified about this channel':'Get notified about new messages here'}" aria-label="${inList?'Leave channel':'Join channel'}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-${inList?'check':'plus'}"></use></svg><span class="lbl">${inList?'Joined':'Join'}</span></button>`)(PUBCHATS.has(e.id)))
-      +(mine?`<button class="btn btn-cyan small" id="ch-edit" title="edit channel" aria-label="Edit channel"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg><span class="lbl">Edit</span></button>`
-            +`<button class="btn btn-ghost small" id="ch-del" title="delete channel" aria-label="Delete channel" style="color:var(--danger,#e0245e)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg></button>`:'');
-    $('#ch-back').onclick=()=>switchView('chat');
-    { const b=$('#ch-join'); if(b) b.onclick=()=>{ b.disabled=true; toggleJoinChannel(e); }; }
-    { const b=$('#ch-edit'); if(b) b.onclick=()=>editChannel(e); }
-    { const b=$('#ch-del'); if(b) b.onclick=()=>_deleteChannel(e); }
-    const ab=$('#ch-about'); if(ab){ ab.hidden=!m.about; ab.innerHTML=m.about?linkify(m.about):''; }
-  }
-  async function openChannel(e, focusId){
-    VIEW='channel'; _chatId=e.id; _chatMsgs=new Map(); _chatReacts=new Map(); _chatZaps=new Map(); _chatDeleted=new Map(); _chatAuxSeen=new Set(); _chatReplyTo=null;
-    if(_chatSub){ try{ Relay.close(_chatSub); }catch(_){} _chatSub=null; }
-    if(_chatReactPoll){ clearTimeout(_chatReactPoll); _chatReactPoll=null; }
-    _clearNav();
-    const feed=$('#feed'); feed.classList.add('feed-chat');
-    feed.innerHTML=`<div class="chatroom">
-      <div class="chatroom-head" id="ch-head"></div>
-      <div class="chatroom-about" id="ch-about" hidden></div>
-      <div id="ch-msgs" class="chatroom-msgs"><div class="spinner"></div></div>
-      <div id="chat-reply-bar" class="chat-reply-bar hidden"></div>
-      <div class="chatroom-compose"><button class="mini" id="ch-attach" title="attach image"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg></button>${window.PC_NOSTR_ONLY?'':'<button class="mini" id="ch-translate" title="translate your message"><svg class="ic b-ic" aria-hidden="true"><use href="#i-globe"></use></svg></button>'}<input type="file" id="ch-file" accept="image/*,video/*" multiple hidden><textarea id="ch-input" rows="1" placeholder="Message…"></textarea><button class="btn btn-neon" id="ch-send">Send</button></div>
-    </div>`;
-    _paintChanHead(e);
-    { const mb=$('#ch-msgs'); if(mb) mb.addEventListener('click', _onChatMsgClick); }   // delegated reply/react taps
-    const send=()=>postToChannel(e);
-    { const b=$('#ch-send'); if(b) b.onclick=send; }
-    { const ta=$('#ch-input'); if(ta){ attachEmojiAutocomplete(ta);
-        ta.onkeydown=ev=>{ if(ev.key==='Enter' && !ev.shiftKey){ ev.preventDefault(); send(); } };
-      ta.oninput=()=>{ ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,120)+'px'; }; } }
-    // 🌐 translate YOUR draft to another language before sending (same picker as new Post / reply).
-    { const tb=$('#ch-translate'), ta=$('#ch-input'); if(tb && ta) tb.onclick=()=>composeTranslate(ta, tb); }
-    // 📎 attach: upload to Blossom, append the URL to the message (inline media renders in kind-42).
-    { const ab=$('#ch-attach'), fi=$('#ch-file'), ta=$('#ch-input');
-      if(ab && fi && ta){
-        ab.onclick=()=>fi.click();
-        fi.onchange=async ev=>{
-          const files=[...ev.target.files]; ev.target.value=''; if(!files.length) return;
-          ab.disabled=true; const lbl=ab.textContent; ab.textContent='⏳';
-          for(let i=0;i<files.length;i++){
-            try{ const url=await uploadBlob(files[i], {folder:'Posts'});
-              ta.value += (ta.value && !ta.value.endsWith('\n') ? '\n' : '') + url;
-              ta.dispatchEvent(new Event('input')); }
-            catch(err){ if(_blossomDenied(err)){ requestBlossomAccess(); toast('🔒 No upload access — requested it from the admin.'); }
-              else toast('upload failed: '+((err&&err.message)||err)); break; }
-          }
-          ab.disabled=false; ab.textContent=lbl; ta.focus();
-        };
-      } }
-    let msgs=[], metas=[];
-    try{ [msgs, metas] = await Promise.all([ Relay.query([{ kinds:[42], '#e':[e.id], limit:300 }]), Relay.query([{ kinds:[41], '#e':[e.id], limit:20 }]) ]); }catch(_){}
-    if(VIEW!=='channel' || _chatId!==e.id) return;
-    if((metas||[]).length){ metas.forEach(_recordChan41); _paintChanHead(e); }   // an edit read after the room opened
-    msgs.forEach(x=>{ _chatMsgs.set(x.id,x); needProfile(x.pubkey); });
-    _markChatRead(e.id, msgs);   // opening the room IS reading it
-    _drawChannel(true);
-    if(focusId) _scrollChatTo(focusId);   // deep-link from a notification → highlight that message
-    _pollChannelMeta();   // fetch + keep reactions/zaps/deletions for the on-screen messages live
-    _chatSub=Relay.subscribe([{ kinds:[42], '#e':[e.id] }], { onEvent: ev=>{ if(ev.kind===42 && !_chatMsgs.has(ev.id)){ _chatMsgs.set(ev.id,ev); needProfile(ev.pubkey);
-      if(VIEW==='channel' && _chatId===e.id){ _setChatSeen(e.id, ev.created_at); _drawChannel(); } } } });   // read as it arrives, so leaving the room leaves nothing unread
-  }
-  function _drawChannel(force){
-    const box=$('#ch-msgs'); if(!box || !_chatId) return;
-    const atBottom = force || (box.scrollHeight-box.scrollTop-box.clientHeight < 90);
-    const msgs=[..._chatMsgs.values()].filter(x=>!isMutedView(x) && !_isChatDeleted(x)).sort((a,b)=>a.created_at-b.created_at);
-    box.innerHTML = msgs.length ? msgs.map(chatMsg).join('') : '<div class="empty">No messages yet — say hi 👋</div>';
-    decorateProfiles();
-    if(atBottom) box.scrollTop=box.scrollHeight;
-  }
-  function chatMsg(e){
-    const p=profOf(e.pubkey); needProfile(e.pubkey); const mine=ME && e.pubkey===ME.pubkey;
-    const pills=chatReactPills(e.id), zap=chatZapPill(e.id);
-    // Both NIP-28 channels (publish to our pool) and NIP-29 groups (authed publish to the group relay)
-    // are writable now, so show the reply/react affordances in both.
-    const canWrite = VIEW==='channel' || VIEW==='group';
-    // 🌐 translate is a personal read-only action (DOM-only, like translatePost), so it's available on
-    // every message regardless of write access — but only when the node has the AI backend (not nostr-only).
-    const tr = window.PC_NOSTR_ONLY ? '' : `<button class="chat-mini chat-tr-btn" data-translate="${enc(e.id)}" title="translate"><svg class="ic b-ic" aria-hidden="true"><use href="#i-globe"></use></svg></button>`;
-    const acts = (canWrite
-      ? `<button class="chat-mini chat-reply-btn" data-reply="${enc(e.id)}" title="reply"><svg class="ic b-ic" aria-hidden="true"><use href="#i-reply"></use></svg></button><button class="chat-mini chat-react-add" data-react-add="${enc(e.id)}" data-pk="${enc(e.pubkey)}" title="react"><svg class="ic b-ic" aria-hidden="true"><use href="#i-smile"></use></svg></button>`
-      : '') + tr;
-    // reply context: when this message replies to one already loaded, show a tappable quote line.
-    let rq=''; const par=_chatReplyParent(e);
-    if(par){ const pm=_chatMsgs.get(par)||_groupMsgs.get(par); if(pm){ const pp=profOf(pm.pubkey);
-      rq=`<button class="chat-replyq" data-scroll="${enc(par)}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-reply"></use></svg>${enc(pp.name||pp.display_name||'anon')}: ${enc((pm.content||'').replace(/\s+/g,' ').slice(0,60))}</button>`; } }
-    return `<div class="chat-msg${mine?' mine':''}" data-pk="${e.pubkey}" data-mid="${enc(e.id)}">
-      <img class="chat-av" data-prof="${e.pubkey}" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
-      <div class="chat-body"><div class="chat-by"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(e.created_at)}</span></div>
-      ${rq}
-      <div class="chat-txt">${linkify(e.content||'')}</div>
-      ${pills||zap||acts?`<div class="chat-reacts">${pills}${zap}${acts}</div>`:''}</div></div>`;
-  }
-  // The id this message replies to (for in-room threading). NIP-28: a non-root e-tag; NIP-29: the
-  // root is the group (h-tag) so any e-tag is the parent; an explicit "reply" marker always wins.
-  function _chatReplyParent(e){
-    const es=e.tags.filter(t=>t[0]==='e'&&t[1]); if(!es.length) return null;
-    const reply=es.find(t=>t[3]==='reply'); if(reply) return reply[1];
-    // NIP-28: the root e-tag is the channel, so an unmarked NON-root e-tag is the reply parent.
-    // NIP-29: the root is the group (h-tag), so a bare e-tag may be a quote/mention — require the
-    // explicit "reply" marker (handled above) rather than guessing, to avoid false reply-quotes.
-    if(e.kind===42){ const nonRoot=es.find(t=>t[1]!==_chatId && t[3]!=='root'); return nonRoot?nonRoot[1]:null; }
-    return null;
-  }
-  function _lastE(ev){ let id=null; for(const t of ev.tags){ if(t[0]==='e' && t[1]) id=t[1]; } return id; }
-  function _cssEsc(s){ return (window.CSS&&CSS.escape)?CSS.escape(s):String(s).replace(/["\\]/g,'\\$&'); }
-  function _flashChatMsg(el){ if(!el) return; el.scrollIntoView({block:'center',behavior:'smooth'}); el.classList.add('flash'); setTimeout(()=>el.classList.remove('flash'),1300); }
-  // Scroll a chat message into view and flash it. Retries briefly since the list may still be drawing
-  // (e.g. right after openChannel kicks off its message fetch).
-  function _scrollChatTo(mid){
-    let tries=0;
-    const tick=()=>{ const box=$('#ch-msgs')||$('#grp-msgs'); const el=box&&box.querySelector(`.chat-msg[data-mid="${_cssEsc(mid)}"]`);
-      if(el){ _flashChatMsg(el); return; }
-      if(++tries<12) setTimeout(tick, 250);
-      else toast('linked message isn’t in the recent history');   // older than the fetch window → not loaded
-    };
-    setTimeout(tick, 120);
-  }
-  // Record a kind-7 reaction into _chatReacts keyed by its target (last e-tag, per NIP-25).
-  // Returns true if it was new (so the caller can redraw).
-  const _chatEmojiImg = new Map();   // NIP-30 custom-emoji ":shortcode:" → image URL (stable cache)
-  function _recordReact(ev){
-    if(!ev || ev.kind!==7) return false;
-    const tid=_lastE(ev); if(!tid) return false;
-    let emoji=ev.content||''; if(emoji==='+'||emoji===''){ emoji='❤️'; } else if(emoji==='-'){ emoji='👎'; }
-    // NIP-30 custom emoji: content is ":shortcode:" with an ["emoji", shortcode, url] tag. Cache the
-    // url so the pill shows the IMAGE — otherwise the bare ":shortcode:" text reads like inline code.
-    if(/^:[^:\s]+:$/.test(emoji)){ const nm=emoji.slice(1,-1); const t=(ev.tags||[]).find(x=>x[0]==='emoji'&&x[1]===nm&&x[2]); if(t) _chatEmojiImg.set(emoji, t[2]); }
-    let m=_chatReacts.get(tid); if(!m){ m=new Map(); _chatReacts.set(tid,m); }
-    let s=m.get(emoji); if(!s){ s=new Set(); m.set(emoji,s); }
-    if(s.has(ev.pubkey)) return false; s.add(ev.pubkey); return true;
-  }
-  // Fold a kind 7 (reaction), 9735 (zap receipt) or 5 (deletion) into the chat engagement maps.
-  // Zaps/deletions are deduped by event id (_chatAuxSeen) so re-polls don't double-count sats.
-  function _recordChatAux(ev){
-    if(!ev) return false;
-    if(ev.kind===7) return _recordReact(ev);
-    if(_chatAuxSeen.has(ev.id)) return false;
-    if(ev.kind===9735){ const tid=_lastE(ev); if(!tid) return false; const sats=zapAmount(ev); if(!sats) return false;   // unparseable → leave unseen so a fuller re-fetch can still count it
-      _chatAuxSeen.add(ev.id); const z=_chatZaps.get(tid)||{sats:0,n:0}; z.sats+=sats; z.n++; _chatZaps.set(tid,z); return true; }
-    if(ev.kind===5){ _chatAuxSeen.add(ev.id); let ch=false; for(const t of ev.tags){ if(t[0]==='e' && t[1]){
-      let s=_chatDeleted.get(t[1]); if(!s){ s=new Set(); _chatDeleted.set(t[1],s); } if(!s.has(ev.pubkey)){ s.add(ev.pubkey); ch=true; } } } return ch; }
-    return false;
-  }
-  // Hide a message only when its OWN author published the kind-5 deleting it (NIP-09) — for channels
-  // AND groups. (Honouring any group kind-5 would let any member hide anyone's message; real NIP-29
-  // moderation is a kind-9005, which we don't act on here.)
-  function _isChatDeleted(msg){ const s=_chatDeleted.get(msg.id); return !!(s && s.has(msg.pubkey)); }
-  function chatReactPills(id){
-    const m=_chatReacts.get(id); if(!m) return '';
-    const mine=ME&&ME.pubkey;
-    return [...m.entries()].filter(([,s])=>s.size).sort((a,b)=>b[1].size-a[1].size).map(([emoji,s])=>{
-      const on=mine && s.has(mine);
-      const url=_chatEmojiImg.get(emoji);
-      const disp = url ? `<img class="chat-react-img" src="${enc(url)}" alt="${enc(emoji)}" loading="lazy">` : enc(emoji);
-      return `<button class="chat-react${on?' on':''}" data-react="${enc(id)}" data-emoji="${enc(emoji)}" title="react ${enc(emoji)}">${disp} <span class="n">${s.size}</span></button>`;
-    }).join('');
-  }
-  function chatZapPill(id){ const z=_chatZaps.get(id); return z&&z.sats?`<span class="chat-zap" title="${z.n} zap${z.n>1?'s':''}">⚡ ${fmtSats(z.sats)}</span>`:''; }
-  // Delegated click on a chat-message list: jump to a quoted parent, start a reply, or react.
-  function _onChatMsgClick(ev){
-    const sc=ev.target.closest('.chat-replyq');
-    if(sc){ const cont=ev.currentTarget, el=cont.querySelector(`.chat-msg[data-mid="${_cssEsc(sc.dataset.scroll)}"]`);
-      if(el) _flashChatMsg(el); else toast('that message isn’t loaded'); return; }
-    const tb=ev.target.closest('.chat-tr-btn'); if(tb){ translateChatMsg(tb.dataset.translate); return; }
-    const rb=ev.target.closest('.chat-reply-btn'); if(rb){ _setChatReply(rb.dataset.reply); return; }
-    const pill=ev.target.closest('.chat-react'); if(pill){ _doChatReact(pill.dataset.react, pill.dataset.emoji); return; }
-    const add=ev.target.closest('.chat-react-add'); if(add){ openEmojiPopover(add, (emoji, close)=>{ close(); _doChatReact(add.dataset.reactAdd, emoji); }); }
-  }
-  async function _doChatReact(id, emoji){
-    if(!ME){ toast('log in to react'); return; }
-    const cur=_chatReacts.get(id); if(cur){ const s=cur.get(emoji); if(s && s.has(ME.pubkey)){ toast('already reacted '+emoji); return; } }
-    const msg=_chatMsgs.get(id)||_groupMsgs.get(id), pk=msg?msg.pubkey:null;
-    try{
-      if(VIEW==='group'){ const ev=await _groupPublish(7, emoji, eTags(id,pk)); if(ev && _recordReact(ev)) _drawGroup(); return; }
-      const r=await publish(7, emoji, eTags(id,pk));   // failure toast by publish() (which rolls the reaction back)
-      if(r && r.ok && r.ev && _recordReact(r.ev)){ _drawChannel(); toast('reacted '+emoji); }
-    }catch(e){ toast('react failed: '+((e&&e.message)||e)); }
-  }
-  // Translate a chat message in-place (channel + group), via the node's AI backend. DOM-only — the
-  // stored event is untouched, so a refresh restores the original. Mirrors translatePost.
-  async function translateChatMsg(id){
-    const msg=_chatMsgs.get(id)||_groupMsgs.get(id); if(!msg){ toast('message not loaded'); return; }
-    const src=(msg.content||'').trim(); if(!src){ toast('nothing to translate'); return; }
-    const box=$('#ch-msgs')||$('#grp-msgs');
-    const node=box&&box.querySelector(`.chat-msg[data-mid="${_cssEsc(id)}"] .chat-txt`);
-    if(!node){ toast('message not visible'); return; }
-    if(!node.dataset.orig) node.dataset.orig=node.innerHTML; node.style.opacity='.5';
-    try{
-      const r=await fetch('/client/translate',{ method:'POST', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({ text:src, to:(navigator.language||'en') }) });
-      const j=await r.json().catch(()=>({}));
-      if(!r.ok || !j.text){ toast(j.error||'translation unavailable'); node.style.opacity=''; return; }
-      // normalized compare: /client/translate collapses whitespace on its unchanged (already-target) return
-      if(_ltNorm(j.text)===_ltNorm(src)){ node.style.opacity=''; toast('nothing to translate — looks already in your language (or just sounds/emoji)'); return; }
-      node.style.opacity=''; node.innerHTML=linkify(j.text)+'<div class="muted small tr-tag">🌐 translated · refresh to restore</div>';
-    }catch(_){ toast('translate failed'); node.style.opacity=''; }
-  }
-  // ---- in-room reply target (shared by channel + group compose) ----
-  function _setChatReply(id){ const msg=_chatMsgs.get(id)||_groupMsgs.get(id); if(!msg) return; _chatReplyTo=id; _renderReplyBar(); const ta=$('#ch-input')||$('#grp-input'); if(ta) ta.focus(); }
-  function _clearChatReply(){ _chatReplyTo=null; _renderReplyBar(); }
-  function _renderReplyBar(){
-    const bar=$('#chat-reply-bar'); if(!bar) return;
-    if(!_chatReplyTo){ bar.classList.add('hidden'); bar.innerHTML=''; return; }
-    const msg=_chatMsgs.get(_chatReplyTo)||_groupMsgs.get(_chatReplyTo), p=msg?profOf(msg.pubkey):{};
-    bar.classList.remove('hidden');
-    bar.innerHTML=`<span class="muted small">↩ replying to <b>${enc(msg?(p.name||p.display_name||'anon'):'…')}</b>: ${enc(msg?(msg.content||'').replace(/\s+/g,' ').slice(0,50):'')}</span><button class="chat-reply-x" id="chat-reply-x" title="cancel"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button>`;
-    const x=$('#chat-reply-x'); if(x) x.onclick=_clearChatReply;
-  }
-  // Channel engagement poll: channels keep a live kind-42 sub, but message-targeted kind 7/9735/5
-  // can't be caught by the channel-root #e filter, so poll them for the on-screen ids (auto-stops on
-  // leave via switchView clearing _chatReactPoll).
-  function _pollChannelMeta(){
-    if(VIEW!=='channel') return;
-    const id=_chatId, ids=[..._chatMsgs.keys()];
-    if(!ids.length){ _chatReactPoll=setTimeout(_pollChannelMeta, 10000); return; }
-    Relay.query([{ kinds:[7,9735,5], '#e':ids, limit:800 }]).then(rs=>{
-      if(VIEW!=='channel' || _chatId!==id) return;
-      let changed=false; rs.forEach(r=>{ if(_recordChatAux(r)) changed=true; }); if(changed) _drawChannel();
-    }).catch(()=>{}).finally(()=>{ if(VIEW==='channel' && _chatId===id) _chatReactPoll=setTimeout(_pollChannelMeta, 10000); });
-  }
-  async function postToChannel(chan){
-    const ta=$('#ch-input'); if(!ta) return; const text=ta.value.trim(); if(!text) return;
-    ta.value=''; ta.style.height='auto'; ta.disabled=true;
-    const tags=[['e', chan.id, '', 'root']];
-    if(_chatReplyTo && _chatReplyTo!==chan.id){ const par=_chatMsgs.get(_chatReplyTo); tags.push(['e', _chatReplyTo, '', 'reply']); if(par) tags.push(['p', par.pubkey]); }
-    let ok=false;
-    try{ const r=await publish(42, text, tags);   // failure toast by publish()
-      if(r && r.ok && r.ev && !_chatMsgs.has(r.ev.id)){ ok=true; _chatMsgs.set(r.ev.id,r.ev); if(VIEW==='channel' && _chatId===chan.id) _drawChannel(true); } }
-    catch(e){ toast('send failed: '+((e&&e.message)||e)); }
-    finally{
-      // On failure restore BOTH the text and the reply target, so a relay blip doesn't eat the message OR
-      // silently drop its threading; only clear the reply once it actually sent.
-      if(ok){ _clearChatReply(); }
-      else if(ta){ ta.value=text; ta.dispatchEvent(new Event('input')); }
-      ta.disabled=false; ta.focus();
-    }
-  }
-  // ---- NIP-29 group writes (kind 9 message / 7 react / 9021 join) via NIP-42 authed publish ----
-  async function _groupPublish(kind, content, extraTags){
-    if(!ME){ toast('log in first'); return null; }
-    const relay=_groupRelay, gid=_groupId; if(!relay||!gid){ toast('no group open'); return null; }
-    try{   // catch signer rejections (extension/NIP-46 decline) too, so a write never fails silently
-      if(!InstEmoji.loaded && InstEmoji.SC_RE.test(content||'')) { try{ await InstEmoji.load(); }catch(_){ } }
-      const ev=await sign(kind, content, InstEmoji.tagsFor(content, [['h', gid], ...(extraTags||[])]));
-      const r=await Relay.publishAuthed(relay, ev, ch=>sign(22242, '', [['relay', relay], ['challenge', ch]]));
-      if(!r.ok){ toast('group: '+(r.msg||'rejected')); return null; }
-      return ev;
-    }catch(e){ toast('group post failed: '+((e&&e.message)||e)); return null; }
-  }
-  async function postToGroup(){
-    const ta=$('#grp-input'); if(!ta) return; const text=ta.value.trim(); if(!text) return;
-    ta.disabled=true;
-    const tags=[]; if(_chatReplyTo){ const par=_groupMsgs.get(_chatReplyTo); tags.push(['e', _chatReplyTo, _groupRelay, 'reply']); if(par) tags.push(['p', par.pubkey]); }
-    try{ const ev=await _groupPublish(9, text, tags);
-      if(ev){ ta.value=''; ta.style.height='auto'; _groupSeen.add(ev.id); _groupMsgs.set(ev.id,ev); needProfile(ev.pubkey); _clearChatReply(); if(VIEW==='group') _drawGroup(true); } }
-    finally{ ta.disabled=false; ta.focus(); }
-  }
-  async function joinGroup(){ const ev=await _groupPublish(9021, 'join request', []); if(ev) toast('join request sent — may need admin approval'); }
-  // ---------- NIP-29 relay-based groups (0xchat &c.) — READ-ONLY browse (Phase 1) ----------
-  // Unlike our NIP-28 channels, NIP-29 groups live on DEDICATED external relays (not our pool):
-  // kind-39000 = group metadata (relay-authored, addressable by d=group-id), kind-9 = chat messages
-  // tagged h=group-id. We read them via the bounded ephemeral queryFrom (one-shot sockets, closed
-  // after EOSE) and POLL every ~6s while a group is open — no persistent connection, CPU-bounded,
-  // auto-stops on leave (switchView clears _groupPoll). Read-only for now: join/post (NIP-42 auth +
-  // kind 9021/9) is a later phase.
-  // (relay.groups.nip29.com dropped — broken TLS cert / hostname mismatch, browser WSS rejects it.)
-  const NIP29_RELAYS = ['wss://groups.0xchat.com/', 'wss://relay.highlighter.com/'];
-  const _NIP29_MAX = 60;   // 0xchat's relay ignores `limit` and dumps ALL (~1000+) groups → cap the render
-  let _groupId=null, _groupRelay=null, _groupMsgs=new Map(), _groupPoll=null, _groupSeen=new Set();
-  function _nip29Meta(e){ const tag=k=>(e.tags.find(t=>t[0]===k)||[])[1]||'';
-    return { id:tag('d'), name:tag('name')||'(unnamed group)', about:tag('about'), picture:tag('picture') }; }
-  async function loadNip29Groups(){
-    if(!$('#nip29-groups')) return;
-    // Query each group relay SEPARATELY so we know which relay each group lives on (queryFrom flattens
-    // across relays and the group id is only unique per relay). Failures per relay are ignored.
-    let groups=[];
-    try{
-      const lists=await Promise.all(NIP29_RELAYS.map(r=>
-        Relay.queryFrom([r], [{ kinds:[39000], limit:100 }]).then(evs=>evs.map(e=>({e, relay:r}))).catch(()=>[])));
-      const seen=new Set();
-      for(const {e, relay} of lists.flat()){
-        const m=_nip29Meta(e); if(!m.id) continue; const key=relay+"'"+m.id; if(seen.has(key)) continue; seen.add(key);
-        groups.push({ relay, m, key });
-      }
-    }catch(_){}
-    const box=$('#nip29-groups'); if(!box || VIEW!=='chat') return;
-    const total=groups.length;
-    // pictured groups first (more "real"/curated), then by name; cap the render (relay dumps 1000+).
-    groups.sort((a,b)=> (b.m.picture?1:0)-(a.m.picture?1:0) || a.m.name.localeCompare(b.m.name));
-    const shownG=groups.slice(0, _NIP29_MAX);
-    box.innerHTML = total
-      ? `<div class="search-section-title" style="margin-top:18px">Groups · NIP-29 <span class="muted small">(0xchat &amp; others — read-only${total>_NIP29_MAX?` · showing ${_NIP29_MAX} of ${total}`:''})</span></div>
-         <div class="stream-grid">${shownG.map(nip29Card).join('')}</div>`
-      : '';   // none found (or the relays require login) → no section
-    $$('.nip29-card',box).forEach(c=>{ const g=groups.find(x=>x.key===c.dataset.key); if(g) c.onclick=()=>openGroup(g); });
-  }
-  function nip29Card(g){ const m=g.m;
-    return `<article class="stream-card nip29-card" data-key="${enc(g.key)}">
-      <div class="stream-thumb">${m.picture?_hold(`<img src="${enc(m.picture)}" loading="lazy" onerror="this.parentElement.classList.add('noimg')">`, m.picture):'<span class="stream-play">👥</span>'}</div>
-      <div class="stream-meta"><div class="stream-title">${enc(m.name)}</div>
-        ${m.about?`<div class="muted small">${enc(m.about.slice(0,120))}</div>`:''}
-        <div class="muted small">🛰 ${enc(g.relay.replace(/^wss:\/\//,'').replace(/\/$/,''))}</div>
-      </div></article>`;
-  }
-  async function openGroup(g){
-    VIEW='group'; _groupId=g.m.id; _groupRelay=g.relay; _groupMsgs=new Map(); _groupSeen=new Set();
-    _chatReacts=new Map(); _chatZaps=new Map(); _chatDeleted=new Map(); _chatAuxSeen=new Set(); _chatReplyTo=null;
-    if(_groupPoll){ clearTimeout(_groupPoll); _groupPoll=null; }
-    _clearNav();
-    $('#view-title').textContent=g.m.name;
-    const feed=$('#feed'); feed.classList.add('feed-chat');
-    // Writable now: posting/reacting/joining go out as NIP-42-authed events to the group's relay. The
-    // relay rejects non-members, so a "join" button sends a kind-9021 request first.
-    feed.innerHTML=`<div class="chatroom">
-      <div class="chatroom-head"><button class="btn btn-ghost small" id="grp-back" aria-label="Back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg></button><span class="chatroom-title">👥 ${enc(g.m.name)}</span><button class="btn btn-ghost small" id="grp-join" title="request to join"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Join</button></div>
-      ${g.m.about?`<div class="chatroom-about">${linkify(g.m.about)}</div>`:''}
-      <div id="grp-msgs" class="chatroom-msgs"><div class="spinner"></div></div>
-      <div id="chat-reply-bar" class="chat-reply-bar hidden"></div>
-      <div class="chatroom-compose"><textarea id="grp-input" rows="1" placeholder="Message… (members only)"></textarea><button class="btn btn-neon" id="grp-send">Send</button></div>
-    </div>`;
-    $('#grp-back').onclick=()=>switchView('chat');
-    { const jb=$('#grp-join'); if(jb) jb.onclick=joinGroup; }
-    { const sb=$('#grp-send'); if(sb) sb.onclick=postToGroup; }
-    { const ta=$('#grp-input'); if(ta){ attachEmojiAutocomplete(ta);
-        ta.onkeydown=ev=>{ if(ev.key==='Enter' && !ev.shiftKey){ ev.preventDefault(); postToGroup(); } };
-      ta.oninput=()=>{ ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,120)+'px'; }; } }
-    { const mb=$('#grp-msgs'); if(mb) mb.addEventListener('click', _onChatMsgClick); }   // delegated reply/react taps
-    _pollGroup(true);
-  }
-  async function _pollGroup(first){
-    const relay=_groupRelay, id=_groupId; if(!relay||!id) return;
-    // NIP-29 tags ALL group content with h=group-id (messages, reactions, zaps, deletions), so one #h
-    // filter per kind fetches everything from the group's relay.
-    let evs=[], aux=[];
-    try{ [evs, aux]=await Promise.all([
-      Relay.queryFrom([relay], [{ kinds:[9], '#h':[id], limit:200 }]),
-      Relay.queryFrom([relay], [{ kinds:[7,9735,5], '#h':[id], limit:300 }]).catch(()=>[]),
-    ]); }catch(_){}
-    if(VIEW!=='group' || _groupId!==id) return;
-    // External relay is untrusted → verify signatures of UNSEEN events (messages + engagement) only.
-    const fresh=[...(evs||[]), ...(aux||[])].filter(e=>e && e.id && !_groupSeen.has(e.id));
-    if(fresh.length){ try{ const v=await Relay.worker.call('verifyBatch',{events:fresh});
-      const ok=new Set(v.filter(r=>r.valid).map(r=>r.id));
-      for(const e of fresh){ if(!ok.has(e.id)){ _groupSeen.add(e.id); continue; }   // bad sig → never retry
-        if(e.kind===9){ _groupSeen.add(e.id); _groupMsgs.set(e.id,e); needProfile(e.pubkey); }
-        else if(_recordChatAux(e)) _groupSeen.add(e.id); }   // recorded → seen; an unparseable zap stays retryable next poll
-    }catch(_){} }
-    if(VIEW!=='group' || _groupId!==id) return;
-    _drawGroup(first);
-    _groupPoll=setTimeout(()=>{ if(VIEW==='group' && _groupId===id) _pollGroup(false); }, 6000);
-  }
-  function _drawGroup(force){
-    const box=$('#grp-msgs'); if(!box || !_groupId) return;
-    const atBottom = force || (box.scrollHeight-box.scrollTop-box.clientHeight < 90);
-    const msgs=[..._groupMsgs.values()].filter(x=>!isMutedView(x) && !_isChatDeleted(x)).sort((a,b)=>a.created_at-b.created_at);
-    box.innerHTML = msgs.length ? msgs.map(chatMsg).join('') : '<div class="empty">No messages, or this group requires login to read.</div>';
-    decorateProfiles();
-    if(atBottom) box.scrollTop=box.scrollHeight;
-  }
   // ---------- floating mini-player: keep a stream playing while you browse other views ----------
   // Moving the live <video> node (with its attached hls.js) OUT of #feed and into a fixed,
   // persistent container means a feed re-render can't kill it — playback simply continues.
@@ -11875,7 +11282,6 @@
     if (ev.kind===1068) return pollCard(ev);   // NIP-88 poll
     if (ev.kind===30023) return articleCard(ev);   // NIP-23 long-form article → reader card
     if (ev.kind===34550) return communityCard(ev);  // NIP-72 community → discovery card in the feed
-    if (ev.kind===40) return _isChanDeleted(ev) ? '' : channelCard(ev);   // NIP-28 channel → discovery card in the feed (a deleted one must not come back via the timeline)
     return noteCard(ev);
   }
   // Timeline renderer: the Home/Global feeds show replies (like Nostr/fediverse), NOT just top-level
@@ -13004,7 +12410,7 @@
       // doesn't match them.
       const artc=e.target.closest('.article-card'); if(artc){ if(e.target.closest('[data-prof]')){ renderProfileView(artc.dataset.pk); return; } const a=Store.get(artc.dataset.id); if(a) openArticle(a); return; }
       // Community / channel discovery cards surfaced in the feed → open the community / channel.
-      const cc=e.target.closest('.community-card,.channel-card'); if(cc){ if(e.target.closest('[data-prof]')){ renderProfileView(cc.dataset.pk); return; } const x=Store.get(cc.dataset.id); if(x){ cc.classList.contains('community-card')?openCommunity(x):openChannel(x); } return; }
+      const cc=e.target.closest('.community-card'); if(cc){ if(e.target.closest('[data-prof]')){ renderProfileView(cc.dataset.pk); return; } const x=Store.get(cc.dataset.id); if(x) openCommunity(x); return; }
       // Git repo cards (kind-30617) surfaced in Discover/search → open the REPO DETAIL (README/issues/
       // patches), NOT the generic .note thread. A repo-card is also class="note" for styling, so without
       // this it fell through to renderThread below and opened the announcement as a thread. Let the author
@@ -13611,7 +13017,7 @@
   // ---------- ":shortcode" autocomplete ----------
   // Type `:` plus a letter in ANY composer and the matching instance emoji drop down, Pleroma-style.
   // ONE implementation, attached to every text box (timeline composer, the New post/reply modal, DMs,
-  // chatrooms, groups) — the picker button and this share InstEmoji, so they can never disagree about
+  // group-style inputs) — the picker button and this share InstEmoji, so they can never disagree about
   // what exists. The `:` must start a word (so "12:30" and "http://…" never trigger it).
   const _AC_RE=/(^|[\s(>])(:([A-Za-z0-9_+\-]{1,40}))$/;
   const _AC_MAX=14;
@@ -14792,13 +14198,12 @@
   }
   function discoverMenu(){   // mobile Discover sub-sheet — mirrors the desktop sidebar's Discover group (incl. Market)
     const _off=navHiddenSet();
-    const items=[['news','news','News'],['markets','chart','Markets'],['budget','bars','Budget'],['calls','phone','Calls'],['articles','article','Articles'],['market','bag','Shopping'],['streams','tv','Streams'],['shorts','tv','Shorts'],['communities','users','Communities'],['concord','concord','Concord'],['chat','chat','Chat'],['torrents','magnet','Torrents'],['repos','git','Git'],['stats','bars','Server Stats']]
+    const items=[['news','news','News'],['markets','chart','Markets'],['budget','bars','Budget'],['calls','phone','Calls'],['articles','article','Articles'],['market','bag','Shopping'],['streams','tv','Streams'],['shorts','tv','Shorts'],['communities','users','Communities'],['concord','concord','Concord'],['torrents','magnet','Torrents'],['repos','git','Git'],['stats','bars','Server Stats']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='markets')     // Markets needs the AI backend (Budget is client-only, so it stays)
                    && !_off.has(v));                              // …and the user's own Settings → Sidebar choices
-    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-compass"></use></svg> Discover</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}${v==='chat'?'<i id="chat-badge-m" class="badge hidden"></i>':''}</span>${v==='news'?'<span class="news-badge" style="display:none"></span>':''}</button>`).join('')}</div>`, root=>{
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-compass"></use></svg> Discover</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}</span>${v==='news'?'<span class="news-badge" style="display:none"></span>':''}</button>`).join('')}</div>`, root=>{
       $$('.more-item',root).forEach(b=> b.onclick=()=>{ closeModal(); switchView(b.dataset.v); });
       if(window.PCNews) window.PCNews.updateBadge();
-      bumpChat();   // the sheet is rebuilt each time it opens, so its badge starts hidden — fill it in
     });
   }
   function gamesMenu(){
@@ -22726,7 +22131,7 @@
     })();
     // Sub A — mentions/reposts/reactions/zaps/reports/chat/comments. Subscribed IMMEDIATELY, never gated on
     // the follower seed, so live mentions/zaps aren't delayed by the seed's laggy-link retry.
-    Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,1984,42,1111,1621,1617], limit:150 }], {   // 42=chat, 1111=community comments, 1621/1617=NIP-34 issue/patch on your repo
+    Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,1984,1111,1621,1617], limit:150 }], {   // 42=chat, 1111=community comments, 1621/1617=NIP-34 issue/patch on your repo
       onEvent: ev => { if(ev.pubkey===ME.pubkey) return; if(Store.saveEvent(ev)){ invalidateCounts(); applySobLive(ev); needProfile(ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey);
         if(ev.created_at>seenNotif.last){ bumpNotif(); if(_notifReady) notifPing(ev); }
         renderNotificationsSoon(); } },
@@ -22749,7 +22154,6 @@
       : ev.kind===1984?'🚩 reported you'
       : ev.kind===7?`reacted ${reactDisp(ev)}`
       : ev.kind===6?'reposted you'
-      : ev.kind===42?'💬 messaged you in chat'
       : ev.kind===1111?'👥 replied to you in a community'
       : ev.kind===1621?'🐛 opened an issue on your repo'
       : ev.kind===1617?'🩹 sent a patch to your repo'
@@ -22779,9 +22183,7 @@
     // a row renderer is not enough, because everything still has to survive this filter. 1621/1617 (NIP-34
     // issue/patch on a repo you maintain) were added to the subscription and the renderer but not here, so
     // they were fetched, toasted live, and then dropped from the list that actually renders.
-    // 42 (NIP-28 chat) and 1111 (community comment) were subscribed to and had rows + a tab filter, but
-    // were missing HERE, so they could never render either — the same gap 1621/1617 had.
-    const evs=Store.all().filter(e=>[1,6,7,9735,3,1984,1621,1617,42,1111].includes(e.kind) && e.pubkey!==ME.pubkey && !MUTED.has(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey) && (e.tags||[]).some(t=>t&&t[0]==='p'&&t[1]===ME.pubkey)
+    const evs=Store.all().filter(e=>[1,6,7,9735,3,1984,1621,1617,1111].includes(e.kind) && e.pubkey!==ME.pubkey && !MUTED.has(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey) && (e.tags||[]).some(t=>t&&t[0]==='p'&&t[1]===ME.pubkey)
       // A reaction or repost with no `e` tag says "someone liked something" and can't say what. The row
       // has nothing to open, and the handler's `ref||e.id` fallback opened the REACTION as a thread,
       // which renders as an empty one. Drop them here so a malformed event from any source — our fedi
@@ -22969,7 +22371,7 @@
   const _NOTIF_TABS = [['all','All'],['mentions','@ Mentions'],['reactions','♥ Reactions'],['zaps','⚡ Zaps'],['follows','🫂 Follows'],['reports','🚩 Reports']];
   function _notifMatch(e){
     switch(_notifFilter){
-      case 'mentions': return (e.kind===1 && !_tipNote(e)) || e.kind===42 || e.kind===1111 || e.kind===1621 || e.kind===1617;   // incl. chat + community replies + git issues/patches; a tip note belongs in Zaps, not here
+      case 'mentions': return (e.kind===1 && !_tipNote(e)) || e.kind===1111 || e.kind===1621 || e.kind===1617;   // incl. chat + community replies + git issues/patches; a tip note belongs in Zaps, not here
       case 'reactions': return e.kind===7||e.kind===6;
       case 'zaps': return e.kind===9735 || !!_tipNote(e);   // Lightning zaps + BCH/Monero address tips share the ⚡ tab
       case 'follows': return e.kind===3;
@@ -23074,7 +22476,7 @@
         more.textContent='Loading older…'; more.disabled=true;
         const oldest=all[all.length-1].created_at;
         try{
-          const older=await Relay.query([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,42,1111,1621,1617], until: oldest-1, limit:100 }]);
+          const older=await Relay.query([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,1111,1621,1617], until: oldest-1, limit:100 }]);
           older.forEach(e=>{ if(e.pubkey!==ME.pubkey) Store.saveEvent(e); });
         }catch(_){}
       }
@@ -23123,7 +22525,7 @@
   // reaction/repost/zap it's the referenced post. Follows and reports aren't about a post at all.
   function _notifCtxId(e){
     if(e.kind===3 || e.kind===1984) return '';
-    if(e.kind===1 || e.kind===42 || e.kind===1111) return replyParentId(e)||'';
+    if(e.kind===1 || e.kind===1111) return replyParentId(e)||'';
     return (e.tags.filter(t=>t[0]==='e').pop()||[])[1]||'';
   }
   // A one-line preview of that post, so "someone reacted ♥ to your post" says WHICH post. Renders from
@@ -23188,14 +22590,13 @@
     // `ref` — the last lowercase `e` tag — which on a NIP-22 comment is the PARENT, so tapping a
     // community/thread mention landed on somebody else's older comment with nothing of theirs to
     // reply to. Exactly the trap the kind-42 note below describes.
-    const tgt = (e.kind===1 || e.kind===42 || e.kind===1111 || e.kind===1621 || e.kind===1617) ? e.id : (ref||e.id);
+    const tgt = (e.kind===1 || e.kind===1111 || e.kind===1621 || e.kind===1617) ? e.id : (ref||e.id);
     let cls,ic,txt;
     if(e.kind===9735){cls='zap';ic='⚡';txt=`zapped you <b>${fmtSats(zapAmount(e))} sats</b>`;}
     else if(e.kind===3){cls='follow';ic='🫂';txt='followed you';}
     else if(e.kind===1984){cls='report';ic='🚩';const tg=e.tags.find(t=>t[0]==='p'&&t[1]===ME.pubkey)||e.tags.find(t=>t[0]==='e');const ty=(tg&&tg[2])||(e.tags.find(t=>t[0]==='report')||[])[1]||'other';txt=`reported you <b>${enc(ty)}</b>${e.content?': '+enc(_notifPreview(e.content).slice(0,80)):''}`;}
     else if(e.kind===7){cls='like';ic='♥';txt=`reacted ${reactDisp(e)} to your post`;}
     else if(e.kind===6){cls='rt';ic='↻';txt='reposted your note';}
-    else if(e.kind===42){cls='reply';ic='💬';txt='in chat'+_notifSaid(e);}
     else if(e.kind===1111){cls='reply';ic='👥';txt='commented'+_notifSaid(e);}
     // NIP-34 collaboration on a repo you own/maintain. The `subject` tag IS the title, so show it
     // instead of _notifSaid's content preview — an issue body's first line is rarely the headline.
@@ -30591,7 +29992,7 @@
      * notification was built from it) and the relay has not finished connecting". Waiting for the
      * socket first spends that entire connect on a spinner, for a post the client could have drawn
      * before the first packet left the phone. */
-    { const have=Store.get(id); if(have && have.kind!==42) _paintThreadHead(feed, have); }
+    { const have=Store.get(id); if(have) _paintThreadHead(feed, have); }
     // A REQ fired at a still-CONNECTING socket is silently DROPPED (relay.js `_send`), so a thread opened
     // COLD — a pasted nevent link, a notification tap, a fresh launch — queried into a dead socket and
     // rendered whatever partial set came back: the "only 1 reply, correct after refresh" bug. Waiting for a
@@ -30600,14 +30001,6 @@
     let ev=Store.get(id);
     if(!ev){ ev=await fetchEvent(id, hints); if(ev) Store.saveEvent(ev); }
     if(!ev){ feed.innerHTML='<div class="empty">Post not found on the relay.</div>'; return; }
-    // A chat message (NIP-28 kind-42) has no normal thread — e.g. a reaction notification links here.
-    // Resolve its channel and open the room, then scroll to + flash the message.
-    if(ev.kind===42){
-      // NIP-28: the channel is the `root`-marked e-tag; with no markers the convention is the FIRST e-tag.
-      const root=(ev.tags.find(t=>t[0]==='e' && t[3]==='root') || ev.tags.find(t=>t[0]==='e') || [])[1];
-      let chan=root ? (Store.get(root)||await fetchEvent(root, [...(hints||[]), ...eTagRelays(ev)])) : null;
-      if(chan){ Store.saveEvent(chan); openChannel(chan, id); return; }
-    }
     // The post we hold, painted now if the Store did not already have it above (a link opened cold,
     // where fetchEvent had to go and get it). Same helper either way — see _paintThreadHead.
     _paintThreadHead(feed, ev);
