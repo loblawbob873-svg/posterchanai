@@ -333,9 +333,9 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
     mmsRefused: !!st.mmsRefused,
     mmsCapped: !!st.mmsCapped,
     blossomDone: !!global.localStorage._all[Object.keys(global.localStorage._all)
-                    .filter(k => k.indexOf('_blossom_v2') > 0)[0]],
+                    .filter(k => k.indexOf('_blossom_v3') > 0)[0]],
     /* THE MARK ITSELF, not whichever `pc_sms_hwm*` key happens to come first. The marker keys are
-     * siblings of it (`_blossom_v2`, `_blossom_rewound_v2`, `_oldest_first_v1`) and all hold "1",
+     * siblings of it (`_blossom_v3`, `_blossom_rewound_v3`, `_oldest_first_v1`) and all hold "1",
      * so an unanchored filter reported a high-water mark of 1 -- a plausible-looking number that
      * makes any "did the mark move" assertion pass for the wrong reason. */
     hwm: Object.keys(global.localStorage._all)

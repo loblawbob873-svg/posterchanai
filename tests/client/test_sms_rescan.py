@@ -1,6 +1,6 @@
 """THE WAY BACK OUT OF "ALREADY DONE".
 
-Every marker the message archive keeps is a LATCH, and the completion one — `..._blossom_v2` — is
+Every marker the message archive keeps is a LATCH, and the completion one — `..._blossom_v3` — is
 read at the top of `migrateLocalHistory` and returns immediately when it is set. That is correct
 when it was set correctly. When it was set by an older build that believed a truncated or walled-off
 read was the whole phone, it is permanent: the device installs every fix that follows, opens Texts,
@@ -58,11 +58,22 @@ def mms_files(res):
 @unittest.skipIf(not NODE, "no node on this node")
 class AStuckCompletionMarker(unittest.TestCase):
 
+    def test_an_old_v2_completion_latch_cannot_hide_mms_after_upgrade(self):
+        """The release migration itself: v2 could declare success with no portable MMS hashes.
+        A current build must regard that old latch as stale and perform one full audit automatically."""
+        rows = [picture(i, NOW - (100 + i) * 86400000) for i in range(1, 5)]
+        res = run(rows, {ME + "_blossom_v2": "1", ME + "_blossom_rewound_v2": "1",
+                         ME + "_oldest_first_v1": "1", ME: str(NOW)},
+                  ["phoneLoad", "migrateAll"])
+        self.assertEqual(len(mms_files(res)), 4,
+                         "the obsolete completion latch still suppresses the repaired MMS audit")
+        self.assertTrue(res["blossomDone"], "the replacement v3 migration did not finish")
+
     def test_a_phone_already_marked_done_migrates_nothing(self):
         """THE BUG, stated as the thing the user sees. The latch is set, so the whole history is
         skipped and not one picture reaches encrypted storage — with no error anywhere."""
         rows = [picture(i, NOW - (100 + i) * 86400000) for i in range(1, 6)]
-        res = run(rows, {ME + "_blossom_v2": "1", ME + "_oldest_first_v1": "1", ME: str(NOW)},
+        res = run(rows, {ME + "_blossom_v3": "1", ME + "_oldest_first_v1": "1", ME: str(NOW)},
                   ["phoneLoad", "migrateAll"])
         self.assertEqual(mms_files(res), [],
                          "the latch did not actually block the migration — this test proves nothing")
@@ -70,7 +81,7 @@ class AStuckCompletionMarker(unittest.TestCase):
     def test_a_rescan_clears_the_latch_and_copies_the_whole_phone(self):
         """The way out. Same phone, same latch, one deliberate re-scan."""
         rows = [picture(i, NOW - (100 + i) * 86400000) for i in range(1, 6)]
-        res = run(rows, {ME + "_blossom_v2": "1", ME + "_oldest_first_v1": "1", ME: str(NOW)},
+        res = run(rows, {ME + "_blossom_v3": "1", ME + "_oldest_first_v1": "1", ME: str(NOW)},
                   ["phoneLoad", "rescan"])
         self.assertEqual(len(mms_files(res)), 5,
                          "the re-scan did not reach the pictures the latch was hiding")
@@ -80,7 +91,7 @@ class AStuckCompletionMarker(unittest.TestCase):
         sweep start at `now` rather than at the beginning, so a re-scan that left it would re-run a
         migration that still could not reach anything old."""
         rows = [picture(i, NOW - (100 + i) * 86400000) for i in range(1, 4)]
-        res = run(rows, {ME + "_blossom_v2": "1", ME + "_oldest_first_v1": "1", ME: str(NOW)},
+        res = run(rows, {ME + "_blossom_v3": "1", ME + "_oldest_first_v1": "1", ME: str(NOW)},
                   ["phoneLoad", "rescan"])
         # Behind the first-run boundary, which is what lets the ordinary sweep reach back at all.
         self.assertLess(res["hwm"], NOW - 20 * 86400000,
@@ -90,8 +101,8 @@ class AStuckCompletionMarker(unittest.TestCase):
         """It is a button somebody will press twice. The second pass must not duplicate the
         uploads — the archive is keyed on the message, not on when it was read."""
         rows = [picture(i, NOW - (100 + i) * 86400000) for i in range(1, 4)]
-        once = run(rows, {ME + "_blossom_v2": "1"}, ["phoneLoad", "rescan"])
-        twice = run(rows, {ME + "_blossom_v2": "1"}, ["phoneLoad", "rescan", "rescan"])
+        once = run(rows, {ME + "_blossom_v3": "1"}, ["phoneLoad", "rescan"])
+        twice = run(rows, {ME + "_blossom_v3": "1"}, ["phoneLoad", "rescan", "rescan"])
         self.assertEqual(len(mms_files(once)), 3)
         self.assertEqual(len(mms_files(twice)), len(mms_files(once)),
                          "a second re-scan re-uploaded everything")
