@@ -42,6 +42,14 @@ var PosterCordReader = (() => {
   ));
   var __toCommonJS = (mod2) => __copyProps(__defProp({}, "__esModule", { value: true }), mod2);
 
+  // <define:import.meta.env>
+  var define_import_meta_env_default;
+  var init_define_import_meta_env = __esm({
+    "<define:import.meta.env>"() {
+      define_import_meta_env_default = {};
+    }
+  });
+
   // node_modules/@noble/curves/node_modules/@noble/hashes/utils.js
   function isBytes(a) {
     return a instanceof Uint8Array || ArrayBuffer.isView(a) && a.constructor.name === "Uint8Array";
@@ -167,6 +175,7 @@ var PosterCordReader = (() => {
   var hasHexBuiltin, hexes, asciis, oidNist;
   var init_utils = __esm({
     "node_modules/@noble/curves/node_modules/@noble/hashes/utils.js"() {
+      init_define_import_meta_env();
       hasHexBuiltin = /* @__PURE__ */ (() => (
         // @ts-ignore
         typeof Uint8Array.from([]).toHex === "function" && typeof Uint8Array.fromHex === "function"
@@ -189,6 +198,7 @@ var PosterCordReader = (() => {
   var HashMD, SHA256_IV;
   var init_md = __esm({
     "node_modules/@noble/curves/node_modules/@noble/hashes/_md.js"() {
+      init_define_import_meta_env();
       init_utils();
       HashMD = class {
         blockLen;
@@ -302,6 +312,7 @@ var PosterCordReader = (() => {
   var SHA256_K, SHA256_W, SHA2_32B, _SHA256, sha256;
   var init_sha2 = __esm({
     "node_modules/@noble/curves/node_modules/@noble/hashes/sha2.js"() {
+      init_define_import_meta_env();
       init_md();
       init_utils();
       SHA256_K = /* @__PURE__ */ Uint32Array.from([
@@ -602,6 +613,7 @@ var PosterCordReader = (() => {
   var _0n, _1n, isPosBig, bitMask;
   var init_utils2 = __esm({
     "node_modules/@noble/curves/utils.js"() {
+      init_define_import_meta_env();
       init_utils();
       init_utils();
       _0n = /* @__PURE__ */ BigInt(0);
@@ -835,6 +847,7 @@ var PosterCordReader = (() => {
   var _0n2, _1n2, _2n, _3n, _4n, _5n, _7n, _8n, _9n, _16n, FIELD_FIELDS, _Field;
   var init_modular = __esm({
     "node_modules/@noble/curves/abstract/modular.js"() {
+      init_define_import_meta_env();
       init_utils2();
       _0n2 = /* @__PURE__ */ BigInt(0);
       _1n2 = /* @__PURE__ */ BigInt(1);
@@ -1103,6 +1116,7 @@ var PosterCordReader = (() => {
   var _0n3, _1n3, pointPrecomputes, pointWindowSizes, wNAF;
   var init_curve = __esm({
     "node_modules/@noble/curves/abstract/curve.js"() {
+      init_define_import_meta_env();
       init_utils2();
       init_modular();
       _0n3 = /* @__PURE__ */ BigInt(0);
@@ -1247,6 +1261,7 @@ var PosterCordReader = (() => {
   var _HMAC, hmac;
   var init_hmac = __esm({
     "node_modules/@noble/curves/node_modules/@noble/hashes/hmac.js"() {
+      init_define_import_meta_env();
       init_utils();
       _HMAC = class {
         oHash;
@@ -2083,6 +2098,7 @@ var PosterCordReader = (() => {
   var divNearest, DERErr, DER, _0n4, _1n4, _2n2, _3n2, _4n2;
   var init_weierstrass = __esm({
     "node_modules/@noble/curves/abstract/weierstrass.js"() {
+      init_define_import_meta_env();
       init_hmac();
       init_utils();
       init_utils2();
@@ -2302,6 +2318,7 @@ var PosterCordReader = (() => {
   var secp256k1_CURVE, secp256k1_ENDO, _0n5, _2n3, Fpk1, Pointk1, secp256k1, TAGGED_HASH_PREFIXES, pointToBytes, hasEven, num, schnorr;
   var init_secp256k1 = __esm({
     "node_modules/@noble/curves/secp256k1.js"() {
+      init_define_import_meta_env();
       init_sha2();
       init_utils();
       init_curve();
@@ -2472,6 +2489,7 @@ var PosterCordReader = (() => {
   var hasHexBuiltin2, hexes2, asciis2, Hash;
   var init_utils3 = __esm({
     "node_modules/@noble/hashes/esm/utils.js"() {
+      init_define_import_meta_env();
       hasHexBuiltin2 = /* @__PURE__ */ (() => (
         // @ts-ignore
         typeof Uint8Array.from([]).toHex === "function" && typeof Uint8Array.fromHex === "function"
@@ -2505,6 +2523,7 @@ var PosterCordReader = (() => {
   var HashMD2, SHA256_IV2;
   var init_md2 = __esm({
     "node_modules/@noble/hashes/esm/_md.js"() {
+      init_define_import_meta_env();
       init_utils3();
       HashMD2 = class extends Hash {
         constructor(blockLen, outputLen, padOffset, isLE2) {
@@ -2613,6 +2632,7 @@ var PosterCordReader = (() => {
   var SHA256_K2, SHA256_W2, SHA256, sha2562;
   var init_sha22 = __esm({
     "node_modules/@noble/hashes/esm/sha2.js"() {
+      init_define_import_meta_env();
       init_md2();
       init_utils3();
       SHA256_K2 = /* @__PURE__ */ Uint32Array.from([
@@ -2853,6 +2873,7 @@ var PosterCordReader = (() => {
   var isLE, wrapCipher;
   var init_utils4 = __esm({
     "node_modules/@noble/ciphers/utils.js"() {
+      init_define_import_meta_env();
       isLE = /* @__PURE__ */ (() => new Uint8Array(new Uint32Array([287454020]).buffer)[0] === 68)();
       wrapCipher = /* @__NO_SIDE_EFFECTS__ */ (params, constructor) => {
         function wrappedCipher(key, ...args) {
@@ -3002,6 +3023,7 @@ var PosterCordReader = (() => {
   var encodeStr, sigma16, sigma32, sigma16_32, sigma32_32, BLOCK_LEN, BLOCK_LEN32, MAX_COUNTER, U32_EMPTY;
   var init_arx = __esm({
     "node_modules/@noble/ciphers/_arx.js"() {
+      init_define_import_meta_env();
       init_utils4();
       encodeStr = (str) => Uint8Array.from(str.split(""), (c) => c.charCodeAt(0));
       sigma16 = encodeStr("expand 16-byte k");
@@ -3030,6 +3052,7 @@ var PosterCordReader = (() => {
   var Poly1305, poly1305;
   var init_poly1305 = __esm({
     "node_modules/@noble/ciphers/_poly1305.js"() {
+      init_define_import_meta_env();
       init_utils4();
       Poly1305 = class {
         blockLen = 16;
@@ -3462,6 +3485,7 @@ var PosterCordReader = (() => {
   var chacha20, xchacha20, ZEROS16, updatePadded, ZEROS32, _poly1305_aead, chacha20poly1305, xchacha20poly1305;
   var init_chacha = __esm({
     "node_modules/@noble/ciphers/chacha.js"() {
+      init_define_import_meta_env();
       init_arx();
       init_poly1305();
       init_utils4();
@@ -3642,6 +3666,7 @@ var PosterCordReader = (() => {
   var hasHexBuiltin3, hexes3, asciis3, oidNist2;
   var init_utils5 = __esm({
     "node_modules/nostr-tools/node_modules/@noble/hashes/utils.js"() {
+      init_define_import_meta_env();
       hasHexBuiltin3 = /* @__PURE__ */ (() => (
         // @ts-ignore
         typeof Uint8Array.from([]).toHex === "function" && typeof Uint8Array.fromHex === "function"
@@ -3658,6 +3683,7 @@ var PosterCordReader = (() => {
   var _HMAC2, hmac3;
   var init_hmac2 = __esm({
     "node_modules/nostr-tools/node_modules/@noble/hashes/hmac.js"() {
+      init_define_import_meta_env();
       init_utils5();
       _HMAC2 = class {
         oHash;
@@ -3767,6 +3793,7 @@ var PosterCordReader = (() => {
   var HKDF_COUNTER2, EMPTY_BUFFER2;
   var init_hkdf = __esm({
     "node_modules/nostr-tools/node_modules/@noble/hashes/hkdf.js"() {
+      init_define_import_meta_env();
       init_hmac2();
       init_utils5();
       HKDF_COUNTER2 = /* @__PURE__ */ Uint8Array.of(0);
@@ -3784,6 +3811,7 @@ var PosterCordReader = (() => {
   var HashMD3, SHA256_IV3;
   var init_md3 = __esm({
     "node_modules/nostr-tools/node_modules/@noble/hashes/_md.js"() {
+      init_define_import_meta_env();
       init_utils5();
       HashMD3 = class {
         blockLen;
@@ -3897,6 +3925,7 @@ var PosterCordReader = (() => {
   var SHA256_K3, SHA256_W3, SHA2_32B2, _SHA2562, sha2563;
   var init_sha23 = __esm({
     "node_modules/nostr-tools/node_modules/@noble/hashes/sha2.js"() {
+      init_define_import_meta_env();
       init_md3();
       init_utils5();
       SHA256_K3 = /* @__PURE__ */ Uint32Array.from([
@@ -4329,6 +4358,7 @@ var PosterCordReader = (() => {
   var gcd, radix2carry, powers, hasBase64Builtin, decodeBase64Builtin, base64, BECH_ALPHABET, POLYMOD_GENERATORS, bech32;
   var init_base = __esm({
     "node_modules/nostr-tools/node_modules/@scure/base/index.js"() {
+      init_define_import_meta_env();
       gcd = (a, b) => b === 0 ? a : gcd(b, a % b);
       radix2carry = /* @__NO_SIDE_EFFECTS__ */ (from, to) => from + (to - gcd(from, to));
       powers = /* @__PURE__ */ (() => {
@@ -4566,6 +4596,7 @@ var PosterCordReader = (() => {
   var BLOCK_SIZE, POLY, sbox, invSbox, rotr32_8, rotl32_8, tableEncoding, tableDecoding, xPowers, cbc, _CMAC, cmac;
   var init_aes = __esm({
     "node_modules/@noble/ciphers/aes.js"() {
+      init_define_import_meta_env();
       init_utils4();
       BLOCK_SIZE = 16;
       POLY = 283;
@@ -6274,6 +6305,7 @@ var PosterCordReader = (() => {
   var __defProp2, __export2, verifiedSymbol, isRecord, utils_exports, utf8Decoder2, utf8Encoder2, JS, i, generateSecretKey, getPublicKey, finalizeEvent, verifyEvent, kinds_exports, Metadata, ShortTextNote, RecommendRelay, Contacts, EncryptedDirectMessage, EventDeletion, Repost, Reaction, BadgeAward, ChatMessage, ForumThread, Seal, PrivateDirectMessage, FileMessage, GenericRepost, Photo, NormalVideo, ShortVideo, ChannelCreation, ChannelMetadata, ChannelMessage, ChannelHideMessage, ChannelMuteUser, OpenTimestamps, GiftWrap, Poll, FileMetadata, Comment, LiveChatMessage, Voice, VoiceComment, ProblemTracker, Report, Reporting, Label, CommunityPostApproval, JobRequest, JobResult, JobFeedback, ZapGoal, ZapRequest, Zap, Highlights, PollResponse, Mutelist, Pinlist, RelayList, BookmarkList, CommunitiesList, PublicChatsList, BlockedRelaysList, SearchRelaysList, FavoriteRelays, InterestsList, UserEmojiList, DirectMessageRelaysList, FileServerPreference, BlossomServerList, NWCWalletInfo, LightningPubRPC, ClientAuth, NWCWalletRequest, NWCWalletResponse, NostrConnect, HTTPAuth, Followsets, Genericlists, Relaysets, Bookmarksets, Curationsets, ProfileBadges, BadgeDefinition, Interestsets, CreateOrUpdateStall, CreateOrUpdateProduct, LongFormArticle, DraftLong, Emojisets, Application, LiveEvent, UserStatuses, ClassifiedListing, DraftClassifiedListing, Date2, Time, Calendar, CalendarEventRSVP, RelayReview, Handlerrecommendation, Handlerinformation, CommunityDefinition, GroupMetadata, fakejson_exports, nip42_exports, _WebSocket, _WebSocket2, nip19_exports, NostrTypeGuard, Bech32MaxSize, BECH32_REGEX, nip04_exports, nip05_exports, NIP05_REGEX, isNip05, _fetch, nip10_exports, nip11_exports, _fetch2, nip13_exports, nip17_exports, nip59_exports, nip44_exports, minPlaintextSize2, maxPlaintextSize2, extendedPrefixThreshold2, v2, TWO_DAYS, now, randomNow, nip44ConversationKey, nip44Encrypt, nip44Decrypt, unwrapEvent2, unwrapManyEvents2, nip18_exports, nip21_exports, NOSTR_URI_REGEX, nip22_exports, nip25_exports, nip27_exports, noCharacter, noURLCharacter, MAX_HASHTAG_LENGTH, nip28_exports, channelCreateEvent, channelMetadataEvent, channelMessageEvent, channelHideMessageEvent, channelMuteUserEvent, nip30_exports, EMOJI_SHORTCODE_REGEX, regex, nip39_exports, _fetch3, nip47_exports, nip54_exports, nip57_exports, _fetch4, nip77_exports, PROTOCOL_VERSION, ID_SIZE, FINGERPRINT_SIZE, Mode, WrappedBuffer, Accumulator, NegentropyStorageVector, Negentropy, NegentropySync, nip98_exports, _authorizationScheme;
   var init_esm = __esm({
     "node_modules/nostr-tools/lib/esm/index.js"() {
+      init_define_import_meta_env();
       init_secp256k1();
       init_utils5();
       init_sha23();
@@ -7316,6 +7348,7 @@ var PosterCordReader = (() => {
   var require_react_development = __commonJS({
     "node_modules/react/cjs/react.development.js"(exports, module) {
       "use strict";
+      init_define_import_meta_env();
       (function() {
         function defineDeprecationWarning(methodName, info) {
           Object.defineProperty(Component.prototype, methodName, {
@@ -8288,6 +8321,7 @@ var PosterCordReader = (() => {
   var require_react = __commonJS({
     "node_modules/react/index.js"(exports, module) {
       "use strict";
+      init_define_import_meta_env();
       if (false) {
         module.exports = null;
       } else {
@@ -8300,6 +8334,7 @@ var PosterCordReader = (() => {
   var require_react_jsx_runtime_development = __commonJS({
     "node_modules/react/cjs/react-jsx-runtime.development.js"(exports) {
       "use strict";
+      init_define_import_meta_env();
       (function() {
         function getComponentNameFromType(type) {
           if (null == type) return null;
@@ -8557,6 +8592,7 @@ var PosterCordReader = (() => {
   var require_jsx_runtime = __commonJS({
     "node_modules/react/jsx-runtime.js"(exports, module) {
       "use strict";
+      init_define_import_meta_env();
       if (false) {
         module.exports = null;
       } else {
@@ -8569,6 +8605,7 @@ var PosterCordReader = (() => {
   var ExceptionCode, CapacitorException, getPlatformId, createCapacitor, initCapacitorGlobal, Capacitor, registerPlugin, WebPlugin, encode3, decode4, CapacitorCookiesPluginWeb, CapacitorCookies, readBlobAsBase64, normalizeHttpHeaders, buildUrlParams, buildRequestInit, CapacitorHttpPluginWeb, CapacitorHttp, SystemBarsStyle, SystemBarType, SystemBarsPluginWeb, SystemBars;
   var init_dist = __esm({
     "node_modules/@capacitor/core/dist/index.js"() {
+      init_define_import_meta_env();
       (function(ExceptionCode2) {
         ExceptionCode2["Unimplemented"] = "UNIMPLEMENTED";
         ExceptionCode2["Unavailable"] = "UNAVAILABLE";
@@ -9082,6 +9119,7 @@ var PosterCordReader = (() => {
   var AppWeb;
   var init_web = __esm({
     "node_modules/@capacitor/app/dist/esm/web.js"() {
+      init_define_import_meta_env();
       init_dist();
       AppWeb = class extends WebPlugin {
         constructor() {
@@ -9130,6 +9168,7 @@ var PosterCordReader = (() => {
   var require_lib = __commonJS({
     "node_modules/light-bolt11-decoder/node_modules/@scure/base/lib/index.js"(exports) {
       "use strict";
+      init_define_import_meta_env();
       Object.defineProperty(exports, "__esModule", { value: true });
       exports.bytes = exports.stringToBytes = exports.str = exports.bytesToString = exports.hex = exports.utf8 = exports.bech32m = exports.bech32 = exports.base58check = exports.base58xmr = exports.base58xrp = exports.base58flickr = exports.base58 = exports.base64url = exports.base64 = exports.base32crockford = exports.base32hex = exports.base32 = exports.base16 = exports.utils = exports.assertNumber = void 0;
       function assertNumber(n) {
@@ -9538,6 +9577,7 @@ var PosterCordReader = (() => {
   // node_modules/light-bolt11-decoder/bolt11.js
   var require_bolt11 = __commonJS({
     "node_modules/light-bolt11-decoder/bolt11.js"(exports, module) {
+      init_define_import_meta_env();
       var { bech32: bech322, hex: hex3, utf8 } = require_lib();
       var DEFAULTNETWORK = {
         // default network is bitcoin
@@ -9874,12 +9914,21 @@ var PosterCordReader = (() => {
     inspectChat: () => inspectChat,
     inspectControl: () => inspectControl
   });
+  init_define_import_meta_env();
+
+  // src/concord-v2/lib/communityList.ts
+  init_define_import_meta_env();
 
   // src/concord-v2/lib/derive.ts
+  init_define_import_meta_env();
   init_secp256k1();
   init_secp256k1();
 
+  // node_modules/@noble/hashes/esm/hkdf.js
+  init_define_import_meta_env();
+
   // node_modules/@noble/hashes/esm/hmac.js
+  init_define_import_meta_env();
   init_utils3();
   var HMAC = class extends Hash {
     constructor(hash2, _key) {
@@ -9989,6 +10038,7 @@ var PosterCordReader = (() => {
   init_utils3();
 
   // node_modules/nostr-tools/lib/esm/nip44.js
+  init_define_import_meta_env();
   init_chacha();
   init_utils4();
   init_secp256k1();
@@ -10240,7 +10290,32 @@ var PosterCordReader = (() => {
     }
   }
 
+  // src/concord-v2/lib/types.ts
+  init_define_import_meta_env();
+
+  // src/lib/gitActivity.ts
+  init_define_import_meta_env();
+
+  // src/lib/ci.ts
+  init_define_import_meta_env();
+
+  // src/lib/nostrId.ts
+  init_define_import_meta_env();
+
+  // node_modules/@nostrify/nostrify/dist/mod.js
+  init_define_import_meta_env();
+
+  // node_modules/@nostrify/nostrify/dist/BunkerURI.js
+  init_define_import_meta_env();
+
+  // node_modules/@nostrify/nostrify/dist/NBrowserSigner.js
+  init_define_import_meta_env();
+
+  // node_modules/@nostrify/nostrify/dist/NCache.js
+  init_define_import_meta_env();
+
   // node_modules/lru-cache/dist/esm/index.js
+  init_define_import_meta_env();
   var perf = typeof performance === "object" && performance && typeof performance.now === "function" ? performance : Date;
   var PROCESS = typeof process === "object" && !!process ? process : {};
   var emitWarning = (msg, type, code, fn) => {
@@ -10282,6 +10357,15 @@ var PosterCordReader = (() => {
       emitWarning("AbortController is not defined. If using lru-cache in node 14, load an AbortController polyfill from the `node-abort-controller` package. A minimal polyfill is provided for use by LRUCache.fetch(), but it should not be relied upon in other contexts (eg, passing it to other APIs that use AbortController/AbortSignal might have undesirable effects). You may disable this with LRU_CACHE_IGNORE_AC_WARNING=1 in the env.", "NO_ABORT_CONTROLLER", "ENOTSUP", warnACPolyfill);
     };
   }
+
+  // node_modules/@nostrify/nostrify/dist/NSet.js
+  init_define_import_meta_env();
+
+  // node_modules/@nostrify/nostrify/dist/NConnectSigner.js
+  init_define_import_meta_env();
+
+  // node_modules/zod/index.js
+  init_define_import_meta_env();
 
   // node_modules/zod/v4/classic/external.js
   var external_exports = {};
@@ -10525,6 +10609,7 @@ var PosterCordReader = (() => {
     xid: () => xid2,
     xor: () => xor
   });
+  init_define_import_meta_env();
 
   // node_modules/zod/v4/core/index.js
   var core_exports2 = {};
@@ -10804,8 +10889,10 @@ var PosterCordReader = (() => {
     util: () => util_exports,
     version: () => version
   });
+  init_define_import_meta_env();
 
   // node_modules/zod/v4/core/core.js
+  init_define_import_meta_env();
   var _a;
   var NEVER = /* @__PURE__ */ Object.freeze({
     status: "aborted"
@@ -10882,6 +10969,12 @@ var PosterCordReader = (() => {
     return globalConfig;
   }
 
+  // node_modules/zod/v4/core/parse.js
+  init_define_import_meta_env();
+
+  // node_modules/zod/v4/core/errors.js
+  init_define_import_meta_env();
+
   // node_modules/zod/v4/core/util.js
   var util_exports = {};
   __export(util_exports, {
@@ -10949,6 +11042,7 @@ var PosterCordReader = (() => {
     uint8ArrayToHex: () => uint8ArrayToHex,
     unwrapMessage: () => unwrapMessage
   });
+  init_define_import_meta_env();
   function assertEqual(val) {
     return val;
   }
@@ -11805,6 +11899,12 @@ var PosterCordReader = (() => {
   };
   var safeDecodeAsync = /* @__PURE__ */ _safeDecodeAsync($ZodRealError);
 
+  // node_modules/zod/v4/core/schemas.js
+  init_define_import_meta_env();
+
+  // node_modules/zod/v4/core/checks.js
+  init_define_import_meta_env();
+
   // node_modules/zod/v4/core/regexes.js
   var regexes_exports = {};
   __export(regexes_exports, {
@@ -11868,6 +11968,7 @@ var PosterCordReader = (() => {
     uuid7: () => uuid7,
     xid: () => xid
   });
+  init_define_import_meta_env();
   var cuid = /^[cC][0-9a-z]{6,}$/;
   var cuid2 = /^[0-9a-z]+$/;
   var ulid = /^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$/;
@@ -12513,6 +12614,7 @@ var PosterCordReader = (() => {
   });
 
   // node_modules/zod/v4/core/doc.js
+  init_define_import_meta_env();
   var Doc = class {
     constructor(args = []) {
       this.content = [];
@@ -12549,6 +12651,7 @@ var PosterCordReader = (() => {
   };
 
   // node_modules/zod/v4/core/versions.js
+  init_define_import_meta_env();
   var version = {
     major: 4,
     minor: 4,
@@ -14704,8 +14807,10 @@ var PosterCordReader = (() => {
     zhCN: () => zh_CN_default,
     zhTW: () => zh_TW_default
   });
+  init_define_import_meta_env();
 
   // node_modules/zod/v4/locales/ar.js
+  init_define_import_meta_env();
   var error = () => {
     const Sizable = {
       string: { unit: "\u062D\u0631\u0641", verb: "\u0623\u0646 \u064A\u062D\u0648\u064A" },
@@ -14813,6 +14918,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/az.js
+  init_define_import_meta_env();
   var error2 = () => {
     const Sizable = {
       string: { unit: "simvol", verb: "olmal\u0131d\u0131r" },
@@ -14919,6 +15025,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/be.js
+  init_define_import_meta_env();
   function getBelarusianPlural(count, one, few, many) {
     const absCount = Math.abs(count);
     const lastDigit = absCount % 10;
@@ -15076,6 +15183,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/bg.js
+  init_define_import_meta_env();
   var error4 = () => {
     const Sizable = {
       string: { unit: "\u0441\u0438\u043C\u0432\u043E\u043B\u0430", verb: "\u0434\u0430 \u0441\u044A\u0434\u044A\u0440\u0436\u0430" },
@@ -15197,6 +15305,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/ca.js
+  init_define_import_meta_env();
   var error5 = () => {
     const Sizable = {
       string: { unit: "car\xE0cters", verb: "contenir" },
@@ -15306,6 +15415,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/cs.js
+  init_define_import_meta_env();
   var error6 = () => {
     const Sizable = {
       string: { unit: "znak\u016F", verb: "m\xEDt" },
@@ -15418,6 +15528,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/da.js
+  init_define_import_meta_env();
   var error7 = () => {
     const Sizable = {
       string: { unit: "tegn", verb: "havde" },
@@ -15534,6 +15645,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/de.js
+  init_define_import_meta_env();
   var error8 = () => {
     const Sizable = {
       string: { unit: "Zeichen", verb: "zu haben" },
@@ -15643,6 +15755,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/el.js
+  init_define_import_meta_env();
   var error9 = () => {
     const Sizable = {
       string: { unit: "\u03C7\u03B1\u03C1\u03B1\u03BA\u03C4\u03AE\u03C1\u03B5\u03C2", verb: "\u03BD\u03B1 \u03AD\u03C7\u03B5\u03B9" },
@@ -15753,6 +15866,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/en.js
+  init_define_import_meta_env();
   var error10 = () => {
     const Sizable = {
       string: { unit: "characters", verb: "to have" },
@@ -15866,6 +15980,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/eo.js
+  init_define_import_meta_env();
   var error11 = () => {
     const Sizable = {
       string: { unit: "karaktrojn", verb: "havi" },
@@ -15976,6 +16091,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/es.js
+  init_define_import_meta_env();
   var error12 = () => {
     const Sizable = {
       string: { unit: "caracteres", verb: "tener" },
@@ -16109,6 +16225,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/fa.js
+  init_define_import_meta_env();
   var error13 = () => {
     const Sizable = {
       string: { unit: "\u06A9\u0627\u0631\u0627\u06A9\u062A\u0631", verb: "\u062F\u0627\u0634\u062A\u0647 \u0628\u0627\u0634\u062F" },
@@ -16224,6 +16341,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/fi.js
+  init_define_import_meta_env();
   var error14 = () => {
     const Sizable = {
       string: { unit: "merkki\xE4", subject: "merkkijonon" },
@@ -16337,6 +16455,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/fr.js
+  init_define_import_meta_env();
   var error15 = () => {
     const Sizable = {
       string: { unit: "caract\xE8res", verb: "avoir" },
@@ -16463,6 +16582,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/fr-CA.js
+  init_define_import_meta_env();
   var error16 = () => {
     const Sizable = {
       string: { unit: "caract\xE8res", verb: "avoir" },
@@ -16571,6 +16691,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/he.js
+  init_define_import_meta_env();
   var error17 = () => {
     const TypeNames = {
       string: { label: "\u05DE\u05D7\u05E8\u05D5\u05D6\u05EA", gender: "f" },
@@ -16766,6 +16887,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/hr.js
+  init_define_import_meta_env();
   var error18 = () => {
     const Sizable = {
       string: { unit: "znakova", verb: "imati" },
@@ -16889,6 +17011,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/hu.js
+  init_define_import_meta_env();
   var error19 = () => {
     const Sizable = {
       string: { unit: "karakter", verb: "legyen" },
@@ -16998,6 +17121,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/hy.js
+  init_define_import_meta_env();
   function getArmenianPlural(count, one, many) {
     return Math.abs(count) === 1 ? one : many;
   }
@@ -17146,6 +17270,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/id.js
+  init_define_import_meta_env();
   var error21 = () => {
     const Sizable = {
       string: { unit: "karakter", verb: "memiliki" },
@@ -17253,6 +17378,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/is.js
+  init_define_import_meta_env();
   var error22 = () => {
     const Sizable = {
       string: { unit: "stafi", verb: "a\xF0 hafa" },
@@ -17363,6 +17489,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/it.js
+  init_define_import_meta_env();
   var error23 = () => {
     const Sizable = {
       string: { unit: "caratteri", verb: "avere" },
@@ -17472,6 +17599,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/ja.js
+  init_define_import_meta_env();
   var error24 = () => {
     const Sizable = {
       string: { unit: "\u6587\u5B57", verb: "\u3067\u3042\u308B" },
@@ -17580,6 +17708,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/ka.js
+  init_define_import_meta_env();
   var error25 = () => {
     const Sizable = {
       string: { unit: "\u10E1\u10D8\u10DB\u10D1\u10DD\u10DA\u10DD", verb: "\u10E3\u10DC\u10D3\u10D0 \u10E8\u10D4\u10D8\u10EA\u10D0\u10D5\u10D3\u10D4\u10E1" },
@@ -17692,7 +17821,11 @@ var PosterCordReader = (() => {
     };
   }
 
+  // node_modules/zod/v4/locales/kh.js
+  init_define_import_meta_env();
+
   // node_modules/zod/v4/locales/km.js
+  init_define_import_meta_env();
   var error26 = () => {
     const Sizable = {
       string: { unit: "\u178F\u17BD\u17A2\u1780\u17D2\u179F\u179A", verb: "\u1782\u17BD\u179A\u1798\u17B6\u1793" },
@@ -17809,6 +17942,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/ko.js
+  init_define_import_meta_env();
   var error27 = () => {
     const Sizable = {
       string: { unit: "\uBB38\uC790", verb: "to have" },
@@ -17921,6 +18055,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/lt.js
+  init_define_import_meta_env();
   var capitalizeFirstCharacter = (text) => {
     return text.charAt(0).toUpperCase() + text.slice(1);
   };
@@ -18125,6 +18260,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/mk.js
+  init_define_import_meta_env();
   var error29 = () => {
     const Sizable = {
       string: { unit: "\u0437\u043D\u0430\u0446\u0438", verb: "\u0434\u0430 \u0438\u043C\u0430\u0430\u0442" },
@@ -18235,6 +18371,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/ms.js
+  init_define_import_meta_env();
   var error30 = () => {
     const Sizable = {
       string: { unit: "aksara", verb: "mempunyai" },
@@ -18343,6 +18480,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/nl.js
+  init_define_import_meta_env();
   var error31 = () => {
     const Sizable = {
       string: { unit: "tekens", verb: "heeft" },
@@ -18454,6 +18592,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/no.js
+  init_define_import_meta_env();
   var error32 = () => {
     const Sizable = {
       string: { unit: "tegn", verb: "\xE5 ha" },
@@ -18563,6 +18702,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/ota.js
+  init_define_import_meta_env();
   var error33 = () => {
     const Sizable = {
       string: { unit: "harf", verb: "olmal\u0131d\u0131r" },
@@ -18673,6 +18813,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/ps.js
+  init_define_import_meta_env();
   var error34 = () => {
     const Sizable = {
       string: { unit: "\u062A\u0648\u06A9\u064A", verb: "\u0648\u0644\u0631\u064A" },
@@ -18788,6 +18929,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/pl.js
+  init_define_import_meta_env();
   var error35 = () => {
     const Sizable = {
       string: { unit: "znak\xF3w", verb: "mie\u0107" },
@@ -18898,6 +19040,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/pt.js
+  init_define_import_meta_env();
   var error36 = () => {
     const Sizable = {
       string: { unit: "caracteres", verb: "ter" },
@@ -19007,6 +19150,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/ro.js
+  init_define_import_meta_env();
   var error37 = () => {
     const Sizable = {
       string: { unit: "caractere", verb: "s\u0103 aib\u0103" },
@@ -19127,6 +19271,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/ru.js
+  init_define_import_meta_env();
   function getRussianPlural(count, one, few, many) {
     const absCount = Math.abs(count);
     const lastDigit = absCount % 10;
@@ -19284,6 +19429,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/sl.js
+  init_define_import_meta_env();
   var error39 = () => {
     const Sizable = {
       string: { unit: "znakov", verb: "imeti" },
@@ -19394,6 +19540,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/sv.js
+  init_define_import_meta_env();
   var error40 = () => {
     const Sizable = {
       string: { unit: "tecken", verb: "att ha" },
@@ -19505,6 +19652,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/ta.js
+  init_define_import_meta_env();
   var error41 = () => {
     const Sizable = {
       string: { unit: "\u0B8E\u0BB4\u0BC1\u0BA4\u0BCD\u0BA4\u0BC1\u0B95\u0BCD\u0B95\u0BB3\u0BCD", verb: "\u0B95\u0BCA\u0BA3\u0BCD\u0B9F\u0BBF\u0BB0\u0BC1\u0B95\u0BCD\u0B95 \u0BB5\u0BC7\u0BA3\u0BCD\u0B9F\u0BC1\u0BAE\u0BCD" },
@@ -19616,6 +19764,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/th.js
+  init_define_import_meta_env();
   var error42 = () => {
     const Sizable = {
       string: { unit: "\u0E15\u0E31\u0E27\u0E2D\u0E31\u0E01\u0E29\u0E23", verb: "\u0E04\u0E27\u0E23\u0E21\u0E35" },
@@ -19727,6 +19876,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/tr.js
+  init_define_import_meta_env();
   var error43 = () => {
     const Sizable = {
       string: { unit: "karakter", verb: "olmal\u0131" },
@@ -19832,7 +19982,11 @@ var PosterCordReader = (() => {
     };
   }
 
+  // node_modules/zod/v4/locales/ua.js
+  init_define_import_meta_env();
+
   // node_modules/zod/v4/locales/uk.js
+  init_define_import_meta_env();
   var error44 = () => {
     const Sizable = {
       string: { unit: "\u0441\u0438\u043C\u0432\u043E\u043B\u0456\u0432", verb: "\u043C\u0430\u0442\u0438\u043C\u0435" },
@@ -19947,6 +20101,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/ur.js
+  init_define_import_meta_env();
   var error45 = () => {
     const Sizable = {
       string: { unit: "\u062D\u0631\u0648\u0641", verb: "\u06C1\u0648\u0646\u0627" },
@@ -20058,6 +20213,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/uz.js
+  init_define_import_meta_env();
   var error46 = () => {
     const Sizable = {
       string: { unit: "belgi", verb: "bo\u2018lishi kerak" },
@@ -20169,6 +20325,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/vi.js
+  init_define_import_meta_env();
   var error47 = () => {
     const Sizable = {
       string: { unit: "k\xFD t\u1EF1", verb: "c\xF3" },
@@ -20278,6 +20435,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/zh-CN.js
+  init_define_import_meta_env();
   var error48 = () => {
     const Sizable = {
       string: { unit: "\u5B57\u7B26", verb: "\u5305\u542B" },
@@ -20388,6 +20546,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/zh-TW.js
+  init_define_import_meta_env();
   var error49 = () => {
     const Sizable = {
       string: { unit: "\u5B57\u5143", verb: "\u64C1\u6709" },
@@ -20496,6 +20655,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/locales/yo.js
+  init_define_import_meta_env();
   var error50 = () => {
     const Sizable = {
       string: { unit: "\xE0mi", verb: "n\xED" },
@@ -20604,6 +20764,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/core/registries.js
+  init_define_import_meta_env();
   var _a2;
   var $output = /* @__PURE__ */ Symbol("ZodOutput");
   var $input = /* @__PURE__ */ Symbol("ZodInput");
@@ -20654,6 +20815,7 @@ var PosterCordReader = (() => {
   var globalRegistry = globalThis.__zod_globalRegistry;
 
   // node_modules/zod/v4/core/api.js
+  init_define_import_meta_env();
   // @__NO_SIDE_EFFECTS__
   function _string(Class2, params) {
     return new Class2({
@@ -21693,6 +21855,7 @@ var PosterCordReader = (() => {
   }
 
   // node_modules/zod/v4/core/to-json-schema.js
+  init_define_import_meta_env();
   function initializeContext(params) {
     let target = params?.target ?? "draft-2020-12";
     if (target === "draft-4")
@@ -22052,6 +22215,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   };
 
   // node_modules/zod/v4/core/json-schema-processors.js
+  init_define_import_meta_env();
   var formatMap = {
     guid: "uuid",
     url: "uri",
@@ -22596,6 +22760,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   }
 
   // node_modules/zod/v4/core/json-schema-generator.js
+  init_define_import_meta_env();
   var JSONSchemaGenerator = class {
     /** @deprecated Access via ctx instead */
     get metadataRegistry() {
@@ -22672,6 +22837,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 
   // node_modules/zod/v4/core/json-schema.js
   var json_schema_exports = {};
+  init_define_import_meta_env();
 
   // node_modules/zod/v4/classic/schemas.js
   var schemas_exports2 = {};
@@ -22843,6 +23009,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     xid: () => xid2,
     xor: () => xor
   });
+  init_define_import_meta_env();
 
   // node_modules/zod/v4/classic/checks.js
   var checks_exports2 = {};
@@ -22877,6 +23044,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     trim: () => _trim,
     uppercase: () => _uppercase
   });
+  init_define_import_meta_env();
 
   // node_modules/zod/v4/classic/iso.js
   var iso_exports = {};
@@ -22890,6 +23058,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     duration: () => duration2,
     time: () => time2
   });
+  init_define_import_meta_env();
   var ZodISODateTime = /* @__PURE__ */ $constructor("ZodISODateTime", (inst, def) => {
     $ZodISODateTime.init(inst, def);
     ZodStringFormat.init(inst, def);
@@ -22919,7 +23088,11 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     return _isoDuration(ZodISODuration, params);
   }
 
+  // node_modules/zod/v4/classic/parse.js
+  init_define_import_meta_env();
+
   // node_modules/zod/v4/classic/errors.js
+  init_define_import_meta_env();
   var initializer2 = (inst, issues) => {
     $ZodError.init(inst, issues);
     inst.name = "ZodError";
@@ -24264,6 +24437,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   }
 
   // node_modules/zod/v4/classic/compat.js
+  init_define_import_meta_env();
   var ZodIssueCode = {
     invalid_type: "invalid_type",
     too_big: "too_big",
@@ -24290,6 +24464,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   })(ZodFirstPartyTypeKind || (ZodFirstPartyTypeKind = {}));
 
   // node_modules/zod/v4/classic/from-json-schema.js
+  init_define_import_meta_env();
   var z = {
     ...schemas_exports2,
     ...checks_exports2,
@@ -24778,6 +24953,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     number: () => number3,
     string: () => string3
   });
+  init_define_import_meta_env();
   function string3(params) {
     return _coercedString(ZodString, params);
   }
@@ -24798,6 +24974,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   config(en_default());
 
   // node_modules/@nostrify/nostrify/dist/NSchema.js
+  init_define_import_meta_env();
   var NSchema = class _NSchema {
     /** Schema to validate Nostr hex IDs such as event IDs and pubkeys. */
     static id() {
@@ -25064,6 +25241,45 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     }
   };
 
+  // node_modules/@nostrify/nostrify/dist/NIP05.js
+  init_define_import_meta_env();
+
+  // node_modules/@nostrify/nostrify/dist/NIP50.js
+  init_define_import_meta_env();
+
+  // node_modules/@nostrify/nostrify/dist/NIP98.js
+  init_define_import_meta_env();
+
+  // node_modules/@nostrify/nostrify/dist/utils/N64.js
+  init_define_import_meta_env();
+
+  // node_modules/@nostrify/nostrify/dist/NIP98Client.js
+  init_define_import_meta_env();
+
+  // node_modules/@nostrify/nostrify/dist/NKinds.js
+  init_define_import_meta_env();
+
+  // node_modules/@nostrify/nostrify/dist/NPool.js
+  init_define_import_meta_env();
+
+  // node_modules/@nostrify/nostrify/dist/utils/getFilterLimit.js
+  init_define_import_meta_env();
+
+  // node_modules/@nostrify/nostrify/dist/utils/CircularSet.js
+  init_define_import_meta_env();
+
+  // node_modules/@nostrify/nostrify/dist/utils/Machina.js
+  init_define_import_meta_env();
+
+  // node_modules/@nostrify/nostrify/dist/NRelay1.js
+  init_define_import_meta_env();
+
+  // node_modules/@nostrify/nostrify/dist/NSecSigner.js
+  init_define_import_meta_env();
+
+  // node_modules/@nostrify/nostrify/dist/RelayError.js
+  init_define_import_meta_env();
+
   // src/lib/nostrId.ts
   function isNostrId(value) {
     return idSchema.safeParse(value).success;
@@ -25071,6 +25287,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   var idSchema = NSchema.id();
 
   // src/lib/parseAddr.ts
+  init_define_import_meta_env();
   function parseAddr(value) {
     if (!value) return void 0;
     const parts = value.split(":");
@@ -25083,8 +25300,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   }
 
   // src/lib/platform.ts
+  init_define_import_meta_env();
   init_esm();
-  var import_meta = {};
   function normalizeRelayUrl(url2) {
     let value = url2.trim();
     if (!value) return void 0;
@@ -25103,22 +25320,22 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   function relayToHttpUrl(relayUrl) {
     return relayUrl.replace(/^wss:\/\//i, "https://").replace(/^ws:\/\//i, "http://").replace(/\/$/, "");
   }
-  var APP_NAME = import_meta.env.VITE_APP_NAME || "Armada";
-  var RAW_PLATFORM_RELAYS = import_meta.env.VITE_PLATFORM_RELAYS ?? "";
+  var APP_NAME = define_import_meta_env_default.VITE_APP_NAME || "Armada";
+  var RAW_PLATFORM_RELAYS = define_import_meta_env_default.VITE_PLATFORM_RELAYS ?? "";
   var PLATFORM_RELAYS = RAW_PLATFORM_RELAYS.split(",").map((url2) => normalizeRelayUrl(url2)).filter((url2) => Boolean(url2));
   var PINNED_RAIL_RELAYS = envBool(
-    import_meta.env.VITE_PIN_PLATFORM_RELAYS,
+    define_import_meta_env_default.VITE_PIN_PLATFORM_RELAYS,
     false
   ) ? PLATFORM_RELAYS : [];
-  var APP_RELAYS = (import_meta.env.VITE_APP_RELAYS || "wss://relay.ditto.pub,wss://relay.dreamith.to").split(",").map((url2) => normalizeRelayUrl(url2)).filter((url2) => Boolean(url2));
-  var SEARCH_RELAYS = (import_meta.env.VITE_SEARCH_RELAYS || "wss://relay.ditto.pub,wss://relay.dreamith.to").split(",").map((url2) => normalizeRelayUrl(url2)).filter((url2) => Boolean(url2));
-  var GIT_ANNOUNCEMENT_DISCOVERY_RELAY = normalizeRelayUrl(import_meta.env.VITE_GIT_DISCOVERY_RELAY ?? "wss://index.ngit.dev") ?? "";
+  var APP_RELAYS = (define_import_meta_env_default.VITE_APP_RELAYS || "wss://relay.ditto.pub,wss://relay.dreamith.to").split(",").map((url2) => normalizeRelayUrl(url2)).filter((url2) => Boolean(url2));
+  var SEARCH_RELAYS = (define_import_meta_env_default.VITE_SEARCH_RELAYS || "wss://relay.ditto.pub,wss://relay.dreamith.to").split(",").map((url2) => normalizeRelayUrl(url2)).filter((url2) => Boolean(url2));
+  var GIT_ANNOUNCEMENT_DISCOVERY_RELAY = normalizeRelayUrl(define_import_meta_env_default.VITE_GIT_DISCOVERY_RELAY ?? "wss://index.ngit.dev") ?? "";
   var DEFAULT_PUBLIC_AV_SERVER = "https://armada.buzz";
-  var CONCORD_AV_SERVERS = (import_meta.env.VITE_CONCORD_AV_SERVERS ?? (PLATFORM_RELAYS.length > 0 ? PLATFORM_RELAYS.map((url2) => relayToHttpUrl(url2)).join(",") : DEFAULT_PUBLIC_AV_SERVER)).split(",").map((s) => s.trim()).filter((s) => Boolean(s));
+  var CONCORD_AV_SERVERS = (define_import_meta_env_default.VITE_CONCORD_AV_SERVERS ?? (PLATFORM_RELAYS.length > 0 ? PLATFORM_RELAYS.map((url2) => relayToHttpUrl(url2)).join(",") : DEFAULT_PUBLIC_AV_SERVER)).split(",").map((s) => s.trim()).filter((s) => Boolean(s));
   var DEFAULT_PUBLIC_DM_VOICE_RELAY = "wss://armada.buzz";
-  var DM_VOICE_RELAYS = (import_meta.env.VITE_DM_VOICE_RELAYS ?? (PLATFORM_RELAYS.length > 0 ? PLATFORM_RELAYS.join(",") : DEFAULT_PUBLIC_DM_VOICE_RELAY)).split(",").map((url2) => normalizeRelayUrl(url2)).filter((url2) => Boolean(url2));
+  var DM_VOICE_RELAYS = (define_import_meta_env_default.VITE_DM_VOICE_RELAYS ?? (PLATFORM_RELAYS.length > 0 ? PLATFORM_RELAYS.join(",") : DEFAULT_PUBLIC_DM_VOICE_RELAY)).split(",").map((url2) => normalizeRelayUrl(url2)).filter((url2) => Boolean(url2));
   var DEFAULT_PUBLIC_DM_RELAY = "wss://relay.armada.buzz";
-  var DM_RELAYS = (import_meta.env.VITE_DM_RELAYS ?? DEFAULT_PUBLIC_DM_RELAY).split(",").map((url2) => normalizeRelayUrl(url2)).filter((url2) => Boolean(url2));
+  var DM_RELAYS = (define_import_meta_env_default.VITE_DM_RELAYS ?? DEFAULT_PUBLIC_DM_RELAY).split(",").map((url2) => normalizeRelayUrl(url2)).filter((url2) => Boolean(url2));
   function envBool(value, dflt) {
     if (value === void 0 || value === "") return dflt;
     if (value === "true" || value === "1") return true;
@@ -25126,22 +25343,22 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     return dflt;
   }
   var DEFAULT_NOISE_SUPPRESSION = envBool(
-    import_meta.env.VITE_DEFAULT_NOISE_SUPPRESSION,
+    define_import_meta_env_default.VITE_DEFAULT_NOISE_SUPPRESSION,
     true
   );
   var DEFAULT_ECHO_CANCELLATION = envBool(
-    import_meta.env.VITE_DEFAULT_ECHO_CANCELLATION,
+    define_import_meta_env_default.VITE_DEFAULT_ECHO_CANCELLATION,
     true
   );
   var DEFAULT_AUTO_GAIN_CONTROL = envBool(
-    import_meta.env.VITE_DEFAULT_AUTO_GAIN_CONTROL,
+    define_import_meta_env_default.VITE_DEFAULT_AUTO_GAIN_CONTROL,
     true
   );
-  var DEFAULT_RNNOISE = envBool(import_meta.env.VITE_DEFAULT_RNNOISE, true);
-  var SANDBOX_DOMAIN = import_meta.env.VITE_SANDBOX_DOMAIN || "iframe.diy";
-  var LINK_PREVIEW_ENDPOINT = (import_meta.env.VITE_LINK_PREVIEW_ENDPOINT ?? "https://ditto.pub/api/link-preview/{url}").trim();
-  var PLAUSIBLE_DOMAIN = (import_meta.env.VITE_PLAUSIBLE_DOMAIN ?? "").trim();
-  var PLAUSIBLE_ENDPOINT = (import_meta.env.VITE_PLAUSIBLE_ENDPOINT ?? "").trim();
+  var DEFAULT_RNNOISE = envBool(define_import_meta_env_default.VITE_DEFAULT_RNNOISE, true);
+  var SANDBOX_DOMAIN = define_import_meta_env_default.VITE_SANDBOX_DOMAIN || "iframe.diy";
+  var LINK_PREVIEW_ENDPOINT = (define_import_meta_env_default.VITE_LINK_PREVIEW_ENDPOINT ?? "https://ditto.pub/api/link-preview/{url}").trim();
+  var PLAUSIBLE_DOMAIN = (define_import_meta_env_default.VITE_PLAUSIBLE_DOMAIN ?? "").trim();
+  var PLAUSIBLE_ENDPOINT = (define_import_meta_env_default.VITE_PLAUSIBLE_ENDPOINT ?? "").trim();
   function decodePushPubkey(raw) {
     const value = raw.trim();
     if (!value) return void 0;
@@ -25156,9 +25373,9 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     return void 0;
   }
   var NOSTR_PUSH_PUBKEY = decodePushPubkey(
-    import_meta.env.VITE_NOSTR_PUSH_PUBKEY ?? ""
+    define_import_meta_env_default.VITE_NOSTR_PUSH_PUBKEY ?? ""
   );
-  var NOSTR_PUSH_RELAYS = (import_meta.env.VITE_NOSTR_PUSH_RELAYS ?? "").split(",").map((url2) => normalizeRelayUrl(url2)).filter((url2) => Boolean(url2));
+  var NOSTR_PUSH_RELAYS = (define_import_meta_env_default.VITE_NOSTR_PUSH_RELAYS ?? "").split(",").map((url2) => normalizeRelayUrl(url2)).filter((url2) => Boolean(url2));
 
   // src/lib/gitActivity.ts
   var GIT_REPOSITORY_ANNOUNCEMENT_KIND = 30617;
@@ -25325,10 +25542,15 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     }
   }
 
+  // src/concord-v2/lib/control.ts
+  init_define_import_meta_env();
+
   // src/concord-v2/lib/edition.ts
+  init_define_import_meta_env();
   init_utils3();
 
   // src/concord-v2/lib/kinds.ts
+  init_define_import_meta_env();
   var KIND_WRAP = 1059;
   var KIND_WRAP_EPHEMERAL = 21059;
   var KIND_SEAL_ENCRYPTED = 20013;
@@ -25353,7 +25575,11 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   var VSK_BANLIST = "4";
   var VSK_INVITE_REGISTRY = "8";
 
+  // src/concord-v2/lib/stream.ts
+  init_define_import_meta_env();
+
   // node_modules/nostr-tools/lib/esm/pure.js
+  init_define_import_meta_env();
   init_secp256k1();
   init_utils5();
   init_sha23();
@@ -25595,6 +25821,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   }
 
   // src/concord-v2/lib/version.ts
+  init_define_import_meta_env();
   init_sha22();
   var EDITION_LABEL = "vector-community/v1/edition";
   function u64be(n) {
@@ -25764,6 +25991,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   }
 
   // src/concord-v2/lib/roles.ts
+  init_define_import_meta_env();
   var Permissions = {
     MANAGE_ROLES: 1n << 0n,
     MANAGE_CHANNELS: 1n << 1n,
@@ -26246,7 +26474,11 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     return result;
   }
 
+  // src/concord-v2/lib/community.ts
+  init_define_import_meta_env();
+
   // src/concord-v2/lib/invite.ts
+  init_define_import_meta_env();
   var RELAY_DICTIONARY = {
     1: "wss://jskitty.com/nostr",
     2: "wss://asia.vectorapp.io/nostr",
@@ -26316,37 +26548,72 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     return out;
   }
 
+  // src/concord-v2/lib/chat.ts
+  init_define_import_meta_env();
+
+  // src/hooks/useReactions.ts
+  init_define_import_meta_env();
+
+  // node_modules/@nostrify/react/dist/mod.js
+  init_define_import_meta_env();
+
   // node_modules/@nostrify/react/dist/NostrContext.js
+  init_define_import_meta_env();
   var import_react = __toESM(require_react(), 1);
   var NostrContext = (0, import_react.createContext)(
     void 0
   );
 
   // node_modules/@nostrify/react/dist/useNostr.js
+  init_define_import_meta_env();
   var import_react2 = __toESM(require_react(), 1);
 
+  // node_modules/@nostrify/react/dist/login/mod.js
+  init_define_import_meta_env();
+
+  // node_modules/@nostrify/react/dist/login/NLogin.js
+  init_define_import_meta_env();
+
   // node_modules/@nostrify/react/dist/login/NostrLoginProvider.js
+  init_define_import_meta_env();
   var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
   var import_react4 = __toESM(require_react(), 1);
 
   // node_modules/@nostrify/react/dist/login/NostrLoginContext.js
+  init_define_import_meta_env();
   var import_react3 = __toESM(require_react(), 1);
   var NostrLoginContext = (0, import_react3.createContext)(void 0);
 
+  // node_modules/@nostrify/react/dist/login/nostrLoginReducer.js
+  init_define_import_meta_env();
+
+  // node_modules/@nostrify/react/dist/login/NUser.js
+  init_define_import_meta_env();
+
   // node_modules/@nostrify/react/dist/login/useNostrLogin.js
+  init_define_import_meta_env();
   var import_react5 = __toESM(require_react(), 1);
 
   // src/hooks/useReactions.ts
   var import_react16 = __toESM(require_react(), 1);
 
   // src/hooks/useCurrentUser.ts
+  init_define_import_meta_env();
   var import_react13 = __toESM(require_react(), 1);
 
+  // src/lib/androidNativeSigner.ts
+  init_define_import_meta_env();
+
   // node_modules/capacitor-plugin-nostr-signer/dist/esm/index.js
+  init_define_import_meta_env();
   init_dist();
   var native = registerPlugin("NostrSignerPlugin");
 
+  // src/lib/AppSigner.ts
+  init_define_import_meta_env();
+
   // node_modules/idb/build/index.js
+  init_define_import_meta_env();
   var instanceOfAny = (object2, constructors) => constructors.some((c) => object2 instanceof c);
   var idbProxyableTypes;
   var cursorAdvanceMethods;
@@ -26555,11 +26822,27 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     }
   }));
 
+  // src/lib/bitcoin-signers.ts
+  init_define_import_meta_env();
+
+  // src/lib/nip46Signer.ts
+  init_define_import_meta_env();
+
   // src/lib/syncLog.ts
+  init_define_import_meta_env();
   var t0 = Date.now();
 
+  // src/lib/nip46Transport.ts
+  init_define_import_meta_env();
+
   // node_modules/@capacitor/app/dist/esm/index.js
+  init_define_import_meta_env();
   init_dist();
+
+  // node_modules/@capacitor/app/dist/esm/definitions.js
+  init_define_import_meta_env();
+
+  // node_modules/@capacitor/app/dist/esm/index.js
   var App = registerPlugin("App", {
     web: () => Promise.resolve().then(() => (init_web(), web_exports)).then((m) => new m.AppWeb())
   });
@@ -26568,28 +26851,53 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   init_dist();
 
   // src/lib/signerWithNudge.ts
+  init_define_import_meta_env();
   var import_react7 = __toESM(require_react(), 1);
 
   // src/components/SignerToastContent.tsx
+  init_define_import_meta_env();
   var import_react6 = __toESM(require_react(), 1);
   var import_jsx_runtime2 = __toESM(require_jsx_runtime(), 1);
 
   // src/hooks/useToast.ts
+  init_define_import_meta_env();
   var React = __toESM(require_react(), 1);
 
+  // src/hooks/useAuthor.ts
+  init_define_import_meta_env();
+
   // src/hooks/useCacheFirstSeed.ts
+  init_define_import_meta_env();
   var import_react10 = __toESM(require_react(), 1);
 
   // src/hooks/useEventStore.ts
+  init_define_import_meta_env();
   var import_react9 = __toESM(require_react(), 1);
 
   // src/contexts/EventStoreContext.ts
+  init_define_import_meta_env();
   var import_react8 = __toESM(require_react(), 1);
   var EventStoreContext = (0, import_react8.createContext)(null);
 
+  // src/hooks/useNostrPublish.ts
+  init_define_import_meta_env();
+
+  // src/lib/publishOutbox.ts
+  init_define_import_meta_env();
+
+  // src/lib/publishTimeout.ts
+  init_define_import_meta_env();
+
   // src/lib/webPushState.ts
+  init_define_import_meta_env();
   var STATE_PREFIX = "/.armada-push-state/";
   var OWN_EVENT_PREFIX = `${STATE_PREFIX}own/`;
+
+  // src/lib/nip29.ts
+  init_define_import_meta_env();
+
+  // src/lib/safeNip19.ts
+  init_define_import_meta_env();
 
   // src/hooks/useReactions.ts
   function reactionContentKey(content) {
@@ -26599,6 +26907,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   }
 
   // src/lib/zaps.ts
+  init_define_import_meta_env();
   init_sha22();
   init_utils3();
   var import_light_bolt11_decoder = __toESM(require_bolt11(), 1);

@@ -10,6 +10,7 @@ APP = (ROOT / "static/js/client/app.js").read_text()
 CSS = (ROOT / "static/css/client.css").read_text()
 CONCORD_CSS = (ROOT / "static/css/concord.css").read_text()
 CONCORD = (ROOT / "static/js/client/concord.js").read_text()
+CORD_READER = (ROOT / "static/js/client/cord-reader.js").read_text()
 HTML = (ROOT / "templates/client.html").read_text()
 PUSH = (ROOT / "app/services/nostr_push_service.py").read_text()
 
@@ -135,6 +136,7 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert '.cc-channel.unread' in CONCORD_CSS and '.cc-server.unread' in CONCORD_CSS
     assert 'notifyMentions(p,current,messages,viewer,me)' in CONCORD
     assert "route:'concord'" in CONCORD and 'concord-mention-' in CONCORD
+    assert 'import_meta.env' not in CORD_READER
     assert "search:'armada.buzz/invite'" in CONCORD and "search:'poster.place/invite'" in CONCORD
     assert 'data-cc-discover' in CONCORD and 'relaySubscribe:' in APP
     assert 'class="cc-message-avatar"' in CONCORD and '.cc-message-avatar' in CONCORD_CSS
