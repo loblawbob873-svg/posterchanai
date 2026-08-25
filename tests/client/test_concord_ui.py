@@ -96,11 +96,13 @@ def test_concord_has_honest_creation_and_public_discovery_empty_states():
     assert 'cc-public-room' in CONCORD_CSS
 
 
-def test_mobile_home_lists_joined_communities_outside_the_hidden_server_rail():
-    assert 'class="cc-joined"' in CONCORD
-    assert 'data-cc-server="${i}" class="cc-joined-room' in CONCORD
-    assert 'Your communities' in CONCORD
-    assert '.cc-joined-room' in CONCORD_CSS
+def test_mobile_reopens_the_last_server_then_drills_into_a_channel_like_discord():
+    assert "localStorage.getItem('pc.concord.active')" in CONCORD
+    assert "localStorage.setItem('pc.concord.active',String(i))" in CONCORD
+    assert 'mobileChatOpen=false, discoveryOpen=false' in CONCORD
+    assert "discoveryOpen=true; state.community=null" in CONCORD
+    assert "state.channel=b.dataset.ccChannel; mobileChatOpen=true" in CONCORD
+    assert "mobileChatOpen=false; render()" in CONCORD
 
 
 def test_created_and_joined_communities_survive_browser_storage_loss():
@@ -206,7 +208,7 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert "if(file&&input)file.onchange=async()=>" in CONCORD
     assert 'room.cord.hydrated=true' in CONCORD
     assert "if(loaded&&loaded.cord)" in CONCORD
-    assert 'let loaded=room; state.community=i' in CONCORD
+    assert 'let loaded=room;' in CONCORD and 'state.community=i' in CONCORD
     assert 'await p.nip44dec(viewer.pubkey,event.content)' in CONCORD
     assert 'cc-public-copy' in CONCORD and '.cc-public-copy' in CONCORD_CSS
     assert 'function isUnread(room)' in CONCORD

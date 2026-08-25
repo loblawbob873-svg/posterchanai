@@ -21,7 +21,7 @@
     return [...byId.values()];
   }
   const state={ community:null, channel:null };
-  let replyTarget=null, reactionTarget=null, mobileChatOpen=false;
+  let replyTarget=null, reactionTarget=null, mobileChatOpen=false, discoveryOpen=false;
   let discovered=[], discoveryStarted=false, discoveryLoaded=false, membershipStarted=false;
   const discoveryIconLoads=new Set();
   const recoveredOwnedInvites=new Set();
@@ -259,6 +259,13 @@
     const rooms=saved();
     const viewer=p.viewer?p.viewer():{};
     syncArmadaMemberships(p,viewer);
+    let autoOpen=-1;
+    if(state.community==null&&rooms.length&&!discoveryOpen){
+      const wanted=Number(localStorage.getItem('pc.concord.active')||0);
+      state.community=Number.isInteger(wanted)&&wanted>=0&&wanted<rooms.length?wanted:0;
+      state.channel='general';
+      autoOpen=state.community;
+    }
     const profile=viewer.profile||{};
     const me=profile.display_name||profile.name||(profile.nip05&&p.niceNip05(profile.nip05))||(viewer.npub?viewer.npub.slice(0,12)+'…':'You');
     const current=state.community==null?null:rooms[state.community];
@@ -266,7 +273,7 @@
     const currentChannel=current&&Array.isArray(current.channels)?current.channels.find(c=>c.name===(state.channel||'general')):null;
     const channelPrivate=!!(currentChannel&&currentChannel.private);
     const messages=current&&(current.local||current.cord)?activeMessages(current):[];
-    const joinedRooms=rooms.length?`<section class="cc-joined"><div><h3>Your communities</h3><small>${rooms.length} joined</small></div>${rooms.map((r,i)=>`<button data-cc-server="${i}" class="cc-joined-room${isUnread(r)?' unread':''}"><span class="cc-public-icon">${roomIcon(p,r,i)}</span><span class="cc-public-copy"><b>${p.enc(roomName(r,i))}</b><small>${p.enc((r.description||'Open community and choose a room').slice(0,120))}</small><em>${isUnread(r)?'New activity':'Joined'}</em></span><strong>Open</strong></button>`).join('')}</section>`:'';
+    const joinedRooms=''; // Active communities use the server rail/channel navigator, not home-page cards.
     notifyMentions(p,current,messages,viewer,me);
     feed.innerHTML=`<div class="cc-app${mobileChatOpen||state.community==null?' show-chat':''}${state.community==null?' home-view':''}">
       <aside class="cc-communities"><button class="cc-brand" id="cc-home" title="Find communities" aria-label="Find communities"><span aria-hidden="true">🕊</span></button>${rooms.map((r,i)=>`<button class="cc-server${state.community===i?' active':''}${isUnread(r)?' unread':''}" data-cc-server="${i}" title="${p.enc(roomName(r,i))}">${roomIcon(p,r,i)}</button>`).join('')}<button class="cc-server cc-add" id="cc-add" title="Join a community">+</button></aside>
@@ -286,13 +293,14 @@
     if(p.hydrateLinkCards)p.hydrateLinkCards(feed);
     hydrateWebxdcCards(current);
     bind(me);
+    if(autoOpen>=0)setTimeout(()=>{ const button=document.querySelector(`[data-cc-server="${autoOpen}"]`); if(button)button.click(); },0);
     if(returning&&current)restoreChatScroll();
   }
   function bind(me){
     const p=PC(), $=p.$, $$=p.$$;
     const scroller=document.querySelector('.cc-messages'); if(scroller){ scroller.onscroll=()=>{ if(scroller.dataset.osParking||!scroller.isConnected||!document.body.classList.contains('concord-view'))return; const key=scrollKey(),st=readScroll(key); st.top=scroller.scrollTop;st.height=scroller.scrollHeight;st.pinned=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;writeScroll(key,st); }; scroller.querySelectorAll('a').forEach(a=>a.addEventListener('pointerdown',()=>{ const key=scrollKey(),st=readScroll(key); st.top=scroller.scrollTop;st.height=scroller.scrollHeight;st.pinned=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;writeScroll(key,st); },{passive:true})); }
     const openJoin=()=>{ $('#cc-join').classList.remove('hidden'); setTimeout(()=>$('#cc-invite-url').focus(),20); };
-    const home=$('#cc-home'); if(home)home.onclick=()=>{ state.community=null; state.channel=null; mobileChatOpen=false; render(); };
+    const home=$('#cc-home'); if(home)home.onclick=()=>{ discoveryOpen=true; state.community=null; state.channel=null; mobileChatOpen=false; render(); };
     ['#cc-add','#cc-invite','#cc-welcome-join'].forEach(s=>{ const b=$(s); if(b)b.onclick=openJoin; });
     const create=$('#cc-create'); if(create)create.onclick=()=>{ $('#cc-create-dialog').classList.remove('hidden'); setTimeout(()=>$('#cc-community-name').focus(),20); };
     const createCancel=$('#cc-create-cancel'); if(createCancel)createCancel.onclick=()=>$('#cc-create-dialog').classList.add('hidden');
@@ -323,10 +331,10 @@
     const call=$('#cc-call'); if(call)call.onclick=()=>{ const room=saved()[state.community], peers=[...new Set(activeMessages(room).map(m=>m.pubkey).filter(pk=>pk&&pk!==(p.viewer&&p.viewer().pubkey)))]; if(!peers.length){ p.toast('No other community members are available to call yet'); return; } p.startGroupCall(peers,false); };
     const cancel=$('#cc-join-cancel'); if(cancel) cancel.onclick=()=>$('#cc-join').classList.add('hidden');
     const go=$('#cc-join-go'); if(go) go.onclick=async()=>{ const raw=String($('#cc-invite-url').value||'').trim(),v=inviteParts(raw); if(!v){ p.toast('that is not a Concord invite link'); return; } go.disabled=true; try{ p.toast('fetching and decrypting community…'); const room=await hydrateInvite(p,raw),a=saved(),i=a.findIndex(x=>x.naddr===v.naddr); if(i<0)a.push(room);else a[i]={...a[i],...room}; save(a); state.community=i<0?a.length-1:i; state.channel='general'; render(); await persistArmadaMembership(p,room); p.toast('community joined'); }catch(e){ go.disabled=false; p.toast('could not join: '+(e&&e.message||e)); } };
-    $$('[data-cc-server]').forEach(b=>b.onclick=async()=>{ const i=+b.dataset.ccServer,a=saved(),room=a[i]; let loaded=room; state.community=i; state.channel='general'; mobileChatOpen=false; render(); scrollChatBottom(); try{ if(room&&room.url&&(!room.cord||room.cord.armadaList)){ loaded={...room,...await hydrateInvite(p,room.url)}; a[i]=loaded; save(a); render(); } if(loaded&&loaded.cord)await hydrateRoomStreams(p,i); }catch(e){ if(loaded&&loaded.cord)loaded.cord.hydrated=false; save(a); p.toast('could not load community: '+(e&&e.message||e)); } });
+    $$('[data-cc-server]').forEach(b=>b.onclick=async()=>{ const i=+b.dataset.ccServer,a=saved(),room=a[i]; let loaded=room; discoveryOpen=false; localStorage.setItem('pc.concord.active',String(i)); state.community=i; state.channel='general'; mobileChatOpen=false; render(); scrollChatBottom(); try{ if(room&&room.url&&(!room.cord||room.cord.armadaList)){ loaded={...room,...await hydrateInvite(p,room.url)}; a[i]=loaded; save(a); render(); } if(loaded&&loaded.cord)await hydrateRoomStreams(p,i); }catch(e){ if(loaded&&loaded.cord)loaded.cord.hydrated=false; save(a); p.toast('could not load community: '+(e&&e.message||e)); } });
     $$('[data-cc-discover]').forEach(b=>b.onclick=async()=>{ const v=discovered[+b.dataset.ccDiscover]; if(!v)return; const a=saved(); let i=a.findIndex(x=>x.naddr===v.naddr); if(i<0){a.push(v);i=a.length-1;} save(a); state.community=i; state.channel='general'; render(); p.toast('fetching and decrypting community…'); try{ a[i]={...a[i],...await hydrateInvite(p,v.url)}; save(a); await persistArmadaMembership(p,a[i]); await hydrateRoomStreams(p,i); p.toast('community joined'); }catch(e){ p.toast('could not load community: '+(e&&e.message||e)); } });
     $$('[data-cc-channel]').forEach(b=>b.onclick=()=>{ state.channel=b.dataset.ccChannel; mobileChatOpen=true; render(); scrollChatBottom(); });
-    const bc=$('#cc-back-communities'); if(bc)bc.onclick=()=>{ state.community=null; state.channel=null; render(); };
+    const bc=$('#cc-back-communities'); if(bc)bc.onclick=()=>{ discoveryOpen=true; state.community=null; state.channel=null; render(); };
     const bh=$('#cc-back-channels'); if(bh)bh.onclick=()=>{ mobileChatOpen=false; render(); };
     const send=$('#cc-send'); if(send&&input){
       send.onclick=async()=>{ const text=String(input.value||'').trim(); const a=saved(), room=a[state.community],storeId=channelStoreId(room,state.channel); if(!text)return; if(!room||(!room.local&&!room.cord)){ p.toast('relay messaging becomes available after the invite is decrypted'); return; } const used=[...pendingAttachments].filter(([url])=>text.includes(url)),attachmentTags=used.map(([,tag])=>tag),target=replyTarget,replyTags=[]; if(target){const inherited=(target.tags||[]).filter(t=>['K','E','P'].includes(t[0]));if(inherited.length)replyTags.push(...inherited);else replyTags.push(['K',String(target.kind||9)],['E',messageId(target),'',target.pubkey||''],['P',target.pubkey||'']);replyTags.push(['k',String(target.kind||9)],['e',messageId(target),'',target.pubkey||''],['p',target.pubkey||'']);} const extraTags=[...attachmentTags,...replyTags],wireKind=target?1111:9; send.disabled=true; try{ const viewer=p.viewer?p.viewer():{}, made=room.local?null:await publishCordMessage(p,room,state.channel,text,extraTags,wireKind),at=made?made.ms:Date.now(),m=testMessages(storeId); m.push({id:made?made.rumorId:(crypto.randomUUID?crypto.randomUUID():`${at}-${Math.random().toString(36).slice(2)}`),by:me,pubkey:viewer.pubkey||'',text,at,kind:wireKind,tags:extraTags,reply:target?{id:messageId(target),by:target.by,text:target.text}:null,reactions:{},remote:!!made}); for(const [url] of used)pendingAttachments.delete(url); input.value=''; replyTarget=null; saveTestMessages(storeId,m); render(); scrollChatBottom(); }catch(e){ p.toast('message was not sent: '+(e&&e.message||e)); }finally{ send.disabled=false; } };
