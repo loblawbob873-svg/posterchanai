@@ -352,6 +352,21 @@ class DoubleHomeRuns(unittest.TestCase):
         self.assertIn("if(forceTop){", app)
         self.assertIn("_tlForceTop=''", app)
 
+    def test_native_feed_top_waits_until_the_webview_has_resumed(self):
+        """onNewIntent precedes Android's foreground WebView scroll restoration."""
+        phone = (ROOT / "static/js/client/phoneshell.js").read_text()
+        self.assertIn("_feedTopWaiting=true", phone)
+        self.assertIn("consumeLaunchView().finally(settleFeedTop)", phone)
+        self.assertIn("A.addListener('resume', again)", phone)
+        self.assertIn("document.visibilityState === 'hidden'", phone)
+        self.assertIn("setTimeout(settleFeedTop,700)", phone)
+        top_call = phone.index("PC.timelineTop()")
+        settle = phone.index("function settleFeedTop")
+        landing = phone.index("if(v === '__feed_top')")
+        self.assertGreater(top_call, settle)
+        self.assertLess(top_call, landing,
+                        "the landing must park the request, not scroll during onNewIntent")
+
     def test_native_duplicate_carriers_land_only_once(self):
         phone = (ROOT / "static/js/client/phoneshell.js").read_text()
         consume = method(strip_comments(phone), "function consumeLaunchView")

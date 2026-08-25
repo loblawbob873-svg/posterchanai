@@ -15,6 +15,24 @@
  */
 (function(){
   let PC = null;
+  let _feedTopWaiting = false, _feedTopTimer = 0;
+
+  /* Android restores a WebView's saved scroll position as the Activity becomes visible. Running
+   * timelineTop from onNewIntent is therefore too early: the feed reloads (the visible "shake"),
+   * then the platform writes the old offset back over it. Park the request until the page is
+   * visible and one short foreground/layout turn has completed. timelineTop's own generation latch
+   * then remains authoritative through the later card-height retries. */
+  function settleFeedTop(){
+    if(!_feedTopWaiting || !PC) return;
+    if(typeof document.visibilityState === 'string' && document.visibilityState === 'hidden') return;
+    clearTimeout(_feedTopTimer);
+    _feedTopTimer=setTimeout(()=>{
+      if(!_feedTopWaiting) return;
+      if(typeof document.visibilityState === 'string' && document.visibilityState === 'hidden') return;
+      _feedTopWaiting=false;
+      try{ if(typeof PC.timelineTop === 'function') PC.timelineTop(); }catch(_){}
+    },180);
+  }
 
   /* A launcher destination must run AFTER app.js has finished booting. #feed is present in the
    * server-rendered shell before boot even starts, so using its existence as "ready" races the
@@ -28,7 +46,12 @@
          * silently switched a Home/Social user to Nostrverse (or targeted a hidden tab), which on
          * a warm app looked exactly like the shortcut did nothing.  With no explicit view,
          * timelineTop keeps the active timeline or falls back to the visible Home timeline. */
-        try{ if(typeof PC.timelineTop === 'function') PC.timelineTop(); }catch(_){}
+        _feedTopWaiting=true;
+        // `App.resume` below is authoritative on Android. This fallback covers a cold boot (there
+        // is no resume listener yet) and an OEM WebView that omits the callback; long enough that
+        // its foreground scroll restoration has completed, still immediate to a human gesture.
+        clearTimeout(_feedTopTimer);
+        _feedTopTimer=setTimeout(settleFeedTop,700);
       } else if(v.indexOf('post:') === 0){
         const id=v.slice(5);
         try{ if(/^[0-9a-f]{64}$/i.test(id)) PC.openThread(id); }catch(_){}
@@ -393,7 +416,10 @@
      *
      * Listening to all three costs nothing: `LaunchView.take()` CONSUMES, so whichever fires first
      * performs the navigation and every later one reads "" and does nothing. */
-    const again = () => { if(document.querySelector('#feed')) consumeLaunchView(); };
+    const again = () => {
+      if(!document.querySelector('#feed')) return;
+      consumeLaunchView().finally(settleFeedTop);
+    };
     /* onNewIntent knows the requested view at the exact instant Android delivers the tile press.
      * Use that payload directly, then drain the parked copy. Waiting for a resume/visibility race
      * made the old screen (often Notifications) win on an already-running app. The parked carrier
@@ -403,7 +429,7 @@
       if(document.querySelector('#feed')) consumeLaunchView(v);
     };
     document.addEventListener('visibilitychange', () => {
-      if(document.visibilityState === 'visible') again();
+      if(document.visibilityState === 'visible'){ again(); settleFeedTop(); }
     });
     try{
       const A = PC.capPlugin ? PC.capPlugin('App', 'addListener') : null;

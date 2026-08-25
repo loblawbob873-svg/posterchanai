@@ -59,12 +59,70 @@ setTimeout(() => {
 }, 700);
 """
 
+RESUME_TOP_HARNESS = r"""
+const fs = require('fs');
+const docListeners = {};
+const appListeners = {};
+let launchListener;
+let parked = '__feed_top';
+const events = [];
+const document = global.document = {
+  visibilityState: 'hidden',
+  querySelector: s => s === '#feed' ? {} : null,
+  addEventListener: (n, fn) => { (docListeners[n] ||= []).push(fn); }
+};
+const home = {
+  consumeLaunchView: async () => { const v=parked; parked=''; return {view:v}; },
+  addListener: (n, fn) => { if(n === 'launchView') launchListener=fn; }
+};
+const app = { addListener: (n, fn) => { appListeners[n]=fn; } };
+global.window = {
+  __PC_BOOTED: true,
+  __PC: {
+    capPlugin: name => name === 'HomeScreen' ? home : (name === 'App' ? app : null),
+    timelineTop: () => events.push('top')
+  },
+  PCOS: { mobileLanding(){} },
+  addEventListener(){}
+};
+global.PCOS = window.PCOS;
+global.navigator = {language:'en-US'};
+global.location = {origin:'https://example.invalid'};
+global.localStorage = {getItem(){return null},setItem(){},removeItem(){}};
+eval(fs.readFileSync(process.argv[1], 'utf8'));
+
+setTimeout(() => {
+  if(!launchListener || !appListeners.resume) throw new Error('native listeners not installed');
+  launchListener({view:'__feed_top'});
+  setTimeout(() => {
+    if(events.length) throw new Error('scrolled while WebView hidden: '+events.join(','));
+    document.visibilityState='visible';
+    appListeners.resume();
+    setTimeout(() => {
+      if(events.join(',') !== 'top') throw new Error('resume did not scroll exactly once: '+events.join(','));
+      console.log('ALL OK');
+      process.exit(0);
+    }, 260);
+  }, 250);
+}, 20);
+"""
+
 
 @unittest.skipIf(shutil.which("node") is None, "node not installed")
 class TabletLauncherRouting(unittest.TestCase):
     def test_folder_sync_wins_after_slow_boot_and_leaves_desktop(self):
         result = subprocess.run(
             ["node", "-e", HARNESS, str(SRC)], capture_output=True, text=True, timeout=10
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("ALL OK", result.stdout)
+
+    def test_double_home_waits_for_webview_resume_before_scrolling(self):
+        result = subprocess.run(
+            ["node", "-e", RESUME_TOP_HARNESS, str(SRC)],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("ALL OK", result.stdout)
