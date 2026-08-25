@@ -1420,7 +1420,7 @@
           const u = await PC.encFileUrl(req.attachment.sha, req.attachment.mime);
           const blob = await fetch(u).then(x=>x.blob());
           r = await P.sendMms({to:req.to, body:req.body||'', data:await fileB64(blob),
-                               mime:req.attachment.mime, name:req.attachment.name});
+                               mime:req.attachment.mime, name:req.attachment.name, outbox:d});
         }else r = await P.send({ to:req.to, body:req.body, outbox:d });
       }catch(_){ r = null; }
       // The background service won the device-local atomic claim. It owns both the radio send and

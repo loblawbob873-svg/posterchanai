@@ -484,9 +484,24 @@ class OutgoingMms(unittest.TestCase):
 
     def test_plugin_decodes_only_at_the_phone_transport_boundary(self):
         plugin = open(os.path.join(SMS, "SmsPlugin.java"), encoding="utf-8").read()
+        sender = open(os.path.join(SMS, "MmsSender.java"), encoding="utf-8").read()
         self.assertIn("public void sendMms", plugin)
         self.assertIn("Base64.decode", plugin)
-        self.assertIn("sendNewMessage", plugin)
+        self.assertIn("MmsSender.send", plugin)
+        self.assertIn("sendNewMessage", sender)
+        self.assertIn("40_000_000L", sender)
+        self.assertIn("8 * 1024 * 1024", sender)
+
+    def test_background_phone_fetches_decrypts_and_sends_a_webui_photo_once(self):
+        js = open(SMSJS, encoding="utf-8").read()
+        outbox = open(os.path.join(SMS, "SmsOutbox.java"), encoding="utf-8").read()
+        plugin = open(os.path.join(SMS, "SmsPlugin.java"), encoding="utf-8").read()
+        self.assertIn("name:req.attachment.name, outbox:d", js)
+        self.assertIn("SmsOutbox.claim(getContext(), outbox)", plugin)
+        self.assertIn("SyncCrypto.unwrapMasterKey", outbox)
+        self.assertIn("SyncCrypto.decrypt(mk, net.getBlob(sha))", outbox)
+        self.assertIn("MmsSender.send(ctx, to, body, imageBytes)", outbox)
+        self.assertIn("if (!claim(ctx, doc)) return null", outbox)
 
     def test_message_bodies_are_encrypted_blobs_not_relay_payloads(self):
         js = open(SMSJS, encoding="utf-8").read()

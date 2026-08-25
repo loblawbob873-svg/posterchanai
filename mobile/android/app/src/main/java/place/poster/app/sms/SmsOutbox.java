@@ -12,6 +12,9 @@ import java.util.List;
 import place.poster.app.signer.Crypt;
 import place.poster.app.signer.Nostr;
 import place.poster.app.signer.SignerKey;
+import place.poster.app.sync.SyncCrypto;
+import place.poster.app.sync.SyncNet;
+import place.poster.app.sync.SyncStore;
 
 /**
  * SENDING A TEXT THIS PHONE WAS ASKED FOR, WITHOUT THE APP BEING OPEN.
@@ -155,7 +158,8 @@ public final class SmsOutbox {
             if (req.optBoolean("done", false)) return null;
             String to = req.optString("to", "");
             String body = req.optString("body", "");
-            if (to.isEmpty() || body.isEmpty()) return null;
+            JSONObject attachment = req.optJSONObject("attachment");
+            if (to.isEmpty() || (body.isEmpty() && attachment == null)) return null;
 
             String doc = docOf(ev);
             if (doc.isEmpty()) return null;
@@ -165,9 +169,38 @@ public final class SmsOutbox {
                 return marker(ctx, sec, me, doc, false, "too old", to, body, asked);
             }
 
+            // A background MMS needs the account's encrypted-drive endpoints/key. If this phone has
+            // never received that config, leave the request unclaimed for the visible WebView.
+            SyncStore store = null;
+            if (attachment != null) {
+                store = new SyncStore(ctx);
+                if (store.apiBase().isEmpty() || store.mediaBase().isEmpty()
+                        || store.wrappedDriveKey().isEmpty()) return null;
+            }
             if (!claim(ctx, doc)) return null;
 
-            SmsSender.Result r = SmsSender.send(ctx, to, body);
+            SmsSender.Result r;
+            if (attachment == null) {
+                r = SmsSender.send(ctx, to, body);
+            } else {
+                try {
+                    String sha = attachment.optString("sha", "");
+                    if (!sha.matches("[0-9a-fA-F]{64}")) throw new Exception("invalid MMS attachment");
+                    long bytes = attachment.optLong("bytes", -1L);
+                    if (bytes < 0L || bytes > 8L * 1024L * 1024L)
+                        throw new Exception("picture message is too large");
+                    SyncNet net = new SyncNet(store.apiBase(), store.mediaBase(), sec);
+                    String canonical = net.driveKey();
+                    if (!canonical.equals(store.wrappedDriveKey())) store.setWrappedDriveKey(canonical);
+                    byte[] mk = SyncCrypto.unwrapMasterKey(sec, canonical);
+                    byte[] imageBytes = SyncCrypto.decrypt(mk, net.getBlob(sha));
+                    r = MmsSender.send(ctx, to, body, imageBytes);
+                } catch (Throwable mmsError) {
+                    r = new SmsSender.Result();
+                    r.error = mmsError.getMessage() == null ? "could not send picture message"
+                                                            : mmsError.getMessage();
+                }
+            }
             /* MARKED WHETHER IT WENT OR NOT. A text that went out and whose marker did not is a text
              * that goes out AGAIN on the next pass, and there is no undo for that. A failure is
              * recorded in the marker so the other device can say so, rather than retried blindly. */

@@ -3,8 +3,6 @@ package place.poster.app.sms;
 import android.content.Context;
 import android.content.Intent;
 import android.provider.Telephony;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.util.Base64;
 import android.os.Bundle;
 import android.telephony.SmsManager;
@@ -20,10 +18,6 @@ import com.getcapacitor.annotation.Permission;
 import org.json.JSONArray;
 
 import java.util.List;
-
-import com.klinker.android.send_message.Message;
-import com.klinker.android.send_message.Settings;
-import com.klinker.android.send_message.Transaction;
 
 /**
  * THE APP'S WINDOW ONTO THE PHONE'S MESSAGES — read, send, delete, and be told when one arrives.
@@ -442,20 +436,19 @@ public class SmsPlugin extends Plugin {
         String to = call.getString("to", "");
         String body = call.getString("body", "");
         String b64 = call.getString("data", "");
+        String outbox = call.getString("outbox", "");
         JSObject o = new JSObject();
         if (to.trim().isEmpty() || b64.isEmpty()) {
             o.put("ok", false); o.put("error", "missing recipient or attachment"); call.resolve(o); return;
         }
+        if (!outbox.isEmpty() && !SmsOutbox.claim(getContext(), outbox)) {
+            o.put("ok", false); o.put("claimed", false);
+            o.put("error", "outbox request is already being handled"); call.resolve(o); return;
+        }
         try {
             byte[] raw = Base64.decode(b64, Base64.DEFAULT);
-            Bitmap image = BitmapFactory.decodeByteArray(raw, 0, raw.length);
-            if (image == null) throw new IllegalArgumentException("attachment is not an image");
-            Settings settings = new Settings();
-            settings.setUseSystemSending(true);
-            Message message = new Message(body, to, image);
-            message.setSave(true);
-            new Transaction(getContext(), settings).sendNewMessage(message);
-            o.put("ok", true);
+            SmsSender.Result r = MmsSender.send(getContext(), to, body, raw);
+            o.put("claimed", true); o.put("ok", r.ok); o.put("error", r.error);
         } catch (Throwable t) {
             o.put("ok", false);
             o.put("error", t.getMessage() == null ? "could not send picture message" : t.getMessage());
