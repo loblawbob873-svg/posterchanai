@@ -96,6 +96,13 @@ def test_concord_has_honest_creation_and_public_discovery_empty_states():
     assert 'cc-public-room' in CONCORD_CSS
 
 
+def test_mobile_home_lists_joined_communities_outside_the_hidden_server_rail():
+    assert 'class="cc-joined"' in CONCORD
+    assert 'data-cc-server="${i}" class="cc-joined-room' in CONCORD
+    assert 'Your communities' in CONCORD
+    assert '.cc-joined-room' in CONCORD_CSS
+
+
 def test_created_and_joined_communities_survive_browser_storage_loss():
     assert 'async function persistArmadaMembership(p,room)' in CONCORD
     assert 'await p.nip44enc(viewer.pubkey,JSON.stringify(list))' in CONCORD
