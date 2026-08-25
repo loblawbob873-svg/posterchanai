@@ -318,6 +318,22 @@ class DoubleHomeRuns(unittest.TestCase):
         self.assertIn("PC.timelineTop()", phone)
         self.assertNotIn("PC.timelineTop('global')", phone)
 
+    def test_first_home_press_is_counted_when_android_only_resumes_the_activity(self):
+        """Real launchers disagree about whether returning to an existing HOME activity sends
+        onNewIntent.  A tracker wired only there sees the second physical press as press one and can
+        never fire.  onStart is the lifecycle callback Android does guarantee for hidden->visible."""
+        home = strip_comments((HOME / "HomeActivity.java").read_text())
+        start = method(home, "protected void onStart")
+        stop = method(home, "protected void onStop")
+        new_intent = method(home, "protected void onNewIntent")
+        create = method(home, "protected void onCreate")
+        self.assertIn("HomeDoublePress.arrived", start)
+        self.assertIn("!homeIntentBeforeStart", start)
+        self.assertIn("homeVisible = false", stop)
+        self.assertIn("homeIntentBeforeStart = true", new_intent)
+        self.assertNotIn("HomeDoublePress.arrived", create,
+                         "onCreate plus onStart can turn one slow cold launch into a double press")
+
     def test_feed_top_reloads_the_active_timeline_before_scrolling(self):
         app = (ROOT / "static/js/client/app.js").read_text()
         start = app.index("function timelineTop(view)")

@@ -98,6 +98,12 @@ public class HomeActivity extends Activity implements DeskView.Host {
     private PcTheme.Palette pal;
     private final Handler main = new Handler(Looper.getMainLooper());
 
+    /* Android does not promise that bringing an existing HOME activity forward arrives through
+     * onNewIntent.  Some launchers resume it through onStart only; others call onNewIntent and then
+     * onStart for the same press.  Track the visible transition so both shapes count ONE press. */
+    private boolean homeVisible = false;
+    private boolean homeIntentBeforeStart = false;
+
     private List<AppShelf.Entry> installed = new ArrayList<AppShelf.Entry>();
     private List<AppShelf.Entry> ourTiles = new ArrayList<AppShelf.Entry>();
     /** Everything, drawer order — the lookup a desktop key resolves through. */
@@ -106,8 +112,6 @@ public class HomeActivity extends Activity implements DeskView.Host {
     @Override
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
-        // A cold first HOME has no onNewIntent; it is still the first half of a possible pair.
-        if (saved == null) HomeDoublePress.arrived(SystemClock.elapsedRealtime());
         repo = new AppRepo(this);
         prefs = new LauncherPrefs(this);
         widgets = new Widgets(this);
@@ -263,6 +267,14 @@ public class HomeActivity extends Activity implements DeskView.Host {
     @Override
     protected void onStart() {
         super.onStart();
+        // A hidden -> visible transition is the first Home press on launchers which resume an
+        // existing activity without onNewIntent.  If onNewIntent already reported this same
+        // transition, do not manufacture a second press from one physical tap.
+        if (!homeVisible && !homeIntentBeforeStart) {
+            HomeDoublePress.arrived(SystemClock.elapsedRealtime());
+        }
+        homeVisible = true;
+        homeIntentBeforeStart = false;
         // WE ARE THE RESTING STATE OF THE PHONE NOW. Folder sync reads this to keep a due sweep from
         // starting in the half-second before somebody taps an icon — see LauncherState.
         LauncherState.homeShown(System.currentTimeMillis());
@@ -288,6 +300,8 @@ public class HomeActivity extends Activity implements DeskView.Host {
     @Override
     protected void onStop() {
         super.onStop();
+        homeVisible = false;
+        homeIntentBeforeStart = false;
         LauncherState.homeHidden();
         repo.stopWatching();
         MusicService.setWatcher(null);
@@ -343,6 +357,8 @@ public class HomeActivity extends Activity implements DeskView.Host {
         setIntent(intent);
         closeDrawer();
         if (desk != null) desk.clearEditing();
+        // Remember that onStart, if it follows, belongs to this same physical Home press.
+        if (!homeVisible) homeIntentBeforeStart = true;
         // One HOME remains an ordinary launcher action. A quick second one explicitly opens Social
         // at its top through the same consume-once carrier every launcher tile uses.
         if (HomeDoublePress.arrived(SystemClock.elapsedRealtime())) {
