@@ -8959,5 +8959,12 @@ audio.sms-att-img{min-width:220px}
 .office-frame{display:block;flex:1 1 auto;width:100%;height:auto;min-height:0;
   border:1px solid var(--line);border-radius:8px;background:#fff}
 .office-launch{display:none}.office-actions{justify-content:flex-end;margin-top:8px}
+/* THE SAME EDITOR IN A DESKTOP WINDOW. `.office-modal` above sizes a centred box against the
+   VIEWPORT; a window is sized by the user, so this fills whatever the window currently is and lets
+   the frame take everything the head and the buttons do not. Without it the iframe keeps the
+   modal's viewport-relative height and spills out of a window somebody just made smaller. */
+.office-win{display:flex;flex-direction:column;height:100%;min-height:0;padding:10px;gap:8px}
+.office-win > *{flex:0 0 auto}
+.office-win .office-frame{flex:1 1 auto;width:100%;height:auto;min-height:0;border:0}
 @media(max-width:640px){.office-head{display:block}.modal.office-modal{width:98vw;height:96dvh;padding:8px}}
 .os-native-controls{display:inline-flex;align-items:center;gap:1px}.os-native-controls button{width:22px;height:22px;padding:0;border:0;border-radius:4px;background:transparent;color:inherit;line-height:20px}.os-native-controls button:hover{background:rgba(255,255,255,.14)}.os-native-close:hover{background:#c42b1c!important;color:#fff}

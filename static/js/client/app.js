@@ -19725,32 +19725,60 @@
       }
       session=await r.json();
       const frameName='pc-office-'+session.id;
-      modal(`<div class="office-head"><h3>📝 ${enc(file.name)}</h3><span class="muted small">Changes are temporary until you tap Save.</span></div>
+      /* THE EDITOR'S BODY, BUILT ONCE and mounted either in a desktop WINDOW or in a modal. A
+       * document editor is an application, not a dialog: on the windowed desktop it must minimise,
+       * maximise, sit behind another window and be dragged between monitors like everything else.
+       * `modal()` can do none of that — it is one centred box with a backdrop. */
+      const bodyHTML = `<div class="office-head"><h3>📝 ${enc(file.name)}</h3><span class="muted small">Changes are temporary until you tap Save.</span></div>
         <iframe class="office-frame" name="${frameName}" title="Office editor"></iframe>
         <form class="office-launch" method="post" action="${enc(session.editor_url)}" target="${frameName}">
           <input type="hidden" name="access_token" value="${enc(session.token)}"><input type="hidden" name="access_token_ttl" value="${session.expires*1000}"></form>
-        <div class="row office-actions"><button class="btn btn-ghost" id="office-close">Close</button><button class="btn btn-neon" id="office-save">Save</button></div>`, root=>{
-          /* A DOCUMENT EDITOR NEEDS THE SCREEN. `modal()` caps its box at 720px, and the office
-           * frame asked for `min(94vw,1400px)` INSIDE that — so the iframe was clipped to 720px of a
-           * modal that then scrolled, which on a desktop reads as "a tiny ass window that is white":
-           * a small viewport showing the top-left corner of a spreadsheet. The composer solves this
-           * with `.cmp-modal`; this is the same trick, and `modal()` has no class hook of its own. */
+        <div class="row office-actions"><button class="btn btn-ghost" id="office-close">Close</button><button class="btn btn-neon" id="office-save">Save</button></div>`;
+      const drop=async()=>{ try{ await fetch(B + '/client/office/session/'+session.id+'?access_token='+encodeURIComponent(session.token),{method:'DELETE'}); }catch(_){} };
+      /* `wire` is handed how to shut whatever it was mounted in, so the Save and Close buttons do
+       * not have to know which of the two they are living in. */
+      const wire = (root, shut) => {
+        $('.office-launch',root).submit();
+        $('#office-close',root).onclick=async()=>{ await drop(); shut(); };
+        $('#office-save',root).onclick=async e=>{
+          const b=e.currentTarget; b.disabled=true; b.textContent='Saving\u2026';
+          try{
+            // CODE writes through PutFile; a short delay lets its final force-save settle.
+            await new Promise(res=>setTimeout(res,700));
+            const rr=await fetch(B + '/client/office/session/'+session.id+'/contents?access_token='+encodeURIComponent(session.token));
+            if(!rr.ok) throw new Error('saved document HTTP '+rr.status);
+            await saveBack(fileFromBytes(await rr.arrayBuffer(),file.name,file.type));
+            await drop();
+            toast('document saved'); shut();
+          }catch(err){ toast('save failed: '+(err.message||err)); b.disabled=false; b.textContent='Save'; }
+        };
+      };
+      /* ON THE WINDOWED DESKTOP IT IS A WINDOW. Same shape webxdc already uses for a mini app:
+       * openDoc with noFeed, mounted by hand into the window's own slot. noFeed is load-bearing —
+       * without it the window joins the shared-feed hand-off, so clicking any OTHER window pulls
+       * the timeline out of this one and repaints it, and a repaint around a live iframe reloads
+       * the editor and loses whatever was typed. The window OWNS the session: closing it drops the
+       * server-side document, or an editor closed by its ✕ leaks a session for the whole TTL. */
+      if(window.PCOS && PCOS.isOn() && PCOS.openDoc){
+        const w = PCOS.openDoc('office:'+session.id, file.name, 'i-doc', () => {}, true);
+        const host = w && (w.slot || w.body);
+        if(host){
+          host.classList.add('office-win');
+          host.innerHTML = bodyHTML;
+          let shut = () => { try{ PCOS.closeDoc && PCOS.closeDoc('office:'+session.id); }catch(_){} };
+          if(w) w.onClose = () => { drop(); };
+          wire(host, shut);
+          return;
+        }
+        // No slot to mount into: fall through to the modal rather than leave an empty window.
+        try{ PCOS.closeDoc && PCOS.closeDoc('office:'+session.id); }catch(_){}
+      }
+      modal(bodyHTML, root=>{
+          /* `modal()` caps its box at 720px and the office frame asks for far more inside that, so
+           * without this the iframe is clipped to 720px of a modal that then scrolls — "a tiny ass
+           * window that is white": a small viewport showing the top-left corner of a spreadsheet. */
           root.classList.add('office-modal');
-          $('.office-launch',root).submit();
-          const drop=async()=>{ try{ await fetch(B + '/client/office/session/'+session.id+'?access_token='+encodeURIComponent(session.token),{method:'DELETE'}); }catch(_){} };
-          $('#office-close',root).onclick=async()=>{ await drop(); closeModal(); };
-          $('#office-save',root).onclick=async e=>{
-            const b=e.currentTarget; b.disabled=true; b.textContent='Saving…';
-            try{
-              // CODE writes through PutFile; a short delay lets its final force-save settle.
-              await new Promise(res=>setTimeout(res,700));
-              const rr=await fetch(B + '/client/office/session/'+session.id+'/contents?access_token='+encodeURIComponent(session.token));
-              if(!rr.ok) throw new Error('saved document HTTP '+rr.status);
-              await saveBack(fileFromBytes(await rr.arrayBuffer(),file.name,file.type));
-              await drop();
-              toast('document saved'); closeModal();
-            }catch(err){ toast('save failed: '+(err.message||err)); b.disabled=false; b.textContent='Save'; }
-          };
+          wire(root, closeModal);
         });
     }catch(err){ toast('office unavailable: '+((err&&err.message)||err)); }
   }
