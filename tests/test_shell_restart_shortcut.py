@@ -67,6 +67,11 @@ def test_shell_restart_is_serialized_and_targets_only_the_shell_process():
     assert "ulimit -c 0\n" not in start
     assert 'max_core = 0' in start
     assert '$HOME/.config/libvirt/qemu.conf' in start
+    # A dead socket from an older compositor can sort before the live one. The launcher must probe,
+    # not use `ls | head`, or every Electron WM request attaches to the dead compositor.
+    assert 'for candidate in /run/user/$(id -u)/sway-ipc.*.sock' in start
+    assert 'swaymsg -s "$candidate" -t get_version' in start
+    assert 'sway-ipc.*.sock 2>/dev/null | head -1' not in start
 
 
 def test_desktop_wrapper_preserves_the_shells_wayland_backend():

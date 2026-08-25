@@ -9,7 +9,19 @@
 #
 # So the window is found FIRST and pinned second — the same order wm.js uses for anything it
 # launches, and for the same reason: an app that has not appeared cannot be placed.
-[ -n "$SWAYSOCK" ] || SWAYSOCK=$(ls /run/user/$(id -u)/sway-ipc.*.sock 2>/dev/null | head -1)
+[ -n "$SWAYSOCK" ] || {
+  # Old compositor sockets survive an unclean Sway restart. Filename order is not liveness: taking
+  # the first one attached Electron's window manager bridge to a dead socket, so Super, placement
+  # and monitor handoff failed intermittently until the next reboot. Ask each candidate and keep
+  # only the compositor that answers.
+  for candidate in /run/user/$(id -u)/sway-ipc.*.sock; do
+    [ -S "$candidate" ] || continue
+    if swaymsg -s "$candidate" -t get_version >/dev/null 2>&1; then
+      SWAYSOCK=$candidate
+      break
+    fi
+  done
+}
 export SWAYSOCK
 
 # Sway may execute a recovery binding more than once when keys bounce or are held. Electron's own
