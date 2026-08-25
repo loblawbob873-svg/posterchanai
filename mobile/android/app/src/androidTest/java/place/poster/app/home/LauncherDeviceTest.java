@@ -156,7 +156,13 @@ public class LauncherDeviceTest {
          * followed later by a second intent must still activate the double-HOME shortcut. */
         HomeRoles.enableLauncherComponent(ctx, true);
         Instrumentation inst = InstrumentationRegistry.getInstrumentation();
-        Instrumentation.ActivityMonitor web = inst.addMonitor(MainActivity.class.getName(), null, false);
+        /* Block the start at Instrumentation. MainActivity is singleTask and is normally reused, so
+         * waiting for a newly-created Activity falsely reports that openApp did nothing on a warm
+         * process. Monitor hits count the actual explicit start in both cold and warm cases. */
+        Instrumentation.ActivityMonitor web = inst.addMonitor(
+                MainActivity.class.getName(),
+                new Instrumentation.ActivityResult(android.app.Activity.RESULT_CANCELED, null),
+                true);
         Intent launch = new Intent(ctx, HomeActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         HomeActivity homeActivity = (HomeActivity) inst.startActivitySync(launch);
         inst.waitForIdleSync();
@@ -168,8 +174,8 @@ public class LauncherDeviceTest {
                 homeActivity.onNewIntent(
                         new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME));
             });
-            assertEquals("one HOME lifecycle pair reopened PosterChan", null,
-                    inst.waitForMonitorWithTimeout(web, 500));
+            Thread.sleep(500);
+            assertEquals("one HOME lifecycle pair reopened PosterChan", 0, web.getHits());
 
             HomeDoublePress.clear();
             inst.runOnMainSync(() -> {
@@ -179,9 +185,9 @@ public class LauncherDeviceTest {
             Thread.sleep(250); // beyond HOME_START_ECHO_MS: the first physical press is now counted
             inst.runOnMainSync(() -> homeActivity.onNewIntent(
                     new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)));
-            android.app.Activity opened = inst.waitForMonitorWithTimeout(web, 1500);
-            assertNotNull("an onStart-only first HOME plus a second HOME did not open the feed", opened);
-            inst.runOnMainSync(opened::finish);
+            Thread.sleep(300);
+            assertEquals("an onStart-only first HOME plus a second HOME did not open the feed",
+                    1, web.getHits());
         } finally {
             inst.removeMonitor(web);
             inst.runOnMainSync(homeActivity::finish);
