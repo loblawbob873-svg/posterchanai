@@ -172,17 +172,30 @@ async def _action_url(ext: str, mode: str) -> str:
         async with httpx.AsyncClient(timeout=10) as client:
             response = await _discover(client)
         root = ET.fromstring(response.content)
-        wanted = "edit" if mode == "edit" else "view"
-        fallback = None
+        # THE ACTION NAME IS NOT ALWAYS "edit" OR "view", and assuming so is what refused PDFs.
+        #
+        # CODE advertises pdf under exactly one action: `view_comment` — its annotation mode, which
+        # is the only way it offers a PDF at all. Asked for "edit" and then falling back to "view",
+        # this found neither and reported "CODE does not advertise support for .pdf" about a format
+        # sitting right there in the discovery document.
+        #
+        # So the preference is a CHAIN, most capable first, and whatever the file actually has is
+        # taken rather than demanded. A PDF opens in the annotator; a .docx still opens in Writer,
+        # because `edit` is still preferred wherever it exists.
+        order = (["edit", "view_comment", "view"] if mode == "edit"
+                 else ["view", "view_comment", "edit"])
+        found: dict[str, str] = {}
         for action in root.iter("action"):
             if action.attrib.get("ext", "").lower() != ext:
                 continue
-            if action.attrib.get("name") == wanted:
-                return action.attrib["urlsrc"]
-            if action.attrib.get("name") == "view":
-                fallback = action.attrib.get("urlsrc")
-        if fallback:
-            return fallback
+            name, url = action.attrib.get("name"), action.attrib.get("urlsrc")
+            if name and url and name not in found:
+                found[name] = url
+        for name in order:
+            if name in found:
+                return found[name]
+        if found:                       # something else entirely — better than refusing the file
+            return next(iter(found.values()))
     except Exception as exc:
         raise HTTPException(503, f"built-in office server unavailable: {exc}")
     raise HTTPException(415, f"CODE does not advertise support for .{ext}")

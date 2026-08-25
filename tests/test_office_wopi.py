@@ -186,3 +186,41 @@ def test_the_accepted_set_is_asked_of_code_not_kept_here():
     assert "_discover(" in body, "the accepted set is not asked of CODE"
     assert "_EXTS_FALLBACK" in body, "there is no fallback for an unreachable CODE"
     assert "if found:" in body, "an empty discovery would be taken as 'nothing is supported'"
+
+
+def test_a_format_advertised_only_under_view_comment_still_opens(monkeypatch):
+    """CODE advertises pdf under exactly ONE action - `view_comment`, its annotation mode. Asking
+    for "edit" and falling back to "view" found neither and reported "CODE does not advertise
+    support for .pdf" about a format sitting right there in the discovery document."""
+    disco = (b'<?xml version="1.0"?><wopi-discovery><net-zone>'
+             b'<app name="Capabilities"><action ext="pdf" name="view_comment" '
+             b'urlsrc="http://code/browser/h/cool.html?"/></app>'
+             b'</net-zone></wopi-discovery>')
+
+    class R:
+        content = disco
+        def raise_for_status(self): pass
+
+    async def disc(_client): return R()
+
+    monkeypatch.setattr(office, "_discover", disc)
+    url = asyncio.run(office._action_url("pdf", "edit"))
+    assert url == "http://code/browser/h/cool.html?"
+
+
+def test_edit_still_wins_where_a_format_offers_it(monkeypatch):
+    """The chain must not demote a .docx into a viewer just because the list grew."""
+    disco = (b'<?xml version="1.0"?><wopi-discovery><net-zone><app name="x">'
+             b'<action ext="docx" name="view" urlsrc="http://code/view?"/>'
+             b'<action ext="docx" name="edit" urlsrc="http://code/edit?"/>'
+             b'</app></net-zone></wopi-discovery>')
+
+    class R:
+        content = disco
+        def raise_for_status(self): pass
+
+    async def disc(_client): return R()
+
+    monkeypatch.setattr(office, "_discover", disc)
+    assert asyncio.run(office._action_url("docx", "edit")) == "http://code/edit?"
+    assert asyncio.run(office._action_url("docx", "view")) == "http://code/view?"

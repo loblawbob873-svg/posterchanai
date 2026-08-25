@@ -49,7 +49,7 @@ def test_concord_owns_a_versioned_stylesheet_so_stale_shell_css_cannot_unstyle_i
 
 def test_concord_fills_workspace_and_identifies_the_signed_in_user():
     assert "classList.toggle('concord-view', v==='concord')" in APP
-    assert 'body.concord-view .rightbar,body.concord-view .rb-toggle{display:none!important}' in CONCORD_CSS
+    assert 'body.concord-view .rightbar,body.concord-view .rb-toggle,body.concord-view #rb-toggle{display:none!important' in CONCORD_CSS
     assert 'max-width:none!important' in CONCORD_CSS
     assert 'viewer: () =>' in APP
     assert 'Your Nostr identity' not in CONCORD
@@ -196,6 +196,9 @@ def test_concord_controls_are_phone_sized_and_single_column():
     assert '.cc-app.show-chat .cc-conversation{display:flex}' in phone_all
     assert '.cc-channel{min-height:46px' in phone_all
     assert '.cc-head-btn,.cc-compose-btn,.cc-mobile-back{min-width:44px' in phone_all
+    assert 'body.concord-view .cc-conversation{width:100vw' in CONCORD_CSS
+    assert 'body.concord-view .cc-message-actions button::after{content:none' in CONCORD_CSS
+    assert "document.getElementById('rb-toggle')" in APP
 
 
 def test_notification_copy_does_not_claim_server_can_read_room_messages():
