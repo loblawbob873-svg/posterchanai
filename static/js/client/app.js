@@ -2957,13 +2957,21 @@
   function _navState(view){
     let top = 0;
     try{ const f = $('#feed'); top = (f && f.scrollTop) || 0; }catch(_){ }
+    const inner = {};
+    /* Chat-style apps scroll inside #feed. Persist those panes in the history entry too; recording
+       only feed.scrollTop (always zero there) made a profile/link round-trip return halfway through
+       Concord, DMs, and AI conversations. IDs are deliberate stable restore points. */
+    try{
+      ['ai-msgs','dm-msgs'].forEach(id=>{ const el=document.getElementById(id); if(!el)return; inner[id]={top:el.scrollTop,bottom:el.scrollHeight-el.scrollTop-el.clientHeight<80}; });
+      const cc=document.querySelector('.cc-messages'); if(cc)inner['cc-messages']={top:cc.scrollTop,bottom:cc.scrollHeight-cc.scrollTop-cc.clientHeight<80};
+    }catch(_){}
     let anchor = null;
     /* Pixels are only a fallback for a timeline. Between opening a post and pressing Back, a live
      * event or a newly-resolved card can change everything above the reader. Preserve the keyed
      * first-visible post as well, so Back returns to the same post rather than merely reusing an
      * offset in a changed list. `_tlAnchor` is a function declaration and is available here. */
     try{ if(_TL_TABS.indexOf(view) >= 0) anchor = _tlAnchor($('#feed')); }catch(_){ }
-    return { pcv: view || null, top, anchor };
+    return { pcv: view || null, top, anchor, inner };
   }
   // Stamp the entry we are LEAVING. The empty url argument keeps the current one — this must never
   // move the address bar, only annotate the entry that is already there.
@@ -2994,11 +3002,24 @@
    * a repo) rebuild asynchronously — a README is a round trip across the internet — so the budget is
    * generous. It costs nothing: _putScroll stops the moment the reader scrolls or leaves. */
   function _restoreNavScroll(st){
-    if(!st || (!(st.top > 0) && !st.anchor)) return;
+    if(!st) return;
     const v = st.pcv;
     try{ if(_TL_TABS.indexOf(v) >= 0) _tlScrollMemo[v] = st.top; }catch(_){ }   // a timeline redraw restores it too
     if(st.anchor) _putAnchor(st.anchor, () => !v || VIEW === v, 160);
-    else _putScroll(st.top, () => !v || VIEW === v, 160);
+    else if(st.top > 0) _putScroll(st.top, () => !v || VIEW === v, 160);
+    const panes=st.inner&&typeof st.inner==='object'?st.inner:{};
+    let tries=0;
+    const restoreInner=()=>{
+      if(++tries>80|| (v&&VIEW!==v))return;
+      let pending=false;
+      for(const [key,pos] of Object.entries(panes)){
+        const el=key==='cc-messages'?document.querySelector('.cc-messages'):document.getElementById(key);
+        if(!el){pending=true;continue;}
+        el.scrollTop=pos&&pos.bottom?el.scrollHeight:Number(pos&&pos.top)||0;
+      }
+      if(pending)setTimeout(restoreInner,25);
+    };
+    if(Object.keys(panes).length)restoreInner();
   }
   // "Has a person done anything yet?" — see _navView. Capture phase, so a handler that stops the
   // event still sets it, and passive because it only ever writes this flag.

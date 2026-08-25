@@ -14,6 +14,7 @@
   let replyTarget=null, reactionTarget=null;
   let discovered=[], discoveryStarted=false, discoveryLoaded=false, membershipStarted=false;
   const discoveryIconLoads=new Set();
+  const recoveredOwnedInvites=new Set();
   const roomLoads=new Map();
   const roomControls=new Map();
   const pendingAttachments=new Map();
@@ -21,10 +22,12 @@
   let liveTimer=null,liveBusy=false;
   function saved(){ try{ const v=JSON.parse(localStorage.getItem('pc.concord.invites')||'[]'); return Array.isArray(v)?v:[]; }catch(_){ return []; } }
   function save(v){ try{ localStorage.setItem('pc.concord.invites',JSON.stringify(v.slice(0,50))); }catch(_){} }
-  function scrollKey(){ return `${state.community==null?'home':state.community}:${state.channel||'general'}`; }
-  function scrollChatBottom(){ const key=scrollKey(),st=scrollStates.get(key)||{}; st.pinned=true; scrollStates.set(key,st); const later=window.requestAnimationFrame||((fn)=>setTimeout(fn,0)); later(()=>{ const box=document.querySelector('.cc-messages'); if(box){box.scrollTop=box.scrollHeight;st.top=box.scrollTop;st.height=box.scrollHeight;} }); }
-  function preserveChatScroll(fn){ const key=scrollKey(),old=document.querySelector('.cc-messages'),st=scrollStates.get(key)||{pinned:true},top=old?old.scrollTop:Number(st.top)||0,height=old?old.scrollHeight:Number(st.height)||0; fn(); const later=window.requestAnimationFrame||((f)=>setTimeout(f,0)); later(()=>{ const box=document.querySelector('.cc-messages'); if(box){box.scrollTop=st.pinned!==false?box.scrollHeight:top+(box.scrollHeight-height);st.top=box.scrollTop;st.height=box.scrollHeight;scrollStates.set(key,st);} }); }
-  function restoreChatScroll(){ const key=scrollKey(),st=scrollStates.get(key)||{pinned:true},later=window.requestAnimationFrame||((f)=>setTimeout(f,0)); later(()=>{ const box=document.querySelector('.cc-messages'); if(box){box.scrollTop=st.pinned!==false?box.scrollHeight:Number(st.top)||0;st.top=box.scrollTop;st.height=box.scrollHeight;scrollStates.set(key,st);} }); }
+  function scrollKey(){ const room=state.community==null?null:saved()[state.community]; return `${room&&(room.communityId||room.naddr||room.url)||'home'}:${state.channel||'general'}`; }
+  function readScroll(key){ if(scrollStates.has(key))return scrollStates.get(key); try{ const v=JSON.parse(sessionStorage.getItem('pc.concord.scroll.'+key)||'null'); if(v&&typeof v==='object')return v; }catch(_){} return {pinned:true}; }
+  function writeScroll(key,st){ scrollStates.set(key,st); try{ sessionStorage.setItem('pc.concord.scroll.'+key,JSON.stringify({top:Number(st.top)||0,height:Number(st.height)||0,pinned:st.pinned!==false})); }catch(_){} }
+  function scrollChatBottom(){ const key=scrollKey(),st=readScroll(key); st.pinned=true; writeScroll(key,st); const later=window.requestAnimationFrame||((fn)=>setTimeout(fn,0)); later(()=>{ const box=document.querySelector('.cc-messages'); if(box){box.scrollTop=box.scrollHeight;st.top=box.scrollTop;st.height=box.scrollHeight;writeScroll(key,st);} }); }
+  function preserveChatScroll(fn){ const key=scrollKey(),old=document.querySelector('.cc-messages'),st=readScroll(key),top=old?old.scrollTop:Number(st.top)||0,height=old?old.scrollHeight:Number(st.height)||0; fn(); const later=window.requestAnimationFrame||((f)=>setTimeout(f,0)); later(()=>{ const box=document.querySelector('.cc-messages'); if(box){box.scrollTop=st.pinned!==false?box.scrollHeight:top+(box.scrollHeight-height);st.top=box.scrollTop;st.height=box.scrollHeight;writeScroll(key,st);} }); }
+  function restoreChatScroll(){ const key=scrollKey(),st=readScroll(key),later=window.requestAnimationFrame||((f)=>setTimeout(f,0)); later(()=>{ const box=document.querySelector('.cc-messages'); if(box){box.scrollTop=st.pinned!==false?box.scrollHeight:Number(st.top)||0;st.top=box.scrollTop;st.height=box.scrollHeight;writeScroll(key,st);} }); }
   function roomName(r,i){ return (r&&r.name)||`Encrypted community ${i+1}`; }
   function normalizeIcon(raw){
     const v=String(raw||'').trim(); if(!v)return '';
@@ -93,10 +96,19 @@
     const matches=String(text||'').match(/https?:\/\/[^\s<>]+\/invite\/naddr1[023456789acdefghjklmnpqrstuvwxyz]+#[A-Za-z0-9_-]+/gi)||[];
     return matches.map(url=>url.replace(/[),.;!?]+$/,'' )).map(url=>{ const parsed=inviteParts(url); if(!parsed)return null; const blurb=String(text).replace(url,'').replace(/#[\w-]+/g,'').replace(/\s+/g,' ').trim(); return {...parsed,name:blurb.slice(0,80)||'Public Concord community',description:blurb,source}; }).filter(Boolean);
   }
+  function recoverOwnedInvite(p,item){
+    const viewer=p.viewer?p.viewer():{};
+    if(!item||!viewer.pubkey||item.source.pubkey!==viewer.pubkey||recoveredOwnedInvites.has(item.naddr))return;
+    recoveredOwnedInvites.add(item.naddr);
+    const rooms=saved();
+    if(rooms.some(r=>r.naddr===item.naddr||r.url===item.url))return;
+    rooms.push({url:item.url,naddr:item.naddr,name:item.name,description:item.description||'',channels:[{name:'general',private:false}],local:false});
+    save(rooms);
+  }
   function startDiscovery(p){
     if(discoveryStarted||!p.relaySubscribe)return; discoveryStarted=true;
     const bySigner=new Map();
-    const onEvent=ev=>{ for(const item of discoverInvites(ev.content,ev)){ const old=bySigner.get(item.naddr); if(!old||Number(ev.created_at)>Number(old.source.created_at))bySigner.set(item.naddr,item); } discovered=[...bySigner.values()].sort((a,b)=>Number(b.source.created_at)-Number(a.source.created_at)); discovered.slice(0,24).forEach(item=>hydrateDiscoveredIcon(p,item)); if(state.community==null)render(); };
+    const onEvent=ev=>{ for(const item of discoverInvites(ev.content,ev)){ const old=bySigner.get(item.naddr); if(!old||Number(ev.created_at)>Number(old.source.created_at))bySigner.set(item.naddr,item); recoverOwnedInvite(p,item); } discovered=[...bySigner.values()].sort((a,b)=>Number(b.source.created_at)-Number(a.source.created_at)); discovered.slice(0,24).forEach(item=>hydrateDiscoveredIcon(p,item)); if(state.community==null)render(); };
     const onEose=()=>{ discoveryLoaded=true; if(state.community==null)render(); };
     const filters=[{kinds:[1],search:'armada.buzz/invite',limit:100},{kinds:[1],search:'poster.place/invite',limit:100}];
     try{ p.relaySubscribe(filters,{onEvent,onEose,live:true}); if(p.relayQueryFrom)p.relayQueryFrom(DISCOVER_RELAYS,filters,{timeout:6000,max:2}).then(events=>{events.forEach(onEvent);onEose();}); }catch(_){ discoveryLoaded=true; }
@@ -147,6 +159,28 @@
       for(const e of live){ const m=e.current,url=inviteRefUrl(e.invite_ref),i=rooms.findIndex(r=>r.communityId===e.community_id||r.url===url); const room={communityId:e.community_id,name:m.name||'Concord community',description:'',channels:[{name:'general',private:false},...(m.channels||[]).map(c=>({name:c.name||'private',private:true,id:c.id}))],local:false,naddr:url?(inviteParts(url)||{}).naddr:'community-'+e.community_id,url,cord:{bundle:m,armadaList:true}}; if(i<0){rooms.push(room);changed=true;}else if(!rooms[i].cord||rooms[i].cord.armadaList){rooms[i]={...rooms[i],...room};changed=true;} }
       if(changed){save(rooms);render();}
     }catch(e){ console.warn('Concord membership sync failed',e); }
+  }
+  async function persistArmadaMembership(p,room){
+    const viewer=p.viewer?p.viewer():{};
+    if(!viewer.pubkey||!p.nip44enc||!room||!room.communityId||!room.url)return false;
+    const filters=[{kinds:[13302,33302],authors:[viewer.pubkey],limit:20}];
+    let list={entries:[],tombstones:[]};
+    try{
+      const [pool,external]=await Promise.all([p.relayQuery?p.relayQuery(filters,5000):[],p.relayQueryFrom?p.relayQueryFrom(CORD_RELAYS,filters,{timeout:6000,max:4}):[]]);
+      const prior=[...(pool||[]),...(external||[])].sort((a,b)=>Number(b.created_at)-Number(a.created_at))[0];
+      if(prior&&p.nip44dec)list=JSON.parse(await p.nip44dec(viewer.pubkey,prior.content));
+    }catch(_){}
+    if(!Array.isArray(list.entries))list.entries=[];
+    if(!Array.isArray(list.tombstones))list.tombstones=[];
+    const now=Date.now(),current={...(room.cord&&room.cord.bundle||{}),name:room.name,invite_ref:room.url};
+    const entry={community_id:room.communityId,added_at:now,current};
+    const i=list.entries.findIndex(e=>e&&e.community_id===room.communityId);
+    if(i<0)list.entries.push(entry); else list.entries[i]={...list.entries[i],...entry};
+    list.tombstones=list.tombstones.filter(t=>t&&t.community_id!==room.communityId);
+    const content=await p.nip44enc(viewer.pubkey,JSON.stringify(list));
+    const made=await p.publish(13302,content,[]);
+    if(made&&made.ev&&p.relayPublishTo)await p.relayPublishTo(CORD_RELAYS,made.ev);
+    return true;
   }
   async function hydrateRoomStreams(p,index){
     const rooms=saved(),room=rooms[index],reader=window.PosterCordReader,bundle=room&&room.cord&&room.cord.bundle;
@@ -242,13 +276,13 @@
   }
   function bind(me){
     const p=PC(), $=p.$, $$=p.$$;
-    const scroller=document.querySelector('.cc-messages'); if(scroller)scroller.onscroll=()=>{ const key=scrollKey(),st=scrollStates.get(key)||{}; st.top=scroller.scrollTop;st.height=scroller.scrollHeight;st.pinned=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;scrollStates.set(key,st); };
+    const scroller=document.querySelector('.cc-messages'); if(scroller){ scroller.onscroll=()=>{ if(!scroller.isConnected||!document.body.classList.contains('concord-view'))return; const key=scrollKey(),st=readScroll(key); st.top=scroller.scrollTop;st.height=scroller.scrollHeight;st.pinned=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;writeScroll(key,st); }; scroller.querySelectorAll('a').forEach(a=>a.addEventListener('pointerdown',()=>{ const key=scrollKey(),st=readScroll(key); st.top=scroller.scrollTop;st.height=scroller.scrollHeight;st.pinned=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;writeScroll(key,st); },{passive:true})); }
     const openJoin=()=>{ $('#cc-join').classList.remove('hidden'); setTimeout(()=>$('#cc-invite-url').focus(),20); };
     const home=$('#cc-home'); if(home)home.onclick=()=>{ state.community=null; state.channel=null; render(); };
     ['#cc-add','#cc-invite','#cc-welcome-join'].forEach(s=>{ const b=$(s); if(b)b.onclick=openJoin; });
     const create=$('#cc-create'); if(create)create.onclick=()=>{ $('#cc-create-dialog').classList.remove('hidden'); setTimeout(()=>$('#cc-community-name').focus(),20); };
     const createCancel=$('#cc-create-cancel'); if(createCancel)createCancel.onclick=()=>$('#cc-create-dialog').classList.add('hidden');
-    const createGo=$('#cc-create-go'); if(createGo)createGo.onclick=async()=>{ const name=String($('#cc-community-name').value||'').trim(); if(!name){ p.toast('name your community'); return; } createGo.disabled=true; try{ p.toast('creating encrypted community…'); const room=await mintPublicRoom(p,name,normalizeIcon($('#cc-community-icon').value)); const a=saved(); a.push(room); save(a); state.community=a.length-1; state.channel='general'; render(); p.copyValue(room.url); p.toast('public community created — invite link copied'); }catch(e){ createGo.disabled=false; p.toast('community creation failed: '+(e&&e.message||e)); } };
+    const createGo=$('#cc-create-go'); if(createGo)createGo.onclick=async()=>{ const name=String($('#cc-community-name').value||'').trim(); if(!name){ p.toast('name your community'); return; } createGo.disabled=true; try{ p.toast('creating encrypted community…'); const room=await mintPublicRoom(p,name,normalizeIcon($('#cc-community-icon').value)); const a=saved(); a.push(room); save(a); state.community=a.length-1; state.channel='general'; render(); await persistArmadaMembership(p,room); p.copyValue(room.url); p.toast('public community created — invite link copied'); }catch(e){ createGo.disabled=false; p.toast('community creation failed: '+(e&&e.message||e)); } };
     const editIcon=$('#cc-edit-icon'); if(editIcon)editIcon.onclick=()=>{ $('#cc-settings-dialog').classList.remove('hidden'); setTimeout(()=>$('#cc-description-value').focus(),20); };
     const iconCancel=$('#cc-icon-cancel'); if(iconCancel)iconCancel.onclick=()=>$('#cc-icon-dialog').classList.add('hidden');
     const iconSave=$('#cc-icon-save'); if(iconSave)iconSave.onclick=()=>{ const a=saved(), room=a[state.community]; if(!room)return; room.icon=normalizeIcon($('#cc-icon-value').value); save(a); render(); p.toast('community icon updated'); };
@@ -272,9 +306,9 @@
     const notify=$('#cc-notify'); if(notify)notify.onclick=async()=>{ const result=p.askOsNotify?await p.askOsNotify():'unsupported'; p.toast(result==='granted'?'community notifications enabled':result==='denied'?'notifications were denied':'notifications are unavailable here'); };
     const call=$('#cc-call'); if(call)call.onclick=()=>{ const room=saved()[state.community], peers=[...new Set(activeMessages(room).map(m=>m.pubkey).filter(pk=>pk&&pk!==(p.viewer&&p.viewer().pubkey)))]; if(!peers.length){ p.toast('No other community members are available to call yet'); return; } p.startGroupCall(peers,false); };
     const cancel=$('#cc-join-cancel'); if(cancel) cancel.onclick=()=>$('#cc-join').classList.add('hidden');
-    const go=$('#cc-join-go'); if(go) go.onclick=async()=>{ const raw=String($('#cc-invite-url').value||'').trim(),v=inviteParts(raw); if(!v){ p.toast('that is not a Concord invite link'); return; } go.disabled=true; try{ p.toast('fetching and decrypting community…'); const room=await hydrateInvite(p,raw),a=saved(),i=a.findIndex(x=>x.naddr===v.naddr); if(i<0)a.push(room);else a[i]={...a[i],...room}; save(a); state.community=i<0?a.length-1:i; state.channel='general'; render(); p.toast('community joined'); }catch(e){ go.disabled=false; p.toast('could not join: '+(e&&e.message||e)); } };
+    const go=$('#cc-join-go'); if(go) go.onclick=async()=>{ const raw=String($('#cc-invite-url').value||'').trim(),v=inviteParts(raw); if(!v){ p.toast('that is not a Concord invite link'); return; } go.disabled=true; try{ p.toast('fetching and decrypting community…'); const room=await hydrateInvite(p,raw),a=saved(),i=a.findIndex(x=>x.naddr===v.naddr); if(i<0)a.push(room);else a[i]={...a[i],...room}; save(a); state.community=i<0?a.length-1:i; state.channel='general'; render(); await persistArmadaMembership(p,room); p.toast('community joined'); }catch(e){ go.disabled=false; p.toast('could not join: '+(e&&e.message||e)); } };
     $$('[data-cc-server]').forEach(b=>b.onclick=async()=>{ const i=+b.dataset.ccServer,a=saved(),room=a[i]; let loaded=room; state.community=i; state.channel='general'; render(); scrollChatBottom(); try{ if(room&&room.url&&(!room.cord||room.cord.armadaList)){ loaded={...room,...await hydrateInvite(p,room.url)}; a[i]=loaded; save(a); render(); } if(loaded&&loaded.cord)await hydrateRoomStreams(p,i); }catch(e){ if(loaded&&loaded.cord)loaded.cord.hydrated=false; save(a); p.toast('could not load community: '+(e&&e.message||e)); } });
-    $$('[data-cc-discover]').forEach(b=>b.onclick=async()=>{ const v=discovered[+b.dataset.ccDiscover]; if(!v)return; const a=saved(); let i=a.findIndex(x=>x.naddr===v.naddr); if(i<0){a.push(v);i=a.length-1;} save(a); state.community=i; state.channel='general'; render(); p.toast('fetching and decrypting community…'); try{ a[i]={...a[i],...await hydrateInvite(p,v.url)}; save(a); await hydrateRoomStreams(p,i); p.toast('community joined'); }catch(e){ p.toast('could not load community: '+(e&&e.message||e)); } });
+    $$('[data-cc-discover]').forEach(b=>b.onclick=async()=>{ const v=discovered[+b.dataset.ccDiscover]; if(!v)return; const a=saved(); let i=a.findIndex(x=>x.naddr===v.naddr); if(i<0){a.push(v);i=a.length-1;} save(a); state.community=i; state.channel='general'; render(); p.toast('fetching and decrypting community…'); try{ a[i]={...a[i],...await hydrateInvite(p,v.url)}; save(a); await persistArmadaMembership(p,a[i]); await hydrateRoomStreams(p,i); p.toast('community joined'); }catch(e){ p.toast('could not load community: '+(e&&e.message||e)); } });
     $$('[data-cc-channel]').forEach(b=>b.onclick=()=>{ state.channel=b.dataset.ccChannel; render(); scrollChatBottom(); });
     const bc=$('#cc-back-communities'); if(bc)bc.onclick=()=>{ state.community=null; state.channel=null; render(); };
     const bh=$('#cc-back-channels'); if(bh)bh.onclick=()=>{ document.querySelector('.cc-app').classList.remove('show-chat'); };
