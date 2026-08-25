@@ -2928,7 +2928,8 @@ FSTAB
 	cat >"$WORK/posterchan-launcher" <<-'LAUNCHER'
 	#!/bin/sh
 	export APPDIR=/opt/posterchan
-	export ELECTRON_OZONE_PLATFORM_HINT=auto
+	: "${ELECTRON_OZONE_PLATFORM_HINT:=auto}"
+	export ELECTRON_OZONE_PLATFORM_HINT
 	if [ -x "$APPDIR/posterchan-desktop" ]; then exec "$APPDIR/posterchan-desktop" "$@"; fi
 	exec "$APPDIR/AppRun" "$@"
 	LAUNCHER

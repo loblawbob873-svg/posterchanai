@@ -65,6 +65,15 @@ def test_shell_restart_is_serialized_and_targets_only_the_shell_process():
     assert '$HOME/.config/libvirt/qemu.conf' in start
 
 
+def test_desktop_wrapper_preserves_the_shells_wayland_backend():
+    wrapper = (ROOT / "os/bin/posterchan-wrapper").read_text()
+    ebuild = (ROOT / "os/overlay/app-misc/posterchan-desktop/posterchan-desktop-1.0.948.ebuild").read_text()
+    updater = (ROOT / "os/bin/update-posterchan").read_text()
+    for source in (wrapper, ebuild, updater):
+        assert '${ELECTRON_OZONE_PLATFORM_HINT:=auto}' in source
+        assert 'export ELECTRON_OZONE_PLATFORM_HINT=auto' not in source
+
+
 def test_upgrade_removes_optioned_printscreen_bindings_before_adding_one_copy():
     ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
     assert "bindsym .*?(Print|Ctrl\\+Shift\\+s|Shift\\+Print)" in ebuild
