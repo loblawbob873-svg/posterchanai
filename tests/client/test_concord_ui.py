@@ -65,6 +65,15 @@ def test_classic_phone_concord_is_a_full_screen_drilldown_not_squeezed_desktop_c
     assert 'body.concord-view .cc-message-actions .cc-quick-react' in CONCORD_CSS
 
 
+def test_tablet_concord_consumes_the_full_shell_width():
+    tablet = CONCORD_CSS.split('@media(min-width:821px) and (max-width:1180px)', 1)[1].split('}', 5)
+    tablet = '}'.join(tablet)
+    assert 'width:100vw!important' in tablet
+    assert 'body.concord-view .main,body.concord-view .feed.feed-dm' in tablet
+    assert 'body.concord-view .cc-app{width:100%!important;max-width:none!important' in tablet
+    assert 'grid-template-columns:62px 220px minmax(0,1fr)!important' in tablet
+
+
 def test_concord_owns_a_versioned_stylesheet_so_stale_shell_css_cannot_unstyle_it():
     assert 'static/css/concord.css' in HTML
     assert "data-concord-css" in CONCORD

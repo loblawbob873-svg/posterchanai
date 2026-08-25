@@ -8,6 +8,15 @@ body.concord-view .rightbar,body.concord-view .rb-toggle,body.concord-view #rb-t
 body.concord-view .main{min-width:0!important}
 html:has(body.concord-view),body.concord-view,body.concord-view .app,body.concord-view .main,body.concord-view .feed,body.concord-view .cc-app,body.concord-view .cc-conversation,body.concord-view .cc-messages{max-width:100vw!important;overflow-x:clip!important}
 body.concord-view .cc-messages{overscroll-behavior-x:none!important;touch-action:pan-y!important}
+/* Tablets were falling between the phone drill-down (<=820px) and the wide desktop assumptions.
+   Explicitly consume the remaining track and remove the shell's content caps at common 834–1180px
+   tablet widths; the conversation column, not an empty right gutter, gets every spare pixel. */
+@media(min-width:821px) and (max-width:1180px){
+  body.concord-view .app{grid-template-columns:240px minmax(0,1fr)!important;width:100vw!important}
+  body.concord-view .main,body.concord-view .feed.feed-dm{width:100%!important;max-width:none!important;min-width:0!important;margin:0!important}
+  body.concord-view .cc-app{width:100%!important;max-width:none!important;grid-template-columns:62px 220px minmax(0,1fr)!important}
+  body.concord-view .cc-conversation{width:auto!important;max-width:none!important}
+}
 .osw-body>#feed.feed-dm:has(.cc-app){width:100%!important;height:100%!important;max-width:none!important;min-height:0!important;margin:0!important;padding:0!important;overflow:hidden!important}.osw-slot:has(>.cc-app){padding:0!important;opacity:1!important;overflow:hidden!important}.osw-slot>.cc-app{width:100%!important;height:100%!important;min-height:0!important}
 .cc-settings-description{display:block!important;width:100%!important;min-height:76px!important;margin-top:10px!important;resize:vertical!important;font:14px/1.4 inherit!important}.cc-member-list{display:flex!important;flex-direction:column!important;gap:6px!important;max-height:50vh!important;overflow:auto!important;margin-top:14px!important}.cc-member{display:flex!important;align-items:center!important;gap:10px!important;padding:9px!important;border-radius:9px!important;background:rgba(255,255,255,.04)!important}.cc-member img{width:38px!important;height:38px!important;border-radius:50%!important;object-fit:cover!important}.cc-member div{min-width:0!important}.cc-member small{display:block!important;color:var(--muted)!important}
 .cc-attach-choices{display:grid!important;grid-template-columns:1fr 1fr!important;gap:10px!important;margin-top:18px!important}.cc-attach-choices .btn{min-height:48px!important}@media(max-width:520px){.cc-attach-choices{grid-template-columns:1fr!important}}
