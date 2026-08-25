@@ -106,6 +106,18 @@ USER_HOME="${HOME:-/home/$(id -un)}"
 # screen: the old pid was dead, but every restart tried its dead socket and no window ever mapped.
 LOCKS="$USER_HOME/.config/posterchan-desktop/SingletonLock $USER_HOME/SingletonLock"
 clear_dead_locks() {
+  # Chromium's singleton state is not guaranteed to keep its usual symlink shape after an
+  # interrupted package replacement. If no shell process exists, the launcher mutex above is the
+  # authority: nothing live can own any of these files, so remove the complete stale set. The old
+  # symlink/PID path remains for the case where another shell really is running.
+  if ! pgrep -u "$(id -u)" -f '^/opt/posterchan/posterchan-desktop .*--shell' >/dev/null 2>&1; then
+    for LOCK in $LOCKS; do
+      singleton_dir=${LOCK%/SingletonLock}
+      rm -f "$singleton_dir"/SingletonLock "$singleton_dir"/SingletonSocket \
+            "$singleton_dir"/SingletonCookie
+    done
+    return
+  fi
   for LOCK in $LOCKS; do
     [ -L "$LOCK" ] || continue
     target=$(readlink "$LOCK" 2>/dev/null || echo '')

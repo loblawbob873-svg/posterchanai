@@ -53,6 +53,8 @@ def test_shell_restart_is_serialized_and_targets_only_the_shell_process():
     assert "$USER_HOME/SingletonLock" in start
     assert "clear_dead_locks" in start
     assert "SingletonSocket" in start and "SingletonCookie" in start
+    assert "if ! pgrep" in start
+    assert "nothing live can own any of these files" in start
     assert "ELECTRON_OZONE_PLATFORM_HINT=wayland" in start
     assert 'while [ "$display_tries" -lt 100 ]' in start
     assert '[ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ]' in start
