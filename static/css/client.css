@@ -8968,3 +8968,31 @@ audio.sms-att-img{min-width:220px}
 .office-win .office-frame{flex:1 1 auto;width:100%;height:auto;min-height:0;border:0}
 @media(max-width:640px){.office-head{display:block}.modal.office-modal{width:98vw;height:96dvh;padding:8px}}
 .os-native-controls{display:inline-flex;align-items:center;gap:1px}.os-native-controls button{width:22px;height:22px;padding:0;border:0;border-radius:4px;background:transparent;color:inherit;line-height:20px}.os-native-controls button:hover{background:rgba(255,255,255,.14)}.os-native-close:hover{background:#c42b1c!important;color:#fff}
+
+/* PREVIEW — the picture/video/PDF viewer (static/js/client/preview.js).
+   Two hosts, one look: a desktop window's slot (.pv-win) and a full-screen sheet (.pv-sheet).
+   Both are a column whose BODY takes everything the bar does not, so the media is sized by the
+   window rather than by the viewport — a viewer that ignores its window is the "tiny white box"
+   the office editor was. */
+.pv-host{display:flex;flex-direction:column;min-height:0;background:var(--bg);color:var(--fg)}
+.pv-win{height:100%}
+.pv-sheet{position:fixed;inset:0;z-index:1200}
+.pv-bar{display:flex;align-items:center;gap:10px;padding:8px 10px;flex:0 0 auto;
+  border-bottom:1px solid var(--border);background:var(--panel)}
+.pv-name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.pv-size{flex:0 0 auto}
+.pv-acts{margin-left:auto;display:flex;gap:6px;flex:0 0 auto}
+.pv-body{flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center;
+  overflow:auto;background:#000}
+.pv-nope{background:var(--bg);padding:16px}
+/* FIT, then ACTUAL SIZE on demand. `max-width/height:100%` with `object-fit:contain` is what makes a
+   4000px photo readable in a small window; .pv-actual drops the cap so the container scrolls. */
+.pv-img{max-width:100%;max-height:100%;object-fit:contain;cursor:zoom-in;
+  transition:transform .15s ease}
+.pv-img.pv-actual{max-width:none;max-height:none;object-fit:none;cursor:zoom-out}
+.pv-img-wrap{padding:0}
+.pv-av-wrap{padding:0}
+.pv-vid{max-width:100%;max-height:100%;display:block;background:#000}
+.pv-aud{width:min(560px,92%)}
+.pv-pdf{width:100%;height:100%;border:0;background:#fff}
+@media(max-width:640px){.pv-bar{padding:6px 8px;gap:6px}.pv-name{font-size:.95em}}

@@ -4679,6 +4679,10 @@
           if(window.PCWebxdc && PCWebxdc.sheetOpen && PCWebxdc.sheetOpen()){ try{ PCWebxdc.closeSheet(); }catch(_){} return; }
           // Notes' folder drawer is an overlay too, and only exists on a phone — i.e. only where
           // this button does. Without this, Back left Notes with the drawer still standing open.
+          /* The preview is a full-screen sheet on a phone, and it is opened FROM a screen the
+           * person still wants (their folder). Back closes the picture, not the folder. First,
+           * because it sits on top of every one of these. */
+          if(window.PCPreview && PCPreview.isOpen && PCPreview.isOpen()){ try{ PCPreview.close(); }catch(_){} return; }
           if(window.PCNotes && PCNotes.drawerOpen && PCNotes.drawerOpen()){ try{ PCNotes.closeDrawer(); }catch(_){} return; }
           // Web Search's reader is a sub-screen inside the view, not a view of its own, so Back must
           // return to the results — otherwise it leaves the whole screen with the article still up
@@ -19707,10 +19711,43 @@
 
   /* What can open this file, in the order somebody would want them. Shared by the drive and by a
    * synced folder so the two offer the same menu for the same file. */
+  const _previewable = (name, mime) => {
+    try{ return !!(window.PCPreview && PCPreview.handles(name, mime)); }catch(_){ return false; }
+  };
+  /* BYTES, FROM WHICHEVER OF THE THREE SOURCES THIS FILE CAME FROM. Preview renders from a Blob and
+   * fetches nothing itself, which is what lets it show an ENCRYPTED file without that file's
+   * plaintext ever going near the network — and what makes it work on a build with no instance. */
+  async function _previewBytes(d, opts){
+    if(opts && opts.sync) return _syncFileBlob(d.sha, d.chunks ? d.chunks.split(',').filter(Boolean) : null);
+    if(d.enc === '1'){
+      const u = await encFileUrl(d.sha, d.mime || mimeForName(d.name));
+      return fetch(u).then(r => r.blob());
+    }
+    const r = await fetch(d.url);
+    if(!r.ok) throw new Error('file HTTP ' + r.status);
+    return r.blob();
+  }
+  async function openPreviewFile(d, opts){
+    try{
+      toast(d.enc === '1' ? 'decrypting…' : 'opening…');
+      const blob = await _previewBytes(d, opts);
+      _withModule('preview.js', 'PCPreview', P => {
+        if(!P.open({ name: d.name || 'file', mime: d.mime || blob.type || '', blob }))
+          toast('nothing here can show that file');
+      });
+    }catch(err){ toast('could not open that: ' + ((err && err.message) || err)); }
+  }
+
   function _handlersFor(d, opts){
     opts = opts || {};
     const name = d.name || '', mime = d.mime || '';
     const out = [];
+    /* FIRST, because looking at a file is the lightest thing you can do with it and it is what
+     * somebody clicking a photograph or a video meant. The editors come after. */
+    if(_previewable(name, mime))
+      out.push({ id:'preview', icon:'👁', label:'Preview',
+                 hint:'Look at it here — pictures, video and PDFs',
+                 run:() => openPreviewFile(d, opts) });
     if(!!CFG.office_enabled && _officeable(name, mime))
       out.push({ id:'office', icon:'📝', label:'Office document',
                  hint:'Writer, Calc or Impress — edits and saves back',
