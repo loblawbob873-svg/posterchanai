@@ -42,7 +42,13 @@ public class MusicBackgroundDeviceTest {
             // A small generated WAV avoids network, account and Blossom dependencies. Looping it
             // exercises Chromium's real media clock while MusicService reproduces production's
             // foreground-playback condition.
-            String start = "(()=>{const n=32000,b=new ArrayBuffer(44+n),v=new DataView(b);"
+            /* Thirty seconds, not four. Starting the foreground service and sending Home through
+             * instrumentation can take several seconds on a loaded emulator. With the former
+             * four-second looping WAV, healthy continuous playback wrapped currentTime from 1.14
+             * to 0.91 and the monotonic assertion falsely called that a stop. Keep loop enabled so
+             * the media remains valid if a very slow device exceeds thirty seconds, but make the
+             * measurement window far shorter than one lap. */
+            String start = "(()=>{const n=240000,b=new ArrayBuffer(44+n),v=new DataView(b);"
                     + "const s=(o,x)=>{for(let i=0;i<x.length;i++)v.setUint8(o+i,x.charCodeAt(i))};"
                     + "s(0,'RIFF');v.setUint32(4,36+n,true);s(8,'WAVEfmt ');v.setUint32(16,16,true);"
                     + "v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,8000,true);"
@@ -60,7 +66,7 @@ public class MusicBackgroundDeviceTest {
                     .putExtra(MusicService.EXTRA_ARTIST, "PosterChan")
                     .putExtra(MusicService.EXTRA_PLAYING, true)
                     .putExtra(MusicService.EXTRA_POSITION, before)
-                    .putExtra(MusicService.EXTRA_DURATION, 4.0);
+                    .putExtra(MusicService.EXTRA_DURATION, 30.0);
             ContextCompat.startForegroundService(ctx, service);
             SystemClock.sleep(500);
 
