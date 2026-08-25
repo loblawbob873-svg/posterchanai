@@ -29,6 +29,12 @@ def test_attach_starts_at_live_prompt_then_respects_manual_scrolling():
     assert "followBottom=!!b && y>=b.baseY" in TERM
     assert "followBottom = true" in TERM
     assert "term.scrollToBottom()" in TERM
+    # xterm emits onScroll while replay itself grows the buffer. The programmatic-scroll guard must
+    # be armed before term.write, or that event disables follow mode before its callback can land at
+    # the prompt.
+    out = TERM[TERM.index("if(m.t === 'out')"):TERM.index("if(m.t === 'ready')")]
+    assert out.index("scrollingByUs=true") < out.index("term.write(m.d")
+    assert "const followThisWrite=followBottom" in out
 
 
 def test_find_navigation_and_close_are_wired():

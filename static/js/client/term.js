@@ -743,9 +743,18 @@
              * pushed event wins the race, its cumulative sequence makes the later snapshot old;
              * discard that snapshot instead of drawing the prompt/echo twice. */
             if(typeof m.seq === 'number' && m.seq <= cursor) return;
+            /* xterm itself emits onScroll while a large replay grows baseY. That is layout, not the
+             * person scrolling, but the old guard began only INSIDE this callback—after xterm had
+             * already emitted and changed followBottom to false. Capture the choice and suppress
+             * those internal events around the whole asynchronous write. Once the bytes are drawn,
+             * land at the live prompt exactly once; a later real swipe still disables following. */
+            const followThisWrite=followBottom;
+            if(followThisWrite) scrollingByUs=true;
             term.write(m.d, function(){
-              if(!followBottom)return;
-              try{scrollingByUs=true;term.scrollToBottom();setTimeout(()=>{scrollingByUs=false;},0);}catch(_){scrollingByUs=false;}
+              if(followThisWrite){
+                try{term.scrollToBottom();}catch(_){}
+                setTimeout(()=>{scrollingByUs=false;},0);
+              }
             });
             _histSaw(m.d);
             // The CURSOR is what a reconnect resumes from, so it advances only for bytes that reached
