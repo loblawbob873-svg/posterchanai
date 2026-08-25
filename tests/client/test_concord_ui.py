@@ -41,7 +41,7 @@ def test_concord_is_precached_and_old_bundles_self_heal_the_nav():
 def test_concord_owns_a_versioned_stylesheet_so_stale_shell_css_cannot_unstyle_it():
     assert 'static/css/concord.css' in HTML
     assert "data-concord-css" in CONCORD
-    assert "concord.css?v=10" in CONCORD
+    assert "concord.css?v=11" in CONCORD
     assert '.cc-compose textarea:focus' in CONCORD_CSS
     assert 'box-shadow:none!important' in CONCORD_CSS
     assert "'/static/css/concord.css'" in (ROOT / "static/js/client/sw.js").read_text()
@@ -199,6 +199,9 @@ def test_concord_dove_icon_reaches_sidebar_mobile_and_desktop_launcher():
     # os.js derives desktop/start-menu icons from the sidebar <use href>, so this is the desktop source.
     os_js = (ROOT / 'static/js/client/os.js').read_text()
     assert "btn.querySelector('svg use')" in os_js
+    assert "if(view==='concord') snapTo(w,'max')" in os_js
+    assert '.osw-slot:has(>.cc-app)' in CONCORD_CSS
+    assert '.osw-body>#feed.feed-dm:has(.cc-app)' in CONCORD_CSS
 
 
 def test_invite_parser_requires_naddr_and_secret_fragment():

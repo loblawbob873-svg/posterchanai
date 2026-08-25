@@ -5,7 +5,7 @@
   // cached client.css for one navigation. Concord owns a versioned sheet and loads it itself too.
   if(!document.querySelector('link[data-concord-css]')){
     const l=document.createElement('link'); l.rel='stylesheet'; l.dataset.concordCss='1';
-    l.href='/static/css/concord.css?v=10'; (document.head||document.documentElement).appendChild(l);
+    l.href='/static/css/concord.css?v=11'; (document.head||document.documentElement).appendChild(l);
   }
   const PC=()=>window.__PC;
   const CORD_RELAYS=['wss://jskitty.com/nostr','wss://asia.vectorapp.io/nostr','wss://relay.ditto.pub','wss://relay.dreamith.to'];

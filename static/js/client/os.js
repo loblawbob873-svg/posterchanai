@@ -1474,7 +1474,10 @@
       if(!el.classList.contains('focused')) focusWin(w);
     }, true);
 
-    focusWin(w);
+    /* Concord is a three-pane workspace. Opening it in the generic reading-column geometry wastes
+       the channel/member space and exposes the desktop behind its bottom edge, so it starts in the
+       same full-workspace geometry the Maximise button provides. */
+    if(view==='concord') snapTo(w,'max'); else focusWin(w);
     return w;
   }
 
