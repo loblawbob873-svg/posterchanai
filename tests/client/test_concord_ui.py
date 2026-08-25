@@ -73,7 +73,7 @@ def test_tablet_concord_consumes_the_full_shell_width():
     assert 'width:100vw!important' in tablet
     assert 'body.concord-view .main,body.concord-view .feed.feed-dm' in tablet
     assert 'body.concord-view .cc-app{width:100%!important;max-width:none!important' in tablet
-    assert 'grid-template-columns:62px 220px minmax(0,1fr)!important' in tablet
+    assert 'grid-template-columns:62px 220px minmax(0,1fr) 190px!important' in tablet
 
 
 def test_web_concord_removes_the_timeline_shell_gutter_and_width_cap():
@@ -117,10 +117,18 @@ def test_concord_fills_workspace_and_identifies_the_signed_in_user():
 
 
 def test_concord_has_discord_style_panes_and_dm_style_composer():
-    for surface in ('cc-communities', 'cc-channels', 'cc-conversation', 'cc-messages', 'cc-compose'):
+    for surface in ('cc-communities', 'cc-channels', 'cc-conversation', 'cc-members-pane', 'cc-messages', 'cc-compose'):
         assert surface in CONCORD
     assert 'Message #${state.channel' in CONCORD
     assert "['concord','concord','Concord']" in APP, "mobile Discover must expose Concord"
+
+
+def test_desktop_members_are_a_right_column_and_mobile_uses_the_dialog():
+    assert 'grid-template-columns:68px 248px minmax(0,1fr) 220px!important' in CONCORD_CSS
+    assert 'class="cc-members-pane${membersHidden?' in CONCORD
+    assert 'pc.concord.members.hidden' in CONCORD
+    assert "!window.matchMedia||window.matchMedia('(max-width:820px)').matches" in CONCORD
+    assert '@media(max-width:820px){.cc-members-pane{display:none!important}}' in CONCORD_CSS
 
 
 def test_channels_can_be_starred_without_merging_concord_into_direct_messages():
