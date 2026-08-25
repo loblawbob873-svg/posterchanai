@@ -36,13 +36,13 @@ def test_packaged_shell_loads_the_complete_concord_surface():
     assert 'data-view="concord"' in HTML
 
 
-def test_stale_pwa_controller_cannot_restore_the_previous_screen_over_concord():
-    assert "previous service worker" in CONCORD
-    assert "[data-view=\"concord\"]" in CONCORD
-    assert "setTimeout" in CONCORD
-    assert "feed.classList.add('feed-dm'); render()" in CONCORD
-    entry = CONCORD[CONCORD.index("document.addEventListener('click'"):]
-    assert 'mobileChatOpen=false;' in entry, "reopening Concord must restore top navigation and rooms"
+def test_concord_never_repaints_another_app_shared_feed():
+    render = CONCORD[CONCORD.index('function render(){'):CONCORD.index('const returning=', CONCORD.index('function render(){'))]
+    assert "p.isView('concord')" in render
+    assert render.index("p.isView('concord')") < render.index("p.$('#feed')")
+    assert "document.addEventListener('click'" not in CONCORD, (
+        "an out-of-band click handler can repaint Concord after Code owns the feed")
+    assert "isView: view => VIEW === view" in APP
 
 
 def test_concord_is_precached_and_old_bundles_self_heal_the_nav():

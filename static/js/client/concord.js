@@ -282,7 +282,12 @@
     return {name,icon,description:'',channels:[{name:'general',private:false,id:made.generalChannelId}],local:false,naddr:inviteParts(made.url).naddr,url:made.url,cord:{...made,bundle}};
   }
   function render(){
-    const p=PC(), feed=p&&p.$('#feed'); if(!feed) return;
+    const p=PC();
+    /* Every async Concord path eventually calls render(). The feed belongs to the CURRENT app, not
+     * to whichever request finished last. This guard protects Code and every other shared-feed view
+     * from relay/discovery/deferred Concord work completing after navigation. */
+    if(!p || typeof p.isView!=='function' || !p.isView('concord')) return;
+    const feed=p.$('#feed'); if(!feed) return;
     const returning=!feed.querySelector||!feed.querySelector('.cc-app');
     startDiscovery(p);
     startLiveSync(p);
@@ -384,15 +389,4 @@
     $$('[data-cc-react]').forEach(b=>b.onclick=()=>{ reactionTarget=b.dataset.ccReact; const choices=['👍','❤️','😂','😮','😢','😡','🎉','💯']; const old=document.querySelector('.cc-reaction-picker'); if(old)old.remove(); const pop=document.createElement('div'); pop.className='cc-reaction-picker'; pop.innerHTML=choices.map(x=>`<button data-emoji="${x}">${x}</button>`).join(''); b.closest('.cc-message-body').appendChild(pop); pop.querySelectorAll('button').forEach(x=>x.onclick=e=>{ e.stopPropagation(); toggleReaction(reactionTarget,x.dataset.emoji); }); });
   }
   window.PCConcord={render,inviteParts,normalizeIcon,notifyMentions,discoverInvites};
-  // Compatibility with a stale PWA app.js served once by the previous service worker. An older
-  // controller knows the injected Discover row only as an unknown view: it changes the title, then
-  // restores the previous feed. Re-mount after that bubble finishes. Harmless on a current shell
-  // (render is idempotent), and it means a newly deployed destination works on the first click.
-  document.addEventListener('click',e=>{
-    const b=e.target.closest&&e.target.closest('[data-view="concord"]'); if(!b) return;
-    mobileChatOpen=false;
-    setTimeout(()=>{ const title=document.getElementById('view-title'); if(title) title.textContent='Concord';
-      document.body.classList.add('concord-view','rb-off');
-      const feed=document.getElementById('feed'); if(feed){ feed.classList.add('feed-dm'); render(); restoreChatScroll(); } },0);
-  });
 })();

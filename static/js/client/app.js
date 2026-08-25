@@ -33452,6 +33452,9 @@
     // Republish the encrypted libraries to the current relay pool (Settings → relays, and
     // automatically after a relay change). Exposed for the sub-modules and for the console.
     carryPrivateToRelays,
+    /* Shared-feed modules may finish network/deferred work after navigation. They must ask who owns
+     * the feed before painting; otherwise a late Concord render can replace Code (and vice versa). */
+    isView: view => VIEW === view,
     $, $$, enc, publish, sendDm, safePk, nip05Resolve, profOf, needProfile, niceNip05, LOGO, toast,
     viewer: () => {
       const profile = ME && ME.pubkey ? (profOf(ME.pubkey) || {}) : {};

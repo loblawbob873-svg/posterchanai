@@ -18,10 +18,12 @@ function control(id){
 const dollar = selector => selector === '#feed' ? feed : control(selector.slice(1));
 const dollars = () => [];
 const calls = {toasts:[], notified:0, group:0, mentions:[]};
+let activeView = 'concord';
 
 globalThis.window = globalThis;
 window.__PC = {
   $:dollar, $$:dollars, enc:s=>String(s), niceNip05:s=>s,
+  isView:view=>view===activeView,
   viewer:()=>({pubkey:'a'.repeat(64),npub:'npub1testidentity',profile:{name:'tester',display_name:'Test User'}}),
   toast:s=>calls.toasts.push(String(s)),
   openEmojiPopover:(_anchor,pick)=>pick('😀',()=>{}),
@@ -112,4 +114,13 @@ PCConcord.render();
 if(calls.mentions.length!==1 || !calls.mentions[0].title.includes('#general') || calls.mentions[0].opts.route!=='concord') throw new Error('mention notification failed');
 PCConcord.render();
 if(calls.mentions.length!==1) throw new Error('mention notification was not deduplicated');
+
+// A relay/deferred callback can render after the user has opened Code. It must not own the shared
+// feed any more, nor restart Concord's live work or shell classes.
+activeView='code';
+feed.innerHTML='<div id="code-editor">working tree</div>';
+const classesBefore=classList.added.length;
+PCConcord.render();
+if(feed.innerHTML!=='<div id="code-editor">working tree</div>') throw new Error('late Concord render replaced Code');
+if(classList.added.length!==classesBefore) throw new Error('late Concord render changed Code shell classes');
 console.log('concord runtime flow ok');
