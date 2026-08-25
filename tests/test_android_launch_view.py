@@ -281,7 +281,7 @@ public class DoubleHarness {
     ok(!HomeDoublePress.arrived(t+500), "third press replayed the pair");
     HomeDoublePress.clear(); ok(!HomeDoublePress.arrived(t), "first fired");
     ok(!HomeDoublePress.arrived(t+20), "duplicate intent fired");
-    ok(!HomeDoublePress.arrived(t+900), "two ordinary visits became a pair");
+    ok(!HomeDoublePress.arrived(t+1800), "two ordinary visits became a pair");
     HomeDoublePress.clear(); ok(!HomeDoublePress.arrived(t), "first fired again");
     ok(!HomeDoublePress.arrived(t-1), "backwards clock fired");
     System.out.println("ALL OK");

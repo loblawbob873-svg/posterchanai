@@ -2,7 +2,9 @@ package place.poster.app.home;
 
 /** Pure timing/state for the launcher's double-Home shortcut. */
 public final class HomeDoublePress {
-    public static final long MAX_GAP_MS = 650L;
+    // This is measured when HOME intents reach the Activity, not when the person's finger lands.
+    // Task/launcher animation can consume several hundred milliseconds, especially on older phones.
+    public static final long MAX_GAP_MS = 1200L;
     public static final long MIN_GAP_MS = 80L;
     private static long lastAt = 0L;
     private HomeDoublePress() { }
