@@ -6,8 +6,19 @@ name: Android APK
 # redirects to that asset, so users always get the newest build.
 
 on:
-  # Release publication is temporarily manual while the native HOME lifecycle regression is being
-  # verified on the emulator. Do not restore push publication until that device run is green.
+  push:
+    branches: [ main ]
+    paths:
+      - 'static/js/client/**'
+      - 'static/css/client.css'
+      # The translation catalogues are COPIED INTO the bundle, so a new language (or new strings in
+      # an existing one) reaches the app only through a rebuild — on the web the server just serves
+      # the new file, which is why this was easy to miss.
+      - 'static/i18n/**'
+      - 'templates/client.html'
+      - 'mobile/**'
+      - 'zapstore.yaml'
+      - '.github/workflows/android.yml'
   workflow_dispatch:
 
 # ONE BUILD PER BRANCH AT A TIME, AND THE ONE THAT IS RUNNING FINISHES.
