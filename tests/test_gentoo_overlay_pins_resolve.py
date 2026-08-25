@@ -81,6 +81,17 @@ class TheOverlayPinsSomethingThatExists(unittest.TestCase):
         self.assertIn("PosterChan-*-linux-x64.tar.zst", wf,
                       "the per-version release does not carry the tarball the overlay wants")
 
+    def test_bump_refuses_a_desktop_payload_without_concord(self):
+        """A checksum proves which bytes arrived, not that those bytes contain the app."""
+        with open(os.path.join(ROOT, "scripts", "bump_desktop_overlay.py"), encoding="utf-8") as fh:
+            bump = fh.read()
+        self.assertIn("def _audit_payload(blob):", bump)
+        for asset in ("concord.css", "concord.js", "cord-reader.js", "cord-protocol.js"):
+            self.assertIn(asset, bump)
+        audit = bump.index("_audit_payload(blob)", bump.index("def main():"))
+        move = bump.index('subprocess.run(["git", "mv"')
+        self.assertLess(audit, move, "the overlay moves before the downloaded package is audited")
+
 
 if __name__ == "__main__":
     unittest.main()

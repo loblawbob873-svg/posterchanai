@@ -26,6 +26,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -63,6 +64,50 @@ def _fetch(url):
         return r.read()
 
 
+def _audit_payload(blob):
+    """Refuse a validly checksummed desktop that omitted the core Concord surface."""
+    with tempfile.TemporaryDirectory(prefix="pc-desktop-audit-") as td:
+        archive = os.path.join(td, "desktop.tar.zst")
+        with open(archive, "wb") as fh:
+            fh.write(blob)
+        unpack = os.path.join(td, "unpack")
+        os.mkdir(unpack)
+        got = subprocess.run(
+            ["tar", "-C", unpack, "-xaf", archive, "--wildcards", "*/resources/app.asar"],
+            capture_output=True, text=True,
+        )
+        if got.returncode:
+            raise RuntimeError("desktop tarball has no resources/app.asar: " + got.stderr.strip()[:160])
+        asar = next((os.path.join(root, "app.asar") for root, _dirs, files in os.walk(unpack)
+                     if "app.asar" in files), None)
+        if not asar:
+            raise RuntimeError("desktop tarball extracted without app.asar")
+        with open(asar, "rb") as fh:
+            payload = fh.read()
+        start = payload.find(b'{"files":')
+        if start < 0:
+            raise RuntimeError("app.asar has no readable file index")
+        tree, _end = json.JSONDecoder().raw_decode(payload[start:].decode("latin1"))
+
+        def present(path):
+            node = tree
+            for part in path.split("/"):
+                node = (node.get("files") or {}).get(part) if isinstance(node, dict) else None
+                if node is None:
+                    return False
+            return True
+
+        required = (
+            "www/static/css/concord.css", "www/static/js/client/concord.js",
+            "www/static/js/client/cord-reader.js", "www/static/js/client/cord-protocol.js",
+        )
+        missing = [path for path in required if not present(path)]
+        if b'data-view="concord"' not in payload:
+            missing.append('index.html Concord navigation entry')
+        if missing:
+            raise RuntimeError("desktop payload is missing Concord: " + ", ".join(missing))
+
+
 def main():
     args = [a for a in sys.argv[1:]]
     check_only = "--check" in args
@@ -97,6 +142,10 @@ def main():
     if published and published != sha512:
         sys.exit("FAIL  the download does not match the .sha512 GitHub published beside it — "
                  "writing this Manifest would fail at emerge time on somebody else's machine")
+    try:
+        _audit_payload(blob)
+    except Exception as e:
+        sys.exit(f"FAIL  refusing to publish incomplete desktop payload: {e}")
     print(f"size {len(blob)}  sha512 verified against the published checksum"
           if published else f"size {len(blob)}  (no published .sha512 to cross-check)")
 
