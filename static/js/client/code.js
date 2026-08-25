@@ -371,6 +371,12 @@
     // ---- files -------------------------------------------------------------------------------
 
     async function loadConfig(){
+      /* A packaged desktop edits the folder the person selected. A clean profile has selected
+       * nothing, so it must not fall through to /api/code/config and quietly open PosterChan's own
+       * server checkout. */
+      if(window.pcHost && window.pcHost.pickDirectory){
+        S.engines={};S.root=S.hostRoot||'No folder open';S.gate='';S.ready=true;return;
+      }
       try{
         const c = await api('/config');
         S.root = c.root || '';
@@ -412,7 +418,8 @@
 
     async function loadGit(){
       S.gitBusy = true; paint();
-      try{ S.git = await api('/git/status'); status('Git status refreshed'); }
+      try{ S.git = S.hostRoot&&window.pcHost&&pcHost.gitStatus
+          ? await pcHost.gitStatus(S.hostRoot) : await api('/git/status'); status('Git status refreshed'); }
       catch(e){ S.git = { error: e.message || String(e), files: [] }; }
       S.gitBusy = false; paint();
     }
@@ -420,7 +427,8 @@
     async function gitAct(action, paths, message){
       try{
         status(action + '…');
-        await post('/git/action', { action, paths: paths || [], message: message || '' });
+        if(S.hostRoot&&window.pcHost&&pcHost.gitAction)await pcHost.gitAction(S.hostRoot,action,paths||[],message||'');
+        else await post('/git/action', { action, paths: paths || [], message: message || '' });
         await loadGit();
         if(action === 'pull') await loadTree(S.cwd);
         status(action + ' complete', 'ok');
@@ -994,7 +1002,8 @@
       document.querySelectorAll('[data-git-diff]').forEach(b=>b.addEventListener('click',async()=>{
         const path=b.dataset.gitDiff;
         S.gitDiff={path,text:'',error:'',busy:true}; paint();
-        try{ const d=await api('/git/diff?path='+encodeURIComponent(path)); S.gitDiff={path,text:d.diff||'',error:'',busy:false}; }
+        try{ const d=S.hostRoot&&window.pcHost&&pcHost.gitDiff ? await pcHost.gitDiff(S.hostRoot,path)
+          : await api('/git/diff?path='+encodeURIComponent(path)); S.gitDiff={path,text:d.diff||'',error:'',busy:false}; }
         catch(e){ S.gitDiff={path,text:'',error:e.message||String(e),busy:false}; }
         paint();
       }));
@@ -1144,8 +1153,7 @@
          * says "loading" about something that already gave up. */
         try{
           await loadConfig();
-          if(S.gate && window.pcHost && window.pcHost.pickDirectory){ S.gate=''; S.root='Open a project folder'; }
-          if(!S.gate) await loadTree(S.cwd);
+          if(!S.gate && (!window.pcHost || !window.pcHost.pickDirectory || S.hostRoot)) await loadTree(S.cwd);
         }catch(e){
           S.ready = true;
           if(!S.gate) S.gate = 'Could not open this node: ' + ((e && e.message) || e);

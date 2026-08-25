@@ -5,10 +5,9 @@
  * the browser — leaving the app, losing the folder you were in, and on the APK doing nothing useful
  * at all. A picture is the most common thing on anybody's drive and it had no viewer.
  *
- * IT RENDERS NOTHING ITSELF, DELIBERATELY. An <img> and the browser's own PDF viewer are better than
- * anything this file could ship, and pdf.js is ~1MB that would have to be bundled into the APK and
- * the desktop app. So this is a window, a fit-to-frame rule, and an honest answer when the platform
- * cannot draw a PDF (see PDF_OK) rather than a blank rectangle.
+ * PDFs use the vendored pdf.js renderer. Android WebView has no built-in PDF viewer, and relying on
+ * an iframe there produced an apology instead of a preview. The library is loaded only when a PDF
+ * is opened, and receives the already-decrypted bytes directly.
  *
  * NO SERVER. It is handed BYTES that the caller already has - the drive decrypts, a synced folder
  * assembles chunks, This Computer reads from disk - so it works on a standalone build with no
@@ -54,18 +53,45 @@
          : isPdf(name, mime) ? 'pdf' : '';
   }
 
-  /* CAN THIS PLATFORM DRAW A PDF AT ALL? Android's WebView ships no PDF viewer, so an <iframe> at a
-   * blob: url there is a permanently blank rectangle with nothing logged - the failure this whole
-   * codebase keeps re-learning. `navigator.pdfViewerEnabled` is the standard answer and is false in
-   * exactly that case. `undefined` means an older browser that has not been asked the question, and
-   * those overwhelmingly do render PDFs, so it is treated as a yes: refusing on "I do not know"
-   * would take the viewer away from the platforms that have always had one.
-   */
-  function pdfOk() {
+  var _pdfjs = null;
+  function loadPdfJs() {
+    if (root.pdfjsLib) return Promise.resolve(root.pdfjsLib);
+    if (_pdfjs) return _pdfjs;
+    _pdfjs = new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = '/static/vendor/pdfjs/pdf.min.js';
+      s.onload = function () {
+        if (!root.pdfjsLib) return reject(new Error('PDF renderer did not start'));
+        root.pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/vendor/pdfjs/pdf.worker.min.js';
+        resolve(root.pdfjsLib);
+      };
+      s.onerror = function () { reject(new Error('PDF renderer is unavailable')); };
+      (document.head || document.documentElement).appendChild(s);
+    });
+    return _pdfjs;
+  }
+
+  async function renderPdf(host, blob) {
+    var box = host.querySelector('.pv-pdf-pages');
+    if (!box) return;
     try {
-      if (typeof navigator.pdfViewerEnabled === 'boolean') return navigator.pdfViewerEnabled;
-    } catch (_) {}
-    return true;
+      var lib = await loadPdfJs();
+      var pdf = await lib.getDocument({ data: await blob.arrayBuffer() }).promise;
+      box.innerHTML = '';
+      for (var n = 1; n <= pdf.numPages; n++) {
+        var page = await pdf.getPage(n);
+        var base = page.getViewport({ scale: 1 });
+        var available = Math.max(280, Math.min(1200, (box.clientWidth || 800) - 20));
+        var viewport = page.getViewport({ scale: Math.min(2.25, available / base.width) });
+        var canvas = document.createElement('canvas');
+        canvas.className = 'pv-pdf-page'; canvas.width = Math.ceil(viewport.width);
+        canvas.height = Math.ceil(viewport.height); canvas.setAttribute('aria-label', 'Page ' + n);
+        box.appendChild(canvas);
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise;
+      }
+    } catch (e) {
+      box.innerHTML = '<div class="empty">Could not render this PDF.<br>' + H((e && e.message) || e) + '</div>';
+    }
   }
 
   var _open = null;          // the one live preview: { url, close }
@@ -110,11 +136,8 @@
       body = '<div class="pv-body pv-av-wrap"><audio class="pv-aud" controls preload="metadata">'
            + '</audio></div>';
     } else if (kind === 'pdf') {
-      body = pdfOk()
-        ? '<div class="pv-body"><iframe class="pv-pdf" title="' + H(name) + '"></iframe></div>'
-        : '<div class="pv-body pv-nope"><div class="empty">'
-          + 'This app cannot draw a PDF on this device — its browser engine ships no PDF viewer.'
-          + '<br>Download it and open it with whatever you normally read PDFs in.</div></div>';
+      body = '<div class="pv-body pv-pdf-body"><div class="pv-pdf-pages" role="document" '
+        + 'aria-label="' + H(name) + '"><div class="spinner"></div></div></div>';
     } else {
       body = '<div class="pv-body pv-nope"><div class="empty">Nothing here can show that file.</div></div>';
     }
@@ -123,7 +146,7 @@
 
   /* Mount, wire, and hand back a `close`. The two hosts differ only in where this goes and how it is
    * taken away again - exactly the split the office editor uses. */
-  function mount(host, name, mime, size, kind, url, shut) {
+  function mount(host, name, mime, size, kind, url, shut, blob) {
     host.innerHTML = bodyHTML(name, mime, size, kind);
     var q = function (s) { return host.querySelector(s); };
 
@@ -159,8 +182,8 @@
         if (b) b.innerHTML = '<div class="empty">This browser cannot play that format.'
           + '<br>Download it and open it in a real player.</div>';
       };
-    } else if (kind === 'pdf' && pdfOk()) {
-      q('.pv-pdf').src = url;
+    } else if (kind === 'pdf') {
+      renderPdf(host, blob);
     }
 
     var dl = q('.pv-dl');
@@ -226,7 +249,7 @@
         host.classList.add('pv-host', 'pv-win');
         shut = function () { try { root.PCOS.closeDoc(key); } catch (_) {} done(); };
         if (w) w.onClose = done;
-        mount(host, name, mime, blob.size, kind, url, shut);
+        mount(host, name, mime, blob.size, kind, url, shut, blob);
         _open = { key: key, close: shut };
         root.addEventListener('keydown', onKey, true);
         return true;
@@ -239,7 +262,7 @@
     sheet.className = 'pv-sheet pv-host';
     document.body.appendChild(sheet);
     shut = function () { try { sheet.remove(); } catch (_) {} done(); };
-    mount(sheet, name, mime, blob.size, kind, url, shut);
+    mount(sheet, name, mime, blob.size, kind, url, shut, blob);
     _open = { key: key, close: shut };
     root.addEventListener('keydown', onKey, true);
     return true;
@@ -247,5 +270,5 @@
 
   root.PCPreview = { open: open, handles: handles, kindOf: kindOf,
                      isImage: isImage, isVideo: isVideo, isAudio: isAudio, isPdf: isPdf,
-                     pdfOk: pdfOk, isOpen: isOpen, close: close };
+                     loadPdfJs: loadPdfJs, isOpen: isOpen, close: close };
 })(window);

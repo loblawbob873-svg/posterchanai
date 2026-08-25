@@ -9028,5 +9028,7 @@ audio.sms-att-img{min-width:220px}
 .pv-av-wrap{padding:0}
 .pv-vid{max-width:100%;max-height:100%;display:block;background:#000}
 .pv-aud{width:min(560px,92%)}
-.pv-pdf{width:100%;height:100%;border:0;background:#fff}
+.pv-pdf-body{display:block;background:#202124;padding:10px;overflow:auto}
+.pv-pdf-pages{width:100%;display:flex;flex-direction:column;align-items:center;gap:10px;min-height:100%}
+.pv-pdf-page{display:block;max-width:100%;height:auto;background:#fff;box-shadow:0 2px 12px #0008}
 @media(max-width:640px){.pv-bar{padding:6px 8px;gap:6px}.pv-name{font-size:.95em}}

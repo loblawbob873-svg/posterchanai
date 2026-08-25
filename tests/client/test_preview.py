@@ -88,8 +88,15 @@ class PreviewIsReachable(unittest.TestCase):
     def test_it_is_styled_for_both_hosts(self):
         """A desktop window's slot and a full-screen sheet. Without the rules the media is sized by
         the viewport inside a window somebody just resized - the office editor's "tiny white box"."""
-        for sel in (".pv-host{", ".pv-win{", ".pv-sheet{", ".pv-vid{", ".pv-img{"):
+        for sel in (".pv-host{", ".pv-win{", ".pv-sheet{", ".pv-vid{", ".pv-img{", ".pv-pdf-page{"):
             self.assertIn(sel, self.css, f"{sel} has no rule")
+
+    def test_android_pdfs_use_the_bundled_renderer(self):
+        src = _read("static/js/client/preview.js")
+        self.assertIn("/static/vendor/pdfjs/pdf.min.js", src)
+        self.assertIn("pdf.worker.min.js", src)
+        self.assertIn("getDocument({ data: await blob.arrayBuffer() })", src)
+        self.assertNotIn("ships no PDF viewer", src)
 
     def test_the_download_never_uses_a_bare_anchor(self):
         """The APK's WebView ignores a programmatic download and the desktop's app:// origin refuses

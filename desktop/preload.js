@@ -263,7 +263,11 @@ if (isOurPage) {
     // PosterChan Code, editing a file on this computer.
     readText: (p) => ipcRenderer.invoke('pc:host:readText', String(p || '')),
     writeText: (p, text, mtime) => ipcRenderer.invoke('pc:host:writeText', String(p || ''),
-                                                      String(text == null ? '' : text), Number(mtime) || 0),
+                                                       String(text == null ? '' : text), Number(mtime) || 0),
+    gitStatus: (root) => ipcRenderer.invoke('pc:host:gitStatus', String(root||'')),
+    gitDiff: (root, p) => ipcRenderer.invoke('pc:host:gitDiff', String(root||''), String(p||'')),
+    gitAction: (root, action, paths, message) => ipcRenderer.invoke('pc:host:gitAction', String(root||''),
+      String(action||''), Array.isArray(paths)?paths:[], String(message||'')),
     search: (q, opts) => ipcRenderer.invoke('pc:host:search', String(q || ''), opts || {}),
     mkdir: (dir, name) => ipcRenderer.invoke('pc:host:mkdir', String(dir || ''), String(name || '')),
     rename: (from, to) => ipcRenderer.invoke('pc:host:rename', String(from || ''), String(to || '')),

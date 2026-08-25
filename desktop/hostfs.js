@@ -26,7 +26,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 
 /* AN ABSOLUTE, NORMALISED PATH OR NOTHING. `..` is resolved rather than rejected — a file manager
  * navigates upwards constantly and refusing the segment would break the parent button — but the
@@ -357,6 +357,53 @@ function writeText(p, text, mtime){
   return { path: abs, size: st.size, mtime: Math.round(st.mtimeMs) };
 }
 
+function _git(root, args, timeout){
+  const cwd=clean(root);if(!cwd||!fs.statSync(cwd).isDirectory())return Promise.reject(new Error('not a project folder'));
+  return new Promise((resolve,reject)=>execFile('git',['-C',cwd].concat(args),{
+    encoding:'utf8',maxBuffer:8*1024*1024,timeout:timeout||30000,env:Object.assign({},process.env,{GIT_TERMINAL_PROMPT:'0'})
+  },(e,stdout,stderr)=>e?reject(new Error(String(stdout||stderr||e.message||e).trim())):resolve(stdout)));
+}
+function _gitPath(p){
+  p=String(p||'');
+  if(!p||p.startsWith('-')||path.isAbsolute(p)||p.split(/[\\/]/).includes('..'))throw new Error('invalid Git path');
+  return p;
+}
+async function gitStatus(root){
+  const top=(await _git(root,['rev-parse','--show-toplevel'])).trim();
+  const branch=(await _git(top,['branch','--show-current'])).trim()||'detached HEAD';
+  let origin='';try{origin=(await _git(top,['remote','get-url','origin'])).trim();}catch(_){}
+  const raw=await _git(top,['status','--porcelain=v1','-z','--untracked-files=all']);
+  const records=raw.split('\0').filter(Boolean),files=[];
+  for(let i=0;i<records.length;i++){
+    const rec=records[i],xy=rec.slice(0,2);let p=rec.slice(3);
+    if((xy[0]==='R'||xy[0]==='C')&&records[i+1])p=records[++i];
+    files.push({xy,path:p});
+  }
+  return {root:top,branch,origin,nostr:/^nostr:/i.test(origin),files};
+}
+async function gitDiff(root,p){
+  p=_gitPath(p);let out=await _git(root,['diff','--',p]);
+  if(!out)out=await _git(root,['diff','--cached','--',p]);
+  if(!out){try{out=await _git(root,['diff','--no-index','--','/dev/null',p]);}catch(e){out=String(e.message||'');}}
+  return {diff:out};
+}
+async function gitAction(root,action,paths,message){
+  const ps=(paths||[]).map(_gitPath);
+  if(action==='stage')await _git(root,['add','--'].concat(ps));
+  else if(action==='unstage')await _git(root,['restore','--staged','--'].concat(ps));
+  else if(action==='restore')for(const p of ps){
+    let tracked=true;try{await _git(root,['ls-files','--error-unmatch','--',p]);}catch(_){tracked=false;}
+    if(tracked)await _git(root,['restore','--worktree','--',p]);
+    else {const top=(await _git(root,['rev-parse','--show-toplevel'])).trim(),abs=path.resolve(top,p);
+      if(abs!==top&&!abs.startsWith(top+path.sep))throw new Error('invalid Git path');
+      fs.rmSync(abs,{recursive:true,force:true});}
+  }
+  else if(action==='commit'){if(!String(message||'').trim())throw new Error('write a commit message');await _git(root,['commit','-m',String(message).slice(0,5000)]);}
+  else if(action==='pull'||action==='push')await _git(root,[action],120000);
+  else throw new Error('unknown Git action');
+  return {ok:true};
+}
+
 module.exports = { list, roots, search, trash, mkdir, rename, transfer, open, clean, parentOf, shape,
-  readText, writeText,
+  readText, writeText, gitStatus, gitDiff, gitAction,
                    trashInfo, freeName, trashDir };

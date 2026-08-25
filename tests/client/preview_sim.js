@@ -120,21 +120,16 @@ console.log('only one at a time');
   P.close();
 }
 
-console.log('a platform with no PDF viewer says so instead of drawing a blank rectangle');
+console.log('a platform with no PDF viewer uses the bundled renderer');
 {
   navigator.pdfViewerEnabled = false;
-  check('pdfOk is false', P.pdfOk() === false);
   P.open({ name: 'a.pdf', mime: 'application/pdf', blob: new global.Blob([]) });
   const host = global.document.body.children[0];
-  check('it still opens (so Download is reachable)', P.isOpen() === true);
-  check('and the body explains rather than showing an empty frame',
-        /ships no PDF viewer/.test(host._html) && !/pv-pdf/.test(host._html));
+  check('it opens', P.isOpen() === true);
+  check('and mounts pdf.js pages instead of a browser PDF iframe',
+        /pv-pdf-pages/.test(host._html) && !/<iframe/.test(host._html));
   P.close();
-  navigator.pdfViewerEnabled = true;
-  check('pdfOk is true where the browser has one', P.pdfOk() === true);
   delete navigator.pdfViewerEnabled;
-  check('an older browser that was never asked is treated as a yes', P.pdfOk() === true,
-        'refusing on "I do not know" takes the viewer from platforms that always had one');
 }
 
 console.log('a video is playsinline and preloads only metadata');

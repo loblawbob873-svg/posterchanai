@@ -47,6 +47,15 @@ def test_working_directory_can_be_changed_on_desktop_and_browser():
     assert "await loadTree(String(picked).trim()" in CODE
 
 
+def test_desktop_git_operates_on_the_selected_local_project():
+    main=(ROOT/'desktop/main.js').read_text(); preload=(ROOT/'desktop/preload.js').read_text()
+    for name in ('gitStatus','gitDiff','gitAction'):
+        assert name in preload and name in main
+        assert f'pcHost.{name}' in CODE
+    assert "S.root=S.hostRoot||'No folder open'" in CODE
+    assert "if(!S.gate && (!window.pcHost || !window.pcHost.pickDirectory || S.hostRoot))" in CODE
+
+
 def test_modified_file_opens_diff_in_the_editor_pane():
     assert 'data-git-diff="' in CODE
     assert "S.gitDiff={path,text:'',error:'',busy:true}" in CODE

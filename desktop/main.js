@@ -1449,6 +1449,10 @@ ipcMain.handle('pc:host:search', (e, q, opts) => {
   const o = opts || {};
   return hostfs().search(String(q || ''), { limit: Number(o.limit) || 8, ms: Number(o.ms) || 350 });
 });
+ipcMain.handle('pc:host:gitStatus', (e, root) => { fsGuard(e); return hostfs().gitStatus(String(root||'')); });
+ipcMain.handle('pc:host:gitDiff', (e, root, p) => { fsGuard(e); return hostfs().gitDiff(String(root||''),String(p||'')); });
+ipcMain.handle('pc:host:gitAction', (e, root, action, paths, message) => { fsGuard(e);
+  return hostfs().gitAction(String(root||''),String(action||''),Array.isArray(paths)?paths:[],String(message||'')); });
 ipcMain.handle('pc:host:mkdir', (e, dir, name) => {
   fsGuard(e); return hostfs().mkdir(String(dir || ''), String(name || ''));
 });
