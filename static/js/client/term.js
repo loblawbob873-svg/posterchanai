@@ -82,6 +82,18 @@
      * may never release the guard underneath a newer write. */
     let bottomPinEpoch = 0, bottomPinT = null;
 
+    function _stopFollowing(){
+      /* A write may keep `scrollingByUs` true across two paints while xterm grows its viewport.
+       * A real wheel/swipe/PageUp during that interval must win immediately; otherwise onScroll
+       * mistakes the person's movement for xterm's layout movement and the next settle callback
+       * yanks them back to the prompt. Invalidating the generation also makes every already queued
+       * RAF/timer harmless. Scrolling back to baseY re-enables following through onScroll below. */
+      followBottom = false;
+      scrollingByUs = false;
+      ++bottomPinEpoch;
+      if(bottomPinT){ clearTimeout(bottomPinT); bottomPinT = null; }
+    }
+
     function _pinBottomAfterLayout(){
       if(!term) return;
       const mine = ++bottomPinEpoch;
@@ -440,11 +452,22 @@
         const b=term.buffer&&term.buffer.active;followBottom=!!b && y>=b.baseY;
       }); }catch(_){}
 
+      /* xterm's onScroll has no user/programmatic source flag. Observe the input that can only mean
+       * "I am reading scrollback" before xterm handles it, so it can cancel an in-flight replay or
+       * live-output pin even when that pin currently owns the onScroll guard. */
+      box.addEventListener('wheel', ev => { if(Number(ev.deltaY) < 0) _stopFollowing(); }, {passive:true});
+      box.addEventListener('touchmove', _stopFollowing, {passive:true});
+      box.addEventListener('pointerdown', ev => {
+        if(ev.target && ev.target.closest && ev.target.closest('.xterm-viewport')) _stopFollowing();
+      }, {passive:true});
+
       /* FIND LIVES IN THE RENDERER, not in the shell. Sending Ctrl+F into readline searches command
        * history; Ctrl+Shift+F searches everything xterm still holds, including program output and
        * the 5,000-line scrollback. The buffer API is public xterm API, so this works in the web,
        * Android and desktop bundles without another CDN or a version-sensitive private property. */
       try{ term.attachCustomKeyEventHandler((ev) => {
+        if(ev.type === 'keydown' && (ev.key === 'PageUp' || (ev.shiftKey && ev.key === 'ArrowUp')))
+          _stopFollowing();
         if(ev.type === 'keydown' && (ev.ctrlKey || ev.metaKey) && ev.shiftKey
             && String(ev.key).toLowerCase() === 'f'){
           ev.preventDefault(); _findOpen(); return false;

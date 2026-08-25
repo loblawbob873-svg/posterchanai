@@ -37,6 +37,28 @@ def test_attach_starts_at_live_prompt_then_respects_manual_scrolling():
     assert "const followThisWrite=followBottom" in out
 
 
+def test_user_scrolling_cancels_an_inflight_bottom_pin():
+    """Live output must not make the terminal impossible to scroll while a pin timer is armed."""
+    stop = TERM[TERM.index("function _stopFollowing"):
+                TERM.index("function _pinBottomAfterLayout")]
+    assert "followBottom = false" in stop
+    assert "scrollingByUs = false" in stop
+    assert "++bottomPinEpoch" in stop
+    assert "clearTimeout(bottomPinT)" in stop
+
+    mount = TERM[TERM.index("function _mountTerm"):
+                 TERM.index("/* FIND LIVES IN THE RENDERER")]
+    assert "addEventListener('wheel'" in mount
+    assert "Number(ev.deltaY) < 0" in mount
+    assert "addEventListener('touchmove', _stopFollowing" in mount
+    assert "closest('.xterm-viewport')" in mount
+
+    keys = TERM[TERM.index("attachCustomKeyEventHandler"):
+                TERM.index("return true;", TERM.index("attachCustomKeyEventHandler"))]
+    assert "ev.key === 'PageUp'" in keys
+    assert "_stopFollowing()" in keys
+
+
 def test_large_replay_stays_pinned_until_chromium_finishes_layout():
     """A write callback can precede the final scrollHeight in packaged Electron."""
     pin = TERM[TERM.index("function _pinBottomAfterLayout"):
