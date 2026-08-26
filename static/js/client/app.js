@@ -33058,14 +33058,14 @@
     if(!sender)return;try{
       const p=sender.getParameters();p.degradationPreference='maintain-resolution';
       if(!p.encodings||!p.encodings.length)p.encodings=[{}];
-      p.encodings[0].maxBitrate=40000000;p.encodings[0].maxFramerate=15;
+      p.encodings[0].maxBitrate=24000000;p.encodings[0].maxFramerate=24;
       await sender.setParameters(p);
     }catch(_){}
   }
   async function _rdSwitchScreen(){
     if(!_call||!_call.remoteDesktop||!_call.caller||!_call.pc)return;
     const activeCall=_call,old=activeCall.local;let next;
-    try{next=await navigator.mediaDevices.getDisplayMedia({video:{frameRate:{ideal:12,max:15}},audio:false});}
+    try{next=await navigator.mediaDevices.getDisplayMedia({video:{frameRate:{ideal:20,max:30}},audio:false});}
     catch(e){if(e&&e.name!=='NotAllowedError')toast(_mediaErrMsg(e));return;}
     if(!_call||_call!==activeCall){next.getTracks().forEach(t=>t.stop());return;}
     const track=next.getVideoTracks()[0],sender=activeCall.pc.getSenders().find(s=>s.track&&s.track.kind==='video');
@@ -33109,12 +33109,7 @@
     // Mouse movement must work while merely hovering. The old px===null guard initialized px only
     // on pointerdown, effectively turning remote control into drag-only control.
     video.addEventListener('pointermove',e=>{if(!active()){px=py=null;return;}const r=video.getBoundingClientRect();
-      // object-fit:contain may letterbox the image. Map against the pixels actually occupied by the
-      // shared monitor, not the video element's black bars, or the remote cursor cannot line up.
-      const va=(video.videoWidth||r.width)/Math.max(1,video.videoHeight||r.height),ra=r.width/Math.max(1,r.height);
-      let left=r.left,top=r.top,width=r.width,height=r.height;
-      if(ra>va){width=height*va;left+=(r.width-width)/2;}else{height=width/va;top+=(r.height-height)/2;}
-      const nx=Math.max(0,Math.min(1,(e.clientX-left)/Math.max(1,width))),ny=Math.max(0,Math.min(1,(e.clientY-top)/Math.max(1,height)));
+      const nx=Math.max(0,Math.min(1,(e.clientX-r.left)/Math.max(1,r.width))),ny=Math.max(0,Math.min(1,(e.clientY-r.top)/Math.max(1,r.height)));
       _rdSend({t:'input',e:{type:'absolute',x:nx,y:ny}});
       px=e.clientX;py=e.clientY;e.preventDefault();});
     const up=e=>{if(!active())return;px=e.clientX;py=e.clientY;_rdSend({t:'input',e:{type:'button',button:Math.min(2,e.button|0),down:false}});e.preventDefault();};
@@ -33141,7 +33136,7 @@
      * the viewer sends no camera or microphone back. Keeping it on the call transport gives it the
      * same encrypted Nostr signaling and TURN fallback without pretending a camera call is a
      * desktop-sharing session. */
-    if(remoteHost) return navigator.mediaDevices.getDisplayMedia({video:{frameRate:{ideal:12,max:15}},audio:false});
+    if(remoteHost) return navigator.mediaDevices.getDisplayMedia({video:{frameRate:{ideal:20,max:30}},audio:false});
     if(remoteGuest) return Promise.resolve(new MediaStream());
     return navigator.mediaDevices.getUserMedia({ audio:true, video: video ? {width:{ideal:640},height:{ideal:480},frameRate:{ideal:24}} : false });
   }
@@ -33624,7 +33619,7 @@
     // Preserve the minimized state: _callUI re-runs on every call event (ICE, mute, remote video), and a
     // bare reassignment would drop `call-mini` and pop the overlay back to fullscreen on its own.
     const _mini=el.classList.contains('call-mini');
-    el.className='call-overlay'+(_call.remoteDesktop?' rd':'')+(_call.remoteDesktop&&_call.controlGranted?' control-on':'')+(showVid?' vid':' aud')+(_call.state==='ringing'?' ring':'')+(_call.state==='connected'?' on':'')+(_mini?' call-mini':'');
+    el.className='call-overlay'+(_call.remoteDesktop?' rd':'')+(showVid?' vid':' aud')+(_call.state==='ringing'?' ring':'')+(_call.state==='connected'?' on':'')+(_mini?' call-mini':'');
     const rv=document.getElementById('call-remote'); if(rv){ rv.style.display=hasRemoteVid?'':'none'; if(_call.remote && rv.srcObject!==_call.remote){ rv.srcObject=_call.remote; rv.play&&rv.play().catch(()=>{}); } if(_call.remoteDesktop&&!_call.caller)_rdBindViewer(rv); }
     const lv=document.getElementById('call-local'); if(lv){ lv.style.display=(hasLocalVid&&!_call.camOff)?'':'none'; if(_call.local && lv.srcObject!==_call.local){ lv.srcObject=_call.local; lv.play&&lv.play().catch(()=>{}); }
       // Wire + restore AFTER display is set: offsetWidth is 0 while hidden, so placing it any earlier
