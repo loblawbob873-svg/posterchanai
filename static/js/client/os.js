@@ -1436,8 +1436,20 @@
         return view==='__music'&&opened ? opened : null;
       }catch(err){ try{ PC().toast('could not open ' + extra.label); }catch(_){} return null; }
     }
-    const existing = wins.find(w => w.view === view);
-    if(existing){ focusWin(existing); return existing; }
+    const existing = wins.find(w => sameAppWindow(w.view, view));
+    if(existing){
+      if(existing.view === view){ focusWin(existing); return existing; }
+      /* Messages and Concord are tabs, not separate desktop applications. An icon/start-menu
+       * launch comes directly through openApp (not routeView), so the old literal lookup missed a
+       * window opened on the other tab and created a second frame. Focus the one Messages frame,
+       * then repaint the requested tab under the repaint guard so switchView cannot route outward
+       * and manufacture the very duplicate this branch is preventing. */
+      focusWin(existing, false); existing.appView = view; existing.appPath = '';
+      repainting++;
+      try{ PC().switchView && PC().switchView(view); }catch(_){}
+      finally{ repainting--; }
+      return existing;
+    }
     const app = apps().find(a => a.view === view) || {};
     label = label || app.label || view;
     icon = icon || app.icon || '';

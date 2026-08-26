@@ -61,3 +61,12 @@ def test_desktop_router_uses_the_tested_messages_window_identity():
     os_js = (ROOT / "static/js/client/os.js").read_text()
     route = os_js[os_js.index("function routeView(view, focusOnly)"):]
     assert "wins.find(x => sameAppWindow(x.view, view))" in route[:1000]
+
+
+def test_desktop_launcher_reuses_messages_window_for_both_tabs():
+    os_js = (ROOT / "static/js/client/os.js").read_text()
+    opened = os_js[os_js.index("function openApp(view, label, icon, render, noFeed, direct)"):]
+    opened = opened[:opened.index("function ", 20)]
+    assert "wins.find(w => sameAppWindow(w.view, view))" in opened
+    assert "focusWin(existing, false); existing.appView = view" in opened
+    assert "PC().switchView && PC().switchView(view)" in opened
