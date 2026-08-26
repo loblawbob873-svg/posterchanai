@@ -66,6 +66,13 @@ class VmBackend(unittest.TestCase):
         src = (ROOT / "desktop" / "vm.js").read_text()
         self.assertIn("'--connect',URI,'--attach','--wait',name", src)
 
+    def test_start_and_create_open_the_display_without_a_second_click(self):
+        ui = (ROOT / "static/js/client/os.js").read_text()
+        self.assertIn("r.ok&&act==='start'", ui)
+        self.assertIn("const v=await pcVM.view(n)", ui)
+        self.assertIn("const v=await pcVM.view(r.name)", ui)
+        self.assertIn("VM started, but its display could not open", ui)
+
     def test_viewer_pointer_and_framebuffer_use_the_same_scale(self):
         src = (ROOT / "desktop" / "vm.js").read_text()
         self.assertIn("['--auto-resize=always','--cursor=local']", src)
