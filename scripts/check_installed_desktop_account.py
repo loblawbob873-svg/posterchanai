@@ -12,11 +12,14 @@ and deletes the temporary session in a finally block.
 """
 
 import asyncio
+import base64
+import io
 import json
 import os
 import sys
 import urllib.error
 import urllib.request
+import zipfile
 
 import websockets
 
@@ -137,24 +140,24 @@ OFFICE_CHECK = r"""(async()=>{
   try{
     await __PC.ensureAiSession();
     const B=String(window.__PC_API_BASE__||'').replace(/\/$/,'');
-    const fd=new FormData();
-    fd.append('file',new File(['office smoke one\n'],'posterchan-office-smoke.txt',{type:'text/plain'}));
+    const fixture='UEsDBBQAAAAIAJBOElFaYkFofwAAAOMAAAALABwAY29udGVudC54bWxVVAkAA8CIO19mzdNkdXgLAAEE6AMAAARkAAAAXY/RCsMgDEXf+xWj767ba+j8FxcjCGpKE6H9+wlbRfYUbs69uWTlECISeMaaqahBLtrm7cipCHzpa657AXYSBYrLJKAIvFG5UjC64Xl/zHZaf0pwj5vKYq9FaA0mOCTjCdMAXFXOTiMa0TNRI/3Im/3ZfUqHttQysqnL/0/sB1BLAwQKAAAAAADnmwlXAAAAAAAAAAAAAAAACQAcAE1FVEEtSU5GL1VUCQADYs3TZNPN02R1eAsAAQToAwAABGQAAABQSwMEFAAAAAgA55sJV/K/qJqaAAAAiAEAABUAHABNRVRBLUlORi9tYW5pZmVzdC54bWxVVAkAA2LN02RizdNkdXgLAAEE6AMAAARkAAAAlZDRCoMwDEXf9xXSd9vtNaj/EmpkhTYtJo7599PBdGMM5ltyc7nnkiYhh4FE4TVU9xRZtrU108iQUYIAYyIB9ZALcZ/9lIgVPv1wsWfTnapmE4YQqV6M41zt2hRjXVCvrXFmlxP1AWudC7UGS4nBo4bM7sa9fVaw72SrdFfjjsBE50hil8o/qGukW8+HYn1mXQv9l9u4r6d3D1BLAwQKAAAAAADzGx9LXsYyDCcAAAAnAAAACAAcAG1pbWV0eXBlVVQJAAP6ZqdZgc3TZHV4CwABBOgDAAAEZAAAAGFwcGxpY2F0aW9uL3ZuZC5vYXNpcy5vcGVuZG9jdW1lbnQudGV4dFBLAwQUAAAACABRgMZWeXVRdKgAAABdAQAACgAcAHN0eWxlcy54bWxVVAkAA3o8f2SRzdNkdXgLAAEE6AMAAARkAAAAjZBLDoMwDET3nCLKPqXdWsBdouC0kfJTPgJu35BQVKEuuh17Zp49OCmVQJidyAZtYjFtGiNZjbYR2nCkOVhwPKoIlhuMkAQ4j/Zjgu9teNzu9PDXsH/tdbm6p44MR1jDKQIZ2nxGybM+OEnTJDdKbyP1PPBn4P61J5yOhGtiPpTGkFQ5rak5IltUYViYdOVu4bQLI00hI+1rX/+jcCfrL2incPnh1L0BUEsBAh4DFAAAAAgAkE4SUVpiQWh/AAAA4wAAAAsAGAAAAAAAAQAAAKSBAAAAAGNvbnRlbnQueG1sVVQFAAPAiDtfdXgLAAEE6AMAAARkAAAAUEsBAh4DCgAAAAAA55sJVwAAAAAAAAAAAAAAAAkAGAAAAAAAAAAQAO1BxAAAAE1FVEEtSU5GL1VUBQADYs3TZHV4CwABBOgDAAAEZAAAAFBLAQIeAxQAAAAIAOebCVfyv6iamgAAAIgBAAAVABgAAAAAAAEAAACkgQcBAABNRVRBLUlORi9tYW5pZmVzdC54bWxVVAUAA2LN02R1eAsAAQToAwAABGQAAABQSwECHgMKAAAAAADzGx9LXsYyDCcAAAAnAAAACAAYAAAAAAABAAAApIHwAQAAbWltZXR5cGVVVAUAA/pmp1l1eAsAAQToAwAABGQAAABQSwECHgMUAAAACABRgMZWeXVRdKgAAABdAQAACgAYAAAAAAABAAAApIFZAgAAc3R5bGVzLnhtbFVUBQADejx/ZHV4CwABBOgDAAAEZAAAAFBLBQYAAAAABQAFAJkBAABFAwAAAAA=';
+    const bytes=Uint8Array.from(atob(fixture),c=>c.charCodeAt(0)),fd=new FormData();
+    fd.append('file',new File([bytes],'posterchan-office-smoke.odt',{type:'application/vnd.oasis.opendocument.text'}));
     fd.append('mode','edit');
     let r=await __PC.authFetch(B+'/client/office/session',{method:'POST',body:fd});
     out.create=r.status; if(!r.ok) throw new Error('create HTTP '+r.status); s=await r.json();
     const q='?access_token='+encodeURIComponent(s.token);
     r=await fetch(B+'/wopi/files/'+s.id+q); out.info=r.status;
-    const info=await r.json(); out.name=info.BaseFileName==='posterchan-office-smoke.txt';
+    const info=await r.json(); out.name=info.BaseFileName==='posterchan-office-smoke.odt';
     r=await fetch(B+'/wopi/files/'+s.id+'/contents'+q); out.read1=r.status;
-    out.initial=(await r.text())==='office smoke one\n';
-    r=await fetch(B+'/wopi/files/'+s.id+'/contents'+q,{method:'POST',
-      headers:{'Content-Type':'application/octet-stream'},body:'office smoke two\n'}); out.put=r.status;
-    r=await fetch(B+'/client/office/session/'+s.id+'/contents'+q); out.read2=r.status;
-    out.updated=(await r.text())==='office smoke two\n';
+    out.initial=(await r.arrayBuffer()).byteLength===bytes.byteLength;
 
     wrap=document.createElement('div'); wrap.id='pc-office-installed-smoke';
-    wrap.style='position:fixed;left:-10000px;width:800px;height:600px';
-    const frame=document.createElement('iframe'); frame.name='pc-office-installed-smoke'; wrap.appendChild(frame);
+    // CDP input is compositor-routed. Keep the disposable editor on-screen while exercising it;
+    // an off-screen iframe can render a DOM yet legitimately discard mouse/keyboard input.
+    wrap.style='position:fixed;inset:0 auto auto 0;width:800px;height:600px;z-index:2147483647;background:#111';
+    const frame=document.createElement('iframe'); frame.name='pc-office-installed-smoke';
+    frame.style='width:100%;height:100%;border:0'; wrap.appendChild(frame);
     const form=document.createElement('form'); form.method='post'; form.action=s.editor_url; form.target=frame.name;
     for(const [n,v] of [['access_token',s.token],['access_token_ttl',String(s.expires*1000)]]){
       const i=document.createElement('input'); i.name=n; i.value=v; form.appendChild(i);
@@ -188,8 +191,27 @@ OFFICE_FRAME_CHECK = r"""(()=>({
   href:location.href,ready:document.readyState,title:document.title,
   bodyChildren:document.body?document.body.children.length:0,
   controls:document.querySelectorAll('button,input,[role="button"],.unobutton').length,
-  workspace:!!document.querySelector('canvas,#document-container,#toolbar-up,.leaflet-container')
+  workspace:!!document.querySelector('canvas,#document-container,#toolbar-up,.leaflet-container'),
+  readonly:!!document.querySelector('#document-container.readonly'),
+  workspaceRect:(()=>{const e=document.querySelector('#document-container,.leaflet-container,canvas');
+    if(!e)return null;const r=e.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height};})(),
+  surfaces:[...document.querySelectorAll('canvas')].map(e=>{const r=e.getBoundingClientRect();
+    return {x:r.x,y:r.y,w:r.width,h:r.height,className:String(e.className||'').slice(0,80)};})
+    .filter(r=>r.w>20&&r.h>20).slice(0,12),
+  hitStack:document.elementsFromPoint(innerWidth/2,innerHeight/2).slice(0,10)
+    .map(e=>({tag:e.tagName,id:e.id||'',className:String(e.className||'').slice(0,100)})),
+  editables:[...document.querySelectorAll('textarea,[contenteditable="true"]')].slice(0,12)
+    .map(e=>({tag:e.tagName,id:e.id||'',className:String(e.className||'').slice(0,120)}))
 }))()"""
+
+OFFICE_CONTENT_CHECK = r"""(async()=>{
+  const held=window.__pcOfficeInstalledSmoke;if(!held)return '';
+  const s=held.session,B=String(window.__PC_API_BASE__||'').replace(/\/$/,'');
+  const r=await fetch(B+'/client/office/session/'+s.id+'/contents?access_token='+encodeURIComponent(s.token));
+  if(!r.ok)return '';const bytes=new Uint8Array(await r.arrayBuffer());let raw='';
+  for(let i=0;i<bytes.length;i+=0x8000)raw+=String.fromCharCode(...bytes.subarray(i,i+0x8000));
+  return btoa(raw);
+})()"""
 
 
 async def main():
@@ -217,12 +239,14 @@ async def main():
             contexts = [e["params"]["context"] for e in events
                         if e.get("method") == "Runtime.executionContextCreated"]
             editor = None
+            editor_session = None
             targets = (await cdp.call("Target.getTargets")).get("targetInfos", [])
             for target in targets:
                 if target.get("type") == "iframe" and "/office-code/" in target.get("url", ""):
                     attached = await cdp.call("Target.attachToTarget", {
                         "targetId": target["targetId"], "flatten": True})
-                    editor = await cdp.eval(OFFICE_FRAME_CHECK, session_id=attached["sessionId"])
+                    editor_session = attached["sessionId"]
+                    editor = await cdp.eval(OFFICE_FRAME_CHECK, session_id=editor_session)
                     break
             for context in reversed(contexts):
                 if editor:
@@ -234,8 +258,8 @@ async def main():
                         editor = candidate
                         break
             assert not office.get("error"), office
-            assert all(office.get(k) for k in ("name", "initial", "updated", "frameLoaded")), office
-            assert all(office.get(k) == 200 for k in ("create", "info", "read1", "put", "read2")), office
+            assert all(office.get(k) for k in ("name", "initial", "frameLoaded")), office
+            assert all(office.get(k) == 200 for k in ("create", "info", "read1")), office
             assert 200 in responses, {"office": office, "editorResponses": responses}
             context_summary = [{"id": c.get("id"), "origin": c.get("origin"),
                                 "name": c.get("name"), "aux": c.get("auxData", {}).get("type")}
@@ -244,7 +268,56 @@ async def main():
                               for t in targets if t.get("type") in ("iframe", "page")]
             assert editor and editor["ready"] == "complete" and editor["bodyChildren"] > 0, {
                 "contexts": context_summary, "targets": target_summary}
-            assert editor["workspace"] and editor["controls"] > 0, editor
+            assert editor["workspace"] and editor["controls"] > 0 and not editor["readonly"], editor
+            assert editor_session, "Collabora editor was not an attachable iframe target"
+            rect = next((r for r in editor.get("surfaces", []) if r.get("w", 0) > 100
+                         and r.get("h", 0) > 100), None) or editor.get("workspaceRect") or {}
+            x = float(rect.get("x", 0)) + max(1.0, float(rect.get("w", 0)) / 2)
+            y = float(rect.get("y", 0)) + max(1.0, float(rect.get("h", 0)) / 2)
+            await cdp.call("Input.dispatchMouseEvent", {
+                "type": "mousePressed", "x": x, "y": y, "button": "left", "clickCount": 1})
+            await cdp.call("Input.dispatchMouseEvent", {
+                "type": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1})
+            await asyncio.sleep(0.5)
+            focused = await cdp.eval("(()=>{const e=document.querySelector('#clipboard-area,#copy-paste-container');"
+                                     "if(!e)return false;e.focus();return document.activeElement===e})()",
+                                     session_id=editor_session)
+            assert focused, editor
+            await cdp.call("Input.insertText", {"text": "office interactive smoke"})
+            bridge = await cdp.eval("(()=>{const e=document.querySelector('#clipboard-area');"
+                                    "return {active:document.activeElement&&document.activeElement.id,"
+                                    "contains:!!e&&String(e.innerHTML||'').includes('office interactive smoke')}})()",
+                                    session_id=editor_session)
+            if not bridge.get("contains"):
+                bridge = await cdp.eval("(()=>{const e=document.querySelector('#clipboard-area');if(!e)return false;"
+                                        "e.focus();document.execCommand('insertText',false,'office interactive smoke');"
+                                        "e.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',"
+                                        "data:'office interactive smoke'}));return String(e.innerHTML||'').includes("
+                                        "'office interactive smoke')})()", session_id=editor_session)
+                assert bridge, "Collabora clipboard bridge rejected text input"
+            await cdp.call("Input.dispatchKeyEvent", {
+                "type": "rawKeyDown", "key": "s", "code": "KeyS",
+                "windowsVirtualKeyCode": 83, "modifiers": 2})
+            await cdp.call("Input.dispatchKeyEvent", {
+                "type": "keyUp", "key": "s", "code": "KeyS",
+                "windowsVirtualKeyCode": 83, "modifiers": 2})
+            saved = False
+            for _ in range(15):
+                await asyncio.sleep(1)
+                encoded = await cdp.eval(OFFICE_CONTENT_CHECK)
+                if not encoded:
+                    continue
+                try:
+                    with zipfile.ZipFile(io.BytesIO(base64.b64decode(encoded))) as archive:
+                        saved = b"office interactive smoke" in archive.read("content.xml")
+                except (ValueError, zipfile.BadZipFile, KeyError):
+                    saved = False
+                if saved:
+                    break
+            assert saved, {"error": "text entered through Collabora did not reach WOPI storage",
+                           "editor": editor}
+            if os.environ.get("PC_CHECK_DEBUG") == "1":
+                print("office frame diagnostics " + json.dumps(editor))
         finally:
             await cdp.eval(OFFICE_CLEANUP)
 
@@ -252,7 +325,8 @@ async def main():
     print(json.dumps({"folders": files["folderTiles"], "folderEntries": files["folderChips"],
                       "serverFiles": files["serverFiles"], "clientFiles": files["clientFiles"],
                       "syncedRoots": files["syncedRoots"], "syncAudit": files["syncAudit"],
-                      "officeEditorHTTP": 200, "officeInteractive": True}))
+                      "officeEditorHTTP": 200, "officeInteractive": True,
+                      "officeEditorSaved": True}))
 
 
 if __name__ == "__main__":

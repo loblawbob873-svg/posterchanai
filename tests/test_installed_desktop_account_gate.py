@@ -33,9 +33,9 @@ def test_installed_account_gate_checks_real_blossom_render_without_reading_names
 
 
 def test_installed_account_gate_uses_and_deletes_a_temporary_office_session():
-    assert "posterchan-office-smoke.txt" in SCRIPT
+    assert "posterchan-office-smoke.odt" in SCRIPT
     assert "'/wopi/files/'" in SCRIPT
-    assert "body:'office smoke two\\n'" in SCRIPT
+    assert "application/vnd.oasis.opendocument.text" in SCRIPT
     assert '"/office-code/browser/"' in SCRIPT
     assert "{method:'DELETE'}" in SCRIPT
     assert "finally" in SCRIPT
@@ -49,4 +49,10 @@ def test_installed_office_gate_attaches_to_the_real_editor_and_requires_controls
     assert 'target.get("type") == "iframe"' in SCRIPT
     assert 'canvas,#document-container,#toolbar-up,.leaflet-container' in SCRIPT
     assert 'editor["workspace"] and editor["controls"] > 0' in SCRIPT
+    assert 'not editor["readonly"]' in SCRIPT
+    assert "Input.insertText" in SCRIPT
+    assert "Input.dispatchKeyEvent" in SCRIPT
+    assert 'archive.read("content.xml")' in SCRIPT
+    assert 'b"office interactive smoke"' in SCRIPT
     assert '"officeInteractive": True' in SCRIPT
+    assert '"officeEditorSaved": True' in SCRIPT
