@@ -46,7 +46,7 @@ async function input(raw){
   if(e.type==='absolute'){
     const x=Math.round(Number(e.x)),y=Math.round(Number(e.y));
     if(!Number.isFinite(x)||!Number.isFinite(y)||Math.abs(x)>100000||Math.abs(y)>100000) return false;
-    return enqueue(['mousemove','--absolute',String(x),String(y)]);
+    return new Promise(resolve=>execFile('/usr/bin/swaymsg',['seat','seat0','cursor','set',String(x),String(y)],{timeout:1500},err=>resolve(!err)));
   }
   if(e.type==='wheel'){
     const dy=Math.round(Number(e.dy));

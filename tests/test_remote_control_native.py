@@ -41,7 +41,7 @@ def test_absolute_remote_pointer_maps_through_the_host_display():
     assert "screen.getCursorScreenPoint()" in MAIN
     assert "screen.getAllDisplays().find" in MAIN
     assert "screen.getDisplayNearestPoint(point)" in MAIN
-    assert "['mousemove','--absolute'" in NATIVE
+    assert "execFile('/usr/bin/swaymsg',['seat','seat0','cursor','set'" in NATIVE
 
 
 def test_posterchanos_installs_and_enables_private_user_input_daemon():

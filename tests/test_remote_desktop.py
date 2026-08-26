@@ -68,6 +68,14 @@ def test_desktop_has_a_picker_and_recovers_its_guard_after_source_errors():
     assert "pickerOpen = false;" in main
 
 
+def test_wayland_does_not_ask_for_the_monitor_twice():
+    main = (ROOT / "desktop/main.js").read_text(encoding="utf-8")
+    assert "process.platform === 'linux' && sources.length === 1" in main
+    assert "return sources[0]" in main
+    assert "Select the monitor you want to share in the next window" in OS
+    assert "Nothing is shared until you choose a monitor." in OS
+
+
 def test_linux_screen_share_has_a_portal_registered_desktop_identity():
     package = json.loads((ROOT / "desktop/package.json").read_text(encoding="utf-8"))
     ebuilds = sorted((ROOT / "os/overlay/app-misc/posterchan-desktop").glob("posterchan-desktop-*.ebuild"))
@@ -233,7 +241,7 @@ def test_remote_desktop_prefers_readable_text_over_frame_rate():
     assert "p.degradationPreference='maintain-resolution'" in APP
     assert "p.encodings[0].maxBitrate=24000000" in APP
     assert "_call.remoteDesktop?' rd'" in APP
-    assert ".call-overlay.rd .call-remote{object-fit:fill" in css
+    assert ".call-overlay.rd .call-remote{object-fit:contain" in css
 
 
 def test_window_focus_and_minimize_do_not_recreate_or_end_remote_session():

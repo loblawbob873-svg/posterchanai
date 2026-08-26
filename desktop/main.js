@@ -851,9 +851,13 @@ function pickScreenSource() {
     .then((sources) => {
       screenLog('desktopCapturer returned ' + sources.length + ' source(s): ' + sources.map((s) => s.id + ':' + s.name).join(', '));
       if (!sources.length) { pickerOpen = false; return null; }
-      // Even when PipeWire exposes one granted source, show PosterChan's confirmation modal. A bare
-      // portal flash gave users no clear indication which monitor was about to be shared; the modal
-      // supplies a labeled thumbnail and an explicit final choice.
+      // Wayland's portal has ALREADY made the user choose a monitor before Electron returns this
+      // single synthetic source. Opening our picker now asks them to choose twice, backwards. The
+      // in-app instruction shown before getDisplayMedia explains the portal; accept its result here.
+      if (process.platform === 'linux' && sources.length === 1) {
+        pickerOpen = false;
+        return sources[0];
+      }
       pendingSources = sources;
       return new Promise((resolve) => {
         let done = false;

@@ -33109,7 +33109,10 @@
     // Mouse movement must work while merely hovering. The old px===null guard initialized px only
     // on pointerdown, effectively turning remote control into drag-only control.
     video.addEventListener('pointermove',e=>{if(!active()){px=py=null;return;}const r=video.getBoundingClientRect();
-      const nx=Math.max(0,Math.min(1,(e.clientX-r.left)/Math.max(1,r.width))),ny=Math.max(0,Math.min(1,(e.clientY-r.top)/Math.max(1,r.height)));
+      const va=(video.videoWidth||r.width)/Math.max(1,video.videoHeight||r.height),ra=r.width/Math.max(1,r.height);
+      let left=r.left,top=r.top,width=r.width,height=r.height;
+      if(ra>va){width=height*va;left+=(r.width-width)/2;}else{height=width/va;top+=(r.height-height)/2;}
+      const nx=Math.max(0,Math.min(1,(e.clientX-left)/Math.max(1,width))),ny=Math.max(0,Math.min(1,(e.clientY-top)/Math.max(1,height)));
       _rdSend({t:'input',e:{type:'absolute',x:nx,y:ny}});
       px=e.clientX;py=e.clientY;e.preventDefault();});
     const up=e=>{if(!active())return;px=e.clientX;py=e.clientY;_rdSend({t:'input',e:{type:'button',button:Math.min(2,e.button|0),down:false}});e.preventDefault();};
@@ -33619,7 +33622,7 @@
     // Preserve the minimized state: _callUI re-runs on every call event (ICE, mute, remote video), and a
     // bare reassignment would drop `call-mini` and pop the overlay back to fullscreen on its own.
     const _mini=el.classList.contains('call-mini');
-    el.className='call-overlay'+(_call.remoteDesktop?' rd':'')+(showVid?' vid':' aud')+(_call.state==='ringing'?' ring':'')+(_call.state==='connected'?' on':'')+(_mini?' call-mini':'');
+    el.className='call-overlay'+(_call.remoteDesktop?' rd':'')+(_call.remoteDesktop&&_call.controlGranted?' control-on':'')+(showVid?' vid':' aud')+(_call.state==='ringing'?' ring':'')+(_call.state==='connected'?' on':'')+(_mini?' call-mini':'');
     const rv=document.getElementById('call-remote'); if(rv){ rv.style.display=hasRemoteVid?'':'none'; if(_call.remote && rv.srcObject!==_call.remote){ rv.srcObject=_call.remote; rv.play&&rv.play().catch(()=>{}); } if(_call.remoteDesktop&&!_call.caller)_rdBindViewer(rv); }
     const lv=document.getElementById('call-local'); if(lv){ lv.style.display=(hasLocalVid&&!_call.camOff)?'':'none'; if(_call.local && lv.srcObject!==_call.local){ lv.srcObject=_call.local; lv.play&&lv.play().catch(()=>{}); }
       // Wire + restore AFTER display is set: offsetWidth is 0 while hidden, so placing it any earlier
