@@ -55,7 +55,8 @@ def test_same_login_has_a_direct_action_and_failures_are_visible_inline():
 
 def test_desktop_has_a_picker_and_recovers_its_guard_after_source_errors():
     main = (ROOT / "desktop/main.js").read_text(encoding="utf-8")
-    assert "useSystemPicker: true" in main
+    assert "useSystemPicker: process.platform === 'darwin'" in main
+    assert "process.platform === 'linux' ? ['screen'] : ['screen', 'window']" in main
     assert ".catch((error) => {" in main
     assert "pickerOpen = false;" in main
 
