@@ -6293,6 +6293,10 @@
                 if(sh) return pcWM.focus(sh.id);
               }).catch(()=>{});
             }
+            else if(/^pc:snap:(left|right|max)$/.test(p)){
+              const w=wins.find(x=>x.el.classList.contains('focused'));
+              if(w) snapTo(w, p.slice(8)==='max' ? 'max' : p.slice(8));
+            }
           });
           /* Arm compositor delivery immediately. PCOSShell.watch() also subscribes, but only after
            * its first hardware/status refresh has completed. A slow or stuck NetworkManager,

@@ -58,7 +58,16 @@ def main():
     if not hit:
         return
     win, out = hit
-    if not out or is_posterchan_shell(win):
+    if not out:
+        return
+    # Sway owns Super+Arrow before Chromium can see it.  Native applications can be resized here,
+    # but PosterChan windows live inside the one shell surface; resizing that surface both misses
+    # the focused in-app window and can force the whole UI into its narrow/classic layout.  Route
+    # the same physical key back to the shell so its ordinary snapTo() path handles the focused
+    # PosterChan window.
+    if is_posterchan_shell(win):
+        if side != "edge":
+            sway("-t", "send_tick", "pc:snap:" + side)
         return
     box = out.get("rect") or {}
     x, y = int(box.get("x", 0)), int(box.get("y", 0))

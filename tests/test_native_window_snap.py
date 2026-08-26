@@ -36,6 +36,27 @@ def test_native_snap_never_resizes_a_posterchan_shell_surface(monkeypatch):
     assert module["is_posterchan_shell"]({"app_id": None, "pid": 4242}) is True
 
 
+def test_super_arrow_routes_shell_focus_to_the_in_app_window(monkeypatch):
+    """The compositor consumes Super+Right, so Chromium cannot be the only handler."""
+    helper = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap"
+    module = runpy.run_path(str(helper), run_name="pc_window_snap_test")
+    sent = []
+    monkeypatch.setattr(module["sys"], "argv", ["pc-window-snap", "right"])
+    monkeypatch.setitem(module["main"].__globals__, "sway",
+                        lambda *args: sent.append(args) or '{"nodes":[]}')
+    monkeypatch.setitem(module["main"].__globals__, "focused",
+                        lambda _tree: ({"id": 9, "app_id": "posterchan-desktop"}, {"rect": {}}))
+    module["main"]()
+    assert sent[-1] == ("-t", "send_tick", "pc:snap:right")
+
+
+def test_shell_snap_tick_uses_the_focused_posterchan_window():
+    src = (ROOT / "static/js/client/os.js").read_text()
+    assert "/^pc:snap:(left|right|max)$/.test(p)" in src
+    assert "wins.find(x=>x.el.classList.contains('focused'))" in src
+    assert "snapTo(w, p.slice(8)==='max' ? 'max' : p.slice(8))" in src
+
+
 def test_native_snap_still_accepts_real_native_apps():
     helper = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap"
     module = runpy.run_path(str(helper), run_name="pc_window_snap_test")
