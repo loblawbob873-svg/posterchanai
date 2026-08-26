@@ -41,7 +41,8 @@ def test_shell_restart_is_serialized_and_targets_only_the_shell_process():
     main = (ROOT / "desktop/main.js").read_text()
     assert "flock -n 9" in start
     assert "posterchan-shell-start.lock" in start
-    assert start.count('"$PC_DESKTOP_LAUNCHER" --shell --ozone-platform=wayland 9>&- &') == 2
+    assert start.count('"$PC_DESKTOP_LAUNCHER" --shell --ozone-platform=wayland 9>&-') == 2
+    assert start.count('>>"$SHELL_LOG" 2>&1 &') == 2
     assert "PC_DESKTOP_LAUNCHER=/usr/bin/posterchan" in start
     assert "PC_DESKTOP_LAUNCHER=/usr/local/bin/posterchan" in start
     assert "pattern='[/]opt/posterchan/'" in restart

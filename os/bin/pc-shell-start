@@ -177,7 +177,10 @@ clear_dead_locks
 # FD 9 is the launcher mutex, not part of the desktop environment. Close it in Electron: otherwise
 # every app Electron launches (Firefox, Steam, terminals) inherits the lock and a shell restart can
 # never acquire it again until all of those unrelated apps exit.
-"$PC_DESKTOP_LAUNCHER" --shell --ozone-platform=wayland 9>&- &
+SHELL_LOG="$USER_HOME/.config/posterchan-desktop/shell.log"
+mkdir -p "${SHELL_LOG%/*}"
+[ ! -f "$SHELL_LOG" ] || [ "$(wc -c < "$SHELL_LOG" 2>/dev/null || echo 0)" -lt 1048576 ] || mv -f "$SHELL_LOG" "$SHELL_LOG.old"
+"$PC_DESKTOP_LAUNCHER" --shell --ozone-platform=wayland 9>&- >>"$SHELL_LOG" 2>&1 &
 shell_pid=$!
 retries=0
 
@@ -208,7 +211,7 @@ while [ $i -lt 120 ]; do
     clear_dead_locks
     retries=$((retries + 1))
     sleep 1
-    "$PC_DESKTOP_LAUNCHER" --shell --ozone-platform=wayland 9>&- &
+    "$PC_DESKTOP_LAUNCHER" --shell --ozone-platform=wayland 9>&- >>"$SHELL_LOG" 2>&1 &
     shell_pid=$!
   fi
   i=$((i + 1))
