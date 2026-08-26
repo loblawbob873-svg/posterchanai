@@ -16,8 +16,21 @@ function control(id){
   return controls.get(id);
 }
 const dollar = selector => selector === '#feed' ? feed : control(selector.slice(1));
-const dollars = () => [];
-const calls = {toasts:[], notified:0, group:0, mentions:[]};
+const actionControls = new Map();
+const dataKey = selector => selector.match(/^\[data-cc-([\w-]+)\]$/)?.[1];
+const camel = value => value.replace(/-([a-z])/g,(_m,c)=>c.toUpperCase());
+const dollars = selector => {
+  const key=dataKey(selector); if(!key)return [];
+  const attribute='data-cc-'+key,pattern=new RegExp(attribute+'="([^"]*)"(?:[^>]*data-cc-emoji="([^"]*)")?','g');
+  const found=[]; let match;
+  while((match=pattern.exec(feed.innerHTML))){
+    const identity=attribute+':'+match[1]+':'+(match[2]||''),button=actionControls.get(identity)||{dataset:{},disabled:false};
+    button.dataset[camel('cc-'+key)]=match[1]; if(match[2])button.dataset.ccEmoji=match[2];
+    actionControls.set(identity,button); found.push(button);
+  }
+  return found;
+};
+const calls = {toasts:[], notified:0, group:0, mentions:[], wraps:[]};
 let activeView = 'concord';
 const JOIN_URL='https://armada.buzz/invite/naddr1pppp#abc_DEF';
 const JOIN_BUNDLE={community_id:'1'.repeat(64),owner:'2'.repeat(64),owner_salt:'3'.repeat(64),
@@ -46,7 +59,7 @@ window.__PC = {
   relayQuery:async filters=>relayFixtures(filters),
   relayQueryFrom:async(_relays,filters)=>relayFixtures(filters),
   relayUrls:()=>['wss://relay.example'], signTemplate:async template=>template,
-  relayPublish:async()=>({ok:true}), relayPublishTo:async()=>1,
+  relayPublish:async()=>({ok:true}), relayPublishTo:async(_relays,event)=>{calls.wraps.push(event);return 1;},
   publish:async()=>({}),
   profOf:()=>({}), LOGO:'', linkify:s=>String(s), linkCardHtml:()=>'', hydrateLinkCards:()=>{},
 };
@@ -65,7 +78,7 @@ window.PosterCordReader={
     : {controlPubkeys:['8'.repeat(64)],channels:[]},
   inspectChat:async()=>({messages:[{id:'joined-message',pubkey:'b'.repeat(64),text:'joined history',at:12,kind:9,tags:[]}],reactions:[],reactionIds:[]}),
   createMetadataWrap:async()=>({wrap:{kind:1059}}),
-  createChatWrap:async()=>({rumorId:'f'.repeat(64),wrap:{kind:1059},ms:1234}),
+  createChatWrap:async(_bundle,_wraps,_channel,text,_author,_sign,tags,kind)=>{calls.lastChat={text,tags,kind};return {rumorId:'f'.repeat(64),wrap:{kind:1059},ms:1234};},
 };
 globalThis.document = {
   body:{classList}, head:{appendChild(){}}, documentElement:{appendChild(){}},
@@ -158,12 +171,52 @@ data.set(raceKey,JSON.stringify(whilePending));
 if(!releaseRace) throw new Error('publish race was not held');
 releaseRace();
 await racing;
+PosterCordReader.createChatWrap=async(_bundle,_wraps,_channel,text,_author,_sign,tags,kind)=>{
+  calls.lastChat={text,tags,kind};
+  return {rumorId:'f'.repeat(64),wrap:{kind:1059},ms:3456};
+};
 const afterRace=JSON.parse(data.get(raceKey));
 if(afterRace.filter(m=>m.id==='e'.repeat(64)).length!==1)
   throw new Error('relay echo duplicated optimistic message');
 PCConcord.render();
 if((feed.innerHTML.match(new RegExp('data-message-id="'+'e'.repeat(64)+'"','g'))||[]).length!==1)
   throw new Error('duplicate relay message rendered twice');
+
+// Exercise the actual rendered action handlers and validate their CORD rumor semantics.
+const permanentId='e'.repeat(64);
+let quick=dollars('[data-cc-quick-react]').find(b=>b.dataset.ccQuickReact===permanentId);
+if(!quick)throw new Error('rendered message has no quick-reaction control');
+await quick.onclick();
+let acted=JSON.parse(data.get(raceKey)).find(m=>m.id===permanentId);
+if(!acted?.reactions?.['👍']?.includes('a'.repeat(64)) || calls.lastChat?.kind!==7 ||
+   !calls.lastChat.tags.some(t=>t[0]==='e'&&t[1]===permanentId))
+  throw new Error('quick reaction did not publish and persist');
+// Treat the permanent fixture as another member's post for the reply-participant assertion.
+acted.pubkey='b'.repeat(64); acted.by='Other User';
+const afterReaction=JSON.parse(data.get(raceKey));
+afterReaction[afterReaction.findIndex(m=>m.id===permanentId)]=acted;
+data.set(raceKey,JSON.stringify(afterReaction));
+
+PCConcord.render();
+const reply=dollars('[data-cc-reply]').find(b=>b.dataset.ccReply===permanentId);
+if(!reply)throw new Error('rendered message has no reply control');
+reply.onclick();
+input.value='thread response';
+await input.onkeydown({key:'Enter',ctrlKey:true,metaKey:false,preventDefault(){}});
+if(calls.lastChat?.kind!==1111 || !calls.lastChat.tags.some(t=>t[0]==='e'&&t[1]===permanentId) ||
+   !calls.lastChat.tags.some(t=>t[0]==='p'&&t[1]==='b'.repeat(64)))
+  throw new Error('reply did not publish thread context and participant tags');
+
+PCConcord.render();
+const sent=JSON.parse(data.get(raceKey)).find(m=>m.text==='thread response');
+const deletion=dollars('[data-cc-delete]').find(b=>b.dataset.ccDelete===sent?.id);
+if(!deletion)throw new Error('own rendered message has no delete control');
+window.__PC.uiConfirm=async()=>true;
+await deletion.onclick();
+if(calls.lastChat?.kind!==5 || !calls.lastChat.tags.some(t=>t[0]==='e'&&t[1]===sent.id) ||
+   JSON.parse(data.get(raceKey)).some(m=>m.id===sent.id))
+  throw new Error('delete did not publish a tombstone and remove the message');
+
 control('cc-back-channels').click();
 if(!feed.innerHTML.includes('cc-app show-chat'))
   throw new Error('mobile room list did not open its active conversation');
