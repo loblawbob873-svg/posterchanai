@@ -347,6 +347,9 @@ class DoubleHomeRuns(unittest.TestCase):
         self.assertIn("if (homeStartPending)", new_intent)
         self.assertIn("homeStartPending = false", new_intent)
         self.assertIn("main.removeCallbacks(countHomeStart)", new_intent)
+        self.assertIn("if (hasWindowFocus())", new_intent)
+        self.assertGreaterEqual(new_intent.count("HomeDoublePress.arrived"), 2,
+                                "a focused fast second HOME must commit the pending first press")
 
     def test_feed_top_reloads_the_active_timeline_before_scrolling(self):
         app = (ROOT / "static/js/client/app.js").read_text()

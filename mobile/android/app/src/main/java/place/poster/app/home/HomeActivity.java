@@ -377,6 +377,14 @@ public class HomeActivity extends Activity implements DeskView.Host {
         if (homeStartPending) {
             homeStartPending = false;
             main.removeCallbacks(countHomeStart);
+            /* Before the launcher owns focus this is the OEM's onStart -> onNewIntent echo for ONE
+             * physical press.  After focus it is a genuine second HOME that happened inside the
+             * 120 ms debounce window.  The old unconditional cancellation threw that first press
+             * away, so a fast double-tap could never fire.  Commit the pending first press now;
+             * the arrived() call below records the focused second one and completes the pair. */
+            if (hasWindowFocus()) {
+                HomeDoublePress.arrived(SystemClock.elapsedRealtime());
+            }
         } else if (!homeVisible) {
             homeIntentBeforeStart = true;
         }
