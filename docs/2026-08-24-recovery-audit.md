@@ -57,15 +57,18 @@ live behavior agree.
   history, icon and members are live-verified; send, reply/react, mention notification, attachment,
   Webxdc and moderation still require a non-production test community or permission to create
   durable relay events.
-- Install APK 1.0.1681 on a physical phone and repeat background Music-after-Home, launcher,
+- Install APK 1.0.1682 on a physical phone and repeat background Music-after-Home, launcher,
   double-Home, narrow portrait, landscape, tablet and mail-attachment taps. The exact-commit API-34
   emulator suite is green, but an emulator is not a physical-device result.
 - Boot `posterchan-live-20260826.iso` from physical USB. Its structure and host-CPU KVM boot are
   verified; QEMU's legacy `qemu64` CPU does not meet this Gentoo image's ISA requirement.
 - Exercise real carrier SMS/MMS send/receive and the complete device-provider migration on a phone
   containing representative long history and media. Emulator/provider tests do not prove a carrier.
-- Exercise copy/paste between native Firefox/Telegram and PosterChan in a sustained manual session.
-  Installed two-output shell reconstruction, Music handoff, real Telegram focus/stacking, reversible
+- Exercise copy/paste specifically through editable fields in native Firefox and XWayland Telegram
+  in a sustained manual session. Installed Desktop 1.0.980 now publishes PosterChan text to the real
+  Wayland selection and reads an independently owned Wayland selection in the opposite direction;
+  both directions passed on the two-output desktop and cleanup left no clipboard daemon or inherited
+  listener. Installed two-output shell reconstruction, Music handoff, real Telegram focus/stacking, reversible
   cross-renderer title-bar drag and real edge-preview/snap are verified.
 - Reconstruct any substantive additions named in the earlier stash handoff from commits, release
   payloads, or external evidence. The authoritative worktree has no stashes now, so their former
@@ -74,9 +77,10 @@ live behavior agree.
 ## August 24 release ancestry
 
 The current branch contains 162 commits dated August 24. Every one is an ancestor of release commit
-`7bf58ac61fa93328586b40c80ebb816eb7b9f9cb`, which produced Desktop 1.0.979 and Android 1.0.1681.
-The post-release diff contains only the immutable Gentoo overlay bump, this audit, release-gate
-scripts and tests; it contains no newer product implementation that is absent from those artifacts.
+`2c2a8af1f528e8fb8be898d6f39821b3fba6f32c`, which produced Desktop 1.0.980 and Android 1.0.1682.
+The later commits contain the immutable Gentoo overlay bumps, live-ISO boot correction, this audit,
+release-gate scripts and tests; they contain no newer Desktop/Android implementation absent from
+those artifacts. The live-ISO correction is packaged in shell 1.0.20260826083717.
 Ancestry proves inclusion, not behavior, so the runtime/package evidence below remains the authority
 and the hardware/external items above remain open.
 
@@ -106,6 +110,7 @@ This is evidence from the recovery pass, not a declaration that the whole queue 
 | Old stash handoff | `git stash list` is empty in the authoritative worktree | No stash exists to reconcile; do not claim its former contents recovered from this fact |
 | Multi-monitor shell recurrence | Installed Desktop 1.0.977 was launched with `SWAYSOCK` and `I3SOCK` absent. It discovered the live compositor and independently recreated exactly two 3840×2560 surfaces. Installed Super+Right left both shell surfaces at their full output dimensions. Desktop 1.0.979 then moved a real Music window between the two renderer processes: the source closed, and the destination contained the full Music library (`#ma-lib`, 744 controls), not Social or a black frame. `7bf58ac6` maps the internal `doc:music` key back to its reconstructible `__music` launcher and suppresses stale page routes; `test_monitor_handoff_reopens.py` and the real two-renderer check cover both layers | Installed recurrence and handoff verified on the two-output desktop |
 | Desktop 1.0.979 delivery | Desktop workflow 32934233192 passed Linux, Windows and macOS builds plus the bundled Concord audit. The immutable tarball is 152,151,912 bytes; the public Gentoo overlay, Manifest and ebuild agree. Both the desktop and laptop run `app-misc/posterchan-desktop-1.0.979` and `app-misc/posterchanos-shell-1.0.20260826053253` | Published and installed on both test machines |
+| Desktop 1.0.980 / native clipboard | Desktop workflow 32945394649 passed Linux, Windows and macOS for `2c2a8af1`; Android build 32945394635 and exact-commit API-34 emulator run 32945394651 also passed. The immutable Linux tarball is 152,151,449 bytes and the public Gentoo overlay/Manifest agree. Both desktop and laptop run Desktop 1.0.980 plus shell 1.0.20260826083717. On the installed desktop, packaged `app.asar/clipboard.js` published text to `wl-paste` and read an independently owned `wl-copy` selection; clearing it left no `wl-copy` process or listening socket | Published, installed and native Wayland bridge verified; exact Firefox/Telegram field UX remains manual |
 | Installed 1.0.979 account gate | Authenticated installed Electron rendered 29 folders and 30 entries; server and client indexes matched at 5,983 files. Both registered sync roots matched server = manifest = local (11,954 and 5,820) with zero skipped. Office/WOPI returned HTTP 200; the gate attached to Collabora's iframe target, found a complete non-read-only workspace with controls, and proved an editor-entered string persisted inside the saved ODT | Passed against installed package over loopback-only CDP |
 | Post-deploy full gate | First `./test.sh --live https://poster.place`: 4,024 unit tests, 1,615 client tests, and 62/64 browser/live checks passed. The two red checks reproduced clean alone: profile/search stability passed 20/20 cold flows and QR device login passed clock skew, idle socket, two-app and reload/signing scenarios. The repeat produced 4,026 unit passes, 1,614 client passes with one transient skip, and 63 browser/live passes with zero failures: isolated QR and stability were green, while Full Sync and the installed-account gate skipped. `0593d11b` registers Full Sync as an isolated live check and preserves the installed gate's external port through discovery; runner-driven focused reruns then passed Full Sync (65s) and installed Files/Office (11s), both with zero skips. The client suite was rerun with skip reasons enabled and passed all 1,615 tests plus 99 subtests. CSS scale remains an advisory (498 values) | All functional gates pass; the evidence is the two complete runs plus explicit clean reruns of every non-pass |
-| Clean ISO 2026-08-26 | `/home/pc-5ac337fb7cb82127/livecd/posterchan-live-20260826.iso`, 3,571,769,344 bytes, SHA-256 `ca6d4e42adb36e84e42cdb2843e4485fb004896c5240975dea87efb93b0074cb`. Independent inspection found hybrid MBR/GPT, bootable BIOS and UEFI El Torito entries, `/LiveOS/squashfs.img`, `/boot/vmlinuz`, `/boot/initramfs.img`, a live-only account, empty machine-id, installer, shell launcher and desktop binary. KVM with the installed system's host CPU reached the PosterChanOS first-run Tor wizard at 1280×800. QEMU's legacy `qemu64` CPU lacks the ISA level used by this Gentoo installation and panics in PID 1; it is not a supported hardware profile | Artifact built and host-profile boot smoke passed; physical USB boot remains the final hardware gate |
+| Clean ISO 2026-08-26 | `/home/pc-5ac337fb7cb82127/livecd/posterchan-live-20260826.iso`, 3,570,515,968 bytes, SHA-256 `29df378fc5fad39f04969ffdee40b429675977bdba520d95e5813827d9dc040a`. It contains Desktop 1.0.980 and shell 1.0.20260826083717. Independent inspection found hybrid MBR/GPT and bootable BIOS/UEFI El Torito entries. The original quiet/Plymouth default reproducibly stalled at switch-root while the diagnostic entry reached first-run; `c99eafeb` removes that unsafe flag from both ordinary modes and `e704439c` prevents shell expansion inside the generated GRUB heredoc. The final generated menu was read back from the ISO and the default entry booted under host-CPU KVM to the PosterChanOS Tor wizard at 1280×800 | Final artifact built and default-menu host-profile boot passed; physical USB boot remains the hardware gate |
