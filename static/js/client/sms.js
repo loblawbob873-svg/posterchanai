@@ -1403,7 +1403,16 @@
    * not wake up and deliver a week of messages whose moment has passed — that is the shape of every
    * "my phone sent it twice, three days late" story, and there is no way to un-send a text. */
   const MAX_AGE_MS = 86400000;
+  let _drainingOutbox = null;
   async function drainOutbox(){
+    /* Coalesce the visibility hook, Texts load and the live foreground poll. Without this guard
+     * two relay queries can see the same still-unclaimed request and race toward the radio. */
+    if(_drainingOutbox) return _drainingOutbox;
+    _drainingOutbox = drainOutboxOnce().finally(() => { _drainingOutbox = null; });
+    return _drainingOutbox;
+  }
+
+  async function drainOutboxOnce(){
     /* PERFORMING A SEND NEEDS A RADIO, NOT THE ROLE. Same correction as `send`, `mirror` and
      * `importAll`: SmsManager needs SEND_SMS, and the role only decides whether messages arrive and
      * whether the phone's own store may be written. Gated on the role, a laptop's request sat
@@ -2379,6 +2388,16 @@
       }
       if(st.telephony) drainOutbox();
     });
+    /* A request can be published while Texts is already open. Previously there was no relay
+     * subscription or subsequent query in that state: the handset checked at load/foreground and
+     * then remained deaf until the user backgrounded it. Poll only while visible, and only on a
+     * device with telephony; this costs nothing on web/desktop and gives a newly queued MMS a
+     * bounded pickup time. drainOutbox() coalesces slow queries and sends. */
+    setInterval(async () => {
+      if(document.visibilityState !== 'visible') return;
+      const st = await phoneState();
+      if(st.telephony) drainOutbox();
+    }, 3000);
   }
   init();
 

@@ -511,6 +511,14 @@ class OutgoingMms(unittest.TestCase):
         self.assertLess(outbox.index("if (isCancelled(ctx, doc))"),
                         outbox.index("MmsSender.send(ctx, to, body, imageBytes)"))
 
+    def test_phone_already_open_keeps_watching_for_new_webui_mms(self):
+        """A request published after the load/visibility hooks must not wait for another resume."""
+        js = open(SMSJS, encoding="utf-8").read()
+        self.assertIn("let _drainingOutbox = null", js)
+        self.assertIn("if(_drainingOutbox) return _drainingOutbox", js)
+        self.assertIn("if(document.visibilityState !== 'visible') return", js)
+        self.assertIn("if(st.telephony) drainOutbox();\n    }, 3000);", js)
+
     def test_remote_photo_placeholder_uses_the_mms_document_identity(self):
         """The later provider mirror must replace the pending bubble, not create a duplicate."""
         js = open(SMSJS, encoding="utf-8").read()
