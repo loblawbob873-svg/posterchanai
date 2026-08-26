@@ -6,12 +6,11 @@ MANIFEST = (ROOT / "mobile/android/app/src/main/AndroidManifest.xml").read_text(
 TILES = (ROOT / "mobile/android/app/src/main/java/place/poster/app/home/HomeTiles.java").read_text()
 
 
-def test_concord_is_an_android_drawer_app_and_launcher_tile():
-    block = MANIFEST.split('android:name=".shortcut.Concord"', 1)[1].split('</activity-alias>', 1)[0]
-    assert 'android.intent.category.LAUNCHER' in block
-    assert 'android:value="concord"' in block
-    assert '@mipmap/ic_launcher_concord' in block
-    assert 'new Tile("concord",       "Concord",       "concord"' in TILES
+def test_concord_communities_are_inside_the_messages_launcher():
+    assert 'new Tile("messages",      "Messages",      "speech"' in TILES
+    assert 'new Tile("concord"' not in TILES
+    assert 'android:value="concord"' not in MANIFEST
+    assert 'android:name=".shortcut.Concord"' not in MANIFEST
 
 
 def test_removed_nostr_chat_is_not_an_android_launcher_tile():

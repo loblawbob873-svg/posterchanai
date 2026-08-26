@@ -307,20 +307,6 @@
             </intent-filter>
         </activity-alias>
 
-        <activity-alias
-            android:name=".shortcut.Concord"
-            android:targetActivity=".shortcut.ViewActivity"
-            android:label="@string/app_concord_title"
-            android:icon="@mipmap/ic_launcher_concord"
-            android:roundIcon="@mipmap/ic_launcher_concord"
-            android:exported="true">
-            <meta-data android:name="pc.view" android:value="concord" />
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity-alias>
-
         <!-- One conversation. singleTop + adjustResize: a notification tapped while the thread is
              already open must not stack a second copy of it, and the compose box must sit above the
              keyboard rather than under it. -->
