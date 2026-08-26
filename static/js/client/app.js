@@ -18625,8 +18625,9 @@
       const bytes = new Uint8Array(await blob.arrayBuffer());
       if(bytes.indexOf(0) !== -1) throw new Error('that looks like a binary file');
       const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
-      if(!(window.PCCode && PCCode.openBlob)) throw new Error('the editor did not load');
-      PCCode.openBlob({ sha: d.sha || ('sync:' + d.path), name: d.name || 'document',
+      const code = await _withModule('code.js', 'PCCode');
+      if(!(code && code.openBlob)) throw new Error('the editor did not load');
+      code.openBlob({ sha: d.sha || ('sync:' + d.path), name: d.name || 'document',
                         mime: mimeForName(d.name || ''), enc: '0',
                         sync: { key: _syncRoot, path: d.path || '' }, text });
       switchView('code');
@@ -19522,8 +19523,9 @@
       openFile: (path, name, openHere) => _openWithSheet(name || path, [{
         id:'code', icon:'&lt;/&gt;', label:'PosterChan Code',
         hint:'Edit it here — saves straight back to this computer',
-        run:async() => { if(window.PCCode && PCCode.openHostFile){
-                      if(await PCCode.openHostFile({ path })) switchView('code'); }
+        run:async() => { const code = await _withModule('code.js', 'PCCode');
+                    if(code && code.openHostFile){
+                      if(await code.openHostFile({ path })) switchView('code'); }
                     else toast('the editor did not load'); } },
         /* Last on the list, and never absent: this is what clicking the file did before the editor
          * existed, and for most files it is still the answer. */
@@ -19827,8 +19829,9 @@
       // A NUL byte is the oldest and most reliable "this is not text" there is.
       if(bytes.indexOf(0) !== -1) throw new Error('that looks like a binary file');
       const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
-      if(!(window.PCCode && PCCode.openBlob)) throw new Error('the editor did not load');
-      PCCode.openBlob({ sha: d.sha, name: d.name || 'document', mime: d.mime || blob.type,
+      const code = await _withModule('code.js', 'PCCode');
+      if(!(code && code.openBlob)) throw new Error('the editor did not load');
+      code.openBlob({ sha: d.sha, name: d.name || 'document', mime: d.mime || blob.type,
                         enc: d.enc || '0', text });
       switchView('code');
     }catch(err){ toast('could not open: ' + ((err && err.message) || err)); }
@@ -28632,7 +28635,10 @@
    * inside a render that has bindings after it. */
   const _lateLoad = {};
   function _withModule(file, global, fn){
-    if(window[global]) { try{ fn(window[global]); }catch(_){} return; }
+    if(window[global]) {
+      if(fn) try{ fn(window[global]); }catch(_){}
+      return Promise.resolve(window[global]);
+    }
     if(!_lateLoad[file]){
       _lateLoad[file] = new Promise(res => {
         const el = document.createElement('script');
@@ -28641,7 +28647,11 @@
         (document.head || document.documentElement).appendChild(el);
       });
     }
-    _lateLoad[file].then(() => { if(window[global]){ try{ fn(window[global]); }catch(_){} } });
+    return _lateLoad[file].then(() => {
+      const mod = window[global] || null;
+      if(mod && fn) try{ fn(mod); }catch(_){}
+      return mod;
+    });
   }
   const _withPhoneShell = fn => _withModule('phoneshell.js', 'PCPhone', fn);
   const _withSms = fn => _withModule('sms.js', 'PCSms', fn);

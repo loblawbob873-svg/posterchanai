@@ -21,6 +21,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 APP = os.path.join(ROOT, "static", "js", "client", "app.js")
 CODE = os.path.join(ROOT, "static", "js", "client", "code.js")
 SELECTOR_SIM = os.path.join(ROOT, "tests", "client", "open_with_selector_sim.js")
+LOADER_SIM = os.path.join(ROOT, "tests", "client", "module_loader_sim.js")
 NODE = shutil.which("node") or shutil.which("nodejs")
 
 
@@ -103,6 +104,20 @@ class FilesOpenInCode(unittest.TestCase):
         r = subprocess.run([NODE, SELECTOR_SIM], capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("open-with selector holds", r.stdout)
+
+    @unittest.skipIf(not NODE, "node is unavailable")
+    def test_files_wait_for_code_on_a_cold_start(self):
+        """Offering Code is not enough: on first use code.js is intentionally lazy, so every Files
+        entry path must await the loader before it calls the module."""
+        for head in ("async function openCodeFile(", "async function openSyncCodeFile("):
+            body = _decomment(_fn(self.app, head))
+            self.assertIn("await _withModule('code.js', 'PCCode')", body, head)
+        host = self.app[self.app.index("id:'code', icon:'&lt;/&gt;'"):
+                        self.app.index("id:'host', icon:'🖥")]
+        self.assertIn("await _withModule('code.js', 'PCCode')", host)
+        r = subprocess.run([NODE, LOADER_SIM], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("lazy module promise holds", r.stdout)
 
     def test_a_file_with_no_dot_can_still_be_opened(self):
         """`_CODE_EXT` anchors on `\.`, so `Makefile`, `Dockerfile`, `README`, `LICENSE` and
