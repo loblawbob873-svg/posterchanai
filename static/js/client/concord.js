@@ -86,9 +86,16 @@
   }
   function activeMessages(room){ return testMessages(channelStoreId(room,state.channel)); }
   function lastActivity(room){ return channelsOf(room).reduce((n,c)=>Math.max(n,...testMessages(channelStoreId(room,c.name)).map(x=>Number(x.at)||0)),0); }
-  function seenAt(room){ return Number(localStorage.getItem('pc.concord.read.'+(room&&room.naddr||''))||0); }
-  function markRead(room){ if(room&&room.naddr)localStorage.setItem('pc.concord.read.'+room.naddr,String(Date.now())); }
-  function isUnread(room){ return lastActivity(room)>seenAt(room); }
+  function channelReadKey(room,name){ return 'pc.concord.read.'+(room&&room.naddr||'')+':'+(name||'general'); }
+  function seenAt(room,name){
+    if(!room||!room.naddr)return 0;
+    const exact=Number(localStorage.getItem(channelReadKey(room,name))||0);
+    if(exact)return exact;
+    /* Migration fallback for the release that stored one timestamp for the whole community. */
+    return Number(localStorage.getItem('pc.concord.read.'+room.naddr)||0);
+  }
+  function markRead(room,name){ if(room&&room.naddr)localStorage.setItem(channelReadKey(room,name),String(Date.now())); }
+  function isUnread(room){ return channelsOf(room).some(c=>testMessages(channelStoreId(room,c.name)).some(m=>(Number(m.at)||0)>seenAt(room,c.name))); }
   function messageId(m){ return String((m&&m.id)||`${Number(m&&m.at)||0}:${String(m&&m.pubkey||'')}`); }
   function imetaFields(tag){
     const out={}; if(!Array.isArray(tag)||tag[0]!=='imeta')return out;
@@ -472,9 +479,9 @@
     const profile=viewer.profile||{};
     const me=profile.display_name||profile.name||(profile.nip05&&p.niceNip05(profile.nip05))||(viewer.npub?viewer.npub.slice(0,12)+'…':'You');
     const current=state.community==null?null:rooms[state.community];
-    if(current)markRead(current);
     const visibleChannels=current?orderedChannels(current):[];
     if(current&&visibleChannels.length&&!visibleChannels.some(c=>c.name===(state.channel||'general')))state.channel=visibleChannels[0].name;
+    if(current)markRead(current,state.channel||'general');
     const currentChannel=current?visibleChannels.find(c=>c.name===(state.channel||'general')):null;
     const channelPrivate=!!(currentChannel&&currentChannel.private);
     const messages=current&&(current.local||current.cord)?activeMessages(current):[];
@@ -489,7 +496,7 @@
       <button class="cc-drawer-backdrop" id="cc-drawer-backdrop" aria-label="Close rooms and channels"></button>
       <aside class="cc-communities"><button class="cc-brand" id="cc-home" title="Your rooms" aria-label="Your rooms"><span aria-hidden="true">🕊</span></button><button class="cc-server cc-discovery-button" id="cc-discovery" title="Discover public communities" aria-label="Discover public communities">◎</button>${rooms.map((r,i)=>`<button class="cc-server${state.community===i?' active':''}${isUnread(r)?' unread':''}" data-cc-server="${i}" title="${p.enc(roomName(r,i))}">${roomIcon(p,r,i)}</button>`).join('')}<button class="cc-server cc-add" id="cc-add" title="Join a community">+</button></aside>
       <aside class="cc-channels"><header><button class="cc-mobile-back" id="cc-back-communities" aria-label="Communities">‹</button><div><b>${state.community==null?'Concord':p.enc(roomName(current,state.community))}</b><small>${current&&current.local?'Local test community':'End-to-end encrypted'}</small></div>${current?'<button class="cc-head-btn" id="cc-edit-icon" title="Set community icon" aria-label="Set community icon"><svg class="ic"><use href="#i-image"></use></svg></button>':''}<button class="cc-head-btn" id="cc-invite" title="Join with invite">+</button></header>
-        <div class="cc-channel-list">${state.community==null?'<div class="cc-empty-side">Choose or join a community</div>':`<div class="cc-section">TEXT CHANNELS</div>${visibleChannels.map(c=>`<div class="cc-channel-row${channelStarred(current,c.name)?' starred':''}"><button class="cc-channel${(state.channel||'general')===c.name?' active':''}${testMessages(channelStoreId(current,c.name)).some(m=>(Number(m.at)||0)>seenAt(current))?' unread':''}" data-cc-channel="${p.enc(c.name)}"><span>#</span> ${p.enc(c.name)}</button><button class="cc-channel-star" data-cc-star="${p.enc(c.name)}" aria-pressed="${channelStarred(current,c.name)}" title="${channelStarred(current,c.name)?'Remove from starred channels':'Star channel'}" aria-label="${channelStarred(current,c.name)?'Unstar':'Star'} #${p.enc(c.name)}">${channelStarred(current,c.name)?'★':'☆'}</button></div>`).join('')}`}</div>
+        <div class="cc-channel-list">${state.community==null?'<div class="cc-empty-side">Choose or join a community</div>':`<div class="cc-section">TEXT CHANNELS</div>${visibleChannels.map(c=>`<div class="cc-channel-row${channelStarred(current,c.name)?' starred':''}"><button class="cc-channel${(state.channel||'general')===c.name?' active':''}${testMessages(channelStoreId(current,c.name)).some(m=>(Number(m.at)||0)>seenAt(current,c.name))?' unread':''}" data-cc-channel="${p.enc(c.name)}"><span>#</span> ${p.enc(c.name)}</button><button class="cc-channel-star" data-cc-star="${p.enc(c.name)}" aria-pressed="${channelStarred(current,c.name)}" title="${channelStarred(current,c.name)?'Remove from starred channels':'Star channel'}" aria-label="${channelStarred(current,c.name)?'Unstar':'Star'} #${p.enc(c.name)}">${channelStarred(current,c.name)?'★':'☆'}</button></div>`).join('')}`}</div>
         <footer class="cc-identity"><span class="cc-status"></span><div><b>${p.enc(me)}</b><small>You</small></div><button class="cc-head-btn" id="cc-notify" title="Notification settings"><svg class="ic"><use href="#i-bell"></use></svg></button></footer>
       </aside>
       <main class="cc-conversation"><header><button class="cc-mobile-back" id="cc-back-channels" aria-label="${state.community==null?'Back to rooms':'Rooms and channels'}">${state.community==null?'‹':'☰'}</button><span class="cc-hash">#</span><b>${state.community==null?'Communities':state.channel||'general'}</b><span class="cc-visibility ${channelPrivate?'private':'public'}">${channelPrivate?'Private':'Public'}</span><span class="cc-topic">${p.enc((current&&current.description)||(channelPrivate?'Invite-only channel':'Visible to all community members'))}</span><span class="cc-spacer"></span>${current?'<button class="cc-head-btn" id="cc-publish-listing" title="Publish to Armada Discover" aria-label="Publish to Armada Discover"><svg class="ic"><use href="#i-share"></use></svg></button><button class="cc-head-btn" id="cc-copy-link" title="Copy room invite link" aria-label="Copy room invite link"><svg class="ic"><use href="#i-link"></use></svg></button><button class="cc-head-btn" id="cc-call" title="Start voice call"><svg class="ic"><use href="#i-phone"></use></svg></button>':''}<button class="cc-head-btn" id="cc-members" title="Members"><svg class="ic"><use href="#i-users"></use></svg></button></header>

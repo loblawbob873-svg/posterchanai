@@ -356,6 +356,10 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert 'cc-public-copy' in CONCORD and '.cc-public-copy' in CONCORD_CSS
     assert 'function isUnread(room)' in CONCORD
     assert '.cc-channel.unread' in CONCORD_CSS and '.cc-server.unread' in CONCORD_CSS
+    assert "channelReadKey(room,name)" in CONCORD
+    assert "markRead(current,state.channel||'general')" in CONCORD
+    assert "seenAt(current,c.name)" in CONCORD
+    assert "if(current)markRead(current);" not in CONCORD
     assert 'notifyMentions(p,current,messages,viewer,me)' in CONCORD
     assert "route:'concord'" in CONCORD and 'concord-mention-' in CONCORD
     assert 'import_meta.env' not in CORD_READER
