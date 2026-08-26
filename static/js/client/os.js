@@ -1958,6 +1958,12 @@
               String(w.appView||w.view||'')===String(v));
   }
 
+  function sameAppWindow(opened, requested){
+    if(opened===requested) return true;
+    return (opened==='messages'||opened==='concord') &&
+           (requested==='messages'||requested==='concord');
+  }
+
   function routeView(view, focusOnly){
     if(!on || !view) return false;
     if(!apps().some(a => a.view === view)) return false;
@@ -1966,8 +1972,7 @@
      * `messages` window.  Looking up only the literal identity made either tab spawn a second window
      * when opened from the other one.  Treat both historical identities as the same application;
      * the caller then paints the requested tab into the window we just focused. */
-    const messageTab = view==='messages' || view==='concord';
-    const w = wins.find(x => messageTab ? (x.view==='messages'||x.view==='concord') : x.view===view);
+    const w = wins.find(x => sameAppWindow(x.view, view));
     if(w){
       // An app-icon click names the app to open. A parked window can carry a stale appView captured
       // from the one global VIEW while another window was active; restoring that value made clicking
@@ -6838,6 +6843,7 @@
                    * twice, a feature added next month that never shows up — so it is tested directly
                    * rather than inferred from a rendered desktop. */
                   __layout: (list, doc) => computeLayout(list, doc), __normDoc: (d) => _normDoc(d),
+                  __sameAppWindow: sameAppWindow,
                   /* The launcher's own list, for the same reason: "a row switched off in Settings →
                    * Sidebar is gone from the desktop too" is invisible when it is wrong — you get a
                    * desktop, just one still carrying the app you removed. tests/client/test_nav_hide.py

@@ -1,3 +1,5 @@
+import json
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -34,7 +36,28 @@ def test_old_concord_routes_remain_for_invites_and_saved_shortcuts():
     assert "if(v==='concord') $('#view-title').textContent='Messages'" in APP
 
 
-def test_desktop_treats_direct_messages_and_concord_as_one_window():
+def test_desktop_treats_direct_messages_and_concord_as_one_window_at_runtime():
+    """Run the shipped desktop router decision, instead of asserting that a fix-shaped string exists."""
+    os_js = ROOT / "static/js/client/os.js"
+    boot = f"""
+global.window = {{}};
+global.document = {{ addEventListener(){{}}, querySelector(){{ return null; }},
+                    querySelectorAll(){{ return []; }} }};
+global.getComputedStyle = () => ({{ zoom: '1' }});
+require({json.dumps(str(os_js))});
+const same = window.PCOS.__sameAppWindow;
+console.log(JSON.stringify([
+  same('messages', 'concord'), same('concord', 'messages'),
+  same('messages', 'messages'), same('concord', 'concord'),
+  same('messages', 'mail'), same('concord', 'texts'), same('home', 'global')
+]));
+"""
+    run = subprocess.run(["node", "-e", boot], capture_output=True, text=True, timeout=30)
+    assert run.returncode == 0, run.stderr
+    assert json.loads(run.stdout) == [True, True, True, True, False, False, False]
+
+
+def test_desktop_router_uses_the_tested_messages_window_identity():
     os_js = (ROOT / "static/js/client/os.js").read_text()
-    assert "const messageTab = view==='messages' || view==='concord';" in os_js
-    assert "messageTab ? (x.view==='messages'||x.view==='concord')" in os_js
+    route = os_js[os_js.index("function routeView(view, focusOnly)"):]
+    assert "wins.find(x => sameAppWindow(x.view, view))" in route[:1000]
