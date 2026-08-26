@@ -231,9 +231,15 @@ class SendingFromAnotherDevice(unittest.TestCase):
     def test_live_cancellation_repaints_even_when_map_size_is_unchanged(self):
         web = (ROOT / "static/js/client/sms.js").read_text()
         watch = web[web.index("function watch()") : web.index("async function notifyNew")]
-        repaint = watch.index("if(PC.VIEW === 'texts') paint()")
+        repaint = watch.index("if(textsOnScreen()) paint()")
         size_gate = watch.index("if(S.msgs.size !== before)")
         self.assertLess(repaint, size_gate)
+
+    def test_desktop_live_repaint_requires_the_texts_window_to_own_the_feed(self):
+        web = (ROOT / "static/js/client/sms.js").read_text()
+        visible = web[web.index("function textsOnScreen()") : web.index("function paint()")]
+        self.assertIn("PCOS.ownsFeedView('texts')", visible)
+        self.assertIn("PCOS.isOn()", visible)
 
     def test_deleting_a_failed_remote_send_tombstones_its_source_receipt(self):
         web = (ROOT / "static/js/client/sms.js").read_text()

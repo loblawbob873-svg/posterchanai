@@ -127,6 +127,7 @@ FILES_CHECK = r"""(async()=>{
   return {
     view:__PC.VIEW, explorers:q('.fx-explorer'), folderTiles:q('.fx-home-tile'),
     folderChips:q('.folder-chip'), syncedRoots:q('.syncroot'),
+    localFolders:(window.PCSync&&PCSync.folders)?PCSync.folders().length:0,
     pullOk:!!pullOk, indexHTTP:ir.status, indexOK:!!ij.ok, serverFiles, clientFiles,
     syncAudit,
     overflow:document.documentElement.scrollWidth>innerWidth+1,
@@ -223,7 +224,10 @@ async def main():
         assert files["syncedRoots"] > 0, files
         assert files["pullOk"] and files["indexHTTP"] == 200 and files["indexOK"], files
         assert files["clientFiles"] == files["serverFiles"], files
-        assert len(files["syncAudit"]) == files["syncedRoots"], files
+        # Account roots are intentionally visible before this particular machine maps them to local
+        # directories. Audit only local mappings; requiring one for every account root made a fresh
+        # laptop fail despite its complete 5,992-entry account index being present and correct.
+        assert len(files["syncAudit"]) == files["localFolders"], files
         assert all(not row.get("error") and row["server"] == row["manifest"] == row["local"]
                    and row["skipped"] == 0 for row in files["syncAudit"]), files
         assert not files["overflow"] and not files["errors"], files

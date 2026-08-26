@@ -326,6 +326,13 @@ class Deleting(unittest.TestCase):
 @unittest.skipIf(shutil.which("node") is None, "node not installed")
 class RefusalIsNotEmptiness(unittest.TestCase):
 
+    def test_portable_hash_is_used_even_when_an_old_archive_kept_a_provider_id(self):
+        web = (ROOT / "static/js/client/sms.js").read_text()
+        part = web[web.index("async function partData(p)") : web.index("function attHtml")]
+        self.assertIn("if(sha && PC.encFileUrl)", part)
+        self.assertNotIn("if(!id && sha", part)
+
+
     def test_a_picture_table_that_would_not_answer_is_said_out_loud(self):
         """The texts are on screen and complete; every photo is missing. There is nothing on the
         screen to notice — it reads as a conversation somebody sent fewer photos in. Folded into the
@@ -333,6 +340,11 @@ class RefusalIsNotEmptiness(unittest.TestCase):
         exact report this screen was rebuilt for."""
         res = run(rows=[text(1)], mmsRefused=True, steps=["load", "render", "settle"])
         self.assertTrue(res["mmsRefused"], "the client dropped the picture-table refusal")
+
+    def test_a_picture_table_refusal_cannot_mark_old_media_migrated(self):
+        res = run(rows=[text(1)], mmsRefused=True, steps=["load", "phoneLoad", "migrateAll"])
+        self.assertFalse(res["blossomDone"],
+                         "a refused MMS table permanently hid old media behind the completion latch")
 
     def test_an_ordinary_read_does_not_claim_a_refusal(self):
         res = run(rows=[text(1), picture(2)], steps=["load", "render", "settle"])

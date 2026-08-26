@@ -46,7 +46,10 @@
   /* v4 deliberately invalidates the v3 completion latch. A v3 phone could mark the migration
    * complete after copying message bodies while its MMS part table was empty/refused; subsequent
    * releases then trusted that stale success forever, leaving every older conversation text-only. */
-  const HWM_BLOSSOM = () => HWM() + '_blossom_v4';
+  /* v5 invalidates the v4 latch because v4 could still declare the migration complete when the
+   * SMS provider answered but the independently-guarded MMS table refused. That exact state leaves
+   * every old conversation present as text while only new picture messages have media. */
+  const HWM_BLOSSOM = () => HWM() + '_blossom_v5';
   /* AND A SEPARATE MARKER FOR THE REWIND ITSELF, because rewinding is a ONE-TIME ACT and finishing
    * the migration is a different question entirely.
    *
@@ -478,7 +481,7 @@
       _cacheDrain = (async () => {
         while(cached.length){
           await absorb(cached.splice(0, 128));
-          if(PC && PC.VIEW === 'texts') paint();
+          if(textsOnScreen()) paint();
           /* Give navigation, typing and the compositor a turn between decrypt batches. */
           await new Promise(resolve => setTimeout(resolve, 0));
         }
@@ -513,7 +516,7 @@
         /* A cancellation/tombstone mutates an existing entry to `gone`; the Map size is unchanged.
          * Repainting only when size changed left deleted attachments visible on an open phone until
          * navigation/reload. Always repaint the active Texts view after a live archive event. */
-        if(PC.VIEW === 'texts') paint();
+        if(textsOnScreen()) paint();
         if(S.msgs.size !== before){
           notifyNew(ev);
         }
@@ -765,7 +768,7 @@
     catch(e){
       S.archive.running = false;
       S.archive.error = String((e && e.message) || e);
-      if(PC && PC.VIEW === 'texts') paint();
+      if(textsOnScreen()) paint();
       return { published:0, skipped:S.archive.error };
     }
     try{
@@ -826,7 +829,7 @@
      * not in `S.msgs` at all, so the candidate set is empty for the honest reason that nothing
      * asked for them. Marked complete on that, the migration never runs again and those pictures
      * are never archived — with the screen saying it finished, which is the worst version of it. */
-    if(!archiveError && !rowErrors && !_migrationFailed.size && !S.mmsCapped
+    if(!archiveError && !rowErrors && !_migrationFailed.size && !S.mmsRefused && !S.mmsCapped
        && opts && opts.fullMigration && migrationRemaining <= rows.length){
       try{ localStorage.setItem(HWM_BLOSSOM(), '1'); }catch(_){ }
     }
@@ -836,7 +839,7 @@
       ? _migrationFailed.size + ' MMS attachment' + (_migrationFailed.size === 1 ? '' : 's')
         + ' could not be read; the other messages were copied'
       : '');
-    if(PC && PC.VIEW === 'texts') paint();
+    if(textsOnScreen()) paint();
     return { published:n, remaining:Math.max(0, migrationRemaining - rows.length),
              failed:_migrationFailed.size, skipped:archiveError || undefined };
   }
@@ -1760,14 +1763,18 @@
   async function partData(p){
     const id = Number(p && p.id) || 0;
     const sha = String((p && p.sha) || '');
-    if(!id && sha && PC.encFileUrl){
+    if(sha && PC.encFileUrl){
       try{
         const previewSha = isImage(p.ct) && p.thumb ? p.thumb : sha;
         const url = await PC.encFileUrl(previewSha,
           previewSha === sha ? (p.ct || 'application/octet-stream') : 'image/jpeg');
         const blob = await fetch(url).then(r => r.blob());
         return { url, blob, ct: p.ct || blob.type || '', preview: previewSha !== sha };
-      }catch(_){ return { why: attLabel(p) + ' \u00b7 could not be opened from encrypted storage' }; }
+      }catch(_){
+        /* A handset may still have the provider part locally. Desktop/web never does, so they get
+         * the truthful encrypted-storage error below; the phone can fall through to its own bytes. */
+        if(!id) return { why: attLabel(p) + ' \u00b7 could not be opened from encrypted storage' };
+      }
     }
     if(!id) return { why: attLabel(p) + ' \u00b7 on your phone' };
     if(ATT.has(id)) return ATT.get(id);
@@ -1900,8 +1907,17 @@
 
   // ---------------------------------------------------------------- view
 
+  function textsOnScreen(){
+    if(!PC) return false;
+    try{
+      if(window.PCOS && PCOS.isOn && PCOS.isOn() && PCOS.ownsFeedView)
+        return !!PCOS.ownsFeedView('texts');
+    }catch(_){ }
+    return PC.VIEW === 'texts';
+  }
+
   function paint(){
-    if(!PC || PC.VIEW !== 'texts') return;
+    if(!textsOnScreen()) return;
     const feed = PC.$('#feed');
     if(!feed) return;
     const enc = PC.enc;
@@ -2530,7 +2546,7 @@
                    migrateAll: migrateLocalHistory,
                    // Contacts can finish after Texts has already painted on a desktop. Rebuild the
                    // thread labels from the same messages; no relay or phone read is necessary.
-                   refreshNames: () => { rebuild(); if(PC && PC.VIEW==='texts') paint(); },
+                   refreshNames: () => { rebuild(); if(textsOnScreen()) paint(); },
                    _state: () => S, _key: key, _outboxId: outboxId, _docId: docIdFor,
                    // Pure scroll primitives let the window-lifecycle suite exercise actual state
                    // transitions without replacing this implementation with a test-only copy.
