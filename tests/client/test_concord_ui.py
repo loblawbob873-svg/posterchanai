@@ -59,7 +59,7 @@ def test_classic_phone_concord_uses_os_style_rail_and_drawer_without_squeezed_ch
     assert "mobileChatOpen=false" in CONCORD
     assert "mobileDrawerOpen=false" in CONCORD
     assert "mobileChatOpen||state.community==null?' show-chat'" in CONCORD
-    assert "mobileChatOpen=true; mobileDrawerOpen=false; render(); scrollChatBottom()" in CONCORD
+    assert "mobileChatOpen=true; mobileDrawerOpen=false; render(); enterChatBottom()" in CONCORD
     assert "mobileDrawerOpen=!mobileDrawerOpen" in CONCORD
     assert 'id="cc-drawer-backdrop"' in CONCORD
     assert 'body.concord-view .cc-app{position:fixed!important' in CONCORD_CSS
@@ -487,6 +487,15 @@ def test_concord_webxdc_mentions_live_sync_and_scroll_are_integrated():
     assert 'mentionBox' not in CONCORD
     assert 'refreshActiveChannel(p)' in CONCORD and 'setInterval(()=>{refreshRoomMetadata(p);refreshActiveChannel(p);},4000)' in CONCORD
     assert 'scrollStates' in CONCORD and 'st.pinned' in CONCORD and 'preserveChatScroll' in CONCORD
+
+
+def test_entering_channel_wins_scroll_race_with_history_and_media():
+    assert 'function enterChatBottom()' in CONCORD
+    assert "[0,60,180,450,900,1600]" in CONCORD
+    assert "scroller.dataset.ccScrollRestore" in CONCORD
+    assert "delete box.dataset.ccScrollRestore" in CONCORD
+    channel_click = CONCORD.split("$$('[data-cc-channel]')", 1)[1].split("$$('[data-cc-star]')", 1)[0]
+    assert channel_click.count('enterChatBottom()') == 2
 
 
 def test_all_joined_community_metadata_repaints_live_without_moving_chat():
