@@ -112,6 +112,7 @@ def _audit_payload(blob):
         markers = {
             b"openHostFile": "desktop local-file bridge",
             b"await _withModule('code.js', 'PCCode')": "cold-start Files to Code loader",
+            b"feed.classList.toggle('feed-code', VIEW==='code')": "Code/Terminal layout isolation",
             b"gitAct('restore'": "Code per-file discard/restore",
             b"openSyncCodeFile": "synced-folder Code routing",
             b"openSyncOfficeFile": "synced-folder Office routing",
