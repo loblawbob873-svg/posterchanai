@@ -33279,9 +33279,15 @@
       }
       if(msg.t==='invite'){
         if(MUTED.has(from)) return;   // a muted/blocked pubkey can't ring you
+        // Compatibility with an older PosterChan sender that produced a screen/video offer but lost
+        // the remoteDesktop field. This inference is deliberately narrow: only another device signed
+        // with MY key, while this device's Remote Desktop surface is explicitly open, can qualify.
+        // It must never turn a stranger's video call into an auto-accepted desktop session.
+        const remoteDesktopInvite=!!msg.remoteDesktop ||
+          !!(_remoteDesktopArmed && from===ME.pubkey && msg.video && msg.sdp && /m=video\s/.test(msg.sdp) && !/m=audio\s/.test(msg.sdp));
         /* Voice/video calls remain available globally, but a desktop session is deliberately
          * opt-in on BOTH ends. Merely being signed in must not make this device a remote endpoint. */
-        if(msg.remoteDesktop&&!_remoteDesktopArmed)return;
+        if(remoteDesktopInvite&&!_remoteDesktopArmed)return;
         // Don't ring for an invite that is already over. The subscription's `since` cannot be relied on
         // to bound this: relay.js re-REQs the filters VERBATIM on re-arm, so `since` is frozen at
         // subscribe time and the window silently widens with uptime (an hour up = an hour of history
@@ -33299,7 +33305,7 @@
         }
         if(_call){ _callSend(from, {v:1, callId:msg.callId, t:'bye'}); return; }   // busy with someone else → auto-decline
         _call = { id:msg.callId, peer:from, pc:null, local:null, remote:null, video:!!msg.video,
-                  remoteDesktop:!!msg.remoteDesktop, state:'ringing', caller:false, invite:msg,
+                  remoteDesktop:remoteDesktopInvite, state:'ringing', caller:false, invite:msg,
                   pendingIce:[] };
         // Stop ringing if the caller vanishes without a 'bye' (crash/offline) — ephemeral events can be lost.
         _call.timeout = setTimeout(()=>{ if(_call && _call.state==='ringing'){ _ringtone(false); _missedAdd(_call.peer, _call.id); _callTeardown(); } }, 60000);
@@ -33307,7 +33313,7 @@
         /* Same account, different device: opening Remote Desktop on both ends is the explicit consent.
          * Auto-accept only that narrow case. Voice/video still rings, another identity still asks, and
          * a closed Remote Desktop app was rejected by the armed gate above. */
-        if(msg.remoteDesktop&&from===ME.pubkey){_acceptCall().catch(()=>{});return;}
+        if(remoteDesktopInvite&&from===ME.pubkey){_acceptCall().catch(()=>{});return;}
         _ringtone(true); _callUI();
         try{ if('Notification' in window && Notification.permission==='granted'){ const p=profOf(from)||{}; new Notification('📞 '+(p.name||'Incoming call'), {body:'tap to answer', tag:'pc-call'}); } }catch(_){}
         return;

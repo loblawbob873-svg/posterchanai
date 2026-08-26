@@ -88,6 +88,12 @@ if [ -z "$wayland_socket" ]; then
 fi
 WAYLAND_DISPLAY=${wayland_socket##*/}
 export WAYLAND_DISPLAY
+# SSH/recovery launches also lack the desktop identity which Chromium and xdg-desktop-portal use to
+# choose the wlroots screencast backend. A Wayland socket owned by this Sway session is conclusive;
+# restore the same values the session exports during a normal boot.
+: "${XDG_SESSION_TYPE:=wayland}"
+: "${XDG_CURRENT_DESKTOP:=sway}"
+export XDG_SESSION_TYPE XDG_CURRENT_DESKTOP
 
 # Recovery launches commonly come from SSH and therefore do not inherit the user's D-Bus session.
 # The original Sway boot does, which made a fresh boot and a remote shell restart behave

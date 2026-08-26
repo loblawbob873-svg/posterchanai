@@ -85,6 +85,13 @@ def test_remote_desktop_viewer_is_receive_only_and_never_requests_camera_or_mic(
     assert "if(local)local.getTracks().forEach" in accept
 
 
+def test_same_identity_legacy_screen_invite_is_never_treated_as_camera_call():
+    assert "const remoteDesktopInvite=!!msg.remoteDesktop" in APP
+    assert "_remoteDesktopArmed && from===ME.pubkey && msg.video" in APP
+    assert "remoteDesktop:remoteDesktopInvite" in APP
+    assert "if(remoteDesktopInvite&&from===ME.pubkey)" in APP
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_address_discovery_returns_choices_then_resolves_the_selected_user(tmp_path):
     """Execute the shipped resolver. An IP with two users must populate the picker, and choosing
@@ -126,7 +133,7 @@ def test_remote_desktop_sends_a_screen_and_no_guest_media():
     assert "navigator.mediaDevices.getDisplayMedia" in APP
     assert "if(remoteGuest) return Promise.resolve(new MediaStream())" in APP
     assert "remoteDesktop,\n                              sdp:" in APP
-    assert "remoteDesktop:!!msg.remoteDesktop" in APP
+    assert "remoteDesktop:remoteDesktopInvite" in APP
 
 
 def test_stopping_browser_screen_share_ends_the_remote_desktop_session():
