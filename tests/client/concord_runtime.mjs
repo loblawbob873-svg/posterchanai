@@ -19,6 +19,15 @@ const dollar = selector => selector === '#feed' ? feed : control(selector.slice(
 const dollars = () => [];
 const calls = {toasts:[], notified:0, group:0, mentions:[]};
 let activeView = 'concord';
+const JOIN_URL='https://armada.buzz/invite/naddr1pppp#abc_DEF';
+const JOIN_BUNDLE={community_id:'1'.repeat(64),owner:'2'.repeat(64),owner_salt:'3'.repeat(64),
+  community_root:'4'.repeat(64),root_epoch:0,channels:[],relays:['wss://relay.example'],name:'Joined Armada Room'};
+const relayFixtures=filters=>{
+  const kinds=(Array.isArray(filters)?filters:[]).flatMap(f=>f.kinds||[]);
+  if(kinds.includes(33301)) return [{id:'bundle-event',kind:33301,created_at:10}];
+  if(kinds.includes(1059)) return [{id:'control-or-chat-wrap',kind:1059,created_at:11}];
+  return [];
+};
 
 globalThis.window = globalThis;
 window.__PC = {
@@ -34,16 +43,27 @@ window.__PC = {
   copyValue:value=>{ calls.copied=value; },
   osNotify:(title,body,opts)=>{ calls.mentions.push({title,body,opts}); },
   relaySubscribe:()=>({close(){}}),
-  relayQueryFrom:async()=>[],
+  relayQuery:async filters=>relayFixtures(filters),
+  relayQueryFrom:async(_relays,filters)=>relayFixtures(filters),
   relayUrls:()=>['wss://relay.example'], signTemplate:async template=>template,
   relayPublish:async()=>({ok:true}), relayPublishTo:async()=>1,
   publish:async()=>({}),
   profOf:()=>({}), LOGO:'', linkify:s=>String(s), linkCardHtml:()=>'', hydrateLinkCards:()=>{},
 };
 globalThis.location={origin:'https://poster.place'};
-window.PosterCord={createCommunity:async()=>({communityId:'c'.repeat(64),generalChannelId:'d'.repeat(64),events:[{}],url:'https://poster.place/invite/naddr1qqqq#abc_DEF',secrets:{},bundle:{relays:['wss://relay.example']}})};
+window.PosterCord={
+  createCommunity:async()=>({communityId:'c'.repeat(64),generalChannelId:'d'.repeat(64),events:[{}],url:'https://poster.place/invite/naddr1qqqq#abc_DEF',secrets:{},bundle:{relays:['wss://relay.example']}}),
+  inviteDetails:()=>({linkSigner:'5'.repeat(64),bootstrapRelays:['wss://relay.example']}),
+  openInvite:()=>({bundle:JOIN_BUNDLE,parsed:{linkSigner:'5'.repeat(64)}}),
+};
 window.PosterCordReader={
-  inspectControl:()=>({controlPubkeys:[],channels:[]}),
+  inspectControl:(_bundle,wraps)=>wraps.length
+    ? {name:'Joined Armada Room',description:'Loaded immediately',icon:'🛸',channels:[
+        {id:'joined-general',name:'general',private:false,streamPubkeys:['6'.repeat(64)]},
+        {id:'joined-support',name:'support',private:false,streamPubkeys:['7'.repeat(64)]},
+      ]}
+    : {controlPubkeys:['8'.repeat(64)],channels:[]},
+  inspectChat:async()=>({messages:[{id:'joined-message',pubkey:'b'.repeat(64),text:'joined history',at:12,kind:9,tags:[]}],reactions:[],reactionIds:[]}),
   createMetadataWrap:async()=>({wrap:{kind:1059}}),
   createChatWrap:async()=>({rumorId:'f'.repeat(64),wrap:{kind:1059},ms:1234}),
 };
@@ -159,6 +179,19 @@ PCConcord.render();
 if(calls.mentions.length!==1 || !calls.mentions[0].title.includes('#general') || calls.mentions[0].opts.route!=='concord') throw new Error('mention notification failed');
 PCConcord.render();
 if(calls.mentions.length!==1) throw new Error('mention notification was not deduplicated');
+
+// A direct Armada invite must hydrate during the JOIN transaction.  Before this regression was
+// fixed, the handler saved a one-channel placeholder and said "community joined"; icon, real
+// channels and history appeared only after switching away and back.
+control('cc-invite-url').value=JOIN_URL;
+await control('cc-join-go').click();
+const afterJoin=JSON.parse(data.get('pc.concord.invites'));
+const joined=afterJoin.find(r=>r.communityId===JOIN_BUNDLE.community_id);
+if(!joined || !joined.cord?.hydrated || joined.icon!=='🛸' || joined.channels.length!==2)
+  throw new Error('direct invite did not hydrate metadata and channels before completing: '+JSON.stringify({joined,rooms:afterJoin,toasts:calls.toasts.slice(-4)}));
+if(![...data.entries()].some(([key,value])=>key.startsWith('pc.concord.test.') && value.includes('joined history')))
+  throw new Error('direct invite did not hydrate room history before completing');
+if(!calls.toasts.some(x=>x==='community joined')) throw new Error('hydrated join never completed');
 
 // A relay/deferred callback can render after the user has opened Code. It must not own the shared
 // feed any more, nor restart Concord's live work or shell classes.

@@ -334,6 +334,10 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert 'upgrading this room to a public relay community' in CONCORD
     assert 'mintPublicRoom(p,room.name,room.icon)' in CONCORD
     assert 'await hydrateInvite(p,raw)' in CONCORD
+    assert 'communityId:bundle.community_id' in CONCORD
+    join_handler = CONCORD.split("const go=$('#cc-join-go')", 1)[1].split("$$('[data-cc-server]')", 1)[0]
+    assert 'await hydrateRoomStreams(p,state.community)' in join_handler
+    assert join_handler.index('await hydrateRoomStreams') < join_handler.index("p.toast('community joined')")
     assert 'refreshing room channels and history' not in CONCORD
     assert 'kinds:[33301]' in CONCORD
     assert "'#d':[''],limit:100" in CONCORD and 'max:200' in CONCORD
