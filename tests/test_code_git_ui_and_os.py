@@ -85,6 +85,8 @@ def test_discard_closes_the_visible_diff_before_the_git_refresh_repaints():
 
 def test_background_terminal_and_code_keep_their_full_height_layout():
     os_js = (ROOT / "static/js/client/os.js").read_text()
+    app_js = (ROOT / "static/js/client/app.js").read_text()
     assert "slot.className = 'osw-slot ' + realFeed.className" in os_js
     assert "w.slot.className = 'osw-slot'" in os_js
     assert ".osw-slot.feed-term,.osw-slot.feed-code" in CSS
+    assert "feed.classList.toggle('feed-code', VIEW==='code')" in app_js

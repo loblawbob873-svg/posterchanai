@@ -6505,6 +6505,11 @@
     feed.classList.toggle('feed-meme', VIEW==='meme');     // full-height Meme Builder (stage + one pane)
     feed.classList.toggle('feed-admin', VIEW==='admin');   // full-height admin iframe
     feed.classList.toggle('feed-term', VIEW==='terminal');  // full-height terminal
+    /* Code adds this class while painting, but it must also be REMOVED centrally when the shared
+     * feed moves into another desktop window.  Without that half, Code → Terminal parked a
+     * `feed-code feed-term` node; the two application layouts then fought over the same flex box
+     * whenever focus changed, which is the editor/terminal shrinking regression. */
+    feed.classList.toggle('feed-code', VIEW==='code');      // full-height editor; never leak into Terminal
     feed.classList.toggle('feed-files', VIEW==='blossom');  // tabs + explorer fill the available pane
     // Tell the desktop what the focused window is actually showing. A window navigated inside itself
     // (the Admin panel is opened from Settings) otherwise keeps repainting as the view it was opened
