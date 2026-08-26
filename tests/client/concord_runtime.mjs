@@ -136,6 +136,15 @@ if(afterRace.filter(m=>m.id==='e'.repeat(64)).length!==1)
 PCConcord.render();
 if((feed.innerHTML.match(new RegExp('data-message-id="'+'e'.repeat(64)+'"','g'))||[]).length!==1)
   throw new Error('duplicate relay message rendered twice');
+control('cc-back-channels').click();
+if(!feed.innerHTML.includes('cc-app show-chat'))
+  throw new Error('mobile room list did not open its active conversation');
+control('cc-back-channels').click();
+if(!feed.innerHTML.includes('cc-app show-chat drawer-open'))
+  throw new Error('mobile rooms button did not open the OS-style channel drawer');
+control('cc-drawer-backdrop').click();
+if(feed.innerHTML.includes('drawer-open'))
+  throw new Error('mobile channel drawer backdrop did not close it');
 data.set('pc.concord.seen.'+rooms[0].naddr,'1');
 data.set('pc.concord.test.'+rooms[0].naddr,JSON.stringify([{by:'Other User',pubkey:'b'.repeat(64),text:'hey @tester',at:2}]));
 PCConcord.render();

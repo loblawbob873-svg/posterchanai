@@ -53,13 +53,18 @@ def test_concord_is_precached_and_old_bundles_self_heal_the_nav():
     assert "{ view:'concord', into:'#disc-sub'" in APP
 
 
-def test_classic_phone_concord_is_a_full_screen_drilldown_not_squeezed_desktop_columns():
+def test_classic_phone_concord_uses_os_style_rail_and_drawer_without_squeezed_chat():
     assert "mobileChatOpen=false" in CONCORD
+    assert "mobileDrawerOpen=false" in CONCORD
     assert "mobileChatOpen||state.community==null?' show-chat'" in CONCORD
-    assert "mobileChatOpen=true; render(); scrollChatBottom()" in CONCORD
-    assert "mobileChatOpen=false; render()" in CONCORD
+    assert "mobileChatOpen=true; mobileDrawerOpen=false; render(); scrollChatBottom()" in CONCORD
+    assert "mobileDrawerOpen=!mobileDrawerOpen" in CONCORD
+    assert 'id="cc-drawer-backdrop"' in CONCORD
     assert 'body.concord-view .cc-app{position:fixed!important' in CONCORD_CSS
-    assert 'flex-direction:row!important' in CONCORD_CSS
+    assert 'grid-template-columns:58px minmax(0,1fr)!important' in CONCORD_CSS
+    assert 'body.concord-view .cc-app.show-chat.drawer-open .cc-communities' in CONCORD_CSS
+    assert 'body.concord-view .cc-app.show-chat.drawer-open .cc-channels' in CONCORD_CSS
+    assert 'width:min(300px,calc(88vw - 58px))!important' in CONCORD_CSS
     assert 'body.concord-view .cc-app.show-chat{inset:0!important' in CONCORD_CSS
     assert 'body.concord-view .cc-app.home-view{inset:calc(58px + env(safe-area-inset-top)) 0 calc(61px + env(safe-area-inset-bottom)) 0!important' in CONCORD_CSS
     assert 'body.concord-view .cc-app.home-view{inset:0!important' not in CONCORD_CSS
@@ -165,10 +170,10 @@ def test_concord_has_honest_creation_and_public_discovery_empty_states():
 def test_mobile_reopens_the_last_server_then_drills_into_a_channel_like_discord():
     assert "localStorage.getItem('pc.concord.active')" in CONCORD
     assert "localStorage.setItem('pc.concord.active',String(i))" in CONCORD
-    assert 'mobileChatOpen=false, discoveryOpen=false' in CONCORD
+    assert 'mobileChatOpen=false, mobileDrawerOpen=false, discoveryOpen=false' in CONCORD
     assert "discoveryOpen=true; state.community=null" in CONCORD
-    assert "state.channel=b.dataset.ccChannel; mobileChatOpen=true" in CONCORD
-    assert "mobileChatOpen=false; render()" in CONCORD
+    assert "state.channel=b.dataset.ccChannel; mobileChatOpen=true; mobileDrawerOpen=false" in CONCORD
+    assert "mobileChatOpen=false; mobileDrawerOpen=false; render()" in CONCORD
     assert 'id="cc-home" title="Your rooms"' in CONCORD
     assert 'id="cc-discovery" title="Discover public communities"' in CONCORD
     assert "discoveryOpen=!rooms.length" in CONCORD
@@ -178,7 +183,7 @@ def test_mobile_reopens_the_last_server_then_drills_into_a_channel_like_discord(
     assert "if(room&&room.cord&&!room.cord.hydrated)" in CONCORD
     assert "await hydrateRoomStreams(p,state.community)" in CONCORD
     assert "if(state.community==null){ const rooms=saved(),wanted=Number(localStorage.getItem('pc.concord.active')" in CONCORD
-    assert "state.community==null?'Back to rooms':'Channels'" in CONCORD
+    assert "state.community==null?'Back to rooms':'Rooms and channels'" in CONCORD
 
 
 def test_created_and_joined_communities_survive_browser_storage_loss():

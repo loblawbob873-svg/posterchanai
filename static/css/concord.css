@@ -111,3 +111,94 @@ body.concord-view .cc-reaction-picker{display:grid!important;grid-template-colum
   body.concord-view .cc-joined-room{grid-template-columns:42px minmax(0,1fr)!important;min-height:64px!important;padding:10px!important}
 }
 @media(max-width:370px){body.concord-view #cc-call{display:none!important}body.concord-view .cc-conversation>header>b{max-width:30vw!important}body.concord-view .cc-compose #cc-emoji{display:none!important}}
+
+/* Phone Concord follows the working PosterChanOS workspace, not a separate card UI.  The same
+   vertical community rail + channel pane are visible before a room is opened and become one
+   dismissible drawer over the conversation afterwards.  This final block intentionally owns the
+   mobile cascade over the older horizontal-strip experiment above. */
+.cc-drawer-backdrop{display:none}
+@media(max-width:820px){
+  body.concord-view .cc-app:not(.show-chat){
+    display:grid!important;
+    grid-template-columns:58px minmax(0,1fr)!important;
+    grid-template-rows:minmax(0,1fr)!important;
+    flex-direction:initial!important;
+  }
+  body.concord-view .cc-app:not(.show-chat) .cc-communities{
+    grid-column:1!important;
+    display:flex!important;
+    flex-direction:column!important;
+    align-items:center!important;
+    width:58px!important;
+    max-width:58px!important;
+    height:100%!important;
+    padding:8px 6px!important;
+    overflow-x:hidden!important;
+    overflow-y:auto!important;
+    border:0!important;
+    border-inline-end:1px solid rgba(255,255,255,.06)!important;
+  }
+  body.concord-view .cc-app:not(.show-chat) .cc-channels{
+    grid-column:2!important;
+    display:flex!important;
+    width:100%!important;
+    max-width:none!important;
+    height:100%!important;
+  }
+  body.concord-view .cc-app:not(.show-chat) .cc-brand,
+  body.concord-view .cc-app:not(.show-chat) .cc-server{
+    flex:0 0 46px!important;
+    width:46px!important;
+    height:46px!important;
+  }
+  body.concord-view .cc-app.show-chat:not(.drawer-open) .cc-communities,
+  body.concord-view .cc-app.show-chat:not(.drawer-open) .cc-channels{display:none!important}
+  body.concord-view .cc-app.show-chat.drawer-open .cc-drawer-backdrop{
+    display:block!important;
+    position:fixed!important;
+    z-index:50!important;
+    inset:0!important;
+    width:100%!important;
+    height:100%!important;
+    padding:0!important;
+    border:0!important;
+    background:rgba(0,0,0,.58)!important;
+  }
+  body.concord-view .cc-app.show-chat.drawer-open .cc-communities{
+    display:flex!important;
+    position:fixed!important;
+    z-index:52!important;
+    inset:0 auto 0 0!important;
+    flex-direction:column!important;
+    align-items:center!important;
+    width:58px!important;
+    max-width:58px!important;
+    height:100dvh!important;
+    padding:calc(8px + env(safe-area-inset-top)) 6px calc(8px + env(safe-area-inset-bottom))!important;
+    overflow-x:hidden!important;
+    overflow-y:auto!important;
+    border:0!important;
+    border-inline-end:1px solid rgba(255,255,255,.06)!important;
+  }
+  body.concord-view .cc-app.show-chat.drawer-open .cc-channels{
+    display:flex!important;
+    position:fixed!important;
+    z-index:52!important;
+    inset:0 auto 0 58px!important;
+    width:min(300px,calc(88vw - 58px))!important;
+    max-width:calc(100vw - 58px)!important;
+    height:100dvh!important;
+    padding-top:env(safe-area-inset-top)!important;
+    padding-bottom:env(safe-area-inset-bottom)!important;
+    border:0!important;
+    box-shadow:18px 0 38px rgba(0,0,0,.46)!important;
+  }
+  body.concord-view .cc-app.show-chat.drawer-open .cc-brand,
+  body.concord-view .cc-app.show-chat.drawer-open .cc-server{
+    flex:0 0 46px!important;
+    width:46px!important;
+    height:46px!important;
+  }
+  body.concord-view .cc-app.show-chat.drawer-open .cc-conversation{display:flex!important}
+  body.concord-view .cc-mobile-back{font-size:22px!important;font-weight:800!important}
+}

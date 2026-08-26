@@ -124,6 +124,7 @@ CHECKS = {
     "check_notes_mobile":              dict(group="ui", secs=600),
     "check_files_explorer":            dict(group="ui", secs=600),
     "check_mail_mobile":               dict(group="ui", secs=600),
+    "check_concord_mobile":            dict(group="ui", secs=420),
     "check_article_editor":            dict(group="ui", secs=600),
 
     # --- browser checks that drive a page they build themselves ----------------------------------
