@@ -33024,6 +33024,13 @@
       if(overlay.parentElement!==target)target.appendChild(overlay);
     }
   }
+  function _rdEnsureHost(){
+    if(_remoteDesktopHost&&_remoteDesktopHost.isConnected)return _remoteDesktopHost;
+    // PosterChanOS owns app windows. Ask it synchronously to create/focus the Remote Desktop
+    // window before rendering; falling back to body is what painted a session over Terminal.
+    try{document.dispatchEvent(new CustomEvent('pc:remote-desktop-window'));}catch(_){}
+    return _remoteDesktopHost&&_remoteDesktopHost.isConnected?_remoteDesktopHost:null;
+  }
   function setRemoteDesktopArmed(on){
     _remoteDesktopArmed=!!on;
     if(!_remoteDesktopArmed&&_call&&_call.remoteDesktop)_hangup(false);
@@ -33033,9 +33040,18 @@
   function _rdReleaseNative(){try{if(window.pcRemoteControl&&pcRemoteControl.release)pcRemoteControl.release();}catch(_){}}
   function _rdWatchScreen(local){
     const screen=local&&local.getVideoTracks&&local.getVideoTracks()[0];
+    if(screen)try{screen.contentHint='detail';}catch(_){}
     if(screen)screen.addEventListener('ended',()=>{
       if(_call&&_call.local===local&&_call.remoteDesktop)_hangup(false);
     },{once:true});
+  }
+  async function _rdTuneSender(sender){
+    if(!sender)return;try{
+      const p=sender.getParameters();p.degradationPreference='maintain-resolution';
+      if(!p.encodings||!p.encodings.length)p.encodings=[{}];
+      p.encodings[0].maxBitrate=12000000;p.encodings[0].maxFramerate=24;
+      await sender.setParameters(p);
+    }catch(_){}
   }
   async function _rdSwitchScreen(){
     if(!_call||!_call.remoteDesktop||!_call.caller||!_call.pc)return;
@@ -33045,7 +33061,7 @@
     if(!_call||_call!==activeCall){next.getTracks().forEach(t=>t.stop());return;}
     const track=next.getVideoTracks()[0],sender=activeCall.pc.getSenders().find(s=>s.track&&s.track.kind==='video');
     if(!track||!sender){next.getTracks().forEach(t=>t.stop());toast('could not switch screens');return;}
-    try{await sender.replaceTrack(track);}catch(_){next.getTracks().forEach(t=>t.stop());toast('could not switch screens');return;}
+    try{track.contentHint='detail';await sender.replaceTrack(track);await _rdTuneSender(sender);}catch(_){next.getTracks().forEach(t=>t.stop());toast('could not switch screens');return;}
     // Swap the identity before stopping the previous track: its ended listener must not interpret
     // this intentional replacement as Stop sharing and tear down the call.
     activeCall.local=next;_rdWatchScreen(next);if(old)old.getTracks().forEach(t=>t.stop());_callUI();
@@ -33175,7 +33191,7 @@
     if(!_call){ local.getTracks().forEach(t=>t.stop()); return; }
     const pc = _newPc(ice.iceServers); _call.pc = pc;
     if(remoteDesktop) _rdWireControl(pc.createDataChannel('posterchan-control',{ordered:true}));
-    local.getTracks().forEach(t=> pc.addTrack(t, local));
+    local.getTracks().forEach(t=>{const sender=pc.addTrack(t,local);if(remoteDesktop&&t.kind==='video')_rdTuneSender(sender);});
     _preferH264(pc);   // hardware encode/decode on both ends — see _preferH264
     // Guard the SDP dance: a createOffer/setLocalDescription rejection (SDP/codec/hardware quirk) or a
     // hangup during these awaits must tear down cleanly, not wedge _call in 'calling' forever.
@@ -33576,7 +33592,7 @@
         <div class="call-head"><img id="call-av" onerror="this.src='${LOGO}'"><div><div class="call-name" id="call-name"></div><div class="call-status" id="call-status"></div></div></div>
         <video id="call-local" class="call-local" autoplay playsinline muted></video>
         <div class="call-actions" id="call-actions"></div>`;
-      const callHost=_call.remoteDesktop&&_remoteDesktopHost&&_remoteDesktopHost.isConnected?_remoteDesktopHost:document.body;
+      const callHost=_call.remoteDesktop?(_rdEnsureHost()||document.body):document.body;
       callHost.appendChild(el);
       // Tap the minimized thumbnail (anywhere but a button) to restore it. The call lives in the
       // PeerConnection, not the DOM, so minimizing/restoring never touches the media.
@@ -33593,7 +33609,7 @@
     // Preserve the minimized state: _callUI re-runs on every call event (ICE, mute, remote video), and a
     // bare reassignment would drop `call-mini` and pop the overlay back to fullscreen on its own.
     const _mini=el.classList.contains('call-mini');
-    el.className='call-overlay'+(showVid?' vid':' aud')+(_call.state==='ringing'?' ring':'')+(_call.state==='connected'?' on':'')+(_mini?' call-mini':'');
+    el.className='call-overlay'+(_call.remoteDesktop?' rd':'')+(showVid?' vid':' aud')+(_call.state==='ringing'?' ring':'')+(_call.state==='connected'?' on':'')+(_mini?' call-mini':'');
     const rv=document.getElementById('call-remote'); if(rv){ rv.style.display=hasRemoteVid?'':'none'; if(_call.remote && rv.srcObject!==_call.remote){ rv.srcObject=_call.remote; rv.play&&rv.play().catch(()=>{}); } if(_call.remoteDesktop&&!_call.caller)_rdBindViewer(rv); }
     const lv=document.getElementById('call-local'); if(lv){ lv.style.display=(hasLocalVid&&!_call.camOff)?'':'none'; if(_call.local && lv.srcObject!==_call.local){ lv.srcObject=_call.local; lv.play&&lv.play().catch(()=>{}); }
       // Wire + restore AFTER display is set: offsetWidth is 0 while hidden, so placing it any earlier

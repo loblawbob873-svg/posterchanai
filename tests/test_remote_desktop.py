@@ -216,6 +216,29 @@ def test_remote_desktop_session_renders_inside_its_managed_window():
     assert "function setRemoteDesktopHost(el)" in APP
     assert "callHost.appendChild(el)" in APP
     assert ".pcrd-session>.call-overlay{position:absolute" in css
+    assert "document.dispatchEvent(new CustomEvent('pc:remote-desktop-window'))" in APP
+    assert "document.addEventListener('pc:remote-desktop-window',()=>openRemoteDesktop())" in OS
+
+
+def test_remote_desktop_prefers_readable_text_over_frame_rate():
+    css = (ROOT / "static/css/client.css").read_text(encoding="utf-8")
+    assert "screen.contentHint='detail'" in APP
+    assert "p.degradationPreference='maintain-resolution'" in APP
+    assert "p.encodings[0].maxBitrate=12000000" in APP
+    assert "_call.remoteDesktop?' rd'" in APP
+    assert ".call-overlay.rd .call-remote{object-fit:contain" in css
+
+
+def test_window_focus_and_minimize_do_not_recreate_or_end_remote_session():
+    host = APP[APP.index("function setRemoteDesktopHost(el)"):APP.index("function _rdEnsureHost()")]
+    # Reparent the one existing overlay; never rebuild media or touch call state when its managed
+    # window is focused, restored, moved, or reattached by the compositor.
+    assert "overlay.parentElement!==target" in host
+    assert "target.appendChild(overlay)" in host
+    assert "_hangup" not in host and "_callTeardown" not in host
+    ui = APP[APP.index("function _callUI()") : APP.index("function _setOverlayMini", APP.index("function _callUI()"))]
+    assert "if(!el){" in ui
+    assert "document.createElement('div')" in ui
 
 
 def test_launcher_tiles_leave_desktop_without_forgetting_the_preference():

@@ -1942,6 +1942,10 @@
     selfButton.onclick=()=>{const viewer=PC().viewer&&PC().viewer(),pk=viewer&&viewer.pubkey;if(!pk){status.textContent='Sign in before sharing to another device.';return;}go(pk);};
     button.onclick=()=>go();input.oninput=()=>{choose.hidden=true;status.textContent='';};input.onkeydown=e=>{if(e.key==='Enter')go();};return w;
   }
+  // app.js receives WebRTC signaling independently of whichever simulated app currently has focus.
+  // A Remote Desktop session must never use that current app as its canvas: ensure the dedicated
+  // managed window exists before the call overlay is mounted.
+  document.addEventListener('pc:remote-desktop-window',()=>openRemoteDesktop());
 
   /* Route a view switch to that feature's OWN window. Returns true when it has taken over (a window
    * was created and has already repainted itself), false when the caller should paint where it is —
