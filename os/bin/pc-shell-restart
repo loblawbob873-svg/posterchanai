@@ -1,23 +1,13 @@
 #!/bin/sh
-# Reload the PosterChan renderer without unmapping the desktop Wayland surface.
+# Replace the PosterChan desktop process and load one coherent installed build.
 #
-# EXCEPT AFTER AN UPDATE, WHICH IS A DIFFERENT ACT AND HAS TO BE TOLD APART.
-#
-# The tick below reloads the PAGE inside a process that keeps running. That is right for a wedged
-# renderer and wrong the moment the code on disk is no longer the code this process started from:
-# `update-posterchan` renames /opt/posterchan aside and deletes it, and `emerge` replaces the files
-# in place, so a reload then loads the NEW bundle into the OLD main process — a mismatched preload,
-# a protocol handler reading an archive whose header it has already cached — and both monitors go
-# black with nothing in any log. Reported exactly that way: "ctrl alt backspace after update always
-# shows 2 black screens". A stale process cannot be reloaded, only replaced.
-#
-# HOW STALENESS IS MEASURED: /proc/<pid>/exe is a magic link to the INODE the process is running,
-# which survives the file being renamed or unlinked. Stat it, stat the path it names, and compare.
-# Different (or the path is gone) means the desktop was replaced underneath this process.
-#
-# AND WHEN IT CANNOT BE MEASURED, IT IS NOT STALE. A restart closes every window the person has
-# open; a reload costs a second. So no /proc, no stat, no readable link — reload. The only thing
-# that earns the expensive answer is positive evidence, never the absence of it.
+# Do not try to infer whether an update happened by comparing /proc/<pid>/exe with the executable
+# on disk. Electron itself is commonly byte-identical between PosterChan releases while
+# resources/app.asar changed. In that case the executable comparison says "current", a renderer
+# reload mixes a new page with the OLD main/preload/protocol code, and only a reboot appears to pick
+# up the update. Ctrl+Alt+Backspace is the explicit recovery/restart shortcut, so correctness wins:
+# always replace the process. The launcher serializes startup, removes dead singleton locks, and
+# proves that the replacement surfaces mapped.
 set -u
 pattern='[/]opt/posterchan/'
 # The launcher's path, overridable so this script can be RUN by a test rather than read by one.
@@ -27,31 +17,7 @@ pattern='[/]opt/posterchan/'
 pids=$(pgrep -f "$pattern" 2>/dev/null)
 
 if [ -n "$pids" ]; then
-	stale=0
-	for pid in $pids; do
-		link=$(readlink "/proc/$pid/exe" 2>/dev/null) || continue
-		[ -n "$link" ] || continue
-		# A deleted binary says so in the link itself on every kernel that has /proc.
-		case "$link" in
-		*' (deleted)')
-			stale=1
-			break
-			;;
-		esac
-		running=$(stat -Lc '%d:%i' "/proc/$pid/exe" 2>/dev/null) || continue
-		ondisk=$(stat -Lc '%d:%i' "$link" 2>/dev/null) || { stale=1; break; }
-		[ -n "$running" ] && [ -n "$ondisk" ] || continue
-		if [ "$running" != "$ondisk" ]; then
-			stale=1
-			break
-		fi
-	done
-
-	if [ "$stale" -eq 0 ]; then
-		exec swaymsg -t send_tick pc:restart
-	fi
-
-	# REPLACED ON DISK. Stop it and fall through to the full launcher, which owns stale-lock
+	# Stop it and fall through to the full launcher, which owns stale-lock
 	# cleanup, environment recovery, retries and the proof that a replacement surface mapped.
 	# TERM first and a bounded wait: Electron writes its singleton lock on the way out, and killing
 	# it outright leaves the lock for the launcher to clean up as a "dead" one it has to guess about.

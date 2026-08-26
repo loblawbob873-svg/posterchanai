@@ -31,6 +31,16 @@ def test_remote_desktop_is_armed_only_while_its_app_is_open_on_both_ends():
     assert "setRemoteDesktopArmed&&PC().setRemoteDesktopArmed(false)" in os_src
 
 
+def test_same_identity_remote_desktop_auto_accepts_on_the_other_device_only():
+    assert "const _CALL_DEVICE_ID=" in APP
+    assert "Object.assign({},obj,{deviceId:_CALL_DEVICE_ID})" in APP
+    assert "msg.deviceId===_CALL_DEVICE_ID)return" in APP
+    assert "if(msg.remoteDesktop&&from===ME.pubkey){_acceptCall().catch(()=>{});return;}" in APP
+    # Consent is still required before the self-device auto-answer branch can be reached.
+    assert APP.index("if(msg.remoteDesktop&&!_remoteDesktopArmed)return") < APP.index(
+        "if(msg.remoteDesktop&&from===ME.pubkey)")
+
+
 def test_control_is_revocable_and_dies_with_the_call():
     assert "_rdSend({t:'release'})" in APP
     assert "m.t==='release'&&_call.caller" in APP

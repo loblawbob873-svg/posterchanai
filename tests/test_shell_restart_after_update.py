@@ -1,4 +1,4 @@
-"""Ctrl+Alt+Backspace must tell a wedged renderer from a REPLACED one.
+"""Ctrl+Alt+Backspace must replace Electron so every layer uses the installed build.
 
 "ctrl alt backspace after update always shows 2 black screens now."
 
@@ -10,9 +10,8 @@ OLD main process — a mismatched preload, a protocol handler reading an archive
 already cached — and both monitors go black with nothing in any log. A stale process cannot be
 reloaded, only replaced.
 
-THE OTHER HALF, and the reason this is not simply "always restart": a restart closes every window
-the person has open, and a reload costs a second. So the expensive answer is earned by POSITIVE
-evidence only. No /proc, an unreadable link, a pid that has already gone — all reload.
+Electron's executable can remain identical while app.asar changes, so executable-inode detection
+cannot prove that main/preload code is current. The explicit recovery shortcut always restarts.
 
 THIS FILE RUNS THE SCRIPT. A grep for `readlink` would pass against a check wired to the wrong half
 of an `if`, and staleness here is measured off real inodes — so each case starts a real process from
@@ -115,14 +114,12 @@ class ShellRestartTellsAReloadFromAReplacement(unittest.TestCase):
     def _relaunched(self):
         return "started" in self._log("start.log")
 
-    # ---- the two answers --------------------------------------------------------------------
-    def test_a_live_desktop_whose_binary_is_intact_is_only_reloaded(self):
-        """The ordinary case, and the one that must stay cheap: nobody's windows are closed."""
+    def test_a_live_desktop_is_replaced_even_when_its_binary_is_intact(self):
+        """An unchanged Electron binary does not mean the app.asar bundle is unchanged."""
         self._start_desktop()
         self._run()
-        self.assertTrue(self._ticked(), "a healthy desktop was not sent the reload tick")
-        self.assertFalse(self._relaunched(),
-                         "a healthy desktop was restarted, which closes every open window")
+        self.assertFalse(self._ticked(), "the old Electron process was reused")
+        self.assertTrue(self._relaunched(), "the installed build was not started")
 
     def test_a_desktop_whose_binary_was_deleted_is_replaced(self):
         """What `update-posterchan` does: /opt/posterchan is renamed aside and then removed."""
@@ -153,22 +150,18 @@ class ShellRestartTellsAReloadFromAReplacement(unittest.TestCase):
         self._run()
         self.assertIsNotNone(proc.poll(), "the old desktop is still running beside the new one")
 
-    # ---- and the rule that keeps it from being trigger-happy ---------------------------------
     def test_no_desktop_at_all_goes_straight_to_the_launcher(self):
         self._pids("")
         self._run()
         self.assertFalse(self._ticked(), "a tick was sent to a shell that is not running")
         self.assertTrue(self._relaunched())
 
-    def test_a_pid_that_cannot_be_measured_is_reloaded_not_restarted(self):
-        """"I could not ask" is never "it is stale". A restart closes every window, so it is
-        earned by positive evidence only — here pgrep names a pid with no /proc entry, which is
-        what a process exiting between the two calls looks like."""
+    def test_a_pid_that_exits_during_restart_still_goes_to_the_launcher(self):
+        """A process exiting between pgrep and kill must not swallow the requested restart."""
         self._pids("2147483646")                    # far above any live pid
         self._run()
-        self.assertTrue(self._ticked(),
-                        "an unmeasurable pid closed every window the person had open")
-        self.assertFalse(self._relaunched())
+        self.assertFalse(self._ticked())
+        self.assertTrue(self._relaunched())
 
     # ---- the two copies -----------------------------------------------------------------------
     def test_both_copies_of_the_helper_are_the_same_file(self):
@@ -183,8 +176,8 @@ class ShellRestartTellsAReloadFromAReplacement(unittest.TestCase):
         where the comparison above is relaxed later."""
         self._start_desktop()
         self._run(PACKAGED)
-        self.assertTrue(self._ticked())
-        self.assertFalse(self._relaunched())
+        self.assertFalse(self._ticked())
+        self.assertTrue(self._relaunched())
 
 
 if __name__ == "__main__":

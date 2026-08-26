@@ -32923,12 +32923,17 @@
    * (no tag), the server would have to ring for both, and nothing would be fixed. Tagging all of them
    * makes ABSENCE mean exactly one thing: a client older than this change. */
   const _RING_FRAMES = new Set(['invite', 'ginvite']);   // 1:1 and group; the only two that ring
+  /* Distinguish devices signed into the same identity. A self-addressed invite is delivered back to
+   * the sending device too; without this marker it tears down its own offer as glare. sessionStorage
+   * makes the marker per renderer/session, never an account identifier published anywhere else. */
+  const _CALL_DEVICE_ID=(()=>{try{let v=sessionStorage.getItem('pc_call_device');if(!v){v=_rid();sessionStorage.setItem('pc_call_device',v);}return v;}catch(_){return _rid();}})();
   function _callTags(peerHex, obj){
     return [['p', peerHex], ['t', (obj && _RING_FRAMES.has(obj.t)) ? 'invite' : 'sig']];
   }
   async function _callSend(peerHex, obj){
     try{
-      const ct = await signer.nip44enc(peerHex, JSON.stringify(obj));
+      const payload=Object.assign({},obj,{deviceId:_CALL_DEVICE_ID});
+      const ct = await signer.nip44enc(peerHex, JSON.stringify(payload));
       const ev = await sign(CALL_KIND, ct, _callTags(peerHex, obj));   // ephemeral, not stored, no client tag
       _callPublish(ev);
     }catch(_){}
@@ -32984,7 +32989,11 @@
     Comma:51,Period:52,Slash:53,ShiftRight:54,AltLeft:56,Space:57,CapsLock:58,ControlRight:97,AltRight:100,
     ArrowUp:103,ArrowLeft:105,ArrowRight:106,ArrowDown:108,Delete:111};
   let _remoteDesktopArmed=false;
-  function setRemoteDesktopArmed(on){_remoteDesktopArmed=!!on;if(!_remoteDesktopArmed&&_call&&_call.remoteDesktop)_hangup(false);return _remoteDesktopArmed;}
+  function setRemoteDesktopArmed(on){
+    _remoteDesktopArmed=!!on;
+    if(!_remoteDesktopArmed&&_call&&_call.remoteDesktop)_hangup(false);
+    return _remoteDesktopArmed;
+  }
   function _rdSend(obj){try{if(_call&&_call.control&&_call.control.readyState==='open')_call.control.send(JSON.stringify(obj));}catch(_){}}
   function _rdReleaseNative(){try{if(window.pcRemoteControl&&pcRemoteControl.release)pcRemoteControl.release();}catch(_){}}
   function _rdWireControl(ch){
@@ -33239,6 +33248,9 @@
     (async()=>{
       let msg; try{ msg = JSON.parse(await signer.nip44dec(ev.pubkey, ev.content)); }catch(_){ return; }
       const from = ev.pubkey;
+      // The relay also fans a self-addressed frame back to its sender. Other devices have a different
+      // marker and continue normally; this renderer must never answer or tear down its own offer.
+      if(msg&&msg.deviceId&&msg.deviceId===_CALL_DEVICE_ID)return;
       if(msg && msg.room){ try{ _onRoomEvent(from, msg); }catch(_){} return; }   // group-call (mesh) signaling
       // Another of MY devices answered (or declined) this call — stop ringing here. Only ever sent
       // by me to me, so a stranger cannot silence someone else's phone with it.
@@ -33277,6 +33289,10 @@
         // Stop ringing if the caller vanishes without a 'bye' (crash/offline) — ephemeral events can be lost.
         _call.timeout = setTimeout(()=>{ if(_call && _call.state==='ringing'){ _ringtone(false); _missedAdd(_call.peer, _call.id); _callTeardown(); } }, 60000);
         try{ needProfile(from); }catch(_){}
+        /* Same account, different device: opening Remote Desktop on both ends is the explicit consent.
+         * Auto-accept only that narrow case. Voice/video still rings, another identity still asks, and
+         * a closed Remote Desktop app was rejected by the armed gate above. */
+        if(msg.remoteDesktop&&from===ME.pubkey){_acceptCall().catch(()=>{});return;}
         _ringtone(true); _callUI();
         try{ if('Notification' in window && Notification.permission==='granted'){ const p=profOf(from)||{}; new Notification('📞 '+(p.name||'Incoming call'), {body:'tap to answer', tag:'pc-call'}); } }catch(_){}
         return;

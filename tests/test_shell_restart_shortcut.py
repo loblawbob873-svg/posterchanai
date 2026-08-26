@@ -45,7 +45,9 @@ def test_shell_restart_is_serialized_and_targets_only_the_shell_process():
     assert "PC_DESKTOP_LAUNCHER=/usr/bin/posterchan" in start
     assert "PC_DESKTOP_LAUNCHER=/usr/local/bin/posterchan" in start
     assert "pattern='[/]opt/posterchan/'" in restart
-    assert "send_tick pc:restart" in restart
+    assert "send_tick pc:restart" not in restart
+    assert "kill $pids" in restart
+    assert "resources/app.asar changed" in restart
     assert "pkill" not in restart
     assert "recoverSurfaces(_shellSurfaces.values(), loadApp).catch" in main
     assert "ev.payload !== 'pc:restart'" in main
