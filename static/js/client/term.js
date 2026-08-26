@@ -466,6 +466,9 @@
        * the 5,000-line scrollback. The buffer API is public xterm API, so this works in the web,
        * Android and desktop bundles without another CDN or a version-sensitive private property. */
       try{ term.attachCustomKeyEventHandler((ev) => {
+        if(ev.type==='keydown' && (ev.ctrlKey||ev.metaKey) && (ev.key==='PageUp'||ev.key==='PageDown')){
+          ev.preventDefault();_cycleTab(ev.key==='PageUp'?-1:1);return false;
+        }
         if(ev.type === 'keydown' && (ev.key === 'PageUp' || (ev.shiftKey && ev.key === 'ArrowUp')))
           _stopFollowing();
         if(ev.type === 'keydown' && (ev.ctrlKey || ev.metaKey) && ev.shiftKey
@@ -547,8 +550,15 @@
           px=Math.round(br.width*10)+'x'+Math.round(br.height*10);
           if(_fitPixels===px && _sentSize)return;
         }catch(_){}
+        /* FitAddon reflows scrollback when the row count changes. If this terminal was following
+         * the prompt, keep following across that reflow; otherwise the old viewport index can land
+         * hundreds of rows above the new bottom after a window resize. A user already reading
+         * history has followBottom=false and is deliberately left alone. */
+        const followThisFit=followBottom;
+        if(followThisFit)scrollingByUs=true;
         try{ term.options.fontSize = fontSize(); }catch(_){}
         try{ if(fit) fit.fit(); }catch(_){}
+        if(followThisFit)_pinBottomAfterLayout();
         /* A ZERO-SIZED BOX IS NOT A SIZE. In desktop mode the Terminal's window is PARKED when
          * another window takes focus — its nodes are moved aside, which fires the ResizeObserver
          * against an element with no layout. FitAddon declines to compute anything then, so
@@ -661,6 +671,14 @@
       followBottom = true;
       if(term) term.reset();
       _open({ resume: id, host: hostName || '', label });
+    }
+
+    function _cycleTab(step){
+      const tabs=[...document.querySelectorAll('#tty-sessions [data-tab]')];
+      if(tabs.length<2)return;
+      let at=tabs.findIndex(x=>x.dataset.tab===sid);if(at<0)at=0;
+      const next=tabs[(at+(step<0?-1:1)+tabs.length)%tabs.length];
+      if(next&&next.dataset.tab!==sid)attach(next.dataset.tab,next.dataset.host,next.dataset.label);
     }
 
     function _open(frame){

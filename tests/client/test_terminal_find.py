@@ -73,6 +73,24 @@ def test_large_replay_stays_pinned_until_chromium_finishes_layout():
     assert "if(followThisWrite) _pinBottomAfterLayout()" in out
 
 
+def test_resize_keeps_a_live_terminal_at_the_prompt_without_fighting_scrollback():
+    fit = TERM[TERM.index("function _fit()"):
+               TERM.index("/* ONE WAY OUT", TERM.index("function _fit()"))]
+    assert "const followThisFit=followBottom" in fit
+    assert fit.index("if(followThisFit)scrollingByUs=true") < fit.index("if(fit) fit.fit()")
+    assert "if(followThisFit)_pinBottomAfterLayout()" in fit
+
+
+def test_ctrl_page_keys_cycle_terminal_tabs_and_wrap_locally():
+    assert "function _cycleTab(step)" in TERM
+    assert "(at+(step<0?-1:1)+tabs.length)%tabs.length" in TERM
+    keys = TERM[TERM.index("attachCustomKeyEventHandler"):
+                TERM.index("return true;", TERM.index("attachCustomKeyEventHandler"))]
+    assert "ev.key==='PageUp'||ev.key==='PageDown'" in keys
+    assert "_cycleTab(ev.key==='PageUp'?-1:1)" in keys
+    assert "return false" in keys
+
+
 def test_find_navigation_and_close_are_wired():
     assert "_findMove(ev.shiftKey ? -1 : 1)" in TERM
     assert "if(ev.key === 'Escape')" in TERM
