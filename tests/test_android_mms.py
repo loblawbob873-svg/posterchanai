@@ -249,6 +249,19 @@ class MmsIdentity(unittest.TestCase):
         self.assertIn("MmsSender.send", retry)
         self.assertLess(retry.index("MmsSender.send"), retry.index("MmsStore.delete"))
 
+    def test_phone_delete_tombstones_the_cross_device_archive(self):
+        thread = open(os.path.join(SMS, "ThreadActivity.java"), encoding="utf-8").read()
+        outbox = open(os.path.join(SMS, "SmsOutbox.java"), encoding="utf-8").read()
+        relay = open(os.path.join(ac.JAVA, "place/poster/app/signer/SignerRelayService.java"),
+                     encoding="utf-8").read()
+        delete = thread[thread.index("private void deleteMessage"):
+                        thread.index("private String bubbleText")]
+        self.assertIn("if (n > 0) SignerRelayService.archiveDelete(this, m.docId())", delete)
+        self.assertIn("public static List<JSONObject> archiveDelete", outbox)
+        self.assertIn('a.add("a"); a.add(KIND + ":" + pubHex + ":" + doc)', outbox)
+        self.assertIn("smsArchiveDeletes.add(doc)", relay)
+        self.assertIn("events.addAll(SmsOutbox.archiveDelete", relay)
+
     out = None
 
     @classmethod

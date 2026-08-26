@@ -31,6 +31,8 @@ import android.widget.Button;
 import android.widget.GridLayout;
 import android.util.LruCache;
 
+import place.poster.app.signer.SignerRelayService;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.io.InputStream;
@@ -473,7 +475,8 @@ public class ThreadActivity extends PcActivity {
                 ? getString(R.string.sms_failed) : result.error); return; }
         // A new outbox row now owns this attempt; remove the old FAILED rendering only after the
         // platform accepted the retry, so a synchronous refusal loses nothing.
-        MmsStore.delete(this, new long[]{m.id});
+        if (MmsStore.delete(this, new long[]{m.id}) > 0)
+            SignerRelayService.archiveDelete(this, m.docId());
         say(getString(R.string.sms_retrying));
         reload();
     }
@@ -484,6 +487,7 @@ public class ThreadActivity extends PcActivity {
         // comes straight back on reload, so pending/failed MMS must use content://mms as well.
         int n = m.mms ? MmsStore.delete(this, new long[]{ m.id })
                       : SmsStore.delete(this, new long[]{ m.id });
+        if (n > 0) SignerRelayService.archiveDelete(this, m.docId());
         say(n > 0 ? getString(R.string.sms_deleted_here) : getString(R.string.sms_delete_failed));
         reload();
     }

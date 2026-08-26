@@ -91,6 +91,44 @@ public final class SmsOutbox {
         }
     }
 
+    /** Replace an archived message with a durable tombstone after Android deleted its provider row. */
+    public static List<JSONObject> archiveDelete(Context ctx, String doc) {
+        List<JSONObject> out = new ArrayList<JSONObject>();
+        try {
+            byte[] sec = SignerKey.load(ctx);
+            if (sec == null || doc == null || doc.isEmpty()) return out;
+            byte[] me = Nostr.pubkey(sec);
+            String pubHex = hex(me);
+            long now = System.currentTimeMillis() / 1000L;
+
+            List<List<String>> tags = new ArrayList<List<String>>();
+            List<String> d = new ArrayList<String>(); d.add("d"); d.add(doc); tags.add(d);
+            List<String> l = new ArrayList<String>(); l.add("l"); l.add(L_TAG); tags.add(l);
+            out.add(signed(sec, pubHex, now, KIND, tags, ""));
+
+            List<List<String>> delTags = new ArrayList<List<String>>();
+            List<String> a = new ArrayList<String>();
+            a.add("a"); a.add(KIND + ":" + pubHex + ":" + doc); delTags.add(a);
+            out.add(signed(sec, pubHex, now, 5, delTags, ""));
+        } catch (Throwable t) {
+            Log.w(TAG, "sms archive: could not seal deletion", t);
+            out.clear();
+        }
+        return out;
+    }
+
+    private static JSONObject signed(byte[] sec, String pubHex, long at, int kind,
+                                     List<List<String>> tags, String content) throws Exception {
+        String tagsJson = Nostr.tagsJson(tags);
+        String ser = Nostr.serialize(pubHex, at, kind, tagsJson, content);
+        byte[] id = Nostr.sha256(ser.getBytes("UTF-8"));
+        JSONObject ev = new JSONObject();
+        ev.put("id", hex(id)); ev.put("pubkey", pubHex); ev.put("created_at", at);
+        ev.put("kind", kind); ev.put("tags", new JSONArray(tagsJson)); ev.put("content", content);
+        ev.put("sig", hex(Nostr.sign(id, sec, null)));
+        return ev;
+    }
+
     /** The REQ this drain needs on a relay socket the caller already owns. */
     public static JSONObject filter(String mePubHex) throws Exception {
         JSONObject f = new JSONObject();

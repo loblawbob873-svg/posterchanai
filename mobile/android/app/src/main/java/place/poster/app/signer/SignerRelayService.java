@@ -159,11 +159,20 @@ public class SignerRelayService extends Service {
     private boolean stopping = false;
     private static final java.util.concurrent.ConcurrentLinkedQueue<String[]> smsArchive =
             new java.util.concurrent.ConcurrentLinkedQueue<>();
+    private static final java.util.concurrent.ConcurrentLinkedQueue<String> smsArchiveDeletes =
+            new java.util.concurrent.ConcurrentLinkedQueue<>();
 
     /** Called by the SMS_DELIVER receiver; the queue survives a cold service start in this process. */
     public static void archiveIncoming(Context ctx, String from, String body, long when) {
         smsArchive.add(new String[]{from == null ? "" : from, body == null ? "" : body,
                 Long.toString(when)});
+        if (wanted(ctx)) kick(ctx, ACTION_SMS_ARCHIVE);
+    }
+
+    /** Remove the encrypted mirror too; deleting only Telephony leaves old media on desktop. */
+    public static void archiveDelete(Context ctx, String doc) {
+        if (doc == null || doc.isEmpty()) return;
+        smsArchiveDeletes.add(doc);
         if (wanted(ctx)) kick(ctx, ACTION_SMS_ARCHIVE);
     }
 
@@ -680,16 +689,25 @@ public class SignerRelayService extends Service {
     private void publishSmsArchive() {
         if (socks.isEmpty()) return;                 // onOpen calls us again once a relay exists
         final String[] row = smsArchive.poll();
-        if (row == null) return;
+        final String deletedDoc = row == null ? smsArchiveDeletes.poll() : null;
+        if (row == null && deletedDoc == null) return;
         final java.util.List<WebSocket> targets = new java.util.ArrayList<>(socks.values());
         pool().execute(() -> {
-            JSONObject ev = SmsOutbox.archiveIncoming(SignerRelayService.this, row[0], row[1],
-                    Long.parseLong(row[2]));
+            final java.util.List<JSONObject> events = new java.util.ArrayList<>();
+            if (row != null) {
+                JSONObject ev = SmsOutbox.archiveIncoming(SignerRelayService.this, row[0], row[1],
+                        Long.parseLong(row[2]));
+                if (ev != null) events.add(ev);
+            } else events.addAll(SmsOutbox.archiveDelete(SignerRelayService.this, deletedDoc));
             handler.post(() -> {
-                if (ev == null) smsArchive.add(row);
+                if (events.isEmpty()) {
+                    if (row != null) smsArchive.add(row); else smsArchiveDeletes.add(deletedDoc);
+                }
                 else {
-                    String wire = new JSONArray().put("EVENT").put(ev).toString();
-                    for (WebSocket ws : targets) if (ws != null) ws.send(wire);
+                    for (JSONObject ev : events) {
+                        String wire = new JSONArray().put("EVENT").put(ev).toString();
+                        for (WebSocket ws : targets) if (ws != null) ws.send(wire);
+                    }
                 }
                 publishSmsArchive();
             });
