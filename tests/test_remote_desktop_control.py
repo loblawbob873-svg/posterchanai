@@ -25,7 +25,7 @@ def test_remote_desktop_is_armed_only_while_its_app_is_open_on_both_ends():
     os_src = (ROOT / "static/js/client/os.js").read_text()
     assert "let _remoteDesktopArmed=false" in APP
     assert "if(!_remoteDesktopArmed)throw new Error('open Remote Desktop before starting a session')" in APP
-    assert "if(msg.remoteDesktop&&!_remoteDesktopArmed)return" in APP
+    assert "if(remoteDesktopInvite&&!_remoteDesktopArmed)return" in APP
     assert "setRemoteDesktopArmed&&PC().setRemoteDesktopArmed(true)" in os_src
     assert "w.onClose=()=>" in os_src
     assert "setRemoteDesktopArmed&&PC().setRemoteDesktopArmed(false)" in os_src
@@ -35,10 +35,10 @@ def test_same_identity_remote_desktop_auto_accepts_on_the_other_device_only():
     assert "const _CALL_DEVICE_ID=" in APP
     assert "Object.assign({},obj,{deviceId:_CALL_DEVICE_ID})" in APP
     assert "msg.deviceId===_CALL_DEVICE_ID)return" in APP
-    assert "if(msg.remoteDesktop&&from===ME.pubkey){_acceptCall().catch(()=>{});return;}" in APP
+    assert "if(remoteDesktopInvite&&from===ME.pubkey){_acceptCall().catch(()=>{});return;}" in APP
     # Consent is still required before the self-device auto-answer branch can be reached.
-    assert APP.index("if(msg.remoteDesktop&&!_remoteDesktopArmed)return") < APP.index(
-        "if(msg.remoteDesktop&&from===ME.pubkey)")
+    assert APP.index("if(remoteDesktopInvite&&!_remoteDesktopArmed)return") < APP.index(
+        "if(remoteDesktopInvite&&from===ME.pubkey)")
 
 
 def test_control_is_revocable_and_dies_with_the_call():
@@ -51,6 +51,6 @@ def test_control_is_revocable_and_dies_with_the_call():
 
 def test_remote_packets_are_bounded_before_crossing_the_native_bridge():
     assert "String(e.data||'').length>512" in APP
-    assert "Math.max(-240,Math.min(240" in APP
+    assert "Math.max(-12,Math.min(12,Math.sign(e.deltaY)))" in APP
     assert "window.pcRemoteControl&&pcRemoteControl.input" in APP
     assert "const _RD_KEYS=" in APP

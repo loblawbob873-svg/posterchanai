@@ -168,7 +168,8 @@ class SurfaceTests(unittest.TestCase):
         """Desktop mode builds its launcher FROM the sidebar, so the icon is free — but the two
         places that used to open the mailbox by opening Messages are not."""
         self.assertIn("openApp('mail')", OS_JS)
-        self.assertNotIn("openApp('messages')", OS_JS)
+        executable = re.sub(r"/\*.*?\*/|//[^\n]*", "", OS_JS, flags=re.S)
+        self.assertNotIn("openApp('messages')", executable)
         self.assertIn("if(view === 'mail'){", OS_JS,
                       "the tray's unread-mail acknowledgement still keys on Messages")
 

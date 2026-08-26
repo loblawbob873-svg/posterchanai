@@ -49,7 +49,12 @@ def _client_tags(frames):
         r"const _RING_FRAMES = new Set\(.*?\n  function _callTags\(peerHex, obj\)\{\n.*?\n  \}",
         src, re.S)
     assert m, "could not find _RING_FRAMES/_callTags in app.js — did they move or get renamed?"
-    js = m.group(0) + "\nconsole.log(JSON.stringify(JSON.parse(process.argv[1]).map(t=>_callTags('peer',{t}))));"
+    # The captured production block now includes the per-device call ID initializer immediately
+    # above _callTags. Give that initializer the two browser globals it owns; the tag behavior is
+    # still the shipped function, not a reimplementation in this test.
+    js = ("const sessionStorage={getItem:()=>null,setItem:()=>{}};const _rid=()=>\"device\";\n"
+          + m.group(0)
+          + "\nconsole.log(JSON.stringify(JSON.parse(process.argv[1]).map(t=>_callTags('peer',{t}))));")
     out = subprocess.run(["node", "-e", js, json.dumps(list(frames))],
                          capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, f"node failed: {out.stderr}"
