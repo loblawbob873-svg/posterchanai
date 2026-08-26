@@ -196,6 +196,19 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
                       "web and packaged roots are non-entity screens; routing either would create "
                       "an extra Social window beside the app that was moved")
 
+    def test_messages_handoff_restores_either_tab_in_the_same_frame(self):
+        """Reported sequence: Messages -> Communities -> other monitor -> Direct Messages.
+
+        The receiver must explicitly adopt either selected tab. Restoring only Concord leaves
+        Direct Messages dependent on the receiver's page-global view and can pop out a second app.
+        """
+        i = self.os.index("if(pcWM.onHandoffFrame")
+        body = self.os[i:self.os.index("if(p.path &&", i)]
+        self.assertIn("p.messagesTab==='concord'||p.messagesTab==='messages'", body)
+        self.assertIn("w.appView=p.messagesTab", body)
+        self.assertIn("PC().switchView&&PC().switchView(p.messagesTab)", body)
+        self.assertNotIn("PC().switchView&&PC().switchView('concord')", body)
+
     def test_the_client_exposes_both_halves(self):
         """os.js can only reach what is on `window.__PC` — the recurring `PC.x is not a function`."""
         i = self.app.index("ensureProfile: _ensureProfile")

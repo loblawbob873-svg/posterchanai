@@ -2840,7 +2840,8 @@
     /* Messages has one canonical window identity. The selected Direct/Communities tab travels in
      * handoffPayload; recreating the frame as the historical `concord` alias made a later Direct
      * click depend on alias lookup and could manufacture a second frame. */
-    if(sameAppWindow(opened,current)) return 'messages';
+    if((opened==='messages'||opened==='concord')&&
+       (current==='messages'||current==='concord')) return 'messages';
     /* Music is opened by the __music launcher action, which in turn creates a doc:music window.
      * doc:music is a uniqueness key, not a launcher/render identity: handing that key to another
      * renderer creates a generic shared-feed document and can display Social inside a Music frame.
@@ -6392,9 +6393,13 @@
               PCConcord.acceptHandoff(p.state);
             const w=openApp(String(p.view), String(p.title||''), String(p.icon||''));
             if(!w) return;
-            if(p.messagesTab==='concord'){
-              w.appView='concord';repainting++;
-              try{PC().switchView&&PC().switchView('concord');}catch(_){}
+            /* A monitor handoff recreates the one Messages frame, then restores its selected tab.
+             * Do this for BOTH tabs. Relying on openApp('messages') to incidentally paint Direct
+             * Messages left the page-global Concord view in charge on some receiving renderers;
+             * the next Direct click then routed outward and produced a second window. */
+            if(p.messagesTab==='concord'||p.messagesTab==='messages'){
+              w.appView=p.messagesTab;w.appPath='';repainting++;
+              try{PC().switchView&&PC().switchView(p.messagesTab);}catch(_){}
               finally{repainting--;}
             }
             /* AND THEN PUT IT BACK ON THE SCREEN IT WAS ON. openApp can only open what a view NAME

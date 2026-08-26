@@ -257,6 +257,17 @@ def test_chat_scroll_is_keyed_by_room_and_survives_profile_link_navigation():
     assert 'scroller.dataset.osParking' in CONCORD
 
 
+def test_every_room_entry_tracks_async_growth_all_the_way_to_latest():
+    """Community metadata, decrypted history and media arrive after the first paint."""
+    assert "function enterChatBottom()" in CONCORD
+    assert "[0,60,180,450,900,1600]" in CONCORD
+    server = CONCORD.split("$$('[data-cc-server]')", 1)[1].split("$$('[data-cc-discover]')", 1)[0]
+    discover = CONCORD.split("$$('[data-cc-discover]')", 1)[1].split("$$('[data-cc-channel]')", 1)[0]
+    channel = CONCORD.split("$$('[data-cc-channel]')", 1)[1].split("$$('[data-cc-star]')", 1)[0]
+    for handler in (server, discover, channel):
+        assert handler.count('enterChatBottom()') >= 2
+
+
 def test_concord_ctrl_or_cmd_enter_sends_without_breaking_plain_enter():
     assert 'bind(me);' in CONCORD and 'function bind(me)' in CONCORD
     assert "e.key==='Enter'||e.code==='Enter'" in CONCORD
