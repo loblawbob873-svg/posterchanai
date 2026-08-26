@@ -104,6 +104,11 @@ public class HomeActivity extends Activity implements DeskView.Host {
     private boolean homeVisible = false;
     private boolean homeIntentBeforeStart = false;
     private boolean homeStartPending = false;
+    /* Activity.hasWindowFocus() is not a stable signal while HOME is being brought forward: some
+     * Android builds update the framework's cached value after delivering onNewIntent.  Record the
+     * actual focus callback instead so an onStart -> onNewIntent echo from one physical press can
+     * never masquerade as a focused second press. */
+    private boolean homeWindowFocused = false;
     private static final long HOME_START_ECHO_MS = 120L;
     private final Runnable countHomeStart = new Runnable() {
         @Override public void run() {
@@ -112,6 +117,12 @@ public class HomeActivity extends Activity implements DeskView.Host {
             HomeDoublePress.arrived(SystemClock.elapsedRealtime());
         }
     };
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        homeWindowFocused = hasFocus;
+    }
 
     private List<AppShelf.Entry> installed = new ArrayList<AppShelf.Entry>();
     private List<AppShelf.Entry> ourTiles = new ArrayList<AppShelf.Entry>();
@@ -382,7 +393,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
              * 120 ms debounce window.  The old unconditional cancellation threw that first press
              * away, so a fast double-tap could never fire.  Commit the pending first press now;
              * the arrived() call below records the focused second one and completes the pair. */
-            if (hasWindowFocus()) {
+            if (homeWindowFocused) {
                 HomeDoublePress.arrived(SystemClock.elapsedRealtime());
             }
         } else if (!homeVisible) {

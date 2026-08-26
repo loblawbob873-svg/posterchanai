@@ -347,7 +347,9 @@ class DoubleHomeRuns(unittest.TestCase):
         self.assertIn("if (homeStartPending)", new_intent)
         self.assertIn("homeStartPending = false", new_intent)
         self.assertIn("main.removeCallbacks(countHomeStart)", new_intent)
-        self.assertIn("if (hasWindowFocus())", new_intent)
+        self.assertIn("if (homeWindowFocused)", new_intent)
+        focus = method(home, "public void onWindowFocusChanged")
+        self.assertIn("homeWindowFocused = hasFocus", focus)
         self.assertGreaterEqual(new_intent.count("HomeDoublePress.arrived"), 2,
                                 "a focused fast second HOME must commit the pending first press")
 
