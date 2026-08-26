@@ -32976,7 +32976,7 @@
     try{
       const caps=(window.RTCRtpSender&&RTCRtpSender.getCapabilities)?RTCRtpSender.getCapabilities('video'):null;
       if(!caps||!caps.codecs)return;
-      const detail=caps.codecs.filter(c=>/\/(av1|vp9)$/i.test(c.mimeType||'')),rest=caps.codecs.filter(c=>!\/\/(av1|vp9)$/i.test(c.mimeType||''));
+      const detail=caps.codecs.filter(c=>/\/(av1|vp9)$/i.test(c.mimeType||'')),rest=caps.codecs.filter(c=>!/\/(av1|vp9)$/i.test(c.mimeType||''));
       if(!detail.length)return;
       pc.getTransceivers().forEach(t=>{if(t.sender&&t.sender.track&&t.sender.track.kind==='video'&&t.setCodecPreferences)t.setCodecPreferences(detail.concat(rest));});
     }catch(_){}

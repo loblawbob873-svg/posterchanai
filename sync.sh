@@ -51,6 +51,21 @@ if [ -z "$SKIP_LINT" ] && [ -x venv-unified/bin/python ]; then
     echo "[sync] bot entrypoint OK (starts and parses arguments)"
 fi
 
+# The desktop and Android shells both boot through these controllers. A malformed token here does
+# not break one feature; it leaves the whole screen at its CSS background with no launcher or apps.
+# Undefined-name lint cannot parse JavaScript, so make syntax validation a release-blocking gate.
+if [ -z "$SKIP_LINT" ] && command -v node >/dev/null 2>&1; then
+    for _client_js in static/js/client/app.js static/js/client/os.js; do
+        if ! node --check "$_client_js"; then
+            echo "[sync] ABORT: $_client_js does not parse — desktop and Android would boot blank"
+            exit 1
+        fi
+    done
+    echo "[sync] client JavaScript syntax OK"
+else
+    echo "[sync] WARN: node unavailable — skipping client JavaScript syntax gate"
+fi
+
 # Desktop CI publishes an immutable desktop-v<version> release after the source commit lands.  That
 # necessarily happens AFTER the deploy which triggered it, so the committed Gentoo ebuild cannot
 # already know that run number.  Reconcile against completed releases before every later deploy;
