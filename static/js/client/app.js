@@ -33183,16 +33183,21 @@
     // Addressed to MYSELF so only my devices see it, and marked `sig` so it never pushes.
     try{ _callSend(ME.pubkey, {v:1, callId:_call.id, t:'handled'}); }catch(_){}
     const invite = _call.invite;
-    let local;
-    try{ local = await _getMedia(_call.video, false, !!_call.remoteDesktop); }catch(_){ toast('microphone/camera permission needed'); _declineCall(); return; }
-    if(!_call){ local.getTracks().forEach(t=>t.stop()); return; }
+    // A Remote Desktop viewer is receive-only. It needs no local MediaStream at all; constructing or
+    // requesting one made some Electron/WebView builds enter the camera permission path and reject an
+    // otherwise valid screen invitation. The remote offer supplies the receiving transceiver.
+    let local=null;
+    if(!_call.remoteDesktop){
+      try{ local = await _getMedia(_call.video, false, false); }catch(_){ toast('microphone/camera permission needed'); _declineCall(); return; }
+    }
+    if(!_call){ if(local)local.getTracks().forEach(t=>t.stop()); return; }
     _call.local = local; _callUI();
     const ice = await _fetchIceServers();
-    if(!_call){ local.getTracks().forEach(t=>t.stop()); return; }
+    if(!_call){ if(local)local.getTracks().forEach(t=>t.stop()); return; }
     const pc = _newPc(ice.iceServers); _call.pc = pc;
     if(_call.remoteDesktop) pc.ondatachannel=e=>{if(e.channel&&e.channel.label==='posterchan-control')_rdWireControl(e.channel);};
     try{ await pc.setRemoteDescription({type:'offer', sdp:invite.sdp}); }catch(_){ _hangup(false); return; }
-    local.getTracks().forEach(t=> pc.addTrack(t, local));
+    if(local)local.getTracks().forEach(t=> pc.addTrack(t, local));
     _preferH264(pc);   // hardware encode/decode on both ends — see _preferH264
     for(const c of (_call.pendingIce||[])){ try{ await pc.addIceCandidate(c); }catch(_){} }
     _call.pendingIce=[];

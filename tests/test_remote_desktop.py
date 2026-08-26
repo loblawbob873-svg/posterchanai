@@ -67,6 +67,17 @@ def test_same_identity_is_allowed_only_for_remote_desktop_calls():
     assert "(peerHex===ME.pubkey && !remoteDesktop)" in app
 
 
+def test_remote_desktop_viewer_is_receive_only_and_never_requests_camera_or_mic():
+    app = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+    start = app.index("async function _acceptCall(){")
+    end = app.index("/* Missed calls", start)
+    accept = app[start:end]
+    assert "let local=null;" in accept
+    assert "if(!_call.remoteDesktop)" in accept
+    assert "_getMedia(_call.video, false, false)" in accept
+    assert "if(local)local.getTracks().forEach" in accept
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_address_discovery_returns_choices_then_resolves_the_selected_user(tmp_path):
     """Execute the shipped resolver. An IP with two users must populate the picker, and choosing
