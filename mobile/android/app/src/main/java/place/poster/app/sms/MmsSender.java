@@ -3,6 +3,7 @@ package place.poster.app.sms;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.telephony.SubscriptionManager;
 
 import com.klinker.android.send_message.Message;
 import com.klinker.android.send_message.Settings;
@@ -29,6 +30,15 @@ public final class MmsSender {
             if (image == null) throw new IllegalArgumentException("attachment is not an image");
             Settings settings = new Settings();
             settings.setUseSystemSending(true);
+            /* MMS must leave through the subscription selected for messages. Relying on the
+             * library's process-global default produces a valid provider outbox row but no carrier
+             * transfer on dual-SIM phones (and on single-SIM devices whose default id is stale).
+             * Prefer the explicit SMS subscription, then the active data subscription MMS uses. */
+            int sub = SubscriptionManager.getDefaultSmsSubscriptionId();
+            if (sub == SubscriptionManager.INVALID_SUBSCRIPTION_ID)
+                sub = SubscriptionManager.getDefaultDataSubscriptionId();
+            if (sub != SubscriptionManager.INVALID_SUBSCRIPTION_ID)
+                settings.setSubscriptionId(sub);
             Message message = new Message(body == null ? "" : body, to, image);
             message.setSave(true);
             new Transaction(ctx, settings).sendNewMessage(message);

@@ -43,7 +43,10 @@
   /* v3 re-audits installs whose v2 latch was written before attachment failures, capped MMS reads
    * and stalled migrations were reported honestly. Those phones can have a "complete" marker and
    * zero portable MMS hashes; keeping the same marker makes every later fix unreachable. */
-  const HWM_BLOSSOM = () => HWM() + '_blossom_v3';
+  /* v4 deliberately invalidates the v3 completion latch. A v3 phone could mark the migration
+   * complete after copying message bodies while its MMS part table was empty/refused; subsequent
+   * releases then trusted that stale success forever, leaving every older conversation text-only. */
+  const HWM_BLOSSOM = () => HWM() + '_blossom_v4';
   /* AND A SEPARATE MARKER FOR THE REWIND ITSELF, because rewinding is a ONE-TIME ACT and finishing
    * the migration is a different question entirely.
    *
@@ -53,7 +56,7 @@
    * will not hand over is enough) that is not a slow start, it is a PERMANENT LOOP: every sweep
    * restarts at the same point, hits the same row, and republishes the same thirty days for ever.
    * Keyed on having rewound, the mark moves forward the way it is documented to. */
-  const HWM_REWOUND = () => HWM() + '_blossom_rewound_v3';
+  const HWM_REWOUND = () => HWM() + '_blossom_rewound_v4';
   /* AND A WAY BACK OUT OF "DONE", because every one of these markers is a LATCH and a latch that
    * was set wrongly is permanent.
    *
