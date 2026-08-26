@@ -33015,6 +33015,15 @@
     Comma:51,Period:52,Slash:53,ShiftRight:54,AltLeft:56,Space:57,CapsLock:58,ControlRight:97,AltRight:100,
     ArrowUp:103,ArrowLeft:105,ArrowRight:106,ArrowDown:108,Delete:111};
   let _remoteDesktopArmed=false;
+  let _remoteDesktopHost=null;
+  function setRemoteDesktopHost(el){
+    _remoteDesktopHost=el&&el.nodeType===1?el:null;
+    const overlay=document.getElementById('call-overlay');
+    if(overlay&&_call&&_call.remoteDesktop){
+      const target=(_remoteDesktopHost&&_remoteDesktopHost.isConnected)?_remoteDesktopHost:document.body;
+      if(overlay.parentElement!==target)target.appendChild(overlay);
+    }
+  }
   function setRemoteDesktopArmed(on){
     _remoteDesktopArmed=!!on;
     if(!_remoteDesktopArmed&&_call&&_call.remoteDesktop)_hangup(false);
@@ -33567,7 +33576,8 @@
         <div class="call-head"><img id="call-av" onerror="this.src='${LOGO}'"><div><div class="call-name" id="call-name"></div><div class="call-status" id="call-status"></div></div></div>
         <video id="call-local" class="call-local" autoplay playsinline muted></video>
         <div class="call-actions" id="call-actions"></div>`;
-      document.body.appendChild(el);
+      const callHost=_call.remoteDesktop&&_remoteDesktopHost&&_remoteDesktopHost.isConnected?_remoteDesktopHost:document.body;
+      callHost.appendChild(el);
       // Tap the minimized thumbnail (anywhere but a button) to restore it. The call lives in the
       // PeerConnection, not the DOM, so minimizing/restoring never touches the media.
       el.onclick=e=>{ if(el.classList.contains('call-mini') && !e.target.closest('button')) _setOverlayMini('call-overlay', false); };
@@ -33926,7 +33936,7 @@
      * timeline subscriptions cannot mistake that borrowed feed for Social and paint into it. */
     adoptView: (v) => { VIEW=String(v||''); },
     askWindowContext,
-    startRemoteDesktop, setRemoteDesktopArmed,
+    startRemoteDesktop, setRemoteDesktopArmed, setRemoteDesktopHost,
     messageUser: (pk) => { pk=safePk(String(pk||'')); if(!pk)return false; if(!dmPeers.has(pk))dmPeers.set(pk,[]); dmActive=pk; switchView('messages'); setTimeout(()=>openDm(pk),80); return true; },
     /* The one pass that fills every `.name[data-prof]` (and avatars, nip05s, @mentions) once a kind-0
      * arrives. A sub-module that paints author names MUST be able to call it, or its names are frozen

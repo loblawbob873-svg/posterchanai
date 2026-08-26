@@ -208,6 +208,16 @@ def test_sharer_can_switch_monitor_without_ending_the_session():
     assert "b('call-screen').onclick=_rdSwitchScreen" in APP
 
 
+def test_remote_desktop_session_renders_inside_its_managed_window():
+    css = (ROOT / "static/css/client.css").read_text(encoding="utf-8")
+    assert "data-rd-session" in OS
+    assert "PC().setRemoteDesktopHost" in OS
+    assert "setRemoteDesktopHost&&PC().setRemoteDesktopHost(null)" in OS
+    assert "function setRemoteDesktopHost(el)" in APP
+    assert "callHost.appendChild(el)" in APP
+    assert ".pcrd-session>.call-overlay{position:absolute" in css
+
+
 def test_launcher_tiles_leave_desktop_without_forgetting_the_preference():
     assert "mobileLanding: () => { if(on) exit(false); }" in OS
     # Both cold/resume paths go through the one boot-ordered landing function.

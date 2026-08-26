@@ -1918,7 +1918,7 @@
     const old=wins.find(x=>x.view==='__remote');if(old){focusWin(old,false);return old;}
     const w=openApp('__remote','Remote Desktop','#i-monitor',null,true,true);if(!w)return null;
     try{PC().setRemoteDesktopArmed&&PC().setRemoteDesktopArmed(true);}catch(_){}
-    w.onClose=()=>{try{PC().setRemoteDesktopArmed&&PC().setRemoteDesktopArmed(false);}catch(_){}};
+    w.onClose=()=>{try{PC().setRemoteDesktopHost&&PC().setRemoteDesktopHost(null);PC().setRemoteDesktopArmed&&PC().setRemoteDesktopArmed(false);}catch(_){}};
     w.el.classList.add('osw-remote');
     w.slot.innerHTML=`<div class="pcrd"><div class="pcrd-hero"><svg class="ic"><use href="#i-monitor"></use></svg><div><b>Share this desktop</b><span>Encrypted peer-to-peer screen sharing, signaled over Nostr.</span></div></div>
       <label class="pcrd-label">Viewer’s npub or address<input class="input" data-rd-peer placeholder="npub1… · 192.168.1.20 · name@host" autocomplete="off" spellcheck="false"></label>
@@ -1927,7 +1927,8 @@
       <button class="btn btn-neon" data-rd-share><svg class="ic b-ic"><use href="#i-share"></use></svg>Choose screen and share</button>
       <div class="pcrd-status" data-rd-status role="status" aria-live="polite"></div>
       <div class="pcrd-note"><b>The viewer must accept.</b> Media uses a direct WebRTC path when possible and your configured TURN service when it is not.</div>
-      <div class="pcrd-cap"><span>✓ PosterChanOS, browser, and phone viewers</span><span>✓ npub, IP address, or name@host</span><span>✓ Authenticated, encrypted Nostr signaling</span></div></div>`;
+      <div class="pcrd-cap"><span>✓ PosterChanOS, browser, and phone viewers</span><span>✓ npub, IP address, or name@host</span><span>✓ Authenticated, encrypted Nostr signaling</span></div></div><div class="pcrd-session" data-rd-session></div>`;
+    try{PC().setRemoteDesktopHost&&PC().setRemoteDesktopHost($('[data-rd-session]',w.slot));}catch(_){}
     const input=$('[data-rd-peer]',w.slot),button=$('[data-rd-share]',w.slot),selfButton=$('[data-rd-self]',w.slot),status=$('[data-rd-status]',w.slot),choose=$('[data-rd-choose]',w.slot),choice=$('[data-rd-choice]',w.slot),continueButton=$('[data-rd-continue]',w.slot);
     const reset=()=>{button.disabled=false;selfButton.disabled=false;button.textContent='Choose screen and share';};
     const go=async explicitPeer=>{const peer=String(explicitPeer||input.value||'').trim();if(!peer){status.textContent='Enter a viewer address or choose your other signed-in device.';input.focus();return;}
