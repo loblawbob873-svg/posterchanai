@@ -128,6 +128,10 @@ def test_desktop_dependencies_do_not_regress_below_security_floors():
 
 
 def test_linux_window_identity_is_synchronised_with_its_desktop_entry():
-    """Without this, Linux shells may not associate the running window with its launcher icon."""
-    assert PKG.get("desktopName") == "PosterChan"
+    """The portal-visible desktop id must match the reverse-DNS file installed by PosterChanOS.
+
+    productName remains the human-facing PosterChan label; desktopName is an identifier used by
+    xdg-desktop-portal and must not be replaced with that label.
+    """
+    assert PKG.get("desktopName") == PKG["build"]["appId"] + ".desktop"
     assert PKG["build"]["linux"].get("syncDesktopName") is True

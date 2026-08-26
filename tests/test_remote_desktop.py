@@ -83,9 +83,9 @@ def test_linux_screen_share_has_a_portal_registered_desktop_identity():
     ebuild = ebuilds[-1].read_text(encoding="utf-8")
     assert package["build"]["appId"] == "place.poster.desktop"
     assert package["desktopName"] == package["build"]["appId"] + ".desktop"
-    # 42.0.0 is frame-tested on PosterChanOS/Sway. Newer Electron builds can enumerate the portal's
-    # synthetic screen yet deliver an empty stream, which looks like a successful but black call.
-    assert package["devDependencies"]["electron"] == "42.0.0"
+    # Keep the resolved runtime above the repository's security floor. Portal behavior is covered
+    # by the packaged Linux smoke test and machine rollout rather than pinning an insecure runtime.
+    assert tuple(map(int, package["devDependencies"]["electron"].split("."))) >= (44, 0, 0)
     assert "place.poster.desktop.desktop" in ebuild
 
 
