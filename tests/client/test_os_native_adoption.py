@@ -8,7 +8,7 @@ OS = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
 
 def test_every_shell_lookup_accepts_electron_44_wayland_app_id_case():
     """Otherwise the shell adopts itself as a recursive black native window."""
-    assert OS.count("/^posterchan(-desktop)?$/i") == 3
+    assert OS.count("/^(?:posterchan(?:-desktop)?|place\\.poster\\.desktop)$/i") == 3
 
 
 def test_late_xwayland_metadata_gets_a_reconciliation_pass():
