@@ -459,10 +459,12 @@ class OutgoingMms(unittest.TestCase):
         thread = open(os.path.join(SMS, "ThreadActivity.java"), encoding="utf-8").read()
         layout = open(os.path.join(ROOT, "mobile/android/app/src/main/res/layout/sms_thread.xml"),
                       encoding="utf-8").read()
+        sender = open(os.path.join(SMS, "MmsSender.java"), encoding="utf-8").read()
         gradle = open(os.path.join(ROOT, "mobile/android/app/build.gradle"), encoding="utf-8").read()
         self.assertIn("pc_th_attach", layout)
         self.assertIn("ACTION_OPEN_DOCUMENT", thread)
-        self.assertIn("setUseSystemSending(true)", thread)
+        self.assertIn("MmsSender.send(this, address, body, raw)", thread)
+        self.assertIn("setUseSystemSending(true)", sender)
         self.assertIn("org.fossify:mmslib:1.0.0", gradle)
 
     def test_native_stuck_mms_has_a_visible_delete_action(self):

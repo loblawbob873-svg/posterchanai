@@ -75,14 +75,14 @@ class NoReadOrSendConsultsTheRole(unittest.TestCase):
         self.assertNotIn("if(await isPhone()){", fn(self.src, "async function send(to, body, file)"))
 
     def test_performing_another_device_s_send(self):
-        body = fn(self.src, "async function drainOutbox")
+        body = fn(self.src, "async function drainOutboxOnce")
         self.assertNotIn("isPhone()", body)
         self.assertIn("telephony", body)
 
     def test_a_device_with_no_radio_still_performs_nothing(self):
         """The rule that actually matters in drainOutbox: it is what stops a laptop and a phone both
         answering the same request."""
-        self.assertIn("if(!stD.telephony) return 0;", fn(self.src, "async function drainOutbox"))
+        self.assertIn("if(!stD.telephony) return 0;", fn(self.src, "async function drainOutboxOnce"))
 
 
 class WritingTheProviderStillNeedsIt(unittest.TestCase):
