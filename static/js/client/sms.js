@@ -2162,7 +2162,11 @@
                app puts it -- and a bubble whose only content is an attachment must not also render
                an empty text node, or it collapses to a sliver. */
             + (m.body ? `<span class="b-txt">${enc(m.body)}</span>` : '')
-            + `<span class="b-meta">${enc(when(m.date))}${m.pending?' · waiting for phone':m.failed?' · not sent':''}</span></div>`;
+            + `<span class="b-meta">${enc(when(m.date))}${m.pending?' · waiting for phone':m.failed?' · not sent':''}</span>`
+            /* Right-click is not a mobile control. A queued send is the one message for which the
+               destructive action is urgent, so put an explicit cancellation beside its status. */
+            + (m.pending ? `<button class="sms-cancel-pending" type="button" data-doc="${enc(m.doc)}">Cancel send</button>` : '')
+            + `</div>`;
         }).join('')}</div>
         ${S.attach?`<div class="sms-attachment-draft"><span>${ICO('image','b-ic')}<b>${enc(S.attach.name||'Photo')}</b><small>${enc(fmtBytes(S.attach.size))} · ready to send as MMS</small></span><button id="sms-attach-clear" aria-label="Remove attached photo">×</button></div>`:''}
         <div class="sms-compose">
@@ -2225,6 +2229,16 @@
     };
     btn.onclick = go;
     input.onkeydown = e => { if(e.key === 'Enter') go(); };
+    feed.querySelectorAll('.sms-cancel-pending').forEach(cancel => {
+      cancel.onclick = async e => {
+        e.preventDefault(); e.stopPropagation();
+        cancel.disabled = true;
+        const r = await remove([cancel.dataset.doc]);
+        if(r.refused) PC.toast(r.error || 'could not cancel pending send');
+        else PC.toast('pending send cancelled');
+        paint();
+      };
+    });
     /* `.bubble[data-doc]`, because the bubble IS a DM bubble now and `data-doc` is what makes it a
      * text rather than a DM. Selected on the class it actually has: this was `.sms-msg`, and moving
      * the markup to the shared bubble would have matched nothing -- so right-clicking a message
@@ -2393,11 +2407,14 @@
      * then remained deaf until the user backgrounded it. Poll only while visible, and only on a
      * device with telephony; this costs nothing on web/desktop and gives a newly queued MMS a
      * bounded pickup time. drainOutbox() coalesces slow queries and sends. */
-    setInterval(async () => {
+    const outboxPoll = setInterval(async () => {
       if(document.visibilityState !== 'visible') return;
       const st = await phoneState();
       if(st.telephony) drainOutbox();
     }, 3000);
+    /* Node's browser simulator returns a ref-counted Timeout; browsers return a number. Do not let
+       the production poll turn a completed regression suite into a process that never exits. */
+    if(outboxPoll && typeof outboxPoll.unref === 'function') outboxPoll.unref();
   }
   init();
 

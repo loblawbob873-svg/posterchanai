@@ -25,3 +25,11 @@ def test_mms_send_captures_the_displayed_file_and_rejects_non_images():
     assert "const attachment=S.attach;" in JS
     assert "send(t.address, body, attachment)" in JS
     assert "if(S.attach===attachment)clearAttachment();" in JS
+
+
+def test_pending_send_has_a_touch_accessible_cancel_action():
+    assert 'class="sms-cancel-pending"' in JS
+    assert '>Cancel send</button>' in JS
+    assert "feed.querySelectorAll('.sms-cancel-pending')" in JS
+    assert "await remove([cancel.dataset.doc])" in JS
+    assert ".sms-cancel-pending{" in CSS

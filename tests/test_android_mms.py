@@ -518,6 +518,7 @@ class OutgoingMms(unittest.TestCase):
         self.assertIn("if(_drainingOutbox) return _drainingOutbox", js)
         self.assertIn("if(document.visibilityState !== 'visible') return", js)
         self.assertIn("if(st.telephony) drainOutbox();\n    }, 3000);", js)
+        self.assertIn("typeof outboxPoll.unref === 'function'", js)
 
     def test_remote_photo_placeholder_uses_the_mms_document_identity(self):
         """The later provider mirror must replace the pending bubble, not create a duplicate."""
