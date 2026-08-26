@@ -47,6 +47,16 @@ def test_working_directory_can_be_changed_on_desktop_and_browser():
     assert "await loadTree(String(picked).trim()" in CODE
 
 
+def test_deleted_native_workspace_returns_to_folder_picker_instead_of_throwing_forever():
+    assert "/ENOENT|no such file or directory/i" in CODE
+    assert "S.hostRoot='';S.root='No folder open';S.cwd='';S.tree=[]" in CODE
+    assert "That project folder is no longer available" in CODE
+
+
+def test_save_uses_the_same_primary_button_treatment_as_other_editor_actions():
+    assert '<button class="btn btn-neon pcc-b" id="pcc-save"' in CODE
+
+
 def test_desktop_git_operates_on_the_selected_local_project():
     main=(ROOT/'desktop/main.js').read_text(); preload=(ROOT/'desktop/preload.js').read_text()
     for name in ('gitStatus','gitDiff','gitAction'):

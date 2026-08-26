@@ -417,9 +417,16 @@
         if(t.truncated) status('This folder has more files than the tree will show', 'warn');
         }
       }catch(e){
+        if(S.hostRoot && /ENOENT|no such file or directory/i.test(String(e&&e.message||e))){
+          /* A selected folder can be deleted, unmounted, or be a temporary installed-test folder
+             that has already been cleaned up. Never reopen a dead path forever from localStorage. */
+          S.hostRoot='';S.root='No folder open';S.cwd='';S.tree=[];
+          S.treeErr='That project folder is no longer available — choose another folder';
+        }else{
         // A FAILED LISTING KEEPS THE LAST GOOD ONE. Blanking the tree on a transient error makes an
         // unreachable node look like an empty workspace — the same rule the file screens follow.
         S.treeErr = e.message || 'Could not read that folder';
+        }
       }
       S.treeBusy = false;
       save();
@@ -757,7 +764,7 @@
       const eng = d ? (S.engines[d.lang] || (d.lang === 'json' ? 'json' : '')) : '';
       return '<div class="pcc-bar">' +
         '<button class="btn btn-ghost pcc-b" id="pcc-open-folder">Change Working Directory</button>' +
-        '<button class="btn pcc-b" id="pcc-save"' + (d && dirty(d) ? '' : ' disabled') + '>Save</button>' +
+        '<button class="btn btn-neon pcc-b" id="pcc-save"' + (d && dirty(d) ? '' : ' disabled') + '>Save</button>' +
         '<button class="btn btn-ghost pcc-b" id="pcc-fmt"' + (d && eng ? '' : ' disabled') + ' title="' +
           (eng ? 'Beautify with ' + enc(eng) : 'No formatter on this node for this language') + '">Format</button>' +
         '<button class="btn btn-ghost pcc-b" id="pcc-reload"' + (d ? '' : ' disabled') + '>Reload</button>' +
