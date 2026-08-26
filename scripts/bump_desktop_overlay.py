@@ -105,8 +105,13 @@ def _audit_payload(blob):
             "www/static/css/client.css",
         )
         missing = [path for path in required if not present(path)]
-        if b'data-view="concord"' not in payload:
-            missing.append('index.html Concord navigation entry')
+        # Concord communities now live inside Messages.  Keep auditing both halves of the
+        # unified surface so a stale package cannot silently ship either the old standalone
+        # launcher or a Messages build with communities omitted.
+        if b'data-view="messages"' not in payload:
+            missing.append('index.html Messages navigation entry')
+        if b'messages-communities' not in payload or b'messages-direct' not in payload:
+            missing.append('unified Messages direct/community tabs')
         # These are behavior-bearing package markers, not cosmetic labels.  Checking the source tree
         # did not catch several releases whose generated app.asar silently lagged behind it.
         markers = {
