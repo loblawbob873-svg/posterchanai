@@ -317,7 +317,9 @@ async def run_case(name, desktop, phone, url, skew, problems):
     nsec, pk = fresh_nsec()
     r = await phone.js(f"({PHONE_LOGIN})({json.dumps(nsec)})") or {}
     if not r.get("ok"):
-        return "SKIP " + str(r.get("err") or "the phone would not sign in")
+        problems.append((name, str(r.get("err") or "the phone would not sign in"),
+                         "the client loaded, so this is an app failure rather than an unavailable gate"))
+        return None
 
     q = await desktop.js(DESKTOP_SHOW_QR) or {}
     uri = q.get("uri") or ""
@@ -367,7 +369,9 @@ async def run_idle_socket(desktop, phone, url, problems):
     nsec, pk = fresh_nsec()
     r = await phone.js(f"({PHONE_LOGIN})({json.dumps(nsec)})") or {}
     if not r.get("ok"):
-        return "SKIP " + str(r.get("err") or "the phone would not sign in")
+        problems.append(("idle-socket", str(r.get("err") or "the phone would not sign in"),
+                         "the client loaded, so this is an app failure rather than an unavailable gate"))
+        return None
 
     await desktop.skew(0)
     if not await desktop.load(url + "/client", "#btn-amber"):
@@ -432,7 +436,9 @@ async def run_two_apps(desktop, phone, url, problems):
     nsec, pk = fresh_nsec()
     r = await phone.js(f"({PHONE_LOGIN})({json.dumps(nsec)})") or {}
     if not r.get("ok"):
-        return "SKIP " + str(r.get("err") or "the phone would not sign in")
+        problems.append(("two-apps", str(r.get("err") or "the phone would not sign in"),
+                         "the client loaded, so this is an app failure rather than an unavailable gate"))
+        return None
 
     # Two desktops in sequence, through the SAME browser: each gets its own nostrconnect link, which
     # is its own app key, which is its own session.
