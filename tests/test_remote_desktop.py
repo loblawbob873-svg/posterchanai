@@ -59,6 +59,9 @@ def test_desktop_has_a_picker_and_recovers_its_guard_after_source_errors():
     # desktopCapturer in the picker otherwise throws before the portal can appear.
     assert "let BrowserWindow, shell, session, Menu, clipboard, dialog, systemPreferences, screen, desktopCapturer;" in main
     assert "systemPreferences, screen, desktopCapturer } = electron" in main
+    capture_wire = main[main.index("function wireWaylandCapture()") : main.index("// ---- Tor", main.index("function wireWaylandCapture()"))]
+    assert "appendSwitch('enable-features', 'WebRTCPipeWireCapturer')" in capture_wire
+    assert "process.env.WAYLAND_DISPLAY" not in capture_wire
     assert "useSystemPicker: process.platform === 'darwin'" in main
     assert "process.platform === 'linux' ? ['screen'] : ['screen', 'window']" in main
     assert ".catch((error) => {" in main

@@ -282,7 +282,11 @@ function wireOzonePlatform() {
 // which Chromium only takes when this feature is on. Harmless no-op if the feature name ever changes.
 function wireWaylandCapture() {
   if (process.platform !== 'linux') return;
-  if (!process.env.WAYLAND_DISPLAY && process.env.XDG_SESSION_TYPE !== 'wayland') return;
+  // Keep this unconditional on Linux. PosterChanOS launches Electron with an explicit
+  // `--ozone-platform=wayland`, but its locked-down shell wrapper deliberately clears most of the
+  // environment. Testing WAYLAND_DISPLAY here therefore selected Chromium's X11 capturer on a
+  // machine with no X server, yielding zero sources before the portal could open. The feature is a
+  // harmless no-op on X11 and is required for the PipeWire portal path on Wayland.
   app.commandLine.appendSwitch('enable-features', 'WebRTCPipeWireCapturer');
 }
 
