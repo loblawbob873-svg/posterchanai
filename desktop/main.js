@@ -20,7 +20,7 @@ const electron = require('electron');
 // other exports are native lazy getters; destructuring `screen`, powerMonitor, session or Tray while
 // this module loads can initialize platform backends before app.ready and SIGTRAP on a fast boot.
 const { app, ipcMain, protocol } = electron;
-let BrowserWindow, shell, session, Menu, clipboard, dialog, systemPreferences, screen;
+let BrowserWindow, shell, session, Menu, clipboard, dialog, systemPreferences, screen, desktopCapturer;
 const path = require('path');
 const fsbridge = require('./fsbridge');
 const fs = require('fs');
@@ -61,7 +61,7 @@ let cfg = {};
 // deliberately traps before creating a window.
 let powerMonitor = null;
 function wireReadyElectronModules() {
-  ({ BrowserWindow, shell, session, Menu, clipboard, dialog, systemPreferences, screen } = electron);
+  ({ BrowserWindow, shell, session, Menu, clipboard, dialog, systemPreferences, screen, desktopCapturer } = electron);
   background = require('./background');
 }
 

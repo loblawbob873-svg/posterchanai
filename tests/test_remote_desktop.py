@@ -55,6 +55,10 @@ def test_same_login_has_a_direct_action_and_failures_are_visible_inline():
 
 def test_desktop_has_a_picker_and_recovers_its_guard_after_source_errors():
     main = (ROOT / "desktop/main.js").read_text(encoding="utf-8")
+    # Electron's lazy browser exports must be wired after app.ready. Merely referring to
+    # desktopCapturer in the picker otherwise throws before the portal can appear.
+    assert "let BrowserWindow, shell, session, Menu, clipboard, dialog, systemPreferences, screen, desktopCapturer;" in main
+    assert "systemPreferences, screen, desktopCapturer } = electron" in main
     assert "useSystemPicker: process.platform === 'darwin'" in main
     assert "process.platform === 'linux' ? ['screen'] : ['screen', 'window']" in main
     assert ".catch((error) => {" in main
