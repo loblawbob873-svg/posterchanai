@@ -1,4 +1,10 @@
 from pathlib import Path
+import json
+import shutil
+import subprocess
+import textwrap
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
@@ -34,6 +40,43 @@ def test_multi_user_address_has_an_explicit_continue_action():
     assert "continueButton.onclick=()=>" in OS
     assert "input.value=choice.value" in OS
     assert "choose.hidden=true;go()" in OS
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_address_discovery_returns_choices_then_resolves_the_selected_user(tmp_path):
+    """Execute the shipped resolver. An IP with two users must populate the picker, and choosing
+    one must issue a name-scoped lookup and return that user's key and signaling relay."""
+    start = APP.index("  async function _remoteDesktopAddress(peer){")
+    end = APP.index("\n  async function startRemoteDesktop(peer){", start)
+    resolver = APP[start:end]
+    driver = tmp_path / "remote-address.js"
+    driver.write_text(textwrap.dedent(f"""
+      const calls=[];
+      const BUNDLED=true;
+      global.window={{isSecureContext:true}};
+      global.safePk=s=>/^[0-9a-f]{{64}}$/.test(s)?s:'';
+      global.normalizeRelay=s=>String(s||'');
+      global.fetch=async url=>{{
+        calls.push(url);
+        const selected=url.includes('?name=alice');
+        return {{ok:true,json:async()=>selected
+          ? {{names:{{alice:'a'.repeat(64)}},relays:{{['a'.repeat(64)]:['wss://peer.test']}}}}
+          : {{names:{{alice:'a'.repeat(64),bob:'b'.repeat(64)}}}}}};
+      }};
+      {resolver}
+      (async()=>{{
+        let choices=[];
+        try{{await _remoteDesktopAddress('10.0.0.8')}}catch(e){{choices=e.remoteChoices||[];}}
+        const target=await _remoteDesktopAddress(choices[0].value);
+        console.log(JSON.stringify({{choices,target,calls}}));
+      }})().catch(e=>{{console.error(e);process.exit(1)}});
+    """), encoding="utf-8")
+    run = subprocess.run(["node", str(driver)], capture_output=True, text=True, timeout=10)
+    assert run.returncode == 0, run.stderr
+    result = json.loads(run.stdout)
+    assert [x["value"] for x in result["choices"]] == ["alice@10.0.0.8", "bob@10.0.0.8"]
+    assert result["target"] == {"pk": "a" * 64, "relays": ["wss://peer.test"]}
+    assert any("/.well-known/nostr.json?name=alice" in url for url in result["calls"])
 
 
 def test_remote_desktop_sends_a_screen_and_no_guest_media():
