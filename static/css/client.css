@@ -4204,6 +4204,7 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 /* ===== Messages: DM/Email tabs + Nostr-mailbox Email client (themed via vars; mobile-responsive) ===== */
 .feed.feed-dm{display:flex;flex-direction:column;min-height:0}
 .feed.feed-dm>.dm-wrap{flex:1 1 auto;min-height:0;height:auto}
+.messages-tabs{flex:0 0 auto;display:flex;gap:4px;padding:7px 10px;border-bottom:1px solid var(--line);background:var(--panel)}.messages-tabs button{min-height:34px;padding:6px 13px;border:0;border-radius:8px;background:transparent;color:var(--muted);font:inherit;font-weight:650;cursor:pointer}.messages-tabs button:hover{background:var(--panel2);color:var(--text)}.messages-tabs button.on{background:rgba(var(--accent-rgb),.14);color:var(--text)}
 
 .mail-root{flex:1 1 auto;min-height:0;display:flex;overflow:hidden}
 .mail-loading,.mail-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:24px}

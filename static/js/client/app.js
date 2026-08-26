@@ -390,7 +390,6 @@
    * So the rows a view NEEDS are asserted here rather than assumed from the markup. Idempotent: an
    * up-to-date shell already has them and nothing happens. */
   const _NAV_REQUIRED = [
-    { view:'concord', into:'#disc-sub', icon:'#i-concord', label:'Concord' },
     { view:'sync', into:'#files-sub', icon:'#i-refresh', label:'Folder Sync' },
     { view:'xdc', into:'#games-sub', icon:'#i-gamepad', label:'Webxdc' },
     { view:'signer', after:'settings', icon:'#i-key', label:'Signer' },
@@ -480,10 +479,7 @@
    * `nostr_only` mean the list of rows differs per node, so the editor keeps every stored key it did
    * not offer a switch for (see the change handler) — otherwise saving the list on a nostr-only node
    * would quietly un-hide Email, Terminal and the rest everywhere else. */
-  /* Concord is a core destination now that legacy NIP-28 Chat is gone. If an older synced sidebar
-   * preference hides it, both Classic and PosterChanOS lose their only room UI because the desktop
-   * launcher is derived from these rows. Keep its door present just like Settings. */
-  const NAV_LOCKED = new Set(['settings', 'bookmarks', 'blossom', 'concord']);
+  const NAV_LOCKED = new Set(['settings', 'bookmarks', 'blossom']);
   const NAV_OFF = 'nav-off';        // ours; NEVER `hidden`, which applyInstanceGating owns and resets
   function _navKey(el){
     if(!el) return '';
@@ -6432,9 +6428,10 @@
       // — you arrived mid-list. One-shot (mirrors _dmScrollTop): the LIVE re-renders that fire as
       // relay events arrive must NOT yank you back to the top while you're reading.
       _notifScrollTop = true; }
-    $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
+    $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v || (v==='concord'&&b.dataset.view==='messages')));
     _syncRightbar();
     $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', concord:'Concord', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', shorts:'Shorts 🎬', communities:'Communities', calls:'Calls 📞', pics:'Pics', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', code:'PosterChan Code 💻', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    if(v==='concord') $('#view-title').textContent='Messages';
     if(v==='signer') $('#view-title').textContent = 'Signer';
     // "New post" is a fixed sidebar button now, so it needs no per-view toggling — it never appears in a
     // view header again. (The ▦ media toggle moved into the timeline's tab row.)
@@ -14309,7 +14306,7 @@
   }
   function discoverMenu(){   // mobile Discover sub-sheet — mirrors the desktop sidebar's Discover group (incl. Market)
     const _off=navHiddenSet();
-    const items=[['news','news','News'],['markets','chart','Markets'],['budget','bars','Budget'],['calls','phone','Calls'],['articles','article','Articles'],['market','bag','Shopping'],['streams','tv','Streams'],['shorts','tv','Shorts'],['communities','users','Communities'],['concord','concord','Concord'],['torrents','magnet','Torrents'],['repos','git','Git'],['stats','bars','Server Stats']]
+    const items=[['news','news','News'],['markets','chart','Markets'],['budget','bars','Budget'],['calls','phone','Calls'],['articles','article','Articles'],['market','bag','Shopping'],['streams','tv','Streams'],['shorts','tv','Shorts'],['communities','users','Communities'],['torrents','magnet','Torrents'],['repos','git','Git'],['stats','bars','Server Stats']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='markets')     // Markets needs the AI backend (Budget is client-only, so it stays)
                    && !_off.has(v));                              // …and the user's own Settings → Sidebar choices
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-compass"></use></svg> Discover</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}</span>${v==='news'?'<span class="news-badge" style="display:none"></span>':''}</button>`).join('')}</div>`, root=>{
@@ -23693,7 +23690,8 @@
     // rebuilds the whole list, which would otherwise reset scroll to the TOP — yanking you up as you
     // try to scroll (and a jump-to-top is what makes the mobile browser re-reveal its toolbar).
     const _prevList=$('#dm-list'); const _listScroll=_prevList?_prevList.scrollTop:0;
-    feed.innerHTML=`<div class="dm-wrap"><div class="dm-list" id="dm-list"></div><div class="dm-thread" id="dm-thread"><div class="empty">${_dmLoaded?'Select a conversation, or start one.':'Loading…'}</div></div></div>`;
+    feed.innerHTML=`<nav class="messages-tabs" aria-label="Message type"><button class="on" aria-current="page">Direct messages</button><button id="messages-communities">Communities</button></nav><div class="dm-wrap"><div class="dm-list" id="dm-list"></div><div class="dm-thread" id="dm-thread"><div class="empty">${_dmLoaded?'Select a conversation, or start one.':'Loading…'}</div></div></div>`;
+    $('#messages-communities').onclick=()=>switchView('concord');
     const list=$('#dm-list');
     // Optional privacy: don't reveal message previews in the list until you open the conversation.
     const hidePrev = ClientSettings.get('hideDmPreview', false);

@@ -259,7 +259,7 @@ jobs:
           test -s www/static/js/client/concord.js
           test -s www/static/js/client/cord-reader.js
           test -s www/static/js/client/cord-protocol.js
-          grep -q 'data-view="concord"' www/index.html
+          grep -q 'data-view="messages"' www/index.html
           grep -q 'static/css/concord.css' www/index.html
           grep -q 'static/js/client/concord.js' www/index.html
           grep -q 'static/js/client/cord-reader.js' www/index.html

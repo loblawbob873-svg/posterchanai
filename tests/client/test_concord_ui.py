@@ -15,25 +15,26 @@ HTML = (ROOT / "templates/client.html").read_text()
 PUSH = (ROOT / "app/services/nostr_push_service.py").read_text()
 
 
-def test_concord_is_a_separate_discover_view_not_public_chat():
-    assert 'data-view="concord"' in HTML
+def test_concord_is_a_communities_section_of_messages_not_public_chat():
+    assert 'data-view="messages"' in HTML
     discover = HTML.split('id="disc-sub"', 1)[1].split('</div>', 1)[0]
-    assert 'data-view="concord"' in discover
+    assert 'data-view="concord"' not in discover
     assert 'static/js/client/concord.js' in HTML
     assert "renderModuleView('concord','concord.js','PCConcord','render')" in APP
     assert 'async function renderChatrooms()' not in APP
     assert 'data-view="chat"' not in HTML, "legacy Nostr Chat navigation must stay removed"
 
 
-def test_concord_cannot_be_hidden_out_of_classic_and_desktop_launchers():
+def test_messages_remains_the_single_room_and_dm_launcher():
     locked = APP.split("const NAV_LOCKED = new Set(", 1)[1].split(");", 1)[0]
-    assert "'concord'" in locked
+    assert 'data-view="messages"' in HTML
+    assert 'data-view="concord"' not in HTML
 
 
 def test_packaged_shell_loads_the_complete_concord_surface():
     for asset in ("concord.css", "cord-reader.js", "concord.js"):
         assert asset in HTML
-    assert 'data-view="concord"' in HTML
+    assert 'id="messages-communities"' in APP
 
 
 def test_concord_never_repaints_another_app_shared_feed():
@@ -47,10 +48,11 @@ def test_concord_never_repaints_another_app_shared_feed():
     assert "isView: view => VIEW === view" in APP
 
 
-def test_concord_is_precached_and_old_bundles_self_heal_the_nav():
+def test_concord_is_precached_behind_the_messages_launcher():
     sw = (ROOT / "static/js/client/sw.js").read_text()
     assert "'/static/js/client/concord.js'" in sw
-    assert "{ view:'concord', into:'#disc-sub'" in APP
+    assert "{ view:'concord', into:'#disc-sub'" not in APP
+    assert 'data-view="messages"' in HTML
 
 
 def test_classic_phone_concord_uses_os_style_rail_and_drawer_without_squeezed_chat():
@@ -109,7 +111,7 @@ def test_desktop_release_audits_the_built_payload_not_only_source():
     gate = workflow[workflow.index("name: Audit bundled Concord surface"):]
     for asset in ("concord.css", "concord.js", "cord-reader.js", "cord-protocol.js"):
         assert f"www/static/" in gate and asset in gate
-    assert 'grep -q \'data-view="concord"\' www/index.html' in gate
+    assert 'grep -q \'data-view="messages"\' www/index.html' in gate
 
 
 def test_concord_fills_workspace_and_identifies_the_signed_in_user():
@@ -125,7 +127,8 @@ def test_concord_has_discord_style_panes_and_dm_style_composer():
     for surface in ('cc-communities', 'cc-channels', 'cc-conversation', 'cc-members-pane', 'cc-messages', 'cc-compose'):
         assert surface in CONCORD
     assert 'Message #${state.channel' in CONCORD
-    assert "['concord','concord','Concord']" in APP, "mobile Discover must expose Concord"
+    assert 'id="messages-direct"' in CONCORD
+    assert 'id="messages-communities"' in APP
 
 
 def test_desktop_members_are_a_right_column_and_mobile_uses_the_dialog():
@@ -371,15 +374,14 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert 'linkify, linkCardHtml, hydrateLinkCards' in APP
 
 
-def test_concord_dove_icon_reaches_sidebar_mobile_and_desktop_launcher():
+def test_concord_dove_icon_remains_available_inside_the_messages_app():
     sprite = (ROOT / 'static/js/client/sprite.js').read_text()
     assert 'id="i-concord"' in sprite
-    assert 'data-view="concord"><svg class="ic"><use href="#i-concord"' in HTML
-    assert "icon:'#i-concord', label:'Concord'" in APP
-    # os.js derives desktop/start-menu icons from the sidebar <use href>, so this is the desktop source.
+    assert 'data-view="concord"' not in HTML
+    assert 'class="messages-tabs"' in CONCORD
     os_js = (ROOT / 'static/js/client/os.js').read_text()
     assert "btn.querySelector('svg use')" in os_js
-    assert "if(view==='concord') snapTo(w,'max')" in os_js
+    assert "if(view==='concord') snapTo(w,'max')" in os_js  # old invite/shortcut route compatibility
     assert '.osw-slot:has(>.cc-app)' in CONCORD_CSS
     assert '.osw-body>#feed.feed-dm:has(.cc-app)' in CONCORD_CSS
 
