@@ -111,6 +111,7 @@ def _audit_payload(blob):
         # did not catch several releases whose generated app.asar silently lagged behind it.
         markers = {
             b"openHostFile": "desktop local-file bridge",
+            b"await _withModule('code.js', 'PCCode')": "cold-start Files to Code loader",
             b"gitAct('restore'": "Code per-file discard/restore",
             b"openSyncCodeFile": "synced-folder Code routing",
             b"openSyncOfficeFile": "synced-folder Office routing",
