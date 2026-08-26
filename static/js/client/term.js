@@ -623,6 +623,18 @@
       return pick;
     }
 
+    function _resetForReplay(){
+      /* xterm emits onScroll from reset(). That is an internal buffer change, not somebody choosing
+       * to read history. If it lands unguarded it flips followBottom false before the resumed
+      * session's backlog arrives, so a phone opens halfway up the terminal and has to be dragged
+      * to the prompt by hand. Treat reset like every other programmatic reflow. */
+      followBottom = true;
+      if(!term) return;
+      scrollingByUs = true;
+      term.reset();
+      _pinBottomAfterLayout();
+    }
+
     async function connect(){
       const sel = $('#tty-host'); if(!sel) return;
       host = sel.value;
@@ -643,7 +655,7 @@
       try{ await _sessions(); }catch(_){}
       _remember('');                       // a fresh connect is a NEW session, not the old one
       cursor = 0;
-      if(term) term.reset();
+      _resetForReplay();
       /* A NEW TAB NAMES ITSELF, and this line is the whole of "New tab actually opens a new shell".
        * With no label the server takes `main` for every one of them, and `tmux new-session -A` is
        * attach-or-create — so pressing + made a SECOND SSH CONNECTION ONTO THE SHELL ALREADY ON
@@ -668,8 +680,7 @@
       _remember(id);
       cursor = 0;                          // no local scrollback for it — replay from the start of
                                            // what the server still holds
-      followBottom = true;
-      if(term) term.reset();
+      _resetForReplay();
       _open({ resume: id, host: hostName || '', label });
     }
 

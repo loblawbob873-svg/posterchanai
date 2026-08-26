@@ -37,6 +37,18 @@ def test_attach_starts_at_live_prompt_then_respects_manual_scrolling():
     assert "const followThisWrite=followBottom" in out
 
 
+def test_reset_cannot_turn_off_follow_mode_before_mobile_replay():
+    reset = TERM[TERM.index("function _resetForReplay"):
+                 TERM.index("async function connect", TERM.index("function _resetForReplay"))]
+    assert reset.index("followBottom = true") < reset.index("term.reset()")
+    assert reset.index("scrollingByUs = true") < reset.index("term.reset()")
+    assert "_pinBottomAfterLayout()" in reset
+    connect = TERM[TERM.index("async function connect"):TERM.index("function attach")]
+    attach = TERM[TERM.index("function attach"):TERM.index("function _cycleTab")]
+    assert "_resetForReplay()" in connect
+    assert "_resetForReplay()" in attach
+
+
 def test_user_scrolling_cancels_an_inflight_bottom_pin():
     """Live output must not make the terminal impossible to scroll while a pin timer is armed."""
     stop = TERM[TERM.index("function _stopFollowing"):
