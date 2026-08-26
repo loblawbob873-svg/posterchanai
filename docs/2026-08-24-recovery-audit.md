@@ -56,8 +56,9 @@ live behavior agree.
 - Exercise an Armada-created public community end-to-end with two identities: discovery, join,
   history, icon, members, send, reply/react, mention notification, attachment, Webxdc and moderation.
 - Exercise phone classic mode and Android at narrow portrait, landscape, and tablet widths.
-- Reconcile or deliberately retire the five named Git stashes only after their substantive additions
-  are proven present. Never drop them merely because HEAD is newer.
+- Reconstruct any substantive additions named in the earlier stash handoff from commits, release
+  payloads, or external evidence. The authoritative worktree has no stashes now, so their former
+  contents cannot be recovered or declared present merely from `git stash list`.
 
 ## 2026-08-25/26 verification pass
 
@@ -68,8 +69,8 @@ This is evidence from the recovery pass, not a declaration that the whole queue 
 | Full source/runtime suite | `scripts/checkall.py`: 4,008 unit + 1,615 client tests; 49 browser/runtime checks passed; QR scan skipped because the test session had no nsec; CSS scale remained advisory | Partial — the skip is open |
 | Files → Code on a cold session | `91ebe39d`; `module_loader_sim.js` executes the asynchronous loader; drive, synced and host routes all await it | Fixed and packaged in Desktop 1.0.962 |
 | Code folder/Git/diff/restore | `check_code_editor.py` now drives a desktop-style host folder, opens Source Control, renders the changed-file diff, restores that exact path, and returns to Explorer | Runtime-covered; installed interaction still requires a selected real folder |
-| Code/Terminal focus sizing | CDP measurement against installed Gentoo 1.0.962 reproduced a parked Terminal with both `feed-code` and `feed-term`; `8cc4c633` makes `renderView` own removal as well as addition | Fix awaiting immutable package/device recheck |
-| Desktop payload/delivery | Desktop 1.0.962 tarball checksum, ASAR contents, public Gentoo overlay, installed package and two mapped 3840×2560 surfaces were checked independently | Verified for 1.0.962; superseded once the focus fix ships |
+| Code/Terminal focus sizing | CDP against installed Gentoo 1.0.964 drove Code → Terminal → Code and asserted parked Code has only `feed-code`, parked Terminal only `feed-term`, and no slot has both | Installed regression verified |
+| Desktop payload/delivery | Desktop 1.0.964 passed Linux/macOS/Windows builds; immutable tarball, public overlay, installed Gentoo package, live static hash and two visible 3840×2560 surfaces were checked independently | Verified for 1.0.964 |
 | Android background music | Signed APK from `91ebe39d`; instrumented API-34 test starts real WebView audio, presses Home and proves media time still advances | Emulator verified; physical phone remains open |
 | Office service | Live `/office-code/hosting/discovery` is healthy and advertises same-origin editor URLs; CSP permits web, Electron and Capacitor parents; Office/WOPI tests pass | Authenticated installed document open/save remains open |
 | Blossom/synced folders | Full sync loop and two-fresh-device drive checks pass; installed ASAR equals audited source | Account-specific folder completeness remains open |
