@@ -58,13 +58,17 @@ SHIMS = {
 package place.poster.app.signer;
 public class SignerRelayService {
   public static void archiveIncoming(android.content.Context c, String f, String b, long w) { }
+  public static void archiveDelete(android.content.Context c, String id) { }
 }
 """,
     # MMS transport is an external Android library present in Gradle, not android.jar. Keep these
     # signatures narrow so this test still checks every call the SMS UI makes into it.
     "com/klinker/android/send_message/Settings.java": """
 package com.klinker.android.send_message;
-public class Settings { public void setUseSystemSending(boolean b) { } }
+public class Settings {
+  public void setUseSystemSending(boolean b) { }
+  public void setSubscriptionId(int id) { }
+}
 """,
     "com/klinker/android/send_message/Message.java": """
 package com.klinker.android.send_message;
@@ -80,6 +84,7 @@ public class Transaction {
   public static final long NO_THREAD_ID = -1;
   public Transaction(android.content.Context c, Settings s) { }
   public void sendNewMessage(Message m) { }
+  public Transaction setExplicitBroadcastForSentMms(android.content.Intent i) { return this; }
 }
 """,
     "com/android/mms/transaction/PushReceiver.java": """

@@ -226,6 +226,28 @@ class Bridge(unittest.TestCase):
         after_open = receive[receive.index("const w=openApp"):]
         self.assertNotIn("focusWin(w);", after_open)
 
+    def test_video_handoff_preserves_playback_instead_of_reopening_black(self):
+        """Moving a playing video across outputs recreates DOM in another renderer.
+
+        The route reconstructs the same post; the generic snapshot must then restore the exact
+        media element by id/index and resume only when it was playing. This protects videos in
+        Social, Concord attachments and Webxdc without a fragile per-app exception.
+        """
+        client = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()
+        capture = client[client.index("function captureHandoffUI("):
+                         client.index("function restoreHandoffUI(")]
+        restore = client[client.index("function restoreHandoffUI("):
+                         client.index("function handoffIdentity(")]
+        self.assertIn("querySelectorAll('audio,video')", capture)
+        for field in ("time:el.currentTime", "paused:!!el.paused", "volume:el.volume",
+                      "muted:!!el.muted", "rate:el.playbackRate"):
+            self.assertIn(field, capture)
+        self.assertIn("find(root,x,'audio,video')", restore)
+        self.assertIn("el.currentTime=x.time", restore)
+        self.assertIn("if(!x.paused)el.play().catch", restore)
+        self.assertIn("++tries<30", restore,
+                      "async attachment/video rendering needs retries after the destination paints")
+
     def test_native_apps_receive_real_decorations(self):
         client = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()
         self.assertIn("pc:wm:decorate", self.main)
@@ -260,8 +282,9 @@ class Bridge(unittest.TestCase):
         self.assertIn("forwardShellTick(ev)", recovery)
         handler = self.main[self.main.index("ipcMain.handle('pc:wm:subscribe'"):
                             self.main.index("/* Power, brightness", self.main.index("ipcMain.handle('pc:wm:subscribe'"))]
-        self.assertIn("const NAMES = ['window', 'workspace', 'output']", handler)
-        self.assertNotIn("const NAMES = ['window', 'workspace', 'output', 'tick']", handler)
+        self.assertIn("const NAMES = ['window', 'workspace', 'output', 'tick']", handler)
+        self.assertIn("if(name === 'tick'", handler,
+                      "Super shortcuts must be scoped to the focused output, not broadcast twice")
 
     def test_it_is_absent_rather_than_broken_without_a_compositor(self):
         """A desktop install that is not PosterChanOS has no sway. The page must be able to ask,
