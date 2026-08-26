@@ -197,6 +197,15 @@ def test_remote_pointer_moves_without_requiring_a_pressed_button():
     assert "addEventListener('wheel'" in block
 
 
+def test_remote_pointer_is_scaled_to_the_shared_monitor():
+    start = APP.index("function _rdBindViewer(video)")
+    block = APP[start:APP.index("document.addEventListener('keydown'", start)]
+    assert "video.videoWidth/video.clientWidth" in block
+    assert "video.videoHeight/video.clientHeight" in block
+    assert "Math.round((e.clientX-px)*sx)" in block
+    assert "Math.round((e.clientY-py)*sy)" in block
+
+
 def test_sharer_can_switch_monitor_without_ending_the_session():
     start = APP.index("async function _rdSwitchScreen()")
     block = APP[start:APP.index("function _rdWireControl", start)]
@@ -226,7 +235,7 @@ def test_remote_desktop_prefers_readable_text_over_frame_rate():
     assert "p.degradationPreference='maintain-resolution'" in APP
     assert "p.encodings[0].maxBitrate=12000000" in APP
     assert "_call.remoteDesktop?' rd'" in APP
-    assert ".call-overlay.rd .call-remote{object-fit:contain" in css
+    assert ".call-overlay.rd .call-remote{object-fit:fill" in css
 
 
 def test_window_focus_and_minimize_do_not_recreate_or_end_remote_session():

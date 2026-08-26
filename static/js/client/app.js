@@ -33099,7 +33099,15 @@
     video.addEventListener('pointerdown',e=>{if(!active())return;px=e.clientX;py=e.clientY;try{video.setPointerCapture(e.pointerId);}catch(_){} _rdSend({t:'input',e:{type:'button',button:Math.min(2,e.button|0),down:true}});e.preventDefault();});
     // Mouse movement must work while merely hovering. The old px===null guard initialized px only
     // on pointerdown, effectively turning remote control into drag-only control.
-    video.addEventListener('pointermove',e=>{if(!active()){px=py=null;return;}if(px===null){px=e.clientX;py=e.clientY;return;}const dx=Math.max(-240,Math.min(240,Math.round(e.clientX-px))),dy=Math.max(-240,Math.min(240,Math.round(e.clientY-py)));px=e.clientX;py=e.clientY;if(dx||dy)_rdSend({t:'input',e:{type:'move',dx,dy}});e.preventDefault();});
+    video.addEventListener('pointermove',e=>{if(!active()){px=py=null;return;}if(px===null){px=e.clientX;py=e.clientY;return;}
+      // The viewer window and shared monitor almost never have the same dimensions. Forwarding
+      // CSS-pixel deltas verbatim makes the two cursors drift farther apart with every movement.
+      // Scale each axis to source pixels; this also remains correct when the window is resized,
+      // maximized, minimized/restored, or the shared monitor has a different aspect ratio.
+      const sx=video.clientWidth&&video.videoWidth?video.videoWidth/video.clientWidth:1;
+      const sy=video.clientHeight&&video.videoHeight?video.videoHeight/video.clientHeight:1;
+      const dx=Math.max(-240,Math.min(240,Math.round((e.clientX-px)*sx))),dy=Math.max(-240,Math.min(240,Math.round((e.clientY-py)*sy)));
+      px=e.clientX;py=e.clientY;if(dx||dy)_rdSend({t:'input',e:{type:'move',dx,dy}});e.preventDefault();});
     const up=e=>{if(!active())return;px=e.clientX;py=e.clientY;_rdSend({t:'input',e:{type:'button',button:Math.min(2,e.button|0),down:false}});e.preventDefault();};
     video.addEventListener('pointerup',up);video.addEventListener('pointercancel',up);video.addEventListener('pointerleave',()=>{px=py=null;});
     video.addEventListener('wheel',e=>{if(!active())return;_rdSend({t:'input',e:{type:'wheel',dy:Math.max(-12,Math.min(12,Math.sign(e.deltaY)))}});e.preventDefault();},{passive:false});

@@ -4694,7 +4694,7 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 @keyframes callpulse{0%,100%{opacity:1}50%{opacity:.45}}
 .call-overlay{position:fixed;inset:0;z-index:400;background:radial-gradient(circle at 50% 28%,#1a1a2e,#08040e);display:flex;flex-direction:column;align-items:center;color:#fff;padding:calc(26px + env(safe-area-inset-top)) 18px calc(30px + env(safe-area-inset-bottom))}
 .call-remote{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000;z-index:0}
-.call-overlay.rd .call-remote{object-fit:contain;image-rendering:auto}
+.call-overlay.rd .call-remote{object-fit:fill;image-rendering:auto}
 .call-overlay.aud .call-remote{display:none}
 .call-head{position:relative;z-index:2;text-align:center;display:flex;flex-direction:column;align-items:center;gap:12px;margin:auto 0}
 .call-overlay.vid .call-head{position:absolute;top:calc(18px + env(safe-area-inset-top));inset-inline-start:0;inset-inline-end:0;margin:0;flex-direction:row;justify-content:center;align-items:center;gap:10px;background:linear-gradient(#000a,transparent);padding:12px}
