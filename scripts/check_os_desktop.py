@@ -1481,6 +1481,42 @@ async def drive(url):
                     print(f"SKIP  {label}: the desktop script did not evaluate")
                     return 2
 
+                # Exercise the browser input path, not merely the CSS declaration. A regression
+                # once left Social with no usable wheel scrolling even though the feed still had
+                # overflow and looked normal in a screenshot.
+                if not touch:
+                    wheel = await js("""(() => {
+                      PCOS.enter();
+                      PCOS.routeView('global');
+                      const f=document.getElementById('feed');
+                      if(!f)return null;
+                      const probe=document.createElement('div');
+                      probe.id='__wheel_probe';probe.style.height='4000px';f.appendChild(probe);
+                      f.scrollTop=0;
+                      const fw=f.closest('.osw');
+                      if(fw)fw.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));
+                      const r=f.getBoundingClientRect();
+                      return {x:r.left+r.width/2,y:r.top+Math.min(80,r.height/2),
+                              scrollbar:getComputedStyle(f).scrollbarWidth,
+                              inWindow:!!fw,scrollHeight:f.scrollHeight,clientHeight:f.clientHeight};
+                    })()""")
+                    if wheel:
+                        await call("Input.dispatchMouseEvent", {"type": "mouseWheel",
+                                   "x": wheel["x"], "y": wheel["y"],
+                                   "deltaX": 0, "deltaY": 700})
+                        await asyncio.sleep(0.15)
+                        wheel["top"] = await js("(document.getElementById('feed')||{}).scrollTop||0")
+                        await js("""(() => { const p=document.getElementById('__wheel_probe');
+                          if(p)p.remove(); PCOS.exit(); return true; })()""")
+                    if not wheel or wheel.get("top", 0) < 100:
+                        problems.append((label, "social-wheel-dead",
+                                         f"a real mouse-wheel event moved Social only "
+                                         f"{(wheel or {}).get('top', 0)}px; probe={wheel}"))
+                    elif wheel.get("scrollbar") not in ("thin", "auto"):
+                        problems.append((label, "social-scrollbar-hidden",
+                                         f"Social computed scrollbar-width is "
+                                         f"{wheel.get('scrollbar')!r}"))
+
                 if not r.get("hasBtn") or not r.get("clicked"):
                     problems.append((label, "clicks-dead",
                                      "a button a feature rendered inside a window did not fire — "
@@ -2001,6 +2037,14 @@ async def drive(url):
                                      "classic UI would render into a detached node"))
     finally:
         proc.terminate()
+        # Chrome keeps writing its profile for a brief moment after SIGTERM. Wait for the process
+        # before deleting it so the test does not intermittently leave files behind or print a
+        # misleading cleanup error after every assertion has passed.
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
         subprocess.run(["rm", "-rf", PROFILE], check=False)
 
     if problems:

@@ -2803,6 +2803,11 @@
   function handoffIdentity(w){
     const opened=String(w&&w.view||''), current=String(w&&w.appView||opened);
     if(opened==='terminal') return 'terminal';
+    /* Music is opened by the __music launcher action, which in turn creates a doc:music window.
+     * doc:music is a uniqueness key, not a launcher/render identity: handing that key to another
+     * renderer creates a generic shared-feed document and can display Social inside a Music frame.
+     * Send the reconstructible action alias so the destination invokes renderMusicApp again. */
+    if(opened==='doc:music') return '__music';
     /* A document's key is its WINDOW identity.  A post is opened as
      * `doc:post:<event-id>` and paints the internal `thread` view inside it.  Sending `thread`
      * loses the document on the receiving renderer: openApp has no launcher app named thread, so
@@ -2819,10 +2824,11 @@
      * change while another window has focus; never let that stale route turn a moved terminal into
      * a Social window (or route the receiving renderer away after it adopts the PTY). */
     const terminal = w.view === 'terminal';
+    const music = w.view === 'doc:music' || w.view === '__music';
     /* `/` is not an address. It is the page-global fallback route, and replaying it after opening
      * an ordinary app makes routeFromPath create a second Social window on the destination output.
      * Only deeper paths identify content that the view name cannot restore by itself. */
-    const appPath = terminal ? '' : String(w.appPath || '');
+    const appPath = terminal || music ? '' : String(w.appPath || '');
     const topPath = appPath==='/' || appPath==='/index.html';
     return {view:handoffIdentity(w),title:w.title||'',icon:w.icon||'',
       width:w.el.offsetWidth,height:w.el.offsetHeight,overflow:Number(overflow)||0,

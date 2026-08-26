@@ -103,7 +103,7 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
         payload = self.os[i:self.os.index("function sendFrameHandoff", i)]
         self.assertIn("const terminal = w.view === 'terminal'", payload)
         self.assertIn("view:handoffIdentity(w)", payload)
-        self.assertIn("const appPath = terminal ? ''", payload,
+        self.assertIn("const appPath = terminal || music ? ''", payload,
                       "the destination would adopt the PTY and then route it back to Social")
 
     def test_music_launcher_returns_its_real_window_for_monitor_handoff(self):
@@ -119,6 +119,17 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
                                self.os.index("if(pcWM.onPreviewFrame")]
         self.assertIn("const w=openApp(String(p.view)", receive)
         self.assertIn("if(!w) return", receive)
+
+    def test_music_handoff_uses_the_reconstructible_launcher_not_a_generic_document(self):
+        """doc:music is the live window key, but only __music knows how to paint Music."""
+        start = self.os.index("function handoffIdentity(")
+        identity = self.os[start:self.os.index("function handoffPayload(", start)]
+        self.assertIn("if(opened==='doc:music') return '__music'", identity)
+        payload = self.os[self.os.index("function handoffPayload("):
+                          self.os.index("function sendFrameHandoff")]
+        self.assertIn("const music = w.view === 'doc:music' || w.view === '__music'", payload)
+        self.assertIn("const appPath = terminal || music ? ''", payload,
+                      "a stale Social/repo path would repaint the reconstructed Music window")
 
     @unittest.skipUnless(NODE, "node is not installed")
     def test_simple_app_identity_cannot_be_replaced_by_global_social_view(self):
@@ -151,13 +162,14 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
             *({"view": view, "appView": "home" if view != "home" else "global", "appPath": ""}
               for view in simple_views),
             {"view": "terminal", "appView": "home", "appPath": "/"},
+            {"view": "doc:music", "appView": "home", "appPath": "/"},
             {"view": "repos", "appView": "repo", "appPath": "/naddr1repo"},
             {"view": "settings", "appView": "admin", "appPath": ""},
         ]
         script = fn + "\nconsole.log(JSON.stringify(" + json.dumps(cases) + ".map(handoffIdentity)))"
         got = json.loads(subprocess.run([NODE, "-e", script], capture_output=True, text=True,
                                         check=True).stdout)
-        self.assertEqual(got, simple_views + ["terminal", "repo", "admin"])
+        self.assertEqual(got, simple_views + ["terminal", "__music", "repo", "admin"])
 
     def test_every_place_that_captures_appView_captures_appPath(self):
         """They are one fact about a window — which screen it is showing — and a site that records
