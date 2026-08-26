@@ -232,7 +232,12 @@ class MmsIdentity(unittest.TestCase):
 
     def test_failed_native_mms_can_be_retried_without_deleting_before_acceptance(self):
         thread = open(os.path.join(SMS, "ThreadActivity.java"), encoding="utf-8").read()
+        bubble = open(os.path.join(ROOT, "mobile/android/app/src/main/res/layout/sms_bubble.xml"),
+                      encoding="utf-8").read()
         self.assertIn("m.mms && (m.failed() || m.pending()) && !m.parts.isEmpty()", thread)
+        self.assertIn('android:id="@+id/pc_b_retry"', bubble)
+        self.assertIn("retry.setVisibility(retryable ? View.VISIBLE : View.GONE)", thread)
+        self.assertIn("retry.setOnClickListener(retryable ? view -> retryMms(m)", thread)
         retry = thread[thread.index("private void retryMms"):thread.index("private void deleteMessage")]
         self.assertIn("MmsStore.partBytes", retry)
         self.assertIn("MmsSender.send", retry)

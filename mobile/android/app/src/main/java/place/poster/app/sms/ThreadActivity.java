@@ -561,6 +561,7 @@ public class ThreadActivity extends PcActivity {
             LinearLayout wrap = (LinearLayout) v.findViewById(R.id.pc_b_wrap);
             TextView text = (TextView) v.findViewById(R.id.pc_b_text);
             TextView meta = (TextView) v.findViewById(R.id.pc_b_meta);
+            Button retry = (Button) v.findViewById(R.id.pc_b_retry);
             Button delete = (Button) v.findViewById(R.id.pc_b_delete);
             LinearLayout attachments = (LinearLayout) v.findViewById(R.id.pc_b_attachments);
             if (m == null) return v;
@@ -599,6 +600,13 @@ public class ThreadActivity extends PcActivity {
             /* Long-press remains the full copy/delete menu, but it is not discoverable. A stuck
              * outgoing carrier row is urgent and common enough to expose directly. Rebind on every
              * recycled view so an incoming row can never inherit the previous row's listener. */
+            boolean retryable = mine && m.mms && (m.pending() || m.failed()) && !m.parts.isEmpty();
+            retry.setVisibility(retryable ? View.VISIBLE : View.GONE);
+            retry.setEnabled(retryable);
+            retry.setText(getString(R.string.sms_retry_send));
+            retry.setTextColor(pal.accent);
+            retry.setBackground(Skin.ghost(ThreadActivity.this, pal, pal.accent, false));
+            retry.setOnClickListener(retryable ? view -> retryMms(m) : null);
             boolean removable = mine && (m.pending() || m.failed());
             delete.setVisibility(removable ? View.VISIBLE : View.GONE);
             delete.setEnabled(removable);
