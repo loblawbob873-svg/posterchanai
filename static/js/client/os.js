@@ -6294,6 +6294,15 @@
          * monitors are separate Electron renderers, so no DOM node can literally cross between
          * them; its app identity and size can, and the destination owns it from this point on. */
         try{
+          if(pcWM.onNativeHandoff) _nativeHandoffOff=pcWM.onNativeHandoff((row)=>{
+            if(!row || row.id==null)return;
+            const w=adoptNative(row);
+            if(w){
+              const id=Number(row.id);
+              if(pcWM.decorate) Promise.resolve(pcWM.decorate(id)).catch(()=>{});
+              drawBar(); requestAnimationFrame(()=>nsync());
+            }
+          });
           if(pcWM.onHandoffFrame) _handoffOff = pcWM.onHandoffFrame((p) => {
             if(_handoffPreviewEl){ _handoffPreviewEl.remove(); _handoffPreviewEl=null; }
             if(!p || !p.view) return;
@@ -6450,6 +6459,7 @@
     if(_natObs){ try{ _natObs.disconnect(); }catch(_){} _natObs = null; }
     if(_tickOff){ try{ _tickOff(); }catch(_){} _tickOff = null; }
     if(_handoffOff){ try{ _handoffOff(); }catch(_){} _handoffOff = null; }
+    if(_nativeHandoffOff){ try{ _nativeHandoffOff(); }catch(_){} _nativeHandoffOff = null; }
     if(_handoffPreviewOff){ try{ _handoffPreviewOff(); }catch(_){} _handoffPreviewOff=null; }
     if(_handoffPreviewEl){ _handoffPreviewEl.remove(); _handoffPreviewEl=null; }
     clearInterval(_clock); _clock = null;
@@ -6768,7 +6778,7 @@
   /* Released on exit. A watcher left running after the desktop closes keeps a compositor
    * subscription and a 30s timer alive for the rest of the session, redrawing markup that is no
    * longer in the document. */
-  let _shellOff = null, _tickOff = null, _handoffOff = null, _handoffPreviewOff=null,
+  let _shellOff = null, _tickOff = null, _handoffOff = null, _nativeHandoffOff=null, _handoffPreviewOff=null,
       _handoffPreviewEl=null;
   /* What the machine has installed, as the start menu last read it. Kept for the life of the
    * desktop rather than per menu opening: a scan parses every .desktop file on the disk and

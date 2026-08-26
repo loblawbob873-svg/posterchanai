@@ -1229,6 +1229,13 @@ ipcMain.handle('pc:wm:handoff', async (e, id, direction) => {
   await wm().placeOnOutput(Number(id), target.rect, String(direction||''));
   _nativeOwners.set(Number(id), String(target.workspace));
   await wm().focus(Number(id));
+  /* The real surface is already on the destination output. Tell that renderer immediately so it
+   * owns a decorated frame on its first paint instead of waiting for a later tree reconciliation. */
+  try{
+    const moved=(await wm().windows()).find(row=>Number(row.id)===Number(id));
+    if(moved && record.browser && !record.browser.isDestroyed())
+      record.browser.webContents.send('pc:wm:native-handoff', moved);
+  }catch(_){ }
   return {output:target.output,workspace:target.workspace};
 });
 

@@ -8656,10 +8656,14 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
    held over exactly that rectangle, so anything drawn here would be underneath it and invisible.
    What it does show is what is on screen while the window is being dragged, when the surface is
    stashed and only the frame moves. */
-.osw-native .osw-body{ background:#05050c; }
+.osw-native .osw-body{
+  background:linear-gradient(145deg,rgba(var(--accent-rgb),.08),rgba(var(--accent-rgb),.025)),
+             var(--panel,#12101b);
+  border-top:1px solid var(--line);
+}
 .osw-nat-note{
   display:flex; align-items:center; justify-content:center; height:100%;
-  color:var(--muted,#7a8699); font-size:12px; letter-spacing:.04em;
+  color:var(--muted,#9a94aa); font-size:12px; letter-spacing:.04em;
 }
 
 /* ── PosterChanOS first run ─────────────────────────────────────────────────────────────────────
