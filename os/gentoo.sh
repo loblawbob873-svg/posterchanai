@@ -3321,7 +3321,12 @@ set default=0
 set timeout=5
 insmod all_video
 menuentry "PosterChan Live" {
-    linux /boot/vmlinuz root=live:CDLABEL=$LABEL rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img quiet
+    # Do not add `quiet` here.  On the shipped Gentoo/dracut/systemd combination it is not merely a
+    # cosmetic switch: the quiet/Plymouth path races switch-root and reproducibly stops at
+    # "Failed to isolate default target" under KVM, while the identical non-quiet boot reaches the
+    # first-run desktop.  A visible boot log is preferable to an installer that sometimes never
+    # starts, and also leaves an actionable error on screen if real hardware cannot boot.
+    linux /boot/vmlinuz root=live:CDLABEL=$LABEL rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img
     initrd /boot/initramfs.img
 }
 menuentry "PosterChan Live (verbose)" {
@@ -3329,7 +3334,7 @@ menuentry "PosterChan Live (verbose)" {
     initrd /boot/initramfs.img
 }
 menuentry "PosterChan Live (copy to RAM)" {
-    linux /boot/vmlinuz root=live:CDLABEL=$LABEL rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img rd.live.ram=1 quiet
+    linux /boot/vmlinuz root=live:CDLABEL=$LABEL rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img rd.live.ram=1
     initrd /boot/initramfs.img
 }
 GRUB

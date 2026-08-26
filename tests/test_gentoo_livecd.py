@@ -120,6 +120,12 @@ class LiveCD(unittest.TestCase):
         self.assertIn("iso/LiveOS/squashfs.img", self.code)
         self.assertIn("rd.live.dir=LiveOS", self.code)
         self.assertIn("rd.live.squashimg=squashfs.img", self.code)
+        # The quiet/Plymouth initramfs path races switch-root on the actual image and strands the
+        # default boot at "Failed to isolate default target".  Both ordinary boot modes must use
+        # the tested, non-quiet path; the separate verbose entry adds rd.debug for diagnosis.
+        grub = self.code[self.code.index('menuentry "PosterChan Live"'):
+                         self.code.index('GRUB') if 'GRUB' in self.code[self.code.index('menuentry "PosterChan Live"'):] else len(self.code)]
+        self.assertNotRegex(grub, r"linux .*\bquiet\b")
 
     def test_it_installs_what_it_needs_including_the_uefi_half(self):
         """A missing mtools is the classic one: grub-mkrescue then produces an ISO that boots on BIOS
