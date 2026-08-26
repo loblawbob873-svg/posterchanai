@@ -112,6 +112,30 @@ await input.onkeydown({key:'Enter',ctrlKey:true,metaKey:false,preventDefault(){p
 const messages=JSON.parse(data.get('pc.concord.test.'+rooms[0].naddr));
 if(!prevented || messages.length!==1 || messages[0].text!=='hello concord' || messages[0].by!=='Test User')
   throw new Error('Ctrl+Enter send flow failed');
+
+// The relay can echo a rumor before publish() resolves.  Reproduce that ordering exactly: keep the
+// optimistic continuation waiting, insert the permanent relay row, then let it rename its pending
+// row to the same id.  Storage and the subsequent render must still contain one message.
+let releaseRace;
+PosterCordReader.createChatWrap=()=>new Promise(resolve=>{releaseRace=()=>resolve({
+  rumorId:'e'.repeat(64),wrap:{kind:1059},ms:2345});});
+input.value='race once';
+const racing=input.onkeydown({key:'Enter',ctrlKey:true,metaKey:false,preventDefault(){}});
+await new Promise(resolve=>setTimeout(resolve,0));
+const raceKey='pc.concord.test.'+rooms[0].naddr;
+const whilePending=JSON.parse(data.get(raceKey));
+whilePending.push({id:'e'.repeat(64),by:'Test User',pubkey:'a'.repeat(64),text:'race once',
+                   at:2345,kind:9,tags:[],reactions:{},remote:true});
+data.set(raceKey,JSON.stringify(whilePending));
+if(!releaseRace) throw new Error('publish race was not held');
+releaseRace();
+await racing;
+const afterRace=JSON.parse(data.get(raceKey));
+if(afterRace.filter(m=>m.id==='e'.repeat(64)).length!==1)
+  throw new Error('relay echo duplicated optimistic message');
+PCConcord.render();
+if((feed.innerHTML.match(new RegExp('data-message-id="'+'e'.repeat(64)+'"','g'))||[]).length!==1)
+  throw new Error('duplicate relay message rendered twice');
 data.set('pc.concord.seen.'+rooms[0].naddr,'1');
 data.set('pc.concord.test.'+rooms[0].naddr,JSON.stringify([{by:'Other User',pubkey:'b'.repeat(64),text:'hey @tester',at:2}]));
 PCConcord.render();

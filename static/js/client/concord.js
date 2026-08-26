@@ -58,8 +58,26 @@
     if(/^(https?:\/\/|blob:)/i.test(icon))return `<img src="${p.enc(icon)}" alt="" loading="lazy">`;
     return `<span>${p.enc(icon||(r.name||'C').slice(0,2).toUpperCase())}</span>`;
   }
-  function testMessages(id){ try{ const v=JSON.parse(localStorage.getItem('pc.concord.test.'+id)||'[]'); return Array.isArray(v)?v:[]; }catch(_){ return []; } }
-  function saveTestMessages(id,v){ try{ localStorage.setItem('pc.concord.test.'+id,JSON.stringify(v.slice(-200))); }catch(_){} }
+  /* ONE RUMOR, ONE ROW.
+   *
+   * Sending is optimistic.  While createChatWrap/publish is still resolving, the four-second live
+   * query can already receive that rumor and append its permanent id.  The publish continuation
+   * then renames the pending row to the SAME id.  Previously both rows were saved and the next live
+   * pass built a dedupe Map but declined to persist it when no new event arrived, so one send could
+   * remain visibly doubled forever.  Normalize at both storage boundaries: writes prevent the race,
+   * reads repair caches produced by an older build.  Later relay data wins while retaining useful
+   * optimistic fields it does not carry (for example the already-painted reply summary). */
+  function uniqueMessages(v){
+    const byId=new Map();
+    for(const m of Array.isArray(v)?v:[]){
+      if(!m||typeof m!=='object')continue;
+      const id=messageId(m),old=byId.get(id);
+      byId.set(id,old?{...old,...m}:m);
+    }
+    return [...byId.values()];
+  }
+  function testMessages(id){ try{ const v=JSON.parse(localStorage.getItem('pc.concord.test.'+id)||'[]'); return uniqueMessages(v); }catch(_){ return []; } }
+  function saveTestMessages(id,v){ try{ localStorage.setItem('pc.concord.test.'+id,JSON.stringify(uniqueMessages(v).slice(-200))); }catch(_){} }
   function channelStoreId(room,name){ const channel=name||'general',c=room&&Array.isArray(room.channels)&&room.channels.find(x=>x.name===channel); return room&&room.naddr+(channel!=='general'&&c&&c.id?'.'+c.id:''); }
   function channelsOf(room){
     const channels=room&&Array.isArray(room.channels)?room.channels.filter(c=>c&&c.name):[];

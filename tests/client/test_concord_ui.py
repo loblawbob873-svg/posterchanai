@@ -206,6 +206,16 @@ def test_send_is_optimistic_and_does_not_wait_for_relays_to_paint():
     assert "failed.pending=false;failed.failed=true" in handler
 
 
+def test_relay_echo_racing_optimistic_send_cannot_leave_two_messages():
+    """The echo may land before publish() resolves and renames the pending row to its rumor id."""
+    assert "function uniqueMessages(v)" in CONCORD
+    assert "const id=messageId(m),old=byId.get(id)" in CONCORD
+    assert "byId.set(id,old?{...old,...m}:m)" in CONCORD
+    assert "return uniqueMessages(v)" in CONCORD, "old duplicated caches are not repaired on read"
+    assert "JSON.stringify(uniqueMessages(v).slice(-200))" in CONCORD, \
+        "the relay-before-publish race can still be persisted"
+
+
 def test_desktop_recovery_merges_armada_list_shards_and_retries_early_empty_queries():
     assert "function membershipEvents(p,pubkey)" in CONCORD
     assert "{kinds:[13302],authors:[pubkey],limit:1}" in CONCORD
