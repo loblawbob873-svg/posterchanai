@@ -496,6 +496,10 @@ def test_entering_channel_wins_scroll_race_with_history_and_media():
     assert "delete box.dataset.ccScrollRestore" in CONCORD
     channel_click = CONCORD.split("$$('[data-cc-channel]')", 1)[1].split("$$('[data-cc-star]')", 1)[0]
     assert channel_click.count('enterChatBottom()') == 2
+    assert 'function watchPinnedRoomGrowth(scroller)' in CONCORD
+    assert "new ResizeObserver" in CONCORD
+    assert "if(st.pinned===false" in CONCORD
+    assert "watchPinnedRoomGrowth(scroller)" in CONCORD
 
 
 def test_all_joined_community_metadata_repaints_live_without_moving_chat():
