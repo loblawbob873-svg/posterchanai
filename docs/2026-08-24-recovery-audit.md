@@ -46,6 +46,9 @@ live behavior agree.
   decisions; Social refreshes after offline without discarding a reply/thread or reading position.
 - Release propagation: verify the exact web build, Android APK, Electron ASAR, immutable desktop
   tarball, Gentoo Manifest/ebuild, and published overlay revision before calling a change deployed.
+- Account-dependent installed desktop gate: run `scripts/check_installed_desktop_account.py` against
+  the installed Electron build over a loopback-only CDP port. It must render Files/Blossom without
+  exposing account contents and pass temporary Office WOPI write/read plus a real editor HTTP 200.
 
 ## Open verification queue
 
@@ -72,6 +75,6 @@ This is evidence from the recovery pass, not a declaration that the whole queue 
 | Code/Terminal focus sizing | CDP against installed Gentoo 1.0.964 drove Code → Terminal → Code and asserted parked Code has only `feed-code`, parked Terminal only `feed-term`, and no slot has both | Installed regression verified |
 | Desktop payload/delivery | Desktop 1.0.964 passed Linux/macOS/Windows builds; immutable tarball, public overlay, installed Gentoo package, live static hash and two visible 3840×2560 surfaces were checked independently | Verified for 1.0.964 |
 | Android background music | Signed `apk-latest` from `8cc4c633`; instrumented API-34 test starts real WebView audio, presses Home and proves media time still advances | Emulator reverified; physical phone remains open |
-| Office service | Live `/office-code/hosting/discovery` is healthy and advertises same-origin editor URLs; CSP permits web, Electron and Capacitor parents; Office/WOPI tests pass | Authenticated installed document open/save remains open |
-| Blossom/synced folders | Full sync loop and two-fresh-device drive checks pass; installed ASAR equals audited source | Account-specific folder completeness remains open |
+| Office service | Installed Gentoo 1.0.964 created an authenticated temporary `.txt` session, verified WOPI read/write/read, loaded Collabora `cool.html` with HTTP 200, and deleted the session; `check_installed_desktop_account.py` makes the path repeatable | Installed authenticated service path verified; interactive editing controls remain open |
+| Blossom/synced folders | Installed Gentoo 1.0.964 rendered 29 folder tiles, 30 folder entries and two synced roots with no overflow/runtime errors; full sync loop and two-fresh-device checks also pass | Installed account render verified; server-versus-device completeness remains open |
 | Old stash handoff | `git stash list` is empty in the authoritative worktree | No stash exists to reconcile; do not claim its former contents recovered from this fact |
