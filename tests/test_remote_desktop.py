@@ -42,6 +42,17 @@ def test_multi_user_address_has_an_explicit_continue_action():
     assert "choose.hidden=true;go()" in OS
 
 
+def test_same_login_has_a_direct_action_and_failures_are_visible_inline():
+    css = (ROOT / "static/css/client.css").read_text(encoding="utf-8")
+    assert "data-rd-self>Share to my other signed-in device" in OS
+    assert "selfButton.onclick=()=>" in OS
+    assert "go(pk)" in OS
+    assert "data-rd-status role=\"status\" aria-live=\"polite\"" in OS
+    assert "status.textContent=String((e&&e.message)||e)" in OS
+    assert "Screen sharing was cancelled or could not start." in OS
+    assert "[data-rd-choose][hidden]{display:none!important}" in css
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_address_discovery_returns_choices_then_resolves_the_selected_user(tmp_path):
     """Execute the shipped resolver. An IP with two users must populate the picker, and choosing

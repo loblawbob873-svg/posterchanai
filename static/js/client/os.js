@@ -1923,19 +1923,23 @@
     w.slot.innerHTML=`<div class="pcrd"><div class="pcrd-hero"><svg class="ic"><use href="#i-monitor"></use></svg><div><b>Share this desktop</b><span>Encrypted peer-to-peer screen sharing, signaled over Nostr.</span></div></div>
       <label class="pcrd-label">Viewer’s npub or address<input class="input" data-rd-peer placeholder="npub1… · 192.168.1.20 · name@host" autocomplete="off" spellcheck="false"></label>
       <div class="pcrd-label" data-rd-choose hidden><label>User at this address<select class="input" data-rd-choice></select></label><button class="btn" type="button" data-rd-continue>Share with this user</button></div>
+      <button class="btn" type="button" data-rd-self>Share to my other signed-in device</button>
       <button class="btn btn-neon" data-rd-share><svg class="ic b-ic"><use href="#i-share"></use></svg>Choose screen and share</button>
+      <div class="pcrd-status" data-rd-status role="status" aria-live="polite"></div>
       <div class="pcrd-note"><b>The viewer must accept.</b> Media uses a direct WebRTC path when possible and your configured TURN service when it is not.</div>
       <div class="pcrd-cap"><span>✓ PosterChanOS, browser, and phone viewers</span><span>✓ npub, IP address, or name@host</span><span>✓ Authenticated, encrypted Nostr signaling</span></div></div>`;
-    const input=$('[data-rd-peer]',w.slot),button=$('[data-rd-share]',w.slot),choose=$('[data-rd-choose]',w.slot),choice=$('[data-rd-choice]',w.slot),continueButton=$('[data-rd-continue]',w.slot);
-    const go=async()=>{const peer=String(input.value||'').trim();if(!peer){input.focus();return;}
-      button.disabled=true;button.textContent='Opening screen picker…';
-      try{const ok=await PC().startRemoteDesktop(peer);if(ok){button.textContent='Sharing request sent';setTimeout(()=>{if(button.isConnected){button.disabled=false;button.textContent='Choose screen and share';}},3000);}else{button.disabled=false;button.textContent='Choose screen and share';}}
-      catch(e){button.disabled=false;button.textContent='Choose screen and share';
+    const input=$('[data-rd-peer]',w.slot),button=$('[data-rd-share]',w.slot),selfButton=$('[data-rd-self]',w.slot),status=$('[data-rd-status]',w.slot),choose=$('[data-rd-choose]',w.slot),choice=$('[data-rd-choice]',w.slot),continueButton=$('[data-rd-continue]',w.slot);
+    const reset=()=>{button.disabled=false;selfButton.disabled=false;button.textContent='Choose screen and share';};
+    const go=async explicitPeer=>{const peer=String(explicitPeer||input.value||'').trim();if(!peer){status.textContent='Enter a viewer address or choose your other signed-in device.';input.focus();return;}
+      button.disabled=true;selfButton.disabled=true;button.textContent='Opening screen picker…';status.textContent='Resolving viewer and opening the screen picker…';
+      try{const ok=await PC().startRemoteDesktop(peer);if(ok){button.textContent='Sharing request sent';status.textContent='Sharing request sent. Waiting for the other device…';setTimeout(()=>{if(button.isConnected)reset();},3000);}else{reset();status.textContent='Screen sharing was cancelled or could not start.';}}
+      catch(e){reset();status.textContent=String((e&&e.message)||e);
         if(e&&e.remoteChoices&&e.remoteChoices.length){choice.innerHTML=e.remoteChoices.map(x=>`<option value="${enc(x.value)}">${enc(x.label)}</option>`).join('');input.value=choice.value||e.remoteChoices[0].value;choose.hidden=false;choice.focus();return;}
-        try{PC().toast(String((e&&e.message)||e));}catch(_){}}};
+        try{PC().toast(status.textContent);}catch(_){}}};
     choice.onchange=()=>{input.value=choice.value;};
     continueButton.onclick=()=>{input.value=choice.value;choose.hidden=true;go();};
-    button.onclick=go;input.oninput=()=>{choose.hidden=true;};input.onkeydown=e=>{if(e.key==='Enter')go();};return w;
+    selfButton.onclick=()=>{const viewer=PC().viewer&&PC().viewer(),pk=viewer&&viewer.pubkey;if(!pk){status.textContent='Sign in before sharing to another device.';return;}go(pk);};
+    button.onclick=()=>go();input.oninput=()=>{choose.hidden=true;status.textContent='';};input.onkeydown=e=>{if(e.key==='Enter')go();};return w;
   }
 
   /* Route a view switch to that feature's OWN window. Returns true when it has taken over (a window
