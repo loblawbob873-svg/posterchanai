@@ -175,6 +175,11 @@
         <receiver
             android:name=".sms.SmsActionReceiver"
             android:exported="false" />
+        <!-- Explicit target for SmsManager's asynchronous MMS result. Without this, outgoing
+             provider rows remain in MESSAGE_BOX_OUTBOX forever even after the carrier answers. -->
+        <receiver
+            android:name=".sms.MmsSendReceiver"
+            android:exported="false" />
 
         <!-- "Reject the call with a text". The least visible of the four requirements and the one
              whose absence is worst: the dialer tells the person their reply was sent. -->

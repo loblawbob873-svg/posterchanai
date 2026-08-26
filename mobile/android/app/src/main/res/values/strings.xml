@@ -107,6 +107,8 @@
     <string name="sms_number_hint">Phone number or contact</string>
     <string name="sms_delete_thread">Delete this conversation</string>
     <string name="sms_delete_msg">Delete message</string>
+    <string name="sms_retry_send">Retry sending</string>
+    <string name="sms_retrying">Retrying picture message</string>
     <string name="sms_delete_confirm">Delete this message from this phone?</string>
     <string name="sms_delete_failed">Android did not delete this message</string>
     <string name="sms_copy">Copy text</string>

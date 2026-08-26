@@ -1,6 +1,7 @@
 package place.poster.app.sms;
 
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.telephony.SubscriptionManager;
@@ -41,7 +42,14 @@ public final class MmsSender {
                 settings.setSubscriptionId(sub);
             Message message = new Message(body == null ? "" : body, to, image);
             message.setSave(true);
-            new Transaction(ctx, settings).sendNewMessage(message);
+            /* The library's default completion receiver is not contributed by its AAR manifest.
+             * Without an explicit receiver Android accepts the send, but nobody moves the provider
+             * row out of content://mms/outbox or removes the temporary PDU: the phone says
+             * "Sending" forever. Route the carrier result to our declared receiver. */
+            Intent sent = new Intent(ctx, MmsSendReceiver.class)
+                    .setAction(MmsSendReceiver.ACTION_SENT);
+            new Transaction(ctx, settings).setExplicitBroadcastForSentMms(sent)
+                    .sendNewMessage(message);
             r.ok = true;
             // Klinker's transaction is responsible for the provider copy when this app has role.
             r.stored = HasRole.sms(ctx);

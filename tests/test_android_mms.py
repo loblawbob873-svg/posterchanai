@@ -218,6 +218,26 @@ def _node():
 @unittest.skipIf(JAR is None, "no android.jar on this node")
 @unittest.skipIf(not os.path.isdir(SMS), "no android sources here")
 class MmsIdentity(unittest.TestCase):
+    def test_outgoing_mms_has_a_real_platform_completion_path(self):
+        sender = open(os.path.join(SMS, "MmsSender.java"), encoding="utf-8").read()
+        receiver = open(os.path.join(SMS, "MmsSendReceiver.java"), encoding="utf-8").read()
+        manifest = open(os.path.join(ROOT, "mobile/android/app/src/main/AndroidManifest.xml"),
+                        encoding="utf-8").read()
+        self.assertIn("setExplicitBroadcastForSentMms(sent)", sender)
+        self.assertIn('.setAction(MmsSendReceiver.ACTION_SENT)', sender)
+        self.assertIn('Telephony.Mms.MESSAGE_BOX_SENT', receiver)
+        self.assertIn('Telephony.Mms.MESSAGE_BOX_FAILED', receiver)
+        self.assertIn('getResultCode()', receiver)
+        self.assertIn('android:name=".sms.MmsSendReceiver"', manifest)
+
+    def test_failed_native_mms_can_be_retried_without_deleting_before_acceptance(self):
+        thread = open(os.path.join(SMS, "ThreadActivity.java"), encoding="utf-8").read()
+        self.assertIn("m.mms && m.failed() && !m.parts.isEmpty()", thread)
+        retry = thread[thread.index("private void retryMms"):thread.index("private void deleteMessage")]
+        self.assertIn("MmsStore.partBytes", retry)
+        self.assertIn("MmsSender.send", retry)
+        self.assertLess(retry.index("MmsSender.send"), retry.index("MmsStore.delete"))
+
     out = None
 
     @classmethod

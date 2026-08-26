@@ -429,12 +429,20 @@ public class ThreadActivity extends PcActivity {
     private void messageMenu(final SmsMsg m) {
         if (m == null) return;
         try {
+            final boolean retry = m.mms && m.failed() && !m.parts.isEmpty();
+            final CharSequence[] actions = retry
+                    ? new CharSequence[]{ getString(R.string.sms_retry_send),
+                                          getString(R.string.sms_copy),
+                                          getString(R.string.sms_delete_msg) }
+                    : new CharSequence[]{ getString(R.string.sms_copy),
+                                          getString(R.string.sms_delete_msg) };
             new AlertDialog.Builder(this)
-                .setItems(new CharSequence[]{ getString(R.string.sms_copy),
-                                              getString(R.string.sms_delete_msg) },
+                .setItems(actions,
                     new android.content.DialogInterface.OnClickListener() {
                         @Override public void onClick(android.content.DialogInterface d, int w) {
-                            if (w == 0) {
+                            if (retry && w == 0) { retryMms(m); return; }
+                            int action = retry ? w - 1 : w;
+                            if (action == 0) {
                                 try {
                                     ClipboardManager cb = (ClipboardManager)
                                             getSystemService(Context.CLIPBOARD_SERVICE);
@@ -446,6 +454,23 @@ public class ThreadActivity extends PcActivity {
                         }
                     }).show();
         } catch (Throwable ignored) { }
+    }
+
+    /** Retry is explicit: automatically replaying a timed-out carrier send can duplicate it. */
+    private void retryMms(final SmsMsg m) {
+        SmsPart image = null;
+        for (SmsPart p : m.parts) if (p.ct != null && p.ct.startsWith("image/")) { image = p; break; }
+        if (image == null) { say(getString(R.string.sms_attachment_bad)); return; }
+        byte[] raw = MmsStore.partBytes(this, image.id, 8 * 1024 * 1024);
+        if (raw == null || raw.length == 0) { say(getString(R.string.sms_attachment_bad)); return; }
+        SmsSender.Result result = MmsSender.send(this, m.address, m.body, raw);
+        if (!result.ok) { say(result.error == null || result.error.isEmpty()
+                ? getString(R.string.sms_failed) : result.error); return; }
+        // A new outbox row now owns this attempt; remove the old FAILED rendering only after the
+        // platform accepted the retry, so a synchronous refusal loses nothing.
+        MmsStore.delete(this, new long[]{m.id});
+        say(getString(R.string.sms_retrying));
+        reload();
     }
 
     private void deleteMessage(final SmsMsg m) {
