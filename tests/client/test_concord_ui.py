@@ -507,9 +507,18 @@ def test_armada_encrypted_attachments_are_decrypted_before_media_rendering():
     assert 'messageContentHtml(p,m)' in CONCORD
     assert 'hydrateEncryptedAttachments(messages)' in CONCORD
     assert 'class="cc-attachment-open"' in CONCORD
-    assert 'if(p.openLightbox)p.openLightbox(got.url)' in CONCORD
+    assert 'attachmentLightbox(p,host,got.url,null)' in CONCORD
     assert 'e.preventDefault();e.stopPropagation()' in CONCORD
     assert 'data-cc-attachment-index' in CONCORD
+
+
+def test_concord_attachments_fit_chat_and_use_the_post_lightbox():
+    assert 'function attachmentLightbox(p,host,url,kind)' in CONCORD
+    assert "querySelectorAll('.cc-encrypted-attachment img,.cc-encrypted-attachment video')" in CONCORD
+    assert "attachmentLightbox(p,host,got.url,'video')" in CONCORD
+    assert 'class="cc-attachment-expand"' in CONCORD
+    assert 'width:fit-content!important;max-width:min(560px,100%)' in CONCORD_CSS
+    assert 'object-fit:contain!important' in CONCORD_CSS
 
 
 def test_concord_brand_always_returns_to_discovery():
