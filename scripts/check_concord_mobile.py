@@ -33,10 +33,9 @@ const room={name:'PosterChan Community',icon:'🕊',description:'A real communit
   local:true,naddr:'naddr-mobile-layout'};
 localStorage.setItem('pc.concord.invites',JSON.stringify([room]));
 localStorage.setItem('pc.concord.active','0');
-localStorage.setItem('pc.concord.test.'+room.naddr,JSON.stringify([
- {id:'one',pubkey:'b'.repeat(64),by:'Alexandria Long Username',at:1,text:'A message with https://example.test/a/very/long/path/that/must/not/push/the/phone/sideways and enough words to wrap naturally.',tags:[],reactions:{'👍':['b'.repeat(64)]}},
- {id:'two',pubkey:'a'.repeat(64),by:'Me',at:2,text:'Latest message',tags:[],reactions:{}}
-]));
+const fixtureMessages=Array.from({length:36},(_,i)=>({id:'message-'+i,pubkey:(i===35?'a':'b').repeat(64),by:i===35?'Me':'Alexandria Long Username',at:i+1,
+ text:i===0?'A message with https://example.test/a/very/long/path/that/must/not/push/the/phone/sideways and enough words to wrap naturally.':'Message '+i+' with enough text to give the chat a real scroll range.',tags:[],reactions:i===0?{'👍':['b'.repeat(64)]}:{}}));
+localStorage.setItem('pc.concord.test.'+room.naddr,JSON.stringify(fixtureMessages));
 window.__PC={$, $$, enc, niceNip05:s=>s, isView:v=>v==='concord',
  viewer:()=>({pubkey:'a'.repeat(64),npub:'npub1mobile',profile:{name:'Me',picture:''}}),
  profOf:pk=>({name:pk[0]==='a'?'Me':'Alexandria Long Username',picture:''}), LOGO:'',
@@ -44,7 +43,8 @@ window.__PC={$, $$, enc, niceNip05:s=>s, isView:v=>v==='concord',
  relayUrls:()=>[], publish:async()=>({ev:{}}), relayPublish:async()=>({ok:true}),relayPublishTo:async()=>1,
  signTemplate:async x=>x, linkify:s=>enc(s),linkCardHtml:()=>'',hydrateLinkCards:()=>{},
  osNotify:()=>{},askOsNotify:async()=> 'granted',copyValue:()=>{},startGroupCall:()=>{},
- uploadBlob:async()=>'',openEmojiPopover:()=>{},insertAt:()=>{},blossomPicker:null,modal:null};
+ uploadBlob:async()=>'',openEmojiPopover:()=>{},insertAt:()=>{},blossomPicker:null,modal:null,
+ uiConfirm:async()=>true};
 </script><script src="/static/js/client/concord.js"></script>
 <script>PCConcord.render();window.__ready=true;</script></body></html>"""
 
@@ -125,6 +125,13 @@ async def drive(url):
                 problems.append(f"{width}px chat did not take the phone viewport cleanly: {chat}")
             if chat["chat"] and abs(chat["chat"]["width"] - width) > 2:
                 problems.append(f"{width}px chat width is {chat['chat']['width']:.1f}px")
+            deletion = await evaluate(ws, r"""(async()=>{const box=document.querySelector('.cc-messages');box.scrollTop=24;box.dispatchEvent(new Event('scroll'));const top=box.scrollTop,count=document.querySelectorAll('.cc-message').length,button=[...document.querySelectorAll('[data-cc-delete]')].at(-1);await button.onclick();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return {top,bottom:box.scrollTop,before:count,after:document.querySelectorAll('.cc-message').length,app:document.querySelector('.cc-app').className,overflow:document.documentElement.scrollWidth-innerWidth};})()""")
+            if deletion["after"] != deletion["before"] - 1:
+                problems.append(f"{width}px delete did not remove exactly one message: {deletion}")
+            if abs(deletion["bottom"] - deletion["top"]) > 2:
+                problems.append(f"{width}px deleting an off-screen message moved the chat: {deletion}")
+            if deletion["overflow"] > 1 or "show-chat" not in deletion["app"]:
+                problems.append(f"{width}px deletion damaged the chat layout: {deletion}")
             await evaluate(ws, "document.querySelector('#cc-back-channels').click()")
             await asyncio.sleep(.05)
             drawer = await evaluate(ws, AUDIT)
