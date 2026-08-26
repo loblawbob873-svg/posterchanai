@@ -1899,11 +1899,16 @@ ipcMain.handle('pc:fs:power', (e) => {
   return { charging: !onBattery, metered: false, online: true };
 });
 
-ipcMain.handle('pc:clip:write', (e, text) => {
+ipcMain.handle('pc:clip:write', async (e, text) => {
   if (!fromOurPage(e)) { console.warn('[clip] denied'); return false; }
   const s = String(text == null ? '' : text);
   if (!s || s.length > 8192) return false;    // a stream key/url is short; refuse to be a bulk channel
   clipboard.writeText(s);
+  /* Chromium's internal cache is not proof that another Wayland client can paste it.  Publish the
+   * compositor selection too; the helper has bounded input/time and cannot inherit shell sockets. */
+  if (require('./clipboard.js').isWayland()) {
+    return require('./clipboard.js').writeWaylandText(s);
+  }
   return true;
 });
 /* CLIPBOARD READ, and why this exists at all when write was deliberately alone.
@@ -1916,8 +1921,10 @@ ipcMain.handle('pc:clip:write', (e, text) => {
  *
  * Bounded, because a paste goes to a shell: 64KB is far more than any command line and far less
  * than a channel worth abusing. */
-ipcMain.handle('pc:clip:read', (e) => {
+ipcMain.handle('pc:clip:read', async (e) => {
   if (!fromOurPage(e)) { console.warn('[clip] read denied'); return ''; }
+  const native = await require('./clipboard.js').readWaylandText();
+  if (native !== null) return native;
   try { return String(clipboard.readText() || '').slice(0, 65536); } catch (_) { return ''; }
 });
 
