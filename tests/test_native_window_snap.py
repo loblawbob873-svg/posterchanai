@@ -57,6 +57,13 @@ def test_shell_snap_tick_uses_the_focused_posterchan_window():
     assert "snapTo(w, p.slice(8)==='max' ? 'max' : p.slice(8))" in src
 
 
+def test_renderer_first_subscription_cannot_drop_all_super_shortcuts():
+    """The renderer and recovery setup race; either one must subscribe the socket to tick."""
+    main = (ROOT / "desktop/main.js").read_text()
+    assert "const NAMES = ['window', 'workspace', 'output', 'tick']" in main
+    assert "await wm().subscribe(['window','workspace','output','tick'])" in main
+
+
 def test_native_snap_still_accepts_real_native_apps():
     helper = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap"
     module = runpy.run_path(str(helper), run_name="pc_window_snap_test")

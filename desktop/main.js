@@ -1571,7 +1571,11 @@ ipcMain.handle('pc:wm:subscribe', async (e) => {
    * page is focused, and the moment you want a start menu is usually the moment something else is. */
   /* Tick forwarding is owned by wireShellRecovery(), whose lifetime is the shell process rather
    * than a renderer's startup. Keeping it here too would toggle Start twice. */
-  const NAMES = ['window', 'workspace', 'output'];
+  /* Include tick on the FIRST subscription. WM.subscribe intentionally owns one socket and returns
+   * when it already exists; if the renderer reached this call before wireShellRecovery(), the old
+   * list permanently omitted tick and every Super shortcut ran in Sway but vanished before the
+   * page. wireShellRecovery still owns the one tick listener, so this does not double-deliver. */
+  const NAMES = ['window', 'workspace', 'output', 'tick'];
   await w.subscribe(NAMES);
   for (const name of NAMES) {
     w.on(name, (ev) => {
