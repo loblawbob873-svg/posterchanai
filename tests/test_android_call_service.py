@@ -202,6 +202,12 @@ def test_every_resume_signal_is_wired_and_they_share_one_debounce():
     assert "_lastWake < 4000" in APPJS[i:i + 300], "the four signals would fire four reconnects"
 
 
+def test_android_network_transport_change_replaces_wifi_bound_relay_socket():
+    """Wi-Fi -> cellular stays online, but its existing WebSocket cannot move to the new network."""
+    assert "navigator.connection||navigator.mozConnection||navigator.webkitConnection" in APPJS
+    assert "nc.addEventListener('change', ()=>{ _tlForeground(); _resumeRelay(); })" in APPJS
+
+
 # ---------------------------------------------------------------------------------------------
 # the rest of "working in the background" — it was never only about calls
 

@@ -4835,6 +4835,13 @@
     // give reliable second chances to reconnect + refetch. Debounced so they don't stack with the above.
     window.addEventListener('online', _resumeRelay);
     window.addEventListener('pageshow', e=>{ if(e && e.persisted) _resumeRelay(); });
+    /* Wi-Fi -> cellular (and back) usually remains "online" throughout, so Android fires no online
+     * event even though every WebSocket still belongs to the dead network. Chromium's Network
+     * Information signal does report the transport change. Replace the sockets and re-arm a paused
+     * timeline; _resumeRelay's shared debounce collapses the burst some radios emit. */
+    try{ const nc=navigator.connection||navigator.mozConnection||navigator.webkitConnection;
+      if(nc && nc.addEventListener) nc.addEventListener('change', ()=>{ _tlForeground(); _resumeRelay(); });
+    }catch(_){}
     if(document.hidden) _animOff(true);   // bound while already backgrounded — no event is coming
     const rb=document.querySelector('.rightbar');
     // No auto-scroll ticker: the column used to creep downward on its own and loop back to the top.
