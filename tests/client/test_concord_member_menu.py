@@ -21,6 +21,19 @@ def test_member_menu_supports_profile_and_owner_only_ban():
     assert "canBan=isOwner&&target!==viewer.pubkey" in JS
     assert "Ban from community" in JS
     assert "p.openProfile(target)" in JS
+    bind = JS[JS.index("function bind(me){"):]
+    menu = bind.index("const openMemberMenu=")
+    assert "const viewer=p.viewer?p.viewer():{}" in bind[:menu]
+    assert "isOwner=!!boundOwnerPk&&boundOwnerPk===viewer.pubkey" in bind[:menu]
+
+
+def test_member_menu_can_open_a_direct_message():
+    assert 'data-cc-member-message=' in JS
+    assert '>Message</button>' in JS
+    assert "if(p.messageUser)p.messageUser(target)" in JS
+    app = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+    assert "messageUser: (pk) =>" in app
+    assert "switchView('messages'); setTimeout(()=>openDm(pk),80)" in app
 
 
 def test_member_rows_and_menu_have_compact_dedicated_styling():

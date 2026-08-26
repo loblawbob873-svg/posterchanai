@@ -33852,6 +33852,7 @@
     adoptView: (v) => { VIEW=String(v||''); },
     askWindowContext,
     startRemoteDesktop, setRemoteDesktopArmed,
+    messageUser: (pk) => { pk=safePk(String(pk||'')); if(!pk)return false; if(!dmPeers.has(pk))dmPeers.set(pk,[]); dmActive=pk; switchView('messages'); setTimeout(()=>openDm(pk),80); return true; },
     /* The one pass that fills every `.name[data-prof]` (and avatars, nip05s, @mentions) once a kind-0
      * arrives. A sub-module that paints author names MUST be able to call it, or its names are frozen
      * at whatever was cached when it drew — webxdc.js's app gallery is not repainted by anything else,
