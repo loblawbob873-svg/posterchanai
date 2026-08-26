@@ -6,9 +6,9 @@ The installed Electron process must be started with a loopback-only CDP port, fo
     posterchan --shell --remote-debugging-address=127.0.0.1 --remote-debugging-port=9223
     PC_CHECK_PORT=9223 venv-unified/bin/python scripts/check_installed_desktop_account.py
 
-This check never reads filenames, file URLs, keys, or document contents from the account.  Office
-uses a temporary text document, verifies the live WOPI write/read path, opens the real editor frame,
-and deletes the temporary session in a finally block.
+This check never reads filenames, file URLs, keys, or document contents from the account. Office
+uses an embedded blank ODT fixture, types a sentinel through the real Collabora editor, proves the
+saved WOPI payload contains it, and deletes the temporary session in a finally block.
 """
 
 import asyncio
