@@ -36,12 +36,17 @@ async function input(raw){
   const now=Date.now();
   // A remote browser can produce hundreds of pointermove events per second. Besides wasting CPU,
   // that can starve the release packet behind a move backlog and leave a button held down.
-  if(e.type==='move' && now-lastAt<16) return false;
+  if((e.type==='move'||e.type==='absolute') && now-lastAt<16) return false;
   lastAt=now; start();
   if(e.type==='move'){
     const dx=Math.round(Number(e.dx)),dy=Math.round(Number(e.dy));
     if(!Number.isFinite(dx)||!Number.isFinite(dy)||Math.abs(dx)>240||Math.abs(dy)>240) return false;
     return enqueue(['mousemove',String(dx),String(dy)]);
+  }
+  if(e.type==='absolute'){
+    const x=Math.round(Number(e.x)),y=Math.round(Number(e.y));
+    if(!Number.isFinite(x)||!Number.isFinite(y)||Math.abs(x)>100000||Math.abs(y)>100000) return false;
+    return enqueue(['mousemove','--absolute',String(x),String(y)]);
   }
   if(e.type==='wheel'){
     const dy=Math.round(Number(e.dy));

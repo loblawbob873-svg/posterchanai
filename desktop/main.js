@@ -810,6 +810,7 @@ function wirePermissions() {
     let source = null;
     try { source = await pickScreenSource(); } catch (e) { screenLog('request failed: ' + ((e && (e.stack || e.message)) || e)); }
     if (!source) return cb({});   // cancelled → the page sees a plain NotAllowedError, as in a browser
+    remoteControlDisplayId = String(source.display_id || '');
     // 'loopback' = share the system audio too, which only Windows supports. The client asks for
     // video-only today; this costs nothing and is right the day it asks for audio.
     cb(req && req.audioRequested && process.platform === 'win32'
@@ -825,6 +826,7 @@ function wirePermissions() {
 // null if the user cancels or closes it — never leaves getDisplayMedia hanging.
 let pendingSources = [];
 let pickerOpen = false;
+let remoteControlDisplayId = '';
 function screenLog(message) {
   const line = new Date().toISOString() + ' ' + String(message) + '\n';
   try { fs.appendFileSync(path.join(app.getPath('userData'), 'screen-share.log'), line); } catch (_) {}
@@ -849,13 +851,9 @@ function pickScreenSource() {
     .then((sources) => {
       screenLog('desktopCapturer returned ' + sources.length + ' source(s): ' + sources.map((s) => s.id + ':' + s.name).join(', '));
       if (!sources.length) { pickerOpen = false; return null; }
-      // PipeWire's portal has already asked the user which monitor may be shared. Chromium exposes that
-      // grant as one synthetic source; opening our own picker after it is both redundant and unreliable
-      // under Sway (the modal can land behind the full-screen shell). Use the granted source directly.
-      if (process.platform === 'linux' && sources.length === 1) {
-        pickerOpen = false;
-        return sources[0];
-      }
+      // Even when PipeWire exposes one granted source, show PosterChan's confirmation modal. A bare
+      // portal flash gave users no clear indication which monitor was about to be shared; the modal
+      // supplies a labeled thumbnail and an explicit final choice.
       pendingSources = sources;
       return new Promise((resolve) => {
         let done = false;
@@ -1329,6 +1327,15 @@ ipcMain.handle('pc:wm:snap', (e, id, zone) => { fsGuard(e); return wm().snap(Num
 ipcMain.handle('pc:remote:input', (e, input) => {
   fsGuard(e);
   if(!SHELL_MODE) return false;
+  if(input && input.type === 'absolute') {
+    const nx = Number(input.x), ny = Number(input.y);
+    if(!Number.isFinite(nx) || !Number.isFinite(ny) || nx < 0 || nx > 1 || ny < 0 || ny > 1) return false;
+    const point = screen.getCursorScreenPoint();
+    const display = screen.getAllDisplays().find(d => String(d.id) === remoteControlDisplayId)
+      || screen.getDisplayNearestPoint(point);
+    const b = display.bounds;
+    input = { type:'absolute', x:b.x + Math.round(nx * Math.max(0,b.width-1)), y:b.y + Math.round(ny * Math.max(0,b.height-1)) };
+  }
   return remotecontrol.input(input);
 });
 ipcMain.handle('pc:remote:release', (e) => { fsGuard(e); return SHELL_MODE ? remotecontrol.release() : false; });

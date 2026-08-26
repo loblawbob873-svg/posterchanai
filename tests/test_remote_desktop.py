@@ -193,17 +193,15 @@ def test_remote_pointer_moves_without_requiring_a_pressed_button():
     block = APP[start:APP.index("document.addEventListener('keydown'", start)]
     move = block[block.index("pointermove"):block.index("const up=", block.index("pointermove"))]
     assert "px===null)return" not in move
-    assert "if(px===null){px=e.clientX;py=e.clientY;return;}" in move
+    assert "type:'absolute',x:nx,y:ny" in move
     assert "addEventListener('wheel'" in block
 
 
 def test_remote_pointer_is_scaled_to_the_shared_monitor():
     start = APP.index("function _rdBindViewer(video)")
     block = APP[start:APP.index("document.addEventListener('keydown'", start)]
-    assert "video.videoWidth/video.clientWidth" in block
-    assert "video.videoHeight/video.clientHeight" in block
-    assert "Math.round((e.clientX-px)*sx)" in block
-    assert "Math.round((e.clientY-py)*sy)" in block
+    assert "video.getBoundingClientRect()" in block
+    assert "type:'absolute',x:nx,y:ny" in block
 
 
 def test_sharer_can_switch_monitor_without_ending_the_session():
@@ -233,7 +231,7 @@ def test_remote_desktop_prefers_readable_text_over_frame_rate():
     css = (ROOT / "static/css/client.css").read_text(encoding="utf-8")
     assert "screen.contentHint='detail'" in APP
     assert "p.degradationPreference='maintain-resolution'" in APP
-    assert "p.encodings[0].maxBitrate=12000000" in APP
+    assert "p.encodings[0].maxBitrate=24000000" in APP
     assert "_call.remoteDesktop?' rd'" in APP
     assert ".call-overlay.rd .call-remote{object-fit:fill" in css
 

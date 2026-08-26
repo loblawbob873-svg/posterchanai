@@ -25,7 +25,7 @@ def test_native_remote_input_is_shell_only_and_origin_guarded():
 
 
 def test_native_remote_input_is_bounded_and_rate_limited():
-    assert "now-lastAt<16" in NATIVE
+    assert "(e.type==='move'||e.type==='absolute') && now-lastAt<16" in NATIVE
     assert "Math.abs(dx)>240||Math.abs(dy)>240" in NATIVE
     assert "e.type==='wheel'" in NATIVE
     assert "KEY_CODES.has(code)" in NATIVE
@@ -34,6 +34,14 @@ def test_native_remote_input_is_bounded_and_rate_limited():
     assert "exec(" not in NATIVE
     assert "queue=queue.then" in NATIVE
     assert "heldKeys" in NATIVE and "heldButtons" in NATIVE
+
+
+def test_absolute_remote_pointer_maps_through_the_host_display():
+    assert "input.type === 'absolute'" in MAIN
+    assert "screen.getCursorScreenPoint()" in MAIN
+    assert "screen.getAllDisplays().find" in MAIN
+    assert "screen.getDisplayNearestPoint(point)" in MAIN
+    assert "['mousemove','--absolute'" in NATIVE
 
 
 def test_posterchanos_installs_and_enables_private_user_input_daemon():

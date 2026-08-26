@@ -32972,6 +32972,15 @@
       });
     }catch(_){}
   }
+  function _preferScreenCodec(pc){
+    try{
+      const caps=(window.RTCRtpSender&&RTCRtpSender.getCapabilities)?RTCRtpSender.getCapabilities('video'):null;
+      if(!caps||!caps.codecs)return;
+      const detail=caps.codecs.filter(c=>/\/(av1|vp9)$/i.test(c.mimeType||'')),rest=caps.codecs.filter(c=>!\/\/(av1|vp9)$/i.test(c.mimeType||''));
+      if(!detail.length)return;
+      pc.getTransceivers().forEach(t=>{if(t.sender&&t.sender.track&&t.sender.track.kind==='video'&&t.setCodecPreferences)t.setCodecPreferences(detail.concat(rest));});
+    }catch(_){}
+  }
   function _newPc(iceServers){
     const pc = new RTCPeerConnection({ iceServers: iceServers||[], iceCandidatePoolSize: 1 });
     pc.onicecandidate = e => { if(e.candidate && _call) _callSend(_call.peer, {v:1, callId:_call.id, t:'ice', cand:e.candidate.toJSON()}); };
@@ -33049,14 +33058,14 @@
     if(!sender)return;try{
       const p=sender.getParameters();p.degradationPreference='maintain-resolution';
       if(!p.encodings||!p.encodings.length)p.encodings=[{}];
-      p.encodings[0].maxBitrate=12000000;p.encodings[0].maxFramerate=24;
+      p.encodings[0].maxBitrate=24000000;p.encodings[0].maxFramerate=24;
       await sender.setParameters(p);
     }catch(_){}
   }
   async function _rdSwitchScreen(){
     if(!_call||!_call.remoteDesktop||!_call.caller||!_call.pc)return;
     const activeCall=_call,old=activeCall.local;let next;
-    try{next=await navigator.mediaDevices.getDisplayMedia({video:{width:{ideal:1920},height:{ideal:1080}},audio:false});}
+    try{next=await navigator.mediaDevices.getDisplayMedia({video:{frameRate:{ideal:20,max:30}},audio:false});}
     catch(e){if(e&&e.name!=='NotAllowedError')toast(_mediaErrMsg(e));return;}
     if(!_call||_call!==activeCall){next.getTracks().forEach(t=>t.stop());return;}
     const track=next.getVideoTracks()[0],sender=activeCall.pc.getSenders().find(s=>s.track&&s.track.kind==='video');
@@ -33099,15 +33108,10 @@
     video.addEventListener('pointerdown',e=>{if(!active())return;px=e.clientX;py=e.clientY;try{video.setPointerCapture(e.pointerId);}catch(_){} _rdSend({t:'input',e:{type:'button',button:Math.min(2,e.button|0),down:true}});e.preventDefault();});
     // Mouse movement must work while merely hovering. The old px===null guard initialized px only
     // on pointerdown, effectively turning remote control into drag-only control.
-    video.addEventListener('pointermove',e=>{if(!active()){px=py=null;return;}if(px===null){px=e.clientX;py=e.clientY;return;}
-      // The viewer window and shared monitor almost never have the same dimensions. Forwarding
-      // CSS-pixel deltas verbatim makes the two cursors drift farther apart with every movement.
-      // Scale each axis to source pixels; this also remains correct when the window is resized,
-      // maximized, minimized/restored, or the shared monitor has a different aspect ratio.
-      const sx=video.clientWidth&&video.videoWidth?video.videoWidth/video.clientWidth:1;
-      const sy=video.clientHeight&&video.videoHeight?video.videoHeight/video.clientHeight:1;
-      const dx=Math.max(-240,Math.min(240,Math.round((e.clientX-px)*sx))),dy=Math.max(-240,Math.min(240,Math.round((e.clientY-py)*sy)));
-      px=e.clientX;py=e.clientY;if(dx||dy)_rdSend({t:'input',e:{type:'move',dx,dy}});e.preventDefault();});
+    video.addEventListener('pointermove',e=>{if(!active()){px=py=null;return;}const r=video.getBoundingClientRect();
+      const nx=Math.max(0,Math.min(1,(e.clientX-r.left)/Math.max(1,r.width))),ny=Math.max(0,Math.min(1,(e.clientY-r.top)/Math.max(1,r.height)));
+      _rdSend({t:'input',e:{type:'absolute',x:nx,y:ny}});
+      px=e.clientX;py=e.clientY;e.preventDefault();});
     const up=e=>{if(!active())return;px=e.clientX;py=e.clientY;_rdSend({t:'input',e:{type:'button',button:Math.min(2,e.button|0),down:false}});e.preventDefault();};
     video.addEventListener('pointerup',up);video.addEventListener('pointercancel',up);video.addEventListener('pointerleave',()=>{px=py=null;});
     video.addEventListener('wheel',e=>{if(!active())return;_rdSend({t:'input',e:{type:'wheel',dy:Math.max(-12,Math.min(12,Math.sign(e.deltaY)))}});e.preventDefault();},{passive:false});
@@ -33132,9 +33136,7 @@
      * the viewer sends no camera or microphone back. Keeping it on the call transport gives it the
      * same encrypted Nostr signaling and TURN fallback without pretending a camera call is a
      * desktop-sharing session. */
-    if(remoteHost) return navigator.mediaDevices.getDisplayMedia({
-      video:{width:{ideal:1920},height:{ideal:1080},frameRate:{ideal:24}}, audio:false
-    });
+    if(remoteHost) return navigator.mediaDevices.getDisplayMedia({video:{frameRate:{ideal:20,max:30}},audio:false});
     if(remoteGuest) return Promise.resolve(new MediaStream());
     return navigator.mediaDevices.getUserMedia({ audio:true, video: video ? {width:{ideal:640},height:{ideal:480},frameRate:{ideal:24}} : false });
   }
@@ -33200,7 +33202,7 @@
     const pc = _newPc(ice.iceServers); _call.pc = pc;
     if(remoteDesktop) _rdWireControl(pc.createDataChannel('posterchan-control',{ordered:true}));
     local.getTracks().forEach(t=>{const sender=pc.addTrack(t,local);if(remoteDesktop&&t.kind==='video')_rdTuneSender(sender);});
-    _preferH264(pc);   // hardware encode/decode on both ends — see _preferH264
+    if(remoteDesktop)_preferScreenCodec(pc);else _preferH264(pc);
     // Guard the SDP dance: a createOffer/setLocalDescription rejection (SDP/codec/hardware quirk) or a
     // hangup during these awaits must tear down cleanly, not wedge _call in 'calling' forever.
     try{
