@@ -235,10 +235,14 @@ class MmsIdentity(unittest.TestCase):
         for reason in ('invalid carrier APN', 'mobile data is unavailable',
                        'the selected SIM is inactive', 'carrier server rejected it'):
             self.assertIn(reason, failures)
-        self.assertIn('carrier accepted MMS without delivery confirmation', failures)
+        self.assertIn('delivery unknown — confirm with the recipient before retrying', failures)
         self.assertIn('verify mobile data and the carrier MMS APN', failures)
         self.assertIn('SubscriptionManager.getDefaultSmsSubscriptionId()', failures)
-        self.assertIn('result == Activity.RESULT_OK || result == Activity.RESULT_CANCELED', receiver)
+        self.assertIn('boolean ok = result == Activity.RESULT_OK', receiver)
+        flight = open(os.path.join(SMS, "MmsFlight.java"), encoding="utf-8").read()
+        self.assertIn('static synchronized boolean claim', flight)
+        self.assertIn('another picture message is still being sent', sender)
+        self.assertIn('MmsFlight.release(ctx)', receiver)
 
     def test_failed_native_mms_can_be_retried_without_deleting_before_acceptance(self):
         thread = open(os.path.join(SMS, "ThreadActivity.java"), encoding="utf-8").read()

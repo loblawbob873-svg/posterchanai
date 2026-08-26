@@ -436,7 +436,8 @@ public class ThreadActivity extends PcActivity {
              * made the repair unreachable for the exact messages it was added to recover. Keep it
              * explicit (long-press → Retry) because an old carrier submission may have escaped even
              * though its provider row never advanced. */
-            final boolean retry = m.mms && (m.failed() || m.pending()) && !m.parts.isEmpty();
+            final boolean retry = m.mms && (m.failed() || m.pending()) && !m.parts.isEmpty()
+                    && !m.error.startsWith("delivery unknown");
             final CharSequence[] actions = retry
                     ? new CharSequence[]{ getString(R.string.sms_retry_send),
                                           getString(R.string.sms_copy),
@@ -605,7 +606,8 @@ public class ThreadActivity extends PcActivity {
             /* Long-press remains the full copy/delete menu, but it is not discoverable. A stuck
              * outgoing carrier row is urgent and common enough to expose directly. Rebind on every
              * recycled view so an incoming row can never inherit the previous row's listener. */
-            boolean retryable = mine && m.mms && (m.pending() || m.failed()) && !m.parts.isEmpty();
+            boolean retryable = mine && m.mms && (m.pending() || m.failed()) && !m.parts.isEmpty()
+                    && !m.error.startsWith("delivery unknown");
             retry.setVisibility(retryable ? View.VISIBLE : View.GONE);
             retry.setEnabled(retryable);
             retry.setText(getString(R.string.sms_retry_send));

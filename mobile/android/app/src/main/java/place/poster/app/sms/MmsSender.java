@@ -19,6 +19,10 @@ public final class MmsSender {
         if (to == null || to.trim().isEmpty()) { r.error = "missing recipient"; return r; }
         if (raw == null || raw.length == 0) { r.error = "missing attachment"; return r; }
         if (raw.length > 8 * 1024 * 1024) { r.error = "picture message is too large"; return r; }
+        if (!MmsFlight.claim(ctx)) {
+            r.error = "another picture message is still being sent";
+            return r;
+        }
         try {
             r.sentAt = System.currentTimeMillis();
             BitmapFactory.Options bounds = new BitmapFactory.Options();
@@ -54,6 +58,7 @@ public final class MmsSender {
             // Klinker's transaction is responsible for the provider copy when this app has role.
             r.stored = HasRole.sms(ctx);
         } catch (Throwable t) {
+            MmsFlight.release(ctx);
             r.error = t.getMessage() == null ? "could not send picture message" : t.getMessage();
         }
         return r;
