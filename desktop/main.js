@@ -804,7 +804,7 @@ function wirePermissions() {
   ses.setDisplayMediaRequestHandler(async (req, cb) => {
     if (!isOurs((req && req.frame && req.frame.url) || (req && req.securityOrigin) || '')) return cb({});
     let source = null;
-    try { source = await pickScreenSource(); } catch (e) { console.warn('[screen]', (e && e.message) || e); }
+    try { source = await pickScreenSource(); } catch (e) { screenLog('request failed: ' + ((e && (e.stack || e.message)) || e)); }
     if (!source) return cb({});   // cancelled → the page sees a plain NotAllowedError, as in a browser
     // 'loopback' = share the system audio too, which only Windows supports. The client asks for
     // video-only today; this costs nothing and is right the day it asks for audio.
@@ -821,6 +821,11 @@ function wirePermissions() {
 // null if the user cancels or closes it — never leaves getDisplayMedia hanging.
 let pendingSources = [];
 let pickerOpen = false;
+function screenLog(message) {
+  const line = new Date().toISOString() + ' ' + String(message) + '\n';
+  try { fs.appendFileSync(path.join(app.getPath('userData'), 'screen-share.log'), line); } catch (_) {}
+  console.warn('[screen]', String(message));
+}
 function pickScreenSource() {
   if (pickerOpen) return Promise.resolve(null);   // one picker at a time — a second request just cancels
   pickerOpen = true;
@@ -830,7 +835,15 @@ function pickScreenSource() {
   return desktopCapturer
     .getSources({ types: sourceTypes, thumbnailSize: { width: 320, height: 200 }, fetchWindowIcons: false })
     .then((sources) => {
+      screenLog('desktopCapturer returned ' + sources.length + ' source(s): ' + sources.map((s) => s.id + ':' + s.name).join(', '));
       if (!sources.length) { pickerOpen = false; return null; }
+      // PipeWire's portal has already asked the user which monitor may be shared. Chromium exposes that
+      // grant as one synthetic source; opening our own picker after it is both redundant and unreliable
+      // under Sway (the modal can land behind the full-screen shell). Use the granted source directly.
+      if (process.platform === 'linux' && sources.length === 1) {
+        pickerOpen = false;
+        return sources[0];
+      }
       pendingSources = sources;
       return new Promise((resolve) => {
         let done = false;
@@ -854,6 +867,7 @@ function pickScreenSource() {
     .catch((error) => {
       // A rejected portal request must not poison every later attempt as "one picker at a time".
       pickerOpen = false;
+      screenLog('desktopCapturer failed: ' + ((error && (error.stack || error.message)) || error));
       throw error;
     });
 }
