@@ -165,7 +165,13 @@ OFFICE_CHECK = r"""(async()=>{
     form.submit(); await loaded; await new Promise(r=>setTimeout(r,2500)); out.frameLoaded=true;
     window.__pcOfficeInstalledSmoke={session:s,wrap};
     return out;
-  }catch(e){out.error=String(e&&e.message||e); if(wrap)wrap.remove(); return out;}
+  }catch(e){
+    out.error=String(e&&e.message||e); if(wrap)wrap.remove();
+    if(s){const B=String(window.__PC_API_BASE__||'').replace(/\/$/,'');
+      await fetch(B+'/client/office/session/'+s.id+'?access_token='+encodeURIComponent(s.token),
+        {method:'DELETE'}).catch(()=>{});}
+    return out;
+  }
 })()"""
 
 OFFICE_CLEANUP = r"""(async()=>{
