@@ -36,6 +36,13 @@ def test_member_menu_can_open_a_direct_message():
     assert "switchView('messages'); setTimeout(()=>openDm(pk),80)" in app
 
 
+def test_member_menu_is_anchored_to_the_row_and_survives_its_button_pointerdown():
+    assert "anchor.getBoundingClientRect?anchor.getBoundingClientRect():null" in JS
+    assert "rect?rect.right+6" in JS
+    assert "if(!menu.contains(e.target))closeMemberMenu()" in JS
+    assert "document.addEventListener('pointerdown',closeMemberMenu" not in JS
+
+
 def test_member_rows_and_menu_have_compact_dedicated_styling():
     assert ".cc-member-menu" in CSS
     assert ".cc-member img{flex:0 0 32px" in CSS
