@@ -91,11 +91,35 @@ FILES_CHECK = r"""(async()=>{
   const serverFiles=Number.isFinite(Number(ptr.n)) ? Number(ptr.n)
     : Object.keys(ptr.files&&typeof ptr.files==='object'?ptr.files:{}).length;
   const clientFiles=Object.keys((idx.data&&idx.data.files)||{}).length;
+  // Synced roots have three independently meaningful counts: the account listing's plaintext
+  // collapse-guard count, the manifest this installed client decrypted, and the actual directory
+  // scan performed by the packaged native bridge.  Equality proves substantially more than seeing
+  // two root buttons.  Only counts leave the page; no pair labels, local paths or filenames do.
+  const syncAudit=[];
+  if(window.PCSync&&window.pcFs){
+    await PCSync.accountFolders(true);
+    const acct=Array.isArray(PCSync.acct())?PCSync.acct():[];
+    for(const f of PCSync.folders()){
+      const key=f.key||f.name, row=acct.find(x=>x.key===key)||{};
+      try{
+        const [got,scan]=await Promise.all([
+          PCSync.docs.state(key), pcFs.scan(f.id,{excludes:f.excludes||[]})
+        ]);
+        const state=(got&&got.state)||{};
+        syncAudit.push({
+          server:Number.isFinite(row.n)?row.n:null,
+          manifest:Object.values(state).filter(x=>x&&typeof x==='object'&&!x.deletedAt).length,
+          local:Object.keys((scan&&scan.files)||{}).length,
+          skipped:((scan&&scan.skipped)||[]).length});
+      }catch(e){ syncAudit.push({error:String(e&&e.message||e)}); }
+    }
+  }
   const q=s=>document.querySelectorAll(s).length;
   return {
     view:__PC.VIEW, explorers:q('.fx-explorer'), folderTiles:q('.fx-home-tile'),
     folderChips:q('.folder-chip'), syncedRoots:q('.syncroot'),
     pullOk:!!pullOk, indexHTTP:ir.status, indexOK:!!ij.ok, serverFiles, clientFiles,
+    syncAudit,
     overflow:document.documentElement.scrollWidth>innerWidth+1,
     errors:__installedCheckErrors.slice(0,5)
   };
@@ -152,6 +176,9 @@ async def main():
         assert files["syncedRoots"] > 0, files
         assert files["pullOk"] and files["indexHTTP"] == 200 and files["indexOK"], files
         assert files["clientFiles"] == files["serverFiles"], files
+        assert len(files["syncAudit"]) == files["syncedRoots"], files
+        assert all(not row.get("error") and row["server"] == row["manifest"] == row["local"]
+                   and row["skipped"] == 0 for row in files["syncAudit"]), files
         assert not files["overflow"] and not files["errors"], files
 
         await cdp.call("Network.enable")
@@ -168,7 +195,8 @@ async def main():
     print("OK installed authenticated Files/Blossom and Office/WOPI/editor checks")
     print(json.dumps({"folders": files["folderTiles"], "folderEntries": files["folderChips"],
                       "serverFiles": files["serverFiles"], "clientFiles": files["clientFiles"],
-                      "syncedRoots": files["syncedRoots"], "officeEditorHTTP": 200}))
+                      "syncedRoots": files["syncedRoots"], "syncAudit": files["syncAudit"],
+                      "officeEditorHTTP": 200}))
 
 
 if __name__ == "__main__":

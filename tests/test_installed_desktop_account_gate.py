@@ -21,6 +21,11 @@ def test_installed_account_gate_checks_real_blossom_render_without_reading_names
     assert "'/client/files-index'" in SCRIPT
     assert 'files["clientFiles"] == files["serverFiles"]' in SCRIPT
     assert "syncedRoots:q('.syncroot')" in SCRIPT
+    assert "PCSync.docs.state(key)" in SCRIPT
+    assert "pcFs.scan(f.id,{excludes:f.excludes||[]})" in SCRIPT
+    assert 'row["server"] == row["manifest"] == row["local"]' in SCRIPT
+    assert 'row["skipped"] == 0' in SCRIPT
+    assert "syncAudit.push({key" not in SCRIPT
     assert "textContent" not in SCRIPT
     # The diagnostics may count private index entries, but must never serialize the index itself.
     assert '"files": files' not in SCRIPT
