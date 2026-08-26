@@ -46,7 +46,8 @@ def turn_credentials(current_user: User = Depends(get_current_user)):
     enabled = (cfg.get("turn_enabled", "false") or "").strip().lower() == "true"
     secret = (cfg.get("turn_shared_secret", "") or "").strip()
     public_ip = (cfg.get("turn_public_ip", "") or "").strip()
-    host = (cfg.get("turn_domain", "") or "").strip() or public_ip
+    domain = (cfg.get("turn_domain", "") or "").strip()
+    host = domain or public_ip
     port = (cfg.get("turn_port", "") or "3478").strip()
     tls_port = (cfg.get("turn_tls_port", "") or "").strip()
     tls_cert = (cfg.get("turn_tls_cert", "") or "").strip()
@@ -58,20 +59,28 @@ def turn_credentials(current_user: User = Depends(get_current_user)):
     relay_up = calls_on and enabled and bool(secret) and bool(public_ip)
     if relay_up:
         # STUN on the same relay (server-reflexive candidates for P2P).
-        ice.append({"urls": [f"stun:{host}:{port}"]})
+        # A TURN domain is frequently also the instance's Blossom hostname. If that DNS record is
+        # Cloudflare-proxied, HTTPS works perfectly while TURN UDP/TCP can never reach the relay.
+        # `turn_public_ip` is already required to launch Pion and is the authoritative bypass. Offer
+        # both values (deduped) so normal direct DNS stays readable and split-DNS/proxy deployments
+        # still have a usable ICE candidate. These are both Admin UI values; the client hard-codes
+        # neither address.
+        turn_hosts = list(dict.fromkeys(h for h in (domain, public_ip) if h))
+        ice.append({"urls": [f"stun:{h}:{port}" for h in turn_hosts]})
         # Short-lived TURN REST credential (coturn use-auth-secret scheme; Pion validates the same HMAC).
         expiry = int(time.time()) + _CRED_TTL
         username = f"{expiry}:{current_user.id}"
         credential = base64.b64encode(
             hmac.new(secret.encode(), username.encode(), hashlib.sha1).digest()
         ).decode()
-        turn_urls = [
-            f"turn:{host}:{port}?transport=udp",
-            f"turn:{host}:{port}?transport=tcp",
-        ]
+        turn_urls = [url for h in turn_hosts for url in (
+            f"turn:{h}:{port}?transport=udp",
+            f"turn:{h}:{port}?transport=tcp",
+        )]
         # Advertise turns:// ONLY when the relay actually opens a TLS listener (needs port + cert + key,
         # matching turn_service._build_env / the Go server) — else clients waste ICE on a closed port.
         if tls_port and tls_cert and tls_key:
+            # TLS certificates name the domain, not its numeric address.
             turn_urls.append(f"turns:{host}:{tls_port}?transport=tcp")
         ice.append({"urls": turn_urls, "username": username, "credential": credential})
     elif calls_on:
