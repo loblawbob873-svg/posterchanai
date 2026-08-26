@@ -78,10 +78,24 @@ FILES_CHECK = r"""(async()=>{
   const onerr=e=>__installedCheckErrors.push(String(e.message||e.reason||e));
   addEventListener('error',onerr); addEventListener('unhandledrejection',onerr);
   await __PC.switchView('blossom'); await new Promise(r=>setTimeout(r,8000));
+  // Rendering a few tiles is not proof that the drive is complete.  Pull the canonical account
+  // index, then independently ask the server for its privacy-preserving entry count and require the
+  // installed client's decrypted in-memory index to agree.  Do not return names, hashes or keys.
+  const idx=__PC.filesIdx();
+  const pullOk=await idx.ensure();
+  const auth=btoa(JSON.stringify(await __PC.signAuth('files-index')));
+  const ir=await fetch('/client/files-index',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({pubkey:__PC.me().pubkey,auth})});
+  const ij=await ir.json().catch(()=>({}));
+  const ptr=ij&&ij.index&&typeof ij.index==='object'?ij.index:{};
+  const serverFiles=Number.isFinite(Number(ptr.n)) ? Number(ptr.n)
+    : Object.keys(ptr.files&&typeof ptr.files==='object'?ptr.files:{}).length;
+  const clientFiles=Object.keys((idx.data&&idx.data.files)||{}).length;
   const q=s=>document.querySelectorAll(s).length;
   return {
     view:__PC.VIEW, explorers:q('.fx-explorer'), folderTiles:q('.fx-home-tile'),
     folderChips:q('.folder-chip'), syncedRoots:q('.syncroot'),
+    pullOk:!!pullOk, indexHTTP:ir.status, indexOK:!!ij.ok, serverFiles, clientFiles,
     overflow:document.documentElement.scrollWidth>innerWidth+1,
     errors:__installedCheckErrors.slice(0,5)
   };
@@ -136,6 +150,8 @@ async def main():
         assert files["view"] == "blossom", files
         assert files["explorers"] == 1 and files["folderTiles"] > 0 and files["folderChips"] > 0, files
         assert files["syncedRoots"] > 0, files
+        assert files["pullOk"] and files["indexHTTP"] == 200 and files["indexOK"], files
+        assert files["clientFiles"] == files["serverFiles"], files
         assert not files["overflow"] and not files["errors"], files
 
         await cdp.call("Network.enable")
@@ -151,6 +167,7 @@ async def main():
 
     print("OK installed authenticated Files/Blossom and Office/WOPI/editor checks")
     print(json.dumps({"folders": files["folderTiles"], "folderEntries": files["folderChips"],
+                      "serverFiles": files["serverFiles"], "clientFiles": files["clientFiles"],
                       "syncedRoots": files["syncedRoots"], "officeEditorHTTP": 200}))
 
 

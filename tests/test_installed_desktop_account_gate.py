@@ -16,9 +16,15 @@ def test_installed_account_gate_uses_loopback_cdp_and_requires_authentication():
 def test_installed_account_gate_checks_real_blossom_render_without_reading_names():
     assert "__PC.switchView('blossom')" in SCRIPT
     assert "folderTiles:q('.fx-home-tile')" in SCRIPT
+    assert "const idx=__PC.filesIdx()" in SCRIPT
+    assert "const pullOk=await idx.ensure()" in SCRIPT
+    assert "'/client/files-index'" in SCRIPT
+    assert 'files["clientFiles"] == files["serverFiles"]' in SCRIPT
     assert "syncedRoots:q('.syncroot')" in SCRIPT
     assert "textContent" not in SCRIPT
-    assert "filesIdx" not in SCRIPT
+    # The diagnostics may count private index entries, but must never serialize the index itself.
+    assert '"files": files' not in SCRIPT
+    assert '"index":' not in SCRIPT
 
 
 def test_installed_account_gate_uses_and_deletes_a_temporary_office_session():
