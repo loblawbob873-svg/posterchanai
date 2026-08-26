@@ -260,8 +260,11 @@ def test_concord_ctrl_or_cmd_enter_sends_without_breaking_plain_enter():
 def test_authors_can_delete_their_own_messages_after_relay_acceptance():
     assert 'data-cc-delete' in CONCORD
     assert "found.pubkey!==viewer.pubkey" in CONCORD
+    assert "p.uiConfirm('Delete this message?',{ok:'Delete',danger:true})" in CONCORD
     assert "[['e',id],['k',String(found.kind||9)]],5" in CONCORD
     assert "messages.filter(m=>messageId(m)!==id)" in CONCORD
+    assert "if(!removeMessageRow(id))preserveChatScroll(()=>render())" in CONCORD
+    assert "above?Math.max(0,top-lost):top" in CONCORD
 
 
 def test_owner_can_publish_an_interoperable_cord_ban():
