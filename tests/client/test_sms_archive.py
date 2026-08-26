@@ -220,6 +220,28 @@ class SendingFromAnotherDevice(unittest.TestCase):
                       "the live outbox document was not replaced by a cancellation")
         self.assertEqual(res["docs"], [], "the pending placeholder is still visible")
 
+    def test_cancel_receipt_is_not_rendered_as_a_failed_attachment(self):
+        web = (ROOT / "static/js/client/sms.js").read_text()
+        absorb = web[web.index("async function absorb(evs)"):web.index("async function publishOne")]
+        cancel = absorb.index("ack && ack.done && ack.cancelled")
+        decode = absorb.index("const sent =")
+        self.assertLess(cancel, decode)
+        self.assertIn("if(old && old.outbox === d)", absorb)
+
+    def test_live_cancellation_repaints_even_when_map_size_is_unchanged(self):
+        web = (ROOT / "static/js/client/sms.js").read_text()
+        watch = web[web.index("function watch()") : web.index("async function notifyNew")]
+        repaint = watch.index("if(PC.VIEW === 'texts') paint()")
+        size_gate = watch.index("if(S.msgs.size !== before)")
+        self.assertLess(repaint, size_gate)
+
+    def test_deleting_a_failed_remote_send_tombstones_its_source_receipt(self):
+        web = (ROOT / "static/js/client/sms.js").read_text()
+        remove = web[web.index("async function remove(docs)"):web.index("async function askForRead")]
+        self.assertIn("selectedOutboxes", remove)
+        self.assertIn("selectedOutboxes.has(m.outbox)", remove)
+        self.assertIn("could not delete send receipt", remove)
+
     def test_texts_uses_the_instances_gif_picker(self):
         """The server-side picker keeps the connected instance's Giphy/Tenor key out of clients."""
         web = (ROOT / "static/js/client/sms.js").read_text()

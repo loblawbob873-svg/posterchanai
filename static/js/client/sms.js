@@ -308,6 +308,16 @@
       if(d.startsWith(D_OUT) && ev.content){
         try{
           const ack = JSON.parse(await PC.nip44dec(ME().pubkey, ev.content));
+          /* Cancellation is not a failed message. Retire every local rendering of this command
+           * before trying to interpret its old request payload; different devices may have keyed
+           * the placeholder at slightly different receipt times, but the outbox id is shared. */
+          if(ack && ack.done && ack.cancelled){
+            for(const [oldDoc, old] of S.msgs){
+              if(old && old.outbox === d)
+                S.msgs.set(oldDoc, {doc:oldDoc, _at:ev.created_at, gone:true});
+            }
+            continue;
+          }
           /* Old web builds put the request behind a Blossom envelope. New requests stay inline so
            * Android's background service can perform them without a WebView or Blossom client. */
           const sent = ack && ack.request ? await openMessageBody(ack.request) : await openMessageBody(ack);
@@ -495,9 +505,12 @@
       _sub = Relay().subscribe([f], { live:true, onEvent: async (ev) => {
         const before = S.msgs.size;
         await absorb([ev]);
+        /* A cancellation/tombstone mutates an existing entry to `gone`; the Map size is unchanged.
+         * Repainting only when size changed left deleted attachments visible on an open phone until
+         * navigation/reload. Always repaint the active Texts view after a live archive event. */
+        if(PC.VIEW === 'texts') paint();
         if(S.msgs.size !== before){
           notifyNew(ev);
-          if(PC.VIEW === 'texts') paint();
         }
       }});
     }catch(_){ _sub = null; }
@@ -1487,6 +1500,16 @@
     docs = (docs || []).filter(Boolean);
     if(!docs.length) return { archive:0, phone:0 };
 
+    /* One remote send can temporarily have an ask-time placeholder and a receipt-time bubble.
+     * Treat the outbox id as their transaction id and remove every local/archive rendering in one
+     * action, otherwise the unselected twin remains on the phone. */
+    const selectedOutboxes = new Set();
+    for(const d of docs){ const m=S.msgs.get(d); if(m && m.outbox) selectedOutboxes.add(m.outbox); }
+    if(selectedOutboxes.size){
+      for(const [d,m] of S.msgs)
+        if(m && selectedOutboxes.has(m.outbox) && !docs.includes(d)) docs.push(d);
+    }
+
     /* A pending laptop bubble has TWO documents: the ordinary message-shaped placeholder and the
      * addressable outbox command the phone will execute. Hiding only the placeholder is not a
      * deletion — the phone can still send it hours later. Replace the command with a terminal
@@ -1504,6 +1527,15 @@
       /* Never hide a request we failed to cancel: that would say "deleted" while a phone can still
        * execute it later. Keeping the bubble visible gives the person a truthful retry target. */
       if(!cancelled) return { archive:0, phone:0, refused:true, error:'could not cancel pending send' };
+    }
+
+    /* A completed/failed outbox receipt can reconstruct its generated message on every absorb.
+     * Once it is no longer live, tombstone that source document as part of deleting the bubble. */
+    for(const d of selectedOutboxes){
+      if(pendingOutboxes.includes(d)) continue; // keep the explicit cancellation marker durable
+      const r = await PC.publish(KIND, '', [['d', d], ['l', L_TAG]], {quiet:true, noQueue:true});
+      if(!r || !r.ok) return {archive:0,phone:0,refused:true,error:'could not delete send receipt'};
+      try{ await PC.publish(5, '', [['a', KIND+':'+ME().pubkey+':'+d]], {quiet:true,noQueue:true}); }catch(_){}
     }
 
     /* THE PHONE'S COPY FIRST, AND IT IS THE WHOLE GUARD.
