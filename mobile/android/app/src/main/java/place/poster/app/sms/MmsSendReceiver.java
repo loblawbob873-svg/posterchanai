@@ -30,6 +30,10 @@ public final class MmsSendReceiver extends BroadcastReceiver {
                 values.put(Telephony.Mms.MESSAGE_BOX, ok
                         ? Telephony.Mms.MESSAGE_BOX_SENT : Telephony.Mms.MESSAGE_BOX_FAILED);
                 ctx.getContentResolver().update(row, values, null, null);
+                long id = 0;
+                try { id = Long.parseLong(row.getLastPathSegment()); } catch (Throwable ignored) { }
+                int http = intent.getIntExtra("android.telephony.extra.MMS_HTTP_STATUS", 0);
+                if (ok) MmsFailures.clear(ctx, id); else MmsFailures.put(ctx, id, result, http);
                 String file = intent.getStringExtra("file_path");
                 if (file != null && !file.isEmpty()) new File(file).delete();
                 SmsPlugin.onSendResult(row.toString(), ok, result);

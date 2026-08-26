@@ -229,6 +229,12 @@ class MmsIdentity(unittest.TestCase):
         self.assertIn('Telephony.Mms.MESSAGE_BOX_FAILED', receiver)
         self.assertIn('getResultCode()', receiver)
         self.assertIn('android:name=".sms.MmsSendReceiver"', manifest)
+        failures = open(os.path.join(SMS, "MmsFailures.java"), encoding="utf-8").read()
+        self.assertIn('android.telephony.extra.MMS_HTTP_STATUS', receiver)
+        self.assertIn('MmsFailures.put(ctx, id, result, http)', receiver)
+        for reason in ('invalid carrier APN', 'mobile data is unavailable',
+                       'the selected SIM is inactive', 'carrier server rejected it'):
+            self.assertIn(reason, failures)
 
     def test_failed_native_mms_can_be_retried_without_deleting_before_acceptance(self):
         thread = open(os.path.join(SMS, "ThreadActivity.java"), encoding="utf-8").read()

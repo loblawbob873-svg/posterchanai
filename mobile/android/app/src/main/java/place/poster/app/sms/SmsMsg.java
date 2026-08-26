@@ -14,6 +14,8 @@ public final class SmsMsg {
     /** Telephony.Sms.MESSAGE_TYPE_*: 1 inbox, 2 sent, 3 draft, 4 outbox, 5 failed, 6 queued. */
     public int type;
     public boolean read;
+    /** Carrier reason retained for a failed MMS row; empty for SMS and successful MMS. */
+    public String error = "";
 
     /**
      * A PICTURE MESSAGE, READ FROM A DIFFERENT PROVIDER TABLE.

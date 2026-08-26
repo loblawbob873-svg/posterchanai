@@ -588,7 +588,8 @@ public class ThreadActivity extends PcActivity {
                             DateUtils.MINUTE_IN_MILLIS).toString()
                     : "";
             if (m.failed()) {
-                meta.setText(getString(R.string.sms_failed) + "  ·  " + when);
+                meta.setText(getString(R.string.sms_failed)
+                        + (m.error.isEmpty() ? "" : ": " + m.error) + "  ·  " + when);
                 meta.setTextColor(pal.danger);
             } else if (m.pending()) {
                 meta.setText(getString(R.string.sms_sending) + "  ·  " + when);
