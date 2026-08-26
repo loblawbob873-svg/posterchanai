@@ -30,6 +30,7 @@ OS_JS = ROOT / "static" / "js" / "client" / "os.js"
 STORE_JS = ROOT / "static" / "js" / "client" / "store.js"
 APP_JS = ROOT / "static" / "js" / "client" / "app.js"
 SW_JS = ROOT / "static" / "js" / "client" / "sw.js"
+CSS = ROOT / "static" / "css" / "client.css"
 
 # Enough of a document for os.js to evaluate: it touches the DOM only inside functions, but it does
 # bind one keydown listener at load, and reads the zoom through getComputedStyle.
@@ -87,6 +88,14 @@ def members(lay, key):
         if k == key:
             return views
     return None
+
+
+def test_desktop_feed_has_a_visible_scrollbar_without_changing_mobile():
+    css = CSS.read_text()
+    assert "body.os-on .osw-body > .feed{scrollbar-width:thin" in css
+    assert "body.os-on .osw-body > .feed::-webkit-scrollbar{width:10px" in css
+    # The broad rule remains hidden; only an actual windowed-desktop feed overrides it.
+    assert "*{scrollbar-width:none}" in css
 
 
 @unittest.skipIf(shutil.which("node") is None, "node not installed")

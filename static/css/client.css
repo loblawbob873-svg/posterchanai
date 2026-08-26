@@ -6518,6 +6518,15 @@ body.is-offline .needs-net{ opacity:.45; pointer-events:none; filter:saturate(.4
 body.os-on .app{filter:none}
 body.os-on > .app{pointer-events:none}          /* the classic UI is still there, just not clickable */
 body.os-on #os-root{pointer-events:auto}
+/* A desktop timeline needs a desktop scrollbar.  The phone intentionally spends no width on one,
+   but hiding it globally removed both position feedback and the drag fallback from Social when a
+   wheel/trackpad driver failed to deliver scrolling.  Scope this to the live shared feed inside an
+   OS window so compact/mobile panes and deliberately self-scrolling apps keep their own layout. */
+body.os-on .osw-body > .feed{scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+body.os-on .osw-body > .feed::-webkit-scrollbar{width:10px;height:10px}
+body.os-on .osw-body > .feed::-webkit-scrollbar-track{background:transparent}
+body.os-on .osw-body > .feed::-webkit-scrollbar-thumb{background:var(--line);border-radius:8px;border:2px solid transparent;background-clip:padding-box}
+body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--muted);background-clip:padding-box}
 .os-root{position:fixed;inset:0;z-index:300;display:flex;flex-direction:column;
   background:radial-gradient(1200px 800px at 20% 0%, rgba(var(--accent-rgb),.16), transparent 60%),
              linear-gradient(160deg, var(--bg), var(--bg2, var(--bg)));}
