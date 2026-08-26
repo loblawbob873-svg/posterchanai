@@ -106,6 +106,7 @@ class TheStartScriptStillDisablesIt(unittest.TestCase):
         self.assertIn('XDG_SESSION_TYPE=wayland', src)
         self.assertIn('XDG_CURRENT_DESKTOP=sway', src)
         self.assertNotIn(': "${XDG_SESSION_TYPE:=wayland}"', src)
+        self.assertIn('[app_id="place.poster.desktop"]', src)
 
 
 if __name__ == "__main__":

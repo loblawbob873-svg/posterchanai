@@ -193,7 +193,7 @@ retries=0
 # subscribing, because this must work before anything else in the session is up.
 i=0
 while [ $i -lt 120 ]; do
-  if swaymsg -t get_tree 2>/dev/null | grep -Eq '"app_id": "(posterchan-desktop|PosterChan)"|"class": "posterchan-desktop"'; then
+  if swaymsg -t get_tree 2>/dev/null | grep -Eq '"app_id": "(posterchan-desktop|PosterChan|place\.poster\.desktop)"|"class": "posterchan-desktop"'; then
     # TILED, NOT FULLSCREEN — and the difference is whether anything else can be seen.
     #
     # A fullscreen window in sway covers the whole workspace INCLUDING floating windows, so with the
@@ -201,7 +201,7 @@ while [ $i -lt 120 ]; do
     # Nothing on screen, no error, and no way to get a terminal on the machine. Being the only TILED
     # window fills the screen just the same and lets everything float above it, which is what the
     # desktop is for.
-    for sel in '[app_id="posterchan-desktop"]' '[app_id="PosterChan"]' '[class="posterchan-desktop"]'; do
+    for sel in '[app_id="posterchan-desktop"]' '[app_id="PosterChan"]' '[app_id="place.poster.desktop"]' '[class="posterchan-desktop"]'; do
       swaymsg "$sel fullscreen disable" >/dev/null 2>&1
       swaymsg "$sel floating disable" >/dev/null 2>&1
       swaymsg "$sel border none" >/dev/null 2>&1
