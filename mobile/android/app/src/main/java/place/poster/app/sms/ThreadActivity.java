@@ -429,7 +429,12 @@ public class ThreadActivity extends PcActivity {
     private void messageMenu(final SmsMsg m) {
         if (m == null) return;
         try {
-            final boolean retry = m.mms && m.failed() && !m.parts.isEmpty();
+            /* Rows created before the completion receiver was shipped can remain OUTBOX forever.
+             * They are every bit as retryable as FAILED rows; restricting this action to failed
+             * made the repair unreachable for the exact messages it was added to recover. Keep it
+             * explicit (long-press → Retry) because an old carrier submission may have escaped even
+             * though its provider row never advanced. */
+            final boolean retry = m.mms && (m.failed() || m.pending()) && !m.parts.isEmpty();
             final CharSequence[] actions = retry
                     ? new CharSequence[]{ getString(R.string.sms_retry_send),
                                           getString(R.string.sms_copy),
