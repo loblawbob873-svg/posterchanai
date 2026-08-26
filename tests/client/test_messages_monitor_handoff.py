@@ -21,3 +21,13 @@ def test_community_and_channel_identity_cross_to_the_other_renderer():
 def test_chat_scroll_pin_crosses_with_the_messages_window():
     assert "pinned:scroll.pinned!==false" in CONCORD
     assert "writeScroll(key,st)" in CONCORD
+
+
+def test_dragged_communities_window_is_reused_when_direct_messages_is_clicked():
+    """Exact regression: Messages → Communities → other monitor → Direct remains one frame."""
+    assert "if(opened==='messages'&&current==='concord') return 'concord';" in OS
+    opened = OS[OS.index("function openApp(view, label, icon, render, noFeed, direct)"):]
+    opened = opened[:opened.index("function ", 20)]
+    assert "wins.find(w => sameAppWindow(w.view, view))" in opened
+    assert "focusWin(existing, false); existing.appView = view" in opened
+    assert "PC().switchView && PC().switchView(view)" in opened
