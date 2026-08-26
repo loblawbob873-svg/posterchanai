@@ -98,7 +98,11 @@ CHECKS = {
     # Two browsers, three pairings, and a clock-skew case that has to time out to prove it works.
     "check_qr_device_login":           dict(group="live", secs=900, serial=True),
     "check_repo_view_mobile":          dict(group="live", secs=420),
-    "check_search_profile_stability":  dict(group="live", secs=1800,
+    # Twenty cold browser sessions, each querying the production relays. Beside the parallel live
+    # batch this can starve the very relay it is measuring: the full gate produced one empty first
+    # profile and one timed-out first search, while the same five-session rate passed 20/20 alone.
+    # Isolation is part of a deterministic integration test, not a relaxation of its assertions.
+    "check_search_profile_stability":  dict(group="live", secs=1800, serial=True,
                                               live_args=["5", "{live}"]),
     "check_timeline_ghosts":           dict(group="live", secs=600),
     "check_websearch_pages":           dict(group="live", secs=420),
