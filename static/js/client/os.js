@@ -2825,9 +2825,10 @@
   function handoffIdentity(w){
     const opened=String(w&&w.view||''), current=String(w&&w.appView||opened);
     if(opened==='terminal') return 'terminal';
-    /* Messages contains two real clients. Preserve the selected Communities tab when the frame
-     * crosses renderers; recreating the launcher's opened identity always reset it to Direct. */
-    if(opened==='messages'&&current==='concord') return 'concord';
+    /* Messages has one canonical window identity. The selected Direct/Communities tab travels in
+     * handoffPayload; recreating the frame as the historical `concord` alias made a later Direct
+     * click depend on alias lookup and could manufacture a second frame. */
+    if(sameAppWindow(opened,current)) return 'messages';
     /* Music is opened by the __music launcher action, which in turn creates a doc:music window.
      * doc:music is a uniqueness key, not a launcher/render identity: handing that key to another
      * renderer creates a generic shared-feed document and can display Social inside a Music frame.
@@ -2855,7 +2856,9 @@
      * Only deeper paths identify content that the view name cannot restore by itself. */
     const appPath = terminal || music ? '' : String(w.appPath || '');
     const topPath = appPath==='/' || appPath==='/index.html';
-    return {view:handoffIdentity(w),title:w.title||'',icon:w.icon||'',
+    const messagesTab=sameAppWindow(String(w.view||''),String(w.appView||w.view||''))
+      ? (String(w.appView||w.view)==='concord'?'concord':'messages') : '';
+    return {view:handoffIdentity(w),messagesTab,title:w.title||'',icon:w.icon||'',
       width:w.el.offsetWidth,height:w.el.offsetHeight,overflow:Number(overflow)||0,
       scrollTop:Math.max(0,Number(realFeed&&realFeed.parentElement===w.body
         ? realFeed.scrollTop : w.slot&&w.parked ? w.slot.scrollTop : w.scrollTop)||0),
@@ -2864,7 +2867,7 @@
       path:topPath ? '' : appPath,ui:captureHandoffUI(w),
       state:w.view==='websearch'&&window.PCWebSearch&&PCWebSearch.handoffState
         ? PCWebSearch.handoffState()
-        : handoffIdentity(w)==='concord'&&window.PCConcord&&PCConcord.handoffState
+        : messagesTab==='concord'&&window.PCConcord&&PCConcord.handoffState
           ? PCConcord.handoffState() : null};
   }
 
@@ -6373,10 +6376,15 @@
               PCTerm.adoptSession(p.terminalSid);
             if(p.view==='websearch' && p.state && window.PCWebSearch && PCWebSearch.acceptHandoff)
               PCWebSearch.acceptHandoff(p.state);
-            if(p.view==='concord' && p.state && window.PCConcord && PCConcord.acceptHandoff)
+            if(p.messagesTab==='concord' && p.state && window.PCConcord && PCConcord.acceptHandoff)
               PCConcord.acceptHandoff(p.state);
             const w=openApp(String(p.view), String(p.title||''), String(p.icon||''));
             if(!w) return;
+            if(p.messagesTab==='concord'){
+              w.appView='concord';repainting++;
+              try{PC().switchView&&PC().switchView('concord');}catch(_){}
+              finally{repainting--;}
+            }
             /* AND THEN PUT IT BACK ON THE SCREEN IT WAS ON. openApp can only open what a view NAME
              * reaches; the path is what reaches a particular repo/article/stream/thread. Routed
              * after the window exists so it renders into this window's feed, and only when it says
