@@ -2197,7 +2197,7 @@
             + `<span class="b-meta">${enc(when(m.date))}${m.pending?' · waiting for phone':m.failed?' · not sent':''}</span>`
             /* Right-click is not a mobile control. A queued send is the one message for which the
                destructive action is urgent, so put an explicit cancellation beside its status. */
-            + ((m.pending||m.failed) ? `<button class="sms-cancel-pending" type="button" data-doc="${enc(m.doc)}">${m.pending?'Cancel send':'Delete'}</button>` : '')
+            + (!m.incoming ? `<button class="sms-cancel-pending" type="button" data-doc="${enc(m.doc)}" aria-label="${m.pending?'Cancel pending send':'Delete sent message'}">${m.pending?'Cancel send':'Delete'}</button>` : '')
             + `</div>`;
         }).join('')}</div>
         ${S.attach?`<div class="sms-attachment-draft"><span>${ICO('image','b-ic')}<b>${enc(S.attach.name||'Photo')}</b><small>${enc(fmtBytes(S.attach.size))} · ready to send as MMS</small></span><button id="sms-attach-clear" aria-label="Remove attached photo">×</button></div>`:''}

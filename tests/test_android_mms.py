@@ -465,6 +465,14 @@ class OutgoingMms(unittest.TestCase):
         self.assertIn("setUseSystemSending(true)", thread)
         self.assertIn("org.fossify:mmslib:1.0.0", gradle)
 
+    def test_native_stuck_mms_has_a_visible_delete_action(self):
+        thread = open(os.path.join(SMS, "ThreadActivity.java"), encoding="utf-8").read()
+        layout = open(os.path.join(ROOT, "mobile/android/app/src/main/res/layout/sms_bubble.xml"), encoding="utf-8").read()
+        self.assertIn('android:id="@+id/pc_b_delete"', layout)
+        self.assertIn("mine && (m.pending() || m.failed())", thread)
+        self.assertIn("MmsStore.delete(this", thread)
+        self.assertIn("sms_delete_confirm", thread)
+
     def test_web_composer_seals_remote_attachment_and_phone_sends_it(self):
         js = open(SMSJS, encoding="utf-8").read()
         self.assertIn('id="sms-file"', js)

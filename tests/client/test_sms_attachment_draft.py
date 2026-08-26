@@ -30,7 +30,8 @@ def test_mms_send_captures_the_displayed_file_and_rejects_non_images():
 def test_pending_send_has_a_touch_accessible_cancel_action():
     assert 'class="sms-cancel-pending"' in JS
     assert "m.pending?'Cancel send':'Delete'" in JS
-    assert '(m.pending||m.failed)' in JS
+    assert '!m.incoming' in JS
+    assert 'aria-label="${m.pending?' in JS
     assert "feed.querySelectorAll('.sms-cancel-pending')" in JS
     assert "await remove([cancel.dataset.doc])" in JS
     assert ".sms-cancel-pending{" in CSS

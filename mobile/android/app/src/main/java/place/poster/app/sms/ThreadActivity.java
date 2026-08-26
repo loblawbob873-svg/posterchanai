@@ -428,16 +428,20 @@ public class ThreadActivity extends PcActivity {
                                 } catch (Throwable ignored) { }
                                 return;
                             }
-                            // A PICTURE MESSAGE LIVES AT A DIFFERENT URI. Handed to SmsStore it
-                            // deletes nothing and says nothing, and the bubble comes straight back
-                            // on the reload below — a delete that silently did not happen.
-                            if (m.mms) MmsStore.delete(ThreadActivity.this, new long[]{ m.id });
-                            else SmsStore.delete(ThreadActivity.this, new long[]{ m.id });
-                            say(getString(R.string.sms_deleted_here));
-                            reload();
+                            deleteMessage(m);
                         }
                     }).show();
         } catch (Throwable ignored) { }
+    }
+
+    private void deleteMessage(final SmsMsg m) {
+        if (m == null) return;
+        // A PICTURE MESSAGE LIVES AT A DIFFERENT URI. Handed to SmsStore it deletes nothing and
+        // comes straight back on reload, so pending/failed MMS must use content://mms as well.
+        int n = m.mms ? MmsStore.delete(this, new long[]{ m.id })
+                      : SmsStore.delete(this, new long[]{ m.id });
+        say(n > 0 ? getString(R.string.sms_deleted_here) : getString(R.string.sms_delete_failed));
+        reload();
     }
 
     /**
@@ -513,6 +517,7 @@ public class ThreadActivity extends PcActivity {
             LinearLayout wrap = (LinearLayout) v.findViewById(R.id.pc_b_wrap);
             TextView text = (TextView) v.findViewById(R.id.pc_b_text);
             TextView meta = (TextView) v.findViewById(R.id.pc_b_meta);
+            Button delete = (Button) v.findViewById(R.id.pc_b_delete);
             LinearLayout attachments = (LinearLayout) v.findViewById(R.id.pc_b_attachments);
             if (m == null) return v;
 
@@ -547,6 +552,20 @@ public class ThreadActivity extends PcActivity {
                 meta.setText(when);
                 meta.setTextColor(pal.muted);
             }
+            /* Long-press remains the full copy/delete menu, but it is not discoverable. A stuck
+             * outgoing carrier row is urgent and common enough to expose directly. Rebind on every
+             * recycled view so an incoming row can never inherit the previous row's listener. */
+            boolean removable = mine && (m.pending() || m.failed());
+            delete.setVisibility(removable ? View.VISIBLE : View.GONE);
+            delete.setEnabled(removable);
+            delete.setText(getString(R.string.sms_delete_msg));
+            delete.setTextColor(pal.danger);
+            delete.setBackground(Skin.ghost(ThreadActivity.this, pal, pal.danger, false));
+            delete.setOnClickListener(removable ? view -> new AlertDialog.Builder(ThreadActivity.this)
+                    .setMessage(R.string.sms_delete_confirm)
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .setPositiveButton(R.string.sms_delete_msg, (dialog, which) -> deleteMessage(m))
+                    .show() : null);
             return v;
         }
     }
