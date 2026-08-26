@@ -202,6 +202,8 @@ def test_remote_pointer_is_scaled_to_the_shared_monitor():
     block = APP[start:APP.index("document.addEventListener('keydown'", start)]
     assert "video.getBoundingClientRect()" in block
     assert "type:'absolute',x:nx,y:ny" in block
+    assert "video.videoWidth" in block and "video.videoHeight" in block
+    assert "if(ra>va)" in block
 
 
 def test_sharer_can_switch_monitor_without_ending_the_session():
@@ -231,9 +233,10 @@ def test_remote_desktop_prefers_readable_text_over_frame_rate():
     css = (ROOT / "static/css/client.css").read_text(encoding="utf-8")
     assert "screen.contentHint='detail'" in APP
     assert "p.degradationPreference='maintain-resolution'" in APP
-    assert "p.encodings[0].maxBitrate=24000000" in APP
+    assert "p.encodings[0].maxBitrate=40000000" in APP
+    assert "p.encodings[0].maxFramerate=15" in APP
     assert "_call.remoteDesktop?' rd'" in APP
-    assert ".call-overlay.rd .call-remote{object-fit:fill" in css
+    assert ".call-overlay.rd .call-remote{object-fit:contain" in css
 
 
 def test_window_focus_and_minimize_do_not_recreate_or_end_remote_session():
