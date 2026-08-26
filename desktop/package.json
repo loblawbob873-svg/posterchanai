@@ -3,7 +3,7 @@
   "version": "1.0.3",
   "private": true,
   "description": "PosterChan desktop app (Electron) — a native window onto a PosterChan instance",
-  "desktopName": "PosterChan",
+  "desktopName": "place.poster.desktop",
   "main": "main.js",
   "scripts": {
     "start": "npm run www && electron .",

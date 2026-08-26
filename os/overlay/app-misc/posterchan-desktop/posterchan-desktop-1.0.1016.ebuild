@@ -80,4 +80,17 @@ src_install() {
 		if [ -x "$APPDIR/posterchan-desktop" ]; then exec "$APPDIR/posterchan-desktop" "$@"; fi
 		exec "$APPDIR/AppRun" "$@"
 	WRAP
+
+	# xdg-desktop-portal 1.20+ gates screencast access on a registered, reverse-DNS app id backed
+	# by an installed desktop file. This filename must match Electron's package `desktopName`.
+	insinto /usr/share/applications
+	newins - place.poster.desktop.desktop <<-'DESKTOP'
+		[Desktop Entry]
+		Type=Application
+		Name=PosterChan
+		Exec=posterchan
+		Icon=posterchan-desktop
+		Categories=Network;
+		StartupWMClass=PosterChan
+	DESKTOP
 }

@@ -1877,6 +1877,18 @@ PROFILE
 			"if [ -x \"\$APPDIR/posterchan-desktop\" ]; then exec \"\$APPDIR/posterchan-desktop\" \"\$@\"; fi" \
 			"exec \"\$APPDIR/AppRun\" \"\$@\"" > /usr/local/bin/posterchan \
 			&& chmod 0755 /usr/local/bin/posterchan'
+		# Portal identity for screen sharing. xdg-desktop-portal 1.20+ rejects host applications
+		# without a reverse-DNS app id backed by a desktop file.
+		mkdir -p "${TARGET}/usr/share/applications"
+		cat > "${TARGET}/usr/share/applications/place.poster.desktop.desktop" <<-'DESKTOP'
+			[Desktop Entry]
+			Type=Application
+			Name=PosterChan
+			Exec=posterchan
+			Icon=posterchan-desktop
+			Categories=Network;
+			StartupWMClass=PosterChan
+		DESKTOP
 		# READABLE BY THE PEOPLE WHO HAVE TO RUN IT. `--appimage-extract` inherits the umask of
 		# whatever shell ran it, and an install running as root under a 0077 umask produces
 		# /opt/posterchan at mode 0700 — root-only, on the one directory every session must exec

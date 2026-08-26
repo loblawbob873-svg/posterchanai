@@ -68,6 +68,13 @@ def test_desktop_has_a_picker_and_recovers_its_guard_after_source_errors():
     assert "pickerOpen = false;" in main
 
 
+def test_linux_screen_share_has_a_portal_registered_desktop_identity():
+    package = json.loads((ROOT / "desktop/package.json").read_text(encoding="utf-8"))
+    ebuild = (ROOT / "os/overlay/app-misc/posterchan-desktop/posterchan-desktop-1.0.1016.ebuild").read_text(encoding="utf-8")
+    assert package["desktopName"] == package["build"]["appId"] == "place.poster.desktop"
+    assert "place.poster.desktop.desktop" in ebuild
+
+
 def test_same_identity_is_allowed_only_for_remote_desktop_calls():
     app = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
     assert "const remoteDesktop = !!(opts && opts.remoteDesktop);" in app
