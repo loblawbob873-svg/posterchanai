@@ -46,7 +46,7 @@ def test_multi_user_address_has_an_explicit_continue_action():
 def test_address_discovery_returns_choices_then_resolves_the_selected_user(tmp_path):
     """Execute the shipped resolver. An IP with two users must populate the picker, and choosing
     one must issue a name-scoped lookup and return that user's key and signaling relay."""
-    start = APP.index("  async function _remoteDesktopAddress(peer){")
+    start = APP.index("  const _remoteDesktopResolved=new Map();")
     end = APP.index("\n  async function startRemoteDesktop(peer){", start)
     resolver = APP[start:end]
     driver = tmp_path / "remote-address.js"
@@ -61,7 +61,7 @@ def test_address_discovery_returns_choices_then_resolves_the_selected_user(tmp_p
         const selected=url.includes('?name=alice');
         return {{ok:true,json:async()=>selected
           ? {{names:{{alice:'a'.repeat(64)}},relays:{{['a'.repeat(64)]:['wss://peer.test']}}}}
-          : {{names:{{alice:'a'.repeat(64),bob:'b'.repeat(64)}}}}}};
+          : {{names:{{alice:'a'.repeat(64),bob:'b'.repeat(64)}},relays:{{['a'.repeat(64)]:['wss://peer.test']}}}}}};
       }};
       {resolver}
       (async()=>{{
@@ -74,9 +74,9 @@ def test_address_discovery_returns_choices_then_resolves_the_selected_user(tmp_p
     run = subprocess.run(["node", str(driver)], capture_output=True, text=True, timeout=10)
     assert run.returncode == 0, run.stderr
     result = json.loads(run.stdout)
-    assert [x["value"] for x in result["choices"]] == ["alice@10.0.0.8", "bob@10.0.0.8"]
+    assert [x["value"] for x in result["choices"]] == ["a" * 64, "b" * 64]
     assert result["target"] == {"pk": "a" * 64, "relays": ["wss://peer.test"]}
-    assert any("/.well-known/nostr.json?name=alice" in url for url in result["calls"])
+    assert len(result["calls"]) == 1, "selection must not spend the screen-picker click on another fetch"
 
 
 def test_remote_desktop_sends_a_screen_and_no_guest_media():

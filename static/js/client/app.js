@@ -33109,9 +33109,10 @@
                               sdp: pc.localDescription.sdp});
     if(_call) _call.timeout = setTimeout(()=>{ if(_call && _call.state==='calling'){ toast('no answer'); _hangup(false); } }, 45000);
   }
+  const _remoteDesktopResolved=new Map();
   async function _remoteDesktopAddress(peer){
     const raw=String(peer||'').trim(), direct=safePk(raw);
-    if(direct)return {pk:direct,relays:[]};
+    if(direct)return {pk:direct,relays:_remoteDesktopResolved.get(direct)||[]};
     let name='',host=raw;
     const ai=raw.lastIndexOf('@');if(ai>0){name=raw.slice(0,ai).trim();host=raw.slice(ai+1).trim();}
     if(!host||/[\s/?#]/.test(host)||host.includes('\\')||host.includes('..'))
@@ -33141,7 +33142,7 @@
     const names=Object.entries((doc&&doc.names)||{}).map(([n,p])=>({name:n,pk:safePk(String(p||''))})).filter(x=>x.pk);
     if(name){const hit=names.find(x=>x.name.toLowerCase()===name.toLowerCase());if(!hit)throw new Error('that user is not advertised by '+host);names.splice(0,names.length,hit);}
     if(!names.length)throw new Error('no PosterChan remote-desktop identity found at '+host+(last?' ('+last+')':''));
-    if(names.length>1){const e=new Error('choose a user on '+host);e.remoteChoices=names.map(x=>({label:x.name+'@'+host,value:x.name+'@'+host}));throw e;}
+    if(names.length>1){const e=new Error('choose a user on '+host);e.remoteChoices=names.map(x=>{const relays=((doc.relays&&doc.relays[x.pk])||[]).map(normalizeRelay).filter(Boolean);_remoteDesktopResolved.set(x.pk,relays);return {label:x.name+'@'+host,value:x.pk};});throw e;}
     const pk=names[0].pk, relays=((doc.relays&&doc.relays[pk])||[]).map(normalizeRelay).filter(Boolean);
     return {pk,relays};
   }
