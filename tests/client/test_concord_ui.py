@@ -175,7 +175,7 @@ def test_mobile_reopens_the_last_server_then_drills_into_a_channel_like_discord(
     assert "localStorage.setItem('pc.concord.active',String(i))" in CONCORD
     assert 'mobileChatOpen=false, mobileDrawerOpen=false, discoveryOpen=false' in CONCORD
     assert "discoveryOpen=true; state.community=null" in CONCORD
-    assert "state.channel=b.dataset.ccChannel; mobileChatOpen=true; mobileDrawerOpen=false" in CONCORD
+    assert "state.channel=channel; mobileChatOpen=true; mobileDrawerOpen=false" in CONCORD
     assert "mobileChatOpen=false; mobileDrawerOpen=false; render()" in CONCORD
     assert 'id="cc-home" title="Your rooms"' in CONCORD
     assert 'id="cc-discovery" title="Discover public communities"' in CONCORD
