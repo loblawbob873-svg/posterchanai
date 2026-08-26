@@ -6,6 +6,13 @@ import time
 from scripts import checkall
 
 
+def test_os_back_is_an_explicit_live_check():
+    """The OS Back driver consumes real repos/issues and must never hide in the local UI group."""
+    jobs = {job["name"]: job for job in checkall.discover()}
+    assert jobs["check_os_back"]["registered"] is True
+    assert jobs["check_os_back"]["group"] == "live"
+
+
 def test_finished_check_does_not_wait_for_a_grandchild_holding_stdout():
     """A browser inherited the old PIPE and froze ./test.sh after pytest had already exited."""
     code = (

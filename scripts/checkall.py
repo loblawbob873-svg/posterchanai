@@ -78,6 +78,11 @@ CHECKS = {
     "check_drive_blob_fetch":          dict(group="live", secs=420,
                                               live_args=[], live_env={"PC_ORIGIN": "{live}"}),
     "check_music_mobile":              dict(group="live", secs=420, serial=True),
+    # Exercises real NIP-34 repository/issue events plus a live timeline.  It used to be
+    # unregistered, so the nominally self-contained UI group silently hit the script's hard-coded
+    # production default and then reported a repository-dependent skip.  Keep external state in the
+    # explicit --live gate where it belongs.
+    "check_os_back":                   dict(group="live", secs=600),
     # Kills a relay under a live session and takes the signer away under a live request. Slow by
     # construction: the waits ARE the check (7s down is longer than the retry that used to be all
     # there was, and the "answered in under 55s" bound is what separates a re-send from the ceiling).
