@@ -103,6 +103,9 @@ class TheStartScriptStillDisablesIt(unittest.TestCase):
         self.assertIn('XDG_RUNTIME_DIR=/run/user/$(id -u)', src)
         self.assertIn("-name 'wayland-*'", src)
         self.assertIn('WAYLAND_DISPLAY=${wayland_socket##*/}', src)
+        self.assertIn('XDG_SESSION_TYPE=wayland', src)
+        self.assertIn('XDG_CURRENT_DESKTOP=sway', src)
+        self.assertNotIn(': "${XDG_SESSION_TYPE:=wayland}"', src)
 
 
 if __name__ == "__main__":

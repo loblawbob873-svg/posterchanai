@@ -91,8 +91,13 @@ export WAYLAND_DISPLAY
 # SSH/recovery launches also lack the desktop identity which Chromium and xdg-desktop-portal use to
 # choose the wlroots screencast backend. A Wayland socket owned by this Sway session is conclusive;
 # restore the same values the session exports during a normal boot.
-: "${XDG_SESSION_TYPE:=wayland}"
-: "${XDG_CURRENT_DESKTOP:=sway}"
+# A recovery launched through SSH commonly has XDG_SESSION_TYPE=tty.  Keeping that non-empty but
+# wrong value makes WebRTC's IsRunningUnderWayland() return false even though Electron is visibly
+# connected to the verified Wayland socket above; desktop capture then takes its X11 fallback and
+# reports zero sources.  At this point the socket has been validated as Sway's, so these are facts,
+# not user preferences to preserve.
+XDG_SESSION_TYPE=wayland
+XDG_CURRENT_DESKTOP=sway
 export XDG_SESSION_TYPE XDG_CURRENT_DESKTOP
 
 # Recovery launches commonly come from SSH and therefore do not inherit the user's D-Bus session.

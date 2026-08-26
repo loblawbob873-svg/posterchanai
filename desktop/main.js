@@ -833,6 +833,14 @@ function screenLog(message) {
 function pickScreenSource() {
   if (pickerOpen) return Promise.resolve(null);   // one picker at a time — a second request just cancels
   pickerOpen = true;
+  // Capture backend selection happens inside WebRTC and otherwise leaves only a misleading X11
+  // error. Keep the three inputs Chromium uses in the persistent diagnostic so a recovery launch
+  // that lost its compositor environment is distinguishable from a PipeWire/portal failure.
+  if (process.platform === 'linux') {
+    screenLog('capture environment: XDG_SESSION_TYPE=' + String(process.env.XDG_SESSION_TYPE || '')
+      + ' XDG_CURRENT_DESKTOP=' + String(process.env.XDG_CURRENT_DESKTOP || '')
+      + ' WAYLAND_DISPLAY=' + String(process.env.WAYLAND_DISPLAY || ''));
+  }
   // xdg-desktop-portal-wlr advertises monitor capture only. Requesting a window source alongside it
   // can make Chromium reject the entire source request on that backend.
   const sourceTypes = process.platform === 'linux' ? ['screen'] : ['screen', 'window'];

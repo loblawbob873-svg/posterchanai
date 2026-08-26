@@ -71,7 +71,11 @@ def test_desktop_has_a_picker_and_recovers_its_guard_after_source_errors():
 def test_linux_screen_share_has_a_portal_registered_desktop_identity():
     package = json.loads((ROOT / "desktop/package.json").read_text(encoding="utf-8"))
     ebuild = (ROOT / "os/overlay/app-misc/posterchan-desktop/posterchan-desktop-1.0.1016.ebuild").read_text(encoding="utf-8")
-    assert package["desktopName"] == package["build"]["appId"] == "place.poster.desktop"
+    assert package["build"]["appId"] == "place.poster.desktop"
+    assert package["desktopName"] == package["build"]["appId"] + ".desktop"
+    # 42.0.0 is frame-tested on PosterChanOS/Sway. Newer Electron builds can enumerate the portal's
+    # synthetic screen yet deliver an empty stream, which looks like a successful but black call.
+    assert package["devDependencies"]["electron"] == "42.0.0"
     assert "place.poster.desktop.desktop" in ebuild
 
 
