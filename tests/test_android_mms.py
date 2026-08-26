@@ -473,6 +473,13 @@ class OutgoingMms(unittest.TestCase):
         self.assertIn("MmsStore.delete(this", thread)
         self.assertIn("sms_delete_confirm", thread)
 
+    def test_native_thread_observes_mms_and_uses_shared_subscription_aware_sender(self):
+        thread = open(os.path.join(SMS, "ThreadActivity.java"), encoding="utf-8").read()
+        self.assertIn("registerContentObserver(Telephony.Mms.CONTENT_URI", thread)
+        self.assertIn("MmsSender.send(this, address, body, raw)", thread)
+        send = thread[thread.index("private void sendMms(String body)") : thread.index("private void messageMenu")]
+        self.assertNotIn("new Transaction", send)
+
     def test_web_composer_seals_remote_attachment_and_phone_sends_it(self):
         js = open(SMSJS, encoding="utf-8").read()
         self.assertIn('id="sms-file"', js)

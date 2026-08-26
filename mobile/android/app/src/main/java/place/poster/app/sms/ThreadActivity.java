@@ -34,10 +34,7 @@ import android.util.LruCache;
 import java.util.ArrayList;
 import java.util.List;
 import java.io.InputStream;
-
-import com.klinker.android.send_message.Message;
-import com.klinker.android.send_message.Settings;
-import com.klinker.android.send_message.Transaction;
+import java.io.ByteArrayOutputStream;
 
 import place.poster.app.R;
 import place.poster.app.ui.CalendarPeek;
@@ -192,9 +189,16 @@ public class ThreadActivity extends PcActivity {
             @Override public void onChange(boolean self) { reload(); }
             @Override public void onChange(boolean self, Uri uri) { reload(); }
         };
-        try {
-            getContentResolver().registerContentObserver(Telephony.Sms.CONTENT_URI, true, watcher);
-        } catch (Throwable ignored) { watcher = null; }
+        boolean observed = false;
+        try { getContentResolver().registerContentObserver(Telephony.Sms.CONTENT_URI, true, watcher);
+              observed = true; } catch (Throwable ignored) { }
+        /* MMS writes and status transitions notify content://mms, not content://sms. Watching only
+         * the latter left a newly sent picture and its Sending/Failed state frozen until the user
+         * backed out and reopened the conversation. One observer may be registered on both URIs;
+         * unregisterContentObserver removes all of its registrations. */
+        try { getContentResolver().registerContentObserver(Telephony.Mms.CONTENT_URI, true, watcher);
+              observed = true; } catch (Throwable ignored) { }
+        if (!observed) watcher = null;
         // Opening a conversation IS reading it — in the provider, so every other app on the phone
         // agrees, and in the shade, so the notification goes.
         SmsStore.markRead(this, ids());
@@ -368,17 +372,27 @@ public class ThreadActivity extends PcActivity {
 
     /** Build a carrier MMS PDU and hand it to Android's public system MMS transport. */
     private void sendMms(String body) {
-        Bitmap image = null;
+        byte[] raw = null;
         try (InputStream in = getContentResolver().openInputStream(attachment)) {
-            image = BitmapFactory.decodeStream(in);
+            if (in != null) {
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                byte[] buf = new byte[64 * 1024]; int n, total = 0;
+                while ((n = in.read(buf)) >= 0) {
+                    total += n;
+                    if (total > 8 * 1024 * 1024) throw new Exception("picture message is too large");
+                    out.write(buf, 0, n);
+                }
+                raw = out.toByteArray();
+            }
         } catch (Throwable ignored) { }
-        if (image == null) { say(getString(R.string.sms_attachment_bad)); return; }
+        if (raw == null || raw.length == 0) { say(getString(R.string.sms_attachment_bad)); return; }
         try {
-            Settings settings = new Settings();
-            settings.setUseSystemSending(true);
-            Message message = new Message(body == null ? "" : body, address, image);
-            message.setSave(true);
-            new Transaction(this, settings).sendNewMessage(message);
+            /* One transport for native and WebUI sends. MmsSender selects the active SMS/data
+             * subscription; this screen's old duplicate omitted it, producing a provider row that
+             * remained at Sending on dual-SIM and stale-default devices. */
+            SmsSender.Result result = MmsSender.send(this, address, body, raw);
+            if (!result.ok) { say(result.error == null || result.error.isEmpty()
+                    ? getString(R.string.sms_failed) : result.error); return; }
             attachment = null;
             input.setText("");
             updateCount();
