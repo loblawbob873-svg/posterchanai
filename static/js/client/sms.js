@@ -1876,6 +1876,11 @@
       v.className = 'sms-att-img';
       v.controls = true;
       v.src = d.url;
+      if(isVideo(p.ct)) v.onclick = e => {
+        /* Controls still receive their click. A click on the picture itself opens the same
+         * edge-to-edge viewer posts use, instead of playing inside a narrow message bubble. */
+        if(e.target === v) try{ PC.openLightbox(d.url, 'video'); }catch(_){}
+      };
       el.appendChild(v);
       return;
     }

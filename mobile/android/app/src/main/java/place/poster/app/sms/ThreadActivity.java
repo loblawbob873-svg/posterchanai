@@ -1,6 +1,7 @@
 package place.poster.app.sms;
 
 import android.app.AlertDialog;
+import android.app.Dialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
@@ -29,6 +30,8 @@ import android.widget.TextView;
 import android.widget.ImageView;
 import android.widget.Button;
 import android.widget.GridLayout;
+import android.widget.VideoView;
+import android.widget.MediaController;
 import android.util.LruCache;
 
 import place.poster.app.signer.SignerRelayService;
@@ -37,6 +40,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.io.InputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 
 import place.poster.app.R;
 import place.poster.app.MainActivity;
@@ -560,13 +565,44 @@ public class ThreadActivity extends PcActivity {
 
     private void showPicture(final Bitmap bm) {
         ImageView full = new ImageView(this); full.setImageBitmap(bm);
-        full.setAdjustViewBounds(true); full.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        new AlertDialog.Builder(this).setView(full).setPositiveButton(android.R.string.ok, null).show();
+        full.setBackgroundColor(android.graphics.Color.BLACK);
+        full.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        final Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+        dialog.setContentView(full, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        full.setOnClickListener(v -> dialog.dismiss());
+        dialog.show();
+    }
+
+    private void showVideo(final SmsPart part) {
+        new Thread(() -> {
+            byte[] bytes = MmsStore.partBytes(this, part.id, 96 * 1024 * 1024);
+            if (bytes == null || bytes.length == 0) { main.post(() -> say(getString(R.string.sms_attachment_bad))); return; }
+            try {
+                File file = new File(getCacheDir(), "sms-video-" + part.id + ".bin");
+                try (FileOutputStream out = new FileOutputStream(file)) { out.write(bytes); }
+                main.post(() -> {
+                    final Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+                    VideoView video = new VideoView(this);
+                    MediaController controls = new MediaController(this);
+                    controls.setAnchorView(video); video.setMediaController(controls);
+                    video.setVideoURI(Uri.fromFile(file));
+                    dialog.setContentView(video, new ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                    dialog.setOnDismissListener(x -> { try { file.delete(); } catch (Throwable ignored) { } });
+                    dialog.show(); video.setOnPreparedListener(mp -> { mp.setLooping(false); video.start(); });
+                });
+            } catch (Throwable t) { main.post(() -> say(getString(R.string.sms_attachment_bad))); }
+        }, "pc-mms-video").start();
     }
 
     private void drawParts(final LinearLayout host, SmsMsg m) {
         host.removeAllViews();
         for (final SmsPart p : m.parts) {
+            if (p.ct != null && p.ct.toLowerCase().startsWith("video/")) {
+                Button play = new Button(this); play.setText("▶  " + (p.name.isEmpty() ? "Play video" : p.name));
+                play.setAllCaps(false); play.setOnClickListener(v -> showVideo(p)); host.addView(play); continue;
+            }
             if (p.ct == null || !p.ct.toLowerCase().startsWith("image/")) continue;
             final ImageView image = new ImageView(this);
             image.setAdjustViewBounds(true); image.setScaleType(ImageView.ScaleType.CENTER_CROP);

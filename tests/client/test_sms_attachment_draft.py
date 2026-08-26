@@ -37,6 +37,11 @@ def test_texts_attachment_menu_offers_camera_device_and_blossom():
     assert "acceptFile(new File([blob],name" in JS
 
 
+def test_texts_media_opens_in_the_shared_fullscreen_viewer():
+    assert "PC.openLightbox(url, 'image')" in JS
+    assert "PC.openLightbox(d.url, 'video')" in JS
+
+
 def test_pending_send_has_a_touch_accessible_cancel_action():
     assert 'class="sms-cancel-pending"' in JS
     assert "m.pending?'Cancel send':'Delete'" in JS
