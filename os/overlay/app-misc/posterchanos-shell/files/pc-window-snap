@@ -21,6 +21,35 @@ def focused(node, output=None):
     return None
 
 
+def process_chain(pid):
+    """Yield command lines for a process and its parents without trusting Wayland app_id.
+
+    Electron surfaces have not kept one stable app_id across Wayland/XWayland and package
+    upgrades.  The compositor must never resize PosterChan's per-output shell surface: doing so
+    makes a laptop viewport narrow enough that the web desktop correctly falls back to Classic.
+    The renderer's ancestry, unlike its optional surface metadata, always reaches the packaged
+    posterchan-desktop main process.
+    """
+    seen = set()
+    while pid and pid not in seen:
+        seen.add(pid)
+        try:
+            raw = open(f"/proc/{pid}/cmdline", "rb").read().replace(b"\0", b" ")
+            yield raw.decode("utf-8", "replace")
+            with open(f"/proc/{pid}/stat", "r", encoding="utf-8") as handle:
+                fields = handle.read().split()
+            pid = int(fields[3])
+        except (OSError, ValueError, IndexError):
+            return
+
+
+def is_posterchan_shell(win):
+    app = str(win.get("app_id") or "").lower()
+    if app in ("posterchan", "posterchan-desktop"):
+        return True
+    return any("posterchan-desktop" in cmd.lower() for cmd in process_chain(win.get("pid")))
+
+
 def main():
     side = sys.argv[1] if len(sys.argv) > 1 else ""
     if side not in ("left", "right", "max", "edge"):
@@ -29,7 +58,7 @@ def main():
     if not hit:
         return
     win, out = hit
-    if not out or win.get("app_id") == "posterchan-desktop":
+    if not out or is_posterchan_shell(win):
         return
     box = out.get("rect") or {}
     x, y = int(box.get("x", 0)), int(box.get("y", 0))

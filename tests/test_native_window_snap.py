@@ -1,4 +1,5 @@
 import re
+import runpy
 from pathlib import Path
 
 
@@ -19,6 +20,27 @@ def test_native_snap_helper_is_shipped_and_bound_in_both_os_configs():
         assert "$mod+Left  exec /usr/local/bin/pc-window-snap left" in src
         assert "$mod+Right exec /usr/local/bin/pc-window-snap right" in src
         assert "$mod+Up    exec /usr/local/bin/pc-window-snap max" in src
+
+
+def test_native_snap_never_resizes_a_posterchan_shell_surface(monkeypatch):
+    """Super+Right must not halve an Electron shell and force its web UI into Classic mode.
+
+    app_id is deliberately absent: that is the real Wayland metadata race that made the old exact
+    string comparison ineffective.  A renderer process is identified through its main-process
+    ancestry instead.
+    """
+    helper = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap"
+    module = runpy.run_path(str(helper), run_name="pc_window_snap_test")
+    monkeypatch.setitem(module["process_chain"].__globals__, "process_chain",
+                        lambda _pid: iter(("/opt/posterchan/posterchan-desktop --shell",)))
+    assert module["is_posterchan_shell"]({"app_id": None, "pid": 4242}) is True
+
+
+def test_native_snap_still_accepts_real_native_apps():
+    helper = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap"
+    module = runpy.run_path(str(helper), run_name="pc_window_snap_test")
+    module["is_posterchan_shell"].__globals__["process_chain"] = lambda _pid: iter(("firefox",))
+    assert module["is_posterchan_shell"]({"app_id": "firefox", "pid": 4243}) is False
 
 
 def test_existing_identity_configs_are_migrated_to_native_snap():
