@@ -2794,6 +2794,13 @@
   function handoffIdentity(w){
     const opened=String(w&&w.view||''), current=String(w&&w.appView||opened);
     if(opened==='terminal') return 'terminal';
+    /* A document's key is its WINDOW identity.  A post is opened as
+     * `doc:post:<event-id>` and paints the internal `thread` view inside it.  Sending `thread`
+     * loses the document on the receiving renderer: openApp has no launcher app named thread, so
+     * it first constructs a generic shared-feed window and the route repaint can land in Social.
+     * Keep the document frame (and its uniqueness key) intact; appPath below still tells the new
+     * renderer which exact post/profile/article to paint inside that frame. */
+    if(opened.indexOf('doc:')===0) return opened;
     if(String(w&&w.appPath||'') || (opened==='settings'&&current==='admin')) return current;
     return opened||current;
   }
