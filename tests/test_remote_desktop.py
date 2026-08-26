@@ -174,6 +174,14 @@ def test_transient_ice_failure_does_not_end_remote_control_session():
     assert "clearTimeout(_call.iceFailureTimer)" in teardown
 
 
+def test_same_identity_remote_control_is_auto_granted_only_to_self():
+    start = APP.index("function _rdWireControl(ch)")
+    block = APP[start:APP.index("function _rdGrant(on)", start)]
+    assert "if(_call.peer===ME.pubkey){_rdGrant(true);return;}" in block
+    # A different verified identity must still go through the visible approval state.
+    assert "_call.controlRequested=true;_callUI();return;" in block
+
+
 def test_launcher_tiles_leave_desktop_without_forgetting_the_preference():
     assert "mobileLanding: () => { if(on) exit(false); }" in OS
     # Both cold/resume paths go through the one boot-ordered landing function.

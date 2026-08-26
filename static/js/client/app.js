@@ -33027,7 +33027,14 @@
     ch.onopen=()=>_callUI();ch.onclose=()=>{if(_call&&_call.control===ch){_call.control=null;_call.controlGranted=false;_call.controlRequested=false;_rdReleaseNative();_callUI();}};
     ch.onmessage=e=>{if(!_call||_call.control!==ch)return;let m;try{if(String(e.data||'').length>512)return;m=JSON.parse(e.data);}catch(_){return;}
       if(m.t==='request'&&!_call.caller){return;} // only the viewer requests; only the sharing host approves
-      if(m.t==='request'&&_call.caller){_call.controlRequested=true;_callUI();return;}
+      if(m.t==='request'&&_call.caller){
+        // Both endpoints proved possession of the same Nostr identity and both explicitly opened
+        // Remote Desktop. That is sufficient consent for this device-to-self case; asking the user
+        // to walk back to the sharing machine defeats unattended access. Other identities still
+        // receive the explicit Allow/Deny prompt below.
+        if(_call.peer===ME.pubkey){_rdGrant(true);return;}
+        _call.controlRequested=true;_callUI();return;
+      }
       if(m.t==='release'&&_call.caller){_call.controlRequested=false;_call.controlGranted=false;_rdReleaseNative();_callUI();return;}
       if(m.t==='grant'&&!_call.caller){_call.controlGranted=!!m.on;_callUI();return;}
       if(m.t==='input'&&_call.caller&&_call.controlGranted&&window.pcRemoteControl&&pcRemoteControl.input)
