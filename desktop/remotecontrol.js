@@ -43,6 +43,11 @@ async function input(raw){
     if(!Number.isFinite(dx)||!Number.isFinite(dy)||Math.abs(dx)>240||Math.abs(dy)>240) return false;
     return enqueue(['mousemove',String(dx),String(dy)]);
   }
+  if(e.type==='wheel'){
+    const dy=Math.round(Number(e.dy));
+    if(!Number.isFinite(dy)||!dy||Math.abs(dy)>12) return false;
+    return enqueue(['mousemove','--wheel','0',String(dy)]);
+  }
   if(e.type==='button'){
     const b=BUTTONS[e.button]; if(b===undefined || typeof e.down!=='boolean') return false;
     const ok=await enqueue(['click',(e.down?'0x4':'0x8')+b]);

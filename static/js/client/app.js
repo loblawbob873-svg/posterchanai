@@ -33022,9 +33022,35 @@
   }
   function _rdSend(obj){try{if(_call&&_call.control&&_call.control.readyState==='open')_call.control.send(JSON.stringify(obj));}catch(_){}}
   function _rdReleaseNative(){try{if(window.pcRemoteControl&&pcRemoteControl.release)pcRemoteControl.release();}catch(_){}}
+  function _rdWatchScreen(local){
+    const screen=local&&local.getVideoTracks&&local.getVideoTracks()[0];
+    if(screen)screen.addEventListener('ended',()=>{
+      if(_call&&_call.local===local&&_call.remoteDesktop)_hangup(false);
+    },{once:true});
+  }
+  async function _rdSwitchScreen(){
+    if(!_call||!_call.remoteDesktop||!_call.caller||!_call.pc)return;
+    const activeCall=_call,old=activeCall.local;let next;
+    try{next=await navigator.mediaDevices.getDisplayMedia({video:{width:{ideal:1920},height:{ideal:1080}},audio:false});}
+    catch(e){if(e&&e.name!=='NotAllowedError')toast(_mediaErrMsg(e));return;}
+    if(!_call||_call!==activeCall){next.getTracks().forEach(t=>t.stop());return;}
+    const track=next.getVideoTracks()[0],sender=activeCall.pc.getSenders().find(s=>s.track&&s.track.kind==='video');
+    if(!track||!sender){next.getTracks().forEach(t=>t.stop());toast('could not switch screens');return;}
+    try{await sender.replaceTrack(track);}catch(_){next.getTracks().forEach(t=>t.stop());toast('could not switch screens');return;}
+    // Swap the identity before stopping the previous track: its ended listener must not interpret
+    // this intentional replacement as Stop sharing and tear down the call.
+    activeCall.local=next;_rdWatchScreen(next);if(old)old.getTracks().forEach(t=>t.stop());_callUI();
+  }
   function _rdWireControl(ch){
     if(!_call||!_call.remoteDesktop||!ch)return;_call.control=ch;
-    ch.onopen=()=>_callUI();ch.onclose=()=>{if(_call&&_call.control===ch){_call.control=null;_call.controlGranted=false;_call.controlRequested=false;_rdReleaseNative();_callUI();}};
+    ch.onopen=()=>{
+      if(!_call||_call.control!==ch)return;
+      // Both devices explicitly opened Remote Desktop and proved the same Nostr identity. Enable
+      // control as part of connecting so device-to-self sessions do not need a redundant Request
+      // click. The host still grants through the channel (rather than trusting viewer-side state).
+      if(!_call.caller&&_call.peer===ME.pubkey)_rdSend({t:'request'});
+      _callUI();
+    };ch.onclose=()=>{if(_call&&_call.control===ch){_call.control=null;_call.controlGranted=false;_call.controlRequested=false;_rdReleaseNative();_callUI();}};
     ch.onmessage=e=>{if(!_call||_call.control!==ch)return;let m;try{if(String(e.data||'').length>512)return;m=JSON.parse(e.data);}catch(_){return;}
       if(m.t==='request'&&!_call.caller){return;} // only the viewer requests; only the sharing host approves
       if(m.t==='request'&&_call.caller){
@@ -33046,9 +33072,13 @@
     if(!video||video.dataset.rdControl)return;video.dataset.rdControl='1';let px=null,py=null;
     const active=()=>!!(_call&&_call.remoteDesktop&&!_call.caller&&_call.controlGranted);
     video.addEventListener('pointerdown',e=>{if(!active())return;px=e.clientX;py=e.clientY;try{video.setPointerCapture(e.pointerId);}catch(_){} _rdSend({t:'input',e:{type:'button',button:Math.min(2,e.button|0),down:true}});e.preventDefault();});
-    video.addEventListener('pointermove',e=>{if(!active()||px===null)return;const dx=Math.max(-240,Math.min(240,Math.round(e.clientX-px))),dy=Math.max(-240,Math.min(240,Math.round(e.clientY-py)));px=e.clientX;py=e.clientY;if(dx||dy)_rdSend({t:'input',e:{type:'move',dx,dy}});e.preventDefault();});
-    const up=e=>{if(!active()||px===null)return;px=py=null;_rdSend({t:'input',e:{type:'button',button:Math.min(2,e.button|0),down:false}});e.preventDefault();};
-    video.addEventListener('pointerup',up);video.addEventListener('pointercancel',up);video.addEventListener('contextmenu',e=>{if(active())e.preventDefault();});
+    // Mouse movement must work while merely hovering. The old px===null guard initialized px only
+    // on pointerdown, effectively turning remote control into drag-only control.
+    video.addEventListener('pointermove',e=>{if(!active()){px=py=null;return;}if(px===null){px=e.clientX;py=e.clientY;return;}const dx=Math.max(-240,Math.min(240,Math.round(e.clientX-px))),dy=Math.max(-240,Math.min(240,Math.round(e.clientY-py)));px=e.clientX;py=e.clientY;if(dx||dy)_rdSend({t:'input',e:{type:'move',dx,dy}});e.preventDefault();});
+    const up=e=>{if(!active())return;px=e.clientX;py=e.clientY;_rdSend({t:'input',e:{type:'button',button:Math.min(2,e.button|0),down:false}});e.preventDefault();};
+    video.addEventListener('pointerup',up);video.addEventListener('pointercancel',up);video.addEventListener('pointerleave',()=>{px=py=null;});
+    video.addEventListener('wheel',e=>{if(!active())return;_rdSend({t:'input',e:{type:'wheel',dy:Math.max(-12,Math.min(12,Math.sign(e.deltaY)))}});e.preventDefault();},{passive:false});
+    video.addEventListener('contextmenu',e=>{if(active())e.preventDefault();});
   }
   document.addEventListener('keydown',e=>{if(!(_call&&_call.remoteDesktop&&!_call.caller&&_call.controlGranted))return;const c=_RD_KEYS[e.code];if(!c)return;e.preventDefault();_rdSend({t:'input',e:{type:'key',code:c,down:true}});},true);
   document.addEventListener('keyup',e=>{if(!(_call&&_call.remoteDesktop&&!_call.caller&&_call.controlGranted))return;const c=_RD_KEYS[e.code];if(!c)return;e.preventDefault();_rdSend({t:'input',e:{type:'key',code:c,down:false}});},true);
@@ -33131,12 +33161,7 @@
     /* The browser's native "Stop sharing" button ends the capture track without touching our call
      * state.  Treat that as an intentional hangup: otherwise the viewer is left on a frozen last
      * frame and the host still sees a misleading "connected" overlay. */
-    if(remoteDesktop){
-      const screen=local.getVideoTracks()[0];
-      if(screen) screen.addEventListener('ended',()=>{
-        if(_call && _call.local===local && _call.remoteDesktop) _hangup(false);
-      },{once:true});
-    }
+    if(remoteDesktop)_rdWatchScreen(local);
     const ice = await _fetchIceServers();
     if(!_call){ local.getTracks().forEach(t=>t.stop()); return; }
     const pc = _newPc(ice.iceServers); _call.pc = pc;
@@ -33573,6 +33598,7 @@
       ? act('call-accept',_call.remoteDesktop?'🖥':'📞',_call.remoteDesktop?'View':'Answer','accept')+act('call-decline','✕','Decline','decline')
       : act('call-min','▁','Minimize')
         +(_call.remoteDesktop&&!_call.caller?act('call-full','⛶','Fullscreen'):'')
+        +(_call.remoteDesktop&&_call.caller&&_call.state==='connected'?act('call-screen','🖥','Switch screen'):'')
         +(_call.remoteDesktop&&!_call.caller&&_call.state==='connected'&&_call.control
           ? act('call-control',_call.controlGranted?'🖱️':'☝️',_call.controlGranted?'Stop control':'Request control',_call.controlGranted?'hang':''):'')
         +(_call.remoteDesktop&&_call.caller&&_call.controlRequested
@@ -33592,6 +33618,7 @@
         if(document.fullscreenElement) await document.exitFullscreen();
         else await el.requestFullscreen();
       }catch(_){ toast('fullscreen is unavailable in this window'); } };
+      if(b('call-screen'))b('call-screen').onclick=_rdSwitchScreen;
       if(b('call-control')) b('call-control').onclick=()=>{if(!_call)return;if(_call.controlGranted){_call.controlGranted=false;_rdSend({t:'release'});_callUI();}else _rdSend({t:'request'});};
       if(b('call-control-allow')) b('call-control-allow').onclick=()=>_rdGrant(true);
       if(b('call-control-deny')) b('call-control-deny').onclick=()=>_rdGrant(false);

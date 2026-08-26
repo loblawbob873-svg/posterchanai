@@ -151,7 +151,7 @@ def test_remote_desktop_sends_a_screen_and_no_guest_media():
 
 def test_stopping_browser_screen_share_ends_the_remote_desktop_session():
     assert "screen.addEventListener('ended'" in APP
-    assert "_call.local===local && _call.remoteDesktop" in APP
+    assert "_call.local===local&&_call.remoteDesktop" in APP
     assert "_hangup(false)" in APP
 
 
@@ -180,6 +180,32 @@ def test_same_identity_remote_control_is_auto_granted_only_to_self():
     assert "if(_call.peer===ME.pubkey){_rdGrant(true);return;}" in block
     # A different verified identity must still go through the visible approval state.
     assert "_call.controlRequested=true;_callUI();return;" in block
+
+
+def test_same_identity_viewer_requests_control_automatically_on_channel_open():
+    start = APP.index("function _rdWireControl(ch)")
+    block = APP[start:APP.index("function _rdGrant(on)", start)]
+    assert "if(!_call.caller&&_call.peer===ME.pubkey)_rdSend({t:'request'});" in block
+
+
+def test_remote_pointer_moves_without_requiring_a_pressed_button():
+    start = APP.index("function _rdBindViewer(video)")
+    block = APP[start:APP.index("document.addEventListener('keydown'", start)]
+    move = block[block.index("pointermove"):block.index("const up=", block.index("pointermove"))]
+    assert "px===null)return" not in move
+    assert "if(px===null){px=e.clientX;py=e.clientY;return;}" in move
+    assert "addEventListener('wheel'" in block
+
+
+def test_sharer_can_switch_monitor_without_ending_the_session():
+    start = APP.index("async function _rdSwitchScreen()")
+    block = APP[start:APP.index("function _rdWireControl", start)]
+    assert "navigator.mediaDevices.getDisplayMedia" in block
+    assert "await sender.replaceTrack(track)" in block
+    assert "activeCall.local=next" in block
+    assert block.index("activeCall.local=next") < block.index("old.getTracks().forEach")
+    assert "act('call-screen','🖥','Switch screen')" in APP
+    assert "b('call-screen').onclick=_rdSwitchScreen" in APP
 
 
 def test_launcher_tiles_leave_desktop_without_forgetting_the_preference():

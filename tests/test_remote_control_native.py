@@ -27,6 +27,7 @@ def test_native_remote_input_is_shell_only_and_origin_guarded():
 def test_native_remote_input_is_bounded_and_rate_limited():
     assert "now-lastAt<16" in NATIVE
     assert "Math.abs(dx)>240||Math.abs(dy)>240" in NATIVE
+    assert "e.type==='wheel'" in NATIVE
     assert "KEY_CODES.has(code)" in NATIVE
     assert "typeof e.down!=='boolean'" in NATIVE
     assert "execFile('/usr/bin/ydotool'" in NATIVE
@@ -52,15 +53,17 @@ def test_native_bridge_executes_only_validated_argument_arrays(tmp_path):
         await new Promise(r=>setTimeout(r,20));
         const hugeMove=await rc.input({{type:'move',dx:999,dy:0}});
         const validKey=await rc.input({{type:'key',code:30,down:true}});
+        const wheel=await rc.input({{type:'wheel',dy:1}});
         const badKey=await rc.input({{type:'key',code:116,down:true}});
         await rc.release();
-        console.log(JSON.stringify({{validMove,hugeMove,validKey,badKey,calls}}));
+        console.log(JSON.stringify({{validMove,hugeMove,validKey,wheel,badKey,calls}}));
       }})().catch(e=>{{console.error(e);process.exit(1)}});
     """), encoding="utf-8")
     run = subprocess.run(["node", str(driver)], capture_output=True, text=True, timeout=10)
     assert run.returncode == 0, run.stderr
     result = json.loads(run.stdout)
     assert result["validMove"] is True and result["hugeMove"] is False
+    assert result["wheel"] is True
     assert result["validKey"] is True and result["badKey"] is False
     ydotool = [args for file, args in result["calls"] if file == "/usr/bin/ydotool"]
-    assert ydotool == [["mousemove", "12", "-9"], ["key", "30:1"], ["key", "30:0"]]
+    assert ydotool == [["mousemove", "12", "-9"], ["key", "30:1"], ["mousemove", "--wheel", "0", "1"], ["key", "30:0"]]
