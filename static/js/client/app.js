@@ -33075,9 +33075,12 @@
   }
   async function startCall(peerHex, opts){
     if(GUEST){ _guestPrompt(); return; }
-    if(!peerHex || peerHex===ME.pubkey){ return; }
-    if(_call){ toast('already in a call'); return; }
     const remoteDesktop = !!(opts && opts.remoteDesktop);
+    // Calling your own identity makes no sense for voice/video, but it is exactly how a user shares
+    // one signed-in device to another. Device ids on the signaling frames prevent this renderer
+    // from answering its own invite; another armed device with the same key accepts it.
+    if(!peerHex || (peerHex===ME.pubkey && !remoteDesktop)){ return; }
+    if(_call){ toast('already in a call'); return; }
     const video = remoteDesktop || !!(opts && opts.video);
     const signalRelays=[...new Set(((opts&&opts.signalRelays)||[]).map(normalizeRelay).filter(Boolean))];
     _call = { id:_rid(), peer:peerHex, pc:null, local:null, remote:null, video, remoteDesktop,

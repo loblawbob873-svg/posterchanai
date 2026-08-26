@@ -811,10 +811,7 @@ function wirePermissions() {
     cb(req && req.audioRequested && process.platform === 'win32'
       ? { video: source, audio: 'loopback' }
       : { video: source });
-  // macOS 15 has a reliable native picker. On Linux, especially wlroots/Sway, asking Electron to
-  // force the portal picker can reject immediately without ever invoking this handler. Keep Linux
-  // and Windows on our explicit picker so a share request cannot disappear before signaling starts.
-  }, { useSystemPicker: process.platform === 'darwin' });
+  }, { useSystemPicker: true });
 }
 
 // ---- screen-source picker (our stand-in for the browser's built-in one) -------------------------
@@ -825,12 +822,8 @@ let pickerOpen = false;
 function pickScreenSource() {
   if (pickerOpen) return Promise.resolve(null);   // one picker at a time — a second request just cancels
   pickerOpen = true;
-  // xdg-desktop-portal-wlr advertises monitor capture only. Asking it for an unsupported window
-  // source together with the monitor can make Chromium return no sources at all. Other platforms
-  // keep the richer screen + window chooser.
-  const sourceTypes = process.platform === 'linux' ? ['screen'] : ['screen', 'window'];
   return desktopCapturer
-    .getSources({ types: sourceTypes, thumbnailSize: { width: 320, height: 200 }, fetchWindowIcons: false })
+    .getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 200 }, fetchWindowIcons: false })
     .then((sources) => {
       if (!sources.length) { pickerOpen = false; return null; }
       pendingSources = sources;

@@ -53,13 +53,17 @@ def test_same_login_has_a_direct_action_and_failures_are_visible_inline():
     assert "[data-rd-choose][hidden]{display:none!important}" in css
 
 
-def test_desktop_uses_its_source_picker_on_linux_instead_of_the_failing_portal_path():
+def test_desktop_has_a_picker_and_recovers_its_guard_after_source_errors():
     main = (ROOT / "desktop/main.js").read_text(encoding="utf-8")
-    assert "useSystemPicker: process.platform === 'darwin'" in main
-    assert "useSystemPicker: true" not in main
-    assert "process.platform === 'linux' ? ['screen'] : ['screen', 'window']" in main
+    assert "useSystemPicker: true" in main
     assert ".catch((error) => {" in main
     assert "pickerOpen = false;" in main
+
+
+def test_same_identity_is_allowed_only_for_remote_desktop_calls():
+    app = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
+    assert "const remoteDesktop = !!(opts && opts.remoteDesktop);" in app
+    assert "(peerHex===ME.pubkey && !remoteDesktop)" in app
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
