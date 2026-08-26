@@ -30,20 +30,21 @@ def test_system_settings_exposes_the_native_power_controls_and_system_info():
     render = OS[OS.index("async function renderSystemSettings()"):
                 OS.index("function openTaskManager", OS.index("async function renderSystemSettings()"))]
     for control in ("data-brightness", "data-power-profile", "data-keep-awake",
-                    "data-idle-timeout", "data-about"):
+                    "data-idle-timeout", 'data-settings-page="about"'):
         assert control in render
     for method in ("pcPower.setBrightness", "pcPower.setProfile", "pcPower.setKeepAwake",
                    "pcPower.setIdleTimeout", "pcSystem.snapshot(false)"):
         assert method in render
 
 
-def test_system_settings_manages_real_desktop_widgets():
+def test_system_settings_categories_are_separate_pages_without_widget_cards():
     render = OS[OS.index("async function renderSystemSettings()"):
                 OS.index("function openTaskManager", OS.index("async function renderSystemSettings()"))]
-    for marker in ('data-jump="widgets"', "data-widgets", "data-widget-add",
-                   "data-widget-size", "data-widget-remove"):
+    for marker in ('data-page="displays"', 'data-page="power"', 'data-page="about"',
+                   'data-settings-page="displays"', 'data-settings-page="power"',
+                   'data-settings-page="about"'):
         assert marker in render
-    for action in ("addWidget(b.dataset.widgetAdd)",
-                   "sizeWidget(s.dataset.widgetSize,s.value)", "removeWidget(id)"):
-        assert action in render
-    assert "Remove widget" in render
+    assert "_osSettingsPage=b.dataset.page;draw()" in render
+    for marker in ('data-jump="widgets"', "data-widgets", "data-widget-add",
+                   "data-widget-size", "data-widget-remove", "Remove widget"):
+        assert marker not in render

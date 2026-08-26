@@ -1636,6 +1636,8 @@
     if(w){ w.rerun=true; w.isolated=true; }
   }
 
+  let _osSettingsPage='displays';
+
   async function renderSystemSettings(){
     const host=document.getElementById('feed');
     if(!host || !window.pcDisplays){ if(host) host.innerHTML='<div class="empty">System settings are unavailable.</div>'; return; }
@@ -1660,27 +1662,19 @@
     let selected=rows.findIndex(x=>x.primary); if(selected<0) selected=0;
     const modeText=m=>m.width+'x'+m.height+(m.refresh?'@'+(Math.round(m.refresh/1000*1000)/1000)+'Hz':'');
     const draw=()=>{
-      const deskWidgets=(layout().widgets||[]).filter(w=>w&&w.id);
-      const widgetRows=deskWidgets.map(w=>{const d=WIDGETS[w.type];return `<div class="os-setting-row os-set-control os-set-widget" data-widget-id="${enc(w.id)}">
-        <div><b>${enc(d?d.label:w.type)}</b><span>${enc(d?d.blurb:'This widget comes from a newer PosterChan build.')}</span></div>
-        <label>Size <select data-widget-size="${enc(w.id)}">${[['s','Small'],['m','Medium'],['l','Large']].map(([v,n])=>`<option value="${v}" ${w.size===v?'selected':''}>${n}</option>`).join('')}</select>
-          <button class="btn btn-ghost danger" data-widget-remove="${enc(w.id)}">Remove</button></label></div>`}).join('');
-      const widgetChoices=Object.keys(WIDGETS).map(k=>{const d=WIDGETS[k];return `<button class="os-wgt-pick" data-widget-add="${enc(k)}">
-        <svg class="ic" aria-hidden="true"><use href="${enc(d.icon)}"></use></svg><span class="os-wgt-pl">${enc(d.label)}</span><span class="os-wgt-pb">${enc(d.blurb)}</span></button>`}).join('');
       const minX=Math.min(...rows.filter(x=>x.enabled).map(x=>x.x),0), minY=Math.min(...rows.filter(x=>x.enabled).map(x=>x.y),0);
       const maxX=Math.max(...rows.filter(x=>x.enabled).map(x=>x.x+x.w),1920), maxY=Math.max(...rows.filter(x=>x.enabled).map(x=>x.y+x.h),1080);
       const scale=Math.min(620/Math.max(1,maxX-minX),300/Math.max(1,maxY-minY));
       host.innerHTML=`<div class="os-settings"><aside class="os-set-nav">
         <div class="os-set-title">${iconSvg('gear')}<b>System Settings</b></div>
-        <button class="on">${iconSvg('monitor')} Displays</button>
+        <button data-page="displays" class="${_osSettingsPage==='displays'?'on':''}">${iconSvg('monitor')} Displays</button>
         <button data-jump="sound">${iconSvg('volume')} Sound</button>
         <button data-jump="network">${iconSvg('wifi')} Network</button>
         <button data-jump="bluetooth">${iconSvg('bluetooth')} Bluetooth</button>
-        <button data-jump="power">${iconSvg('power')} Power &amp; brightness</button>
-        <button data-jump="widgets">${iconSvg('grid')} Widgets</button>
-        <button data-jump="about">${iconSvg('chart')} About</button>
-        ${window.pcLiveUSB?`<button data-jump="liveusb">${iconSvg('drive')} LiveUSB</button>`:''}
-      </aside><main class="os-set-main"><header class="os-set-pagehead"><div>${iconSvg('monitor')}</div><span><h2>Displays</h2><p>Arrange monitors, choose resolution and scaling, then preview safely before saving.</p></span></header>
+        <button data-page="power" class="${_osSettingsPage==='power'?'on':''}">${iconSvg('power')} Power &amp; brightness</button>
+        <button data-page="about" class="${_osSettingsPage==='about'?'on':''}">${iconSvg('chart')} About</button>
+        ${window.pcLiveUSB?`<button data-page="liveusb" class="${_osSettingsPage==='liveusb'?'on':''}">${iconSvg('drive')} LiveUSB</button>`:''}
+      </aside><main class="os-set-main"><section data-settings-page="displays" ${_osSettingsPage==='displays'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('monitor')}</div><span><h2>Displays</h2><p>Arrange monitors, choose resolution and scaling, then preview safely before saving.</p></span></header>
         <section class="os-set-card"><div class="os-set-cardhead"><b>Monitor arrangement</b><span>Drag each numbered screen to match its physical position on your desk.</span></div>
         <div class="os-display-map" style="height:${Math.max(180,(maxY-minY)*scale+40)}px">${rows.map((r,i)=>
           `<button class="os-display ${i===selected?'selected':''} ${r.enabled?'':'off'}" data-i="${i}"
@@ -1688,8 +1682,8 @@
            <b>${i+1}</b><span>${enc(r.label)}</span><small>${r.w} × ${r.h}</small></button>`).join('')}</div>
         <div class="os-display-controls"></div>
         <div class="os-set-actions"><button class="btn" data-detect>Detect displays</button>
-          <button class="btn primary" data-apply>Preview and apply</button><span class="muted" data-status></span></div></section>
-        <div class="os-set-section-title"><h3>Power and sleep</h3><p>These changes apply to this PosterChanOS computer.</p></div>
+          <button class="btn primary" data-apply>Preview and apply</button><span class="muted" data-status></span></div></section></section>
+        <section data-settings-page="power" ${_osSettingsPage==='power'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('power')}</div><span><h2>Power &amp; brightness</h2><p>Battery, performance, sleep, and display brightness.</p></span></header>
         ${power.brightness&&power.brightness.available?`<section class="os-setting-row os-set-control"><div><b>Brightness</b><span>${enc(power.brightness.name||'Built-in display')}</span></div><label><output data-bright-value>${enc(power.brightness.percent)}%</output><input data-brightness type="range" min="1" max="100" value="${enc(power.brightness.percent)}" aria-label="Display brightness"></label></section>`:''}
         ${power.profiles&&power.profiles.available?`<section class="os-setting-row os-set-control"><div><b>Power mode</b><span>Balance speed, heat, and battery use.</span></div><select data-power-profile aria-label="Power mode">${power.profiles.list.map(n=>`<option ${n===power.profiles.active?'selected':''}>${enc(n)}</option>`).join('')}</select></section>`:''}
         <section class="os-setting-row os-set-control"><div><b>Keep awake</b><span>Prevent automatic display-off during presentations and long tasks.</span></div><label class="os-set-switch"><input data-keep-awake type="checkbox" ${power.keepAwake?'checked':''}><span>${power.keepAwake?'On':'Off'}</span></label></section>
@@ -1698,22 +1692,15 @@
         <section class="os-hibernate os-setting-row"><div><b>Turn display off when idle</b><span>The computer stays running; only its displays switch off.</span></div>
           <select data-idle-timeout aria-label="Display idle timeout">
             ${[[60,'1 minute'],[120,'2 minutes'],[300,'5 minutes'],[600,'10 minutes'],[1800,'30 minutes'],[0,'Never']].map(([n,label])=>`<option value="${n}" ${Number(power.idleSeconds)===n?'selected':''}>${label}</option>`).join('')}
-          </select></section>
-        <div class="os-set-section-title" data-widgets><h3>Desktop widgets</h3><p>Add useful live panels to this desktop, resize them here, or remove ones you no longer use.</p></div>
-        <section class="os-set-card os-set-widgets">
-          <div class="os-set-cardhead"><b>On this desktop</b><span>Widget placement and settings stay synchronized with your PosterChan desktop.</span></div>
-          <div class="os-set-widget-list">${widgetRows||'<div class="pcc-note">No widgets on this desktop yet.</div>'}</div>
-          <div class="os-set-cardhead os-set-widget-addhead"><b>Add a widget</b><span>You can add more than one of the same kind.</span></div>
-          <div class="os-set-widget-grid">${widgetChoices}</div>
-        </section>
-        <div class="os-set-section-title" data-about><h3>About this computer</h3><p>Live hardware and session information.</p></div>
+          </select></section></section>
+        <section data-settings-page="about" ${_osSettingsPage==='about'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('chart')}</div><span><h2>About</h2><p>Hardware and session information for this computer.</p></span></header>
         <section class="os-set-card os-about-grid">
           <div><span>System</span><b>PosterChanOS</b></div>
           <div><span>Processors</span><b>${enc((system.cpu&&system.cpu.cores)||'—')} logical cores</b></div>
           <div><span>Memory</span><b>${system.memory&&system.memory.total?enc((system.memory.total/1073741824).toFixed(1))+' GB':'—'}</b></div>
           <div><span>Up time</span><b>${Number.isFinite(system.uptime)?enc(Math.floor(system.uptime/3600))+'h '+enc(Math.floor(system.uptime/60)%60)+'m':'—'}</b></div>
-        </section>
-        ${window.pcLiveUSB?`<section class="os-liveusb" data-liveusb><div class="os-liveusb-head"><div><b>PosterChanOS LiveUSB</b><span>Build a recovery/installer ISO or write one to removable media.</span></div><button class="btn" data-live-refresh>Refresh</button></div>
+        </section></section>
+        ${window.pcLiveUSB?`<section class="os-liveusb" data-liveusb data-settings-page="liveusb" ${_osSettingsPage==='liveusb'?'':'hidden'}><div class="os-liveusb-head"><div><b>PosterChanOS LiveUSB</b><span>Build a recovery/installer ISO or write one to removable media.</span></div><button class="btn" data-live-refresh>Refresh</button></div>
           <div class="os-liveusb-grid"><div><h3>Build an ISO</h3><label>Output folder<div class="os-path-pick"><input class="input" data-live-out readonly placeholder="Choose a folder"><button class="btn" data-live-dir>Choose…</button></div></label><label><input type="checkbox" data-live-home> Include personal home files <small>(recovery media only)</small></label><button class="btn primary" data-live-build>Build ISO</button></div>
           <div><h3>Write a USB drive</h3><label>ISO file<div class="os-path-pick"><input class="input" data-live-iso readonly placeholder="Choose an ISO"><button class="btn" data-live-pick>Choose…</button></div></label><label>Removable drive<select data-live-disk><option value="">Scanning…</option></select></label><button class="btn danger" data-live-burn>Write USB…</button></div></div>
           <pre class="os-liveusb-status" data-live-status>Ready</pre></section>`:''}
@@ -1776,23 +1763,6 @@
       const awake=host.querySelector('[data-keep-awake]'); if(awake)awake.onchange=async()=>{
         awake.disabled=true;try{await pcPower.setKeepAwake(awake.checked);const s=awake.parentElement.querySelector('span');if(s)s.textContent=awake.checked?'On':'Off';PC().toast(awake.checked?'Computer will stay awake':'Normal sleep behavior restored');}catch(e){awake.checked=!awake.checked;PC().toast(String(e&&e.message||e));}finally{awake.disabled=false;}
       };
-      host.querySelectorAll('[data-widget-add]').forEach(b=>b.onclick=async()=>{
-        b.disabled=true;
-        try{if(await addWidget(b.dataset.widgetAdd))renderSystemSettings();}
-        catch(e){PC().toast(String(e&&e.message||e));b.disabled=false;}
-      });
-      host.querySelectorAll('[data-widget-size]').forEach(s=>s.onchange=async()=>{
-        s.disabled=true;
-        try{await sizeWidget(s.dataset.widgetSize,s.value);renderSystemSettings();}
-        catch(e){PC().toast(String(e&&e.message||e));s.disabled=false;}
-      });
-      host.querySelectorAll('[data-widget-remove]').forEach(b=>b.onclick=async()=>{
-        const id=b.dataset.widgetRemove,row=(layout().widgets||[]).find(w=>w.id===id),d=row&&WIDGETS[row.type];
-        if(!await PC().uiConfirm('Remove the '+(d?d.label:'widget')+' from this desktop?',{ok:'Remove widget'}))return;
-        b.disabled=true;
-        try{await removeWidget(id);renderSystemSettings();}
-        catch(e){PC().toast(String(e&&e.message||e));b.disabled=false;}
-      });
       const live=host.querySelector('[data-liveusb]');
       if(live){
         const out=live.querySelector('[data-live-out]'), iso=live.querySelector('[data-live-iso]');
@@ -1820,13 +1790,11 @@
       }
       host.querySelectorAll('[data-jump]').forEach(b=>b.onclick=()=>{
         const k=b.dataset.jump;
-        if(k==='widgets'){ const sec=host.querySelector('[data-widgets]'); if(sec)sec.scrollIntoView({behavior:'smooth',block:'start'}); return; }
-        if(k==='liveusb'){ const sec=host.querySelector('[data-liveusb]'); if(sec)sec.scrollIntoView({behavior:'smooth',block:'start'}); return; }
-        if(k==='about'){ const sec=host.querySelector('[data-about]'); if(sec)sec.scrollIntoView({behavior:'smooth',block:'start'}); return; }
-        if(k==='network'||k==='bluetooth'||k==='sound'||k==='power')
+        if(k==='network'||k==='bluetooth'||k==='sound')
           try{ Promise.resolve(PCOSShell.openControl(k,b)).catch(e=>PC().toast(String(e&&e.message||e))); }
           catch(e){ try{PC().toast(String(e&&e.message||e))}catch(_){} }
       });
+      host.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{_osSettingsPage=b.dataset.page;draw();});
     };
     draw();
   }
