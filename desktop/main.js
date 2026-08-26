@@ -2007,7 +2007,15 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
     /* Upgrade old saved layouts before creating the per-output shell relationship. A small gap in
      * outputs.conf is a real pointer wall; leaving it until somebody happens to open Displays keeps
      * the broken drag/gaming geometry after an otherwise successful OS update. */
-    if(SHELL_MODE) await displays().repairPointerGaps();
+    if(SHELL_MODE){
+      /* Display repair is useful, not permission to abort the desktop.  A recovery/diagnostic
+       * launch once missed SWAYSOCK here; this rejected out of app.whenReady before
+       * reconcileShellDisplays(), leaving the primary surface on one output and a completely black
+       * second output.  WM now recovers the live socket from the user's runtime directory, and this
+       * final guard keeps a transient compositor failure from cancelling renderer creation. */
+      try{ await displays().repairPointerGaps(); }
+      catch(e){ console.warn('[shell displays] pointer-gap repair deferred:', e&&e.message||e); }
+    }
     await reconcileShellDisplays();
     wireShellRecovery();
     background.init({

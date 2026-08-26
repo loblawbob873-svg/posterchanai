@@ -125,6 +125,30 @@ class CompositorIPC(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr[-1500:])
         return json.loads(r.stdout)
 
+    def test_shell_recovers_the_live_sway_socket_when_environment_is_missing(self):
+        """An SSH/diagnostic restart must still create every monitor surface, not stop at one."""
+        src = r"""
+const net=require('net'),fs=require('fs'),os=require('os'),path=require('path');
+const MAGIC=Buffer.from('i3-ipc'),HEAD=14,dir=fs.mkdtempSync(path.join(os.tmpdir(),'pcwm-recover-'));
+const sock=path.join(dir,'sway-ipc.'+process.getuid()+'.4242.sock');
+function reply(type,obj){const body=Buffer.from(JSON.stringify(obj));const b=Buffer.alloc(HEAD+body.length);
+  MAGIC.copy(b,0);b.writeUInt32LE(body.length,6);b.writeUInt32LE(type,10);body.copy(b,HEAD);return b;}
+const server=net.createServer(c=>{let buf=Buffer.alloc(0);c.on('data',x=>{buf=Buffer.concat([buf,x]);
+  if(buf.length<HEAD)return;const n=buf.readUInt32LE(6),type=buf.readUInt32LE(10);if(buf.length<HEAD+n)return;
+  c.write(reply(type,type===7?{human_readable:'recovered'}:{}));});});
+server.listen(sock,async()=>{delete process.env.SWAYSOCK;delete process.env.I3SOCK;process.env.XDG_RUNTIME_DIR=dir;
+  const {WM}=require(__WM__);const w=new WM();try{const v=await w.version();console.log(JSON.stringify({available:w.available(),path:w.path,v}));}
+  catch(e){console.log(JSON.stringify({error:String(e)}));}finally{
+    if(w.sock)w.sock.destroy();server.close(()=>process.exit(0));}});
+""".replace("__WM__", json.dumps(WM))
+        r = subprocess.run([NODE, "-e", src], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr[-1000:])
+        got = json.loads(r.stdout)
+        self.assertNotIn("error", got)
+        self.assertTrue(got["available"])
+        self.assertTrue(got["path"].endswith(".4242.sock"))
+        self.assertEqual(got["v"]["human_readable"], "recovered")
+
     def test_it_speaks_the_real_wire_format(self):
         """The header is the magic string, a uint32 LE length and a uint32 LE type. Getting it wrong
         is silent — the socket simply never answers."""

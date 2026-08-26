@@ -36,6 +36,15 @@ class Bridge(unittest.TestCase):
         for surface in ("pcWM", "pcNet", "pcOS", "pcPower", "pcAudio"):
             self.assertIn(surface, self.pre, f"{surface} is not exposed to the page")
 
+    def test_pointer_gap_repair_cannot_abort_multi_monitor_startup(self):
+        """A missing compositor variable must not skip reconcileShellDisplays and black an output."""
+        repair = self.main.index("await displays().repairPointerGaps()")
+        reconcile = self.main.index("await reconcileShellDisplays()", repair)
+        block = self.main[repair - 120:reconcile]
+        self.assertIn("try{", block)
+        self.assertIn("catch(e)", block)
+        self.assertIn("pointer-gap repair deferred", block)
+
     def test_every_privileged_handler_checks_the_sender(self):
         """`launch` starts a process and `connect` hands over a wifi password. A handler reachable
         from any page but our own is a remote code execution, and the check is one call — which is

@@ -23,6 +23,8 @@
  */
 'use strict';
 const net = require('net');
+const fs = require('fs');
+const path = require('path');
 const { spawn } = require('child_process');
 
 const MAGIC = Buffer.from('i3-ipc');
@@ -35,6 +37,26 @@ const EVENT_BIT = 0x80000000;
  * appears as `window::new` and that is the only moment its pid can be tied to a window id. */
 const EVENT = { 0: 'workspace', 1: 'output', 2: 'mode', 3: 'window', 4: 'barconfig_update', 5: 'binding',
                 6: 'shutdown', 7: 'tick', 14: 'input' };
+
+/* Recovery/diagnostic launches do not necessarily inherit Sway's environment.  The shell launcher
+ * normally repairs it, but the desktop process must not turn one missing variable into one black
+ * monitor: main.js asks the WM for outputs before it creates the companion surfaces.  Search only
+ * this uid's private runtime directory and try newest sockets first; _connect still proves liveness,
+ * so an unclean compositor restart cannot select a dead filename. */
+function compositorSockets(explicit){
+  if(explicit) return [String(explicit)];
+  const inherited=process.env.SWAYSOCK||process.env.I3SOCK||'';
+  if(inherited) return [inherited];
+  if(process.platform!=='linux') return [];
+  const uid=typeof process.getuid==='function'?process.getuid():null;
+  const runtime=process.env.XDG_RUNTIME_DIR||(uid==null?'':'/run/user/'+uid);
+  if(!runtime) return [];
+  try{
+    return fs.readdirSync(runtime).filter(n=>/^sway-ipc\.\d+\.\d+\.sock$/.test(n))
+      .map(n=>{const p=path.join(runtime,n);let at=0;try{const s=fs.statSync(p);if(!s.isSocket())return null;at=s.mtimeMs||0;}catch(_){return null;}return {p,at};})
+      .filter(Boolean).sort((a,b)=>b.at-a.at).map(x=>x.p);
+  }catch(_){ return []; }
+}
 
 function frame(type, payload){
   const body = Buffer.from(payload == null ? '' : String(payload), 'utf8');
@@ -129,30 +151,47 @@ function clampRectToOutputs(rect, outputs){
 
 class WM {
   constructor(sockPath){
-    this.path = sockPath || process.env.SWAYSOCK || process.env.I3SOCK || '';
+    this.paths = compositorSockets(sockPath);
+    this.path = this.paths[0] || '';
     this.sock = null;
+    this.connecting = null;
     this.subSock = null;
     this.pending = [];           // FIFO of {type, resolve, reject} — sway answers in order
     this.listeners = new Map();  // event name -> Set(fn)
     this.moves = new Map();      // con_id -> latest-wins drag queue (never replay stale positions)
   }
 
-  available(){ return !!this.path; }
+  available(){ return this.paths.length > 0; }
 
   _connect(){
     if(this.sock) return Promise.resolve(this.sock);
-    if(!this.path) return Promise.reject(new Error('no compositor socket — SWAYSOCK is not set'));
+    if(this.connecting) return this.connecting;
+    if(!this.paths.length) return Promise.reject(new Error('no compositor socket — SWAYSOCK is not set'));
+    this.connecting=(async()=>{
+      let last=null;
+      for(const candidate of this.paths){
+        try{ const s=await this._connectPath(candidate); this.path=candidate; return s; }
+        catch(e){ last=e; }
+      }
+      throw last||new Error('no live compositor socket');
+    })().finally(()=>{this.connecting=null;});
+    return this.connecting;
+  }
+
+  _connectPath(candidate){
     return new Promise((res, rej) => {
-      const s = net.createConnection(this.path);
+      const s = net.createConnection(candidate);
+      let settled=false;
       const feed = decoder((type, json) => {
         const w = this.pending.shift();
         if(w) w.resolve(json);
       });
       s.on('data', (c) => { try{ feed(c); }catch(e){ this._failAll(e); s.destroy(); } });
-      s.on('error', (e) => { this._failAll(e); this.sock = null; rej(e); });
+      s.on('error', (e) => { this._failAll(e); if(this.sock===s)this.sock=null;
+                             if(!settled){settled=true;rej(e);} });
       s.on('close', () => { this._failAll(new Error('the compositor closed the connection'));
-                            this.sock = null; });
-      s.on('connect', () => { this.sock = s; res(s); });
+                            if(this.sock===s)this.sock=null; });
+      s.on('connect', () => { if(settled)return;settled=true;this.sock=s;res(s); });
     });
   }
 
@@ -354,6 +393,9 @@ class WM {
   /** Subscribe on its OWN socket. sway will not answer ordinary requests on a subscribed one. */
   async subscribe(names){
     if(this.subSock) return;
+    // Resolve a live recovered socket first.  Creating against this.path directly used the first
+    // stale filename and produced ERR_SOCKET_BAD_PORT when no environment variable was inherited.
+    await this._connect();
     const s = net.createConnection(this.path);
     this.subSock = s;
     const feed = decoder((type, json) => {
