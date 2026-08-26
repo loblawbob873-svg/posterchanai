@@ -38,10 +38,13 @@ class CDP:
     async def __aexit__(self, *_):
         await self.ws.close()
 
-    async def call(self, method, params=None, events=None):
+    async def call(self, method, params=None, events=None, session_id=None):
         self.seq += 1
         call_id = self.seq
-        await self.ws.send(json.dumps({"id": call_id, "method": method, "params": params or {}}))
+        message = {"id": call_id, "method": method, "params": params or {}}
+        if session_id is not None:
+            message["sessionId"] = session_id
+        await self.ws.send(json.dumps(message))
         while True:
             message = json.loads(await self.ws.recv())
             if events is not None and message.get("method"):
@@ -51,12 +54,15 @@ class CDP:
                     raise RuntimeError(message["error"])
                 return message["result"]
 
-    async def eval(self, expression, events=None):
-        result = await self.call("Runtime.evaluate", {
+    async def eval(self, expression, events=None, context_id=None, session_id=None):
+        params = {
             "expression": expression,
             "awaitPromise": True,
             "returnByValue": True,
-        }, events)
+        }
+        if context_id is not None:
+            params["contextId"] = context_id
+        result = await self.call("Runtime.evaluate", params, events, session_id)
         remote = result.get("result", {})
         if remote.get("subtype") == "error":
             raise RuntimeError(remote.get("description") or remote)
@@ -146,7 +152,8 @@ OFFICE_CHECK = r"""(async()=>{
     r=await fetch(B+'/client/office/session/'+s.id+'/contents'+q); out.read2=r.status;
     out.updated=(await r.text())==='office smoke two\n';
 
-    wrap=document.createElement('div'); wrap.style='position:fixed;left:-10000px;width:800px;height:600px';
+    wrap=document.createElement('div'); wrap.id='pc-office-installed-smoke';
+    wrap.style='position:fixed;left:-10000px;width:800px;height:600px';
     const frame=document.createElement('iframe'); frame.name='pc-office-installed-smoke'; wrap.appendChild(frame);
     const form=document.createElement('form'); form.method='post'; form.action=s.editor_url; form.target=frame.name;
     for(const [n,v] of [['access_token',s.token],['access_token_ttl',String(s.expires*1000)]]){
@@ -155,16 +162,28 @@ OFFICE_CHECK = r"""(async()=>{
     wrap.appendChild(form); document.body.appendChild(wrap);
     const loaded=new Promise((resolve,reject)=>{const t=setTimeout(()=>reject(new Error('editor iframe timeout')),20000);
       frame.onload=()=>{clearTimeout(t);resolve(true)};});
-    form.submit(); await loaded; await new Promise(r=>setTimeout(r,1500)); out.frameLoaded=true;
+    form.submit(); await loaded; await new Promise(r=>setTimeout(r,2500)); out.frameLoaded=true;
+    window.__pcOfficeInstalledSmoke={session:s,wrap};
     return out;
-  }catch(e){out.error=String(e&&e.message||e); return out;}
-  finally{
-    if(wrap) wrap.remove();
-    if(s){const B=String(window.__PC_API_BASE__||'').replace(/\/$/,'');
-      await fetch(B+'/client/office/session/'+s.id+'?access_token='+encodeURIComponent(s.token),
-        {method:'DELETE'}).catch(()=>{});}
-  }
+  }catch(e){out.error=String(e&&e.message||e); if(wrap)wrap.remove(); return out;}
 })()"""
+
+OFFICE_CLEANUP = r"""(async()=>{
+  const held=window.__pcOfficeInstalledSmoke; delete window.__pcOfficeInstalledSmoke;
+  if(!held)return true;
+  if(held.wrap)held.wrap.remove();
+  const s=held.session,B=String(window.__PC_API_BASE__||'').replace(/\/$/,'');
+  if(s)await fetch(B+'/client/office/session/'+s.id+'?access_token='+encodeURIComponent(s.token),
+    {method:'DELETE'}).catch(()=>{});
+  return true;
+})()"""
+
+OFFICE_FRAME_CHECK = r"""(()=>({
+  href:location.href,ready:document.readyState,title:document.title,
+  bodyChildren:document.body?document.body.children.length:0,
+  controls:document.querySelectorAll('button,input,[role="button"],.unobutton').length,
+  workspace:!!document.querySelector('canvas,#document-container,#toolbar-up,.leaflet-container')
+}))()"""
 
 
 async def main():
@@ -182,21 +201,52 @@ async def main():
         assert not files["overflow"] and not files["errors"], files
 
         await cdp.call("Network.enable")
+        await cdp.call("Runtime.enable")
         events = []
-        office = await cdp.eval(OFFICE_CHECK, events)
-        responses = [int(e["params"]["response"].get("status", 0)) for e in events
-                     if e.get("method") == "Network.responseReceived"
-                     and "/office-code/browser/" in e["params"]["response"].get("url", "")]
-        assert not office.get("error"), office
-        assert all(office.get(k) for k in ("name", "initial", "updated", "frameLoaded")), office
-        assert all(office.get(k) == 200 for k in ("create", "info", "read1", "put", "read2")), office
-        assert 200 in responses, {"office": office, "editorResponses": responses}
+        try:
+            office = await cdp.eval(OFFICE_CHECK, events)
+            responses = [int(e["params"]["response"].get("status", 0)) for e in events
+                         if e.get("method") == "Network.responseReceived"
+                         and "/office-code/browser/" in e["params"]["response"].get("url", "")]
+            contexts = [e["params"]["context"] for e in events
+                        if e.get("method") == "Runtime.executionContextCreated"]
+            editor = None
+            targets = (await cdp.call("Target.getTargets")).get("targetInfos", [])
+            for target in targets:
+                if target.get("type") == "iframe" and "/office-code/" in target.get("url", ""):
+                    attached = await cdp.call("Target.attachToTarget", {
+                        "targetId": target["targetId"], "flatten": True})
+                    editor = await cdp.eval(OFFICE_FRAME_CHECK, session_id=attached["sessionId"])
+                    break
+            for context in reversed(contexts):
+                if editor:
+                    break
+                origin = str(context.get("origin", ""))
+                if origin.startswith("https://poster.place"):
+                    candidate = await cdp.eval(OFFICE_FRAME_CHECK, context_id=context["id"])
+                    if "/office-code/" in str(candidate.get("href", "")):
+                        editor = candidate
+                        break
+            assert not office.get("error"), office
+            assert all(office.get(k) for k in ("name", "initial", "updated", "frameLoaded")), office
+            assert all(office.get(k) == 200 for k in ("create", "info", "read1", "put", "read2")), office
+            assert 200 in responses, {"office": office, "editorResponses": responses}
+            context_summary = [{"id": c.get("id"), "origin": c.get("origin"),
+                                "name": c.get("name"), "aux": c.get("auxData", {}).get("type")}
+                               for c in contexts]
+            target_summary = [{"type": t.get("type"), "url": t.get("url", "").split("?", 1)[0]}
+                              for t in targets if t.get("type") in ("iframe", "page")]
+            assert editor and editor["ready"] == "complete" and editor["bodyChildren"] > 0, {
+                "contexts": context_summary, "targets": target_summary}
+            assert editor["workspace"] and editor["controls"] > 0, editor
+        finally:
+            await cdp.eval(OFFICE_CLEANUP)
 
     print("OK installed authenticated Files/Blossom and Office/WOPI/editor checks")
     print(json.dumps({"folders": files["folderTiles"], "folderEntries": files["folderChips"],
                       "serverFiles": files["serverFiles"], "clientFiles": files["clientFiles"],
                       "syncedRoots": files["syncedRoots"], "syncAudit": files["syncAudit"],
-                      "officeEditorHTTP": 200}))
+                      "officeEditorHTTP": 200, "officeInteractive": True}))
 
 
 if __name__ == "__main__":

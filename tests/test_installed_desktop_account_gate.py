@@ -39,3 +39,14 @@ def test_installed_account_gate_uses_and_deletes_a_temporary_office_session():
     assert '"/office-code/browser/"' in SCRIPT
     assert "{method:'DELETE'}" in SCRIPT
     assert "finally" in SCRIPT
+
+
+def test_installed_office_gate_attaches_to_the_real_editor_and_requires_controls():
+    # A successful cool.html response is not an interactive editor. Collabora is an
+    # out-of-process iframe in Electron, so inspect its own CDP target.
+    assert 'Target.getTargets' in SCRIPT
+    assert 'Target.attachToTarget' in SCRIPT
+    assert 'target.get("type") == "iframe"' in SCRIPT
+    assert 'canvas,#document-container,#toolbar-up,.leaflet-container' in SCRIPT
+    assert 'editor["workspace"] and editor["controls"] > 0' in SCRIPT
+    assert '"officeInteractive": True' in SCRIPT
