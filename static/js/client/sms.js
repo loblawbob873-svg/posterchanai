@@ -124,7 +124,11 @@
     loading: false,
     error: '',
     archive: { running:false, published:0, error:'', attempted:false },
-    scroll: 0,
+    /* One conversation can be parked while another is opened. Keep the scroll state by thread,
+       not as one module-wide number, or returning to a conversation borrows the previous one's
+       offset. `bottom` is intent: new content may keep a person at latest only when they were
+       already there. */
+    scroll: Object.create(null),
     attach: null,         // File waiting in the open conversation's composer
     /* THE FLOOR FOR NOTIFICATIONS, set once when the module loads. A first sync pulls a phone's
        whole history through the subscription, and every one of those is "new" to this device — a
@@ -2162,7 +2166,26 @@
       + 'phone to send it, so your phone has to be reachable.';
   }
 
+  function scrollState(el){
+    return el ? {top:Number(el.scrollTop)||0,
+      bottom:el.scrollHeight-el.scrollTop-el.clientHeight<80} : null;
+  }
+
+  function putScroll(el, pos){
+    if(!el) return;
+    el.scrollTop = !pos || pos.bottom ? el.scrollHeight : Math.max(0, Number(pos.top)||0);
+  }
+
   function paintThread(feed, enc){
+    /* A focus change, attachment draft, receipt, contact refresh, or relay event can repaint the
+       whole thread. Capture the OLD element before replacing it. Its data key is authoritative:
+       the room-list click changes S.open before this function runs, while the DOM still belongs to
+       the conversation being left. */
+    const oldList = feed.querySelector && feed.querySelector('.sms-msgs');
+    if(oldList){
+      const oldKey = oldList.dataset.threadKey || '';
+      if(oldKey) S.scroll[oldKey] = scrollState(oldList);
+    }
     const t = S.threads.find(x => x.key === S.open);
     if(!t){ S.open = ''; return paint(); }
     const who = whoIs((t.msgs[t.msgs.length-1] || {}).name, t.address);
@@ -2173,7 +2196,7 @@
           <div class="sms-title">${enc(who)}</div>
         </div>
         ${blankNote(blankCount(t.msgs))}
-        <div class="sms-msgs dm-msgs">${t.msgs.map((m, i) => {
+        <div class="sms-msgs dm-msgs" id="sms-msgs" data-thread-key="${enc(t.key)}">${t.msgs.map((m, i) => {
           /* THE SAME BUBBLE AS A DM, not a second one that looks nearly like it.
            *
            * Texts had its own parallel set of classes -- sms-msg/sms-bub/sms-meta -- built to the
@@ -2288,16 +2311,31 @@
         paint();
       };
     });
-    const list = PC.$('.sms-msgs');
-    if(list) list.scrollTop = list.scrollHeight;
+    const list = feed.querySelector('.sms-msgs');
+    const saved = S.scroll[t.key];
+    putScroll(list, saved);
+    if(list) list.onscroll = () => {
+      /* Reparenting during desktop window parking fires synthetic scroll events. The OS restores
+         the exact offset itself; do not replace that saved intent with the transient zero. */
+      if(list.dataset.osParking === '1') return;
+      S.scroll[t.key] = scrollState(list);
+    };
     /* THE PICTURES ARRIVE AFTER THE DRAW, and each one that lands pushes everything below it
        down. A thread opens at its newest message (the line above), so re-pinning as they land is
        what keeps it there instead of drifting backwards through the conversation as the photos
        above resolve. Guarded on there BEING attachments, so an ordinary text thread does no work. */
     if(t.msgs.some(m => (m.parts || []).length)){
+      const before = list ? { top:list.scrollTop, height:list.scrollHeight,
+        bottom:list.scrollHeight-list.scrollTop-list.clientHeight<80 } : null;
       hydrateAtt(feed, t.msgs).then(() => {
-        const l = PC.$('.sms-msgs');
-        if(l) l.scrollTop = l.scrollHeight;
+        const l = feed.querySelector('.sms-msgs');
+        if(!l || !before) return;
+        /* Media resolving above the viewport must not move the message being read. Compensate by
+           the height gained; a bottom-pinned reader remains bottom-pinned. */
+        l.scrollTop = before.bottom ? l.scrollHeight
+          : Math.max(0, before.top + (l.scrollHeight - before.height));
+        S.scroll[t.key] = {top:l.scrollTop,
+          bottom:l.scrollHeight-l.scrollTop-l.clientHeight<80};
       }, () => {});
     }
   }
@@ -2464,6 +2502,9 @@
                    // thread labels from the same messages; no relay or phone read is necessary.
                    refreshNames: () => { rebuild(); if(PC && PC.VIEW==='texts') paint(); },
                    _state: () => S, _key: key, _outboxId: outboxId, _docId: docIdFor,
+                   // Pure scroll primitives let the window-lifecycle suite exercise actual state
+                   // transitions without replacing this implementation with a test-only copy.
+                   _scrollState: scrollState, _putScroll: putScroll,
                    // The attachment identity rules, for tests/test_android_mms.py — which runs them
                    // against SmsKeys.partKey/partsKey in Java, because a picture message filed at
                    // two addresses appears twice in the thread.

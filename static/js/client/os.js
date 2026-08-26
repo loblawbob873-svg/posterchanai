@@ -1002,7 +1002,8 @@
        feed.scrollTop to remember them. Capture both the offset and bottom-pin before layout changes
        in the parked slot can fire a misleading scroll event. */
     w.innerChatScroll={};
-    for(const [key,selector] of [['ai-msgs','#ai-msgs'],['dm-msgs','#dm-msgs'],['cc-messages','.cc-messages']]){
+    for(const [key,selector] of [['ai-msgs','#ai-msgs'],['dm-msgs','#dm-msgs'],
+                                 ['sms-msgs','#sms-msgs'],['cc-messages','.cc-messages']]){
       const el=realFeed.querySelector(selector); if(!el)continue;
       w.innerChatScroll[key]={top:el.scrollTop,bottom:el.scrollHeight-el.scrollTop-el.clientHeight<80};
       el.dataset.osParking='1';

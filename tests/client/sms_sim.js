@@ -321,8 +321,19 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
   }
   await new Promise(r => setTimeout(r, 20));
   const st = S._state();
+  let scrollProbe = null;
+  if(opt.scrollProbe){
+    const reading = {scrollTop:240, scrollHeight:1200, clientHeight:400};
+    const savedReading = S._scrollState(reading);
+    reading.scrollTop = 0; S._putScroll(reading, savedReading);
+    const pinned = {scrollTop:795, scrollHeight:1200, clientHeight:400};
+    const savedPinned = S._scrollState(pinned);
+    pinned.scrollHeight = 1600; pinned.scrollTop = 0; S._putScroll(pinned, savedPinned);
+    scrollProbe = {savedReading, restoredReading:reading.scrollTop,
+                   savedPinned, restoredPinned:pinned.scrollTop};
+  }
   console.log(JSON.stringify({
-    calls, published, notified, uploads,
+    calls, published, notified, uploads, scrollProbe,
     drive: { folders:Array.from(driveFolders).sort(), files:driveFiles, batch:driveBatch },
     rows: rows.map(r => r.doc),
     relay: Array.from(relay.keys()).sort(),
