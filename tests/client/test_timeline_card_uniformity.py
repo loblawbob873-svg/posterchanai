@@ -29,6 +29,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "static" / "js" / "client" / "app.js"
 CSS = ROOT / "static" / "css" / "client.css"
+AUDIT = (ROOT / "scripts" / "check_timeline_uniformity.py").read_text()
 
 
 class EveryHeaderIsOneLine(unittest.TestCase):
@@ -69,6 +70,10 @@ class EveryHeaderIsOneLine(unittest.TestCase):
         r = self._rule(".note .time")
         self.assertIn("flex:none", r)
         self.assertIn("white-space:nowrap", r, "'2d' wrapping to two lines is the tall card again")
+
+    def test_browser_audit_distinguishes_a_wrap_from_taller_inline_emoji(self):
+        self.assertIn("nb.bottom < tb.top - 3 || tb.bottom < nb.top - 3", AUDIT)
+        self.assertNotIn("Math.abs(nm.getBoundingClientRect().y - tm.getBoundingClientRect().y) > 3", AUDIT)
 
 
 class ARepostSaysWhoAndWhen(unittest.TestCase):

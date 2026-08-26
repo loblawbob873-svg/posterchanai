@@ -72,9 +72,12 @@ AUDIT = r"""(() => {
     const who = ((nm && nm.textContent) || '').trim().slice(0, 30) || '(no name)';
     // WRAPPED is measured as "the name and the time are on different rows", not as a height
     // threshold — a two-line name would fail a height test while being perfectly uniform.
-    if (nm && tm && Math.abs(nm.getBoundingClientRect().y - tm.getBoundingClientRect().y) > 3)
-      out.wrapped.push(who + ' — ' + Math.round(nm.getBoundingClientRect().y) + '/' +
-                       Math.round(tm.getBoundingClientRect().y) + ' — ' +
+    const nb = nm && nm.getBoundingClientRect(), tb = tm && tm.getBoundingClientRect();
+    // Custom emoji can make the name's inline box a few pixels taller than plain timestamp text
+    // even though both still occupy the same row. A real wrap separates their vertical ranges.
+    if (nb && tb && (nb.bottom < tb.top - 3 || tb.bottom < nb.top - 3))
+      out.wrapped.push(who + ' — ' + Math.round(nb.y) + '/' +
+                       Math.round(tb.y) + ' — ' +
                        String(hd.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 100));
     [nm, tm, hd.querySelector('.handle')].forEach(el => {
       if (!el) return;

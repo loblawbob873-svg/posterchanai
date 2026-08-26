@@ -309,6 +309,10 @@ def test_public_community_cards_resolve_cord_icons():
 
 def test_concord_standard_controls_are_wired_not_decorative():
     assert 'id="cc-attach"' in CONCORD and 'file.onchange=async' in CONCORD
+    assert "input.onpaste=event=>" in CONCORD
+    assert "item.kind==='file'" in CONCORD
+    assert "String(item.type||'').startsWith('image/')" in CONCORD
+    assert 'event.preventDefault(); void uploadAttachments(images)' in CONCORD
     assert 'p.uploadBlob' in CONCORD
     assert 'p.blossomPicker(null,insertBlossomAttachment' in CONCORD
     assert '🌸 Blossom folders' in CONCORD
