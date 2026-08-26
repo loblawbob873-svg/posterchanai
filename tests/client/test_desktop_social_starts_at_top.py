@@ -13,6 +13,9 @@ def test_new_social_window_uses_authoritative_refresh_and_top_latch():
 
 def test_existing_social_window_preserves_its_reading_position():
     start = OS.index("function openApp(")
-    existing = OS.index("if(existing){ focusWin(existing); return existing; }", start)
+    existing = OS.index("const existing = wins.find", start)
     force = OS.index("PC().timelineTop('home')", start)
     assert existing < force
+    branch = OS[existing:OS.index("const app =", existing)]
+    assert "focusWin(existing" in branch
+    assert "timelineTop" not in branch

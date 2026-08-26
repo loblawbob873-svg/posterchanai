@@ -17,7 +17,8 @@ def test_explicit_room_and_channel_entry_mark_the_scroller_pinned():
 
     # Entering a room is an explicit navigation action, even from the mobile drawer. It must not
     # restore an old mid-history position, and the delayed relay hydration must not undo the jump.
-    assert "render(); scrollChatBottom();" in server
-    assert "finally{ if(state.community===i)scrollChatBottom(); }" in server
+    assert "render(); enterChatBottom();" in server
+    assert "finally{ if(state.community===i)enterChatBottom(); }" in server
     assert "if(!inDrawer)scrollChatBottom()" not in server
-    assert "if(state.community===community&&state.channel===channel)scrollChatBottom();" in channel
+    assert "if(state.community===community&&state.channel===channel)enterChatBottom();" in channel
+    assert "[0,60,180,450,900,1600]" in JS
