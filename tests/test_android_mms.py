@@ -511,6 +511,14 @@ class OutgoingMms(unittest.TestCase):
         self.assertLess(outbox.index("if (isCancelled(ctx, doc))"),
                         outbox.index("MmsSender.send(ctx, to, body, imageBytes)"))
 
+    def test_background_send_receipt_survives_a_relay_reconnect(self):
+        service = open(os.path.join(ROOT, "mobile/android/app/src/main/java/place/poster/app/signer/SignerRelayService.java"), encoding="utf-8").read()
+        self.assertIn('SMS_RECEIPTS = "poster_sms_outbox_receipts"', service)
+        self.assertIn("queueSmsReceipt(done)", service)
+        self.assertIn("flushSmsReceipts(socks.get(url))", service)
+        self.assertIn("flushSmsReceipts(s);", service)
+        self.assertNotIn("final WebSocket ws = socks.get(url);", service)
+
     def test_phone_already_open_keeps_watching_for_new_webui_mms(self):
         """A request published after the load/visibility hooks must not wait for another resume."""
         js = open(SMSJS, encoding="utf-8").read()

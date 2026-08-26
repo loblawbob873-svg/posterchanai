@@ -75,6 +75,7 @@ import place.poster.app.RunningNote;
  * chose it, learned the same way.
  */
 public class SignerRelayService extends Service {
+    private static final String SMS_RECEIPTS = "poster_sms_outbox_receipts";
 
     public static final String ACTION_START = "place.poster.app.SIGNER_START";
     public static final String ACTION_STOP = "place.poster.app.SIGNER_STOP";
@@ -418,6 +419,7 @@ public class SignerRelayService extends Service {
                         s.send(new JSONArray().put("REQ").put(smsSubId)
                                 .put(SmsOutbox.filter(me)).toString());
                     } catch (Throwable ignored2) { }
+                    flushSmsReceipts(s);
                 } catch (Throwable ignored) { }
                 handler.post(() -> { lastRx.put(url, System.currentTimeMillis());
                                      connected = socks.size(); note(); publishSmsArchive(); });
@@ -526,15 +528,38 @@ public class SignerRelayService extends Service {
     private void smsOutbox(String url, JSONObject ev) {
         if (ev == null) return;
         if (!SmsOutbox.isRequest(ev)) return;
-        // The socket map belongs to the handler thread. Capture the connection before dispatching
-        // the expensive decrypt/sign/send work; reading HashMap from the pool races reconnects.
-        final WebSocket ws = socks.get(url);
         pool().execute(() -> {
             JSONObject done = SmsOutbox.perform(SignerRelayService.this, ev);
             if (done == null) return;
-            final String wire = new JSONArray().put("EVENT").put(done).toString();
-            handler.post(() -> { if (ws != null) ws.send(wire); });
+            /* Download/decrypt can outlive a relay socket. Publishing through the socket captured
+             * before that work loses the receipt after a reconnect and leaves every client saying
+             * "waiting for phone" forever, while the durable radio claim forbids another attempt.
+             * Persist first, then flush through whichever socket is current. */
+            queueSmsReceipt(done);
+            handler.post(() -> flushSmsReceipts(socks.get(url)));
         });
+    }
+
+    private void queueSmsReceipt(JSONObject done) {
+        String id = done == null ? "" : done.optString("id", "");
+        if (id.isEmpty()) return;
+        getSharedPreferences(SMS_RECEIPTS, MODE_PRIVATE).edit().putString(id, done.toString()).commit();
+    }
+
+    private void flushSmsReceipts(WebSocket ws) {
+        if (ws == null) return;
+        android.content.SharedPreferences p = getSharedPreferences(SMS_RECEIPTS, MODE_PRIVATE);
+        for (java.util.Map.Entry<String, ?> e : p.getAll().entrySet()) {
+            Object value = e.getValue();
+            if (!(value instanceof String)) continue;
+            try {
+                JSONObject done = new JSONObject((String) value);
+                String wire = new JSONArray().put("EVENT").put(done).toString();
+                if (ws.send(wire)) p.edit().remove(e.getKey()).apply();
+            } catch (Throwable bad) {
+                p.edit().remove(e.getKey()).apply();
+            }
+        }
     }
 
     private void recv(String url, String raw) {
