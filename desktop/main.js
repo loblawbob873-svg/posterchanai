@@ -825,8 +825,12 @@ let pickerOpen = false;
 function pickScreenSource() {
   if (pickerOpen) return Promise.resolve(null);   // one picker at a time — a second request just cancels
   pickerOpen = true;
+  // xdg-desktop-portal-wlr advertises monitor capture only. Asking it for an unsupported window
+  // source together with the monitor can make Chromium return no sources at all. Other platforms
+  // keep the richer screen + window chooser.
+  const sourceTypes = process.platform === 'linux' ? ['screen'] : ['screen', 'window'];
   return desktopCapturer
-    .getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 200 }, fetchWindowIcons: false })
+    .getSources({ types: sourceTypes, thumbnailSize: { width: 320, height: 200 }, fetchWindowIcons: false })
     .then((sources) => {
       if (!sources.length) { pickerOpen = false; return null; }
       pendingSources = sources;
@@ -848,6 +852,11 @@ function pickScreenSource() {
         pick.on('closed', () => { ipcMain.removeAllListeners('pc:screen:pick'); finish(null); });
         pick.loadFile(path.join(__dirname, 'picker.html'));
       });
+    })
+    .catch((error) => {
+      // A rejected portal request must not poison every later attempt as "one picker at a time".
+      pickerOpen = false;
+      throw error;
     });
 }
 

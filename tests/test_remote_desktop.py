@@ -57,6 +57,9 @@ def test_desktop_uses_its_source_picker_on_linux_instead_of_the_failing_portal_p
     main = (ROOT / "desktop/main.js").read_text(encoding="utf-8")
     assert "useSystemPicker: process.platform === 'darwin'" in main
     assert "useSystemPicker: true" not in main
+    assert "process.platform === 'linux' ? ['screen'] : ['screen', 'window']" in main
+    assert ".catch((error) => {" in main
+    assert "pickerOpen = false;" in main
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
