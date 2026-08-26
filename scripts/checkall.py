@@ -68,6 +68,8 @@ if not os.path.exists(PY):
 #   secs     timeout. Generous: a check killed by the clock reports as a failure, which is a lie
 #            about the code, and the one thing worse than a slow suite is a suite nobody trusts.
 #   why      printed when the check is skipped, so a skip always says what would make it run.
+#   env      fixed environment required by a check. This is applied after the runner's generated
+#            browser port/profile, so an external installed process can deliberately name its port.
 # ---------------------------------------------------------------------------------------------
 CHECKS = {
     # --- need a live instance -------------------------------------------------------------------
@@ -104,6 +106,12 @@ CHECKS = {
     # Isolation is part of a deterministic integration test, not a relaxation of its assertions.
     "check_search_profile_stability":  dict(group="live", secs=1800, serial=True,
                                               live_args=["5", "{live}"]),
+    # This is the complete two-device byte/sweep/trash/restore loop over the selected instance. It
+    # signs two cold clients in, so running beside the six-way live batch can starve login and turn
+    # a real gate into "SKIP login failed". It also used to be unregistered and silently targeted
+    # whichever service happened to listen on localhost:3051.
+    "check_sync_full":                 dict(group="live", secs=900, serial=True,
+                                              live_args=["{live}"]),
     "check_timeline_ghosts":           dict(group="live", secs=600),
     "check_websearch_pages":           dict(group="live", secs=420),
     # Both checks put sustained pressure on resources shared by the production instance. Running
@@ -126,6 +134,11 @@ CHECKS = {
     "check_calendar_mobile":           dict(group="ui", secs=600),
     # Both drive a local stub server and need no instance, so they are `ui`, not `live`.
     "check_code_editor":               dict(group="ui", secs=420),
+    # Unlike every self-contained Chrome check, this attaches to an already-running installed
+    # Electron process. Its port is intentionally fixed and must not be replaced by the per-check
+    # collision-avoidance port assigned below.
+    "check_installed_desktop_account": dict(group="ui", secs=420, serial=True,
+                                              env={"PC_CHECK_PORT": "9223"}),
     "check_sharelink":                 dict(group="ui", secs=420),
     "check_contacts_mobile":           dict(group="ui", secs=600),
     "check_vault_mobile":              dict(group="ui", secs=600),
@@ -191,6 +204,7 @@ def discover():
         found.append(dict(name=p.stem, path=p, group=meta.get("group", "ui"),
                           secs=meta.get("secs", DEFAULT_SECS), why=meta.get("why", ""),
                           live_args=meta.get("live_args"), live_env=meta.get("live_env", {}),
+                          env=meta.get("env", {}),
                           serial=meta.get("serial", p.stem == "check_drive_fresh_pair"),
                           registered=p.stem in CHECKS))
     return found
@@ -262,6 +276,8 @@ def run_one(job, live, tmp, idx):
     env["PC_CHECK_PORT"] = str(PORT_BASE + idx)
     env["PC_CHECK_PROFILE"] = str(tmp / job["name"])
     env.setdefault("PYTHONUNBUFFERED", "1")
+    for key, value in (job.get("env") or {}).items():
+        env[key] = str(value).replace("{live}", live or "")
     argv = [PY, str(job["path"])]
     if job["group"] == "live":
         spec = job.get("live_args")

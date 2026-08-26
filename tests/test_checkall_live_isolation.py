@@ -21,3 +21,20 @@ def test_cold_session_stability_runs_outside_the_parallel_relay_batch():
 def test_two_browser_qr_login_remains_isolated_too():
     check = _checkall().CHECKS["check_qr_device_login"]
     assert check["serial"] is True
+
+
+def test_full_sync_is_registered_live_and_isolated():
+    check = _checkall().CHECKS["check_sync_full"]
+    assert check["group"] == "live"
+    assert check["serial"] is True
+    assert check["live_args"] == ["{live}"]
+
+
+def test_installed_account_gate_keeps_the_external_electron_port():
+    module = _checkall()
+    check = module.CHECKS["check_installed_desktop_account"]
+    assert check["serial"] is True
+    assert check["env"]["PC_CHECK_PORT"] == "9223"
+    discovered = next(c for c in module.discover()
+                      if c["name"] == "check_installed_desktop_account")
+    assert discovered["env"]["PC_CHECK_PORT"] == "9223"
