@@ -23,7 +23,7 @@ live behavior agree.
 | IndexedDB cursor safety | App callbacks never await inside a live cursor transaction | `tests/client/test_idb_cursor_never_awaits.py` |
 | Texts history resume | Incomplete migration resumes after reconnect | `sms_sim.js`, `test_sms_rescan.py`, `test_sms_attachments.py` |
 | Packaged email attachments | Download links bind to the configured instance, never the WebView/Electron origin | `test_mobile_mail_reader.py`, `check_mail_mobile.py` |
-| Native window ownership | External/native windows use unified focus and placement handling | `test_desktop_wm.py`, `test_os_native_windows.py` |
+| Native window ownership | External/native windows use unified focus and placement handling. On installed 1.0.979, the real Telegram frame restored/focused its XWayland surface; clicking an overlapping PosterChan window then stashed Telegram in the compositor and focused the shell, so it could not remain on top | `check_installed_native_focus.py`; 59 focused gate/WM tests pass |
 | Feed reconnect | Timeline waits for a usable relay and retries one unanswered EOSE | `test_feed_asks_a_socket_that_can_answer.py` |
 | Gentoo desktop delivery | Overlay pins an immutable, checksummed release tarball | `test_gentoo_overlay_pins_resolve.py`, `test_sync_updates_desktop_overlay.py` |
 
@@ -64,9 +64,9 @@ live behavior agree.
   verified; QEMU's legacy `qemu64` CPU does not meet this Gentoo image's ISA requirement.
 - Exercise real carrier SMS/MMS send/receive and the complete device-provider migration on a phone
   containing representative long history and media. Emulator/provider tests do not prove a carrier.
-- Exercise native Firefox/Telegram focus, stacking, edge snap, clipboard and cross-monitor dragging
-  in a sustained manual session. Installed two-output shell reconstruction and Music handoff are
-  verified, but those external applications have their own compositor behavior.
+- Exercise native Firefox/Telegram edge snap, clipboard and cross-monitor dragging in a sustained
+  manual session. Installed two-output shell reconstruction, Music handoff and real Telegram →
+  overlapping PosterChan focus/stacking are verified; the remaining external-app gestures are not.
 - Reconstruct any substantive additions named in the earlier stash handoff from commits, release
   payloads, or external evidence. The authoritative worktree has no stashes now, so their former
   contents cannot be recovered or declared present merely from `git stash list`.
