@@ -76,6 +76,7 @@ const enc = s => String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'
 window.__view = 'code';
 window.__SAMPLE = __SAMPLE__;
 window.__saved = null;
+window.__gitActions = [];
 // The node, stubbed. This tests the screen, not the server.
 window.fetch = async (url, opts) => {
   const u = String(url); const j = d => ({ ok:true, status:200, json: async()=>d });
@@ -99,6 +100,8 @@ window.__PC = {
   toast: m => {},
   authFetch: (u,o) => window.fetch(u,o),
   ensureAiSession: async () => ({ can_ai:true, is_admin:true }),
+  uiPrompt: async () => '',
+  uiConfirm: async () => true,
   switchView: v => { window.__view = v; },
   get ME(){ return {pubkey:'abcdef012345'}; },
   get VIEW(){ return window.__view; },
@@ -113,6 +116,47 @@ window.__PC = {
 })();
 </script>
 </body></html>"""
+
+NATIVE_GIT = r"""(async () => {
+  let dirty = true;
+  window.pcHost = {
+    pickDirectory: async () => '/tmp/my-project',
+    list: async p => ({path:p, entries:[
+      {name:'changed.js', path:p+'/changed.js', dir:false, size:30, mtime:4},
+      {name:'src', path:p+'/src', dir:true, size:0, mtime:4}]}),
+    readText: async p => ({path:p,text:'const changed = true;\n',mtime:4}),
+    writeText: async () => ({mtime:5}),
+    gitStatus: async () => ({branch:'master',origin:'local',nostr:false,
+      files:dirty?[{xy:' M',path:'changed.js'}]:[]}),
+    gitDiff: async () => ({diff:'diff --git a/changed.js b/changed.js\n+const changed = true;'}),
+    gitAction: async (_root, action, paths) => {
+      window.__gitActions.push({action,paths}); if(action==='restore') dirty=false; return {ok:true};
+    },
+  };
+  document.querySelector('#pcc-open-folder').click();
+  for(let i=0;i<60 && !document.querySelector('[data-file="/tmp/my-project/changed.js"]');i++)
+    await new Promise(r=>setTimeout(r,25));
+  const opened = !!document.querySelector('[data-file="/tmp/my-project/changed.js"]');
+  document.querySelector('[data-code-view="git"]').click();
+  for(let i=0;i<60 && !document.querySelector('[data-git-diff="changed.js"]');i++)
+    await new Promise(r=>setTimeout(r,25));
+  const changed = document.querySelector('[data-git-diff="changed.js"]');
+  if(changed) changed.click();
+  for(let i=0;i<60 && !((document.querySelector('.pcc-git-diff')||{}).textContent||'').includes('+const');i++)
+    await new Promise(r=>setTimeout(r,25));
+  const diff = (document.querySelector('.pcc-git-diff')||{}).textContent||'';
+  const restore = document.querySelector('[data-git-restore="changed.js"]');
+  if(restore) restore.click();
+  for(let i=0;i<60 && !document.body.textContent.includes('Working tree clean');i++)
+    await new Promise(r=>setTimeout(r,25));
+  const clean = document.body.textContent.includes('Working tree clean');
+  const diffClosed = !document.querySelector('.pcc-git-diff');
+  document.querySelector('[data-code-view="explorer"]').click();
+  await new Promise(r=>setTimeout(r,80));
+  return {opened, diff, clean, diffClosed,
+    explorerBack:!!document.querySelector('[data-file="/tmp/my-project/changed.js"]'),
+    actions:window.__gitActions};
+})()"""
 
 OPEN_FILE = r"""(async () => {
   const t = [...document.querySelectorAll('[data-file]')].find(b => b.dataset.file === 'handler.py');
@@ -377,6 +421,20 @@ async def drive(url):
                     problems.append(("no-colour",
                                      "the light theme did not change the editor's text colour — "
                                      "a hard-coded colour somewhere in this block"))
+
+            native = await js(NATIVE_GIT, awaited=True)
+            if not native or not native.get("opened"):
+                problems.append(("native-working-directory", "the desktop folder picker did not populate Explorer"))
+            else:
+                if "+const changed = true;" not in native.get("diff", ""):
+                    problems.append(("native-git-diff", "clicking a modified file did not show its patch"))
+                if not native.get("clean") or not native.get("diffClosed"):
+                    problems.append(("native-git-restore", "discard did not clean the tree and close the stale diff"))
+                if not native.get("explorerBack"):
+                    problems.append(("native-working-directory", "Explorer could not be reopened from Source Control"))
+                acts = native.get("actions") or []
+                if not any(x.get("action") == "restore" and x.get("paths") == ["changed.js"] for x in acts):
+                    problems.append(("native-git-restore", "restore was not scoped to the selected file"))
 
         if problems:
             print(f"FAIL  {len(problems)} problem(s):")
