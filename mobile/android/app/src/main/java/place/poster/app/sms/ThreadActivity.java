@@ -338,11 +338,10 @@ public class ThreadActivity extends PcActivity {
                 .setItems(new CharSequence[]{"Camera", "Device", "Blossom"}, (dialog, which) -> {
                     if (which == 1) { pickAttachment(); return; }
                     if (which == 2) {
-                        /* Blossom's authenticated, encrypted folder index lives in the web client.
-                         * Open its Texts composer rather than exposing the drive through a public
-                         * URL or building a second, inevitably divergent native file index. */
+                        /* Open the authenticated picker over this exact conversation. */
                         Intent i = new Intent(this, MainActivity.class)
-                                .putExtra(HomeActivity.EXTRA_VIEW, "texts")
+                                .putExtra(HomeActivity.EXTRA_VIEW, "texts-blossom:" +
+                                        Uri.encode(address == null ? "" : address))
                                 .putExtra(HomeActivity.EXTRA_VIEW_AT, System.currentTimeMillis());
                         startActivity(i); return;
                     }

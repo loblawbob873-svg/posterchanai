@@ -37,6 +37,15 @@ def test_texts_attachment_menu_offers_camera_device_and_blossom():
     assert "acceptFile(new File([blob],name" in JS
 
 
+def test_native_blossom_launch_opens_picker_in_the_original_conversation():
+    phone = (ROOT / 'static/js/client/phoneshell.js').read_text()
+    assert "v.indexOf('texts-blossom:')===0" in phone
+    assert "PCSms.openBlossom(address)" in phone
+    assert "openBlossom: address =>" in JS
+    assert "blossomLaunch=true;paint()" in JS
+    assert "if(blossomLaunch){blossomLaunch=false;setTimeout(fromBlossom,0);}" in JS
+
+
 def test_texts_media_opens_in_the_shared_fullscreen_viewer():
     assert "PC.openLightbox(url, 'image')" in JS
     assert "PC.openLightbox(d.url, 'video')" in JS

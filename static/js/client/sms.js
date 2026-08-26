@@ -136,6 +136,7 @@
        page did is an event; everything older is history. */
     since: Date.now() - 120000,
   };
+  let blossomLaunch=false;
   function clearAttachment(){ S.attach=null; }
   function isImageFile(file){ return !!file&&(/^image\//i.test(file.type||'')||/\.(?:jpe?g|png|gif|webp|heic|heif|avif)$/i.test(file.name||'')); }
 
@@ -2267,6 +2268,7 @@
         acceptFile(new File([blob],name,{type:type||blob.type||'image/jpeg'}));
       }catch(e){ PC.toast('could not attach Blossom photo: '+String(e&&e.message||e)); }
     }, {title:'🌸 Attach photo from Blossom',filter:b=>String(b.type||'').startsWith('image/')});
+    if(blossomLaunch){blossomLaunch=false;setTimeout(fromBlossom,0);}
     attachBtn.onclick = async () => {
       /* Electron's hidden file input is not reliable when the Texts window has just changed focus
        * between compositor surfaces. Use the desktop's native, explicitly user-confirmed picker;
@@ -2516,6 +2518,7 @@
   init();
 
   window.PCSms = { render, mirror, importAll, loadFromPhone, emptyWhy, ensureRead, phoneState,
+                   openBlossom: address => { const to=String(address||'').trim();if(!to)return;clearAttachment();S.open=key(to);if(!S.threads.some(t=>t.key===S.open))S.threads.unshift({key:S.open,address:to,msgs:[],date:0,unread:0});blossomLaunch=true;paint(); },
                    // Clear the archive's latches and walk the whole phone again -- see rescan().
                    rescan, resetArchiveMarkers,
                    // The oversized-attachment fallback — see sendAsLink.
