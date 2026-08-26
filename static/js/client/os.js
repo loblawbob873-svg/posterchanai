@@ -2784,6 +2784,9 @@
   function handoffIdentity(w){
     const opened=String(w&&w.view||''), current=String(w&&w.appView||opened);
     if(opened==='terminal') return 'terminal';
+    /* Messages contains two real clients. Preserve the selected Communities tab when the frame
+     * crosses renderers; recreating the launcher's opened identity always reset it to Direct. */
+    if(opened==='messages'&&current==='concord') return 'concord';
     /* Music is opened by the __music launcher action, which in turn creates a doc:music window.
      * doc:music is a uniqueness key, not a launcher/render identity: handing that key to another
      * renderer creates a generic shared-feed document and can display Social inside a Music frame.
@@ -2819,7 +2822,9 @@
         ? PCTerm.sessionId() : '',
       path:topPath ? '' : appPath,ui:captureHandoffUI(w),
       state:w.view==='websearch'&&window.PCWebSearch&&PCWebSearch.handoffState
-        ? PCWebSearch.handoffState() : null};
+        ? PCWebSearch.handoffState()
+        : handoffIdentity(w)==='concord'&&window.PCConcord&&PCConcord.handoffState
+          ? PCConcord.handoffState() : null};
   }
 
   function sendFrameHandoff(w,direction,overflow){
@@ -6318,6 +6323,8 @@
               PCTerm.adoptSession(p.terminalSid);
             if(p.view==='websearch' && p.state && window.PCWebSearch && PCWebSearch.acceptHandoff)
               PCWebSearch.acceptHandoff(p.state);
+            if(p.view==='concord' && p.state && window.PCConcord && PCConcord.acceptHandoff)
+              PCConcord.acceptHandoff(p.state);
             const w=openApp(String(p.view), String(p.title||''), String(p.icon||''));
             if(!w) return;
             /* AND THEN PUT IT BACK ON THE SCREEN IT WAS ON. openApp can only open what a view NAME

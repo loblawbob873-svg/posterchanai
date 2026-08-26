@@ -1466,6 +1466,16 @@ const hostfs = () => (_hostfs || (_hostfs = require('./hostfs.js')));
 
 ipcMain.handle('pc:host:list', (e, dir) => { fsGuard(e); return hostfs().list(String(dir || '')); });
 ipcMain.handle('pc:host:roots', (e) => { fsGuard(e); return hostfs().roots(); });
+ipcMain.handle('pc:host:notify', (e, options) => {
+  fsGuard(e);
+  const o=options&&typeof options==='object'?options:{},Notification=electron.Notification;
+  if(!Notification||!Notification.isSupported())return false;
+  const owner=BrowserWindow.fromWebContents(e.sender)||win,route=String(o.route||'notifications').slice(0,220);
+  const note=new Notification({title:String(o.title||'PosterChan').slice(0,120),
+    body:String(o.body||'').slice(0,1000),icon:path.join(__dirname,'icon.png'),silent:false});
+  note.on('click',()=>{try{if(owner){owner.show();owner.focus();}if(!e.sender.isDestroyed())e.sender.send('pc:host:notification-click',route);}catch(_){}});
+  note.show();return true;
+});
 ipcMain.handle('pc:host:pickDirectory', async (e) => {
   fsGuard(e);
   const owner = BrowserWindow.fromWebContents(e.sender) || win;

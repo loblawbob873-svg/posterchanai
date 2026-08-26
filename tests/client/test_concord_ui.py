@@ -271,7 +271,9 @@ def test_authors_can_delete_their_own_messages_after_relay_acceptance():
 
 
 def test_owner_can_publish_an_interoperable_cord_ban():
-    assert 'data-cc-ban' in CONCORD
+    assert 'data-cc-member-ban' in CONCORD
+    assert 'canBan=isOwner&&target!==viewer.pubkey' in CONCORD
+    assert 'const banMember=async target=>' in CONCORD
     assert 'reader.createBanWrap' in CONCORD
     assert 'community relays rejected the ban' in CONCORD
     assert 'room.banned=made.banned' in CONCORD

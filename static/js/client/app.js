@@ -27841,6 +27841,15 @@
   function osNotify(title, body, opts){
     const clean = String(body||'').replace(/<[^>]+>/g,'')
                     .replace(_SHORTCODE_STRIP,'').replace(/\s+/g,' ').trim();
+    /* Bundled desktop pages must not depend on Chromium's per-origin web-notification permission.
+     * Electron owns a native notification API, including click-to-focus, so use the guarded preload
+     * bridge before either the Android plugin or the browser fallback. */
+    if(window.pcHost&&pcHost.notify){
+      if(!osNotify._nativeClicks&&pcHost.onNotificationClick){osNotify._nativeClicks=pcHost.onNotificationClick(route=>{if(String(route).startsWith('post:'))openThread(String(route).slice(5));else switchView(route==='concord'?'concord':route==='messages'?'messages':'notifications');});}
+      try{const r=pcHost.notify({title:String(title||'PosterChan'),body:clean,
+        route:(opts&&opts.route)||'notifications',tag:(opts&&opts.tag)||''});if(r&&r.catch)r.catch(()=>{});}catch(_){}
+      return null;
+    }
     /* THE APK GOES NATIVE, because Android's WebView does not implement the Notifications API at all.
      * `new Notification(...)` in there is not an error and not a refusal — it is silence, so every
      * caller below has been drawing nothing on the packaged app since it shipped: a DM that had
@@ -33872,10 +33881,11 @@
      * Push: push needs a configured VAPID key and a server, and this needs neither — it is what
      * makes a reminder raise a system notification while the app is open behind another window,
      * which is the whole point of running it as a desktop. */
-    osNotifyState: () => { try{ return window.Notification ? Notification.permission : 'unsupported'; }
+    osNotifyState: () => { if(window.pcHost&&pcHost.notify)return 'granted'; try{ return window.Notification ? Notification.permission : 'unsupported'; }
                            catch(_){ return 'unsupported'; } },
     askOsNotify: async () => {
       try{
+        if(window.pcHost&&pcHost.notify){ await pcHost.notify({title:'PosterChan',body:'Notifications are on.',route:'notifications',tag:'pc-test'});return 'granted'; }
         if(!window.Notification) return 'unsupported';
         if(Notification.permission==='granted') return 'granted';
         const r=await Notification.requestPermission();

@@ -262,6 +262,13 @@ if (isOurPage) {
    * the encrypted drive and a synced folder. Absent everywhere else, which is how the client
    * feature-detects it — a browser tab has no filesystem at all. */
   contextBridge.exposeInMainWorld('pcHost', {
+    notify: (opts) => ipcRenderer.invoke('pc:host:notify', opts || {}),
+    onNotificationClick: (fn) => {
+      if (typeof fn !== 'function') return () => {};
+      const h = (_e, route) => { try { fn(String(route || 'notifications')); } catch (_) {} };
+      ipcRenderer.on('pc:host:notification-click', h);
+      return () => ipcRenderer.removeListener('pc:host:notification-click', h);
+    },
     pickDirectory: () => ipcRenderer.invoke('pc:host:pickDirectory'),
     pickFile: (opts) => ipcRenderer.invoke('pc:host:pickFile', opts || {}).then((r) => r && ({
       name:String(r.name||'file'), type:String(r.type||'application/octet-stream'), size:Number(r.size)||0,
