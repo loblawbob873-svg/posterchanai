@@ -33722,7 +33722,8 @@
      * (Continuation lines carry a leading `*`: tests/test_relay_change_carry.py scans app.js for
      * uses of the sub-modules' `PC` binding and skips comment lines by that marker, so a prose line
      * without one reads as code and fails the build.) */
-    openMenuPopover, openEmojiPopover, linkify, linkCardHtml, hydrateLinkCards,
+    openMenuPopover, openEmojiPopover, gifPicker, gifEnabled: () => !!CFG.gif_enabled,
+    linkify, linkCardHtml, hydrateLinkCards,
     insertAt: _insertAt,
     startGroupCall,
     uploadBlob,

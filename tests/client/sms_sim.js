@@ -307,6 +307,11 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
       const r = await S.remove(step.slice(7).split(','));
       calls.push(['removeResult', r.archive, r.phone]);
     }
+    else if(step === 'removePending'){
+      const m = Array.from(S._state().msgs.values()).find(x => x && x.pending);
+      const r = await S.remove(m ? [m.doc] : []);
+      calls.push(['removePendingResult', r.archive || 0, r.phone || 0, r.cancelled || 0]);
+    }
     else if(step === 'render'){ await S.render(); }
     else if(step === 'why'){
       const w = await S.emptyWhy();
@@ -321,6 +326,7 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
     drive: { folders:Array.from(driveFolders).sort(), files:driveFiles, batch:driveBatch },
     rows: rows.map(r => r.doc),
     relay: Array.from(relay.keys()).sort(),
+    relayEvents: Array.from(relay.entries()).map(([d, e]) => ({d, content:e.content})),
     // LIVE documents only. A tombstone is kept in the map as a marker (see sms.js absorb) so an
     // older cached copy cannot walk over the hole and restore the message; what the person sees is
     // the set below.

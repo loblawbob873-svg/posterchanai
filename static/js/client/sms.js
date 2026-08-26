@@ -308,9 +308,21 @@
           const sent = ack && ack.request ? await openMessageBody(ack.request) : await openMessageBody(ack);
           if(sent && sent.to && (sent.body || sent.attachment)){
             const at = Number(sent.at) || Number(ev.created_at || 0) * 1000 || Date.now();
-            const md = await docIdFor(sent.to, at, sent.body || '', false);
-            const have = S.msgs.get(md);
             const sentParts=sent.attachment?[{id:0,ct:sent.attachment.mime||'application/octet-stream',name:sent.attachment.name||'',bytes:Number(sent.attachment.bytes)||-1,sha:String(sent.attachment.sha||''),thumb:'',nothumb:1}]:[];
+            /* The provider's MMS document includes its attachment identity. Filing the pending
+             * request/receipt as a text-only document guarantees a second bubble when the handset
+             * subsequently mirrors the provider row. Use the same portable type/name/size key on
+             * both sides; ordinary SMS remains byte-for-byte unchanged. */
+            const md = await docIdFor(sent.to, at, sent.body || '', false, partsKeyOf(sentParts));
+            const have = S.msgs.get(md);
+            /* A queued bubble is keyed at the ASK time; a provider row is keyed at the actual
+             * radio time. A phone that wakes later therefore has a different correct document id.
+             * Retire the placeholder tied to this outbox before installing the receipt, otherwise
+             * both bubbles remain and the user sees every remotely-sent message twice. */
+            if(ack.done) for(const [oldDoc, old] of S.msgs){
+              if(oldDoc !== md && old && old.pending && old.outbox === d)
+                S.msgs.set(oldDoc, {doc:oldDoc, _at:ev.created_at, gone:true});
+            }
             if(!ack.done){
               if(!have || !Number(have._at) || have._at < ev.created_at)
                 S.msgs.set(md, { doc:md, address:sent.to, body:sent.body || '', date:at,
@@ -1217,9 +1229,10 @@
     const ct = await PC.nip44enc(ME().pubkey, JSON.stringify(request));
     const r = await PC.publish(KIND, ct, [['d', doc], ['l', L_TAG]], {quiet:true, noQueue:true});
     if(r && r.ok){
-      const md = await docIdFor(to, at, body || '', false);
+      const pendingParts=attachment?[{id:0,ct:attachment.mime,name:attachment.name,bytes:attachment.bytes,sha:attachment.sha,thumb:'',nothumb:1}]:[];
+      const md = await docIdFor(to, at, body || '', false, partsKeyOf(pendingParts));
       S.msgs.set(md, { doc:md, address:to, body:body || '', date:at, incoming:false, name:'',
-                       parts:attachment?[{id:0,ct:attachment.mime,name:attachment.name,bytes:attachment.bytes,sha:attachment.sha,thumb:'',nothumb:1}]:[],
+                       parts:pendingParts,
                        pending:true, outbox:doc, _at:Number((r.ev && r.ev.created_at) || now()) });
       rebuild();
       return { ok:true, where:'queued', doc };
@@ -1429,7 +1442,10 @@
       // MARKED BEFORE ANYTHING ELSE, and marked even when the send FAILED. A text that went out and
       // whose marker did not is a text that goes out again on the next drain; there is no undo for
       // that, so a failed send is reported in the marker rather than retried blindly.
-      await mark(d, { done:true, ok: !!(r && r.ok), error: (r && r.error) || '', request });
+      const completedRequest = Object.assign({}, request,
+        { at:Number(r && r.sentAt) || Number(request && request.at) || Date.now() });
+      await mark(d, { done:true, ok: !!(r && r.ok), error: (r && r.error) || '',
+                      request:completedRequest });
       done++;
     }
     if(done) mirror({ limit: 50 });
@@ -1439,8 +1455,9 @@
   async function mark(doc, obj){
     try{
       const ct = await PC.nip44enc(ME().pubkey, JSON.stringify(obj));
-      await PC.publish(KIND, ct, [['d', doc], ['l', L_TAG]], {quiet:true, noQueue:true});
-    }catch(_){ }
+      const r = await PC.publish(KIND, ct, [['d', doc], ['l', L_TAG]], {quiet:true, noQueue:true});
+      return !!(r && r.ok);
+    }catch(_){ return false; }
   }
 
   // ---------------------------------------------------------------- deleting
@@ -1454,6 +1471,25 @@
   async function remove(docs){
     docs = (docs || []).filter(Boolean);
     if(!docs.length) return { archive:0, phone:0 };
+
+    /* A pending laptop bubble has TWO documents: the ordinary message-shaped placeholder and the
+     * addressable outbox command the phone will execute. Hiding only the placeholder is not a
+     * deletion — the phone can still send it hours later. Replace the command with a terminal
+     * cancellation first. A phone that has already claimed the radio operation may still finish;
+     * no distributed system can unsend an SMS, but a request not yet claimed is now actually gone. */
+    const pendingOutboxes = [];
+    for(const d of docs){
+      const m = S.msgs.get(d);
+      if(m && m.pending && m.outbox && String(m.outbox).startsWith(D_OUT))
+        pendingOutboxes.push(String(m.outbox));
+    }
+    for(const d of [...new Set(pendingOutboxes)]){
+      const cancelled = await mark(d,
+        { done:true, ok:false, cancelled:true, error:'cancelled by sender' });
+      /* Never hide a request we failed to cancel: that would say "deleted" while a phone can still
+       * execute it later. Keeping the bubble visible gives the person a truthful retry target. */
+      if(!cancelled) return { archive:0, phone:0, refused:true, error:'could not cancel pending send' };
+    }
 
     /* THE PHONE'S COPY FIRST, AND IT IS THE WHOLE GUARD.
      *
@@ -1504,7 +1540,7 @@
       S.msgs.set(d, { doc:d, _at: now(), gone:true });
     }
     rebuild();
-    return { archive, phone };
+    return { archive, phone, cancelled:pendingOutboxes.length };
   }
 
   /* ASK ANDROID FOR PERMISSION TO READ THIS PHONE'S MESSAGES, then actually read them.
@@ -2117,6 +2153,7 @@
           <button class="btn small" id="sms-attach" title="Add photo">${ICO('paperclip','b-ic')}</button>
           <input id="sms-file" type="file" accept="image/*" hidden>
           <button class="btn small" id="sms-emoji" title="Add emoji" aria-label="Add emoji">${ICO('smile','b-ic')}</button>
+          ${(PC.gifEnabled && PC.gifEnabled())?`<button class="btn small" id="sms-gif" title="Add GIF" aria-label="Add GIF">${ICO('film','b-ic')}</button>`:''}
           <input class="input" id="sms-in" placeholder="Text message">
           <button class="btn btn-neon" id="sms-send">${ICO('send','b-ic')}Send</button>
         </div>
@@ -2131,6 +2168,8 @@
       input.dispatchEvent(new Event('input', {bubbles:true}));
       close(); input.focus();
     }, {unicodeOnly:true});
+    const gifBtn = PC.$('#sms-gif');
+    if(gifBtn) gifBtn.onclick = () => { if(PC.gifPicker) PC.gifPicker(input); };
     const pick = PC.$('#sms-file'), attachBtn = PC.$('#sms-attach');
     attachBtn.onclick = () => pick.click();
     pick.onchange = () => {

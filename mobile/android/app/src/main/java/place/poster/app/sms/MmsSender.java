@@ -18,6 +18,7 @@ public final class MmsSender {
         if (raw == null || raw.length == 0) { r.error = "missing attachment"; return r; }
         if (raw.length > 8 * 1024 * 1024) { r.error = "picture message is too large"; return r; }
         try {
+            r.sentAt = System.currentTimeMillis();
             BitmapFactory.Options bounds = new BitmapFactory.Options();
             bounds.inJustDecodeBounds = true;
             BitmapFactory.decodeByteArray(raw, 0, raw.length, bounds);

@@ -423,6 +423,7 @@ public class SmsPlugin extends Plugin {
         o.put("ok", r.ok);
         o.put("error", r.error);
         o.put("parts", r.parts);
+        o.put("sentAt", r.sentAt);
         // FALSE means the radio was asked and the phone's OWN messages app has no copy — we lack the
         // role to write its store. The caller keeps its own copy and says so; it is not a failure.
         o.put("stored", r.stored);
@@ -449,6 +450,7 @@ public class SmsPlugin extends Plugin {
             byte[] raw = Base64.decode(b64, Base64.DEFAULT);
             SmsSender.Result r = MmsSender.send(getContext(), to, body, raw);
             o.put("claimed", true); o.put("ok", r.ok); o.put("error", r.error);
+            o.put("sentAt", r.sentAt);
         } catch (Throwable t) {
             o.put("ok", false);
             o.put("error", t.getMessage() == null ? "could not send picture message" : t.getMessage());

@@ -120,6 +120,14 @@ class TheDrainRefusesWhatItMustRefuse(unittest.TestCase):
         self.assertIn("return marker(", after)
         self.assertNotIn("if (r != null && r.ok) return marker", after)
 
+    def test_an_mms_receipt_keeps_its_attachment(self):
+        """A background success must not turn the desktop's pending photo into text-only history."""
+        self.assertIn('if (attachment != null) o.put("attachment", attachment);', self.src)
+
+    def test_the_receipt_uses_radio_time_not_the_laptop_ask_time(self):
+        """A delayed provider row and its receipt must derive the same archive document id."""
+        self.assertIn("r.sentAt > 0L ? r.sentAt : asked", self.src)
+
     def test_a_stale_request_is_dropped_not_performed(self):
         """A text arriving a day late is worse than one that never went."""
         self.assertIn("MAX_AGE_MS", self.src)

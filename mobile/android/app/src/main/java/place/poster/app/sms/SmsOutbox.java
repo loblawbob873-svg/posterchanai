@@ -166,7 +166,7 @@ public final class SmsOutbox {
 
             long asked = req.optLong("at", 0L);
             if (System.currentTimeMillis() - asked > MAX_AGE_MS) {
-                return marker(ctx, sec, me, doc, false, "too old", to, body, asked);
+                return marker(ctx, sec, me, doc, false, "too old", to, body, asked, attachment);
             }
 
             // A background MMS needs the account's encrypted-drive endpoints/key. If this phone has
@@ -204,8 +204,9 @@ public final class SmsOutbox {
             /* MARKED WHETHER IT WENT OR NOT. A text that went out and whose marker did not is a text
              * that goes out AGAIN on the next pass, and there is no undo for that. A failure is
              * recorded in the marker so the other device can say so, rather than retried blindly. */
+            long sentAt = r != null && r.sentAt > 0L ? r.sentAt : asked;
             return marker(ctx, sec, me, doc, r != null && r.ok, r == null ? "no result" : r.error,
-                    to, body, asked);
+                    to, body, sentAt, attachment);
         } catch (Throwable t) {
             Log.w(TAG, "sms outbox: could not perform a request", t);
             return null;
@@ -215,7 +216,7 @@ public final class SmsOutbox {
     /** The `{done:true}` replacement for the request, signed and ready to publish. */
     private static JSONObject marker(Context ctx, byte[] sec, byte[] me, String doc,
                                      boolean ok, String error, String to, String body,
-                                     long asked) throws Exception {
+                                     long asked, JSONObject attachment) throws Exception {
         JSONObject o = new JSONObject();
         o.put("done", true);
         o.put("ok", ok);
@@ -226,6 +227,11 @@ public final class SmsOutbox {
         o.put("to", to);
         o.put("body", body);
         o.put("at", asked);
+        // Keep the desktop's pending MMS intact when this receipt replaces its request event.
+        // Without this field absorb() truthfully knew the radio succeeded, but could only replace
+        // the pending photo bubble with a text-only one; the encrypted Blossom object then became
+        // unreachable from the conversation even though both send and upload had succeeded.
+        if (attachment != null) o.put("attachment", attachment);
         byte[] ck = Crypt.conversationKey(sec, me);
         String ct = Crypt.nip44Encrypt(ck, o.toString(), null);
 

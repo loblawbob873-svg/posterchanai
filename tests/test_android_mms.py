@@ -503,6 +503,13 @@ class OutgoingMms(unittest.TestCase):
         self.assertIn("MmsSender.send(ctx, to, body, imageBytes)", outbox)
         self.assertIn("if (!claim(ctx, doc)) return null", outbox)
 
+    def test_remote_photo_placeholder_uses_the_mms_document_identity(self):
+        """The later provider mirror must replace the pending bubble, not create a duplicate."""
+        js = open(SMSJS, encoding="utf-8").read()
+        self.assertIn("partsKeyOf(pendingParts)", js)
+        self.assertIn("partsKeyOf(sentParts)", js)
+        self.assertIn("old.pending && old.outbox === d", js)
+
     def test_message_bodies_are_encrypted_blobs_not_relay_payloads(self):
         js = open(SMSJS, encoding="utf-8").read()
         self.assertIn("archiveMessageBody(m.doc, body)", js)

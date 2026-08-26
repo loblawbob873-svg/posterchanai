@@ -202,6 +202,32 @@ class SendingFromAnotherDevice(unittest.TestCase):
         self.assertIn("d.startsWith(D_OUT)", web)
         self.assertIn("ack.done && ack.ok", web)
 
+    def test_deleting_a_pending_message_cancels_its_outbox_command(self):
+        """Deleting a queued bubble must not leave a command that the phone sends later."""
+        web = (ROOT / "static/js/client/sms.js").read_text()
+        remove = web[web.index("async function remove(docs)"):web.index("async function askForRead")]
+        self.assertIn("m.pending && m.outbox", remove)
+        self.assertIn("cancelled:true", remove)
+        self.assertIn("await mark(d", remove)
+        self.assertIn("if(!cancelled) return", remove)
+
+        res = run(isPhone=False, telephony=False,
+                  steps=["load", "send:+15550100:not yet", "removePending"])
+        cancelled = calls_of(res, "removePendingResult")[0]
+        self.assertEqual(cancelled[3], 1)
+        out = next(e for e in res["relayEvents"] if e["d"].startswith("pcai:smsout:"))
+        self.assertIn('"cancelled":true', out["content"],
+                      "the live outbox document was not replaced by a cancellation")
+        self.assertEqual(res["docs"], [], "the pending placeholder is still visible")
+
+    def test_texts_uses_the_instances_gif_picker(self):
+        """The server-side picker keeps the connected instance's Giphy/Tenor key out of clients."""
+        web = (ROOT / "static/js/client/sms.js").read_text()
+        app = (ROOT / "static/js/client/app.js").read_text()
+        self.assertIn('id="sms-gif"', web)
+        self.assertIn("PC.gifPicker(input)", web)
+        self.assertIn("gifEnabled: () => !!CFG.gif_enabled", app)
+
     def test_a_laptop_queues_a_request_and_says_so(self):
         """It cannot reach a radio. Reporting the message as sent would be a lie the person only
         discovers when the reply never comes.

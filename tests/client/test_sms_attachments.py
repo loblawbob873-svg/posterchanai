@@ -83,7 +83,7 @@ class ThreadsHoldBothKinds(unittest.TestCase):
         self.assertIn("const sentParts=sent.attachment?", src)
         self.assertIn("parts:sentParts, pending:true", src)
         self.assertIn("parts:sentParts, _at:ev.created_at", src)
-        self.assertIn("parts:attachment?[{id:0", src)
+        self.assertIn("parts:pendingParts", src)
 
     def test_texts_and_pictures_are_one_conversation(self):
         """A conversation is texts AND pictures and has always been read as one thing. Two threads

@@ -38,6 +38,8 @@ public final class SmsSender {
         public String error = "";
         public Uri row;
         public int parts;
+        /** Radio/provider send time, used to give every device the same archive identity. */
+        public long sentAt;
         /** Whether the phone's OWN message store has a copy. False when we sent without the role. */
         public boolean stored;
     }
@@ -77,6 +79,7 @@ public final class SmsSender {
         boolean mayWrite = HasRole.sms(ctx);
 
         long now = System.currentTimeMillis();
+        r.sentAt = now;
         r.row = mayWrite
                 ? SmsStore.storeSent(ctx, address, body, now, Telephony.Sms.MESSAGE_TYPE_OUTBOX,
                                      threadId)
