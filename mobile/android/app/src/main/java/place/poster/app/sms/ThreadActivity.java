@@ -39,6 +39,8 @@ import java.io.InputStream;
 import java.io.ByteArrayOutputStream;
 
 import place.poster.app.R;
+import place.poster.app.MainActivity;
+import place.poster.app.home.HomeActivity;
 import place.poster.app.ui.CalendarPeek;
 import place.poster.app.ui.PcActivity;
 import place.poster.app.ui.Skin;
@@ -61,6 +63,7 @@ import place.poster.app.ui.Skin;
 public class ThreadActivity extends PcActivity {
 
     private static final int PICK_MMS_IMAGE = 7312;
+    private static final int CAPTURE_MMS_IMAGE = 7313;
 
     public static final String EXTRA_THREAD = "thread";
     /**
@@ -82,6 +85,7 @@ public class ThreadActivity extends PcActivity {
     private ListView list;
     private EditText input;
     private Uri attachment;
+    private byte[] capturedAttachment;
     private TextView count, name, sub, avatar, context;
     private Msgs adapter;
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -125,7 +129,7 @@ public class ThreadActivity extends PcActivity {
             @Override public void onClick(View v) { send(); }
         });
         findViewById(R.id.pc_th_attach).setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { pickAttachment(); }
+            @Override public void onClick(View v) { chooseAttachmentSource(); }
         });
         findViewById(R.id.pc_th_emoji).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { pickEmoji(); }
@@ -324,6 +328,25 @@ public class ThreadActivity extends PcActivity {
         catch (Throwable t) { say(getString(R.string.sms_attachment_bad)); }
     }
 
+    private void chooseAttachmentSource() {
+        new AlertDialog.Builder(this).setTitle(R.string.sms_add_attachment)
+                .setItems(new CharSequence[]{"Camera", "Device", "Blossom"}, (dialog, which) -> {
+                    if (which == 1) { pickAttachment(); return; }
+                    if (which == 2) {
+                        /* Blossom's authenticated, encrypted folder index lives in the web client.
+                         * Open its Texts composer rather than exposing the drive through a public
+                         * URL or building a second, inevitably divergent native file index. */
+                        Intent i = new Intent(this, MainActivity.class)
+                                .putExtra(HomeActivity.EXTRA_VIEW, "texts")
+                                .putExtra(HomeActivity.EXTRA_VIEW_AT, System.currentTimeMillis());
+                        startActivity(i); return;
+                    }
+                    try { startActivityForResult(new Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE),
+                                                 CAPTURE_MMS_IMAGE); }
+                    catch (Throwable t) { say(getString(R.string.sms_attachment_bad)); }
+                }).show();
+    }
+
     /** A compact carrier-safe Unicode picker. Strings are built from code points so joined emoji
      * (skin tones, professions and families) are inserted as one selection, never split at a UTF-16
      * boundary. The system keyboard remains available for its complete/searchable emoji catalogue. */
@@ -360,6 +383,16 @@ public class ThreadActivity extends PcActivity {
     @Override
     protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
+        if (request == CAPTURE_MMS_IMAGE && result == RESULT_OK && data != null) {
+            Object raw = data.getExtras() == null ? null : data.getExtras().get("data");
+            if (raw instanceof Bitmap) {
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                ((Bitmap) raw).compress(Bitmap.CompressFormat.JPEG, 92, out);
+                capturedAttachment = out.toByteArray(); attachment = null;
+                say(getString(R.string.sms_attachment_ready));
+            } else say(getString(R.string.sms_attachment_bad));
+            return;
+        }
         if (request != PICK_MMS_IMAGE || result != RESULT_OK || data == null) return;
         Uri picked = data.getData();
         if (picked == null) return;
@@ -369,13 +402,15 @@ public class ThreadActivity extends PcActivity {
                                      | Intent.FLAG_GRANT_WRITE_URI_PERMISSION));
         } catch (Throwable ignored) { }
         attachment = picked;
+        capturedAttachment = null;
         say(getString(R.string.sms_attachment_ready));
     }
 
     /** Build a carrier MMS PDU and hand it to Android's public system MMS transport. */
     private void sendMms(String body) {
-        byte[] raw = null;
-        try (InputStream in = getContentResolver().openInputStream(attachment)) {
+        byte[] raw = capturedAttachment;
+        try (InputStream in = raw == null && attachment != null
+                ? getContentResolver().openInputStream(attachment) : null) {
             if (in != null) {
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
                 byte[] buf = new byte[64 * 1024]; int n, total = 0;
@@ -396,6 +431,7 @@ public class ThreadActivity extends PcActivity {
             if (!result.ok) { say(result.error == null || result.error.isEmpty()
                     ? getString(R.string.sms_failed) : result.error); return; }
             attachment = null;
+            capturedAttachment = null;
             input.setText("");
             updateCount();
             say(getString(R.string.sms_mms_sent));

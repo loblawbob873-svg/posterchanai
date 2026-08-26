@@ -27,6 +27,16 @@ def test_mms_send_captures_the_displayed_file_and_rejects_non_images():
     assert "if(S.attach===attachment)clearAttachment();" in JS
 
 
+def test_texts_attachment_menu_offers_camera_device_and_blossom():
+    assert 'id="sms-camera" type="file" accept="image/*" capture="environment"' in JS
+    assert 'id="sms-src-camera"' in JS
+    assert 'id="sms-src-device"' in JS
+    assert 'id="sms-src-blossom"' in JS
+    assert "PC.blossomPicker(null, async ({url,type,ext})" in JS
+    assert "filter:b=>String(b.type||'').startsWith('image/')" in JS
+    assert "acceptFile(new File([blob],name" in JS
+
+
 def test_pending_send_has_a_touch_accessible_cancel_action():
     assert 'class="sms-cancel-pending"' in JS
     assert "m.pending?'Cancel send':'Delete'" in JS

@@ -2227,6 +2227,7 @@
         <div class="sms-compose">
           <button class="btn small" id="sms-attach" title="Add photo">${ICO('paperclip','b-ic')}</button>
           <input id="sms-file" type="file" accept="image/*" hidden>
+          <input id="sms-camera" type="file" accept="image/*" capture="environment" hidden>
           <button class="btn small" id="sms-emoji" title="Add emoji" aria-label="Add emoji">${ICO('smile','b-ic')}</button>
           ${(PC.gifEnabled && PC.gifEnabled())?`<button class="btn small" id="sms-gif" title="Add GIF" aria-label="Add GIF">${ICO('film','b-ic')}</button>`:''}
           <input class="input" id="sms-in" placeholder="Text message">
@@ -2245,7 +2246,22 @@
     }, {unicodeOnly:true});
     const gifBtn = PC.$('#sms-gif');
     if(gifBtn) gifBtn.onclick = () => { if(PC.gifPicker) PC.gifPicker(input); };
-    const pick = PC.$('#sms-file'), attachBtn = PC.$('#sms-attach');
+    const pick = PC.$('#sms-file'), camera = PC.$('#sms-camera'), attachBtn = PC.$('#sms-attach');
+    const acceptFile = file => {
+      if(file&&!isImageFile(file)){PC.toast('MMS currently supports photos');return false;}
+      if(file){ S.attach=file; paint(); }
+      return !!file;
+    };
+    const fromBlossom = () => PC.blossomPicker(null, async ({url,type,ext}) => {
+      try{
+        if(!String(type||'').startsWith('image/')) throw new Error('MMS currently supports photos');
+        const res=await fetch(url); if(!res.ok)throw new Error('Blossom returned '+res.status);
+        const blob=await res.blob();
+        const name=(String(url).split(/[?#]/)[0].split('/').pop()||'blossom-photo')
+                   +(ext&&!String(url).split(/[?#]/)[0].includes('.')?'.'+ext:'');
+        acceptFile(new File([blob],name,{type:type||blob.type||'image/jpeg'}));
+      }catch(e){ PC.toast('could not attach Blossom photo: '+String(e&&e.message||e)); }
+    }, {title:'🌸 Attach photo from Blossom',filter:b=>String(b.type||'').startsWith('image/')});
     attachBtn.onclick = async () => {
       /* Electron's hidden file input is not reliable when the Texts window has just changed focus
        * between compositor surfaces. Use the desktop's native, explicitly user-confirmed picker;
@@ -2261,13 +2277,19 @@
         }catch(e){ PC.toast('could not attach photo: '+String(e&&e.message||e)); }
         return;
       }
-      pick.click();
+      if(PC.blossomPicker && PC.modal){
+        PC.modal('<h3>Add a photo</h3><div class="sms-attach-sources"><button class="btn" id="sms-src-camera">Camera</button><button class="btn" id="sms-src-device">Device</button><button class="btn" id="sms-src-blossom">🌸 Blossom</button></div>', root=>{
+          root.querySelector('#sms-src-camera').onclick=()=>{PC.closeModal();camera.click();};
+          root.querySelector('#sms-src-device').onclick=()=>{PC.closeModal();pick.click();};
+          root.querySelector('#sms-src-blossom').onclick=()=>{PC.closeModal();fromBlossom();};
+        });
+      }else pick.click();
     };
     pick.onchange = () => {
       const file=(pick.files||[])[0]||null;
-      if(file&&!isImageFile(file)){PC.toast('MMS currently supports photos');pick.value='';return;}
-      S.attach=file;paint();
+      acceptFile(file); pick.value='';
     };
+    camera.onchange=()=>{acceptFile((camera.files||[])[0]||null);camera.value='';};
     const clear=PC.$('#sms-attach-clear');if(clear)clear.onclick=()=>{clearAttachment();paint();};
     const go = async () => {
       const body = input.value.trim();
