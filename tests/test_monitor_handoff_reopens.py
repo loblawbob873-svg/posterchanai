@@ -106,6 +106,20 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
         self.assertIn("const appPath = terminal ? ''", payload,
                       "the destination would adopt the PTY and then route it back to Social")
 
+    def test_music_launcher_returns_its_real_window_for_monitor_handoff(self):
+        """__music is an action alias, but the destination needs the window openDoc created.
+
+        Discarding it makes the handoff receiver take its `if(!w)return` branch, producing the
+        reported black Music window with only the unrelated floating transport left visible.
+        """
+        start = self.os.index("function openApp(")
+        body = self.os[start:self.os.index("function windowAIContext", start)]
+        self.assertIn("return view==='__music'&&opened ? opened : null", body)
+        receive = self.os[self.os.index("if(pcWM.onHandoffFrame"):
+                               self.os.index("if(pcWM.onPreviewFrame")]
+        self.assertIn("const w=openApp(String(p.view)", receive)
+        self.assertIn("if(!w) return", receive)
+
     @unittest.skipUnless(NODE, "node is not installed")
     def test_simple_app_identity_cannot_be_replaced_by_global_social_view(self):
         """Every ordinary app keeps its opened identity when another window changes the page-global

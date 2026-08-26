@@ -1425,7 +1425,16 @@
       try{ mailAck = (PC().mailUnread && PC().mailUnread()) || 0; }catch(_){}
     }
     const extra = !direct && EXTRAS.find(x => x.view === view);
-    if(extra){ try{ extra.act(); }catch(err){ try{ PC().toast('could not open ' + extra.label); }catch(_){} } return null; }
+    if(extra){
+      try{
+        const opened=extra.act();
+        /* Music is a real document window hidden behind a launcher action. A monitor handoff calls
+           openApp('__music') on the destination; throwing away openDoc's return made the receiver
+           stop before geometry/UI restoration, leaving a black frame and only the global player
+           button. Other extras remain actions and intentionally return no window. */
+        return view==='__music'&&opened ? opened : null;
+      }catch(err){ try{ PC().toast('could not open ' + extra.label); }catch(_){} return null; }
+    }
     const existing = wins.find(w => w.view === view);
     if(existing){ focusWin(existing); return existing; }
     const app = apps().find(a => a.view === view) || {};
