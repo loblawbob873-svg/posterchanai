@@ -2579,6 +2579,23 @@
     if(next) focusWin(next); else drawBar();
   }
 
+  /* Taskbar recovery for a window whose title bar is awkward or partly outside the display. The
+   * next pointer movement picks the window up by its centre; click commits, Escape restores it. */
+  function taskbarMove(w){
+    if(!w||!w.el)return;
+    if(w.min)focusWin(w);else focusWin(w,false);
+    const old={left:w.el.style.left,top:w.el.style.top};
+    w.el.classList.add('dragging','osw-taskbar-moving');_natGesture(w,true);
+    const move=e=>{const k=zf(),ww=w.el.offsetWidth||MIN_W,hh=w.el.offsetHeight||MIN_H;
+      w.el.style.left=Math.max(12,Math.min(vwL()-ww-12,e.clientX/k-ww/2))+'px';
+      w.el.style.top=Math.max(12,Math.min(vhL()-TASKBAR-hh-12,e.clientY/k-24))+'px';};
+    let done=false;
+    const finish=(keep=true)=>{if(done)return;done=true;document.removeEventListener('pointermove',move,true);document.removeEventListener('pointerdown',place,true);document.removeEventListener('keydown',key,true);w.el.classList.remove('dragging','osw-taskbar-moving');if(!keep)Object.assign(w.el.style,old);keepFrameReachable(w);_natGesture(w,false);};
+    const place=e=>{e.preventDefault();e.stopPropagation();finish(true);};
+    const key=e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();finish(false);}};
+    setTimeout(()=>{document.addEventListener('pointermove',move,true);document.addEventListener('pointerdown',place,true);document.addEventListener('keydown',key,true);},0);
+  }
+
   // ---- snapping (Windows 11 style) ------------------------------------------------------------
   // Drag a window against a screen edge and it snaps: the sides give halves, the top maximises, the
   // corners give quarters. A GHOST previews the zone before the pointer is released — a window that
@@ -5433,6 +5450,7 @@
       if(b.dataset.kind === 'native'){
         const w=nativeTasks.find(x=>String(x.id)===b.dataset.id); if(!w) return;
         showCtx(e.clientX,e.clientY,[
+          {label:'Move',run:()=>Promise.resolve(pcWM.command('[con_id='+Number(w.id)+'] move position cursor')).catch(()=>{})},
           {label:'Snap left',run:()=>Promise.resolve(pcWM.snap(w.id,'left')).catch(()=>{})},
           {label:'Snap right',run:()=>Promise.resolve(pcWM.snap(w.id,'right')).catch(()=>{})},
           {label:'Maximize',run:()=>Promise.resolve(pcWM.snap(w.id,'max')).catch(()=>{})},
@@ -5441,15 +5459,19 @@
         ]);
         return;
       }
-      let key = b.dataset.pin || '';
+      let key = b.dataset.pin || '',running=null;
       if(!key && b.dataset.kind === 'web'){
-        const w = wins.find(x => String(x.id) === b.dataset.id);
-        if(w && w.view) key = 'view:' + w.view;
+        running = wins.find(x => String(x.id) === b.dataset.id);
+        if(running && running.view) key = 'view:' + running.view;
       }
       if(!key) return;
       const pinned = pins.indexOf(key) >= 0, cut = key.indexOf(':');
-      showCtx(e.clientX, e.clientY, [{ label: pinned ? 'Unpin from taskbar' : 'Pin to taskbar',
-        run: () => setPinned(key.slice(0, cut), key.slice(cut + 1), !pinned) }]);
+      const actions=[];
+      if(running)actions.push({label:'Move',run:()=>taskbarMove(running)},
+        {label:'Close',run:()=>closeWin(running)},{sep:true});
+      actions.push({ label: pinned ? 'Unpin from taskbar' : 'Pin to taskbar',
+        run: () => setPinned(key.slice(0, cut), key.slice(cut + 1), !pinned) });
+      showCtx(e.clientX, e.clientY, actions);
     });
     $$('.os-native-max',bar).forEach(b=>b.onclick=e=>{ e.stopPropagation(); Promise.resolve(pcWM.snap(Number(b.dataset.id),'max')).catch(()=>{}); });
     $$('.os-native-close',bar).forEach(b=>b.onclick=e=>{ e.stopPropagation(); Promise.resolve(pcWM.close(Number(b.dataset.id))).catch(()=>{}); });

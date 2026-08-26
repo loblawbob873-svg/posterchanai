@@ -25,6 +25,15 @@ def test_start_menu_and_taskbar_offer_pin_and_unpin():
     assert "setPinned('view', view, !pinned)" in SRC
 
 
+def test_running_task_context_menu_can_move_recover_and_close_windows():
+    assert "function taskbarMove(w)" in SRC
+    assert "osw-taskbar-moving" in SRC
+    assert "{label:'Move',run:()=>taskbarMove(running)}" in SRC
+    assert "{label:'Close',run:()=>closeWin(running)}" in SRC
+    assert "keepFrameReachable(w);_natGesture(w,false)" in SRC
+    assert "move position cursor" in SRC
+
+
 def test_start_menu_can_add_and_remove_apps_from_desktop():
     assert "Add ' + label + ' to the desktop" in SRC
     assert "Hide ' + label + ' from the desktop" in SRC
