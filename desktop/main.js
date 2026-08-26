@@ -811,7 +811,10 @@ function wirePermissions() {
     cb(req && req.audioRequested && process.platform === 'win32'
       ? { video: source, audio: 'loopback' }
       : { video: source });
-  }, { useSystemPicker: true });
+  // macOS 15 has a reliable native picker. On Linux, especially wlroots/Sway, asking Electron to
+  // force the portal picker can reject immediately without ever invoking this handler. Keep Linux
+  // and Windows on our explicit picker so a share request cannot disappear before signaling starts.
+  }, { useSystemPicker: process.platform === 'darwin' });
 }
 
 // ---- screen-source picker (our stand-in for the browser's built-in one) -------------------------

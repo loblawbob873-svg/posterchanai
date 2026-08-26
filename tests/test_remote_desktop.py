@@ -53,6 +53,12 @@ def test_same_login_has_a_direct_action_and_failures_are_visible_inline():
     assert "[data-rd-choose][hidden]{display:none!important}" in css
 
 
+def test_desktop_uses_its_source_picker_on_linux_instead_of_the_failing_portal_path():
+    main = (ROOT / "desktop/main.js").read_text(encoding="utf-8")
+    assert "useSystemPicker: process.platform === 'darwin'" in main
+    assert "useSystemPicker: true" not in main
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_address_discovery_returns_choices_then_resolves_the_selected_user(tmp_path):
     """Execute the shipped resolver. An IP with two users must populate the picker, and choosing
