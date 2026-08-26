@@ -14,6 +14,8 @@ and deletes the temporary session in a finally block.
 import asyncio
 import json
 import os
+import sys
+import urllib.error
 import urllib.request
 
 import websockets
@@ -153,4 +155,9 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (urllib.error.URLError, ConnectionRefusedError) as exc:
+        print("SKIP installed Electron is not attached on the loopback CDP port; "
+              "run this gate on the target desktop (" + str(exc.reason if hasattr(exc, "reason") else exc) + ")")
+        sys.exit(2)

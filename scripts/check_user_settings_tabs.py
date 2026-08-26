@@ -24,7 +24,11 @@ import urllib.request
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:3051"
 PORT = int(os.environ.get("PC_CHECK_PORT") or 9559)
-PROF = (os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-ustabs")
+# A fixed /tmp profile races a previous Chrome that is still releasing its LevelDB files.  In the
+# full parallel matrix that left a half-removed Default directory and occasionally loaded Settings
+# from stale state.  Each check process owns a unique profile unless the caller explicitly supplies
+# one for debugging.
+PROF = os.environ.get("PC_CHECK_PROFILE") or f"/tmp/pc-ustabs-{os.getpid()}"
 
 # control id -> the pane it must live in
 WHERE = {
@@ -115,7 +119,7 @@ class Tab:
 
     async def start(self, chrome, url):
         import websockets
-        subprocess.run(["rm", "-rf", self.profile], check=False)
+        shutil.rmtree(self.profile, ignore_errors=True)
         self.proc = subprocess.Popen(
             [chrome, "--headless=new", "--disable-gpu", "--no-sandbox",
              f"--remote-debugging-port={self.port}", f"--user-data-dir={self.profile}",
@@ -164,10 +168,16 @@ class Tab:
 
     def stop(self):
         try:
-            self.proc and self.proc.terminate()
+            if self.proc:
+                self.proc.terminate()
+                try:
+                    self.proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    self.proc.kill()
+                    self.proc.wait(timeout=10)
         except Exception:
             pass
-        subprocess.run(["rm", "-rf", self.profile], check=False)
+        shutil.rmtree(self.profile, ignore_errors=True)
 
 
 async def drive(url):

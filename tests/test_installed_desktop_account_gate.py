@@ -9,6 +9,8 @@ def test_installed_account_gate_uses_loopback_cdp_and_requires_authentication():
     assert "http://127.0.0.1:{PORT}" in SCRIPT
     assert "__PC.me && __PC.me()" in SCRIPT
     assert "no authenticated installed PosterChan page" in SCRIPT
+    assert "SKIP installed Electron is not attached" in SCRIPT
+    assert "sys.exit(2)" in SCRIPT
 
 
 def test_installed_account_gate_checks_real_blossom_render_without_reading_names():

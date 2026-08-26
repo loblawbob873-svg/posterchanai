@@ -39,7 +39,10 @@ import check_nip46_signer as sig            # noqa: E402
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:3051"
 PORT = int(os.environ.get("PC_CHECK_PORT") or 9494)
-PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-nip46-reconnect"
+# Never inherit a half-released Chrome profile from another matrix run.  LevelDB can still create a
+# file after terminate() if the process was not awaited, which made a later login intermittently
+# skip even though this reconnect path was healthy.
+PROFILE = os.environ.get("PC_CHECK_PROFILE") or f"/tmp/pc-nip46-reconnect-{os.getpid()}"
 
 
 class Relay(sig.MiniRelay):
@@ -163,7 +166,7 @@ SIGNJS = r"""(async (ms) => {
 
 
 async def drive(url):
-    subprocess.run(["rm", "-rf", PROFILE], check=False)
+    shutil.rmtree(PROFILE, ignore_errors=True)
     chrome = (shutil.which("google-chrome-stable") or shutil.which("google-chrome")
               or shutil.which("chromium"))
     if not chrome:
@@ -343,7 +346,12 @@ async def drive(url):
             pass
         await relay.stop()
         proc.terminate()
-        subprocess.run(["rm", "-rf", PROFILE], check=False)
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=10)
+        shutil.rmtree(PROFILE, ignore_errors=True)
 
     if problems:
         print(f"FAIL  {len(problems)} problem(s):")
