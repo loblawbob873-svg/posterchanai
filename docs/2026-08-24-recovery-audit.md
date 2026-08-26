@@ -53,16 +53,37 @@ live behavior agree.
 
 ## Open verification queue
 
-- Run `./test.sh` and record every failure, skip, and advisory result. A skip is not a pass.
-- Run the live suite against `https://poster.place` after the static deploy settles.
-- Install the newly published Gentoo desktop package in a clean profile and inspect its ASAR/build
-  stamp from the installed path.
 - Exercise an Armada-created public community end-to-end with two identities: discovery, join,
-  history, icon, members, send, reply/react, mention notification, attachment, Webxdc and moderation.
-- Exercise phone classic mode and Android at narrow portrait, landscape, and tablet widths.
+  history, icon and members are live-verified; send, reply/react, mention notification, attachment,
+  Webxdc and moderation still require a non-production test community or permission to create
+  durable relay events.
+- Install APK 1.0.1681 on a physical phone and repeat background Music-after-Home, launcher,
+  double-Home, narrow portrait, landscape, tablet and mail-attachment taps. The exact-commit API-34
+  emulator suite is green, but an emulator is not a physical-device result.
+- Boot `posterchan-live-20260826.iso` from physical USB. Its structure and host-CPU KVM boot are
+  verified; QEMU's legacy `qemu64` CPU does not meet this Gentoo image's ISA requirement.
+- Exercise real carrier SMS/MMS send/receive and the complete device-provider migration on a phone
+  containing representative long history and media. Emulator/provider tests do not prove a carrier.
+- Exercise native Firefox/Telegram focus, stacking, edge snap, clipboard and cross-monitor dragging
+  in a sustained manual session. Installed two-output shell reconstruction and Music handoff are
+  verified, but those external applications have their own compositor behavior.
 - Reconstruct any substantive additions named in the earlier stash handoff from commits, release
   payloads, or external evidence. The authoritative worktree has no stashes now, so their former
   contents cannot be recovered or declared present merely from `git stash list`.
+
+## August 24 release ancestry
+
+The current branch contains 162 commits dated August 24. Every one is an ancestor of release commit
+`7bf58ac61fa93328586b40c80ebb816eb7b9f9cb`, which produced Desktop 1.0.979 and Android 1.0.1681.
+The post-release diff contains only the immutable Gentoo overlay bump, this audit, release-gate
+scripts and tests; it contains no newer product implementation that is absent from those artifacts.
+Ancestry proves inclusion, not behavior, so the runtime/package evidence below remains the authority
+and the hardware/external items above remain open.
+
+A current cross-area recovery run selected every Python suite whose path covers SMS/MMS, Files,
+Blossom, Code, Music, native windows, Settings/LiveUSB, signer/extension, Social/feed, Preview,
+Remote Desktop or Concord. It passed 1,164 tests plus 46 subtests in 53.51 seconds. This complements
+the complete release gate; it does not close the physical/carrier/external-application checks above.
 
 ## 2026-08-25/26 verification pass
 
