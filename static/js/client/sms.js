@@ -129,6 +129,8 @@
        page did is an event; everything older is history. */
     since: Date.now() - 120000,
   };
+  function clearAttachment(){ S.attach=null; }
+  function isImageFile(file){ return !!file&&(/^image\//i.test(file.type||'')||/\.(?:jpe?g|png|gif|webp|heic|heif|avif)$/i.test(file.name||'')); }
 
   const now = () => Math.floor(Date.now() / 1000);
   const ME = () => PC.ME || {};
@@ -1120,6 +1122,7 @@
 
   async function send(to, body, file){
     if(!to || (!body && !file)) return { ok:false, error:'nothing to send' };
+    if(file&&!isImageFile(file))return {ok:false,error:'MMS currently supports photos'};
     /* THE RADIO IS IN THIS DEVICE OR IT IS NOT — the ROLE is a different question.
      *
      * This used to ask `isPhone()`, which is "do we hold the SMS role". On a phone that has not
@@ -1995,7 +1998,7 @@
       paint();
     };
     feed.querySelectorAll('.sms-thread').forEach(b => {
-      b.onclick = () => { S.open = b.dataset.k; paint(); };
+      b.onclick = () => { clearAttachment(); S.open = b.dataset.k; paint(); };
     });
     noteWhere();
   }
@@ -2149,6 +2152,7 @@
             + (m.body ? `<span class="b-txt">${enc(m.body)}</span>` : '')
             + `<span class="b-meta">${enc(when(m.date))}${m.pending?' · waiting for phone':m.failed?' · not sent':''}</span></div>`;
         }).join('')}</div>
+        ${S.attach?`<div class="sms-attachment-draft"><span>${ICO('image','b-ic')}<b>${enc(S.attach.name||'Photo')}</b><small>${enc(fmtBytes(S.attach.size))} · ready to send as MMS</small></span><button id="sms-attach-clear" aria-label="Remove attached photo">×</button></div>`:''}
         <div class="sms-compose">
           <button class="btn small" id="sms-attach" title="Add photo">${ICO('paperclip','b-ic')}</button>
           <input id="sms-file" type="file" accept="image/*" hidden>
@@ -2158,7 +2162,7 @@
           <button class="btn btn-neon" id="sms-send">${ICO('send','b-ic')}Send</button>
         </div>
       </div>`;
-    PC.$('#sms-back').onclick = () => { S.open = ''; paint(); };
+    PC.$('#sms-back').onclick = () => { clearAttachment(); S.open = ''; paint(); };
     const input = PC.$('#sms-in'), btn = PC.$('#sms-send');
     const emojiBtn = PC.$('#sms-emoji');
     emojiBtn.onclick = () => PC.openEmojiPopover(emojiBtn, (emoji, close) => {
@@ -2180,27 +2184,30 @@
         try{
           const chosen=await pcHost.pickFile({images:true,max:32*1024*1024,title:'Add a photo to Texts'});
           if(!chosen)return;
-          S.attach=new File([chosen.data],chosen.name,{type:chosen.type});
-          attachBtn.classList.toggle('btn-neon',true); attachBtn.title=S.attach.name;
+          const file=new File([chosen.data],chosen.name,{type:chosen.type});
+          if(!isImageFile(file)){PC.toast('MMS currently supports photos');return;}
+          S.attach=file;paint();
         }catch(e){ PC.toast('could not attach photo: '+String(e&&e.message||e)); }
         return;
       }
       pick.click();
     };
     pick.onchange = () => {
-      S.attach = (pick.files||[])[0] || null;
-      attachBtn.classList.toggle('btn-neon', !!S.attach);
-      attachBtn.title = S.attach ? S.attach.name : 'Add photo';
+      const file=(pick.files||[])[0]||null;
+      if(file&&!isImageFile(file)){PC.toast('MMS currently supports photos');pick.value='';return;}
+      S.attach=file;paint();
     };
+    const clear=PC.$('#sms-attach-clear');if(clear)clear.onclick=()=>{clearAttachment();paint();};
     const go = async () => {
       const body = input.value.trim();
       if(!body && !S.attach) return;
+      const attachment=S.attach;
       btn.disabled = true;
-      const r = await send(t.address, body, S.attach);
+      const r = await send(t.address, body, attachment);
       btn.disabled = false;
       if(!r.ok){ PC.toast(r.error || 'could not send'); return; }
       input.value = '';
-      S.attach = null;
+      if(S.attach===attachment)clearAttachment();
       PC.toast(r.where === 'phone' ? 'sent' : 'waiting for your phone to send it');
       paint();
     };
@@ -2240,7 +2247,7 @@
   async function composeNew(){
     const to = await PC.uiPrompt('Phone number');
     if(!to) return;
-    S.open = key(to);
+    clearAttachment(); S.open = key(to);
     if(!S.threads.some(t => t.key === S.open)){
       S.threads.unshift({ key:S.open, address:to, msgs:[], date:0, unread:0 });
     }
