@@ -151,12 +151,29 @@
     const here=items.findIndex(x=>x.src===url);
     p.openLightbox(url,kind||null,items.length>1?{items,i:Math.max(0,here)}:null);
   }
+  function wireRoomMedia(p){
+    if(!p.openLightbox||!document.querySelectorAll)return;
+    const media=[...document.querySelectorAll('.cc-message-body img,.cc-message-body video')]
+      .filter(el=>!el.closest('.cc-encrypted-attachment'));
+    const items=media.map(el=>({src:el.currentSrc||el.src,kind:el.tagName==='VIDEO'?'video':null}))
+      .filter(x=>x.src);
+    for(const el of media){
+      if(el.dataset.ccViewer==='1')continue; el.dataset.ccViewer='1';
+      el.onclick=e=>{
+        e.preventDefault();e.stopPropagation();
+        const url=el.currentSrc||el.src;if(!url)return;
+        const here=items.findIndex(x=>x.src===url);
+        p.openLightbox(url,el.tagName==='VIDEO'?'video':null,
+          items.length>1?{items,i:Math.max(0,here)}:null);
+      };
+    }
+  }
   async function hydrateEncryptedAttachments(messages){
     if(!document.querySelectorAll)return;
     const byId=new Map((messages||[]).map(m=>[messageId(m),m]));
     for(const host of document.querySelectorAll('.cc-encrypted-attachment[data-cc-attachment]')){
       const m=byId.get(host.dataset.ccAttachment),file=m&&encryptedAttachments(m)[Number(host.dataset.ccAttachmentIndex)||0];if(!file)continue;
-      try{const got=await decryptAttachment(file);if(!host.isConnected)continue;const p=PC(),url=p.enc(got.url),label=p.enc(got.name||'attachment');if(got.mime.startsWith('image/')){host.innerHTML=`<button class="cc-attachment-open" type="button" aria-label="Open ${label}"><img src="${url}" alt="${label}" loading="lazy"></button>`;const open=host.querySelector('.cc-attachment-open');if(open)open.onclick=e=>{e.preventDefault();e.stopPropagation();attachmentLightbox(p,host,got.url,null);};}else if(got.mime.startsWith('video/')){host.innerHTML=`<div class="cc-attachment-media"><video src="${url}" controls playsinline preload="metadata"></video><button class="cc-attachment-expand" type="button" aria-label="Open ${label}">↗</button></div>`;const open=host.querySelector('.cc-attachment-expand');if(open)open.onclick=e=>{e.preventDefault();e.stopPropagation();attachmentLightbox(p,host,got.url,'video');};}else if(got.mime.startsWith('audio/'))host.innerHTML=`<audio src="${url}" controls preload="metadata"></audio>`;else host.innerHTML=`<a href="${url}" download="${label}">Download ${label}</a>`;}catch(_){if(host.isConnected)host.innerHTML='<span class="cc-attachment-error">Could not decrypt attachment</span>';}
+      try{const got=await decryptAttachment(file);if(!host.isConnected)continue;const p=PC(),url=p.enc(got.url),label=p.enc(got.name||'attachment');if(got.mime.startsWith('image/')){host.innerHTML=`<button class="cc-attachment-open" type="button" aria-label="Open ${label}"><img src="${url}" alt="${label}" loading="lazy"></button>`;const open=host.querySelector('.cc-attachment-open');if(open)open.onclick=e=>{e.preventDefault();e.stopPropagation();attachmentLightbox(p,host,got.url,null);};}else if(got.mime.startsWith('video/')){host.innerHTML=`<div class="cc-attachment-media"><video src="${url}" controls playsinline preload="metadata"></video><button class="cc-attachment-expand" type="button" aria-label="Open ${label}">↗</button></div>`;const openVideo=e=>{e.preventDefault();e.stopPropagation();attachmentLightbox(p,host,got.url,'video');};const video=host.querySelector('video');if(video)video.onclick=openVideo;const open=host.querySelector('.cc-attachment-expand');if(open)open.onclick=openVideo;}else if(got.mime.startsWith('audio/'))host.innerHTML=`<audio src="${url}" controls preload="metadata"></audio>`;else host.innerHTML=`<a href="${url}" download="${label}">Download ${label}</a>`;}catch(_){if(host.isConnected)host.innerHTML='<span class="cc-attachment-error">Could not decrypt attachment</span>';}
     }
   }
   function channelStarKey(room,name){ return `pc.concord.star.${room&&(room.communityId||room.naddr||room.url)||'unknown'}:${name||'general'}`; }
@@ -534,6 +551,7 @@
       if(settingsActions&&settingsActions.insertAdjacentHTML)settingsActions.insertAdjacentHTML('afterbegin','<button class="btn btn-ghost danger" id="cc-leave-community">Leave community</button>');
     }
     if(p.hydrateLinkCards)p.hydrateLinkCards(feed);
+    wireRoomMedia(p);
     hydrateEncryptedAttachments(messages);
     hydrateWebxdcCards(current);
     bind(me);
@@ -616,5 +634,5 @@
     $$('[data-cc-react-toggle]').forEach(b=>b.onclick=()=>toggleReaction(b.dataset.ccReactToggle,b.dataset.ccEmoji));
     $$('[data-cc-react]').forEach(b=>b.onclick=()=>{ reactionTarget=b.dataset.ccReact; const choices=['👍','❤️','😂','😮','😢','😡','🎉','💯']; const old=document.querySelector('.cc-reaction-picker'); if(old)old.remove(); const pop=document.createElement('div'); pop.className='cc-reaction-picker'; pop.innerHTML=choices.map(x=>`<button data-emoji="${x}">${x}</button>`).join(''); b.closest('.cc-message-body').appendChild(pop); pop.querySelectorAll('button').forEach(x=>x.onclick=e=>{ e.stopPropagation(); toggleReaction(reactionTarget,x.dataset.emoji); }); });
   }
-  window.PCConcord={render,openInvite:openInviteLink,inviteParts,normalizeIcon,notifyMentions,discoverInvites,threadParticipants,encryptedAttachments,messageContentHtml,handoffState,acceptHandoff};
+  window.PCConcord={render,openInvite:openInviteLink,inviteParts,normalizeIcon,notifyMentions,discoverInvites,threadParticipants,encryptedAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff};
 })();

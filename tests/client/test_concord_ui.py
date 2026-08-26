@@ -521,6 +521,17 @@ def test_concord_attachments_fit_chat_and_use_the_post_lightbox():
     assert 'object-fit:contain!important' in CONCORD_CSS
 
 
+def test_plain_room_images_and_videos_open_fullscreen_on_every_layout():
+    assert "function wireRoomMedia(p)" in CONCORD
+    assert "querySelectorAll('.cc-message-body img,.cc-message-body video')" in CONCORD
+    assert "!el.closest('.cc-encrypted-attachment')" in CONCORD
+    assert "el.tagName==='VIDEO'?'video':null" in CONCORD
+    assert "e.preventDefault();e.stopPropagation()" in CONCORD
+    assert "wireRoomMedia(p);" in CONCORD
+    assert "if(video)video.onclick=openVideo" in CONCORD
+    assert "if(open)open.onclick=openVideo" in CONCORD
+
+
 def test_concord_brand_always_returns_to_discovery():
     assert 'id="cc-home"' in CONCORD
     assert "state.community=null; state.channel=null; render()" in CONCORD
