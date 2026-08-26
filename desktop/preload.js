@@ -263,6 +263,10 @@ if (isOurPage) {
    * feature-detects it — a browser tab has no filesystem at all. */
   contextBridge.exposeInMainWorld('pcHost', {
     pickDirectory: () => ipcRenderer.invoke('pc:host:pickDirectory'),
+    pickFile: (opts) => ipcRenderer.invoke('pc:host:pickFile', opts || {}).then((r) => r && ({
+      name:String(r.name||'file'), type:String(r.type||'application/octet-stream'), size:Number(r.size)||0,
+      data:new Uint8Array(r.data)
+    })),
     list: (dir) => ipcRenderer.invoke('pc:host:list', String(dir || '')),
     roots: () => ipcRenderer.invoke('pc:host:roots'),
     // PosterChan Code, editing a file on this computer.

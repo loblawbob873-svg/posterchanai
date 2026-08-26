@@ -1520,7 +1520,15 @@
        same full-workspace geometry the Maximise button provides. */
     if(view==='concord') snapTo(w,'max');
     else if(view==='mail') documentWindow(w);
-    else focusWin(w);
+    else{
+      focusWin(w);
+      /* A newly CREATED Social window is an entry point, not a return to an old reading session.
+       * Use the client's authoritative refresh/top latch so delayed cards and scroll restoration
+       * cannot put the fresh window at the offset left by whichever app previously owned #feed.
+       * The existing-window branch above deliberately does not call this: focusing Social again
+       * must preserve the person's place. */
+      if(view==='home' && PC().timelineTop) PC().timelineTop('home');
+    }
     return w;
   }
 

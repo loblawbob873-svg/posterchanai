@@ -1472,6 +1472,21 @@ ipcMain.handle('pc:host:pickDirectory', async (e) => {
   const r = await dialog.showOpenDialog(owner, { title: 'Open project folder', properties: ['openDirectory'] });
   return r.canceled || !r.filePaths || !r.filePaths[0] ? null : hostfs().clean(r.filePaths[0]);
 });
+ipcMain.handle('pc:host:pickFile', async (e, options) => {
+  fsGuard(e);
+  const o=options && typeof options==='object' ? options : {};
+  const filters=o.images ? [{name:'Images',extensions:['jpg','jpeg','png','gif','webp','heic','heif','avif']}]
+                         : [{name:'All files',extensions:['*']}];
+  const r=await dialog.showOpenDialog(win,{title:String(o.title||'Choose a file').slice(0,80),
+    properties:['openFile'],filters});
+  if(r.canceled || !r.filePaths[0])return null;
+  const file=r.filePaths[0],st=fs.statSync(file),max=Math.min(Math.max(Number(o.max)||32*1024*1024,1),64*1024*1024);
+  if(!st.isFile())throw new Error('that is not a file');
+  if(st.size>max)throw new Error('that file is too large');
+  const ext=path.extname(file).toLowerCase(),types={'.jpg':'image/jpeg','.jpeg':'image/jpeg','.png':'image/png',
+    '.gif':'image/gif','.webp':'image/webp','.heic':'image/heic','.heif':'image/heif','.avif':'image/avif'};
+  return {name:path.basename(file),type:types[ext]||'application/octet-stream',size:st.size,data:fs.readFileSync(file)};
+});
 /* PosterChan Code editing a file on THIS computer. The guards (size, NUL bytes, atomic rename,
  * mtime compare-and-swap) are in hostfs.js, where a bridge cannot be talked out of them. */
 ipcMain.handle('pc:host:readText', (e, p) => { fsGuard(e); return hostfs().readText(String(p || '')); });

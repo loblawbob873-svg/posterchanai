@@ -33734,7 +33734,8 @@
      * on the web. sms.js needs it for a picture message's attachments, which are bytes the client
      * holds and nothing else can fetch. */
     saveBlobAs,
-    ensureProfile: _ensureProfile, NT, compose, switchView,   // compose → News "Share as note"; switchView → nav
+    ensureProfile: _ensureProfile, NT, compose, switchView, timelineTop,
+    // compose → News "Share as note"; switchView → nav; timelineTop → fresh desktop Social window
     timelineTop,
     /* PosterChan Code saves a Files document back to Files. The editor holds the text; the drive
      * index, the encryption and the folder all live here, so the round trip does too. */

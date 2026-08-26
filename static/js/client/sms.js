@@ -2171,7 +2171,22 @@
     const gifBtn = PC.$('#sms-gif');
     if(gifBtn) gifBtn.onclick = () => { if(PC.gifPicker) PC.gifPicker(input); };
     const pick = PC.$('#sms-file'), attachBtn = PC.$('#sms-attach');
-    attachBtn.onclick = () => pick.click();
+    attachBtn.onclick = async () => {
+      /* Electron's hidden file input is not reliable when the Texts window has just changed focus
+       * between compositor surfaces. Use the desktop's native, explicitly user-confirmed picker;
+       * browsers and Android keep the ordinary input. Bytes are bounded in the main process before
+       * crossing IPC, then restored as a real File so every existing MMS/upload path stays shared. */
+      if(window.pcHost && pcHost.pickFile){
+        try{
+          const chosen=await pcHost.pickFile({images:true,max:32*1024*1024,title:'Add a photo to Texts'});
+          if(!chosen)return;
+          S.attach=new File([chosen.data],chosen.name,{type:chosen.type});
+          attachBtn.classList.toggle('btn-neon',true); attachBtn.title=S.attach.name;
+        }catch(e){ PC.toast('could not attach photo: '+String(e&&e.message||e)); }
+        return;
+      }
+      pick.click();
+    };
     pick.onchange = () => {
       S.attach = (pick.files||[])[0] || null;
       attachBtn.classList.toggle('btn-neon', !!S.attach);
