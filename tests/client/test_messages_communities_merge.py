@@ -32,3 +32,9 @@ def test_android_launcher_uses_unambiguous_texts_and_messages_names():
 def test_old_concord_routes_remain_for_invites_and_saved_shortcuts():
     assert "renderModuleView('concord','concord.js','PCConcord','render')" in APP
     assert "if(v==='concord') $('#view-title').textContent='Messages'" in APP
+
+
+def test_desktop_treats_direct_messages_and_concord_as_one_window():
+    os_js = (ROOT / "static/js/client/os.js").read_text()
+    assert "const messageTab = view==='messages' || view==='concord';" in os_js
+    assert "messageTab ? (x.view==='messages'||x.view==='concord')" in os_js

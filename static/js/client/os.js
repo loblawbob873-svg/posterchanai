@@ -1961,7 +1961,13 @@
   function routeView(view, focusOnly){
     if(!on || !view) return false;
     if(!apps().some(a => a.view === view)) return false;
-    const w = wins.find(x => x.view === view);
+    /* Direct Messages and Concord are tabs of ONE Messages application.  Older saved shortcuts and
+     * invite links can still have `concord` as their window identity, while the launcher creates a
+     * `messages` window.  Looking up only the literal identity made either tab spawn a second window
+     * when opened from the other one.  Treat both historical identities as the same application;
+     * the caller then paints the requested tab into the window we just focused. */
+    const messageTab = view==='messages' || view==='concord';
+    const w = wins.find(x => messageTab ? (x.view==='messages'||x.view==='concord') : x.view===view);
     if(w){
       // An app-icon click names the app to open. A parked window can carry a stale appView captured
       // from the one global VIEW while another window was active; restoring that value made clicking
