@@ -40,7 +40,7 @@ final class MmsFailures {
             case 10: why = "the selected SIM is inactive"; break;
             case 11: why = "mobile data is disabled"; break;
             case 12: why = "no default messages app is available"; break;
-            case 0: why = "Android cancelled MMS before the carrier returned a reason"; break;
+            case 0: why = "carrier accepted MMS without delivery confirmation"; break;
             case 1: why = "carrier MMS transport failed without a reason"; break;
             default: why = "carrier send failed (code " + code + ")";
         }

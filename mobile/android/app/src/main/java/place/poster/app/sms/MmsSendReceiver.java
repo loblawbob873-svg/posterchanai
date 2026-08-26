@@ -25,7 +25,11 @@ public final class MmsSendReceiver extends BroadcastReceiver {
                 String value = intent.getStringExtra("content_uri");
                 if (value == null || value.isEmpty()) throw new Exception("missing MMS provider row");
                 Uri row = Uri.parse(value);
-                boolean ok = result == Activity.RESULT_OK;
+                /* Some carrier/OEM MMS services return Activity.RESULT_CANCELED (0) after they
+                 * accepted and delivered the PDU. Treating that as FAILED exposed Retry and sent
+                 * the same pictures repeatedly. MMS's documented transport failures are positive
+                 * codes; zero therefore means accepted with no delivery confirmation here. */
+                boolean ok = result == Activity.RESULT_OK || result == Activity.RESULT_CANCELED;
                 ContentValues values = new ContentValues();
                 values.put(Telephony.Mms.MESSAGE_BOX, ok
                         ? Telephony.Mms.MESSAGE_BOX_SENT : Telephony.Mms.MESSAGE_BOX_FAILED);
