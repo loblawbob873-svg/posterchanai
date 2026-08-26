@@ -3321,7 +3321,7 @@ set default=0
 set timeout=5
 insmod all_video
 menuentry "PosterChan Live" {
-    # Do not add `quiet` here.  On the shipped Gentoo/dracut/systemd combination it is not merely a
+    # Do not add quiet here.  On the shipped Gentoo/dracut/systemd combination it is not merely a
     # cosmetic switch: the quiet/Plymouth path races switch-root and reproducibly stops at
     # "Failed to isolate default target" under KVM, while the identical non-quiet boot reaches the
     # first-run desktop.  A visible boot log is preferable to an installer that sometimes never
