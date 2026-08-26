@@ -220,6 +220,10 @@ def test_relay_echo_racing_optimistic_send_cannot_leave_two_messages():
     assert "const id=messageId(m),old=byId.get(id)" in CONCORD
     assert "byId.set(id,old?{...old,...m}:m)" in CONCORD
     assert "return uniqueMessages(v)" in CONCORD, "old duplicated caches are not repaired on read"
+    assert "function mergeRelayMessages(prior,incoming)" in CONCORD
+    assert "m&&m.pending&&String(m.pubkey||'')===String(remote.pubkey||'')" in CONCORD
+    assert "Object.assign(pending,remote,{pending:false,remote:true})" in CONCORD
+    assert "mergeRelayMessages(prior,incoming)" in CONCORD
     assert "JSON.stringify(uniqueMessages(v).slice(-200))" in CONCORD, \
         "the relay-before-publish race can still be persisted"
 
@@ -367,6 +371,9 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert "if(current)markRead(current);" not in CONCORD
     assert 'notifyMentions(p,current,messages,viewer,me)' in CONCORD
     assert "route:'concord'" in CONCORD and 'concord-mention-' in CONCORD
+    assert "const tagged=(m.tags||[]).some(t=>(t[0]==='p'||t[0]==='P')" in CONCORD
+    assert "mentionRecipients.set(handle.toLowerCase(),choice.pk)" in CONCORD
+    assert "mentionTags.push(['P',pk],['p',pk])" in CONCORD
     assert 'import_meta.env' not in CORD_READER
     assert 'CapacitorException' not in CORD_READER and 'registerPlugin' not in CORD_READER
     assert 'decryptImagePointer(icon)' in CONCORD and "crypto.subtle.decrypt({name:'AES-GCM'" in CONCORD
@@ -468,7 +475,7 @@ def test_room_history_reads_pool_and_external_relays_without_erasing_cached_mess
     assert 'if(p.relayQuery)jobs.push' in CONCORD
     assert 'if(p.relayQueryFrom)jobs.push' in CONCORD
     assert 'const storeId=channelStoreId(room,channel.name),prior=testMessages(storeId)' in CONCORD
-    assert 'for(const m of msgs)merged.set' in CONCORD
+    assert 'mergeRelayMessages(prior,msgs)' in CONCORD
     assert 'since,limit:500' in CONCORD
 
 
@@ -499,6 +506,9 @@ def test_armada_encrypted_attachments_are_decrypted_before_media_rendering():
     assert "hash!==file.hash" in CONCORD
     assert 'messageContentHtml(p,m)' in CONCORD
     assert 'hydrateEncryptedAttachments(messages)' in CONCORD
+    assert 'class="cc-attachment-open"' in CONCORD
+    assert 'if(p.openLightbox)p.openLightbox(got.url)' in CONCORD
+    assert 'e.preventDefault();e.stopPropagation()' in CONCORD
     assert 'data-cc-attachment-index' in CONCORD
 
 

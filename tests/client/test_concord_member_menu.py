@@ -15,6 +15,7 @@ def test_member_rows_do_not_expose_destructive_buttons_permanently():
 
 def test_member_menu_supports_profile_and_owner_only_ban():
     assert "row.oncontextmenu" in JS
+    assert "row.onclick=e=>{e.preventDefault();openMemberMenu(e,target);}" in JS
     assert "row.onpointerdown" in JS and "550" in JS
     assert "View profile" in JS
     assert "canBan=isOwner&&target!==viewer.pubkey" in JS
