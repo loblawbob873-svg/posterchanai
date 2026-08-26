@@ -120,7 +120,7 @@ git push github master:main || echo "[sync] WARN: github push (Android APK build
 # server (behind Cloudflare — a nearby CDN edge, with Range/resume), which downloads far more reliably on
 # slow/throttled mobile links than bouncing to GitHub's distant CDN. The CI build takes ~2-3 min, so do it
 # detached after a delay (best-effort; /apk falls back to the GitHub redirect until the mirror updates).
-( sleep 240; /home/verita84/posterchan-apk/refresh.sh ) >/tmp/apk-refresh.log 2>&1 &
+( sleep 240; ./scripts/refresh_apk.sh ) >/tmp/apk-refresh.log 2>&1 &
 
 # Update router.lan (192.168.0.1) nginx's static checkout. It serves /static from LOCAL files
 # (root /srv/posterchanai → a git clone), decoupling asset loading from server1 so the restart below
