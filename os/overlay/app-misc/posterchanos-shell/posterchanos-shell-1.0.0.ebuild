@@ -26,6 +26,7 @@ RDEPEND="
 	gui-apps/grim
 	gui-apps/slurp
 	gui-apps/wl-clipboard
+	x11-misc/ydotool
 	app-misc/ddcutil
 	www-client/firefox-bin
 	net-wireless/bluez
@@ -71,6 +72,9 @@ src_install() {
 }
 
 pkg_postinst() {
+	# Remote Desktop control uses ydotool's per-user 0600 socket. Enable it globally so each signed-in
+	# identity gets its own daemon/socket; the desktop also starts it lazily for already-open sessions.
+	systemctl --global enable ydotool.service >/dev/null 2>&1 || true
 	# One repository endpoint on every PosterChanOS machine. The NAS maintains the local mirror and
 	# gentoo.poster.place serves it over HTTPS; clients consume Gentoo's signed webrsync snapshot.
 	# Keep this in pkg_postinst as well as gentoo.sh so a normal OS update repairs existing installs.

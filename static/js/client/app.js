@@ -32974,6 +32974,40 @@
     };
     return pc;
   }
+  /* Remote Desktop control rides a dedicated WebRTC data channel. Screen acceptance never implies
+   * input acceptance: the viewer asks, the sharer explicitly allows, and either side can revoke it.
+   * No relay sees keystrokes and a disconnected call destroys the channel with the PeerConnection. */
+  const _RD_KEYS={Escape:1,Digit1:2,Digit2:3,Digit3:4,Digit4:5,Digit5:6,Digit6:7,Digit7:8,Digit8:9,Digit9:10,Digit0:11,
+    Minus:12,Equal:13,Backspace:14,Tab:15,KeyQ:16,KeyW:17,KeyE:18,KeyR:19,KeyT:20,KeyY:21,KeyU:22,KeyI:23,KeyO:24,KeyP:25,
+    BracketLeft:26,BracketRight:27,Enter:28,ControlLeft:29,KeyA:30,KeyS:31,KeyD:32,KeyF:33,KeyG:34,KeyH:35,KeyJ:36,KeyK:37,KeyL:38,
+    Semicolon:39,Quote:40,Backquote:41,ShiftLeft:42,Backslash:43,KeyZ:44,KeyX:45,KeyC:46,KeyV:47,KeyB:48,KeyN:49,KeyM:50,
+    Comma:51,Period:52,Slash:53,ShiftRight:54,AltLeft:56,Space:57,CapsLock:58,ControlRight:97,AltRight:100,
+    ArrowUp:103,ArrowLeft:105,ArrowRight:106,ArrowDown:108,Delete:111};
+  function _rdSend(obj){try{if(_call&&_call.control&&_call.control.readyState==='open')_call.control.send(JSON.stringify(obj));}catch(_){}}
+  function _rdReleaseNative(){try{if(window.pcRemoteControl&&pcRemoteControl.release)pcRemoteControl.release();}catch(_){}}
+  function _rdWireControl(ch){
+    if(!_call||!_call.remoteDesktop||!ch)return;_call.control=ch;
+    ch.onopen=()=>_callUI();ch.onclose=()=>{if(_call&&_call.control===ch){_call.control=null;_call.controlGranted=false;_call.controlRequested=false;_rdReleaseNative();_callUI();}};
+    ch.onmessage=e=>{if(!_call||_call.control!==ch)return;let m;try{if(String(e.data||'').length>512)return;m=JSON.parse(e.data);}catch(_){return;}
+      if(m.t==='request'&&!_call.caller){return;} // only the viewer requests; only the sharing host approves
+      if(m.t==='request'&&_call.caller){_call.controlRequested=true;_callUI();return;}
+      if(m.t==='release'&&_call.caller){_call.controlRequested=false;_call.controlGranted=false;_rdReleaseNative();_callUI();return;}
+      if(m.t==='grant'&&!_call.caller){_call.controlGranted=!!m.on;_callUI();return;}
+      if(m.t==='input'&&_call.caller&&_call.controlGranted&&window.pcRemoteControl&&pcRemoteControl.input)
+        Promise.resolve(pcRemoteControl.input(m.e||{})).catch(()=>{});
+    };
+  }
+  function _rdGrant(on){if(!_call||!_call.remoteDesktop||!_call.caller)return;_call.controlRequested=false;_call.controlGranted=!!on;if(!on)_rdReleaseNative();_rdSend({t:'grant',on:!!on});_callUI();}
+  function _rdBindViewer(video){
+    if(!video||video.dataset.rdControl)return;video.dataset.rdControl='1';let px=null,py=null;
+    const active=()=>!!(_call&&_call.remoteDesktop&&!_call.caller&&_call.controlGranted);
+    video.addEventListener('pointerdown',e=>{if(!active())return;px=e.clientX;py=e.clientY;try{video.setPointerCapture(e.pointerId);}catch(_){} _rdSend({t:'input',e:{type:'button',button:Math.min(2,e.button|0),down:true}});e.preventDefault();});
+    video.addEventListener('pointermove',e=>{if(!active()||px===null)return;const dx=Math.max(-240,Math.min(240,Math.round(e.clientX-px))),dy=Math.max(-240,Math.min(240,Math.round(e.clientY-py)));px=e.clientX;py=e.clientY;if(dx||dy)_rdSend({t:'input',e:{type:'move',dx,dy}});e.preventDefault();});
+    const up=e=>{if(!active()||px===null)return;px=py=null;_rdSend({t:'input',e:{type:'button',button:Math.min(2,e.button|0),down:false}});e.preventDefault();};
+    video.addEventListener('pointerup',up);video.addEventListener('pointercancel',up);video.addEventListener('contextmenu',e=>{if(active())e.preventDefault();});
+  }
+  document.addEventListener('keydown',e=>{if(!(_call&&_call.remoteDesktop&&!_call.caller&&_call.controlGranted))return;const c=_RD_KEYS[e.code];if(!c)return;e.preventDefault();_rdSend({t:'input',e:{type:'key',code:c,down:true}});},true);
+  document.addEventListener('keyup',e=>{if(!(_call&&_call.remoteDesktop&&!_call.caller&&_call.controlGranted))return;const c=_RD_KEYS[e.code];if(!c)return;e.preventDefault();_rdSend({t:'input',e:{type:'key',code:c,down:false}});},true);
   // getUserMedia failures were all reported as "permission needed", which is wrong in the most common
   // case: on an insecure origin (http:// on a LAN IP) navigator.mediaDevices is undefined, the browser
   // never prompts, and there is genuinely nothing for the user to click — hence "no way to do it".
@@ -33059,6 +33093,7 @@
     const ice = await _fetchIceServers();
     if(!_call){ local.getTracks().forEach(t=>t.stop()); return; }
     const pc = _newPc(ice.iceServers); _call.pc = pc;
+    if(remoteDesktop) _rdWireControl(pc.createDataChannel('posterchan-control',{ordered:true}));
     local.getTracks().forEach(t=> pc.addTrack(t, local));
     _preferH264(pc);   // hardware encode/decode on both ends — see _preferH264
     // Guard the SDP dance: a createOffer/setLocalDescription rejection (SDP/codec/hardware quirk) or a
@@ -33132,6 +33167,7 @@
     const ice = await _fetchIceServers();
     if(!_call){ local.getTracks().forEach(t=>t.stop()); return; }
     const pc = _newPc(ice.iceServers); _call.pc = pc;
+    if(_call.remoteDesktop) pc.ondatachannel=e=>{if(e.channel&&e.channel.label==='posterchan-control')_rdWireControl(e.channel);};
     try{ await pc.setRemoteDescription({type:'offer', sdp:invite.sdp}); }catch(_){ _hangup(false); return; }
     local.getTracks().forEach(t=> pc.addTrack(t, local));
     _preferH264(pc);   // hardware encode/decode on both ends — see _preferH264
@@ -33187,6 +33223,8 @@
     if(!_call) return;
     try{ clearTimeout(_call.timeout); }catch(_){}
     try{ if(_call.signalClose) _call.signalClose(); }catch(_){}
+    if(_call.remoteDesktop&&_call.caller)_rdReleaseNative();
+    try{ if(_call.control) _call.control.close(); }catch(_){}
     try{ if(_call.pc) _call.pc.close(); }catch(_){}
     try{ if(_call.local) _call.local.getTracks().forEach(t=>t.stop()); }catch(_){}
     _call = null; _callService(false); _callUI();
@@ -33450,7 +33488,7 @@
     // bare reassignment would drop `call-mini` and pop the overlay back to fullscreen on its own.
     const _mini=el.classList.contains('call-mini');
     el.className='call-overlay'+(showVid?' vid':' aud')+(_call.state==='ringing'?' ring':'')+(_call.state==='connected'?' on':'')+(_mini?' call-mini':'');
-    const rv=document.getElementById('call-remote'); if(rv){ rv.style.display=hasRemoteVid?'':'none'; if(_call.remote && rv.srcObject!==_call.remote){ rv.srcObject=_call.remote; rv.play&&rv.play().catch(()=>{}); } }
+    const rv=document.getElementById('call-remote'); if(rv){ rv.style.display=hasRemoteVid?'':'none'; if(_call.remote && rv.srcObject!==_call.remote){ rv.srcObject=_call.remote; rv.play&&rv.play().catch(()=>{}); } if(_call.remoteDesktop&&!_call.caller)_rdBindViewer(rv); }
     const lv=document.getElementById('call-local'); if(lv){ lv.style.display=(hasLocalVid&&!_call.camOff)?'':'none'; if(_call.local && lv.srcObject!==_call.local){ lv.srcObject=_call.local; lv.play&&lv.play().catch(()=>{}); }
       // Wire + restore AFTER display is set: offsetWidth is 0 while hidden, so placing it any earlier
       // has nothing to clamp against and would silently leave it in the default corner.
@@ -33464,6 +33502,12 @@
       ? act('call-accept',_call.remoteDesktop?'🖥':'📞',_call.remoteDesktop?'View':'Answer','accept')+act('call-decline','✕','Decline','decline')
       : act('call-min','▁','Minimize')
         +(_call.remoteDesktop&&!_call.caller?act('call-full','⛶','Fullscreen'):'')
+        +(_call.remoteDesktop&&!_call.caller&&_call.state==='connected'&&_call.control
+          ? act('call-control',_call.controlGranted?'🖱️':'☝️',_call.controlGranted?'Stop control':'Request control',_call.controlGranted?'hang':''):'')
+        +(_call.remoteDesktop&&_call.caller&&_call.controlRequested
+          ? act('call-control-allow','✓','Allow control','accept')+act('call-control-deny','✕','Deny control','hang'):'')
+        +(_call.remoteDesktop&&_call.caller&&_call.controlGranted&&!_call.controlRequested
+          ? act('call-control-stop','🖱️','Stop control','hang'):'')
         +(_call.remoteDesktop?'':act('call-mute', _call.muted?'🔇':'🎙️', _call.muted?'Unmute':'Mute'))
         +(!_call.remoteDesktop&&canVid?act('call-cam', sendingVid?'🚫':'📷', sendingVid?'Stop video':'Start video'):'')
         +act('call-hang','📵',_call.remoteDesktop&&_call.caller?'Stop sharing':'End','hang');
@@ -33477,6 +33521,10 @@
         if(document.fullscreenElement) await document.exitFullscreen();
         else await el.requestFullscreen();
       }catch(_){ toast('fullscreen is unavailable in this window'); } };
+      if(b('call-control')) b('call-control').onclick=()=>{if(!_call)return;if(_call.controlGranted){_call.controlGranted=false;_rdSend({t:'release'});_callUI();}else _rdSend({t:'request'});};
+      if(b('call-control-allow')) b('call-control-allow').onclick=()=>_rdGrant(true);
+      if(b('call-control-deny')) b('call-control-deny').onclick=()=>_rdGrant(false);
+      if(b('call-control-stop')) b('call-control-stop').onclick=()=>_rdGrant(false);
       if(b('call-mute')) b('call-mute').onclick=()=>{ if(_call&&_call.local){ _call.muted=!_call.muted; _call.local.getAudioTracks().forEach(t=>t.enabled=!_call.muted); _callUI(); } };
       if(b('call-cam')) b('call-cam').onclick=()=>_toggleVideo();
     }

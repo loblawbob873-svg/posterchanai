@@ -29,6 +29,7 @@ let background = null; // background.js imports Tray, so require it only after a
 const vm = require('./vm');
 const bluetooth = require('./bluetooth');
 const liveusb = require('./liveusb');
+const remotecontrol = require('./remotecontrol');
 
 /* --shell: this process IS the desktop, not an app running on one.
  *
@@ -1289,6 +1290,12 @@ ipcMain.handle('pc:wm:restore', (e, id, x, y, w, h) => {
 });
 ipcMain.handle('pc:wm:fullscreen', (e, id, on) => { fsGuard(e); return wm().fullscreen(Number(id), !!on); });
 ipcMain.handle('pc:wm:snap', (e, id, zone) => { fsGuard(e); return wm().snap(Number(id), String(zone||'')); });
+ipcMain.handle('pc:remote:input', (e, input) => {
+  fsGuard(e);
+  if(!SHELL_MODE) return false;
+  return remotecontrol.input(input);
+});
+ipcMain.handle('pc:remote:release', (e) => { fsGuard(e); return SHELL_MODE ? remotecontrol.release() : false; });
 /* Decorating the FIRST native window is also when the palette is (re)applied: it is the earliest
  * moment we know a compositor is there and something is about to be drawn with it, and it costs
  * seven idempotent commands once per session. Without this the colours come only from a config file

@@ -155,6 +155,11 @@ if (isOurPage) {
     revert: token => ipcRenderer.invoke('pc:display:revert', String(token||'')),
   });
 
+  contextBridge.exposeInMainWorld('pcRemoteControl', {
+    input: event => ipcRenderer.invoke('pc:remote:input', event && typeof event==='object' ? event : {}),
+    release: () => ipcRenderer.invoke('pc:remote:release'),
+  });
+
   contextBridge.exposeInMainWorld('pcLiveUSB', {
     devices: () => ipcRenderer.invoke('pc:liveusb:devices'),
     status: () => ipcRenderer.invoke('pc:liveusb:status'),
