@@ -24331,7 +24331,11 @@
       (m0, pre, url) => pre + '<a href="' + (/^www\./i.test(url) ? 'https://' + url : url)
         + '" target="_blank" rel="noopener noreferrer">' + url + '</a>'); },
     _msgBlock(m, folder, acct, expanded){
-      const atts=(m.attachments||[]).map((at,i)=>`<a class="mail-att" href="/api/mail/dl/${encodeURIComponent(m.account||acct)}/${encodeURIComponent(m.folder||folder)}/${encodeURIComponent(m.uid)}/${i}" target="_blank" rel="noopener">📎 ${enc(at.name||'attachment')} <span class="muted small">${_fmtBytes(at.size||0)}</span></a>`).join('');
+      /* A relative download URL belongs to the page that rendered it. That is correct on the web,
+       * but packaged clients render at app://posterchan (desktop) or https://localhost (Android),
+       * neither of which hosts Mail. Always bind the attachment to the configured instance. */
+      const dlBase=_instanceBase();
+      const atts=(m.attachments||[]).map((at,i)=>`<a class="mail-att" href="${enc(dlBase)}/api/mail/dl/${encodeURIComponent(m.account||acct)}/${encodeURIComponent(m.folder||folder)}/${encodeURIComponent(m.uid)}/${i}" target="_blank" rel="noopener">📎 ${enc(at.name||'attachment')} <span class="muted small">${_fmtBytes(at.size||0)}</span></a>`).join('');
       /* Untrusted email HTML → sandboxed iframe (no scripts, no forms, no same-origin); else text.
        *
        * A LINK IN AN EMAIL OPENS IN THE BROWSER. With a bare `sandbox` a click did nothing at all:

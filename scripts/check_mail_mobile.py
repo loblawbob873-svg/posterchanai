@@ -39,7 +39,7 @@ import urllib.request
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WIDTHS = [(390, 844, True), (360, 780, True), (1280, 860, False)]
 PORT = int(os.environ.get("PC_CHECK_PORT") or 9485)
-PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-mail-check"
+PROFILE = os.environ.get("PC_CHECK_PROFILE") or f"/tmp/pc-mail-check-{os.getpid()}"
 
 # Long, unbounded strings on purpose: a real inbox is full of them and they are what breaks a phone
 # layout. One contact card carries a grouped email, the shape DAVx5 writes.
@@ -73,6 +73,8 @@ const ME = { pubkey:'me' };
 const CFG = {};
 const mediaServer = ()=>'';
 const FilesIdx = null;
+window.__PC_API_BASE__ = 'https://mail.instance.test';
+const _instanceBase = () => window.__PC_API_BASE__;
 let VIEW='messages';
 const MSGS = [
   { uid:'1', account:'me@example.com', folder:'INBOX', read:false,
@@ -256,6 +258,10 @@ OPEN_MESSAGE = r"""(async () => {
            wide: !!(r && Math.round(r.width) > window.innerWidth + 1),
            paneH: r ? Math.round(r.height) : 0,
            bodyH: br ? Math.round(br.height) : 0,
+           attachment: (() => {
+             const a = document.querySelector('.mail-att');
+             return a ? { href:a.href, host:new URL(a.href).host } : null;
+           })(),
            acts: (() => {
              const bar = document.querySelector('.mail-actions');
              if (!bar) return null;
@@ -263,6 +269,7 @@ OPEN_MESSAGE = r"""(async () => {
              const tops = new Set(bs.map(b => Math.round(b.getBoundingClientRect().top)));
              const br = bar.getBoundingClientRect();
              return { n: bs.length, rows: tops.size,
+                      barH: Math.round(br.height),
                       short: bs.filter(b => b.getBoundingClientRect().height < 32).length,
                       // A button whose right edge is past the row's is CUT OFF — which is what a
                       // 112px minimum column did to Delete on a narrow reading pane.
@@ -347,7 +354,7 @@ RENDER_STORM = r"""(async () => {
 
 async def drive(url):
     import websockets  # noqa: F401,F811
-    subprocess.run(["rm", "-rf", PROFILE], check=False)
+    shutil.rmtree(PROFILE, ignore_errors=True)
     chrome = (shutil.which("google-chrome-stable") or shutil.which("google-chrome")
               or shutil.which("chromium"))
     if not chrome:
@@ -529,6 +536,15 @@ async def drive(url):
                         if phone and a["short"]:
                             problems.append((label, "tiny-tap-target",
                                              f"{a['short']} action button(s) under 32px"))
+                        if phone and (a["rows"] != 1 or a["barH"] > 54):
+                            problems.append((label, "actions-oversized",
+                                             f"message actions occupy {a['rows']} rows / {a['barH']}px; "
+                                             "the mobile reader needs one compact toolbar"))
+                    att = op.get("attachment")
+                    if not att or att.get("host") != "mail.instance.test":
+                        problems.append((label, "attachment-wrong-origin",
+                                         f"attachment resolved to {(att or {}).get('href')!r}, "
+                                         "not the configured mail instance"))
                     if op.get("hdrOverflow"):
                         problems.append((label, "horizontal-overflow",
                                          "a long From/To pushes the message header out of the pane"))
@@ -612,7 +628,12 @@ async def drive(url):
                             problems.append((label, "ios-zoom-trap", f"composer field {s}"))
     finally:
         proc.terminate()
-        subprocess.run(["rm", "-rf", PROFILE], check=False)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+        shutil.rmtree(PROFILE, ignore_errors=True)
 
     if problems:
         print(f"FAIL  {len(problems)} problem(s):")

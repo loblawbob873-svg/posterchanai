@@ -1,6 +1,7 @@
 from pathlib import Path
 
 CSS=(Path(__file__).parents[1]/'static/css/client.css').read_text()
+ROOT=Path(__file__).parents[1]
 
 
 def test_mobile_reader_uses_readable_type_and_measure():
@@ -10,6 +11,12 @@ def test_mobile_reader_uses_readable_type_and_measure():
 
 
 def test_mobile_actions_are_thumb_sized_and_fit_without_hidden_scrolling():
-    assert 'grid-template-columns:repeat(4,minmax(0,1fr))' in CSS
-    assert '.mail-actions .btn{width:auto;min-width:0;min-height:44px' in CSS
+    assert 'grid-template-columns:repeat(7,minmax(0,1fr))' in CSS
+    assert '.mail-actions .btn{width:auto;min-width:0;min-height:40px;height:40px' in CSS
     assert '.mail-att{min-height:44px' in CSS
+
+
+def test_packaged_mail_attachments_use_the_configured_instance():
+    app = (ROOT / 'static/js/client/app.js').read_text()
+    assert 'const dlBase=_instanceBase();' in app
+    assert 'href="${enc(dlBase)}/api/mail/dl/' in app
