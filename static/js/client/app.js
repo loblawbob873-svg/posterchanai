@@ -32979,8 +32979,27 @@
     pc.oniceconnectionstatechange = () => { if(_call && _call.pc===pc) _callUI(); };   // surface ICE progress in the status line
     pc.onconnectionstatechange = () => { if(!_call || _call.pc!==pc) return;
       const st=pc.connectionState;
-      if(st==='connected'){ _call.state='connected'; _callUI(); }
-      else if(st==='failed'){ toast('call couldn’t connect (network/firewall)'); _hangup(false); }   // ICE/relay failure → tell the peer too
+      if(st==='connected'){
+        // A Wi-Fi route change can report `failed`, recover after restartIce(), then become connected
+        // again. Cancel the delayed teardown so a recovered Remote Desktop session stays intact.
+        if(_call.iceFailureTimer){clearTimeout(_call.iceFailureTimer);_call.iceFailureTimer=null;}
+        _call.state='connected'; _callUI();
+      }
+      else if(st==='failed'){
+        /* `failed` is not necessarily terminal: Chromium can briefly enter it while switching from a
+         * host candidate to TURN (observed when the Remote Desktop control data-channel first sends).
+         * Tearing down synchronously made "Request control" appear to end a healthy screen share.
+         * Give ICE one bounded recovery attempt; a genuinely dead peer still closes promptly. */
+        if(!_call.iceFailureTimer){
+          _call.state='connecting'; _callUI();
+          try{pc.restartIce();}catch(_){}
+          _call.iceFailureTimer=setTimeout(()=>{
+            if(_call&&_call.pc===pc&&pc.connectionState==='failed'){
+              toast('call couldn’t connect (network/firewall)'); _hangup(false);
+            }else if(_call&&_call.pc===pc){_call.iceFailureTimer=null;}
+          },10000);
+        }
+      }
       else if(st==='closed'){ _hangup(true); }
       else _callUI();
     };
@@ -33250,6 +33269,7 @@
   function _callTeardown(){
     if(!_call) return;
     try{ clearTimeout(_call.timeout); }catch(_){}
+    try{ clearTimeout(_call.iceFailureTimer); }catch(_){}
     try{ if(_call.signalClose) _call.signalClose(); }catch(_){}
     if(_call.remoteDesktop&&_call.caller)_rdReleaseNative();
     try{ if(_call.control) _call.control.close(); }catch(_){}

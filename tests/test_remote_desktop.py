@@ -70,7 +70,9 @@ def test_desktop_has_a_picker_and_recovers_its_guard_after_source_errors():
 
 def test_linux_screen_share_has_a_portal_registered_desktop_identity():
     package = json.loads((ROOT / "desktop/package.json").read_text(encoding="utf-8"))
-    ebuild = (ROOT / "os/overlay/app-misc/posterchan-desktop/posterchan-desktop-1.0.1016.ebuild").read_text(encoding="utf-8")
+    ebuilds = sorted((ROOT / "os/overlay/app-misc/posterchan-desktop").glob("posterchan-desktop-*.ebuild"))
+    assert ebuilds, "Gentoo overlay has no PosterChan desktop ebuild"
+    ebuild = ebuilds[-1].read_text(encoding="utf-8")
     assert package["build"]["appId"] == "place.poster.desktop"
     assert package["desktopName"] == package["build"]["appId"] + ".desktop"
     # 42.0.0 is frame-tested on PosterChanOS/Sway. Newer Electron builds can enumerate the portal's
@@ -157,6 +159,19 @@ def test_remote_desktop_viewer_has_a_real_fullscreen_control():
     assert "act('call-full','⛶','Fullscreen')" in APP
     assert "await el.requestFullscreen()" in APP
     assert "await document.exitFullscreen()" in APP
+
+
+def test_transient_ice_failure_does_not_end_remote_control_session():
+    """Opening/using the control data channel can coincide with an ICE route switch.  A transient
+    `failed` state must get a recovery window instead of turning Request control into Hang up."""
+    block = APP[APP.index("function _newPc(iceServers)"):APP.index("/* Remote Desktop control", APP.index("function _newPc(iceServers)"))]
+    failed = block[block.index("else if(st==='failed')"):block.index("else if(st==='closed')")]
+    assert "pc.restartIce()" in failed
+    assert "setTimeout" in failed
+    assert "_hangup(false)" in failed
+    assert failed.index("setTimeout") < failed.index("_hangup(false)")
+    teardown = APP[APP.index("function _callTeardown()") : APP.index("function _onCallEvent", APP.index("function _callTeardown()"))]
+    assert "clearTimeout(_call.iceFailureTimer)" in teardown
 
 
 def test_launcher_tiles_leave_desktop_without_forgetting_the_preference():
