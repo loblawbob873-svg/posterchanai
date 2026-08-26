@@ -461,7 +461,6 @@
     if(window.PCOS && PCOS.isOn && PCOS.isOn() &&
        (!PCOS.ownsFeedView || !PCOS.ownsFeedView('concord'))) return;
     const feed=p.$('#feed'); if(!feed) return;
-    const returning=!feed.querySelector||!feed.querySelector('.cc-app');
     startDiscovery(p);
     startLiveSync(p);
     // Covers the stale-service-worker compatibility entry too, which does not run switchView().
@@ -515,7 +514,12 @@
     hydrateWebxdcCards(current);
     bind(me);
     if(autoOpen>=0)setTimeout(()=>{ const button=document.querySelector(`[data-cc-server="${autoOpen}"]`); if(button)button.click(); },0);
-    if(returning&&current)restoreChatScroll();
+    /* render() replaces the scroller on EVERY relay/history/metadata repaint, not only when the app
+     * first returns to the feed. Restore after every replacement: pinned rooms land at the newest
+     * message; a person who deliberately scrolled up keeps that saved offset. The old `returning`
+     * gate is why entering a room briefly reached the bottom and then jumped into the middle when
+     * its asynchronous history hydration rendered again. */
+    if(current)restoreChatScroll();
   }
   function bind(me){
     const p=PC(), $=p.$, $$=p.$$;

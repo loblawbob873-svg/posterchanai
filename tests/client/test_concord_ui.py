@@ -37,7 +37,7 @@ def test_packaged_shell_loads_the_complete_concord_surface():
 
 
 def test_concord_never_repaints_another_app_shared_feed():
-    render = CONCORD[CONCORD.index('function render(){'):CONCORD.index('const returning=', CONCORD.index('function render(){'))]
+    render = CONCORD[CONCORD.index('function render(){'):CONCORD.index('startDiscovery(p)', CONCORD.index('function render(){'))]
     assert "p.isView('concord')" in render
     assert render.index("p.isView('concord')") < render.index("p.$('#feed')")
     assert "PCOS.ownsFeedView('concord')" in render
