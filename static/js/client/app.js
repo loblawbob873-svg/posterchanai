@@ -32983,6 +32983,8 @@
     Semicolon:39,Quote:40,Backquote:41,ShiftLeft:42,Backslash:43,KeyZ:44,KeyX:45,KeyC:46,KeyV:47,KeyB:48,KeyN:49,KeyM:50,
     Comma:51,Period:52,Slash:53,ShiftRight:54,AltLeft:56,Space:57,CapsLock:58,ControlRight:97,AltRight:100,
     ArrowUp:103,ArrowLeft:105,ArrowRight:106,ArrowDown:108,Delete:111};
+  let _remoteDesktopArmed=false;
+  function setRemoteDesktopArmed(on){_remoteDesktopArmed=!!on;if(!_remoteDesktopArmed&&_call&&_call.remoteDesktop)_hangup(false);return _remoteDesktopArmed;}
   function _rdSend(obj){try{if(_call&&_call.control&&_call.control.readyState==='open')_call.control.send(JSON.stringify(obj));}catch(_){}}
   function _rdReleaseNative(){try{if(window.pcRemoteControl&&pcRemoteControl.release)pcRemoteControl.release();}catch(_){}}
   function _rdWireControl(ch){
@@ -33147,6 +33149,7 @@
     return {pk,relays};
   }
   async function startRemoteDesktop(peer){
+    if(!_remoteDesktopArmed)throw new Error('open Remote Desktop before starting a session');
     const target=await _remoteDesktopAddress(peer);
     await startCall(target.pk,{remoteDesktop:true,signalRelays:target.relays});
     return !!_call;
@@ -33249,6 +33252,9 @@
       }
       if(msg.t==='invite'){
         if(MUTED.has(from)) return;   // a muted/blocked pubkey can't ring you
+        /* Voice/video calls remain available globally, but a desktop session is deliberately
+         * opt-in on BOTH ends. Merely being signed in must not make this device a remote endpoint. */
+        if(msg.remoteDesktop&&!_remoteDesktopArmed)return;
         // Don't ring for an invite that is already over. The subscription's `since` cannot be relied on
         // to bound this: relay.js re-REQs the filters VERBATIM on re-arm, so `since` is frozen at
         // subscribe time and the window silently widens with uptime (an hour up = an hour of history
@@ -33829,7 +33835,7 @@
      * timeline subscriptions cannot mistake that borrowed feed for Social and paint into it. */
     adoptView: (v) => { VIEW=String(v||''); },
     askWindowContext,
-    startRemoteDesktop,
+    startRemoteDesktop, setRemoteDesktopArmed,
     /* The one pass that fills every `.name[data-prof]` (and avatars, nip05s, @mentions) once a kind-0
      * arrives. A sub-module that paints author names MUST be able to call it, or its names are frozen
      * at whatever was cached when it drew — webxdc.js's app gallery is not repainted by anything else,

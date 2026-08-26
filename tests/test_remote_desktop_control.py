@@ -21,6 +21,16 @@ def test_viewer_must_request_and_host_must_explicitly_grant_control():
     assert gate in APP
 
 
+def test_remote_desktop_is_armed_only_while_its_app_is_open_on_both_ends():
+    os_src = (ROOT / "static/js/client/os.js").read_text()
+    assert "let _remoteDesktopArmed=false" in APP
+    assert "if(!_remoteDesktopArmed)throw new Error('open Remote Desktop before starting a session')" in APP
+    assert "if(msg.remoteDesktop&&!_remoteDesktopArmed)return" in APP
+    assert "setRemoteDesktopArmed&&PC().setRemoteDesktopArmed(true)" in os_src
+    assert "w.onClose=()=>" in os_src
+    assert "setRemoteDesktopArmed&&PC().setRemoteDesktopArmed(false)" in os_src
+
+
 def test_control_is_revocable_and_dies_with_the_call():
     assert "_rdSend({t:'release'})" in APP
     assert "m.t==='release'&&_call.caller" in APP

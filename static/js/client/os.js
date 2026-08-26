@@ -1917,6 +1917,8 @@
   function openRemoteDesktop(){
     const old=wins.find(x=>x.view==='__remote');if(old){focusWin(old,false);return old;}
     const w=openApp('__remote','Remote Desktop','#i-monitor',null,true,true);if(!w)return null;
+    try{PC().setRemoteDesktopArmed&&PC().setRemoteDesktopArmed(true);}catch(_){}
+    w.onClose=()=>{try{PC().setRemoteDesktopArmed&&PC().setRemoteDesktopArmed(false);}catch(_){}};
     w.el.classList.add('osw-remote');
     w.slot.innerHTML=`<div class="pcrd"><div class="pcrd-hero"><svg class="ic"><use href="#i-monitor"></use></svg><div><b>Share this desktop</b><span>Encrypted peer-to-peer screen sharing, signaled over Nostr.</span></div></div>
       <label class="pcrd-label">Viewer’s npub or address<input class="input" data-rd-peer placeholder="npub1… · 192.168.1.20 · name@host" autocomplete="off" spellcheck="false"></label>
