@@ -48,6 +48,7 @@ import place.poster.app.sync.SyncStore;
  */
 public final class SmsOutbox {
     private static final String CLAIMS = "poster_sms_outbox_claims";
+    private static final String CANCELLED = "poster_sms_outbox_cancelled";
 
     private static final String TAG = "PosterChan";
     private static final int KIND = 30078;
@@ -138,6 +139,18 @@ public final class SmsOutbox {
         return p.edit().putLong(doc, System.currentTimeMillis()).commit();
     }
 
+    /** Remember a sender cancellation even when a worker has already claimed the request. */
+    public static synchronized void cancel(Context ctx, String doc) {
+        if (doc == null || !doc.startsWith(D_OUT)) return;
+        ctx.getSharedPreferences(CANCELLED, Context.MODE_PRIVATE).edit()
+                .putLong(doc, System.currentTimeMillis()).commit();
+    }
+
+    public static synchronized boolean isCancelled(Context ctx, String doc) {
+        return doc != null && ctx.getSharedPreferences(CANCELLED, Context.MODE_PRIVATE)
+                .contains(doc);
+    }
+
     /**
      * Perform one request. Returns the EVENT to publish (the done marker), or null when there is
      * nothing to do -- already done, too old, not for us, or the app is on screen and its own drain
@@ -155,14 +168,16 @@ public final class SmsOutbox {
             byte[] ck = Crypt.conversationKey(sec, me);   // sealed to the user's OWN key
             String plain = Crypt.nip44Decrypt(ck, ev.optString("content", ""));
             JSONObject req = new JSONObject(plain);
-            if (req.optBoolean("done", false)) return null;
+            String doc = docOf(ev);
+            if (doc.isEmpty()) return null;
+            if (req.optBoolean("done", false)) {
+                if (req.optBoolean("cancelled", false)) cancel(ctx, doc);
+                return null;
+            }
             String to = req.optString("to", "");
             String body = req.optString("body", "");
             JSONObject attachment = req.optJSONObject("attachment");
             if (to.isEmpty() || (body.isEmpty() && attachment == null)) return null;
-
-            String doc = docOf(ev);
-            if (doc.isEmpty()) return null;
 
             long asked = req.optLong("at", 0L);
             if (System.currentTimeMillis() - asked > MAX_AGE_MS) {
@@ -194,7 +209,14 @@ public final class SmsOutbox {
                     if (!canonical.equals(store.wrappedDriveKey())) store.setWrappedDriveKey(canonical);
                     byte[] mk = SyncCrypto.unwrapMasterKey(sec, canonical);
                     byte[] imageBytes = SyncCrypto.decrypt(mk, net.getBlob(sha));
-                    r = MmsSender.send(ctx, to, body, imageBytes);
+                    /* Download/decrypt can take seconds. A cancellation event delivered while that
+                     * work was running must win before bytes cross the irreversible radio boundary. */
+                    if (isCancelled(ctx, doc)) {
+                        r = new SmsSender.Result();
+                        r.error = "cancelled by sender";
+                    } else {
+                        r = MmsSender.send(ctx, to, body, imageBytes);
+                    }
                 } catch (Throwable mmsError) {
                     r = new SmsSender.Result();
                     r.error = mmsError.getMessage() == null ? "could not send picture message"

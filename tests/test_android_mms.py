@@ -505,6 +505,11 @@ class OutgoingMms(unittest.TestCase):
         self.assertIn("SyncCrypto.decrypt(mk, net.getBlob(sha))", outbox)
         self.assertIn("MmsSender.send(ctx, to, body, imageBytes)", outbox)
         self.assertIn("if (!claim(ctx, doc)) return null", outbox)
+        self.assertIn('req.optBoolean("cancelled", false)', outbox)
+        self.assertIn("cancel(ctx, doc)", outbox)
+        self.assertIn("if (isCancelled(ctx, doc))", outbox)
+        self.assertLess(outbox.index("if (isCancelled(ctx, doc))"),
+                        outbox.index("MmsSender.send(ctx, to, body, imageBytes)"))
 
     def test_remote_photo_placeholder_uses_the_mms_document_identity(self):
         """The later provider mirror must replace the pending bubble, not create a duplicate."""

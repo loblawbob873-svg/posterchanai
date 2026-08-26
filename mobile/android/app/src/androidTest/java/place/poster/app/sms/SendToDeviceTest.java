@@ -4,7 +4,9 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 import android.net.Uri;
+import android.content.Context;
 
+import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 
 import org.junit.Test;
@@ -64,5 +66,15 @@ public class SendToDeviceTest {
         assertTrue(SendTo.isMessageUri(Uri.parse("SMSTO:+15550100")));
         assertTrue(!SendTo.isMessageUri(Uri.parse("tel:+15550100")));
         assertTrue(!SendTo.isMessageUri(null));
+    }
+
+    @Test
+    public void anOutboxCancellationSurvivesUntilTheRadioWorkerChecksIt() {
+        Context context = ApplicationProvider.getApplicationContext();
+        String doc = "pcai:smsout:device-cancel-" + System.nanoTime();
+        assertTrue(!SmsOutbox.isCancelled(context, doc));
+        SmsOutbox.cancel(context, doc);
+        assertTrue("a cancellation delivered during attachment download was lost",
+                SmsOutbox.isCancelled(context, doc));
     }
 }

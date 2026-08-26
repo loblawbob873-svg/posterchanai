@@ -169,6 +169,7 @@ public class LauncherDeviceTest {
         try {
             HomeDoublePress.clear();
             inst.runOnMainSync(() -> {
+                homeActivity.getWindow().getDecorView().dispatchWindowFocusChanged(false);
                 homeActivity.onStop();
                 homeActivity.onStart();
                 homeActivity.onNewIntent(
@@ -179,15 +180,32 @@ public class LauncherDeviceTest {
 
             HomeDoublePress.clear();
             inst.runOnMainSync(() -> {
+                homeActivity.getWindow().getDecorView().dispatchWindowFocusChanged(false);
                 homeActivity.onStop();
                 homeActivity.onStart();
             });
             Thread.sleep(250); // beyond HOME_START_ECHO_MS: the first physical press is now counted
-            inst.runOnMainSync(() -> homeActivity.onNewIntent(
-                    new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)));
+            inst.runOnMainSync(() -> {
+                homeActivity.getWindow().getDecorView().dispatchWindowFocusChanged(true);
+                homeActivity.onNewIntent(
+                        new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME));
+            });
             Thread.sleep(300);
             assertEquals("an onStart-only first HOME plus a second HOME did not open the feed",
                     1, web.getHits());
+
+            HomeDoublePress.clear();
+            inst.runOnMainSync(() -> {
+                homeActivity.getWindow().getDecorView().dispatchWindowFocusChanged(false);
+                homeActivity.onStop();
+                homeActivity.onStart();
+                homeActivity.getWindow().getDecorView().dispatchWindowFocusChanged(true);
+                homeActivity.onNewIntent(
+                        new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME));
+            });
+            Thread.sleep(300);
+            assertEquals("a focused second HOME inside the debounce window was discarded",
+                    2, web.getHits());
         } finally {
             inst.removeMonitor(web);
             inst.runOnMainSync(homeActivity::finish);
