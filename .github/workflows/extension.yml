@@ -21,7 +21,7 @@ name: Firefox extension
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
     paths:
       - 'extension/**'
       - 'static/js/client/vaultcore.js'      # the shared core IS the extension's core

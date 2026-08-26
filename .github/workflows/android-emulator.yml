@@ -24,12 +24,13 @@ name: Android emulator checks
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
     paths:
       - 'mobile/**'
       - 'static/js/client/**'
       - '.github/workflows/android-emulator.yml'
   pull_request:
+    branches: [ main, master ]
     paths:
       - 'mobile/**'
       - '.github/workflows/android-emulator.yml'
