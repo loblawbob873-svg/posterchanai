@@ -43,3 +43,9 @@ def test_files_home_does_not_render_an_unknown_sync_count_as_null_files():
 def test_manifest_read_updates_the_already_rendered_account_count():
     assert "const ar = _acct.find(x => x && x.key === key)" in SYNC
     assert "if(ar) ar.n = Number(j.n)" in SYNC
+
+
+def test_delta_cache_is_periodically_reanchored_to_the_authoritative_record_set():
+    assert "_FULL_REANCHOR_MS: 7 * 24 * 60 * 60 * 1000" in SYNC
+    assert "cache && cache.cursor && cache.fullAt" in SYNC
+    assert "fullAt: j.full ? Date.now()" in SYNC

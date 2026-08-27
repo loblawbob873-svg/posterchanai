@@ -994,6 +994,11 @@
     return j;
   }
   const stateS = {
+    // Delta reads keep ordinary sweeps cheap, but they cannot discover a record that disappeared
+    // before the cached cursor. Re-anchor periodically so relay records, local journal and count
+    // cannot drift forever. Existing caches have no `fullAt`, deliberately forcing one full read
+    // after this upgrade; thereafter the cost is paid at most weekly.
+    _FULL_REANCHOR_MS: 7 * 24 * 60 * 60 * 1000,
     async _cache(key){
       try{ const v = await _IDB._tx('readonly', st => st.get(_SKEY(key)));
            if(v && typeof v === 'object' && v.entries) return v; }catch(_){}
@@ -1013,7 +1018,10 @@
       const tick = (i, n) => { try{ if(onTick) onTick({ phase: 'reading the folder\u2019s shared records', i, n }); }catch(_){} };
       const cache = await this._cache(key);
       const body = { pair: key };
-      if(cache && cache.cursor){ body.since = Math.max(0, cache.cursor - 60); body.era = cache.era; }
+      if(cache && cache.cursor && cache.fullAt
+         && (Date.now() - cache.fullAt) < this._FULL_REANCHOR_MS){
+        body.since = Math.max(0, cache.cursor - 60); body.era = cache.era;
+      }
       /* No `since` is a FULL read — every record, which is megabytes. See _FULL_READ_TIMEOUT_MS. */
       const j = await _statePost(body, false, body.since ? _POST_TIMEOUT_MS : _FULL_READ_TIMEOUT_MS);
       let entries, d2p;
@@ -1061,7 +1069,8 @@
       if(j.full && (j.records || []).length > 2 && !got && und)
         throw new Error('none of this folder’s records could be decrypted — this device’s '
                         + 'key cannot open them');
-      await this._saveCache(key, { era: j.era, cursor: j.now || 0, entries, d2p });
+      await this._saveCache(key, { era: j.era, cursor: j.now || 0, entries, d2p,
+                                  fullAt: j.full ? Date.now() : (cache && cache.fullAt) || 0 });
       /* A complete read can repair the relay's cheap plaintext count from the authoritative
        * records. Keep the already-rendered account row in step immediately; otherwise Files shows
        * the pre-repair number until its TTL expires even though this call just learned the truth. */
