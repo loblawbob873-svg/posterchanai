@@ -14,3 +14,11 @@ def test_focus_gate_drives_real_desktop_windows():
     assert "PCOS.routeView('code')" in SRC
     assert "PCOS.routeView('terminal')" in SRC
     assert "new PointerEvent('pointerdown'" in SRC
+
+
+def test_focus_gate_removes_only_created_windows_and_restores_prior_focus():
+    assert "finally:" in SRC
+    assert "__pcInstalledCodeFocusBackup={before,focused:" in SRC
+    assert ".filter(w=>!backup.before.has(w))" in SRC
+    assert "const close=w.querySelector('.osw-x');if(close)close.click()" in SRC
+    assert "backup.focused&&backup.focused.isConnected" in SRC

@@ -10,6 +10,7 @@ from check_installed_desktop_account import CDP, choose_authenticated_page
 DRIVE = r"""(async()=>{
   if(!window.PCOS||!PCOS.routeView)throw new Error('desktop window manager is unavailable');
   const before=new Set([...document.querySelectorAll('.osw:not(.osw-native)')]);
+  window.__pcInstalledCodeFocusBackup={before,focused:document.querySelector('.osw.focused')};
   PCOS.routeView('code');await new Promise(r=>setTimeout(r,700));
   const code=[...document.querySelectorAll('.osw:not(.osw-native)')].find(w=>
     /code/i.test((w.querySelector('.osw-title')||{}).textContent||''))||
@@ -38,12 +39,26 @@ DRIVE = r"""(async()=>{
       second.term.includes('feed-term')&&!second.term.includes('feed-code')};
 })()"""
 
+CLEANUP = r"""(async()=>{
+  const backup=window.__pcInstalledCodeFocusBackup;if(!backup)return false;
+  const created=[...document.querySelectorAll('.osw:not(.osw-native)')]
+    .filter(w=>!backup.before.has(w));
+  for(const w of created){const close=w.querySelector('.osw-x');if(close)close.click();}
+  if(backup.focused&&backup.focused.isConnected){
+    const bar=backup.focused.querySelector('.osw-bar');if(bar)bar.click();
+  }
+  delete window.__pcInstalledCodeFocusBackup;return true;
+})()"""
+
 
 async def main():
     page = await choose_authenticated_page()
     async with CDP(page["webSocketDebuggerUrl"]) as cdp:
-        result = await cdp.eval(DRIVE)
-        assert result and result.get("pass"), result
+        try:
+            result = await cdp.eval(DRIVE)
+            assert result and result.get("pass"), result
+        finally:
+            await cdp.eval(CLEANUP)
     print("OK installed Code and Terminal retain exclusive full-height sizing across focus")
     return 0
 
