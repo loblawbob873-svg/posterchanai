@@ -2341,7 +2341,17 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .selbox-gap{display:block;width:20px;height:1px}
 .files-grid:not(.details) .selbox-gap{display:none}
 .file-card .selbox{position:absolute;top:6px;inset-inline-start:6px;z-index:2;width:20px;height:20px;cursor:pointer;
-  accent-color:var(--neon);border-radius:4px;box-shadow:0 0 0 2px rgba(0,0,0,.55);background:rgba(0,0,0,.35)}
+  appearance:none;-webkit-appearance:none;display:grid;place-items:center;padding:0;margin:0;
+  border:1px solid rgba(255,255,255,.78);border-radius:4px;color:transparent;font:800 13px/1 system-ui;
+  box-shadow:0 0 0 2px rgba(0,0,0,.55);background:rgba(10,12,20,.68)}
+/* One checkmark implementation for both sources. Blossom rows use a real checkbox; This Computer
+   uses an aria-pressed button because its selection is keyed by a path. Native checkbox artwork
+   plus a button's text glyph produced two different, off-centre controls. */
+.file-card input.selbox::before{content:'';width:9px;height:5px;border-inline-start:2px solid #071018;
+  border-bottom:2px solid #071018;transform:translateY(-1px) rotate(-45deg) scale(0);transform-origin:center}
+.file-card input.selbox:checked,.file-card button.selbox[aria-pressed=true]{
+  color:#071018;border-color:var(--cyan);background:var(--cyan);box-shadow:0 0 0 2px rgba(0,0,0,.55)}
+.file-card input.selbox:checked::before{transform:translateY(-1px) rotate(-45deg) scale(1)}
 /* Selection is a FILL plus the border, the way every file manager marks it — a bare glow around a
    transparent tile reads as a hover, not a choice. */
 .file-card.selected{border-color:var(--neon);background:rgba(var(--accent-rgb),.16)}
@@ -8233,16 +8243,14 @@ html.os-on #upload-badge.upbadge{z-index:333}
 .files-grid.details.nosel .fx-cols,
 .files-grid.details.nosel .file-card.row{grid-template-columns:minmax(0,1fr) 88px 140px 172px var(--fx-acts)}
 /* “This Computer” lives beside the explorer sidebar, so viewport media queries do not describe the
-   width its details table actually has. The four fixed secondary columns could consume the whole
-   pane while the name's minmax column collapsed to zero: folder icons with no labels, even though
-   Tiles showed the same names. Local files have no inline actions until selected, and Name/Size are
-   the useful browsing facts, so keep those columns readable and omit Type/Modified in this pane. */
+   width its details table actually has. Keep Type out so Name remains readable, but Date created is
+   essential list metadata and must not disappear on desktop. The phone rule below still removes it
+   when four useful columns genuinely cannot fit. */
 #host-pane .fx-cols,
 #host-pane .files-grid.details .file-card.row{
-  grid-template-columns:24px minmax(140px,1fr) 88px var(--fx-acts)
+  grid-template-columns:24px minmax(140px,1fr) 88px 172px var(--fx-acts)
 }
-#host-pane .fx-c-type,#host-pane .fx-c-modified,
-#host-pane .fx-type,#host-pane .fx-mod{display:none}
+#host-pane .fx-c-type,#host-pane .fx-type{display:none}
 .fx-cols{position:sticky;top:0;z-index:2;padding:4px 8px;background:var(--panel);
   border-bottom:1px solid var(--line)}
 .fx-col{background:none;border:0;font:inherit;font-size:12px;font-weight:700;letter-spacing:.5px;
@@ -8260,7 +8268,7 @@ html.os-on #upload-badge.upbadge{z-index:333}
 .files-grid.details .file-card.row.isdir{cursor:pointer}
 /* The checkbox is a normal column here, not an overlay on a photo — so it loses the contrast ring it
    needs when it sits ON an image. */
-.files-grid.details .file-card.row .selbox{position:static;width:16px;height:16px;box-shadow:none;background:none}
+.files-grid.details .file-card.row .selbox{position:static;width:18px;height:18px;box-shadow:none}
 .fx-name{display:flex;align-items:center;gap:8px;min-width:0;color:var(--text);text-decoration:none}
 .fx-name .fname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
 .fx-name:hover .fname{color:var(--cyan)}

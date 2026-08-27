@@ -17839,7 +17839,7 @@
       </div></div>`;
   }
   function _fxBindBar(pane){
-    { const open=$('#fx-locations-open',pane), explorer=$('.fx-explorer',pane);
+    { const open=$('#fx-locations-open',pane), explorer=open&&open.closest('.fx-explorer');
       if(open && explorer) open.onclick=()=>explorer.classList.add('fx-locations-on'); }
     /* SEARCH. The drive outgrew browsing the moment Folder Sync started filing thousands of files
      * into it, and a folder is only findable if you remember which one you put it in.
@@ -18853,7 +18853,8 @@
   }
   function _fxBindSide(root){
     const r = root || document;
-    { const close=$('#fx-locations-close',r), explorer=$('.fx-explorer',r);
+    { const close=$('#fx-locations-close',r), explorer=(close&&close.closest('.fx-explorer'))
+        || (r.closest&&r.closest('.fx-explorer')) || $('.fx-explorer',r);
       if(close && explorer) close.onclick=()=>explorer.classList.remove('fx-locations-on');
       /* The phone drawer's dark surround is a box-shadow, not a DOM backdrop. The narrow exposed
        * strip therefore belongs to .fx-main underneath it; without a capture guard, tapping there

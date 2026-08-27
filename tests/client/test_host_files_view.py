@@ -145,7 +145,32 @@ class HostFilesView(unittest.TestCase):
             r"\{([^}]+)\}", css)
         self.assertTrue(host_rule, "This Computer has no pane-width-aware details layout")
         columns = re.sub(r"\s+", " ", host_rule.group(1))
-        self.assertIn("grid-template-columns:24px minmax(140px,1fr) 88px var(--fx-acts)", columns)
+        self.assertIn("grid-template-columns:24px minmax(140px,1fr) 88px 172px var(--fx-acts)", columns)
+        self.assertNotIn("#host-pane .fx-c-modified", css,
+                         "desktop list mode hides Date created in This Computer")
+
+    def test_list_selection_is_centered_and_filled_for_both_file_sources(self):
+        """Blossom uses an input and This Computer uses an aria-pressed button; they must paint as
+        one control instead of exposing two browser-dependent checkbox/checkmark styles."""
+        css = open(os.path.join(ROOT, "static", "css", "client.css"), encoding="utf-8").read()
+        base = re.search(r"\.file-card \.selbox\{([^}]+)\}", css)
+        self.assertTrue(base)
+        rule = re.sub(r"\s+", "", base.group(1))
+        self.assertIn("display:grid", rule)
+        self.assertIn("place-items:center", rule)
+        self.assertIn("appearance:none", rule)
+        self.assertRegex(css, r"input\.selbox:checked,\.file-card button\.selbox\[aria-pressed=true\]")
+        self.assertIn("background:var(--cyan)", css)
+
+    def test_mobile_locations_button_targets_its_own_explorer_ancestor(self):
+        """The toolbar is inside .fx-main, so querying downward from its pane can never find the
+        sibling sidebar's .fx-explorer parent. Open and close must resolve their nearest owner."""
+        app = open(APP, encoding="utf-8").read()
+        bind = app[app.index("function _fxBindBar"):app.index("/* SEARCH.", app.index("function _fxBindBar"))]
+        self.assertIn("open.closest('.fx-explorer')", bind)
+        self.assertNotIn("explorer=$('.fx-explorer',pane)", bind)
+        side = app[app.index("function _fxBindSide"):app.index("$$('[data-files-mode]'", app.index("function _fxBindSide"))]
+        self.assertIn("close.closest('.fx-explorer')", side)
 
     def test_a_home_path_is_shortened_but_never_the_one_used(self):
         """`/home/npub1fdtthaq…/Documents` is unreadable and its leading two thirds never change."""
