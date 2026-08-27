@@ -397,6 +397,16 @@ class TheLiveSessionActuallyStarts(unittest.TestCase):
         self.assertIn("etc/systemd/system/boot-snapshot.timer", self.fn)
         self.assertIn("etc/systemd/system/default.target.wants/boot-snapshot.timer", self.fn)
 
+    def test_clean_disc_never_contains_telegram_bot_sessions(self):
+        """telegram-bot-api stores mutable authorization/session state beneath /var/lib. Besides
+        leaking credentials, copying it while the daemon writes td.binlog makes squashfs reread a
+        moving file and yields a non-reproducible image."""
+        self.assertIn("/var/lib/telegram-bot-api", self.fn)
+        private = self.fn[self.fn.index("A release image is an operating system"):
+                          self.fn.index("/opt is commonly", self.fn.index("A release image is an operating system"))]
+        self.assertIn("EXCLUDES", private)
+        self.assertIn("/var/lib/telegram-bot-api", private)
+
     def test_clean_disc_keeps_ssh_installed_but_disabled(self):
         self.assertIn("etc/systemd/system/multi-user.target.wants/sshd.service", self.fn)
         self.assertIn("inherited SSH or snapshot enablement", self.fn)

@@ -2774,7 +2774,8 @@ FSTAB
 		for F in /var/www /var/intel \
 			/var/lib/gitea /var/lib/postgresql \
 			/var/lib/posterchanai /var/lib/synapse /var/lib/pleroma \
-			/var/lib/redis /var/lib/radicale /var/lib/tor /var/lib/letsencrypt; do
+			/var/lib/redis /var/lib/radicale /var/lib/tor /var/lib/letsencrypt \
+			/var/lib/telegram-bot-api; do
 			[[ -e "$F" ]] && EXCLUDES+=("${F#/}")
 		done
 
