@@ -28160,6 +28160,20 @@
   /* One place that raises an OS-level notification. Everything that wants one goes through here so
    * the permission check, the click-to-focus and the icon cannot drift between callers — clicking a
    * system notification that does nothing is worse than not having sent it. */
+  function openOsNotificationRoute(route){
+    const value=String(route||'');
+    if(value.startsWith('post:')){openThread(value.slice(5));return true;}
+    if(value.startsWith('concord:')){
+      const bits=value.slice(8).split(':').map(x=>{try{return decodeURIComponent(x);}catch(_){return '';}});
+      if(bits.length<3||!bits[0])return false;
+      switchView('concord');
+      _withModule('concord.js','PCConcord',mod=>mod.openNotification&&mod.openNotification({community:bits[0],channel:bits[1],message:bits.slice(2).join(':')}));
+      return true;
+    }
+    switchView(value==='concord'?'concord':value==='messages'?'messages':'notifications');
+    return true;
+  }
+  window.PCOpenNotificationRoute=openOsNotificationRoute;
   function osNotify(title, body, opts){
     const clean = String(body||'').replace(/<[^>]+>/g,'')
                     .replace(_SHORTCODE_STRIP,'').replace(/\s+/g,' ').trim();
@@ -28167,7 +28181,7 @@
      * Electron owns a native notification API, including click-to-focus, so use the guarded preload
      * bridge before either the Android plugin or the browser fallback. */
     if(window.pcHost&&pcHost.notify){
-      if(!osNotify._nativeClicks&&pcHost.onNotificationClick){osNotify._nativeClicks=pcHost.onNotificationClick(route=>{if(String(route).startsWith('post:'))openThread(String(route).slice(5));else switchView(route==='concord'?'concord':route==='messages'?'messages':'notifications');});}
+      if(!osNotify._nativeClicks&&pcHost.onNotificationClick){osNotify._nativeClicks=pcHost.onNotificationClick(openOsNotificationRoute);}
       try{const r=pcHost.notify({title:String(title||'PosterChan'),body:clean,
         route:(opts&&opts.route)||'notifications',tag:(opts&&opts.tag)||''});if(r&&r.catch)r.catch(()=>{});}catch(_){}
       return null;
@@ -28197,7 +28211,7 @@
                                           .replace(_SHORTCODE_STRIP,'').replace(/\s+/g,' ').trim(),
                                         icon:(opts&&opts.icon)||LOGO, tag:(opts&&opts.tag)||undefined });
       n.onclick=()=>{ try{ window.focus(); }catch(_){}
-                      try{ if(opts&&opts.onClick) opts.onClick(); }catch(_){}
+                      try{ if(opts&&opts.onClick) opts.onClick(); else openOsNotificationRoute(opts&&opts.route); }catch(_){}
                       try{ n.close(); }catch(_){} };
       return n;
     }catch(_){ return null; }

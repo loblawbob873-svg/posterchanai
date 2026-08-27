@@ -114,6 +114,7 @@
      * exactly what "clicking play on music widget opens up default posterchan app page instead of
      * music" looked like from the other end. One name, used by both. */
       if(v.indexOf('concord:')===0){
+        if(window.PCOpenNotificationRoute){window.PCOpenNotificationRoute(v);return v;}
         const bits=v.slice('concord:'.length).split(':').map(x=>{try{return decodeURIComponent(x);}catch(_){return '';}});
         if(bits.length<3||!bits[0])return '';
         landView('concord');

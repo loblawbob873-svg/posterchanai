@@ -321,7 +321,9 @@ if(feed.innerHTML.includes('drawer-open'))
 data.set('pc.concord.seen.'+rooms[0].naddr+':general','1');
 data.set('pc.concord.test.'+rooms[0].naddr,JSON.stringify([{by:'Other User',pubkey:'b'.repeat(64),text:'hey @tester',at:2}]));
 PCConcord.render();
-if(calls.mentions.length!==1 || !calls.mentions[0].title.includes('#general') || calls.mentions[0].opts.route!=='concord') throw new Error('mention notification failed');
+if(calls.mentions.length!==1 || !calls.mentions[0].title.includes('#general') ||
+   !calls.mentions[0].opts.route.startsWith('concord:'+encodeURIComponent(rooms[0].naddr)+':general:'))
+  throw new Error('mention notification lost its exact room/channel/message route');
 PCConcord.render();
 if(calls.mentions.length!==1) throw new Error('mention notification was not deduplicated');
 // Mention cursors are per channel. A newer #general timestamp must not suppress #support, and OS

@@ -21,3 +21,10 @@ def test_android_phone_shell_consumes_exact_route_once():
     assert "v.indexOf('concord:')===0" in js
     assert "PCConcord.openNotification" in js
     assert "landView('concord')" in js
+
+
+def test_desktop_and_browser_clicks_use_the_same_exact_router():
+    js = (ROOT / "static/js/client/app.js").read_text()
+    assert "pcHost.onNotificationClick(openOsNotificationRoute)" in js
+    assert "else openOsNotificationRoute(opts&&opts.route)" in js
+    assert "mod.openNotification&&mod.openNotification" in js

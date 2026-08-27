@@ -552,7 +552,7 @@
     if(made&&made.ev&&p.relayPublishTo){const accepted=await p.relayPublishTo(CORD_RELAYS,made.ev);if(!accepted)throw new Error('membership relays rejected the leave update');}
     return true;
   }
-  async function hydrateRoomStreams(p,index){
+  async function hydrateRoomStreams(p,index,expectedIdentity=''){
     const rooms=saved(),room=rooms[index],reader=window.PosterCordReader,bundle=room&&room.cord&&room.cord.bundle;
     if(!room||!bundle||!reader||!p.relayQueryFrom)return;
     const loadKey=room.communityId||room.naddr; if(roomLoads.has(loadKey))return roomLoads.get(loadKey);
@@ -577,8 +577,12 @@
         saveTestMessages(storeId,mergeRelayMessages(prior,msgs).sort((a,b)=>Number(a.at)-Number(b.at)));
       }
       room.cord.hydrated=true; rooms[index]=room; save(rooms);
-      render();
-      scrollChatBottom();
+      /* A relay answer may return after the reader chose another community. Persisting the fetched
+       * room is still useful, but repainting/scrolling the new room is not. Notification launches
+       * pass the durable identity explicitly because saved array positions can change meanwhile. */
+      const current=saved()[index],stillSelected=state.community===index&&
+        (!expectedIdentity||roomIdentity(current)===expectedIdentity);
+      if(stillSelected){render();scrollChatBottom();}
     })().finally(()=>roomLoads.delete(loadKey)); roomLoads.set(loadKey,job); return job;
   }
   async function publishCordMessage(p,room,channelName,text,extraTags=[],kind=9){
@@ -734,6 +738,19 @@
       if(++tries<50)setTimeout(reveal,100);
     };
     reveal();
+    /* Polling the DOM cannot create history. A cold/background launch commonly has only the saved
+     * encrypted bundle, so follow the same invite/control/chat hydration path as a real room click.
+     * Keep the requested channel across the metadata repaint and never let a late result take over
+     * after the reader selected another community. */
+    if(rooms[index]&&rooms[index].cord&&!rooms[index].cord.hydrated){
+      (async()=>{try{
+        await hydrateRoomStreams(PC(),index,identity);
+        if(state.community!==index||roomIdentity(saved()[index])!==identity)return;
+        const fresh=saved()[index],available=channelsOf(fresh);
+        if(available.some(c=>c.name===requested))state.channel=requested;
+        render();reveal();
+      }catch(e){console.warn('Concord notification room hydration failed',e);}})();
+    }
     return true;
   }
   function bind(me){
