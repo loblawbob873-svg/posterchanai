@@ -105,6 +105,10 @@
 
   let _messagesFolderReady = false;
   const _migrationFailed = new Set();
+  /* A cancelled outbox command is its own tombstone. Relay pools and the local Store can hand us
+   * an older request after the newer cancellation (including in a later refresh); without keeping
+   * this watermark, that stale request recreates a sending bubble and can reach drainOutbox again. */
+  const _cancelledOutboxAt = new Map();
 
   let PC = null;
   const S = {
@@ -314,12 +318,14 @@
        * radio accepted it. Turn it into the ordinary sent bubble, durably, instead of leaving the
        * thread unchanged after showing a transient "sent" toast. */
       if(d.startsWith(D_OUT) && ev.content){
+        if((_cancelledOutboxAt.get(d) || 0) >= Number(ev.created_at || 0)) continue;
         try{
           const ack = JSON.parse(await PC.nip44dec(ME().pubkey, ev.content));
           /* Cancellation is not a failed message. Retire every local rendering of this command
            * before trying to interpret its old request payload; different devices may have keyed
            * the placeholder at slightly different receipt times, but the outbox id is shared. */
           if(ack && ack.done && ack.cancelled){
+            _cancelledOutboxAt.set(d, Number(ev.created_at || 0));
             for(const [oldDoc, old] of S.msgs){
               if(old && old.outbox === d)
                 S.msgs.set(oldDoc, {doc:oldDoc, _at:ev.created_at, gone:true});
@@ -2706,6 +2712,7 @@
                    // The oversized-attachment fallback — see sendAsLink.
                    mmsLimit, shareLinkFor,
                    drainOutbox, send, remove, load,
+                   _absorb: absorb,
                    // Explicit failed-send retry is exported for the protocol simulator.
                    _retryFailed: retryFailed,
                    // The real batched migration loop, for tests/client/test_sms_attachments.py —

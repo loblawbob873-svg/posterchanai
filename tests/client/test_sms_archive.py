@@ -228,6 +228,25 @@ class SendingFromAnotherDevice(unittest.TestCase):
         self.assertLess(cancel, decode)
         self.assertIn("if(old && old.outbox === d)", absorb)
 
+    def test_older_relay_request_cannot_resurrect_a_cancelled_send(self):
+        """A relay pool may deliver the cancellation first and a lagging request on a later pass.
+        Cancellation must remain a tombstone for that outbox id, not merely remove today's bubble."""
+        doc = "pcai:smsout:cancel-watermark"
+        cancel = {
+            "kind": 30078, "created_at": 1700000020, "pubkey": "me",
+            "tags": [["d", doc], ["l", "pcai-sms"]],
+            "content": 'enc:{"done":true,"ok":false,"cancelled":true}',
+        }
+        stale = {
+            "kind": 30078, "created_at": 1700000010, "pubkey": "me",
+            "tags": [["d", doc], ["l", "pcai-sms"]],
+            "content": 'enc:{"to":"+15550100","body":"do not send","at":1700000000000}',
+        }
+        res = run(isPhone=False, telephony=False, relay=[cancel], rawEvents=[stale],
+                  steps=["load", "settle", "absorbRaw"])
+        self.assertEqual(res["docs"], [])
+        self.assertFalse(any(t["pending"] for t in res["threads"]))
+
     def test_live_cancellation_repaints_even_when_map_size_is_unchanged(self):
         web = (ROOT / "static/js/client/sms.js").read_text()
         watch = web[web.index("function watch()") : web.index("async function notifyNew")]

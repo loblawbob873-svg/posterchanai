@@ -329,6 +329,7 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
       calls.push(['why', w.fix || '', w.why]);
     }
     else if(step === 'settle'){ await new Promise(r => setTimeout(r, 20)); }
+    else if(step === 'absorbRaw'){ await S._absorb(opt.rawEvents || []); }
   }
   await new Promise(r => setTimeout(r, 20));
   const st = S._state();
