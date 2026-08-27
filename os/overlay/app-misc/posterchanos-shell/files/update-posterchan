@@ -23,6 +23,14 @@ if [ "$(id -u)" -ne 0 ]; then
 	exec sudo -- "$0" "$@"
 fi
 
+# ONE UPDATE OWNS PORTAGE'S OVERLAY CHECKOUT AT A TIME. `emaint sync` does not serialize the Git
+# object writes itself: two launchers started together can leave a zero-byte loose object, after
+# which every later update falls back to stale metadata and incorrectly says "Already up to date".
+# Hold the lock for this process's lifetime; a second invocation waits and then re-checks normally.
+mkdir -p /run/lock
+exec 9>/run/lock/posterchan-update.lock
+flock 9
+
 command -v emerge >/dev/null 2>&1 || {
 	echo "${RED}This is for PosterChanOS — there is no emerge on this machine.${OFF}"
 	exit 1

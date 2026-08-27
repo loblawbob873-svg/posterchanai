@@ -110,7 +110,7 @@ class ItUpdatesBothHalves(unittest.TestCase):
         self.assertNotIn("emerge --sync", code)
 
     def test_an_unreachable_overlay_is_not_fatal(self):
-        i = self.src.index("emaint sync")
+        i = self.src.index("if ! emaint sync -r posterchan")
         self.assertIn("Could not reach the overlay", self.src[i:i + 1200])
 
     def test_a_restored_overlay_repairs_only_portages_checkout(self):
