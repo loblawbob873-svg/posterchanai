@@ -4640,20 +4640,21 @@ async def _fs_list_all(port: int, sk: bytes, prefix: str, since: int | None = No
     """Every doc under `prefix`, PAGED past list_docs' window — {d: (envelope, at)}. Strict."""
     from app.services import nostr_store as store
     out: dict = {}
-    until = None
+    cursor = None
     for _page in range(40):                       # 40 * 5000 = far past any real folder
         got = await store.list_docs(port, prefix, seckey=sk, strict=True, encrypt=False,
-                                    with_meta=True, until=until, since=since)
+                                    with_meta="cursor", cursor=cursor, since=since)
         fresh = 0
         oldest = None
-        for d, (doc, at) in got.items():
-            oldest = at if oldest is None else min(oldest, at)
+        for d, (doc, at, event_id) in got.items():
+            pos = (at, event_id)
+            oldest = pos if oldest is None or pos < oldest else oldest
             if d not in out:
                 fresh += 1
                 out[d] = (doc, at)
         if fresh == 0 or len(got) < 4500 or not oldest:
             break                                 # a page of nothing new, or an unfilled window
-        until = oldest                            # inclusive boundary; dedup above absorbs overlap
+        cursor = oldest                           # exclusive timestamp + event-id boundary
     return out
 
 

@@ -754,6 +754,13 @@ class RelayStore:
         if flt.get("until") is not None:
             where.append("e.created_at <= ?")
             params.append(int(flt["until"]))
+        # Stable local paging cursor. NIP-01's second-resolution `until` cannot advance when more
+        # than one page shares a timestamp. `_cursor: [created_at, id]` follows this relay's
+        # deterministic ORDER BY and is used only by PosterChan's private document store.
+        cursor = flt.get("_cursor")
+        if isinstance(cursor, list) and len(cursor) == 2:
+            where.append("(e.created_at < ? OR (e.created_at = ? AND e.id < ?))")
+            params.extend([int(cursor[0]), int(cursor[0]), str(cursor[1])])
         # NIP-50 full-text search over content (Postgres GIN to_tsvector index). plainto_tsquery
         # is injection-safe and tolerant of arbitrary input (empty/garbage → matches nothing).
         search = flt.get("search")
@@ -811,7 +818,7 @@ class RelayStore:
         sql = "SELECT e.raw FROM events e"
         if where:
             sql += " WHERE " + " AND ".join(where)
-        sql += " ORDER BY e.created_at DESC LIMIT ?"
+        sql += " ORDER BY e.created_at DESC, e.id DESC LIMIT ?"
         params.append(limit)
         rows = conn.execute(sql, params).fetchall()
         out = []

@@ -45,14 +45,19 @@ class _FakeRelay:
         return out
 
     async def list_docs(self, port, prefix, seckey=None, strict=False, encrypt=True,
-                        with_meta=False, until=None, since=None, limit=5000, **kw):
+                        with_meta=False, until=None, since=None, limit=5000, cursor=None, **kw):
         rows = [(d, doc, at) for d, (doc, at) in self.docs.items() if d.startswith(prefix)]
         if until:
             rows = [r for r in rows if r[2] <= until]
         if since:
             rows = [r for r in rows if r[2] >= since]
-        rows.sort(key=lambda r: -r[2])
+        if cursor:
+            rows = [r for r in rows if r[2] < cursor[0]
+                    or (r[2] == cursor[0] and r[0] < cursor[1])]
+        rows.sort(key=lambda r: (r[2], r[0]), reverse=True)
         rows = rows[:limit]
+        if with_meta == "cursor":
+            return {d: (json.loads(json.dumps(doc)), at, d) for d, doc, at in rows}
         return {d: (json.loads(json.dumps(doc)), at) for d, doc, at in rows}
 
 
@@ -223,6 +228,15 @@ class SyncStateEndpoint(unittest.TestCase):
                                                    1_000_000 + i)
         got = _run(_fs_list_all(3052, sk, "pcai:fs:Big:"))
         self.assertEqual(len(got), 12000, "a folder past the 5000-doc window must not truncate")
+
+    def test_paged_listing_survives_more_than_5000_records_in_one_second(self):
+        """An `until` timestamp cannot advance inside this batch; the stable event-id cursor can."""
+        relay, sk = self.relay, b"\x01" * 32
+        for i in range(5833):
+            relay.docs["pcai:fs:Tied:%024x" % i] = (
+                {"v": 1, "by": "x", "era": 0, "ct": "c"}, 1_000_000)
+        got = _run(_fs_list_all(3052, sk, "pcai:fs:Tied:"))
+        self.assertEqual(len(got), 5833)
 
     def test_full_read_repairs_a_drifted_plaintext_count(self):
         """Per-file records are authoritative; a killed process or old server can leave meta.n

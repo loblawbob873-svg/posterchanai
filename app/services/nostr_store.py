@@ -285,7 +285,7 @@ async def get_doc(port: int, d_tag: str, *, seckey: bytes | None = None, pubkey:
 async def list_docs(port: int, prefix: str, *, seckey: bytes | None = None, pubkey: str | None = None,
                     encrypt: bool = True, kind: int = APP_KIND, strict: bool = False,
                     limit: int = 5000, until: int | None = None, since: int | None = None,
-                    with_meta: bool = False) -> dict:
+                    with_meta: bool = False, cursor: tuple[int, str] | None = None) -> dict:
     """Return {d_tag: data} for every doc whose `d` tag starts with `prefix`, newest per d_tag.
 
     `since` is NIP-01's other cursor (created_at >= since): a caller keeping a local copy in step
@@ -319,6 +319,8 @@ async def list_docs(port: int, prefix: str, *, seckey: bytes | None = None, pubk
         flt["until"] = int(until)
     if since:
         flt["since"] = int(since)
+    if cursor:
+        flt["_cursor"] = [int(cursor[0]), str(cursor[1])]
     evs = await _ws_query(port, [flt], strict=strict)
     best: dict = {}
     for ev in evs:
@@ -327,6 +329,10 @@ async def list_docs(port: int, prefix: str, *, seckey: bytes | None = None, pubk
             continue
         if d not in best or ev.get("created_at", 0) > best[d].get("created_at", 0):
             best[d] = ev
+    if with_meta == "cursor":
+        return {d: (_decode(ev.get("content", ""), seckey, encrypt),
+                    int(ev.get("created_at", 0)), str(ev.get("id") or ""))
+                for d, ev in best.items()}
     if with_meta:
         # (value, created_at) — the caller needs the event's own timestamp to build the next cursor;
         # the document's contents cannot supply it (a message's date is not when it was stored).

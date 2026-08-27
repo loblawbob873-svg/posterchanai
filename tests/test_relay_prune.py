@@ -648,6 +648,31 @@ def test_a_prefix_tag_filter_reads_one_namespace_not_the_whole_key(store_factory
     _run(go)
 
 
+def test_private_document_cursor_advances_inside_one_second(store_factory):
+    """A timestamp-only cursor repeats page one forever when a large sync batch shares a second."""
+    async def go(loop):
+        store = store_factory(loop)
+        pk = "f" * 64
+        rows = []
+        for i in range(7):
+            e = _ev(1000 + i, kind=30078, pubkey=pk)
+            e["created_at"] = 1234567
+            e["id"] = f"{i + 1:064x}"
+            e["tags"] = [["d", f"pcai:fs:Tied:{i}"]]
+            rows.append(e)
+        await store.add_events_bulk(rows, origin="direct")
+        first = await store.query([{"authors": [pk], "kinds": [30078],
+                                    "#d~": ["pcai:fs:Tied:"], "limit": 3}])
+        assert [e["id"] for e in first] == [f"{i:064x}" for i in (7, 6, 5)]
+        last = first[-1]
+        second = await store.query([{"authors": [pk], "kinds": [30078],
+                                     "#d~": ["pcai:fs:Tied:"], "limit": 3,
+                                     "_cursor": [last["created_at"], last["id"]]}])
+        assert [e["id"] for e in second] == [f"{i:064x}" for i in (4, 3, 2)]
+
+    _run(go)
+
+
 def test_deleting_a_backup_document_still_federates():
     """The private-deletion guard must not swallow the DR-backup namespaces.
 
