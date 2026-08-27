@@ -108,6 +108,19 @@ class TheStartScriptStillDisablesIt(unittest.TestCase):
         self.assertNotIn(': "${XDG_SESSION_TYPE:=wayland}"', src)
         self.assertIn('[app_id="place.poster.desktop"]', src)
 
+    def test_recovery_launch_repairs_the_portal_service_environment(self):
+        """`grim` uses Sway directly and can work while Electron lists zero screens. The latter
+        means the already-running systemd portal never received the recovered Wayland variables."""
+        src = START.read_text()
+        export_at = src.index('export XDG_SESSION_TYPE XDG_CURRENT_DESKTOP')
+        import_at = src.index('systemctl --user import-environment')
+        launch_at = src.index('"$PC_DESKTOP_LAUNCHER" --shell')
+        self.assertLess(export_at, import_at)
+        self.assertLess(import_at, launch_at)
+        self.assertIn('dbus-update-activation-environment --systemd', src)
+        self.assertIn('try-restart xdg-desktop-portal-wlr.service xdg-desktop-portal.service', src)
+        self.assertIn('portal_stale', src, "every shell restart would interrupt healthy capture")
+
 
 if __name__ == "__main__":
     unittest.main()

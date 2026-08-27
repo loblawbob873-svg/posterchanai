@@ -109,6 +109,24 @@ if [ -z "$DBUS_SESSION_BUS_ADDRESS" ] && [ -S "$XDG_RUNTIME_DIR/bus" ]; then
   export DBUS_SESSION_BUS_ADDRESS
 fi
 
+# Exporting these variables fixes Electron itself, but xdg-desktop-portal is a systemd user service
+# and inherits the USER MANAGER'S environment instead.  When that environment is empty, grim still
+# works while WebRTC/OBS lists no screens: the portal cannot select its wlroots backend.  Import the
+# verified Sway values before launching PosterChan. Restart the portal only when its old environment
+# was stale, so restarting the shell does not interrupt an already healthy recording session.
+portal_env=$(systemctl --user show-environment 2>/dev/null || true)
+portal_stale=0
+printf '%s\n' "$portal_env" | grep -qx "WAYLAND_DISPLAY=$WAYLAND_DISPLAY" || portal_stale=1
+printf '%s\n' "$portal_env" | grep -qx 'XDG_CURRENT_DESKTOP=sway' || portal_stale=1
+printf '%s\n' "$portal_env" | grep -qx 'XDG_SESSION_TYPE=wayland' || portal_stale=1
+systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE SWAYSOCK >/dev/null 2>&1 || true
+if command -v dbus-update-activation-environment >/dev/null 2>&1; then
+  dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE SWAYSOCK >/dev/null 2>&1 || true
+fi
+if [ "$portal_stale" -eq 1 ]; then
+  systemctl --user try-restart xdg-desktop-portal-wlr.service xdg-desktop-portal.service >/dev/null 2>&1 || true
+fi
+
 # Portage owns /usr/bin/posterchan. Older LiveOS images and the standalone updater installed the
 # wrapper in /usr/local/bin instead; keep that as a fallback, but never let a stale local copy
 # shadow the package that was just upgraded. That stale wrapper reset Wayland to `auto`, which is
