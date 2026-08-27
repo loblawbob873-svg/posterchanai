@@ -2555,6 +2555,16 @@
     for(const r of rows) if(!nativeWins().some(w=>Number(w.native)===Number(r.id))){
       adoptNative(r); changed=true;
     }
+    /* ADOPTION MUST NOT INVENT THE STACKING ORDER.
+     * openApp focuses a newly created frame. During shell recovery that means the last enumerated
+     * app becomes the apparent foreground app even when Sway says another window is focused.
+     * Telegram commonly follows Firefox in the tree, so it inherited the top HTML z after every
+     * shell restart. Re-assert Sway's authoritative focused row only after all frames exist. */
+    const focusedNative = rows.find(r => r && r.focused);
+    if(focusedNative){
+      const fw = nativeWins().find(w => Number(w.native) === Number(focusedNative.id));
+      if(fw && !fw.el.classList.contains('focused')) focusWin(fw, false);
+    }
     for(const w of nativeWins()){
       const r=rows.find(x=>Number(x.id)===Number(w.native));
       if(!r){

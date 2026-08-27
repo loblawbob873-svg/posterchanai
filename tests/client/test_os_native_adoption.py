@@ -80,3 +80,14 @@ def test_cross_monitor_disappearance_detaches_without_killing_or_stealing_focus(
     adopt = OS[start:end]
     assert "allIds.has(Number(w.native))" in adopt
     assert "preserveFocus:!!(allIds && allIds.has(Number(w.native)))" in adopt
+
+
+def test_recovery_restores_sways_focused_native_after_enumerating_all_frames():
+    """Creating each recovered frame focuses it; enumeration order must not become z-order."""
+    start = OS.index("async function adoptAll()")
+    end = OS.index("function closeWin(w, opts)", start)
+    adopt = OS[start:end]
+    created = adopt.index("for(const r of rows) if(!nativeWins()")
+    restored = adopt.index("const focusedNative = rows.find")
+    assert restored > created
+    assert "focusWin(fw, false)" in adopt[restored:]
