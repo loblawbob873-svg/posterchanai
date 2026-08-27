@@ -36,3 +36,15 @@ def test_music_device_test_requires_our_launcher_and_restores_prior_state():
     assert 'assertTrue("Home backgrounded the player but did not show PosterChan\'s launcher"' in TEST
     assert "if (HomeRoles.isDefaultHome(ctx))" not in TEST
     assert "HomeRoles.enableLauncherComponent(ctx, wasEnabled)" in TEST
+
+
+def test_music_device_cleanup_works_while_main_activity_is_stopped_at_home():
+    cleanup = TEST.split("private static void restoreDeviceState", 1)[1].split(
+        "private static String shell", 1)[0]
+    assert "scenario.onActivity" not in cleanup
+    assert "runOnMainSync" in cleanup
+    assert 'SCREEN_ORIENTATION_UNSPECIFIED' in cleanup
+    assert 'cmd role remove-role-holder android.app.role.HOME' in cleanup
+    assert "FLAG_ACTIVITY_REORDER_TO_FRONT" in cleanup
+    assert "scenario.moveToState(Lifecycle.State.RESUMED)" in cleanup
+    assert TEST.count("restoreDeviceState(ctx, oldHome, wasEnabled, scenario, activity)") == 2

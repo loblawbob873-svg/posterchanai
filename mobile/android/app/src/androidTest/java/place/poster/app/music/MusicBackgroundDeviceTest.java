@@ -45,10 +45,12 @@ public class MusicBackgroundDeviceTest {
         shell("cmd role add-role-holder android.app.role.HOME " + ctx.getPackageName());
         SystemClock.sleep(500);
         ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class);
+        AtomicReference<MainActivity> activity = new AtomicReference<MainActivity>();
         try {
             AtomicReference<WebView> ref = new AtomicReference<WebView>();
             AtomicInteger task = new AtomicInteger();
             scenario.onActivity(a -> {
+                activity.set(a);
                 ref.set(findWebView(a.findViewById(android.R.id.content)));
                 task.set(a.getTaskId());
             });
@@ -93,12 +95,7 @@ public class MusicBackgroundDeviceTest {
             assertEquals("\"true|messages\"", eval(web,
                     "localStorage.getItem('osMode')+'|'+window.__pcTabletLifecycle.focus"));
         } finally {
-            scenario.onActivity(a -> a.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED));
-            scenario.close();
-            if (!oldHome.isEmpty() && !oldHome.equals(ctx.getPackageName()))
-                try { shell("cmd role add-role-holder android.app.role.HOME " + oldHome); }
-                catch (Throwable ignored) { }
-            HomeRoles.enableLauncherComponent(ctx, wasEnabled);
+            restoreDeviceState(ctx, oldHome, wasEnabled, scenario, activity);
         }
     }
 
@@ -112,9 +109,13 @@ public class MusicBackgroundDeviceTest {
         SystemClock.sleep(500);
         assertTrue("the emulator did not assign PosterChan the HOME role", HomeRoles.isDefaultHome(ctx));
         ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class);
+        AtomicReference<MainActivity> activity = new AtomicReference<MainActivity>();
         try {
             AtomicReference<WebView> ref = new AtomicReference<WebView>();
-            scenario.onActivity(a -> ref.set(findWebView(a.findViewById(android.R.id.content))));
+            scenario.onActivity(a -> {
+                activity.set(a);
+                ref.set(findWebView(a.findViewById(android.R.id.content)));
+            });
             WebView web = waitForWebView(ref, scenario);
             waitForClientPage(web);
 
@@ -136,8 +137,11 @@ public class MusicBackgroundDeviceTest {
                     + "let a=new Audio(URL.createObjectURL(new Blob([b],{type:'audio/wav'})));"
                     + "a.loop=true;window.__pcBackgroundAudio=a;return a.play().then(()=>a.currentTime)})()";
             eval(web, start);
-            SystemClock.sleep(700);
-            double before = number(eval(web, "window.__pcBackgroundAudio.currentTime"));
+            double before = 0;
+            for (int i = 0; i < 30 && before <= 0.15; i++) {
+                SystemClock.sleep(100);
+                before = number(eval(web, "window.__pcBackgroundAudio.currentTime"));
+            }
             assertTrue("the injected track never began playing: " + before, before > 0.15);
 
             Intent service = new Intent(ctx, MusicService.class).setAction(MusicService.ACTION_UPDATE)
@@ -166,12 +170,33 @@ public class MusicBackgroundDeviceTest {
         } finally {
             try { ctx.startService(new Intent(ctx, MusicService.class).setAction(MusicService.ACTION_STOP)); }
             catch (Throwable ignored) { }
-            scenario.close();
-            if (!oldHome.isEmpty() && !oldHome.equals(ctx.getPackageName()))
-                try { shell("cmd role add-role-holder android.app.role.HOME " + oldHome); }
-                catch (Throwable ignored) { }
-            HomeRoles.enableLauncherComponent(ctx, wasEnabled);
+            restoreDeviceState(ctx, oldHome, wasEnabled, scenario, activity);
         }
+    }
+
+    /** Restore global emulator state even when HOME left ActivityScenario in CREATED/STOPPED.
+     * onActivity() requires RESUMED and therefore cannot be used from a failing test's cleanup. */
+    private static void restoreDeviceState(Context ctx, String oldHome, boolean wasEnabled,
+                                           ActivityScenario<MainActivity> scenario,
+                                           AtomicReference<MainActivity> activity) {
+        try {
+            MainActivity a = activity.get();
+            if (a != null) InstrumentationRegistry.getInstrumentation().runOnMainSync(
+                    () -> a.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED));
+        } catch (Throwable ignored) { }
+        try { shell("cmd role remove-role-holder android.app.role.HOME " + ctx.getPackageName()); }
+        catch (Throwable ignored) { }
+        if (!oldHome.isEmpty() && !oldHome.equals(ctx.getPackageName()))
+            try { shell("cmd role add-role-holder android.app.role.HOME " + oldHome); }
+            catch (Throwable ignored) { }
+        try {
+            ctx.startActivity(new Intent(ctx, MainActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+            SystemClock.sleep(250);
+            scenario.moveToState(Lifecycle.State.RESUMED);
+        } catch (Throwable ignored) { }
+        try { scenario.close(); } catch (Throwable ignored) { }
+        try { HomeRoles.enableLauncherComponent(ctx, wasEnabled); } catch (Throwable ignored) { }
     }
 
     private static String shell(String cmd) throws Exception {
