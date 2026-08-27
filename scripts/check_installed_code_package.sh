@@ -13,5 +13,9 @@ cleanup() { rm -r "$check_dir"; }
 trap cleanup EXIT HUP INT TERM
 (cd "$check_dir" && node "$asar_cli" extract-file "$asar" hostfs.js)
 mv "$check_dir/hostfs.js" "$check_dir/installed-hostfs.js"
+(cd "$check_dir" && node "$asar_cli" extract-file "$asar" www/static/js/client/code.js)
+mv "$check_dir/code.js" "$check_dir/installed-code.js"
 PC_INSTALLED_HOSTFS_JS="$check_dir/installed-hostfs.js" \
   node "$repo/tests/client/installed_git_restore_sim.js"
+PC_INSTALLED_CODE_JS="$check_dir/installed-code.js" \
+  "$repo/.venv/bin/python" "$repo/scripts/check_code_editor.py"

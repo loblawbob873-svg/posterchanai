@@ -246,7 +246,10 @@ COLOURS = r"""(() => {
            tree: document.querySelectorAll('.pcc-item').length,
            tabs: document.querySelectorAll('.pcc-tab').length,
            toolbar: !!document.querySelector('#pcc-save'),
-           gutter: !!document.querySelector('#pcc-gutter') };
+           gutter: !!document.querySelector('#pcc-gutter'),
+           feedH: Math.round(document.querySelector('#feed').getBoundingClientRect().height),
+           codeH: Math.round(document.querySelector('.pcc').getBoundingClientRect().height),
+           sideH: Math.round(document.querySelector('.pcc-side').getBoundingClientRect().height) };
 })()"""
 
 
@@ -332,6 +335,10 @@ async def drive(url):
                     problems.append(("missing-control", "no toolbar"))
                 if not base["gutter"]:
                     problems.append(("missing-control", "no line-number gutter"))
+                if base["codeH"] < base["feedH"] - 2 or base["sideH"] < base["codeH"] - 2:
+                    problems.append(("workspace-shrunk",
+                                     f"Code/feed/sidebar heights are {base['codeH']}/"
+                                     f"{base['feedH']}/{base['sideH']}px"))
                 for cls, col in base["seen"].items():
                     if not col:
                         problems.append(("no-colour", f"no {cls} token rendered at all"))
@@ -463,6 +470,8 @@ def main():
     class H(http.server.SimpleHTTPRequestHandler):
         def translate_path(self, path):
             path = path.split("?")[0].split("#")[0]
+            if path == "/static/js/client/code.js" and os.environ.get("PC_INSTALLED_CODE_JS"):
+                return os.environ["PC_INSTALLED_CODE_JS"]
             if path.startswith("/static/"):
                 return os.path.join(ROOT, path.lstrip("/"))
             return os.path.join(tmp, path.lstrip("/") or "index.html")
