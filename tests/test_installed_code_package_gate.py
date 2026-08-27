@@ -13,6 +13,9 @@ def test_installed_code_package_gate_extracts_the_native_bridge():
     assert "installed_git_restore_sim.js" in gate
     assert "www/static/js/client/code.js" in gate
     assert "PC_INSTALLED_CODE_JS=" in gate
+    assert 'PC_CHECK_PROFILE="$check_dir/chrome-profile"' in gate
+    assert 'PC_CHECK_PORT="$check_port"' in gate
+    assert 's.bind(("127.0.0.1",0))' in gate
     assert "check_code_editor.py" in gate
 
 
