@@ -2515,6 +2515,10 @@
     if(!w) return null;
     w.native=id; w.nativeFullscreen=!!nw.fullscreen; w.machineApp=nw;
     w.el.classList.add('osw-native');
+    /* Stable identity for accessibility, diagnostics and exact window actions.  Matching a frame
+     * by title or by "the first Firefox" is unsafe when two profiles or Telegram are open: a test
+     * or context-menu action can move the wrong person's live window. */
+    w.el.dataset.native=String(id);
     if(w.slot) w.slot.innerHTML='<div class="osw-nat-note">'+enc(nw.app||'application')+'</div>';
     _natSent.delete(id);
     requestAnimationFrame(()=>requestAnimationFrame(nsync));

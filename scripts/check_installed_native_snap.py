@@ -3,6 +3,7 @@
 
 import asyncio
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -11,6 +12,7 @@ from check_installed_desktop_account import BASE, CDP
 
 
 async def main():
+    wanted = int(os.environ.get("PC_NATIVE_APP_ID") or 0)
     pages = [p for p in json.load(urllib.request.urlopen(BASE + "/json/list", timeout=5))
              if p.get("type") == "page" and p.get("url", "").startswith("app://posterchan/")]
     source = None
@@ -19,11 +21,20 @@ async def main():
     initially_stashed = False
     for page in pages:
         async with CDP(page["webSocketDebuggerUrl"]) as cdp:
-            state = await cdp.eval(r"""(async()=>{if(!window.PCOS||!window.pcWM)return null;
-              await PCOS.refresh();await new Promise(r=>setTimeout(r,400));const snap=await pcWM.snapshot();
-              const row=(snap.windows||[]).find(w=>/firefox|telegram/i.test(String(w.app||'')));
-              return {frames:document.querySelectorAll('.osw-native').length,row};})()""")
-            if state and state["frames"]:
+            state = await cdp.eval(r"""(async wanted=>{if(!window.PCOS||!window.pcWM)return null;
+              if(!PCOS.isOn())PCOS.enter();await PCOS.refresh();await new Promise(r=>setTimeout(r,700));
+              const snap=await pcWM.snapshot(),rows=(snap.windows||[])
+                .filter(w=>/firefox|telegram/i.test(String(w.app||'')));
+              const row=wanted?rows.find(w=>Number(w.id)===Number(wanted)):(rows.length===1?rows[0]:null);
+              if(!row)return {unsafe:rows.length};
+              let frame=document.querySelector('.osw-native[data-native="'+Number(row.id)+'"]');
+              if(!frame){const app=String(row.app||'').toLowerCase(),matches=[...document.querySelectorAll('.osw-native')]
+                .filter(e=>String((e.querySelector('.osw-nat-note')||{}).textContent||'').toLowerCase()===app);
+                if(matches.length===1)frame=matches[0];}
+              if(!frame)return {unsafe:rows.length};frame.dataset.pcCheckNative=String(Number(row.id));
+              return {frames:document.querySelectorAll('.osw-native').length,row};})"""
+                + "(" + json.dumps(wanted) + ")")
+            if state and state.get("frames"):
                 source, native_id = page, int(state["row"]["id"])
                 original = state["row"]["rect"]
                 initially_stashed = bool(state["row"].get("stashed"))
@@ -34,22 +45,22 @@ async def main():
 
     async with CDP(source["webSocketDebuggerUrl"]) as cdp:
         try:
-            preview = await cdp.eval(r"""(()=>{const b=document.querySelector('.osw-native .osw-bar'),
-              r=b.getBoundingClientRect(),sx=r.left+r.width/2,sy=r.top+10,id=92;
-              b.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerId:id,
+            preview = await cdp.eval(r"""(id=>{const b=document.querySelector('.osw-native[data-pc-check-native="'+Number(id)+'"] .osw-bar'),
+              r=b.getBoundingClientRect(),sx=r.left+r.width/2,sy=r.top+10,pid=92;
+              b.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerId:pid,
                 pointerType:'mouse',button:0,buttons:1,clientX:sx,clientY:sy,screenX:sx,screenY:sy}));
               const x=innerWidth-1,y=innerHeight/2;
-              document.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,pointerId:id,
+              document.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,pointerId:pid,
                 pointerType:'mouse',button:-1,buttons:1,clientX:x,clientY:y,screenX:x,screenY:y}));
               const ghost=document.querySelector('.os-ghost');
-              return !!ghost&&getComputedStyle(ghost).display==='block';})()""")
+              return !!ghost&&getComputedStyle(ghost).display==='block';})""" + "(" + str(native_id) + ")")
             assert preview, "native edge drag displayed no snap preview"
             await cdp.eval(r"""(()=>{const x=innerWidth-1,y=innerHeight/2;
               document.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerId:92,
                 pointerType:'mouse',button:0,buttons:0,clientX:x,clientY:y,screenX:x,screenY:y}));
               return true;})()""")
             await asyncio.sleep(2)
-            snapped = await cdp.eval(r"""(async id=>{const frame=document.querySelector('.osw-native'),
+            snapped = await cdp.eval(r"""(async id=>{const frame=document.querySelector('.osw-native[data-pc-check-native="'+Number(id)+'"]'),
               fr=frame.getBoundingClientRect(),snap=await pcWM.snapshot(),
               shell=(snap.windows||[]).find(w=>/^(posterchan(-desktop)?|place\.poster\.desktop)$/i.test(String(w.app||''))),
               row=(snap.windows||[]).find(w=>Number(w.id)===Number(id));

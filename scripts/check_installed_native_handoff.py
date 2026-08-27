@@ -17,17 +17,23 @@ from check_installed_desktop_account import BASE, CDP
 
 STATE = r"""(async()=>{
   await PCOS.refresh();await new Promise(r=>setTimeout(r,400));const snap=await pcWM.snapshot();
-  const shell=(snap.windows||[]).find(w=>/^(posterchan(-desktop)?|place\.poster\.desktop)$/i.test(String(w.app||'')));
-  const native=(snap.windows||[]).find(w=>/firefox|telegram/i.test(String(w.app||'')));
-  return {nativeFrames:document.querySelectorAll('.osw-native').length,
+  const shell=(snap.windows||[]).find(w=>Number(w.id)===Number(snap.shellId));
+  const rows=(snap.windows||[]).filter(w=>/firefox|telegram/i.test(String(w.app||'')));
+  const native=WANTED?rows.find(w=>Number(w.id)===Number(WANTED)):(rows.length===1?rows[0]:null);
+  let frame=native&&document.querySelector('.osw-native[data-native="'+Number(native.id)+'"]');
+  if(native&&!frame){const app=String(native.app||'').toLowerCase(),matches=[...document.querySelectorAll('.osw-native')]
+    .filter(e=>String((e.querySelector('.osw-nat-note')||{}).textContent||'').toLowerCase()===app);
+    if(matches.length===1)frame=matches[0];}
+  if(frame)frame.dataset.pcCheckNative=String(Number(native.id));
+  return {nativeFrames:frame?1:0,unsafe:rows.length&&!native,
     htmlFrames:document.querySelectorAll('.osw:not(.osw-native)').length,
-    frameStashed:!!document.querySelector('.osw-native.native-stashed'),
+    frameStashed:!!(frame&&frame.classList.contains('native-stashed')),
     shell:shell&&{id:shell.id,rect:shell.rect},
     native:native&&{id:native.id,rect:native.rect,stashed:!!native.stashed}};
 })()"""
 
 DRAG = r"""(async direction=>{
-  const bar=document.querySelector('.osw-native .osw-bar');if(!bar)return false;
+  const bar=document.querySelector('.osw-native[data-pc-check-native="'+Number(WANTED)+'"] .osw-bar');if(!bar)return false;
   const r=bar.getBoundingClientRect(),sx=r.left+r.width/2,sy=r.top+12,id=91;
   bar.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerId:id,pointerType:'mouse',
     button:0,buttons:1,clientX:sx,clientY:sy,screenX:sx,screenY:sy}));
@@ -47,22 +53,23 @@ async def installed_pages():
         if page.get("type") != "page" or not page.get("url", "").startswith("app://posterchan/"):
             continue
         async with CDP(page["webSocketDebuggerUrl"]) as cdp:
-            if await cdp.eval("!!(window.__PC&&__PC.me&&__PC.me()&&window.PCOS&&window.pcWM)"):
+            if await cdp.eval("!!(window.PCOS&&window.pcWM&&PCOS.isOn()&&pcWM.snapshot)"):
                 pages.append(page)
     return pages
 
 
-async def states(pages):
+async def states(pages, wanted):
     result = []
     for page in pages:
         async with CDP(page["webSocketDebuggerUrl"]) as cdp:
-            result.append(await cdp.eval(STATE))
+            result.append(await cdp.eval(STATE.replace("WANTED", json.dumps(wanted))))
     return result
 
 
-async def drag(page, direction):
+async def drag(page, direction, wanted):
     async with CDP(page["webSocketDebuggerUrl"]) as cdp:
-        assert await cdp.eval(DRAG + "(" + json.dumps(direction) + ")")
+        assert await cdp.eval(DRAG.replace("WANTED", json.dumps(wanted))
+                              + "(" + json.dumps(direction) + ")")
 
 
 def owner_index(rows):
@@ -72,11 +79,17 @@ def owner_index(rows):
 
 
 async def main():
+    wanted = int(os.environ.get("PC_NATIVE_APP_ID") or 0)
+    if not wanted:
+        print("SKIP installed native handoff requires PC_NATIVE_APP_ID for a disposable window")
+        return 2
     pages = await installed_pages()
     if len(pages) < 2:
         print("SKIP installed native handoff requires two PosterChanOS renderer surfaces")
         return 2
-    before = await states(pages)
+    before = await states(pages, wanted)
+    assert all(row.get("shell") for row in before), (
+        "installed package lacks exact per-renderer shellId; update Desktop before handoff testing", before)
     source = owner_index(before)
     native_id = before[source]["native"]["id"]
     initially_stashed = before[source]["native"]["stashed"]
@@ -87,9 +100,9 @@ async def main():
     direction = "right" if before[destination]["shell"]["rect"]["x"] > before[source]["shell"]["rect"]["x"] else "left"
     reverse = "left" if direction == "right" else "right"
     try:
-        await drag(pages[source], direction)
+        await drag(pages[source], direction, wanted)
         await asyncio.sleep(3)
-        moved = await states(pages)
+        moved = await states(pages, wanted)
         assert owner_index(moved) == destination, moved
         assert [row["htmlFrames"] for row in moved] == html_counts, moved
         assert not moved[destination]["frameStashed"], moved[destination]
@@ -98,9 +111,9 @@ async def main():
         native_rect = moved[destination]["native"]["rect"]
         assert target_rect["x"] <= native_rect["x"] < target_rect["x"] + target_rect["width"], moved[destination]
 
-        await drag(pages[destination], reverse)
+        await drag(pages[destination], reverse, wanted)
         await asyncio.sleep(3)
-        restored = await states(pages)
+        restored = await states(pages, wanted)
         assert owner_index(restored) == source, restored
         assert [row["htmlFrames"] for row in restored] == html_counts, restored
         assert restored[source]["native"]["id"] == native_id, restored[source]
@@ -108,7 +121,7 @@ async def main():
         native_rect = restored[source]["native"]["rect"]
         assert source_rect["x"] <= native_rect["x"] < source_rect["x"] + source_rect["width"], restored[source]
     finally:
-        current = await states(pages)
+        current = await states(pages, wanted)
         owner = owner_index(current)
         async with CDP(pages[owner]["webSocketDebuggerUrl"]) as cdp:
             if initially_stashed:

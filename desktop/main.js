@@ -1231,8 +1231,14 @@ ipcMain.handle('pc:wm:snapshot', async (e) => {
    * workspace slice, while allIds remains global; keeping that distinction in the API prevents a
    * renderer from killing an app merely because it crossed a monitor boundary. */
   const rows = await wm().windows();
+  const scope = _shellScopes.get(e.sender.id);
+  const own = scope && _shellSurfaces.get(scope.output);
   return { windows: scopedWindows(e, rows),
-           allIds: rows.map(x => Number(x.id)).filter(Number.isFinite) };
+           allIds: rows.map(x => Number(x.id)).filter(Number.isFinite),
+           /* The exact compositor surface behind THIS renderer.  A multi-monitor diagnostic can
+            * temporarily put two PosterChan processes on one output; guessing "the first shell"
+            * then moves or measures the wrong desktop.  Identity is cheap and makes callers safe. */
+           shellId: own && Number.isFinite(Number(own.conId)) ? Number(own.conId) : null };
 });
 ipcMain.handle('pc:wm:handoff-ready', (e, ready) => {
   fsGuard(e);

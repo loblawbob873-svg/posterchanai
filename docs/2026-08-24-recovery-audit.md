@@ -178,6 +178,11 @@ This is evidence from the recovery pass, not a declaration that the whole queue 
   verifier assumption: the packaged app ID is `place.poster.desktop`, not only `posterchan-desktop`.
   The diagnostic processes were removed and the canonical two 3840×2560 shell surfaces returned to
   full size. Cross-monitor handoff remains open rather than being inferred from these narrower runs.
+  A follow-up safety audit found that the original probes selected the first Firefox/Telegram when
+  several existed. They now require an exact `PC_NATIVE_APP_ID` for multi-window runs, tag native
+  frames with their compositor ID, and make the bridge expose the exact shell surface belonging to
+  each renderer. The focus/snap checks were rerun against only disposable Firefox con_id 96. The
+  handoff gate remains open until that new bridge is installed and can prove both directions.
 - The same shell serializes `update-posterchan` before `emaint` touches Portage's Git checkout. A
   live held-lock test proved a second updater remained blocked with no output or overlay access; 110
   updater/profile tests plus 35 subtests pass. This prevents concurrent launches from leaving a

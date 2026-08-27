@@ -24,20 +24,28 @@ CLICK = r"""(selector=>{
   e.click();return true;
 })"""
 
-SETUP = r"""(async()=>{
+SETUP = r"""(async wanted=>{
   if(!PCOS.isOn())PCOS.enter();
   await PCOS.refresh();await new Promise(r=>setTimeout(r,800));
   const snap=await pcWM.snapshot(),allowed=/firefox|telegram/i;
-  const row=(snap.windows||[]).find(w=>allowed.test(String(w.app||'')));
-  if(!row)return {skip:true};
+  const rows=(snap.windows||[]).filter(w=>allowed.test(String(w.app||'')));
+  const row=wanted?rows.find(w=>Number(w.id)===Number(wanted)):(rows.length===1?rows[0]:null);
+  if(!row)return {skip:true,why:wanted?'requested native window is not on this surface'
+    :'more than one native window is visible; set PC_NATIVE_APP_ID'};
+  let frame=document.querySelector('.osw-native[data-native="'+Number(row.id)+'"]');
+  if(!frame){const app=String(row.app||'').toLowerCase(),matches=[...document.querySelectorAll('.osw-native')]
+    .filter(e=>String((e.querySelector('.osw-nat-note')||{}).textContent||'').toLowerCase()===app);
+    if(matches.length===1)frame=matches[0];}
+  if(!frame)return {skip:true,why:'could not identify the requested native frame safely'};
+  frame.dataset.pcCheckNative=String(Number(row.id));
   const created=!!PCOS.routeView('global');await new Promise(r=>setTimeout(r,500));
   return {id:Number(row.id),initiallyStashed:!!row.stashed,created,
     nativeFrames:document.querySelectorAll('.osw-native').length,
     htmlFrames:document.querySelectorAll('.osw:not(.osw-native)').length};
-})()"""
+})"""
 
 STATE = r"""(async id=>{
-  const frame=document.querySelector('.osw-native'),snap=await pcWM.snapshot(),row=(snap.windows||[])
+  const frame=document.querySelector('.osw-native[data-pc-check-native="'+Number(id)+'"]'),snap=await pcWM.snapshot(),row=(snap.windows||[])
     .find(w=>Number(w.id)===Number(id));
   return {nativeFocused:!!(frame&&frame.classList.contains('focused')),
     nativeStashed:!!(frame&&frame.classList.contains('native-stashed')),
@@ -53,31 +61,35 @@ CLEANUP = r"""(async info=>{
 })"""
 
 
-async def choose_native_page():
+async def choose_native_page(wanted):
     pages = [p for p in json.load(urllib.request.urlopen(BASE + "/json/list", timeout=5))
              if p.get("type") == "page" and p.get("url", "").startswith("app://posterchan/")]
     for page in pages:
         async with CDP(page["webSocketDebuggerUrl"]) as cdp:
-            usable = await cdp.eval(r"""(async()=>{
+            usable = await cdp.eval(r"""(async wanted=>{
               if(!window.PCOS||!window.pcWM)return false;
               if(!PCOS.isOn())PCOS.enter();await new Promise(r=>setTimeout(r,700));
-              return document.querySelectorAll('.osw-native').length>0;
-            })()""")
+              const snap=await pcWM.snapshot();return wanted
+                ?(snap.windows||[]).some(w=>Number(w.id)===Number(wanted))
+                :document.querySelectorAll('.osw-native').length>0;
+            })""" + "(" + json.dumps(wanted) + ")")
             if usable:
                 return page
     raise RuntimeError("no installed PosterChan surface owns a native frame")
 
 
 async def main():
-    page = await choose_native_page()
+    wanted = int(os.environ.get("PC_NATIVE_APP_ID") or 0)
+    page = await choose_native_page(wanted)
     async with CDP(page["webSocketDebuggerUrl"]) as cdp:
-        info = await cdp.eval(SETUP)
+        info = await cdp.eval(SETUP + "(" + json.dumps(wanted) + ")")
         if info.get("skip"):
-            print("SKIP no Firefox or Telegram surface is available for installed focus testing")
+            print("SKIP installed focus test: " + info.get("why", "no safe native surface"))
             return 2
         assert info["nativeFrames"] > 0 and info["htmlFrames"] > 0, info
         try:
-            assert await cdp.eval(CLICK + "('.osw-native .osw-bar')")
+            selector = f'.osw-native[data-pc-check-native="{info["id"]}"] .osw-bar'
+            assert await cdp.eval(CLICK + "(" + json.dumps(selector) + ")")
             await asyncio.sleep(1.2)
             native = await cdp.eval(STATE + f"({json.dumps(info['id'])})")
             assert native["nativeFocused"] and native["compositorFocused"], native
