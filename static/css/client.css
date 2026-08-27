@@ -7305,6 +7305,22 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 .osw{position:absolute;display:flex;flex-direction:column;min-width:420px;min-height:260px;
   background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;
   box-shadow:0 18px 50px rgba(0,0,0,.55)}
+.os-root.os-fx .osw:not(.osw-document){
+  background:color-mix(in srgb,var(--panel) 94%,transparent);
+  -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
+  transition:border-color .14s ease,box-shadow .14s ease}
+.os-root.os-fx .osw.focused:not(.osw-document){box-shadow:0 24px 68px rgba(0,0,0,.58),0 0 0 1px rgba(var(--accent-rgb),.12)}
+.os-root.os-fx .osw-bar{background:color-mix(in srgb,var(--panel2) 91%,transparent)}
+.os-root.os-fx .os-bar{box-shadow:0 -10px 32px rgba(0,0,0,.18)}
+/* Explicit low-power/OFF means off: it also removes the desktop's pre-existing frost and depth.
+   Geometry, stacking and hit testing are deliberately absent from both effect modes. */
+.os-root.os-fx-off .osw,.os-root.os-fx-off .osw.focused,
+.os-root.os-fx-off .osw.osw-document,.os-root.os-fx-off .os-bar,
+.os-root.os-fx-off .os-startmenu,.os-root.os-fx-off .os-layouts,.os-root.os-fx-off .os-ghost{
+  box-shadow:none!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;
+  transition:none!important}
+.os-root.os-fx-off .osw:not(.osw-document),.os-root.os-fx-off .osw-bar{background:var(--panel)}
+@media(prefers-reduced-motion:reduce){.os-root.os-fx .osw{transition:none}}
 .osw.focused{border-color:color-mix(in srgb, var(--neon) 55%, var(--line));
   box-shadow:0 22px 64px rgba(0,0,0,.62)}
 .osw.osw-document,.osw.osw-document.focused{border-color:#4b5563;border-radius:4px;
