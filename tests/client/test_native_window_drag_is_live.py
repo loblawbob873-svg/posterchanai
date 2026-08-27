@@ -32,7 +32,7 @@ def test_cancelled_drag_restores_geometry_and_never_snaps_or_hands_off():
     cancel = up[up.index("if(cancelled){", up.index("hideGhost()")):]
     assert cancel.index("_natGesture(w,false)") < cancel.index("return;")
     assert cancel.index("return;") < cancel.index("if(handoff && w.native != null")
-    assert cancel.index("return;") < cancel.index("if(zone) snapTo(w, zone)")
+    assert cancel.index("return;") < cancel.index("if(zone){ _natGesture(w,false); snapTo(w,zone); }")
 
 
 def test_native_bridge_retains_move_for_non_gesture_placement_operations():
@@ -47,7 +47,8 @@ def test_snapping_ends_move_only_mode_before_the_full_native_resize():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
     up = src[src.index("const up = (endEvent, cancelled) =>", src.index("function startDrag")):
              src.index("document.addEventListener('pointermove'", src.index("function startDrag"))]
-    assert up.index("_natGesture(w, false)") < up.index("if(zone) snapTo(w, zone)")
+    snap = "if(zone){ _natGesture(w,false); snapTo(w,zone); }"
+    assert snap in up
     snap = src[src.index("function snapTo"):src.index("function unsnap")]
     assert "_natSent.delete(Number(w.native))" in snap
     assert "requestAnimationFrame(() => requestAnimationFrame(nsync))" in snap
@@ -66,7 +67,15 @@ def test_pointerup_recomputes_the_snap_zone_from_its_final_coordinate():
     drag = src[src.index("function startDrag"):src.index("function startResize")]
     up = drag[drag.index("const up = (endEvent, cancelled) =>"):drag.index("document.addEventListener('pointermove'")]
     assert "zone = zoneAt(endEvent.clientX,endEvent.clientY)" in up
-    assert up.index("zone = zoneAt(endEvent.clientX,endEvent.clientY)") < up.index("if(zone) snapTo(w, zone)")
+    assert up.index("zone = zoneAt(endEvent.clientX,endEvent.clientY)") < up.index("if(zone){ _natGesture")
+
+
+def test_free_drag_is_clamped_before_native_gesture_commits_placement():
+    src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+    drag = src[src.index("function startDrag"):src.index("function startResize")]
+    branch = drag[drag.index("if(zone){ _natGesture"):drag.index("const cancel =")]
+    free = branch[branch.index("else {"):]
+    assert free.index("keepFrameReachable(w)") < free.index("_natGesture(w,false)")
 
 
 def test_taskbar_is_icon_only():

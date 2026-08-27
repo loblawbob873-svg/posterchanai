@@ -1241,7 +1241,12 @@
      * stashed changed with it — and the keyboard belongs to the app now, which only the compositor
      * can arrange. Clicking a browser's title bar and then typing into the desktop underneath is
      * exactly the sort of thing that makes a shell feel like a costume. */
-    if(w.native != null && !_natFocusHold){ try{ pcWM.focus(w.native); }catch(_){} }
+    if(w.native != null && !_natFocusHold){
+      /* Focusing a scratchpad container can make Sway reveal it at scratchpad geometry before our
+       * frame is ready — the focus-loss black flash/tiny Firefox window. Restore and place first. */
+      if(_natSent.get(Number(w.native))==='hidden') _focusNativeWhenShown(w);
+      else try{ pcWM.focus(w.native); }catch(_){}
+    }
     if(nativeWins().length) nsync();
     if(!w.noFeed) claimFeed(w);   // a folder owns its own contents and must never take the feed
     if(w.isolated){
@@ -2115,6 +2120,16 @@
   let _natShell = null, _natShellAt = 0, _natSent = new Map(), _natBusy = false, _natAgain = false;
 
   const nativeWins = () => wins.filter(w => w.native != null);
+  function _focusNativeWhenShown(w, attempt){
+    const id=w&&Number(w.native); if(!id || !wins.includes(w))return;
+    Promise.resolve(nsync()).then(()=>{
+      if(!wins.includes(w))return;
+      if(_natSent.get(id)==='hidden' && (attempt||0)<8){
+        setTimeout(()=>_focusNativeWhenShown(w,(attempt||0)+1),60); return;
+      }
+      try{pcWM.focus(id);}catch(_){}
+    },()=>{});
+  }
   /* Native programs are real Sway windows. They deliberately do not get an HTML doppelganger:
    * two independently rendered rectangles can never remain one window while crossing outputs,
    * changing scale, maximising, or restoring after a shell restart. PosterChan only mirrors the
@@ -3175,12 +3190,11 @@
         if(nativeWins().length) nsync();
         return;
       }
-      _natGesture(w, false);
       /* Clear gesture mode BEFORE snapping. While gesturing, nsync deliberately uses move() only
        * and never resizes; the previous order therefore moved Firefox into the right tile at its
        * old size and never issued the final full placement. */
-      if(zone) snapTo(w, zone);
-      else { keepFrameReachable(w); if(nativeWins().length) nsync(); }
+      if(zone){ _natGesture(w,false); snapTo(w,zone); }
+      else { keepFrameReachable(w); _natGesture(w,false); }
     };
     const cancel = (e) => up(e,true);
     document.addEventListener('pointermove', move);

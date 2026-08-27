@@ -146,6 +146,16 @@ class AStashedSurfaceIsNotDrawnAsABlackWindow(unittest.TestCase):
         self.assertNotIn("pcWM.place", adopt)
         self.assertNotIn("pcWM.fullscreen", adopt)
 
+    def test_refocusing_firefox_restores_pixels_before_keyboard_focus(self):
+        raw = OS_JS.read_text()
+        focus = body(raw, "function focusWin")
+        self.assertIn("_natSent.get(Number(w.native))==='hidden'", focus)
+        self.assertIn("_focusNativeWhenShown(w)", focus)
+        restore = body(raw, "function _focusNativeWhenShown")
+        self.assertLess(restore.index("nsync()"), restore.index("pcWM.focus(id)"))
+        self.assertIn("setTimeout", restore)
+        self.assertIn("<8", restore, "a failed compositor restore must not poll forever")
+
 
 if __name__ == "__main__":
     unittest.main()
