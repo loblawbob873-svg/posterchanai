@@ -68,6 +68,7 @@ def geometry(rect, inset=True):
 
 def main():
     app_id = os.environ.get("PC_NATIVE_APP_ID", "")
+    shell_pid = int(os.environ.get("PC_SHELL_PID", "0") or 0)
     try:
         pid = int(os.environ.get("PC_NATIVE_PID", ""))
     except ValueError:
@@ -76,7 +77,11 @@ def main():
     first_tree = tree()
     target, original_output = resolve(first_tree, app_id, pid)
     original = dict(target["rect"])
-    outs = outputs()
+    outs = [out for n, out in descendants(first_tree)
+            if out and re.search(r"^(?:place\.poster\.desktop|posterchan)",
+                                 str(n.get("app_id") or ""), re.I)
+            and (not shell_pid or int(n.get("pid") or -1) == shell_pid)]
+    outs = list(dict.fromkeys(outs))
     if len(outs) < 1:
         raise RuntimeError("no active outputs")
     tested = []
@@ -89,7 +94,8 @@ def main():
                 target, actual_out = resolve(current_tree, app_id, pid)
                 shells = [(n, o) for n, o in descendants(current_tree)
                           if o == actual_out and re.search(r"^(?:place\.poster\.desktop|posterchan)",
-                                                           str(n.get("app_id") or ""), re.I)]
+                                                           str(n.get("app_id") or ""), re.I)
+                          and (not shell_pid or int(n.get("pid") or -1) == shell_pid)]
                 if len(shells) != 1:
                     raise RuntimeError(f"need one managed shell on {actual_out}, found {len(shells)}")
                 before = dict(target["rect"])
