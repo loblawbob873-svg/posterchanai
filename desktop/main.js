@@ -543,6 +543,11 @@ function createWindow(assignment) {
   // alt-tabbing back does not need a click either.
   const focusPage = () => { if (!created.isDestroyed()) created.webContents.focus(); };
   created.webContents.on('did-finish-load', focusPage);
+  /* Reload keeps the same webContents id. Clear readiness while its listener-owning JavaScript is
+   * gone; os.js rearms it only after all monitor-handoff destinations have been installed. */
+  created.webContents.on('did-start-navigation', (_e, _url, _inPlace, isMainFrame) => {
+    if(isMainFrame) _handoffReady.delete(Number(created.webContents.id));
+  });
   created.on('focus', focusPage);
   /* FILLS THE SCREEN WITHOUT BEING FULLSCREEN. See the SHELL_MODE block in the options above: the
    * compositor's fullscreen state hides every floating window on the workspace, which is every app
@@ -670,7 +675,7 @@ function createWindow(assignment) {
 
   const contentsId = created.webContents.id;
   if(assignment) _shellScopes.set(contentsId, assignment);
-  created.on('closed', () => _shellScopes.delete(contentsId));
+  created.on('closed', () => { _shellScopes.delete(contentsId); _handoffReady.delete(contentsId); });
   loadApp(created);
   return created;
 }
@@ -1039,6 +1044,7 @@ function wm() {
 const _shellScopes = new Map();       // webContents.id -> { output, workspace }
 const _nativeOwners = new Map();      // con_id -> last ordinary workspace
 const _shellSurfaces = new Map();     // output name -> { browser, conId, assignment }
+const _handoffReady = new Set();      // webContents ids with destination listeners installed
 const { recoverSurfaces } = require('./shell-recovery.js');
 let _displayReconcile = null;
 let _displayReconcileTimer = null;
@@ -1228,6 +1234,12 @@ ipcMain.handle('pc:wm:snapshot', async (e) => {
   return { windows: scopedWindows(e, rows),
            allIds: rows.map(x => Number(x.id)).filter(Number.isFinite) };
 });
+ipcMain.handle('pc:wm:handoff-ready', (e, ready) => {
+  fsGuard(e);
+  const id=Number(e.sender.id);
+  if(ready === false) _handoffReady.delete(id); else _handoffReady.add(id);
+  return true;
+});
 ipcMain.handle('pc:wm:focus', (e, id) => { fsGuard(e); return wm().focus(Number(id)); });
 ipcMain.handle('pc:wm:close', (e, id) => { fsGuard(e); return wm().close(Number(id)); });
 ipcMain.handle('pc:wm:place', (e, id, x, y, w, h) => {
@@ -1262,6 +1274,10 @@ ipcMain.handle('pc:wm:handoff', async (e, id, direction) => {
   fsGuard(e);
   const record=adjacentShellSurface(e, String(direction||''));
   if(!record) return false;
+  /* Sending to a loading renderer succeeds but reaches no listener. Refuse before moving the real
+   * native surface, so a cross-monitor drag during reload cannot lose Firefox/Telegram. */
+  if(!_handoffReady.has(Number(record.browser.webContents.id)) ||
+     record.browser.webContents.isLoadingMainFrame()) return false;
   const target=record.assignment;
   await wm().finishMove(Number(id));
   await wm().command('[con_id='+Number(id)+'] move container to workspace number '+target.workspace);
@@ -1285,6 +1301,8 @@ ipcMain.handle('pc:wm:handoff-frame', async (e, payload, direction) => {
   fsGuard(e);
   const record=adjacentShellSurface(e, String(direction||''));
   if(!record) return false;
+  if(!_handoffReady.has(Number(record.browser.webContents.id)) ||
+     record.browser.webContents.isLoadingMainFrame()) return false;
   const p=payload && typeof payload==='object' ? payload : {};
   record.browser.webContents.send('pc:wm:handoff-frame', {
     view:String(p.view||''), title:String(p.title||''), icon:String(p.icon||''),

@@ -107,6 +107,7 @@ if (isOurPage) {
                                                   Number(w), Number(h)),
     move: (id, x, y) => ipcRenderer.invoke('pc:wm:move', Number(id), Number(x), Number(y)),
     handoff: (id, direction) => ipcRenderer.invoke('pc:wm:handoff', Number(id), String(direction||'')),
+    handoffReady: (ready) => ipcRenderer.invoke('pc:wm:handoff-ready', ready !== false),
     onNativeHandoff: (fn) => {
       const h = (_e, payload) => { try { fn(payload || {}); } catch (_) {} };
       ipcRenderer.on('pc:wm:native-handoff', h);

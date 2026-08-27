@@ -6475,6 +6475,9 @@
               width:Math.round(ww)+'px',height:Math.round(hh)+'px',zIndex:String(nextZ())});
           });
         }catch(_){}
+        /* webContents.send cannot tell the main process that a destination listener is absent.
+         * Declare readiness only after native, DOM-frame and preview listeners all exist. */
+        try{ if(pcWM.handoffReady) Promise.resolve(pcWM.handoffReady(true)).catch(()=>{}); }catch(_){}
         PCOSShell.watch(() => {
           /* Hardware readings change often. Rebuilding `bar.innerHTML` for every battery, volume,
            * Wi-Fi or PipeWire notification destroys and recreates the Start image, making the logo
@@ -6561,6 +6564,7 @@
     if(_handoffOff){ try{ _handoffOff(); }catch(_){} _handoffOff = null; }
     if(_nativeHandoffOff){ try{ _nativeHandoffOff(); }catch(_){} _nativeHandoffOff = null; }
     if(_handoffPreviewOff){ try{ _handoffPreviewOff(); }catch(_){} _handoffPreviewOff=null; }
+    try{ if(window.pcWM&&pcWM.handoffReady) Promise.resolve(pcWM.handoffReady(false)).catch(()=>{}); }catch(_){}
     if(_handoffPreviewEl){ _handoffPreviewEl.remove(); _handoffPreviewEl=null; }
     clearInterval(_clock); _clock = null;
     clearInterval(mailT); mailT = 0; mailSeen = null;
