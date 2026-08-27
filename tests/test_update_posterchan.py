@@ -89,6 +89,16 @@ class ItUpdatesBothHalves(unittest.TestCase):
         """The overlay is the release channel; without a sync there is nothing new to find."""
         self.assertIn("emaint sync -r posterchan", self.src)
 
+    def test_concurrent_updates_cannot_corrupt_the_overlay_checkout(self):
+        """Portage does not protect Git object writes from two simultaneous updater commands."""
+        lock = self.src.index("exec 9>/run/lock/posterchan-update.lock")
+        held = self.src.index("flock 9", lock)
+        sync = self.src.index("emaint sync -r posterchan")
+        emerge = self.src.index("emerge -u", sync)
+        self.assertLess(lock, held)
+        self.assertLess(held, sync)
+        self.assertLess(held, emerge)
+
     def test_it_does_not_sync_the_whole_tree(self):
         """A full `emerge --sync` is a large fetch with nothing to do with this app, and making
         people wait for it is how a one-command update becomes one nobody runs.
