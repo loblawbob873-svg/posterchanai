@@ -315,8 +315,15 @@ DRIVE = r"""(async () => {
   PCOS.openSystemSettings(); await sleep(300);
   const appearance=document.querySelector('.os-set-nav [data-page="appearance"]');
   if(appearance){appearance.click();await sleep(80);}
+  const categoryPages={};
+  for(const page of ['displays','appearance','sound','network','bluetooth','power','users','updates','about','liveusb']){
+    const nav=document.querySelector(`.os-set-nav [data-page="${page}"]`);if(nav)nav.click();await sleep(20);
+    const pane=document.querySelector(`[data-settings-page="${page}"]`);
+    categoryPages[page]=!!(nav&&pane&&pane.hidden===false&&
+      document.querySelectorAll('[data-settings-page]:not([hidden])').length===1);
+  }
   out.settings={opened:!!document.querySelector('.os-settings'),appearance:!!appearance,
-    visible:document.querySelector('[data-settings-page="appearance"]')?.hidden===false,
+    visible:!!categoryPages.appearance,categories:categoryPages,
     pages:document.querySelectorAll('[data-settings-page]').length,
     widgets:document.querySelectorAll('[data-widget-add],[data-widget-size],[data-widget-remove]').length};
   document.querySelector('.osw.focused .osw-x')?.click(); await sleep(80);
@@ -1565,6 +1572,11 @@ async def drive(url):
                 if settings.get("widgets"):
                     problems.append((label, "settings-mixed-widgets",
                                      f"settings included {settings['widgets']} dashboard widget controls"))
+                missing_categories = [name for name, shown in (settings.get("categories") or {}).items()
+                                      if not shown]
+                if missing_categories or len(settings.get("categories") or {}) != 10:
+                    problems.append((label, "settings-category-missing",
+                                     f"distinct Settings pages failed: {settings.get('categories')}"))
 
                 concord = r.get("concordSize") or {}
                 # Maximised managed windows deliberately retain the WM's 8 CSS-px snap gutter;

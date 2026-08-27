@@ -54,7 +54,7 @@ def test_a_missing_display_bridge_does_not_hide_unrelated_settings_pages():
     render = OS[OS.index("async function renderSystemSettings()"):
                 OS.index("function openTaskManager", OS.index("async function renderSystemSettings()"))]
     assert "if(!host) return" in render
-    assert "outs=window.pcDisplays?await pcDisplays.status():[]" in render
+    assert "outs=window.pcDisplays?await pcDisplays.status()" in render
     assert "displayError='Could not read displays:" in render
     assert "System settings are unavailable" not in render
     public = OS[OS.index("window.PCOS = {"):]
@@ -66,8 +66,8 @@ def test_mobile_settings_keeps_every_category_reachable_when_sidebar_is_hidden()
                 OS.index("function openTaskManager", OS.index("async function renderSystemSettings()"))]
     css = (ROOT / "static" / "css" / "client.css").read_text()
     assert 'data-settings-mobile' in render
-    for destination in ("page:displays", "jump:sound", "jump:network", "jump:bluetooth",
-                        "page:power", "page:about", "page:liveusb"):
+    for destination in ("page:displays", "page:sound", "page:network", "page:bluetooth",
+                        "page:power", "page:users", "page:updates", "page:about", "page:liveusb"):
         assert destination in render
     assert "if(kind==='page'){_osSettingsPage=value;draw();}" in render
     assert "else if(kind==='jump')jump(value,mobile)" in render
@@ -75,3 +75,17 @@ def test_mobile_settings_keeps_every_category_reachable_when_sidebar_is_hidden()
     mobile = css[css.index("@media(max-width:760px)", css.index(".os-settings-feed")):]
     assert ".os-set-nav{display:none}" in mobile
     assert ".os-set-mobile-nav{" in mobile and "display:flex" in mobile
+
+
+def test_every_major_settings_category_is_a_distinct_page_not_a_combined_jump_tab():
+    render = OS[OS.index("async function renderSystemSettings()"):
+                OS.index("function openTaskManager", OS.index("async function renderSystemSettings()"))]
+    pages = ("displays", "appearance", "sound", "network", "bluetooth", "power",
+             "users", "updates", "about", "liveusb")
+    for page in pages:
+        assert f'data-page="{page}"' in render
+        if page not in ("sound", "network", "bluetooth"):
+            assert f'data-settings-page="{page}"' in render
+    assert 'data-settings-page="${key}"' in render
+    for combined in ('data-jump="sound"', 'data-jump="network"', 'data-jump="bluetooth"'):
+        assert combined not in render

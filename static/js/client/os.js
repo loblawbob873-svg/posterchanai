@@ -1694,13 +1694,15 @@
     host.innerHTML='<div class="spinner"></div>';
     /* Displays is one settings page, not the gatekeeper for every page. A missing/crashed display
        bridge must not also erase Appearance, Power and About. Degrade this page locally. */
-    let outs=[], power={}, system={}, displayError='';
-    try{ outs=window.pcDisplays?await pcDisplays.status():[]; }
+    let outs=[], power={}, system={}, displayError='',powerError='',systemError='';
+    try{ outs=window.pcDisplays?await pcDisplays.status():(displayError='Display controls are unavailable on this device.',[]); }
     catch(e){ outs=[];displayError='Could not read displays: '+String(e&&e.message||e); }
     if(!alive()) return;
-    try{ power=window.pcPower?await pcPower.status():{}; }catch(_){ power={}; }
+    try{ power=window.pcPower?await pcPower.status():(powerError='Power controls are unavailable on this device.',{}); }
+    catch(e){ power={};powerError='Could not read power settings: '+String(e&&e.message||e); }
     if(!alive()) return;
-    try{ system=window.pcSystem?await pcSystem.snapshot(false):{}; }catch(_){ system={}; }
+    try{ system=window.pcSystem?await pcSystem.snapshot(false):(systemError='System information is unavailable on this device.',{}); }
+    catch(e){ system={};systemError='Could not read system information: '+String(e&&e.message||e); }
     if(!alive()) return;
     const rows=outs.map(o=>{ const cur=(o.modes||[]).find(m=>m.current);
       const hz=m=>Math.round((+m.refresh||0)/1000*1000)/1000;
@@ -1719,19 +1721,22 @@
         <div class="os-set-title">${iconSvg('gear')}<b>System Settings</b></div>
         <button data-page="displays" class="${_osSettingsPage==='displays'?'on':''}">${iconSvg('monitor')} Displays</button>
         <button data-page="appearance" class="${_osSettingsPage==='appearance'?'on':''}">${iconSvg('palette')} Appearance</button>
-        <button data-jump="sound">${iconSvg('volume')} Sound</button>
-        <button data-jump="network">${iconSvg('wifi')} Network</button>
-        <button data-jump="bluetooth">${iconSvg('bluetooth')} Bluetooth</button>
+        <button data-page="sound" class="${_osSettingsPage==='sound'?'on':''}">${iconSvg('volume')} Sound</button>
+        <button data-page="network" class="${_osSettingsPage==='network'?'on':''}">${iconSvg('wifi')} Network</button>
+        <button data-page="bluetooth" class="${_osSettingsPage==='bluetooth'?'on':''}">${iconSvg('bluetooth')} Bluetooth</button>
         <button data-page="power" class="${_osSettingsPage==='power'?'on':''}">${iconSvg('power')} Power &amp; brightness</button>
+        <button data-page="users" class="${_osSettingsPage==='users'?'on':''}">${iconSvg('user')} Users</button>
+        <button data-page="updates" class="${_osSettingsPage==='updates'?'on':''}">${iconSvg('refresh')} Updates</button>
         <button data-page="about" class="${_osSettingsPage==='about'?'on':''}">${iconSvg('chart')} About</button>
-        ${window.pcLiveUSB?`<button data-page="liveusb" class="${_osSettingsPage==='liveusb'?'on':''}">${iconSvg('drive')} LiveUSB</button>`:''}
+        <button data-page="liveusb" class="${_osSettingsPage==='liveusb'?'on':''}">${iconSvg('drive')} Installation media</button>
       </aside><main class="os-set-main"><label class="os-set-mobile-nav"><span>Settings category</span><select data-settings-mobile aria-label="Settings category">
         <option value="page:displays" ${_osSettingsPage==='displays'?'selected':''}>Displays</option>
         <option value="page:appearance" ${_osSettingsPage==='appearance'?'selected':''}>Appearance</option>
-        <option value="jump:sound">Sound</option><option value="jump:network">Network</option><option value="jump:bluetooth">Bluetooth</option>
+        <option value="page:sound" ${_osSettingsPage==='sound'?'selected':''}>Sound</option><option value="page:network" ${_osSettingsPage==='network'?'selected':''}>Network</option><option value="page:bluetooth" ${_osSettingsPage==='bluetooth'?'selected':''}>Bluetooth</option>
         <option value="page:power" ${_osSettingsPage==='power'?'selected':''}>Power &amp; brightness</option>
+        <option value="page:users" ${_osSettingsPage==='users'?'selected':''}>Users</option><option value="page:updates" ${_osSettingsPage==='updates'?'selected':''}>Updates</option>
         <option value="page:about" ${_osSettingsPage==='about'?'selected':''}>About</option>
-        ${window.pcLiveUSB?`<option value="page:liveusb" ${_osSettingsPage==='liveusb'?'selected':''}>LiveUSB</option>`:''}
+        <option value="page:liveusb" ${_osSettingsPage==='liveusb'?'selected':''}>Installation media</option>
       </select></label><section data-settings-page="displays" ${_osSettingsPage==='displays'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('monitor')}</div><span><h2>Displays</h2><p>Arrange monitors, choose resolution and scaling, then preview safely before saving.</p></span></header>
         <section class="os-set-card"><div class="os-set-cardhead"><b>Monitor arrangement</b><span>Drag each numbered screen to match its physical position on your desk.</span></div>
         ${displayError?`<div class="empty">${enc(displayError)}</div>`:''}<div class="os-display-map" style="height:${Math.max(180,(maxY-minY)*scale+40)}px">${rows.map((r,i)=>
@@ -1739,12 +1744,19 @@
            style="left:${20+(r.x-minX)*scale}px;top:${20+(r.y-minY)*scale}px;width:${Math.max(90,r.w*scale)}px;height:${Math.max(60,r.h*scale)}px">
            <b>${i+1}</b><span>${enc(r.label)}</span><small>${r.w} × ${r.h}</small></button>`).join('')}</div>
         <div class="os-display-controls"></div>
-        <div class="os-set-actions"><button class="btn" data-detect>Detect displays</button>
-          <button class="btn primary" data-apply>Preview and apply</button><span class="muted" data-status></span></div></section></section>
+        ${window.pcDisplays?`<div class="os-set-actions"><button class="btn" data-detect>Detect displays</button>
+          <button class="btn primary" data-apply>Preview and apply</button><span class="muted" data-status></span></div>`:''}</section></section>
         <section data-settings-page="appearance" ${_osSettingsPage==='appearance'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('palette')}</div><span><h2>Appearance</h2><p>Choose modern desktop depth or a flat low-power presentation.</p></span></header>
         <section class="os-setting-row os-set-control"><div><b>Desktop experience</b><span>Keep PosterChan's current desktop or use optional macOS-style window chrome.</span></div><select data-desktop-style aria-label="Desktop experience"><option value="posterchan" ${settings().get(STYLE_KEY,'posterchan')!=='mac'?'selected':''}>PosterChan</option><option value="mac" ${settings().get(STYLE_KEY,'posterchan')==='mac'?'selected':''}>macOS-style</option></select></section>
         <section class="os-setting-row os-set-control"><div><b>Window effects</b><span>Shadows, restrained transparency and short visual transitions. This never changes window focus or placement.</span></div><select data-window-effects aria-label="Window effects"><option value="full" ${settings().get(FX_KEY,'full')!=='off'?'selected':''}>Modern</option><option value="off" ${settings().get(FX_KEY,'full')==='off'?'selected':''}>Low power / off</option></select></section></section>
+        ${[['sound','volume','Sound','Output, input, and application volume.','Open sound controls'],
+           ['network','wifi','Network','Wi-Fi and wired network connections.','Open network controls'],
+           ['bluetooth','bluetooth','Bluetooth','Discover, pair, and manage nearby devices.','Open Bluetooth controls']].map(([key,ic,title,desc,action])=>`
+        <section data-settings-page="${key}" ${_osSettingsPage===key?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg(ic)}</div><span><h2>${title}</h2><p>${desc}</p></span></header>
+          <section class="os-set-card"><div class="os-set-cardhead"><b>${title} controls</b><span>Controls open beside this Settings window and return here when closed.</span></div>
+          ${window.PCOSShell&&PCOSShell.openControl?`<button class="btn primary os-set-open-control" data-open-control="${key}">${action}</button>`:`<div class="empty">${title} controls are unavailable on this device.</div>`}</section></section>`).join('')}
         <section data-settings-page="power" ${_osSettingsPage==='power'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('power')}</div><span><h2>Power &amp; brightness</h2><p>Battery, performance, sleep, and display brightness.</p></span></header>
+        ${powerError?`<div class="empty">${enc(powerError)}</div>`:''}
         ${power.brightness&&power.brightness.available?`<section class="os-setting-row os-set-control"><div><b>Brightness</b><span>${enc(power.brightness.name||'Built-in display')}</span></div><label><output data-bright-value>${enc(power.brightness.percent)}%</output><input data-brightness type="range" min="1" max="100" value="${enc(power.brightness.percent)}" aria-label="Display brightness"></label></section>`:''}
         ${power.profiles&&power.profiles.available?`<section class="os-setting-row os-set-control"><div><b>Power mode</b><span>Balance speed, heat, and battery use.</span></div><select data-power-profile aria-label="Power mode">${power.profiles.list.map(n=>`<option ${n===power.profiles.active?'selected':''}>${enc(n)}</option>`).join('')}</select></section>`:''}
         <section class="os-setting-row os-set-control"><div><b>Keep awake</b><span>Prevent automatic display-off during presentations and long tasks.</span></div><label class="os-set-switch"><input data-keep-awake type="checkbox" ${power.keepAwake?'checked':''}><span>${power.keepAwake?'On':'Off'}</span></label></section>
@@ -1754,17 +1766,22 @@
           <select data-idle-timeout aria-label="Display idle timeout">
             ${[[60,'1 minute'],[120,'2 minutes'],[300,'5 minutes'],[600,'10 minutes'],[1800,'30 minutes'],[0,'Never']].map(([n,label])=>`<option value="${n}" ${Number(power.idleSeconds)===n?'selected':''}>${label}</option>`).join('')}
           </select></section></section>
+        <section data-settings-page="users" ${_osSettingsPage==='users'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('user')}</div><span><h2>Users</h2><p>Accounts allowed to sign in to this computer.</p></span></header>
+          <section class="os-set-card"><div class="os-set-cardhead"><b>Local accounts</b><span>User administration is unavailable in this session. Existing accounts are unchanged.</span></div></section></section>
+        <section data-settings-page="updates" ${_osSettingsPage==='updates'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('refresh')}</div><span><h2>Updates</h2><p>Operating-system and installed application updates.</p></span></header>
+          <section class="os-set-card"><div class="os-set-cardhead"><b>System updates</b><span>Update controls are unavailable in this session. No update has been started.</span></div></section></section>
         <section data-settings-page="about" ${_osSettingsPage==='about'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('chart')}</div><span><h2>About</h2><p>Hardware and session information for this computer.</p></span></header>
+        ${systemError?`<div class="empty">${enc(systemError)}</div>`:''}
         <section class="os-set-card os-about-grid">
           <div><span>System</span><b>PosterChanOS</b></div>
           <div><span>Processors</span><b>${enc((system.cpu&&system.cpu.cores)||'—')} logical cores</b></div>
           <div><span>Memory</span><b>${system.memory&&system.memory.total?enc((system.memory.total/1073741824).toFixed(1))+' GB':'—'}</b></div>
           <div><span>Up time</span><b>${Number.isFinite(system.uptime)?enc(Math.floor(system.uptime/3600))+'h '+enc(Math.floor(system.uptime/60)%60)+'m':'—'}</b></div>
         </section></section>
-        ${window.pcLiveUSB?`<section class="os-liveusb" data-liveusb data-settings-page="liveusb" ${_osSettingsPage==='liveusb'?'':'hidden'}><div class="os-liveusb-head"><div><b>PosterChanOS LiveUSB</b><span>Build a recovery/installer ISO or write one to removable media.</span></div><button class="btn" data-live-refresh>Refresh</button></div>
+        <section class="os-liveusb" data-liveusb data-settings-page="liveusb" ${_osSettingsPage==='liveusb'?'':'hidden'}>${window.pcLiveUSB?`<div class="os-liveusb-head"><div><b>PosterChanOS installation media</b><span>Build a recovery/installer ISO or write one to removable media.</span></div><button class="btn" data-live-refresh>Refresh</button></div>
           <div class="os-liveusb-grid"><div><h3>Build an ISO</h3><label>Output folder<div class="os-path-pick"><input class="input" data-live-out readonly placeholder="Choose a folder"><button class="btn" data-live-dir>Choose…</button></div></label><label><input type="checkbox" data-live-home> Include personal home files <small>(recovery media only)</small></label><button class="btn primary" data-live-build>Build ISO</button></div>
           <div><h3>Write a USB drive</h3><label>ISO file<div class="os-path-pick"><input class="input" data-live-iso readonly placeholder="Choose an ISO"><button class="btn" data-live-pick>Choose…</button></div></label><label>Removable drive<select data-live-disk><option value="">Scanning…</option></select></label><button class="btn danger" data-live-burn>Write USB…</button></div></div>
-          <pre class="os-liveusb-status" data-live-status>Ready</pre></section>`:''}
+          <pre class="os-liveusb-status" data-live-status>Ready</pre>`:`<header class="os-set-pagehead"><div>${iconSvg('drive')}</div><span><h2>Installation media</h2><p>Recovery and installer media for PosterChanOS.</p></span></header><div class="empty">Installation-media tools are unavailable on this device.</div>`}</section>
       </main></div>`;
       wire(); controls();
     };
@@ -1831,7 +1848,7 @@
         awake.disabled=true;try{await pcPower.setKeepAwake(awake.checked);const s=awake.parentElement.querySelector('span');if(s)s.textContent=awake.checked?'On':'Off';PC().toast(awake.checked?'Computer will stay awake':'Normal sleep behavior restored');}catch(e){awake.checked=!awake.checked;PC().toast(String(e&&e.message||e));}finally{awake.disabled=false;}
       };
       const live=host.querySelector('[data-liveusb]');
-      if(live){
+      if(live&&window.pcLiveUSB){
         const out=live.querySelector('[data-live-out]'), iso=live.querySelector('[data-live-iso]');
         const disk=live.querySelector('[data-live-disk]'), stat=live.querySelector('[data-live-status]');
         const refresh=async()=>{ try{
@@ -1861,6 +1878,7 @@
           catch(e){ try{PC().toast(String(e&&e.message||e))}catch(_){} }
       };
       host.querySelectorAll('[data-jump]').forEach(b=>b.onclick=()=>jump(b.dataset.jump,b));
+      host.querySelectorAll('[data-open-control]').forEach(b=>b.onclick=()=>jump(b.dataset.openControl,b));
       host.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{_osSettingsPage=b.dataset.page;draw();});
       const mobile=host.querySelector('[data-settings-mobile]');if(mobile)mobile.onchange=()=>{
         const [kind,value]=String(mobile.value||'').split(':',2);
