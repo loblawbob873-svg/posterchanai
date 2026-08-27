@@ -351,6 +351,15 @@
                 S.msgs.set(md, { doc:md, address:sent.to, body:sent.body || '', date:at,
                                  incoming:false, name:'', parts:sentParts, pending:true, outbox:d,
                                  _at:ev.created_at });
+            }else if(ack.done && ack.ok && ack.pending){
+              /* Android has accepted an asynchronous MMS transaction, but its carrier callback
+               * has not happened yet. `done` retires the command so no phone sends it twice;
+               * `pending` keeps the bubble honest until provider mirroring replaces it with the
+               * eventual SENT/FAILED row. */
+              if(!have || have.pending || have.failed || !Number(have._at) || have._at < ev.created_at)
+                S.msgs.set(md, { doc:md, address:sent.to, body:sent.body || '', date:at,
+                                 incoming:false, name:'', parts:sentParts, pending:true, outbox:d,
+                                 _at:ev.created_at });
             }else if(ack.done && ack.ok){
               if(!have || have.pending || have.failed || !Number(have._at) || have._at < ev.created_at)
                 S.msgs.set(md, { doc:md, address:sent.to, body:sent.body || '', date:at,

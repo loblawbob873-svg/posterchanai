@@ -280,6 +280,12 @@ public final class SmsOutbox {
         JSONObject o = new JSONObject();
         o.put("done", true);
         o.put("ok", ok);
+        /* MmsSender.ok means Android accepted the asynchronous carrier transaction, not that the
+         * carrier delivered it. The command is terminal (and must never be performed twice), but
+         * its message remains pending until MmsSendReceiver/provider mirroring supplies the real
+         * SENT/FAILED state. Calling this final success made every desktop lie during that window
+         * and permanently when the WebView did not subsequently mirror the provider row. */
+        if (attachment != null && ok) o.put("pending", true);
         o.put("error", error == null ? "" : error);
         o.put("by", "phone");
         // The completion is also the desktop's durable sent receipt. Without these fields the

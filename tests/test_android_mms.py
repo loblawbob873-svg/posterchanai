@@ -607,6 +607,16 @@ class OutgoingMms(unittest.TestCase):
         self.assertIn("if (isCancelled(ctx, doc))", outbox)
         self.assertLess(outbox.index("if (isCancelled(ctx, doc))"),
                         outbox.index("MmsSender.send(ctx, to, body, imageBytes)"))
+        marker = outbox[outbox.index("private static JSONObject marker") :]
+        self.assertIn('if (attachment != null && ok) o.put("pending", true)', marker,
+                      "system acceptance is still being reported as final carrier success")
+
+    def test_web_keeps_an_accepted_remote_mms_pending_until_provider_reconciliation(self):
+        js = open(SMSJS, encoding="utf-8").read()
+        pending = js[js.index("ack.done && ack.ok && ack.pending") :
+                     js.index("}else if(ack.done && ack.ok){")]
+        self.assertIn("pending:true", pending)
+        self.assertIn("outbox:d", pending)
 
     def test_background_send_receipt_survives_a_relay_reconnect(self):
         service = open(os.path.join(ROOT, "mobile/android/app/src/main/java/place/poster/app/signer/SignerRelayService.java"), encoding="utf-8").read()
