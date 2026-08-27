@@ -38,13 +38,20 @@ def test_snapping_ends_move_only_mode_before_the_full_native_resize():
     assert "requestAnimationFrame(() => requestAnimationFrame(nsync))" in snap
 
 
-def test_wayland_edge_clamping_still_hands_native_windows_to_the_other_monitor():
+def test_mouse_edge_snap_is_not_stolen_by_a_timed_monitor_handoff():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
     drag = src[src.index("function startDrag"):src.index("function startResize")]
-    assert "edgeHoldDir='',edgeHoldAt=0" in drag
-    assert "w.native!=null&&edgeHoldAt&&Date.now()-edgeHoldAt>=280" in drag
-    assert "edgeOverflow(e,dir)>8||" in drag
+    assert "edgeHoldAt" not in drag
+    assert "return edgeOverflow(e,dir)>8?dir:''" in drag
     assert "if(handoff && w.native != null && pcWM.handoff)" in drag
+
+
+def test_pointerup_recomputes_the_snap_zone_from_its_final_coordinate():
+    src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+    drag = src[src.index("function startDrag"):src.index("function startResize")]
+    up = drag[drag.index("const up = (endEvent) =>"):drag.index("document.addEventListener('pointermove'")]
+    assert "zone = zoneAt(endEvent.clientX,endEvent.clientY)" in up
+    assert up.index("zone = zoneAt(endEvent.clientX,endEvent.clientY)") < up.index("if(zone) snapTo(w, zone)")
 
 
 def test_taskbar_is_icon_only():

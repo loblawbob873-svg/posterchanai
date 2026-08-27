@@ -2938,7 +2938,7 @@
     let ssx = gxOf(ev), ssy = gyOf(ev);
     let ox = parseInt(w.el.style.left, 10), oy = parseInt(w.el.style.top, 10);
     let curX = ox, curY = oy, zone = '', handoff = '', raf = 0, lastMove = ev,
-        previewDir='', previewAt=0,edgeHoldDir='',edgeHoldAt=0;
+        previewDir='', previewAt=0;
     hideLayouts();
     /* Native apps follow the frame with position-only compositor moves. Resizing/re-floating on
      * every frame is still avoided; `_natGesture` makes nsync choose pcWM.move until release. */
@@ -2980,14 +2980,12 @@
     };
     const handoffDirection = (e) => {
       const dir=edgeDirection(e);
-      if(dir!==edgeHoldDir){edgeHoldDir=dir;edgeHoldAt=dir?Date.now():0;}
       if(!dir)return '';
-      /* Wayland often clamps screenX/clientX at this renderer's last pixel. There is then no
-       * measurable overflow, so the native Firefox/Telegram surface follows the moving HTML frame
-       * onto another output but ownership never transfers: the two visibly separate. Holding a
-       * native titlebar at the edge is the unambiguous cross-monitor gesture; a quick release still
-       * performs ordinary edge snap. */
-      return edgeOverflow(e,dir)>8||(w.native!=null&&edgeHoldAt&&Date.now()-edgeHoldAt>=280)?dir:'';
+      /* An edge is always a SNAP target. A timed dwell used to reinterpret an ordinary mouse snap
+       * as a monitor handoff after 280ms, so anyone who paused to look at the preview could never
+       * snap Firefox/Telegram. Cross-monitor drag requires actual virtual-desktop overflow; the
+       * title-bar Move-to-monitor action remains the deterministic path where Wayland clamps it. */
+      return edgeOverflow(e,dir)>8?dir:'';
     };
     const preview = (e) => {
       if(!window.pcWM || !pcWM.previewFrame) return;
@@ -3055,6 +3053,10 @@
       w.el.style.transform = '';
       w.el.style.left = Math.round(curX) + 'px';
       w.el.style.top = Math.round(curY) + 'px';
+      /* Pointer coalescing can deliver the final edge coordinate only on pointerup. Reusing the
+       * previous move's zone made a perfectly ordinary drag-to-edge do nothing intermittently. */
+      if(endEvent && Number.isFinite(endEvent.clientX) && Number.isFinite(endEvent.clientY))
+        zone = zoneAt(endEvent.clientX,endEvent.clientY);
       hideGhost();
       handoff = handoffDirection(endEvent) || handoff || handoffDirection(lastMove);
       if(previewDir && pcWM.previewFrame){ try{ pcWM.previewFrame(null,previewDir); }catch(_){} }
