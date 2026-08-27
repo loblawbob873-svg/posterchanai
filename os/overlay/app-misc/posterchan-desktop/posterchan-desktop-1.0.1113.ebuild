@@ -3,7 +3,7 @@
 
 EAPI=8
 
-DESCRIPTION="PosterChan desktop — the shell PosterChanOS boots into"
+DESCRIPTION="PosterChan desktop — the installed shell PosterChanOS boots into"
 HOMEPAGE="https://poster.place"
 # A VERSIONED TARBALL, AND THAT IS WHAT MAKES A MANIFEST POSSIBLE.
 #
