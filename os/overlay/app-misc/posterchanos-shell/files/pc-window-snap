@@ -45,7 +45,11 @@ def process_chain(pid):
 
 def is_posterchan_shell(win):
     app = str(win.get("app_id") or "").lower()
-    if app in ("posterchan", "posterchan-desktop"):
+    # Electron 44's registered Wayland identity is the reverse-DNS package name. During startup or
+    # compositor recovery pid metadata can still be absent, so ancestry is not a usable fallback.
+    # Treat every identity accepted by the renderer/main shell lookup as the same protected surface;
+    # resizing one here halves an entire monitor instead of the focused PosterChan window inside it.
+    if app in ("posterchan", "posterchan-desktop", "place.poster.desktop"):
         return True
     return any("posterchan-desktop" in cmd.lower() for cmd in process_chain(win.get("pid")))
 

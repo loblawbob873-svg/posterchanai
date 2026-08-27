@@ -36,6 +36,59 @@ def test_native_snap_never_resizes_a_posterchan_shell_surface(monkeypatch):
     assert module["is_posterchan_shell"]({"app_id": None, "pid": 4242}) is True
 
 
+def test_electron_44_reverse_dns_shell_identity_needs_no_pid_fallback():
+    helper = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap"
+    module = runpy.run_path(str(helper), run_name="pc_window_snap_identity_test")
+    module["is_posterchan_shell"].__globals__["process_chain"] = lambda _pid: (_ for _ in ()).throw(
+        AssertionError("stable app_id must not need process ancestry"))
+    assert module["is_posterchan_shell"]({"app_id": "place.poster.desktop", "pid": 0}) is True
+
+
+def test_repeated_super_arrows_route_to_the_internal_window_without_resizing_shell(monkeypatch):
+    helper = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap"
+    module = runpy.run_path(str(helper), run_name="pc_window_snap_repeat_test")
+    sent = []
+    resized = []
+    monkeypatch.setitem(module["main"].__globals__, "sway",
+                        lambda *args: sent.append(args) or '{"nodes":[]}')
+    monkeypatch.setitem(module["main"].__globals__, "focused",
+                        lambda _tree: ({"id": 31, "app_id": "place.poster.desktop", "pid": 0},
+                                       {"rect": {"x": 1920, "y": 0,
+                                                 "width": 2560, "height": 1440}}))
+    monkeypatch.setattr(module["subprocess"], "check_call",
+                        lambda argv, **_kw: resized.append(argv))
+    for side in ("right", "right", "left", "right", "max", "left"):
+        monkeypatch.setattr(module["sys"], "argv", ["pc-window-snap", side])
+        module["main"]()
+    assert [call[-1] for call in sent if call[:2] == ("-t", "send_tick")] == [
+        "pc:snap:right", "pc:snap:right", "pc:snap:left",
+        "pc:snap:right", "pc:snap:max", "pc:snap:left"]
+    assert resized == [], "Super+Arrow resized the per-monitor shell instead of its internal window"
+
+
+def test_mouse_edge_release_cannot_snap_the_reverse_dns_shell_surface(monkeypatch):
+    """The HTML frame owns mouse snapping; the compositor helper must leave its output intact."""
+    helper = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap"
+    module = runpy.run_path(str(helper), run_name="pc_window_snap_mouse_shell_test")
+    sent = []
+    resized = []
+    monkeypatch.setattr(module["sys"], "argv", ["pc-window-snap", "edge"])
+    monkeypatch.setitem(module["main"].__globals__, "sway",
+                        lambda *args: sent.append(args) or '{"nodes":[]}')
+    monkeypatch.setitem(module["main"].__globals__, "focused",
+                        lambda _tree: ({"id": 32, "app_id": "place.poster.desktop", "pid": 0,
+                                        "rect": {"x": 1920, "y": 0,
+                                                 "width": 2560, "height": 1440}},
+                                       {"rect": {"x": 1920, "y": 0,
+                                                 "width": 2560, "height": 1440}}))
+    monkeypatch.setattr(module["subprocess"], "check_call",
+                        lambda argv, **_kw: resized.append(argv))
+    for _ in range(6):
+        module["main"]()
+    assert not [call for call in sent if call[:2] == ("-t", "send_tick")]
+    assert resized == []
+
+
 def test_super_arrow_routes_shell_focus_to_the_in_app_window(monkeypatch):
     """The compositor consumes Super+Right, so Chromium cannot be the only handler."""
     helper = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap"
