@@ -17830,6 +17830,16 @@
              * A SYNCED folder still goes the long way: its listing comes from a manifest and a
              * different renderer, and there is no cached array here to re-filter. */
             const g = document.getElementById('bl-grid');
+            /* A query belongs to FILE MANAGER, not to the location that happened to be open when
+             * it was typed.  Always take the full render path while searching so Blossom, synced
+             * folders and this computer are aggregated into one result list. */
+            if(_filesQ.trim()){
+              const at = f.selectionStart;
+              await renderBlossom();
+              const nf = document.getElementById('fx-find');
+              if(nf){ nf.focus(); try{ nf.setSelectionRange(at, at); }catch(_){} }
+              return;
+            }
             // Re-filter what we already have, through the SAME renderer renderBlossom would pick —
             // a Music folder drawn by _renderFilesGrid is a different screen, not a filtered one.
             if(!_syncRoot && g && _filesGridList){
@@ -17912,6 +17922,7 @@
     return !q || String(nm||'').toLowerCase().includes(q); };
   const _FILES_PAGE = 60;
   let _filesShown = _FILES_PAGE, _filesShownFolder = null;
+  let _fxSearchSeq = 0;
 
   /* ---------- Synced folders, as browsable roots ------------------------------------------------
    *
@@ -19661,6 +19672,71 @@
   }
 
   let _filesRenderLoadedKey='';
+  /* SEARCH THE FILE MANAGER, NOT ONE DRAWER.
+   *
+   * Each source keeps its own storage contract, so aggregation happens here and remains read-only:
+   * Blossom names come from the encrypted client index, synced names from their manifests, and the
+   * device uses the bounded native search bridge.  A hit routes into its real source; it is never a
+   * synthetic fourth filesystem. */
+  async function _renderFilesEverywhere(pane){
+    const q = _filesQ.trim(), seq = ++_fxSearchSeq;
+    pane.innerHTML = '<div class="fx-explorer"><div class="fx-side">' + _fxSideHTML() + '</div>'
+      + '<div class="fx-main">' + _fxBarHTML([{label:'Search everywhere',to:_fxWhere()}], _fxHist.length > 0, false)
+      + '<div class="fx-search-status muted small">Searching Blossom, Synced Folders and My Computer…</div>'
+      + '<div class="fx-search-results" id="fx-search-results"><div class="spinner"></div></div></div></div>';
+    _fxBindSide(pane); _fxBindBar(pane);
+    const blossom = [], synced = [];
+    let local = [], drive = Array.isArray(_filesGridList) ? _filesGridList : null;
+    const server = mediaServer();
+    const jobs = [];
+    if(!drive && server){
+      jobs.push(fetch(server.replace(/\/$/,'') + '/list/' + ME.pubkey, {cache:'no-store'})
+        .then(r => { if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+        .then(rows => { if(Array.isArray(rows)) drive = _filesGridList = rows; }).catch(()=>{}));
+    }
+    _adoptSyncPairs();
+    const pairs = Array.isArray(_syncPairs) ? _syncPairs.slice() : [];
+    jobs.push(...pairs.map(pair => _syncManifest(pair.key).then(paths => {
+      for(const path in (paths || {})){
+        const e=paths[path]; if(!e || e.deletedAt || !_fxMatch(path.split('/').pop())) continue;
+        synced.push({ source:'synced', root:pair.key, path, name:path.split('/').pop(),
+          folder:path.split('/').slice(0,-1).join('/'), size:+e.size||0, modified:+e.mtime||0 });
+      }
+    }).catch(()=>{})));
+    if(window.pcHost && typeof pcHost.search === 'function') jobs.push(
+      pcHost.search(q, {limit:200}).then(rows => { if(Array.isArray(rows)) local=rows; }).catch(()=>{}));
+    await Promise.allSettled(jobs);
+    if(seq !== _fxSearchSeq || _filesQ.trim() !== q || !pane.isConnected) return;
+    for(const b of (drive || [])){
+      if(!b || !b.sha256) continue;
+      const name=_fxBlobName(b); if(!_fxMatch(name)) continue;
+      blossom.push({ source:'blossom', sha:b.sha256, name:name||b.sha256, folder:FilesIdx.folderOf(b.sha256)||'',
+        size:+b.size||0, modified:+b.uploaded||0 });
+    }
+    const rows = blossom.concat(synced, local.map(e => Object.assign({source:'computer'},e)))
+      .sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),undefined,{numeric:true,sensitivity:'base'}));
+    const results=$('#fx-search-results',pane), status=$('.fx-search-status',pane);
+    if(status) status.textContent=rows.length+' result'+(rows.length===1?'':'s')+' across all locations';
+    if(!results) return;
+    const sourceName = {blossom:'Blossom',synced:'Synced Folders',computer:'My Computer'};
+    results.innerHTML = rows.length ? rows.map((r,i)=>{
+      const where=r.source==='synced' ? (r.root+(r.folder?' / '+r.folder:''))
+        : r.source==='computer' ? String(r.path||'') : (r.folder||'All files');
+      return `<button class="fx-search-hit" data-hit="${i}"><span class="fx-search-source">${enc(sourceName[r.source]||r.source)}</span>`
+        + `<span class="fx-search-name">${_fxIcon('',r.mime||'')}${enc(r.name||r.path||'file')}</span>`
+        + `<span class="fx-search-path">${enc(where)}</span><span class="fx-search-size">${r.dir?'Folder':_fxBytes(r.size)}</span>`
+        + `<span class="fx-search-date">${enc(_fxWhen(r.created||r.modified||r.mtime))}</span></button>`;
+    }).join('') : `<div class="empty">Nothing in Blossom, Synced Folders or My Computer matches “${enc(q)}”.</div>`;
+    $$('.fx-search-hit',results).forEach(b=>b.onclick=()=>{
+      const r=rows[+b.dataset.hit]; if(!r) return;
+      _fxRemember(); _filesQ='';
+      if(r.source==='blossom'){ _hostOn=false; _syncRoot=''; _syncPath=''; _filesFolder=r.folder||''; _fxMobileSource='blossom'; }
+      else if(r.source==='synced'){ _hostOn=false; _syncRoot=r.root; _syncPath=r.folder||''; _fxMobileSource='synced'; }
+      else { const H=_hostFs(); if(H){ const p=String(r.path||''); const cut=Math.max(p.lastIndexOf('/'),p.lastIndexOf('\\'));
+          H.enter(r.dir?p:(cut>0?p.slice(0,cut):p)); } _hostOn=true; _syncRoot=''; _filesFolder=null; _fxMobileSource='computer'; }
+      renderBlossom();
+    });
+  }
   async function renderPublicFiles(pane){
     const server=mediaServer();
     if(!server){ pane.innerHTML='<div class="empty">Blossom server not configured.</div>'; return; }
@@ -19671,6 +19747,7 @@
      * deduplicated, and changing accounts gives it a different key. */
     const renderKey=FilesIdx._key();
     if(_filesRenderLoadedKey!==renderKey){ FilesIdx.loadLocal(); _filesRenderLoadedKey=renderKey; }
+    if(_filesQ.trim()) return _renderFilesEverywhere(pane);
     // Remote drive metadata is encrypted. The explicit Refresh control requests it; opening Files
     // itself stays instant and never waits on a signer.
     /* A synced folder is a different SOURCE, not a different folder of the drive: its list comes from

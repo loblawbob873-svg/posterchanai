@@ -262,6 +262,8 @@
       + `<div class="fx-actions">
            <button class="btn btn-ghost small hf-up"${listing.parent ? '' : ' disabled'}>Up</button>
            <button class="btn btn-ghost small hf-new">New folder</button>
+           <button class="btn btn-ghost small hf-all">Select all${rows.length ? ' (' + rows.length + ')' : ''}</button>
+           <button class="btn btn-ghost small hf-none"${_sel.size ? '' : ' disabled'}>Select none</button>
            ${_clipboard ? `<button class="btn btn-cyan small hf-paste">${_clipboard.move ? 'Move' : 'Paste'} here</button>` : ''}
            <button class="btn btn-ghost small hf-hidden">${_hidden ? 'Hide dotfiles' : 'Show dotfiles'}</button>
            <span class="spacer"></span>
@@ -289,6 +291,12 @@
     if(details && u.bindCols && grid) u.bindCols(grid);
 
     if(listing.parent){ const up = $('.hf-up'); if(up) up.onclick = () => { enter(listing.parent); again(); }; }
+    $('.hf-all').onclick = () => {
+      const paths=rows.map(r=>r.path), all=paths.length && paths.every(p=>_sel.has(p));
+      if(all) paths.forEach(p=>_sel.delete(p)); else paths.forEach(p=>_sel.add(p));
+      again();
+    };
+    $('.hf-none').onclick = () => { _sel = new Set(); again(); };
     $('.hf-hidden').onclick = () => { _hidden = !_hidden; again(); };
     const paste = $('.hf-paste');
     if(paste) paste.onclick = async () => {
