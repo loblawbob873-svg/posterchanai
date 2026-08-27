@@ -139,6 +139,8 @@ CHECKS = {
     # collision-avoidance port assigned below.
     "check_installed_desktop_account": dict(group="ui", secs=420, serial=True,
                                               env={"PC_CHECK_PORT": "9223"}),
+    "check_installed_native_files": dict(group="ui", secs=90, serial=True,
+                                           env={"PC_CHECK_PORT": "9223"}),
     "check_sharelink":                 dict(group="ui", secs=420),
     "check_contacts_mobile":           dict(group="ui", secs=600),
     "check_vault_mobile":              dict(group="ui", secs=600),

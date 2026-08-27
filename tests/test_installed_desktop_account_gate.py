@@ -32,6 +32,17 @@ def test_installed_account_gate_checks_real_blossom_render_without_reading_names
     assert '"index":' not in SCRIPT
 
 
+def test_installed_account_gate_clicks_disposable_native_files_and_cleans_them():
+    assert 'TemporaryDirectory(prefix="posterchan-installed-files-")' in SCRIPT
+    assert 'PCHostFiles.enter(PATH)' in SCRIPT
+    assert ".fx-home-tile[data-hosthome],.folder-chip[data-host]" in SCRIPT
+    assert "posterchan-installed.conf" in SCRIPT
+    assert '"code" in native_files["confChoices"]' in SCRIPT
+    assert '"host" in native_files["confChoices"]' in SCRIPT
+    assert "posterchan-installed.svg" in SCRIPT
+    assert 'native_files["preview"]' in SCRIPT
+
+
 def test_installed_account_gate_uses_and_deletes_a_temporary_office_session():
     assert "posterchan-office-smoke.odt" in SCRIPT
     assert "'/wopi/files/'" in SCRIPT

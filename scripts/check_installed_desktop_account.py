@@ -16,6 +16,8 @@ import base64
 import io
 import json
 import os
+from pathlib import Path
+import tempfile
 import sys
 import urllib.error
 import urllib.request
@@ -136,6 +138,49 @@ FILES_CHECK = r"""(async()=>{
 })()"""
 
 
+def native_files_check(directory):
+    """Return a renderer check for a directory created and owned by this verifier.
+
+    The path is JSON encoded rather than interpolated as JavaScript source.  The temporary
+    directory is removed by Python's TemporaryDirectory even if the renderer or an assertion
+    fails, so a release check cannot litter somebody's Files view or trash.
+    """
+    path = json.dumps(str(directory))
+    return r"""(async()=>{
+      const out={path:false,rows:0,confChoices:[],preview:false,errors:[]};
+      const onerr=e=>out.errors.push(String(e.message||e.reason||e));
+      addEventListener('error',onerr);addEventListener('unhandledrejection',onerr);
+      try{
+        await __PC.switchView('blossom');
+        await new Promise(r=>setTimeout(r,1000));
+        if(!window.pcHost||!window.PCHostFiles)throw new Error('installed native Files bridge is absent');
+        PCHostFiles.enter(PATH);
+        const entry=document.querySelector('.fx-home-tile[data-hosthome],.folder-chip[data-host]');
+        if(!entry)throw new Error('This computer is not reachable from Files');
+        entry.click();
+        for(let i=0;i<40&&!document.querySelector('#host-pane .file-card[data-p]');i++)
+          await new Promise(r=>setTimeout(r,100));
+        const cards=[...document.querySelectorAll('#host-pane .file-card[data-p]')];
+        out.path=PCHostFiles.at()===PATH;out.rows=cards.length;
+        const conf=cards.find(e=>e.dataset.p===PATH+'/posterchan-installed.conf');
+        if(!conf)throw new Error('the packaged local listing omitted the .conf fixture');
+        conf.click();await new Promise(r=>setTimeout(r,100));
+        out.confChoices=[...document.querySelectorAll('.openwith .ow-opt')].map(e=>e.dataset.ow);
+        const close=document.querySelector('#ow-x');if(close)close.click();
+        const image=[...document.querySelectorAll('#host-pane .file-card[data-p]')]
+          .find(e=>e.dataset.p===PATH+'/posterchan-installed.svg');
+        if(!image)throw new Error('the packaged local listing omitted the image fixture');
+        image.click();
+        for(let i=0;i<40&&!document.querySelector('.pv-host .pv-img');i++)
+          await new Promise(r=>setTimeout(r,100));
+        out.preview=!!document.querySelector('.pv-host .pv-img');
+        if(window.PCPreview&&PCPreview.close)PCPreview.close();
+      }catch(e){out.errors.push(String(e&&e.message||e));}
+      removeEventListener('error',onerr);removeEventListener('unhandledrejection',onerr);
+      return out;
+    })()""".replace("PATH", path)
+
+
 OFFICE_CHECK = r"""(async()=>{
   let s=null,wrap=null; const out={};
   try{
@@ -217,7 +262,13 @@ OFFICE_CONTENT_CHECK = r"""(async()=>{
 
 async def main():
     page = await choose_authenticated_page()
-    async with CDP(page["webSocketDebuggerUrl"]) as cdp:
+    with tempfile.TemporaryDirectory(prefix="posterchan-installed-files-") as fixture_dir:
+      fixture = Path(fixture_dir)
+      (fixture / "posterchan-installed.conf").write_text("installed=true\n", encoding="utf-8")
+      (fixture / "posterchan-installed.svg").write_text(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8">'
+          '<rect width="8" height="8" fill="#713dd8"/></svg>', encoding="utf-8")
+      async with CDP(page["webSocketDebuggerUrl"]) as cdp:
         files = await cdp.eval(FILES_CHECK)
         assert files["view"] == "blossom", files
         assert files["explorers"] == 1 and files["folderTiles"] > 0 and files["folderChips"] > 0, files
@@ -231,6 +282,12 @@ async def main():
         assert all(not row.get("error") and row["server"] == row["manifest"] == row["local"]
                    and row["skipped"] == 0 for row in files["syncAudit"]), files
         assert not files["overflow"] and not files["errors"], files
+
+        native_files = await cdp.eval(native_files_check(fixture))
+        assert native_files["path"] and native_files["rows"] == 2, native_files
+        assert "code" in native_files["confChoices"], native_files
+        assert "host" in native_files["confChoices"], native_files
+        assert native_files["preview"] and not native_files["errors"], native_files
 
         await cdp.call("Network.enable")
         await cdp.call("Runtime.enable")
@@ -329,6 +386,7 @@ async def main():
     print(json.dumps({"folders": files["folderTiles"], "folderEntries": files["folderChips"],
                       "serverFiles": files["serverFiles"], "clientFiles": files["clientFiles"],
                       "syncedRoots": files["syncedRoots"], "syncAudit": files["syncAudit"],
+                      "nativeFiles": native_files,
                       "officeEditorHTTP": 200, "officeInteractive": True,
                       "officeEditorSaved": True}))
 
