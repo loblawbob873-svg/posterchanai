@@ -134,6 +134,15 @@ class TheEditorOpensAndSavesThem(unittest.TestCase):
         self.assertIn("openable: () => true", self.app)
         self.assertNotIn("_CODE_EXT", self.host, "hostfiles.js grew its own opinion")
 
+    def test_openable_is_in_the_file_click_handlers_scope(self):
+        """The grid builder and click binder are sibling functions. Declaring this in rowsHTML
+        paints a convincing file list whose every regular-file click crashes at runtime."""
+        render = _fn(self.host, "async function render(")
+        rows = _fn(self.host, "function rowsHTML(")
+        self.assertIn("const openable = u.openable", render)
+        self.assertIn("openable(nm", render)
+        self.assertNotIn("const openable", rows)
+
 
 if __name__ == "__main__":
     unittest.main()

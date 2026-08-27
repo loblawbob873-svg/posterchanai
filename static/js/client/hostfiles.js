@@ -176,9 +176,6 @@
     const details = u.view === 'details';
     if(!entries.length) return '<div class="empty">This folder is empty.</div>';
 
-    /* CAN POSTERCHAN CODE OPEN THIS? Decided by the caller, which owns the answer for every source
-     * in Files — this module must not grow a second opinion about what "a text file" is. */
-    const openable = u.openable || (() => false);
     const cells = entries.map(e => {
       const ext = extOf(e);
       const sel = _sel.has(e.path);
@@ -229,6 +226,10 @@
   async function render(pane, ui){
     if(!pane) return;
     const u = ui || {};
+    /* Used by the FILE CLICK HANDLER below, so it belongs in render's scope. This was accidentally
+     * declared inside rowsHTML(); the list painted normally, then every regular file click threw
+     * `openable is not defined` before Video/Preview/Code/host opening could run. */
+    const openable = u.openable || (() => false);
     let listing = null, err = '';
     try{ listing = await read(_path); }
     catch(e){ err = String((e && e.message) || e); }
