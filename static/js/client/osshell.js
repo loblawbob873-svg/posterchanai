@@ -182,6 +182,14 @@
       // recursive black "PosterChan · Nostr" window inside the desktop and closing it can remove
       // the only visible surface.
       if(!app || /^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i.test(app)) continue;
+      /* Native file choosers are transient UI owned by the application which opened them, not
+       * applications of their own.  The Wayland portal gives its chooser a normal titled surface,
+       * so the generic adoption path used to wrap it in a PosterChan frame and taskbar button.
+       * Cancel then destroyed the real surface first and left an empty/black hosted frame until a
+       * later tree reconciliation. Filter by the portal implementation's stable app id, never by
+       * the title (which is localized and which a real app may legitimately share). Firefox
+       * private windows retain `firefox` and remain ordinary adoptable windows. */
+      if(/^(?:xdg-desktop-portal(?:-.+)?|org\.freedesktop\.impl\.portal\.desktop(?:\..+)?|org\.gtk\..*filechooser)$/i.test(app)) continue;
       const title = String(w.title || '').trim();
       if(!title) continue;
       const low=app.toLowerCase();

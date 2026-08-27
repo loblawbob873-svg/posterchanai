@@ -89,6 +89,28 @@ class Shell(unittest.TestCase):
         rows = self.run_js("out.r = S.taskbarRows([{id:9, app:'foot', title:'   '}]);")["r"]
         self.assertEqual(rows, [])
 
+    def test_native_portal_file_choosers_never_become_apps_or_black_frames(self):
+        """Cancel belongs to the calling app; there must be no adopted chooser left to clean up."""
+        rows = self.run_js("""out.r = S.taskbarRows([
+          {id:10,app:'xdg-desktop-portal-gtk',title:'Open File'},
+          {id:11,app:'org.freedesktop.impl.portal.desktop.gtk',title:'Select a Folder'},
+          {id:12,app:'org.gtk.Settings.FileChooser',title:'Choose File'},
+          {id:13,app:'firefox',title:'Private Browsing'}]);""")["r"]
+        self.assertEqual([(r["id"], r["app"]) for r in rows], [(13, "firefox")])
+
+    def test_portal_filter_is_stable_across_repeated_open_cancel_cycles(self):
+        out = self.run_js("""
+          const live={id:21,app:'firefox',title:'Firefox'};
+          out.cycles=[];
+          for(let i=0;i<8;i++){
+            const picker={id:100+i,app:i%2?'xdg-desktop-portal-wlr':'xdg-desktop-portal-gtk',
+                          title:i%2?'Choose a screen':'Open File'};
+            out.cycles.push(S.taskbarRows([live,picker]).map(x=>x.id));
+            out.cycles.push(S.taskbarRows([live]).map(x=>x.id));
+          }
+        """)
+        self.assertEqual(out["cycles"], [[21]] * 16)
+
     def test_a_long_title_is_trimmed_not_wrapped(self):
         rows = self.run_js("out.r = S.taskbarRows([{id:1, app:'firefox', title:'%s'}]);"
                            % ("x" * 200))["r"]
