@@ -3413,6 +3413,33 @@
       } title="${enc(a.label)}">
        ${a.folder ? folderGlyph(a.folder) : iconSvg(a.icon)}<span>${enc(a.label)}</span></button>`;
 
+  /* Fit sparse saved coordinates to THIS usable desktop without rewriting the synced document.
+   * Valid user positions stay exact; only an out-of-bounds/colliding/new icon takes the next free
+   * grid slot. Recomputing from the immutable saved positions means returning to a larger device
+   * restores its arrangement instead of persisting the tablet's emergency packing everywhere. */
+  function fitIconPositions(items,pos,maxX,maxY){
+    const out={},used=[],pending=[],stepX=ICON_W+ICON_GAP,stepY=ICON_H+ICON_GAP;
+    const clear=(x,y)=>!used.some(p=>Math.abs(p[0]-x)<stepX&&Math.abs(p[1]-y)<stepY);
+    for(const it of items){
+      const p=pos&&pos[it.view],x=p&&Number(p[0]),y=p&&Number(p[1]);
+      if(Number.isFinite(x)&&Number.isFinite(y)&&x>=0&&y>=0&&x<=maxX&&y<=maxY&&clear(x,y)){
+        out[it.view]=[x,y];used.push([x,y]);
+      }else pending.push(it);
+    }
+    const slots=[];
+    for(let x=Math.min(ICON_PAD,maxX);x<=maxX;x+=stepX)
+      for(let y=Math.min(ICON_PAD,maxY);y<=maxY;y+=stepY) slots.push([x,y]);
+    /* A very small portrait viewport can have fewer canonical cells than icons. Continue along the
+       bottom/right boundary; overlap is still refused and every result remains inside usable area. */
+    for(const it of pending){
+      let p=slots.find(q=>clear(q[0],q[1]));
+      if(!p){ outer:for(let y=0;y<=maxY;y+=8)for(let x=0;x<=maxX;x+=8)
+        if(clear(x,y)){p=[x,y];break outer;} }
+      p=p||[0,0];out[it.view]=p.slice();used.push(p.slice());
+    }
+    return out;
+  }
+
   function drawDesktop(){
     desk.querySelectorAll('.os-icons').forEach(n => n.remove());
     const lay = layout();
@@ -3431,13 +3458,10 @@
       const k = zf();
       const dr = desk.getBoundingClientRect();
       const maxX = Math.max(0, (dr.width / k) - ICON_W - 4), maxY = Math.max(0, (dr.height / k) - ICON_H - 4);
-      let auto = 0, span = 0;
+      const fitted=fitIconPositions(items,lay.pos,maxX,maxY);
+      let span = 0;
       $$('.os-icon', grid).forEach(b => {
-        const p = lay.pos[b.dataset.view];
-        // No saved position (a feature that shipped after the desktop was arranged): drop it into
-        // the next free column slot rather than at 0,0 on top of something else.
-        const x = p ? Math.min(p[0], maxX) : ICON_PAD;
-        const y = p ? Math.min(p[1], maxY) : Math.min(ICON_PAD + (auto++) * (ICON_H + ICON_GAP), maxY);
+        const p=fitted[b.dataset.view]||[0,0],x=p[0],y=p[1];
         b.style.left = x + 'px'; b.style.top = y + 'px';
         span = Math.max(span, x + ICON_W);
       });
@@ -7195,6 +7219,7 @@
                    * twice, a feature added next month that never shows up — so it is tested directly
                    * rather than inferred from a rendered desktop. */
                   __layout: (list, doc) => computeLayout(list, doc), __normDoc: (d) => _normDoc(d),
+                  __fitIcons: (items,pos,maxX,maxY) => fitIconPositions(items,pos,maxX,maxY),
                   __sameAppWindow: sameAppWindow,
                   __shouldSelectMessagesTab: shouldSelectMessagesTab,
                   /* The launcher's own list, for the same reason: "a row switched off in Settings →
