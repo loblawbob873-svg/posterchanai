@@ -265,6 +265,30 @@ class SendingFromAnotherDevice(unittest.TestCase):
         self.assertIn("selectedOutboxes.has(m.outbox)", remove)
         self.assertIn("could not delete send receipt", remove)
 
+    def test_failed_receipt_rebuilds_the_bubble_on_a_fresh_desktop(self):
+        """The ask-time placeholder is local and may not exist after reload; the durable receipt
+        must still show what failed instead of silently losing the message and its attachment."""
+        receipt = {
+            "kind": 30078,
+            "created_at": 1700000010,
+            "pubkey": "me",
+            "tags": [["d", "pcai:smsout:failed-one"], ["l", "pcai-sms"]],
+            "content": 'enc:{"done":true,"ok":false,"error":"radio rejected it",'
+                       '"request":{"to":"+15550100","body":"photo",'
+                       '"at":1700000000000,"attachment":{"sha":"' + "a" * 64 + '",'
+                       '"mime":"image/jpeg","name":"photo.jpg","bytes":1234}}}',
+        }
+        res = run(isPhone=False, telephony=False, relay=[receipt], steps=["load"])
+        self.assertEqual(len(res["threads"]), 1, "the failed send disappeared after reload")
+        self.assertEqual(res["threads"][0]["n"], 1)
+        self.assertEqual(res["threads"][0]["parts"], [1],
+                         "the failed MMS came back without its attachment")
+
+        web = (ROOT / "static/js/client/sms.js").read_text()
+        absorb = web[web.index("async function absorb(evs)"):web.index("function whoIs")]
+        self.assertIn("failed:true, outbox:d", absorb,
+                      "the rebuilt bubble cannot delete its source receipt")
+
     def test_texts_uses_the_instances_gif_picker(self):
         """The server-side picker keeps the connected instance's Giphy/Tenor key out of clients."""
         web = (ROOT / "static/js/client/sms.js").read_text()

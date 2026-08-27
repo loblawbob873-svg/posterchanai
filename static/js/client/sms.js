@@ -355,9 +355,18 @@
               if(!have || have.pending || have.failed || !Number(have._at) || have._at < ev.created_at)
                 S.msgs.set(md, { doc:md, address:sent.to, body:sent.body || '', date:at,
                                  incoming:false, name:'', parts:sentParts, _at:ev.created_at });
-            }else if(have && have.pending){
-              have.pending = false; have.failed = true; have.error = String(ack.error || 'not sent');
-              have._at = ev.created_at;
+            }else if(!have || have.pending || have.failed){
+              /* FAILURE MUST ALSO BE RECONSTRUCTABLE FROM THE RECEIPT ALONE. The pending bubble is
+               * keyed at ask time, while `md` is keyed at the phone's actual attempt time. Above we
+               * correctly retire the ask-time bubble, but this branch used to require `have` at the
+               * new id before drawing the failure. On a fresh desktop—or an ordinary delayed send—
+               * there is no such entry, so the failed MMS vanished completely and could neither be
+               * inspected nor deleted. Keep the outbox id so remove() can tombstone this receipt and
+               * prevent it recreating the failed bubble on the next refresh. An existing successful
+               * provider/archive row still wins: it is stronger evidence than an ambiguous failure. */
+              S.msgs.set(md, { doc:md, address:sent.to, body:sent.body || '', date:at,
+                               incoming:false, name:'', parts:sentParts, failed:true, outbox:d,
+                               error:String(ack.error || 'not sent'), _at:ev.created_at });
             }
           }
         }catch(_){}
