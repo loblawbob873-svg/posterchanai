@@ -128,6 +128,11 @@ if(playableXdc.includes(xdcUrl)||!playableXdc.includes('play this'))
 delete window.PCWebxdc;
 const fallbackXdc=PCConcord.messageContentHtml({enc:String,linkify:String,linkCardHtml:()=>''},xdcMessage);
 if(!fallbackXdc.includes(xdcUrl))throw new Error('Webxdc URL fallback disappeared without a card renderer');
+const blossomImage='https://blossom.example/'+ '9'.repeat(64);
+const imageMessage={id:'plain-image',text:'photo '+blossomImage,tags:[['imeta',`url ${blossomImage}`,'m image/png','name pasted.png']]};
+const imageHtml=PCConcord.messageContentHtml({enc:String,linkify:String,linkCardHtml:()=>''},imageMessage);
+if(!imageHtml.includes('class="cc-plain-attachment"')||!imageHtml.includes('<img ')||imageHtml.includes('<p>photo '+blossomImage))
+  throw new Error('extensionless Blossom image did not render from imeta metadata');
 const iconRoom={icon:'https://old.example/icon.png'};
 if(!await PCConcord.applyRoomIconMetadata(iconRoom,{icon:''},'icon-clear') || iconRoom.icon!=='')
   throw new Error('explicit community icon removal was ignored');

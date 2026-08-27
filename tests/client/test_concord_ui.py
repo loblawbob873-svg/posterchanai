@@ -354,6 +354,8 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert "item.kind==='file'" in CONCORD
     assert "String(item.type||'').startsWith('image/')" in CONCORD
     assert 'event.preventDefault(); void uploadAttachments(images)' in CONCORD
+    assert "pendingAttachments.set(url,tag)" in CONCORD
+    assert "class=\"cc-plain-attachment\"" in CONCORD
     assert 'p.uploadBlob' in CONCORD
     assert 'p.blossomPicker(null,insertBlossomAttachment' in CONCORD
     assert '📁 Files' in CONCORD
@@ -516,7 +518,7 @@ def test_room_history_reads_pool_and_external_relays_without_erasing_cached_mess
 
 
 def test_concord_webxdc_mentions_live_sync_and_scroll_are_integrated():
-    assert "application/x-webxdc" in CONCORD and "pendingAttachments.set(url,['imeta'" in CONCORD
+    assert "application/x-webxdc" in CONCORD and "pendingAttachments.set(url,tag)" in CONCORD
     assert 'hydrateWebxdcCards(current)' in CONCORD and 'PCWebxdc.cardHtml(app)' in CONCORD
     assert 'reactionIds:' in CORD_READER and 'extraTags' in CORD_READER
     assert 'mentionToken' in CONCORD and "e.key==='Tab'" in CONCORD
