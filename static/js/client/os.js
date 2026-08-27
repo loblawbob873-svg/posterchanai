@@ -2618,6 +2618,29 @@
     setTimeout(()=>{document.addEventListener('pointermove',move,true);document.addEventListener('pointerdown',place,true);document.addEventListener('keydown',key,true);},0);
   }
 
+  /* Alt+Tab has to cycle OUR windows, not only Sway surfaces. Every PosterChan app on this output
+   * lives inside one Electron surface, while adopted Firefox/Telegram windows are represented in
+   * this same list. Creation order is stable as focus changes, so advancing from the focused frame
+   * visits every window instead of bouncing between the two highest z-indices. */
+  function cycleWindows(direction){
+    const rows=wins.slice();if(!rows.length)return false;
+    const current=rows.findIndex(w=>w.el.classList.contains('focused')&&!w.min);
+    const step=direction==='previous'?-1:1;
+    const target=rows[(current<0?(step>0?0:rows.length-1):(current+step+rows.length)%rows.length)];
+    if(!target)return false;
+    toggleStart(false);hideCtx();
+    if(target.native!=null){focusWin(target,false);return true;}
+    /* A tick arrives while Firefox may still own compositor focus. Changing DOM z-order alone
+     * would paint the target behind it and leave typing in Firefox, so focus this output's shell
+     * surface before activating the internal frame. Failure still leaves a recoverable DOM focus. */
+    const activate=()=>{if(wins.includes(target))focusWin(target,false);};
+    try{Promise.resolve(pcWM.windows()).then(list=>{
+      const shell=(list||[]).find(x=>/^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i.test(String(x.app||'')));
+      return shell?Promise.resolve(pcWM.focus(shell.id)).then(activate,activate):activate();
+    },activate);}catch(_){activate();}
+    return true;
+  }
+
   // ---- snapping (Windows 11 style) ------------------------------------------------------------
   // Drag a window against a screen edge and it snaps: the sides give halves, the top maximises, the
   // corners give quarters. A GHOST previews the zone before the pointer is released — a window that
@@ -6375,6 +6398,7 @@
                 if(sh) return pcWM.focus(sh.id);
               }).catch(()=>{});
             }
+            else if(/^pc:cycle:(next|previous)$/.test(p)) cycleWindows(p.slice(9));
             else if(/^pc:snap:(left|right|max)$/.test(p)){
               const w=wins.find(x=>x.el.classList.contains('focused'));
               if(w) snapTo(w, p.slice(8)==='max' ? 'max' : p.slice(8));

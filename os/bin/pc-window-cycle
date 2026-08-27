@@ -1,32 +1,9 @@
 #!/bin/sh
-# Cycle visible Sway application surfaces without depending on the PosterChan renderer having focus.
+# PosterChan application windows share one compositor surface, so cycling Sway leaves alone can
+# never reach Messages, Terminal, Code, or File Manager. A tick is compositor-owned (works while a
+# native app has focus), routed by main.js to the focused output, and lets that renderer cycle both
+# its internal frames and the native surfaces it has adopted without reopening either kind.
 set -u
 direction="${1:-next}"
 [ "$direction" = next ] || [ "$direction" = previous ] || exit 2
-tree=$(swaymsg -r -t get_tree 2>/dev/null) || exit 1
-target=$(printf '%s' "$tree" | python3 -c '
-import json,sys
-direction=sys.argv[1]
-root=json.load(sys.stdin)
-focused_ws=[None]
-def walk(n, ws=None):
-    if n.get("type")=="workspace": ws=n
-    if n.get("focused") and ws is not None: focused_ws[0]=ws
-    for c in n.get("nodes",[])+n.get("floating_nodes",[]): walk(c,ws)
-walk(root)
-ws=focused_ws[0]
-if not ws: raise SystemExit(1)
-rows=[]; focused=[-1]
-def leaves(n):
-    kids=n.get("nodes",[])+n.get("floating_nodes",[])
-    if not kids and (n.get("app_id") or n.get("window") or n.get("pid")):
-        if n.get("focused"): focused[0]=len(rows)
-        rows.append(n.get("id"))
-    for c in kids: leaves(c)
-leaves(ws)
-if not rows: raise SystemExit(1)
-step=1 if direction=="next" else -1
-idx=(focused[0]+step)%len(rows) if focused[0]>=0 else (0 if step>0 else len(rows)-1)
-print(rows[idx])
-' "$direction") || exit 0
-[ -n "$target" ] && swaymsg "[con_id=$target] focus" >/dev/null
+exec swaymsg -t send_tick "pc:cycle:$direction" >/dev/null
