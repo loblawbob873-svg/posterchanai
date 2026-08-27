@@ -1,9 +1,11 @@
 package place.poster.app.music;
 
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertEquals;
 
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ActivityInfo;
 import android.os.SystemClock;
 import android.view.KeyEvent;
 import android.view.View;
@@ -22,6 +24,7 @@ import org.junit.runner.RunWith;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 
@@ -32,6 +35,72 @@ import place.poster.app.home.LauncherState;
 /** The reported failure: a playing track stopped as soon as Android Home was pressed. */
 @RunWith(AndroidJUnit4.class)
 public class MusicBackgroundDeviceTest {
+
+    @Test
+    public void tabletDesktopStateSurvivesHomeAndRotationInBothTasks() throws Exception {
+        Context ctx = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        boolean wasEnabled = HomeRoles.launcherComponentEnabled(ctx);
+        String oldHome = firstRoleHolder(shell("cmd role get-role-holders android.app.role.HOME"));
+        HomeRoles.enableLauncherComponent(ctx, true);
+        shell("cmd role add-role-holder android.app.role.HOME " + ctx.getPackageName());
+        SystemClock.sleep(500);
+        ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class);
+        try {
+            AtomicReference<WebView> ref = new AtomicReference<WebView>();
+            AtomicInteger task = new AtomicInteger();
+            scenario.onActivity(a -> {
+                ref.set(findWebView(a.findViewById(android.R.id.content)));
+                task.set(a.getTaskId());
+            });
+            WebView web = waitForWebView(ref, scenario);
+            waitForClientPage(web);
+            assertEquals("\"desktop-ready\"", eval(web,
+                    "localStorage.setItem('osMode','true');"
+                    + "window.__pcTabletLifecycle={windows:['files','messages'],focus:'messages',snap:'right'};"
+                    + "'desktop-ready'"));
+
+            InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_HOME);
+            SystemClock.sleep(900);
+            assertTrue("HOME did not background the Desktop activity",
+                    scenario.getState() == Lifecycle.State.CREATED);
+            assertTrue("HOME did not show the independent native launcher", LauncherState.atHome());
+
+            // MainActivity declares orientation/screenSize configChanges. A tablet rotation while
+            // its separate task is behind HomeActivity must not recreate its Bridge/WebView.
+            scenario.onActivity(a -> a.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE));
+            SystemClock.sleep(500);
+            assertTrue("background rotation foregrounded or destroyed Desktop",
+                    scenario.getState() == Lifecycle.State.CREATED);
+
+            scenario.moveToState(Lifecycle.State.RESUMED);
+            AtomicReference<WebView> resumed = new AtomicReference<WebView>();
+            AtomicInteger resumedTask = new AtomicInteger();
+            scenario.onActivity(a -> {
+                resumed.set(findWebView(a.findViewById(android.R.id.content)));
+                resumedTask.set(a.getTaskId());
+            });
+            assertTrue("returning from launcher replaced Desktop's live WebView", web == resumed.get());
+            assertEquals("launcher conflated the HOME and Desktop tasks", task.get(), resumedTask.get());
+            assertEquals("\"true|files,messages|messages|right\"", eval(web,
+                    "localStorage.getItem('osMode')+'|'+window.__pcTabletLifecycle.windows.join(',')+'|'"
+                    + "+window.__pcTabletLifecycle.focus+'|'+window.__pcTabletLifecycle.snap"));
+
+            scenario.onActivity(a -> a.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT));
+            SystemClock.sleep(500);
+            AtomicReference<WebView> rotated = new AtomicReference<WebView>();
+            scenario.onActivity(a -> rotated.set(findWebView(a.findViewById(android.R.id.content))));
+            assertTrue("foreground rotation replaced Desktop's live WebView", web == rotated.get());
+            assertEquals("\"true|messages\"", eval(web,
+                    "localStorage.getItem('osMode')+'|'+window.__pcTabletLifecycle.focus"));
+        } finally {
+            scenario.onActivity(a -> a.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED));
+            scenario.close();
+            if (!oldHome.isEmpty() && !oldHome.equals(ctx.getPackageName()))
+                try { shell("cmd role add-role-holder android.app.role.HOME " + oldHome); }
+                catch (Throwable ignored) { }
+            HomeRoles.enableLauncherComponent(ctx, wasEnabled);
+        }
+    }
 
     @Test
     public void aPlayingWebViewTrackKeepsAdvancingAfterHome() throws Exception {
