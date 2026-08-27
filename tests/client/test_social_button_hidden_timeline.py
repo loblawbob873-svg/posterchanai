@@ -106,6 +106,38 @@ class SocialButtonTests(unittest.TestCase):
         self.assertEqual(self._activate("global", "global", [], "home"), ["top:global"])
         self.assertEqual(self._activate("global", "home", [], "home"), ["view:global"])
 
+    def _double_activate(self, active, hidden, start_pref):
+        """Execute both presses; switchView mutates VIEW as the shipped router does."""
+        js = """
+        const _TL_TABS = ['home','global','trending'];
+        const ClientSettings = { get: (k, d) => k === 'startTimeline' ? %s : d };
+        const tlHiddenSet = () => new Set(%s);
+        const GUEST = false;
+        let VIEW = %s;
+        const events=[];
+        const timelineTop=v=>events.push('top:'+v);
+        const switchView=v=>{events.push('view:'+v);VIEW=v;};
+        %s
+        %s
+        activateNavView('global');
+        activateNavView('global');
+        process.stdout.write(JSON.stringify(events));
+        """ % (json.dumps(start_pref), json.dumps(hidden), json.dumps(active),
+                 self.start_tl, self.activate)
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr[-1500:])
+        return json.loads(r.stdout)
+
+    def test_double_social_from_another_view_opens_then_refreshes_configured_home(self):
+        """Exact phone gesture: Messages → Social → Social with Nostrverse hidden."""
+        self.assertEqual(self._double_activate("messages", ["global"], "home"),
+                         ["view:home", "top:home"])
+
+    def test_double_social_never_targets_a_hidden_saved_timeline(self):
+        """A stale Home preference falls through to the remaining visible Trending timeline."""
+        self.assertEqual(self._double_activate("messages", ["global", "home"], "home"),
+                         ["view:trending", "top:trending"])
+
 
 if __name__ == "__main__":
     unittest.main()
