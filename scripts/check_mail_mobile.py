@@ -94,6 +94,9 @@ const CARDS = [
   { uid:'c3', ics:'BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c3\r\nFN:No Email Here\r\nTEL:5551234\r\nEND:VCARD\r\n' },
 ];
 window.__sent = null;
+window.__mailErrors = [];
+window.addEventListener('error', e => window.__mailErrors.push(String(e.error || e.message || 'error')));
+window.addEventListener('unhandledrejection', e => window.__mailErrors.push(String(e.reason || 'rejection')));
 window.__calls = {sync:0, folders:0, messages:0};
 window.fetch = async (url, opts) => {
   const u = String(url);
@@ -252,6 +255,8 @@ OPEN_MESSAGE = r"""(async () => {
   const body = document.querySelector('.mail-html');
   const br = body ? body.getBoundingClientRect() : null;
   return { open: !!(pane && pane.classList.contains('has-open')),
+           errors: window.__mailErrors.slice(),
+           paneText: pane ? pane.textContent.trim().slice(0,160) : '',
            back: !!document.querySelector('#mail-back'),
            display: pane ? getComputedStyle(pane).display : '',
            coversList: !!(r && r.width >= window.innerWidth - 2),
@@ -501,6 +506,8 @@ async def drive(url):
                     problems.append((label, "missing-control",
                                      f"could not open a message ({(op or {}).get('error')})"))
                 else:
+                    if op.get("errors"):
+                        problems.append((label, "reader-error", "; ".join(op["errors"])))
                     if not op["open"]:
                         problems.append((label, "reader-not-overlay",
                                          "opening a message did not mark the pane .has-open"))
@@ -651,9 +658,14 @@ def _harness_js():
     test pointed at the real code — a copy would drift the moment either side changed.
     """
     src = open(os.path.join(ROOT, "static", "js", "client", "app.js"), encoding="utf-8").read()
+    # Mail attachment rendering shares the shipped file-preview classifier. Keep that helper in the
+    # lifted harness too: otherwise the browser check fails before it can render the toolbar/body,
+    # while production (where the helper is in the same IIFE) works normally.
+    preview_start = src.index("  const _PREVIEW_EXT =")
+    preview_end = src.index("  /* Blossom implementations disagree", preview_start)
     start = src.index("  function _mailDate(ts)")
     end = src.index("  function safePk(v){", start)
-    return src[start:end] + HARNESS_TAIL
+    return src[preview_start:preview_end] + src[start:end] + HARNESS_TAIL
 
 
 def main():
