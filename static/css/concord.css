@@ -54,9 +54,17 @@ body.concord-view .cc-message-actions button::after{content:none!important;displ
 body.concord-view .cc-action-sep{width:1px!important;height:20px!important;margin:0 2px!important;background:rgba(255,255,255,.12)!important}
 body.concord-view .cc-reactions{gap:5px!important;margin-top:7px!important}
 body.concord-view .cc-reaction{min-height:28px!important;padding:3px 9px!important;border:1px solid rgba(255,255,255,.12)!important;border-radius:9px!important;background:rgba(255,255,255,.055)!important;color:#e8eaf0!important}
+body.concord-view .cc-reaction-emoji{display:block!important;width:22px!important;height:22px!important;object-fit:contain!important;border-radius:4px!important}
 body.concord-view .cc-reaction:hover{border-color:rgba(88,101,242,.7)!important;background:rgba(88,101,242,.14)!important}
 body.concord-view .cc-reaction.mine{border-color:#7785ff!important;background:rgba(88,101,242,.25)!important;color:#fff!important}
 body.concord-view .cc-reaction-picker{display:grid!important;grid-template-columns:repeat(4,32px)!important;width:auto!important;gap:2px!important;padding:6px!important;border-radius:11px!important;background:#20232d!important}
+/* The ellipsis is a real disclosure control on every screen size. Previously cc-actions-open only
+   affected the mobile media query, so desktop clicks changed state without changing pixels while
+   hover/focus left the old full toolbar hanging around. */
+body.concord-view .cc-message-actions button:not(.cc-action-trigger){display:none!important}
+body.concord-view .cc-message.cc-actions-open .cc-message-actions{display:flex!important}
+body.concord-view .cc-message.cc-actions-open .cc-message-actions button{display:grid!important}
+body.concord-view .cc-message.cc-actions-open .cc-action-trigger{background:rgba(255,255,255,.12)!important}
 @media(max-width:820px),(hover:none){body.concord-view .cc-message-actions{position:static!important;float:none!important;width:max-content!important;margin:7px 0 0 auto!important;opacity:1!important;visibility:visible!important;transform:none!important;box-shadow:none!important;background:rgba(255,255,255,.035)!important}body.concord-view .cc-message-actions button{display:none!important;width:34px!important;min-width:34px!important;max-width:34px!important;height:34px!important}body.concord-view .cc-message-actions .cc-action-trigger,body.concord-view .cc-message.cc-actions-open .cc-message-actions button{display:grid!important}body.concord-view .cc-message.cc-actions-open .cc-action-trigger{background:rgba(255,255,255,.12)!important}body.concord-view .cc-reaction-picker{position:fixed!important;inset:auto 10px calc(74px + env(safe-area-inset-bottom)) auto!important;grid-template-columns:repeat(4,40px)!important}body.concord-view .cc-reaction-picker button{width:40px!important;height:40px!important}}
 
 /* Classic-mode phone shell: one real screen at a time, with a horizontal community switcher. */

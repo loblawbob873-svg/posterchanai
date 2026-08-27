@@ -16,6 +16,15 @@ MOD = os.path.join(ROOT, "static", "js", "client", "osnative.js")
 NODE = shutil.which("node") or shutil.which("nodejs")
 
 
+def test_maximised_workspace_can_be_restored_and_resized_from_its_grip():
+    """A maximised Concord window must not turn its visible resize grip into a dead control."""
+    with open(os.path.join(ROOT, "static", "js", "client", "os.js"), encoding="utf-8") as handle:
+        src = handle.read()
+    resize = src[src.index("function startResize"):src.index("// ---- desktop, taskbar")]
+    assert "if(w.max) toggleMax(w)" in resize
+    assert "if(w.max) return" not in resize
+
+
 @unittest.skipIf(not NODE, "needs node")
 class NativeWindowGeometry(unittest.TestCase):
     def js(self, body):

@@ -2820,14 +2820,22 @@
       if(i===s.index&&b.scrollIntoView)try{b.scrollIntoView({block:'nearest',inline:'nearest'});}catch(_){}
     });
   }
-  function cycleWindows(direction){
+  function _leaveAltSwitch(){const s=_altSwitch;if(!s)return;_altSwitch=null;clearTimeout(s.timer);if(s.el)try{s.el.remove();}catch(_){}}
+  function cycleWindows(direction,entering){
     const rows=_switchRows();if(!rows.length)return false;
     const step=direction==='previous'?-1:1;
     if(!_altSwitch){
       const initial=rows.find(w=>w.el.classList.contains('focused')&&!w.min)||null;
       const current=rows.indexOf(initial);
+      /* Each output has its own renderer and therefore its own `wins`. At the end of this output's
+       * list, continue the SAME Alt+Tab gesture on the adjacent output instead of wrapping forever
+       * and making Firefox/Telegram on that monitor unreachable. */
+      if(!entering&&current>=0&&((step>0&&current===rows.length-1)||(step<0&&current===0))&&pcWM.cycleOutput){
+        Promise.resolve(pcWM.cycleOutput(direction)).then(moved=>{if(!moved)cycleWindows(direction,true);}).catch(()=>cycleWindows(direction,true));
+        return true;
+      }
       _altSwitch={rows,initial,index:current<0?(step>0?0:rows.length-1):
-        (current+step+rows.length)%rows.length,el:null,timer:0};
+        entering?(step>0?0:rows.length-1):(current+step+rows.length)%rows.length,el:null,timer:0};
       toggleStart(false);hideCtx();
       /* The switcher belongs to this output's shell. Bring that surface forward while selection is
          staged; native targets are focused only on commit, otherwise their opaque surface would
@@ -2837,7 +2845,11 @@
         if(shell)return pcWM.focus(shell.id);}).catch(()=>{});}catch(_){}
     }else{
       _altSwitch.rows=rows;
-      _altSwitch.index=(_altSwitch.index+step+rows.length)%rows.length;
+      const next=_altSwitch.index+step;
+      if((next<0||next>=rows.length)&&pcWM.cycleOutput){
+        _leaveAltSwitch();Promise.resolve(pcWM.cycleOutput(direction)).then(moved=>{if(!moved)cycleWindows(direction,true);}).catch(()=>cycleWindows(direction,true));return true;
+      }
+      _altSwitch.index=(next+rows.length)%rows.length;
     }
     _drawAltSwitch(_altSwitch);
     clearTimeout(_altSwitch.timer);
@@ -3381,7 +3393,11 @@
   }
 
   function startResize(w, ev){
-    if(w.max) return;
+    /* Maximised is a window state, not a dead resize handle. Concord intentionally opens maximised
+     * to use the workspace, but the user must still be able to grab its corner and choose a size.
+     * Restore the remembered floating rectangle synchronously, then let this same pointer gesture
+     * resize it; requiring a separate Maximise-button click made the visible grip appear broken. */
+    if(w.max) toggleMax(w);
     // Resizing by hand means the window is no longer "the left half" — drop the snap, or a later
     // restore yanks it back to a size the user has just replaced by hand.
     if(w.snap){ w.snap = null; w.el.classList.remove('snapped'); }
@@ -6707,6 +6723,7 @@
               }).catch(()=>{});
             }
             else if(/^pc:cycle:(next|previous)$/.test(p)) cycleWindows(p.slice(9));
+            else if(/^pc:cycle-enter:(next|previous)$/.test(p)) cycleWindows(p.slice(15),true);
             else if(/^pc:snap:(left|right|max)$/.test(p)){
               const w=wins.find(x=>x.el.classList.contains('focused'));
               if(w) snapTo(w, p.slice(8)==='max' ? 'max' : p.slice(8));

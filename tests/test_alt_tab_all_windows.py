@@ -79,6 +79,20 @@ def test_compositor_tick_reaches_cycle_handler_and_native_target_uses_normal_foc
     assert "if(target&&wins.includes(target))focusWin(target,false)" in body
 
 
+def test_alt_tab_crosses_output_boundary_instead_of_wrapping_locally():
+    preload = (ROOT / "desktop/preload.js").read_text(encoding="utf-8")
+    main = (ROOT / "desktop/main.js").read_text(encoding="utf-8")
+    assert "cycleOutput: (direction) => ipcRenderer.invoke('pc:wm:cycle-output'" in preload
+    assert "ipcMain.handle('pc:wm:cycle-output'" in main
+    assert "_shellSurfaces.size<2" in main
+    assert "payload:'pc:cycle-enter:'+dir" in main
+    start = CLIENT.index("let _altSwitch=null")
+    body = CLIENT[start:CLIENT.index("// ---- snapping", start)]
+    assert "pcWM.cycleOutput(direction)" in body
+    assert "cycleWindows(direction,true)" in body
+    assert "pc:cycle-enter:(next|previous)" in CLIENT
+
+
 def test_visual_switcher_runtime_cycles_cancels_and_commits():
     run = subprocess.run(["node", str(SIM)], capture_output=True, text=True, check=False)
     assert run.returncode == 0, run.stdout + run.stderr

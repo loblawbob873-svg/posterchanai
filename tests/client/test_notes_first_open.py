@@ -41,6 +41,28 @@ class CoreAppsOpenReliably(unittest.TestCase):
         self.assertIn("_fitPixels===px && _sentSize", fit)
         self.assertLess(fit.index("_fitPixels===px"), fit.index("fit.fit()"))
 
+    def test_terminal_focus_preserves_live_dom_and_scrollback(self):
+        os_js = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+        snapshot = os_js[os_js.index("function snapshot(w)"):
+                         os_js.index("function parkedSlot(view)")]
+        claim = os_js[os_js.index("function claimFeed(w)"):
+                      os_js.index("function releaseFeed(park)")]
+        focus = os_js[os_js.index("function focusWin(w, render)"):
+                      os_js.index("let iconSpan")]
+        # Parking and returning must move the same nodes. Serialising innerHTML remounts xterm,
+        # reconnects its PTY and loses the viewport/process state the user left behind.
+        self.assertIn("while(realFeed.firstChild) slot.appendChild(realFeed.firstChild)", snapshot)
+        self.assertIn("while(w.slot.firstChild) realFeed.appendChild(w.slot.firstChild)", claim)
+        self.assertIn("if(w.restored)", focus)
+        restored = focus[focus.index("if(w.restored)"):focus.index("repainting++")]
+        # Only explicitly isolated/rerunnable documents may repaint here. Terminal is a shared-feed
+        # feature, so it must take the adopt-and-return path with the live xterm nodes untouched.
+        self.assertIn("if(w.isolated)", restored)
+        self.assertIn("if(w.rerun) try{ w.render(); }", restored)
+        self.assertIn("restoreScroll(w);", restored)
+        self.assertIn("return;", restored)
+        self.assertNotIn("PCTerm.unmount", focus)
+
     def test_every_module_backed_app_heals_its_first_open(self):
         for view, file_name, global_name, method in (
             ('news','news.js','PCNews','render'), ('websearch','websearch.js','PCWebSearch','render'),

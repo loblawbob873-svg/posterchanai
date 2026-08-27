@@ -16310,7 +16310,7 @@
            * frames (and every document icon) are otherwise indistinguishable, while the Files view
            * itself already carries the name and size. Keep the same metadata directly under the
            * preview and return it to the caller so an MMS part is not named with its blob hash. */
-          return `<button type="button" class="file-card bp-pick-card" data-url="${enc(b.url)}" data-type="${enc(type)}" data-name="${enc(name)}"><span class="bp-pick-preview">${blobThumb(Object.assign({},b,{type}),ext)}</span><span class="meta"><b class="fname">${enc(fileLabel(name,ext,b.size))}</b><small>${enc(fmtBytes(b.size||0))}${type?' · '+enc(type.replace(/;.*/,'')):''}</small></span></button>`;
+          return `<button type="button" class="file-card bp-pick-card" data-url="${enc(b.url)}" data-type="${enc(type)}" data-name="${enc(name)}"><span class="bp-pick-preview">${blobThumb(Object.assign({},b,{type}),ext)}</span><span class="meta"><b class="fname">${enc(fileLabel(name,ext,b.size))}</b><small>${enc(_fmtBytes(b.size||0))}${type?' · '+enc(type.replace(/;.*/,'')):''}</small></span></button>`;
         }).join('')
           : `<div class="empty">${cur?'Nothing in this folder.':enc(opts.empty||'No files yet — upload some in the Files tab.')}</div>`;
         _bindThumbFallback(grid);   // same markup as the Files grid, so the same fallback

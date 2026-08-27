@@ -7,7 +7,7 @@ globalThis.localStorage = {
   setItem: (key, value) => data.set(key, String(value)),
 };
 
-const makeClassList = () => ({added:[],removed:[],add(...x){this.added.push(...x);},remove(...x){this.removed.push(...x);},toggle(){}});
+const makeClassList = () => ({added:[],removed:[],values:new Set(),add(...x){this.added.push(...x);x.forEach(v=>this.values.add(v));},remove(...x){this.removed.push(...x);x.forEach(v=>this.values.delete(v));},contains(x){return this.values.has(x);},toggle(x,on){const yes=on===undefined?!this.values.has(x):!!on;yes?this.values.add(x):this.values.delete(x);return yes;}});
 const classList = makeClassList();
 const feed = { innerHTML:'', classList, insertAdjacentHTML(){} };
 const controls = new Map();
@@ -17,15 +17,22 @@ function control(id){
 }
 const dollar = selector => selector === '#feed' ? feed : control(selector.slice(1));
 const actionControls = new Map();
+const messageRows = new Map();
+function messageRow(id){
+  if(!messageRows.has(id))messageRows.set(id,{dataset:{messageId:id},classList:makeClassList(),querySelector(sel){return sel==='[data-cc-actions]'?actionControls.get('data-cc-actions:'+id+':'):null;}});
+  return messageRows.get(id);
+}
 const dataKey = selector => selector.match(/^\[data-cc-([\w-]+)\]$/)?.[1];
 const camel = value => value.replace(/-([a-z])/g,(_m,c)=>c.toUpperCase());
 const dollars = selector => {
+  if(selector==='.cc-message.cc-actions-open')return [...messageRows.values()].filter(row=>row.classList.contains('cc-actions-open'));
   const key=dataKey(selector); if(!key)return [];
   const attribute='data-cc-'+key,pattern=new RegExp(attribute+'="([^"]*)"(?:[^>]*data-cc-emoji="([^"]*)")?','g');
   const found=[]; let match;
   while((match=pattern.exec(feed.innerHTML))){
-    const identity=attribute+':'+match[1]+':'+(match[2]||''),button=actionControls.get(identity)||{dataset:{},disabled:false};
-    button.dataset[camel('cc-'+key)]=match[1]; if(match[2])button.dataset.ccEmoji=match[2];
+    const rowId=match[1],identity=attribute+':'+rowId+':'+(match[2]||''),button=actionControls.get(identity)||{dataset:{},disabled:false,attributes:{},setAttribute(k,v){this.attributes[k]=String(v);}};
+    button.dataset[camel('cc-'+key)]=rowId; if(match[2])button.dataset.ccEmoji=match[2];
+    button.closest=sel=>sel==='.cc-message'?messageRow(rowId):null;
     actionControls.set(identity,button); found.push(button);
   }
   return found;
@@ -43,6 +50,9 @@ const relayFixtures=filters=>{
 };
 
 globalThis.window = globalThis;
+const documentListeners=new Map(),windowListeners=new Map();
+window.addEventListener=(name,fn)=>windowListeners.set(name,fn);
+window.removeEventListener=(name,fn)=>{if(windowListeners.get(name)===fn)windowListeners.delete(name);};
 window.__PC = {
   $:dollar, $$:dollars, enc:s=>String(s), niceNip05:s=>s,
   isView:view=>view===activeView,
@@ -85,7 +95,8 @@ globalThis.document = {
   body:{classList}, head:{appendChild(){}}, documentElement:{appendChild(){}},
   createElement:()=>({dataset:{}}),
   querySelector:s=>s==='link[data-concord-css]'?{}:null,
-  addEventListener(){},
+  addEventListener(name,fn){documentListeners.set(name,fn);},
+  removeEventListener(name,fn){if(documentListeners.get(name)===fn)documentListeners.delete(name);},
 };
 
 vm.runInThisContext(fs.readFileSync(new URL('../../static/js/client/concord.js', import.meta.url), 'utf8'),
@@ -133,14 +144,34 @@ const imageMessage={id:'plain-image',text:'photo '+blossomImage,tags:[['imeta',`
 const imageHtml=PCConcord.messageContentHtml({enc:String,linkify:String,linkCardHtml:()=>''},imageMessage);
 if(!imageHtml.includes('class="cc-plain-attachment"')||!imageHtml.includes('<img ')||imageHtml.includes('<p>photo '+blossomImage))
   throw new Error('extensionless Blossom image did not render from imeta metadata');
+const customReaction=PCConcord.reactionSummary({enc:String,viewer:()=>({pubkey:'a'})},{id:'custom-react',reactions:{':carlJAM:':['b']},reactionUrls:{':carlJAM:':'https://emoji.example/carlJAM.gif'}});
+if(!customReaction.includes('class="cc-reaction-emoji"')||!customReaction.includes('https://emoji.example/carlJAM.gif')||!customReaction.includes('alt=":carlJAM:"'))
+  throw new Error('NIP-30 Concord reaction rendered as a raw shortcode');
+const missingCustomReaction=PCConcord.reactionSummary({enc:String,viewer:()=>({pubkey:'a'})},{id:'custom-fallback',reactions:{':missing:':['b']},reactionUrls:{}});
+if(!missingCustomReaction.includes(':missing:')||missingCustomReaction.includes('cc-reaction-emoji'))
+  throw new Error('custom reaction fallback is not readable without its asset');
 const iconRoom={icon:'https://old.example/icon.png'};
 if(!await PCConcord.applyRoomIconMetadata(iconRoom,{icon:''},'icon-clear') || iconRoom.icon!=='')
   throw new Error('explicit community icon removal was ignored');
 if(!await PCConcord.applyRoomIconMetadata(iconRoom,{icon:'🛸'},'icon-plain') || iconRoom.icon!=='🛸')
   throw new Error('plain community icon update was ignored');
+const iconPlain=new TextEncoder().encode('durable icon bytes'),iconKey=crypto.getRandomValues(new Uint8Array(32)),iconNonce=crypto.getRandomValues(new Uint8Array(12));
+const iconCryptoKey=await crypto.subtle.importKey('raw',iconKey,'AES-GCM',false,['encrypt']);
+const iconCipher=await crypto.subtle.encrypt({name:'AES-GCM',iv:iconNonce},iconCryptoKey,iconPlain);
+const hex=a=>[...new Uint8Array(a)].map(x=>x.toString(16).padStart(2,'0')).join('');
+const iconPointer={url:'https://icons.example/encrypted',key:hex(iconKey),nonce:hex(iconNonce),hash:hex(await crypto.subtle.digest('SHA-256',iconPlain))};
+globalThis.fetch=async()=>new Response(iconCipher,{status:200});
+iconRoom.communityId='icon-durable';iconRoom.icon='blob:dead-from-previous-renderer';
+if(!await PCConcord.applyRoomIconMetadata(iconRoom,{icon:iconPointer},'icon-durable') ||
+   JSON.stringify(iconRoom.iconPointer)!==JSON.stringify(iconPointer) || iconRoom.icon!=='')
+  throw new Error('encrypted community icon pointer was not stored durably');
+const rehydratedIcon=PCConcord.roomIcon({enc:String},iconRoom,0);
+if(!rehydratedIcon.includes('blob:')||rehydratedIcon.includes('blob:dead-from-previous-renderer'))
+  throw new Error('durable community icon pointer did not use the decrypted renderer cache');
 const priorFetch=globalThis.fetch;
 globalThis.fetch=async()=>{throw new Error('offline icon host');};
-if(await PCConcord.applyRoomIconMetadata(iconRoom,{icon:{url:'https://bad.example/icon',key:'00',nonce:'00',hash:'00'}},'icon-bad') || iconRoom.icon!=='🛸')
+const beforeBadIcon=JSON.stringify(iconRoom);
+if(await PCConcord.applyRoomIconMetadata(iconRoom,{icon:{url:'https://bad.example/icon',key:'00',nonce:'00',hash:'00'}},'icon-bad') || JSON.stringify(iconRoom)!==beforeBadIcon)
   throw new Error('failed encrypted icon damaged room metadata');
 globalThis.fetch=priorFetch;
 const leaveFixture=[{communityId:'first'},{communityId:'leave-me'},{communityId:'last'}];
@@ -290,6 +321,18 @@ memberViewportNarrow=true;
 if(!PCConcord.memberViewportIsNarrow())throw new Error('member viewport stayed desktop after a responsive resize');
 memberViewportNarrow=false;
 PCConcord.render();
+const disclosure=dollars('[data-cc-actions]').find(b=>b.dataset.ccActions===permanentId);
+const disclosureRow=messageRow(permanentId);
+disclosure.onclick({stopPropagation(){}});
+if(!disclosureRow.classList.contains('cc-actions-open')||disclosure.attributes['aria-expanded']!=='true')
+  throw new Error('ellipsis did not disclose message actions');
+documentListeners.get('pointerdown')({target:{closest(){return null;}}});
+if(disclosureRow.classList.contains('cc-actions-open')||disclosure.attributes['aria-expanded']!=='false')
+  throw new Error('outside press did not immediately dismiss message actions');
+disclosure.onclick({stopPropagation(){}});
+documentListeners.get('keydown')({key:'Escape'});
+if(disclosureRow.classList.contains('cc-actions-open'))
+  throw new Error('Escape did not immediately dismiss message actions');
 const reply=dollars('[data-cc-reply]').find(b=>b.dataset.ccReply===permanentId);
 if(!reply)throw new Error('rendered message has no reply control');
 reply.onclick();
@@ -356,3 +399,4 @@ PCConcord.render();
 if(feed.innerHTML!=='<div id="code-editor">working tree</div>') throw new Error('late Concord render replaced Code');
 if(classList.added.length!==classesBefore) throw new Error('late Concord render changed Code shell classes');
 console.log('concord runtime flow ok');
+process.exit(0);

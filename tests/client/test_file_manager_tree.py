@@ -109,6 +109,9 @@ def test_file_picker_has_bounded_desktop_and_mobile_layouts():
     assert "height:min(720px,calc(100vh - 28px))" in CSS
     assert ".bp-explorer{display:flex;flex-direction:column}" in CSS
     assert "grid-template-columns:repeat(2,minmax(0,1fr))" in CSS
+    assert "max-height:min(32vh,240px);overflow-y:auto" in CSS
+    assert ".bp-explorer .folder-bar{flex-direction:column;overflow:visible" in CSS
+    assert "white-space:normal;overflow-wrap:anywhere" in CSS
 
 
 def test_mobile_picker_identifies_each_file_beside_a_real_preview():
@@ -116,7 +119,8 @@ def test_mobile_picker_identifies_each_file_beside_a_real_preview():
                  APP.index("// ---------- Pics:")]
     assert 'class="file-card bp-pick-card"' in picker
     assert 'class="fname"' in picker
-    assert "fmtBytes(b.size||0)" in picker
+    assert "_fmtBytes(b.size||0)" in picker
+    assert "enc(fmtBytes(" not in picker
     assert "onPick({url, type, ext, name})" in picker
     assert ".bp-explorer .bp-pick-card .fname" in CSS
 

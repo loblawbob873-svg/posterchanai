@@ -45,7 +45,15 @@ def test_shell_restart_is_serialized_and_targets_only_the_shell_process():
     assert start.count('>>"$SHELL_LOG" 2>&1 &') == 2
     assert "PC_DESKTOP_LAUNCHER=/usr/bin/posterchan" in start
     assert "PC_DESKTOP_LAUNCHER=/usr/local/bin/posterchan" in start
-    assert "pattern='[/]opt/posterchan/'" in restart
+    # Restart only the canonical shell.  A broad /opt/posterchan match also catches installed
+    # diagnostic/verifier instances and lets an update test tear down the user's real desktop.
+    assert "candidates=$requested" in restart
+    assert "pgrep -f '[/]opt/posterchan/posterchan-desktop'" in restart
+    assert "/opt/posterchan/posterchan-desktop\\ *--shell*" in restart
+    assert "--pc-diagnostic-token=" in restart
+    assert "--pc-diagnostic-profile=" in restart
+    assert "--pc-diagnostic-swaysock=" in restart
+    assert "exit 64" in restart
     assert "send_tick pc:restart" not in restart
     assert "kill $pids" in restart
     assert "resources/app.asar changed" in restart

@@ -26673,7 +26673,10 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     return {
       messages: timeline.messages.map((m) => ({ id: m.rumorId, pubkey: m.author, text: m.content, at: m.ms, kind: m.kind, tags: m.tags })),
       reactions: [...timeline.reactions].map(([target, byEmoji]) => [target, [...byEmoji].map(([emoji3, entry]) => [emoji3, [...entry.reactors.keys()]])]),
-      reactionIds: [...timeline.reactions].map(([target, byEmoji]) => [target, [...byEmoji].map(([emoji3, entry]) => [emoji3, [...entry.reactors.entries()]])])
+      reactionIds: [...timeline.reactions].map(([target, byEmoji]) => [target, [...byEmoji].map(([emoji3, entry]) => [emoji3, [...entry.reactors.entries()]])]),
+      /* Preserve NIP-30 reaction assets. foldTimeline already validates/extracts the emoji tag, but
+       * the public reader used to discard its URL here, leaving Concord to render :carlJAM: text. */
+      reactionUrls: [...timeline.reactions].map(([target, byEmoji]) => [target, [...byEmoji].filter(([, entry]) => entry.url).map(([emoji3, entry]) => [emoji3, entry.url])])
     };
   }
   async function createChatWrap(bundle, controlWraps, channelId, content, pubkey, signEvent, extraTags = [], kind = KIND_MESSAGE) {

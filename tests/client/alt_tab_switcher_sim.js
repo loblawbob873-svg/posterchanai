@@ -28,7 +28,8 @@ const listeners={};
 global.document={body:new El('body'),createElement:()=>new El(),
   addEventListener:(k,f)=>(listeners[k]=listeners[k]||[]).push(f)};
 const toggleStart=()=>{},hideCtx=()=>{},enc=String,iconSvg=x=>'<svg>'+x+'</svg>';
-const pcWM={windows:async()=>[{id:90,app:'posterchan-desktop'}],focus:async()=>{}};
+const crossed=[];
+const pcWM={windows:async()=>[{id:90,app:'posterchan-desktop'}],focus:async()=>{},cycleOutput:async direction=>{crossed.push(direction);return true;}};
 const focused=[];
 const focusWin=w=>{focused.push(w.title);wins.forEach(x=>x.el.classList.s.delete('focused'));
   w.el.classList.add('focused');w.min=false;};
@@ -55,4 +56,9 @@ overlay=document.body.children.find(x=>x.classList.contains('os-alt-switch'));
 listeners.keyup[0]({key:'Alt'});
 ok('Alt release commits the highlighted window',focused.at(-1)==='Social');
 ok('commit removes the chooser',!document.body.children.includes(overlay));
-console.log('OK Alt+Tab switcher holds');
+__cycleWindows('next');
+setTimeout(()=>{
+  ok('end of one monitor hands Alt+Tab to the adjacent monitor',crossed.join(',')==='next');
+  ok('local chooser does not wrap over the cross-monitor handoff',!document.body.children.some(x=>x.classList.contains('os-alt-switch')));
+  console.log('OK Alt+Tab switcher holds');
+},0);

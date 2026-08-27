@@ -1300,6 +1300,20 @@ function displays(){
 
 ipcMain.handle('pc:wm:available', (e) => { fsGuard(e); return wm().available(); });
 ipcMain.handle('pc:wm:windows', async (e) => { fsGuard(e); return scopedWindows(e, await wm().windows()); });
+ipcMain.handle('pc:wm:cycle-output', async (e, direction) => {
+  fsGuard(e);
+  const dir=String(direction||''); if(dir!=='next'&&dir!=='previous')return false;
+  const scope=_shellScopes.get(e.sender.id); if(!scope||_shellSurfaces.size<2)return false;
+  const rows=[..._shellSurfaces.values()].filter(x=>x&&x.browser&&!x.browser.isDestroyed()&&x.assignment)
+    .sort((a,b)=>{const ar=a.assignment.rect||{},br=b.assignment.rect||{};return (Number(ar.y)||0)-(Number(br.y)||0)||(Number(ar.x)||0)-(Number(br.x)||0)||String(a.assignment.output||'').localeCompare(String(b.assignment.output||''));});
+  const at=rows.findIndex(x=>String(x.assignment.output||'')===String(scope.output||''));
+  if(at<0||rows.length<2)return false;
+  const step=dir==='previous'?-1:1,target=rows[(at+step+rows.length)%rows.length];
+  if(!target||target===rows[at])return false;
+  if(Number.isFinite(Number(target.conId)))await wm().focus(Number(target.conId));
+  try{target.browser.webContents.send('pc:wm:event',{name:'tick',change:'run',payload:'pc:cycle-enter:'+dir,window:null});}catch(_){return false;}
+  return true;
+});
 ipcMain.handle('pc:wm:snapshot', async (e) => {
   fsGuard(e);
   /* Today the primary surface owns the full list. Per-output surfaces replace `windows` with their

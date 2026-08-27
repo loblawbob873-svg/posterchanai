@@ -103,6 +103,7 @@ if (isOurPage) {
     snapshot: () => ipcRenderer.invoke('pc:wm:snapshot'),
     preview: (id) => ipcRenderer.invoke('pc:wm:preview', Number(id)),
     focus: (id) => ipcRenderer.invoke('pc:wm:focus', Number(id)),
+    cycleOutput: (direction) => ipcRenderer.invoke('pc:wm:cycle-output', String(direction||'')),
     close: (id) => ipcRenderer.invoke('pc:wm:close', Number(id)),
     place: (id, x, y, w, h) => ipcRenderer.invoke('pc:wm:place', Number(id), Number(x), Number(y),
                                                   Number(w), Number(h)),
