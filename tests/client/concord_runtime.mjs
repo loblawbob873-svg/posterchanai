@@ -168,6 +168,20 @@ if(!await PCConcord.applyRoomIconMetadata(iconRoom,{icon:iconPointer},'icon-dura
 const rehydratedIcon=PCConcord.roomIcon({enc:String},iconRoom,0);
 if(!rehydratedIcon.includes('blob:')||rehydratedIcon.includes('blob:dead-from-previous-renderer'))
   throw new Error('durable community icon pointer did not use the decrypted renderer cache');
+// Exercise the cold path used after a renderer reload/re-enter, rather than reading the cache
+// populated by applyRoomIconMetadata above. roomIcon starts hydration without blocking the room
+// list; the subsequent render reads the newly decrypted blob URL from renderer-only memory.
+const coldIconRoom={communityId:'icon-after-reload',name:'Cold icon',icon:'',iconPointer};
+data.set('pc.concord.invites',JSON.stringify([coldIconRoom]));
+const coldFirst=PCConcord.roomIcon({enc:String},coldIconRoom,0);
+if(coldFirst.includes('blob:'))throw new Error('cold community icon reused another room cache entry');
+await new Promise(resolve=>setTimeout(resolve,0));
+const coldHydrated=PCConcord.roomIcon({enc:String},coldIconRoom,0);
+if(!coldHydrated.includes('blob:'))throw new Error('encrypted community icon did not rehydrate after reload/re-enter');
+const coldStored=JSON.parse(data.get('pc.concord.invites'))[0];
+if(!coldStored.iconPointer||String(coldStored.icon||'').startsWith('blob:'))
+  throw new Error('community icon persisted an ephemeral blob instead of its encrypted pointer');
+data.delete('pc.concord.invites');
 const priorFetch=globalThis.fetch;
 globalThis.fetch=async()=>{throw new Error('offline icon host');};
 const beforeBadIcon=JSON.stringify(iconRoom);
@@ -335,7 +349,10 @@ if(disclosureRow.classList.contains('cc-actions-open'))
   throw new Error('Escape did not immediately dismiss message actions');
 const reply=dollars('[data-cc-reply]').find(b=>b.dataset.ccReply===permanentId);
 if(!reply)throw new Error('rendered message has no reply control');
+disclosure.onclick({stopPropagation(){}});
 reply.onclick();
+if(disclosureRow.classList.contains('cc-actions-open')||disclosure.attributes['aria-expanded']!=='false')
+  throw new Error('choosing a message action did not close its disclosure');
 input.value='thread response';
 await input.onkeydown({key:'Enter',ctrlKey:true,metaKey:false,preventDefault(){}});
 if(calls.lastChat?.kind!==1111 || !calls.lastChat.tags.some(t=>t[0]==='e'&&t[1]===permanentId) ||
