@@ -2244,6 +2244,37 @@
     el.scrollTop = !pos || pos.bottom ? el.scrollHeight : Math.max(0, Number(pos.top)||0);
   }
 
+  /* RETRY IS AN EXPLICIT NEW SEND, NEVER A GUESS ABOUT A CARRIER CALLBACK.
+   *
+   * A definite failed receipt keeps enough information to make another attempt, including the
+   * encrypted attachment hash.  Ambiguous carrier outcomes deliberately stay excluded: sending
+   * those again can duplicate a message that actually reached the recipient.  Queue/send the
+   * replacement first and only then retire the failed receipt, so a relay, phone, or attachment
+   * read failure cannot turn a visible failed message into a lost one. */
+  async function retryFailed(m){
+    if(!m || m.incoming || !m.failed ||
+       String(m.error || '').startsWith('delivery unknown'))
+      return {ok:false, error:'this message is not safe to retry'};
+    let file = null;
+    const parts = m.parts || [];
+    if(parts.length){
+      const p = parts.find(x => isImage(x.ct));
+      if(!p) return {ok:false, error:'MMS currently supports photos'};
+      const d = await partData(p);
+      if(!d || !d.blob)
+        return {ok:false, error:(d && d.why) || 'could not read attachment'};
+      file = new File([d.blob], p.name || 'photo.jpg',
+                      {type:p.ct || d.blob.type || 'image/jpeg'});
+    }
+    const sent = await send(m.address, m.body || '', file);
+    if(!sent || !sent.ok) return sent || {ok:false, error:'could not retry'};
+    const gone = await remove([m.doc]);
+    if(gone && gone.refused)
+      return Object.assign({}, sent, {warning:gone.error ||
+        'replacement accepted, but the old failed copy could not be removed'});
+    return sent;
+  }
+
   function paintThread(feed, enc){
     /* A focus change, attachment draft, receipt, contact refresh, or relay event can repaint the
        whole thread. Capture the OLD element before replacing it. Its data key is authoritative:
@@ -2279,6 +2310,8 @@
           const prev = t.msgs[i-1];
           const grp = !prev || !!prev.incoming !== !!m.incoming ? ' grp' : ' cont';
           const atts = (m.parts||[]).map((p, j) => attHtml(p, enc, i, j)).join('');
+          const retryable = !m.incoming && m.failed &&
+            !String(m.error || '').startsWith('delivery unknown');
           return `<div class="bubble ${m.incoming ? 'in' : 'out'}${grp}${atts ? ' has-att' : ''}" data-doc="${enc(m.doc)}">`
             + atts
             /* THE ATTACHMENTS COME FIRST AND THE CAPTION UNDER THEM, which is where every messages
@@ -2286,6 +2319,7 @@
                an empty text node, or it collapses to a sliver. */
             + (m.body ? `<span class="b-txt">${enc(m.body)}</span>` : '')
             + `<span class="b-meta">${enc(when(m.date))}${m.error&&String(m.error).startsWith('delivery unknown')?' · delivery unknown':m.pending?' · sending':m.failed?' · not sent':''}</span>`
+            + (retryable ? `<button class="btn small sms-retry" data-sms-retry="${enc(m.doc)}">Retry</button>` : '')
             + `</div>`;
         }).join('')}</div>
         ${S.attach?`<div class="sms-attachment-draft"><span>${ICO('image','b-ic')}<b>${enc(S.attach.name||'Photo')}</b><small>${enc(fmtBytes(S.attach.size))} · ready to send as MMS</small></span><button id="sms-attach-clear" aria-label="Remove attached photo">×</button></div>`:''}
@@ -2390,6 +2424,22 @@
     };
     btn.onclick = go;
     input.onkeydown = e => { if(e.key === 'Enter'){ e.preventDefault(); go(); } };
+    feed.querySelectorAll('[data-sms-retry]').forEach(retry => {
+      retry.onclick = async e => {
+        e.stopPropagation();
+        if(retry.disabled) return;
+        retry.disabled = true;
+        const r = await retryFailed(S.msgs.get(retry.dataset.smsRetry));
+        if(!r || !r.ok){
+          PC.toast((r && r.error) || 'could not retry');
+          retry.disabled = false;
+          return;
+        }
+        PC.toast(r.warning || (r.where === 'phone' ? 'retry accepted' :
+          'retry queued for your phone'));
+        paint();
+      };
+    });
     /* `.bubble[data-doc]`, because the bubble IS a DM bubble now and `data-doc` is what makes it a
      * text rather than a DM. Selected on the class it actually has: this was `.sms-msg`, and moving
      * the markup to the shared bubble would have matched nothing -- so right-clicking a message
@@ -2408,11 +2458,15 @@
         else PC.toast(r.phone ? 'deleted here and from your archive' : 'deleted from your archive');
         paint();
       };
-      el.oncontextmenu = e => { e.preventDefault(); removeMessage(); };
+      el.oncontextmenu = e => {
+        if(e.target.closest('button,a,input')) return;
+        e.preventDefault(); removeMessage();
+      };
       /* A HOLD IS THE MOBILE MESSAGE MENU. Pointer events cover touch and pen without also
          installing touch handlers that fire twice on Android. Cancel as soon as the finger moves:
          scrolling a conversation must never become a destructive gesture. */
       el.onpointerdown=e=>{
+        if(e.target.closest('button,a,input'))return;
         if(e.pointerType==='mouse')return;
         startX=e.clientX;startY=e.clientY;stopHold();
         hold=setTimeout(()=>{hold=0;removeMessage();},550);
@@ -2628,6 +2682,8 @@
                    // The oversized-attachment fallback — see sendAsLink.
                    mmsLimit, shareLinkFor,
                    drainOutbox, send, remove, load,
+                   // Explicit failed-send retry is exported for the protocol simulator.
+                   _retryFailed: retryFailed,
                    // The real batched migration loop, for tests/client/test_sms_attachments.py —
                    // its convergence is the property that matters and it is invisible from a single
                    // mirror() call.

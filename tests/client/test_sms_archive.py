@@ -289,6 +289,45 @@ class SendingFromAnotherDevice(unittest.TestCase):
         self.assertIn("failed:true, outbox:d", absorb,
                       "the rebuilt bubble cannot delete its source receipt")
 
+    def test_a_failed_remote_send_can_be_explicitly_retried_without_duplicating_its_receipt(self):
+        """Retry is a deliberate new request.  The failed receipt must remain until that request
+        is accepted, then disappear so reload cannot reconstruct both the failed and pending copy."""
+        receipt = {
+            "kind": 30078,
+            "created_at": 1700000010,
+            "pubkey": "me",
+            "tags": [["d", "pcai:smsout:failed-retry"], ["l", "pcai-sms"]],
+            "content": 'enc:{"done":true,"ok":false,"error":"radio rejected it",'
+                       '"request":{"to":"+15550100","body":"try again",'
+                       '"at":1700000000000}}',
+        }
+        res = run(isPhone=False, telephony=False, relay=[receipt],
+                  steps=["load", "settle", "retryFailed"])
+        self.assertEqual(calls_of(res, "retryFailedResult")[0][1:3], [True, "queued"])
+        self.assertNotIn("pcai:smsout:failed-retry", res["relay"],
+                         "the old failed receipt can recreate a ghost after retry")
+        self.assertEqual(res["threads"][0]["failed"], [False])
+        self.assertEqual(res["threads"][0]["pending"], [True])
+
+    def test_retry_never_repeats_an_ambiguous_carrier_outcome(self):
+        receipt = {
+            "kind": 30078,
+            "created_at": 1700000010,
+            "pubkey": "me",
+            "tags": [["d", "pcai:smsout:unknown-retry"], ["l", "pcai-sms"]],
+            "content": 'enc:{"done":true,"ok":false,"error":"delivery unknown: callback timed out",'
+                       '"request":{"to":"+15550100","body":"maybe delivered",'
+                       '"at":1700000000000}}',
+        }
+        res = run(isPhone=False, telephony=False, relay=[receipt],
+                  steps=["load", "settle", "retryFailed"])
+        retry = calls_of(res, "retryFailedResult")[0]
+        self.assertEqual(retry[1:], [False, "this message is not safe to retry", ""])
+        self.assertEqual(res["relay"], ["pcai:smsout:unknown-retry"])
+        self.assertFalse(any(p["d"] != "pcai:smsout:unknown-retry"
+                             and p["d"].startswith("pcai:smsout:")
+                             for p in res["published"]))
+
     def test_texts_uses_the_instances_gif_picker(self):
         """The server-side picker keeps the connected instance's Giphy/Tenor key out of clients."""
         web = (ROOT / "static/js/client/sms.js").read_text()

@@ -317,6 +317,12 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
       const r = await S.remove(m ? [m.doc] : []);
       calls.push(['removePendingResult', r.archive || 0, r.phone || 0, r.cancelled || 0]);
     }
+    else if(step === 'retryFailed'){
+      const m = Array.from(S._state().msgs.values()).find(x => x && x.failed);
+      const r = await S._retryFailed(m);
+      calls.push(['retryFailedResult', !!(r && r.ok),
+                  (r && (r.where || r.error)) || '', (r && r.warning) || '']);
+    }
     else if(step === 'render'){ await S.render(); }
     else if(step === 'why'){
       const w = await S.emptyWhy();

@@ -61,3 +61,12 @@ def test_messages_delete_from_long_press_without_an_inline_button():
     assert "el.onpointercancel=stopHold" in JS
     assert "el.oncontextmenu = e =>" in JS
     assert "await remove([el.dataset.doc])" in JS
+
+
+def test_definite_failed_sends_offer_a_guarded_retry_without_destructive_long_press():
+    assert 'data-sms-retry="${enc(m.doc)}"' in JS
+    retry = JS[JS.index("async function retryFailed(m)"):JS.index("function paintThread")]
+    assert "!m.failed" in retry
+    assert "startsWith('delivery unknown')" in retry
+    assert retry.index("await send(m.address") < retry.index("await remove([m.doc])")
+    assert "e.target.closest('button,a,input')" in JS
