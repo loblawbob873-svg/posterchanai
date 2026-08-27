@@ -413,7 +413,7 @@ class TheLiveSessionActuallyStarts(unittest.TestCase):
 
     def test_live_desktop_repairs_network_manager_before_welcome(self):
         i = self.fn.index('cat >"$WORK/live.bash_profile"')
-        profile = self.fn[i:i + 900]
+        profile = self.fn[i:self.fn.index("\nPROFILE", i)]
         self.assertIn("systemctl is-active --quiet NetworkManager.service", profile)
         self.assertIn("sudo -n systemctl start NetworkManager.service", profile)
         self.assertLess(profile.index("systemctl start NetworkManager.service"), profile.index("exec sway"))
@@ -426,7 +426,8 @@ class TheLiveSessionActuallyStarts(unittest.TestCase):
 
     def test_it_starts_the_compositor(self):
         i = self.fn.index('cat >"$WORK/live.bash_profile"')
-        self.assertIn("exec sway", self.fn[i:i + 900])
+        profile = self.fn[i:self.fn.index("\nPROFILE", i)]
+        self.assertIn("exec sway", profile)
 
     def test_it_only_does_so_on_the_first_tty(self):
         """A second console must still be a console."""

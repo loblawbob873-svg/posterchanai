@@ -225,6 +225,10 @@ while [ $i -lt 120 ]; do
       swaymsg "$sel border none" >/dev/null 2>&1
     done
     echo "PosterChan shell window mapped"
+    # The login profile uses this boot-scoped counter to stop agetty turning a fatal Sway exit into
+    # an endless black-frame loop. A mapped shell proves this session is healthy, so a later genuine
+    # restart gets its normal recovery attempt again.
+    rm -f "$USER_HOME/.local/state/posterchanos/sway-boot-attempt"
     exit 0
   fi
   # Electron can exit before mapping when its SingletonSocket/Lock outlives the process that was

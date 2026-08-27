@@ -684,6 +684,21 @@ finalizeInstall() {
 if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
 	export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=sway MOZ_ENABLE_WAYLAND=1
 	mkdir -p "$HOME/.local/state/posterchanos"
+	# agetty immediately starts another autologin when Sway exits. Without a guard, one fatal
+	# compositor/GPU error becomes an endless Sway/VT restart loop which virt-viewer displays as
+	# alternating black frames. Allow one recovery attempt, then leave a usable diagnostic shell.
+	pc_boot_id=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)
+	pc_guard="$HOME/.local/state/posterchanos/sway-boot-attempt"
+	pc_old_id= pc_attempts=0
+	[ ! -r "$pc_guard" ] || read -r pc_old_id pc_attempts <"$pc_guard"
+	[ "$pc_old_id" = "$pc_boot_id" ] || pc_attempts=0
+	pc_attempts=$((pc_attempts + 1))
+	printf '%s %s\n' "$pc_boot_id" "$pc_attempts" >"$pc_guard"
+	if [ "$pc_attempts" -gt 2 ]; then
+		echo 'PosterChanOS stopped a graphical-session restart loop.'
+		echo "Diagnostics: $HOME/.local/state/posterchanos/sway.log"
+		return 0 2>/dev/null || exit 0
+	fi
 	exec sway >"$HOME/.local/state/posterchanos/sway.log" 2>&1
 fi
 POSTERCHAN_PROFILE
@@ -1462,6 +1477,18 @@ posterchanShell() {
 if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
 	export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=sway MOZ_ENABLE_WAYLAND=1
 	mkdir -p "$HOME/.local/state/posterchanos"
+	pc_boot_id=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)
+	pc_guard="$HOME/.local/state/posterchanos/sway-boot-attempt"
+	pc_old_id= pc_attempts=0
+	[ ! -r "$pc_guard" ] || read -r pc_old_id pc_attempts <"$pc_guard"
+	[ "$pc_old_id" = "$pc_boot_id" ] || pc_attempts=0
+	pc_attempts=$((pc_attempts + 1))
+	printf '%s %s\n' "$pc_boot_id" "$pc_attempts" >"$pc_guard"
+	if [ "$pc_attempts" -gt 2 ]; then
+		echo 'PosterChanOS stopped a graphical-session restart loop.'
+		echo "Diagnostics: $HOME/.local/state/posterchanos/sway.log"
+		return 0 2>/dev/null || exit 0
+	fi
 	exec sway >"$HOME/.local/state/posterchanos/sway.log" 2>&1
 fi
 PROFILE
@@ -3093,6 +3120,19 @@ if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
 		sudo -n systemctl start NetworkManager.service
 	fi
 	export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=sway MOZ_ENABLE_WAYLAND=1
+	mkdir -p "$HOME/.local/state/posterchanos"
+	pc_boot_id=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)
+	pc_guard="$HOME/.local/state/posterchanos/sway-boot-attempt"
+	pc_old_id= pc_attempts=0
+	[ ! -r "$pc_guard" ] || read -r pc_old_id pc_attempts <"$pc_guard"
+	[ "$pc_old_id" = "$pc_boot_id" ] || pc_attempts=0
+	pc_attempts=$((pc_attempts + 1))
+	printf '%s %s\n' "$pc_boot_id" "$pc_attempts" >"$pc_guard"
+	if [ "$pc_attempts" -gt 2 ]; then
+		echo 'PosterChanOS stopped a graphical-session restart loop.'
+		echo "Diagnostics: $HOME/.local/state/posterchanos/sway.log"
+		return 0 2>/dev/null || exit 0
+	fi
 	exec sway
 fi
 PROFILE
