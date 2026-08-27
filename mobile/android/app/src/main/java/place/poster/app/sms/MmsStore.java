@@ -212,7 +212,9 @@ public final class MmsStore {
                 // A column an OEM table may not carry: absent, it reads as 0, which is not 130, so
                 // the message is treated as an ordinary one -- the same behaviour as before.
                 try { m.undownloaded = c.getInt(6) == PDU_NOTIFICATION_IND; } catch (Throwable ignored) { }
-                if (m.failed()) m.error = MmsFailures.get(ctx, m.id);
+                /* Code 0 remains in OUTBOX because the callback is ambiguous. Its durable
+                 * "delivery unknown" reason must still ride with that pending row. */
+                if (m.failed() || m.pending()) m.error = MmsFailures.get(ctx, m.id);
                 out.add(m);
             }
         } catch (Throwable t) {

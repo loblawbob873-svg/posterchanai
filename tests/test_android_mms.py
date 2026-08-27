@@ -234,6 +234,8 @@ class MmsIdentity(unittest.TestCase):
         failures = open(os.path.join(SMS, "MmsFailures.java"), encoding="utf-8").read()
         self.assertIn('android.telephony.extra.MMS_HTTP_STATUS', receiver)
         self.assertIn('MmsFailures.put(ctx, id, result, http)', receiver)
+        store = open(os.path.join(SMS, "MmsStore.java"), encoding="utf-8").read()
+        self.assertIn('if (m.failed() || m.pending()) m.error = MmsFailures.get(ctx, m.id)', store)
         for reason in ('invalid carrier APN', 'mobile data is unavailable',
                        'the selected SIM is inactive', 'carrier server rejected it'):
             self.assertIn(reason, failures)
@@ -244,6 +246,10 @@ class MmsIdentity(unittest.TestCase):
         self.assertIn('boolean unknown = result == 0', receiver)
         self.assertIn('if (!unknown)', receiver)
         self.assertIn('if (!unknown) SmsPlugin.onSendResult', receiver)
+        plugin = open(os.path.join(SMS, "SmsPlugin.java"), encoding="utf-8").read()
+        self.assertIn('o.put("failed", m.failed())', plugin)
+        self.assertIn('o.put("pending", m.pending())', plugin)
+        self.assertIn('o.put("error", m.error == null ? "" : m.error)', plugin)
         flight = open(os.path.join(SMS, "MmsFlight.java"), encoding="utf-8").read()
         self.assertIn('static synchronized boolean claim', flight)
         self.assertIn('another picture message is still being sent', sender)

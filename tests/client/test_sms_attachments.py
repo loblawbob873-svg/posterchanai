@@ -103,6 +103,26 @@ class ThreadsHoldBothKinds(unittest.TestCase):
 
 @unittest.skipIf(shutil.which("node") is None, "node not installed")
 class TheArchive(unittest.TestCase):
+    def test_carrier_failure_and_ambiguity_are_archived_for_other_devices(self):
+        failed = picture(40)
+        failed.update({"type": 5, "incoming": False, "error": "carrier server rejected it",
+                       "failed": True})
+        unknown = picture(41)
+        unknown.update({"type": 4, "incoming": False,
+                        "error": "delivery unknown — confirm with the recipient before retrying",
+                        "pending": True})
+        res = run(rows=[failed, unknown], steps=["phoneLoad", "migrateAll"])
+        bodies = [json.loads(v["text"]) for v in res["uploads"].values()
+                  if v["folder"] == "Messages"]
+        self.assertTrue(any(b.get("failed") and b.get("error") == "carrier server rejected it"
+                            for b in bodies), "carrier failure vanished at the archive bridge")
+        self.assertTrue(any(b.get("pending") and str(b.get("error", "")).startswith("delivery unknown")
+                            for b in bodies), "ambiguous carrier acceptance was reported as sent")
+
+        js = (ROOT / "static/js/client/sms.js").read_text()
+        self.assertIn("stateChanged", js)
+        self.assertIn("' · delivery unknown'", js)
+
 
     def test_existing_sms_high_water_mark_does_not_skip_the_blossom_migration(self):
         """The ordering repair shipped before encrypted Blossom storage. Phones therefore already

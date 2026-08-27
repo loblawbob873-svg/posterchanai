@@ -673,6 +673,9 @@
     /* MMS bytes live in the encrypted `MMS` Blossom folder. Provider row ids remain local to the
      * handset; the content hash is portable and decryptable by every client holding the drive key. */
     if(m.mms) body.mms = true;
+    if(m.failed) body.failed = true;
+    if(m.pending) body.pending = true;
+    if(m.error) body.error = String(m.error);
     if(m.parts && m.parts.length){
       await ensureMmsFolder();
       body.att = [];
@@ -1367,7 +1370,8 @@
              _local: true,
              // Carried rather than inferred from `parts` being non-empty: a picture message whose
              // attachments could not be read is still a picture message.
-             mms: !!r.mms, parts: cleanParts(r.parts) };
+             mms: !!r.mms, parts: cleanParts(r.parts),
+             failed: !!r.failed, pending: !!r.pending, error: String(r.error || '') };
   }
 
   /* WHAT THE PHONE SAID WAS ATTACHED, reduced to what the archive carries. The provider ROW IDS are
@@ -1398,7 +1402,12 @@
   }
 
   function needsArchiveUpgrade(phone, archived){
-    return !archived || !archived._blob || needsPartUpgrade(phone, archived);
+    /* Carrier callbacks change state without changing message identity or attachment. An existing
+       body blob must not freeze web/desktop at the pre-callback state forever. */
+    const stateChanged = !!archived &&
+      (!!phone.failed !== !!archived.failed || !!phone.pending !== !!archived.pending
+       || String(phone.error || '') !== String(archived.error || ''));
+    return !archived || !archived._blob || needsPartUpgrade(phone, archived) || stateChanged;
   }
 
   let _fullMigration = null;
@@ -2259,7 +2268,7 @@
                app puts it -- and a bubble whose only content is an attachment must not also render
                an empty text node, or it collapses to a sliver. */
             + (m.body ? `<span class="b-txt">${enc(m.body)}</span>` : '')
-            + `<span class="b-meta">${enc(when(m.date))}${m.pending?' · waiting for phone':m.failed?' · not sent':''}</span>`
+            + `<span class="b-meta">${enc(when(m.date))}${m.error&&String(m.error).startsWith('delivery unknown')?' · delivery unknown':m.pending?' · sending':m.failed?' · not sent':''}</span>`
             + `</div>`;
         }).join('')}</div>
         ${S.attach?`<div class="sms-attachment-draft"><span>${ICO('image','b-ic')}<b>${enc(S.attach.name||'Photo')}</b><small>${enc(fmtBytes(S.attach.size))} · ready to send as MMS</small></span><button id="sms-attach-clear" aria-label="Remove attached photo">×</button></div>`:''}

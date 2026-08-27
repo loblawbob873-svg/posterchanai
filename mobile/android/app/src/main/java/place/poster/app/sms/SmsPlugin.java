@@ -636,6 +636,9 @@ public class SmsPlugin extends Plugin {
             o.put("incoming", m.incoming());
             o.put("read", m.read);
             o.put("mms", m.mms);
+            o.put("failed", m.failed());
+            o.put("pending", m.pending());
+            o.put("error", m.error == null ? "" : m.error);
             // WHAT WAS ATTACHED — metadata only. The bytes come one at a time from `attachment`,
             // when something is actually about to show one: a thread of picture messages handed
             // over as base64 in a single JSON reply is tens of megabytes through the bridge.
