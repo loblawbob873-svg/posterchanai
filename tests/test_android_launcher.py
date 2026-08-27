@@ -721,6 +721,17 @@ class LauncherSources(unittest.TestCase):
         self.assertIn("android.intent.category.HOME", block)
         self.assertIn("android.intent.category.DEFAULT", block)
 
+    def test_launcher_and_mobile_app_do_not_share_a_task(self):
+        """A WebView launched from a tile must not become the top of the HOME task."""
+        man = open(os.path.join(ROOT, "mobile", "android", "app", "src", "main",
+                                "AndroidManifest.xml")).read()
+        i = man.index(".home.HomeActivity")
+        block = man[i:i + 1200]
+        self.assertIn('android:taskAffinity="place.poster.app.home"', block)
+        main = man[man.index('android:name=".MainActivity"'):]
+        main = main[:main.index("</activity>")]
+        self.assertNotIn('android:taskAffinity="place.poster.app.home"', main)
+
     def test_an_apk_upgrade_restores_a_previous_launcher_opt_in(self):
         """An OEM package installer may re-apply HomeActivity's disabled manifest default while
         replacing the APK. The HOME role is package-scoped there, so HOME otherwise opens the

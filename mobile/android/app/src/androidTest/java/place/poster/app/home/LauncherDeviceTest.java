@@ -80,6 +80,25 @@ public class LauncherDeviceTest {
     }
 
     @Test
+    public void launcherAndMobileAppOwnDifferentTasks() throws Exception {
+        /* A launcher is the phone's resting task, not the root of PosterChan's WebView task. Tiles
+         * start MainActivity with NEW_TASK; a shared affinity lets Android put that activity above
+         * HomeActivity, so HOME has to clear/reshape the same task and Recents cannot independently
+         * restore the app. Read the installed manifest because task affinity is platform routing,
+         * not a property either Activity can faithfully simulate. */
+        android.content.pm.PackageManager pm = ctx.getPackageManager();
+        int flags = android.content.pm.PackageManager.MATCH_DISABLED_COMPONENTS;
+        android.content.pm.ActivityInfo home = pm.getActivityInfo(
+                new ComponentName(ctx, HomeActivity.class), flags);
+        android.content.pm.ActivityInfo app = pm.getActivityInfo(
+                new ComponentName(ctx, MainActivity.class), flags);
+        assertNotNull(home.taskAffinity);
+        assertNotNull(app.taskAffinity);
+        assertFalse("launcher and WebView app must remain independently resumable",
+                home.taskAffinity.equals(app.taskAffinity));
+    }
+
+    @Test
     public void thePhoneListsItsOwnApps() {
         List<AppShelf.Entry> found = new AppRepo(ctx).installed();
         assertTrue("no launchable apps found — the package query or <queries> is wrong",
