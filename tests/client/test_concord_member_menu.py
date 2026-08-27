@@ -15,7 +15,8 @@ def test_member_rows_do_not_expose_destructive_buttons_permanently():
 
 def test_member_menu_supports_profile_and_owner_only_ban():
     assert "row.oncontextmenu" in JS
-    assert "row.onclick=e=>{e.preventDefault();openMemberMenu(e,target);}" in JS
+    assert "if(action==='profile'){if(p.openProfile)p.openProfile(target);return;}" in JS
+    assert "openMemberMenu(e,target)" in JS
     assert "row.onpointerdown" in JS and "550" in JS
     assert "View profile" in JS
     assert "canBan=isOwner&&target!==viewer.pubkey" in JS
@@ -25,6 +26,17 @@ def test_member_menu_supports_profile_and_owner_only_ban():
     menu = bind.index("const openMemberMenu=")
     assert "const viewer=p.viewer?p.viewer():{}" in bind[:menu]
     assert "isOwner=!!boundOwnerPk&&boundOwnerPk===viewer.pubkey" in bind[:menu]
+
+
+def test_mobile_tap_opens_profile_but_long_press_keeps_context_actions():
+    rows = JS.split("$$('[data-cc-member]')", 1)[1].split("const membersInvite", 1)[0]
+    assert "window.matchMedia('(max-width:820px)').matches" in rows
+    assert "memberTapAction(narrow,longPressed)" in rows
+    assert "if(action==='consume')return" in rows
+    assert "if(action==='profile'){if(p.openProfile)p.openProfile(target);return;}" in rows
+    assert "longPressed=true;openMemberMenu(e,target)" in rows
+    assert "row.oncontextmenu" in rows
+    assert "function memberTapAction(narrow,longPressed)" in JS
 
 
 def test_delayed_ban_updates_the_original_room_not_whichever_room_is_active_later():

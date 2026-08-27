@@ -30,7 +30,7 @@ const dollars = selector => {
   }
   return found;
 };
-const calls = {toasts:[], notified:0, group:0, mentions:[], wraps:[]};
+const calls = {toasts:[], notified:0, group:0, mentions:[], wraps:[], profiles:[]};
 let activeView = 'concord';
 const JOIN_URL='https://armada.buzz/invite/naddr1pppp#abc_DEF';
 const JOIN_BUNDLE={community_id:'1'.repeat(64),owner:'2'.repeat(64),owner_salt:'3'.repeat(64),
@@ -54,6 +54,7 @@ window.__PC = {
   askOsNotify:async()=>{ calls.notified++; return 'granted'; },
   startGroupCall:()=>{ calls.group++; },
   copyValue:value=>{ calls.copied=value; },
+  openProfile:pk=>{ calls.profiles.push(pk); },
   osNotify:(title,body,opts)=>{ calls.mentions.push({title,body,opts}); },
   relaySubscribe:()=>({close(){}}),
   relayQuery:async filters=>relayFixtures(filters),
@@ -244,6 +245,10 @@ const afterReaction=JSON.parse(data.get(raceKey));
 afterReaction[afterReaction.findIndex(m=>m.id===permanentId)]=acted;
 data.set(raceKey,JSON.stringify(afterReaction));
 
+if(PCConcord.memberTapAction(true,false)!=='profile' ||
+   PCConcord.memberTapAction(false,false)!=='menu' ||
+   PCConcord.memberTapAction(true,true)!=='consume')
+  throw new Error('member tap/long-press action routing is wrong');
 PCConcord.render();
 const reply=dollars('[data-cc-reply]').find(b=>b.dataset.ccReply===permanentId);
 if(!reply)throw new Error('rendered message has no reply control');
