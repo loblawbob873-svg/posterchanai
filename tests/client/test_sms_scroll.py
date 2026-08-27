@@ -27,3 +27,12 @@ def test_texts_repaint_and_desktop_parking_use_the_same_scroll_contract():
     assert "if(list.dataset.osParking === '1') return" in SMS
     assert "before.top + (l.scrollHeight - before.height)" in SMS
     assert "['sms-msgs','#sms-msgs']" in OS
+
+
+def test_stale_attachment_hydration_cannot_move_a_repainted_conversation():
+    hydration = SMS.split("hydrateAtt(feed, t.msgs).then(() => {", 1)[1].split(
+        "}, () => {});", 1
+    )[0]
+    guard = "if(!l || l !== list || !before) return"
+    assert guard in hydration
+    assert hydration.index(guard) < hydration.index("l.scrollTop =")

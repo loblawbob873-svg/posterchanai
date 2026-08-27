@@ -2435,7 +2435,12 @@
         bottom:list.scrollHeight-list.scrollTop-list.clientHeight<80 } : null;
       hydrateAtt(feed, t.msgs).then(() => {
         const l = feed.querySelector('.sms-msgs');
-        if(!l || !before) return;
+        /* Hydration belongs to THIS rendered element, not merely this thread key. A focus sync can
+           repaint the same conversation while an encrypted photo is loading; a user can also open
+           another conversation. In both cases the old promise used to apply its height delta to the
+           new DOM and throw that reader toward the middle/bottom. The replacement paint owns its
+           own restoration/hydration pass, so stale work must not touch it. */
+        if(!l || l !== list || !before) return;
         /* Media resolving above the viewport must not move the message being read. Compensate by
            the height gained; a bottom-pinned reader remains bottom-pinned. */
         l.scrollTop = before.bottom ? l.scrollHeight
