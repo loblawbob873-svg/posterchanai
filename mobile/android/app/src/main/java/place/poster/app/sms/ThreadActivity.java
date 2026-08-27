@@ -314,9 +314,13 @@ public class ThreadActivity extends PcActivity {
 
     private void send() {
         String body = input.getText().toString();
-        if (body.trim().isEmpty() && attachment == null) return;
+        /* Camera capture is an in-memory JPEG, while Device is a content URI.  Treat them as the
+         * same draft: checking only the URI made a photo-only send do nothing and made a captioned
+         * camera photo leave as ordinary SMS with the image silently stranded in this Activity. */
+        boolean hasAttachment = attachment != null || capturedAttachment != null;
+        if (body.trim().isEmpty() && !hasAttachment) return;
         if (address.isEmpty()) { say(getString(R.string.sms_not_default)); return; }
-        if (attachment != null) {
+        if (hasAttachment) {
             sendMms(body);
             return;
         }

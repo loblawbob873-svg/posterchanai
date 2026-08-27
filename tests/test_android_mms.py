@@ -559,6 +559,18 @@ class OutgoingMms(unittest.TestCase):
         self.assertIn("setUseSystemSending(true)", sender)
         self.assertIn("org.fossify:mmslib:1.0.0", gradle)
 
+    def test_camera_bytes_are_sent_as_mms_with_or_without_a_caption(self):
+        """Camera results have bytes but no content URI.  The compose gate must recognize both,
+        otherwise an empty-caption photo is ignored and a captioned photo becomes plain SMS."""
+        thread = open(os.path.join(SMS, "ThreadActivity.java"), encoding="utf-8").read()
+        send = thread[thread.index("    private void send() {"):
+                      thread.index("    /** Pick through Android's document provider", thread.index("    private void send() {"))]
+        self.assertIn("attachment != null || capturedAttachment != null", send)
+        self.assertIn("if (body.trim().isEmpty() && !hasAttachment) return;", send)
+        self.assertIn("if (hasAttachment) {", send)
+        self.assertIn("sendMms(body);", send)
+        self.assertLess(send.index("if (hasAttachment) {"), send.index("SmsSender.send("))
+
     def test_native_stuck_mms_has_a_visible_delete_action(self):
         thread = open(os.path.join(SMS, "ThreadActivity.java"), encoding="utf-8").read()
         layout = open(os.path.join(ROOT, "mobile/android/app/src/main/res/layout/sms_bubble.xml"), encoding="utf-8").read()
