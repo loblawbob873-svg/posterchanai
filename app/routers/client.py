@@ -4857,6 +4857,7 @@ async def sync_state(data: SyncStateReq, db: Session = Depends(get_db)):
             logger.warning("[client] sync-state: list unreadable %s: %s", pair, e)
             return JSONResponse({"ok": False, "error": "sync state unavailable"}, status_code=503)
         records = []
+        live_n = 0
         for d_tag, (env, at) in docs.items():
             env = env if isinstance(env, dict) else {}
             if int(env.get("era") or 0) != era:
@@ -4865,11 +4866,28 @@ async def sync_state(data: SyncStateReq, db: Session = Depends(get_db)):
                    "by": env.get("by") or "", "ct": env.get("ct") or "", "at": int(at or 0)}
             if env.get("t"):
                 row["t"] = 1
+            else:
+                live_n += 1
             if env.get("bad"):
                 row["bad"] = env.get("bad")
             records.append(row)
+        # `n` is only a convenience index; the per-path envelopes above are the authority.  Older
+        # servers could leave it behind when a batch partly won a CAS race (and a killed process can
+        # always land the records just before its meta write).  A COMPLETE, strict read is the one
+        # safe opportunity to heal it.  Never do this for a delta, an unreadable listing, or a
+        # retired pair: all three would turn absence into destructive information.
+        if use_since is None and not meta.get("retired") and live_n != int(meta.get("n") or 0):
+            old_n = int(meta.get("n") or 0)
+            healed = {"era": era, "n": live_n, "at": int(time.time())}
+            if await store.put_doc(port, sk, meta_d, healed, encrypt=False):
+                meta = healed
+                logger.info("[client] sync-state: repaired count for %s: %d -> %d",
+                            pair, old_n, live_n)
+            else:
+                logger.warning("[client] sync-state: could not repair count for %s (%d -> %d)",
+                               pair, old_n, live_n)
         return JSONResponse({"ok": True, "era": era, "now": now_ts,
-                             "full": use_since is None, "records": records})
+                             "full": use_since is None, "records": records, "n": live_n})
 
 
 class FilesIndexReq(BaseModel):

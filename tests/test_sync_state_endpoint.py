@@ -224,6 +224,32 @@ class SyncStateEndpoint(unittest.TestCase):
         got = _run(_fs_list_all(3052, sk, "pcai:fs:Big:"))
         self.assertEqual(len(got), 12000, "a folder past the 5000-doc window must not truncate")
 
+    def test_full_read_repairs_a_drifted_plaintext_count(self):
+        """Per-file records are authoritative; a killed process or old server can leave meta.n
+        behind. Only a complete strict listing has enough information to repair it safely."""
+        self.call(put=[self.rec(D1, 1), self.rec(D2, 1)], era=0)
+        self.relay.docs["pcai:fsmeta:TestPair"] = ({"era": 0, "n": 1}, self.relay.clock)
+        code, body = self.call()
+        self.assertEqual(code, 200)
+        self.assertTrue(body["full"])
+        self.assertEqual(body["n"], 2)
+        self.assertEqual(self.relay.docs["pcai:fsmeta:TestPair"][0]["n"], 2)
+
+    def test_delta_never_repairs_count_from_a_partial_listing(self):
+        self.call(put=[self.rec(D1, 1), self.rec(D2, 1)], era=0)
+        self.relay.docs["pcai:fsmeta:TestPair"] = ({"era": 0, "n": 9}, self.relay.clock)
+        code, body = self.call(since=self.relay.clock, era=0)
+        self.assertEqual(code, 200)
+        self.assertFalse(body["full"])
+        self.assertEqual(self.relay.docs["pcai:fsmeta:TestPair"][0]["n"], 9,
+                         "a partial delta must never overwrite the account count")
+
+    def test_full_read_does_not_resurrect_a_retired_pair(self):
+        self.call(put=[self.rec(D1, 1)], era=0)
+        self.call(forgetAll=True)
+        self.call()
+        self.assertTrue(self.relay.docs["pcai:fsmeta:TestPair"][0].get("retired"))
+
     # ---- flags ----------------------------------------------------------------------------------
     def test_flag_marks_without_touching_version(self):
         self.call(put=[self.rec(D1, 3)], era=0)
