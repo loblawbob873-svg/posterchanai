@@ -657,7 +657,9 @@ def _harness_js():
     app.js is one big IIFE, so the client cannot be imported. Slicing the shipped source keeps this
     test pointed at the real code — a copy would drift the moment either side changed.
     """
-    src = open(os.path.join(ROOT, "static", "js", "client", "app.js"), encoding="utf-8").read()
+    app_js = os.environ.get("PC_INSTALLED_APP_JS") or os.path.join(
+        ROOT, "static", "js", "client", "app.js")
+    src = open(app_js, encoding="utf-8").read()
     # Mail attachment rendering shares the shipped file-preview classifier. Keep that helper in the
     # lifted harness too: otherwise the browser check fails before it can render the toolbar/body,
     # while production (where the helper is in the same IIFE) works normally.
