@@ -118,10 +118,18 @@ This is evidence from the recovery pass, not a declaration that the whole queue 
 
 ## 2026-08-27 current-package verification
 
-- Desktop 1.0.1083 and shell 1.0.20260827175951 are installed on both the dual-monitor desktop and
+- Desktop 1.0.1083 and shell 1.0.20260827182039 are installed on both the dual-monitor desktop and
   laptop from the public Gentoo overlay. The immutable tarball checksum was verified before the
   overlay was published; the diagnostic shell was removed afterward and the canonical no-CDP shell
   restored.
+- Desktop workflow 33100871080 completed successfully at `eb2dea16`. Both the rolling release and
+  immutable `desktop-v1.0.1083` release expose the same 152,166,782-byte Linux tarball, SHA-256
+  `9ef5c0d19148f4e309404f0a3ae9099435a630710d200e7d8592544fd86f83dd`. The public overlay head is
+  `b13fd0d4991212f264b53b22375d653a84694d91`; its 1.0.1083 ebuild points at the immutable tag and
+  its Manifest records the matching size and SHA-512. Both test machines report Desktop 1.0.1083
+  and shell 1.0.20260827182039, with `/opt/posterchan/resources/app.asar` owned by the Desktop
+  package. The Files/Office/Code interaction itself was run on the earlier shell
+  1.0.20260827175951 baseline; subsequent shell-only updates did not replace the Desktop payload.
 - The installed account gate rendered 29 File Manager folders and 6,000/6,000 account files. Its two
   real sync roots matched relay = decrypted manifest = native disk scan at 11,954 and 5,833 entries,
   with zero skipped files. This run caught and fixed both second-resolution relay page truncation and
@@ -135,6 +143,16 @@ This is evidence from the recovery pass, not a declaration that the whole queue 
   passed 53 tests; Android launcher/background-Music tests passed 149 tests plus 17 subtests. Signed
   APK 1.0.1802 was published from `eb2dea16`; its exact-commit API-34 emulator gate completed
   successfully. Physical-phone playback remains open because no ADB device was attached.
+- The rolling Android asset was independently downloaded after publication: 20,392,197 bytes,
+  SHA-256 `da39460b836a81112e245509a813fc88f25089970367e543fb8d907da0930d6c`, version code/name
+  `1802`/`1.0.1802`, and signer certificate SHA-256
+  `eddf3a7983df49221a5ace0d0ca52c899d34eb88a4155b0829b05c0afc31f342`. APK Signature Schemes
+  v2 and v3 verify. The packaged manifest contains `FOREGROUND_SERVICE_MEDIA_PLAYBACK` and declares
+  `place.poster.app.music.MusicService` with the media-playback foreground-service type; the DEX
+  contains `MusicService`, `MusicPlugin`, and `MusicWidget`. Android build run 33100871091 and
+  exact-commit emulator run 33100871059 both completed successfully at `eb2dea16`; the build log
+  confirms publication of the same 20,392,197-byte APK to GitHub and version 1.0.1802 to Zapstore.
+  This proves delivery and packaged implementation, not playback on physical hardware.
 - Shell 1.0.20260827182039 is installed on the desktop and laptop. Its package-owned Foot launcher
   raises Foot's documented delayed-render window for non-atomic streaming TUI updates while keeping
   the bound below one 60 Hz frame. Against the installed package, 40 clear/write bursts produced 43
