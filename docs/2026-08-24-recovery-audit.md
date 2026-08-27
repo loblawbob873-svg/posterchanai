@@ -57,7 +57,7 @@ live behavior agree.
   history, icon and members are live-verified; send, reply/react, mention notification, attachment,
   Webxdc and moderation still require a non-production test community or permission to create
   durable relay events.
-- Install current signed APK 1.0.1802 on a physical phone and repeat background Music-after-Home, launcher,
+- Install current signed APK 1.0.1834 on a physical phone and repeat background Music-after-Home, launcher,
   double-Home, narrow portrait, landscape, tablet and mail-attachment taps. The exact-commit API-34
   emulator suite is green, but an emulator is not a physical-device result. On 2026-08-27 no device
   was visible through USB ADB, wireless-ADB mDNS, or the known LAN hosts, so this gate remains open.
@@ -77,6 +77,22 @@ live behavior agree.
 
 ## 2026-08-27 Android exact-head gate
 
+- Commit `d464795123e9b09c33e7bb1b2dc3d7d71611380b` passed Android emulator run
+  `33126267471`: **74/74 tests**, zero failures, errors, or skips; the report records
+  `ConcordNotificationDeviceTest.roomChannelAndMessageSurviveTheNotificationTapIntent` (0.027s),
+  `MusicBackgroundDeviceTest.aPlayingWebViewTrackKeepsAdvancingAfterHome` (4.758s), and
+  `tabletDesktopStateSurvivesHomeAndRotationInBothTasks` (10.554s). Both the device-check step and
+  artifact uploads completed successfully.
+- APK run `33126267477` at the same full commit published GitHub/Zapstore version `1.0.1834` and
+  linked certificate `eddf3a7983df4922…` to the developer npub on all **3/3** configured relays.
+  The independently downloaded rolling APK is 20,407,826 bytes, SHA-256
+  `e93b300ec2e75b250ed7f77fbb4f1c58670f5a2f55a292e260cd9145fe9eb94e`; APK verification reports
+  package `place.poster.app`, versionCode/versionName `1834`/`1.0.1834`, one signer with certificate
+  SHA-256 `eddf3a7983df49221a5ace0d0ca52c899d34eb88a4155b0829b05c0afc31f342`, and verified v2/v3
+  signatures. Release body provenance names the same full commit. The packaged
+  `assets/public/static/js/client/concord.js` contains the Vector interoperability markers:
+  `wss://nostr.computingcache.com`, the unfiltered kind-33302 `limit:64` fragment query, and
+  `decodeMembershipLists`; this is payload evidence, not merely a source-tree assertion.
 - Commit `71c1e9066445cc3f403d429fd2a7d860b234034b` passed Android emulator run
   `33124229201`: **74/74 tests**, zero failures, errors, or skips; the shell device gate and
   instrumented gate both returned zero. The report records
