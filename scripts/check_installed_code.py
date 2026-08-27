@@ -31,12 +31,21 @@ DRIVE = r"""(async root=>{
   const keys=[];for(let i=0;i<localStorage.length;i++){
     const k=localStorage.key(i);if(k&&k.startsWith('pccode_'))keys.push([k,localStorage.getItem(k)]);
   }
-  window.__pcInstalledCodeBackup={state:JSON.parse(JSON.stringify(S)),keys};
-  const listing=await pcHost.list(root);
-  Object.assign(S,{ready:true,root,hostRoot:root,cwd:root,gate:'',treeErr:'',treeBusy:false,
-    tree:(listing.entries||[]).map(e=>({name:e.name,path:e.path,dir:!!e.dir,lang:''})),
+  window.__pcInstalledCodeBackup={state:JSON.parse(JSON.stringify(S)),keys,
+    pickDirectory:pcHost.pickDirectory};
+  Object.assign(S,{ready:true,root:'No folder open',hostRoot:'',cwd:'',gate:'',treeErr:'',treeBusy:false,
+    tree:[],
     open:[],active:-1,gitOpen:false,git:null,gitBusy:false,gitDiff:null,status:''});
   await PCCode.render();await new Promise(r=>setTimeout(r,200));
+  /* Drive the same user-selection path as the Open Folder toolbar button.  The native dialog itself
+     cannot safely be automated over CDP, so replace only its return value with the already-guarded
+     disposable root; the button handler, state transition, listing and repaint remain production. */
+  pcHost.pickDirectory=async()=>root;
+  const openFolder=document.querySelector('#pcc-open-folder');
+  if(!openFolder)throw new Error('Open Folder button is missing');
+  openFolder.click();
+  for(let i=0;i<100&&!document.querySelector('[data-file="'+CSS.escape(root+'/changed.js')+'"]');i++)
+    await new Promise(r=>setTimeout(r,50));
   const explorer=!!document.querySelector('[data-file="'+CSS.escape(root+'/changed.js')+'"]');
   const gitButton=document.querySelector('[data-code-view="git"]');
   if(!gitButton)throw new Error('Source Control button is missing');gitButton.click();
@@ -70,6 +79,7 @@ CLEANUP = r"""(async root=>{
     if((status.files||[]).some(f=>f.path==='changed.js'))await pcHost.gitAction(root,'restore',['changed.js']);
   }catch(_){}
   const b=window.__pcInstalledCodeBackup;if(!b||!window.PCCode)return false;
+  pcHost.pickDirectory=b.pickDirectory;
   for(let i=localStorage.length-1;i>=0;i--){const k=localStorage.key(i);if(k&&k.startsWith('pccode_'))localStorage.removeItem(k);}
   for(const [k,v] of b.keys)if(v!==null)localStorage.setItem(k,v);
   Object.assign(PCCode._state,b.state);await PCCode.render();delete window.__pcInstalledCodeBackup;return true;
