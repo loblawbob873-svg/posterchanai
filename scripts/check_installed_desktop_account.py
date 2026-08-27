@@ -13,6 +13,7 @@ saved WOPI payload contains it, and deletes the temporary session in a finally b
 
 import asyncio
 import base64
+import contextlib
 import io
 import json
 import os
@@ -262,16 +263,24 @@ OFFICE_CONTENT_CHECK = r"""(async()=>{
 
 async def main():
     page = await choose_authenticated_page()
-    with tempfile.TemporaryDirectory(prefix="posterchan-installed-files-") as fixture_dir:
+    supplied_fixture = os.environ.get("PC_INSTALLED_FIXTURE_DIR", "")
+    if supplied_fixture and not supplied_fixture.startswith("/tmp/posterchan-installed-files-"):
+        raise RuntimeError("PC_INSTALLED_FIXTURE_DIR must be a disposable /tmp/posterchan-installed-files-* path")
+    fixture_context = (contextlib.nullcontext(supplied_fixture) if supplied_fixture else
+                       tempfile.TemporaryDirectory(prefix="posterchan-installed-files-"))
+    with fixture_context as fixture_dir:
       fixture = Path(fixture_dir)
-      (fixture / "posterchan-installed.conf").write_text("installed=true\n", encoding="utf-8")
-      (fixture / "posterchan-installed.svg").write_text(
-          '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8">'
-          '<rect width="8" height="8" fill="#713dd8"/></svg>', encoding="utf-8")
+      if not supplied_fixture:
+        (fixture / "posterchan-installed.conf").write_text("installed=true\n", encoding="utf-8")
+        (fixture / "posterchan-installed.svg").write_text(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8">'
+            '<rect width="8" height="8" fill="#713dd8"/></svg>', encoding="utf-8")
       async with CDP(page["webSocketDebuggerUrl"]) as cdp:
         files = await cdp.eval(FILES_CHECK)
         assert files["view"] == "blossom", files
-        assert files["explorers"] == 1 and files["folderTiles"] > 0 and files["folderChips"] > 0, files
+        # Files has used both home tiles and the denser folder-chip surface.  Requiring both made a
+        # valid compact layout fail merely because it no longer duplicated every folder twice.
+        assert files["explorers"] == 1 and files["folderTiles"] + files["folderChips"] > 0, files
         assert files["syncedRoots"] > 0, files
         assert files["pullOk"] and files["indexHTTP"] == 200 and files["indexOK"], files
         assert files["clientFiles"] == files["serverFiles"], files

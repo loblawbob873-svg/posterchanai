@@ -14,7 +14,9 @@ def test_installed_code_gate_exercises_ui_diff_restore_and_explorer_return():
                    '[data-git-restore="changed.js"]', "Working tree clean",
                    '[data-code-view="explorer"]'):
         assert marker in SRC
-    assert "pcHost.pickDirectory=async()=>root" in SRC
+    assert "pcHost.pickDirectory=pickedForGate" in SRC
+    assert "const listed=await pcHost.list(root)" in SRC
+    assert "pcHost.pickDirectory===pickedForGate" in SRC
     assert "pcHost.gitAction(root,'restore',['changed.js'])" in SRC
     assert '.uiconfirm-bg [data-uc="1"]' in SRC
 

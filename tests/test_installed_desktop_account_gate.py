@@ -16,6 +16,7 @@ def test_installed_account_gate_uses_loopback_cdp_and_requires_authentication():
 def test_installed_account_gate_checks_real_blossom_render_without_reading_names():
     assert "__PC.switchView('blossom')" in SCRIPT
     assert "folderTiles:q('.fx-home-tile')" in SCRIPT
+    assert 'files["folderTiles"] + files["folderChips"] > 0' in SCRIPT
     assert "const idx=__PC.filesIdx()" in SCRIPT
     assert "const pullOk=await idx.ensure()" in SCRIPT
     assert "'/client/files-index'" in SCRIPT
@@ -41,6 +42,12 @@ def test_installed_account_gate_clicks_disposable_native_files_and_cleans_them()
     assert '"host" in native_files["confChoices"]' in SCRIPT
     assert "posterchan-installed.svg" in SCRIPT
     assert 'native_files["preview"]' in SCRIPT
+
+
+def test_installed_account_gate_can_use_a_bounded_fixture_on_the_cdp_machine():
+    assert 'os.environ.get("PC_INSTALLED_FIXTURE_DIR"' in SCRIPT
+    assert 'startswith("/tmp/posterchan-installed-files-")' in SCRIPT
+    assert "contextlib.nullcontext(supplied_fixture)" in SCRIPT
 
 
 def test_installed_account_gate_uses_and_deletes_a_temporary_office_session():

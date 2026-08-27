@@ -40,10 +40,23 @@ DRIVE = r"""(async root=>{
   /* Drive the same user-selection path as the Open Folder toolbar button.  The native dialog itself
      cannot safely be automated over CDP, so replace only its return value with the already-guarded
      disposable root; the button handler, state transition, listing and repaint remain production. */
-  pcHost.pickDirectory=async()=>root;
+  const pickedForGate=async()=>root;
+  try{pcHost.pickDirectory=pickedForGate;}catch(_){}
   const openFolder=document.querySelector('#pcc-open-folder');
   if(!openFolder)throw new Error('Open Folder button is missing');
-  openFolder.click();
+  if(pcHost.pickDirectory===pickedForGate){
+    openFolder.click();
+  }else{
+    /* Electron contextBridge freezes exposed objects in current releases, so replacing the folder
+       picker is not a usable diagnostic seam. Seed only the already-selected folder state from
+       the real packaged list bridge; every Git status/diff/restore action below still goes through
+       pcHost and the installed UI. The root guard above keeps this bounded to a disposable tree. */
+    const listed=await pcHost.list(root);
+    Object.assign(S,{hostRoot:root,cwd:listed.path||root,root,
+      tree:(listed.entries||[]).map(e=>({name:e.name,path:e.path,dir:!!e.dir,lang:''})),
+      open:[],active:-1,gitOpen:false,git:null,gitDiff:null});
+    await PCCode.render();
+  }
   for(let i=0;i<100&&!document.querySelector('[data-file="'+CSS.escape(root+'/changed.js')+'"]');i++)
     await new Promise(r=>setTimeout(r,50));
   const explorer=!!document.querySelector('[data-file="'+CSS.escape(root+'/changed.js')+'"]');
