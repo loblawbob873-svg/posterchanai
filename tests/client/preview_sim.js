@@ -122,6 +122,29 @@ console.log('only one at a time');
   P.close();
 }
 
+console.log('the desktop uses its full document workspace');
+{
+  const calls = { open: 0, document: 0, close: 0, noFeed: false };
+  const slot = El('div');
+  window.PCOS = {
+    isOn: () => true,
+    openDoc(key, name, icon, render, noFeed) {
+      calls.open++; calls.noFeed = noFeed === true;
+      return { slot };
+    },
+    documentWindow(w) { calls.document++; w.documentWorkspace = true; },
+    closeDoc() { calls.close++; },
+  };
+  check('desktop preview opens',
+        P.open({ name: 'desktop.pdf', mime: 'application/pdf', blob: new global.Blob([]) }) === true);
+  check('it owns a no-feed window', calls.open === 1 && calls.noFeed);
+  check('it requests the maximised neutral document workspace', calls.document === 1);
+  check('the media is mounted in the window slot', slot.classList.contains('pv-win'));
+  P.close();
+  check('closing uses the desktop window lifecycle', calls.close === 1);
+  delete window.PCOS;
+}
+
 console.log('a platform with no PDF viewer uses the bundled renderer');
 {
   navigator.pdfViewerEnabled = false;

@@ -27,6 +27,7 @@ class PreviewSim(unittest.TestCase):
         r = subprocess.run([NODE, SIM], capture_output=True, text=True, timeout=120)
         self.assertEqual(r.returncode, 0, (r.stdout + r.stderr)[-3000:])
         self.assertIn("preview holds", r.stdout)
+        self.assertIn("it requests the maximised neutral document workspace", r.stdout)
 
 
 class PreviewIsReachable(unittest.TestCase):
