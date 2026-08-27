@@ -81,6 +81,14 @@ class TheOverlayPinsSomethingThatExists(unittest.TestCase):
         self.assertIn("PosterChan-*-linux-x64.tar.zst", wf,
                       "the per-version release does not carry the tarball the overlay wants")
 
+    def test_ci_publishes_immutable_payload_before_rolling_installers(self):
+        """A flaky convenience-installer upload must not skip the permanent Portage artifact."""
+        with open(os.path.join(ROOT, ".github", "workflows", "desktop.yml"), encoding="utf-8") as fh:
+            wf = fh.read()
+        immutable = wf.index("name: Publish the versioned tarball the Gentoo overlay pins")
+        rolling = wf.index("name: Publish rolling release")
+        self.assertLess(immutable, rolling)
+
     def test_bump_refuses_a_desktop_payload_without_concord(self):
         """A checksum proves which bytes arrived, not that those bytes contain the app."""
         with open(os.path.join(ROOT, "scripts", "bump_desktop_overlay.py"), encoding="utf-8") as fh:

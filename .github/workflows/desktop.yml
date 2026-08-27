@@ -333,6 +333,22 @@ jobs:
       - name: List what we're shipping
         run: ls -la artifacts
 
+      # Publish the immutable Gentoo payload before touching the rolling release. A transient upload
+      # failure in any Windows/macOS installer must never prevent Portage's permanent, checksummed
+      # source URI from being created.
+      - name: Publish the versioned tarball the Gentoo overlay pins
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: desktop-v1.0.${{ github.run_number }}
+          name: PosterChan Desktop 1.0.${{ github.run_number }}
+          body: |
+            Permanent per-version tarball for the PosterChanOS Gentoo overlay
+            (`app-misc/posterchan-desktop`). Never deleted, so a pinned Manifest keeps resolving.
+          make_latest: false
+          files: |
+            artifacts/PosterChan-*-linux-x64.tar.zst
+            artifacts/PosterChan-*-linux-x64.tar.zst.sha512
+
       # GitHub stamps a release's publish date ONCE, when the release object is created — replacing the
       # assets under a rolling tag never touches it, so desktop-latest would keep showing an old date
       # next to a fresh build. Deleting the release (the TAG and therefore every
@@ -369,18 +385,5 @@ jobs:
       # download at all. It had gone stale that way three times (1.0.818, 1.0.825, 1.0.828) before
       # anybody checked, and each time `emerge posterchan-desktop` simply could not run.
       #
-      # This tag is written once and never touched again, so every pin stays good for ever. Only the
-      # Linux tarball and its checksum: the installers belong to the rolling release, which is what
-      # poster.place/desktop and the auto-updater read.
-      - name: Publish the versioned tarball the Gentoo overlay pins
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: desktop-v1.0.${{ github.run_number }}
-          name: PosterChan Desktop 1.0.${{ github.run_number }}
-          body: |
-            Permanent per-version tarball for the PosterChanOS Gentoo overlay
-            (`app-misc/posterchan-desktop`). Never deleted, so a pinned Manifest keeps resolving.
-          make_latest: false
-          files: |
-            artifacts/PosterChan-*-linux-x64.tar.zst
-            artifacts/PosterChan-*-linux-x64.tar.zst.sha512
+      # The immutable release above remains available even if one of these convenience installers
+      # encounters a transient GitHub upload failure.
