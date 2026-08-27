@@ -11,8 +11,9 @@ import json
 import os
 import sys
 import urllib.error
+import urllib.request
 
-from check_installed_desktop_account import CDP, choose_authenticated_page
+from check_installed_desktop_account import BASE, CDP
 
 
 CLICK = r"""(selector=>{
@@ -24,6 +25,7 @@ CLICK = r"""(selector=>{
 })"""
 
 SETUP = r"""(async()=>{
+  if(!PCOS.isOn())PCOS.enter();
   await PCOS.refresh();await new Promise(r=>setTimeout(r,800));
   const snap=await pcWM.snapshot(),allowed=/firefox|telegram/i;
   const row=(snap.windows||[]).find(w=>allowed.test(String(w.app||'')));
@@ -40,7 +42,7 @@ STATE = r"""(async id=>{
   return {nativeFocused:!!(frame&&frame.classList.contains('focused')),
     nativeStashed:!!(frame&&frame.classList.contains('native-stashed')),
     compositorFocused:!!(row&&row.focused),compositorStashed:!!(row&&row.stashed),
-    shellFocused:(snap.windows||[]).some(w=>/^posterchan(-desktop)?$/i.test(String(w.app||''))&&w.focused)};
+    shellFocused:(snap.windows||[]).some(w=>/^(posterchan(-desktop)?|place\.poster\.desktop)$/i.test(String(w.app||''))&&w.focused)};
 })"""
 
 CLEANUP = r"""(async info=>{
@@ -51,8 +53,23 @@ CLEANUP = r"""(async info=>{
 })"""
 
 
+async def choose_native_page():
+    pages = [p for p in json.load(urllib.request.urlopen(BASE + "/json/list", timeout=5))
+             if p.get("type") == "page" and p.get("url", "").startswith("app://posterchan/")]
+    for page in pages:
+        async with CDP(page["webSocketDebuggerUrl"]) as cdp:
+            usable = await cdp.eval(r"""(async()=>{
+              if(!window.PCOS||!window.pcWM)return false;
+              if(!PCOS.isOn())PCOS.enter();await new Promise(r=>setTimeout(r,700));
+              return document.querySelectorAll('.osw-native').length>0;
+            })()""")
+            if usable:
+                return page
+    raise RuntimeError("no installed PosterChan surface owns a native frame")
+
+
 async def main():
-    page = await choose_authenticated_page()
+    page = await choose_native_page()
     async with CDP(page["webSocketDebuggerUrl"]) as cdp:
         info = await cdp.eval(SETUP)
         if info.get("skip"):

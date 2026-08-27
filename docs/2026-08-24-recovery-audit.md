@@ -171,6 +171,13 @@ This is evidence from the recovery pass, not a declaration that the whole queue 
   frames instead of the stock launcher's 81, eliminating the exposed intermediate repaint in this
   controlled case. A sustained real Codex/Claude session remains open because neither CLI is
   installed on the test machines.
+- An isolated installed 1.0.1083 shell and disposable Firefox profile exercised native-window
+  focus and edge snapping through the real Sway bridge. Firefox yielded to an overlapping
+  PosterChan window; edge preview appeared; the completed right-half snap kept the native surface
+  visible and its compositor/frame geometry aligned. The checks also exposed and fixed a stale
+  verifier assumption: the packaged app ID is `place.poster.desktop`, not only `posterchan-desktop`.
+  The diagnostic processes were removed and the canonical two 3840×2560 shell surfaces returned to
+  full size. Cross-monitor handoff remains open rather than being inferred from these narrower runs.
 - The same shell serializes `update-posterchan` before `emaint` touches Portage's Git checkout. A
   live held-lock test proved a second updater remained blocked with no output or overlay access; 110
   updater/profile tests plus 35 subtests pass. This prevents concurrent launches from leaving a

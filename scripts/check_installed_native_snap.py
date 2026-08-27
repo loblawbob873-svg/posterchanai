@@ -51,7 +51,7 @@ async def main():
             await asyncio.sleep(2)
             snapped = await cdp.eval(r"""(async id=>{const frame=document.querySelector('.osw-native'),
               fr=frame.getBoundingClientRect(),snap=await pcWM.snapshot(),
-              shell=(snap.windows||[]).find(w=>/^posterchan(-desktop)?$/i.test(String(w.app||''))),
+              shell=(snap.windows||[]).find(w=>/^(posterchan(-desktop)?|place\.poster\.desktop)$/i.test(String(w.app||''))),
               row=(snap.windows||[]).find(w=>Number(w.id)===Number(id));
               return {frame:{x:fr.x,y:fr.y,w:fr.width,h:fr.height},
                 snapped:frame.classList.contains('snapped'),

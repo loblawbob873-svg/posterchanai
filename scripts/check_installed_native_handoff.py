@@ -17,7 +17,7 @@ from check_installed_desktop_account import BASE, CDP
 
 STATE = r"""(async()=>{
   await PCOS.refresh();await new Promise(r=>setTimeout(r,400));const snap=await pcWM.snapshot();
-  const shell=(snap.windows||[]).find(w=>/^posterchan(-desktop)?$/i.test(String(w.app||'')));
+  const shell=(snap.windows||[]).find(w=>/^(posterchan(-desktop)?|place\.poster\.desktop)$/i.test(String(w.app||'')));
   const native=(snap.windows||[]).find(w=>/firefox|telegram/i.test(String(w.app||'')));
   return {nativeFrames:document.querySelectorAll('.osw-native').length,
     htmlFrames:document.querySelectorAll('.osw:not(.osw-native)').length,
