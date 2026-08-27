@@ -54,15 +54,48 @@ function osName() {
   const m = raw.match(/^PRETTY_NAME=(?:"([^"]*)"|'([^']*)'|([^\n]*))$/m);
   return clean(m && (m[1] || m[2] || m[3]), `${os.type()} ${os.release()}`);
 }
+let _pciIds = null;
+function pciIdsText() {
+  if (_pciIds !== null) return _pciIds;
+  _pciIds = '';
+  for (const file of ['/usr/share/hwdata/pci.ids', '/usr/share/misc/pci.ids', '/usr/share/pci.ids']) {
+    const text = one(file);
+    if (text) { _pciIds = text; break; }
+  }
+  return _pciIds;
+}
+/* Resolve one PCI_ID without executing lspci. pci.ids is already shipped for hardware discovery,
+ * and reading it once per Electron process keeps every later terminal tab dependency-free and
+ * instant. Vendor records start at column zero; device records are one tab beneath their vendor. */
+function pciModel(ids, vendor, device) {
+  const wantV = String(vendor || '').replace(/^0x/i, '').toLowerCase();
+  const wantD = String(device || '').replace(/^0x/i, '').toLowerCase();
+  if (!ids || !wantV || !wantD) return '';
+  let inVendor = false;
+  for (const line of String(ids).split(/\r?\n/)) {
+    const vm = line.match(/^([0-9a-fA-F]{4})\s+(.+)$/);
+    if (vm) { inVendor = vm[1].toLowerCase() === wantV; continue; }
+    if (!inVendor) continue;
+    const dm = line.match(/^\t([0-9a-fA-F]{4})\s+(.+)$/);
+    if (dm && dm[1].toLowerCase() === wantD) return clean(dm[2]);
+  }
+  return '';
+}
 function gpu() {
   try {
+    const rows = [];
     for (const card of fs.readdirSync('/sys/class/drm').filter(x => /^card\d+$/.test(x))) {
       const dir = path.join('/sys/class/drm', card, 'device');
       const vendor = one(path.join(dir, 'vendor')).toLowerCase();
-      const driver = one(path.join(dir, 'uevent')).match(/^DRIVER=(.+)$/m);
-      const name = ({'0x1002':'AMD', '0x10de':'NVIDIA', '0x8086':'Intel'})[vendor] || '';
-      if (name || driver) return clean([name, driver && driver[1]].filter(Boolean).join(' · '));
+      const uevent = one(path.join(dir, 'uevent'));
+      const driver = uevent.match(/^DRIVER=(.+)$/m);
+      const pci = uevent.match(/^PCI_ID=([0-9a-f]{4}):([0-9a-f]{4})$/im);
+      const maker = ({'0x1002':'AMD', '0x10de':'NVIDIA', '0x8086':'Intel'})[vendor] || '';
+      const model = pci ? pciModel(pciIdsText(), pci[1], pci[2]) : '';
+      const label = clean([maker, model || (driver && driver[1])].filter(Boolean).join(' '));
+      if (label && !rows.includes(label)) rows.push(label);
     }
+    if (rows.length) return rows.join(' / ');
   } catch (_) {}
   return 'not reported';
 }
@@ -202,4 +235,4 @@ function render(env, cols) {
   return `\r\n${lines.join('\r\n')}\r\n\r\n`;
 }
 
-module.exports = { render, human, duration, meter, LOGO };
+module.exports = { render, human, duration, meter, pciModel, LOGO };

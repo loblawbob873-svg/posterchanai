@@ -111,6 +111,22 @@ class PosterfetchTests(unittest.TestCase):
         got = json.loads(subprocess.check_output(["node", "-e", js], cwd=ROOT, text=True))
         self.assertEqual(got, ["1.0 GiB", "1d 1h 1m"])
 
+    def test_pci_device_ids_resolve_to_the_actual_gpu_model(self):
+        ids = "1002  Advanced Micro Devices\n\t73bf  Navi 21 [Radeon RX 6800/6800 XT]\n"
+        js = ("const p=require('./desktop/posterfetch.js');"
+              f"console.log(JSON.stringify(p.pciModel({json.dumps(ids)},'1002','73BF')))" )
+        got = json.loads(subprocess.check_output(["node", "-e", js], cwd=ROOT, text=True))
+        self.assertEqual(got, "Navi 21 [Radeon RX 6800/6800 XT]")
+
+    def test_gpu_probe_does_not_stop_at_the_first_card(self):
+        src = (ROOT / "desktop/posterfetch.js").read_text()
+        start = src.index("function gpu()")
+        body = src[start:src.index("function network()", start)]
+        self.assertIn("rows.push", body)
+        self.assertIn("rows.join", body)
+        self.assertNotRegex(body, r"if \(name \|\| driver\) return",
+                            "a second GPU would never be inspected")
+
     def test_each_new_local_tab_buffers_one_welcome(self):
         src = (ROOT / "desktop/localterm.js").read_text()
         self.assertIn("require('./posterfetch.js')", src)
