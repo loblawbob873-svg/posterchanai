@@ -16,6 +16,7 @@ the controls to disappear with nothing in any log to say so:
     about the BROWSER API — and the whole reason this feature exists is that the WebView has that API
     and does nothing with it.
 """
+from pathlib import Path
 import os
 import re
 
@@ -156,6 +157,15 @@ def test_a_swiped_away_app_does_not_leave_a_dead_notification():
     """The audio lives in the WebView, so removing the task destroys it — the notification must go
     too, or the shade keeps a media card whose buttons control nothing."""
     assert "onTaskRemoved" in SERVICE
+
+
+def test_device_home_probe_requires_background_audio_and_visible_launcher_together():
+    device = (Path(ROOT) / "mobile/android/app/src/androidTest/java/place/poster/app/music/"
+                     "MusicBackgroundDeviceTest.java").read_text()
+    assert "after > before + 0.7" in device
+    assert "scenario.getState() == Lifecycle.State.CREATED" in device
+    assert "if (HomeRoles.isDefaultHome(ctx))" in device
+    assert "LauncherState.atHome()" in device
 
 
 def test_no_two_methods_in_a_file_share_a_signature():

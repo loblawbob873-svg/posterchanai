@@ -24,6 +24,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import place.poster.app.MainActivity;
+import place.poster.app.home.HomeRoles;
+import place.poster.app.home.LauncherState;
 
 /** The reported failure: a playing track stopped as soon as Android Home was pressed. */
 @RunWith(AndroidJUnit4.class)
@@ -75,6 +77,17 @@ public class MusicBackgroundDeviceTest {
             double after = number(eval(web, "window.__pcBackgroundAudio.currentTime"));
             assertTrue("audio stopped on Home (before=" + before + ", after=" + after + ")",
                     after > before + 0.7);
+            /* Advancing audio alone does not prove Home worked: a broken launcher transition can
+             * leave MainActivity visible while its track quite correctly keeps playing. Verify the
+             * two promises together. ActivityScenario reports CREATED only after this Activity has
+             * actually lost the screen; when PosterChan is the configured HOME app, LauncherState
+             * is set by HomeActivity.onStart and proves the native launcher owns that screen. */
+            assertTrue("PosterChan's WebView stayed visible after Home: " + scenario.getState(),
+                    scenario.getState() == Lifecycle.State.CREATED);
+            if (HomeRoles.isDefaultHome(ctx)) {
+                assertTrue("Home backgrounded the player but did not show PosterChan's launcher",
+                        LauncherState.atHome());
+            }
         } finally {
             try { ctx.startService(new Intent(ctx, MusicService.class).setAction(MusicService.ACTION_STOP)); }
             catch (Throwable ignored) { }
