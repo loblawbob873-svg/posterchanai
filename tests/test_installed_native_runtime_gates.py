@@ -35,6 +35,15 @@ def test_handoff_gate_requires_exact_renderer_and_native_window_identity():
     assert "data-pc-check-native" in src
 
 
+def test_handoff_gate_crosses_the_edge_with_coherent_screen_coordinates():
+    src = (ROOT / "scripts" / "check_installed_native_handoff.py").read_text(encoding="utf-8")
+    assert "innerWidth+16:-16" in src
+    assert "screenX:wx+sx" in src
+    assert "screenX:wx+x" in src
+    assert '["native"]["workspace"] == moved[destination]["shell"]["workspace"]' in src
+    assert '["native"]["workspace"] == restored[source]["shell"]["workspace"]' in src
+
+
 def test_native_frames_publish_their_compositor_identity():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
     assert "w.el.dataset.native=String(id)" in src

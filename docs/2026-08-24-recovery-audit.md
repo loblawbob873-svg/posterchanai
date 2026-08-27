@@ -182,7 +182,14 @@ This is evidence from the recovery pass, not a declaration that the whole queue 
   several existed. They now require an exact `PC_NATIVE_APP_ID` for multi-window runs, tag native
   frames with their compositor ID, and make the bridge expose the exact shell surface belonging to
   each renderer. The focus/snap checks were rerun against only disposable Firefox con_id 96. The
-  handoff gate remains open until that new bridge is installed and can prove both directions.
+  Desktop 1.0.1084 and shell 1.0.20260827190130 were then installed on both machines. An isolated
+  installed 1.0.1084 process exposed the new exact per-renderer `shellId`; disposable Firefox
+  con_id 100 crossed from one renderer/workspace to the other and returned with the same compositor
+  identity, one frame, no HTML replacement, no stash, and matching destination workspace in both
+  directions. The run also corrected the probe itself to send coherent virtual screen coordinates
+  sixteen pixels beyond the renderer edge (the former one-pixel-inside coordinate exercised snap,
+  not handoff). All disposable processes were removed and the canonical two 3840×2560 surfaces
+  returned to full size. Cross-monitor native handoff is now proved against the installed package.
 - The same shell serializes `update-posterchan` before `emaint` touches Portage's Git checkout. A
   live held-lock test proved a second updater remained blocked with no output or overlay access; 110
   updater/profile tests plus 35 subtests pass. This prevents concurrent launches from leaving a

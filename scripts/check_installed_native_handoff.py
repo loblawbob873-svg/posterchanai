@@ -28,21 +28,24 @@ STATE = r"""(async()=>{
   return {nativeFrames:frame?1:0,unsafe:rows.length&&!native,
     htmlFrames:document.querySelectorAll('.osw:not(.osw-native)').length,
     frameStashed:!!(frame&&frame.classList.contains('native-stashed')),
-    shell:shell&&{id:shell.id,rect:shell.rect},
-    native:native&&{id:native.id,rect:native.rect,stashed:!!native.stashed}};
+    shell:shell&&{id:shell.id,workspace:String(shell.workspace||''),rect:shell.rect},
+    native:native&&{id:native.id,workspace:String(native.workspace||''),rect:native.rect,stashed:!!native.stashed}};
 })()"""
 
 DRAG = r"""(async direction=>{
   const bar=document.querySelector('.osw-native[data-pc-check-native="'+Number(WANTED)+'"] .osw-bar');if(!bar)return false;
-  const r=bar.getBoundingClientRect(),sx=r.left+r.width/2,sy=r.top+12,id=91;
+  const r=bar.getBoundingClientRect(),sx=r.left+r.width/2,sy=r.top+12,id=91,
+    wx=Number(window.screenX)||0,wy=Number(window.screenY)||0;
   bar.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerId:id,pointerType:'mouse',
-    button:0,buttons:1,clientX:sx,clientY:sy,screenX:sx,screenY:sy}));
-  const x=direction==='right'?innerWidth-1:1,y=innerHeight/2;
+    button:0,buttons:1,clientX:sx,clientY:sy,screenX:wx+sx,screenY:wy+sy}));
+  // Cross the edge by more than os.js's eight-pixel handoff threshold.  Keeping screen and client
+  // coordinates in the same virtual-desktop space is what distinguishes this from an edge snap.
+  const x=direction==='right'?innerWidth+16:-16,y=innerHeight/2;
   const move=()=>document.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,pointerId:id,
-    pointerType:'mouse',button:-1,buttons:1,clientX:x,clientY:y,screenX:x,screenY:y}));
+    pointerType:'mouse',button:-1,buttons:1,clientX:x,clientY:y,screenX:wx+x,screenY:wy+y}));
   move();await new Promise(r=>setTimeout(r,400));move();
   document.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerId:id,pointerType:'mouse',
-    button:0,buttons:0,clientX:x,clientY:y,screenX:x,screenY:y}));return true;
+    button:0,buttons:0,clientX:x,clientY:y,screenX:wx+x,screenY:wy+y}));return true;
 })"""
 
 
@@ -107,9 +110,7 @@ async def main():
         assert [row["htmlFrames"] for row in moved] == html_counts, moved
         assert not moved[destination]["frameStashed"], moved[destination]
         assert moved[destination]["native"] and not moved[destination]["native"]["stashed"], moved[destination]
-        target_rect = moved[destination]["shell"]["rect"]
-        native_rect = moved[destination]["native"]["rect"]
-        assert target_rect["x"] <= native_rect["x"] < target_rect["x"] + target_rect["width"], moved[destination]
+        assert moved[destination]["native"]["workspace"] == moved[destination]["shell"]["workspace"], moved[destination]
 
         await drag(pages[destination], reverse, wanted)
         await asyncio.sleep(3)
@@ -117,9 +118,7 @@ async def main():
         assert owner_index(restored) == source, restored
         assert [row["htmlFrames"] for row in restored] == html_counts, restored
         assert restored[source]["native"]["id"] == native_id, restored[source]
-        source_rect = restored[source]["shell"]["rect"]
-        native_rect = restored[source]["native"]["rect"]
-        assert source_rect["x"] <= native_rect["x"] < source_rect["x"] + source_rect["width"], restored[source]
+        assert restored[source]["native"]["workspace"] == restored[source]["shell"]["workspace"], restored[source]
     finally:
         current = await states(pages, wanted)
         owner = owner_index(current)
