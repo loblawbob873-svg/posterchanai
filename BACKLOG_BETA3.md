@@ -63,6 +63,8 @@ test, deployment/package, and relevant real-device check are complete. The insta
       completed snap, cancelled drag, and unsnap preserve the original app, decorations and geometry.
 - [ ] Taskbar right-click offers Close and Move. Alt+Tab switcher works. Clipboard works between
       Firefox/Telegram and PosterChan. Black-screen and exhaustive app handoff tests are release gates.
+- [ ] Foot never flashes or flickers while Codex or Claude streams sustained terminal output; cover
+      focus, resize, damage/repaint, GPU acceleration, and multi-monitor movement in a runtime test.
 
 ## 6. Remaining desktop applications
 
