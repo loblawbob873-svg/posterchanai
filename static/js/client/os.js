@@ -2236,12 +2236,21 @@
    * may be in flight and only the newest pending position survives. The previous scratchpad preview
    * made the frame move as a black/empty rectangle and Firefox appear only on release — technically
    * coherent, visibly unusable. Full size/placement is still committed once at gesture end. */
+  let _htmlGestureRect = null;
   function _natGesture(w, on){
     /* Cleared for EVERY window, not just a native one: the hold is armed by the press, and the
      * press does not know yet whether the frame it landed on wraps an app. Left set after dragging
      * one of our own windows, no native window would ever take the keyboard again. */
     if(!on) _natFocusHold = false;
-    if(!w || w.native == null) return;
+    if(w && w.native == null){
+      _htmlGestureRect = on ? _frameRect(w) : null;
+      /* A floating native surface is above the tiled shell. During a real Terminal/Notes gesture,
+       * temporarily park only surfaces intersecting that frame so its body receives pointer input;
+       * restore them at the exact paired rectangle when the gesture ends. */
+      if(nativeWins().length) nsync();
+      return;
+    }
+    if(!w) return;
     w.gesturing = !!on;
     if(on){ nsync(); return; }
     const done = nsync();
@@ -2289,6 +2298,8 @@
                  rect: { left: r.left, top: r.top, width: r.width, height: r.height } });
     };
     try{
+      if(_htmlGestureRect) out.push({z:Number.MAX_SAFE_INTEGER,minimised:false,
+                                    rect:_htmlGestureRect});
       for(const el of (root ? root.children : []))
         if(el !== desk && el !== bar) add(el);
       for(const el of document.querySelectorAll(_OVERLAYS_ON_BODY)) add(el);
@@ -2405,6 +2416,10 @@
       const plan = NAT().stashPlan(items, overlayRects());
       const stash = new Set(plan.stash);
       for(const it of items){
+        /* A destination handoff frame is measured while hidden, before the real Wayland surface
+         * moves. It must not participate in ordinary reconciliation until main commits the exact
+         * same body rectangle, or this renderer can pull Firefox across the seam prematurely. */
+        if(it.w.nativeHandoffToken) continue;
         /* This pass may have awaited sway while the frame crossed an output. Do not send another
          * source-monitor coordinate for a window this renderer no longer owns. */
         if(!wins.includes(it.w)) continue;
@@ -3177,7 +3192,10 @@
     const paint = () => {
       raf = 0;
       w.el.style.transform = `translate(${curX - ox}px, ${curY - oy}px)`;
-      if(nativeWins().length) nsync();
+      /* Recompute the HTML overlay after every painted pointer frame. A Terminal may begin clear
+       * of Firefox and cross it mid-drag; retaining only the press-time rectangle lets the native
+       * surface intercept the pointer as soon as their paths meet. */
+      if(nativeWins().length) _natGesture(w, true);
     };
     const edgeDirection = (e) => {
       if(!e) return '';
@@ -3351,7 +3369,8 @@
     let nw = ow, nh = oh, raf = 0;
     const hadButtons = (ev.buttons || 0) > 0;
     _natGesture(w, true);                        // see startDrag — the surface is placed once, at the end
-    const paint = () => { raf = 0; w.el.style.width = nw + 'px'; w.el.style.height = nh + 'px'; };
+    const paint = () => { raf = 0; w.el.style.width = nw + 'px'; w.el.style.height = nh + 'px';
+                         if(nativeWins().length) _natGesture(w, true); };
     const move = (e) => {
       if(hadButtons && e.pointerType !== 'touch' && (e.buttons || 0) === 0){ up(); return; }
       const left=Math.max(0,parseFloat(w.el.style.left)||0);
@@ -6668,7 +6687,28 @@
          * monitors are separate Electron renderers, so no DOM node can literally cross between
          * them; its app identity and size can, and the destination owns it from this point on. */
         try{
-          if(pcWM.onNativeHandoff) _nativeHandoffOff=pcWM.onNativeHandoff((row)=>{
+          if(pcWM.onNativeHandoffPrepare) _nativeHandoffPrepareOff=pcWM.onNativeHandoffPrepare(async(p)=>{
+            const row=p&&p.row, token=String(p&&p.token||'');
+            if(!row || row.id==null || !token)return;
+            _nativeAdoptPass++;
+            const w=adoptNative(row); if(!w)return;
+            w.nativeHandoffToken=token;
+            w.el.classList.add('native-handoff-prepared');
+            /* Two frames: openApp inserts the node on the first, layout supplies body geometry on
+             * the second. Ack only the compositor-space body rectangle actually measured here. */
+            await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+            if(!wins.includes(w)||w.nativeHandoffToken!==token)return;
+            try{
+              const snap=await pcWM.snapshot(), rows=Array.isArray(snap&&snap.windows)?snap.windows:[];
+              const shell=rows.find(x=>Number(x.id)===Number(snap.shellId));
+              const scale=NAT().scaleFrom(shell&&shell.rect,document.documentElement.clientWidth,
+                                          document.documentElement.clientHeight);
+              const rect=NAT().mapRect(_bodyRect(w),scale);
+              if(rect)await pcWM.nativeHandoffAck(token,rect);
+            }catch(_){}
+          });
+          if(pcWM.onNativeHandoff) _nativeHandoffOff=pcWM.onNativeHandoff((p)=>{
+            const row=p&&p.row?p.row:p, token=String(p&&p.token||'');
             if(!row || row.id==null)return;
             /* A tree read begun before the compositor moved this surface still says it belongs to
              * the source output. Invalidate that read before establishing destination ownership. */
@@ -6676,9 +6716,19 @@
             const w=adoptNative(row);
             if(w){
               const id=Number(row.id);
+              if(token && w.nativeHandoffToken!==token)return;
+              w.nativeHandoffToken='';
+              w.machineApp=row;
+              w.el.classList.remove('native-handoff-prepared');
+              if(p&&p.rect)_natSent.set(id,p.rect);
               if(pcWM.decorate) Promise.resolve(pcWM.decorate(id)).catch(()=>{});
               drawBar(); requestAnimationFrame(()=>nsync());
             }
+          });
+          if(pcWM.onNativeHandoffAbort) _nativeHandoffAbortOff=pcWM.onNativeHandoffAbort((p)=>{
+            const token=String(p&&p.token||''), id=Number(p&&p.id);
+            const w=nativeWins().find(x=>Number(x.native)===id&&x.nativeHandoffToken===token);
+            if(w)closeWin(w,{killNative:false,preserveFocus:true});
           });
           if(pcWM.onHandoffFrame) _handoffOff = pcWM.onHandoffFrame((p) => {
             if(_handoffPreviewEl){ _handoffPreviewEl.remove(); _handoffPreviewEl=null; }
@@ -6856,6 +6906,8 @@
     if(_tickOff){ try{ _tickOff(); }catch(_){} _tickOff = null; }
     if(_handoffOff){ try{ _handoffOff(); }catch(_){} _handoffOff = null; }
     if(_nativeHandoffOff){ try{ _nativeHandoffOff(); }catch(_){} _nativeHandoffOff = null; }
+    if(_nativeHandoffPrepareOff){ try{ _nativeHandoffPrepareOff(); }catch(_){} _nativeHandoffPrepareOff=null; }
+    if(_nativeHandoffAbortOff){ try{ _nativeHandoffAbortOff(); }catch(_){} _nativeHandoffAbortOff=null; }
     if(_handoffPreviewOff){ try{ _handoffPreviewOff(); }catch(_){} _handoffPreviewOff=null; }
     try{ if(window.pcWM&&pcWM.handoffReady) Promise.resolve(pcWM.handoffReady(false)).catch(()=>{}); }catch(_){}
     if(_handoffPreviewEl){ _handoffPreviewEl.remove(); _handoffPreviewEl=null; }
@@ -7184,7 +7236,8 @@
   /* Released on exit. A watcher left running after the desktop closes keeps a compositor
    * subscription and a 30s timer alive for the rest of the session, redrawing markup that is no
    * longer in the document. */
-  let _shellOff = null, _tickOff = null, _handoffOff = null, _nativeHandoffOff=null, _handoffPreviewOff=null,
+  let _shellOff = null, _tickOff = null, _handoffOff = null, _nativeHandoffOff=null,
+      _nativeHandoffPrepareOff=null, _nativeHandoffAbortOff=null, _handoffPreviewOff=null,
       _handoffPreviewEl=null;
   /* What the machine has installed, as the start menu last read it. Kept for the life of the
    * desktop rather than per menu opening: a scan parses every .desktop file on the disk and

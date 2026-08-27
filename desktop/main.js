@@ -1045,7 +1045,9 @@ const _shellScopes = new Map();       // webContents.id -> { output, workspace }
 const _nativeOwners = new Map();      // con_id -> last ordinary workspace
 const _shellSurfaces = new Map();     // output name -> { browser, conId, assignment }
 const _handoffReady = new Set();      // webContents ids with destination listeners installed
+const _nativeHandoffAcks = new Map(); // token -> { contentsId, resolve, timer }
 const { recoverSurfaces } = require('./shell-recovery.js');
+const { runAtomicHandoff } = require('./native-handoff.js');
 let _displayReconcile = null;
 let _displayReconcileTimer = null;
 /* Recover the owner of a parked window after the shell process itself restarts.
@@ -1246,6 +1248,16 @@ ipcMain.handle('pc:wm:handoff-ready', (e, ready) => {
   if(ready === false) _handoffReady.delete(id); else _handoffReady.add(id);
   return true;
 });
+ipcMain.handle('pc:wm:native-handoff-ack', (e, token, rect) => {
+  fsGuard(e);
+  const pending=_nativeHandoffAcks.get(String(token||''));
+  if(!pending || pending.contentsId!==Number(e.sender.id)) return false;
+  const r=rect&&typeof rect==='object'?rect:{};
+  const out={x:Number(r.x),y:Number(r.y),w:Number(r.w),h:Number(r.h)};
+  if(!Object.values(out).every(Number.isFinite) || out.w<64 || out.h<64) return false;
+  clearTimeout(pending.timer); _nativeHandoffAcks.delete(String(token)); pending.resolve(out);
+  return true;
+});
 ipcMain.handle('pc:wm:focus', (e, id) => { fsGuard(e); return wm().focus(Number(id)); });
 ipcMain.handle('pc:wm:preview', async (e, id) => {
   fsGuard(e); id=Number(id); if(!Number.isFinite(id))return '';
@@ -1299,19 +1311,52 @@ ipcMain.handle('pc:wm:handoff', async (e, id, direction) => {
   if(!_handoffReady.has(Number(record.browser.webContents.id)) ||
      record.browser.webContents.isLoadingMainFrame()) return false;
   const target=record.assignment;
-  await wm().finishMove(Number(id));
-  await wm().command('[con_id='+Number(id)+'] move container to workspace number '+target.workspace);
-  await wm().placeOnOutput(Number(id), target.rect, String(direction||''));
-  _nativeOwners.set(Number(id), String(target.workspace));
-  await wm().focus(Number(id));
-  /* The real surface is already on the destination output. Tell that renderer immediately so it
-   * owns a decorated frame on its first paint instead of waiting for a later tree reconciliation. */
-  try{
-    const moved=(await wm().windows()).find(row=>Number(row.id)===Number(id));
-    if(moved && record.browser && !record.browser.isDestroyed())
-      record.browser.webContents.send('pc:wm:native-handoff', moved);
-  }catch(_){ }
-  return {output:target.output,workspace:target.workspace};
+  const nativeId=Number(id), rows=await wm().windows();
+  const before=rows.find(row=>Number(row.id)===nativeId);
+  if(!before || !before.rect) return false;
+  const sourceWorkspace=String(before.workspace||_nativeOwners.get(nativeId)||'');
+  const token=nativeId+'-'+Date.now()+'-'+Math.random().toString(36).slice(2);
+  const abort=async()=>{
+    const pending=_nativeHandoffAcks.get(token);
+    if(pending){clearTimeout(pending.timer);_nativeHandoffAcks.delete(token);}
+    try{record.browser.webContents.send('pc:wm:native-handoff-abort',{token,id:nativeId});}catch(_send){}
+  };
+  return runAtomicHandoff({
+    prepare:()=>{
+      const ack=new Promise(resolve=>{
+        const timer=setTimeout(()=>{_nativeHandoffAcks.delete(token);resolve(null);},1800);
+        _nativeHandoffAcks.set(token,{contentsId:Number(record.browser.webContents.id),resolve,timer});
+      });
+      record.browser.webContents.send('pc:wm:native-handoff-prepare',
+                                      {token,row:before,direction:String(direction||'')});
+      return ack;
+    },
+    commit:async prepared=>{
+      const b=target.rect||{}, right=Number(b.x)+Number(b.width), bottom=Number(b.y)+Number(b.height);
+      if(prepared.x<Number(b.x)||prepared.y<Number(b.y)||prepared.x+prepared.w>right||
+         prepared.y+prepared.h>bottom) throw new Error('destination frame geometry is outside output');
+      await wm().finishMove(nativeId);
+      await wm().command('[con_id='+nativeId+'] move container to workspace number '+target.workspace);
+      await wm().place(nativeId,prepared.x,prepared.y,prepared.w,prepared.h);
+      _nativeOwners.set(nativeId,String(target.workspace));
+      const moved=(await wm().windows()).find(row=>Number(row.id)===nativeId);
+      if(!moved) throw new Error('native surface disappeared during handoff');
+      record.browser.webContents.send('pc:wm:native-handoff',{token,row:moved,rect:prepared});
+      await wm().focus(nativeId);
+      return {output:target.output,workspace:target.workspace};
+    },
+    rollback:async()=>{
+      try{
+        if(sourceWorkspace){
+          await wm().command('[con_id='+nativeId+'] move container to workspace number '+sourceWorkspace);
+          await wm().place(nativeId,before.rect.x,before.rect.y,before.rect.width,before.rect.height);
+          _nativeOwners.set(nativeId,sourceWorkspace);
+          await wm().focus(nativeId);
+        }
+      }catch(_rollback){}
+    },
+    abort,
+  },2000);
 });
 
 /* DOM application windows live inside one output renderer. Transfer their durable identity to the

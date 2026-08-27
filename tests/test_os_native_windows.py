@@ -34,6 +34,19 @@ class NativeWindowGeometry(unittest.TestCase):
         self.assertEqual(out["s"]["x"], 2.0)
         self.assertEqual(out["s"]["y"], 2.0)
 
+    def test_terminal_drag_overlay_parks_only_the_intersecting_native_surface(self):
+        out = self.js("""
+          const items=[
+            {native:7,z:20,minimised:false,rect:{left:100,top:100,width:700,height:500}},
+            {native:8,z:21,minimised:false,rect:{left:1000,top:100,width:700,height:500}}];
+          const terminal=[{z:Number.MAX_SAFE_INTEGER,minimised:false,
+            rect:{left:200,top:150,width:600,height:450}}];
+          out.p=N.stashPlan(items,terminal);
+        """)
+        self.assertEqual(out["p"]["stash"], [7])
+        self.assertEqual(out["p"]["show"], [8])
+        self.assertEqual(out["p"]["show"], [8])
+
     def test_an_unmeasurable_scale_is_null_not_one(self):
         """Placing a window with the wrong scale is worse than not placing it: the app is moved
         somewhere confidently wrong and redraws itself there."""
@@ -126,7 +139,24 @@ class NativeWindowGeometry(unittest.TestCase):
             [{z: 2, rect:{left:400, top:300, width:500, height:400}}]);
         """)
         self.assertEqual(out["p"]["stash"], [7])
-        self.assertEqual(out["p"]["show"], [])
+
+    def test_html_drag_crossing_a_native_surface_updates_the_stash_plan(self):
+        """A Terminal that starts clear of Firefox must park it when their paths cross."""
+        out = self.js("""
+          const native = [{native:7,z:1,rect:{left:500,top:200,width:700,height:500}}];
+          out.before = N.stashPlan(native,
+            [{z:Number.MAX_SAFE_INTEGER,rect:{left:20,top:20,width:300,height:180}}]);
+          out.crossed = N.stashPlan(native,
+            [{z:Number.MAX_SAFE_INTEGER,rect:{left:650,top:260,width:300,height:180}}]);
+        """)
+        self.assertEqual(out["before"]["stash"], [])
+        self.assertEqual(out["crossed"]["stash"], [7])
+
+        src = open(os.path.join(ROOT, "static", "js", "client", "os.js"), encoding="utf-8").read()
+        drag = src[src.index("function startDrag"):src.index("function startResize")]
+        resize = src[src.index("function startResize"):src.index("// ---- desktop, taskbar")]
+        self.assertIn("if(nativeWins().length) _natGesture(w, true)", drag)
+        self.assertIn("if(nativeWins().length) _natGesture(w, true)", resize)
 
     def test_the_frame_of_a_stashed_app_stays_on_the_desktop(self):
         """The other half, and without it the rule above IS the "Telegram disappeared" bug.

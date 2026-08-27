@@ -7401,6 +7401,7 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 /* No text/icon selection on the title bar: a native drag of the title steals the gesture, the
    browser stops sending pointer events, and the window ends up glued to the cursor. */
 .osw-bar{user-select:none;-webkit-user-select:none}
+.osw-native.native-handoff-prepared{visibility:hidden;pointer-events:none}
 .osw-bar *{-webkit-user-drag:none}
 .osw.dragging .osw-body{pointer-events:none}
 /* touch-action:none is what makes dragging work with a FINGER. Pointer events fire on touch either

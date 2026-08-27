@@ -108,11 +108,23 @@ if (isOurPage) {
                                                   Number(w), Number(h)),
     move: (id, x, y) => ipcRenderer.invoke('pc:wm:move', Number(id), Number(x), Number(y)),
     handoff: (id, direction) => ipcRenderer.invoke('pc:wm:handoff', Number(id), String(direction||'')),
+    nativeHandoffAck: (token, rect) => ipcRenderer.invoke('pc:wm:native-handoff-ack',
+                                                           String(token||''), rect||{}),
     handoffReady: (ready) => ipcRenderer.invoke('pc:wm:handoff-ready', ready !== false),
     onNativeHandoff: (fn) => {
       const h = (_e, payload) => { try { fn(payload || {}); } catch (_) {} };
       ipcRenderer.on('pc:wm:native-handoff', h);
       return () => ipcRenderer.removeListener('pc:wm:native-handoff', h);
+    },
+    onNativeHandoffPrepare: (fn) => {
+      const h = (_e, payload) => { try { fn(payload || {}); } catch (_) {} };
+      ipcRenderer.on('pc:wm:native-handoff-prepare', h);
+      return () => ipcRenderer.removeListener('pc:wm:native-handoff-prepare', h);
+    },
+    onNativeHandoffAbort: (fn) => {
+      const h = (_e, payload) => { try { fn(payload || {}); } catch (_) {} };
+      ipcRenderer.on('pc:wm:native-handoff-abort', h);
+      return () => ipcRenderer.removeListener('pc:wm:native-handoff-abort', h);
     },
     handoffFrame: (payload, direction) => ipcRenderer.invoke('pc:wm:handoff-frame', payload || {},
                                                               String(direction||'')),

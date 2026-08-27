@@ -22,11 +22,22 @@ STATE = r"""(async()=>{
   const native=WANTED?rows.find(w=>Number(w.id)===Number(WANTED)):(rows.length===1?rows[0]:null);
   const frame=native&&document.querySelector('.osw-native[data-native="'+Number(native.id)+'"]');
   if(frame)frame.dataset.pcCheckNative=String(Number(native.id));
+  const bar=frame&&frame.querySelector('.osw-bar'),body=frame&&frame.querySelector('.osw-body');
+  const br=body&&body.getBoundingClientRect(),scale=shell&&window.PCOSNative&&
+    PCOSNative.scaleFrom(shell.rect,document.documentElement.clientWidth,document.documentElement.clientHeight);
+  const mapped=br&&scale&&PCOSNative.mapRect({left:br.left,top:br.top,width:br.width,height:br.height},scale);
+  const buttons=frame?[...frame.querySelectorAll('.osw-btns [data-w]')].map(b=>b.dataset.w):[];
   return {nativeFrames:frame?1:0,unsafe:rows.length&&!native,
     htmlFrames:document.querySelectorAll('.osw:not(.osw-native)').length,
     frameStashed:!!(frame&&frame.classList.contains('native-stashed')),
+    framePrepared:!!(frame&&frame.classList.contains('native-handoff-prepared')),
+    frameFocused:!!(frame&&frame.classList.contains('focused')),
+    chrome:!!(bar&&bar.getClientRects().length&&buttons.includes('min')&&buttons.includes('max')&&buttons.includes('close')),
+    border:!!(body&&parseFloat(getComputedStyle(body).borderTopWidth)>0),
+    mapped:mapped&&{x:mapped.x,y:mapped.y,w:mapped.w,h:mapped.h},
     shell:shell&&{id:shell.id,workspace:String(shell.workspace||''),rect:shell.rect},
-    native:native&&{id:native.id,workspace:String(native.workspace||''),rect:native.rect,stashed:!!native.stashed}};
+    native:native&&{id:native.id,workspace:String(native.workspace||''),rect:native.rect,
+      stashed:!!native.stashed,focused:!!native.focused}};
 })()"""
 
 DRAG = r"""(async direction=>{
@@ -78,6 +89,16 @@ def owner_index(rows):
     return owners[0]
 
 
+def assert_paired(row):
+    assert row["chrome"] and row["border"], row
+    assert not row["framePrepared"] and not row["frameStashed"], row
+    assert row["frameFocused"] and row["native"]["focused"], row
+    mapped, native = row["mapped"], row["native"]["rect"]
+    assert mapped and all(abs(mapped[k] - native[k if k in ("x", "y") else
+                                                ("width" if k == "w" else "height")]) <= 3
+                          for k in ("x", "y", "w", "h")), row
+
+
 async def main():
     wanted = int(os.environ.get("PC_NATIVE_APP_ID") or 0)
     if not wanted:
@@ -108,6 +129,7 @@ async def main():
         assert not moved[destination]["frameStashed"], moved[destination]
         assert moved[destination]["native"] and not moved[destination]["native"]["stashed"], moved[destination]
         assert moved[destination]["native"]["workspace"] == moved[destination]["shell"]["workspace"], moved[destination]
+        assert_paired(moved[destination])
 
         await drag(pages[destination], reverse, wanted)
         await asyncio.sleep(3)
@@ -116,6 +138,7 @@ async def main():
         assert [row["htmlFrames"] for row in restored] == html_counts, restored
         assert restored[source]["native"]["id"] == native_id, restored[source]
         assert restored[source]["native"]["workspace"] == restored[source]["shell"]["workspace"], restored[source]
+        assert_paired(restored[source])
     finally:
         current = await states(pages, wanted)
         owner = owner_index(current)
