@@ -1099,7 +1099,20 @@ function scopedWindows(e, rows){
 }
 let _shellRecoveryWired = false;
 let _updateRestart = null;
-function requestSafeShellRestart(){
+const bundleRestartMarker=()=>path.join(app.getPath('userData'),'installed-bundle-restart.json');
+function rememberBundleRestart(identity,source){
+  if(!identity) return;
+  try{
+    const marker=bundleRestartMarker(),tmp=marker+'.tmp';
+    fs.writeFileSync(tmp,JSON.stringify({identity,source,at:Date.now()}),{mode:0o600});
+    fs.renameSync(tmp,marker);
+  }catch(e){console.warn('[update restart] marker',e&&e.message||e);}
+}
+function rememberedBundleRestart(){
+  try{return String(JSON.parse(fs.readFileSync(bundleRestartMarker(),'utf8')).identity||'');}
+  catch(_){return '';}
+}
+function requestSafeShellRestart(source='unknown',bundleIdentity=''){
   /* A verifier owns a private singleton/compositor domain and is never the installed desktop.
    * It may observe an updated ASAR copied underneath it, but it must neither acknowledge nor
    * initiate the canonical lifecycle. */
@@ -1108,7 +1121,8 @@ function requestSafeShellRestart(){
     .filter(w=>w&&!w.isDestroyed()&&_handoffReady.has(Number(w.webContents.id)));
   if(!targets.length) return false;
   const token=require('crypto').randomBytes(12).toString('hex');
-  _updateRestart={token,pending:new Set(targets.map(w=>w.webContents.id))};
+  _updateRestart={token,pending:new Set(targets.map(w=>w.webContents.id)),source,bundleIdentity};
+  console.warn(`[update restart] requested source=${source} pid=${process.pid}`);
   for(const target of targets) try{ target.webContents.send('pc:wm:event',
     {name:'tick',change:'update',payload:'pc:update-installed:'+token,window:null}); }catch(_){}
   return true;
@@ -1119,11 +1133,16 @@ ipcMain.handle('pc:shell:update-idle',(e,token)=>{
   pending.pending.delete(e.sender.id);
   if(pending.pending.size) return true;
   _updateRestart=null;
+  rememberBundleRestart(pending.bundleIdentity,pending.source);
   /* The shipped helper owns TERM, singleton-lock cleanup, canonical environment recovery and the
    * proof that both replacement surfaces mapped. Never duplicate that fragile sequence here. */
+  console.warn(`[update restart] spawning source=${pending.source} pid=${process.pid}`);
   setTimeout(()=>{ try{ const child=require('child_process').spawn(
     '/usr/local/bin/pc-shell-restart',[String(process.pid)],
-    {detached:true,stdio:'ignore',env:process.env});child.unref();
+    {detached:true,stdio:'ignore',env:process.env});
+    /* spawn() reports a missing helper asynchronously. Without a listener EventEmitter throws the
+     * ENOENT into Electron, producing a visible error window on an otherwise healthy desktop. */
+    child.on('error',e=>console.warn('[update restart] helper',e&&e.message||e));child.unref();
   }catch(e){console.warn('[update restart]',e&&e.message||e);} },250);
   return true;
 });
@@ -1151,13 +1170,13 @@ async function wireShellRecovery(){
   try{
     await wm().subscribe(['window','workspace','output','tick']);
     wm().on('tick', (ev) => {
-      if(!ev) return;
+      if(!ev || ev.first) return;
       if(ev.payload !== 'pc:restart'){
         /* Keyboard events cannot depend on a renderer first asking to receive them. On the laptop,
          * Sway ran the physical Super binding but a slow renderer startup had never armed the
          * forwarding handler, so the tick died here in the main process. This subscription is
          * always installed for shell recovery; it is therefore the authoritative keyboard path. */
-        if(ev.payload==='pc:update-installed') requestSafeShellRestart();
+        if(ev.payload==='pc:update-installed') requestSafeShellRestart('sway-tick');
         else forwardShellTick(ev).catch(()=>{});
         return;
       }
@@ -1185,8 +1204,16 @@ function watchInstalledBundle(){
   const bundle=path.join(process.resourcesPath,'app.asar');
   let identity='';
   try{const s=fs.statSync(bundle);identity=`${s.dev}:${s.ino}:${s.size}:${s.mtimeMs}`;}catch(_){return;}
+  let candidate='',stable=0;
   const check=()=>{try{const s=fs.statSync(bundle),next=`${s.dev}:${s.ino}:${s.size}:${s.mtimeMs}`;
-    if(next!==identity && requestSafeShellRestart()) identity=next;}catch(_){}};
+    if(next===identity){candidate='';stable=0;return;}
+    /* Remember the immutable bundle accepted before spawning the replacement. A new process must
+     * never interpret that same file as another update and form a restart loop. */
+    if(next===rememberedBundleRestart()){identity=next;candidate='';stable=0;return;}
+    if(next!==candidate){candidate=next;stable=1;
+      console.warn(`[update restart] bundle mismatch observed old=${identity} next=${next}`);return;}
+    if(++stable>=2 && requestSafeShellRestart('bundle-watch',next)) identity=next;
+  }catch(_){}};
   setInterval(check,30000).unref();
 }
 

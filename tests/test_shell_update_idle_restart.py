@@ -11,7 +11,23 @@ def test_packaged_shell_detects_replaced_asar_without_waiting_for_login():
     assert "path.join(process.resourcesPath,'app.asar')" in MAIN
     assert "s.dev}:${s.ino}:${s.size}:${s.mtimeMs}" in MAIN
     assert "setInterval(check,30000).unref()" in MAIN
+    assert "next===rememberedBundleRestart()" in MAIN
+    assert "if(next!==candidate){candidate=next;stable=1" in MAIN
+    assert "requestSafeShellRestart('bundle-watch',next)" in MAIN
     assert "watchInstalledBundle();" in MAIN
+
+
+def test_restart_source_is_logged_and_synthetic_subscription_tick_is_ignored():
+    assert "if(!ev || ev.first) return" in MAIN
+    assert "requestSafeShellRestart('sway-tick')" in MAIN
+    assert "spawning source=${pending.source}" in MAIN
+    assert "rememberBundleRestart(pending.bundleIdentity,pending.source)" in MAIN
+
+
+def test_missing_restart_helper_is_consumed_without_an_uncaught_electron_error():
+    spawn = MAIN.split("'/usr/local/bin/pc-shell-restart'", 1)[1].split("return true;", 1)[0]
+    assert "child.on('error',e=>console.warn('[update restart] helper'" in spawn
+    assert "child.unref()" in spawn
 
 
 def test_every_surface_must_report_idle_before_canonical_restart():
