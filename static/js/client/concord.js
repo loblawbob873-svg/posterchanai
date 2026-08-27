@@ -89,6 +89,10 @@
   function removeMessageRow(id){ const box=document.querySelector('.cc-messages'),row=[...document.querySelectorAll('.cc-message[data-message-id]')].find(el=>el.dataset.messageId===id); if(!box||!row)return false; const key=scrollKey(),st=readScroll(key),top=box.scrollTop,height=box.scrollHeight,above=(Number(row.offsetTop)||0)+(Number(row.offsetHeight)||0)<=top; row.remove(); const later=window.requestAnimationFrame||((f)=>setTimeout(f,0)); later(()=>{ if(!box.isConnected)return; const lost=Math.max(0,height-box.scrollHeight); box.scrollTop=st.pinned!==false?box.scrollHeight:(above?Math.max(0,top-lost):top);st.top=box.scrollTop;st.height=box.scrollHeight;writeScroll(key,st); }); return true; }
   function roomName(r,i){ return (r&&r.name)||`Encrypted community ${i+1}`; }
   function roomIdentity(room){ return String(room&&(room.communityId||room.naddr||room.url)||''); }
+  function notificationRoute(room,channel,message){
+    return 'concord:'+encodeURIComponent(roomIdentity(room))+':'+
+      encodeURIComponent(String(channel||'general'))+':'+encodeURIComponent(messageId(message));
+  }
   function removeCommunityByIdentity(rooms,identity){
     const next=Array.isArray(rooms)?rooms.slice():[],index=next.findIndex(room=>roomIdentity(room)===String(identity||''));
     if(index>=0)next.splice(index,1);
@@ -363,7 +367,7 @@
       const body=String(m.text||''),fromMe=m.pubkey===viewer.pubkey;
       const tagged=(m.tags||[]).some(t=>(t[0]==='p'||t[0]==='P')&&String(t[1]||'')===viewer.pubkey);
       const mentioned=!fromMe&&(tagged||textMentionsViewer(body,handles));
-      if((Number(m.at)||0)>seen&&mentioned&&p.osNotify) p.osNotify(`Mention in #${channel}`,`${m.by||'Someone'}: ${body}`,{tag:'concord-mention-'+room.naddr+':'+channel,route:'concord'});
+      if((Number(m.at)||0)>seen&&mentioned&&p.osNotify) p.osNotify(`Mention in #${channel}`,`${m.by||'Someone'}: ${body}`,{tag:'concord-mention-'+room.naddr+':'+channel,route:notificationRoute(room,channel,m)});
     }
     if(newest>seen)localStorage.setItem(key,String(newest));
   }
@@ -705,6 +709,33 @@
      * its asynchronous history hydration rendered again. */
     if(current)restoreChatScroll();
   }
+  /* A notification identifies content, not merely the Concord application. Select with durable
+   * room identity (saved array positions change), paint the named channel, then keep looking while
+   * relay history hydrates. A missing target leaves the requested room/channel open; it must never
+   * silently jump to some other community. */
+  function openNotification(target){
+    const t=target&&typeof target==='object'?target:{},rooms=saved(),identity=String(t.community||''),
+      index=rooms.findIndex(room=>roomIdentity(room)===identity);
+    if(index<0)return false;
+    const requested=String(t.channel||'general').slice(0,80),channels=channelsOf(rooms[index]);
+    state.community=index;
+    state.channel=channels.some(c=>c.name===requested)?requested:(channels[0]&&channels[0].name)||'general';
+    mobileChatOpen=true;mobileDrawerOpen=false;discoveryOpen=false;
+    localStorage.setItem('pc.concord.active',String(index));
+    render();
+    const id=String(t.message||'');
+    if(!id)return true;
+    let tries=0;
+    const reveal=()=>{
+      if(state.community!==index||state.channel!==(channels.some(c=>c.name===requested)?requested:state.channel))return;
+      const row=[...document.querySelectorAll('.cc-message[data-message-id]')]
+        .find(el=>el.dataset&&el.dataset.messageId===id);
+      if(row){const st=readScroll(scrollKey());st.pinned=false;row.scrollIntoView({block:'center'});row.classList.add('cc-message-target');setTimeout(()=>{if(row.isConnected)row.classList.remove('cc-message-target');},2400);return;}
+      if(++tries<50)setTimeout(reveal,100);
+    };
+    reveal();
+    return true;
+  }
   function bind(me){
     const p=PC(), $=p.$, $$=p.$$;
     /* bind() is a sibling of render(), not its closure. Member actions must derive their own
@@ -782,5 +813,5 @@
     $$('[data-cc-react-toggle]').forEach(b=>b.onclick=()=>toggleReaction(b.dataset.ccReactToggle,b.dataset.ccEmoji));
     $$('[data-cc-react]').forEach(b=>b.onclick=()=>{ reactionTarget=b.dataset.ccReact; const choices=['👍','❤️','😂','😮','😢','😡','🎉','💯']; const old=document.querySelector('.cc-reaction-picker'); if(old)old.remove(); const pop=document.createElement('div'); pop.className='cc-reaction-picker'; pop.innerHTML=choices.map(x=>`<button data-emoji="${x}">${x}</button>`).join(''); b.closest('.cc-message-body').appendChild(pop); pop.querySelectorAll('button').forEach(x=>x.onclick=e=>{ e.stopPropagation(); toggleReaction(reactionTarget,x.dataset.emoji); }); });
   }
-  window.PCConcord={render,openInvite:openInviteLink,inviteParts,normalizeIcon,notifyMentions,discoverInvites,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff};
+  window.PCConcord={render,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,notifyMentions,discoverInvites,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff};
 })();

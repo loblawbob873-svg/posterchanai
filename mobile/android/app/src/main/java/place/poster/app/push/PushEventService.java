@@ -77,11 +77,7 @@ public class PushEventService extends PushService {
         boolean isCall = "call".equals(type);
         ensureChannels(ctx);
 
-        Intent open = new Intent(ctx, MainActivity.class);
-        open.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        open.putExtra(place.poster.app.home.HomeActivity.EXTRA_VIEW,
-                route == null || route.trim().isEmpty() ? "notifications" : route.trim());
-        open.putExtra(place.poster.app.home.HomeActivity.EXTRA_VIEW_AT, System.currentTimeMillis());
+        Intent open = openIntent(ctx, route, System.currentTimeMillis());
         int flags = PendingIntent.FLAG_UPDATE_CURRENT
                 | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0);
         PendingIntent pi = PendingIntent.getActivity(ctx,
@@ -115,6 +111,16 @@ public class PushEventService extends PushService {
             // messaging you at once.
             nm.notify(tag != null ? tag : (isCall ? "call" : "msg"), isCall ? 1001 : 1002, b.build());
         }
+    }
+
+    /** Package-visible so the device suite can prove the notification's exact deep-link survives. */
+    static Intent openIntent(Context ctx, String route, long at) {
+        Intent open = new Intent(ctx, MainActivity.class);
+        open.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        open.putExtra(place.poster.app.home.HomeActivity.EXTRA_VIEW,
+                route == null || route.trim().isEmpty() ? "notifications" : route.trim());
+        open.putExtra(place.poster.app.home.HomeActivity.EXTRA_VIEW_AT, at);
+        return open;
     }
 
     /**

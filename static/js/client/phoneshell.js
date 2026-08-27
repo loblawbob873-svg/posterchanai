@@ -113,7 +113,14 @@
      * `openMusic()`; `switchView('__music')` would fall through to the default screen, which is
      * exactly what "clicking play on music widget opens up default posterchan app page instead of
      * music" looked like from the other end. One name, used by both. */
-      if(v.indexOf('texts-blossom:')===0){
+      if(v.indexOf('concord:')===0){
+        const bits=v.slice('concord:'.length).split(':').map(x=>{try{return decodeURIComponent(x);}catch(_){return '';}});
+        if(bits.length<3||!bits[0])return '';
+        landView('concord');
+        let tries=0;
+        const open=()=>{if(window.PCConcord&&PCConcord.openNotification){PCConcord.openNotification({community:bits[0],channel:bits[1],message:bits.slice(2).join(':')});return;}if(++tries<80)setTimeout(open,50);};
+        open();
+      }else if(v.indexOf('texts-blossom:')===0){
         const address=decodeURIComponent(v.slice('texts-blossom:'.length));
         landView('texts');
         setTimeout(()=>{try{window.PCSms&&PCSms.openBlossom&&PCSms.openBlossom(address);}catch(_){}},80);
