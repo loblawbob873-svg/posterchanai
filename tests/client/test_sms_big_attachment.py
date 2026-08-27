@@ -73,6 +73,15 @@ class TooBigForMms(unittest.TestCase):
         self.assertIn("/f/", link)
         self.assertIn("#pcenc1=", link)
 
+    def test_a_completed_phone_link_send_is_not_reported_as_waiting(self):
+        """Local `where:link` means the text already crossed this phone's radio."""
+        js = open(os.path.join(ROOT, "static", "js", "client", "sms.js"), encoding="utf-8").read()
+        start = js.index("PC.toast(r.where === 'link'")
+        done = js[start:start + 500]
+        self.assertIn("sent as a private Files link", done)
+        self.assertIn("r.where === 'phone' ? 'sent'", done)
+        self.assertIn("waiting for your phone to send it", done)
+
     def test_webui_queues_an_oversized_photo_as_an_encrypted_link(self):
         """A browser has no carrier plugin to call locally; the link itself must be queued as the
         SMS command for the phone instead of queueing an oversized MMS attachment."""

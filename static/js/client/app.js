@@ -16201,9 +16201,21 @@
     const grid=bg.querySelector('#gif-grid'), q=bg.querySelector('#gif-q'); let t=null;
     async function load(query){
       grid.innerHTML='<div class="spinner"></div>';
-      let j={}; try{ j=await fetch('/client/gif?q='+encodeURIComponent(query||'')).then(r=>r.json()); }catch(_){}
+      /* Ask the CONNECTED INSTANCE explicitly. Its Giphy/Tenor key stays server-side; the APK's
+       * https://localhost bundle and Electron's app:// origin own no key and must never answer this
+       * relative to themselves. Most bundled builds also install a root-URL fetch shim, but the GIF
+       * picker is shared with web/test shells where depending on that invisible rewrite made the
+       * selected instance an accident rather than part of this request. */
+      const base=_instanceBase();
+      let j={};
+      try{
+        if(!base) throw new Error('no connected instance');
+        const r=await fetch(base+'/client/gif?q='+encodeURIComponent(query||''),
+                            {credentials:'include'});
+        j=r.ok ? await r.json() : {error:'http_'+r.status};
+      }catch(_){ j={error:'unreachable'}; }
       const rs=j.results||[];
-      if(!rs.length){ grid.innerHTML='<div class="empty">'+(j.error?'GIF search not configured (set a Tenor key in Admin).':'No GIFs.')+'</div>'; return; }
+      if(!rs.length){ grid.innerHTML='<div class="empty">'+(j.error?'GIF search is unavailable on this connected instance. Add a Giphy or Tenor key in its Admin settings.':'No GIFs.')+'</div>'; return; }
       grid.innerHTML=rs.map(g=>`<img class="gif-item" src="${enc(g.preview)}" data-url="${enc(g.url)}" loading="lazy">`).join('');
       grid.querySelectorAll('.gif-item').forEach(im=> im.onclick=()=>{ ta.value+=(ta.value?'\n':'')+im.dataset.url+' '; ta.dispatchEvent(new Event('input',{bubbles:true})); bg.remove(); toast('GIF added'); });
     }

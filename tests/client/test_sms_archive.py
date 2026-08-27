@@ -335,6 +335,14 @@ class SendingFromAnotherDevice(unittest.TestCase):
         self.assertIn('id="sms-gif"', web)
         self.assertIn("PC.gifPicker(input)", web)
         self.assertIn("gifEnabled: () => !!CFG.gif_enabled", app)
+        picker = app[app.index("function gifPicker(ta)"):
+                     app.index("function blossomPicker", app.index("function gifPicker(ta)"))]
+        self.assertIn("const base=_instanceBase()", picker)
+        self.assertIn("fetch(base+'/client/gif?q='", picker)
+        self.assertIn("{credentials:'include'}", picker)
+        self.assertNotIn("fetch('/client/gif", picker,
+                         "the APK's local bundle origin can accidentally own GIF search")
+        self.assertIn("Giphy or Tenor key", picker)
 
     def test_a_laptop_queues_a_request_and_says_so(self):
         """It cannot reach a radio. Reporting the message as sent would be a lie the person only

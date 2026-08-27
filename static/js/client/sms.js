@@ -2432,7 +2432,13 @@
         if(!r.ok){ PC.toast(r.error || 'could not send'); return; }
         input.value = '';
         if(S.attach===attachment)clearAttachment();
-        PC.toast(r.where === 'phone' ? 'sent' : 'waiting for your phone to send it');
+        /* `link` is already a successful local SMS send: the media was encrypted into Files and
+         * its private link crossed this phone's radio. Calling that "waiting for your phone" made a
+         * completed oversize send look stuck. Only queued/queued-link are genuinely waiting on a
+         * different device. */
+        PC.toast(r.where === 'link' ? 'sent as a private Files link'
+                 : r.where === 'phone' ? 'sent'
+                 : 'waiting for your phone to send it');
         paint();
       }finally{
         sending = false;
