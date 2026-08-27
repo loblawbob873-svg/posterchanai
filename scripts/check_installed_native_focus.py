@@ -141,12 +141,32 @@ async def main():
                     **native["rect"], "scale": 1}})
                 (Path(evidence) / "native-before.png").write_bytes(base64.b64decode(before_shot["data"]))
 
-            # A normal Terminal overlap must leave native pixels live; only the transient Start
-            # overlay intentionally parks them so its controls can receive input.
+            # A native client is a floating Sway surface, so a higher managed Terminal cannot stack
+            # above it directly. The product parks only the covered surface and must show its
+            # captured nonblack preview; clicking that exact frame restores the same con_id.
             assert await cdp.eval(CLICK + "('.osw[data-pc-check-cover=\"1\"] .osw-bar')")
             await asyncio.sleep(.4)
             overlapped = await cdp.eval(STATE + f"({json.dumps(info['id'])})")
-            assert not overlapped["nativeStashed"] and not overlapped["compositorStashed"], overlapped
+            assert overlapped["nativeStashed"] and overlapped["compositorStashed"], overlapped
+            assert overlapped["shellFocused"] and overlapped.get("rect"), overlapped
+            overlap_shot = await cdp.call("Page.captureScreenshot", {"format": "png", "clip": {
+                **overlapped["rect"], "scale": 1}})
+            overlap_image = Image.open(io.BytesIO(base64.b64decode(overlap_shot["data"]))).convert("RGB")
+            overlap_stat = ImageStat.Stat(overlap_image)
+            overlap_mean, overlap_variance = sum(overlap_stat.mean) / 3, sum(overlap_stat.var) / 3
+            assert overlap_mean >= 45 and overlap_variance >= 250, {
+                "blackManagedOverlap": {"mean": overlap_mean, "variance": overlap_variance},
+                "state": overlapped}
+            body_selector = selector.replace(" .osw-bar", " .osw-body")
+            assert await cdp.eval(CLICK + "(" + json.dumps(body_selector) + ")")
+            for _ in range(40):
+                await asyncio.sleep(.1)
+                overlap_restored = await cdp.eval(STATE + f"({json.dumps(info['id'])})")
+                if (overlap_restored["nativeFocused"] and overlap_restored["compositorFocused"] and
+                        not overlap_restored["nativeStashed"]):
+                    break
+            else:
+                raise AssertionError({"managedOverlapDidNotRestore": overlap_restored})
             assert await cdp.eval("!!document.querySelector('#os-start') && (document.querySelector('#os-start').click(),true)")
             # Wait for both authorities and for the exact HTML placeholder rectangle to settle.
             # A scratchpad container's Sway rect is not this rectangle and may point at black space.
@@ -184,12 +204,12 @@ async def main():
                 "blackPlaceholder": {"mean": mean, "variance": variance, "nearblack": nearblack},
                 "state": covered}
             # The placeholder itself is the restore target; click it and require exact native state.
-            assert await cdp.eval(CLICK + "(" + json.dumps(selector.replace(" .osw-bar", " .osw-body")) + ")")
+            assert await cdp.eval(CLICK + "(" + json.dumps(body_selector) + ")")
             # Synthetic CDP pointer events are not trusted, so the document's outside-click handler
             # may leave Start open even though a real pointer closes it. Detect that exact overlay,
             # dismiss it explicitly, then repeat the same placeholder click—never a blind screen click.
             await cdp.eval("(()=>{const b=document.querySelector('#os-start.on');if(b)b.click();return true})()")
-            assert await cdp.eval(CLICK + "(" + json.dumps(selector.replace(" .osw-bar", " .osw-body")) + ")")
+            assert await cdp.eval(CLICK + "(" + json.dumps(body_selector) + ")")
             for _ in range(40):
                 await asyncio.sleep(.1)
                 restored = await cdp.eval(STATE + f"({json.dumps(info['id'])})")
@@ -204,7 +224,9 @@ async def main():
         finally:
             await cdp.eval(CLEANUP + f"({json.dumps(info)})")
 
-    print(f"OK installed native app yields/restores; parked mean={mean:.2f} variance={variance:.2f} nearblack={nearblack:.4f}")
+    print(f"OK installed native app yields/restores; overlap mean={overlap_mean:.2f} "
+          f"variance={overlap_variance:.2f}; parked mean={mean:.2f} variance={variance:.2f} "
+          f"nearblack={nearblack:.4f}")
     return 0
 
 

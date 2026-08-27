@@ -11,6 +11,9 @@ def test_installed_native_focus_gate_uses_real_dom_and_compositor_state():
     assert ".osw:not(.osw-native) .osw-bar" in SCRIPT
     assert 'covered["nativeStashed"] and covered["compositorStashed"]' in SCRIPT
     assert 'covered["shellFocused"]' in SCRIPT
+    assert 'overlapped["nativeStashed"] and overlapped["compositorStashed"]' in SCRIPT
+    assert '"blackManagedOverlap"' in SCRIPT
+    assert '"managedOverlapDidNotRestore"' in SCRIPT
 
 
 def test_installed_native_focus_gate_is_private_and_restores_state():
