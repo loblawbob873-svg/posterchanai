@@ -134,15 +134,15 @@ browser-only interaction into a current installed pass.
 
 | Release-gate requirement | Verified through current package | Still open |
 |---|---|---|
-| Concord behavior | Source/browser room, send, reply, reaction, scroll and responsive suites remain green; the current Desktop artifact includes the later managed-workspace sizing fix | Live two-identity send/reply/react/mention/moderation/attachment/Webxdc and current-package installed interaction |
+| Concord behavior | Source/browser room, send, reply, reaction, scroll and responsive suites remain green. Isolated authenticated 1.0.1106 drove the real Messages → Communities tab: Concord rendered, remained snapped/maximised with a 16px frame gutter, and filled its body to 1px | Live two-identity send/reply/react/mention/moderation/attachment/Webxdc remains external |
 | Responsive Concord | Browser phone/tablet/desktop sizing and managed-window fill have deterministic coverage | Physical phone/tablet rotation and the complete current-package navigation matrix |
 | App isolation | Ownership tests cover lazy modules, route replacement, focus preservation and Terminal/Social snap geometry; Concord is kept inside its owning Messages frame | Exhaustive installed 1.0.1106 click/focus/scroll sequence across every named app |
-| Files / Blossom | Desktop 1.0.1105 Files release is an ancestor of 1.0.1106; installed ASAR contains Locations and immutable package gates cover open-with/upload/native routing | Authenticated index/sync completeness and interactive upload/open-with rerun on 1.0.1106 |
-| Code | Disposable installed Git/diff/restore and Code/Terminal focus passed on the recorded earlier package; implementation and package gates remain in 1.0.1106 | Repeat the authenticated/disposable-repository interaction against 1.0.1106 |
+| Files / Blossom | Authenticated isolated 1.0.1106 matched 6,005 server and client entries. Its two mapped roots each matched relay = decrypted manifest = native scan (11,954 and 5,834) with zero skipped. Disposable native Files listed both fixtures, offered Code and host for `.conf`, and opened SVG in Preview | Physical-device Files behavior and unrelated external storage providers remain separate gates |
+| Code | Isolated installed 1.0.1106 selected a disposable Git repository, rendered its changed row and real diff, restored through the UI, returned to a clean tree and Explorer, and retained exclusive full-height Code/Terminal content across focus | User-selected non-disposable repositories remain outside automation by design |
 | PosterChanOS / native windows | 1.0.1106 includes atomic handoff, nonblack stash fallback and the zero-screen-coordinate left-snap drag fix. Local exact Terminal-left/Firefox-right coverage passed 1600/1280/1024, three cycles each; native probes now require a disposable app ID/PID | Final installed disposable Firefox/Telegram focus, preview, restore and cross-output repetition on 1.0.1106; do not infer this from ASAR markers |
 | Texts / Social | SMS resume/attachment and Social route/scroll-state suites remain covered. The 1600px Social wheel red was a headless verifier defect: the real wheel reached the exact writable feed unprevented; the corrected full desktop matrix passes | Carrier SMS/MMS and live offline/reply/thread preservation remain external gates |
 | Release propagation | Desktop workflow 33121179501 succeeded for Linux/Windows/macOS and publish at target `1cfd14462`; immutable 1.0.1106 Linux asset and Manifest both report 152,164,017 bytes. The desktop reports Desktop 1.0.1106 and shell 1.0.20260827221110 | Current web revision, physical Android installation, carrier/external services and physical USB boot remain separate gates |
-| Installed account gate | Earlier installed Files/sync completeness and real Collabora WOPI edit/save/readback remain valid historical evidence | Authenticated loopback-CDP rerun on Desktop 1.0.1106 |
+| Installed account gate | Isolated authenticated 1.0.1106 passed Files/sync completeness and native Files/Preview. Collabora returned HTTP 200, accepted real editor input, saved through WOPI and preserved the edit in the resulting ODT; the disposable Office session was deleted | No current-package account gate remains; future releases must rerun it |
 
 - The dual-monitor desktop currently reports Desktop 1.0.1106 and shell
   1.0.20260827221110 from the Gentoo packages. `/opt/posterchan/resources/app.asar` is 15,615,681
@@ -150,6 +150,16 @@ browser-only interaction into a current installed pass.
   the Desktop package. Read-only marker checks found the zero-screen-coordinate Terminal drag fix,
   the nonblack native-stash fallback and File Manager Locations implementation in that installed
   ASAR. This proves installed payload identity, not that every interaction below was rerun on 1.0.1106.
+- The final authenticated interaction used the installed binary with a private temporary profile and
+  loopback-only CDP. Only the small authentication/state stores were copied; caches and account
+  contents were not emitted. The exact diagnostic PID was parked in Sway's scratchpad while the
+  canonical process continued running. It passed the Files/sync, native Files/Preview, Office/WOPI,
+  Code Git/diff/restore/focus, ten-page Settings and Concord managed-workspace checks recorded in the
+  table above. The disposable Office session and Git/files fixtures, diagnostic process/profile and
+  local tunnel were removed. A final compositor read found only canonical con_ids 10 and 11, both
+  visible and non-scratchpad, one full 3840×2560 surface on each physical output. No Firefox or VM
+  was targeted: final disposable native focus/handoff/preview, explicit disposable-VM lifecycle,
+  physical phone/tablet/USB, carrier and external two-identity gates remain open.
 - Earlier Desktop workflow 33100871080 completed successfully at `eb2dea16`. Both the rolling release and
   immutable `desktop-v1.0.1083` release expose the same 152,166,782-byte Linux tarball, SHA-256
   `9ef5c0d19148f4e309404f0a3ae9099435a630710d200e7d8592544fd86f83dd`. The public overlay head is
