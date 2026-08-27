@@ -32,7 +32,7 @@ test, deployment/package, and relevant real-device check are complete. The insta
 
 ## 3. Blossom and file opening
 
-- [ ] All encrypted folders/files and sync manifests recover without destructive zero-entry writes,
+- [x] All encrypted folders/files and sync manifests recover without destructive zero-entry writes,
       missing partial listings, lost folders, or stale signer state.
 - [ ] Restored file/folder appearance and icons remain intact.
 - [ ] Open-with supports PosterChan Code for every suitable file, `.conf` and `.csv`; PDFs use Preview;

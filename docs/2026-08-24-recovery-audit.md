@@ -114,3 +114,23 @@ This is evidence from the recovery pass, not a declaration that the whole queue 
 | Installed 1.0.980 account gate | Authenticated installed Electron rendered 29 folders and 30 entries; server and client indexes matched at 5,983 files. Both registered sync roots matched server = manifest = local (11,954 and 5,820) with zero skipped. Office/WOPI returned HTTP 200; the gate attached to Collabora's iframe target, found a complete non-read-only workspace with controls, and proved an editor-entered string persisted inside the saved ODT. The one-off loopback-only diagnostic launch was then stopped and the canonical no-CDP shell restored | Passed against the final installed package |
 | Post-deploy full gate | First `./test.sh --live https://poster.place`: 4,024 unit tests, 1,615 client tests, and 62/64 browser/live checks passed. The two red checks reproduced clean alone: profile/search stability passed 20/20 cold flows and QR device login passed clock skew, idle socket, two-app and reload/signing scenarios. The repeat produced 4,026 unit passes, 1,614 client passes with one transient skip, and 63 browser/live passes with zero failures: isolated QR and stability were green, while Full Sync and the installed-account gate skipped. `0593d11b` registers Full Sync as an isolated live check and preserves the installed gate's external port through discovery; runner-driven focused reruns then passed Full Sync (65s) and installed Files/Office (11s), both with zero skips. The client suite was rerun with skip reasons enabled and passed all 1,615 tests plus 99 subtests. CSS scale remains an advisory (498 values) | All functional gates pass; the evidence is the two complete runs plus explicit clean reruns of every non-pass |
 | Clean ISO 2026-08-26 | `/home/pc-5ac337fb7cb82127/livecd/posterchan-live-20260826.iso`, 3,570,515,968 bytes, SHA-256 `29df378fc5fad39f04969ffdee40b429675977bdba520d95e5813827d9dc040a`. It contains Desktop 1.0.980 and shell 1.0.20260826083717. Independent inspection found hybrid MBR/GPT and bootable BIOS/UEFI El Torito entries. The original quiet/Plymouth default reproducibly stalled at switch-root while the diagnostic entry reached first-run; `c99eafeb` removes that unsafe flag from both ordinary modes and `e704439c` prevents shell expansion inside the generated GRUB heredoc. The final generated menu was read back from the ISO and the default entry booted under host-CPU KVM to the PosterChanOS Tor wizard at 1280×800 | Final artifact built and default-menu host-profile boot passed; physical USB boot remains the hardware gate |
+
+## 2026-08-27 current-package verification
+
+- Desktop 1.0.1083 and shell 1.0.20260827175951 are installed on both the dual-monitor desktop and
+  laptop from the public Gentoo overlay. The immutable tarball checksum was verified before the
+  overlay was published; the diagnostic shell was removed afterward and the canonical no-CDP shell
+  restored.
+- The installed account gate rendered 29 File Manager folders and 6,000/6,000 account files. Its two
+  real sync roots matched relay = decrypted manifest = native disk scan at 11,954 and 5,833 entries,
+  with zero skipped files. This run caught and fixed both second-resolution relay page truncation and
+  a delta cache that could retain stale records indefinitely; full re-anchoring is now periodic.
+- The same installed run loaded Collabora with HTTP 200, accepted real editor input, saved through
+  WOPI, and proved the resulting ODT contained the edit. The disposable Office session was deleted.
+- Installed PosterChan Code selected a disposable local Git repository, showed its modified file and
+  real diff, restored it through the UI, returned to a clean tree and Explorer, and retained correct
+  full-height Code/Terminal sizing across focus changes.
+- Folder/paging regressions passed 122 tests plus three subtests; current File Manager/Office tests
+  passed 53 tests; Android launcher/background-Music tests passed 149 tests plus 17 subtests. Signed
+  APK 1.0.1802 was published from `eb2dea16`; its exact-commit API-34 emulator gate completed
+  successfully. Physical-phone playback remains open because no ADB device was attached.
