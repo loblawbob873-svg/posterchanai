@@ -134,6 +134,15 @@ class PosterfetchTests(unittest.TestCase):
         self.assertNotRegex(body, r"if \(name \|\| driver\) return",
                             "a second GPU would never be inspected")
 
+    def test_network_enumeration_failure_cannot_break_the_banner_or_shell(self):
+        js = ("const os=require('os'); os.networkInterfaces=()=>{throw new Error('offline')}; "
+              "const p=require('./desktop/posterfetch.js'); "
+              "const out=p.render({COLORTERM:'truecolor'},80); "
+              "if(!out.includes('offline')) process.exit(2); console.log('offline banner ok')")
+        got = subprocess.run(["node", "-e", js], cwd=ROOT, text=True,
+                             capture_output=True, timeout=10)
+        self.assertEqual(got.returncode, 0, got.stderr or got.stdout)
+
     def test_each_new_local_tab_buffers_one_welcome(self):
         src = (ROOT / "desktop/localterm.js").read_text()
         self.assertIn("require('./posterfetch.js')", src)

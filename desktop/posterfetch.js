@@ -101,10 +101,15 @@ function gpu() {
 }
 function network() {
   const rows = [];
-  for (const [name, addrs] of Object.entries(os.networkInterfaces())) {
-    const a = (addrs || []).find(x => x && x.family === 'IPv4' && !x.internal);
-    if (a) rows.push(`${name} ${a.address}`);
-  }
+  /* This is decoration, never a dependency of the local shell. libuv can reject interface
+   * enumeration while networking is being reconfigured; letting that exception escape aborts
+   * localterm.start before the prompt exists. */
+  try {
+    for (const [name, addrs] of Object.entries(os.networkInterfaces() || {})) {
+      const a = (addrs || []).find(x => x && x.family === 'IPv4' && !x.internal);
+      if (a) rows.push(`${name} ${a.address}`);
+    }
+  } catch (_) { return 'offline'; }
   return clean(rows.join(' · '), 'offline');
 }
 function diskBytes(home) {
