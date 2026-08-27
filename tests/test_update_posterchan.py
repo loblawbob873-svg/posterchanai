@@ -67,6 +67,13 @@ class TheCommandExists(unittest.TestCase):
         self.assertIn('chmod 0755 "$NEW/resources/tor/tor/tor"', updater)
         self.assertIn("test -x dist/linux-unpacked/resources/tor/tor/tor", workflow)
 
+    def test_desktop_package_owns_the_wrapper_path_the_installer_puts_first(self):
+        desktop_ebuilds = sorted((ROOT / "os/overlay/app-misc/posterchan-desktop").glob("*.ebuild"))
+        ebuild = desktop_ebuilds[-1].read_text()
+        self.assertIn("exeinto /usr/local/bin", ebuild)
+        self.assertIn("newexe - posterchan", ebuild)
+        self.assertNotIn("newbin - posterchan", ebuild)
+
     def test_privileged_helper_rules_are_package_owned(self):
         """An update must make multi-user login work, not only a fresh gentoo.sh install."""
         ebuild = EBUILD.read_text()

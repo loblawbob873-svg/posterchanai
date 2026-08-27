@@ -76,7 +76,11 @@ src_install() {
 	# A WRAPPER, NOT A SYMLINK: AppRun finds the binary through $APPDIR, which the AppImage RUNTIME
 	# sets — exactly the thing extracting removes. Symlinked, it resolves to "/posterchan-desktop:
 	# No such file or directory", a path that was never real.
-	newbin - posterchan <<-'WRAP'
+	# Match the installer's canonical path. It already creates /usr/local/bin/posterchan, which wins
+	# over /usr/bin in PATH; installing the package wrapper under /usr/bin leaves that older unowned
+	# file shadowing every future wrapper update even though emerge reports success.
+	exeinto /usr/local/bin
+	newexe - posterchan <<-'WRAP'
 		#!/bin/sh
 		export APPDIR=/opt/posterchan
 		: "${ELECTRON_OZONE_PLATFORM_HINT:=auto}"
