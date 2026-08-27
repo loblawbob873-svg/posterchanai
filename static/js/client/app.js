@@ -654,11 +654,20 @@
     }catch(_){}
   }
   function activateNavView(v){
-    if(v === VIEW && _TL_TABS.indexOf(v) >= 0){
-      timelineTop(v);
+    /* Compare the destination the button REALLY names. Social is printed as `global`, but when
+     * Nostrverse is hidden switchView resolves it through the configured start timeline. Comparing
+     * the raw slug meant repeated Social taps were repeated no-op navigations to Home, never the
+     * active-timeline refresh/top gesture. Resolve first so alternate timeline preferences retain
+     * the same second-tap contract as an ordinary visible tab. */
+    let target=v;
+    if(_TL_TABS.indexOf(target) >= 0){
+      try{ if(tlHiddenSet().has(target)) target=_startTimeline(); }catch(_){}
+    }
+    if(target === VIEW && _TL_TABS.indexOf(target) >= 0){
+      timelineTop(target);
       return;
     }
-    switchView(v);
+    switchView(target);
   }
 
   function timelineTop(view){

@@ -38,6 +38,9 @@ class SocialButtonTests(unittest.TestCase):
         m = re.search(r"function _startTimeline\(\)\{.*?\n  \}", src, re.S)
         assert m, "_startTimeline is gone from app.js"
         cls.start_tl = m.group(0)
+        m = re.search(r"function activateNavView\(v\)\{.*?\n  \}", src, re.S)
+        assert m, "activateNavView is gone from app.js"
+        cls.activate = m.group(0)
 
     def _route(self, view, hidden, start_pref, guest=False):
         js = """
@@ -73,6 +76,35 @@ class SocialButtonTests(unittest.TestCase):
 
     def test_non_timeline_views_are_untouched(self):
         self.assertEqual(self._route("messages", ["global"], "home"), "messages")
+
+    def _activate(self, pressed, active, hidden, start_pref):
+        js = """
+        const _TL_TABS = ['home','global','trending'];
+        const ClientSettings = { get: (k, d) => k === 'startTimeline' ? %s : d };
+        const tlHiddenSet = () => new Set(%s);
+        const GUEST = false;
+        let VIEW = %s;
+        const events=[];
+        const timelineTop=v=>events.push('top:'+v);
+        const switchView=v=>events.push('view:'+v);
+        %s
+        %s
+        activateNavView(%s);
+        process.stdout.write(JSON.stringify(events));
+        """ % (json.dumps(start_pref), json.dumps(hidden), json.dumps(active),
+                 self.start_tl, self.activate, json.dumps(pressed))
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr[-1500:])
+        return json.loads(r.stdout)
+
+    def test_repeated_social_refreshes_its_configured_visible_timeline(self):
+        """A hidden Social/Nostrverse button resolves to configured Home before deciding whether
+        this is a repeated activation; the second tap must refresh, not navigate to the same view."""
+        self.assertEqual(self._activate("global", "home", ["global"], "home"), ["top:home"])
+
+    def test_visible_social_still_refreshes_and_other_views_still_navigate(self):
+        self.assertEqual(self._activate("global", "global", [], "home"), ["top:global"])
+        self.assertEqual(self._activate("global", "home", [], "home"), ["view:global"])
 
 
 if __name__ == "__main__":
