@@ -2101,6 +2101,11 @@
   let nativeTasks = [];
   let nativeMenuHidden = [];
   const _nativeDecorated = new Set();
+  /* GET_TREE and desktop-entry discovery are asynchronous. Window events can overlap those reads:
+   * an old "Firefox still exists here" pass completing after a close or monitor handoff used to
+   * recreate an HTML frame whose native pixels were already gone — the intermittent black window
+   * after Quit. Only the most recently requested compositor view may mutate ownership. */
+  let _nativeAdoptPass = 0;
 
   /* AN OPEN MENU PUTS AWAY WHAT IT COVERS, AND NOTHING ELSE.
    *
@@ -2480,6 +2485,7 @@
   /* Whatever the compositor has that we have not framed yet. */
   async function adoptAll(){
     if(!window.pcWM || !window.PCOSShell || !PCOSShell.available()) return false;
+    const pass = ++_nativeAdoptPass;
     let list = [];
     let allIds = null;
     try{
@@ -2495,6 +2501,7 @@
      * so Telegram/Firefox launched from a shortcut appeared as the generic grid until then. The
      * scan is session-cached and concurrent callers share one promise. */
     try{ if(PCOSShell.machineApps) await PCOSShell.machineApps(); }catch(_){}
+    if(pass !== _nativeAdoptPass) return false;
     try{ rows = PCOSShell.taskbarRows(list); }catch(_){ rows = []; }
     let changed = JSON.stringify(nativeTasks.map(r => [r.id,r.title,r.focused,r.stashed]))
                !== JSON.stringify(rows.map(r => [r.id,r.title,r.focused,r.stashed]));
@@ -6453,6 +6460,9 @@
         try{
           if(pcWM.onNativeHandoff) _nativeHandoffOff=pcWM.onNativeHandoff((row)=>{
             if(!row || row.id==null)return;
+            /* A tree read begun before the compositor moved this surface still says it belongs to
+             * the source output. Invalidate that read before establishing destination ownership. */
+            _nativeAdoptPass++;
             const w=adoptNative(row);
             if(w){
               const id=Number(row.id);

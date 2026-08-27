@@ -113,6 +113,19 @@ def test_native_apps_inherit_the_dark_gtk_chrome():
         assert "GTK_APPLICATION_PREFER_DARK_THEME=1" in start
 
 
+def test_stale_native_tree_reads_cannot_recreate_a_black_frame_after_quit_or_handoff():
+    src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+    adopt = src[src.index("async function adoptAll()"):
+                src.index("function closeWin(w, opts)")]
+    assert "const pass = ++_nativeAdoptPass" in adopt
+    guard = adopt.index("if(pass !== _nativeAdoptPass) return false")
+    assert guard < adopt.index("nativeTasks = rows")
+    assert guard < adopt.index("adoptNative(r)")
+    receiver = src[src.index("pcWM.onNativeHandoff"):
+                   src.index("if(pcWM.onHandoffFrame")]
+    assert receiver.index("_nativeAdoptPass++") < receiver.index("adoptNative(row)")
+
+
 def test_resized_and_rejected_handoff_windows_stay_inside_the_desktop():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
     assert "function keepFrameReachable(w)" in src
