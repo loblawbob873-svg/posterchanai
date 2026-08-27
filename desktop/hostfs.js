@@ -47,8 +47,10 @@ function parentOf(p) {
   return up === c ? null : up;
 }
 
-/* One directory entry, in the shape the explorer's comparator already understands: a name, a size,
- * a modified time and whether it is a folder. */
+/* One directory entry, in the shape the explorer's comparator already understands. Keep birthtime
+ * separately: list mode calls this “Date created”, and showing mtime there makes an old file look
+ * newly created merely because it was edited. Filesystems without birth time legitimately fall
+ * back to mtime in the client. */
 function shape(dir, name, st, lst) {
   const isLink = !!(lst && lst.isSymbolicLink());
   const s = st || lst;
@@ -61,6 +63,7 @@ function shape(dir, name, st, lst) {
      * not interleave every folder in the middle of the files. */
     size: (s && s.isDirectory()) ? 0 : Number((s && s.size) || 0),
     mtime: Number((s && s.mtimeMs) || 0),
+    created: Number((s && s.birthtimeMs) || 0),
     link: isLink,
     /* Dotfiles are marked, not dropped: the explorer decides whether to show them, the same way
      * every file manager has a switch for it. */

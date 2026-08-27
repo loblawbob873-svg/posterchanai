@@ -65,7 +65,7 @@ function install() {
   };
   // node 21+ defines a real `navigator` with only a getter, so it has to be REPLACED, not assigned.
   Object.defineProperty(global, 'navigator', { value: {}, configurable: true, writable: true });
-  global.URL = { _live: 0, createObjectURL() { this._live++; return 'blob:x' + this._live; },
+  global.URL = { _live: 0, _lastType: '', createObjectURL(blob) { this._live++; this._lastType = blob.type; return 'blob:x' + this._live; },
                  revokeObjectURL() { this._live--; } };
   global.Blob = class { constructor(parts, opts) { this.type = (opts && opts.type) || '';
                                                    this.size = 10; } };
@@ -140,6 +140,17 @@ console.log('a video is playsinline and preloads only metadata');
         'without it iOS goes full screen on play and throws away the window');
   check('preload=metadata', /preload="metadata"/.test(host._html));
   check('controls', /controls/.test(host._html));
+  P.close();
+}
+
+console.log('an old Blossom MP4 returned as generic binary is playable');
+{
+  P.open({ name: 'camera.mp4', mime: 'application/octet-stream',
+           blob: new global.Blob([], { type: 'application/octet-stream' }) });
+  check('generic MP4 is rebuilt with video/mp4', global.URL._lastType === 'video/mp4',
+        'object URL type was ' + global.URL._lastType);
+  const host = global.document.body.children[0];
+  check('loading is visible instead of a silent black rectangle', /Loading video/.test(host._html));
   P.close();
 }
 

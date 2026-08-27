@@ -53,6 +53,23 @@
          : isPdf(name, mime) ? 'pdf' : '';
   }
 
+  /* Blossom servers are allowed to return application/octet-stream (and older uploads often do).
+   * A blob URL keeps that type, so Chromium hands an otherwise valid MP4 to <video> as generic
+   * binary and the result is a black rectangle with controls that never start. Infer only the
+   * media types we actually preview; the filename remains the authority for these generic blobs. */
+  function inferredType(name, kind) {
+    var ext = String(name || '').toLowerCase().match(/\.([a-z0-9]+)$/);
+    ext = ext ? ext[1] : '';
+    if (kind === 'video') return ({ mp4:'video/mp4', m4v:'video/mp4', mov:'video/quicktime',
+      webm:'video/webm', ogv:'video/ogg', '3gp':'video/3gpp', mkv:'video/x-matroska',
+      avi:'video/x-msvideo' })[ext] || 'video/mp4';
+    if (kind === 'audio') return ({ mp3:'audio/mpeg', m4a:'audio/mp4', aac:'audio/aac',
+      ogg:'audio/ogg', oga:'audio/ogg', opus:'audio/ogg', wav:'audio/wav', flac:'audio/flac' })[ext] || '';
+    if (kind === 'image') return ({ jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png',
+      gif:'image/gif', webp:'image/webp', avif:'image/avif', svg:'image/svg+xml' })[ext] || '';
+    return kind === 'pdf' ? 'application/pdf' : '';
+  }
+
   var _pdfjs = null;
   function loadPdfJs() {
     if (root.pdfjsLib) return Promise.resolve(root.pdfjsLib);
@@ -131,7 +148,7 @@
        * window this was opened in. `preload="metadata"` so the poster frame and the duration are
        * there before anybody presses play, without pulling the whole file. */
       body = '<div class="pv-body pv-av-wrap"><video class="pv-vid" controls playsinline '
-           + 'preload="metadata"></video></div>';
+           + 'preload="metadata"></video><div class="pv-media-state">Loading video…</div></div>';
     } else if (kind === 'audio') {
       body = '<div class="pv-body pv-av-wrap"><audio class="pv-aud" controls preload="metadata">'
            + '</audio></div>';
@@ -173,6 +190,8 @@
     } else if (kind === 'video' || kind === 'audio') {
       var av = q(kind === 'video' ? '.pv-vid' : '.pv-aud');
       av.src = url;
+      var state = q('.pv-media-state');
+      av.onloadedmetadata = function () { if (state) state.remove(); };
       /* A CODEC THIS BROWSER CANNOT PLAY MUST SAY SO. A <video> handed a container it cannot decode
        * (an .mkv or an .avi almost anywhere, HEVC in Firefox) fires `error` and then shows a black
        * rectangle with dead controls, which reads as a broken player rather than an unsupported
@@ -182,6 +201,9 @@
         if (b) b.innerHTML = '<div class="empty">This browser cannot play that format.'
           + '<br>Download it and open it in a real player.</div>';
       };
+      /* Explicit load matters in Android WebView and after a desktop document window is recycled:
+       * assigning a blob URL alone can leave the old, empty media resource selected. */
+      try { av.load(); } catch (_) {}
     } else if (kind === 'pdf') {
       renderPdf(host, blob);
     }
@@ -216,8 +238,9 @@
     /* A PDF must be handed to the viewer as a PDF. A blob rebuilt from an ArrayBuffer has an EMPTY
      * type, and an <iframe> at a blob: url with no type is downloaded or ignored rather than
      * rendered - the picture works either way, which is exactly how this would ship half-broken. */
-    if (!blob.type) {
-      var t = mime || (kind === 'pdf' ? 'application/pdf' : '');
+    var generic = !blob.type || /^application\/(octet-stream|binary)$/i.test(blob.type);
+    if (generic) {
+      var t = (!/^application\/(octet-stream|binary)$/i.test(mime) && mime) || inferredType(name, kind);
       if (t) { try { blob = new Blob([blob], { type: t }); } catch (_) {} }
     }
 

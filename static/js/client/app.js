@@ -17615,7 +17615,7 @@
    *
    * Sort and view mode are per device (localStorage), not per account: which way someone likes to
    * look at a folder belongs to the screen they are looking at it on. */
-  const _FX_COLS = [['name','Name'],['size','Size'],['type','Type'],['modified','Modified']];
+  const _FX_COLS = [['name','Name'],['size','Size'],['type','Type'],['modified','Date created']];
   function _fxView(){ return ClientSettings.get('filesView','tiles')==='details' ? 'details' : 'tiles'; }
   function _fxSort(){
     const s = ClientSettings.get('filesSort', null);
@@ -17761,6 +17761,7 @@
    * "the page never rendered", which is a check that cannot run rather than one that passes. */
   function _fxBarHTML(crumbs, canBack, canNewFolder){
     const v = _fxView();
+    const s = _fxSort();
     /* BACK AND UP — the two controls every file manager has and this one did not.
      *
      * Browsing was breadcrumbs only, which can go UP but never BACK: walking into a folder, into a
@@ -17781,6 +17782,8 @@
              placeholder="🔍 Search files" aria-label="Search files" value="${enc(_filesQ)}">
       <div class="fx-views">
         ${canNewFolder ? `<button class="fx-newfolder" id="bl-newfolder" title="New folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg><span>New folder</span></button>` : ''}
+        <label class="fx-sort-wrap"><span>Sort by</span><select class="fx-sort" id="fx-sort" aria-label="Sort by">${_FX_COLS.map(([k,l])=>`<option value="${k}"${s.by===k?' selected':''}>${l}</option>`).join('')}</select></label>
+        <button class="fx-sort-dir" id="fx-sort-dir" title="Reverse sort" aria-label="Reverse sort">${s.dir===1?'▲':'▼'}</button>
         <button class="fx-vw${v==='tiles'?' on':''}" data-view="tiles" title="Tiles" aria-label="Tiles"><svg class="ic b-ic" aria-hidden="true"><use href="#i-grid"></use></svg></button>
         <button class="fx-vw${v==='details'?' on':''}" data-view="details" title="Details" aria-label="Details"><svg class="ic b-ic" aria-hidden="true"><use href="#i-bars"></use></svg></button>
       </div></div>`;
@@ -17852,6 +17855,14 @@
       if(!_hostOn && !_syncRoot && _filesFolder === null) _filesFolder = '';
       renderBlossom();
     });
+    { const sort=$('#fx-sort',pane); if(sort) sort.onchange=()=>{
+        const cur=_fxSort();
+        ClientSettings.set('filesSort',{by:sort.value,dir:(sort.value==='name'||sort.value==='type')?1:-1});
+        if(cur.by===sort.value) ClientSettings.set('filesSort',cur);
+        renderBlossom();
+      };
+      const dir=$('#fx-sort-dir',pane); if(dir) dir.onclick=()=>{ const cur=_fxSort();
+        ClientSettings.set('filesSort',{by:cur.by,dir:-cur.dir}); renderBlossom(); }; }
     { const nf=$('#bl-newfolder',pane); if(nf) nf.onclick=_newFolderModal; }
     /* ONE ROUTER FOR EVERY WAY OF MOVING. A crumb, Up and Back all mean "go to this place", and the
      * place is one of three sources (drive folder, synced folder, this computer). A second copy of

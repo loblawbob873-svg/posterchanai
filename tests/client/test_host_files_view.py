@@ -65,6 +65,18 @@ class HostFilesView(unittest.TestCase):
         self.assertEqual(out["f"], 4096)
         self.assertEqual(out["t"], "txt")
 
+    def test_created_sort_prefers_filesystem_birth_time(self):
+        out = self.js("out.at = F.keyOf({ created: 20, mtime: 90 }, 'modified');"
+                      "out.old = F.keyOf({ mtime: 12 }, 'modified');")
+        self.assertEqual(out["at"], 20)
+        self.assertEqual(out["old"], 12, "filesystems without birth time need a useful fallback")
+
+    def test_toolbar_has_explicit_sort_controls_and_created_column(self):
+        app = open(APP, encoding="utf-8").read()
+        self.assertIn("['modified','Date created']", app)
+        self.assertIn('id="fx-sort"', app)
+        self.assertIn('id="fx-sort-dir"', app)
+
     def test_every_ancestor_in_the_path_is_clickable(self):
         """The way back up is the most used control in a file manager, and a text field is not it."""
         out = self.js("out.c = F.crumbs('/home/x/Documents');out.r = F.crumbs('/');")

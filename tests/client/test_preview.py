@@ -138,6 +138,15 @@ class PreviewIsReachable(unittest.TestCase):
         src = _read("static/js/client/preview.js")
         self.assertIn(".pause()", src, "a closed window would keep talking")
 
+    def test_generic_blossom_video_is_given_a_real_media_type(self):
+        """Old Blossom objects commonly say octet-stream; preserving that on the blob URL makes
+        Chromium render a black video surface and refuse to start an otherwise valid MP4."""
+        src = _read("static/js/client/preview.js")
+        self.assertIn("application\\/(octet-stream|binary)", src)
+        self.assertIn("mp4:'video/mp4'", src)
+        self.assertIn("av.load()", src)
+        self.assertIn("Loading video", src)
+
 
 if __name__ == "__main__":
     unittest.main()

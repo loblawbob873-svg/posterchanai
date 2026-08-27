@@ -30,7 +30,7 @@
   function keyOf(entry, col){
     const e = entry || {};
     if(col === 'size') return e.dir ? -1 : Number(e.size || 0);
-    if(col === 'modified') return Number(e.mtime || 0);
+    if(col === 'modified') return Number(e.created || e.mtime || 0);
     if(col === 'type') return e.dir ? '' : (String(e.name || '').split('.').pop() || '').toLowerCase();
     return String(e.name || '');
   }
@@ -186,7 +186,7 @@
       if(details) return (u.row || (() => ''))({
         dir: e.dir, selected: sel, name: e.name + (e.link ? ' ↗' : ''), title: e.path,
         icon: ic, size: e.dir ? '' : fmt(e.size), type: e.dir ? 'Folder' : typeName(ext),
-        when: when(e.mtime),
+        when: when(e.created || e.mtime),
         box: `<button class="selbox hf-select" type="button" aria-label="${sel ? 'Deselect' : 'Select'} ${H(e.name)}"
           aria-pressed="${sel ? 'true' : 'false'}">${sel ? '✓' : ''}</button>`,
         acts: '',

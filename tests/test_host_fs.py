@@ -81,6 +81,11 @@ class HostFs(unittest.TestCase):
         out = self.js("out.e = H.list(D).entries.find(x => x.name === '.hidden');")
         self.assertTrue(out["e"]["hidden"])
 
+    def test_list_includes_the_filesystem_created_time(self):
+        open(os.path.join(self.d, "dated.txt"), "w").write("x")
+        out = self.js("out.e = H.list(D).entries.find(x => x.name === 'dated.txt');")
+        self.assertGreater(out["e"]["created"], 0)
+
     def test_an_unreadable_directory_THROWS_rather_than_looking_empty(self):
         """"I could not read that" and "there is nothing in it" are different facts, and a file
         manager that confuses them shows somebody an empty folder full of their files."""

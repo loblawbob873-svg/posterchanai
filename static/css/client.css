@@ -8084,6 +8084,12 @@ html.os-on #upload-badge.upbadge{z-index:333}
 .fx-find{flex:1 1 180px;min-width:110px;max-width:340px;height:34px;padding:6px 10px;font-size:13px}
 @media (max-width:520px){ .fx-find{flex:1 1 100%;max-width:none;order:3;margin-top:6px} }
 .fx-views{display:flex;gap:4px;flex:0 0 auto}
+.fx-sort-wrap{display:flex;align-items:center;gap:5px;color:var(--muted);font-size:12px;white-space:nowrap}
+.fx-sort{height:32px;max-width:132px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);
+  color:var(--text);padding:4px 24px 4px 8px;font:inherit;font-size:12px}
+.fx-sort-dir{width:32px;height:32px;border:1px solid var(--line);border-radius:8px;background:none;
+  color:var(--muted);cursor:pointer}
+.fx-sort-dir:hover{color:var(--text);border-color:var(--cyan)}
 .fx-newfolder{display:inline-flex;align-items:center;gap:6px;background:rgba(var(--accent-rgb),.12);
   border:1px solid var(--cyan);border-radius:8px;color:var(--text);cursor:pointer;font:inherit;
   font-size:13px;font-weight:650;line-height:1;padding:6px 10px;min-height:32px;white-space:nowrap}
@@ -8197,7 +8203,7 @@ html.os-on #upload-badge.upbadge{z-index:333}
   .fx-sec > b{padding:0 4px 0 0;flex:0 0 auto}
   .fx-secnote{padding:0;flex:0 0 auto}
   .folder-chip .fx-n{margin-inline-start:6px}
-  /* Type and Modified are the first columns to go: a name and a size are what a phone screen has
+  /* Type and Date created are the first columns to go: a name and a size are what a phone screen has
      room for, and a truncated date is worse than no date. */
   .fx-cols,.files-grid.details .file-card.row{grid-template-columns:44px minmax(0,1fr) 66px 44px;gap:4px}
   .fx-cols{padding-inline:4px}
@@ -9146,8 +9152,10 @@ audio.sms-att-img{min-width:220px}
   transition:transform .15s ease}
 .pv-img.pv-actual{max-width:none;max-height:none;object-fit:none;cursor:zoom-out}
 .pv-img-wrap{padding:0}
-.pv-av-wrap{padding:0}
+.pv-av-wrap{padding:0;position:relative}
 .pv-vid{max-width:100%;max-height:100%;display:block;background:#000}
+.pv-media-state{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;
+  color:#fff;background:radial-gradient(circle,rgba(0,0,0,.28),rgba(0,0,0,.72));font-size:14px}
 .pv-aud{width:min(560px,92%)}
 .pv-pdf-body{display:block;background:#202124;padding:10px;overflow:auto}
 .pv-pdf-pages{width:100%;display:flex;flex-direction:column;align-items:center;gap:10px;min-height:100%}
