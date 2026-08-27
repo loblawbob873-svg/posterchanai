@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Boot a PosterChanOS ISO and prove its graphical session stays visible.
+"""Boot a PosterChanOS ISO or installed disk and prove its graphical session stays visible.
 
 This is intentionally a release *probe*, not an ISO builder.  QEMU's HMP ``screendump`` command
 samples the guest framebuffer without requiring a working guest network or an interactive viewer.
@@ -88,15 +88,25 @@ def wait_for_socket(path: Path, proc: subprocess.Popen, seconds: int = 20) -> No
     raise RuntimeError("QEMU monitor did not open")
 
 
-def run(iso: Path, timeout: int, interval: int) -> int:
+def qemu_command(source: Path, installed_disk: bool, monitor: Path, serial: Path) -> list[str]:
     qemu = os.environ.get("QEMU", "qemu-system-x86_64")
+    cmd = [qemu, "-machine", "q35,accel=kvm" if Path("/dev/kvm").exists() else "q35",
+           "-m", "4096", "-smp", "2"]
+    if installed_disk:
+        # Deliberately NO cdrom device: this is the post-installer eject/reboot gate, not another
+        # successful boot from the LiveCD masquerading as proof that the installed disk works.
+        cmd += ["-drive", f"file={source},if=virtio,format=qcow2", "-boot", "c"]
+    else:
+        cmd += ["-cdrom", str(source), "-boot", "d"]
+    return cmd + ["-display", "none", "-monitor", f"unix:{monitor},server=on,wait=off",
+                  "-serial", f"file:{serial}", "-no-reboot"]
+
+
+def run(source: Path, timeout: int, interval: int, installed_disk: bool = False) -> int:
     with tempfile.TemporaryDirectory(prefix="pc-livecd-smoke-") as raw:
         work = Path(raw)
         monitor, serial = work / "monitor.sock", work / "serial.log"
-        cmd = [qemu, "-machine", "q35,accel=kvm" if Path("/dev/kvm").exists() else "q35",
-               "-m", "4096", "-smp", "2", "-cdrom", str(iso), "-boot", "d",
-               "-display", "none", "-monitor", f"unix:{monitor},server=on,wait=off",
-               "-serial", f"file:{serial}", "-no-reboot"]
+        cmd = qemu_command(source, installed_disk, monitor, serial)
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         try:
             wait_for_socket(monitor, proc)
@@ -114,7 +124,8 @@ def run(iso: Path, timeout: int, interval: int) -> int:
                 if graphical:
                     seen, stable = True, stable + 1
                     if stable >= 3:
-                        print(f"LiveCD graphical boot stable across {stable} samples")
+                        label = "installed-disk" if installed_disk else "LiveCD"
+                        print(f"{label} graphical boot stable across {stable} samples")
                         return 0
                 else:
                     stable = 0
@@ -132,18 +143,22 @@ def run(iso: Path, timeout: int, interval: int) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("iso", type=Path)
+    inputs = parser.add_mutually_exclusive_group(required=True)
+    inputs.add_argument("iso", type=Path, nargs="?", help="LiveCD ISO to boot")
+    inputs.add_argument("--disk", type=Path,
+                        help="installed qcow2 disk to boot with no installer media attached")
     parser.add_argument("--timeout", type=int, default=240)
     parser.add_argument("--interval", type=int, default=5)
     args = parser.parse_args()
-    if not args.iso.is_file():
-        parser.error(f"ISO not found: {args.iso}")
+    source = args.disk or args.iso
+    if not source.is_file():
+        parser.error(f"{'disk' if args.disk else 'ISO'} not found: {source}")
     if args.timeout < 15 or args.interval < 1:
         parser.error("timeout must be >= 15 and interval must be >= 1")
     try:
-        return run(args.iso.resolve(), args.timeout, args.interval)
+        return run(source.resolve(), args.timeout, args.interval, installed_disk=bool(args.disk))
     except (OSError, RuntimeError, ValueError) as exc:
-        print(f"LiveCD VM smoke failed: {exc}", file=__import__("sys").stderr)
+        print(f"PosterChanOS VM smoke failed: {exc}", file=__import__("sys").stderr)
         return 1
 
 
