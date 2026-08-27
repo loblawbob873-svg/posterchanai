@@ -24581,7 +24581,7 @@
       const atts=(m.attachments||[]).map((at,i)=>{
         const name=String(at.name||'attachment'), type=String(at.type||'application/octet-stream');
         const pv=_previewable(name,type);
-        return `<a class="mail-att" href="${enc(dlBase)}/api/mail/dl/${encodeURIComponent(m.account||acct)}/${encodeURIComponent(m.folder||folder)}/${encodeURIComponent(m.uid)}/${i}" target="_blank" rel="noopener"${pv?` data-mail-preview="1" data-name="${enc(name)}" data-mime="${enc(type)}"`:''}>📎 ${enc(name)} <span class="muted small">${_fmtBytes(at.size||0)}</span></a>`;
+        return `<a class="mail-att" data-mail-attachment="1" href="${enc(dlBase)}/api/mail/dl/${encodeURIComponent(m.account||acct)}/${encodeURIComponent(m.folder||folder)}/${encodeURIComponent(m.uid)}/${i}" target="_blank" rel="noopener" data-name="${enc(name)}" data-mime="${enc(type)}"${pv?' data-mail-preview="1"':''}>📎 ${enc(name)} <span class="muted small">${_fmtBytes(at.size||0)}</span></a>`;
       }).join('');
       /* Untrusted email HTML → sandboxed iframe (no scripts, no forms, no same-origin); else text.
        *
@@ -24681,21 +24681,25 @@
       });
       $$('.mm-sender',pane).forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); this.senderCard(b.dataset.from, b.dataset.name); });
       $$('[data-act]',pane).forEach(b=> b.onclick=()=>this.action(b.dataset.act, target, target.folder||folder, target.account||acct));
-      $$('[data-mail-preview]',pane).forEach(a=> a.onclick=async e=>{
+      $$('[data-mail-attachment]',pane).forEach(a=> a.onclick=async e=>{
         e.preventDefault();
         if(a.dataset.loading==='1')return;
         a.dataset.loading='1';a.setAttribute('aria-busy','true');
         try{
           /* Packaged clients live at app://posterchan or https://localhost. The href is already
            * pinned to the configured instance; fetch those same authenticated bytes and hand them
-           * to Preview instead of asking the package origin/new-tab handler to display them. */
+           * to Preview or the platform save flow instead of asking a package-origin new tab to
+           * display them. This applies to EVERY attachment: a normal anchor navigation cannot add
+           * the bearer token, so non-previewable archives used to fail even though images worked. */
           const r=await fetch(a.href,{credentials:'include',headers:_aiToken
             ?{'Authorization':'Bearer '+_aiToken}:{}});
           if(!r.ok)throw new Error('attachment returned '+r.status);
           const blob=await r.blob();
-          const P=await _withModule('preview.js','PCPreview');
-          if(!P||!P.open({name:a.dataset.name||'attachment',mime:a.dataset.mime||blob.type,blob}))
-            throw new Error('Preview cannot open this attachment');
+          if(a.dataset.mailPreview==='1'){
+            const P=await _withModule('preview.js','PCPreview');
+            if(!P||!P.open({name:a.dataset.name||'attachment',mime:a.dataset.mime||blob.type,blob}))
+              throw new Error('Preview cannot open this attachment');
+          }else await saveBlobAs(blob,a.dataset.name||'attachment');
         }catch(err){toast('could not open attachment: '+((err&&err.message)||err));}
         finally{delete a.dataset.loading;a.removeAttribute('aria-busy');}
       });
