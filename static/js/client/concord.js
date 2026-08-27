@@ -220,13 +220,17 @@
   function setChannelStarred(room,name,on){ try{if(on)localStorage.setItem(channelStarKey(room,name),'1');else localStorage.removeItem(channelStarKey(room,name));}catch(_){} }
   function orderedChannels(room){ return channelsOf(room).map((channel,index)=>({channel,index,starred:channelStarred(room,channel.name)})).sort((a,b)=>Number(b.starred)-Number(a.starred)||a.index-b.index).map(x=>x.channel); }
   function threadParticipants(messages,target,viewerPubkey){
-    const byId=new Map((messages||[]).map(m=>[messageId(m),m])),seen=new Set(),people=new Set();
-    let node=target;
-    while(node&&!seen.has(messageId(node))){
-      seen.add(messageId(node));
+    const rows=messages||[],byId=new Map(rows.map(m=>[messageId(m),m])),people=new Set();
+    const parentId=node=>String((node&&node.reply&&node.reply.id)||
+      (((node&&node.tags)||[]).find(t=>t[0]==='e'||t[0]==='E')||[])[1]||'');
+    const rootId=node=>{const seen=new Set();let last=messageId(node);while(node&&!seen.has(messageId(node))){last=messageId(node);seen.add(last);const parent=parentId(node);node=parent&&byId.get(parent);}return last;};
+    const root=rootId(target);
+    /* Reply UX follows Armada/Element: a reply notifies everybody already participating in this
+     * thread, not only the selected message's ancestor chain. This matters most when replying to
+     * the root after several branches exist — the old upward-only walk silently omitted them. */
+    for(const node of [target,...rows]){
+      if(!node||rootId(node)!==root)continue;
       if(node.pubkey&&node.pubkey!==viewerPubkey)people.add(node.pubkey);
-      const parentId=(node.reply&&node.reply.id)||((node.tags||[]).find(t=>t[0]==='e'||t[0]==='E')||[])[1];
-      node=parentId&&byId.get(String(parentId));
     }
     return [...people];
   }

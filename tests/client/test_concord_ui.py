@@ -151,9 +151,12 @@ def test_channels_can_be_starred_without_merging_concord_into_direct_messages():
 
 
 def test_thread_replies_tag_every_participant_once_but_never_the_sender():
-    assert 'function threadParticipants(messages,target,viewerPubkey)' in CONCORD
-    assert 'node.pubkey!==viewerPubkey' in CONCORD
-    assert 'seen.has(messageId(node))' in CONCORD
+    block = CONCORD.split('function threadParticipants(messages,target,viewerPubkey)', 1)[1].split('function webxdcOf', 1)[0]
+    assert 'const root=rootId(target)' in block
+    assert 'for(const node of [target,...rows])' in block
+    assert 'rootId(node)!==root' in block
+    assert 'node.pubkey!==viewerPubkey' in block
+    assert 'people.add(node.pubkey)' in block
     assert "replyTags.push(['P',pk],['p',pk])" in CONCORD
     assert "filter(t=>['K','E'].includes(t[0]))" in CONCORD
 

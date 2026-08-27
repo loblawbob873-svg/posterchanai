@@ -93,8 +93,13 @@ const publicLinks=PCConcord.discoverInvites('Join us https://armada.buzz/invite/
 if(publicLinks.length!==1 || publicLinks[0].name!=='Join us') throw new Error('public discovery parser failed');
 const alice={id:'root',pubkey:'b'.repeat(64),tags:[]};
 const bob={id:'child',pubkey:'c'.repeat(64),reply:{id:'root'},tags:[['e','root']]};
-const participants=PCConcord.threadParticipants([alice,bob],bob,'a'.repeat(64));
-if(participants.length!==2 || !participants.includes(alice.pubkey) || !participants.includes(bob.pubkey)) throw new Error('thread participant inheritance failed');
+const carol={id:'sibling',pubkey:'d'.repeat(64),reply:{id:'root'},tags:[['e','root']]};
+const stranger={id:'elsewhere',pubkey:'e'.repeat(64),tags:[]};
+const participants=PCConcord.threadParticipants([alice,bob,carol,stranger],bob,'a'.repeat(64));
+if(participants.length!==3 || !participants.includes(alice.pubkey) ||
+   !participants.includes(bob.pubkey) || !participants.includes(carol.pubkey) ||
+   participants.includes(stranger.pubkey))
+  throw new Error('whole-thread participant inheritance failed');
 if(PCConcord.conversationIsVisible(true,false,false) ||
    PCConcord.conversationIsVisible(true,true,true) ||
    !PCConcord.conversationIsVisible(true,true,false) ||
