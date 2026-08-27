@@ -12,6 +12,9 @@ def test_pdf_fallback_reaches_a_real_android_view_intent():
     assert 'FLAG_GRANT_READ_URI_PERMISSION' in PLUGIN
     assert 'FileProvider.getUriForFile' in PLUGIN
     assert 'resolveActivity' in PLUGIN
+    assert '.setClipData(' not in PLUGIN.split('view.setClipData', 1)[0].split('Intent view=', 1)[-1]
+    assert 'view.setClipData(' in PLUGIN
+    assert 'view.addFlags(' in PLUGIN
 
 
 def test_native_open_is_private_bounded_and_cleans_previous_preview():

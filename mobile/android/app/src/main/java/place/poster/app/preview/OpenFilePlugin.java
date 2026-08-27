@@ -34,8 +34,11 @@ public final class OpenFilePlugin extends Plugin {
         File[] old=dir.listFiles();if(old!=null)for(File f:old)if(f!=null)f.delete();
         out=new File(dir,name);try(FileOutputStream stream=new FileOutputStream(out,false)){stream.write(bytes);}
         Uri uri=FileProvider.getUriForFile(getContext(),getContext().getPackageName()+".fileprovider",out);
-        Intent view=new Intent(Intent.ACTION_VIEW).setDataAndType(uri,mime)
-            .setClipData(ClipData.newRawUri(name,uri)).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        Intent view=new Intent(Intent.ACTION_VIEW).setDataAndType(uri,mime);
+        /* Intent.setClipData is void on the Android SDK level this APK compiles against. Keep the
+         * grant on the same Intent, but do not chain through a method which has no return value. */
+        view.setClipData(ClipData.newRawUri(name,uri));
+        view.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         if(view.resolveActivity(getContext().getPackageManager())==null)throw new Exception("no app can open this file");
         getActivity().startActivity(Intent.createChooser(view,"Open "+name));
         JSObject result=new JSObject();result.put("ok",true);call.resolve(result);

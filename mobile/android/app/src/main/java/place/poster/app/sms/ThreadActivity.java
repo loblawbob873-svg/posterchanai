@@ -36,6 +36,8 @@ import android.widget.VideoView;
 import android.widget.MediaController;
 import android.util.LruCache;
 
+import androidx.core.content.FileProvider;
+
 import place.poster.app.signer.SignerRelayService;
 
 import java.util.ArrayList;
@@ -95,6 +97,8 @@ public class ThreadActivity extends PcActivity {
     private String attachmentMime = "image/jpeg";
     private String attachmentName = "attachment";
     private byte[] capturedAttachment;
+    private Uri pendingCameraUri;
+    private File pendingCameraFile;
     private TextView count, name, sub, avatar, context;
     private Msgs adapter;
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -354,10 +358,34 @@ public class ThreadActivity extends PcActivity {
                                 .putExtra(HomeActivity.EXTRA_VIEW_AT, System.currentTimeMillis());
                         startActivity(i); return;
                     }
-                    try { startActivityForResult(new Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE),
-                                                 CAPTURE_MMS_IMAGE); }
-                    catch (Throwable t) { say(getString(R.string.sms_attachment_bad)); }
+                    captureAttachment();
                 }).show();
+    }
+
+    /** Capture the real camera file. The optional result Intent normally carries only a thumbnail
+     * and many camera apps return no Intent at all once they report RESULT_OK. */
+    private void captureAttachment() {
+        try {
+            File dir = new File(getCacheDir(), "mms-camera");
+            if (!dir.exists() && !dir.mkdirs()) throw new Exception("could not make camera cache");
+            File[] old = dir.listFiles(); if (old != null) for (File f : old) if (f != null) f.delete();
+            pendingCameraFile = File.createTempFile("photo-", ".jpg", dir);
+            pendingCameraUri = FileProvider.getUriForFile(this,
+                    getPackageName() + ".fileprovider", pendingCameraFile);
+            Intent camera = new Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE)
+                    .putExtra(android.provider.MediaStore.EXTRA_OUTPUT, pendingCameraUri);
+            camera.setClipData(ClipData.newRawUri("camera photo", pendingCameraUri));
+            camera.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            startActivityForResult(camera, CAPTURE_MMS_IMAGE);
+        } catch (Throwable t) {
+            discardPendingCamera();
+            say(getString(R.string.sms_attachment_bad));
+        }
+    }
+
+    private void discardPendingCamera() {
+        if (pendingCameraFile != null) try { pendingCameraFile.delete(); } catch (Throwable ignored) { }
+        pendingCameraFile = null; pendingCameraUri = null;
     }
 
     /** A compact carrier-safe Unicode picker. Strings are built from code points so joined emoji
@@ -396,8 +424,16 @@ public class ThreadActivity extends PcActivity {
     @Override
     protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
-        if (request == CAPTURE_MMS_IMAGE && result == RESULT_OK && data != null) {
-            Object raw = data.getExtras() == null ? null : data.getExtras().get("data");
+        if (request == CAPTURE_MMS_IMAGE) {
+            if (result == RESULT_OK && pendingCameraFile != null && pendingCameraFile.length() > 0) {
+                attachment = pendingCameraUri; attachmentMime = "image/jpeg";
+                attachmentName = pendingCameraFile.getName(); capturedAttachment = null;
+                say(getString(R.string.sms_attachment_ready));
+                return;
+            }
+            Object raw = result == RESULT_OK && data != null && data.getExtras() != null
+                    ? data.getExtras().get("data") : null;
+            discardPendingCamera();
             if (raw instanceof Bitmap) {
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
                 ((Bitmap) raw).compress(Bitmap.CompressFormat.JPEG, 92, out);
@@ -465,6 +501,7 @@ public class ThreadActivity extends PcActivity {
                     ? getString(R.string.sms_failed) : result.error); return; }
             attachment = null;
             capturedAttachment = null;
+            discardPendingCamera();
             input.setText("");
             updateCount();
             say(getString(R.string.sms_mms_sent));

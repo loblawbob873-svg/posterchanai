@@ -571,6 +571,22 @@ class OutgoingMms(unittest.TestCase):
         self.assertIn("sendMms(body);", send)
         self.assertLess(send.index("if (hasAttachment) {"), send.index("SmsSender.send("))
 
+    def test_camera_source_uses_full_resolution_fileprovider_with_thumbnail_fallback(self):
+        thread = open(os.path.join(SMS, "ThreadActivity.java"), encoding="utf-8").read()
+        capture = thread[thread.index("private void captureAttachment()"):
+                         thread.index("private void discardPendingCamera()")]
+        result = thread[thread.index("if (request == CAPTURE_MMS_IMAGE)"):
+                        thread.index("if (request != PICK_MMS_IMAGE")]
+        self.assertIn("File.createTempFile", capture)
+        self.assertIn("FileProvider.getUriForFile", capture)
+        self.assertIn("MediaStore.EXTRA_OUTPUT", capture)
+        self.assertIn("FLAG_GRANT_WRITE_URI_PERMISSION", capture)
+        self.assertIn("setClipData", capture)
+        self.assertIn("pendingCameraFile.length() > 0", result)
+        self.assertIn("attachment = pendingCameraUri", result)
+        self.assertIn("raw instanceof Bitmap", result,
+                      "older camera apps still need their thumbnail result accepted")
+
     def test_native_stuck_mms_has_a_visible_delete_action(self):
         thread = open(os.path.join(SMS, "ThreadActivity.java"), encoding="utf-8").read()
         layout = open(os.path.join(ROOT, "mobile/android/app/src/main/res/layout/sms_bubble.xml"), encoding="utf-8").read()
