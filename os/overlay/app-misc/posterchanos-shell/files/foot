@@ -1,0 +1,12 @@
+#!/bin/sh
+# PosterChanOS Foot defaults for streaming terminal UIs.
+#
+# Codex, Claude and similar TUIs repaint by issuing several small writes.  The stock 0.5 ms lower
+# delay can expose the cleared intermediate frame as a flash.  Foot documents these two knobs as
+# its compatibility path for non-atomic screen updates.  Both values remain below one 60 Hz frame,
+# so interactive input is not made visibly sluggish.  Explicit options supplied by the user come
+# later and therefore still override the OS defaults.
+exec /usr/bin/foot \
+  -o tweak.delayed-render-lower=2000000 \
+  -o tweak.delayed-render-upper=12000000 \
+  "$@"

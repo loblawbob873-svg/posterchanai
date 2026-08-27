@@ -57,9 +57,10 @@ live behavior agree.
   history, icon and members are live-verified; send, reply/react, mention notification, attachment,
   Webxdc and moderation still require a non-production test community or permission to create
   durable relay events.
-- Install APK 1.0.1682 on a physical phone and repeat background Music-after-Home, launcher,
+- Install current signed APK 1.0.1802 on a physical phone and repeat background Music-after-Home, launcher,
   double-Home, narrow portrait, landscape, tablet and mail-attachment taps. The exact-commit API-34
-  emulator suite is green, but an emulator is not a physical-device result.
+  emulator suite is green, but an emulator is not a physical-device result. On 2026-08-27 no device
+  was visible through USB ADB, wireless-ADB mDNS, or the known LAN hosts, so this gate remains open.
 - Boot `posterchan-live-20260826.iso` from physical USB. Its structure and host-CPU KVM boot are
   verified; QEMU's legacy `qemu64` CPU does not meet this Gentoo image's ISA requirement.
 - Exercise real carrier SMS/MMS send/receive and the complete device-provider migration on a phone
