@@ -2375,9 +2375,12 @@
                                              rect: _frameRect(w), w }));
       /* Native windows remain mapped during ordinary focus changes. Only explicit minimise/zero
        * geometry may park one; treating overlap as minimise made Firefox and Telegram disappear. */
-      const htmls = wins.filter(w => w.native == null)
-        .map(w => ({z:_zOf(w), minimised:!!w.min, rect:_frameRect(w)}));
-      const plan = NAT().stashPlan(items, htmls.concat(overlayRects()));
+      /* Do not turn an unfocused Firefox/Telegram window into an empty black proxy merely because
+       * an HTML frame overlaps it. Native pixels must remain live across ordinary focus changes;
+       * only an explicit minimise (carried on `items`) or a transient shell overlay may park the
+       * compositor surface. The latter is necessary because a start menu/modal otherwise cannot be
+       * reached at all: floating Wayland clients are above the tiled shell. */
+      const plan = NAT().stashPlan(items, overlayRects());
       const stash = new Set(plan.stash);
       for(const it of items){
         /* This pass may have awaited sway while the frame crossed an output. Do not send another
@@ -3188,7 +3191,7 @@
       document.removeEventListener('pointerup', up);
       document.removeEventListener('pointercancel', cancel);
       window.removeEventListener('blur', cancel);
-      w.el.removeEventListener('lostpointercapture', cancel);
+      w.el.removeEventListener('lostpointercapture', lostCapture);
       try{ if(w.el.hasPointerCapture(ev.pointerId)) w.el.releasePointerCapture(ev.pointerId); }catch(_){}
       if(raf) cancelAnimationFrame(raf);
       w.el.classList.remove('dragging');
@@ -3240,13 +3243,25 @@
       else { keepFrameReachable(w); _natGesture(w,false); }
     };
     const cancel = (e) => up(e,true);
+    const lostCapture = (e) => {
+      if(ended)return;
+      /* Wayland commonly revokes capture at the exact boundary between the two Electron output
+       * surfaces. Waiting for >8px overflow made frame handoff a race: one coalesced event beyond
+       * the seam worked, the usual edge-clamped sequence rolled the drag back. Capture loss while
+       * the mouse is still held at the previewed edge is the missing positive crossing signal.
+       * A normal edge snap ends with pointerup (whose listener is removed before releaseCapture),
+       * while cancellation away from an edge retains the rollback path below. */
+      const dir=handoff||previewDir||edgeDirection(lastMove);
+      if(hadButtons && dir && edgeDirection(lastMove)===dir){handoff=dir;up(lastMove,false);}
+      else cancel(e);
+    };
     document.addEventListener('pointermove', move);
     document.addEventListener('pointerup', up);
     document.addEventListener('pointercancel', cancel);
     /* Focusing a hosted native app blurs the shell. Pointer capture is the authority for that
      * gesture; treating blur as release was why Telegram stopped after the first few pixels. */
     if(w.native == null) window.addEventListener('blur', cancel);
-    w.el.addEventListener('lostpointercapture', cancel);
+    w.el.addEventListener('lostpointercapture', lostCapture);
   }
 
   function startResize(w, ev){

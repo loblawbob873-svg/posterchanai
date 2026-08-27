@@ -26,7 +26,8 @@ def test_cancelled_drag_restores_geometry_and_never_snaps_or_hands_off():
     up = drag[drag.index("const up = (endEvent, cancelled) =>"):
               drag.index("document.addEventListener('pointermove'")]
     assert "document.addEventListener('pointercancel', cancel)" in drag
-    assert "w.el.addEventListener('lostpointercapture', cancel)" in drag
+    assert "w.el.addEventListener('lostpointercapture', lostCapture)" in drag
+    assert "w.el.removeEventListener('lostpointercapture', lostCapture)" in drag
     assert "Object.assign(w.el.style,{left:before.left,top:before.top,width:before.width,height:before.height})" in up
     assert "w.snap=before.snap; w.max=before.max; w.rect=before.rect" in up
     cancel = up[up.index("if(cancelled){", up.index("hideGhost()")):]
@@ -60,6 +61,16 @@ def test_mouse_edge_snap_is_not_stolen_by_a_timed_monitor_handoff():
     assert "edgeHoldAt" not in drag
     assert "return edgeOverflow(e,dir)>8?dir:''" in drag
     assert "if(handoff && w.native != null && pcWM.handoff)" in drag
+
+
+def test_wayland_capture_loss_at_a_previewed_edge_commits_monitor_handoff():
+    src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+    drag = src[src.index("function startDrag"):src.index("function startResize")]
+    lost = drag[drag.index("const lostCapture ="):drag.index("document.addEventListener('pointermove'")]
+    assert "handoff||previewDir||edgeDirection(lastMove)" in lost
+    assert "hadButtons && dir && edgeDirection(lastMove)===dir" in lost
+    assert "handoff=dir;up(lastMove,false)" in lost
+    assert "else cancel(e)" in lost
 
 
 def test_pointerup_recomputes_the_snap_zone_from_its_final_coordinate():

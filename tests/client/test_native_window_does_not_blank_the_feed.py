@@ -85,11 +85,11 @@ class APlacementThatCouldNotBeMeasuredIsRetried(unittest.TestCase):
         fn = body(self.src, "function _natMeasureAgain")
         self.assertIn("if(_natRetryT", fn)
 
-    def test_only_real_higher_html_windows_and_overlays_occlude_native_surface(self):
-        """Native frames are excluded, while higher DOM windows prevent compositor bleed-through."""
+    def test_only_shell_overlays_occlude_a_live_native_surface(self):
+        """Ordinary focus changes keep Firefox rendered; menus may park it while they are open."""
         sync = body(self.src, "async function nsync")
-        self.assertIn("wins.filter(w => w.native == null)", sync)
-        self.assertIn("stashPlan(items, htmls.concat(overlayRects()))", sync)
+        self.assertNotIn("wins.filter(w => w.native == null)", sync)
+        self.assertIn("stashPlan(items, overlayRects())", sync)
         self.assertEqual(sync.count("overlayRects()"), 1)
         overlays = body(self.src, "function overlayRects")
         self.assertIn("el !== desk && el !== bar", overlays)
