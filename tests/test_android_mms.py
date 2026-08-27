@@ -460,6 +460,17 @@ class MmsProvider(unittest.TestCase):
         self.assertIn("Messages.thread", self._code("ThreadActivity.java"))
         self.assertIn("Messages.threads", self._code("ThreadListActivity.java"))
 
+    def test_conversation_list_repaints_for_mms_without_reopening(self):
+        """MMS-only threads and carrier state changes notify content://mms, not content://sms."""
+        src = self._code("ThreadListActivity.java")
+        start = src[src.index("protected void onStart()") : src.index("protected void onStop()")]
+        self.assertIn("registerContentObserver(Telephony.Sms.CONTENT_URI", start)
+        self.assertIn("registerContentObserver(Telephony.Mms.CONTENT_URI", start)
+        self.assertIn("boolean observed = false", start)
+        self.assertIn("if (!observed) watcher = null", start)
+        self.assertEqual(start.count("new ContentObserver(main)"), 1,
+                         "SMS and MMS refresh paths must share one lifecycle-owned observer")
+
     def test_a_picture_message_never_draws_an_empty_bubble(self):
         """An empty bubble is what a message that FAILED looks like. The native screen labels its
         attachments; the client draws them and names the ones it cannot."""

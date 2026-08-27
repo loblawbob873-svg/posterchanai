@@ -37,9 +37,10 @@ import place.poster.app.ui.Skin;
  * shows the same threads every other app on the phone shows, including the ones that arrived before
  * PosterChan was installed.
  *
- * NO POLLING. The list refreshes on a ContentObserver over `content://sms`, registered while the
- * screen is on and gone the moment it is not. With the HOME role this process is resident for the
- * life of the battery; a five-second refresh here would be a five-second refresh for ever.
+ * NO POLLING. The list refreshes on one ContentObserver registered over BOTH `content://sms` and
+ * `content://mms` while the screen is on and gone the moment it is not. With the HOME role this
+ * process is resident for the life of the battery; a five-second refresh here would be a
+ * five-second refresh for ever.
  */
 public class ThreadListActivity extends PcActivity {
 
@@ -163,9 +164,22 @@ public class ThreadListActivity extends PcActivity {
             @Override public void onChange(boolean self) { reload(); }
             @Override public void onChange(boolean self, Uri uri) { reload(); }
         };
+        boolean observed = false;
         try {
             getContentResolver().registerContentObserver(Telephony.Sms.CONTENT_URI, true, watcher);
-        } catch (Throwable ignored) { watcher = null; }
+            observed = true;
+        } catch (Throwable ignored) { }
+        /* The thread itself already observes both providers. The conversation list did not: a new
+         * MMS-only conversation, a video reply, and an outgoing MMS moving Sending -> Sent/Failed
+         * notify content://mms without touching content://sms. Its row therefore stayed absent or
+         * stale until this Activity stopped and started again. One observer can own both
+         * registrations, and unregisterContentObserver removes both. Keep the registrations
+         * independent because several OEMs guard the MMS provider separately from SMS. */
+        try {
+            getContentResolver().registerContentObserver(Telephony.Mms.CONTENT_URI, true, watcher);
+            observed = true;
+        } catch (Throwable ignored) { }
+        if (!observed) watcher = null;
     }
 
     @Override
