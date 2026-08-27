@@ -82,7 +82,7 @@ class FilesOpenInCode(unittest.TestCase):
         for binary in ("shot.png", "a.jpg", "a.jpeg", "a.gif", "a.webp", "clip.mp4",
                        "song.mp3", "doc.pdf", "bundle.zip", "game.xdc"):
             self.assertIsNone(rx.search(binary), f"Code offers to edit {binary} as text")
-        for text in ("notes.md", "a.json", "s.py", "a.js", "run.sh", "conf.yml",
+        for text in ("notes.md", "a.csv", "a.json", "s.py", "a.js", "run.sh", "conf.yml",
                      "conf.yaml", "server.conf", "a.css", "a.txt"):
             self.assertIsNotNone(rx.search(text), f"Code will not open {text}")
 
@@ -152,9 +152,14 @@ class FilesOpenInCode(unittest.TestCase):
         for cls_ in (".openbtn", ".opensync", ".openhost"):
             self.assertNotIn(cls_, css, f"{cls_} is styled but never drawn")
 
-    def test_a_spreadsheet_belongs_to_office_not_to_code(self):
-        self.assertIsNone(self._code_ext().search("sheet.csv"),
-                          "csv is in _OFFICE_EXT; offering both makes the two buttons fight")
+    def test_csv_can_be_opened_as_a_spreadsheet_or_raw_text(self):
+        """Open With must keep Calc as the friendly choice without hiding the Code option.
+
+        CSV is plain text and remains useful on nodes where Office is disabled, so classifying it
+        as Code-capable also gives the chooser the honest highlighting hint rather than calling it
+        an unknown raw file.
+        """
+        self.assertIsNotNone(self._code_ext().search("sheet.csv"))
 
     def test_binary_is_refused_by_its_BYTES_not_its_name(self):
         """A .txt that is really a zip must not open, whatever it is called."""

@@ -15603,8 +15603,9 @@
     || /officedocument|opendocument|msword|ms-excel|ms-powerpoint/i.test(String(mime || ''));
   /* WHAT POSTERCHAN CODE WILL OPEN FROM FILES. Text, by extension — the editor is a text editor and
    * a .png opened as text is a screenful of mojibake and a corrupted file the moment it is saved.
-   * `.csv` is deliberately absent: it is in _OFFICE_EXT above, where a spreadsheet belongs. */
-  const _CODE_EXT = /\.(txt|md|markdown|json|jsonc|ya?ml|toml|ini|cfg|conf|env|log|xml|svg|html?|css|scss|less|js|mjs|cjs|jsx|ts|tsx|py|rb|php|go|rs|java|kt|swift|c|h|cpp|hpp|cs|sh|bash|zsh|fish|sql|diff|patch)$/i;
+   * CSV deliberately belongs to BOTH lists: Office is the friendly spreadsheet editor, while Code
+   * remains the useful raw-text option required by Open With (and works when Office is disabled). */
+  const _CODE_EXT = /\.(txt|md|markdown|csv|json|jsonc|ya?ml|toml|ini|cfg|conf|env|log|xml|svg|html?|css|scss|less|js|mjs|cjs|jsx|ts|tsx|py|rb|php|go|rs|java|kt|swift|c|h|cpp|hpp|cs|sh|bash|zsh|fish|sql|diff|patch)$/i;
   /* FILES WITH NO DOT ARE STILL TEXT. `_CODE_EXT` anchors on `\.` — so `Makefile`, `Dockerfile`,
    * `README`, `LICENSE` and `.gitignore` could never match it, however they were spelled in the
    * alternation. These are exactly the files somebody opens an editor for. */

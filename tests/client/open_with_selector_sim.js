@@ -56,6 +56,8 @@ same(context.route({ name:'manual.pdf', mime:'application/pdf', url:'https://b/x
      ['preview', 'office', 'code'], 'cold-start PDF');
 same(context.route({ name:'server.conf', mime:'application/octet-stream', url:'https://b/x' }),
      ['code'], '.conf by indexed name');
+same(context.route({ name:'sheet.csv', mime:'text/csv', url:'https://b/x' }),
+     ['office', 'code'], '.csv offers spreadsheet and raw-text editors');
 same(context.route({ name:'', mime:'application/octet-stream', url:'https://b/f/nginx%2Econf' }),
      ['code'], '.conf by encoded Blossom URL');
 same(context.route({ name:'firmware.bin', mime:'application/octet-stream', url:'https://b/x' }),
