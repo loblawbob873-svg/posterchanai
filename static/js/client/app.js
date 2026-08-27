@@ -19321,6 +19321,9 @@
     $$('.file-card:not(.isdir)', grid).forEach(c=> c.onclick=(e)=>{
       if(e.target.closest('.fc-acts') || e.target.closest('.selbox')) return;
       const b = c.querySelector('.dlsync'); if(!b) return;
+      if(_previewable(_openFileName(b.dataset), b.dataset.mime)){
+        e.preventDefault(); e.stopPropagation(); openPreviewFile(b.dataset, {sync:true}); return;
+      }
       /* Ask when something of ours can open it, and keep Download as the last choice — that is what
        * this click did before, and a synced file has no URL to open any other way. */
       const hs = _handlersFor(b.dataset, { sync:true });
@@ -19547,7 +19550,19 @@
        * pleasant to edit, but hiding the editor entirely made .conf files, PDFs and extensionless
        * project files impossible to inspect from the machine picker. */
       openable: () => true,
-      openFile: (path, name, openHere) => _openWithSheet(name || path, [{
+      openFile: async (path, name, openHere, mime) => {
+        if(_previewable(name || path, mime)){
+          try{
+            toast('opening…');
+            const bytes = await window.pcHost.read(path, 256 * 1024 * 1024);
+            const blob = new Blob([bytes], { type:mime || mimeForName(name || path) || '' });
+            const P = await _withModule('preview.js', 'PCPreview');
+            if(!P || !P.open({ name:name || path, mime:mime || blob.type || '', blob }))
+              toast('nothing here can show that file');
+          }catch(e){ toast('could not open that: ' + ((e && e.message) || e)); }
+          return;
+        }
+        _openWithSheet(name || path, [{
         id:'code', icon:'&lt;/&gt;', label:'PosterChan Code',
         hint:'Edit it here — saves straight back to this computer',
         run:async() => { const code = await _withModule('code.js', 'PCCode');
@@ -19558,7 +19573,8 @@
          * existed, and for most files it is still the answer. */
         { id:'host', icon:'🖥', label:'This computer',
           hint:'Hand it to whatever this machine opens that with',
-          run:() => { if(openHere) openHere(); } }]),
+          run:() => { if(openHere) openHere(); } }]);
+      },
       toast, prompt: uiPrompt, confirm: uiConfirm,
     });
   }
@@ -19683,7 +19699,13 @@
         const retry=$('#bl-list-retry',g);if(retry)retry.onclick=()=>renderBlossom();
       } }
     }finally{ if(listTimer)clearTimeout(listTimer); }
-    if(list!==null){ _blobHave=new Set(list.map(b=>b.sha256));   // reuse this fetch for the music player's existence check
+    if(list!==null){
+      /* Blossom list responses need not repeat an absolute URL. Build the canonical blob address
+       * once so thumbnails, Preview, copy and download all consume a complete entry. */
+      list = list.filter(b=>b && b.sha256).map(b => Object.assign({}, b, {
+        url:b.url || (server.replace(/\/$/,'') + '/' + b.sha256)
+      }));
+      _blobHave=new Set(list.map(b=>b.sha256));   // reuse this fetch for the music player's existence check
       // …and the SIZES, which the drive home totals. Filled here as well as in _refreshBlobHave
       // because this is the fetch the Files screen actually makes; keying the figure on the other
       // one is what printed "0 B stored" on a full drive.
@@ -20252,6 +20274,9 @@
     $$('.file-card[data-sha] > a', grid).forEach(a=> a.onclick=async e=>{
       const d=a.dataset, hs=_handlersFor(d, {});
       const encd = d.enc==='1';
+      if(_previewable(_openFileName(d), d.mime)){
+        e.preventDefault(); e.stopPropagation(); openPreviewFile(d, {}); return;
+      }
       if(!hs.length && !encd) return;              // an ordinary link with nothing to choose: let it work
       e.preventDefault(); e.stopPropagation();
       const plain = encd

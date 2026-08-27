@@ -71,6 +71,18 @@ class PreviewIsReachable(unittest.TestCase):
         self.assertIn("encFileUrl", body, "an encrypted file cannot be previewed")
         self.assertIn("d.url", body, "a plain drive file cannot be previewed")
 
+    def test_media_click_opens_preview_directly_in_every_source(self):
+        self.assertGreaterEqual(self.app.count("if(_previewable(_openFileName("), 2,
+                                "Blossom and synced media must bypass the Open With chooser")
+        start = self.app.index("openFile: async (path, name, openHere, mime)")
+        host = self.app[start:self.app.index("toast, prompt: uiPrompt", start)]
+        self.assertIn("if(_previewable(name || path, mime))", host)
+        self.assertIn("window.pcHost.read(path, 256 * 1024 * 1024)", host)
+        self.assertIn("P.open({ name:name || path", host)
+
+    def test_blossom_list_without_url_gets_a_canonical_blob_address(self):
+        self.assertIn("url:b.url || (server.replace(/\\/$/,'') + '/' + b.sha256)", self.app)
+
     def test_the_module_is_shipped_and_cached(self):
         """It is lazily loaded through _withModule, so a missing script tag is survivable - but a
         missing PRECACHE entry means the viewer is simply absent offline, which is exactly when

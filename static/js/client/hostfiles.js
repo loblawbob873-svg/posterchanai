@@ -336,8 +336,9 @@
          * and `openHere` goes on that list, because handing it to the machine is what this click
          * has always done and is still the right answer for most files. The bridge call is built
          * HERE rather than in the caller: this is the only file that knows about the bridge. */
-        if(u.openFile && openable(nm, (byPath.get(p) || {}).mime || '')){
-          ev.preventDefault(); u.openFile(p, nm, openHere); return;
+        const mime = (byPath.get(p) || {}).mime || '';
+        if(u.openFile && openable(nm, mime)){
+          ev.preventDefault(); u.openFile(p, nm, openHere, mime); return;
         }
         openHere();
       };

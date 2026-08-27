@@ -279,7 +279,8 @@ class ClickingTheFileIsHowYouOpenIt(unittest.TestCase):
         seg = body[i:i + 1400]
         self.assertIn("if(!hs.length && !encd) return;", seg,
                       "an ordinary file now costs a chooser it has nothing to put in")
-        self.assertLess(seg.index("if(!hs.length && !encd) return;"), seg.index("preventDefault"),
+        early = seg.index("if(!hs.length && !encd) return;")
+        self.assertLess(early, seg.index("e.preventDefault", early),
                         "the early return must come BEFORE the link is cancelled")
 
     def test_an_encrypted_file_still_decrypts_in_one_click_when_nothing_else_can_open_it(self):
@@ -328,15 +329,15 @@ class ClickingTheFileIsHowYouOpenIt(unittest.TestCase):
     def test_a_local_file_can_still_be_handed_to_the_machine(self):
         """`openFile` replaced a call to the host bridge. If the bridge call is not passed through,
         a local text file can ONLY be opened in the editor \u2014 which is a removal, not an addition."""
-        self.assertIn("u.openFile(p, nm, openHere)", self.host,
+        self.assertIn("u.openFile(p, nm, openHere, mime)", self.host,
                       "hostfiles does not pass the machine-open through to the chooser")
-        self.assertIn("openFile: (path, name, openHere) =>", self.app)
-        seg = self.app[self.app.index("openFile: (path, name, openHere) =>"):][:900]
+        self.assertIn("openFile: async (path, name, openHere, mime) =>", self.app)
+        seg = self.app[self.app.index("openFile: async (path, name, openHere, mime) =>"):][:1500]
         self.assertIn("id:'host'", seg, "the chooser for a local file offers only the editor")
 
     def test_the_bridge_call_lives_in_the_file_that_knows_the_bridge(self):
         """app.js must not learn how to open a local path; it takes a callback."""
-        seg = self.app[self.app.index("openFile: (path, name, openHere) =>"):][:900]
+        seg = self.app[self.app.index("openFile: async (path, name, openHere, mime) =>"):][:1500]
         self.assertNotIn("HOST()", seg)
 
 
