@@ -668,7 +668,14 @@ public class ThreadActivity extends PcActivity {
                         + (m.error.isEmpty() ? "" : ": " + m.error) + "  ·  " + when);
                 meta.setTextColor(pal.danger);
             } else if (m.pending()) {
-                meta.setText(getString(R.string.sms_sending) + "  ·  " + when);
+                /* An OUTBOX row normally means the carrier transaction is still running. Result
+                 * code zero is different: several OEM stacks return it after either delivery or
+                 * failure, so MmsSendReceiver deliberately leaves the row pending and records an
+                 * honest delivery-unknown reason. Do not redraw that durable result as "Sending"
+                 * forever; it conceals the warning that also prevents a duplicate blind retry. */
+                meta.setText(m.error.isEmpty()
+                        ? getString(R.string.sms_sending) + "  ·  " + when
+                        : m.error + "  ·  " + when);
                 meta.setTextColor(pal.amber);
             } else {
                 meta.setText(when);

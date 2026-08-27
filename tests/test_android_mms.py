@@ -255,6 +255,16 @@ class MmsIdentity(unittest.TestCase):
         self.assertIn('another picture message is still being sent', sender)
         self.assertIn('MmsFlight.release(ctx)', receiver)
 
+    def test_ambiguous_carrier_result_is_visible_instead_of_saying_sending_forever(self):
+        """Code zero deliberately remains OUTBOX, but it is a completed ambiguous callback, not
+        an in-flight send. The native thread must expose its durable reason just as web does."""
+        thread = open(os.path.join(SMS, "ThreadActivity.java"), encoding="utf-8").read()
+        pending = thread[thread.index("} else if (m.pending()) {"):
+                         thread.index("} else {", thread.index("} else if (m.pending()) {"))]
+        self.assertIn("m.error.isEmpty()", pending)
+        self.assertIn('m.error + "  ·  " + when', pending)
+        self.assertIn("getString(R.string.sms_sending)", pending)
+
     def test_failed_native_mms_can_be_retried_without_deleting_before_acceptance(self):
         thread = open(os.path.join(SMS, "ThreadActivity.java"), encoding="utf-8").read()
         bubble = open(os.path.join(ROOT, "mobile/android/app/src/main/res/layout/sms_bubble.xml"),
