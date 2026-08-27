@@ -149,6 +149,39 @@ function clampRectToOutputs(rect, outputs){
           y:Math.min(Math.max(Math.round(Number(rect.y)||0),best.t),best.d-h),w,h};
 }
 
+/** Expand a launched process into all descendants described by `{pid, ppid}` rows. */
+function pidFamily(roots, rows){
+  const family=new Set((roots||[]).map(Number).filter(Number.isFinite));
+  let changed=true;
+  while(changed){
+    changed=false;
+    for(const row of rows||[]){
+      const pid=Number(row&&row.pid),ppid=Number(row&&row.ppid);
+      if(Number.isFinite(pid)&&family.has(ppid)&&!family.has(pid)){family.add(pid);changed=true;}
+    }
+  }
+  return family;
+}
+
+/* Linux process names may contain spaces and parentheses, so split /proc/<pid>/stat only after its
+ * final ')'. The first field after it is state and the second is the parent pid. */
+function procParents(){
+  if(process.platform!=='linux')return [];
+  const out=[];
+  try{
+    for(const name of fs.readdirSync('/proc')){
+      if(!/^\d+$/.test(name))continue;
+      try{
+        const stat=fs.readFileSync('/proc/'+name+'/stat','utf8'),end=stat.lastIndexOf(')');
+        if(end<0)continue;
+        const fields=stat.slice(end+1).trim().split(/\s+/),ppid=Number(fields[1]);
+        if(Number.isFinite(ppid))out.push({pid:Number(name),ppid});
+      }catch(_){}
+    }
+  }catch(_){}
+  return out;
+}
+
 class WM {
   constructor(sockPath){
     this.paths = compositorSockets(sockPath);
@@ -458,10 +491,14 @@ class WM {
   /** The window belonging to `pid` (or a child of it), once it exists. Null if it never appears. */
   async waitForWindow(pid, ms, kin){
     const deadline = Date.now() + (ms || 15000);
-    const family = new Set([Number(pid)].concat((kin || []).map(Number)));
+    const roots = [Number(pid)].concat((kin || []).map(Number));
+    let family = pidFamily(roots,[]);
     for(;;){
       let list = [];
       try{ list = await this.windows(); }catch(_){ list = []; }
+      /* Browsers and Telegram routinely fork before mapping their surface. Refresh ancestry each
+       * pass: a one-time snapshot taken immediately after spawn misses children created later. */
+      family = pidFamily([...family],procParents());
       const hit = list.find(w => family.has(Number(w.pid)));
       if(hit) return hit;
       if(Date.now() > deadline) return null;
@@ -470,4 +507,4 @@ class WM {
   }
 }
 
-module.exports = { WM, frame, decoder, flatten, clampRectToOutputs, MSG, EVENT, EVENT_BIT };
+module.exports = { WM, frame, decoder, flatten, clampRectToOutputs, pidFamily, MSG, EVENT, EVENT_BIT };

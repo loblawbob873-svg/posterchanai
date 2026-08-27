@@ -299,6 +299,23 @@ server.listen(sock,async()=>{delete process.env.SWAYSOCK;delete process.env.I3SO
         self.assertTrue(out.get("w"), "a child pid did not match its parent's launch")
         self.assertEqual(out["w"]["app"], "portal2_linux")
 
+    def test_a_late_forked_native_window_keeps_its_launch_identity(self):
+        """Production does not know Firefox's child pid ahead of time. Descendants must be
+        discovered transitively, including a child created after the initial spawn."""
+        script = r"""
+          const {pidFamily}=require('./desktop/wm.js');
+          const family=pidFamily([100],[{pid:200,ppid:100},{pid:300,ppid:200},
+                                        {pid:999,ppid:1}]);
+          process.stdout.write(JSON.stringify([...family].sort((a,b)=>a-b)));
+        """
+        got = subprocess.check_output([NODE, "-e", script], cwd=ROOT, text=True)
+        self.assertEqual(json.loads(got), [100, 200, 300])
+
+    def test_wait_for_window_refreshes_live_process_ancestry(self):
+        src = open(os.path.join(ROOT, "desktop", "wm.js"), encoding="utf-8").read()
+        wait = src[src.index("async waitForWindow"):src.index("\n  }\n}", src.index("async waitForWindow"))]
+        self.assertIn("family = pidFamily([...family],procParents())", wait)
+
     def test_waiting_for_a_window_that_never_comes_answers_null(self):
         """An app that fails to start must not hang the desktop for ever — and must not be reported
         as launched either."""
