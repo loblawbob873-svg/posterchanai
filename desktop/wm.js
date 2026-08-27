@@ -350,12 +350,18 @@ class WM {
     if(!out) out=outputs[0];
     if(!out) return false;
     const b=out.rect, h=Math.max(1,Number(b.height)-72), half=Math.floor(Number(b.width)/2);
-    let x=Number(b.x), w=Number(b.width);
+    let x=Number(b.x), y=Number(b.y), w=Number(b.width), height=h;
     if(zone==='left') w=half;
     else if(zone==='right'){ w=Number(b.width)-half; x+=half; }
-    else if(zone!=='max') return false;
+    else if(/^(top|bottom)-(left|right)$/.test(zone)){
+      const parts=zone.split('-'), hh=Math.floor(h/2);
+      w=parts[1]==='left'?half:Number(b.width)-half;
+      if(parts[1]==='right')x+=half;
+      height=parts[0]==='top'?hh:h-hh;
+      if(parts[0]==='bottom')y+=hh;
+    }else if(zone!=='max') return false;
     await this.command('[con_id='+Number(id)+'] floating enable');
-    return this.place(id,x,Number(b.y),w,h);
+    return this.place(id,x,y,w,height);
   }
 
   /** Dragging changes position only, and LATEST WINS.

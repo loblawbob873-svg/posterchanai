@@ -121,6 +121,38 @@ def test_dragging_a_titlebar_to_an_output_edge_snaps_without_stealing_app_clicks
     assert "pc-window-snap pc-key" in ebuild
 
 
+def test_native_titlebar_corners_snap_to_output_quarters(monkeypatch):
+    helper = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap"
+    module = runpy.run_path(str(helper), run_name="pc_window_snap_corner_test")
+
+    def run(rect):
+        calls = []
+        monkeypatch.setattr(module["sys"], "argv", ["pc-window-snap", "edge"])
+        monkeypatch.setitem(module["main"].__globals__, "sway", lambda *_: '{"nodes":[]}')
+        monkeypatch.setitem(module["main"].__globals__, "focused", lambda _tree:
+                            ({"id": 7, "app_id": "firefox", "rect": rect},
+                             {"rect": {"x": 1000, "y": 100, "width": 1200, "height": 900}}))
+        monkeypatch.setattr(module["subprocess"], "check_call",
+                            lambda argv, **_kw: calls.append(argv))
+        module["main"]()
+        return calls
+
+    top_left = run({"x": 1000, "y": 100, "width": 500, "height": 400})
+    assert top_left[-2][-6:] == ["width", "600", "px", "height", "414", "px"]
+    assert top_left[-1][-3:] == ["position", "1000", "100"]
+
+    bottom_right = run({"x": 1700, "y": 600, "width": 500, "height": 328})
+    assert bottom_right[-2][-6:] == ["width", "600", "px", "height", "414", "px"]
+    assert bottom_right[-1][-3:] == ["position", "1600", "514"]
+
+
+def test_compositor_snap_api_supports_all_four_corner_zones():
+    wm = (ROOT / "desktop/wm.js").read_text()
+    snap = wm[wm.index("async snap(id, zone)"):wm.index("\n  move(", wm.index("async snap(id, zone)"))]
+    assert "/^(top|bottom)-(left|right)$/.test(zone)" in snap
+    assert "parts[0]==='bottom'" in snap and "parts[1]==='right'" in snap
+
+
 def test_existing_identity_configs_receive_the_posterchan_native_chrome():
     ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
     for rule in ("titlebar_border_thickness 0", "titlebar_padding 8 6",

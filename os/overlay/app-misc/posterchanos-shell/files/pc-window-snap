@@ -76,23 +76,41 @@ def main():
         r = win.get("rect") or {}
         # This mode runs on a title-bar button release. A release away from an edge is deliberately
         # a no-op; it must never turn an ordinary click or small move into a resize.
-        if int(r.get("y", y + 1000)) <= y + 60:
+        near_top = int(r.get("y", y + 1000)) <= y + 60
+        near_bottom = int(r.get("y", y)) + int(r.get("height", 0)) >= y + height - 28
+        near_left = int(r.get("x", x + 1000)) <= x + 28
+        near_right = int(r.get("x", x)) + int(r.get("width", 0)) >= x + width - 28
+        # Corners are checked before the top edge. The previous top-first order maximised every
+        # top-corner drop, making the four quarter-screen layouts impossible for native apps.
+        if near_top and near_left:
+            side = "top-left"
+        elif near_top and near_right:
+            side = "top-right"
+        elif near_bottom and near_left:
+            side = "bottom-left"
+        elif near_bottom and near_right:
+            side = "bottom-right"
+        elif near_top:
             side = "max"
-        elif int(r.get("x", x + 1000)) <= x + 28:
+        elif near_left:
             side = "left"
-        elif int(r.get("x", x)) + int(r.get("width", 0)) >= x + width - 28:
+        elif near_right:
             side = "right"
         else:
             return
     if side == "max":
-        nx, nw = x, width
+        nx, ny, nw, nh = x, y, width, height
+    elif side in ("top-left", "top-right", "bottom-left", "bottom-right"):
+        nw, nh = width // 2, height // 2
+        nx = x if side.endswith("left") else x + width - nw
+        ny = y if side.startswith("top") else y + height - nh
     else:
-        nw = width // 2
+        nw, nh, ny = width // 2, height, y
         nx = x if side == "left" else x + width - nw
     criteria = "[con_id=%d]" % int(win["id"])
     subprocess.check_call(["swaymsg", criteria, "floating", "enable"], stdout=subprocess.DEVNULL)
-    subprocess.check_call(["swaymsg", criteria, "resize", "set", "width", str(nw), "px", "height", str(height), "px"], stdout=subprocess.DEVNULL)
-    subprocess.check_call(["swaymsg", criteria, "move", "absolute", "position", str(nx), str(y)], stdout=subprocess.DEVNULL)
+    subprocess.check_call(["swaymsg", criteria, "resize", "set", "width", str(nw), "px", "height", str(nh), "px"], stdout=subprocess.DEVNULL)
+    subprocess.check_call(["swaymsg", criteria, "move", "absolute", "position", str(nx), str(ny)], stdout=subprocess.DEVNULL)
 
 
 if __name__ == "__main__":
