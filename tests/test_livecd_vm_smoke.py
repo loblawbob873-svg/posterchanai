@@ -50,11 +50,23 @@ def test_missing_iso_fails_before_qemu_is_started(tmp_path):
     assert "ISO not found" in result.stderr
 
 
-def test_probe_requires_three_stable_samples_and_detects_late_black():
+def test_probe_ignores_boot_graphics_and_requires_post_grace_stability():
     source = SCRIPT.read_text()
-    assert "stable >= 3" in source
-    assert "if seen and not graphical" in source
+    assert "eligible = time.monotonic() - started >= boot_grace" in source
+    assert "stable >= stable_samples" in source
+    assert "if desktop_seen and not graphical" in source
+    assert "default=60" in source
+    assert "default=6" in source
     assert "screendump" in source
+
+
+def test_invalid_grace_cannot_make_a_vacuous_gate(tmp_path):
+    iso = tmp_path / "fixture.iso"
+    iso.write_bytes(b"not booted because arguments are rejected first")
+    result = subprocess.run([sys.executable, str(SCRIPT), str(iso), "--timeout", "30",
+                             "--boot-grace", "30"], capture_output=True, text=True)
+    assert result.returncode == 2
+    assert "boot grace within timeout" in result.stderr
 
 
 def test_installed_disk_gate_has_no_live_media(tmp_path):

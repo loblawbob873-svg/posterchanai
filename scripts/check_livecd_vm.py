@@ -102,7 +102,8 @@ def qemu_command(source: Path, installed_disk: bool, monitor: Path, serial: Path
                   "-serial", f"file:{serial}", "-no-reboot"]
 
 
-def run(source: Path, timeout: int, interval: int, installed_disk: bool = False) -> int:
+def run(source: Path, timeout: int, interval: int, installed_disk: bool = False,
+        boot_grace: int = 60, stable_samples: int = 6) -> int:
     with tempfile.TemporaryDirectory(prefix="pc-livecd-smoke-") as raw:
         work = Path(raw)
         monitor, serial = work / "monitor.sock", work / "serial.log"
@@ -110,7 +111,8 @@ def run(source: Path, timeout: int, interval: int, installed_disk: bool = False)
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         try:
             wait_for_socket(monitor, proc)
-            deadline, stable, seen = time.monotonic() + timeout, 0, False
+            started = time.monotonic()
+            deadline, stable, desktop_seen = started + timeout, 0, False
             sample = 0
             while time.monotonic() < deadline:
                 if proc.poll() is not None:
@@ -119,13 +121,17 @@ def run(source: Path, timeout: int, interval: int, installed_disk: bool = False)
                 shot = work / f"frame-{sample:03d}.ppm"
                 hmp(monitor, f"screendump {shot}")
                 graphical = frame_is_graphical(shot)
-                if seen and not graphical:
+                # Firmware and GRUB are graphical too. They must neither satisfy the desktop gate
+                # nor make the ordinary boot-menu -> kernel modeset blank transition a failure.
+                # Only classify frames after the guest has had time to reach its graphical target.
+                eligible = time.monotonic() - started >= boot_grace
+                if desktop_seen and not graphical:
                     raise RuntimeError(f"framebuffer became black/blank after graphics appeared (sample {sample})")
-                if graphical:
-                    seen, stable = True, stable + 1
-                    if stable >= 3:
+                if eligible and graphical:
+                    desktop_seen, stable = True, stable + 1
+                    if stable >= stable_samples:
                         label = "installed-disk" if installed_disk else "LiveCD"
-                        print(f"{label} graphical boot stable across {stable} samples")
+                        print(f"{label} graphical boot stable across {stable} post-grace samples")
                         return 0
                 else:
                     stable = 0
@@ -149,14 +155,20 @@ def main() -> int:
                         help="installed qcow2 disk to boot with no installer media attached")
     parser.add_argument("--timeout", type=int, default=240)
     parser.add_argument("--interval", type=int, default=5)
+    parser.add_argument("--boot-grace", type=int, default=60,
+                        help="seconds before graphical frames can count as the desktop")
+    parser.add_argument("--stable-samples", type=int, default=6,
+                        help="consecutive post-grace graphical frames required")
     args = parser.parse_args()
     source = args.disk or args.iso
     if not source.is_file():
         parser.error(f"{'disk' if args.disk else 'ISO'} not found: {source}")
-    if args.timeout < 15 or args.interval < 1:
-        parser.error("timeout must be >= 15 and interval must be >= 1")
+    if (args.timeout < 15 or args.interval < 1 or args.boot_grace < 0
+            or args.stable_samples < 3 or args.boot_grace >= args.timeout):
+        parser.error("timeout must be >= 15, interval >= 1, stable samples >= 3, and boot grace within timeout")
     try:
-        return run(source.resolve(), args.timeout, args.interval, installed_disk=bool(args.disk))
+        return run(source.resolve(), args.timeout, args.interval, installed_disk=bool(args.disk),
+                   boot_grace=args.boot_grace, stable_samples=args.stable_samples)
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"PosterChanOS VM smoke failed: {exc}", file=__import__("sys").stderr)
         return 1

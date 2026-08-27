@@ -3390,15 +3390,15 @@ menuentry "PosterChan Live" {
     # "Failed to isolate default target" under KVM, while the identical non-quiet boot reaches the
     # first-run desktop.  A visible boot log is preferable to an installer that sometimes never
     # starts, and also leaves an actionable error on screen if real hardware cannot boot.
-    linux /boot/vmlinuz root=live:CDLABEL=$LABEL rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img
+    linux /boot/vmlinuz root=live:CDLABEL=$LABEL rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img console=tty0 console=ttyS0,115200n8
     initrd /boot/initramfs.img
 }
 menuentry "PosterChan Live (verbose)" {
-    linux /boot/vmlinuz root=live:CDLABEL=$LABEL rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img rd.debug
+    linux /boot/vmlinuz root=live:CDLABEL=$LABEL rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img rd.debug console=tty0 console=ttyS0,115200n8
     initrd /boot/initramfs.img
 }
 menuentry "PosterChan Live (copy to RAM)" {
-    linux /boot/vmlinuz root=live:CDLABEL=$LABEL rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img rd.live.ram=1
+    linux /boot/vmlinuz root=live:CDLABEL=$LABEL rd.live.image rd.live.dir=LiveOS rd.live.squashimg=squashfs.img rd.live.ram=1 console=tty0 console=ttyS0,115200n8
     initrd /boot/initramfs.img
 }
 GRUB

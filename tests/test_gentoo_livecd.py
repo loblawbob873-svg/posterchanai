@@ -128,6 +128,16 @@ class LiveCD(unittest.TestCase):
         self.assertNotRegex(grub, r"linux .*\bquiet\b")
         self.assertNotIn("`", grub, "an unquoted GRUB heredoc executes backticks while building")
 
+    def test_every_live_entry_records_kernel_and_systemd_boot_on_serial(self):
+        """The VM gate's serial tail is useless unless the guest sends its boot log to ttyS0."""
+        grub_start = self.code.index('menuentry "PosterChan Live"')
+        grub = self.code[grub_start:self.code.index("\nGRUB", grub_start)]
+        linux = [line for line in grub.splitlines() if line.lstrip().startswith("linux ")]
+        self.assertEqual(len(linux), 3)
+        for line in linux:
+            self.assertIn("console=tty0", line)
+            self.assertIn("console=ttyS0,115200n8", line)
+
     def test_it_installs_what_it_needs_including_the_uefi_half(self):
         """A missing mtools is the classic one: grub-mkrescue then produces an ISO that boots on BIOS
         and is invisible to every UEFI machine, with only a warning to say so."""
