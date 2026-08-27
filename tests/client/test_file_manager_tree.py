@@ -28,3 +28,23 @@ def test_top_source_tabs_are_removed_in_favor_of_sidebar_navigation():
     assert "_fxSideHTML()" in render
     assert 'data-files-mode="ai"' in APP
     assert 'data-files-mode="admin"' in APP
+
+
+def test_blossom_picker_uses_the_same_collapsible_file_manager_tree():
+    picker = APP[APP.index("function blossomPicker(ta, onPick, opts={})"):
+                 APP.index("// ---------- Pics:")]
+    assert 'class="bp-explorer"' in picker
+    assert 'aria-label="Blossom folders"' in picker
+    assert 'id="bp-tree-toggle"' in picker
+    assert '<b>Blossom</b>' in picker
+    assert 'data-folder=' in picker
+    assert 'bp-folder-sel' not in picker
+    assert "toggle.setAttribute('aria-expanded'" in picker
+
+
+def test_file_picker_has_bounded_desktop_and_mobile_layouts():
+    for selector in (".bp-file-picker", ".bp-explorer", ".bp-explorer>.bp-folders",
+                     ".bp-explorer>.files-grid"):
+        assert selector in CSS
+    assert "height:min(720px,calc(100vh - 28px))" in CSS
+    assert "grid-template-columns:132px minmax(0,1fr)" in CSS

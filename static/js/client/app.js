@@ -16196,10 +16196,11 @@
      * including the one that lifts modals above the PosterChan OS desktop, which is why attaching
      * from Blossom silently did nothing there while Local (a native file input) worked. */
     const bg=document.createElement('div'); bg.className='modal-bg modal-sub';
-    bg.innerHTML=`<div class="modal glass neon-border bp-modal">
-      <div class="bp-head"><h3>${enc(opts.title||'🌸 Blossom Files')}</h3>
-        <div id="bp-folders" class="bp-folders"></div></div>
-      <div id="bp-grid" class="files-grid"><div class="spinner"></div></div></div>`;
+    bg.innerHTML=`<div class="modal glass neon-border bp-modal bp-file-picker">
+      <div class="bp-head"><h3>${enc(opts.title||'📁 Choose from File Manager')}</h3>
+        <button type="button" class="mini bp-close" aria-label="Cancel file selection">×</button></div>
+      <div class="bp-explorer"><nav id="bp-folders" class="bp-folders" aria-label="Blossom folders"></nav>
+        <div id="bp-grid" class="files-grid"><div class="spinner"></div></div></div></div>`;
     // This sheet is hand-rolled rather than built by modal()/subModal(), so it used to get NONE of what
     // they provide: no Escape, no focus trap, and body.modal-open was never set (so `/` and the other
     // global keys still fired at the view behind it). One close path now does all of it.
@@ -16208,6 +16209,7 @@
     bg.onclick=e=>{ if(e.target===bg) close(); };
     $('#modal-root').appendChild(bg);
     document.body.classList.add('modal-open');
+    bg.querySelector('.bp-close').onclick=close;
     _trapFocus(bg.querySelector('.modal'), close);
     // The grid is a grid of DIVs — nothing focusable, so Tab could never reach a file and Enter had
     // nothing to press. _popKeys is the app's grid cursor (arrows, and hjkl when Vim keys are on, with
@@ -16255,15 +16257,19 @@
           ta.dispatchEvent(new Event('input',{bubbles:true})); toast('attached'); });
 
       };
-      // ONE ROW, always. A wrapping chip bar grew with the folder count until it filled a phone
-      // screen, and its translucent background let the grid scroll visibly through it. A select is
-      // a fixed-height control and opens the OS picker on mobile.
-      fbar.innerHTML = folders.length>1
-        ? `<label class="bp-folderlbl">📁<select class="input bp-folder-sel" id="bp-folder-sel">${
-            folders.map(([v,l])=>`<option value="${enc(v)}">${enc(l)}</option>`).join('')}</select></label>`
-        : '';
-      { const sel=fbar.querySelector('#bp-folder-sel');
-        if(sel) sel.onchange=()=>{ cur=sel.value||''; draw(); }; }
+      // The picker follows File Manager's navigation instead of maintaining a third, flat UI. The
+      // Blossom root and its folders are a real collapsible tree; importantly, the full folder name
+      // stays visible instead of being hidden inside a native select whose state was easy to miss.
+      fbar.innerHTML = `<section class="fx-tree-node"><button type="button" class="fx-tree-head active" id="bp-tree-toggle" aria-expanded="true"><span class="chev">▾</span><svg class="ic b-ic" aria-hidden="true"><use href="#i-flower"></use></svg><b>Blossom</b></button>
+        <div class="fx-tree-children" id="bp-tree-children"><div class="folder-bar">${folders.map(([v,l])=>
+          `<button type="button" class="folder-chip${v===''?' active':''}" data-folder="${enc(v)}">${enc(l)}</button>`).join('')}</div></div></section>`;
+      const toggle=fbar.querySelector('#bp-tree-toggle'), children=fbar.querySelector('#bp-tree-children');
+      toggle.onclick=()=>{ const open=!children.classList.toggle('hidden'); toggle.setAttribute('aria-expanded',open?'true':'false'); toggle.querySelector('.chev').textContent=open?'▾':'▸'; };
+      fbar.querySelectorAll('[data-folder]').forEach(btn=>btn.onclick=()=>{
+        cur=btn.dataset.folder||'';
+        fbar.querySelectorAll('[data-folder]').forEach(x=>x.classList.toggle('active',x===btn));
+        draw();
+      });
       draw();
     })();
   }

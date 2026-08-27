@@ -5109,14 +5109,38 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
    padding instead (.bp-modal) and the header supplies it, so the pinned position equals the resting
    position and nothing shifts. */
 .bp-modal{padding-top:0}
+.bp-file-picker{width:min(960px,calc(100vw - 28px));max-width:960px;height:min(720px,calc(100vh - 28px));
+  display:flex;flex-direction:column;background:var(--bg2)}
 .bp-head{position:sticky;top:0;z-index:3;background:var(--bg2);margin:0 -22px 10px;padding:16px 22px 0;
   border-bottom:1px solid var(--line)}
 .bp-head h3{margin:0 0 6px}
+.bp-file-picker .bp-head{position:relative;display:flex;align-items:center;gap:10px;flex:0 0 auto;padding-bottom:10px}
+.bp-file-picker .bp-head h3{margin:0;flex:1 1 auto}
+.bp-close{font-size:22px;line-height:1}
+.bp-explorer{display:grid;grid-template-columns:220px minmax(0,1fr);min-height:0;flex:1 1 auto;
+  border:1px solid var(--line);background:var(--panel);overflow:hidden}
+.bp-explorer>.bp-folders{min-width:0;margin:0;padding:10px;border-inline-end:1px solid var(--line);
+  background:var(--panel2);overflow:auto}
+.bp-explorer>.files-grid{min-width:0;min-height:0;margin:0;padding:12px;overflow:auto;align-content:start}
+.bp-explorer .folder-bar{display:flex;flex-direction:column;gap:2px}
+.bp-explorer .folder-chip{width:100%;padding:8px 10px;border:1px solid transparent;border-radius:8px;
+  background:none;color:var(--text);text-align:start;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.bp-explorer .folder-chip:hover{background:rgba(var(--accent-rgb),.10)}
+.bp-explorer .folder-chip.active{background:rgba(var(--accent-rgb),.16);border-color:var(--neon)}
 .bp-folders{margin:0;padding:0 0 10px}
 .bp-folders:empty{display:none}
 .bp-folderlbl{display:flex;align-items:center;gap:8px}
 .bp-folder-sel{margin:0;flex:1 1 auto;min-width:0;font-size:17px;min-height:44px}  /* 16px: iOS zoom */
-@media (max-width:820px){ .bp-head{margin:0 -16px 8px;padding:12px 16px 0} }
+@media (max-width:820px){
+  .bp-head{margin:0 -16px 8px;padding:12px 16px 0}
+  .bp-file-picker{width:100%;height:min(88vh,760px)}
+  .bp-file-picker .bp-head{padding-bottom:10px}
+  .bp-explorer{grid-template-columns:132px minmax(0,1fr)}
+  .bp-explorer>.bp-folders{padding:6px}
+  .bp-explorer .fx-tree-children{padding-inline-start:7px;margin-inline-start:5px}
+  .bp-explorer .folder-chip{padding:9px 7px}
+  .bp-explorer>.files-grid{padding:7px;grid-template-columns:repeat(auto-fill,minmax(92px,1fr))}
+}
 /* file-mode fields in the Make-something sheet */
 .gen-file-btn{margin-top:8px;min-height:46px}
 .gen-file-list{margin-top:6px;word-break:break-all}
