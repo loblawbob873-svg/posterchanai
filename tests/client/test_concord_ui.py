@@ -408,6 +408,8 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert "const tagged=(m.tags||[]).some(t=>(t[0]==='p'||t[0]==='P')" in CONCORD
     assert "mentionRecipients.set(handle.toLowerCase(),choice.pk)" in CONCORD
     assert "mentionTags.push(['P',pk],['p',pk])" in CONCORD
+    assert "tagged||textMentionsViewer(body,handles)" in CONCORD
+    assert "lower.includes('@'+h)" not in CONCORD
     assert 'import_meta.env' not in CORD_READER
     assert 'CapacitorException' not in CORD_READER and 'registerPlugin' not in CORD_READER
     assert 'await decryptImagePointer(value)' in CONCORD and "crypto.subtle.decrypt({name:'AES-GCM'" in CONCORD

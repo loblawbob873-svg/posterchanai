@@ -165,6 +165,10 @@ const profiles=new Map([
 const typed=PCConcord.typedMentionRecipients('hello @Other_User and @support.mod',roomPeople,pk=>profiles.get(pk));
 if(typed.length!==2 || !typed.includes('b'.repeat(64)) || !typed.includes('c'.repeat(64)))
   throw new Error('typed community mentions were not resolved to Nostr recipients');
+if(!PCConcord.textMentionsViewer('hello @Other_User',['Other User']) ||
+   PCConcord.textMentionsViewer('hello @Other_Username',['Other User']) ||
+   PCConcord.textMentionsViewer('email Other_User@example.test',['Other User']))
+  throw new Error('notification mention matching is not token-exact');
 PCConcord.render();
 
 control('cc-community-name').value='Runtime Test';

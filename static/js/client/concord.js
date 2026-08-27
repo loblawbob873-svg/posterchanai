@@ -169,6 +169,10 @@
       return [...mentionAliases(profile,pubkey)].some(alias=>tokens.has(alias));
     }))];
   }
+  function textMentionsViewer(text,handles){
+    const tokens=new Set([...String(text||'').matchAll(/(?:^|\s)@([\w.-]+)/g)].map(match=>match[1].toLowerCase()));
+    return (handles||[]).some(handle=>tokens.has(String(handle||'').trim().toLowerCase().replace(/\s+/g,'_')));
+  }
   function lastActivity(room){ return channelsOf(room).reduce((n,c)=>Math.max(n,...testMessages(channelStoreId(room,c.name)).map(x=>Number(x.at)||0)),0); }
   function channelReadKey(room,name){ return 'pc.concord.read.'+(room&&room.naddr||'')+':'+(name||'general'); }
   function seenAt(room,name){
@@ -334,12 +338,11 @@
     let seen=Number(localStorage.getItem(key)||0);
     if(!seen&&channel==='general')seen=Number(localStorage.getItem('pc.concord.seen.'+room.naddr)||0);
     if(!seen){ localStorage.setItem(key,String(newest)); return; } // opening history must not alert
-    const profile=viewer.profile||{}, handles=[me,profile.name,profile.display_name,viewer.npub,viewer.pubkey]
-      .filter(Boolean).flatMap(v=>[String(v).toLowerCase(),String(v).toLowerCase().replace(/\s+/g,'')]);
+    const profile=viewer.profile||{}, handles=[me,profile.name,profile.display_name,viewer.npub,viewer.pubkey].filter(Boolean);
     for(const m of messages){
-      const body=String(m.text||''), lower=body.toLowerCase().replace(/\s+/g,''), fromMe=m.pubkey===viewer.pubkey;
+      const body=String(m.text||''),fromMe=m.pubkey===viewer.pubkey;
       const tagged=(m.tags||[]).some(t=>(t[0]==='p'||t[0]==='P')&&String(t[1]||'')===viewer.pubkey);
-      const mentioned=!fromMe&&(tagged||handles.some(h=>h&&(lower.includes('@'+h)||lower.includes(h.startsWith('npub1')||h.length===64?h:'@'+h))));
+      const mentioned=!fromMe&&(tagged||textMentionsViewer(body,handles));
       if((Number(m.at)||0)>seen&&mentioned&&p.osNotify) p.osNotify(`Mention in #${channel}`,`${m.by||'Someone'}: ${body}`,{tag:'concord-mention-'+room.naddr+':'+channel,route:'concord'});
     }
     if(newest>seen)localStorage.setItem(key,String(newest));
@@ -759,5 +762,5 @@
     $$('[data-cc-react-toggle]').forEach(b=>b.onclick=()=>toggleReaction(b.dataset.ccReactToggle,b.dataset.ccEmoji));
     $$('[data-cc-react]').forEach(b=>b.onclick=()=>{ reactionTarget=b.dataset.ccReact; const choices=['👍','❤️','😂','😮','😢','😡','🎉','💯']; const old=document.querySelector('.cc-reaction-picker'); if(old)old.remove(); const pop=document.createElement('div'); pop.className='cc-reaction-picker'; pop.innerHTML=choices.map(x=>`<button data-emoji="${x}">${x}</button>`).join(''); b.closest('.cc-message-body').appendChild(pop); pop.querySelectorAll('button').forEach(x=>x.onclick=e=>{ e.stopPropagation(); toggleReaction(reactionTarget,x.dataset.emoji); }); });
   }
-  window.PCConcord={render,openInvite:openInviteLink,inviteParts,normalizeIcon,notifyMentions,discoverInvites,threadParticipants,roomParticipants,typedMentionRecipients,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff};
+  window.PCConcord={render,openInvite:openInviteLink,inviteParts,normalizeIcon,notifyMentions,discoverInvites,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff};
 })();
