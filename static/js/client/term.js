@@ -530,6 +530,13 @@
       _fitT = setTimeout(() => {
         _fitT = null;
         if(!term) return;
+        /* `_mountTerm` has its own block-scoped `box`; this sibling function cannot see it. The
+         * old references below therefore threw ReferenceError inside their defensive try/catches,
+         * silently disabling both the unfocused-window guard and pixel-size deduplication. Resolve
+         * the live terminal host in this callback, after the debounce, so a parked/repainted window
+         * is measured only if it is still the element this terminal owns. */
+        const box = $('#tty-screen');
+        if(!box || !box.isConnected) return;
         /* FOCUS MAY CHANGE Z-ORDER, NEVER TERMINAL GEOMETRY. PosterChanOS parks/moves the shared
          * feed while another window takes focus, and that transition fires ResizeObserver with a
          * temporary content size. Fitting xterm there sends SIGWINCH to the PTY and makes the

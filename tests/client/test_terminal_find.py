@@ -93,6 +93,18 @@ def test_resize_keeps_a_live_terminal_at_the_prompt_without_fighting_scrollback(
     assert "if(followThisFit)_pinBottomAfterLayout()" in fit
 
 
+def test_resize_guards_measure_the_live_terminal_element_not_an_out_of_scope_local():
+    """The mount function's `const box` is not visible in sibling `_fit`; caught ReferenceErrors
+    used to turn every focus/geometry guard into a silent no-op."""
+    fit = TERM[TERM.index("function _fit()"):
+               TERM.index("/* ONE WAY OUT", TERM.index("function _fit()"))]
+    resolve = "const box = $('#tty-screen')"
+    assert resolve in fit
+    assert fit.index(resolve) < fit.index("box.closest")
+    assert fit.index(resolve) < fit.index("box.getBoundingClientRect")
+    assert "if(!box || !box.isConnected) return" in fit
+
+
 def test_ctrl_page_keys_cycle_terminal_tabs_and_wrap_locally():
     assert "function _cycleTab(step)" in TERM
     assert "(at+(step<0?-1:1)+tabs.length)%tabs.length" in TERM
