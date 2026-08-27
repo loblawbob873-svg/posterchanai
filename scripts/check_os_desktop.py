@@ -679,7 +679,26 @@ DRIVE = r"""(async () => {
   const w = document.querySelector('.osw.focused');
   w.querySelector('[data-w="max"]').click(); await sleep(80);
   out.maximised = w.classList.contains('maximised') && w.offsetWidth > window.innerWidth * 0.9;
-  w.querySelector('[data-w="max"]').click(); await sleep(80);
+  /* Right-click Move must recover a maximised window before pointer movement. Keeping its snapped
+   * full-screen width makes every candidate left position clamp to the same edge, so the command
+   * looks present but cannot move anything. Exercise the real task/menu/pointer path. */
+  const wt = [...document.querySelectorAll('.os-task')]
+    .find(b => b.dataset.kind === 'web' && b.classList.contains('on'));
+  if(wt){
+    wt.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,
+      clientX:wt.getBoundingClientRect().left+4,clientY:wt.getBoundingClientRect().top+4}));
+    await sleep(60);
+    const mv=[...document.querySelectorAll('.os-ctx-b')].find(b=>b.textContent.trim()==='Move');
+    if(mv){mv.click();await sleep(40);
+      document.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,
+        clientX:window.innerWidth*.35,clientY:window.innerHeight*.30}));
+      document.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,
+        clientX:window.innerWidth*.35,clientY:window.innerHeight*.30}));
+      await sleep(80);
+    }
+  }
+  out.taskMoveRecovered = !w.classList.contains('maximised')
+    && w.classList.contains('osw-taskbar-moving')===false && parseFloat(w.style.left)>12;
   out.restored = !w.classList.contains('maximised');
   w.querySelector('[data-w="min"]').click(); await sleep(120);
   out.minimised = w.classList.contains('minimised');
@@ -1680,6 +1699,9 @@ async def drive(url):
                 if not r["maximised"] or not r["restored"]:
                     problems.append((label, "window-controls",
                                      f"maximise={r['maximised']} restore={r['restored']}"))
+                if not r.get("taskMoveRecovered"):
+                    problems.append((label, "window-controls",
+                                     "taskbar Move could not recover and reposition a maximised window"))
                 if not r["minimised"]:
                     problems.append((label, "window-controls", "minimise did nothing"))
                 if not r["closed"]:

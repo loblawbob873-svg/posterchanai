@@ -2690,13 +2690,18 @@
   function taskbarMove(w){
     if(!w||!w.el)return;
     if(w.min)focusWin(w);else focusWin(w,false);
-    const old={left:w.el.style.left,top:w.el.style.top};
+    /* A maximised/snapped frame has no room to move: its width consumes the desktop, so the clamp
+     * below resolves every pointer position to the same edge. Recover its saved normal rectangle
+     * before arming the pointer. Escape puts the exact snap zone back; committing the gesture keeps
+     * the recovered normal geometry, which is what choosing Move from the taskbar means. */
+    const old={left:w.el.style.left,top:w.el.style.top,snap:w.snap||null};
+    if(old.snap)unsnap(w);
     w.el.classList.add('dragging','osw-taskbar-moving');_natGesture(w,true);
     const move=e=>{const k=zf(),ww=w.el.offsetWidth||MIN_W,hh=w.el.offsetHeight||MIN_H;
       w.el.style.left=Math.max(12,Math.min(vwL()-ww-12,e.clientX/k-ww/2))+'px';
       w.el.style.top=Math.max(12,Math.min(vhL()-TASKBAR-hh-12,e.clientY/k-24))+'px';};
     let done=false;
-    const finish=(keep=true)=>{if(done)return;done=true;document.removeEventListener('pointermove',move,true);document.removeEventListener('pointerdown',place,true);document.removeEventListener('keydown',key,true);w.el.classList.remove('dragging','osw-taskbar-moving');if(!keep)Object.assign(w.el.style,old);keepFrameReachable(w);_natGesture(w,false);};
+    const finish=(keep=true)=>{if(done)return;done=true;document.removeEventListener('pointermove',move,true);document.removeEventListener('pointerdown',place,true);document.removeEventListener('keydown',key,true);w.el.classList.remove('dragging','osw-taskbar-moving');if(!keep){if(old.snap)snapTo(w,old.snap);else Object.assign(w.el.style,{left:old.left,top:old.top});}keepFrameReachable(w);_natGesture(w,false);};
     const place=e=>{e.preventDefault();e.stopPropagation();finish(true);};
     const key=e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();finish(false);}};
     setTimeout(()=>{document.addEventListener('pointermove',move,true);document.addEventListener('pointerdown',place,true);document.addEventListener('keydown',key,true);},0);

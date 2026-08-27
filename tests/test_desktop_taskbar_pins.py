@@ -39,6 +39,15 @@ def test_running_task_context_menu_can_move_recover_and_close_windows():
     assert "move position cursor" not in menu
 
 
+def test_taskbar_move_recovers_snapped_geometry_and_escape_restores_the_zone():
+    start = SRC.index("function taskbarMove(w)")
+    body = SRC[start:SRC.index("function nativeTaskbarMove(row)", start)]
+    assert "snap:w.snap||null" in body
+    assert "if(old.snap)unsnap(w)" in body
+    assert "if(old.snap)snapTo(w,old.snap)" in body
+    assert "left:old.left,top:old.top" in body
+
+
 def test_adopted_native_task_gets_move_and_close_without_an_ephemeral_pin():
     menu = SRC[SRC.index("$$('.os-task', bar).forEach(b => b.oncontextmenu"):
                SRC.index("$$('.os-native-max'", SRC.index("$$('.os-task', bar).forEach(b => b.oncontextmenu"))]
