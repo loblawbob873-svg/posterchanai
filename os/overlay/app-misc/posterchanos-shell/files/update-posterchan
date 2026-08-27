@@ -47,7 +47,17 @@ have_pkgs="$(qlist -Iv app-misc/posterchan-desktop app-misc/posterchanos-shell 2
 if [ -n "$have_pkgs" ]; then
 	echo "${CYA}Syncing the PosterChanOS overlay${OFF}"
 	if ! emaint sync -r posterchan; then
-		echo "${YEL}Could not reach the overlay — trying the update with what is already here.${OFF}"
+		# The public bare repository can be restored from backup after storage failure. In that case
+		# an installed checkout and the restored release channel have unrelated Git histories, and
+		# Portage's ordinary sync refuses to cross them. This directory is only Portage's disposable
+		# overlay cache: fetch and reset that one bounded checkout, never user files or /etc.
+		if [ -d /var/db/repos/posterchan/.git ] \
+			&& git -C /var/db/repos/posterchan fetch --prune origin main \
+			&& git -C /var/db/repos/posterchan reset --hard FETCH_HEAD; then
+			echo "${GRN}Repaired the local PosterChanOS overlay checkout.${OFF}"
+		else
+			echo "${YEL}Could not reach the overlay — trying the update with what is already here.${OFF}"
+		fi
 	fi
 	echo "${CYA}Updating${OFF} $PKGS"
 	if ! emerge -u --quiet-build=n $PKGS; then

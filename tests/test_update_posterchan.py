@@ -101,7 +101,14 @@ class ItUpdatesBothHalves(unittest.TestCase):
 
     def test_an_unreachable_overlay_is_not_fatal(self):
         i = self.src.index("emaint sync")
-        self.assertIn("Could not reach the overlay", self.src[i:i + 300])
+        self.assertIn("Could not reach the overlay", self.src[i:i + 1200])
+
+    def test_a_restored_overlay_repairs_only_portages_checkout(self):
+        """A recreated release repository may have unrelated history. The updater may reset the
+        disposable Portage checkout, but must never apply that recovery to a user directory."""
+        self.assertIn("git -C /var/db/repos/posterchan fetch --prune origin main", self.src)
+        self.assertIn("git -C /var/db/repos/posterchan reset --hard FETCH_HEAD", self.src)
+        self.assertNotIn("git reset --hard /", self.src)
 
 
 class ItBehavesLikeACommandSomebodyTypes(unittest.TestCase):
