@@ -184,6 +184,7 @@ import android.content.Context; import java.util.*;
 final class SmsStore { static class Thread { String address,label; }
  static List<SmsMsg> recent(Context c,int n){return new ArrayList<>();}
  static List<SmsMsg> since(Context c,long d,int n){return new ArrayList<>();}
+ static List<SmsMsg> before(Context c,long d,int n){return new ArrayList<>();}
  static List<SmsMsg> thread(Context c,long[] ids,int n){return new ArrayList<>();}
  static List<Thread> platformThreads(Context c,int n,boolean w){return new ArrayList<>();}
  static List<Thread> fold(Context c,List<SmsMsg> m,boolean w){return new ArrayList<>();} }""",
@@ -192,6 +193,7 @@ import android.content.Context; import java.util.*;
 final class MmsStore {
  static List<SmsMsg> recent(Context c,int n){return new ArrayList<>();}
  static List<SmsMsg> since(Context c,long d,int n){return new ArrayList<>();}
+ static List<SmsMsg> before(Context c,long d,int n){return new ArrayList<>();}
  static List<SmsMsg> thread(Context c,long[] ids,int n){return new ArrayList<>();} }""",
     }
     r = ac.compile_sources(src, tmp, shims=stores)
@@ -670,6 +672,22 @@ class TheArchiveCanReachEveryPictureMessage(unittest.TestCase):
         """A clock that went backwards, or an unset mark read as -1, must not build a clause that
         selects rows the caller has already archived."""
         self.assertEqual(self.out["after-args-negative"], "0,0")
+
+    def test_full_history_has_a_strict_before_page_in_both_time_units(self):
+        when = self._code("MmsWhen.java")
+        mms = self._code("MmsStore.java")
+        sms = self._code("SmsStore.java")
+        messages = self._code("Messages.java")
+        plugin = open(os.path.join(SMS, "SmsPlugin.java"), encoding="utf-8").read()
+        web = open(SMSJS, encoding="utf-8").read()
+        self.assertIn("static String before(String col)", when)
+        self.assertIn("MmsWhen.before(Telephony.Mms.DATE)", mms)
+        self.assertIn('Telephony.Sms.DATE + "<?"', sms)
+        self.assertIn("Messages.before(getContext(), before, limit)", plugin)
+        self.assertIn("SmsStore.before(ctx, dateMs, limit)", messages)
+        self.assertIn("MmsStore.before(ctx, dateMs, limit)", messages)
+        self.assertIn("P.list({ before: edge, limit: 400 })", web)
+        self.assertNotIn("edge - 90 * DAY", web)
 
     # ---- the predicate against REAL sqlite ----------------------------------------------------
 

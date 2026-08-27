@@ -976,16 +976,21 @@
      * reading a phone's own inbox. */
     const stI = await phoneState();
     if(!stI.canRead) return { published: 0, why: 'PosterChan cannot read this phone\u2019s messages' };
-    const DAY = 86400000;
     let total = 0, quiet = 0;
     // Oldest we already hold — the back-fill starts from there and reaches further each round.
     let edge = Date.now();
     for(const m of S.msgs.values()) if(m && m.date && m.date < edge) edge = m.date;
     for(let round = 0; round < 400 && quiet < 2; round++){
-      const from = Math.max(0, edge - 90 * DAY);
       let rows = [];
-      try{ rows = ((await P.list({ since: from, limit: 400 })) || {}).messages || []; }
+      try{ rows = ((await P.list({ before: edge, limit: 400 })) || {}).messages || []; }
       catch(_){ return { published: total, why: 'could not read the phone' }; }
+      /* An older APK ignores `before` and answers with its newest page. Do not mistake that for the
+       * beginning of history and set the completion latch. Strict pages also eliminate timestamp
+       * overlap if an OEM provider treats `<` as `<=`. */
+      const offered = rows.length;
+      rows = rows.filter(r => r && Number(r.date) < edge);
+      if(offered && !rows.length)
+        return { published:total, why:'this phone build cannot page older message history yet' };
       let n = 0, oldest = edge;
       for(const r of rows){
         if(!r || !r.doc) continue;
@@ -1004,8 +1009,8 @@
       if(n) S.localRead = true;      // rows came out of THIS device's store — see noteWhere
       quiet = n ? 0 : quiet + 1;
       if(n){ rebuild(); if(onProgress) try{ onProgress(total); }catch(_){ } }
-      if(from === 0) break;                  // reached the beginning of time; nothing older exists
-      edge = Math.min(oldest, from);
+      if(rows.length < 400) break;            // provider exhausted: reached the beginning of time
+      edge = oldest;                          // strict-before makes the next page non-overlapping
     }
     return { published: total };
   }

@@ -343,6 +343,12 @@ public final class SmsStore {
                 new String[]{ String.valueOf(dateMs) }, "date ASC", limit);
     }
 
+    /** Older history, newest page first. Used by the resumable full-history archive backfill. */
+    public static List<SmsMsg> before(Context ctx, long dateMs, int limit) {
+        return query(ctx, Telephony.Sms.DATE + "<?",
+                new String[]{ String.valueOf(Math.max(0L, dateMs)) }, "date DESC", limit);
+    }
+
     /**
      * Whether the LAST read was refused rather than answered empty.
      *

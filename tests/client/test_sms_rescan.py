@@ -58,6 +58,20 @@ def mms_files(res):
 @unittest.skipIf(not NODE, "no node on this node")
 class AStuckCompletionMarker(unittest.TestCase):
 
+    def test_dense_old_history_pages_without_skipping_a_window(self):
+        """More than 400 messages in one 90-day span used to lose the middle permanently: the
+        client selected the oldest page in the span, then jumped its window behind that page."""
+        rows = []
+        for i in range(405):
+            rows.append({"id": i + 1, "thread": 1, "address": "+15550100",
+                         "body": "old-%d" % i, "date": NOW - (i + 1) * 60000,
+                         "type": 1, "incoming": True, "read": True, "mms": False,
+                         "parts": [], "doc": "pcai:sms:dense%019d" % i})
+        res = run(rows, {}, ["importAll"])
+        archived = [d for d in res["docs"] if d.startswith("pcai:sms:dense")]
+        self.assertEqual(len(archived), 405,
+                         "strict backward paging skipped part of a dense history window")
+
     def test_an_old_v2_completion_latch_cannot_hide_mms_after_upgrade(self):
         """The release migration itself: v2 could declare success with no portable MMS hashes.
         A current build must regard that old latch as stale and perform one full audit automatically."""

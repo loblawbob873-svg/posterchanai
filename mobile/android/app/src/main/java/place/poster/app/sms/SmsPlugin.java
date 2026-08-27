@@ -342,13 +342,15 @@ public class SmsPlugin extends Plugin {
     @PluginMethod
     public void list(PluginCall call) {
         long since = call.getLong("since", 0L);
+        long before = call.getLong("before", 0L);
         int limit = call.getInt("limit", 500);
         /* BOTH PROVIDERS, INTERLEAVED — see Messages. A conversation is texts AND pictures and has
          * always been read as one thing; two lists is not a smaller version of that, it is a thread
          * with holes in it. */
-        List<SmsMsg> rows = since > 0
-                ? Messages.since(getContext(), since, limit)
-                : Messages.recent(getContext(), limit);
+        List<SmsMsg> rows = before > 0
+                ? Messages.before(getContext(), before, limit)
+                : (since > 0 ? Messages.since(getContext(), since, limit)
+                             : Messages.recent(getContext(), limit));
         // READ IMMEDIATELY AFTER, on this thread, and SEPARATELY — the two tables fail
         // independently and folding them into one flag either blames a working half or hides a
         // refusal. Whichever is read second would otherwise overwrite the other's answer.

@@ -141,6 +141,12 @@ public final class MmsStore {
                      "date ASC", limit);
     }
 
+    /** Older history, newest page first. Strict-before prevents overlap between pages. */
+    public static List<SmsMsg> before(Context ctx, long dateMs, int limit) {
+        return query(ctx, MmsWhen.before(Telephony.Mms.DATE), MmsWhen.beforeArgs(dateMs),
+                     "date DESC", limit);
+    }
+
     public static List<SmsMsg> thread(Context ctx, long threadId, int limit) {
         return thread(ctx, new long[]{ threadId }, limit);
     }

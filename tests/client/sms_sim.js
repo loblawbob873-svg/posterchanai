@@ -63,7 +63,7 @@ const PLUGIN = {
              telephony: opt.telephony !== false };
   },
   async list(a){
-    calls.push(['list', a && a.since || 0]);
+    calls.push(['list', a && a.since || 0, a && a.before || 0]);
     // THE PROVIDER REFUSES WITHOUT READ_SMS, and `SmsStore.query` turns that refusal into an empty
     // list — which is exactly what a phone with no texts returns. That indistinguishability IS the
     // bug, so the stub reproduces it rather than handing the client rows it could never have had.
@@ -71,10 +71,14 @@ const PLUGIN = {
     const allowed = opt.oldApk ? isPhone() : canRead;
     if(!allowed) return { messages: [] };
     const since = (a && a.since) || 0;
+    const before = (a && a.before) || 0;
     // THE TWO PROVIDER TABLES REFUSE INDEPENDENTLY — several OEM builds guard `content://mms`
     // differently from `content://sms`. Folded into `refused` an MMS-only refusal reads as "you
     // have no messages", over a full inbox.
-    const out = { messages: rows.filter(r => r.date > since).sort((x, y) => x.date - y.date) };
+    let found = rows.filter(r => before ? r.date < before : r.date > since)
+                    .sort((x, y) => before ? y.date - x.date : x.date - y.date);
+    if(a && a.limit) found = found.slice(0, Math.max(1, Number(a.limit) || 1));
+    const out = { messages: found };
     if(opt.mmsRefused) out.mmsRefused = true;
     // TRUNCATED, not exhausted — MmsStore.MAX_ROWS hands back the newest 2,000 and there is no way
     // to ask for the rest. The stub reports it the way the plugin does, on every reply.
@@ -280,6 +284,7 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
     else if(step === 'migrate'){ await S.mirror({ fullMigration:true, limit:Number(opt.migrationBatch)||60 }); }
     // The whole batched loop, the way render() drives it — the only way to see it converge (or not).
     else if(step === 'migrateAll'){ calls.push(['migrateAll', await S.migrateAll()]); }
+    else if(step === 'importAll'){ calls.push(['importAll', await S.importAll()]); }
     // The deliberate, person-pressed re-read: clears the archive's latches and walks the phone again.
     else if(step === 'rescan'){ calls.push(['rescan', await S.rescan()]); }
     else if(step === 'mirror'){ await S.mirror(); }

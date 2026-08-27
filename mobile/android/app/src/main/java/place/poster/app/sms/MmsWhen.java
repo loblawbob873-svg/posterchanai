@@ -61,4 +61,15 @@ public final class MmsWhen {
         long ms = Math.max(0L, dateMs);
         return new String[]{ String.valueOf(ms), String.valueOf(ms / 1000L) };
     }
+
+    /** Mirror of {@link #after}: rows strictly BEFORE a millisecond timestamp in either unit. */
+    static String before(String col) {
+        return "((" + col + ">" + MS_FLOOR + " AND " + col + "<?)"
+             + " OR (" + col + "<=" + MS_FLOOR + " AND " + col + "<?))";
+    }
+
+    static String[] beforeArgs(long dateMs) {
+        long ms = Math.max(0L, dateMs);
+        return new String[]{ String.valueOf(ms), String.valueOf(ms / 1000L) };
+    }
 }

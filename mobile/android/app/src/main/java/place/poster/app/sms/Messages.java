@@ -62,6 +62,12 @@ public final class Messages {
         return out.size() > want ? new ArrayList<SmsMsg>(out.subList(0, want)) : out;
     }
 
+    /** One strict page older than `dateMs`, newest first across SMS and MMS providers. */
+    public static List<SmsMsg> before(Context ctx, long dateMs, int limit) {
+        return merge(SmsStore.before(ctx, dateMs, limit),
+                     MmsStore.before(ctx, dateMs, limit), limit);
+    }
+
     /** One conversation, oldest first — the order a thread is read in. */
     public static List<SmsMsg> thread(Context ctx, long threadId, int limit) {
         return thread(ctx, new long[]{ threadId }, limit);
