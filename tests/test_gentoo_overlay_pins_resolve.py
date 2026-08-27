@@ -98,6 +98,8 @@ class TheOverlayPinsSomethingThatExists(unittest.TestCase):
         verify = wf.index("name: Verify immutable version tag")
         self.assertLess(guard, publish)
         self.assertLess(publish, verify)
+        self.assertIn('if found="$(gh api', wf[guard:publish])
+        self.assertNotIn('--jq .object.sha 2>/dev/null || true', wf[guard:publish])
         self.assertIn('[ "$existing" != "$GITHUB_SHA" ]', wf[guard:publish])
         self.assertIn("target_commitish: ${{ github.sha }}", wf[publish:verify])
         self.assertIn('test "$actual" = "$GITHUB_SHA"', wf[verify:])

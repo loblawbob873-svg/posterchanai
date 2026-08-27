@@ -346,8 +346,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          existing="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$VERSION_TAG" \
-            --jq .object.sha 2>/dev/null || true)"
+          existing=""
+          # `gh api` writes the JSON 404 body to stdout as well as failing. Assign only on success;
+          # `... || true` inside command substitution mistakes that body for an existing SHA and
+          # rejects every genuinely unused version.
+          if found="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$VERSION_TAG" \
+            --jq .object.sha 2>/dev/null)"; then
+            existing="$found"
+          fi
           if [ -n "$existing" ] && [ "$existing" != "$GITHUB_SHA" ]; then
             echo "::error::immutable tag $VERSION_TAG already names $existing, not $GITHUB_SHA"
             exit 1
