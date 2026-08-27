@@ -977,9 +977,15 @@
     const stI = await phoneState();
     if(!stI.canRead) return { published: 0, why: 'PosterChan cannot read this phone\u2019s messages' };
     let total = 0, quiet = 0;
-    // Oldest we already hold — the back-fill starts from there and reaches further each round.
-    let edge = Date.now();
-    for(const m of S.msgs.values()) if(m && m.date && m.date < edge) edge = m.date;
+    /* START AT NOW, NOT AT THE OLDEST ROW ALREADY ON SCREEN.
+     *
+     * `loadFromPhone` deliberately puts provider rows in S before this runs, including MMS whose
+     * attachment has never reached encrypted Blossom. Using the oldest S date as the first cursor
+     * skipped every one of those visible-but-unarchived rows and asked only for messages older than
+     * them. This is especially destructive after a capped MMS read: the newest 2,000 pictures look
+     * complete locally, none of their bytes are portable, and “Bring in older messages” walks away
+     * from all of them. Audit from now; needsArchiveUpgrade makes completed archive rows cheap skips. */
+    let edge = Date.now() + 1;
     for(let round = 0; round < 400 && quiet < 2; round++){
       let rows = [];
       try{ rows = ((await P.list({ before: edge, limit: 400 })) || {}).messages || []; }

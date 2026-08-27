@@ -58,6 +58,14 @@ def mms_files(res):
 @unittest.skipIf(not NODE, "no node on this node")
 class AStuckCompletionMarker(unittest.TestCase):
 
+    def test_backfill_archives_media_already_visible_from_the_phone(self):
+        """Provider rows are loaded into the screen first. They are not thereby archived: a photo
+        still needs encrypted Blossom hashes, and backfill must revisit rather than cursor past it."""
+        rows = [picture(1, NOW - 5 * 86400000)]
+        res = run(rows, {}, ["phoneLoad", "importAll"])
+        self.assertEqual(len(mms_files(res)), 1,
+                         "the visible MMS row was skipped instead of uploading its media")
+
     def test_dense_old_history_pages_without_skipping_a_window(self):
         """More than 400 messages in one 90-day span used to lose the middle permanently: the
         client selected the oldest page in the span, then jumped its window behind that page."""
