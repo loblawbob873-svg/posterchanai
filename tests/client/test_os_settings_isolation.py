@@ -48,3 +48,19 @@ def test_system_settings_categories_are_separate_pages_without_widget_cards():
     for marker in ('data-jump="widgets"', "data-widgets", "data-widget-add",
                    "data-widget-size", "data-widget-remove", "Remove widget"):
         assert marker not in render
+
+
+def test_mobile_settings_keeps_every_category_reachable_when_sidebar_is_hidden():
+    render = OS[OS.index("async function renderSystemSettings()"):
+                OS.index("function openTaskManager", OS.index("async function renderSystemSettings()"))]
+    css = (ROOT / "static" / "css" / "client.css").read_text()
+    assert 'data-settings-mobile' in render
+    for destination in ("page:displays", "jump:sound", "jump:network", "jump:bluetooth",
+                        "page:power", "page:about", "page:liveusb"):
+        assert destination in render
+    assert "if(kind==='page'){_osSettingsPage=value;draw();}" in render
+    assert "else if(kind==='jump')jump(value,mobile)" in render
+    assert ".os-set-mobile-nav{display:none}" in css
+    mobile = css[css.index("@media(max-width:760px)", css.index(".os-settings-feed")):]
+    assert ".os-set-nav{display:none}" in mobile
+    assert ".os-set-mobile-nav{" in mobile and "display:flex" in mobile

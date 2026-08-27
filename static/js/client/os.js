@@ -1695,7 +1695,13 @@
         <button data-page="power" class="${_osSettingsPage==='power'?'on':''}">${iconSvg('power')} Power &amp; brightness</button>
         <button data-page="about" class="${_osSettingsPage==='about'?'on':''}">${iconSvg('chart')} About</button>
         ${window.pcLiveUSB?`<button data-page="liveusb" class="${_osSettingsPage==='liveusb'?'on':''}">${iconSvg('drive')} LiveUSB</button>`:''}
-      </aside><main class="os-set-main"><section data-settings-page="displays" ${_osSettingsPage==='displays'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('monitor')}</div><span><h2>Displays</h2><p>Arrange monitors, choose resolution and scaling, then preview safely before saving.</p></span></header>
+      </aside><main class="os-set-main"><label class="os-set-mobile-nav"><span>Settings category</span><select data-settings-mobile aria-label="Settings category">
+        <option value="page:displays" ${_osSettingsPage==='displays'?'selected':''}>Displays</option>
+        <option value="jump:sound">Sound</option><option value="jump:network">Network</option><option value="jump:bluetooth">Bluetooth</option>
+        <option value="page:power" ${_osSettingsPage==='power'?'selected':''}>Power &amp; brightness</option>
+        <option value="page:about" ${_osSettingsPage==='about'?'selected':''}>About</option>
+        ${window.pcLiveUSB?`<option value="page:liveusb" ${_osSettingsPage==='liveusb'?'selected':''}>LiveUSB</option>`:''}
+      </select></label><section data-settings-page="displays" ${_osSettingsPage==='displays'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('monitor')}</div><span><h2>Displays</h2><p>Arrange monitors, choose resolution and scaling, then preview safely before saving.</p></span></header>
         <section class="os-set-card"><div class="os-set-cardhead"><b>Monitor arrangement</b><span>Drag each numbered screen to match its physical position on your desk.</span></div>
         <div class="os-display-map" style="height:${Math.max(180,(maxY-minY)*scale+40)}px">${rows.map((r,i)=>
           `<button class="os-display ${i===selected?'selected':''} ${r.enabled?'':'off'}" data-i="${i}"
@@ -1809,13 +1815,17 @@
           try{e.target.disabled=true;await pcLiveUSB.burn(iso.value,disk.value);stat.textContent='Writing USB… do not unplug it';}catch(x){PC().toast(String(x&&x.message||x))}finally{e.target.disabled=false}};
         refresh();
       }
-      host.querySelectorAll('[data-jump]').forEach(b=>b.onclick=()=>{
-        const k=b.dataset.jump;
+      const jump=(k,anchor)=>{
         if(k==='network'||k==='bluetooth'||k==='sound')
-          try{ Promise.resolve(PCOSShell.openControl(k,b)).catch(e=>PC().toast(String(e&&e.message||e))); }
+          try{ Promise.resolve(PCOSShell.openControl(k,anchor)).catch(e=>PC().toast(String(e&&e.message||e))); }
           catch(e){ try{PC().toast(String(e&&e.message||e))}catch(_){} }
-      });
+      };
+      host.querySelectorAll('[data-jump]').forEach(b=>b.onclick=()=>jump(b.dataset.jump,b));
       host.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{_osSettingsPage=b.dataset.page;draw();});
+      const mobile=host.querySelector('[data-settings-mobile]');if(mobile)mobile.onchange=()=>{
+        const [kind,value]=String(mobile.value||'').split(':',2);
+        if(kind==='page'){_osSettingsPage=value;draw();}else if(kind==='jump')jump(value,mobile);
+      };
     };
     draw();
   }
