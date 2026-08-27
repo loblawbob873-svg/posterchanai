@@ -118,6 +118,13 @@ class PosterfetchTests(unittest.TestCase):
         got = json.loads(subprocess.check_output(["node", "-e", js], cwd=ROOT, text=True))
         self.assertEqual(got, "Navi 21 [Radeon RX 6800/6800 XT]")
 
+    def test_posterchanos_explicitly_ships_the_pci_model_database(self):
+        """A clean minimal image must not depend on another package incidentally installing pci.ids."""
+        installer = (ROOT / "os/gentoo.sh").read_text()
+        initial = next(line for line in installer.splitlines()
+                       if line.startswith('BASE_PACKAGES="') and '$BASE_PACKAGES' not in line)
+        self.assertIn("sys-apps/hwdata", initial)
+
     def test_gpu_probe_does_not_stop_at_the_first_card(self):
         src = (ROOT / "desktop/posterfetch.js").read_text()
         start = src.index("function gpu()")
