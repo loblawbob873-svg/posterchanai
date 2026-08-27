@@ -430,7 +430,12 @@
      * remains the cold-start fallback, where no JS listener exists yet. */
     const launched = (e) => {
       const v = e && typeof e.view === 'string' ? e.view.trim() : '';
-      if(document.querySelector('#feed')) consumeLaunchView(v);
+      /* A warm launcher press can arrive while MainActivity is already visible, in which case
+       * Android emits launchView but no later resume/visibility signal.  __feed_top was consumed
+       * here and left waiting for its 700 ms cold-boot fallback, producing the reported timeline
+       * shake with no apparent jump.  Direct delivery owns the same settle contract as `again`:
+       * hidden pages still wait for resume, visible pages scroll after WebView layout restoration. */
+      if(document.querySelector('#feed')) consumeLaunchView(v).finally(settleFeedTop);
     };
     document.addEventListener('visibilitychange', () => {
       if(document.visibilityState === 'visible'){ again(); settleFeedTop(); }

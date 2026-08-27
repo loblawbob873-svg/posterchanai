@@ -107,6 +107,47 @@ setTimeout(() => {
 }, 20);
 """
 
+DIRECT_TOP_HARNESS = r"""
+const fs = require('fs');
+let launchListener;
+const events = [];
+const document = global.document = {
+  visibilityState: 'visible',
+  querySelector: s => s === '#feed' ? {} : null,
+  addEventListener(){}
+};
+const home = {
+  consumeLaunchView: async () => ({view:''}),
+  addListener: (name, fn) => { if(name === 'launchView') launchListener=fn; }
+};
+global.window = {
+  __PC_BOOTED: true,
+  __PC: {
+    capPlugin: name => name === 'HomeScreen' ? home : null,
+    timelineTop: () => events.push('top')
+  },
+  PCOS: { mobileLanding(){} },
+  addEventListener(){}
+};
+global.PCOS = window.PCOS;
+global.navigator = {language:'en-US'};
+global.location = {origin:'https://example.invalid'};
+global.localStorage = {getItem(){return null},setItem(){},removeItem(){}};
+eval(fs.readFileSync(process.argv[1], 'utf8'));
+
+setTimeout(() => {
+  if(!launchListener) throw new Error('native launch listener not installed');
+  // A warm double-Home delivery does not necessarily produce a later App.resume. The direct
+  // launchView event must therefore finish the scroll by itself.
+  launchListener({view:'__feed_top'});
+  setTimeout(() => {
+    if(events.join(',') !== 'top') throw new Error('direct launch did not scroll exactly once: '+events.join(','));
+    console.log('ALL OK');
+    process.exit(0);
+  }, 260);
+}, 20);
+"""
+
 
 @unittest.skipIf(shutil.which("node") is None, "node not installed")
 class TabletLauncherRouting(unittest.TestCase):
@@ -120,6 +161,16 @@ class TabletLauncherRouting(unittest.TestCase):
     def test_double_home_waits_for_webview_resume_before_scrolling(self):
         result = subprocess.run(
             ["node", "-e", RESUME_TOP_HARNESS, str(SRC)],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("ALL OK", result.stdout)
+
+    def test_warm_double_home_scrolls_without_a_resume_callback(self):
+        result = subprocess.run(
+            ["node", "-e", DIRECT_TOP_HARNESS, str(SRC)],
             capture_output=True,
             text=True,
             timeout=10,
