@@ -17,7 +17,22 @@ def test_dragging_keeps_native_surface_live_and_coalesces_position_moves():
     assert "_natMove(w)" not in drag
     assert "pcWM.place" not in drag
     assert "setPointerCapture(ev.pointerId)" in drag
-    assert "if(w.native == null) window.addEventListener('blur', up)" in drag
+    assert "if(w.native == null) window.addEventListener('blur', cancel)" in drag
+
+
+def test_cancelled_drag_restores_geometry_and_never_snaps_or_hands_off():
+    src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+    drag = src[src.index("function startDrag"):src.index("function startResize")]
+    up = drag[drag.index("const up = (endEvent, cancelled) =>"):
+              drag.index("document.addEventListener('pointermove'")]
+    assert "document.addEventListener('pointercancel', cancel)" in drag
+    assert "w.el.addEventListener('lostpointercapture', cancel)" in drag
+    assert "Object.assign(w.el.style,{left:before.left,top:before.top,width:before.width,height:before.height})" in up
+    assert "w.snap=before.snap; w.max=before.max; w.rect=before.rect" in up
+    cancel = up[up.index("if(cancelled){", up.index("hideGhost()")):]
+    assert cancel.index("_natGesture(w,false)") < cancel.index("return;")
+    assert cancel.index("return;") < cancel.index("if(handoff && w.native != null")
+    assert cancel.index("return;") < cancel.index("if(zone) snapTo(w, zone)")
 
 
 def test_native_bridge_retains_move_for_non_gesture_placement_operations():
@@ -30,7 +45,7 @@ def test_native_bridge_retains_move_for_non_gesture_placement_operations():
 
 def test_snapping_ends_move_only_mode_before_the_full_native_resize():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
-    up = src[src.index("const up = (endEvent) =>", src.index("function startDrag")):
+    up = src[src.index("const up = (endEvent, cancelled) =>", src.index("function startDrag")):
              src.index("document.addEventListener('pointermove'", src.index("function startDrag"))]
     assert up.index("_natGesture(w, false)") < up.index("if(zone) snapTo(w, zone)")
     snap = src[src.index("function snapTo"):src.index("function unsnap")]
@@ -49,7 +64,7 @@ def test_mouse_edge_snap_is_not_stolen_by_a_timed_monitor_handoff():
 def test_pointerup_recomputes_the_snap_zone_from_its_final_coordinate():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
     drag = src[src.index("function startDrag"):src.index("function startResize")]
-    up = drag[drag.index("const up = (endEvent) =>"):drag.index("document.addEventListener('pointermove'")]
+    up = drag[drag.index("const up = (endEvent, cancelled) =>"):drag.index("document.addEventListener('pointermove'")]
     assert "zone = zoneAt(endEvent.clientX,endEvent.clientY)" in up
     assert up.index("zone = zoneAt(endEvent.clientX,endEvent.clientY)") < up.index("if(zone) snapTo(w, zone)")
 

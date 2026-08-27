@@ -2981,6 +2981,14 @@
     const gyOf = e => realScreen && Number.isFinite(e.screenY) ? e.screenY : e.clientY;
     let ssx = gxOf(ev), ssy = gyOf(ev);
     let ox = parseInt(w.el.style.left, 10), oy = parseInt(w.el.style.top, 10);
+    /* Cancellation is not a drop. Pointer capture can be revoked by the compositor, Escape-like
+     * system gestures, or a renderer losing focus. Keep the complete pre-drag frame state so those
+     * paths cannot accidentally commit a snap, monitor handoff, or the temporary floating geometry
+     * created when a snapped window is pulled away from its edge. */
+    const before = { left:w.el.style.left, top:w.el.style.top,
+      width:w.el.style.width, height:w.el.style.height,
+      snap:w.snap || null, max:!!w.max, rect:w.rect ? Object.assign({},w.rect) : null,
+      snapped:w.el.classList.contains('snapped'), maximised:w.el.classList.contains('maximised') };
     let curX = ox, curY = oy, zone = '', handoff = '', raf = 0, lastMove = ev,
         previewDir='', previewAt=0;
     hideLayouts();
@@ -3083,27 +3091,39 @@
       if(z !== zone){ zone = z; showGhost(zone); }     // only when it CHANGES — not 120 times a second
     };
     let ended = false;
-    const up = (endEvent) => {
+    const up = (endEvent, cancelled) => {
       if(ended) return;
       ended = true;
       document.removeEventListener('pointermove', move);
       document.removeEventListener('pointerup', up);
-      document.removeEventListener('pointercancel', up);
-      window.removeEventListener('blur', up);
-      w.el.removeEventListener('lostpointercapture', up);
+      document.removeEventListener('pointercancel', cancel);
+      window.removeEventListener('blur', cancel);
+      w.el.removeEventListener('lostpointercapture', cancel);
       try{ if(w.el.hasPointerCapture(ev.pointerId)) w.el.releasePointerCapture(ev.pointerId); }catch(_){}
       if(raf) cancelAnimationFrame(raf);
       w.el.classList.remove('dragging');
       w.el.style.transform = '';
-      w.el.style.left = Math.round(curX) + 'px';
-      w.el.style.top = Math.round(curY) + 'px';
+      if(cancelled){
+        Object.assign(w.el.style,{left:before.left,top:before.top,width:before.width,height:before.height});
+        w.snap=before.snap; w.max=before.max; w.rect=before.rect;
+        w.el.classList.toggle('snapped',before.snapped);
+        w.el.classList.toggle('maximised',before.maximised);
+      }else{
+        w.el.style.left = Math.round(curX) + 'px';
+        w.el.style.top = Math.round(curY) + 'px';
+      }
       /* Pointer coalescing can deliver the final edge coordinate only on pointerup. Reusing the
        * previous move's zone made a perfectly ordinary drag-to-edge do nothing intermittently. */
       if(endEvent && Number.isFinite(endEvent.clientX) && Number.isFinite(endEvent.clientY))
         zone = zoneAt(endEvent.clientX,endEvent.clientY);
       hideGhost();
-      handoff = handoffDirection(endEvent) || handoff || handoffDirection(lastMove);
       if(previewDir && pcWM.previewFrame){ try{ pcWM.previewFrame(null,previewDir); }catch(_){} }
+      if(cancelled){
+        _natGesture(w,false);
+        if(nativeWins().length)nsync();
+        return;
+      }
+      handoff = handoffDirection(endEvent) || handoff || handoffDirection(lastMove);
       if(handoff && w.native != null && pcWM.handoff){
         w.gesturing=false; _natFocusHold=false;
         const id=w.native;
@@ -3128,13 +3148,14 @@
       if(zone) snapTo(w, zone);
       else if(nativeWins().length) nsync();
     };
+    const cancel = (e) => up(e,true);
     document.addEventListener('pointermove', move);
     document.addEventListener('pointerup', up);
-    document.addEventListener('pointercancel', up);
+    document.addEventListener('pointercancel', cancel);
     /* Focusing a hosted native app blurs the shell. Pointer capture is the authority for that
      * gesture; treating blur as release was why Telegram stopped after the first few pixels. */
-    if(w.native == null) window.addEventListener('blur', up);
-    w.el.addEventListener('lostpointercapture', up);
+    if(w.native == null) window.addEventListener('blur', cancel);
+    w.el.addEventListener('lostpointercapture', cancel);
   }
 
   function startResize(w, ev){
