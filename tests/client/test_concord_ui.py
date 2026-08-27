@@ -390,7 +390,7 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert "mentionTags.push(['P',pk],['p',pk])" in CONCORD
     assert 'import_meta.env' not in CORD_READER
     assert 'CapacitorException' not in CORD_READER and 'registerPlugin' not in CORD_READER
-    assert 'decryptImagePointer(icon)' in CONCORD and "crypto.subtle.decrypt({name:'AES-GCM'" in CONCORD
+    assert 'await decryptImagePointer(value)' in CONCORD and "crypto.subtle.decrypt({name:'AES-GCM'" in CONCORD
     assert "search:'armada.buzz/invite'" in CONCORD and "search:'poster.place/invite'" in CONCORD
     assert 'data-cc-discover' in CONCORD and 'relaySubscribe:' in APP
     assert 'class="cc-message-avatar"' in CONCORD and '.cc-message-avatar' in CONCORD_CSS
@@ -528,10 +528,21 @@ def test_all_joined_community_metadata_repaints_live_without_moving_chat():
     assert 'eligible[metadataCursor++%eligible.length]' in block
     assert 'roomControls.set(loadKey,wraps||[])' in block
     assert "assign('name'" in block and "assign('description'" in block
-    assert "roomIconRefs.get(loadKey)!==ref" in block
+    assert "await applyRoomIconMetadata(room,info,loadKey)" in block
     assert 'const roomIconRefs=new Map()' in CONCORD
     assert 'rooms[selected.index]=room;save(rooms);preserveChatScroll(()=>render())' in block
     assert 'scrollChatBottom' not in block
+
+
+def test_icon_removal_and_failure_cannot_block_room_history_hydration():
+    helper = CONCORD.split('async function applyRoomIconMetadata', 1)[1].split('function reactionSummary', 1)[0]
+    hydrate = CONCORD.split('async function hydrateRoomStreams', 1)[1].split('async function publishCordMessage', 1)[0]
+    assert "hasOwnProperty.call(info,'icon')" in helper
+    assert "const icon=value?" in helper and ":''" in helper
+    assert "console.warn('Concord community icon could not be loaded'" in helper
+    assert 'return false' in helper
+    assert 'await applyRoomIconMetadata(room,info,loadKey)' in hydrate
+    assert hydrate.index('await applyRoomIconMetadata') < hydrate.index('for(const channel of room.channels)')
 
 
 def test_armada_encrypted_attachments_are_decrypted_before_media_rendering():

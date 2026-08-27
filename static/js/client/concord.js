@@ -250,6 +250,23 @@
     const hash=bytesHex(await crypto.subtle.digest('SHA-256',plain)); if(hash!==String(pointer.hash).toLowerCase())throw new Error('community icon failed integrity check');
     return URL.createObjectURL(new Blob([plain],{type:imageMime(plain)}));
   }
+  async function applyRoomIconMetadata(room,info,loadKey){
+    if(!room||!info||!Object.prototype.hasOwnProperty.call(info,'icon'))return false;
+    const value=info.icon,ref=typeof value==='string'?value:JSON.stringify(value||null);
+    if(roomIconRefs.get(loadKey)===ref)return false;
+    try{
+      const icon=value?(typeof value==='string'?value:await decryptImagePointer(value)):'';
+      roomIconRefs.set(loadKey,ref);
+      if(room.icon===icon)return false;
+      room.icon=icon;
+      return true;
+    }catch(error){
+      /* An icon is decoration, never a prerequisite for channels or history. Do not remember the
+       * failed pointer so the metadata rotation retries it, but let hydration continue immediately. */
+      console.warn('Concord community icon could not be loaded',error);
+      return false;
+    }
+  }
   function reactionSummary(p,m){
     const reactions=m&&m.reactions&&typeof m.reactions==='object'?m.reactions:{};
     const viewer=p.viewer?p.viewer():{};
@@ -462,7 +479,7 @@
       roomControls.set(loadKey,controlWraps||[]);
       room.name=info.name||room.name; room.description=info.description||room.description;
       room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];
-      const icon=info.icon; if(icon)room.icon=typeof icon==='string'?icon:await decryptImagePointer(icon);
+      await applyRoomIconMetadata(room,info,loadKey);
       const hydratedChannels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);
       if(!hydratedChannels.length)throw new Error('the control stream returned no readable channels');
       room.channels=hydratedChannels;
@@ -514,10 +531,7 @@
       const assign=(key,value)=>{if(value!==undefined&&JSON.stringify(room[key])!==JSON.stringify(value)){room[key]=value;changed=true;}};
       assign('name',info.name||room.name); assign('description',info.description===undefined?room.description:info.description);
       assign('banned',Array.isArray(info.banned)?info.banned:room.banned||[]);
-      if(Object.prototype.hasOwnProperty.call(info,'icon')){
-        const ref=typeof info.icon==='string'?info.icon:JSON.stringify(info.icon||null);
-        if(roomIconRefs.get(loadKey)!==ref){roomIconRefs.set(loadKey,ref);room.icon=info.icon?(typeof info.icon==='string'?info.icon:await decryptImagePointer(info.icon)):'';changed=true;}
-      }
+      if(await applyRoomIconMetadata(room,info,loadKey))changed=true;
       const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);
       if(channels.length)assign('channels',channels);
       if(changed){rooms[selected.index]=room;save(rooms);preserveChatScroll(()=>render());}
@@ -688,5 +702,5 @@
     $$('[data-cc-react-toggle]').forEach(b=>b.onclick=()=>toggleReaction(b.dataset.ccReactToggle,b.dataset.ccEmoji));
     $$('[data-cc-react]').forEach(b=>b.onclick=()=>{ reactionTarget=b.dataset.ccReact; const choices=['👍','❤️','😂','😮','😢','😡','🎉','💯']; const old=document.querySelector('.cc-reaction-picker'); if(old)old.remove(); const pop=document.createElement('div'); pop.className='cc-reaction-picker'; pop.innerHTML=choices.map(x=>`<button data-emoji="${x}">${x}</button>`).join(''); b.closest('.cc-message-body').appendChild(pop); pop.querySelectorAll('button').forEach(x=>x.onclick=e=>{ e.stopPropagation(); toggleReaction(reactionTarget,x.dataset.emoji); }); });
   }
-  window.PCConcord={render,openInvite:openInviteLink,inviteParts,normalizeIcon,notifyMentions,discoverInvites,threadParticipants,roomParticipants,typedMentionRecipients,conversationIsVisible,encryptedAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff};
+  window.PCConcord={render,openInvite:openInviteLink,inviteParts,normalizeIcon,notifyMentions,discoverInvites,threadParticipants,roomParticipants,typedMentionRecipients,conversationIsVisible,applyRoomIconMetadata,encryptedAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff};
 })();

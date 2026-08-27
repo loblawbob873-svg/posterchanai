@@ -105,6 +105,16 @@ if(PCConcord.conversationIsVisible(true,false,false) ||
    !PCConcord.conversationIsVisible(true,true,false) ||
    !PCConcord.conversationIsVisible(false,false,false))
   throw new Error('mobile conversation visibility/read-state rule is wrong');
+const iconRoom={icon:'https://old.example/icon.png'};
+if(!await PCConcord.applyRoomIconMetadata(iconRoom,{icon:''},'icon-clear') || iconRoom.icon!=='')
+  throw new Error('explicit community icon removal was ignored');
+if(!await PCConcord.applyRoomIconMetadata(iconRoom,{icon:'🛸'},'icon-plain') || iconRoom.icon!=='🛸')
+  throw new Error('plain community icon update was ignored');
+const priorFetch=globalThis.fetch;
+globalThis.fetch=async()=>{throw new Error('offline icon host');};
+if(await PCConcord.applyRoomIconMetadata(iconRoom,{icon:{url:'https://bad.example/icon',key:'00',nonce:'00',hash:'00'}},'icon-bad') || iconRoom.icon!=='🛸')
+  throw new Error('failed encrypted icon damaged room metadata');
+globalThis.fetch=priorFetch;
 const mentionRoom={naddr:'mention-room',channels:[{name:'general'},{name:'support',id:'support-id'}]};
 data.set('pc.concord.test.mention-room',JSON.stringify([{id:'m1',pubkey:'b'.repeat(64),text:'general'}]));
 data.set('pc.concord.test.mention-room.support-id',JSON.stringify([{id:'m2',pubkey:'c'.repeat(64),text:'support'}]));
