@@ -189,13 +189,21 @@
       .filter(x=>x.src);
     for(const el of media){
       if(el.dataset.ccViewer==='1')continue; el.dataset.ccViewer='1';
-      el.onclick=e=>{
+      const open=e=>{
         e.preventDefault();e.stopPropagation();
         const url=el.currentSrc||el.src;if(!url)return;
         const here=items.findIndex(x=>x.src===url);
         p.openLightbox(url,el.tagName==='VIDEO'?'video':null,
           items.length>1?{items,i:Math.max(0,here)}:null);
       };
+      /* A click on a <video controls> is also how Chromium reports presses on Play, seek, volume
+       * and fullscreen. Installing the image-style onclick handler there consumed those controls
+       * and made the attachment disappear into a repainted lightbox when somebody pressed Play.
+       * Images open on one click; videos keep native controls and use double-click to expand. */
+      if(el.tagName==='VIDEO'){
+        el.ondblclick=open;
+        if(!el.title)el.title='Double-click to expand';
+      }else el.onclick=open;
     }
   }
   async function hydrateEncryptedAttachments(messages){
@@ -203,7 +211,7 @@
     const byId=new Map((messages||[]).map(m=>[messageId(m),m]));
     for(const host of document.querySelectorAll('.cc-encrypted-attachment[data-cc-attachment]')){
       const m=byId.get(host.dataset.ccAttachment),file=m&&encryptedAttachments(m)[Number(host.dataset.ccAttachmentIndex)||0];if(!file)continue;
-      try{const got=await decryptAttachment(file);if(!host.isConnected)continue;const p=PC(),url=p.enc(got.url),label=p.enc(got.name||'attachment');if(got.mime.startsWith('image/')){host.innerHTML=`<button class="cc-attachment-open" type="button" aria-label="Open ${label}"><img src="${url}" alt="${label}" loading="lazy"></button>`;const open=host.querySelector('.cc-attachment-open');if(open)open.onclick=e=>{e.preventDefault();e.stopPropagation();attachmentLightbox(p,host,got.url,null);};}else if(got.mime.startsWith('video/')){host.innerHTML=`<div class="cc-attachment-media"><video src="${url}" controls playsinline preload="metadata"></video><button class="cc-attachment-expand" type="button" aria-label="Open ${label}">↗</button></div>`;const openVideo=e=>{e.preventDefault();e.stopPropagation();attachmentLightbox(p,host,got.url,'video');};const video=host.querySelector('video');if(video)video.onclick=openVideo;const open=host.querySelector('.cc-attachment-expand');if(open)open.onclick=openVideo;}else if(got.mime.startsWith('audio/'))host.innerHTML=`<audio src="${url}" controls preload="metadata"></audio>`;else host.innerHTML=`<a href="${url}" download="${label}">Download ${label}</a>`;}catch(_){if(host.isConnected)host.innerHTML='<span class="cc-attachment-error">Could not decrypt attachment</span>';}
+      try{const got=await decryptAttachment(file);if(!host.isConnected)continue;const p=PC(),url=p.enc(got.url),label=p.enc(got.name||'attachment');if(got.mime.startsWith('image/')){host.innerHTML=`<button class="cc-attachment-open" type="button" aria-label="Open ${label}"><img src="${url}" alt="${label}" loading="lazy"></button>`;const open=host.querySelector('.cc-attachment-open');if(open)open.onclick=e=>{e.preventDefault();e.stopPropagation();attachmentLightbox(p,host,got.url,null);};}else if(got.mime.startsWith('video/')){host.innerHTML=`<div class="cc-attachment-media"><video src="${url}" controls playsinline preload="metadata" title="Double-click to expand"></video><button class="cc-attachment-expand" type="button" aria-label="Open ${label}">↗</button></div>`;const openVideo=e=>{e.preventDefault();e.stopPropagation();attachmentLightbox(p,host,got.url,'video');};const video=host.querySelector('video');if(video)video.ondblclick=openVideo;const open=host.querySelector('.cc-attachment-expand');if(open)open.onclick=openVideo;}else if(got.mime.startsWith('audio/'))host.innerHTML=`<audio src="${url}" controls preload="metadata"></audio>`;else host.innerHTML=`<a href="${url}" download="${label}">Download ${label}</a>`;}catch(_){if(host.isConnected)host.innerHTML='<span class="cc-attachment-error">Could not decrypt attachment</span>';}
     }
   }
   function channelStarKey(room,name){ return `pc.concord.star.${room&&(room.communityId||room.naddr||room.url)||'unknown'}:${name||'general'}`; }

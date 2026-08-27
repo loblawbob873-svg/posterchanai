@@ -552,8 +552,20 @@ def test_plain_room_images_and_videos_open_fullscreen_on_every_layout():
     assert "el.tagName==='VIDEO'?'video':null" in CONCORD
     assert "e.preventDefault();e.stopPropagation()" in CONCORD
     assert "wireRoomMedia(p);" in CONCORD
-    assert "if(video)video.onclick=openVideo" in CONCORD
+    assert "if(video)video.ondblclick=openVideo" in CONCORD
     assert "if(open)open.onclick=openVideo" in CONCORD
+
+
+def test_video_playback_controls_are_not_replaced_by_the_lightbox_handler():
+    wire = CONCORD.split("function wireRoomMedia(p)", 1)[1].split("async function hydrateEncryptedAttachments", 1)[0]
+    encrypted = CONCORD.split("async function hydrateEncryptedAttachments", 1)[1].split("function channelStarKey", 1)[0]
+    assert "if(el.tagName==='VIDEO')" in wire
+    assert "el.ondblclick=open" in wire
+    assert "else el.onclick=open" in wire
+    assert "el.onclick=open" not in wire.split("if(el.tagName==='VIDEO')", 1)[1].split("else el.onclick=open", 1)[0]
+    assert "if(video)video.ondblclick=openVideo" in encrypted
+    assert "if(video)video.onclick=openVideo" not in encrypted
+    assert 'class="cc-attachment-expand"' in encrypted
 
 
 def test_concord_brand_always_returns_to_discovery():
