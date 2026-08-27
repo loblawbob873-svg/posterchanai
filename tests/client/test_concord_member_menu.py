@@ -30,13 +30,14 @@ def test_member_menu_supports_profile_and_owner_only_ban():
 
 def test_mobile_tap_opens_profile_but_long_press_keeps_context_actions():
     rows = JS.split("$$('[data-cc-member]')", 1)[1].split("const membersInvite", 1)[0]
-    assert "window.matchMedia('(max-width:820px)').matches" in rows
-    assert "memberTapAction(narrow,longPressed)" in rows
+    assert "memberTapAction(memberViewportIsNarrow(),longPressed)" in rows
+    assert "const target=row.dataset.ccMember,narrow=" not in rows
     assert "if(action==='consume')return" in rows
     assert "if(action==='profile'){if(p.openProfile)p.openProfile(target);return;}" in rows
     assert "longPressed=true;openMemberMenu(e,target)" in rows
     assert "row.oncontextmenu" in rows
     assert "function memberTapAction(narrow,longPressed)" in JS
+    assert "function memberViewportIsNarrow()" in JS
 
 
 def test_delayed_ban_updates_the_original_room_not_whichever_room_is_active_later():

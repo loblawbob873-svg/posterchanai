@@ -275,6 +275,12 @@ if(PCConcord.memberTapAction(true,false)!=='profile' ||
    PCConcord.memberTapAction(false,false)!=='menu' ||
    PCConcord.memberTapAction(true,true)!=='consume')
   throw new Error('member tap/long-press action routing is wrong');
+let memberViewportNarrow=false;
+window.matchMedia=query=>({matches:query==='(max-width:820px)'&&memberViewportNarrow});
+if(PCConcord.memberViewportIsNarrow())throw new Error('desktop member viewport was detected as mobile');
+memberViewportNarrow=true;
+if(!PCConcord.memberViewportIsNarrow())throw new Error('member viewport stayed desktop after a responsive resize');
+memberViewportNarrow=false;
 PCConcord.render();
 const reply=dollars('[data-cc-reply]').find(b=>b.dataset.ccReply===permanentId);
 if(!reply)throw new Error('rendered message has no reply control');
