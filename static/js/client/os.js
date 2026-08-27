@@ -1470,6 +1470,7 @@
       repainting++;
       try{ PC().switchView && PC().switchView(view); }catch(_){}
       finally{ repainting--; }
+      if(view==='concord') snapTo(existing,'max');
       return existing;
     }
     const app = apps().find(a => a.view === view) || {};
@@ -2017,7 +2018,13 @@
   function noteView(v){
     if(!on || !v || !realFeed) return;
     const w = wins.find(x => realFeed.parentElement === x.body);
-    if(w){ w.appView = v; try{ w.appPath = (PC().viewPath && PC().viewPath()) || ''; }catch(_){} }
+    if(w){
+      w.appView = v; try{ w.appPath = (PC().viewPath && PC().viewPath()) || ''; }catch(_){}
+      /* Concord is selected inside the canonical Messages frame, after routing has already chosen
+       * that frame. This render notification is therefore the authoritative place to apply its
+       * full three-pane workspace policy on tablets and on restored Direct Messages windows. */
+      if(v==='concord' && !w.max) snapTo(w,'max');
+    }
   }
 
   /* A shared-feed painter needs stronger proof than the client's one global VIEW string. A
@@ -2057,7 +2064,12 @@
       // An app-icon click names the app to open. A parked window can carry a stale appView captured
       // from the one global VIEW while another window was active; restoring that value made clicking
       // Texts repaint Concord (and vice versa). Its original app identity wins for explicit routing.
-      w.appView=view; w.appPath=''; focusWin(w, false); return false;
+      w.appView=view; w.appPath=''; focusWin(w, false);
+      /* Concord is the wide, three-pane tab inside Messages. Switching an already-open Messages
+       * frame used to bypass the creation-time maximise below, leaving the workspace letterboxed
+       * in the generic reading-column rectangle on tablets. */
+      if(view==='concord') snapTo(w,'max');
+      return false;
     }   // already open: claim the feed, let the caller paint
     // Back/forward passes focusOnly: it may bring a window forward, never conjure one.
     if(focusOnly) return false;

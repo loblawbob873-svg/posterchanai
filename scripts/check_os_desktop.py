@@ -319,6 +319,19 @@ DRIVE = r"""(async () => {
     pages:document.querySelectorAll('[data-settings-page]').length,
     widgets:document.querySelectorAll('[data-widget-add],[data-widget-size],[data-widget-remove]').length};
   document.querySelector('.osw.focused .osw-x')?.click(); await sleep(80);
+  /* Concord is painted as a tab inside the canonical Messages frame. The render notification must
+     maximise that existing frame, including at tablet widths, rather than leaving a desktop strip. */
+  PCOS.routeView('messages'); await sleep(180);
+  PCOS.noteView('concord'); await sleep(180);
+  {
+    const d=document.querySelector('.os-desk')?.getBoundingClientRect();
+    const w=document.querySelector('.osw.focused')?.getBoundingClientRect();
+    const b=document.querySelector('.osw.focused .osw-body')?.getBoundingClientRect();
+    out.concordSize=d&&w&&b?{max:document.querySelector('.osw.focused')?.classList.contains('maximised'),
+      frameGap:Math.round(Math.abs(d.width-w.width)+Math.abs(d.height-w.height)),
+      bodyGap:Math.round(Math.max(0,w.bottom-b.bottom)),bodyH:Math.round(b.height)}:{};
+  }
+  document.querySelector('.osw.focused .osw-x')?.click(); await sleep(80);
   const nb = document.querySelector('#os-new');
   out.hasNew = !!nb;
   if (nb) nb.click();
@@ -1522,6 +1535,16 @@ async def drive(url):
                 if settings.get("widgets"):
                     problems.append((label, "settings-mixed-widgets",
                                      f"settings included {settings['widgets']} dashboard widget controls"))
+
+                concord = r.get("concordSize") or {}
+                # Maximised managed windows deliberately retain the WM's 8 CSS-px snap gutter;
+                # bodyGap below is the actual unused strip regression inside the frame.
+                if not concord.get("max") or concord.get("frameGap", 999) > 28:
+                    problems.append((label, "concord-not-maximised",
+                                     f"Concord left unused managed workspace: {concord}"))
+                if concord.get("bodyH", 0) < 200 or concord.get("bodyGap", 999) > 4:
+                    problems.append((label, "concord-inner-gap",
+                                     f"Concord body did not fill its frame: {concord}"))
 
                 # Exercise the browser input path, not merely the CSS declaration. A regression
                 # once left Social with no usable wheel scrolling even though the feed still had
