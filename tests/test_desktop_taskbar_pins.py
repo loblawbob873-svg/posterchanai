@@ -31,7 +31,21 @@ def test_running_task_context_menu_can_move_recover_and_close_windows():
     assert "{label:'Move',run:()=>taskbarMove(running)}" in SRC
     assert "{label:'Close',run:()=>closeWin(running)}" in SRC
     assert "keepFrameReachable(w);_natGesture(w,false)" in SRC
-    assert "move position cursor" in SRC
+    assert "function nativeTaskbarMove(row)" in SRC
+    assert "{label:'Move',run:()=>nativeTaskbarMove(w)}" in SRC
+    assert "if(!w)w=adoptNative(row)" in SRC
+    menu = SRC[SRC.index("$$('.os-task', bar).forEach(b => b.oncontextmenu"):
+               SRC.index("$$('.os-native-max'", SRC.index("$$('.os-task', bar).forEach(b => b.oncontextmenu"))]
+    assert "move position cursor" not in menu
+
+
+def test_adopted_native_task_gets_move_and_close_without_an_ephemeral_pin():
+    menu = SRC[SRC.index("$$('.os-task', bar).forEach(b => b.oncontextmenu"):
+               SRC.index("$$('.os-native-max'", SRC.index("$$('.os-task', bar).forEach(b => b.oncontextmenu"))]
+    assert "running.native==null" in menu
+    assert "if(running)actions.push({label:'Move'" in menu
+    assert "{label:'Close',run:()=>closeWin(running)}" in menu
+    assert "if(key){" in menu
 
 
 def test_taskbar_context_menu_is_anchored_in_the_desktops_scaled_coordinate_space():

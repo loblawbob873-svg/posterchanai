@@ -2618,6 +2618,17 @@
     setTimeout(()=>{document.addEventListener('pointermove',move,true);document.addEventListener('pointerdown',place,true);document.addEventListener('keydown',key,true);},0);
   }
 
+  /* A compositor row can briefly reach the taskbar before reconciliation has built its HTML frame.
+   * `move position cursor` merely teleports the surface once; it does not arm an interactive move.
+   * Adopt it now and use the same pointer-follow/cancel/geometry path every other task uses. */
+  function nativeTaskbarMove(row){
+    if(!row||row.id==null)return false;
+    let w=nativeWins().find(x=>Number(x.native)===Number(row.id));
+    if(!w)w=adoptNative(row);
+    if(!w)return false;
+    taskbarMove(w);return true;
+  }
+
   /* Alt+Tab has to cycle OUR windows, not only Sway surfaces. Every PosterChan app on this output
    * lives inside one Electron surface, while adopted Firefox/Telegram windows are represented in
    * this same list. Creation order is stable as focus changes, so advancing from the focused frame
@@ -5509,7 +5520,7 @@
       if(b.dataset.kind === 'native'){
         const w=nativeTasks.find(x=>String(x.id)===b.dataset.id); if(!w) return;
         showCtx(e.clientX,e.clientY,[
-          {label:'Move',run:()=>Promise.resolve(pcWM.command('[con_id='+Number(w.id)+'] move position cursor')).catch(()=>{})},
+          {label:'Move',run:()=>nativeTaskbarMove(w)},
           {label:'Snap left',run:()=>Promise.resolve(pcWM.snap(w.id,'left')).catch(()=>{})},
           {label:'Snap right',run:()=>Promise.resolve(pcWM.snap(w.id,'right')).catch(()=>{})},
           {label:'Maximize',run:()=>Promise.resolve(pcWM.snap(w.id,'max')).catch(()=>{})},
@@ -5521,15 +5532,17 @@
       let key = b.dataset.pin || '',running=null;
       if(!key && b.dataset.kind === 'web'){
         running = wins.find(x => String(x.id) === b.dataset.id);
-        if(running && running.view) key = 'view:' + running.view;
+        /* `native:<con_id>` is a frame identity for this one compositor session, not an app a pin
+         * can launch tomorrow. Native windows still get Move/Close; only the invalid pin is absent. */
+        if(running && running.native==null && running.view) key = 'view:' + running.view;
       }
-      if(!key) return;
-      const pinned = pins.indexOf(key) >= 0, cut = key.indexOf(':');
       const actions=[];
       if(running)actions.push({label:'Move',run:()=>taskbarMove(running)},
         {label:'Close',run:()=>closeWin(running)},{sep:true});
-      actions.push({ label: pinned ? 'Unpin from taskbar' : 'Pin to taskbar',
-        run: () => setPinned(key.slice(0, cut), key.slice(cut + 1), !pinned) });
+      if(key){const pinned=pins.indexOf(key)>=0,cut=key.indexOf(':');actions.push({
+        label:pinned?'Unpin from taskbar':'Pin to taskbar',
+        run:()=>setPinned(key.slice(0,cut),key.slice(cut+1),!pinned)});}
+      if(!actions.length)return;
       showCtx(e.clientX, e.clientY, actions, b);
     });
     $$('.os-native-max',bar).forEach(b=>b.onclick=e=>{ e.stopPropagation(); Promise.resolve(pcWM.snap(Number(b.dataset.id),'max')).catch(()=>{}); });

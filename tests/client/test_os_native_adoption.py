@@ -8,7 +8,8 @@ OS = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
 
 def test_every_shell_lookup_accepts_electron_44_wayland_app_id_case():
     """Otherwise the shell adopts itself as a recursive black native window."""
-    assert OS.count("/^(?:posterchan(?:-desktop)?|place\\.poster\\.desktop)$/i") == 3
+    # Adoption, native sync, Task Manager focus, and Alt+Tab's shell-focus handoff.
+    assert OS.count("/^(?:posterchan(?:-desktop)?|place\\.poster\\.desktop)$/i") == 4
 
 
 def test_late_xwayland_metadata_gets_a_reconciliation_pass():
@@ -31,6 +32,15 @@ def test_native_taskbar_menu_has_the_same_snap_layouts_as_posterchan_windows():
     assert "{label:'Snap right'" in OS
     assert "{label:'Maximize'" in OS
     assert "pcWM.snap(w.id,'left')" in OS
+
+
+def test_early_native_taskbar_move_adopts_then_uses_live_frame_movement():
+    start = OS.index("function nativeTaskbarMove(row)")
+    body = OS[start:OS.index("// ---- snapping", start)]
+    assert "nativeWins().find" in body
+    assert "adoptNative(row)" in body
+    assert "taskbarMove(w)" in body
+    assert "pcWM.command(" not in body
 
 
 def test_hardware_watch_does_not_rebuild_the_start_button():
