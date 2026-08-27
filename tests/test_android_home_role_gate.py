@@ -23,6 +23,13 @@ def test_home_role_gate_fails_closed_instead_of_skipping_launcher():
     assert "--ez enabled false" in SCRIPT
 
 
+def test_launcher_presence_check_does_not_press_home_twice():
+    block = SCRIPT.split('say "bring the launcher up"', 1)[1].split(
+        'say "double HOME opens the active feed at its top"', 1)[0]
+    assert "to_home" not in block
+    assert '*HomeActivity*) ok "the launcher is what came up"' in block
+
+
 def test_music_device_test_requires_our_launcher_and_restores_prior_state():
     assert 'cmd role add-role-holder android.app.role.HOME " + ctx.getPackageName()' in TEST
     assert 'assertTrue("the emulator did not assign PosterChan the HOME role"' in TEST

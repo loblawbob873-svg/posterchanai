@@ -257,7 +257,11 @@ to_home() {
 if [ -n "$HOLDER" ]; then
   adb logcat -c
   say "bring the launcher up"
-  to_home
+  # The role assertion immediately above already brought HomeActivity to the foreground. Pressing
+  # HOME again here is not navigation: it is the first half of PosterChan's intentional double-HOME
+  # shortcut. On a busy emulator that delivery can be delayed long enough to pair with the next
+  # lifecycle callback and open MainActivity, making a healthy launcher fail this unrelated check.
+  # Re-read the foreground state; the explicit double-HOME block below owns the next HOME presses.
   sleep 6
   TOP=$(adb shell dumpsys activity activities 2>/dev/null | grep -m1 -E 'mResumedActivity|topResumedActivity' | tr -d '\r')
   echo "    resumed: $TOP"
