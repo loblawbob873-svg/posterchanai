@@ -291,13 +291,13 @@
     if(details && u.bindCols && grid) u.bindCols(grid);
 
     if(listing.parent){ const up = $('.hf-up'); if(up) up.onclick = () => { enter(listing.parent); again(); }; }
-    $('.hf-all').onclick = () => {
-      const paths=rows.map(r=>r.path), all=paths.length && paths.every(p=>_sel.has(p));
-      if(all) paths.forEach(p=>_sel.delete(p)); else paths.forEach(p=>_sel.add(p));
-      again();
-    };
-    $('.hf-none').onclick = () => { _sel = new Set(); again(); };
-    $('.hf-hidden').onclick = () => { _hidden = !_hidden; again(); };
+    { const allBtn=$('.hf-all'); if(allBtn) allBtn.onclick = () => {
+        const paths=rows.map(r=>r.path), all=paths.length && paths.every(p=>_sel.has(p));
+        if(all) paths.forEach(p=>_sel.delete(p)); else paths.forEach(p=>_sel.add(p));
+        again();
+      }; }
+    { const noneBtn=$('.hf-none'); if(noneBtn) noneBtn.onclick = () => { _sel = new Set(); again(); }; }
+    { const hiddenBtn=$('.hf-hidden'); if(hiddenBtn) hiddenBtn.onclick = () => { _hidden = !_hidden; again(); }; }
     const paste = $('.hf-paste');
     if(paste) paste.onclick = async () => {
       paste.disabled = true;
