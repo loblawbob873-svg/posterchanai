@@ -89,12 +89,19 @@ class HostFilesView(unittest.TestCase):
         out = self.js(r"""
           out.c = F.crumbs('C:\\Users\\Default User');
           out.p = F.parentPath('C:\\Users\\Default User');
+          out.fileAtRoot = F.parentPath('C:\\boot.ini');
           out.root = F.parentPath('C:\\');
         """)
         self.assertEqual([c["label"] for c in out["c"]], ["C:", "Users", "Default User"])
         self.assertEqual([c["path"] for c in out["c"]],
                          ["C:\\", "C:\\Users", "C:\\Users\\Default User"])
         self.assertEqual(out["p"], "C:\\Users")
+        self.assertEqual(out["fileAtRoot"], "C:\\")
+        self.assertIsNone(out["root"])
+
+    def test_unix_file_at_root_has_the_root_as_its_parent(self):
+        out = self.js("out.p = F.parentPath('/README');out.root = F.parentPath('/');")
+        self.assertEqual(out["p"], "/")
         self.assertIsNone(out["root"])
 
     def test_an_unreadable_folder_keeps_an_up_button(self):

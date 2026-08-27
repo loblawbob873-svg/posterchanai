@@ -19,8 +19,18 @@ def test_search_aggregates_all_three_file_sources():
 def test_search_hits_route_back_to_their_real_source():
     assert "r.source==='blossom'" in APP
     assert "r.source==='synced'" in APP
-    assert "H.enter(r.dir?p:" in APP
+    assert "H.enter(r.dir?p:(H.parentPath(p)||p))" in APP
     assert "_filesQ=''" in APP
+
+
+def test_computer_search_hits_use_cross_platform_parent_navigation():
+    """Root-level Unix and Windows files must route to `/` and `C:\\`, not to the file or `C:`."""
+    click = APP[APP.index("$$('.fx-search-hit',results)"):]
+    click = click[:click.index("\n  }")]
+    assert "H.parentPath(p)" in click
+    assert "lastIndexOf" not in click
+    assert "slice(0,cut)" not in click
+    assert "function parentPath(p)" in HOST
 
 
 def test_every_source_has_explicit_select_all_and_none():
@@ -38,4 +48,3 @@ def test_details_view_has_a_real_date_column_and_cell():
 def test_unified_results_do_not_overflow_a_phone():
     assert ".fx-search-hit{display:grid" in CSS
     assert ".fx-search-path,.fx-search-date{display:none}" in CSS
-

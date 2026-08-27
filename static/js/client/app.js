@@ -19751,8 +19751,12 @@
       _fxRemember(); _filesQ='';
       if(r.source==='blossom'){ _hostOn=false; _syncRoot=''; _syncPath=''; _filesFolder=r.folder||''; _fxMobileSource='blossom'; }
       else if(r.source==='synced'){ _hostOn=false; _syncRoot=r.root; _syncPath=r.folder||''; _fxMobileSource='synced'; }
-      else { const H=_hostFs(); if(H){ const p=String(r.path||''); const cut=Math.max(p.lastIndexOf('/'),p.lastIndexOf('\\'));
-          H.enter(r.dir?p:(cut>0?p.slice(0,cut):p)); } _hostOn=true; _syncRoot=''; _filesFolder=null; _fxMobileSource='computer'; }
+      else { const H=_hostFs(); if(H){ const p=String(r.path||'');
+          /* Do not derive a native parent by slicing separators here. `/file` has its separator at
+           * zero and `C:\\file` needs to retain the root slash; both used to route back into an
+           * invalid file path after choosing a unified-search hit. The host module already owns
+           * cross-platform path ancestry for breadcrumbs and Up, so search uses the same rule. */
+          H.enter(r.dir?p:(H.parentPath(p)||p)); } _hostOn=true; _syncRoot=''; _filesFolder=null; _fxMobileSource='computer'; }
       renderBlossom();
     });
   }
