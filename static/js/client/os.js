@@ -1555,7 +1555,10 @@
        * cannot put the fresh window at the offset left by whichever app previously owned #feed.
        * The existing-window branch above deliberately does not call this: focusing Social again
        * must preserve the person's place. */
-      if(view==='home' && PC().timelineTop) PC().timelineTop('home');
+      /* The sidebar names Social `global`; `home` is its alternate tab. Cover both identities so
+       * the fresh-window top latch is reached by the launcher people actually click. timelineTop
+       * owns hidden-tab/start-timeline resolution, so passing the requested tab remains canonical. */
+      if((view==='home'||view==='global') && PC().timelineTop) PC().timelineTop(view);
     }
     return w;
   }
