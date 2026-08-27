@@ -114,6 +114,20 @@ class PreviewIsReachable(unittest.TestCase):
         self.assertIn(".pc-document-focus .scanlines", self.css)
         self.assertIn("classList.remove('pc-document-focus')", osjs)
 
+    def test_minimising_the_last_document_restores_desktop_effects(self):
+        """Document chrome is a focus state, not a sticky preference.
+
+        With Preview as the only visible window, minimise has no successor to pass through
+        ``focusWin``.  That branch must explicitly restore the desktop just like close does.
+        """
+        osjs = _read("static/js/client/os.js")
+        start = osjs.index("function minimise(w)")
+        body = osjs[start:osjs.index("function taskbarMove(w)", start)]
+        no_successor = body[body.index("if(next) focusWin(next)"):]
+        self.assertIn("classList.remove('pc-document-focus')", no_successor)
+        self.assertLess(no_successor.index("classList.remove('pc-document-focus')"),
+                        no_successor.index("drawBar()"))
+
     def test_android_pdfs_use_the_bundled_renderer(self):
         src = _read("static/js/client/preview.js")
         self.assertIn("/static/vendor/pdfjs/pdf.min.js", src)

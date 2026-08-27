@@ -2661,7 +2661,15 @@
     if(nativeWins().length) nsync();
     if(realFeed && realFeed.parentElement === w.body) releaseFeed(true);   // it is coming back
     const next = wins.filter(x => !x.min).pop();
-    if(next) focusWin(next); else drawBar();
+    if(next) focusWin(next); else{
+      /* `pc-document-focus` describes the VISIBLE focused workspace, not the last window which
+       * happened to own focus.  Minimising the only Preview/Office/Email window used to leave this
+       * class behind, so the document's scanline suppression leaked onto the bare desktop until a
+       * different window was opened.  closeWin already clears the state in this same no-successor
+       * transition; minimise must do so too. */
+      document.documentElement.classList.remove('pc-document-focus');
+      drawBar();
+    }
   }
 
   /* Taskbar recovery for a window whose title bar is awkward or partly outside the display. The
