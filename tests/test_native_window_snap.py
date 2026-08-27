@@ -176,6 +176,15 @@ def test_the_native_palette_is_applied_at_RUNTIME_not_only_from_a_config_file():
     assert "applyChrome()" in main, "applyChrome exists but nothing ever calls it"
 
 
+def test_every_adopted_native_window_loses_stale_sticky_state_by_identity():
+    """A restored Firefox private/Telegram window must not follow every workspace or output."""
+    main = (ROOT / "desktop/main.js").read_text()
+    decorate = main[main.index("ipcMain.handle('pc:wm:decorate'"):
+                    main.index("ipcMain.handle('pc:display:status'")]
+    assert "[con_id=' + Number(id) + '] border none, sticky disable" in decorate
+    assert "fullscreen disable" not in decorate, "adoption must preserve app-requested fullscreen"
+
+
 def test_the_runtime_palette_matches_the_shipped_config():
     """Two hand-maintained copies is how one of them ends up wrong — the recurring shape in this
     repo. Every client.* line the shell sends must be a line the config also has."""

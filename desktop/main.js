@@ -1370,8 +1370,14 @@ ipcMain.handle('pc:wm:decorate', async (e, id) => {
   fsGuard(e);
   if(!_chromeDone){ _chromeDone = true; try{ await wm().applyChrome(); }catch(_){ _chromeDone = false; } }
   /* The PosterChan HTML frame is the only chrome. A second Sway titlebar is the mismatched
-   * Firefox/Telegram decoration users were seeing around it. */
-  return wm().command('[con_id=' + Number(id) + '] border none');
+   * Firefox/Telegram decoration users were seeing around it.
+   *
+   * `sticky` is persistent compositor state, not useful application state. Firefox private
+   * windows and Telegram can inherit it from a prior session; then the surface follows every
+   * workspace, appears above unrelated PosterChan frames and can be claimed by the wrong output.
+   * Clear it by exact con_id whenever a surface is adopted. Do not blanket-disable fullscreen:
+   * games and videos deliberately own that state and the renderer tracks it separately. */
+  return wm().command('[con_id=' + Number(id) + '] border none, sticky disable');
 });
 ipcMain.handle('pc:display:status', (e) => { fsGuard(e); return displays().status(); });
 ipcMain.handle('pc:display:preview', (e, rows) => { fsGuard(e); return displays().preview(rows); });
