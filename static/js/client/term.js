@@ -985,6 +985,36 @@
 
     /* Shells this ACCOUNT still has running. Without this a reload — or a second device — leaves a
      * session alive and unreachable, since the id lives in one browser's localStorage. */
+    function _paintSessions(){
+      const box = $('#tty-sessions'); if(!box) return;
+      const tabs = live.slice();
+      if(sid && !tabs.some(x => x.sid === sid))
+        tabs.unshift({ sid, host:host || 'local', label, age:0, alive:true });
+      box.hidden = false;
+      box.innerHTML = '<span class="tty-sess-lbl">tabs</span>' + tabs.map((x, n) => {
+        const lab = String(x.label || '');
+        const nm = (x.host || 'terminal') + (lab ? (lab === 'main' ? '' : ' ' + lab) : ' ' + (n + 1));
+        return `<span class="tty-sess tty-tab${x.sid === sid ? ' active' : ''}" data-tab="${enc(x.sid)}"
+               data-host="${enc(x.host || '')}" data-label="${enc(lab)}"
+               title="${enc(nm)}"><b>${enc(nm)}</b>`
+        + `<i>${_ago(x.age)}</i>`
+        + `<button data-kill="${enc(x.sid)}" class="tty-kill" title="Close tab"
+                   aria-label="Close terminal tab">×</button></span>`;
+      }).join('')
+        + '<button class="tty-tab-new" id="tty-tab-new" title="New terminal tab">+</button>';
+    }
+
+    async function _remoteSessions(){
+      try{
+        const r = await _bounded(authFetch('/api/ssh/sessions'), 8000);
+        const remote = ((await _bounded(r.json(), 3000)) || {}).sessions || [];
+        /* Replace only remote rows. A late server response must never erase a local PTY that was
+         * opened while the network request was in flight. */
+        live = live.filter(x => isLocalSid(x.sid)).concat(remote);
+        _paintSessions();
+      }catch(_){}
+    }
+
     async function _sessions(){
       const box = $('#tty-sessions'); if(!box) return;
       live = [];
@@ -997,37 +1027,22 @@
             live.push({ sid: localSid(x.id), host: 'local', age: Math.round((x.idle || 0)), alive: x.alive });
         }catch(_){}
       }
-      try{
-        const r = await authFetch('/api/ssh/sessions');
-        live = live.concat(((await r.json()) || {}).sessions || []);
-      }catch(_){}
+      /* A local terminal is painted and returned to its opener before ANY instance request. The
+       * remote tabs are useful, but connectivity is not a prerequisite for a shell on this device.
+       * In particular authFetch can remain pending while the signer relay reconnects. */
+      if(LOCAL()) _remoteSessions();
+      else await _remoteSessions();
       /* THESE ARE TABS, not a recovery list. Every row names a distinct PTY; selecting one tears
        * down only the viewing transport and attaches this xterm to that PTY. The processes and
        * input streams never merge. Keeping the active shell in the strip is what makes the model
        * visible: two terminals look like two tabs, instead of one terminal plus an obscure
        * “still running” diagnostic people quite reasonably did not recognize as tab support. */
-      const tabs = live.slice();
-      if(sid && !tabs.some(x => x.sid === sid))
-        tabs.unshift({ sid, host:host || 'local', label, age:0, alive:true });
-      box.hidden = false;
+      _paintSessions();
       /* NAMED BY ITS LABEL, NEVER BY ITS POSITION. `${host} ${n+1}` renumbers every tab the moment
        * one of them is closed, so the tab you were in changes its name while you are looking at it —
        * and it says nothing about WHICH shell it is, which was invisible for as long as they were
        * all secretly the same one. The label IS the remote tmux session, so it is the honest name.
        * `main` is left implicit: one tab should read `server1`, not `server1 main`. */
-      box.innerHTML = '<span class="tty-sess-lbl">tabs</span>' + tabs.map((x, n) => {
-        /* A local PTY carries no label — it is a process on this machine, not a tmux session —
-         * and several of them are genuinely distinct, so those keep the positional number. */
-        const lab = String(x.label || '');
-        const nm = (x.host || 'terminal') + (lab ? (lab === 'main' ? '' : ' ' + lab) : ' ' + (n + 1));
-        return `<span class="tty-sess tty-tab${x.sid === sid ? ' active' : ''}" data-tab="${enc(x.sid)}"
-               data-host="${enc(x.host || '')}" data-label="${enc(lab)}"
-               title="${enc(nm)}"><b>${enc(nm)}</b>`
-        + `<i>${_ago(x.age)}</i>`
-        + `<button data-kill="${enc(x.sid)}" class="tty-kill" title="Close tab"
-                   aria-label="Close terminal tab">×</button></span>`;
-      }).join('')
-        + '<button class="tty-tab-new" id="tty-tab-new" title="New terminal tab">+</button>';
     }
 
     function _ago(sec){

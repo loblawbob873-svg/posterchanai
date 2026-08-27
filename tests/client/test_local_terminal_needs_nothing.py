@@ -92,6 +92,19 @@ class TheLocalShellNeedsNothing(unittest.TestCase):
         self.assertNotIn("authFetch", body)
         self.assertNotIn("ensureAiSession", body)
 
+    def test_session_discovery_does_not_await_the_instance_on_desktop(self):
+        """Host discovery was fixed first, but render still awaited _sessions and _sessions awaited
+        the server.  That left the local PTY unusable until connectivity returned."""
+        body = _decomment(_fn(self.src, "async function _sessions()"))
+        self.assertIn("if(LOCAL()) _remoteSessions();", body)
+        self.assertNotIn("if(LOCAL()) await _remoteSessions", body)
+        self.assertIn("else await _remoteSessions();", body)
+
+    def test_remote_session_discovery_is_bounded(self):
+        body = _decomment(_fn(self.src, "async function _remoteSessions()"))
+        self.assertRegex(body, r"await\s+_bounded\(authFetch\('/api/ssh/sessions'\)")
+        self.assertRegex(body, r"await\s+_bounded\(r\.json\(\)")
+
 
 if __name__ == "__main__":
     unittest.main()
