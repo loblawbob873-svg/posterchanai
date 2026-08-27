@@ -1497,7 +1497,14 @@
       if(!req || req.done) continue;
       if(!req.to || (!req.body && !req.attachment)) continue;
       if(Date.now() - (req.at || 0) > MAX_AGE_MS){
-        await mark(d, { done:true, dropped:'too old' });
+        /* A terminal receipt must retain the request just like a carrier completion does. Without
+         * it absorb() cannot derive the message id or find the ask-time placeholder tied to this
+         * outbox document, so an expired request remains visibly `sending` on every other device
+         * forever. It was deliberately NOT sent; represent that truth as a failed/expired bubble
+         * which the sender can inspect or delete, never as a request eligible for automatic retry. */
+        await mark(d, { done:true, ok:false, dropped:'too old', error:'request expired before phone was reachable',
+                        request:Object.assign({}, request,
+                          {at:Number(req.at) || Number(request && request.at) || Date.now()}) });
         continue;
       }
       const P = plug(req.attachment ? 'sendMms' : 'send');

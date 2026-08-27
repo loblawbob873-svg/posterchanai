@@ -351,7 +351,9 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
                                    // The order a thread is READ in, so a merge that interleaves
                                    // wrongly is visible rather than merely counted.
                                    order: t.msgs.map(m => m.doc),
-                                   parts: t.msgs.map(m => (m.parts || []).length) })),
+                                   parts: t.msgs.map(m => (m.parts || []).length),
+                                   pending: t.msgs.map(m => !!m.pending),
+                                   failed: t.msgs.map(m => !!m.failed) })),
     mmsRefused: !!st.mmsRefused,
     mmsCapped: !!st.mmsCapped,
     blossomDone: !!global.localStorage._all[Object.keys(global.localStorage._all)

@@ -363,11 +363,19 @@ class SendingFromAnotherDevice(unittest.TestCase):
         moment has passed."""
         res = run(relay=[ev("pcai:smsout:old", {"to": "+15550100", "body": "running late",
                                                 "at": NOW - 3 * DAY})],
-                  steps=["load", "drain"])
+                  # A second client observes the terminal relay replacement on its next foreground
+                  # refresh. `settle` lets load's intentionally backgrounded initial refresh finish.
+                  steps=["load", "drain", "settle", "foreground", "settle"])
         self.assertEqual(calls_of(res, "send"), [])
         marks = [p for p in res["published"] if p["d"] == "pcai:smsout:old"]
         self.assertTrue(marks)
         self.assertIn("too old", marks[-1]["content"])
+        self.assertIn('"request":', marks[-1]["content"],
+                      "the terminal receipt cannot identify the pending bubble")
+        self.assertEqual(res["threads"][0]["pending"], [False],
+                         "the expired request remained stuck at sending")
+        self.assertEqual(res["threads"][0]["failed"], [True],
+                         "the safely dropped request was hidden instead of made actionable")
 
     def test_a_device_with_no_radio_never_drains(self):
         """`telephony=False` is what makes this a laptop. It used to say `isPhone=False`, which
