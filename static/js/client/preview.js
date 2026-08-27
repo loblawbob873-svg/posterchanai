@@ -76,19 +76,36 @@
     if (_pdfjs) return _pdfjs;
     _pdfjs = new Promise(function (resolve, reject) {
       var s = document.createElement('script');
+      var finished = false;
+      var fail = function (e) {
+        if (finished) return;
+        finished = true; clearTimeout(timer); _pdfjs = null;
+        try { s.remove(); } catch (_) {}
+        reject(e);
+      };
+      var timer = setTimeout(function () { fail(new Error('PDF renderer timed out')); }, 10000);
       s.src = '/static/vendor/pdfjs/pdf.min.js';
       s.onload = function () {
-        if (!root.pdfjsLib) return reject(new Error('PDF renderer did not start'));
+        if (finished) return;
+        if (!root.pdfjsLib) return fail(new Error('PDF renderer did not start'));
+        finished = true; clearTimeout(timer);
         root.pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/vendor/pdfjs/pdf.worker.min.js';
         resolve(root.pdfjsLib);
       };
-      s.onerror = function () { reject(new Error('PDF renderer is unavailable')); };
+      s.onerror = function () { fail(new Error('PDF renderer is unavailable')); };
       (document.head || document.documentElement).appendChild(s);
     });
     return _pdfjs;
   }
 
-  async function renderPdf(host, blob) {
+  function openElsewhere(blob, name) {
+    var save = PC().saveBlobAs;
+    if (!save) { toast('cannot open this PDF on this build'); return; }
+    Promise.resolve(save(blob, name || 'document.pdf'))
+      .catch(function (e) { toast('could not open that PDF: ' + ((e && e.message) || e)); });
+  }
+
+  async function renderPdf(host, blob, name) {
     var box = host.querySelector('.pv-pdf-pages');
     if (!box) return;
     try {
@@ -107,7 +124,11 @@
         await page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise;
       }
     } catch (e) {
-      box.innerHTML = '<div class="empty">Could not render this PDF.<br>' + H((e && e.message) || e) + '</div>';
+      box.innerHTML = '<div class="empty pv-pdf-fallback">Could not render this PDF.<br>'
+        + H((e && e.message) || e)
+        + '<br><button class="btn primary pv-pdf-native">Open or save in another app</button></div>';
+      var native = box.querySelector('.pv-pdf-native');
+      if (native) native.onclick = function () { openElsewhere(blob, name); };
     }
   }
 
@@ -205,7 +226,7 @@
        * assigning a blob URL alone can leave the old, empty media resource selected. */
       try { av.load(); } catch (_) {}
     } else if (kind === 'pdf') {
-      renderPdf(host, blob);
+      renderPdf(host, blob, name);
     }
 
     var dl = q('.pv-dl');

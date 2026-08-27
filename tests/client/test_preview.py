@@ -121,6 +121,24 @@ class PreviewIsReachable(unittest.TestCase):
         self.assertIn("getDocument({ data: await blob.arrayBuffer() })", src)
         self.assertNotIn("ships no PDF viewer", src)
 
+    def test_pdf_engine_failure_is_bounded_retryable_and_has_a_native_fallback(self):
+        """Android WebView has no built-in PDF renderer. A pdf.js failure must not remain a
+        permanent spinner, poison later attempts, or leave the reader without a useful way out."""
+        src = _read("static/js/client/preview.js")
+        loader = src[src.index("function loadPdfJs()"):
+                     src.index("function openElsewhere", src.index("function loadPdfJs()"))]
+        self.assertIn("setTimeout", loader)
+        self.assertIn("_pdfjs = null", loader)
+        self.assertIn("PDF renderer timed out", loader)
+        render = src[src.index("async function renderPdf"):
+                     src.index("var _open", src.index("async function renderPdf"))]
+        self.assertIn("pv-pdf-native", render)
+        self.assertIn("openElsewhere(blob, name)", render)
+        fallback = src[src.index("function openElsewhere"):
+                       src.index("async function renderPdf")]
+        self.assertIn("saveBlobAs", fallback)
+        self.assertIn("document.pdf", fallback)
+
     def test_the_download_never_uses_a_bare_anchor(self):
         """The APK's WebView ignores a programmatic download and the desktop's app:// origin refuses
         one, so `<a download>` is a button that silently does nothing on two of three platforms."""
