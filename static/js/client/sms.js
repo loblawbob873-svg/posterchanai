@@ -2495,11 +2495,22 @@
      * archive. Behind `load` so it never runs before the client has a key, and on visibility rather
      * than a timer: a poll here would run for the life of the battery on a device that already holds
      * the HOME role. */
-    document.addEventListener('visibilitychange', async () => {
+    /* DESKTOP FOREGROUND IS NOT A PHONE FOREGROUND. The old handler returned immediately when the
+     * device had neither READ_SMS nor a radio, which is every web/PosterChanOS session. A live
+     * subscription interrupted by sleep, relay reconnect, or a window handoff therefore stayed
+     * stale until Texts was closed and reopened. Always run the encrypted-archive catch-up query;
+     * only the provider migration and outbox drain are handset-only.
+     *
+     * Chromium can emit both visibilitychange and focus for one return. Coalesce them so one click
+     * does not decrypt the archive twice or race two provider migrations. */
+    let foregrounding = null;
+    async function foreground(){
       if(document.visibilityState !== 'visible') return;
-      const st = await phoneState();
-      if(!st.canRead && !st.telephony) return;
+      if(foregrounding) return foregrounding;
+      foregrounding = (async () => {
       await load();
+      await refresh();
+      const st = await phoneState();
       /* A foreground is also the retry boundary for the COMPLETE archive, not merely its recent
        * high-water sweep. A phone can be suspended, lose its signer, or go offline half-way through
        * migrating years of messages. The old path only called mirror(), whose timestamp cursor
@@ -2516,7 +2527,11 @@
         await mirror();
       }
       if(st.telephony) drainOutbox();
-    });
+      })().finally(() => { foregrounding = null; });
+      return foregrounding;
+    }
+    document.addEventListener('visibilitychange', foreground);
+    if(window.addEventListener) window.addEventListener('focus', foreground);
     /* A request can be published while Texts is already open. Previously there was no relay
      * subscription or subsequent query in that state: the handset checked at load/foreground and
      * then remained deaf until the user backgrounded it. Poll only while visible, and only on a

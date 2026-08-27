@@ -241,6 +241,23 @@ class SendingFromAnotherDevice(unittest.TestCase):
         self.assertIn("PCOS.ownsFeedView('texts')", visible)
         self.assertIn("PCOS.isOn()", visible)
 
+    def test_returning_to_an_open_desktop_texts_window_catches_up(self):
+        """PosterChanOS has no SMS plugin, so a phone-gated foreground handler returned before its
+        relay query. Miss one live event during suspend/reconnect and only reopening Texts fixed it."""
+        web = (ROOT / "static/js/client/sms.js").read_text()
+        foreground = web[web.index("async function foreground()"):
+                         web.index("document.addEventListener('visibilitychange', foreground)")]
+        self.assertIn("await load()", foreground)
+        self.assertIn("await refresh()", foreground)
+        self.assertLess(foreground.index("await refresh()"), foreground.index("const st = await phoneState()"))
+        self.assertNotIn("if(!st.canRead && !st.telephony) return", foreground)
+
+    def test_window_focus_and_visibility_share_one_foreground_sync(self):
+        web = (ROOT / "static/js/client/sms.js").read_text()
+        self.assertIn("if(foregrounding) return foregrounding", web)
+        self.assertIn("document.addEventListener('visibilitychange', foreground)", web)
+        self.assertIn("if(window.addEventListener) window.addEventListener('focus', foreground)", web)
+
     def test_deleting_a_failed_remote_send_tombstones_its_source_receipt(self):
         web = (ROOT / "static/js/client/sms.js").read_text()
         remove = web[web.index("async function remove(docs)"):web.index("async function askForRead")]
