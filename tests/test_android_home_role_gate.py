@@ -30,6 +30,14 @@ def test_launcher_presence_check_does_not_press_home_twice():
     assert '*HomeActivity*) ok "the launcher is what came up"' in block
 
 
+def test_back_gate_clears_the_full_double_home_window_first():
+    block = SCRIPT.split('ok "double HOME took the native feed-top path"', 1)[1].split(
+        'say "what the home screen costs"', 1)[0]
+    assert "HomeDoublePress deliberately accepts a 2-second delivery gap" in block
+    assert block.index("sleep 3") < block.index("to_home\n  adb shell input keyevent KEYCODE_BACK")
+    assert "to_home\n  adb shell input keyevent KEYCODE_BACK" in block
+
+
 def test_music_device_test_requires_our_launcher_and_restores_prior_state():
     assert 'cmd role add-role-holder android.app.role.HOME " + ctx.getPackageName()' in TEST
     assert 'assertTrue("the emulator did not assign PosterChan the HOME role"' in TEST

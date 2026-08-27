@@ -290,7 +290,10 @@ if [ -n "$HOLDER" ]; then
     adb logcat -d 2>/dev/null | grep -E "PosterChan|HomeActivity|ActivityTaskManager" | tail -80
   fi
   to_home
-  sleep 2
+  # HomeDoublePress deliberately accepts a 2-second delivery gap for slow physical launchers.
+  # Sleeping exactly 2 seconds sits on that inclusive boundary; scheduler jitter made the next
+  # single HOME complete the prior pair and open MainActivity just before the Back assertion.
+  sleep 3
 
   # PRESSING HOME WHILE ALREADY HOME, and BACK. Both are swallowed by a launcher; a launcher that
   # finishes on back leaves the phone showing whatever is behind it, which on a fresh boot is
