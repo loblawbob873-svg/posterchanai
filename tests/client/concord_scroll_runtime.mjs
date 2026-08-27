@@ -16,8 +16,9 @@ function fn(head){
 const timers=[];
 const storage=new Map();
 const box={dataset:{},scrollTop:0,scrollHeight:100,clientHeight:40,isConnected:true,
-  querySelector(){return content;}};
+  querySelector(){return content;},querySelectorAll(){return rows;}};
 const content={};
+let rows=[];
 let resizeCallback=null;
 const context={
   window:{requestAnimationFrame:f=>f()},
@@ -30,8 +31,9 @@ const context={
 vm.createContext(context);
 vm.runInContext([
   fn('function readScroll('),fn('function writeScroll('),fn('function setProgrammaticScroll('),
+  fn('function repaintScrollTop('),fn('function preserveChatScroll('),
   fn('function enterChatBottom('),fn('function watchPinnedRoomGrowth('),
-  'globalThis.api={readScroll,writeScroll,enterChatBottom,watchPinnedRoomGrowth};'
+  'globalThis.api={readScroll,writeScroll,preserveChatScroll,enterChatBottom,watchPinnedRoomGrowth};'
 ].join('\n'),context);
 
 // Entry initially reaches the small placeholder history.
@@ -54,5 +56,15 @@ if(box.scrollTop!==1400)throw Error('delayed media growth moved pinned room away
 const state=context.api.readScroll('room:general');state.pinned=false;state.top=275;
 box.scrollTop=275;box.scrollHeight=1800;resizeCallback();
 if(box.scrollTop!==275)throw Error('delayed media destroyed deliberate scroll position');
+
+// Backfilled history is prepended. Preserve the visible message, not its obsolete pixel offset.
+rows=[{dataset:{messageId:'visible'},offsetTop:300,offsetHeight:40}];
+box.scrollTop=310;state.top=310;state.pinned=false;
+context.api.preserveChatScroll(()=>{
+  rows=[{dataset:{messageId:'older'},offsetTop:100,offsetHeight:40},
+        {dataset:{messageId:'visible'},offsetTop:700,offsetHeight:40}];
+  box.scrollHeight=2200;
+});
+if(box.scrollTop!==710)throw Error('prepended history replaced the message being read');
 
 console.log('Concord delayed scroll behavior holds');

@@ -48,7 +48,28 @@
    * reach what was the bottom and still leave the person hundreds of pixels above the final bottom. */
   function enterChatBottom(){ const key=scrollKey(),token=Date.now()+Math.random();enterChatBottom.token=token;const st=readScroll(key);st.pinned=true;st.top=Number.MAX_SAFE_INTEGER;writeScroll(key,st);for(const delay of [0,60,180,450,900,1600])setTimeout(()=>{if(enterChatBottom.token!==token||scrollKey()!==key)return;const box=document.querySelector('.cc-messages');if(!box)return;setProgrammaticScroll(box,box.scrollHeight,()=>{st.top=box.scrollTop;st.height=box.scrollHeight;st.pinned=true;writeScroll(key,st);});},delay); }
   function repaintScrollTop(pinned,top,scrollHeight){ return pinned!==false?scrollHeight:Math.max(0,Number(top)||0); }
-  function preserveChatScroll(fn){ const key=scrollKey(),old=document.querySelector('.cc-messages'),st=readScroll(key),top=old?old.scrollTop:Number(st.top)||0; fn(); const later=window.requestAnimationFrame||((f)=>setTimeout(f,0)); later(()=>{ const box=document.querySelector('.cc-messages'); if(box){/* Live CORD queries append at the end. A reader who scrolled up keeps the exact pixel offset; adding the new row's height would drag them downward even though nothing changed above their viewport. */box.scrollTop=repaintScrollTop(st.pinned,top,box.scrollHeight);st.top=box.scrollTop;st.height=box.scrollHeight;writeScroll(key,st);} }); }
+  function preserveChatScroll(fn){
+    const key=scrollKey(),old=document.querySelector('.cc-messages'),st=readScroll(key),
+      top=old?old.scrollTop:Number(st.top)||0;
+    /* Pixel offsets only preserve appended history. Delayed backfill inserts older rows above the
+     * viewport, where restoring the same number silently changes which message the reader sees.
+     * Keep the first visible message and its position inside the viewport as the stronger anchor. */
+    const oldRows=old&&old.querySelectorAll?[...old.querySelectorAll('.cc-message[data-message-id]')]:[],
+      anchor=st.pinned===false?oldRows.find(row=>(Number(row.offsetTop)||0)+(Number(row.offsetHeight)||0)>top):null,
+      anchorId=anchor&&anchor.dataset&&anchor.dataset.messageId,
+      anchorGap=anchor?(Number(anchor.offsetTop)||0)-top:0;
+    fn();
+    const later=window.requestAnimationFrame||((f)=>setTimeout(f,0));
+    later(()=>{ const box=document.querySelector('.cc-messages'); if(box){
+      let next=repaintScrollTop(st.pinned,top,box.scrollHeight);
+      if(st.pinned===false&&anchorId&&box.querySelectorAll){
+        const row=[...box.querySelectorAll('.cc-message[data-message-id]')]
+          .find(el=>el.dataset&&el.dataset.messageId===anchorId);
+        if(row)next=Math.max(0,(Number(row.offsetTop)||0)-anchorGap);
+      }
+      box.scrollTop=next;st.top=box.scrollTop;st.height=box.scrollHeight;writeScroll(key,st);
+    } });
+  }
   function restoreChatScroll(){ const key=scrollKey(),st=readScroll(key),later=window.requestAnimationFrame||((f)=>setTimeout(f,0)); later(()=>{ const box=document.querySelector('.cc-messages'); if(box)setProgrammaticScroll(box,st.pinned!==false?box.scrollHeight:Number(st.top)||0,()=>{st.top=box.scrollTop;st.height=box.scrollHeight;writeScroll(key,st);}); }); }
   function watchPinnedRoomGrowth(scroller){
     if(!scroller||typeof ResizeObserver==='undefined')return;

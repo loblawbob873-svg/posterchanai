@@ -36,6 +36,13 @@ def test_live_append_preserves_exact_offset_after_user_scrolls_up():
     assert "pinned!==false?scrollHeight" in JS
 
 
+def test_delayed_prepend_preserves_the_visible_message_anchor():
+    preserve = JS[JS.index("function preserveChatScroll("):JS.index("function restoreChatScroll(")]
+    assert "anchorId" in preserve
+    assert "el.dataset.messageId===anchorId" in preserve
+    assert "Number(row.offsetTop)" in preserve
+
+
 @pytest.mark.skipif(not NODE, reason="node is unavailable")
 def test_delayed_history_and_media_execute_the_shipped_scroll_contract():
     result = subprocess.run([NODE, str(ROOT / "tests/client/concord_scroll_runtime.mjs")],
