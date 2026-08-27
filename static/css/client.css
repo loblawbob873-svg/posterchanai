@@ -3272,6 +3272,12 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-inline-end:4px;
 .markdown a{color:var(--cyan);text-decoration:underline;text-underline-offset:2px;word-break:break-word}
 .markdown a:hover{color:var(--neon);text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .markdown img{max-width:100%;border-radius:12px;border:1px solid var(--line);margin:10px 0;cursor:zoom-in}
+/* An article may contain an original phone photo several thousand pixels tall.  It remains
+   available at full size through the existing lightbox, but the reading surface must not turn one
+   inline image into several screens of scrolling. Preserve its aspect ratio and fit it inside a
+   useful reading viewport instead of cropping it. */
+.article-view .av-body img{display:block;width:auto;max-width:100%;max-height:min(60vh,560px);
+  object-fit:contain;margin:14px auto}
 .markdown ul,.markdown ol{margin:0 0 16px;padding-inline-start:24px}
 .markdown li{margin:6px 0}
 .markdown li::marker{color:var(--neon2)}
