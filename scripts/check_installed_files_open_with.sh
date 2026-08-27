@@ -28,6 +28,8 @@ PC_INSTALLED_APP_JS="$check_dir/installed-app.js" \
   node "$repo/tests/client/open_with_selector_sim.js"
 PC_INSTALLED_APP_JS="$check_dir/installed-app.js" \
   node "$repo/tests/client/folder_drop_paths_sim.js"
+PC_INSTALLED_APP_JS="$check_dir/installed-app.js" \
+  node "$repo/tests/client/folder_upload_completion_sim.js"
 PC_INSTALLED_HOSTFILES_JS="$check_dir/installed-hostfiles.js" \
   node "$repo/tests/client/hostfiles_click_sim.js"
 PC_INSTALLED_PREVIEW_JS="$check_dir/installed-preview.js" \
