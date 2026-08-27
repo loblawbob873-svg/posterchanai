@@ -24,6 +24,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -73,7 +74,8 @@ def _audit_payload(blob):
         unpack = os.path.join(td, "unpack")
         os.mkdir(unpack)
         got = subprocess.run(
-            ["tar", "-C", unpack, "-xaf", archive, "--wildcards", "*/resources/app.asar"],
+            ["tar", "-C", unpack, "-xaf", archive, "--wildcards",
+             "*/resources/app.asar", "*/resources/tor/tor/tor"],
             capture_output=True, text=True,
         )
         if got.returncode:
@@ -82,6 +84,12 @@ def _audit_payload(blob):
                      if "app.asar" in files), None)
         if not asar:
             raise RuntimeError("desktop tarball extracted without app.asar")
+        tor = next((os.path.join(root, "tor") for root, _dirs, files in os.walk(unpack)
+                    if "tor" in files and root.endswith(os.path.join("resources", "tor", "tor"))), None)
+        if not tor:
+            raise RuntimeError("desktop tarball has no bundled Tor executable")
+        if not os.stat(tor).st_mode & stat.S_IXUSR:
+            raise RuntimeError("desktop tarball mode-stripped bundled Tor; first-run would fail EACCES")
         with open(asar, "rb") as fh:
             payload = fh.read()
         start = payload.find(b'{"files":')
