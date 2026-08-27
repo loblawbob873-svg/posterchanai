@@ -1018,6 +1018,10 @@
       let n = 0, oldest = edge;
       for(const r of rows){
         if(!r || !r.doc) continue;
+        /* PAGINATION FOLLOWS THE PROVIDER PAGE, not the number of new archive writes.  On an
+         * established phone the newest page is normally already complete; advancing `oldest` only
+         * after publish reread that page twice, tripped the quiet guard and never reached page 2. */
+        if(Number(r.date) && Number(r.date) < oldest) oldest = Number(r.date);
         const old = S.msgs.get(r.doc);
         if(old && !needsArchiveUpgrade(r, old)) continue;
         const m = fromRow(r);
@@ -1028,7 +1032,6 @@
         if(!ok) return { published: total, why: 'the relay stopped accepting messages' };
         S.msgs.set(m.doc, m);
         n++; total++;
-        if(m.date && m.date < oldest) oldest = m.date;
       }
       if(n) S.localRead = true;      // rows came out of THIS device's store — see noteWhere
       quiet = n ? 0 : quiet + 1;

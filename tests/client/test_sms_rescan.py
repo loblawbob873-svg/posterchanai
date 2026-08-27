@@ -43,9 +43,11 @@ def picture(i, date):
             "doc": "pcai:sms:%024d" % i}
 
 
-def run(rows, storage, steps):
+def run(rows, storage, steps, extra=None):
     # Options ride on argv[2], not stdin — see sms_sim.js's usage line.
     payload = {"rows": rows, "storage": storage, "steps": steps, "now": NOW, "canRead": True}
+    if extra:
+        payload.update(extra)
     r = subprocess.run([NODE, SIM, json.dumps(payload)], capture_output=True, text=True, timeout=180)
     assert r.returncode == 0, r.stderr[-4000:]
     return json.loads(r.stdout.strip().splitlines()[-1])
@@ -79,6 +81,20 @@ class AStuckCompletionMarker(unittest.TestCase):
         archived = [d for d in res["docs"] if d.startswith("pcai:sms:dense")]
         self.assertEqual(len(archived), 405,
                          "strict backward paging skipped part of a dense history window")
+
+    def test_completed_first_page_does_not_hide_older_mms_media(self):
+        """A second backfill normally starts over already-archived recent rows. Its provider
+        cursor must cross that quiet page to discover an old picture added behind the boundary."""
+        recent = [{"id": i + 1, "thread": 1, "address": "+15550100",
+                   "body": "recent-%d" % i, "date": NOW - (i + 1) * 60000,
+                   "type": 1, "incoming": True, "read": True, "mms": False,
+                   "parts": [], "doc": "pcai:sms:recent%018d" % i}
+                  for i in range(400)]
+        old_picture = picture(5000, NOW - 500 * 60000)
+        res = run(recent, {}, ["importAll", "appendRows", "importAll"],
+                  {"appendRows": [old_picture]})
+        self.assertEqual(len(mms_files(res)), 1,
+                         "an already-complete first page stopped paging before the old MMS")
 
     def test_an_old_v2_completion_latch_cannot_hide_mms_after_upgrade(self):
         """The release migration itself: v2 could declare success with no portable MMS hashes.

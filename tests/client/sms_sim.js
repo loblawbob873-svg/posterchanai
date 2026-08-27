@@ -285,6 +285,7 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
     // The whole batched loop, the way render() drives it — the only way to see it converge (or not).
     else if(step === 'migrateAll'){ calls.push(['migrateAll', await S.migrateAll()]); }
     else if(step === 'importAll'){ calls.push(['importAll', await S.importAll()]); }
+    else if(step === 'appendRows'){ rows.push(...(opt.appendRows || [])); }
     // The deliberate, person-pressed re-read: clears the archive's latches and walks the phone again.
     else if(step === 'rescan'){ calls.push(['rescan', await S.rescan()]); }
     else if(step === 'mirror'){ await S.mirror(); }
