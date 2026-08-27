@@ -2311,21 +2311,33 @@
     };
     camera.onchange=()=>{acceptFile((camera.files||[])[0]||null);camera.value='';};
     const clear=PC.$('#sms-attach-clear');if(clear)clear.onclick=()=>{clearAttachment();paint();};
+    /* THE BUTTON'S DISABLED STATE DOES NOT GUARD THE KEYBOARD. Two Enter keydowns can arrive while
+       the first radio/upload promise is pending; programmatic clicks can do the same. Without a
+       function-level latch both calls pass the empty-body check and put the same message on the
+       carrier twice. Keep the latch around the whole attempt, including failures, and release it
+       in `finally` so a rejected plugin call cannot permanently disable this conversation. */
+    let sending = false;
     const go = async () => {
+      if(sending) return;
       const body = input.value.trim();
       if(!body && !S.attach) return;
       const attachment=S.attach;
+      sending = true;
       btn.disabled = true;
-      const r = await send(t.address, body, attachment);
-      btn.disabled = false;
-      if(!r.ok){ PC.toast(r.error || 'could not send'); return; }
-      input.value = '';
-      if(S.attach===attachment)clearAttachment();
-      PC.toast(r.where === 'phone' ? 'sent' : 'waiting for your phone to send it');
-      paint();
+      try{
+        const r = await send(t.address, body, attachment);
+        if(!r.ok){ PC.toast(r.error || 'could not send'); return; }
+        input.value = '';
+        if(S.attach===attachment)clearAttachment();
+        PC.toast(r.where === 'phone' ? 'sent' : 'waiting for your phone to send it');
+        paint();
+      }finally{
+        sending = false;
+        btn.disabled = false;
+      }
     };
     btn.onclick = go;
-    input.onkeydown = e => { if(e.key === 'Enter') go(); };
+    input.onkeydown = e => { if(e.key === 'Enter'){ e.preventDefault(); go(); } };
     /* `.bubble[data-doc]`, because the bubble IS a DM bubble now and `data-doc` is what makes it a
      * text rather than a DM. Selected on the class it actually has: this was `.sms-msg`, and moving
      * the markup to the shared bubble would have matched nothing -- so right-clicking a message
