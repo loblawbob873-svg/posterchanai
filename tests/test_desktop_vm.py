@@ -163,6 +163,17 @@ const fs=require('fs'),os=require('os'),path=require('path'),v=require('./deskto
         self.assertIn("await pcVM.bootDisk(n)", ui)
         self.assertNotIn('p.canceled||!p.path', ui, "the ISO picker returns a path string")
 
+    def test_post_install_disk_boot_opens_the_guest_display(self):
+        ui = (ROOT / "static" / "js" / "client" / "os.js").read_text()
+        start = ui.index("list.querySelectorAll('[data-vm-boot-disk]')")
+        handler = ui[start:ui.index("list.querySelectorAll('[data-vm-edit-open]')", start)]
+        eject = handler.index("await pcVM.bootDisk(n)")
+        boot = handler.index("await pcVM.action(n,'start')")
+        display = handler.index("await pcVM.view(n)")
+        self.assertLess(eject, boot)
+        self.assertLess(boot, display)
+        self.assertIn("VM started, but its display could not open", handler)
+
     def test_editor_keeps_the_common_path_simple(self):
         ui = (ROOT / "static" / "js" / "client" / "os.js").read_text()
         self.assertIn('<section class="vmui-section"><h3>Performance</h3>', ui)
