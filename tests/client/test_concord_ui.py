@@ -143,7 +143,7 @@ def test_desktop_members_are_a_right_column_and_mobile_uses_the_dialog():
 def test_channels_can_be_starred_without_merging_concord_into_direct_messages():
     assert 'channelStarKey(room,name)' in CONCORD
     assert 'data-cc-star=' in CONCORD
-    assert 'aria-pressed="${channelStarred(current,c.name)}"' in CONCORD
+    assert 'aria-pressed="${channelStarred(room,c.name)}"' in CONCORD
     assert 'orderedChannels(current)' in CONCORD
     assert '.cc-channel-star[aria-pressed="true"]' in CONCORD_CSS
     assert "VIEW==='messages' || VIEW==='concord'" in APP
@@ -159,6 +159,14 @@ def test_thread_replies_tag_every_participant_once_but_never_the_sender():
     assert 'people.add(node.pubkey)' in block
     assert "replyTags.push(['P',pk],['p',pk])" in CONCORD
     assert "filter(t=>['K','E'].includes(t[0]))" in CONCORD
+
+
+def test_starred_channels_have_a_distinct_nonduplicated_section():
+    assert 'function channelSectionsHtml(p,room,channels)' in CONCORD
+    assert 'cc-starred-section">STARRED' in CONCORD
+    assert "filter(c=>channelStarred(room,c.name))" in CONCORD
+    assert "filter(c=>!channelStarred(room,c.name))" in CONCORD
+    assert 'channelSectionsHtml(p,current,visibleChannels)' in CONCORD
 
 
 def test_concord_has_honest_creation_and_public_discovery_empty_states():
@@ -184,7 +192,7 @@ def test_mobile_reopens_the_last_server_then_drills_into_a_channel_like_discord(
     assert 'id="cc-discovery" title="Discover public communities"' in CONCORD
     assert "discoveryOpen=!rooms.length" in CONCORD
     assert "return channels.length?channels:[{name:'general',private:false}]" in CONCORD
-    assert 'visibleChannels.map(c=>' in CONCORD
+    assert 'channelSectionsHtml(p,current,visibleChannels)' in CONCORD
     assert 'room.channels=hydratedChannels' in CONCORD
     assert "if(room&&room.cord&&!room.cord.hydrated)" in CONCORD
     assert "await hydrateRoomStreams(p,state.community)" in CONCORD
@@ -381,7 +389,7 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert '.cc-channel.unread' in CONCORD_CSS and '.cc-server.unread' in CONCORD_CSS
     assert "channelReadKey(room,name)" in CONCORD
     assert "markRead(current,state.channel||'general')" in CONCORD
-    assert "seenAt(current,c.name)" in CONCORD
+    assert "seenAt(room,c.name)" in CONCORD
     assert "if(current)markRead(current);" not in CONCORD
     assert 'notifyMentions(p,current,messages,viewer,me)' in CONCORD
     assert "route:'concord'" in CONCORD and 'concord-mention-' in CONCORD

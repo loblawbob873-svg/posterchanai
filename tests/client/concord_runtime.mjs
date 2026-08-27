@@ -118,6 +118,13 @@ globalThis.fetch=priorFetch;
 const mentionRoom={naddr:'mention-room',channels:[{name:'general'},{name:'support',id:'support-id'}]};
 data.set('pc.concord.test.mention-room',JSON.stringify([{id:'m1',pubkey:'b'.repeat(64),text:'general'}]));
 data.set('pc.concord.test.mention-room.support-id',JSON.stringify([{id:'m2',pubkey:'c'.repeat(64),text:'support'}]));
+data.set('pc.concord.star.mention-room:support','1');
+const channelSections=PCConcord.channelSectionsHtml({enc:String},mentionRoom,mentionRoom.channels);
+if(!channelSections.includes('STARRED') ||
+   channelSections.indexOf('STARRED')>channelSections.indexOf('TEXT CHANNELS') ||
+   (channelSections.match(/data-cc-channel="support"/g)||[]).length!==1 ||
+   (channelSections.match(/data-cc-channel="general"/g)||[]).length!==1)
+  throw new Error('starred channels were not grouped once above regular channels');
 const roomPeople=PCConcord.roomParticipants(mentionRoom,'a'.repeat(64));
 if(roomPeople.length!==3 || !roomPeople.includes('c'.repeat(64)))
   throw new Error('community member pool omitted a participant from another channel');
