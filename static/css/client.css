@@ -8028,22 +8028,24 @@ html.os-on #upload-badge.upbadge{z-index:333}
      consumed the top third of the phone and duplicated Synced Folders. Keep the tree hierarchical,
      reveal it only when asked, and give the files the screen the rest of the time. */
   .fx-explorer{display:block;border:0;border-radius:0;background:transparent;overflow:visible}
-  .fx-side{display:none;position:fixed;z-index:320;inset:0 auto 0 0;width:min(88vw,360px);
-    max-height:none;padding:12px;background:var(--panel);border:0;border-inline-end:1px solid var(--line);
-    box-shadow:18px 0 50px rgba(0,0,0,.7);overflow-y:auto}
+  .fx-side{display:none;position:fixed;z-index:320;inset:0 auto 0 0;width:min(94vw,390px);
+    max-height:none;padding:12px;background:var(--bg,#10131a);color:var(--text);border:0;
+    border-inline-end:1px solid var(--line);box-shadow:18px 0 50px rgba(0,0,0,.75),
+    100vw 0 0 100vw rgba(0,0,0,.58);overflow-y:auto}
   .fx-explorer.fx-locations-on>.fx-side{display:block}
   .fx-side-mobile-head{display:flex;align-items:center;justify-content:space-between;position:sticky;
-    top:-12px;z-index:2;margin:-12px -12px 10px;padding:14px;background:var(--panel);
+    top:-12px;z-index:2;margin:-12px -12px 10px;padding:14px;background:var(--bg,#10131a);
     border-bottom:1px solid var(--line);font-size:18px}
   .fx-locations-open{display:inline-flex}
   .fx-tree{display:flex;flex-direction:column;gap:5px}
   .fx-tree-node{display:flex}
-  .fx-tree-node>.fx-tree-head{min-height:46px;padding:10px}
+  .fx-tree-node>.fx-tree-head{min-height:48px;padding:10px;background:var(--panel2);border:1px solid var(--line)}
+  .fx-tree-node>.fx-tree-head.active,.fx-tree-node>.fx-tree-head.mobile-on{border-color:var(--neon);color:var(--text)}
   .fx-tree-node>.fx-tree-head b{font-size:15px}
   .fx-tree-node>.fx-tree-children{padding-inline-start:18px;margin-inline-start:15px}
   .fx-side .folder-bar{flex-direction:column;overflow:visible;gap:3px}
-  .fx-side .folder-chip{width:100%;min-height:44px;flex:none;border:1px solid transparent;
-    border-radius:9px;padding:10px 12px}
+  .fx-side .folder-chip{width:100%;min-height:46px;flex:none;border:1px solid var(--line);
+    border-radius:9px;padding:10px 12px;background:var(--panel);color:var(--text)}
   .fx-main{padding:6px 0}
   .fx-bar{gap:7px;padding:0 2px 10px}
   .fx-nav{order:1}

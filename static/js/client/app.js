@@ -17834,7 +17834,14 @@
         // you cannot empty without selecting the text is a small daily annoyance.
         f.onkeydown = e => { if(e.key === 'Escape'){ e.stopPropagation(); f.value=''; f.oninput(); } };
       } }
-    $$('.fx-vw', pane).forEach(b => b.onclick = () => { ClientSettings.set('filesView', b.dataset.view); renderBlossom(); });
+    $$('.fx-vw', pane).forEach(b => b.onclick = () => {
+      ClientSettings.set('filesView', b.dataset.view);
+      /* The drive landing page is a folder dashboard, so tiles/details cannot change its shape.
+       * Leaving the controls live there made both buttons appear broken on a phone. A view choice
+       * now means "show my files this way": enter All files first, then paint the selected view. */
+      if(!_hostOn && !_syncRoot && _filesFolder === null) _filesFolder = '';
+      renderBlossom();
+    });
     { const nf=$('#bl-newfolder',pane); if(nf) nf.onclick=_newFolderModal; }
     /* ONE ROUTER FOR EVERY WAY OF MOVING. A crumb, Up and Back all mean "go to this place", and the
      * place is one of three sources (drive folder, synced folder, this computer). A second copy of
@@ -18773,13 +18780,29 @@
       const which=b.dataset.fxtoggle;
       const mobile = !!(window.matchMedia && matchMedia('(max-width:820px)').matches);
       _fxMobileSource = which;
-      if(which==='blossom')_fxBlossomOpen=mobile ? true : !_fxBlossomOpen;
-      else if(which==='synced')_fxSyncedOpen=mobile ? true : !_fxSyncedOpen;
-      else if(which==='computer')_fxComputerOpen=mobile ? true : !_fxComputerOpen;
+      /* On desktop these headings collapse a tree. In the phone Locations drawer they are also the
+       * large, obvious source buttons. The old handler forced their tree open and immediately
+       * repainted the same screen, so tapping Blossom/My Computer visibly did NOTHING. Route the
+       * source on mobile; only Synced Folders stays an in-place disclosure because it has no single
+       * landing folder of its own. */
+      if(mobile && which==='blossom'){
+        _fxRemember(); _hostOn=false; _syncRoot=''; _syncPath=''; _filesFolder=null;
+        renderBlossom(); return;
+      }
+      if(mobile && which==='computer'){
+        _fxRemember(); _openHostFiles(); return;
+      }
+      if(which==='blossom')_fxBlossomOpen=!_fxBlossomOpen;
+      else if(which==='synced')_fxSyncedOpen=!_fxSyncedOpen;
+      else if(which==='computer')_fxComputerOpen=!_fxComputerOpen;
       else return;
       const open = which==='blossom' ? _fxBlossomOpen : (which==='synced' ? _fxSyncedOpen : _fxComputerOpen);
       localStorage.setItem('pc.files.tree.'+which,open?'1':'0');
-      renderBlossom();
+      if(mobile){
+        b.setAttribute('aria-expanded',open?'true':'false');
+        const tree=$(`[data-fxtree="${which}"]`,r); if(tree)tree.classList.toggle('hidden',!open);
+        const chev=b.querySelector('.chev'); if(chev)chev.textContent=open?'▾':'▸';
+      }else renderBlossom();
     });
     /* EVERY move remembers where it came from, or Back only undoes the ones made from the crumbs —
      * which is the half of browsing nobody uses. */

@@ -26,10 +26,28 @@ def test_mobile_uses_source_switcher_and_only_active_source_locations():
     assert 'id="fx-locations-open"' in APP
     assert 'id="fx-locations-close"' in APP
     assert ".fx-explorer.fx-locations-on>.fx-side" in CSS
-    assert "width:min(88vw,360px)" in CSS
+    assert "width:min(94vw,390px)" in CSS
     assert "position:fixed" in CSS
+    assert "100vw 0 0 100vw rgba(0,0,0,.58)" in CSS
     assert "explorer.classList.add('fx-locations-on')" in APP
     assert "explorer.classList.remove('fx-locations-on')" in APP
+
+
+def test_mobile_source_heads_navigate_instead_of_repainting_the_same_drawer():
+    start = APP.index("function _fxBindSide(")
+    bind = APP[start:start + 7000]
+    assert "if(mobile && which==='blossom')" in bind
+    assert "_filesFolder=null" in bind
+    assert "if(mobile && which==='computer')" in bind
+    assert "_openHostFiles()" in bind
+    # Synced Folders is a disclosure and must visibly toggle without destroying the open drawer.
+    assert "tree.classList.toggle('hidden',!open)" in bind
+
+
+def test_view_buttons_leave_the_folder_dashboard_and_show_the_selected_file_view():
+    bind = APP[APP.index("function _fxBindBar("):APP.index("let _filesFolder = null")]
+    assert "ClientSettings.set('filesView', b.dataset.view)" in bind
+    assert "_filesFolder === null) _filesFolder = ''" in bind
 
 
 def test_mobile_details_rows_collapse_actions_into_one_menu():
