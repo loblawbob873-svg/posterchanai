@@ -10410,7 +10410,17 @@
     // Dismissing the screen picker throws NotAllowedError — the same name a BLOCKED camera throws — and
     // _mediaErrMsg's "Camera/mic blocked, click the 🔒 icon in the address bar" is nonsense for a picker
     // the user simply closed. Say what actually happened.
-    catch(e){ toast(wantScreen && (e&&e.name)==='NotAllowedError' ? 'screen share cancelled' : _mediaErrMsg(e));
+    catch(e){
+      /* A display-capture NotFoundError is NOT "no camera or microphone found". That generic
+       * formatter sent PosterChanOS users looking for a camera after they had explicitly selected
+       * Record screen, while the thing that actually failed was the PipeWire/portal source. Keep
+       * camera wording on the camera path and make the screen failure actionable. */
+      const kind=e&&e.name;
+      toast(wantScreen
+        ? (kind==='NotAllowedError' ? 'screen share cancelled'
+          : kind==='NotFoundError' ? 'no screen capture source was found — restart the PosterChanOS session; capture details are in screen-share.log'
+          : 'screen share could not start' + (e&&e.message ? ': '+e.message : ''))
+        : _mediaErrMsg(e));
       _goingLive=false; return; }
     toast('connecting…');
     try{

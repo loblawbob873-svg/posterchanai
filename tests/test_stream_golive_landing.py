@@ -133,6 +133,18 @@ def test_the_watch_link_survives_a_refused_clipboard(app):
     assert "copyValue(" in body, "a refused clipboard silently copies nothing"
 
 
+def test_record_screen_never_reports_a_missing_camera(app):
+    """Display capture and camera capture both use DOMException names, but NotFoundError means
+    completely different hardware. A failed Wayland portal must not tell the user to find a camera."""
+    start = app.index("async function _phoneGoLive(")
+    body = app[start:app.index("toast('connecting…')", start)]
+    assert "kind==='NotFoundError'" in body
+    assert "no screen capture source was found" in body
+    assert "screen-share.log" in body
+    screen_catch = body[body.rindex("catch(e){"):]
+    assert "wantScreen" in screen_catch and ": _mediaErrMsg(e)" in screen_catch
+
+
 def test_opening_a_stream_tells_the_desktop_what_the_window_holds(app):
     """openStream sets VIEW directly instead of going through renderView, which is where noteView
     normally runs — so the window went on believing it held the streams LIST, and any repaint (a
