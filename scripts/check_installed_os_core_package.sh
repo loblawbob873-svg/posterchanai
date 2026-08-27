@@ -38,12 +38,18 @@ done
   echo "session-switch sudo rule has an unsafe mode" >&2; exit 1;
 }
 
-for command in sway foot firefox virsh qemu-system-x86_64; do
+for command in sway foot firefox-bin virsh qemu-system-x86_64; do
   command -v "$command" >/dev/null || { echo "first-run core command is missing: $command" >&2; exit 1; }
 done
 grep -q 'posterchan-update.lock' /usr/local/bin/update-posterchan
 grep -q 'emaint sync -r posterchan' /usr/local/bin/update-posterchan
-grep -q 'exec sway' /home/posterchan/.bash_profile
-grep -q -- '--autologin posterchan' /etc/systemd/system/getty@tty1.service.d/override.conf
+autologin_user="$(sed -n 's/^ExecStart=.*--autologin \([^ ]*\).*/\1/p' \
+  /etc/systemd/system/getty@tty1.service.d/override.conf)"
+[ -n "$autologin_user" ] && getent passwd "$autologin_user" >/dev/null || {
+  echo "tty1 autologin does not name an installed account" >&2; exit 1;
+}
+autologin_home="$(getent passwd "$autologin_user" | cut -d: -f6)"
+grep -q 'exec sway' "$autologin_home/.bash_profile"
 
-printf 'Installed core package gate passed: %s; %s\n' "$desktop" "$shell"
+printf 'Installed core package gate passed: %s; %s; autologin %s\n' \
+  "$desktop" "$shell" "$autologin_user"

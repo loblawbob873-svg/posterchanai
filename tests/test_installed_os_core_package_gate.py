@@ -26,4 +26,8 @@ def test_gate_covers_update_first_run_and_security_critical_modes():
     assert source.count("sudoers.d/") >= 2 and "440" in source
     assert "posterchan-update.lock" in source
     assert "emaint sync -r posterchan" in source
-    assert "exec sway" in source and "--autologin posterchan" in source
+    assert "exec sway" in source and "autologin_user" in source
+    assert 'getent passwd "$autologin_user"' in source
+    # PosterChanOS installs Gentoo's prebuilt www-client/firefox-bin package.  It intentionally
+    # exposes /usr/bin/firefox-bin rather than relying on a distribution-specific `firefox` alias.
+    assert "firefox-bin" in source
