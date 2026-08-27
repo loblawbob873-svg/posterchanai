@@ -273,8 +273,10 @@ OPEN_MESSAGE = r"""(async () => {
              const bs = [...bar.querySelectorAll('.btn')];
              const tops = new Set(bs.map(b => Math.round(b.getBoundingClientRect().top)));
              const br = bar.getBoundingClientRect();
+             const widths = bs.map(b => Math.round(b.getBoundingClientRect().width));
              return { n: bs.length, rows: tops.size,
                       barH: Math.round(br.height),
+                      widths, usedW: widths.reduce((n,w)=>n+w,0) + Math.max(0,bs.length-1)*6,
                       short: bs.filter(b => b.getBoundingClientRect().height < 32).length,
                       // A button whose right edge is past the row's is CUT OFF — which is what a
                       // 112px minimum column did to Delete on a narrow reading pane.
@@ -547,6 +549,10 @@ async def drive(url):
                             problems.append((label, "actions-oversized",
                                              f"message actions occupy {a['rows']} rows / {a['barH']}px; "
                                              "the mobile reader needs one compact toolbar"))
+                        if not phone and (max(a["widths"]) > 48 or a["usedW"] > 360):
+                            problems.append((label, "actions-oversized",
+                                             f"desktop icon actions grew to {a['widths']}px / "
+                                             f"{a['usedW']}px total instead of a compact toolbar"))
                     att = op.get("attachment")
                     if not att or att.get("host") != "mail.instance.test":
                         problems.append((label, "attachment-wrong-origin",
