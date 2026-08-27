@@ -1,3 +1,5 @@
+import json
+import subprocess
 from pathlib import Path
 
 
@@ -38,5 +40,29 @@ def test_dragged_communities_window_is_reused_when_direct_messages_is_clicked():
     opened = OS[OS.index("function openApp(view, label, icon, render, noFeed, direct)"):]
     opened = opened[:opened.index("function ", 20)]
     assert "wins.find(w => sameAppWindow(w.view, view))" in opened
+    assert "!shouldSelectMessagesTab(existing, view)" in opened
     assert "focusWin(existing, false); existing.appView = view" in opened
     assert "PC().switchView && PC().switchView(view)" in opened
+
+
+def test_handed_off_communities_frame_selects_direct_messages_at_runtime():
+    """The destination frame is canonical `messages`, but its restored tab is `concord`."""
+    os_js = ROOT / "static/js/client/os.js"
+    boot = f"""
+global.window = {{}};
+global.document = {{ addEventListener(){{}}, querySelector(){{ return null; }},
+                    querySelectorAll(){{ return []; }} }};
+global.getComputedStyle = () => ({{ zoom: '1' }});
+require({json.dumps(str(os_js))});
+const select = window.PCOS.__shouldSelectMessagesTab;
+console.log(JSON.stringify([
+  select({{view:'messages', appView:'concord'}}, 'messages'),
+  select({{view:'messages', appView:'messages'}}, 'messages'),
+  select({{view:'messages', appView:'messages'}}, 'concord'),
+  select({{view:'concord', appView:'concord'}}, 'messages'),
+  select({{view:'mail', appView:'mail'}}, 'messages')
+]));
+"""
+    run = subprocess.run(["node", "-e", boot], capture_output=True, text=True, timeout=30)
+    assert run.returncode == 0, run.stderr
+    assert json.loads(run.stdout) == [True, False, True, True, False]

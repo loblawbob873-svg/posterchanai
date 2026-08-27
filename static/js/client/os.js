@@ -1453,7 +1453,14 @@
     }
     const existing = wins.find(w => sameAppWindow(w.view, view));
     if(existing){
-      if(existing.view === view){ focusWin(existing); return existing; }
+      /* A handed-off Communities window deliberately comes back with the canonical frame identity
+       * `messages` and the selected tab in appView (`concord`).  Comparing only frame identities
+       * therefore makes a later Direct Messages launch take this early return: the right frame is
+       * focused, but it still shows Communities.  Treat an explicit launch of the other Messages
+       * tab as a selection even when the canonical frame identity already equals the request. */
+      if(existing.view === view && !shouldSelectMessagesTab(existing, view)){
+        focusWin(existing); return existing;
+      }
       /* Messages and Concord are tabs, not separate desktop applications. An icon/start-menu
        * launch comes directly through openApp (not routeView), so the old literal lookup missed a
        * window opened on the other tab and created a second frame. Focus the one Messages frame,
@@ -2026,6 +2033,12 @@
     if(opened===requested) return true;
     return (opened==='messages'||opened==='concord') &&
            (requested==='messages'||requested==='concord');
+  }
+
+  function shouldSelectMessagesTab(w, requested){
+    if(!w || (requested!=='messages'&&requested!=='concord')) return false;
+    if(!sameAppWindow(String(w.view||''), requested)) return false;
+    return String(w.appView||w.view||'') !== requested;
   }
 
   function routeView(view, focusOnly){
@@ -7072,6 +7085,7 @@
                    * rather than inferred from a rendered desktop. */
                   __layout: (list, doc) => computeLayout(list, doc), __normDoc: (d) => _normDoc(d),
                   __sameAppWindow: sameAppWindow,
+                  __shouldSelectMessagesTab: shouldSelectMessagesTab,
                   /* The launcher's own list, for the same reason: "a row switched off in Settings →
                    * Sidebar is gone from the desktop too" is invisible when it is wrong — you get a
                    * desktop, just one still carrying the app you removed. tests/client/test_nav_hide.py
