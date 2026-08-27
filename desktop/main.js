@@ -30,6 +30,12 @@ const vm = require('./vm');
 const bluetooth = require('./bluetooth');
 const liveusb = require('./liveusb');
 const remotecontrol = require('./remotecontrol');
+const diagnostic = require('./diagnostic').resolve(process.argv, process.env);
+/* ProcessSingleton is acquired much later, but Electron chooses its lock directory from userData.
+ * Set the diagnostic domain before any config/session access and, crucially, before
+ * requestSingleInstanceLock(): Chromium's --user-data-dir flag alone does not change Electron's
+ * application singleton and previously forwarded a verifier launch into the live desktop. */
+if (diagnostic) app.setPath('userData', diagnostic.profile);
 
 /* --shell: this process IS the desktop, not an app running on one.
  *
