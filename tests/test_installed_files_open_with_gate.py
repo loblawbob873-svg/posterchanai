@@ -13,12 +13,15 @@ def test_gate_extracts_both_routing_layers_from_the_installed_asar():
     assert "www/static/js/client/hostfiles.js" in src
     assert "PC_INSTALLED_APP_JS=" in src
     assert "PC_INSTALLED_HOSTFILES_JS=" in src
+    assert "folder_drop_paths_sim.js" in src
 
 
 def test_simulations_accept_an_installed_payload_override():
     open_with = (ROOT / "tests/client/open_with_selector_sim.js").read_text(encoding="utf-8")
+    folder_drop = (ROOT / "tests/client/folder_drop_paths_sim.js").read_text(encoding="utf-8")
     hostfiles = (ROOT / "tests/client/hostfiles_click_sim.js").read_text(encoding="utf-8")
     assert "process.env.PC_INSTALLED_APP_JS" in open_with
+    assert "process.env.PC_INSTALLED_APP_JS" in folder_drop
     assert "process.env.PC_INSTALLED_HOSTFILES_JS" in hostfiles
 
 

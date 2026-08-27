@@ -25,6 +25,8 @@ extract www/static/js/client/hostfiles.js "$check_dir/installed-hostfiles.js"
 
 PC_INSTALLED_APP_JS="$check_dir/installed-app.js" \
   node "$repo/tests/client/open_with_selector_sim.js"
+PC_INSTALLED_APP_JS="$check_dir/installed-app.js" \
+  node "$repo/tests/client/folder_drop_paths_sim.js"
 PC_INSTALLED_HOSTFILES_JS="$check_dir/installed-hostfiles.js" \
   node "$repo/tests/client/hostfiles_click_sim.js"
 echo "OK installed File Manager open-with routes"
