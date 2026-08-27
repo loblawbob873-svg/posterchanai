@@ -31,6 +31,7 @@
   const MIN_WIDTH = 1024;          // below this the desktop is not offered at all
   const KEY = 'osMode';            // ClientSettings: remembered across sessions
   const FX_KEY = 'osCompositing';  // full, or off/low-power; presentation only
+  const STYLE_KEY = 'osDesktopStyle'; // posterchan or optional mac; presentation only
   const TASKBAR = 48;
   const SNAP = 8;                  // edge gutter when tiling
 
@@ -98,6 +99,10 @@
     const full=settings().get(FX_KEY,'full')!=='off';
     root.classList.toggle('os-fx',full);
     root.classList.toggle('os-fx-off',!full);
+  }
+  function applyDesktopStyle(){
+    if(!root) return;
+    root.classList.toggle('os-style-mac',settings().get(STYLE_KEY,'posterchan')==='mac');
   }
   const fits = () => window.innerWidth >= MIN_WIDTH;
 
@@ -1718,6 +1723,7 @@
         <div class="os-set-actions"><button class="btn" data-detect>Detect displays</button>
           <button class="btn primary" data-apply>Preview and apply</button><span class="muted" data-status></span></div></section></section>
         <section data-settings-page="appearance" ${_osSettingsPage==='appearance'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('palette')}</div><span><h2>Appearance</h2><p>Choose modern desktop depth or a flat low-power presentation.</p></span></header>
+        <section class="os-setting-row os-set-control"><div><b>Desktop experience</b><span>Keep PosterChan's current desktop or use optional macOS-style window chrome.</span></div><select data-desktop-style aria-label="Desktop experience"><option value="posterchan" ${settings().get(STYLE_KEY,'posterchan')!=='mac'?'selected':''}>PosterChan</option><option value="mac" ${settings().get(STYLE_KEY,'posterchan')==='mac'?'selected':''}>macOS-style</option></select></section>
         <section class="os-setting-row os-set-control"><div><b>Window effects</b><span>Shadows, restrained transparency and short visual transitions. This never changes window focus or placement.</span></div><select data-window-effects aria-label="Window effects"><option value="full" ${settings().get(FX_KEY,'full')!=='off'?'selected':''}>Modern</option><option value="off" ${settings().get(FX_KEY,'full')==='off'?'selected':''}>Low power / off</option></select></section></section>
         <section data-settings-page="power" ${_osSettingsPage==='power'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('power')}</div><span><h2>Power &amp; brightness</h2><p>Battery, performance, sleep, and display brightness.</p></span></header>
         ${power.brightness&&power.brightness.available?`<section class="os-setting-row os-set-control"><div><b>Brightness</b><span>${enc(power.brightness.name||'Built-in display')}</span></div><label><output data-bright-value>${enc(power.brightness.percent)}%</output><input data-brightness type="range" min="1" max="100" value="${enc(power.brightness.percent)}" aria-label="Display brightness"></label></section>`:''}
@@ -1798,6 +1804,9 @@
       };
       const effects=host.querySelector('[data-window-effects]');if(effects)effects.onchange=()=>{
         settings().set(FX_KEY,effects.value==='off'?'off':'full');applyDesktopEffects();
+      };
+      const desktopStyle=host.querySelector('[data-desktop-style]');if(desktopStyle)desktopStyle.onchange=()=>{
+        settings().set(STYLE_KEY,desktopStyle.value==='mac'?'mac':'posterchan');applyDesktopStyle();
       };
       const awake=host.querySelector('[data-keep-awake]'); if(awake)awake.onchange=async()=>{
         awake.disabled=true;try{await pcPower.setKeepAwake(awake.checked);const s=awake.parentElement.querySelector('span');if(s)s.textContent=awake.checked?'On':'Off';PC().toast(awake.checked?'Computer will stay awake':'Normal sleep behavior restored');}catch(e){awake.checked=!awake.checked;PC().toast(String(e&&e.message||e));}finally{awake.disabled=false;}
@@ -6360,6 +6369,7 @@
     root.id = 'os-root';
     root.className = 'os-root';
     applyDesktopEffects();
+    applyDesktopStyle();
     root.innerHTML = '<div class="os-desk" id="os-desk"></div><div class="os-bar" id="os-bar"></div>';
     document.body.appendChild(root);
     /* Kept for old Sway configs during their first session after an upgrade. Current installs use

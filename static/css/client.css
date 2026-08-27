@@ -7321,6 +7321,24 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
   transition:none!important}
 .os-root.os-fx-off .osw:not(.osw-document),.os-root.os-fx-off .osw-bar{background:var(--panel)}
 @media(prefers-reduced-motion:reduce){.os-root.os-fx .osw{transition:none}}
+/* Optional macOS-style presentation. The same DOM/buttons/taskbar and inline z-order remain in
+   charge; only chrome order, radii and paint change, so switching styles cannot recreate a window. */
+.os-root.os-style-mac .osw{border-radius:15px}
+.os-root.os-style-mac .osw-bar{padding:0 10px;gap:7px;background:color-mix(in srgb,var(--panel2) 94%,transparent)}
+.os-root.os-style-mac .osw-btns{order:-1;gap:7px;margin-inline-end:2px}
+.os-root.os-style-mac .osw-b[data-w="min"],
+.os-root.os-style-mac .osw-b[data-w="max"],
+.os-root.os-style-mac .osw-b[data-w="close"]{width:13px;height:13px;border-radius:50%;font-size:0}
+.os-root.os-style-mac .osw-b[data-w="close"]{order:-3;background:#ff5f57}
+.os-root.os-style-mac .osw-b[data-w="min"]{order:-2;background:#febc2e}
+.os-root.os-style-mac .osw-b[data-w="max"]{order:-1;background:#28c840}
+.os-root.os-style-mac .osw-b[data-w="close"]:hover{background:#ff766f}
+.os-root.os-style-mac .osw-b[data-w="min"]:hover{background:#ffd05c}
+.os-root.os-style-mac .osw-b[data-w="max"]:hover{background:#50da65}
+.os-root.os-style-mac .osw-ai,.os-root.os-style-mac .osw-monitor{width:27px;height:28px}
+.os-root.os-style-mac .osw-title{text-align:center;padding-inline-end:54px}
+.os-root.os-style-mac .os-bar{border-top:1px solid color-mix(in srgb,var(--line) 72%,transparent);border-radius:16px 16px 0 0}
+.os-root.os-style-mac .os-task,.os-root.os-style-mac .os-start{border-radius:12px}
 .osw.focused{border-color:color-mix(in srgb, var(--neon) 55%, var(--line));
   box-shadow:0 22px 64px rgba(0,0,0,.62)}
 .osw.osw-document,.osw.osw-document.focused{border-color:#4b5563;border-radius:4px;
