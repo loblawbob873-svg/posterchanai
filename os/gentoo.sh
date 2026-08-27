@@ -1861,6 +1861,7 @@ PROFILE
 			&& tar -C posterchan.new -xaf /tmp/PosterChan-linux-x64.tar.zst \
 			&& mv posterchan.new posterchan \
 			&& chmod -R a+rX /opt/posterchan \
+			&& chmod 0755 /opt/posterchan/resources/tor/tor/tor \
 			&& chown root:root /opt/posterchan/chrome-sandbox \
 			&& chmod 4755 /opt/posterchan/chrome-sandbox \
 			&& rm -f /tmp/PosterChan-linux-x64.tar.zst'
@@ -1874,6 +1875,7 @@ PROFILE
 			&& /tmp/PosterChan.AppImage --appimage-extract >/dev/null 2>&1 \
 			&& mv squashfs-root posterchan \
 			&& chmod -R a+rX /opt/posterchan \
+			&& chmod 0755 /opt/posterchan/resources/tor/tor/tor \
 			&& chown root:root /opt/posterchan/chrome-sandbox \
 			&& chmod 4755 /opt/posterchan/chrome-sandbox \
 			&& rm -f /tmp/PosterChan.AppImage'

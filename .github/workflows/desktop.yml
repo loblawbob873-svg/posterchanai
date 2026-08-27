@@ -299,6 +299,9 @@ jobs:
         shell: bash
         run: |
           test -d dist/linux-unpacked || { echo "::error::no linux-unpacked to pack"; exit 1; }
+          test -x dist/linux-unpacked/resources/tor/tor/tor || {
+            echo "::error::packaged Tor is not executable — first-run would fail with EACCES"; exit 1;
+          }
           ver="$(node -p "require('./package.json').version")"
           # zstd: in the base system on the machines that consume this (the live image already needs
           # it for its squashfs), and far quicker to unpack than xz on a first boot.

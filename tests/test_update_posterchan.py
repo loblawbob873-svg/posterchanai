@@ -53,6 +53,20 @@ class TheCommandExists(unittest.TestCase):
         self.assertIn("exeinto /usr/local/bin", ebuild)
         self.assertIn('doexe "${FILESDIR}/${helper}"', ebuild)
 
+    def test_bundled_tor_remains_executable_in_every_hard_disk_install_path(self):
+        """Captured on the installed package: Tor existed at 0644 and first-run reported EACCES."""
+        desktop_ebuilds = sorted((ROOT / "os/overlay/app-misc/posterchan-desktop").glob("*.ebuild"))
+        self.assertTrue(desktop_ebuilds)
+        ebuild = desktop_ebuilds[-1].read_text()
+        installer = GENTOO.read_text()
+        updater = CMD.read_text()
+        workflow = (ROOT / ".github/workflows/desktop.yml").read_text()
+        tor = "/opt/posterchan/resources/tor/tor/tor"
+        self.assertIn(f"fperms 0755 {tor}", ebuild)
+        self.assertGreaterEqual(installer.count(f"chmod 0755 {tor}"), 2)
+        self.assertIn('chmod 0755 "$NEW/resources/tor/tor/tor"', updater)
+        self.assertIn("test -x dist/linux-unpacked/resources/tor/tor/tor", workflow)
+
     def test_privileged_helper_rules_are_package_owned(self):
         """An update must make multi-user login work, not only a fresh gentoo.sh install."""
         ebuild = EBUILD.read_text()

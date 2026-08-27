@@ -64,6 +64,10 @@ src_install() {
 	# whatever ran it; installed at 0700 the one directory every session execs from is root-only.
 	fperms -R a+rX /opt/posterchan
 	fperms 0755 /opt/posterchan/posterchan-desktop
+	# doins deliberately installs ordinary files as 0644. The bundled Tor executable is an
+	# extraResource, not the package's main binary, so without an explicit mode first-run reaches the
+	# Tor choice and fails with `spawn .../resources/tor/tor/tor EACCES`.
+	fperms 0755 /opt/posterchan/resources/tor/tor/tor
 	# Electron refuses to start unless its sandbox helper is setuid root, and no archive can carry
 	# that bit. The alternative is --no-sandbox, which turns the renderer sandbox off on a machine
 	# strangers log into.
