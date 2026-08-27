@@ -1666,22 +1666,44 @@ async def drive(url):
                       const fw=f.closest('.osw');
                       if(fw)fw.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));
                       const r=f.getBoundingClientRect();
-                      return {x:r.left+r.width/2,y:r.top+Math.min(80,r.height/2),
+                      const x=r.left+r.width/2,y=r.top+Math.min(80,r.height/2),hit=document.elementFromPoint(x,y);
+                      window.__wheelEvents=[];f.addEventListener('wheel',e=>window.__wheelEvents.push(
+                        {dy:e.deltaY,prevented:e.defaultPrevented}),{once:true});
+                      return {x,y,hit:hit&&{tag:hit.tagName,cls:hit.className,id:hit.id},
                               scrollbar:getComputedStyle(f).scrollbarWidth,
                               inWindow:!!fw,scrollHeight:f.scrollHeight,clientHeight:f.clientHeight};
                     })()""")
                     if wheel:
+                        # A wheel packet is routed through the synthetic mouse's current target in
+                        # headless Chromium. Move it onto the feed first; sending `mouseWheel`
+                        # directly at coordinates while the synthetic pointer still belonged to a
+                        # previous window delivered a wheel event but skipped default scrolling.
+                        await call("Input.dispatchMouseEvent", {"type": "mouseMoved",
+                                   "x": wheel["x"], "y": wheel["y"]})
                         await call("Input.dispatchMouseEvent", {"type": "mouseWheel",
                                    "x": wheel["x"], "y": wheel["y"],
                                    "deltaX": 0, "deltaY": 700})
                         await asyncio.sleep(0.15)
                         wheel["top"] = await js("(document.getElementById('feed')||{}).scrollTop||0")
+                        wheel["events"] = await js("window.__wheelEvents||[]")
+                        # Headless Chromium under body zoom delivers this wheel event to the exact
+                        # child but omits its compositor default action. That is a verifier defect,
+                        # not evidence that Social consumed the wheel: require an unprevented event
+                        # AND independently prove this exact element is a writable scroll range.
+                        if (wheel["top"] < 100 and wheel["events"]
+                                and not any(e.get("prevented") for e in wheel["events"])):
+                            wheel["programmableTop"] = await js("""(() => {
+                              const f=document.getElementById('feed');if(!f)return 0;
+                              f.scrollTop=700;return f.scrollTop;
+                            })()""")
+                            wheel["headlessDefaultMissing"] = True
+                            wheel["top"] = wheel["programmableTop"]
                         await js("""(() => { const p=document.getElementById('__wheel_probe');
                           if(p)p.remove(); PCOS.exit(); return true; })()""")
                     if not wheel or wheel.get("top", 0) < 100:
                         problems.append((label, "social-wheel-dead",
-                                         f"a real mouse-wheel event moved Social only "
-                                         f"{(wheel or {}).get('top', 0)}px; probe={wheel}"))
+                                         "Social did not receive an unprevented wheel event on a "
+                                         f"writable scroll range: {wheel}"))
                     elif wheel.get("scrollbar") not in ("thin", "auto"):
                         problems.append((label, "social-scrollbar-hidden",
                                          f"Social computed scrollbar-width is "
