@@ -16231,7 +16231,18 @@
       // Folder names live in the encrypted Files index, which is only fetched when you OPEN Files —
       // so without this pull the picker showed a flat drive to anyone who hadn't been there yet.
       try{ await FilesIdx.ensure(); }catch(_){ }
-      let list=[]; try{ const r=await fetch(server+'/list/'+ME.pubkey); if(r.ok) list=await r.json(); }catch(_){}
+      let list=[]; try{
+        const r=await fetch(server+'/list/'+ME.pubkey,{cache:'no-store'});
+        if(r.ok){
+          const rows=await r.json();
+          if(Array.isArray(rows)) list=rows.filter(b=>b&&b.sha256).map(b=>Object.assign({},b,{
+            /* A Blossom list entry is allowed to omit `url`. File Manager already canonicalises
+             * that response; the picker did not, so All rendered cards whose image and click URL
+             * were both empty on a conforming server. Keep the two consumers byte-for-byte aligned. */
+            url:b.url || (server.replace(/\/$/,'')+'/'+b.sha256)
+          }));
+        }
+      }catch(_){}
       // Same filter as the Files grid: hide the octet-stream noise (encrypted ciphertext, stale/live
       // index blobs, unnamed binaries) — none of it renders as media in a post, and it floods the picker.
       list = list.filter(b=>{
