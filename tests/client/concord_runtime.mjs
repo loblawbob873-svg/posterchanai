@@ -52,7 +52,7 @@ window.__PC = {
   insertAt:(input,value)=>{ input.value+=value; },
   uploadBlob:async file=>'https://files.example/'+file.name,
   askOsNotify:async()=>{ calls.notified++; return 'granted'; },
-  startGroupCall:()=>{ calls.group++; },
+  startGroupCall:peers=>{ calls.group++; calls.groupPeers=peers; },
   copyValue:value=>{ calls.copied=value; },
   openProfile:pk=>{ calls.profiles.push(pk); },
   osNotify:(title,body,opts)=>{ calls.mentions.push({title,body,opts}); },
@@ -267,6 +267,10 @@ const afterReaction=JSON.parse(data.get(raceKey));
 afterReaction[afterReaction.findIndex(m=>m.id===permanentId)]=acted;
 data.set(raceKey,JSON.stringify(afterReaction));
 
+PCConcord.render();
+control('cc-call').click();
+if(calls.group!==1 || !calls.groupPeers.includes('b'.repeat(64)))
+  throw new Error('community call omitted a known room participant');
 if(PCConcord.memberTapAction(true,false)!=='profile' ||
    PCConcord.memberTapAction(false,false)!=='menu' ||
    PCConcord.memberTapAction(true,true)!=='consume')

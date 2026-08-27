@@ -362,6 +362,9 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert 'id="cc-members"' in CONCORD and "members.onclick" in CONCORD
     assert 'id="cc-notify"' in CONCORD and 'p.askOsNotify' in CONCORD
     assert 'id="cc-call"' in CONCORD and 'p.startGroupCall' in CONCORD
+    call_handler = CONCORD.split("const call=$('#cc-call')", 1)[1].split("const cancel=", 1)[0]
+    assert 'roomParticipants(room,viewerPk)' in call_handler
+    assert 'activeMessages(room).map' not in call_handler
     assert 'startGroupCall,' in APP and 'uploadBlob,' in APP and 'openEmojiPopover,' in APP
     assert 'cc-members-dialog' in CONCORD and 'cc-member-list' in CONCORD_CSS
     assert 'cc-description-value' in CONCORD and 'room.description=description' in CONCORD
