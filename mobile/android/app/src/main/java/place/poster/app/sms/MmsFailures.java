@@ -24,6 +24,11 @@ final class MmsFailures {
                 .remove(String.valueOf(id)).apply();
     }
 
+    static boolean indeterminate(String error) {
+        return error != null && (error.startsWith("carrier send status is pending")
+                || error.startsWith("delivery unknown")); // rows written by older builds
+    }
+
     /* SmsManager's MMS result values. Kept numeric so this remains installable on API 26, where
        several newer named constants do not exist at runtime. */
     static String reason(int code, int http) {
@@ -40,7 +45,7 @@ final class MmsFailures {
             case 10: why = "the selected SIM is inactive"; break;
             case 11: why = "mobile data is disabled"; break;
             case 12: why = "no default messages app is available"; break;
-            case 0: why = "delivery unknown — confirm with the recipient before retrying"; break;
+            case 0: why = "carrier send status is pending — it may already have been sent; confirm with the recipient before retrying"; break;
             case 1: why = "carrier MMS transport failed without a reason"; break;
             default: why = "carrier send failed (code " + code + ")";
         }
@@ -69,6 +74,6 @@ final class MmsFailures {
         int sub = android.telephony.SubscriptionManager.getDefaultSmsSubscriptionId();
         if (sub == android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID)
             return why + "; Android has no default SMS SIM";
-        return why + "; verify mobile data and the carrier MMS APN for SIM " + sub;
+        return why + "; using SMS SIM " + sub;
     }
 }

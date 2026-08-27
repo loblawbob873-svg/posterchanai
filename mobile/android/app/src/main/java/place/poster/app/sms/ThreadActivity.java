@@ -502,7 +502,7 @@ public class ThreadActivity extends PcActivity {
              * explicit (long-press → Retry) because an old carrier submission may have escaped even
              * though its provider row never advanced. */
             final boolean retry = m.mms && (m.failed() || m.pending()) && !m.parts.isEmpty()
-                    && !m.error.startsWith("delivery unknown");
+                    && !MmsFailures.indeterminate(m.error);
             final CharSequence[] actions = retry
                     ? new CharSequence[]{ getString(R.string.sms_retry_send),
                                           getString(R.string.sms_copy),
@@ -711,7 +711,7 @@ public class ThreadActivity extends PcActivity {
              * outgoing carrier row is urgent and common enough to expose directly. Rebind on every
              * recycled view so an incoming row can never inherit the previous row's listener. */
             boolean retryable = mine && m.mms && (m.pending() || m.failed()) && !m.parts.isEmpty()
-                    && !m.error.startsWith("delivery unknown");
+                    && !MmsFailures.indeterminate(m.error);
             retry.setVisibility(retryable ? View.VISIBLE : View.GONE);
             retry.setEnabled(retryable);
             retry.setText(getString(R.string.sms_retry_send));

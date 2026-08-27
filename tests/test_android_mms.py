@@ -239,11 +239,12 @@ class MmsIdentity(unittest.TestCase):
         for reason in ('invalid carrier APN', 'mobile data is unavailable',
                        'the selected SIM is inactive', 'carrier server rejected it'):
             self.assertIn(reason, failures)
-        self.assertIn('delivery unknown — confirm with the recipient before retrying', failures)
-        self.assertIn('verify mobile data and the carrier MMS APN', failures)
+        self.assertIn('carrier send status is pending — it may already have been sent', failures)
+        self.assertNotIn('verify mobile data and the carrier MMS APN', failures)
         self.assertIn('SubscriptionManager.getDefaultSmsSubscriptionId()', failures)
-        self.assertIn('boolean ok = result == Activity.RESULT_OK', receiver)
-        self.assertIn('boolean unknown = result == 0', receiver)
+        self.assertIn('MmsResult.classify(result, http, providerBox)', receiver)
+        self.assertIn('boolean ok = status == MmsResult.SENT', receiver)
+        self.assertIn('boolean unknown = status == MmsResult.UNKNOWN', receiver)
         self.assertIn('if (!unknown)', receiver)
         self.assertIn('if (!unknown) SmsPlugin.onSendResult', receiver)
         plugin = open(os.path.join(SMS, "SmsPlugin.java"), encoding="utf-8").read()

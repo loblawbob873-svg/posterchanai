@@ -121,7 +121,7 @@ class TheArchive(unittest.TestCase):
 
         js = (ROOT / "static/js/client/sms.js").read_text()
         self.assertIn("stateChanged", js)
-        self.assertIn("' · delivery unknown'", js)
+        self.assertIn("' · carrier status pending'", js)
 
 
     def test_existing_sms_high_water_mark_does_not_skip_the_blossom_migration(self):

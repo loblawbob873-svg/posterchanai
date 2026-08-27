@@ -2268,9 +2268,10 @@
    * those again can duplicate a message that actually reached the recipient.  Queue/send the
    * replacement first and only then retire the failed receipt, so a relay, phone, or attachment
    * read failure cannot turn a visible failed message into a lost one. */
+  function ambiguousMmsError(error){const s=String(error||'');return s.startsWith('carrier send status is pending')||s.startsWith('delivery unknown');}
   async function retryFailed(m){
     if(!m || m.incoming || !m.failed ||
-       String(m.error || '').startsWith('delivery unknown'))
+       ambiguousMmsError(m.error))
       return {ok:false, error:'this message is not safe to retry'};
     let file = null;
     const parts = m.parts || [];
@@ -2328,14 +2329,14 @@
           const grp = !prev || !!prev.incoming !== !!m.incoming ? ' grp' : ' cont';
           const atts = (m.parts||[]).map((p, j) => attHtml(p, enc, i, j)).join('');
           const retryable = !m.incoming && m.failed &&
-            !String(m.error || '').startsWith('delivery unknown');
+            !ambiguousMmsError(m.error);
           return `<div class="bubble ${m.incoming ? 'in' : 'out'}${grp}${atts ? ' has-att' : ''}" data-doc="${enc(m.doc)}">`
             + atts
             /* THE ATTACHMENTS COME FIRST AND THE CAPTION UNDER THEM, which is where every messages
                app puts it -- and a bubble whose only content is an attachment must not also render
                an empty text node, or it collapses to a sliver. */
             + (m.body ? `<span class="b-txt">${enc(m.body)}</span>` : '')
-            + `<span class="b-meta">${enc(when(m.date))}${m.error&&String(m.error).startsWith('delivery unknown')?' · delivery unknown':m.pending?' · sending':m.failed?' · not sent':''}</span>`
+            + `<span class="b-meta">${enc(when(m.date))}${ambiguousMmsError(m.error)?' · carrier status pending':m.pending?' · sending':m.failed?' · not sent':''}</span>`
             + (retryable ? `<button class="btn small sms-retry" data-sms-retry="${enc(m.doc)}">Retry</button>` : '')
             + `</div>`;
         }).join('')}</div>

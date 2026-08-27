@@ -1,10 +1,10 @@
 package place.poster.app.sms;
 
-import android.app.Activity;
 import android.content.BroadcastReceiver;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
+import android.database.Cursor;
 import android.net.Uri;
 import android.provider.Telephony;
 import android.util.Log;
@@ -25,10 +25,15 @@ public final class MmsSendReceiver extends BroadcastReceiver {
                 String value = intent.getStringExtra("content_uri");
                 if (value == null || value.isEmpty()) throw new Exception("missing MMS provider row");
                 Uri row = Uri.parse(value);
-                /* Zero is genuinely ambiguous on OEM MMS services: observed attempts with the same
-                 * result both delivered and did not. Never call it sent or invite a blind retry. */
-                boolean ok = result == Activity.RESULT_OK;
-                boolean unknown = result == 0;
+                int http = intent.getIntExtra("android.telephony.extra.MMS_HTTP_STATUS", 0);
+                int providerBox = 0;
+                try (Cursor c = ctx.getContentResolver().query(row,
+                        new String[]{Telephony.Mms.MESSAGE_BOX}, null, null, null)) {
+                    if (c != null && c.moveToFirst()) providerBox = c.getInt(0);
+                } catch (Throwable ignored) { }
+                int status = MmsResult.classify(result, http, providerBox);
+                boolean ok = status == MmsResult.SENT;
+                boolean unknown = status == MmsResult.UNKNOWN;
                 /* Code 0 is not a failure on several OEM carrier stacks: the same callback has
                  * been observed for delivered and undelivered MMS. Keep its provider row in the
                  * outbox and label it delivery-unknown. Marking it FAILED caused the UI to lie and
@@ -41,7 +46,6 @@ public final class MmsSendReceiver extends BroadcastReceiver {
                 }
                 long id = 0;
                 try { id = Long.parseLong(row.getLastPathSegment()); } catch (Throwable ignored) { }
-                int http = intent.getIntExtra("android.telephony.extra.MMS_HTTP_STATUS", 0);
                 if (ok) MmsFailures.clear(ctx, id); else MmsFailures.put(ctx, id, result, http);
                 String file = intent.getStringExtra("file_path");
                 if (file != null && !file.isEmpty()) new File(file).delete();
