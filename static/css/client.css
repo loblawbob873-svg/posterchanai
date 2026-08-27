@@ -7964,10 +7964,17 @@ html.os-on #upload-badge.upbadge{z-index:333}
    one fix. */
 .osw.native-stashed .osw-body{position:relative}
 .osw.native-stashed .osw-body::after{
-  content:'click to bring this window forward';
+  content:'App is behind another window · click to bring it forward';
   position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-  padding:12px;text-align:center;font-size:12.5px;letter-spacing:.02em;
-  color:var(--muted);background:var(--panel, #0b0a14);
+  padding:12px;text-align:center;font-size:13px;font-weight:700;letter-spacing:.025em;
+  color:#fff;text-shadow:0 1px 3px #000;
+  /* Capture can be unavailable (another native surface overlaps, grim is absent, or the 16 MiB
+     memory cap rejects it). Never fall back to a near-black empty body: that is indistinguishable
+     from Firefox failing to render. This unmistakable system card remains useful and clickable. */
+  background:
+    radial-gradient(circle at 22% 28%,rgba(0,240,255,.72),transparent 31%),
+    radial-gradient(circle at 78% 74%,rgba(203,76,255,.68),transparent 34%),
+    linear-gradient(135deg,#174b67 0%,#3b326a 52%,#175466 100%);
   border-top:1px solid var(--line)}
 .osw.native-stashed.native-stash-preview .osw-body::after{
   content:'click to bring this window forward';align-items:flex-end;justify-content:flex-start;
