@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import subprocess
 
 
@@ -20,6 +21,16 @@ def test_publish_is_atomic_and_checksum_guarded():
     assert '[[ "$REMOTE_SHA" != "$LOCAL_SHA" ]]' in src
     assert "mv -f '$STAGING_PATH' '$PUBLISH_PATH'" in src
     assert src.index("REMOTE_SHA=") < src.index("mv -f '$STAGING_PATH' '$PUBLISH_PATH'")
+
+
+def test_checksum_sidecar_is_staged_published_and_read_back():
+    src = PUBLISH.read_text()
+    assert 'CHECKSUM_PATH="${PUBLISH_PATH}.sha256"' in src
+    assert 'CHECKSUM_STAGING="${CHECKSUM_PATH}.uploading"' in src
+    assert "mv -f '$CHECKSUM_STAGING' '$CHECKSUM_PATH'" in src
+    assert 'PUBLISHED_SHA=' in src
+    assert '[[ "$PUBLISHED_SHA" != "$LOCAL_SHA" ]]' in src
+    assert src.index("REMOTE_SHA=") < src.index("CHECKSUM_STAGING' && chmod")
 
 
 def test_livecd_only_publishes_after_success_and_only_when_clean():
@@ -48,3 +59,35 @@ def test_destination_overrides_cannot_inject_remote_commands(tmp_path):
     )
     assert bad.returncode == 2
     assert "unsafe publish host" in bad.stderr
+
+
+def test_successful_publish_writes_checksum_after_verified_iso(tmp_path):
+    """Exercise the shell flow without a network; the fake tools log the remote transaction."""
+    image = tmp_path / "posterchan-live.iso"
+    image.write_bytes(b"verified image bytes")
+    expected = subprocess.check_output(["sha256sum", str(image)], text=True).split()[0]
+    bindir, log = tmp_path / "bin", tmp_path / "commands"
+    bindir.mkdir()
+    (bindir / "scp").write_text("#!/bin/sh\necho scp \"$@\" >> \"$PC_TEST_LOG\"\n")
+    (bindir / "ssh").write_text(
+        "#!/bin/sh\n"
+        "echo ssh \"$@\" >> \"$PC_TEST_LOG\"\n"
+        "case \"$2\" in\n"
+        "  sha256sum*) printf '%s  staged.iso\\n' \"$PC_TEST_SHA\";;\n"
+        "  awk*) printf '%s\\n' \"$PC_TEST_SHA\";;\n"
+        "esac\n"
+    )
+    os.chmod(bindir / "scp", 0o755)
+    os.chmod(bindir / "ssh", 0o755)
+    env = os.environ.copy()
+    env.update(PATH=f"{bindir}:{env['PATH']}", PC_TEST_LOG=str(log), PC_TEST_SHA=expected,
+               PC_ISO_PUBLISH_HOST="root@test", PC_ISO_PUBLISH_PATH="/iso/posterchanos.iso")
+    result = subprocess.run([str(PUBLISH), str(image)], env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    commands = log.read_text()
+    assert "posterchanos.iso.sha256.uploading" in commands
+    transaction = next(line for line in commands.splitlines()
+                       if "chmod 0644" in line and "posterchanos.iso.sha256" in line)
+    assert transaction.index("posterchanos.iso.uploading' '/iso/posterchanos.iso'") < transaction.index(
+        "posterchanos.iso.sha256.uploading' '/iso/posterchanos.iso.sha256'")
+    assert "and /iso/posterchanos.iso.sha256" in result.stdout
