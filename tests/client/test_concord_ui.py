@@ -71,7 +71,7 @@ def test_classic_phone_concord_uses_os_style_rail_and_drawer_without_squeezed_ch
     assert 'body.concord-view .cc-app.home-view{inset:calc(58px + env(safe-area-inset-top)) 0 calc(61px + env(safe-area-inset-bottom)) 0!important' in CONCORD_CSS
     assert 'body.concord-view .cc-app.home-view{inset:0!important' not in CONCORD_CSS
     assert 'body.concord-view .cc-app.home-view #cc-back-channels{display:grid!important}' in CONCORD_CSS
-    assert 'body.concord-view .cc-message-actions .cc-quick-react' in CONCORD_CSS
+    assert 'body.concord-view .cc-message-actions .cc-action-trigger' in CONCORD_CSS
 
 
 def test_tablet_concord_consumes_the_full_shell_width():
@@ -91,7 +91,7 @@ def test_web_concord_removes_the_timeline_shell_gutter_and_width_cap():
 def test_concord_owns_a_versioned_stylesheet_so_stale_shell_css_cannot_unstyle_it():
     assert 'static/css/concord.css' in HTML
     assert "data-concord-css" in CONCORD
-    assert "concord.css?v=16" in CONCORD
+    assert "concord.css?v=17" in CONCORD
     assert '.cc-compose textarea:focus' in CONCORD_CSS
     assert 'box-shadow:none!important' in CONCORD_CSS
     assert "'/static/css/concord.css'" in (ROOT / "static/js/client/sw.js").read_text()
@@ -502,7 +502,10 @@ def test_concord_messages_support_persisted_replies_and_reactions():
     assert '.cc-message-reply' in CONCORD_CSS
     assert '.cc-reaction-picker' in CONCORD_CSS
     assert "publishCordMessage(p,room,state.channel,emoji" in CONCORD
-    assert 'data-cc-quick-react=' in CONCORD
+    assert 'data-cc-quick-react=' not in CONCORD
+    assert 'data-cc-actions=' in CONCORD
+    assert "row.classList.toggle('cc-actions-open',open)" in CONCORD
+    assert '.cc-message.cc-actions-open .cc-message-actions button{display:grid' in CONCORD_CSS
     assert 'cc-reaction${mine?' in CONCORD and 'aria-pressed="${mine}"' in CONCORD
     assert '.cc-reaction.mine' in CONCORD_CSS
     assert '.cc-action-sep' in CONCORD_CSS

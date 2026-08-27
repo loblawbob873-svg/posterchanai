@@ -261,15 +261,14 @@ PCConcord.render();
 if((feed.innerHTML.match(new RegExp('data-message-id="'+'e'.repeat(64)+'"','g'))||[]).length!==1)
   throw new Error('duplicate relay message rendered twice');
 
-// Exercise the actual rendered action handlers and validate their CORD rumor semantics.
+// Message actions stay collapsed until the user activates the post.  Reactions
+// must not be permanently repeated beside every message on touch layouts.
 const permanentId='e'.repeat(64);
-let quick=dollars('[data-cc-quick-react]').find(b=>b.dataset.ccQuickReact===permanentId);
-if(!quick)throw new Error('rendered message has no quick-reaction control');
-await quick.onclick();
 let acted=JSON.parse(data.get(raceKey)).find(m=>m.id===permanentId);
-if(!acted?.reactions?.['👍']?.includes('a'.repeat(64)) || calls.lastChat?.kind!==7 ||
-   !calls.lastChat.tags.some(t=>t[0]==='e'&&t[1]===permanentId))
-  throw new Error('quick reaction did not publish and persist');
+const actionTrigger=dollars('[data-cc-actions]').find(b=>b.dataset.ccActions===permanentId);
+if(!actionTrigger)throw new Error('rendered message has no collapsed action trigger');
+if(dollars('[data-cc-quick-react]').length)
+  throw new Error('rendered message still exposes permanent quick-reaction controls');
 // Treat the permanent fixture as another member's post for the reply-participant assertion.
 acted.pubkey='b'.repeat(64); acted.by='Other User';
 const afterReaction=JSON.parse(data.get(raceKey));
