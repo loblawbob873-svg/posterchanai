@@ -23,6 +23,7 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 TERM = os.path.join(ROOT, "static", "js", "client", "term.js")
+APP = os.path.join(ROOT, "static", "js", "client", "app.js")
 
 
 def _decomment(js):
@@ -104,6 +105,19 @@ class TheLocalShellNeedsNothing(unittest.TestCase):
         body = _decomment(_fn(self.src, "async function _remoteSessions()"))
         self.assertRegex(body, r"await\s+_bounded\(authFetch\('/api/ssh/sessions'\)")
         self.assertRegex(body, r"await\s+_bounded\(r\.json\(\)")
+
+    def test_saved_remote_identity_does_not_hold_the_whole_os_behind_reconnect(self):
+        """term.js cannot mount until startApp; NIP-46 resume must not block startApp when the
+        public identity is already saved locally."""
+        with open(APP, encoding="utf-8") as fh:
+            app = _decomment(fh.read())
+        start = app.index("const relays = paired.concat(_ncRelays())")
+        end = app.index("if(!this.userPk) this.userPk=await", start)
+        body = app[start:end]
+        branch = body[body.index("if(this.userPk){") : body.index("try{ await this._openAll", body.index("if(this.userPk){"))]
+        self.assertIn("this._openAll(relays).catch", branch)
+        self.assertIn("return this.userPk", branch)
+        self.assertNotIn("await this._openAll", branch)
 
 
 if __name__ == "__main__":

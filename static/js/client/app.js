@@ -2073,11 +2073,18 @@
        *
        * A session with NO userPk is different and still fails: that one genuinely has to ask the
        * signer who it is, and it cannot without a socket. */
-      try{ await this._openAll(relays); }
-      catch(e){
-        try{ await this._openRelay(paired[0] || s.relay); }
-        catch(e2){ if(!this.userPk) throw e2; console.warn('signer relay not up yet — keeping the login:', e2); }
+      /* THE SAVED IDENTITY MAKES RECONNECT A BACKGROUND OPERATION.
+       * Waiting here blocks startApp(), which means a disconnected signer used to prevent the
+       * desktop, Files and even this machine's native PTY from mounting. The public key is already
+       * in the saved session; only a future SIGNING operation needs the socket, and _ensure() dials
+       * before one. Start the dial now for low latency, but never put the local OS behind it. */
+      if(this.userPk){
+        this._openAll(relays).catch(() => this._openRelay(paired[0] || s.relay).catch(e2 =>
+          console.warn('signer relay not up yet — keeping the login:', e2)));
+        return this.userPk;
       }
+      try{ await this._openAll(relays); }
+      catch(_){ await this._openRelay(paired[0] || s.relay); }
       if(!this.userPk) this.userPk=await this._send('get_public_key',[]);
       return this.userPk;
     },
