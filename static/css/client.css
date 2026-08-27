@@ -8955,6 +8955,9 @@ html.osfr-on body > .app, html.osfr-on #os-root{ visibility:hidden; }
   cursor:zoom-in;background:var(--panel)}
 video.sms-att-img,audio.sms-att-img{cursor:default}
 audio.sms-att-img{min-width:220px}
+.sms-att-open{display:block;width:100%;min-height:38px;border:0;border-top:1px solid var(--line);
+  padding:7px 10px;background:var(--panel2);color:var(--cyan);font:600 12px inherit;cursor:pointer}
+.sms-att-open:hover,.sms-att-open:focus-visible{background:var(--hover);color:var(--text)}
 .sms-compose{display:flex;gap:8px;align-items:center;flex:none}
 .sms-compose .input{flex:1;min-width:0}
 .sms-attachment-draft{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 8px;padding:8px 10px;border:1px solid color-mix(in srgb,var(--cyan) 45%,var(--line));border-radius:10px;background:color-mix(in srgb,var(--cyan) 8%,var(--panel))}.sms-attachment-draft>span{display:grid;grid-template-columns:24px minmax(0,1fr);align-items:center;min-width:0}.sms-attachment-draft svg{grid-row:1/3;width:18px;height:18px}.sms-attachment-draft b,.sms-attachment-draft small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sms-attachment-draft small{color:var(--muted);font-size:11px}.sms-attachment-draft button{flex:0 0 32px;width:32px;height:32px;border:0;border-radius:8px;background:transparent;color:var(--muted);font-size:20px}.sms-attachment-draft button:hover{background:var(--hover);color:var(--text)}

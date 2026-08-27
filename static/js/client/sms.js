@@ -1939,12 +1939,20 @@
       v.className = 'sms-att-img';
       v.controls = true;
       v.src = d.url;
-      if(isVideo(p.ct)) v.onclick = e => {
-        /* Controls still receive their click. A click on the picture itself opens the same
-         * edge-to-edge viewer posts use, instead of playing inside a narrow message bubble. */
-        if(e.target === v) try{ PC.openLightbox(d.url, 'video'); }catch(_){}
-      };
       el.appendChild(v);
+      if(isVideo(p.ct)){
+        /* WebView retargets taps inside the native controls' shadow tree to the <video> itself.
+         * An onclick on `v` therefore cannot distinguish "play/seek" from "open viewer" and used
+         * to replace every attempted control tap with the lightbox. Keep controls native and give
+         * the fitted viewer one explicit, thumb-sized action beside them. */
+        const full = document.createElement('button');
+        full.className = 'sms-att-open';
+        full.type = 'button';
+        full.textContent = 'Full screen';
+        full.setAttribute('aria-label', 'Open video full screen');
+        full.onclick = () => { try{ PC.openLightbox(d.url, 'video'); }catch(_){} };
+        el.appendChild(full);
+      }
       return;
     }
     const b = document.createElement('button');
