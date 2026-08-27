@@ -594,6 +594,63 @@ DRIVE = r"""(async () => {
       document.dispatchEvent(new PointerEvent('pointercancel', {bubbles:true, pointerId:7})));
     out.stuckOnLostUp = await stuck(() => {});   // the pointerup simply never arrives
 
+    /* Exact paired-window report: Terminal is snapped left, an inactive native Firefox frame is
+       snapped right, then Terminal is focused and pulled away.  The native pixels are compositor
+       owned in production, but the failure under investigation is entirely in startDrag's HTML
+       state; marking the peer frame native-stashed recreates the placeholder without inventing a
+       second compositor or touching a live desktop. Repeat because a stale snap/capture latch was
+       reported only after the first successful move. */
+    PCOS.routeView('terminal'); await sleep(100);
+    const terminal = document.querySelector('.osw.focused');
+    PCOS.routeView('websearch'); await sleep(100);
+    const firefox = document.querySelector('.osw.focused');
+    firefox.classList.add('osw-native', 'native-stashed');
+    firefox.dataset.native = '9001';
+    const drag = async (win, x, y, id, carry=false) => {
+      const r=win.getBoundingClientRect(), b=win.querySelector('.osw-bar');
+      b.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,
+        clientX:r.left+80,clientY:r.top+12,pointerId:id,pointerType:'mouse',buttons:1}));
+      document.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,clientX:x,
+        clientY:y,pointerId:id,pointerType:'mouse',buttons:1}));
+      await sleep(24);
+      /* The first sample beyond the threshold restores a snapped frame under the cursor. A real
+         gesture then supplies more samples; require one here so this checks movement rather than
+         mistaking the intentional restore sample for the end of a drag. */
+      if(carry){x+=80;y+=35;document.dispatchEvent(new PointerEvent('pointermove',
+        {bubbles:true,clientX:x,clientY:y,pointerId:id,pointerType:'mouse',buttons:1}));await sleep(24);}
+      document.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,clientX:x,
+        clientY:y,pointerId:id,pointerType:'mouse',buttons:0}));
+      await sleep(50);
+    };
+    await drag(terminal, 3, 320, 81);
+    await drag(firefox, innerWidth-3, 320, 82);
+    const pairSetup=terminal.classList.contains('snapped')&&
+                    firefox.classList.contains('snapped')&&firefox.classList.contains('native-stashed');
+    const fixed = firefox.getBoundingClientRect();
+    const fixedRect = {x:fixed.x,y:fixed.y,w:fixed.width,h:fixed.height};
+    const paired=[];
+    for(let i=0;i<3;i++){
+      firefox.querySelector('.osw-body').dispatchEvent(new PointerEvent('pointerdown',
+        {bubbles:true,pointerId:90+i,pointerType:'mouse',buttons:1}));
+      terminal.querySelector('.osw-body').dispatchEvent(new PointerEvent('pointerdown',
+        {bubbles:true,pointerId:100+i,pointerType:'mouse',buttons:1}));
+      const before=terminal.getBoundingClientRect();
+      await drag(terminal, before.left+260, before.top+120, 110+i, true);
+      const after=terminal.getBoundingClientRect(), peer=firefox.getBoundingClientRect();
+      paired.push({unsnapped:!terminal.classList.contains('snapped'),
+        moved:Math.abs(after.left-before.left)>30 || Math.abs(after.top-before.top)>30,
+        before:{x:Math.round(before.left),y:Math.round(before.top),w:Math.round(before.width)},
+        after:{x:Math.round(after.left),y:Math.round(after.top),w:Math.round(after.width)},
+        peerSame:Math.abs(peer.x-fixedRect.x)<2&&Math.abs(peer.y-fixedRect.y)<2&&
+                 Math.abs(peer.width-fixedRect.w)<2&&Math.abs(peer.height-fixedRect.h)<2,
+        dragging:terminal.classList.contains('dragging'),
+        captured:terminal.hasPointerCapture?terminal.hasPointerCapture(110+i):false});
+      if(i<2)await drag(terminal,3,320,120+i);
+    }
+    out.pairedTerminalDrag={setup:pairSetup,cycles:paired};
+    firefox.querySelector('.osw-x').click(); await sleep(30);
+    terminal.querySelector('.osw-x').click(); await sleep(30);
+
     w0.querySelector('.osw-x').click();      // leave no window behind for the checks that follow
     await sleep(80);
   }
@@ -1656,6 +1713,14 @@ async def drive(url):
                                      f"preview={r.get('ghostShown')} snapped-to-half={r.get('snappedHalf')} "
                                      f"preview-cleared={r.get('ghostHidden')} "
                                      f"restored-on-drag-off={r.get('unsnapped')} {r.get('dbg')}"))
+                pair = r.get("pairedTerminalDrag") or {}
+                cycles = pair.get("cycles") or []
+                if not pair.get("setup") or len(cycles) != 3 or not all(
+                        c.get("unsnapped") and c.get("moved") and c.get("peerSame")
+                        and not c.get("dragging") and not c.get("captured") for c in cycles):
+                    problems.append((label, "paired-terminal-drag",
+                                     "Terminal did not detach cleanly from a right-snapped native "
+                                     f"placeholder across repeated focus/drag cycles: {pair}"))
                 if r.get("docWins") != 1 or r.get("docDedup") != 1 or not r.get("docFeed") \
                         or not r.get("docTask") or not r.get("docPaint") \
                         or r.get("docClosed") != 0:

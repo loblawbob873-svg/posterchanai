@@ -3174,6 +3174,11 @@
      * screen coordinate is deliberately allowed to diverge. Decide once at press time so the
      * coordinate space cannot change halfway through a gesture. */
     const realScreen = Number.isFinite(ev.screenX) && Number.isFinite(ev.screenY)
+      /* Chromium gives constructed PointerEvents screenX=screenY=0. A left-snapped title is also
+       * genuinely within 256px of the renderer origin, so the proximity test alone accepted those
+       * zeroes and every later sample had a zero delta: the pane restored but stayed glued to the
+       * left edge. A real title-bar press cannot be at virtual (0,0) while its client point is not. */
+      && !(ev.screenX === 0 && ev.screenY === 0 && (ev.clientX !== 0 || ev.clientY !== 0))
       && Math.abs((ev.screenX - (Number(window.screenX)||0)) - ev.clientX) < 256
       && Math.abs((ev.screenY - (Number(window.screenY)||0)) - ev.clientY) < 256;
     const gxOf = e => realScreen && Number.isFinite(e.screenX) ? e.screenX : e.clientX;

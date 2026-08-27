@@ -63,6 +63,15 @@ def test_mouse_edge_snap_is_not_stolen_by_a_timed_monitor_handoff():
     assert "if(handoff && w.native != null && pcWM.handoff)" in drag
 
 
+def test_zero_screen_coordinates_cannot_glue_a_left_snapped_window_to_the_edge():
+    src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+    drag = src[src.index("function startDrag"):src.index("function startResize")]
+    assert "ev.screenX === 0 && ev.screenY === 0" in drag
+    reject = drag.index("ev.screenX === 0 && ev.screenY === 0")
+    proximity = drag.index("Math.abs((ev.screenX - (Number(window.screenX)||0)) - ev.clientX)")
+    assert reject < proximity
+
+
 def test_wayland_capture_loss_at_a_previewed_edge_commits_monitor_handoff():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
     drag = src[src.index("function startDrag"):src.index("function startResize")]
