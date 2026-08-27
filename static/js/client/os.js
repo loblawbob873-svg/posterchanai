@@ -2983,6 +2983,9 @@
   function handoffIdentity(w){
     const opened=String(w&&w.view||''), current=String(w&&w.appView||opened);
     if(opened==='terminal') return 'terminal';
+    /* Web Search carries its query/page in handoffState, never in the browser's page-global route.
+     * A Social/profile URL left by another window must not replace the application identity. */
+    if(opened==='websearch') return 'websearch';
     /* Messages has one canonical window identity. The selected Direct/Communities tab travels in
      * handoffPayload; recreating the frame as the historical `concord` alias made a later Direct
      * click depend on alias lookup and could manufacture a second frame. */
@@ -3009,11 +3012,12 @@
      * change while another window has focus; never let that stale route turn a moved terminal into
      * a Social window (or route the receiving renderer away after it adopts the PTY). */
     const terminal = w.view === 'terminal';
+    const websearch = w.view === 'websearch';
     const music = w.view === 'doc:music' || w.view === '__music';
     /* `/` is not an address. It is the page-global fallback route, and replaying it after opening
      * an ordinary app makes routeFromPath create a second Social window on the destination output.
      * Only deeper paths identify content that the view name cannot restore by itself. */
-    const appPath = terminal || music ? '' : String(w.appPath || '');
+    const appPath = terminal || websearch || music ? '' : String(w.appPath || '');
     const topPath = appPath==='/' || appPath==='/index.html';
     const messagesTab=sameAppWindow(String(w.view||''),String(w.appView||w.view||''))
       ? (String(w.appView||w.view)==='concord'?'concord':'messages') : '';
