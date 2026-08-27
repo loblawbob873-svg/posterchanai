@@ -27,6 +27,15 @@ def test_member_menu_supports_profile_and_owner_only_ban():
     assert "isOwner=!!boundOwnerPk&&boundOwnerPk===viewer.pubkey" in bind[:menu]
 
 
+def test_delayed_ban_updates_the_original_room_not_whichever_room_is_active_later():
+    handler = JS.split('const banMember=async target=>', 1)[1].split('const closeMemberMenu', 1)[0]
+    assert 'roomId=roomIdentity(room)' in handler
+    assert 'const latest=saved()' in handler
+    assert 'latest.findIndex(item=>roomIdentity(item)===roomId)' in handler
+    assert 'latest[roomIndex].banned=made.banned' in handler
+    assert 'rooms[state.community]=room' not in handler
+
+
 def test_member_menu_can_open_a_direct_message():
     assert 'data-cc-member-message=' in JS
     assert '>Message</button>' in JS

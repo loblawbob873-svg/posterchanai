@@ -115,6 +115,13 @@ globalThis.fetch=async()=>{throw new Error('offline icon host');};
 if(await PCConcord.applyRoomIconMetadata(iconRoom,{icon:{url:'https://bad.example/icon',key:'00',nonce:'00',hash:'00'}},'icon-bad') || iconRoom.icon!=='🛸')
   throw new Error('failed encrypted icon damaged room metadata');
 globalThis.fetch=priorFetch;
+const leaveFixture=[{communityId:'first'},{communityId:'leave-me'},{communityId:'last'}];
+const left=PCConcord.removeCommunityByIdentity(leaveFixture,'leave-me');
+if(left.index!==1 || left.rooms.map(x=>x.communityId).join(',')!=='first,last' || leaveFixture.length!==3)
+  throw new Error('community leave did not remove exactly the durable identity');
+const missingLeave=PCConcord.removeCommunityByIdentity(leaveFixture,'not-present');
+if(missingLeave.index!==-1 || missingLeave.rooms.length!==3)
+  throw new Error('missing community leave removed another room');
 const mentionRoom={naddr:'mention-room',channels:[{name:'general'},{name:'support',id:'support-id'}]};
 data.set('pc.concord.test.mention-room',JSON.stringify([{id:'m1',pubkey:'b'.repeat(64),text:'general'}]));
 data.set('pc.concord.test.mention-room.support-id',JSON.stringify([{id:'m2',pubkey:'c'.repeat(64),text:'support'}]));

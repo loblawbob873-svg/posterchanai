@@ -214,7 +214,11 @@ def test_leaving_a_community_publishes_a_membership_tombstone_before_removal():
     assert "tombs.set(room.communityId,{community_id:room.communityId,removed_at:Date.now()})" in CONCORD
     assert "await p.publish(13302,content,[])" in CONCORD
     handler = CONCORD.split("const leave=$('#cc-leave-community')", 1)[1].split("const settingsSave", 1)[0]
-    assert handler.index('await leaveArmadaMembership(p,room)') < handler.index('rooms.splice(index,1)')
+    assert handler.index('await leaveArmadaMembership(p,room)') < handler.index('const latest=saved()')
+    assert 'removeCommunityByIdentity(latest,leavingId)' in handler
+    assert "rooms.splice(index,1)" not in handler
+    assert "localStorage.setItem('pc.concord.active',String(state.community))" in handler
+    assert "localStorage.removeItem('pc.concord.active')" in handler
     assert "roomInvite.title='Invite people'" in CONCORD
 
 
@@ -302,7 +306,7 @@ def test_owner_can_publish_an_interoperable_cord_ban():
     assert 'const banMember=async target=>' in CONCORD
     assert 'reader.createBanWrap' in CONCORD
     assert 'community relays rejected the ban' in CONCORD
-    assert 'room.banned=made.banned' in CONCORD
+    assert 'latest[roomIndex].banned=made.banned' in CONCORD
 
 
 def test_concord_create_and_send_flow_executes_without_runtime_errors():
