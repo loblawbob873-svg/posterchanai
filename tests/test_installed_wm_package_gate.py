@@ -11,6 +11,9 @@ def test_gate_extracts_wm_from_the_immutable_asar():
     assert "extract-file \"$asar\" wm.js" in gate
     assert "PC_INSTALLED_WM_JS=" in gate
     assert "installed_wm_ancestry_sim.js" in gate
+    assert 'extract-file "$asar" www/static/js/client/os.js' in gate
+    assert "PC_INSTALLED_OS_JS=" in gate
+    assert "alt_tab_switcher_sim.js" in gate
 
 
 def test_sim_uses_a_live_disposable_process_family():

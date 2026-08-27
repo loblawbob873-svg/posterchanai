@@ -13,5 +13,9 @@ cleanup() { rm -r "$check_dir"; }
 trap cleanup EXIT HUP INT TERM
 (cd "$check_dir" && node "$asar_cli" extract-file "$asar" wm.js)
 mv "$check_dir/wm.js" "$check_dir/installed-wm.js"
+(cd "$check_dir" && node "$asar_cli" extract-file "$asar" www/static/js/client/os.js)
+mv "$check_dir/os.js" "$check_dir/installed-os.js"
 PC_INSTALLED_WM_JS="$check_dir/installed-wm.js" \
   node "$repo/tests/client/installed_wm_ancestry_sim.js"
+PC_INSTALLED_OS_JS="$check_dir/installed-os.js" \
+  node "$repo/tests/client/alt_tab_switcher_sim.js"
