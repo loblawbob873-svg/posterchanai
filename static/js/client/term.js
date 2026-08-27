@@ -564,7 +564,13 @@
         const followThisFit=followBottom;
         if(followThisFit)scrollingByUs=true;
         try{ term.options.fontSize = fontSize(); }catch(_){}
-        try{ if(fit) fit.fit(); }catch(_){}
+        /* Reparenting the live terminal during an app switch can deliver the first focused
+         * ResizeObserver callback before xterm's viewport/canvas has finished reconnecting.  A
+         * FitAddon exception there is transient.  Do not remember those pixels as successfully
+         * fitted: otherwise the next stable callback sees the same rectangle, returns above, and
+         * leaves the xterm grid/PTY at the pre-switch dimensions until somebody drags the window. */
+        let fitOk=!fit;
+        try{ if(fit){ fit.fit(); fitOk=true; } }catch(_){}
         if(followThisFit)_pinBottomAfterLayout();
         /* A ZERO-SIZED BOX IS NOT A SIZE. In desktop mode the Terminal's window is PARKED when
          * another window takes focus — its nodes are moved aside, which fires the ResizeObserver
@@ -579,7 +585,7 @@
          * at the far end — and a full-screen program redraws its entire display on each one. The
          * common case of _fit (a reconnect, a repaint, a focus) is that nothing moved at all. */
         const sig = c + 'x' + r;
-        if(px)_fitPixels=px;
+        if(px&&fitOk)_fitPixels=px;
         if(sig === _sentSize) return;
         _sentSize = sig;
         _send({ t: 'size', cols: c, rows: r });

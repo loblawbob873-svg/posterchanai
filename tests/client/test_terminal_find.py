@@ -89,7 +89,7 @@ def test_resize_keeps_a_live_terminal_at_the_prompt_without_fighting_scrollback(
     fit = TERM[TERM.index("function _fit()"):
                TERM.index("/* ONE WAY OUT", TERM.index("function _fit()"))]
     assert "const followThisFit=followBottom" in fit
-    assert fit.index("if(followThisFit)scrollingByUs=true") < fit.index("if(fit) fit.fit()")
+    assert fit.index("if(followThisFit)scrollingByUs=true") < fit.index("if(fit){ fit.fit(); fitOk=true; }")
     assert "if(followThisFit)_pinBottomAfterLayout()" in fit
 
 
@@ -125,6 +125,16 @@ def test_resize_guards_measure_the_live_terminal_element_not_an_out_of_scope_loc
     assert fit.index(resolve) < fit.index("box.closest")
     assert fit.index(resolve) < fit.index("box.getBoundingClientRect")
     assert "if(!box || !box.isConnected) return" in fit
+
+
+def test_focus_return_retries_a_fit_that_ran_before_xterms_viewport_was_ready():
+    """The same ResizeObserver rectangle must not be deduplicated after FitAddon threw once."""
+    fit = TERM[TERM.index("function _fit()"):
+               TERM.index("/* ONE WAY OUT", TERM.index("function _fit()"))]
+    assert "let fitOk=!fit" in fit
+    assert "if(fit){ fit.fit(); fitOk=true; }" in fit
+    assert "if(px&&fitOk)_fitPixels=px" in fit
+    assert "if(px)_fitPixels=px" not in fit
 
 
 def test_ctrl_page_keys_cycle_terminal_tabs_and_wrap_locally():
