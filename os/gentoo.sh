@@ -3377,6 +3377,27 @@ GRUB
 	echo
 	echo -e "${COLOR_YELLOW}It is a hybrid image: the same file boots on BIOS and on UEFI.${COLOR_RESET}"
 	echo
+	# A clean release image is deployed under one stable URL. Publish only AFTER every build and
+	# content check above has succeeded, and never upload a personal rescue image that may contain
+	# accounts or secrets. PC_ISO_PUBLISH=n is the explicit escape hatch for a local test build.
+	local PUBLISH_ISO
+	PUBLISH_ISO="${PC_ISO_PUBLISH:-y}"
+	if [[ "${CLEAN,,}" == y* && "${PUBLISH_ISO,,}" == y* ]]; then
+		local PUBLISHER
+		PUBLISHER="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/publish_iso.sh"
+		if [[ ! -x "$PUBLISHER" ]]; then
+			_lcd_fail "ISO is complete but its publisher is missing or not executable: $PUBLISHER"
+			return
+		fi
+		"$PUBLISHER" "$ISO" || {
+			_lcd_fail "ISO is complete but publishing it failed. The local image remains at $ISO."
+			return
+		}
+	elif [[ "${CLEAN,,}" != y* ]]; then
+		echo -e "${COLOR_YELLOW}Personal rescue image: not publishing it.${COLOR_RESET}"
+	else
+		echo -e "${COLOR_YELLOW}Publishing disabled by PC_ISO_PUBLISH=$PUBLISH_ISO.${COLOR_RESET}"
+	fi
 	# A headless `gentoo.sh livecd` has no keyboard. The image is already complete here, so an
 	# unconditional read leaves the ssh job and its caller hanging forever after a successful build.
 	[[ -t 0 ]] && read -p "Press enter key to Continue"
