@@ -2321,7 +2321,7 @@
       }catch(e){ PC.toast('could not attach Blossom photo: '+String(e&&e.message||e)); }
     }, {title:'📁 Attach photo from Files',filter:b=>String(b.type||'').startsWith('image/')});
     if(blossomLaunch){blossomLaunch=false;setTimeout(fromBlossom,0);}
-    attachBtn.onclick = async () => {
+    const fromDevice = async () => {
       /* Electron's hidden file input is not reliable when the Texts window has just changed focus
        * between compositor surfaces. Use the desktop's native, explicitly user-confirmed picker;
        * browsers and Android keep the ordinary input. Bytes are bounded in the main process before
@@ -2329,20 +2329,26 @@
       if(window.pcHost && pcHost.pickFile){
         try{
           const chosen=await pcHost.pickFile({images:true,max:32*1024*1024,title:'Add a photo to Texts'});
-          if(!chosen)return;
+          if(!chosen)return false;
           const file=new File([chosen.data],chosen.name,{type:chosen.type});
-          if(!isImageFile(file)){PC.toast('MMS currently supports photos');return;}
-          S.attach=file;paint();
+          return acceptFile(file);
         }catch(e){ PC.toast('could not attach photo: '+String(e&&e.message||e)); }
-        return;
+        return false;
       }
+      pick.click();
+      return true;
+    };
+    attachBtn.onclick = async () => {
+      /* Do not let the native desktop picker bypass this choice. A signed-in desktop is also an
+       * account-scoped Files client, and hiding that source made web Texts offer Blossom while the
+       * installed app only offered the local disk. `Device` still uses the reliable host dialog. */
       if(PC.blossomPicker && PC.modal){
         PC.modal('<h3>Add a photo</h3><div class="sms-attach-sources"><button class="btn" id="sms-src-camera">Camera</button><button class="btn" id="sms-src-device">Device</button><button class="btn" id="sms-src-blossom">📁 Files</button></div>', root=>{
           root.querySelector('#sms-src-camera').onclick=()=>{PC.closeModal();camera.click();};
-          root.querySelector('#sms-src-device').onclick=()=>{PC.closeModal();pick.click();};
+          root.querySelector('#sms-src-device').onclick=()=>{PC.closeModal();fromDevice();};
           root.querySelector('#sms-src-blossom').onclick=()=>{PC.closeModal();fromBlossom();};
         });
-      }else pick.click();
+      }else await fromDevice();
     };
     pick.onchange = () => {
       const file=(pick.files||[])[0]||null;
