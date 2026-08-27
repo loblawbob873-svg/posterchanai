@@ -142,6 +142,12 @@ This is evidence from the recovery pass, not a declaration that the whole queue 
   extensionless project file remained inspectable in Code; and clicking a This Computer MP4 reached
   the chooser before invoking the native opener. The reusable installed gate is
   `scripts/check_installed_files_open_with.sh`; 64 focused open-with/Code tests pass.
+- An isolated instance of the installed 1.0.1083 Electron package then exercised the native bridge
+  and rendered File Manager itself: it navigated to a disposable directory, listed both fixtures,
+  clicked a `.conf` file and found the Code/native choices, then clicked an SVG and required the
+  real Preview image surface. The diagnostic profile and fixtures were removed without restarting
+  the signed-in desktop. `scripts/check_installed_native_files.py` preserves this installed-runtime
+  gate and also supports a remote-owned fixture when CDP is reached through an SSH tunnel.
 - Installed PosterChan Code selected a disposable local Git repository, showed its modified file and
   real diff, restored it through the UI, returned to a clean tree and Explorer, and retained correct
   full-height Code/Terminal sizing across focus changes.
