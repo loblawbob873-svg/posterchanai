@@ -70,3 +70,19 @@ def test_bluetooth_autoplay_is_phone_settings_not_music_chrome():
     assert "musicPhoneSettings: _musicPhoneSettings" in APP
     assert 'id="ps-autobt"' in phone
     assert "setAutoplayBluetooth(box.checked)" in phone
+
+
+def test_phone_library_actions_are_one_compact_row_with_count_below():
+    body = APP[APP.index("function _renderMusicList"):
+               APP.index("grid.onclick = async", APP.index("function _renderMusicList"))]
+    primary = body[body.index('class="music-head-primary"'):
+                   body.index('class="music-count ')]
+    assert all(f'id="{control}"' in primary
+               for control in ("mus-shuffle", "mus-refresh", "mus-delall"))
+    assert primary.index('id="mus-shuffle"') < primary.index('id="mus-refresh"') < primary.index('id="mus-delall"')
+    assert "'Delete All'" in primary
+    assert 'class="music-count muted small"' in body
+
+    mobile = CSS[CSS.index("@media(max-width:560px){", CSS.index(".music-head{")):]
+    assert ".music-head-primary{order:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr))" in mobile
+    assert ".music-count{order:2;flex:1 1 100%;width:100%" in mobile

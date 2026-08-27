@@ -21445,18 +21445,23 @@
     const offAll=all.filter(t=>t.offline).length;
     const wantable=all.filter(t=>!t.missing && !t.offline).map(t=>t.sha);
     const head = `<div class="music-head">
+      <div class="music-head-primary">
         <button class="btn btn-neon small" id="mus-shuffle"${liveAll?'':' disabled'}>
-          <svg class="ic b-ic" aria-hidden="true"><use href="#i-shuffle"></use></svg>${only ? 'Shuffle playlist' : 'Shuffle all'}</button>
-        <span class="muted small">${needle ? `${tracks.length} of ${all.length} match`
+          <svg class="ic b-ic" aria-hidden="true"><use href="#i-shuffle"></use></svg>${only ? 'Shuffle playlist' : 'Shuffle'}</button>
+        <button class="btn btn-ghost small" id="mus-refresh" title="Fetch the library again — songs added on another device appear here">
+          <svg class="ic b-ic" aria-hidden="true"><use href="#i-refresh"></use></svg>Refresh</button>
+        ${!only ? `<button class="btn btn-ghost small" id="mus-delall"${tracks.length?'':' disabled'}
+          title="${needle ? 'Delete the songs matching this search — from your library, not just this view' : 'Delete every song in your library'}">${needle ? 'Delete matches' : 'Delete All'}</button>` : ''}
+      </div>
+      <span class="music-count muted small">${needle ? `${tracks.length} of ${all.length} match`
           : (live ? (live + ' track' + (live>1?'s':'')) : 'nothing playable yet')}${
           gone ? ` · ${gone} missing from the server` : ''}${
           offAll ? ` · ${offAll} offline` : ''}</span>
+      <div class="music-head-secondary">
         ${wantable.length ? `<button class="btn btn-ghost small" id="mus-getall" title="Keep every track on this device — they play with no network">
           <svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Download ${wantable.length}</button>` : ''}
-        <button class="btn btn-ghost small" id="mus-refresh" title="Fetch the library again — songs added on another device appear here">
-          <svg class="ic b-ic" aria-hidden="true"><use href="#i-refresh"></use></svg>Refresh</button>
         ${gone ? `<button class="btn btn-ghost small" id="mus-tidy">Remove ${gone} missing</button>` : ''}
-        ${(tracks.length && !only) ? `<button class="btn btn-ghost small" id="mus-delall" title="${needle ? 'Delete the songs matching this search — from your library, not just this view' : 'Delete every song in your library'}">Delete ${needle ? `these ${tracks.length}` : 'all'}</button>` : ''}</div>`;
+      </div></div>`;
     /* THE WHOLE LIBRARY USED TO BE ON SCREEN AT ONCE, and a big one made the entire app sluggish for
      * as long as the window was open — with nothing playing. Reported as "the music player on the
      * desktop slows everything down, window movement included; it's fast again once Music is closed",

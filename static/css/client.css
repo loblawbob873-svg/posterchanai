@@ -7692,8 +7692,19 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 .osw-slot.os-folder .os-icon{position:static}
 
 /* The Music view's header — one obvious action, so a library reads as a player and not a folder. */
-.music-head{display:flex;align-items:center;gap:12px;padding:2px 2px 12px;flex-wrap:wrap}
+.music-head{display:flex;align-items:center;gap:8px 12px;padding:2px 2px 12px;flex-wrap:wrap}
+.music-head-primary,.music-head-secondary{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.music-count{flex:1 1 180px;min-width:0}
+.music-head-secondary{margin-inline-start:auto}
 .music-head .btn[disabled]{opacity:.45;cursor:default}
+@media(max-width:560px){
+  .music-head{align-items:stretch;gap:6px}
+  .music-head-primary{order:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));
+    width:100%;gap:5px}
+  .music-head-primary .btn{min-width:0;width:100%;padding:6px 4px;white-space:nowrap}
+  .music-count{order:2;flex:1 1 100%;width:100%;padding-inline:2px}
+  .music-head-secondary{order:3;margin-inline-start:0;width:100%}
+}
 
 /* A track the index knows about whose bytes are no longer on the server. Shown, not hidden: a
    library that quietly drops half its rows looks broken, and one that lies about them fails on play. */
