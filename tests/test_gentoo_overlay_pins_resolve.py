@@ -89,6 +89,19 @@ class TheOverlayPinsSomethingThatExists(unittest.TestCase):
         rolling = wf.index("name: Publish rolling release")
         self.assertLess(immutable, rolling)
 
+    def test_ci_refuses_to_replace_assets_under_an_older_commit_tag(self):
+        """A checksum cannot repair provenance if a reused version tag names different source."""
+        with open(os.path.join(ROOT, ".github", "workflows", "desktop.yml"), encoding="utf-8") as fh:
+            wf = fh.read()
+        guard = wf.index("name: Guard immutable version tag")
+        publish = wf.index("name: Publish the versioned tarball the Gentoo overlay pins")
+        verify = wf.index("name: Verify immutable version tag")
+        self.assertLess(guard, publish)
+        self.assertLess(publish, verify)
+        self.assertIn('[ "$existing" != "$GITHUB_SHA" ]', wf[guard:publish])
+        self.assertIn("target_commitish: ${{ github.sha }}", wf[publish:verify])
+        self.assertIn('test "$actual" = "$GITHUB_SHA"', wf[verify:])
+
     def test_bump_refuses_a_desktop_payload_without_concord(self):
         """A checksum proves which bytes arrived, not that those bytes contain the app."""
         with open(os.path.join(ROOT, "scripts", "bump_desktop_overlay.py"), encoding="utf-8") as fh:

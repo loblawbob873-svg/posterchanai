@@ -333,6 +333,26 @@ jobs:
       - name: List what we're shipping
         run: ls -la artifacts
 
+      # A workflow run number is normally monotonic, but it is not a globally unique release
+      # identity: restored/recreated Actions metadata and old manual releases can leave the same
+      # version tag behind. softprops correctly refuses to move that tag, yet it will still replace
+      # the release assets. That produced an apparently immutable 1.0.1088 whose bytes came from a
+      # newer commit while its tag still named an older one. Fail before uploading a byte whenever
+      # the proposed immutable tag belongs to any other commit.
+      - name: Guard immutable version tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION_TAG: desktop-v1.0.${{ github.run_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          existing="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$VERSION_TAG" \
+            --jq .object.sha 2>/dev/null || true)"
+          if [ -n "$existing" ] && [ "$existing" != "$GITHUB_SHA" ]; then
+            echo "::error::immutable tag $VERSION_TAG already names $existing, not $GITHUB_SHA"
+            exit 1
+          fi
+
       # Publish the immutable Gentoo payload before touching the rolling release. A transient upload
       # failure in any Windows/macOS installer must never prevent Portage's permanent, checksummed
       # source URI from being created.
@@ -340,6 +360,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: desktop-v1.0.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
           name: PosterChan Desktop 1.0.${{ github.run_number }}
           body: |
             Permanent per-version tarball for the PosterChanOS Gentoo overlay
@@ -348,6 +369,19 @@ jobs:
           files: |
             artifacts/PosterChan-*-linux-x64.tar.zst
             artifacts/PosterChan-*-linux-x64.tar.zst.sha512
+
+      - name: Verify immutable version tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION_TAG: desktop-v1.0.${{ github.run_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$VERSION_TAG" --jq .object.sha)"
+          test "$actual" = "$GITHUB_SHA" || {
+            echo "::error::published $VERSION_TAG names $actual, not $GITHUB_SHA"
+            exit 1
+          }
 
       # GitHub stamps a release's publish date ONCE, when the release object is created — replacing the
       # assets under a rolling tag never touches it, so desktop-latest would keep showing an old date
