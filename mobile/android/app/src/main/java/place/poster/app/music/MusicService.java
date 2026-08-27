@@ -131,7 +131,12 @@ public class MusicService extends Service {
   /** Transport bridge back to the Capacitor plugin (which forwards to JS as `musicTransport`). */
   public interface Listener { void onTransport(String action, double value); }
   private static volatile Listener listener;
-  public static void setListener(Listener l) { listener = l; }
+  public static synchronized void setListener(Listener l) { listener = l; }
+  /** Drop a bridge only if it is still the current one. An old Activity can finish after its
+   * replacement has loaded, and an unconditional clear there would silence the new WebView. */
+  public static synchronized void clearListener(Listener l) {
+    if (listener == l) listener = null;
+  }
 
   public static volatile MusicService INSTANCE;
 

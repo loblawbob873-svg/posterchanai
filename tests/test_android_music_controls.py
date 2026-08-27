@@ -242,6 +242,15 @@ def test_the_transport_listener_is_armed_at_startup_not_at_first_play():
     assert startup.index("MusicPlayer._nativeInit();") < startup.index("MusicPlayer.consumeLaunch();")
 
 
+def test_a_destroyed_bridge_cannot_keep_receiving_transport_presses():
+    """MusicService outlives an Activity. A static listener aimed at that Activity's destroyed
+    bridge makes emit() appear successful, preventing the cold-press revival path from running."""
+    destroy = re.search(r"protected void handleOnDestroy\(\) \{(.*?)\n  \}", PLUGIN, re.S)
+    assert destroy and "MusicService.clearListener(transportListener)" in destroy.group(1)
+    assert "if (listener == l) listener = null" in SERVICE, (
+        "late teardown of an old bridge must not clear the replacement bridge's listener")
+
+
 def test_play_from_outside_works_on_a_page_that_has_never_played():
     """A car button, the lock screen and a Bluetooth connection cannot see this page, and after a
     reload it holds no track: `_audioEl.play()` against an empty <audio> resolves against nothing and

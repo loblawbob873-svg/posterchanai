@@ -43,15 +43,27 @@ public class MusicPlugin extends Plugin {
   private static final long LAUNCH_MAX_AGE_MS = 60_000;
 
   private boolean askedForNotifications = false;
+  private MusicService.Listener transportListener;
 
   @Override
   public void load() {
-    MusicService.setListener((action, value) -> {
+    transportListener = (action, value) -> {
       JSObject data = new JSObject();
       data.put("action", action);
       data.put("value", value);
       notifyListeners("musicTransport", data);
-    });
+    };
+    MusicService.setListener(transportListener);
+  }
+
+  /** The service is process-scoped; the Capacitor bridge is not. Leaving this listener installed
+   * after an Activity/renderer teardown makes a cold car or notification press look delivered even
+   * though it went into a dead bridge, so the service never takes its measured revival path. */
+  @Override
+  protected void handleOnDestroy() {
+    MusicService.clearListener(transportListener);
+    transportListener = null;
+    super.handleOnDestroy();
   }
 
   /**
