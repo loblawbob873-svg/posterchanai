@@ -2403,12 +2403,18 @@
     const fromBlossom = () => PC.blossomPicker(null, async ({url,type,ext,name}) => {
       try{
         if(!/^(?:image|video)\//.test(String(type||''))) throw new Error('MMS supports photos and videos');
-        const res=await fetch(url); if(!res.ok)throw new Error('Blossom returned '+res.status);
-        const blob=await res.blob();
+        /* A tile can DISPLAY cross-origin without CORS and still fail when Texts reads its bytes.
+         * Use the app's authenticated/native-aware media path: own-instance credentials, omitted
+         * cross-origin credentials, then the connected instance's guarded proxy. Older bundles
+         * retain the direct path rather than losing Attach Files entirely. */
+        let blob;
+        if(PC.fetchMediaBlob) blob=(await PC.fetchMediaBlob(url)).blob;
+        else { const res=await fetch(url); if(!res.ok)throw new Error('Files returned '+res.status);
+          blob=await res.blob(); }
         const pickedName=name||((String(url).split(/[?#]/)[0].split('/').pop()||'file')
                    +(ext&&!String(url).split(/[?#]/)[0].includes('.')?'.'+ext:''));
         acceptFile(new File([blob],pickedName,{type:type||blob.type||'application/octet-stream'}));
-      }catch(e){ PC.toast('could not attach Blossom media: '+String(e&&e.message||e)); }
+      }catch(e){ PC.toast('could not attach Files media: '+String(e&&e.message||e)); }
     }, {title:'📁 Attach photo or video from Files',filter:b=>/^(?:image|video)\//.test(String(b.type||''))});
     if(blossomLaunch){blossomLaunch=false;setTimeout(fromBlossom,0);}
     const fromDevice = async () => {

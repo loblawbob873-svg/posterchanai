@@ -34239,7 +34239,7 @@
      * two of three platforms; this routes through Filesystem+Share in a shell and the anchor only
      * on the web. sms.js needs it for a picture message's attachments, which are bytes the client
      * holds and nothing else can fetch. */
-    saveBlobAs,
+    saveBlobAs, fetchMediaBlob,
     ensureProfile: _ensureProfile, NT, compose, switchView, timelineTop,
     // compose → News "Share as note"; switchView → nav; timelineTop → fresh desktop Social window
     timelineTop,

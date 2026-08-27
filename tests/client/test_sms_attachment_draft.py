@@ -39,6 +39,21 @@ def test_texts_attachment_menu_offers_camera_device_and_readable_files():
     assert "title:'📁 Attach photo or video from Files'" in JS
 
 
+def test_attach_files_uses_connected_instances_cors_safe_media_reader():
+    app = (ROOT / "static/js/client/app.js").read_text()
+    picker = JS[JS.index("const fromBlossom ="):
+                JS.index("if(blossomLaunch)", JS.index("const fromBlossom ="))]
+    assert "PC.fetchMediaBlob(url)" in picker
+    assert "blob=(await PC.fetchMediaBlob(url)).blob" in picker
+    assert picker.index("PC.fetchMediaBlob(url)") < picker.index("else { const res=await fetch(url)")
+    assert "saveBlobAs, fetchMediaBlob" in app
+    fetcher = app[app.index("async function fetchMediaBlob(src)"):
+                  app.index("async function sniffExt", app.index("async function fetchMediaBlob(src)"))]
+    assert "credentials:'include'" in fetcher
+    assert "credentials:'omit'" in fetcher
+    assert "/client/proxy-image?url=" in fetcher
+
+
 def test_native_blossom_launch_opens_picker_in_the_original_conversation():
     phone = (ROOT / 'static/js/client/phoneshell.js').read_text()
     assert "v.indexOf('texts-blossom:')===0" in phone
