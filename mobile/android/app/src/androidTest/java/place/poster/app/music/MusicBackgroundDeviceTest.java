@@ -204,10 +204,17 @@ public class MusicBackgroundDeviceTest {
         ctx.startActivity(new Intent(ctx, MainActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
         for (int i = 0; i < 50; i++) {
-            if (scenario.getState() == Lifecycle.State.RESUMED) return;
+            try {
+                // ActivityScenario.getState() itself throws while ActivityLifecycleMonitor is
+                // between STARTED and RESUMED. That is the transition we are waiting for, not a
+                // failed relaunch; sample again until it publishes a stable lifecycle stage.
+                if (scenario.getState() == Lifecycle.State.RESUMED) return;
+            } catch (NullPointerException transitionIncomplete) { /* sample again */ }
             SystemClock.sleep(100);
         }
-        throw new AssertionError("relaunch did not resume Desktop task: " + scenario.getState());
+        Lifecycle.State state = null;
+        try { state = scenario.getState(); } catch (NullPointerException ignored) { }
+        throw new AssertionError("relaunch did not resume Desktop task: " + state);
     }
 
     private static String shell(String cmd) throws Exception {

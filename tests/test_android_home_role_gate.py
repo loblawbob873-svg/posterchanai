@@ -59,4 +59,5 @@ def test_tablet_returns_from_real_home_by_relaunching_the_existing_main_task():
     assert "relaunchMainTask(ctx, scenario)" in body
     assert "FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT" in helper
     assert "scenario.getState() == Lifecycle.State.RESUMED" in helper
+    assert "catch (NullPointerException transitionIncomplete)" in helper
     assert 'throw new AssertionError("relaunch did not resume Desktop task:' in helper
