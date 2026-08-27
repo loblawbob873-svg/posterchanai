@@ -46,5 +46,17 @@ def test_music_device_cleanup_works_while_main_activity_is_stopped_at_home():
     assert 'SCREEN_ORIENTATION_UNSPECIFIED' in cleanup
     assert 'cmd role remove-role-holder android.app.role.HOME' in cleanup
     assert "FLAG_ACTIVITY_REORDER_TO_FRONT" in cleanup
-    assert "scenario.moveToState(Lifecycle.State.RESUMED)" in cleanup
+    assert "relaunchMainTask(ctx, scenario)" in cleanup
     assert TEST.count("restoreDeviceState(ctx, oldHome, wasEnabled, scenario, activity)") == 2
+
+
+def test_tablet_returns_from_real_home_by_relaunching_the_existing_main_task():
+    body = TEST.split("tabletDesktopStateSurvivesHomeAndRotationInBothTasks", 1)[1].split(
+        "aPlayingWebViewTrackKeepsAdvancingAfterHome", 1)[0]
+    helper = TEST.split("private static void relaunchMainTask", 1)[1].split(
+        "private static String shell", 1)[0]
+    assert "scenario.moveToState(Lifecycle.State.RESUMED)" not in body
+    assert "relaunchMainTask(ctx, scenario)" in body
+    assert "FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT" in helper
+    assert "scenario.getState() == Lifecycle.State.RESUMED" in helper
+    assert 'throw new AssertionError("relaunch did not resume Desktop task:' in helper

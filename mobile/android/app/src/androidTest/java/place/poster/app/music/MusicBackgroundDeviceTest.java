@@ -74,7 +74,10 @@ public class MusicBackgroundDeviceTest {
             assertTrue("background rotation foregrounded or destroyed Desktop",
                     scenario.getState() == Lifecycle.State.CREATED);
 
-            scenario.moveToState(Lifecycle.State.RESUMED);
+            // ActivityScenario.moveToState(RESUMED) only drives lifecycle callbacks; it cannot
+            // remove an independent HOME task that is actually covering this singleTask activity.
+            // Exercise the same path as tapping PosterChan in Recents/the launcher instead.
+            relaunchMainTask(ctx, scenario);
             AtomicReference<WebView> resumed = new AtomicReference<WebView>();
             AtomicInteger resumedTask = new AtomicInteger();
             scenario.onActivity(a -> {
@@ -190,13 +193,21 @@ public class MusicBackgroundDeviceTest {
             try { shell("cmd role add-role-holder android.app.role.HOME " + oldHome); }
             catch (Throwable ignored) { }
         try {
-            ctx.startActivity(new Intent(ctx, MainActivity.class)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
-            SystemClock.sleep(250);
-            scenario.moveToState(Lifecycle.State.RESUMED);
+            relaunchMainTask(ctx, scenario);
         } catch (Throwable ignored) { }
         try { scenario.close(); } catch (Throwable ignored) { }
         try { HomeRoles.enableLauncherComponent(ctx, wasEnabled); } catch (Throwable ignored) { }
+    }
+
+    private static void relaunchMainTask(Context ctx, ActivityScenario<MainActivity> scenario)
+            throws Exception {
+        ctx.startActivity(new Intent(ctx, MainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+        for (int i = 0; i < 50; i++) {
+            if (scenario.getState() == Lifecycle.State.RESUMED) return;
+            SystemClock.sleep(100);
+        }
+        throw new AssertionError("relaunch did not resume Desktop task: " + scenario.getState());
     }
 
     private static String shell(String cmd) throws Exception {
