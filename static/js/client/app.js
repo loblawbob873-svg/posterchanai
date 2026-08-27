@@ -17747,7 +17747,7 @@
    * measuring a copy of the markup that has drifted from the real one — so it must not close over
    * anything that only exists at runtime. Reading `_fxHist` here made the whole check SKIP with
    * "the page never rendered", which is a check that cannot run rather than one that passes. */
-  function _fxBarHTML(crumbs, canBack){
+  function _fxBarHTML(crumbs, canBack, canNewFolder){
     const v = _fxView();
     /* BACK AND UP — the two controls every file manager has and this one did not.
      *
@@ -17767,6 +17767,7 @@
       <input class="input fx-find" id="fx-find" type="search" autocomplete="off"
              placeholder="🔍 Search files" aria-label="Search files" value="${enc(_filesQ)}">
       <div class="fx-views">
+        ${canNewFolder ? `<button class="fx-newfolder" id="bl-newfolder" title="New folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg><span>New folder</span></button>` : ''}
         <button class="fx-vw${v==='tiles'?' on':''}" data-view="tiles" title="Tiles" aria-label="Tiles">▦</button>
         <button class="fx-vw${v==='details'?' on':''}" data-view="details" title="Details" aria-label="Details">☰</button>
       </div></div>`;
@@ -17829,6 +17830,7 @@
         f.onkeydown = e => { if(e.key === 'Escape'){ e.stopPropagation(); f.value=''; f.oninput(); } };
       } }
     $$('.fx-vw', pane).forEach(b => b.onclick = () => { ClientSettings.set('filesView', b.dataset.view); renderBlossom(); });
+    { const nf=$('#bl-newfolder',pane); if(nf) nf.onclick=_newFolderModal; }
     /* ONE ROUTER FOR EVERY WAY OF MOVING. A crumb, Up and Back all mean "go to this place", and the
      * place is one of three sources (drive folder, synced folder, this computer). A second copy of
      * this switch is how two of them start disagreeing about what `up` means. */
@@ -17853,12 +17855,12 @@
          * its crumb router; a second one is how two breadcrumb trails start disagreeing about what
          * "up" means. */
         const H3 = _hostFs(); if(H3) H3.enter(to.slice(2));
-        _hostOn = true; _filesTab = 'computer';
+        _hostOn = true; _filesTab = 'computer'; _fxMobileSource = 'computer';
       }
       else if(to.charAt(0) === 's'){ const rest = to.slice(2); const cut = rest.indexOf('/');
         _syncRoot = cut < 0 ? rest : rest.slice(0, cut); _syncPath = cut < 0 ? '' : rest.slice(cut+1);
-        _syncSel.clear(); _syncSelOn = false; }
-      else { _syncRoot = ''; _syncPath = ''; _filesFolder = to.slice(2); _hostOn = false; }
+        _syncSel.clear(); _syncSelOn = false; _fxMobileSource = 'synced'; }
+      else { _syncRoot = ''; _syncPath = ''; _filesFolder = to.slice(2); _hostOn = false; _fxMobileSource = 'blossom'; }
     }
   }
 
@@ -17901,14 +17903,16 @@
    * Absent everywhere the bridge is (a browser tab has no filesystem), which is what `available()`
    * answers — so the chip is simply not drawn rather than drawn and broken. */
   let _hostOn = false;
+  let _fxMobileSource = 'blossom';
   let _fxBlossomOpen = localStorage.getItem('pc.files.tree.blossom') !== '0';
+  let _fxSyncedOpen = localStorage.getItem('pc.files.tree.synced') !== '0';
   let _fxComputerOpen = localStorage.getItem('pc.files.tree.computer') !== '0';
   const _hostFs = () => (window.PCHostFiles && PCHostFiles.available()) ? PCHostFiles : null;
   /* ONE opener for both surfaces. The sidebar chip and the home-screen tile are two ways to the
    * same place, and two copies of "where does this start" is how they end up starting somewhere
    * different. */
   function _openHostFiles(){
-    _syncRoot=''; _syncPath=''; _filesFolder=null; _hostOn=true; _filesTab='computer';
+    _syncRoot=''; _syncPath=''; _filesFolder=null; _hostOn=true; _filesTab='computer'; _fxMobileSource='computer';
     const H2 = _hostFs();
     /* HOME on a fresh entry only. Walking into a folder and back out must not throw you back to
      * your home directory, so the path is kept in the module between visits. */
@@ -18018,20 +18022,20 @@
   function _fxSyncedHTML(){
     if(_standalone()) return '';
     const p = _syncPairs;
-    if(p === 'error') return '<div class="fx-sec"><b>Synced folders</b>'
-      + '<div class="muted small fx-secnote">couldn’t be loaded just now</div></div>';
-    if(!Array.isArray(p)) return '<div class="fx-sec"><b>Synced folders</b>'
-      + '<button class="btn btn-ghost small" data-load-sync-folders>Load synced folders</button>'
-      + '<div class="muted small fx-secnote">Uses your signer only when you ask.</div></div>';
-    if(!p.length) return '';        // nothing synced — Folder Sync is its own screen; no empty shelf here
-    return '<div class="fx-sec"><b>Synced folders</b>' + p.map(f =>
+    let body = '';
+    if(p === 'error') body = '<div class="muted small fx-secnote">Couldn’t be loaded just now</div>';
+    else if(!Array.isArray(p)) body = '<button class="btn btn-ghost small" data-load-sync-folders>Load synced folders</button>'
+      + '<div class="muted small fx-secnote">Uses your signer only when you ask.</div>';
+    else if(!p.length) body = '<div class="muted small fx-secnote">No synced folders</div>';
+    else body = p.map(f =>
       `<span class="fx-syncwrap"><button class="folder-chip syncroot${_syncRoot===f.key?' active':''}" data-synckey="${enc(f.key)}"
          title="${enc(f.key)}${Number.isFinite(f.n)?` — ${f.n} file${f.n===1?'':'s'}`:' — synced on this device'}">🔄 ${enc(f.key)}${Number.isFinite(f.n)?`<span class="fx-n">${f.n}</span>`:''}</button>`
       /* Removing a folder from every device leaves its shared record behind for ever — keyed on the
          NAME, so the pair goes on existing with all its history and any device that pairs that name
          later inherits it. There was no way to clear it from anywhere in the app. */
       + `<button class="fx-syncx" data-syncforget="${enc(f.key)}" title="Forget “${enc(f.key)}” — remove this folder's shared record">✕</button></span>`).join('')
-      + '</div>';
+      + _fxDeletedHTML();
+    return `<section class="fx-tree-node"><button class="fx-tree-head${_syncRoot?' active':''}${_fxMobileSource==='synced'?' mobile-on':''}" data-fxtoggle="synced" aria-expanded="${_fxSyncedOpen?'true':'false'}"><span class="chev">${_fxSyncedOpen?'▾':'▸'}</span><svg class="ic b-ic" aria-hidden="true"><use href="#i-refresh"></use></svg><b>Synced Folders</b></button><div class="fx-tree-children${_fxSyncedOpen?'':' hidden'}" data-fxtree="synced">${body}</div></section>`;
   }
   // The manifest for one pair, decrypted by sync.js's store (NIP-44 to the user's own key — this
   // node cannot read it, and neither can this code without the signer).
@@ -18663,13 +18667,12 @@
   function _fxSideHTML(){
     const folders = FilesIdx.folders();
     return `<div class="fx-tree"><section class="fx-tree-node">
-      <button class="fx-tree-head${(!_hostOn)?' active':''}" data-fxtoggle="blossom" aria-expanded="${_fxBlossomOpen?'true':'false'}"><span class="chev">${_fxBlossomOpen?'▾':'▸'}</span><svg class="ic b-ic" aria-hidden="true"><use href="#i-flower"></use></svg><b>Blossom</b></button>
+      <button class="fx-tree-head${(!_hostOn&&!_syncRoot)?' active':''}${_fxMobileSource==='blossom'?' mobile-on':''}" data-fxtoggle="blossom" aria-expanded="${_fxBlossomOpen?'true':'false'}"><span class="chev">${_fxBlossomOpen?'▾':'▸'}</span><svg class="ic b-ic" aria-hidden="true"><use href="#i-flower"></use></svg><b>Blossom</b></button>
       <div class="fx-tree-children${_fxBlossomOpen?'':' hidden'}" data-fxtree="blossom"><div class="folder-bar">
         <button class="folder-chip${(!_syncRoot&&_filesFolder==='')?' active':''}" data-folder=""><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>All</button>
         ${folders.map(f=>`<button class="folder-chip${(!_syncRoot&&_filesFolder===f)?' active':''}" data-folder="${enc(f)}">${f==='Music'?'🎵':(FilesIdx.isEncFolder(f)?'🔒':'📁')} ${enc(f)}</button>`).join('')}
-        <button class="folder-chip newfolder" id="bl-newfolder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New folder</button>
         ${(!_syncRoot && _filesFolder && _filesFolder!=='Music') ? `<button class="folder-chip delfolder" id="bl-delfolder" title="Delete this folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete “${enc(_filesFolder)}”</button>` : ''}
-      </div>` + _fxSyncedHTML() + _fxDeletedHTML() + `</div></section>` + _fxHostHTML()
+      </div></div></section>` + _fxSyncedHTML() + _fxHostHTML()
       + `${_standalone()?'':`<button class="fx-tree-head${_filesTab==='ai'?' active':''}" data-files-mode="ai"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg><b>AI Chat files</b></button>`}`
       + `${IS_ADMIN?`<button class="fx-tree-head${_filesTab==='admin'?' active':''}" data-files-mode="admin"><svg class="ic b-ic" aria-hidden="true"><use href="#i-shield"></use></svg><b>Storage admin</b></button>`:''}</div>`;
   }
@@ -18681,7 +18684,7 @@
      * own. An invented one has no stylesheet behind it, so the heading renders as unstyled body
      * text in a sidebar where every other heading is a small cyan caption: it looks like a bug in
      * the theme rather than a section nobody wrote CSS for. */
-    return `<section class="fx-tree-node"><button class="fx-tree-head${_hostOn?' active':''}" data-fxtoggle="computer" aria-expanded="${_fxComputerOpen?'true':'false'}"><span class="chev">${_fxComputerOpen?'▾':'▸'}</span><svg class="ic b-ic" aria-hidden="true"><use href="#i-monitor"></use></svg><b>My Computer</b></button><div class="fx-tree-children${_fxComputerOpen?'':' hidden'}" data-fxtree="computer"><button class="folder-chip${_hostOn ? ' active' : ''}" data-host="1" title="Browse this machine's own files"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Home</button></div></section>`;
+    return `<section class="fx-tree-node"><button class="fx-tree-head${_hostOn?' active':''}${_fxMobileSource==='computer'?' mobile-on':''}" data-fxtoggle="computer" aria-expanded="${_fxComputerOpen?'true':'false'}"><span class="chev">${_fxComputerOpen?'▾':'▸'}</span><svg class="ic b-ic" aria-hidden="true"><use href="#i-monitor"></use></svg><b>My Computer</b></button><div class="fx-tree-children${_fxComputerOpen?'':' hidden'}" data-fxtree="computer"><button class="folder-chip${_hostOn ? ' active' : ''}" data-host="1" title="Browse this machine's own files"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Home</button></div></section>`;
   }
   /* \u267b DELETED ON EVERY DEVICE — the account-wide undo, beside the per-device trash. Entries
    * the record marks deleted BUT whose address was retained (executors keep sha/chunks on
@@ -18761,16 +18764,20 @@
     });
     $$('[data-fxtoggle]',r).forEach(b=>b.onclick=()=>{
       const which=b.dataset.fxtoggle;
-      if(which==='blossom')_fxBlossomOpen=!_fxBlossomOpen;
-      else if(which==='computer')_fxComputerOpen=!_fxComputerOpen;
+      const mobile = !!(window.matchMedia && matchMedia('(max-width:820px)').matches);
+      _fxMobileSource = which;
+      if(which==='blossom')_fxBlossomOpen=mobile ? true : !_fxBlossomOpen;
+      else if(which==='synced')_fxSyncedOpen=mobile ? true : !_fxSyncedOpen;
+      else if(which==='computer')_fxComputerOpen=mobile ? true : !_fxComputerOpen;
       else return;
-      localStorage.setItem('pc.files.tree.'+which,(which==='blossom'?_fxBlossomOpen:_fxComputerOpen)?'1':'0');
+      const open = which==='blossom' ? _fxBlossomOpen : (which==='synced' ? _fxSyncedOpen : _fxComputerOpen);
+      localStorage.setItem('pc.files.tree.'+which,open?'1':'0');
       renderBlossom();
     });
     /* EVERY move remembers where it came from, or Back only undoes the ones made from the crumbs —
      * which is the half of browsing nobody uses. */
-    $$('.folder-chip[data-folder]', r).forEach(b=> b.onclick=()=>{ _fxRemember(); _syncRoot=''; _syncPath=''; _hostOn=false; _filesFolder=b.dataset.folder; renderBlossom(); });
-    $$('.folder-chip[data-synckey]', r).forEach(b=> b.onclick=()=>{ _fxRemember(); _syncRoot=b.dataset.synckey; _syncPath=''; _hostOn=false; renderBlossom(); });
+    $$('.folder-chip[data-folder]', r).forEach(b=> b.onclick=()=>{ _fxRemember(); _syncRoot=''; _syncPath=''; _hostOn=false; _fxMobileSource='blossom'; _filesFolder=b.dataset.folder; renderBlossom(); });
+    $$('.folder-chip[data-synckey]', r).forEach(b=> b.onclick=()=>{ _fxRemember(); _syncRoot=b.dataset.synckey; _syncPath=''; _hostOn=false; _fxMobileSource='synced'; renderBlossom(); });
     $$('.folder-chip[data-host]', r).forEach(b=> b.onclick=_openHostFiles);
     /* The trash's own bindings live with the LISTING now that it is a folder, not here beside the
      * chips — a set of handlers left behind for markup that no longer renders is how a dead control
@@ -18828,7 +18835,6 @@
         renderBlossom();
       }catch(err){ toast('could not forget it: ' + ((err && err.message) || err)); }
     });
-    { const nf=$('#bl-newfolder',r); if(nf) nf.onclick=_newFolderModal; }
     { const df=$('#bl-delfolder',r); if(df) df.onclick=async()=>{ if(await uiConfirm('Delete folder “'+_filesFolder+'”? Its files move to All — the files themselves aren\'t deleted.')){ FilesIdx.removeFolder(_filesFolder); _filesFolder=''; renderBlossom(); } }; }
     _fxBindChipDrop(r);
     /* Opening Files must never summon a remote signer. Discovery is encrypted, so make it an
@@ -19627,7 +19633,7 @@
      * column on a phone, where a 220px sidebar would leave nothing for the files. */
     pane.innerHTML = '<div class="fx-explorer">'
       + '<div class="fx-side">' + _fxSideHTML() + '</div>'
-      + '<div class="fx-main">' + _fxBarHTML(_fxCrumbs(), _fxHist.length > 0) + head
+      + '<div class="fx-main">' + _fxBarHTML(_fxCrumbs(), _fxHist.length > 0, true) + head
       + '<div class="files-selbar" id="bl-selbar"></div>'
       + '<div class="files-grid" id="bl-grid"><div class="spinner"></div></div></div></div>';
     _fxBindSide(pane); _fxBindBar(pane);

@@ -8023,17 +8023,30 @@ html.os-on #upload-badge.upbadge{z-index:333}
   padding-top:12px;color:var(--muted)}
 .fx-side .folder-chip.delfolder{color:var(--danger)}
 @media(max-width:820px){
-  /* A 220px sidebar on a 390px screen leaves nothing for the files. Back to one column, with the
-     folder list scrolling horizontally the way it did before. */
-  .fx-explorer{display:block;border-radius:12px}
-  .fx-side{border-inline-end:0;border-bottom:1px solid var(--line);max-height:none;padding:8px}
+  /* Phone navigation is a compact source switcher, not a desktop sidebar dumped above the files.
+     Blossom, Synced Folders and My Computer occupy one stable row; only the active source exposes
+     its locations in the swipeable row underneath. The file pane therefore keeps the full width. */
+  .fx-explorer{display:block;border:0;border-radius:0;background:transparent;overflow:visible}
+  .fx-side{border:1px solid var(--line);border-radius:12px;background:var(--panel2);
+    max-height:none;padding:6px;margin-bottom:8px;overflow:hidden}
+  .fx-tree{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}
+  .fx-tree-node{display:contents}
+  .fx-tree-node>.fx-tree-head{grid-row:1;min-width:0;justify-content:center;padding:9px 5px}
+  .fx-tree-node>.fx-tree-head .chev{display:none}
+  .fx-tree-node>.fx-tree-head b{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .fx-tree-node>.fx-tree-children{display:none!important;grid-row:2;grid-column:1/-1;
+    padding:6px 0 0;margin:2px 0 0;border:0;border-top:1px solid var(--line);min-width:0}
+  .fx-tree-node>.fx-tree-head.mobile-on + .fx-tree-children{display:flex!important;align-items:center;
+    gap:6px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .fx-tree-node>.fx-tree-head.mobile-on + .fx-tree-children::-webkit-scrollbar{display:none}
+  .fx-tree>.fx-tree-head{grid-column:1/-1;min-height:40px}
+  .fx-main{padding:8px 2px}
   .fx-side .folder-bar{flex-direction:row;flex-wrap:nowrap;overflow-x:auto;gap:6px;
     scrollbar-width:none;-webkit-overflow-scrolling:touch}
   .fx-side .folder-bar::-webkit-scrollbar{display:none}
   .fx-side .folder-chip{width:auto;flex:0 0 auto;border:1px solid var(--line);border-radius:999px;
     padding:8px 12px;min-height:36px}
   .fx-side .folder-chip.newfolder{margin-top:0;border-top:1px solid var(--line);border-radius:999px;padding-top:8px}
-  .fx-tree-children{padding-inline-start:12px;margin-inline-start:9px}
 }
 
 /* ---- Synced folders, as roots beside the drive's own folders --------------------------------- */
@@ -8059,6 +8072,11 @@ html.os-on #upload-badge.upbadge{z-index:333}
 .fx-find{flex:1 1 180px;min-width:110px;max-width:340px;height:34px;padding:6px 10px;font-size:13px}
 @media (max-width:520px){ .fx-find{flex:1 1 100%;max-width:none;order:3;margin-top:6px} }
 .fx-views{display:flex;gap:4px;flex:0 0 auto}
+.fx-newfolder{display:inline-flex;align-items:center;gap:6px;background:rgba(var(--accent-rgb),.12);
+  border:1px solid var(--cyan);border-radius:8px;color:var(--text);cursor:pointer;font:inherit;
+  font-size:13px;font-weight:650;line-height:1;padding:6px 10px;min-height:32px;white-space:nowrap}
+.fx-newfolder:hover{background:rgba(var(--accent-rgb),.22);border-color:var(--neon)}
+.fx-newfolder .ic{width:14px;height:14px}
 .fx-vw{background:none;border:1px solid var(--line);border-radius:8px;color:var(--muted);cursor:pointer;
   font-size:15px;line-height:1;padding:6px 10px;min-height:32px}
 .fx-vw:hover{color:var(--text);border-color:var(--cyan)}

@@ -95,3 +95,6 @@ test, deployment/package, and relevant real-device check are complete. The insta
 - [ ] Add PosterChanOS compositing with modern shadows, transitions, smooth movement and restrained
       transparency/blur; include a low-power/off setting and regression/performance tests proving it
       cannot cause black windows, focus errors, input lag, or cross-monitor state loss.
+- [ ] After the desktop is stable, add an optional macOS-style PosterChanOS desktop experience in
+      Settings. Keep the current experience available, and cover switching, persistence, windows,
+      focus, multi-monitor behavior, and rollback with the same no-black-window release tests.

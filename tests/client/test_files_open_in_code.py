@@ -540,6 +540,8 @@ class TheExplorerToolbarStaysLiftable(unittest.TestCase):
         sig = self.bar[:self.bar.index(")") + 1]
         self.assertIn("crumbs", sig)
         self.assertIn("canBack", sig, "the Back state is read from module scope, not passed")
+        self.assertIn("canNewFolder", sig,
+                      "toolbar actions must be passed in so the standalone layout check still runs")
 
     def test_it_reads_no_navigation_state_of_its_own(self):
         for leak in ("_fxHist", "_syncRoot", "_syncPath", "_filesFolder", "_hostOn"):

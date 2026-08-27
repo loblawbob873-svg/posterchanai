@@ -9,8 +9,10 @@ CSS = (ROOT / "static/css/client.css").read_text(encoding="utf-8")
 def test_file_manager_uses_collapsible_blossom_and_computer_roots():
     assert 'data-fxtoggle="blossom"' in APP
     assert 'data-fxtoggle="computer"' in APP
+    assert 'data-fxtoggle="synced"' in APP
     assert '<b>Blossom</b>' in APP
     assert '<b>My Computer</b>' in APP
+    assert '<b>Synced Folders</b>' in APP
     assert "pc.files.tree." in APP
     assert "aria-expanded" in APP
 
@@ -18,6 +20,15 @@ def test_file_manager_uses_collapsible_blossom_and_computer_roots():
 def test_tree_is_real_sidebar_hierarchy_not_unstyled_text():
     for selector in (".fx-tree", ".fx-tree-node", ".fx-tree-head", ".fx-tree-children"):
         assert selector in CSS
+
+
+def test_mobile_uses_source_switcher_and_only_active_source_locations():
+    assert "grid-template-columns:repeat(3,minmax(0,1fr))" in CSS
+    assert ".fx-tree-node>.fx-tree-head.mobile-on + .fx-tree-children" in CSS
+    assert "display:flex!important" in CSS
+    assert "overflow-x:auto" in CSS
+    assert "_fxMobileSource = which" in APP
+    assert "matchMedia('(max-width:820px)').matches" in APP
 
 
 def test_top_source_tabs_are_removed_in_favor_of_sidebar_navigation():
@@ -28,6 +39,18 @@ def test_top_source_tabs_are_removed_in_favor_of_sidebar_navigation():
     assert "_fxSideHTML()" in render
     assert 'data-files-mode="ai"' in APP
     assert 'data-files-mode="admin"' in APP
+
+
+def test_new_folder_is_in_toolbar_beside_layout_controls_not_in_tree():
+    bar = APP[APP.index("function _fxBarHTML("):
+              APP.index("function _fxBindBar(")]
+    side = APP[APP.index("function _fxSideHTML("):
+               APP.index("function _fxHostHTML(")]
+    assert 'id="bl-newfolder"' in bar
+    assert bar.index('id="bl-newfolder"') < bar.index('data-view="tiles"')
+    assert 'id="bl-newfolder"' not in side
+    assert "if(nf) nf.onclick=_newFolderModal" in APP[APP.index("function _fxBindBar("):
+                                                         APP.index("let _filesFolder = null")]
 
 
 def test_blossom_picker_uses_the_same_collapsible_file_manager_tree():
