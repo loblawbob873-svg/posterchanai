@@ -396,7 +396,10 @@ async function gitAction(root,action,paths,message){
   else if(action==='unstage')await _git(root,['restore','--staged','--'].concat(ps));
   else if(action==='restore')for(const p of ps){
     let tracked=true;try{await _git(root,['ls-files','--error-unmatch','--',p]);}catch(_){tracked=false;}
-    if(tracked)await _git(root,['restore','--worktree','--',p]);
+    /* “Discard changes” means the same thing in the native desktop and the server API: restore
+     * both the index and working tree from HEAD. Restoring only --worktree leaves a staged edit in
+     * Source Control, so the destructive action reports success while the file remains modified. */
+    if(tracked)await _git(root,['restore','--staged','--worktree','--',p]);
     else {const top=(await _git(root,['rev-parse','--show-toplevel'])).trim(),abs=path.resolve(top,p);
       if(abs!==top&&!abs.startsWith(top+path.sep))throw new Error('invalid Git path');
       fs.rmSync(abs,{recursive:true,force:true});}
