@@ -236,7 +236,10 @@ def test_relay_echo_racing_optimistic_send_cannot_leave_two_messages():
     assert "byId.set(id,old?{...old,...m}:m)" in CONCORD
     assert "return uniqueMessages(v)" in CONCORD, "old duplicated caches are not repaired on read"
     assert "function mergeRelayMessages(prior,incoming)" in CONCORD
-    assert "m&&m.pending&&String(m.pubkey||'')===String(remote.pubkey||'')" in CONCORD
+    assert "m&&m.pending&&String(m.pubkey||'')===String(remote&&remote.pubkey||'')" in CONCORD
+    assert "const pending=pendingEchoMatch(out,remote)" in CONCORD
+    assert "sort((a,b)=>a.gap-b.gap)" in CONCORD
+    assert "if(candidates.length>1)return null" in CONCORD
     assert "Object.assign(pending,remote,{pending:false,remote:true})" in CONCORD
     assert "mergeRelayMessages(prior,incoming)" in CONCORD
     assert "JSON.stringify(uniqueMessages(v).slice(-200))" in CONCORD, \

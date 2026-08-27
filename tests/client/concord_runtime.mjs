@@ -109,6 +109,16 @@ if(PCConcord.conversationIsVisible(true,false,false) ||
 if(PCConcord.repaintScrollTop(false,420,2400)!==420 ||
    PCConcord.repaintScrollTop(true,420,2400)!==2400)
   throw new Error('Concord repaint moved an unpinned reader or failed to follow a pinned room');
+const samePending=[
+  {id:'pending-1',pending:true,pubkey:'a',text:'same',kind:9,at:1000},
+  {id:'pending-2',pending:true,pubkey:'a',text:'same',kind:9,at:2000},
+];
+if(PCConcord.pendingEchoMatch([samePending[1]],{pubkey:'a',text:'same',kind:9,at:1900})!==samePending[1])
+  throw new Error('relay echo did not reconcile one unambiguous pending send');
+if(PCConcord.pendingEchoMatch(samePending,{pubkey:'a',text:'same',kind:9,at:1900})!==null)
+  throw new Error('multiple identical pending sends were guessed and could collapse a real send');
+if(PCConcord.pendingEchoMatch(samePending,{pubkey:'a',text:'same',kind:9,at:1500})!==null)
+  throw new Error('ambiguous identical relay echo guessed and could collapse a real send');
 const xdcUrl='https://files.example/game.xdc';
 const xdcMessage={id:'xdc-message',text:'play this '+xdcUrl,tags:[['imeta',`url ${xdcUrl}`,'m application/x-webxdc','webxdc game-1','summary Game']]};
 window.PCWebxdc={cardHtml:()=>'<div class="xdc-card">Game</div>'};

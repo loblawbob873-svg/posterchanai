@@ -100,6 +100,15 @@
   }
   function testMessages(id){ try{ const v=JSON.parse(localStorage.getItem('pc.concord.test.'+id)||'[]'); return uniqueMessages(v); }catch(_){ return []; } }
   function saveTestMessages(id,v){ try{ localStorage.setItem('pc.concord.test.'+id,JSON.stringify(uniqueMessages(v).slice(-200))); }catch(_){} }
+  function pendingEchoMatch(messages,remote){
+    const candidates=(messages||[]).filter(m=>m&&m.pending&&String(m.pubkey||'')===String(remote&&remote.pubkey||'')&&String(m.text||'')===String(remote&&remote.text||'')&&Number(m.kind||9)===Number(remote&&remote.kind||9)).map(m=>({message:m,gap:Math.abs(Number(m.at||0)-Number(remote&&remote.at||0))})).filter(x=>x.gap<120000).sort((a,b)=>a.gap-b.gap);
+    if(!candidates.length)return null;
+    /* Two intentional identical sends can coexist. A relay echo has no trustworthy way to identify
+     * either pending row from content and approximate time alone; leave it separate until createChatWrap returns the
+     * permanent rumor id, rather than guessing and collapsing a real message. */
+    if(candidates.length>1)return null;
+    return candidates[0].message;
+  }
   function mergeRelayMessages(prior,incoming){
     const out=uniqueMessages(prior),byId=new Map(out.map(m=>[messageId(m),m]));
     for(const remote of incoming||[]){
@@ -107,7 +116,7 @@
       /* A relay echo may arrive before createChatWrap() returns its permanent rumor id. Reconcile
        * that echo with the optimistic row by authorship/content/kind and a tight send-time window;
        * otherwise the same send is painted twice until another refresh happens. */
-      const pending=out.find(m=>m&&m.pending&&String(m.pubkey||'')===String(remote.pubkey||'')&&String(m.text||'')===String(remote.text||'')&&Number(m.kind||9)===Number(remote.kind||9)&&Math.abs(Number(m.at||0)-Number(remote.at||0))<120000);
+      const pending=pendingEchoMatch(out,remote);
       if(pending){byId.delete(messageId(pending));Object.assign(pending,remote,{pending:false,remote:true});byId.set(id,pending);}
       else{out.push(remote);byId.set(id,remote);}
     }
@@ -723,5 +732,5 @@
     $$('[data-cc-react-toggle]').forEach(b=>b.onclick=()=>toggleReaction(b.dataset.ccReactToggle,b.dataset.ccEmoji));
     $$('[data-cc-react]').forEach(b=>b.onclick=()=>{ reactionTarget=b.dataset.ccReact; const choices=['👍','❤️','😂','😮','😢','😡','🎉','💯']; const old=document.querySelector('.cc-reaction-picker'); if(old)old.remove(); const pop=document.createElement('div'); pop.className='cc-reaction-picker'; pop.innerHTML=choices.map(x=>`<button data-emoji="${x}">${x}</button>`).join(''); b.closest('.cc-message-body').appendChild(pop); pop.querySelectorAll('button').forEach(x=>x.onclick=e=>{ e.stopPropagation(); toggleReaction(reactionTarget,x.dataset.emoji); }); });
   }
-  window.PCConcord={render,openInvite:openInviteLink,inviteParts,normalizeIcon,notifyMentions,discoverInvites,threadParticipants,roomParticipants,typedMentionRecipients,conversationIsVisible,repaintScrollTop,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,encryptedAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff};
+  window.PCConcord={render,openInvite:openInviteLink,inviteParts,normalizeIcon,notifyMentions,discoverInvites,threadParticipants,roomParticipants,typedMentionRecipients,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,encryptedAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff};
 })();
