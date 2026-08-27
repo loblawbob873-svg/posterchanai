@@ -51,11 +51,13 @@ def test_texts_media_opens_in_the_shared_fullscreen_viewer():
     assert "PC.openLightbox(d.url, 'video')" in JS
 
 
-def test_pending_send_has_a_touch_accessible_cancel_action():
-    assert 'class="sms-cancel-pending"' in JS
-    assert "m.pending?'Cancel send':'Delete'" in JS
-    assert '!m.incoming' in JS
-    assert 'aria-label="${m.pending?' in JS
-    assert "feed.querySelectorAll('.sms-cancel-pending')" in JS
-    assert "await remove([cancel.dataset.doc])" in JS
-    assert ".sms-cancel-pending{" in CSS
+def test_messages_delete_from_long_press_without_an_inline_button():
+    assert 'class="sms-cancel-pending"' not in JS
+    assert ".sms-cancel-pending{" not in CSS
+    assert "el.onpointerdown=e=>" in JS
+    assert "setTimeout(()=>{hold=0;removeMessage();},550)" in JS
+    assert "el.onpointermove=e=>" in JS
+    assert "Math.abs(e.clientX-startX)>10" in JS
+    assert "el.onpointercancel=stopHold" in JS
+    assert "el.oncontextmenu = e =>" in JS
+    assert "await remove([el.dataset.doc])" in JS

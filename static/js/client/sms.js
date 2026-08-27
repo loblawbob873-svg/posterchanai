@@ -2240,9 +2240,6 @@
                an empty text node, or it collapses to a sliver. */
             + (m.body ? `<span class="b-txt">${enc(m.body)}</span>` : '')
             + `<span class="b-meta">${enc(when(m.date))}${m.pending?' · waiting for phone':m.failed?' · not sent':''}</span>`
-            /* Right-click is not a mobile control. A queued send is the one message for which the
-               destructive action is urgent, so put an explicit cancellation beside its status. */
-            + (!m.incoming ? `<button class="sms-cancel-pending" type="button" data-doc="${enc(m.doc)}" aria-label="${m.pending?'Cancel pending send':'Delete sent message'}">${m.pending?'Cancel send':'Delete'}</button>` : '')
             + `</div>`;
         }).join('')}</div>
         ${S.attach?`<div class="sms-attachment-draft"><span>${ICO('image','b-ic')}<b>${enc(S.attach.name||'Photo')}</b><small>${enc(fmtBytes(S.attach.size))} · ready to send as MMS</small></span><button id="sms-attach-clear" aria-label="Remove attached photo">×</button></div>`:''}
@@ -2329,23 +2326,15 @@
     };
     btn.onclick = go;
     input.onkeydown = e => { if(e.key === 'Enter') go(); };
-    feed.querySelectorAll('.sms-cancel-pending').forEach(cancel => {
-      cancel.onclick = async e => {
-        e.preventDefault(); e.stopPropagation();
-        cancel.disabled = true;
-        const r = await remove([cancel.dataset.doc]);
-        if(r.refused) PC.toast(r.error || 'could not cancel pending send');
-        else PC.toast('message removed');
-        paint();
-      };
-    });
     /* `.bubble[data-doc]`, because the bubble IS a DM bubble now and `data-doc` is what makes it a
      * text rather than a DM. Selected on the class it actually has: this was `.sms-msg`, and moving
      * the markup to the shared bubble would have matched nothing -- so right-clicking a message
      * would silently stop offering to delete it, on a screen that still drew perfectly. */
     feed.querySelectorAll('.bubble[data-doc]').forEach(el => {
-      el.oncontextmenu = async (e) => {
-        e.preventDefault();
+      let hold=0, startX=0, startY=0;
+      const stopHold=()=>{if(hold){clearTimeout(hold);hold=0;}};
+      const removeMessage=async () => {
+        stopHold();
         if(!await PC.uiConfirm('Delete this message from your archive' +
              (await isPhone() ? ' and from this phone' : '') + '?')) return;
         const r = await remove([el.dataset.doc]);
@@ -2355,6 +2344,21 @@
         else PC.toast(r.phone ? 'deleted here and from your archive' : 'deleted from your archive');
         paint();
       };
+      el.oncontextmenu = e => { e.preventDefault(); removeMessage(); };
+      /* A HOLD IS THE MOBILE MESSAGE MENU. Pointer events cover touch and pen without also
+         installing touch handlers that fire twice on Android. Cancel as soon as the finger moves:
+         scrolling a conversation must never become a destructive gesture. */
+      el.onpointerdown=e=>{
+        if(e.pointerType==='mouse')return;
+        startX=e.clientX;startY=e.clientY;stopHold();
+        hold=setTimeout(()=>{hold=0;removeMessage();},550);
+      };
+      el.onpointermove=e=>{
+        if(hold&&(Math.abs(e.clientX-startX)>10||Math.abs(e.clientY-startY)>10))stopHold();
+      };
+      el.onpointerup=stopHold;
+      el.onpointercancel=stopHold;
+      el.onpointerleave=stopHold;
     });
     const list = feed.querySelector('.sms-msgs');
     const saved = S.scroll[t.key];
