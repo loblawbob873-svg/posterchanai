@@ -7,5 +7,6 @@ public class ActivityScenario<A> implements AutoCloseable {
   public static <T> ActivityScenario<T> launch(android.content.Intent i) { return null; }
   public ActivityScenario<A> onActivity(ActivityAction<A> action) { return this; }
   public ActivityScenario<A> moveToState(androidx.lifecycle.Lifecycle.State s) { return this; }
+  public androidx.lifecycle.Lifecycle.State getState() { return androidx.lifecycle.Lifecycle.State.CREATED; }
   @Override public void close() { }
 }
