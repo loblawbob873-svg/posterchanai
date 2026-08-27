@@ -401,8 +401,10 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert "markRead(current,state.channel||'general')" in CONCORD
     assert "seenAt(room,c.name)" in CONCORD
     assert "if(current)markRead(current);" not in CONCORD
-    assert 'notifyMentions(p,current,messages,viewer,me)' in CONCORD
+    assert "notifyMentions(p,current,messages,viewer,me,state.channel||'general')" in CONCORD
     assert "route:'concord'" in CONCORD and 'concord-mention-' in CONCORD
+    assert "mentionSeenKey(room,channel)" in CONCORD
+    assert "room.naddr+':'+channel" in CONCORD
     assert "const tagged=(m.tags||[]).some(t=>(t[0]==='p'||t[0]==='P')" in CONCORD
     assert "mentionRecipients.set(handle.toLowerCase(),choice.pk)" in CONCORD
     assert "mentionTags.push(['P',pk],['p',pk])" in CONCORD

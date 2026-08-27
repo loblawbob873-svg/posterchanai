@@ -302,10 +302,15 @@
     const viewer=p.viewer?p.viewer():{};
     return Object.entries(reactions).map(([emoji,people])=>{ const n=Array.isArray(people)?people.length:0,mine=!!(viewer.pubkey&&people.includes(viewer.pubkey)); return n?`<button class="cc-reaction${mine?' mine':''}" aria-pressed="${mine}" data-cc-react-toggle="${p.enc(messageId(m))}" data-cc-emoji="${p.enc(emoji)}" title="${n} reaction${n===1?'':'s'}"><span>${p.enc(emoji)}</span><b>${n}</b></button>`:''; }).join('');
   }
-  function notifyMentions(p,room,messages,viewer,me){
+  function mentionSeenKey(room,channel){ return 'pc.concord.seen.'+room.naddr+':'+(channel||'general'); }
+  function notifyMentions(p,room,messages,viewer,me,channel=state.channel||'general'){
     if(!room||!room.naddr||!messages.length||!viewer.pubkey)return;
-    const key='pc.concord.seen.'+room.naddr, newest=Math.max(...messages.map(m=>Number(m.at)||0));
+    const key=mentionSeenKey(room,channel), newest=Math.max(...messages.map(m=>Number(m.at)||0));
+    /* The original release stored one cursor for the whole community. Only #general can inherit
+     * that value safely: applying its newest timestamp to every channel lets a newer general post
+     * permanently suppress an older (but newly fetched) #support mention. */
     let seen=Number(localStorage.getItem(key)||0);
+    if(!seen&&channel==='general')seen=Number(localStorage.getItem('pc.concord.seen.'+room.naddr)||0);
     if(!seen){ localStorage.setItem(key,String(newest)); return; } // opening history must not alert
     const profile=viewer.profile||{}, handles=[me,profile.name,profile.display_name,viewer.npub,viewer.pubkey]
       .filter(Boolean).flatMap(v=>[String(v).toLowerCase(),String(v).toLowerCase().replace(/\s+/g,'')]);
@@ -313,7 +318,7 @@
       const body=String(m.text||''), lower=body.toLowerCase().replace(/\s+/g,''), fromMe=m.pubkey===viewer.pubkey;
       const tagged=(m.tags||[]).some(t=>(t[0]==='p'||t[0]==='P')&&String(t[1]||'')===viewer.pubkey);
       const mentioned=!fromMe&&(tagged||handles.some(h=>h&&(lower.includes('@'+h)||lower.includes(h.startsWith('npub1')||h.length===64?h:'@'+h))));
-      if((Number(m.at)||0)>seen&&mentioned&&p.osNotify) p.osNotify(`Mention in #${state.channel||'general'}`,`${m.by||'Someone'}: ${body}`,{tag:'concord-mention-'+room.naddr,route:'concord'});
+      if((Number(m.at)||0)>seen&&mentioned&&p.osNotify) p.osNotify(`Mention in #${channel}`,`${m.by||'Someone'}: ${body}`,{tag:'concord-mention-'+room.naddr+':'+channel,route:'concord'});
     }
     if(newest>seen)localStorage.setItem(key,String(newest));
   }
@@ -621,7 +626,7 @@
       memberPks=current?roomParticipants(current,viewer.pubkey).filter(pk=>!banned.has(pk)):[];
     let membersHidden=localStorage.getItem('pc.concord.members.hidden')==='1';
     const memberRows=memberPks.map(pk=>{const pr=p.profOf?p.profOf(pk):{},name=pk===viewer.pubkey?me:(pr.display_name||pr.name||pk.slice(0,12)+'…');return `<button class="cc-member" data-cc-member="${p.enc(pk)}" aria-label="${p.enc(name)} — ${pk===ownerPk?'Owner':'Member'}"><img src="${p.enc(pr.picture||p.LOGO||'')}" alt=""><span><b>${p.enc(name)}</b><small>${pk===ownerPk?'Owner':'Member'}</small></span></button>`;}).join('');
-    notifyMentions(p,current,messages,viewer,me);
+    notifyMentions(p,current,messages,viewer,me,state.channel||'general');
     feed.innerHTML=`<div class="cc-app${mobileChatOpen||state.community==null?' show-chat':''}${mobileDrawerOpen?' drawer-open':''}${state.community==null?' home-view':''}">
       <button class="cc-drawer-backdrop" id="cc-drawer-backdrop" aria-label="Close rooms and channels"></button>
       <aside class="cc-communities"><button class="cc-brand" id="cc-home" title="Your rooms" aria-label="Your rooms"><span aria-hidden="true">🕊</span></button><button class="cc-server cc-discovery-button" id="cc-discovery" title="Discover public communities" aria-label="Discover public communities">◎</button>${rooms.map((r,i)=>`<button class="cc-server${state.community===i?' active':''}${isUnread(r)?' unread':''}" data-cc-server="${i}" title="${p.enc(roomName(r,i))}">${roomIcon(p,r,i)}</button>`).join('')}<button class="cc-server cc-add" id="cc-add" title="Join a community">+</button></aside>

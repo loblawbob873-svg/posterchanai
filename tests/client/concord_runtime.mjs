@@ -304,12 +304,19 @@ if(!feed.innerHTML.includes('cc-app show-chat drawer-open'))
 control('cc-drawer-backdrop').click();
 if(feed.innerHTML.includes('drawer-open'))
   throw new Error('mobile channel drawer backdrop did not close it');
-data.set('pc.concord.seen.'+rooms[0].naddr,'1');
+data.set('pc.concord.seen.'+rooms[0].naddr+':general','1');
 data.set('pc.concord.test.'+rooms[0].naddr,JSON.stringify([{by:'Other User',pubkey:'b'.repeat(64),text:'hey @tester',at:2}]));
 PCConcord.render();
 if(calls.mentions.length!==1 || !calls.mentions[0].title.includes('#general') || calls.mentions[0].opts.route!=='concord') throw new Error('mention notification failed');
 PCConcord.render();
 if(calls.mentions.length!==1) throw new Error('mention notification was not deduplicated');
+// Mention cursors are per channel. A newer #general timestamp must not suppress #support, and OS
+// notification replacement tags must not make mentions from the two channels overwrite each other.
+data.set('pc.concord.seen.'+rooms[0].naddr+':support','1');
+PCConcord.notifyMentions(window.__PC,rooms[0],[{by:'Support User',pubkey:'c'.repeat(64),text:'hey @tester',at:2}],window.__PC.viewer(),'tester','support');
+if(calls.mentions.length!==2 || !calls.mentions[1].title.includes('#support') ||
+   calls.mentions[0].opts.tag===calls.mentions[1].opts.tag)
+  throw new Error('mention notification cursors/tags collided across channels');
 
 // A direct Armada invite must hydrate during the JOIN transaction.  Before this regression was
 // fixed, the handler saved a one-channel placeholder and said "community joined"; icon, real
