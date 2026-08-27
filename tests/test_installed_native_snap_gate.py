@@ -5,7 +5,7 @@ SCRIPT = (Path(__file__).resolve().parents[1] / "scripts" / "check_installed_nat
 
 
 def test_installed_native_snap_uses_a_real_drag_and_requires_preview():
-    assert ".osw-native .osw-bar" in SCRIPT
+    assert ".osw-native[data-pc-check-native" in SCRIPT
     assert "new PointerEvent('pointerdown'" in SCRIPT
     assert "new PointerEvent('pointermove'" in SCRIPT
     assert "new PointerEvent('pointerup'" in SCRIPT

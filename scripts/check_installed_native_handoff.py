@@ -20,10 +20,7 @@ STATE = r"""(async()=>{
   const shell=(snap.windows||[]).find(w=>Number(w.id)===Number(snap.shellId));
   const rows=(snap.windows||[]).filter(w=>/firefox|telegram/i.test(String(w.app||'')));
   const native=WANTED?rows.find(w=>Number(w.id)===Number(WANTED)):(rows.length===1?rows[0]:null);
-  let frame=native&&document.querySelector('.osw-native[data-native="'+Number(native.id)+'"]');
-  if(native&&!frame){const app=String(native.app||'').toLowerCase(),matches=[...document.querySelectorAll('.osw-native')]
-    .filter(e=>String((e.querySelector('.osw-nat-note')||{}).textContent||'').toLowerCase()===app);
-    if(matches.length===1)frame=matches[0];}
+  const frame=native&&document.querySelector('.osw-native[data-native="'+Number(native.id)+'"]');
   if(frame)frame.dataset.pcCheckNative=String(Number(native.id));
   return {nativeFrames:frame?1:0,unsafe:rows.length&&!native,
     htmlFrames:document.querySelectorAll('.osw:not(.osw-native)').length,

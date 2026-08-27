@@ -5,7 +5,7 @@ SCRIPT = (Path(__file__).resolve().parents[1] / "scripts" / "check_installed_nat
 
 
 def test_installed_handoff_drives_the_title_bar_not_the_bridge_shortcut():
-    assert ".osw-native .osw-bar" in SCRIPT
+    assert ".osw-native[data-pc-check-native" in SCRIPT
     assert "new PointerEvent('pointerdown'" in SCRIPT
     assert "new PointerEvent('pointermove'" in SCRIPT
     assert "new PointerEvent('pointerup'" in SCRIPT

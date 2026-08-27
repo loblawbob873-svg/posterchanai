@@ -27,10 +27,7 @@ async def main():
                 .filter(w=>/firefox|telegram/i.test(String(w.app||'')));
               const row=wanted?rows.find(w=>Number(w.id)===Number(wanted)):(rows.length===1?rows[0]:null);
               if(!row)return {unsafe:rows.length};
-              let frame=document.querySelector('.osw-native[data-native="'+Number(row.id)+'"]');
-              if(!frame){const app=String(row.app||'').toLowerCase(),matches=[...document.querySelectorAll('.osw-native')]
-                .filter(e=>String((e.querySelector('.osw-nat-note')||{}).textContent||'').toLowerCase()===app);
-                if(matches.length===1)frame=matches[0];}
+              const frame=document.querySelector('.osw-native[data-native="'+Number(row.id)+'"]');
               if(!frame)return {unsafe:rows.length};frame.dataset.pcCheckNative=String(Number(row.id));
               return {frames:document.querySelectorAll('.osw-native').length,row};})"""
                 + "(" + json.dumps(wanted) + ")")

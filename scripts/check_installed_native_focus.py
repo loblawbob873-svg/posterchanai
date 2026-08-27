@@ -32,10 +32,7 @@ SETUP = r"""(async wanted=>{
   const row=wanted?rows.find(w=>Number(w.id)===Number(wanted)):(rows.length===1?rows[0]:null);
   if(!row)return {skip:true,why:wanted?'requested native window is not on this surface'
     :'more than one native window is visible; set PC_NATIVE_APP_ID'};
-  let frame=document.querySelector('.osw-native[data-native="'+Number(row.id)+'"]');
-  if(!frame){const app=String(row.app||'').toLowerCase(),matches=[...document.querySelectorAll('.osw-native')]
-    .filter(e=>String((e.querySelector('.osw-nat-note')||{}).textContent||'').toLowerCase()===app);
-    if(matches.length===1)frame=matches[0];}
+  const frame=document.querySelector('.osw-native[data-native="'+Number(row.id)+'"]');
   if(!frame)return {skip:true,why:'could not identify the requested native frame safely'};
   frame.dataset.pcCheckNative=String(Number(row.id));
   const created=!!PCOS.routeView('global');await new Promise(r=>setTimeout(r,500));
