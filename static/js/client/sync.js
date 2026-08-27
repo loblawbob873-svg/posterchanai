@@ -1062,6 +1062,13 @@
         throw new Error('none of this folder’s records could be decrypted — this device’s '
                         + 'key cannot open them');
       await this._saveCache(key, { era: j.era, cursor: j.now || 0, entries, d2p });
+      /* A complete read can repair the relay's cheap plaintext count from the authoritative
+       * records. Keep the already-rendered account row in step immediately; otherwise Files shows
+       * the pre-repair number until its TTL expires even though this call just learned the truth. */
+      if(Number.isFinite(Number(j.n)) && Array.isArray(_acct)){
+        const ar = _acct.find(x => x && x.key === key);
+        if(ar) ar.n = Number(j.n);
+      }
       const state = {}, flagged = {};
       for(const p in entries){
         const e = Object.assign({}, entries[p]);

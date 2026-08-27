@@ -4888,7 +4888,8 @@ async def sync_state(data: SyncStateReq, db: Session = Depends(get_db)):
                 logger.warning("[client] sync-state: could not repair count for %s (%d -> %d)",
                                pair, old_n, live_n)
         return JSONResponse({"ok": True, "era": era, "now": now_ts,
-                             "full": use_since is None, "records": records, "n": live_n})
+                             "full": use_since is None, "records": records,
+                             "n": int(meta.get("n") or 0)})
 
 
 class FilesIndexReq(BaseModel):

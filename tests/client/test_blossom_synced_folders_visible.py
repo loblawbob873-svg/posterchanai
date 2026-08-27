@@ -38,3 +38,8 @@ def test_files_home_does_not_render_an_unknown_sync_count_as_null_files():
     assert "Number.isFinite(f.n)" in home
     assert "synced on this device" in home
     assert "tile('🔄', f.key, f.n" not in home
+
+
+def test_manifest_read_updates_the_already_rendered_account_count():
+    assert "const ar = _acct.find(x => x && x.key === key)" in SYNC
+    assert "if(ar) ar.n = Number(j.n)" in SYNC
