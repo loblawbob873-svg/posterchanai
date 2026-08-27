@@ -8,7 +8,7 @@
     l.href='/static/css/concord.css?v=17'; (document.head||document.documentElement).appendChild(l);
   }
   const PC=()=>window.__PC;
-  const CORD_RELAYS=['wss://jskitty.com/nostr','wss://asia.vectorapp.io/nostr','wss://relay.ditto.pub','wss://relay.dreamith.to'];
+  const CORD_RELAYS=['wss://jskitty.com/nostr','wss://asia.vectorapp.io/nostr','wss://nostr.computingcache.com','wss://relay.ditto.pub','wss://relay.dreamith.to'];
   const DISCOVER_RELAYS=['wss://relay.ditto.pub','wss://relay.dreamith.to'];
   async function cordQuery(p,relays,filters,{timeout=8000,max=8}={}){
     /* queryFrom intentionally skips relays already owned by the shared pool. Always ask both paths:
@@ -459,8 +459,40 @@
       return [...new Map([...(pool||[]),...(external||[])].filter(e=>e&&e.id).map(e=>[e.id,e])).values()];
     };
     const released=await query({kinds:[13302],authors:[pubkey],limit:1});
-    const migrated=await query({kinds:[33302],authors:[pubkey],'#d':[''],limit:20});
-    return [...new Map([...released,...migrated].map(e=>[e.id,e])).values()].sort((a,b)=>Number(b.created_at)-Number(a.created_at));
+    /* CORD-02 v2 is fragmented: Vector addresses fragment zero as d="0" (then 1, 2, ...),
+       while the short-lived pre-fragment migration used d="". Ask the unrestricted kind as its
+       own subscription so every coordinate is returned. Keeping the two precise queries matters
+       for relays which implement tag filters but cap an unfiltered replaceable-kind result. */
+    const [legacy,migrated]=await Promise.all([
+      query({kinds:[33302],authors:[pubkey],'#d':[''],limit:20}),
+      query({kinds:[33302],authors:[pubkey],limit:64}),
+    ]);
+    return [...new Map([...released,...legacy,...migrated].map(e=>[e.id,e])).values()].sort((a,b)=>Number(b.created_at)-Number(a.created_at)||String(a.id).localeCompare(String(b.id)));
+  }
+  function cordListHex(value){
+    const s=String(value||''); if(s.length!==43)return s;
+    try{const raw=atob(s.replace(/-/g,'+').replace(/_/g,'/')+'=');return [...raw].map(c=>c.charCodeAt(0).toString(16).padStart(2,'0')).join('');}catch(_){return s;}
+  }
+  function cordListMaterial(material,communityId){
+    const m=material&&typeof material==='object'?material:{};
+    return {...m,community_id:cordListHex(communityId),owner:cordListHex(m.owner),owner_salt:cordListHex(m.owner_salt),community_root:cordListHex(m.community_root),control_pk:m.control_pk?cordListHex(m.control_pk):m.control_pk,control_root:m.control_root?cordListHex(m.control_root):m.control_root,channels:(m.channels||[]).map(c=>({...c,id:cordListHex(c.id),key:c.key?cordListHex(c.key):c.key}))};
+  }
+  function decodeMembershipLists(decrypted){
+    /* Resolve addressable coordinates exactly as relays do, before unioning fragments. Without
+       this, an older d=0 sibling can resurrect rooms that a newer fragment tombstoned. */
+    const ordinary=[],coordinates=new Map();
+    for(const row of decrypted){
+      const doc=row.doc||{},d=((row.event.tags||[]).find(t=>t[0]==='d')||[])[1];
+      if(row.event.kind!==33302||!/^(0|[1-9]\d*)$/.test(String(d))||!Number.isInteger(Number(doc.frags))){ordinary.push(doc);continue;}
+      const old=coordinates.get(Number(d)),wins=!old||Number(row.event.created_at)>Number(old.event.created_at)||(Number(row.event.created_at)===Number(old.event.created_at)&&String(row.event.id)<String(old.event.id));
+      if(wins)coordinates.set(Number(d),row);
+    }
+    const docs=[...ordinary,...[...coordinates.values()].map(x=>x.doc)],entries=[],tombstones=[];
+    for(const doc of docs){
+      for(const e of Array.isArray(doc.entries)?doc.entries:[]){const cid=cordListHex(e.community_id),current=cordListMaterial(e.current,cid),seed=cordListMaterial(e.seed||e.current,cid);entries.push({...e,community_id:cid,current,seed});}
+      for(const t of Array.isArray(doc.tombstones)?doc.tombstones:[])tombstones.push({...t,community_id:cordListHex(t.community_id)});
+    }
+    return {entries,tombstones};
   }
   async function syncArmadaMemberships(p,viewer){
     if(membershipBusy||!viewer.pubkey||!p.nip44dec)return; membershipBusy=true;
@@ -469,14 +501,15 @@
       const candidates=await membershipEvents(p,viewer.pubkey);
       // Armada has emitted both kinds and may leave several list shards on relays. Decode every
       // valid snapshot: choosing one newest event can hide communities stored in another shard.
-      const entries=new Map(),tombs=new Map();
+      const entries=new Map(),tombs=new Map(),decrypted=[];
       for(const event of candidates){
         try{
-          const list=JSON.parse(await p.nip44dec(viewer.pubkey,event.content)); recovered=true;
-          for(const t of Array.isArray(list.tombstones)?list.tombstones:[]){if(t&&t.community_id)tombs.set(t.community_id,Math.max(Number(tombs.get(t.community_id))||0,Number(t.removed_at)||0));}
-          for(const e of Array.isArray(list.entries)?list.entries:[]){if(!e||!e.community_id||!e.current)continue;const old=entries.get(e.community_id);if(!old||Number(e.added_at||0)>Number(old.added_at||0))entries.set(e.community_id,e);}
+          decrypted.push({event,doc:JSON.parse(await p.nip44dec(viewer.pubkey,event.content))}); recovered=true;
         }catch(_){}
       }
+      const list=decodeMembershipLists(decrypted);
+      for(const t of list.tombstones){if(t&&t.community_id)tombs.set(t.community_id,Math.max(Number(tombs.get(t.community_id))||0,Number(t.removed_at)||0));}
+      for(const e of list.entries){if(!e||!e.community_id||!e.current)continue;const old=entries.get(e.community_id);if(!old||Number(e.added_at||0)>Number(old.added_at||0))entries.set(e.community_id,e);}
       const live=[...entries.values()].filter(e=>Number(e.added_at||0)>Number(tombs.get(e.community_id)||0)); if(!live.length)return;
       const rooms=saved(); let changed=false;
       for(const e of live){
@@ -830,5 +863,5 @@
     $$('[data-cc-react-toggle]').forEach(b=>b.onclick=()=>toggleReaction(b.dataset.ccReactToggle,b.dataset.ccEmoji));
     $$('[data-cc-react]').forEach(b=>b.onclick=()=>{ reactionTarget=b.dataset.ccReact; const choices=['👍','❤️','😂','😮','😢','😡','🎉','💯']; const old=document.querySelector('.cc-reaction-picker'); if(old)old.remove(); const pop=document.createElement('div'); pop.className='cc-reaction-picker'; pop.innerHTML=choices.map(x=>`<button data-emoji="${x}">${x}</button>`).join(''); b.closest('.cc-message-body').appendChild(pop); pop.querySelectorAll('button').forEach(x=>x.onclick=e=>{ e.stopPropagation(); toggleReaction(reactionTarget,x.dataset.emoji); }); });
   }
-  window.PCConcord={render,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,notifyMentions,discoverInvites,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff};
+  window.PCConcord={render,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,notifyMentions,discoverInvites,decodeMembershipLists,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff};
 })();
