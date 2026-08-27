@@ -1,0 +1,8 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application>
+    <!-- Debug/emulator gate only. DUMP is signature-level and held by adb shell, not third-party
+         apps; release builds contain neither this receiver nor its exported surface. -->
+    <receiver android:name="place.poster.app.home.HomeTestReceiver" android:enabled="true"
+        android:exported="true" android:permission="android.permission.DUMP" />
+  </application>
+</manifest>

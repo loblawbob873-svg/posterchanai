@@ -164,7 +164,8 @@ def test_device_home_probe_requires_background_audio_and_visible_launcher_togeth
                      "MusicBackgroundDeviceTest.java").read_text()
     assert "after > before + 0.7" in device
     assert "scenario.getState() == Lifecycle.State.CREATED" in device
-    assert "if (HomeRoles.isDefaultHome(ctx))" in device
+    assert 'assertTrue("the emulator did not assign PosterChan the HOME role"' in device
+    assert "if (HomeRoles.isDefaultHome(ctx))" not in device
     assert "LauncherState.atHome()" in device
 
 

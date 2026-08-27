@@ -22,6 +22,8 @@ import org.junit.runner.RunWith;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 
 import place.poster.app.MainActivity;
 import place.poster.app.home.HomeRoles;
@@ -34,6 +36,12 @@ public class MusicBackgroundDeviceTest {
     @Test
     public void aPlayingWebViewTrackKeepsAdvancingAfterHome() throws Exception {
         Context ctx = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        boolean wasEnabled = HomeRoles.launcherComponentEnabled(ctx);
+        String oldHome = firstRoleHolder(shell("cmd role get-role-holders android.app.role.HOME"));
+        HomeRoles.enableLauncherComponent(ctx, true);
+        shell("cmd role add-role-holder android.app.role.HOME " + ctx.getPackageName());
+        SystemClock.sleep(500);
+        assertTrue("the emulator did not assign PosterChan the HOME role", HomeRoles.isDefaultHome(ctx));
         ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class);
         try {
             AtomicReference<WebView> ref = new AtomicReference<WebView>();
@@ -84,15 +92,32 @@ public class MusicBackgroundDeviceTest {
              * is set by HomeActivity.onStart and proves the native launcher owns that screen. */
             assertTrue("PosterChan's WebView stayed visible after Home: " + scenario.getState(),
                     scenario.getState() == Lifecycle.State.CREATED);
-            if (HomeRoles.isDefaultHome(ctx)) {
-                assertTrue("Home backgrounded the player but did not show PosterChan's launcher",
-                        LauncherState.atHome());
-            }
+            assertTrue("Home backgrounded the player but did not show PosterChan's launcher",
+                    LauncherState.atHome());
         } finally {
             try { ctx.startService(new Intent(ctx, MusicService.class).setAction(MusicService.ACTION_STOP)); }
             catch (Throwable ignored) { }
             scenario.close();
+            if (!oldHome.isEmpty() && !oldHome.equals(ctx.getPackageName()))
+                try { shell("cmd role add-role-holder android.app.role.HOME " + oldHome); }
+                catch (Throwable ignored) { }
+            HomeRoles.enableLauncherComponent(ctx, wasEnabled);
         }
+    }
+
+    private static String shell(String cmd) throws Exception {
+        try (InputStream is = new android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                InstrumentationRegistry.getInstrumentation().getUiAutomation().executeShellCommand(cmd))) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buf = new byte[4096]; int n;
+            while ((n = is.read(buf)) > 0) out.write(buf, 0, n);
+            return out.toString("UTF-8");
+        }
+    }
+
+    private static String firstRoleHolder(String output) {
+        String normalized = output == null ? "" : output.replace('[', ' ').replace(']', ' ').trim();
+        return normalized.isEmpty() ? "" : normalized.split("\\s+")[0];
     }
 
     private static WebView waitForWebView(AtomicReference<WebView> ref,

@@ -129,6 +129,11 @@ HOME_ACT=$PKG/$PKG.home.HomeActivity
 PREV_HOME=$(adb shell cmd role get-role-holders android.app.role.HOME 2>/dev/null | tr -d '\r')
 
 say "the launcher: take the HOME role"
+# HomeActivity deliberately ships disabled. API 34 forbids adb shell from mutating this app-owned
+# component, so ask the DEBUG APK itself through a DUMP-protected receiver absent from release.
+GATE_RECEIVER=$PKG/place.poster.app.home.HomeTestReceiver
+GATE_ACTION=place.poster.app.test.SET_HOME_COMPONENT
+echo "    app-owned enable:     [$(adb shell am broadcast -a "$GATE_ACTION" -n "$GATE_RECEIVER" --ez enabled true 2>&1 | tr -d '\r')]"
 # ENABLE IT, AND CHECK THAT IT TOOK — because on this image it does not, and for two rounds the only
 # thing that said so was a failure three steps later blaming the lock screen.
 #
@@ -190,31 +195,8 @@ sleep 1
 # screenshots, the drawer swipe, the tablet resize and the wake-lock measurement all need the
 # launcher ON SCREEN, not the role.
 if [ "${HOME_SEEN:-0}" -lt 1 ]; then
-  echo "    SKIP: the shell could not make our HomeActivity a home candidate on this image"
-  echo "          (pm enable printed nothing, set-home-activity refused) — the HOME-ROLE leg is not"
-  echo "          being reported either way. The launcher itself is covered by the instrumented"
-  echo "          tests on this same boot."
-  echo "    am start: [$(adb shell "am start -n $HOME_ACT; echo rc=\$?" 2>&1 | tr -d '\r' | tail -2 | tr '\n' ' ')]"
-  sleep 3
-  TOP=$(adb shell dumpsys activity activities 2>/dev/null | grep -m1 -E 'mResumedActivity|topResumedActivity' | tr -d '\r')
-  echo "    started directly: $TOP"
-  case "$TOP" in
-    *HomeActivity*)
-      ok "the launcher draws when started directly"
-      HOLDER="direct"
-      ;;
-    *)
-      # STILL A SKIP, NOT A FAILURE. If the shell could not enable the component then it cannot
-      # start it either, and neither fact is a statement about the launcher — the instrumented
-      # tests enable it from INSIDE the app (PackageManager.setComponentEnabledSetting, which does
-      # work) and drive it hard on this same boot. Calling this a failure is how a red job comes to
-      # mean nothing.
-      echo "    SKIP: and it cannot be started either, for the same reason — the component is still"
-      echo "          disabled and only the app itself can change that. Nothing about the launcher"
-      echo "          is being reported from this script on this image."
-      HOLDER=""
-      ;;
-  esac
+  fail "debug app-owned enable did not expose HomeActivity as a HOME candidate"
+  HOLDER=""
 else
 
 adb shell input keyevent KEYCODE_HOME
@@ -460,7 +442,7 @@ if [ -n "$HOLDER" ]; then
     *:*) adb shell cmd role add-role-holder android.app.role.HOME \
               "$(echo "$PREV_HOME" | sed 's/.*: *//')" >/dev/null 2>&1 ;;
   esac
-  adb shell pm disable-user --user 0 "$HOME_ACT" >/dev/null 2>&1
+  adb shell am broadcast -a "$GATE_ACTION" -n "$GATE_RECEIVER" --ez enabled false >/dev/null 2>&1
   [ -n "${STOCK:-}" ] && adb shell pm enable "$STOCK" >/dev/null 2>&1
   adb shell input keyevent KEYCODE_HOME
   sleep 2
