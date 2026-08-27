@@ -73,6 +73,23 @@ class TooBigForMms(unittest.TestCase):
         self.assertIn("/f/", link)
         self.assertIn("#pcenc1=", link)
 
+    def test_webui_queues_an_oversized_photo_as_an_encrypted_link(self):
+        """A browser has no carrier plugin to call locally; the link itself must be queued as the
+        SMS command for the phone instead of queueing an oversized MMS attachment."""
+        res = run(isPhone=False, telephony=False,
+                  steps=["sendfile:+15550100:%d:web caption" % (900 * KB)],
+                  mmsLimit=300 * KB)
+        self.assertTrue(calls_of(res, "uploadSharedEnc"), "web never uploaded the encrypted file")
+        self.assertFalse(calls_of(res, "sendMms"), "web tried a local carrier MMS transport")
+        outbox = [e for e in res["relayEvents"] if e["d"].startswith("pcai:smsout:")]
+        self.assertEqual(len(outbox), 1)
+        self.assertIn("/f/", outbox[0]["content"])
+        self.assertIn("#pcenc1=", outbox[0]["content"])
+        command = json.loads(outbox[0]["content"].removeprefix("enc:"))
+        self.assertIsNone(command.get("attachment"),
+                          "the queued command is still an oversized MMS instead of a text link")
+        self.assertEqual(result(res)[2], "queued-link")
+
     def test_the_key_is_in_the_fragment_and_only_in_the_fragment(self):
         """THE WHOLE PRIVACY CLAIM. A fragment is never transmitted to a server; a query string is.
         If the descriptor ever moved in front of the `#`, the node would receive the key on every

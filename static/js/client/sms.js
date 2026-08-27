@@ -1130,7 +1130,7 @@
 
   /* Send `file` as a link instead of as an attachment. Returns null when it cannot, so the caller
    * can fall back to trying the MMS rather than refusing to send anything at all. */
-  async function sendAsLink(to, body, file, limit){
+  async function sendAsLink(to, body, file, limit, remote){
     if(!PC.uploadSharedEnc) return null;
     let ref = '';
     try{ ref = await PC.uploadSharedEnc(file); }
@@ -1146,12 +1146,21 @@
     }
     const link = shareLinkFor(ref);
     if(!link) return null;
-    const P = plug('send');
-    if(!P || !P.send) return null;
     const note = (body ? body + '\n\n' : '')
                + (file.name ? file.name + ' \u00b7 ' : '')
                + fmtBytes(file.size) + ' \u2014 too big to send as a picture message, so here it is '
                + 'as a private link:\n' + link;
+    /* A WEB/DESKTOP DEVICE HAS NO RADIO. Queue the resulting TEXT command for the phone instead
+       of requiring a local Sms plugin—the old requirement made the safe oversize path impossible
+       on precisely the surfaces that needed it. `file` is null, so this recursive call cannot
+       re-enter the attachment/link branch. */
+    if(remote){
+      const queued = await send(to, note, null);
+      if(!queued || !queued.ok) return queued || {ok:false,error:'could not queue the link'};
+      return {ok:true, where:'queued-link', link, limit:limit&&limit.bytes, doc:queued.doc};
+    }
+    const P = plug('send');
+    if(!P || !P.send) return null;
     try{
       const r = await P.send({ to, body: note });
       if(!r || !r.ok) return { ok:false, error:(r && r.error) || 'the phone would not send it' };
@@ -1186,19 +1195,20 @@
      * including a tablet with no radio — while `telephony` is whether this device can actually put
      * a message on a network. Gating on `present` sent a laptop's text down the radio path, which
      * the archive test caught by name. */
-    if(st0.telephony){
-      /* CHECKED BEFORE THE ATTEMPT, not after a failure — see sendAsLink. There is no "after" worth
-       * having here: an oversized MMS is accepted and silently not delivered far more often than it
-       * is refused, so a fallback that waits for an error would never run. */
-      if(file){
-        const limit = await mmsLimit();
-        if(file.size > Math.max(MMS_FLOOR, limit.bytes - MMS_HEADROOM)){
-          const viaLink = await sendAsLink(to, body, file, limit);
-          // `null` means the link route was not available on this build/account. Falling through to
-          // try the MMS anyway beats refusing to send: an oversized MMS sometimes does arrive.
-          if(viaLink) return viaLink;
-        }
+    /* CHECKED ON EVERY COMPOSING DEVICE, not only the phone. A desktop used to encrypt and queue a
+       multi-megabyte MMS request without ever taking this branch; the phone then inherited an
+       oversized carrier send with no chance to offer the safe link. A remote device cannot measure
+       that SIM, so mmsLimit() uses the documented conservative default. */
+    if(file){
+      const limit = await mmsLimit();
+      if(file.size > Math.max(MMS_FLOOR, limit.bytes - MMS_HEADROOM)){
+        const viaLink = await sendAsLink(to, body, file, limit, !st0.telephony);
+        // `null` means encrypted storage was unavailable. A phone may still try its MMS transport;
+        // a desktop falls through to the existing encrypted outbox attachment rather than losing it.
+        if(viaLink) return viaLink;
       }
+    }
+    if(st0.telephony){
       const P = plug(file ? 'sendMms' : 'send');
       if(!P) return { ok:false, error:'no messages plugin' };
       let r = null;
