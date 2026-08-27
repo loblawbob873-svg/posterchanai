@@ -145,6 +145,7 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
       <button class="nav-item" data-view="drafts"><svg class="ic"><use href="#i-draft"></use></svg><span>Drafts</span></button>
       <button class="nav-item" data-view="meme"><svg class="ic"><use href="#i-tv"></use></svg><span>Meme Builder</span></button>
       <button class="nav-item" data-view="websearch"><svg class="ic"><use href="#i-search"></use></svg><span>Web Search</span></button>
+      <button class="nav-item" data-view="terminal"><svg class="ic"><use href="#i-terminal"></use></svg><span>Terminal</span></button>
       <button class="nav-item" data-view="markets"><svg class="ic"><use href="#i-chart"></use></svg><span>Markets</span></button>
       <button class="nav-item" data-view="news"><svg class="ic"><use href="#i-news"></use></svg><span>News</span></button>
       <button class="nav-item" data-view="stats"><svg class="ic"><use href="#i-chart"></use></svg><span>Server Stats</span></button>
@@ -332,6 +333,35 @@ DRIVE = r"""(async () => {
       bodyGap:Math.round(Math.max(0,w.bottom-b.bottom)),bodyH:Math.round(b.height)}:{};
   }
   document.querySelector('.osw.focused .osw-x')?.click(); await sleep(80);
+  /* Exact tablet report: Social snapped left, Terminal right; focus Terminal then Social. Merely
+     changing which shared-feed window is live must not rewrite either managed frame rectangle. */
+  {
+    const snap=async(w,edge)=>{
+      const bar=w.querySelector('.osw-bar'),r=bar.getBoundingClientRect(),x=edge==='left'?3:window.innerWidth-3;
+      bar.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,clientX:r.left+80,clientY:r.top+12,pointerId:71,buttons:1}));
+      const path=edge==='left'?[window.innerWidth*.35,window.innerWidth*.18,60,x]
+                              :[window.innerWidth*.65,window.innerWidth*.82,window.innerWidth-60,x];
+      for(const px of path){document.dispatchEvent(new PointerEvent('pointermove',
+        {bubbles:true,clientX:px,clientY:220,pointerId:71,buttons:1}));await sleep(16);}
+      document.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,clientX:x,clientY:220,pointerId:71,buttons:0}));
+      await sleep(140);
+    };
+    PCOS.routeView('global');await sleep(160);const social=document.querySelector('.osw.focused');
+    if(social)await snap(social,'left');
+    PCOS.routeView('terminal');await sleep(160);const term=document.querySelector('.osw.focused');
+    if(term)await snap(term,'right');
+    const rect=w=>{const r=w?.getBoundingClientRect();return r&&[r.x,r.y,r.width,r.height].map(Math.round)};
+    const before=rect(social);
+    term?.querySelector('.osw-body')?.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerId:72}));await sleep(80);
+    social?.querySelector('.osw-body')?.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerId:73}));await sleep(180);
+    const after=rect(social);
+    const states=PCOS.windows();
+    out.socialTerminalFocus={before,after,
+      socialSnap:states.find(x=>x.view==='global')?.snap||'',
+      terminalSnap:states.find(x=>x.view==='terminal')?.snap||'',
+      same:JSON.stringify(before)===JSON.stringify(after)};
+    for(const w of [term,social])w?.querySelector('.osw-x')?.click();await sleep(100);
+  }
   const nb = document.querySelector('#os-new');
   out.hasNew = !!nb;
   if (nb) nb.click();
@@ -1545,6 +1575,12 @@ async def drive(url):
                 if concord.get("bodyH", 0) < 200 or concord.get("bodyGap", 999) > 4:
                     problems.append((label, "concord-inner-gap",
                                      f"Concord body did not fill its frame: {concord}"))
+
+                ft = r.get("socialTerminalFocus") or {}
+                if not (ft.get("socialSnap") == "left" and ft.get("terminalSnap") == "right"
+                        and ft.get("same")):
+                    problems.append((label, "focus-resized-snapped-window",
+                                     f"Terminal -> Social focus changed managed geometry: {ft}"))
 
                 # Exercise the browser input path, not merely the CSS declaration. A regression
                 # once left Social with no usable wheel scrolling even though the feed still had

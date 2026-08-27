@@ -6516,6 +6516,8 @@
       return;
     }
     on = true;
+    _deskLayoutSize={w:Math.round(vwL()),h:Math.round(vhL())};
+    _keyboardViewport=false;
     realFeed = document.getElementById('feed');
     realHome = realFeed ? realFeed.parentElement : null;
     root = document.createElement('div');
@@ -6818,6 +6820,8 @@
   function exit(remember){
     if(!on) return;
     on = false;
+    _deskLayoutSize=null;
+    _keyboardViewport=false;
     // The shell's watcher holds a compositor subscription and a 30s timer. Left running it redraws
     // markup that is no longer in the document, for the rest of the session.
     if(_shellOff){ try{ _shellOff(); }catch(_){} _shellOff = null; }
@@ -6887,30 +6891,33 @@
   }
 
   let _clock = null;
+  /* Stable managed-desktop dimensions. A tablet keyboard changes only the visual viewport height
+   * when Terminal takes focus; treating that as a monitor resize visibly resnaps every window. */
+  let _deskLayoutSize = null;
+  let _keyboardViewport = false;
 
-  /* Rotating a tablet into portrait leaves the desktop in a width it was refused at. Rather than
-   * strand somebody in a layout that cannot work, step back to the classic client — and because the
-   * preference is remembered, turning it back to landscape restores the desktop.
-   *
-   * The remembered flag is deliberately NOT cleared here: this is the screen being too narrow, not
-   * the user choosing to leave. */
+  /* Fresh entry can refuse a portrait tablet, but rotation is not a request to close the desktop.
+   * Existing windows and application state survive until landscape returns. */
   function onFullChange(){ if(on && startOpen) toggleStart(true); }
 
   function onResize(){
     if(!on) return;
-    if(!fits() && !isSystemShell()){
-      /* Read with the same default as restore(). An absent preference means Classic on the web;
-       * only PosterChanOS itself forces the desktop, above.
-     * This is an INVOLUNTARY exit -- the screen got too narrow, or a login gate needs the page --
-     * and it re-sets the flag afterwards so the desktop comes back. Read with a default of false,
-     * a user who had never toggled it (because they never had to) counted as "did not want it", so
-     * `exit()` wrote false and one rotation, or one sign-in, turned the default off for good. */
-    const remember = settings().get(KEY, false);
-      exit();
-      if(remember) settings().set(KEY, true);
-      try{ PC().toast && PC().toast('Turn the device sideways for the desktop'); }catch(_){}
+    const logical={w:Math.round(vwL()),h:Math.round(vhL())};
+    /* Rotation/display changes alter width. A software keyboard on a tablet alters height only,
+     * often by hundreds of pixels, and must not change the managed frame geometry. */
+    const ae=document.activeElement;
+    const editing=!!(ae&&(ae.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName||'')));
+    const heightOnly=!!(_deskLayoutSize&&Math.abs(logical.w-_deskLayoutSize.w)<=2&&
+                            Math.abs(logical.h-_deskLayoutSize.h)>48);
+    /* A tablet using a mouse can report pointer:fine while its on-screen keyboard still resizes the
+     * WebView. Remember the shrink so keyboard-hide is ignored after focus leaves the input too. */
+    if(heightOnly&&(editing||_keyboardViewport)){
+      _keyboardViewport=logical.h<_deskLayoutSize.h;
       return;
     }
+    if(!heightOnly) _keyboardViewport=false;
+    _deskLayoutSize=logical;
+    const portrait=!fits() && !isSystemShell();
     // A rotation or a resized browser changes how many icon columns fit and where the snap zones
     // are. Without this a tablet turned sideways keeps the portrait column count and the last rows
     // sit under the taskbar — visible only by scrolling, which is how they got "cut off".
@@ -6920,6 +6927,17 @@
        * looks correct while tiled and jumps partly onto a removed monitor when later unsnapped. */
       if(w.rect) w.rect=NAT().clampLocalRect(w.rect,{width:vwL(),height:vhL()-TASKBAR},
         {width:MIN_W,height:MIN_H,gap:12});
+      /* Two half-screen windows cannot satisfy the managed 420px minimum on an 800px portrait
+       * tablet. Temporarily maximise each frame (stacked, identities intact), remember its side,
+       * and restore that side when landscape comes back. Do this without focusWin: rotation must
+       * not navigate or repaint either application merely to change its rectangle. */
+      if(portrait && w.snap && w.snap!=='max'){
+        w.rotationSnap=w.rotationSnap||w.snap;w.snap='max';w.max=true;
+        w.el.classList.add('maximised','snapped');
+      }else if(!portrait && w.rotationSnap){
+        w.snap=w.rotationSnap;w.rotationSnap='';w.max=w.snap==='max';
+        w.el.classList.toggle('maximised',w.max);w.el.classList.add('snapped');
+      }
       if(w.snap){
         const css = rectOf(w.snap);
         if(css) Object.assign(w.el.style, css);
@@ -7169,7 +7187,8 @@
                    * members have all just gone, which is the visible half of hiding a group. */
                   navChanged: refreshIcons,
                   isRepainting: () => repainting > 0, ownsFeedView, parkedSlot, noteScroll,
-                  windows: () => wins.map(w => ({ view: w.view, title: w.title, min: w.min })),
+                  windows: () => wins.map(w => ({ view: w.view, title: w.title, min: w.min,
+                                                  snap:w.snap||'', rotationSnap:w.rotationSnap||'' })),
                   /* The layout arithmetic, exposed so tests/test_desktop_layout.py can run the
                    * SHIPPED code against a list of apps and a document. Everything it decides fails
                    * silently on screen — an app that stops appearing, a folder that swallows an icon
