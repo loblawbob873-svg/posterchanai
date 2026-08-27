@@ -1935,9 +1935,14 @@ PROFILE
 	# what joins the two. It is the ONLY privileged thing the shell asks for, and it is limited to
 	# exactly that one command — signing in with a key is not the same as being trusted with root,
 	# and a machine anyone may log into must not hand every visitor sudo.
-	for helper in pc-provision-user pc-session-switch pc-shell-start pc-shell-restart pc-window-cycle pc-key pc-idle update-posterchan; do
+	# Keep this list in step with the commands /etc/sway/config executes. Snap and Screenshot lived
+	# only in the overlay package's FILESDIR; a direct/fresh installer run therefore wrote working
+	# key bindings to executables it never copied, and mouse/Super snapping simply did nothing.
+	for helper in pc-provision-user pc-session-switch pc-shell-start pc-shell-restart pc-window-cycle pc-window-snap pc-key pc-idle pc-screenshot update-posterchan; do
 		if [ -f "$PCOS_TREE/bin/$helper" ]; then
 			cp -f "$PCOS_TREE/bin/$helper" ${TARGET}/usr/local/bin/$helper
+		elif [ -f "$PCOS_TREE/overlay/app-misc/posterchanos-shell/files/$helper" ]; then
+			cp -f "$PCOS_TREE/overlay/app-misc/posterchanos-shell/files/$helper" ${TARGET}/usr/local/bin/$helper
 		elif [ -f /tmp/bin/$helper ]; then
 			cp -f /tmp/bin/$helper ${TARGET}/usr/local/bin/$helper
 		fi
@@ -1945,6 +1950,12 @@ PROFILE
 	done
 	[ -f "${TARGET}/usr/local/bin/pc-shell-start" ] || \
 		echo -e "\033[1;31m  ✗ pc-shell-start not shipped — the desktop will not be full screen\033[0m"
+	for helper in pc-window-cycle pc-window-snap pc-screenshot; do
+		if [ ! -x "${TARGET}/usr/local/bin/$helper" ]; then
+			echo -e "\033[1;31m  ✗ $helper not shipped — refusing a desktop with dead window/keyboard controls\033[0m"
+			return 1
+		fi
+	done
 	if [ -f "${TARGET}/usr/local/bin/pc-provision-user" ]; then
 		chmod 0755 ${TARGET}/usr/local/bin/pc-provision-user
 		mkdir -p ${TARGET}/etc/sudoers.d

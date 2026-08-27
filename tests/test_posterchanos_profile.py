@@ -961,6 +961,24 @@ class TheTwoCOPIESOfEveryHelperAgree(unittest.TestCase):
         self.assertIn("/usr/local/bin/pc-idle", cfg,
                       "the package's session never starts the idle watcher")
 
+    def test_direct_installer_ships_every_compositor_bound_helper(self):
+        """The overlay package is not the fresh installer's only path.
+
+        A LiveCD/direct install writes Sway bindings before the package can be relied upon. Those
+        bindings used pc-window-snap and pc-screenshot while the manual copy list omitted both, so
+        Super/edge snapping and PrintScreen were dead with no error.
+        """
+        src = open(SH, encoding="utf-8").read()
+        marker = "Keep this list in step with the commands /etc/sway/config executes"
+        start = src.index(marker)
+        block = src[start:src.index("if [ -f \"${TARGET}/usr/local/bin/pc-provision-user\" ]", start)]
+        for helper in ("pc-window-cycle", "pc-window-snap", "pc-screenshot"):
+            self.assertIn(helper, block)
+            self.assertTrue(os.path.isfile(os.path.join(self.PKG, "files", helper)))
+        self.assertIn('overlay/app-misc/posterchanos-shell/files/$helper', block)
+        self.assertIn('if [ ! -x "${TARGET}/usr/local/bin/$helper" ]', block)
+        self.assertIn("return 1", block, "a missing bound helper is still reported as success")
+
 
 class TheInstalledMachineHasAKernelWhereTheBootloaderLOOKS(unittest.TestCase):
     """An install that finished and then booted to emergency mode, with root locked so there was no
