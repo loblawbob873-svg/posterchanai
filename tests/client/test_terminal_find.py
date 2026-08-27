@@ -93,6 +93,28 @@ def test_resize_keeps_a_live_terminal_at_the_prompt_without_fighting_scrollback(
     assert "if(followThisFit)_pinBottomAfterLayout()" in fit
 
 
+def test_reconnect_preserves_scrollback_but_initial_attach_opens_at_current_output():
+    """READY is shared by fresh opens, explicit attaches and automatic reconnects. Only the first
+    two reset replay state; making READY itself enable following destroys a deliberate scroll-up
+    whenever Android wakes and reconnects its socket."""
+    ready = TERM[TERM.index("if(m.t === 'ready')"):TERM.index("if(m.t === 'gone')")]
+    assert "followBottom=true" not in ready
+    assert "if(followBottom) _pinBottomAfterLayout()" in ready
+
+    reset = TERM[TERM.index("function _resetForReplay"):
+                 TERM.index("async function connect", TERM.index("function _resetForReplay"))]
+    assert "followBottom = true" in reset
+    connect = TERM[TERM.index("async function connect"):TERM.index("function attach")]
+    attach = TERM[TERM.index("function attach"):TERM.index("function _cycleTab")]
+    assert "_resetForReplay()" in connect
+    assert "_resetForReplay()" in attach
+
+    later = TERM[TERM.index("function _later()"):
+                 TERM.index("function _wake()", TERM.index("function _later()"))]
+    assert "_open({ resume: sid, host, label })" in later
+    assert "_resetForReplay()" not in later
+
+
 def test_resize_guards_measure_the_live_terminal_element_not_an_out_of_scope_local():
     """The mount function's `const box` is not visible in sibling `_fit`; caught ReferenceErrors
     used to turn every focus/geometry guard into a silent no-op."""

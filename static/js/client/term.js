@@ -868,8 +868,12 @@
             if(label) asked.add(String(host || '') + '\u0000' + String(label));
             _state((m.resumed ? 'reattached to ' : 'connected to ') + host, 'ok');
             _chrome(true); _fit(); _focus();
-            followBottom=true;
-            _pinBottomAfterLayout();
+            /* A reconnect is not a new terminal. If the person was reading scrollback when the
+             * socket dropped, keep that deliberate position; forcing follow mode here yanked them
+             * to the prompt on every phone wake/network change. Fresh opens and explicit tab
+             * attaches already call _resetForReplay(), which arms followBottom before READY, so
+             * they still open at current output. A terminal that was pinned also remains pinned. */
+            if(followBottom) _pinBottomAfterLayout();
             /* A NEW PTY IS A NEW TAB. Starting one used to update `sid` but never repaint the tab
              * strip, so the shell existed while the only visible tab was still the previous one.
              * The next press appeared to do nothing useful and switching was impossible until a
