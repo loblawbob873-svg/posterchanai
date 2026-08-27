@@ -98,3 +98,12 @@ def test_file_picker_has_bounded_desktop_and_mobile_layouts():
         assert selector in CSS
     assert "height:min(720px,calc(100vh - 28px))" in CSS
     assert "grid-template-columns:132px minmax(0,1fr)" in CSS
+
+
+def test_large_file_picker_results_cannot_squash_thumbnails_into_lines():
+    """A bounded grid with many implicit rows must scroll, never divide its height among them."""
+    assert ".bp-explorer>.files-grid{grid-auto-rows:max-content" in CSS
+    assert ".bp-explorer>.files-grid>.file-card{min-width:0;min-height:96px" in CSS
+    assert ".bp-explorer>.files-grid>.file-card>img," in CSS
+    assert "height:96px;min-height:96px;object-fit:cover" in CSS
+    assert "overscroll-behavior:contain" in CSS
