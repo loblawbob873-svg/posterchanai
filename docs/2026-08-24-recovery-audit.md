@@ -135,3 +135,13 @@ This is evidence from the recovery pass, not a declaration that the whole queue 
   passed 53 tests; Android launcher/background-Music tests passed 149 tests plus 17 subtests. Signed
   APK 1.0.1802 was published from `eb2dea16`; its exact-commit API-34 emulator gate completed
   successfully. Physical-phone playback remains open because no ADB device was attached.
+- Shell 1.0.20260827182039 is installed on the desktop and laptop. Its package-owned Foot launcher
+  raises Foot's documented delayed-render window for non-atomic streaming TUI updates while keeping
+  the bound below one 60 Hz frame. Against the installed package, 40 clear/write bursts produced 43
+  frames instead of the stock launcher's 81, eliminating the exposed intermediate repaint in this
+  controlled case. A sustained real Codex/Claude session remains open because neither CLI is
+  installed on the test machines.
+- The same shell serializes `update-posterchan` before `emaint` touches Portage's Git checkout. A
+  live held-lock test proved a second updater remained blocked with no output or overlay access; 110
+  updater/profile tests plus 35 subtests pass. This prevents concurrent launches from leaving a
+  zero-byte loose Git object and then falsely reporting a stale package as current.
