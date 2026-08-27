@@ -51,7 +51,8 @@ import base64
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-APP = os.path.join(ROOT, "static", "js", "client", "app.js")
+APP = os.environ.get("PC_INSTALLED_APP_JS") or os.path.join(
+    ROOT, "static", "js", "client", "app.js")
 # 390/360: phones. 900: the narrowest desktop, where a 220px sidebar leaves least for the columns.
 # 1280: the ordinary case.
 WIDTHS = [(390, 844, True), (360, 780, True), (900, 800, False), (1280, 860, False)]

@@ -34,4 +34,6 @@ PC_INSTALLED_HOSTFILES_JS="$check_dir/installed-hostfiles.js" \
   node "$repo/tests/client/hostfiles_click_sim.js"
 PC_INSTALLED_PREVIEW_JS="$check_dir/installed-preview.js" \
   node "$repo/tests/client/preview_sim.js"
+PC_INSTALLED_APP_JS="$check_dir/installed-app.js" \
+  "$repo/.venv/bin/python" "$repo/scripts/check_files_explorer.py"
 echo "OK installed File Manager open-with routes"

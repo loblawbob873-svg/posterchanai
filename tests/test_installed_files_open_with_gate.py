@@ -18,6 +18,7 @@ def test_gate_extracts_routing_and_preview_runtime_from_the_installed_asar():
     assert "folder_drop_paths_sim.js" in src
     assert "folder_upload_completion_sim.js" in src
     assert "preview_sim.js" in src
+    assert "check_files_explorer.py" in src
 
 
 def test_simulations_accept_an_installed_payload_override():
@@ -31,6 +32,11 @@ def test_simulations_accept_an_installed_payload_override():
     assert "process.env.PC_INSTALLED_APP_JS" in folder_upload
     assert "process.env.PC_INSTALLED_HOSTFILES_JS" in hostfiles
     assert "process.env.PC_INSTALLED_PREVIEW_JS" in preview
+
+
+def test_explorer_browser_harness_accepts_installed_app_payload():
+    explorer = (ROOT / "scripts/check_files_explorer.py").read_text(encoding="utf-8")
+    assert 'os.environ.get("PC_INSTALLED_APP_JS")' in explorer
 
 
 def test_installed_selector_sim_covers_document_media_and_cancel_lifecycle():
