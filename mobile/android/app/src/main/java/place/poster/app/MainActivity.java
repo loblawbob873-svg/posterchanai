@@ -54,6 +54,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(VaultAutofillPlugin.class);
         registerPlugin(place.poster.app.push.PushPlugin.class);
         registerPlugin(place.poster.app.music.MusicPlugin.class);
+        registerPlugin(place.poster.app.preview.OpenFilePlugin.class);
         registerPlugin(place.poster.app.call.CallPlugin.class);
         registerPlugin(place.poster.app.calendar.CalendarPlugin.class);
         // The weather widget is drawn by the LAUNCHER, which has no session and cannot know

@@ -98,11 +98,25 @@
     return _pdfjs;
   }
 
-  function openElsewhere(blob, name) {
+  async function openElsewhere(blob, name) {
+    name=name||'document.pdf';
+    /* Android WebView has no PDF activity inside it. Ask the platform to ACTION_VIEW the exact
+     * bytes first; OpenFile keeps them in private cache and grants only the chosen viewer read
+     * access. No viewer/older APK/cancel falls through to the useful Save-or-share sheet. */
+    try {
+      var cap=PC().capPlugin&&PC().capPlugin('OpenFile','open');
+      if(cap&&cap.open){
+        var bytes=new Uint8Array(await blob.arrayBuffer()),binary='';
+        for(var at=0;at<bytes.length;at+=0x8000)binary+=String.fromCharCode.apply(null,bytes.subarray(at,at+0x8000));
+        var opened=await cap.open({data:btoa(binary),mime:blob.type||'application/pdf',name:name});
+        if(opened&&opened.ok)return 'opened';
+      }
+    } catch (_) { /* no viewer or native failure: retain Save/share below */ }
     var save = PC().saveBlobAs;
     if (!save) { toast('cannot open this PDF on this build'); return; }
-    Promise.resolve(save(blob, name || 'document.pdf'))
-      .catch(function (e) { toast('could not open that PDF: ' + ((e && e.message) || e)); });
+    return Promise.resolve(save(blob, name)).catch(function (e) {
+      toast('could not open that PDF: ' + ((e && e.message) || e));
+    });
   }
 
   async function renderPdf(host, blob, name) {

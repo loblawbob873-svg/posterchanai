@@ -44,7 +44,7 @@ PACKAGES = [os.path.join(APP, p) for p in SHELL]
 # is their compile check.
 NOT_SHELL = {
     "calendar", "call", "contacts", "gamepad", "music", "nip55", "push", "scan",
-    "screenshare", "share", "signer", "sync", "tor", "vault",
+    "preview", "screenshare", "share", "signer", "sync", "tor", "vault",
 }
 
 # WHAT IS SHIMMED, AND WHY. HomeActivity reads the music service's now-playing state and presses its
