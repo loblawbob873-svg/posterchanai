@@ -7453,9 +7453,9 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
   touch-action:none;background:linear-gradient(135deg,transparent 50%,var(--line) 50%)}
 
 /* Taskbar */
-/* Start/search stay at the far left and the tray at the far right. The app group is centred on the
-   SCREEN, not merely in the leftover (asymmetric) space between them. A bounded, horizontally
-   scrolling group keeps many apps clear of both sides without making one/few apps look right-set. */
+/* Windows-style persistent flow: Start/search first, then open apps in stable left-to-right order,
+   with the tray pinned right. Recentring the entire group whenever an app opens makes every target
+   move under the pointer and does not match the requested desktop behaviour. */
 .os-bar{position:relative;flex:0 0 48px;display:flex;align-items:center;justify-content:flex-start;gap:8px;
   padding:0 min(390px,32vw) 0 10px;
   background:color-mix(in srgb, var(--panel2) 88%, transparent);
@@ -7473,8 +7473,7 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 .os-new:hover{filter:brightness(1.08)}
 .os-new .ic{width:15px;height:15px}
 @media (pointer:coarse){ .os-new{height:calc(42px / var(--zf, 1))} }
-.os-tasks{position:absolute;inset-inline-start:50%;transform:translateX(-50%);width:max-content;
-  max-width:calc(100% - min(780px,64vw));min-width:0;display:flex;justify-content:flex-start;
+.os-tasks{position:static;flex:1 1 auto;width:auto;max-width:none;min-width:0;display:flex;justify-content:flex-start;
   gap:6px;overflow-x:auto;scrollbar-width:none}
 .os-tasks::-webkit-scrollbar{display:none}
 .os-task{flex:0 0 40px;width:40px;display:grid;place-items:center;height:38px;
