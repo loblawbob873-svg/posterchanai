@@ -8571,9 +8571,9 @@
     body.addEventListener('scroll', sync(body, prev), { passive:true });
     prev.addEventListener('scroll', sync(prev, body), { passive:true });
     $('#ae-img-up').onclick=()=>$('#ae-img-file').click();
-    $('#ae-img-file').onchange=async ev=>{ const f=ev.target.files[0]; if(!f)return; $('#ae-status').textContent='uploading image…'; try{ $('#ae-img').value=await uploadBlob(f); $('#ae-status').textContent='image uploaded'; }catch(err){ $('#ae-status').textContent='upload failed: '+err.message; } };
+    $('#ae-img-file').onchange=async ev=>{ const f=ev.target.files[0]; if(!f)return; $('#ae-status').textContent='uploading image…'; try{ $('#ae-img').value=await uploadBlob(f,{folder:'Posts'}); $('#ae-status').textContent='image uploaded'; }catch(err){ $('#ae-status').textContent='upload failed: '+err.message; } };
     $('#ae-insert').onclick=()=>$('#ae-body-file').click();
-    $('#ae-body-file').onchange=async ev=>{ const files=[...ev.target.files]; for(let i=0;i<files.length;i++){ $('#ae-status').textContent=`uploading ${i+1}/${files.length}…`; try{ const url=await uploadBlob(files[i]); _insertAt(body, `\n![](${url})\n`); }catch(err){ $('#ae-status').textContent='upload failed: '+err.message; return; } } $('#ae-status').textContent=''; ev.target.value=''; };
+    $('#ae-body-file').onchange=async ev=>{ const files=[...ev.target.files]; for(let i=0;i<files.length;i++){ $('#ae-status').textContent=`uploading ${i+1}/${files.length}…`; try{ const url=await uploadBlob(files[i],{folder:'Posts'}); _insertAt(body, `\n![](${url})\n`); }catch(err){ $('#ae-status').textContent='upload failed: '+err.message; return; } } $('#ae-status').textContent=''; ev.target.value=''; };
     $('#ae-pub').onclick=()=>publishArticle({ title:$('#ae-title').value.trim(), summary:$('#ae-sum').value.trim(), image:$('#ae-img').value.trim(), body:body.value, d:_aeSlug });
   }
   async function deleteArticle(e){
@@ -8769,7 +8769,7 @@
     const drawImgs=()=>{ const box=$('#le-imgs'); if(!box) return; box.innerHTML=images.map((u,i)=>`<div class="le-img"><img src="${enc(u)}" onerror="this.src='${LOGO}'"><button type="button" class="le-img-x" data-i="${i}" aria-label="Remove image"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div>`).join(''); $$('.le-img-x',box).forEach(x=> x.onclick=()=>{ images.splice(+x.dataset.i,1); drawImgs(); }); };
     drawImgs();
     $('#le-img-up').onclick=()=>$('#le-img-file').click();
-    $('#le-img-file').onchange=async ev=>{ const files=[...ev.target.files]; for(let i=0;i<files.length;i++){ $('#le-status').textContent=`uploading ${i+1}/${files.length}…`; try{ images.push(await uploadBlob(files[i])); drawImgs(); }catch(err){ $('#le-status').textContent='upload failed: '+err.message; ev.target.value=''; return; } } $('#le-status').textContent=''; ev.target.value=''; };
+    $('#le-img-file').onchange=async ev=>{ const files=[...ev.target.files]; for(let i=0;i<files.length;i++){ $('#le-status').textContent=`uploading ${i+1}/${files.length}…`; try{ images.push(await uploadBlob(files[i],{folder:'Posts'})); drawImgs(); }catch(err){ $('#le-status').textContent='upload failed: '+err.message; ev.target.value=''; return; } } $('#le-status').textContent=''; ev.target.value=''; };
     const _grab=()=>({ title:$('#le-title').value.trim(), summary:$('#le-sum').value.trim(), price:$('#le-price').value.trim(), cur:$('#le-cur').value, freq:$('#le-freq').value.trim(), loc:$('#le-loc').value.trim(), body:$('#le-body').value, sold:$('#le-sold').checked, images, cats });
     $('#le-draft').onclick=async()=>{
       const a=_grab(); if(!(a.title||a.body||a.images.length)){ toast('nothing to save yet'); return; }
@@ -14750,7 +14750,7 @@
       // and append its URL, exactly like paste/attach. Runs async so the composer paints immediately.
       if(files && files.length){ (async()=>{ const st=$('#cmp-status',root);
         for(let i=0;i<files.length;i++){ if(st) st.textContent=`uploading shared ${i+1}/${files.length}…`;
-          try{ const url=await uploadBlob(files[i]); ta.value+=(ta.value?'\n':'')+url; }
+          try{ const url=await uploadBlob(files[i], {folder:'Posts'}); ta.value+=(ta.value?'\n':'')+url; }
           catch(err){ if(_blossomDenied&&_blossomDenied(err)){ requestBlossomAccess(); if(st) st.textContent='🔒 No upload access — requested it from the admin.'; }
             else if(st) st.textContent='upload failed: '+((err&&err.message)||err); return; } }
         if(st) st.textContent=''; try{ ta.dispatchEvent(new Event('input')); }catch(_){} })(); }
@@ -14806,7 +14806,7 @@
         const files=[...(e.clipboardData&&e.clipboardData.items||[])].filter(it=>it.kind==='file').map(it=>it.getAsFile()).filter(Boolean);
         if(!files.length) return; e.preventDefault();
         for(let i=0;i<files.length;i++){ $('#cmp-status',root).textContent=`uploading pasted ${i+1}/${files.length}…`;
-          try{ const url=await uploadBlob(files[i]); ta.value+=(ta.value?'\n':'')+url; }
+          try{ const url=await uploadBlob(files[i], {folder:'Posts'}); ta.value+=(ta.value?'\n':'')+url; }
           catch(err){ if(_blossomDenied(err)){ requestBlossomAccess(); $('#cmp-status',root).textContent='🔒 No upload access — requested it from the admin.'; } else $('#cmp-status',root).textContent='upload failed: '+err.message; return; } }
         $('#cmp-status',root).textContent='';
       });
@@ -14906,13 +14906,13 @@
         if(cb) cb.onclick=()=>_cleanLinksCmd(ta, m=>{ const s=$('#cmp-status',root); if(s) s.textContent=m; }); }
       $('#cmp-file',root).onchange=async e=>{ const files=[...e.target.files]; if(!files.length)return;
         for(let i=0;i<files.length;i++){ $('#cmp-status',root).textContent=`uploading ${i+1}/${files.length}…`;
-          try{ const url=await uploadBlob(files[i]); ta.value+=(ta.value?'\n':'')+url; }
+          try{ const url=await uploadBlob(files[i], {folder:'Posts'}); ta.value+=(ta.value?'\n':'')+url; }
           catch(err){ if(_blossomDenied(err)){ requestBlossomAccess(); $('#cmp-status',root).textContent='🔒 No upload access — requested it from the admin.'; } else $('#cmp-status',root).textContent='upload failed: '+err.message; return; } }
         $('#cmp-status',root).textContent=''; e.target.value=''; };
       // drag & drop files onto the composer → upload + append URLs (same as 📎 Attach / paste)
       { const _cmpDrop=async files=>{ files=files.filter(Boolean); if(!files.length)return;
           for(let i=0;i<files.length;i++){ $('#cmp-status',root).textContent=`uploading ${i+1}/${files.length}…`;
-            try{ const url=await uploadBlob(files[i]); ta.value+=(ta.value?'\n':'')+url; }
+            try{ const url=await uploadBlob(files[i], {folder:'Posts'}); ta.value+=(ta.value?'\n':'')+url; }
             catch(err){ if(_blossomDenied(err)){ requestBlossomAccess(); $('#cmp-status',root).textContent='🔒 No upload access — requested it from the admin.'; } else $('#cmp-status',root).textContent='upload failed: '+err.message; return; } }
           $('#cmp-status',root).textContent=''; };
         root.addEventListener('dragover',e=>{ if(e.dataTransfer&&[...(e.dataTransfer.types||[])].includes('Files')){ e.preventDefault(); root.classList.add('cmp-drop'); } });
@@ -19840,6 +19840,7 @@
       // because this is the fetch the Files screen actually makes; keying the figure on the other
       // one is what printed "0 B stored" on a full drive.
       _blobSizes=new Map(list.map(b=>[b.sha256, Number(b.size)||0]));
+      _backfillPostFolder(list);
       // Guarded: a throw in the grid renderer used to escape renderPublicFiles and leave the grid
       // spinner spinning with no error anywhere the user could see.
       try{
@@ -19894,6 +19895,37 @@
     catch(_){}
     _vodNamesInflight=false;
     return changed;            // failure keeps the stamp → next retry after the 60s TTL (bounded), labels just wait
+  }
+  let _postFolderBackfilled=false;
+  /* Older composer builds uploaded media successfully but did not put it in the Files index.  The
+   * blob therefore appears under All while Posts looks almost empty. Recover metadata from the
+   * account's already-cached social history: only URLs that name a blob this account actually owns
+   * are admitted, and an existing user-chosen folder always wins. */
+  function _backfillPostFolder(list){
+    if(_postFolderBackfilled) return 0;
+    _postFolderBackfilled=true;
+    const have=new Map((list||[]).filter(b=>b&&b.sha256).map(b=>[String(b.sha256).toLowerCase(),b]));
+    let evs=[]; try{ evs=Store.query([{authors:[ME.pubkey],kinds:[1,20,30023,30402,34235,34236],limit:10000}])||[]; }catch(_){}
+    const found=new Map();
+    for(const e of evs){
+      const bits=[String(e.content||'')];
+      for(const t of (e.tags||[])) if(['imeta','url','image','thumb'].includes(t[0])) bits.push(t.slice(1).join(' '));
+      for(const bit of bits) for(const u of (bit.match(/https?:\/\/[^\s<>"']+/g)||[])){
+        const m=u.match(/(?:^|\/)([0-9a-f]{64})(?:\.[a-z0-9]{1,10})?(?:[?#]|$)/i);
+        if(m && have.has(m[1].toLowerCase())) found.set(m[1].toLowerCase(),u);
+      }
+    }
+    const add=[...found].filter(([sha])=>!FilesIdx.meta(sha));
+    if(!add.length) return 0;
+    FilesIdx.beginBatch();
+    try{
+      if(!FilesIdx.folders().includes('Posts')) FilesIdx.addFolder('Posts');
+      for(const [sha,u] of add){ const b=have.get(sha)||{}; let name=b.name||'';
+        if(!name) try{ name=decodeURIComponent(new URL(u).pathname.split('/').pop()||''); }catch(_){}
+        FilesIdx.setFile(sha,{name:name||('post-'+sha.slice(0,8)),folder:'Posts',mime:b.type||'',size:+b.size||0,ts:+b.created_at||Math.floor(Date.now()/1000)});
+      }
+    }finally{ FilesIdx.endBatch().catch(()=>{}); }
+    return add.length;
   }
   // ---------- Files: multi-select for mass operations ----------
   // Selection is a Set of sha256 held OUTSIDE the grid, because the grid re-renders constantly
