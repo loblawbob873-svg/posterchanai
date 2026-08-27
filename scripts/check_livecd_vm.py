@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import socket
 import subprocess
+import shutil
 import tempfile
 import time
 
@@ -68,13 +69,23 @@ def frame_is_graphical(path: Path) -> bool:
     return lit >= 0.025 and spread >= 24 and colours >= 16
 
 
-def hmp(sock_path: Path, command: str, timeout: float = 5) -> None:
+def _hmp_prompt(sock: socket.socket, timeout: float) -> bytes:
+    sock.settimeout(timeout)
+    data = bytearray()
+    while b"(qemu)" not in data:
+        chunk = sock.recv(4096)
+        if not chunk:
+            raise RuntimeError("QEMU monitor closed before its prompt")
+        data.extend(chunk)
+    return bytes(data)
+
+
+def hmp(sock_path: Path, command: str, timeout: float = 5) -> bytes:
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-        sock.settimeout(timeout)
         sock.connect(str(sock_path))
-        sock.recv(4096)
+        _hmp_prompt(sock, timeout)
         sock.sendall(command.encode("utf-8") + b"\n")
-        sock.recv(4096)
+        return _hmp_prompt(sock, timeout)
 
 
 def wait_for_socket(path: Path, proc: subprocess.Popen, seconds: int = 20) -> None:
@@ -88,13 +99,43 @@ def wait_for_socket(path: Path, proc: subprocess.Popen, seconds: int = 20) -> No
     raise RuntimeError("QEMU monitor did not open")
 
 
-def qemu_command(source: Path, installed_disk: bool, monitor: Path, serial: Path) -> list[str]:
+def ovmf_firmware() -> tuple[Path, Path]:
+    """Return the distro's OVMF code and writable-variable templates."""
+    pairs = (
+        (Path("/usr/share/edk2/OvmfX64/OVMF_CODE.fd"),
+         Path("/usr/share/edk2/OvmfX64/OVMF_VARS.fd")),
+        (Path("/usr/share/OVMF/OVMF_CODE.fd"), Path("/usr/share/OVMF/OVMF_VARS.fd")),
+        (Path("/usr/share/edk2/x64/OVMF_CODE.fd"), Path("/usr/share/edk2/x64/OVMF_VARS.fd")),
+    )
+    for code, variables in pairs:
+        if code.is_file() and variables.is_file():
+            return code, variables
+    raise RuntimeError("OVMF firmware is required to boot the installed UEFI disk")
+
+
+def qemu_command(source: Path, installed_disk: bool, monitor: Path, serial: Path,
+                 firmware: tuple[Path, Path] | None = None) -> list[str]:
     qemu = os.environ.get("QEMU", "qemu-system-x86_64")
-    cmd = [qemu, "-machine", "q35,accel=kvm" if Path("/dev/kvm").exists() else "q35",
-           "-m", "4096", "-smp", "2"]
+    kvm = Path("/dev/kvm").exists()
+    cmd = [qemu, "-machine", "q35,accel=kvm" if kvm else "q35"]
+    # QEMU's generic virtual CPU is deliberately ancient.  The release image is built for the
+    # machine that produced it and its userspace can legally use newer instructions; booting that
+    # image with the generic CPU made init take SIGILL and panic with "Attempted to kill init".
+    # KVM host passthrough is also the profile used by the independent UEFI boot gate.  TCG cannot
+    # use `host`, so retain its portable default for developer machines without /dev/kvm.
+    if kvm:
+        cmd += ["-cpu", "host"]
+    cmd += ["-m", "4096", "-smp", "2"]
     if installed_disk:
         # Deliberately NO cdrom device: this is the post-installer eject/reboot gate, not another
         # successful boot from the LiveCD masquerading as proof that the installed disk works.
+        # PosterChanOS installs systemd-boot on the ESP and has no legacy BIOS loader.  Supplying a
+        # writable copy of OVMF's variable store is therefore part of the installed-disk gate.
+        if firmware is None:
+            raise RuntimeError("installed-disk gate requires OVMF firmware")
+        code, variables = firmware
+        cmd += ["-drive", f"if=pflash,format=raw,readonly=on,file={code}",
+                "-drive", f"if=pflash,format=raw,file={variables}"]
         cmd += ["-drive", f"file={source},if=virtio,format=qcow2", "-boot", "c"]
     else:
         cmd += ["-cdrom", str(source), "-boot", "d"]
@@ -103,11 +144,18 @@ def qemu_command(source: Path, installed_disk: bool, monitor: Path, serial: Path
 
 
 def run(source: Path, timeout: int, interval: int, installed_disk: bool = False,
-        boot_grace: int = 60, stable_samples: int = 6) -> int:
+        boot_grace: int = 60, stable_samples: int = 6,
+        evidence_dir: Path | None = None) -> int:
     with tempfile.TemporaryDirectory(prefix="pc-livecd-smoke-") as raw:
         work = Path(raw)
         monitor, serial = work / "monitor.sock", work / "serial.log"
-        cmd = qemu_command(source, installed_disk, monitor, serial)
+        firmware = None
+        if installed_disk:
+            code, template = ovmf_firmware()
+            variables = work / "OVMF_VARS.fd"
+            shutil.copy2(template, variables)
+            firmware = code, variables
+        cmd = qemu_command(source, installed_disk, monitor, serial, firmware)
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         try:
             wait_for_socket(monitor, proc)
@@ -120,6 +168,11 @@ def run(source: Path, timeout: int, interval: int, installed_disk: bool = False,
                     raise RuntimeError("QEMU exited during boot" + (": " + err if err else ""))
                 shot = work / f"frame-{sample:03d}.ppm"
                 hmp(monitor, f"screendump {shot}")
+                shot_deadline = time.monotonic() + 5
+                while not shot.is_file() and time.monotonic() < shot_deadline:
+                    time.sleep(0.05)
+                if not shot.is_file():
+                    raise RuntimeError(f"QEMU did not write framebuffer sample {sample}")
                 graphical = frame_is_graphical(shot)
                 # Firmware and GRUB are graphical too. They must neither satisfy the desktop gate
                 # nor make the ordinary boot-menu -> kernel modeset blank transition a failure.
@@ -145,6 +198,13 @@ def run(source: Path, timeout: int, interval: int, installed_disk: bool = False,
                 proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 proc.kill()
+            if evidence_dir:
+                evidence_dir.mkdir(parents=True, exist_ok=True)
+                if serial.exists():
+                    shutil.copy2(serial, evidence_dir / "serial.log")
+                frames = sorted(work.glob("frame-*.ppm"))[-12:]
+                for frame in frames:
+                    shutil.copy2(frame, evidence_dir / frame.name)
 
 
 def main() -> int:
@@ -159,6 +219,8 @@ def main() -> int:
                         help="seconds before graphical frames can count as the desktop")
     parser.add_argument("--stable-samples", type=int, default=6,
                         help="consecutive post-grace graphical frames required")
+    parser.add_argument("--evidence-dir", type=Path,
+                        help="preserve serial log and final framebuffer samples here")
     args = parser.parse_args()
     source = args.disk or args.iso
     if not source.is_file():
@@ -168,7 +230,8 @@ def main() -> int:
         parser.error("timeout must be >= 15, interval >= 1, stable samples >= 3, and boot grace within timeout")
     try:
         return run(source.resolve(), args.timeout, args.interval, installed_disk=bool(args.disk),
-                   boot_grace=args.boot_grace, stable_samples=args.stable_samples)
+                   boot_grace=args.boot_grace, stable_samples=args.stable_samples,
+                   evidence_dir=args.evidence_dir)
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"PosterChanOS VM smoke failed: {exc}", file=__import__("sys").stderr)
         return 1

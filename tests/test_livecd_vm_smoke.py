@@ -1,7 +1,9 @@
 from pathlib import Path
 import importlib.util
+import socket
 import subprocess
 import sys
+import threading
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,6 +60,34 @@ def test_probe_ignores_boot_graphics_and_requires_post_grace_stability():
     assert "default=60" in source
     assert "default=6" in source
     assert "screendump" in source
+    assert "while not shot.is_file()" in source
+
+
+def test_hmp_waits_for_the_command_prompt_not_an_arbitrary_socket_chunk(tmp_path):
+    monitor = tmp_path / "monitor.sock"
+    ready = threading.Event()
+
+    def server():
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+            listener.bind(str(monitor))
+            listener.listen(1)
+            ready.set()
+            conn, _ = listener.accept()
+            with conn:
+                conn.sendall(b"QEMU monitor")
+                conn.sendall(b"\r\n(qemu)")
+                command = conn.recv(4096)
+                assert b"screendump" in command
+                conn.sendall(b"command accepted\r\n")
+                conn.sendall(b"(qemu)")
+
+    thread = threading.Thread(target=server)
+    thread.start()
+    assert ready.wait(2)
+    response = MOD.hmp(monitor, "screendump /tmp/frame.ppm")
+    thread.join(2)
+    assert not thread.is_alive()
+    assert b"command accepted" in response
 
 
 def test_invalid_grace_cannot_make_a_vacuous_gate(tmp_path):
@@ -69,16 +99,36 @@ def test_invalid_grace_cannot_make_a_vacuous_gate(tmp_path):
     assert "boot grace within timeout" in result.stderr
 
 
+def test_failed_probe_can_preserve_serial_and_final_frames():
+    source = SCRIPT.read_text()
+    assert 'shutil.copy2(serial, evidence_dir / "serial.log")' in source
+    assert 'sorted(work.glob("frame-*.ppm"))[-12:]' in source
+    assert '"--evidence-dir"' in source
+
+
 def test_installed_disk_gate_has_no_live_media(tmp_path):
     """The second boot must not accidentally prove the ISO works for a second time."""
     disk = tmp_path / "installed.qcow2"
     monitor, serial = tmp_path / "monitor", tmp_path / "serial"
-    command = MOD.qemu_command(disk, True, monitor, serial)
+    code, variables = tmp_path / "OVMF_CODE.fd", tmp_path / "OVMF_VARS.fd"
+    command = MOD.qemu_command(disk, True, monitor, serial, (code, variables))
     assert "-cdrom" not in command
     assert ["-boot", "c"] == command[command.index("-boot"):command.index("-boot") + 2]
-    drive = command[command.index("-drive") + 1]
+    drive = next(arg for arg in command if arg.startswith(f"file={disk},"))
     assert f"file={disk}" in drive
     assert "if=virtio" in drive and "format=qcow2" in drive
+    assert f"if=pflash,format=raw,readonly=on,file={code}" in command
+    assert f"if=pflash,format=raw,file={variables}" in command
+
+
+def test_installed_disk_refuses_a_seabios_false_negative(tmp_path):
+    disk = tmp_path / "installed.qcow2"
+    try:
+        MOD.qemu_command(disk, True, tmp_path / "monitor", tmp_path / "serial")
+    except RuntimeError as exc:
+        assert "requires OVMF" in str(exc)
+    else:
+        raise AssertionError("UEFI-only installed disk was launched with legacy SeaBIOS")
 
 
 def test_live_gate_still_attaches_iso_and_boots_it_first(tmp_path):
@@ -86,6 +136,30 @@ def test_live_gate_still_attaches_iso_and_boots_it_first(tmp_path):
     command = MOD.qemu_command(iso, False, tmp_path / "monitor", tmp_path / "serial")
     assert command[command.index("-cdrom") + 1] == str(iso)
     assert ["-boot", "d"] == command[command.index("-boot"):command.index("-boot") + 2]
+
+
+def test_kvm_gate_uses_the_host_cpu_that_the_release_image_targets(tmp_path, monkeypatch):
+    iso = tmp_path / "live.iso"
+    real_exists = MOD.Path.exists
+
+    def exists(path):
+        return True if str(path) == "/dev/kvm" else real_exists(path)
+
+    monkeypatch.setattr(MOD.Path, "exists", exists)
+    command = MOD.qemu_command(iso, False, tmp_path / "monitor", tmp_path / "serial")
+    assert command[command.index("-cpu"):command.index("-cpu") + 2] == ["-cpu", "host"]
+
+
+def test_tcg_gate_does_not_request_an_unsupported_host_cpu(tmp_path, monkeypatch):
+    iso = tmp_path / "live.iso"
+    real_exists = MOD.Path.exists
+
+    def exists(path):
+        return False if str(path) == "/dev/kvm" else real_exists(path)
+
+    monkeypatch.setattr(MOD.Path, "exists", exists)
+    command = MOD.qemu_command(iso, False, tmp_path / "monitor", tmp_path / "serial")
+    assert "-cpu" not in command
 
 
 def test_missing_installed_disk_fails_before_qemu(tmp_path):
