@@ -5,7 +5,10 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const root = path.resolve(__dirname, '../..');
-const app = fs.readFileSync(path.join(root, 'static/js/client/app.js'), 'utf8');
+// The ordinary suite exercises the worktree. Installed-package gates point this at app.js extracted
+// from /opt/posterchan/resources/app.asar, so a green source test cannot hide a stale Gentoo payload.
+const app = fs.readFileSync(process.env.PC_INSTALLED_APP_JS ||
+  path.join(root, 'static/js/client/app.js'), 'utf8');
 
 function statement(head) {
   const i = app.indexOf(head);

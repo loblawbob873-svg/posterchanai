@@ -29,7 +29,9 @@ const pane = {
   querySelectorAll(s){ return s==='#hf-grid .file-card[data-p]'?[card]:[]; },
 };
 
-const hostfiles = require(path.join(root, 'static/js/client/hostfiles.js'));
+// See open_with_selector_sim.js: installed verification supplies the file extracted from app.asar.
+const hostfiles = require(process.env.PC_INSTALLED_HOSTFILES_JS ||
+  path.join(root, 'static/js/client/hostfiles.js'));
 hostfiles.enter('/home/test/Videos');
 hostfiles.render(pane, {
   view:'tiles', cmp:()=>((a,b)=>String(a.name).localeCompare(String(b.name))),

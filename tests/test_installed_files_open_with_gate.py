@@ -1,0 +1,22 @@
+"""The installed File Manager gate must execute the immutable ASAR payload."""
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+GATE = ROOT / "scripts/check_installed_files_open_with.sh"
+
+
+def test_gate_extracts_both_routing_layers_from_the_installed_asar():
+    src = GATE.read_text(encoding="utf-8")
+    assert "PC_INSTALLED_ASAR:-/opt/posterchan/resources/app.asar" in src
+    assert "www/static/js/client/app.js" in src
+    assert "www/static/js/client/hostfiles.js" in src
+    assert "PC_INSTALLED_APP_JS=" in src
+    assert "PC_INSTALLED_HOSTFILES_JS=" in src
+
+
+def test_simulations_accept_an_installed_payload_override():
+    open_with = (ROOT / "tests/client/open_with_selector_sim.js").read_text(encoding="utf-8")
+    hostfiles = (ROOT / "tests/client/hostfiles_click_sim.js").read_text(encoding="utf-8")
+    assert "process.env.PC_INSTALLED_APP_JS" in open_with
+    assert "process.env.PC_INSTALLED_HOSTFILES_JS" in hostfiles

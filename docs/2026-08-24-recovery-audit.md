@@ -136,6 +136,12 @@ This is evidence from the recovery pass, not a declaration that the whole queue 
   a delta cache that could retain stale records indefinitely; full re-anchoring is now periodic.
 - The same installed run loaded Collabora with HTTP 200, accepted real editor input, saved through
   WOPI, and proved the resulting ODT contained the edit. The disposable Office session was deleted.
+- The installed 1.0.1083 ASAR's own `app.js` and `hostfiles.js` were extracted and executed through
+  the File Manager routing simulations. Cold-start PDF offered Preview, Office and Code; `.conf`
+  offered Code; `.csv` offered Office and Code; encoded Blossom `.conf`, unknown binary and an
+  extensionless project file remained inspectable in Code; and clicking a This Computer MP4 reached
+  the chooser before invoking the native opener. The reusable installed gate is
+  `scripts/check_installed_files_open_with.sh`; 64 focused open-with/Code tests pass.
 - Installed PosterChan Code selected a disposable local Git repository, showed its modified file and
   real diff, restored it through the UI, returned to a clean tree and Explorer, and retained correct
   full-height Code/Terminal sizing across focus changes.
