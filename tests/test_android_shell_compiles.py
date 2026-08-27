@@ -73,8 +73,10 @@ public class Settings {
     "com/klinker/android/send_message/Message.java": """
 package com.klinker.android.send_message;
 public class Message {
+  public Message(String b, String a) { }
   public Message(String b, String a, byte[] image) { }
   public Message(String b, String a, android.graphics.Bitmap image) { }
+  public void addMedia(byte[] raw, String mime, String name) { }
   public void setSave(boolean save) { }
 }
 """,

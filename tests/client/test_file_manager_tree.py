@@ -107,7 +107,26 @@ def test_file_picker_has_bounded_desktop_and_mobile_layouts():
                      ".bp-explorer>.files-grid"):
         assert selector in CSS
     assert "height:min(720px,calc(100vh - 28px))" in CSS
-    assert "grid-template-columns:132px minmax(0,1fr)" in CSS
+    assert ".bp-explorer{display:flex;flex-direction:column}" in CSS
+    assert "grid-template-columns:repeat(2,minmax(0,1fr))" in CSS
+
+
+def test_mobile_picker_identifies_each_file_beside_a_real_preview():
+    picker = APP[APP.index("function blossomPicker(ta, onPick, opts={})"):
+                 APP.index("// ---------- Pics:")]
+    assert 'class="file-card bp-pick-card"' in picker
+    assert 'class="fname"' in picker
+    assert "fmtBytes(b.size||0)" in picker
+    assert "onPick({url, type, ext, name})" in picker
+    assert ".bp-explorer .bp-pick-card .fname" in CSS
+
+
+def test_picker_recovers_video_mime_from_index_or_filename_before_filtering():
+    picker = APP[APP.index("function blossomPicker(ta, onPick, opts={})"):
+                 APP.index("// ---------- Pics:")]
+    assert "if(!b.name && m.name) b.name=m.name" in picker
+    assert "b.type=mimeForName(b.name||'')||b.type||''" in picker
+    assert picker.index("b.type=mimeForName") < picker.index("if(opts.filter")
 
 
 def test_large_file_picker_results_cannot_squash_thumbnails_into_lines():

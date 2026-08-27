@@ -5139,6 +5139,17 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .bp-explorer>.files-grid>.file-card{min-width:0;min-height:96px;align-self:start}
 .bp-explorer>.files-grid>.file-card>img,
 .bp-explorer>.files-grid>.file-card>video{display:block;width:100%;height:96px;min-height:96px;object-fit:cover}
+.bp-explorer .bp-pick-card{display:flex;flex-direction:column;width:100%;padding:0;color:var(--text);
+  font:inherit;text-align:start;cursor:pointer}
+.bp-explorer .bp-pick-preview{display:block;width:100%;height:96px;flex:0 0 96px}
+.bp-explorer .bp-pick-preview>img,.bp-explorer .bp-pick-preview>video,
+.bp-explorer .bp-pick-preview>.file-icon{display:flex;width:100%;height:96px;min-height:96px;object-fit:cover}
+.bp-explorer .bp-pick-card .meta{display:flex;flex-direction:column;align-items:stretch;gap:2px;width:100%;
+  padding:8px;line-height:1.3}
+.bp-explorer .bp-pick-card .fname{display:-webkit-box;min-width:0;overflow:hidden;-webkit-box-orient:vertical;
+  -webkit-line-clamp:2;overflow-wrap:anywhere;font-size:13px;color:var(--text)}
+.bp-explorer .bp-pick-card small{overflow:hidden;color:var(--muted);font-size:10px;white-space:nowrap;
+  text-overflow:ellipsis}
 .bp-explorer .folder-bar{display:flex;flex-direction:column;gap:2px}
 .bp-explorer .folder-chip{width:100%;padding:8px 10px;border:1px solid transparent;border-radius:8px;
   background:none;color:var(--text);text-align:start;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
@@ -5152,12 +5163,15 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
   .bp-head{margin:0 -16px 8px;padding:12px 16px 0}
   .bp-file-picker{width:100%;height:min(88vh,760px)}
   .bp-file-picker .bp-head{padding-bottom:10px}
-  .bp-explorer{grid-template-columns:132px minmax(0,1fr)}
-  .bp-explorer>.bp-folders{padding:6px}
-  .bp-explorer .fx-tree-children{padding-inline-start:7px;margin-inline-start:5px}
-  .bp-explorer .folder-chip{padding:9px 7px}
-  .bp-explorer>.files-grid{padding:7px;grid-template-columns:repeat(auto-fill,minmax(92px,1fr))}
+  .bp-explorer{display:flex;flex-direction:column}
+  .bp-explorer>.bp-folders{flex:0 0 auto;max-height:132px;padding:6px;border-inline-end:0;border-bottom:1px solid var(--line)}
+  .bp-explorer .fx-tree-children{padding-inline-start:0;margin-inline-start:0}
+  .bp-explorer .folder-bar{flex-direction:row;overflow-x:auto;overscroll-behavior-inline:contain;padding-bottom:2px}
+  .bp-explorer .folder-chip{width:auto;min-width:max-content;padding:9px 12px}
+  .bp-explorer>.files-grid{flex:1 1 auto;padding:8px;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+  .bp-explorer>.files-grid>.file-card{min-height:154px}
 }
+@media (max-width:380px){.bp-explorer>.files-grid{grid-template-columns:minmax(0,1fr)}}
 /* file-mode fields in the Make-something sheet */
 .gen-file-btn{margin-top:8px;min-height:46px}
 .gen-file-list{margin-top:6px;word-break:break-all}

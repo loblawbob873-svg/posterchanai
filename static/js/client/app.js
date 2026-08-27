@@ -16266,8 +16266,17 @@
         if(b.sha256===FilesIdx._lastIndexSha) return false;        // the encrypted Files index blob itself
         const m=FilesIdx.meta(b.sha256);
         if(m && m.enc) return false;                               // encrypted ciphertext — not publicly viewable
-        if(!m && /octet-stream/.test(b.type||'')) return false;    // stale index blobs / unnamed binaries
+        if(!m && /octet-stream/.test(b.type||'') && !mimeForName(b.name||'')) return false;
         if(FilesIdx.isEncFolder(FilesIdx.folderOf(b.sha256))) return false;   // ditto for a whole encrypted folder
+        /* Normalize old/typeless Blossom rows before a caller filters them. The Files index knows
+         * the original name and MIME; applying `video/*` to the server's octet-stream placeholder
+         * made an MP4 visible in Files but absent from Texts' Attach Files picker. */
+        if(m){
+          if(!b.name && m.name) b.name=m.name;
+          if((!b.type || /^application\/octet-stream/i.test(b.type)) && m.mime) b.type=m.mime;
+        }
+        if(!b.type || /^application\/octet-stream/i.test(b.type))
+          b.type=mimeForName(b.name||'')||b.type||'';
         if(opts.filter && !opts.filter(b)) return false;            // caller's own narrowing (e.g. media only)
         return true;
       });
@@ -16280,14 +16289,24 @@
       let cur='';
       const draw=()=>{
         const shown=list.filter(b=> cur==='' || (FilesIdx.folderOf(b.sha256)||'')===cur);
-        grid.innerHTML = shown.length ? shown.map(b=>
-          `<div class="file-card" data-url="${enc(b.url)}" data-type="${enc(b.type||'')}">${blobThumb(b)}</div>`).join('')
+        grid.innerHTML = shown.length ? shown.map(b=>{
+          const m=FilesIdx.meta(b.sha256)||{};
+          const ext=extOfBlob(b,m), name=m.name||b.name||downloadName(b,'',ext);
+          const type=(b.type&&!/^application\/octet-stream/i.test(b.type))
+                     ? b.type : (m.mime||mimeForName(name)||b.type||'');
+          /* A picker tile must identify the file, not merely draw it. On a phone two similar video
+           * frames (and every document icon) are otherwise indistinguishable, while the Files view
+           * itself already carries the name and size. Keep the same metadata directly under the
+           * preview and return it to the caller so an MMS part is not named with its blob hash. */
+          return `<button type="button" class="file-card bp-pick-card" data-url="${enc(b.url)}" data-type="${enc(type)}" data-name="${enc(name)}"><span class="bp-pick-preview">${blobThumb(Object.assign({},b,{type}),ext)}</span><span class="meta"><b class="fname">${enc(fileLabel(name,ext,b.size))}</b><small>${enc(fmtBytes(b.size||0))}${type?' · '+enc(type.replace(/;.*/,'')):''}</small></span></button>`;
+        }).join('')
           : `<div class="empty">${cur?'Nothing in this folder.':enc(opts.empty||'No files yet — upload some in the Files tab.')}</div>`;
         _bindThumbFallback(grid);   // same markup as the Files grid, so the same fallback
         grid.querySelectorAll('[data-url]').forEach(el=> el.onclick=()=>{
           const type=el.dataset.type||''; const ext=_MIME_EXT[type]||''; const url=el.dataset.url;
+          const name=el.dataset.name||'';
           close();
-          if(onPick){ try{ onPick({url, type, ext}); }catch(_){} return; }
+          if(onPick){ try{ onPick({url, type, ext, name}); }catch(_){} return; }
           // ...only when the URL doesn't already carry one — the server's listing now includes the
           // extension, and appending unconditionally produced "…/<sha>.png.png" (which still served,
           // but is what every other client shows in the note).

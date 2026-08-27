@@ -537,13 +537,13 @@ class OutgoingMms(unittest.TestCase):
         self.assertIn("pc_th_attach", layout)
         self.assertIn("ACTION_OPEN_DOCUMENT", thread)
         self.assertIn("MediaStore.ACTION_IMAGE_CAPTURE", thread)
-        self.assertIn('new CharSequence[]{"Camera", "Device", "Blossom"}', thread)
+        self.assertIn('new CharSequence[]{"Camera photo", "Device", "Files"}', thread)
         self.assertIn('"texts-blossom:" +', thread)
         self.assertNotIn('.putExtra(HomeActivity.EXTRA_VIEW, "texts")', thread)
         self.assertIn("Theme_Black_NoTitleBar_Fullscreen", thread)
         self.assertIn("VideoView video = new VideoView(this)", thread)
         self.assertIn("play.setOnClickListener(v -> showVideo(p))", thread)
-        self.assertIn("MmsSender.send(this, address, body, raw)", thread)
+        self.assertIn("MmsSender.send(this, address, body, raw,", thread)
         self.assertIn("setUseSystemSending(true)", sender)
         self.assertIn("org.fossify:mmslib:1.0.0", gradle)
 
@@ -558,7 +558,7 @@ class OutgoingMms(unittest.TestCase):
     def test_native_thread_observes_mms_and_uses_shared_subscription_aware_sender(self):
         thread = open(os.path.join(SMS, "ThreadActivity.java"), encoding="utf-8").read()
         self.assertIn("registerContentObserver(Telephony.Mms.CONTENT_URI", thread)
-        self.assertIn("MmsSender.send(this, address, body, raw)", thread)
+        self.assertIn("MmsSender.send(this, address, body, raw,", thread)
         send = thread[thread.index("private void sendMms(String body)") : thread.index("private void messageMenu")]
         self.assertNotIn("new Transaction", send)
 
@@ -589,6 +589,10 @@ class OutgoingMms(unittest.TestCase):
         self.assertIn("SubscriptionManager.getDefaultDataSubscriptionId()", sender)
         self.assertIn("settings.setSubscriptionId(sub)", sender)
         self.assertIn("sendNewMessage", sender)
+        self.assertIn("message.addMedia(raw, type", sender)
+        self.assertIn('return "video/mp4"', sender)
+        self.assertIn('cfg.getInt("maxMessageSize"', sender)
+        self.assertIn("video is too large for this carrier MMS", sender)
         self.assertIn("40_000_000L", sender)
         self.assertIn("8 * 1024 * 1024", sender)
 
@@ -600,13 +604,13 @@ class OutgoingMms(unittest.TestCase):
         self.assertIn("SmsOutbox.claim(getContext(), outbox)", plugin)
         self.assertIn("SyncCrypto.unwrapMasterKey", outbox)
         self.assertIn("SyncCrypto.decrypt(mk, net.getBlob(sha))", outbox)
-        self.assertIn("MmsSender.send(ctx, to, body, imageBytes)", outbox)
+        self.assertIn("MmsSender.send(ctx, to, body, imageBytes,", outbox)
         self.assertIn("if (!claim(ctx, doc)) return null", outbox)
         self.assertIn('req.optBoolean("cancelled", false)', outbox)
         self.assertIn("cancel(ctx, doc)", outbox)
         self.assertIn("if (isCancelled(ctx, doc))", outbox)
         self.assertLess(outbox.index("if (isCancelled(ctx, doc))"),
-                        outbox.index("MmsSender.send(ctx, to, body, imageBytes)"))
+                        outbox.index("MmsSender.send(ctx, to, body, imageBytes,"))
         marker = outbox[outbox.index("private static JSONObject marker") :]
         self.assertIn('if (attachment != null && ok) o.put("pending", true)', marker,
                       "system acceptance is still being reported as final carrier success")

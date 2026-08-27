@@ -20,21 +20,23 @@ def test_attachment_cannot_leak_to_another_recipient():
     assert "clearAttachment(); S.open = key(to);" in JS
 
 
-def test_mms_send_captures_the_displayed_file_and_rejects_non_images():
-    assert "if(file&&!isImageFile(file))return {ok:false,error:'MMS currently supports photos'};" in JS
+def test_mms_send_captures_the_displayed_file_and_accepts_photos_or_videos_only():
+    assert "if(file&&!isMmsFile(file))return {ok:false,error:'MMS supports photos and videos'};" in JS
+    assert 'accept="image/*,video/*"' in JS
     assert "const attachment=S.attach;" in JS
     assert "send(t.address, body, attachment)" in JS
     assert "if(S.attach===attachment)clearAttachment();" in JS
 
 
-def test_texts_attachment_menu_offers_camera_device_and_blossom():
+def test_texts_attachment_menu_offers_camera_device_and_readable_files():
     assert 'id="sms-camera" type="file" accept="image/*" capture="environment"' in JS
     assert 'id="sms-src-camera"' in JS
     assert 'id="sms-src-device"' in JS
     assert 'id="sms-src-blossom"' in JS
-    assert "PC.blossomPicker(null, async ({url,type,ext})" in JS
-    assert "filter:b=>String(b.type||'').startsWith('image/')" in JS
-    assert "acceptFile(new File([blob],name" in JS
+    assert "PC.blossomPicker(null, async ({url,type,ext,name})" in JS
+    assert "filter:b=>/^(?:image|video)\\//" in JS
+    assert "acceptFile(new File([blob],pickedName" in JS
+    assert "title:'📁 Attach photo or video from Files'" in JS
 
 
 def test_native_blossom_launch_opens_picker_in_the_original_conversation():

@@ -7,6 +7,7 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.database.ContentObserver;
+import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
@@ -14,6 +15,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Telephony;
+import android.provider.OpenableColumns;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.text.format.DateUtils;
@@ -90,6 +92,8 @@ public class ThreadActivity extends PcActivity {
     private ListView list;
     private EditText input;
     private Uri attachment;
+    private String attachmentMime = "image/jpeg";
+    private String attachmentName = "attachment";
     private byte[] capturedAttachment;
     private TextView count, name, sub, avatar, context;
     private Msgs adapter;
@@ -328,14 +332,15 @@ public class ThreadActivity extends PcActivity {
     private void pickAttachment() {
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT)
                 .addCategory(Intent.CATEGORY_OPENABLE)
-                .setType("image/*");
+                .setType("*/*")
+                .putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/*", "video/*"});
         try { startActivityForResult(i, PICK_MMS_IMAGE); }
         catch (Throwable t) { say(getString(R.string.sms_attachment_bad)); }
     }
 
     private void chooseAttachmentSource() {
         new AlertDialog.Builder(this).setTitle(R.string.sms_add_attachment)
-                .setItems(new CharSequence[]{"Camera", "Device", "Blossom"}, (dialog, which) -> {
+                .setItems(new CharSequence[]{"Camera photo", "Device", "Files"}, (dialog, which) -> {
                     if (which == 1) { pickAttachment(); return; }
                     if (which == 2) {
                         /* Open the authenticated picker over this exact conversation. */
@@ -406,6 +411,20 @@ public class ThreadActivity extends PcActivity {
                                      | Intent.FLAG_GRANT_WRITE_URI_PERMISSION));
         } catch (Throwable ignored) { }
         attachment = picked;
+        attachmentMime = getContentResolver().getType(picked);
+        if (attachmentMime == null) attachmentMime = "application/octet-stream";
+        attachmentName = "attachment";
+        try (Cursor c = getContentResolver().query(picked,
+                new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                String found = c.getString(0);
+                if (found != null && !found.trim().isEmpty()) attachmentName = found;
+            }
+        } catch (Throwable ignored) { }
+        attachmentMime = MmsSender.normalizedMime(attachmentMime, attachmentName);
+        if (!attachmentMime.startsWith("image/") && !attachmentMime.startsWith("video/")) {
+            attachment = null; say(getString(R.string.sms_attachment_bad)); return;
+        }
         capturedAttachment = null;
         say(getString(R.string.sms_attachment_ready));
     }
@@ -420,18 +439,24 @@ public class ThreadActivity extends PcActivity {
                 byte[] buf = new byte[64 * 1024]; int n, total = 0;
                 while ((n = in.read(buf)) >= 0) {
                     total += n;
-                    if (total > 8 * 1024 * 1024) throw new Exception("picture message is too large");
+                    if (total > 8 * 1024 * 1024) throw new Exception("media message is too large");
                     out.write(buf, 0, n);
                 }
                 raw = out.toByteArray();
             }
-        } catch (Throwable ignored) { }
+        } catch (Throwable problem) {
+            say(problem.getMessage() == null ? getString(R.string.sms_attachment_bad)
+                                             : problem.getMessage());
+            return;
+        }
         if (raw == null || raw.length == 0) { say(getString(R.string.sms_attachment_bad)); return; }
         try {
             /* One transport for native and WebUI sends. MmsSender selects the active SMS/data
              * subscription; this screen's old duplicate omitted it, producing a provider row that
              * remained at Sending on dual-SIM and stale-default devices. */
-            SmsSender.Result result = MmsSender.send(this, address, body, raw);
+            SmsSender.Result result = MmsSender.send(this, address, body, raw,
+                    capturedAttachment != null ? "image/jpeg" : attachmentMime,
+                    capturedAttachment != null ? "camera.jpg" : attachmentName);
             if (!result.ok) { say(result.error == null || result.error.isEmpty()
                     ? getString(R.string.sms_failed) : result.error); return; }
             attachment = null;
@@ -507,11 +532,12 @@ public class ThreadActivity extends PcActivity {
     /** Retry is explicit: automatically replaying a timed-out carrier send can duplicate it. */
     private void retryMms(final SmsMsg m) {
         SmsPart image = null;
-        for (SmsPart p : m.parts) if (p.ct != null && p.ct.startsWith("image/")) { image = p; break; }
+        for (SmsPart p : m.parts) if (p.ct != null && (p.ct.startsWith("image/")
+                || p.ct.startsWith("video/"))) { image = p; break; }
         if (image == null) { say(getString(R.string.sms_attachment_bad)); return; }
         byte[] raw = MmsStore.partBytes(this, image.id, 8 * 1024 * 1024);
         if (raw == null || raw.length == 0) { say(getString(R.string.sms_attachment_bad)); return; }
-        SmsSender.Result result = MmsSender.send(this, m.address, m.body, raw);
+        SmsSender.Result result = MmsSender.send(this, m.address, m.body, raw, image.ct, image.name);
         if (!result.ok) { say(result.error == null || result.error.isEmpty()
                 ? getString(R.string.sms_failed) : result.error); return; }
         // A new outbox row now owns this attempt; remove the old FAILED rendering only after the

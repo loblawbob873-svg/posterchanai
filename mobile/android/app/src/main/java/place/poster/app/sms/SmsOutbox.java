@@ -253,7 +253,9 @@ public final class SmsOutbox {
                         r = new SmsSender.Result();
                         r.error = "cancelled by sender";
                     } else {
-                        r = MmsSender.send(ctx, to, body, imageBytes);
+                        r = MmsSender.send(ctx, to, body, imageBytes,
+                                attachment.optString("mime", "image/jpeg"),
+                                attachment.optString("name", "attachment"));
                     }
                 } catch (Throwable mmsError) {
                     r = new SmsSender.Result();

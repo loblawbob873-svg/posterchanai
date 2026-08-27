@@ -439,6 +439,8 @@ public class SmsPlugin extends Plugin {
         String to = call.getString("to", "");
         String body = call.getString("body", "");
         String b64 = call.getString("data", "");
+        String mime = call.getString("mime", "image/jpeg");
+        String name = call.getString("name", "attachment");
         String outbox = call.getString("outbox", "");
         JSObject o = new JSObject();
         if (to.trim().isEmpty() || b64.isEmpty()) {
@@ -450,7 +452,7 @@ public class SmsPlugin extends Plugin {
         }
         try {
             byte[] raw = Base64.decode(b64, Base64.DEFAULT);
-            SmsSender.Result r = MmsSender.send(getContext(), to, body, raw);
+            SmsSender.Result r = MmsSender.send(getContext(), to, body, raw, mime, name);
             o.put("claimed", true); o.put("ok", r.ok); o.put("error", r.error);
             o.put("sentAt", r.sentAt);
         } catch (Throwable t) {

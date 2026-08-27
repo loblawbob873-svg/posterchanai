@@ -141,7 +141,7 @@
   };
   let blossomLaunch=false;
   function clearAttachment(){ S.attach=null; }
-  function isImageFile(file){ return !!file&&(/^image\//i.test(file.type||'')||/\.(?:jpe?g|png|gif|webp|heic|heif|avif)$/i.test(file.name||'')); }
+  function isMmsFile(file){ return !!file&&(/^(?:image|video)\//i.test(file.type||'')||/\.(?:jpe?g|png|gif|webp|heic|heif|avif|mp4|m4v|mov|webm|3gp)$/i.test(file.name||'')); }
 
   const now = () => Math.floor(Date.now() / 1000);
   const ME = () => PC.ME || {};
@@ -1187,7 +1187,7 @@
 
   async function send(to, body, file){
     if(!to || (!body && !file)) return { ok:false, error:'nothing to send' };
-    if(file&&!isImageFile(file))return {ok:false,error:'MMS currently supports photos'};
+    if(file&&!isMmsFile(file))return {ok:false,error:'MMS supports photos and videos'};
     /* THE RADIO IS IN THIS DEVICE OR IT IS NOT — the ROLE is a different question.
      *
      * This used to ask `isPhone()`, which is "do we hold the SMS role". On a phone that has not
@@ -2275,8 +2275,8 @@
     let file = null;
     const parts = m.parts || [];
     if(parts.length){
-      const p = parts.find(x => isImage(x.ct));
-      if(!p) return {ok:false, error:'MMS currently supports photos'};
+      const p = parts.find(x => isImage(x.ct)||String(x.ct||'').startsWith('video/'));
+      if(!p) return {ok:false, error:'MMS supports photos and videos'};
       const d = await partData(p);
       if(!d || !d.blob)
         return {ok:false, error:(d && d.why) || 'could not read attachment'};
@@ -2339,10 +2339,10 @@
             + (retryable ? `<button class="btn small sms-retry" data-sms-retry="${enc(m.doc)}">Retry</button>` : '')
             + `</div>`;
         }).join('')}</div>
-        ${S.attach?`<div class="sms-attachment-draft"><span>${ICO('image','b-ic')}<b>${enc(S.attach.name||'Photo')}</b><small>${enc(fmtBytes(S.attach.size))} · ready to send as MMS</small></span><button id="sms-attach-clear" aria-label="Remove attached photo">×</button></div>`:''}
+        ${S.attach?`<div class="sms-attachment-draft"><span>${ICO(String(S.attach.type||'').startsWith('video/')?'film':'image','b-ic')}<b>${enc(S.attach.name||'Attachment')}</b><small>${enc(fmtBytes(S.attach.size))} · ready to send as MMS</small></span><button id="sms-attach-clear" aria-label="Remove attachment">×</button></div>`:''}
         <div class="sms-compose">
-          <button class="btn small" id="sms-attach" title="Add photo">${ICO('paperclip','b-ic')}</button>
-          <input id="sms-file" type="file" accept="image/*" hidden>
+          <button class="btn small" id="sms-attach" title="Add photo or video">${ICO('paperclip','b-ic')}</button>
+          <input id="sms-file" type="file" accept="image/*,video/*" hidden>
           <input id="sms-camera" type="file" accept="image/*" capture="environment" hidden>
           <button class="btn small" id="sms-emoji" title="Add emoji" aria-label="Add emoji">${ICO('smile','b-ic')}</button>
           ${(PC.gifEnabled && PC.gifEnabled())?`<button class="btn small" id="sms-gif" title="Add GIF" aria-label="Add GIF">${ICO('film','b-ic')}</button>`:''}
@@ -2364,20 +2364,20 @@
     if(gifBtn) gifBtn.onclick = () => { if(PC.gifPicker) PC.gifPicker(input); };
     const pick = PC.$('#sms-file'), camera = PC.$('#sms-camera'), attachBtn = PC.$('#sms-attach');
     const acceptFile = file => {
-      if(file&&!isImageFile(file)){PC.toast('MMS currently supports photos');return false;}
+      if(file&&!isMmsFile(file)){PC.toast('MMS supports photos and videos');return false;}
       if(file){ S.attach=file; paint(); }
       return !!file;
     };
-    const fromBlossom = () => PC.blossomPicker(null, async ({url,type,ext}) => {
+    const fromBlossom = () => PC.blossomPicker(null, async ({url,type,ext,name}) => {
       try{
-        if(!String(type||'').startsWith('image/')) throw new Error('MMS currently supports photos');
+        if(!/^(?:image|video)\//.test(String(type||''))) throw new Error('MMS supports photos and videos');
         const res=await fetch(url); if(!res.ok)throw new Error('Blossom returned '+res.status);
         const blob=await res.blob();
-        const name=(String(url).split(/[?#]/)[0].split('/').pop()||'blossom-photo')
-                   +(ext&&!String(url).split(/[?#]/)[0].includes('.')?'.'+ext:'');
-        acceptFile(new File([blob],name,{type:type||blob.type||'image/jpeg'}));
-      }catch(e){ PC.toast('could not attach Blossom photo: '+String(e&&e.message||e)); }
-    }, {title:'📁 Attach photo from Files',filter:b=>String(b.type||'').startsWith('image/')});
+        const pickedName=name||((String(url).split(/[?#]/)[0].split('/').pop()||'file')
+                   +(ext&&!String(url).split(/[?#]/)[0].includes('.')?'.'+ext:''));
+        acceptFile(new File([blob],pickedName,{type:type||blob.type||'application/octet-stream'}));
+      }catch(e){ PC.toast('could not attach Blossom media: '+String(e&&e.message||e)); }
+    }, {title:'📁 Attach photo or video from Files',filter:b=>/^(?:image|video)\//.test(String(b.type||''))});
     if(blossomLaunch){blossomLaunch=false;setTimeout(fromBlossom,0);}
     const fromDevice = async () => {
       /* Electron's hidden file input is not reliable when the Texts window has just changed focus
@@ -2386,11 +2386,11 @@
        * crossing IPC, then restored as a real File so every existing MMS/upload path stays shared. */
       if(window.pcHost && pcHost.pickFile){
         try{
-          const chosen=await pcHost.pickFile({images:true,max:32*1024*1024,title:'Add a photo to Texts'});
+          const chosen=await pcHost.pickFile({accept:['image/*','video/*'],max:32*1024*1024,title:'Add a photo or video to Texts'});
           if(!chosen)return false;
           const file=new File([chosen.data],chosen.name,{type:chosen.type});
           return acceptFile(file);
-        }catch(e){ PC.toast('could not attach photo: '+String(e&&e.message||e)); }
+        }catch(e){ PC.toast('could not attach media: '+String(e&&e.message||e)); }
         return false;
       }
       pick.click();
@@ -2401,7 +2401,7 @@
        * account-scoped Files client, and hiding that source made web Texts offer Blossom while the
        * installed app only offered the local disk. `Device` still uses the reliable host dialog. */
       if(PC.blossomPicker && PC.modal){
-        PC.modal('<h3>Add a photo</h3><div class="sms-attach-sources"><button class="btn" id="sms-src-camera">Camera</button><button class="btn" id="sms-src-device">Device</button><button class="btn" id="sms-src-blossom">📁 Files</button></div>', root=>{
+        PC.modal('<h3>Add a photo or video</h3><div class="sms-attach-sources"><button class="btn" id="sms-src-camera">Camera photo</button><button class="btn" id="sms-src-device">Device</button><button class="btn" id="sms-src-blossom">📁 Files</button></div>', root=>{
           root.querySelector('#sms-src-camera').onclick=()=>{PC.closeModal();camera.click();};
           root.querySelector('#sms-src-device').onclick=()=>{PC.closeModal();fromDevice();};
           root.querySelector('#sms-src-blossom').onclick=()=>{PC.closeModal();fromBlossom();};
