@@ -62,7 +62,7 @@ PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-files-explorer-check"
 # The functions lifted out of app.js. Each is matched from `function <name>(` to the line that closes
 # it at the same indentation — app.js indents module-level functions by two spaces, so the closing
 # brace is the first line that is exactly "  }".
-LIFT = ["_fxDetailsRow", "_fxColsHTML", "_fxBarHTML", "_fxBytes", "_fxWhen", "_fxType", "_fxFileGlyph", "_fxIcon",
+LIFT = ["_fxDetailsRow", "_fxColsHTML", "_fxBarHTML", "_fxBindBar", "_fxBytes", "_fxWhen", "_fxType", "_fxFileGlyph", "_fxIcon",
         "_fxView", "_fxSort", "_fxCompare"]
 # Data the lifted functions close over. Same rule: taken verbatim, never restated here.
 LIFT_CONST = ["_FX_COLS", "_FX_KINDS"]
@@ -107,6 +107,8 @@ const enc = s => String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'
 // The drive's search box is part of the lifted toolbar, and its query is module state in app.js.
 // Empty here: this harness measures LAYOUT, and every assertion is about an unfiltered drive.
 let _filesQ = '';
+const $ = (s,r) => (r||document).querySelector(s);
+const $$ = (s,r) => Array.from((r||document).querySelectorAll(s));
 window.ClientSettings = { _v:{filesView:'details', filesSort:{by:'name', dir:1}},
                           get(k,d){ return this._v[k]===undefined?d:this._v[k]; },
                           set(k,v){ this._v[k]=v; } };
@@ -193,6 +195,7 @@ function paint(which){
       + '<div class="fx-home-sec">Everything</div>'
       + tile('🗂','All files','browse the whole drive')
       + '</div></div></div></div>';
+    _fxBindBar(document.querySelector('.fx-main'));
     return;
   }
   const nosel = which === 'synced';
@@ -209,6 +212,7 @@ function paint(which){
     + DROP
     + '<div class="files-grid details" id="bl-grid">'
     + _fxColsHTML(true) + (nosel ? synced() : drive()) + '</div></div></div>';
+  _fxBindBar(document.querySelector('.fx-main'));
 }
 window.__paint = paint;
 paint('drive');
@@ -222,6 +226,11 @@ AUDIT = r"""(() => {
   const vis = el => !!(el && el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden');
   const out = { vw, overflow: document.documentElement.scrollWidth > vw + 1,
                 homeTiles: document.querySelectorAll('.fx-home-tile').length };
+  /* Exercise the real bound control. The toolbar is a child of .fx-main while .fx-explorer is its
+     ancestor; querying down from the pane was why this button rendered and did nothing. */
+  const locations=document.querySelector('#fx-locations-open'),explorer=document.querySelector('.fx-explorer');
+  if(locations&&explorer){ locations.click();out.locationsOpened=explorer.classList.contains('fx-locations-on');
+    explorer.classList.remove('fx-locations-on'); } else out.locationsOpened=false;
 
   /* How many COLUMNS the folder tiles actually landed in, and how wide the tile grid got.
    * "It rendered tiles" was the only thing asked before, and that stayed true while the home was
@@ -413,6 +422,8 @@ async def drive_browser(url):
 
 def judge(label, r, phone, which):
     bad = []
+    if phone and not r.get("locationsOpened"):
+        bad.append(f"[locations-dead] {label}: the Locations button did not open its own drawer")
     if r["overflow"]:
         bad.append(f"[horizontal-overflow] {label}: the page scrolls sideways")
     if which == "home":
