@@ -6379,9 +6379,19 @@
 
   // ---- enter / leave ---------------------------------------------------------------------------
 
+  /* PosterChanOS is the compositor session, not an optional wide-screen presentation.  There is
+   * no Classic desktop underneath it that can launch native apps or recover a managed window.  A
+   * transient narrow renderer measurement (display reconciliation, monitor scale, or an embedded
+   * admin operation repainting its host) therefore must never call exit().  Browser and tablet
+   * Desktop mode retain the width gate; the actual OS keeps its shell and lets the responsive
+   * window clamps below adapt to the available surface. */
+  function isSystemShell(){
+    try{ return !!(window.PCOSShell && PCOSShell.available()); }catch(_){ return false; }
+  }
+
   function enter(){
     if(on) return;
-    if(!fits()){
+    if(!fits() && !isSystemShell()){
       // A tablet held upright is the common case here, and "needs a wider screen" is useless advice
       // when turning the device sideways is the answer.
       const rotatable = Math.max(window.innerWidth, window.innerHeight) >= MIN_WIDTH;
@@ -6773,7 +6783,7 @@
 
   function onResize(){
     if(!on) return;
-    if(!fits()){
+    if(!fits() && !isSystemShell()){
       /* Read with the same default as restore(). An absent preference means Classic on the web;
        * only PosterChanOS itself forces the desktop, above.
      * This is an INVOLUNTARY exit -- the screen got too narrow, or a login gate needs the page --

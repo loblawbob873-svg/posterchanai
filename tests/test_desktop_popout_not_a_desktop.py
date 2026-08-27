@@ -54,6 +54,10 @@ global.window = { innerWidth: %(width)d,
                   location: global.location,
                   ClientSettings: { get:(k,d)=> (k==='osMode' ? %(osmode)s : d),
                                     set:(k,v)=>{ WRITES.push([k,v]); } } };
+if (%(shell)s) {
+  global.window.PCOSShell = { available:()=>true };
+  global.PCOSShell = global.window.PCOSShell;
+}
 global.document = { addEventListener(){}, querySelector(){ return null; },
                     querySelectorAll(){ return []; }, getElementById(){ return null; },
                     createElement(){ return { style:{}, classList:{ add(){}, remove(){} },
@@ -80,7 +84,7 @@ def _src(with_guard=True):
 
 @unittest.skipIf(not NODE, "no node on this node")
 class PopoutIsNotADesktop(unittest.TestCase):
-    def run_os(self, *, search, osmode=True, width=1344, with_guard=True):
+    def run_os(self, *, search, osmode=True, width=1344, with_guard=True, shell=False):
         import tempfile
         with tempfile.TemporaryDirectory(prefix="pc-osjs-") as d:
             mod = Path(d) / "os.js"
@@ -88,6 +92,7 @@ class PopoutIsNotADesktop(unittest.TestCase):
             drv = Path(d) / "drv.js"
             drv.write_text(HARNESS % {"width": width, "search": json.dumps(search),
                                       "osmode": "true" if osmode else "false",
+                                      "shell": "true" if shell else "false",
                                       "mod": json.dumps(str(mod))}, encoding="utf-8")
             r = subprocess.run([NODE, str(drv)], capture_output=True, text=True, timeout=60)
         if r.returncode != 0:
@@ -111,6 +116,11 @@ class PopoutIsNotADesktop(unittest.TestCase):
         """The pre-existing size rule is untouched: MIN_WIDTH still wins."""
         o = self.run_os(search="", width=900)
         self.assertFalse(o["on"])
+
+    def test_real_posterchanos_is_never_replaced_by_classic_at_narrow_width(self):
+        o = self.run_os(search="", osmode=False, width=900, shell=True)
+        self.assertTrue(o["on"],
+                        "the actual PosterChanOS compositor shell fell through to Classic mode")
 
     def test_the_flag_is_not_cleared(self):
         """The popout shares localStorage with the tab that opened it. Writing osMode:false here

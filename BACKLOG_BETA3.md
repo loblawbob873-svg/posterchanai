@@ -54,8 +54,8 @@ test, deployment/package, and relevant real-device check are complete. The insta
 
 - [ ] No PosterChan or native app ever becomes an empty/black managed window after open, close, quit,
       cancel, focus, minimize, resize, monitor handoff, restart, snapping, or Ctrl+Alt+Backspace.
-- [ ] Preview auto-clean/close never exits PosterChanOS Desktop or exposes Classic mode; preserve the
-      owning desktop window, route and focused app, with an installed runtime regression test.
+- [ ] Admin Relay → Preview auto-clean never exits PosterChanOS Desktop or exposes Classic mode;
+      preserve the owning Settings/Admin window, route and focus, with an installed runtime test.
 - [ ] Every app preserves identity, route, DOM state, scroll, forms, terminal session, and media state
       across focus and monitor movement. Moving never opens Social or another unrelated app.
 - [ ] Playing video survives monitor movement at the same playback time/state and fitted scale.

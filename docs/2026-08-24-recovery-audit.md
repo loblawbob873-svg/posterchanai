@@ -130,6 +130,15 @@ This is evidence from the recovery pass, not a declaration that the whole queue 
   and shell 1.0.20260827182039, with `/opt/posterchan/resources/app.asar` owned by the Desktop
   package. The Files/Office/Code interaction itself was run on the earlier shell
   1.0.20260827175951 baseline; subsequent shell-only updates did not replace the Desktop payload.
+- Admin Relay → Preview auto-clean completed its real nondestructive count inside an isolated,
+  authenticated installed 1.0.1084 shell. During that request, forcing the renderer through the
+  narrow-width value produced by display reconciliation reproduced the reported failure exactly:
+  `PCOS.isOn()` changed true → false and `#os-root` disappeared. The real OS is the compositor
+  session and has no usable Classic fallback, but `enter()` and `onResize()` applied the optional
+  browser/tablet width rule to it anyway. They now exempt only a proven `PCOSShell.available()`
+  system shell; web and tablet width gates remain. `check_installed_admin_prune_preview.py` clicks
+  the real dry-run control, injects that resize race while it is active, and requires the Desktop
+  root, Admin route/host and owning managed window to survive. Immutable-package rerun remains open.
 - The installed account gate rendered 29 File Manager folders and 6,000/6,000 account files. Its two
   real sync roots matched relay = decrypted manifest = native disk scan at 11,954 and 5,833 entries,
   with zero skipped files. This run caught and fixed both second-resolution relay page truncation and
