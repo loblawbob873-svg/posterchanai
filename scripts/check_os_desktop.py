@@ -1362,7 +1362,11 @@ TOUCH = r"""(async () => {
   document.dispatchEvent(new PointerEvent('pointermove',
       {bubbles:true, clientX:x0+220, clientY:y0+140, pointerType:'touch'}));
   await sleep(60);
-  document.dispatchEvent(new PointerEvent('pointerup', {bubbles:true, pointerType:'touch'}));
+  /* Release where the synthetic finger actually is. PointerEvent defaults omitted coordinates to
+     (0,0); startDrag quite correctly interpreted that final sample as the top-left snap zone, so
+     this gate reported a huge negative "drag" after testing a snap it never intended to perform. */
+  document.dispatchEvent(new PointerEvent('pointerup',
+      {bubbles:true, clientX:x0+220, clientY:y0+140, pointerType:'touch'}));
   await sleep(60);
   const moved = { dx: parseInt(w.style.left,10) - x0, dy: parseInt(w.style.top,10) - y0 };
   // What the FINGER sees. style.left is layout px and the pointer is in zoomed css px, so the

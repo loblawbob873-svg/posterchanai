@@ -5146,7 +5146,7 @@
   }
   function _ctxAway(e){ if(!e.target.closest || !e.target.closest('.os-ctx')) hideCtx(); }
 
-  function showCtx(x, y, rows){
+  function showCtx(x, y, rows, anchor){
     hideCtx();
     if(!rows.length) return;
     const m = document.createElement('div');
@@ -5154,12 +5154,20 @@
     m.innerHTML = rows.map((r, i) => r.sep ? '<hr>'
       : `<button class="os-ctx-b" data-i="${i}">${enc(r.label)}</button>`).join('');
     desk.appendChild(m);
-    const k = zf();
-    // Clamped so the menu is never opened off the edge it was summoned at — a right-click in the
-    // bottom-right corner is exactly where this happens.
+    /* `clientX/Y` are VIEWPORT coordinates while this menu is absolutely positioned inside the
+     * logical desktop. Body zoom and a shell embedded on a secondary display mean its origin is not
+     * necessarily (0,0); dividing by zoom alone put taskbar menus tens or hundreds of pixels away
+     * from the app that was clicked. Derive both origin and scale from the actual desktop rect.
+     * Taskbar menus anchor above the button, as a real taskbar does; other context menus stay at the
+     * pointer. */
+    const dr=desk.getBoundingClientRect();
+    const sx=dr.width/(desk.offsetWidth||vwL())||zf(), sy=dr.height/(desk.offsetHeight||vhL())||sx;
     const w = m.offsetWidth || 200, h = m.offsetHeight || 80;
-    m.style.left = Math.max(4, Math.min(vwL() - w - 4, x / k)) + 'px';
-    m.style.top = Math.max(4, Math.min(vhL() - TASKBAR - h - 4, y / k)) + 'px';
+    const ar=anchor&&anchor.getBoundingClientRect?anchor.getBoundingClientRect():null;
+    const lx=ar ? (ar.left-dr.left)/sx : (x-dr.left)/sx;
+    const ly=ar ? (ar.top-dr.top)/sy-h-6 : (y-dr.top)/sy;
+    m.style.left = Math.max(4, Math.min((desk.offsetWidth||vwL()) - w - 4, lx)) + 'px';
+    m.style.top = Math.max(4, Math.min((desk.offsetHeight||vhL()) - TASKBAR - h - 4, ly)) + 'px';
     $$('.os-ctx-b', m).forEach(b => b.onclick = () => {
       const r = rows[b.dataset.i | 0];
       hideCtx();
@@ -5474,7 +5482,7 @@
           {label:'Maximize',run:()=>Promise.resolve(pcWM.snap(w.id,'max')).catch(()=>{})},
           {sep:true},
           {label:'Close',run:()=>Promise.resolve(pcWM.close(w.id)).catch(()=>{})}
-        ]);
+        ],b);
         return;
       }
       let key = b.dataset.pin || '',running=null;
@@ -5489,7 +5497,7 @@
         {label:'Close',run:()=>closeWin(running)},{sep:true});
       actions.push({ label: pinned ? 'Unpin from taskbar' : 'Pin to taskbar',
         run: () => setPinned(key.slice(0, cut), key.slice(cut + 1), !pinned) });
-      showCtx(e.clientX, e.clientY, actions);
+      showCtx(e.clientX, e.clientY, actions, b);
     });
     $$('.os-native-max',bar).forEach(b=>b.onclick=e=>{ e.stopPropagation(); Promise.resolve(pcWM.snap(Number(b.dataset.id),'max')).catch(()=>{}); });
     $$('.os-native-close',bar).forEach(b=>b.onclick=e=>{ e.stopPropagation(); Promise.resolve(pcWM.close(Number(b.dataset.id))).catch(()=>{}); });

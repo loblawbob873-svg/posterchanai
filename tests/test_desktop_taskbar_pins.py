@@ -34,6 +34,19 @@ def test_running_task_context_menu_can_move_recover_and_close_windows():
     assert "move position cursor" in SRC
 
 
+def test_taskbar_context_menu_is_anchored_in_the_desktops_scaled_coordinate_space():
+    start = SRC.index("function showCtx(")
+    body = SRC[start:SRC.index("function iconMenu(", start)]
+    assert "desk.getBoundingClientRect()" in body
+    assert "desk.offsetWidth" in body and "desk.offsetHeight" in body
+    assert "ar.left-dr.left" in body and "ar.top-dr.top" in body
+    # Both native and PosterChan task buttons pass the button, not just viewport pointer coordinates.
+    task = SRC[SRC.index("$$('.os-task', bar).forEach(b => b.oncontextmenu"):
+               SRC.index("$$('.os-native-max'", SRC.index("$$('.os-task', bar).forEach(b => b.oncontextmenu"))]
+    assert task.count("],b);") >= 1
+    assert "showCtx(e.clientX, e.clientY, actions, b)" in task
+
+
 def test_start_menu_can_add_and_remove_apps_from_desktop():
     assert "Add ' + label + ' to the desktop" in SRC
     assert "Hide ' + label + ' from the desktop" in SRC
