@@ -75,6 +75,25 @@ live behavior agree.
   payloads, or external evidence. The authoritative worktree has no stashes now, so their former
   contents cannot be recovered or declared present merely from `git stash list`.
 
+## 2026-08-27 Android exact-head gate
+
+- Commit `71c1e9066445cc3f403d429fd2a7d860b234034b` passed Android emulator run
+  `33124229201`: **74/74 tests**, zero failures, errors, or skips; the shell device gate and
+  instrumented gate both returned zero. The report records
+  `ConcordNotificationDeviceTest.roomChannelAndMessageSurviveTheNotificationTapIntent` (0.001s),
+  `MusicBackgroundDeviceTest.aPlayingWebViewTrackKeepsAdvancingAfterHome` (5.357s), and
+  `tabletDesktopStateSurvivesHomeAndRotationInBothTasks` (11.163s).
+- APK run `33124229312` at that exact commit built and published Zapstore version `1.0.1830` and
+  reported certificate publication accepted by all three configured relays. Because `apk-latest`
+  is rolling, exact-commit rerun `33124370945` subsequently replaced it with `1.0.1831`. The
+  currently downloadable APK is 20,406,889 bytes, SHA-256
+  `67cf7dc25edf62f565d981caf3a68b92e3cc70825ffea227f2736c258c9263de`; APK verification reports
+  package `place.poster.app`, versionCode/versionName `1831`/`1.0.1831`, one RSA-2048 signer with
+  certificate SHA-256 `eddf3a7983df49221a5ace0d0ca52c899d34eb88a4155b0829b05c0afc31f342`, and verified v2/v3
+  signatures. The rolling release provenance names the same full commit.
+- These CI/package results do not close physical phone/tablet, Bluetooth playback, real carrier
+  SMS/MMS/APN, or cross-device notification delivery gates.
+
 ## August 24 release ancestry
 
 The current branch contains 162 commits dated August 24. Every one is an ancestor of release commit
