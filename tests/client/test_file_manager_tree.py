@@ -20,8 +20,11 @@ def test_tree_is_real_sidebar_hierarchy_not_unstyled_text():
         assert selector in CSS
 
 
-def test_source_tabs_are_collapsed_into_one_file_manager_tab():
+def test_top_source_tabs_are_removed_in_favor_of_sidebar_navigation():
     render = APP[APP.index("async function renderBlossom()"):
                  APP.index("// Admin tab:")]
-    assert '>Files</button>' in render
-    assert '>This Computer</button>' not in render
+    assert 'class="files-tabs"' not in render
+    assert 'class="ftab' not in render
+    assert "_fxSideHTML()" in render
+    assert 'data-files-mode="ai"' in APP
+    assert 'data-files-mode="admin"' in APP

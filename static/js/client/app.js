@@ -14302,7 +14302,7 @@
      * group being absent, so hiding every Files row shows an empty sheet rather than resurrecting
      * the literal below over the user's own choice. */
     if(rows.length || $('#files-sub .nav-item')) return _filesSheet(rows);
-    return _filesSheet([{ v:'blossom', svg:ICO('flower'), label:'File Manager' },
+    return _filesSheet([{ v:'blossom', svg:ICO('folder'), label:'File Manager' },
                         { v:'__music', svg:ICO('music'),  label:'Music' },
                         { v:'sync',    svg:ICO('refresh'), label:'Folder Sync' }]);
   }
@@ -16875,30 +16875,21 @@
   }
   async function renderBlossom(){
     const feed=$('#feed');
-    feed.innerHTML=`<div class="files-tabs">
-        <button class="ftab${(_filesTab==='public'||_filesTab==='computer')?' active':''}" data-ft="public"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Files</button>
-        ${_standalone()?'':`<button class="ftab${_filesTab==='ai'?' active':''}" data-ft="ai"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg>AI Chat</button>`}
-        ${IS_ADMIN?`<button class="ftab${_filesTab==='admin'?' active':''}" data-ft="admin"><svg class="ic b-ic" aria-hidden="true"><use href="#i-shield"></use></svg>Admin</button>`:''}
-      </div><div id="files-pane"></div>`;
-    /* Clicking the tab you are already on RESETS it to the folder list, the way clicking Files in
-     * the sidebar does. Landing back where you last were is right for navigating INTO something and
-     * wrong for pressing the top-level tab, which reads as "take me back to the start". */
-    $$('.ftab',feed).forEach(b=> b.onclick=()=>{
-      _filesAdminPk=null;
-      if(b.dataset.ft==='public'){ _syncRoot=''; _syncPath=''; _filesFolder=null; _hostOn=false; }
-      /* THE COMPUTER IS A TAB, not a chip buried in a sidebar — "add a Tab at the top for This
-       * Computer". Pressing it goes through the same opener the sidebar chip and the home tile use,
-       * so all three land in the same place on the same directory. */
-      if(b.dataset.ft==='computer'){ _filesTab='computer'; _openHostFiles(); return; }
-      _filesTab=b.dataset.ft; renderBlossom(); });
+    /* One Explorer-style navigation tree replaces the duplicate row of source tabs. */
+    feed.innerHTML='<div id="files-pane"></div>';
     const pane=$('#files-pane',feed);
     // A remembered tab can name one that is no longer drawn (the AI tab, with no server) — the same
     // reason switchView re-checks a view the nav has stopped offering.
     if(_standalone() && _filesTab==='ai') _filesTab='public';
     // A remembered "This Computer" on a build with no filesystem names a tab that is not drawn.
     if(_filesTab==='computer' && !_hostFs()){ _filesTab='public'; _hostOn=false; }
-    if(_filesTab==='admin') return renderBlossomAdmin(pane);
-    if(_filesTab==='ai') return renderAiFiles(pane);
+    if(_filesTab==='admin'||_filesTab==='ai'){
+      pane.innerHTML='<div class="fx-explorer"><div class="fx-side">'+_fxSideHTML()
+        +'</div><div class="fx-main" id="files-special"></div></div>';
+      _fxBindSide(pane);
+      const special=$('#files-special',pane);
+      return _filesTab==='admin'?renderBlossomAdmin(special):renderAiFiles(special);
+    }
     if(_filesTab==='computer') return _renderHostRoot(pane);
     return renderPublicFiles(pane);
   }
@@ -18671,7 +18662,9 @@
         ${folders.map(f=>`<button class="folder-chip${(!_syncRoot&&_filesFolder===f)?' active':''}" data-folder="${enc(f)}">${f==='Music'?'🎵':(FilesIdx.isEncFolder(f)?'🔒':'📁')} ${enc(f)}</button>`).join('')}
         <button class="folder-chip newfolder" id="bl-newfolder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New folder</button>
         ${(!_syncRoot && _filesFolder && _filesFolder!=='Music') ? `<button class="folder-chip delfolder" id="bl-delfolder" title="Delete this folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete “${enc(_filesFolder)}”</button>` : ''}
-      </div>` + _fxSyncedHTML() + _fxDeletedHTML() + `</div></section>` + _fxHostHTML() + `</div>`;
+      </div>` + _fxSyncedHTML() + _fxDeletedHTML() + `</div></section>` + _fxHostHTML()
+      + `${_standalone()?'':`<button class="fx-tree-head${_filesTab==='ai'?' active':''}" data-files-mode="ai"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg><b>AI Chat files</b></button>`}`
+      + `${IS_ADMIN?`<button class="fx-tree-head${_filesTab==='admin'?' active':''}" data-files-mode="admin"><svg class="ic b-ic" aria-hidden="true"><use href="#i-shield"></use></svg><b>Storage admin</b></button>`:''}</div>`;
   }
   /* "This computer", beside the drive's folders and the synced ones — one tree, three sources,
    * which is the whole reason they share a screen instead of having three. */
@@ -18756,6 +18749,9 @@
   }
   function _fxBindSide(root){
     const r = root || document;
+    $$('[data-files-mode]',r).forEach(b=>b.onclick=()=>{
+      _filesAdminPk=null; _filesTab=b.dataset.filesMode; renderBlossom();
+    });
     $$('[data-fxtoggle]',r).forEach(b=>b.onclick=()=>{
       const which=b.dataset.fxtoggle;
       if(which==='blossom')_fxBlossomOpen=!_fxBlossomOpen;

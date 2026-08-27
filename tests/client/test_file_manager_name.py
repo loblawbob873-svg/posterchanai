@@ -10,7 +10,8 @@ def test_blossom_route_is_presented_as_file_manager():
     assert 'data-view="blossom"' in SHELL
     nav = SHELL[SHELL.index('data-view="blossom"'):][:180]
     assert '<span>File Manager</span>' in nav
-    assert "{ v:'blossom', svg:ICO('flower'), label:'File Manager' }" in APP
+    assert 'href="#i-folder"' in nav
+    assert "{ v:'blossom', svg:ICO('folder'), label:'File Manager' }" in APP
 
 
 def test_internal_route_stays_stable_for_saved_windows_and_links():
