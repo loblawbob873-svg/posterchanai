@@ -17734,7 +17734,9 @@
       + `<span class="fx-size">${enc(o.size)}</span>`
       + `<span class="fx-type">${enc(o.type)}</span>`
       + `<span class="fx-mod">${enc(o.when)}</span>`
-      + `<span class="fc-acts">${o.acts || ''}</span></div>`;
+      + `<span class="fc-acts">${o.acts || ''}</span>`
+      + (o.acts ? `<details class="fx-mobile-actions"><summary aria-label="File actions"><span class="fx-more-dots" aria-hidden="true"></span></summary><span class="fc-acts">${o.acts}</span></details>` : '')
+      + `</div>`;
   }
   function _fxBindCols(grid){
     $$('.fx-col', grid).forEach(b => b.onclick = () => { _fxSetSort(b.dataset.sort); renderBlossom(); });
@@ -17759,6 +17761,7 @@
     const up = crumbs.length > 1 ? crumbs[crumbs.length - 2].to : '';
     return `<div class="fx-bar">
       <div class="fx-nav">
+        <button class="fx-nb fx-locations-open" id="fx-locations-open" title="Locations" aria-label="Locations"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg></button>
         <button class="fx-nb" id="fx-back" title="Back" aria-label="Back"${canBack ? '' : ' disabled'}>‹</button>
         <button class="fx-nb" id="fx-up" title="Up one folder" aria-label="Up one folder"${up || crumbs.length > 1 ? '' : ' disabled'} data-to="${enc(up)}">↑</button>
       </div><nav class="fx-crumbs">${crumbs.map((c, i) => (i ? '<span class="fx-sep">›</span>' : '')
@@ -17768,11 +17771,13 @@
              placeholder="🔍 Search files" aria-label="Search files" value="${enc(_filesQ)}">
       <div class="fx-views">
         ${canNewFolder ? `<button class="fx-newfolder" id="bl-newfolder" title="New folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg><span>New folder</span></button>` : ''}
-        <button class="fx-vw${v==='tiles'?' on':''}" data-view="tiles" title="Tiles" aria-label="Tiles">▦</button>
-        <button class="fx-vw${v==='details'?' on':''}" data-view="details" title="Details" aria-label="Details">☰</button>
+        <button class="fx-vw${v==='tiles'?' on':''}" data-view="tiles" title="Tiles" aria-label="Tiles"><svg class="ic b-ic" aria-hidden="true"><use href="#i-grid"></use></svg></button>
+        <button class="fx-vw${v==='details'?' on':''}" data-view="details" title="Details" aria-label="Details"><svg class="ic b-ic" aria-hidden="true"><use href="#i-bars"></use></svg></button>
       </div></div>`;
   }
   function _fxBindBar(pane){
+    { const open=$('#fx-locations-open',pane), explorer=$('.fx-explorer',pane);
+      if(open && explorer) open.onclick=()=>explorer.classList.add('fx-locations-on'); }
     /* SEARCH. The drive outgrew browsing the moment Folder Sync started filing thousands of files
      * into it, and a folder is only findable if you remember which one you put it in.
      *
@@ -18666,7 +18671,7 @@
    * .folder-chip[data-folder] and every handler they had still finds them. */
   function _fxSideHTML(){
     const folders = FilesIdx.folders();
-    return `<div class="fx-tree"><section class="fx-tree-node">
+    return `<div class="fx-side-mobile-head"><b>Locations</b><button class="fx-nb" id="fx-locations-close" aria-label="Close locations"><svg class="ic b-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div><div class="fx-tree"><section class="fx-tree-node">
       <button class="fx-tree-head${(!_hostOn&&!_syncRoot)?' active':''}${_fxMobileSource==='blossom'?' mobile-on':''}" data-fxtoggle="blossom" aria-expanded="${_fxBlossomOpen?'true':'false'}"><span class="chev">${_fxBlossomOpen?'▾':'▸'}</span><svg class="ic b-ic" aria-hidden="true"><use href="#i-flower"></use></svg><b>Blossom</b></button>
       <div class="fx-tree-children${_fxBlossomOpen?'':' hidden'}" data-fxtree="blossom"><div class="folder-bar">
         <button class="folder-chip${(!_syncRoot&&_filesFolder==='')?' active':''}" data-folder=""><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>All</button>
@@ -18759,6 +18764,8 @@
   }
   function _fxBindSide(root){
     const r = root || document;
+    { const close=$('#fx-locations-close',r), explorer=$('.fx-explorer',r);
+      if(close && explorer) close.onclick=()=>explorer.classList.remove('fx-locations-on'); }
     $$('[data-files-mode]',r).forEach(b=>b.onclick=()=>{
       _filesAdminPk=null; _filesTab=b.dataset.filesMode; renderBlossom();
     });

@@ -47,6 +47,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import base64
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -385,6 +386,12 @@ async def drive_browser(url):
                         return 2
                     await js(f"window.__paint({json.dumps(which)})")
                     await asyncio.sleep(0.15)
+                    shots = os.environ.get("PC_CHECK_SHOTS")
+                    if shots:
+                        os.makedirs(shots, exist_ok=True)
+                        shot = await call("Page.captureScreenshot", {"format": "png", "fromSurface": True})
+                        with open(os.path.join(shots, f"files-{w}-{which}.png"), "wb") as fh:
+                            fh.write(base64.b64decode(shot["data"]))
                     r = await js(AUDIT)
                     if r is None:
                         print(f"SKIP  {label}: page did not evaluate")

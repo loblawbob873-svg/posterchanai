@@ -8002,6 +8002,7 @@ html.os-on #upload-badge.upbadge{z-index:333}
 .fx-nb:disabled{opacity:.35;cursor:default}
 .fx-side{border-inline-end:1px solid var(--line);background:var(--panel2);padding:10px;min-width:0;
   max-height:70vh;overflow-y:auto}
+.fx-side-mobile-head,.fx-locations-open{display:none}
 .fx-tree{display:flex;flex-direction:column;gap:4px}
 .fx-tree-node{display:flex;flex-direction:column;gap:2px}
 .fx-tree-head{display:flex;align-items:center;gap:7px;width:100%;padding:8px;border:0;border-radius:8px;
@@ -8023,30 +8024,39 @@ html.os-on #upload-badge.upbadge{z-index:333}
   padding-top:12px;color:var(--muted)}
 .fx-side .folder-chip.delfolder{color:var(--danger)}
 @media(max-width:820px){
-  /* Phone navigation is a compact source switcher, not a desktop sidebar dumped above the files.
-     Blossom, Synced Folders and My Computer occupy one stable row; only the active source exposes
-     its locations in the swipeable row underneath. The file pane therefore keeps the full width. */
+  /* Mobile uses a real LOCATIONS DRAWER. A desktop tree flattened into two horizontal chip rails
+     consumed the top third of the phone and duplicated Synced Folders. Keep the tree hierarchical,
+     reveal it only when asked, and give the files the screen the rest of the time. */
   .fx-explorer{display:block;border:0;border-radius:0;background:transparent;overflow:visible}
-  .fx-side{border:1px solid var(--line);border-radius:12px;background:var(--panel2);
-    max-height:none;padding:6px;margin-bottom:8px;overflow:hidden}
-  .fx-tree{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}
-  .fx-tree-node{display:contents}
-  .fx-tree-node>.fx-tree-head{grid-row:1;min-width:0;justify-content:center;padding:9px 5px}
-  .fx-tree-node>.fx-tree-head .chev{display:none}
-  .fx-tree-node>.fx-tree-head b{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .fx-tree-node>.fx-tree-children{display:none!important;grid-row:2;grid-column:1/-1;
-    padding:6px 0 0;margin:2px 0 0;border:0;border-top:1px solid var(--line);min-width:0}
-  .fx-tree-node>.fx-tree-head.mobile-on + .fx-tree-children{display:flex!important;align-items:center;
-    gap:6px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
-  .fx-tree-node>.fx-tree-head.mobile-on + .fx-tree-children::-webkit-scrollbar{display:none}
-  .fx-tree>.fx-tree-head{grid-column:1/-1;min-height:40px}
-  .fx-main{padding:8px 2px}
-  .fx-side .folder-bar{flex-direction:row;flex-wrap:nowrap;overflow-x:auto;gap:6px;
-    scrollbar-width:none;-webkit-overflow-scrolling:touch}
-  .fx-side .folder-bar::-webkit-scrollbar{display:none}
-  .fx-side .folder-chip{width:auto;flex:0 0 auto;border:1px solid var(--line);border-radius:999px;
-    padding:8px 12px;min-height:36px}
-  .fx-side .folder-chip.newfolder{margin-top:0;border-top:1px solid var(--line);border-radius:999px;padding-top:8px}
+  .fx-side{display:none;position:fixed;z-index:320;inset:0 auto 0 0;width:min(88vw,360px);
+    max-height:none;padding:12px;background:var(--panel);border:0;border-inline-end:1px solid var(--line);
+    box-shadow:18px 0 50px rgba(0,0,0,.7);overflow-y:auto}
+  .fx-explorer.fx-locations-on>.fx-side{display:block}
+  .fx-side-mobile-head{display:flex;align-items:center;justify-content:space-between;position:sticky;
+    top:-12px;z-index:2;margin:-12px -12px 10px;padding:14px;background:var(--panel);
+    border-bottom:1px solid var(--line);font-size:18px}
+  .fx-locations-open{display:inline-flex}
+  .fx-tree{display:flex;flex-direction:column;gap:5px}
+  .fx-tree-node{display:flex}
+  .fx-tree-node>.fx-tree-head{min-height:46px;padding:10px}
+  .fx-tree-node>.fx-tree-head b{font-size:15px}
+  .fx-tree-node>.fx-tree-children{padding-inline-start:18px;margin-inline-start:15px}
+  .fx-side .folder-bar{flex-direction:column;overflow:visible;gap:3px}
+  .fx-side .folder-chip{width:100%;min-height:44px;flex:none;border:1px solid transparent;
+    border-radius:9px;padding:10px 12px}
+  .fx-main{padding:6px 0}
+  .fx-bar{gap:7px;padding:0 2px 10px}
+  .fx-nav{order:1}
+  .fx-crumbs{order:2;flex:1;flex-wrap:nowrap;overflow:hidden}
+  .fx-crumbs .fx-crumb:not(.on),.fx-crumbs .fx-sep{display:none}
+  .fx-crumb.on{max-width:100%;font-size:17px}
+  .fx-views{order:3}
+  .fx-find{order:4!important;flex:1 1 100%;max-width:none;margin-top:2px!important;min-height:44px}
+  .fx-newfolder span{display:none}
+  .fx-newfolder{min-width:42px;justify-content:center}
+  .drop-zone{margin:4px 2px;padding:8px;border-width:1px;border-radius:10px}
+  .dz-inner{flex-direction:row;justify-content:center;flex-wrap:wrap;gap:6px;font-size:13px}
+  .dz-inner>.dz-ic,.dz-inner>.muted{display:none}
 }
 
 /* ---- Synced folders, as roots beside the drive's own folders --------------------------------- */
@@ -8137,6 +8147,7 @@ html.os-on #upload-badge.upbadge{z-index:333}
 .fx-ic{flex:0 0 auto;font-size:17px;line-height:1}
 .fx-size,.fx-type,.fx-mod{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .files-grid.details .file-card.row .fc-acts{display:flex;align-items:center;gap:2px;justify-self:end}
+.fx-mobile-actions{display:none}
 /* Every action is a plain icon button on a row — the tile view positions .del/.copy absolutely over
    the thumbnail, which would drop them out of the row entirely. */
 .files-grid.details .file-card.row .del,
@@ -8186,15 +8197,31 @@ html.os-on #upload-badge.upbadge{z-index:333}
   .folder-chip .fx-n{margin-inline-start:6px}
   /* Type and Modified are the first columns to go: a name and a size are what a phone screen has
      room for, and a truncated date is worse than no date. */
-  .fx-cols,.files-grid.details .file-card.row{grid-template-columns:24px minmax(0,1fr) 74px var(--fx-acts)}
+  .fx-cols,.files-grid.details .file-card.row{grid-template-columns:44px minmax(0,1fr) 66px 44px;gap:4px}
+  .fx-cols{padding-inline:4px}
   .files-grid.details.nosel .fx-cols,
-  .files-grid.details.nosel .file-card.row{grid-template-columns:minmax(0,1fr) 74px var(--fx-acts)}
+  .files-grid.details.nosel .file-card.row{grid-template-columns:minmax(0,1fr) 66px 44px}
   .fx-c-type,.fx-c-modified,.fx-type,.fx-mod{display:none}
+  .files-grid.details .file-card.row>.fc-acts{display:none}
+  .fx-mobile-actions{display:block;position:relative;justify-self:end;z-index:4}
+  .fx-mobile-actions>summary{list-style:none;width:42px;height:42px;border-radius:50%;cursor:pointer;
+    display:grid;place-items:center;color:var(--muted);font-size:24px;line-height:1}
+  .fx-mobile-actions>summary::-webkit-details-marker{display:none}
+  .fx-more-dots{display:block;width:4px;height:4px;border-radius:50%;background:currentColor;
+    box-shadow:0 -7px currentColor,0 7px currentColor}
+  .fx-mobile-actions[open]>summary{background:rgba(var(--accent-rgb),.16);color:var(--text)}
+  .fx-mobile-actions>.fc-acts{display:flex!important;position:absolute;inset-inline-end:0;top:44px;
+    z-index:20;padding:7px;background:var(--panel);border:1px solid var(--line);border-radius:10px;
+    box-shadow:0 12px 30px rgba(0,0,0,.65);gap:4px;min-width:max-content}
+  .fx-mobile-actions>.fc-acts button{position:static!important;display:grid;place-items:center;
+    min-width:42px;min-height:42px;padding:8px!important;background:var(--panel2)!important;
+    border:1px solid var(--line)!important;border-radius:8px!important}
+  .fx-cols .fx-c-acts{display:block}
   /* Everything you tap gets a thumb-sized box. A 27px sort heading and a 27px crumb are the two
      controls this screen is navigated with. */
   .fx-crumb{font-size:15px;max-width:150px;display:inline-flex;align-items:center;min-height:36px}
   .fx-col{min-height:36px}
-  .files-grid.details .file-card.row{min-height:42px}
+  .files-grid.details .file-card.row{min-height:56px;padding:6px 4px}
   .fx-vw{min-height:38px;min-width:42px}
 }
 

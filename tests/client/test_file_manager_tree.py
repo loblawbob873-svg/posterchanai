@@ -23,12 +23,21 @@ def test_tree_is_real_sidebar_hierarchy_not_unstyled_text():
 
 
 def test_mobile_uses_source_switcher_and_only_active_source_locations():
-    assert "grid-template-columns:repeat(3,minmax(0,1fr))" in CSS
-    assert ".fx-tree-node>.fx-tree-head.mobile-on + .fx-tree-children" in CSS
-    assert "display:flex!important" in CSS
-    assert "overflow-x:auto" in CSS
-    assert "_fxMobileSource = which" in APP
-    assert "matchMedia('(max-width:820px)').matches" in APP
+    assert 'id="fx-locations-open"' in APP
+    assert 'id="fx-locations-close"' in APP
+    assert ".fx-explorer.fx-locations-on>.fx-side" in CSS
+    assert "width:min(88vw,360px)" in CSS
+    assert "position:fixed" in CSS
+    assert "explorer.classList.add('fx-locations-on')" in APP
+    assert "explorer.classList.remove('fx-locations-on')" in APP
+
+
+def test_mobile_details_rows_collapse_actions_into_one_menu():
+    assert 'class="fx-mobile-actions"' in APP
+    assert 'summary aria-label="File actions"' in APP
+    assert 'class="fx-more-dots"' in APP
+    assert ".files-grid.details .file-card.row>.fc-acts{display:none}" in CSS
+    assert ".fx-mobile-actions>.fc-acts" in CSS
 
 
 def test_top_source_tabs_are_removed_in_favor_of_sidebar_navigation():
