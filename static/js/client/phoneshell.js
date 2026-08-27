@@ -140,6 +140,7 @@
     if(!st){ host.innerHTML = ''; return; }
     const enc = PC.enc;
     const yes = (b) => b ? 'yes' : 'no';
+    const musicPrefs = PC.musicPhoneSettings && PC.musicPhoneSettings();
     host.innerHTML = `
       <section class="set-card">
         <div class="set-head"><div>
@@ -169,6 +170,12 @@
           <div class="muted small">Different from PosterChan's own Calls screen, which is a call over
             the internet to another Nostr user. This one is the cellular dialer.</div>
 
+          ${musicPrefs ? `<label class="set-stay" style="margin-top:12px"><input
+            type="checkbox" id="ps-autobt"${musicPrefs.autoplayBluetooth()?' checked':''}>
+            Start Music when Bluetooth connects</label>
+          <div class="muted small">Uses the phone's background connection service, so <strong>Stay
+            connected in the background</strong> must also be enabled.</div>` : ''}
+
           <div class="muted small" style="margin-top:12px">
             Battery: these roles are what let Android keep PosterChan running properly in the
             background — a home screen is never a background app, and the messages and phone roles are
@@ -196,6 +203,13 @@
     host.querySelectorAll('input[name="ps-units"]').forEach(r => {
       r.onchange = () => { if(r.checked) setUnits(r.value); };
     });
+    { const box=$('#ps-autobt');
+      if(box && musicPrefs) box.onchange=()=>{
+        musicPrefs.setAutoplayBluetooth(box.checked);
+        PC.toast(box.checked ? 'Bluetooth autoplay on — keep “stay connected” enabled'
+                             : 'Bluetooth autoplay off');
+      };
+    }
 
     async function refresh(){
       const s = await status();

@@ -556,8 +556,9 @@ def test_a_refused_start_is_counted_rather_than_swallowed():
 def test_the_switch_names_what_it_depends_on():
     """Autoplay now rides 'stay connected', which is off by default. An unstated dependency is the
     same silent no-op this feature already was."""
-    i = APPJS.index("Bluetooth autoplay on")
-    assert "stay connected" in APPJS[i:i + 300], \
+    phone = _read(ROOT, "static", "js", "client", "phoneshell.js")
+    i = phone.index("Bluetooth autoplay on")
+    assert "stay connected" in phone[i:i + 300], \
         "the autoplay toast must name its dependency on 'stay connected'"
 
 

@@ -7,7 +7,7 @@ CSS = (ROOT / "static/css/client.css").read_text()
 
 
 def test_music_app_has_one_transport_and_equalizer():
-    body = APP[APP.index("function renderMusicApp(){"):APP.index("function _bindMusicCar", APP.index("function renderMusicApp(){"))]
+    body = APP[APP.index("function renderMusicApp(){"):APP.index("function _musicPhoneSettings", APP.index("function renderMusicApp(){"))]
     assert 'id="ma-shuffle"' in body
     assert 'id="ma-play"' in body
     assert 'id="ma-eq"' in body
@@ -60,3 +60,13 @@ def test_music_car_setting_does_not_expose_debug_details():
     assert 'id="ma-cardiag"' not in APP
     assert 'id="ma-carnote"' not in APP
     assert ".ma-car-note" not in CSS
+
+
+def test_bluetooth_autoplay_is_phone_settings_not_music_chrome():
+    body = APP[APP.index("function renderMusicApp(){"):APP.index("function _musicPhoneSettings")]
+    phone = (ROOT / "static/js/client/phoneshell.js").read_text()
+    assert 'id="ma-autobt"' not in body
+    assert 'id="ma-car"' not in body
+    assert "musicPhoneSettings: _musicPhoneSettings" in APP
+    assert 'id="ps-autobt"' in phone
+    assert "setAutoplayBluetooth(box.checked)" in phone

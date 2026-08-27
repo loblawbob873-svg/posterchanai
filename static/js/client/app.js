@@ -16650,7 +16650,6 @@
         </div>
       </div>
       <div id="ma-plbar"></div>
-      <div class="ma-car hidden" id="ma-car"></div>
       <input class="input ma-q" id="ma-q" type="search" autocomplete="off"
              placeholder="Search your library" aria-label="Search your library">
       <div class="music-list" id="ma-lib"><div class="spinner"></div></div></div>`;
@@ -16722,7 +16721,6 @@
      * applied to old libraries — and re-adding the files is the same repair with nothing that
      * deletes a blob. Its helpers (_musicBySrcName / _musicReplaceOriginals) and
      * PCPlaylists.replaceTrack went with it rather than being left as dead code. */
-    _bindMusicCar($('#ma-car',feed));
     // The same scrubber the floating widget uses — one implementation, so the two cannot drift.
     MusicPlayer.bindSeek($('#ma-seek',feed));
     MusicPlayer._tickApp();   // paint the position immediately: entering mid-track must not read 0:00
@@ -16737,26 +16735,14 @@
           _renderMusicList(lib, null, _musicQ, sel ? _plTracks(_musicPl) : null); _musicAppNow(); }; } }
     MusicPlayer.onChange=_musicAppNow;   // the floating player is the single source of truth
   }
-  /* The APK-only Bluetooth autoplay setting. Native counters remain available through the plugin
-   * for support logs; a normal player screen should not expose implementation diagnostics. */
-  function _bindMusicCar(row){
-    if(!row) return;
-    if(!_capPlugin('MusicControls','setOptions')) return;   // browser / desktop: nothing to configure
-    row.classList.remove('hidden');
-    row.innerHTML=`<label class="ma-car-sw"><input type="checkbox" id="ma-autobt"${MusicPlayer.autoplayBT()?' checked':''}>
-        <span>Start playing when a Bluetooth device connects</span></label>`;
-    const cb=$('#ma-autobt',row);
-    if(cb) cb.onchange=()=>{ MusicPlayer.setAutoplayBT(cb.checked);
-      // Said out loud, because the limitation is not guessable: the service only exists while the
-      // player does, so a phone with music CLOSED has nothing to resume when the car connects.
-      /* The old wording was "the player has to be open (paused is fine)", which was true and was the
-       * whole complaint: a car finds the app CLOSED, so the feature could never fire when it was
-       * wanted. With the listener moved to StayAwakeService it works closed — but only while "stay
-       * connected" is on, and that is off by default. Naming the dependency is the difference
-       * between a feature and a silent no-op. */
-      toast(cb.checked ? 'Bluetooth autoplay on — needs “stay connected” on too, or nothing is '
-                       + 'listening while the app is closed'
-                       : 'Bluetooth autoplay off'); };
+  /* Bluetooth connection behaviour is a PHONE preference, not player chrome. User Settings asks
+   * through this narrow bridge so the Music screen keeps its scarce mobile height for the library. */
+  function _musicPhoneSettings(){
+    if(!_capPlugin('MusicControls','setOptions')) return null;
+    return {
+      autoplayBluetooth: () => MusicPlayer.autoplayBT(),
+      setAutoplayBluetooth: on => MusicPlayer.setAutoplayBT(!!on),
+    };
   }
   // Mirror the player's state into the app's header. Cheap, and it no-ops when the app isn't mounted
   // (the window may be closed while music keeps playing — that is the point of a floating player).
@@ -34762,6 +34748,7 @@
       seek: (frac) => { if(_audioEl && isFinite(_audioEl.duration) && _audioEl.duration > 0)
                           _audioEl.currentTime = Math.max(0, Math.min(1, frac)) * _audioEl.duration; },
     }),
+    musicPhoneSettings: _musicPhoneSettings,
     mdToHtml, uploadEncFile, encFileUrl, deleteBlobQuiet, filesIdx: () => FilesIdx,
     get ME(){ return ME; }, get CFG(){ return CFG; }, get VIEW(){ return VIEW; },
     /* …AND A SETTER, because a sub-module opening a view of its own has to be able to say so.
