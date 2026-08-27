@@ -43,6 +43,13 @@ def test_delayed_prepend_preserves_the_visible_message_anchor():
     assert "Number(row.offsetTop)" in preserve
 
 
+def test_delayed_media_growth_preserves_the_visible_message_anchor():
+    watcher = JS[JS.index("function viewportAnchor("):JS.index("function removeMessageRow(")]
+    assert "scroller.addEventListener('scroll',remember" in watcher
+    assert "el.dataset.messageId===anchor.id" in watcher
+    assert "Number(row.offsetTop)" in watcher
+
+
 @pytest.mark.skipif(not NODE, reason="node is unavailable")
 def test_delayed_history_and_media_execute_the_shipped_scroll_contract():
     result = subprocess.run([NODE, str(ROOT / "tests/client/concord_scroll_runtime.mjs")],

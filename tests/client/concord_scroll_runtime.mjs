@@ -15,8 +15,10 @@ function fn(head){
 
 const timers=[];
 const storage=new Map();
+const listeners={};
 const box={dataset:{},scrollTop:0,scrollHeight:100,clientHeight:40,isConnected:true,
-  querySelector(){return content;},querySelectorAll(){return rows;}};
+  querySelector(){return content;},querySelectorAll(){return rows;},
+  addEventListener(type,fn){listeners[type]=fn;}};
 const content={};
 let rows=[];
 let resizeCallback=null;
@@ -32,7 +34,7 @@ vm.createContext(context);
 vm.runInContext([
   fn('function readScroll('),fn('function writeScroll('),fn('function setProgrammaticScroll('),
   fn('function repaintScrollTop('),fn('function preserveChatScroll('),
-  fn('function enterChatBottom('),fn('function watchPinnedRoomGrowth('),
+  fn('function enterChatBottom('),fn('function viewportAnchor('),fn('function watchPinnedRoomGrowth('),
   'globalThis.api={readScroll,writeScroll,preserveChatScroll,enterChatBottom,watchPinnedRoomGrowth};'
 ].join('\n'),context);
 
@@ -54,8 +56,14 @@ if(box.scrollTop!==1400)throw Error('delayed media growth moved pinned room away
 
 // Once the reader deliberately scrolls up, later media must not drag them down.
 const state=context.api.readScroll('room:general');state.pinned=false;state.top=275;
-box.scrollTop=275;box.scrollHeight=1800;resizeCallback();
-if(box.scrollTop!==275)throw Error('delayed media destroyed deliberate scroll position');
+rows=[{dataset:{messageId:'reading'},offsetTop:300,offsetHeight:40}];
+box.scrollTop=275;if(listeners.scroll)listeners.scroll();
+// An attachment above the visible message hydrates and adds 240px.
+rows[0].offsetTop=540;box.scrollHeight=1800;resizeCallback();
+if(box.scrollTop!==515)throw Error('delayed media replaced the message being read');
+// Growth below the anchor cannot move it.
+box.scrollHeight=2000;resizeCallback();
+if(box.scrollTop!==515)throw Error('media below the reader moved the viewport');
 
 // Backfilled history is prepended. Preserve the visible message, not its obsolete pixel offset.
 rows=[{dataset:{messageId:'visible'},offsetTop:300,offsetHeight:40}];

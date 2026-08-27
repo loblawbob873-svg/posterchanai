@@ -71,10 +71,19 @@
     } });
   }
   function restoreChatScroll(){ const key=scrollKey(),st=readScroll(key),later=window.requestAnimationFrame||((f)=>setTimeout(f,0)); later(()=>{ const box=document.querySelector('.cc-messages'); if(box)setProgrammaticScroll(box,st.pinned!==false?box.scrollHeight:Number(st.top)||0,()=>{st.top=box.scrollTop;st.height=box.scrollHeight;writeScroll(key,st);}); }); }
+  function viewportAnchor(scroller){
+    if(!scroller||!scroller.querySelectorAll)return null;
+    const top=Number(scroller.scrollTop)||0,row=[...scroller.querySelectorAll('.cc-message[data-message-id]')]
+      .find(el=>(Number(el.offsetTop)||0)+(Number(el.offsetHeight)||0)>top);
+    return row&&row.dataset&&row.dataset.messageId?{id:row.dataset.messageId,gap:(Number(row.offsetTop)||0)-top}:null;
+  }
   function watchPinnedRoomGrowth(scroller){
     if(!scroller||typeof ResizeObserver==='undefined')return;
     const key=scrollKey(),content=scroller.querySelector('.cc-message-list')||scroller;
-    const observer=new ResizeObserver(()=>{const st=readScroll(key);if(st.pinned===false||!scroller.isConnected||scrollKey()!==key){if(!scroller.isConnected)observer.disconnect();return;}setProgrammaticScroll(scroller,scroller.scrollHeight,()=>{st.top=scroller.scrollTop;st.height=scroller.scrollHeight;writeScroll(key,st);});});
+    let anchor=viewportAnchor(scroller);
+    const remember=()=>{anchor=viewportAnchor(scroller);};
+    if(scroller.addEventListener)scroller.addEventListener('scroll',remember,{passive:true});
+    const observer=new ResizeObserver(()=>{const st=readScroll(key);if(!scroller.isConnected||scrollKey()!==key){if(!scroller.isConnected)observer.disconnect();return;}if(st.pinned!==false){setProgrammaticScroll(scroller,scroller.scrollHeight,()=>{st.top=scroller.scrollTop;st.height=scroller.scrollHeight;writeScroll(key,st);remember();});return;}/* Decrypted images and link cards can gain height above an unpinned reader long after render. A fixed pixel offset would replace the message in view, so restore the last visible row and its viewport gap. Growth below it naturally produces the same offset. */const row=anchor&&[...scroller.querySelectorAll('.cc-message[data-message-id]')].find(el=>el.dataset&&el.dataset.messageId===anchor.id),top=row?Math.max(0,(Number(row.offsetTop)||0)-anchor.gap):scroller.scrollTop;setProgrammaticScroll(scroller,top,()=>{st.top=scroller.scrollTop;st.height=scroller.scrollHeight;writeScroll(key,st);remember();});});
     observer.observe(content);
   }
   function removeMessageRow(id){ const box=document.querySelector('.cc-messages'),row=[...document.querySelectorAll('.cc-message[data-message-id]')].find(el=>el.dataset.messageId===id); if(!box||!row)return false; const key=scrollKey(),st=readScroll(key),top=box.scrollTop,height=box.scrollHeight,above=(Number(row.offsetTop)||0)+(Number(row.offsetHeight)||0)<=top; row.remove(); const later=window.requestAnimationFrame||((f)=>setTimeout(f,0)); later(()=>{ if(!box.isConnected)return; const lost=Math.max(0,height-box.scrollHeight); box.scrollTop=st.pinned!==false?box.scrollHeight:(above?Math.max(0,top-lost):top);st.top=box.scrollTop;st.height=box.scrollHeight;writeScroll(key,st); }); return true; }
