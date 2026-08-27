@@ -1,7 +1,11 @@
 from pathlib import Path
+import shutil
+import subprocess
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 JS = (ROOT / "static/js/client/concord.js").read_text()
+NODE = shutil.which("node") or shutil.which("nodejs")
 
 
 def test_every_room_repaint_restores_bottom_or_the_users_saved_position():
@@ -30,3 +34,11 @@ def test_live_append_preserves_exact_offset_after_user_scrolls_up():
     assert "top+(box.scrollHeight-height)" not in preserve
     assert "function repaintScrollTop(pinned,top,scrollHeight)" in JS
     assert "pinned!==false?scrollHeight" in JS
+
+
+@pytest.mark.skipif(not NODE, reason="node is unavailable")
+def test_delayed_history_and_media_execute_the_shipped_scroll_contract():
+    result = subprocess.run([NODE, str(ROOT / "tests/client/concord_scroll_runtime.mjs")],
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "delayed scroll behavior holds" in result.stdout
