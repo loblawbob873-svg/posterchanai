@@ -9,12 +9,35 @@
 # always replace the process. The launcher serializes startup, removes dead singleton locks, and
 # proves that the replacement surfaces mapped.
 set -u
-pattern='[/]opt/posterchan/'
 # The launcher's path, overridable so this script can be RUN by a test rather than read by one.
 # The default is absolute on purpose: this is driven from a key binding and from sway, neither of
 # which is guaranteed a useful PATH.
 : "${PC_SHELL_START:=/usr/local/bin/pc-shell-start}"
-pids=$(pgrep -f "$pattern" 2>/dev/null)
+# The update acknowledgement supplies the exact process that owns the canonical singleton.  The
+# keyboard shortcut has no caller PID, so it discovers candidates, then applies the same strict
+# identity check.  Never pattern-kill /opt/posterchan: installed diagnostic instances deliberately
+# run that executable too, in a private singleton/compositor domain.
+requested=${1:-}
+case "$requested" in ''|*[!0-9]*) requested='' ;; esac
+[ -n "$requested" ] && candidates=$requested || candidates=$(pgrep -f '[/]opt/posterchan/posterchan-desktop' 2>/dev/null || :)
+pids=''
+for pid in $candidates; do
+	[ -r "/proc/$pid/cmdline" ] || continue
+	cmd=$(tr '\000' ' ' < "/proc/$pid/cmdline" 2>/dev/null || :)
+	case "$cmd" in
+		*--pc-diagnostic-token=*|*--pc-diagnostic-profile=*|*--pc-diagnostic-swaysock=*) continue ;;
+	esac
+	case "$cmd" in
+		/opt/posterchan/posterchan-desktop\ *--shell*) pids="$pids $pid" ;;
+		*) [ "${PC_SHELL_TEST_ALLOW_PID:-}" = 1 ] && pids="$pids $pid" ;;
+	esac
+done
+
+# An explicit PID that is gone or is not the canonical shell is a fail-closed request.  Starting a
+# replacement anyway could race a live singleton we intentionally refused to target.
+if [ -n "$requested" ] && [ -z "$pids" ]; then
+	exit 64
+fi
 
 if [ -n "$pids" ]; then
 	# Stop it and fall through to the full launcher, which owns stale-lock

@@ -19,7 +19,8 @@ def test_every_surface_must_report_idle_before_canonical_restart():
     assert "_handoffReady.has(Number(w.webContents.id))" in MAIN
     assert "pending.pending.delete(e.sender.id)" in MAIN
     assert "if(pending.pending.size) return true" in MAIN
-    assert "'/usr/local/bin/pc-shell-restart'" in MAIN
+    assert "'/usr/local/bin/pc-shell-restart',[String(process.pid)]" in MAIN
+    assert "if(!SHELL_MODE || diagnostic || _updateRestart)" in MAIN
     assert "updateIdle: (token)" in PRELOAD
 
 

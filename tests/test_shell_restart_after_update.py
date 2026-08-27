@@ -96,12 +96,13 @@ class ShellRestartTellsAReloadFromAReplacement(unittest.TestCase):
         with open(os.path.join(self.tmp, "pids.txt"), "w") as fh:
             fh.write(text + ("\n" if text else ""))
 
-    def _run(self, script=SCRIPT):
+    def _run(self, script=SCRIPT, args=()):
         env = dict(os.environ)
         env["PATH"] = self.bin + os.pathsep + env["PATH"]
         env["PC_TEST_DIR"] = self.tmp
         env["PC_SHELL_START"] = os.path.join(self.bin, "pc-shell-start")
-        return subprocess.run(["sh", script], env=env, capture_output=True,
+        env["PC_SHELL_TEST_ALLOW_PID"] = "1"
+        return subprocess.run(["sh", script, *map(str, args)], env=env, capture_output=True,
                               text=True, timeout=60)
 
     def _log(self, name):
@@ -162,6 +163,31 @@ class ShellRestartTellsAReloadFromAReplacement(unittest.TestCase):
         self._run()
         self.assertFalse(self._ticked())
         self.assertTrue(self._relaunched())
+
+    def test_discovered_diagnostic_is_never_stopped(self):
+        proc = subprocess.Popen([
+            sys.executable, "-c", "import time; time.sleep(120)",
+            "--pc-diagnostic-token=diagnostic12",
+            "--pc-diagnostic-profile=/tmp/pc-installed-diagnostic.diagnostic12/profile",
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.proc = proc
+        self._pids(str(proc.pid))
+        result = self._run()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNone(proc.poll(), "canonical restart killed the private diagnostic")
+        self.assertTrue(self._relaunched(), "no canonical shell existed, so one should be started")
+
+    def test_explicit_diagnostic_pid_fails_closed_without_starting_or_stopping(self):
+        proc = subprocess.Popen([
+            sys.executable, "-c", "import time; time.sleep(120)",
+            "--pc-diagnostic-token=diagnostic12",
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.proc = proc
+        self._pids(str(proc.pid))
+        result = self._run(args=(proc.pid,))
+        self.assertEqual(result.returncode, 64)
+        self.assertIsNone(proc.poll(), "an explicit diagnostic PID was terminated")
+        self.assertFalse(self._relaunched(), "a refused PID must not race the live singleton")
 
     # ---- the two copies -----------------------------------------------------------------------
     def test_both_copies_of_the_helper_are_the_same_file(self):

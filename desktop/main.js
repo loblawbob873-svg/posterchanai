@@ -1100,7 +1100,10 @@ function scopedWindows(e, rows){
 let _shellRecoveryWired = false;
 let _updateRestart = null;
 function requestSafeShellRestart(){
-  if(!SHELL_MODE || _updateRestart) return false;
+  /* A verifier owns a private singleton/compositor domain and is never the installed desktop.
+   * It may observe an updated ASAR copied underneath it, but it must neither acknowledge nor
+   * initiate the canonical lifecycle. */
+  if(!SHELL_MODE || diagnostic || _updateRestart) return false;
   const targets=Array.from(_shellSurfaces.values()).map(r=>r&&r.browser)
     .filter(w=>w&&!w.isDestroyed()&&_handoffReady.has(Number(w.webContents.id)));
   if(!targets.length) return false;
@@ -1119,7 +1122,8 @@ ipcMain.handle('pc:shell:update-idle',(e,token)=>{
   /* The shipped helper owns TERM, singleton-lock cleanup, canonical environment recovery and the
    * proof that both replacement surfaces mapped. Never duplicate that fragile sequence here. */
   setTimeout(()=>{ try{ const child=require('child_process').spawn(
-    '/usr/local/bin/pc-shell-restart',[],{detached:true,stdio:'ignore',env:process.env});child.unref();
+    '/usr/local/bin/pc-shell-restart',[String(process.pid)],
+    {detached:true,stdio:'ignore',env:process.env});child.unref();
   }catch(e){console.warn('[update restart]',e&&e.message||e);} },250);
   return true;
 });
