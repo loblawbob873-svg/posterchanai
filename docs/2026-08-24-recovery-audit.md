@@ -23,7 +23,7 @@ live behavior agree.
 | IndexedDB cursor safety | App callbacks never await inside a live cursor transaction | `tests/client/test_idb_cursor_never_awaits.py` |
 | Texts history resume | Incomplete migration resumes after reconnect | `sms_sim.js`, `test_sms_rescan.py`, `test_sms_attachments.py` |
 | Packaged email attachments | Download links bind to the configured instance, never the WebView/Electron origin | `test_mobile_mail_reader.py`, `check_mail_mobile.py` |
-| Native window ownership | External/native windows use unified focus and placement handling. On final installed 1.0.980, the real Telegram frame restored/focused its XWayland surface; clicking an overlapping PosterChan window then stashed Telegram in the compositor and focused the shell, so it could not remain on top. A real title-bar drag handed the same Telegram con_id left → right → left across renderer processes with exactly one paired frame and no HTML/Social window. A quick edge drag displayed the snap ghost, snapped both the HTML frame and Telegram surface to the right half at matching widths, and restored its prior geometry/state afterward. All three installed checks were rerun after packaging, then the diagnostic instance was stopped and the canonical launcher restored | `check_installed_native_focus.py`, `check_installed_native_handoff.py`, `check_installed_native_snap.py`; exact-package runtime pass plus 59 focus/WM tests, 33 handoff tests with 5 subtests, and 31 snap/native tests |
+| Native window ownership | External/native windows use unified focus and placement handling. Installed 1.0.980 proved Telegram focus, snap and same-con-id cross-renderer handoff. Later focus work stopped treating an ordinary overlapping managed window as a reason to park native pixels; when parking is explicitly required, the frame retains a bounded captured preview or a branded nonblack fallback instead of an empty black body. Installed checks now require an explicitly disposable app identity/PID rather than selecting an arbitrary Firefox/Telegram window | `check_installed_native_focus.py`, `check_installed_native_handoff.py`, `check_installed_native_snap.py`, `test_native_stash_fallback_runtime.py`; historical 1.0.980 interaction plus current package/runtime gates |
 | Feed reconnect | Timeline waits for a usable relay and retries one unanswered EOSE | `test_feed_asks_a_socket_that_can_answer.py` |
 | Gentoo desktop delivery | Overlay pins an immutable, checksummed release tarball | `test_gentoo_overlay_pins_resolve.py`, `test_sync_updates_desktop_overlay.py` |
 
@@ -126,11 +126,31 @@ This is evidence from the recovery pass, not a declaration that the whole queue 
 | WM black-output / monitor coverage | `check_installed_shell_surfaces.py` requires exactly one visible, full-geometry, package-backed shell surface on every active output. Desktop 1.0.1095 passed with two 3840×2560 outputs and two surfaces | Cold start without inherited `SWAYSOCK` remains the disruptive recurrence gate |
 | Native focus/handoff/snap | Installed focus, handoff and snap scripts bind actions to exact compositor and renderer identities | Disposable Firefox/Telegram windows remain required; never target an arbitrary user's window |
 
-- Desktop 1.0.1083 and shell 1.0.20260827182039 are installed on both the dual-monitor desktop and
-  laptop from the public Gentoo overlay. The immutable tarball checksum was verified before the
-  overlay was published; the diagnostic shell was removed afterward and the canonical no-CDP shell
-  restored.
-- Desktop workflow 33100871080 completed successfully at `eb2dea16`. Both the rolling release and
+### Desktop 1.0.1106 / shell 1.0.20260827221110 reconciliation
+
+This is the requirement-by-requirement state at the current package boundary. “Included” means the
+immutable payload contains the tested implementation; it does not silently promote an older or
+browser-only interaction into a current installed pass.
+
+| Release-gate requirement | Verified through current package | Still open |
+|---|---|---|
+| Concord behavior | Source/browser room, send, reply, reaction, scroll and responsive suites remain green; the current Desktop artifact includes the later managed-workspace sizing fix | Live two-identity send/reply/react/mention/moderation/attachment/Webxdc and current-package installed interaction |
+| Responsive Concord | Browser phone/tablet/desktop sizing and managed-window fill have deterministic coverage | Physical phone/tablet rotation and the complete current-package navigation matrix |
+| App isolation | Ownership tests cover lazy modules, route replacement, focus preservation and Terminal/Social snap geometry; Concord is kept inside its owning Messages frame | Exhaustive installed 1.0.1106 click/focus/scroll sequence across every named app |
+| Files / Blossom | Desktop 1.0.1105 Files release is an ancestor of 1.0.1106; installed ASAR contains Locations and immutable package gates cover open-with/upload/native routing | Authenticated index/sync completeness and interactive upload/open-with rerun on 1.0.1106 |
+| Code | Disposable installed Git/diff/restore and Code/Terminal focus passed on the recorded earlier package; implementation and package gates remain in 1.0.1106 | Repeat the authenticated/disposable-repository interaction against 1.0.1106 |
+| PosterChanOS / native windows | 1.0.1106 includes atomic handoff, nonblack stash fallback and the zero-screen-coordinate left-snap drag fix. Local exact Terminal-left/Firefox-right coverage passed 1600/1280/1024, three cycles each; native probes now require a disposable app ID/PID | Final installed disposable Firefox/Telegram focus, preview, restore and cross-output repetition on 1.0.1106; do not infer this from ASAR markers |
+| Texts / Social | SMS resume/attachment and Social route/scroll-state suites remain covered. The 1600px Social wheel red was a headless verifier defect: the real wheel reached the exact writable feed unprevented; the corrected full desktop matrix passes | Carrier SMS/MMS and live offline/reply/thread preservation remain external gates |
+| Release propagation | Desktop workflow 33121179501 succeeded for Linux/Windows/macOS and publish at target `1cfd14462`; immutable 1.0.1106 Linux asset and Manifest both report 152,164,017 bytes. The desktop reports Desktop 1.0.1106 and shell 1.0.20260827221110 | Current web revision, physical Android installation, carrier/external services and physical USB boot remain separate gates |
+| Installed account gate | Earlier installed Files/sync completeness and real Collabora WOPI edit/save/readback remain valid historical evidence | Authenticated loopback-CDP rerun on Desktop 1.0.1106 |
+
+- The dual-monitor desktop currently reports Desktop 1.0.1106 and shell
+  1.0.20260827221110 from the Gentoo packages. `/opt/posterchan/resources/app.asar` is 15,615,681
+  bytes, SHA-256 `cbc81f3a3e8c2c55886cd4d04d41d5fb37614c265735a0722efa4befeb3ede73`, and is owned by
+  the Desktop package. Read-only marker checks found the zero-screen-coordinate Terminal drag fix,
+  the nonblack native-stash fallback and File Manager Locations implementation in that installed
+  ASAR. This proves installed payload identity, not that every interaction below was rerun on 1.0.1106.
+- Earlier Desktop workflow 33100871080 completed successfully at `eb2dea16`. Both the rolling release and
   immutable `desktop-v1.0.1083` release expose the same 152,166,782-byte Linux tarball, SHA-256
   `9ef5c0d19148f4e309404f0a3ae9099435a630710d200e7d8592544fd86f83dd`. The public overlay head is
   `b13fd0d4991212f264b53b22375d653a84694d91`; its 1.0.1083 ebuild points at the immutable tag and
