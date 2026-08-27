@@ -124,9 +124,9 @@ class TheEditorOpensAndSavesThem(unittest.TestCase):
         that click as a choice rather than replacing it; `openHere` is what keeps the old answer on
         the list, and without it this feature is a removal."""
         self.assertTrue("openhost" not in self.host, "an Open button came back on a local row")
-        self.assertTrue("u.openFile(p, nm, openHere)" in self.host,
+        self.assertTrue("u.openFile(p, nm, openHere, mime)" in self.host,
                         "clicking a local file does not offer the editor")
-        self.assertTrue("openFile: (path, name, openHere) =>" in self.app,
+        self.assertTrue("openFile: async (path, name, openHere, mime) =>" in self.app,
                         "Files never passes an opener to the host view")
 
     def test_the_host_view_does_not_decide_what_text_is(self):
