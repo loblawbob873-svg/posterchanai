@@ -20515,7 +20515,16 @@
   async function _walkEntries(entries){
     const out=[];
     async function walk(entry){
-      if(entry.isFile){ await new Promise(res=>entry.file(f=>{ out.push(f); res(); }, ()=>res())); }
+      if(entry.isFile){ await new Promise(res=>entry.file(f=>{
+        /* FileSystemEntry keeps the directory path on the ENTRY, not on the File it returns.
+         * `webkitRelativePath` is therefore empty for a dropped directory even though it is set for
+         * the equivalent <input webkitdirectory> selection. Carry the path beside that read-only
+         * browser property or dropping Pictures/Trips/a.jpg at Home silently files a.jpg in All. */
+        const rel=String(entry.fullPath||'').replace(/^\/+|\/+$/g,'');
+        if(rel){ try{ Object.defineProperty(f,'_pcRelativePath',{value:rel,configurable:true}); }
+          catch(_){ try{ f._pcRelativePath=rel; }catch(__){} } }
+        out.push(f); res();
+      }, ()=>res())); }
       else if(entry.isDirectory){ const reader=entry.createReader();
         await new Promise(res=>{ const read=()=>reader.readEntries(async ents=>{ if(!ents.length){ res(); return; } for(const en of ents){ await walk(en); } read(); }, ()=>res()); read(); }); }
     }
@@ -20726,7 +20735,7 @@
     // index-align. At Files home/All, the chosen top-level directory becomes a real drive folder; inside
     // an existing folder, only its subdirectories are nested there. Only the plain path uses it; Music /
     // encrypted folders keep their single-folder behavior.
-    const _relPaths=files.map(f=>(f&&f.webkitRelativePath)||'');
+    const _relPaths=files.map(f=>(f&&(f.webkitRelativePath||f._pcRelativePath))||'');
     const _subFolder=(i)=>_uploadTargetFolder(folder,_relPaths[i]);
     // FAIL-CLOSED: never upload into a NAMED folder before the index has loaded. If the folder's
     // encrypted flag isn't known yet, uploading would silently take the PLAINTEXT path and put a

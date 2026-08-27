@@ -34,12 +34,34 @@ process.stdout.write(JSON.stringify(cases.map(x => _uploadTargetFolder(x[0], x[1
     assert got == ["Pictures", "Pictures/Trips", "Photos", "Photos/Trips", "Posts"]
 
 
+def test_dropped_directory_preserves_entry_paths_before_folder_routing():
+    walk = re.search(r"async function _walkEntries\(entries\)\{.*?\n  \}", APP, re.S)
+    target = re.search(r"function _uploadTargetFolder\(current, relative\)\{.*?\n  \}", APP, re.S)
+    assert walk and target
+    script = f"""
+{walk.group(0)}
+{target.group(0)}
+const file=(path)=>({{isFile:true,fullPath:path,file(ok){{ok({{name:path.split('/').pop(),webkitRelativePath:''}})}}}});
+const dir=(path, children)=>({{isDirectory:true,fullPath:path,createReader(){{let sent=false;return{{
+  readEntries(ok){{if(sent)ok([]);else{{sent=true;ok(children)}}}}
+}}}}}});
+(async()=>{{
+  const files=await _walkEntries([dir('/Pictures',[dir('/Pictures/Trips',[file('/Pictures/Trips/a.jpg')]),file('/Pictures/b.jpg')])]);
+  process.stdout.write(JSON.stringify(files.map(f=>[f._pcRelativePath,_uploadTargetFolder(null,f._pcRelativePath)])));
+}})();
+"""
+    got = json.loads(subprocess.check_output(["node", "-e", script], text=True))
+    assert got == [["Pictures/Trips/a.jpg", "Pictures/Trips"],
+                   ["Pictures/b.jpg", "Pictures"]]
+
+
 def test_folder_import_registers_every_production_target_before_uploading():
     upload = APP[APP.index("async function uploadFilesSeq(files)") :]
     upload = upload[: upload.index("// ---- Music:")]
     assert "const _subFolder=(i)=>_uploadTargetFolder(folder,_relPaths[i])" in upload
     assert "FilesIdx.addFolder(tf)" in upload
     assert "folder:_targetFolders[i]" in upload
+    assert "f.webkitRelativePath||f._pcRelativePath" in upload
 
 
 def test_folder_import_waits_for_index_before_deciding_encryption():
