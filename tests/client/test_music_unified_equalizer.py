@@ -86,3 +86,15 @@ def test_phone_library_actions_are_one_compact_row_with_count_below():
     mobile = CSS[CSS.index("@media(max-width:560px){", CSS.index(".music-head{")):]
     assert ".music-head-primary{order:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr))" in mobile
     assert ".music-count{order:2;flex:1 1 100%;width:100%" in mobile
+
+
+def test_library_count_describes_every_visible_row_not_only_playable_tracks():
+    body = APP[APP.index("function _renderMusicList"):
+               APP.index("grid.onclick = async", APP.index("function _renderMusicList"))]
+    count = body[body.index('class="music-count muted small"'):
+                 body.index('class="music-head-secondary"')]
+    assert "tracks.length + ' track'" in count
+    assert "tracks.length===1?'':'s'" in count
+    assert "${gone} missing from the server" in count
+    assert "live + ' track'" not in count
+    assert 'aria-live="polite"' in count

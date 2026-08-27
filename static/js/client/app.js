@@ -21502,8 +21502,9 @@
         ${!only ? `<button class="btn btn-ghost small" id="mus-delall"${tracks.length?'':' disabled'}
           title="${needle ? 'Delete the songs matching this search — from your library, not just this view' : 'Delete every song in your library'}">${needle ? 'Delete matches' : 'Delete All'}</button>` : ''}
       </div>
-      <span class="music-count muted small">${needle ? `${tracks.length} of ${all.length} match`
-          : (live ? (live + ' track' + (live>1?'s':'')) : 'nothing playable yet')}${
+      <span class="music-count muted small" aria-live="polite">${needle
+          ? `${tracks.length} of ${all.length} track${all.length===1?'':'s'}`
+          : (tracks.length + ' track' + (tracks.length===1?'':'s'))}${
           gone ? ` · ${gone} missing from the server` : ''}${
           offAll ? ` · ${offAll} offline` : ''}</span>
       <div class="music-head-secondary">
