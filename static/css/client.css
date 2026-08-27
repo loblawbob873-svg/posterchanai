@@ -5304,6 +5304,7 @@ body.modal-open .mobilenav{display:none}
 /* ===== In-app confirm (replaces native confirm(); a native dialog wedges the Electron renderer's focus) ===== */
 .btn-danger{background:linear-gradient(135deg,var(--danger,#d61f4e),#a01436);border:none;color:#fff;box-shadow:0 0 12px rgba(214,31,78,.4)}
 .uiconfirm-bg{position:fixed;inset:0;z-index:500;display:grid;place-items:center;padding:24px;background:rgba(4,2,12,.72);backdrop-filter:blur(3px)}
+.osw-body:has(>.uiconfirm-owned){position:relative}.uiconfirm-bg.uiconfirm-owned{position:absolute}
 .uiconfirm{width:min(400px,94vw);border-radius:16px;padding:22px}
 .uiconfirm-msg{font-size:17px;line-height:1.45;margin-bottom:18px;text-align:center}
 .uiconfirm-btns{display:flex;gap:10px;justify-content:center}

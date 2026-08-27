@@ -31462,7 +31462,12 @@
       const onKey=e=>{ if(e.key==='Escape'){ e.preventDefault(); done(false); } else if(e.key==='Enter'){ e.preventDefault(); done(true); } };
       ov.addEventListener('click',e=>{ if(e.target===ov){ done(false); return; } const b=e.target.closest('[data-uc]'); if(b) done(b.dataset.uc==='1'); });
       document.addEventListener('keydown',onKey,true);
-      document.body.appendChild(ov);
+      /* A managed desktop app may own the question. Keeping that overlay inside its `.osw-body`
+       * prevents the shared page/body modal from covering the second output or exposing Classic
+       * beside the managed window. Ordinary browser confirms retain the body-wide behavior. */
+      const owner=opts.owner&&opts.owner.isConnected?opts.owner:document.body;
+      if(owner!==document.body)ov.classList.add('uiconfirm-owned');
+      owner.appendChild(ov);
       const y=ov.querySelector('[data-uc="1"]'); if(y) setTimeout(()=>{ try{ y.focus(); }catch(_){} },20);
     });
   }
