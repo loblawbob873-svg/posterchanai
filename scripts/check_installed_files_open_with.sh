@@ -22,6 +22,7 @@ extract() {
 
 extract www/static/js/client/app.js "$check_dir/installed-app.js"
 extract www/static/js/client/hostfiles.js "$check_dir/installed-hostfiles.js"
+extract www/static/js/client/preview.js "$check_dir/installed-preview.js"
 
 PC_INSTALLED_APP_JS="$check_dir/installed-app.js" \
   node "$repo/tests/client/open_with_selector_sim.js"
@@ -29,4 +30,6 @@ PC_INSTALLED_APP_JS="$check_dir/installed-app.js" \
   node "$repo/tests/client/folder_drop_paths_sim.js"
 PC_INSTALLED_HOSTFILES_JS="$check_dir/installed-hostfiles.js" \
   node "$repo/tests/client/hostfiles_click_sim.js"
+PC_INSTALLED_PREVIEW_JS="$check_dir/installed-preview.js" \
+  node "$repo/tests/client/preview_sim.js"
 echo "OK installed File Manager open-with routes"

@@ -9,6 +9,8 @@
  */
 'use strict';
 const path = require('path');
+const PREVIEW = process.env.PC_INSTALLED_PREVIEW_JS ||
+  path.resolve(__dirname, '../../static/js/client/preview.js');
 
 let failures = 0;
 function check(name, cond, detail) {
@@ -70,8 +72,8 @@ function install() {
   global.Blob = class { constructor(parts, opts) { this.type = (opts && opts.type) || '';
                                                    this.size = 10; } };
   global.fetch = async () => ({ blob: async () => new global.Blob([]) });
-  delete require.cache[require.resolve(path.resolve(__dirname, '../../static/js/client/preview.js'))];
-  require(path.resolve(__dirname, '../../static/js/client/preview.js'));
+  delete require.cache[require.resolve(PREVIEW)];
+  require(PREVIEW);
   return global.window.PCPreview;
 }
 
