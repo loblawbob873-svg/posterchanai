@@ -6649,6 +6649,19 @@
             }
             if(ev.name !== 'tick') return;
             const p = String(ev.payload || '');
+            if(p.startsWith('pc:update-installed:')){
+              const token=p.slice('pc:update-installed:'.length);
+              let quiet=0;
+              const idle=()=>!wins.some(w=>w&&(w.gesturing||w.nativeHandoffToken))
+                && !document.querySelector('.dragging,.resizing,.os-dragging');
+              const wait=setInterval(()=>{
+                if(!idle()){quiet=0;return;}
+                if(++quiet<2)return;
+                clearInterval(wait);
+                try{pcWM.updateIdle(token);}catch(_){}
+              },150);
+              return;
+            }
             /* THE SHELL TAKES THE KEYBOARD FIRST, or the menu opens and your typing goes to
              * FIREFOX. Reported exactly that way: "it only works if no other window is focused".
              *

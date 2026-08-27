@@ -111,6 +111,7 @@ if (isOurPage) {
     nativeHandoffAck: (token, rect) => ipcRenderer.invoke('pc:wm:native-handoff-ack',
                                                            String(token||''), rect||{}),
     handoffReady: (ready) => ipcRenderer.invoke('pc:wm:handoff-ready', ready !== false),
+    updateIdle: (token) => ipcRenderer.invoke('pc:shell:update-idle', String(token||'')),
     onNativeHandoff: (fn) => {
       const h = (_e, payload) => { try { fn(payload || {}); } catch (_) {} };
       ipcRenderer.on('pc:wm:native-handoff', h);

@@ -1092,6 +1092,31 @@ function scopedWindows(e, rows){
   });
 }
 let _shellRecoveryWired = false;
+let _updateRestart = null;
+function requestSafeShellRestart(){
+  if(!SHELL_MODE || _updateRestart) return false;
+  const targets=Array.from(_shellSurfaces.values()).map(r=>r&&r.browser)
+    .filter(w=>w&&!w.isDestroyed()&&_handoffReady.has(Number(w.webContents.id)));
+  if(!targets.length) return false;
+  const token=require('crypto').randomBytes(12).toString('hex');
+  _updateRestart={token,pending:new Set(targets.map(w=>w.webContents.id))};
+  for(const target of targets) try{ target.webContents.send('pc:wm:event',
+    {name:'tick',change:'update',payload:'pc:update-installed:'+token,window:null}); }catch(_){}
+  return true;
+}
+ipcMain.handle('pc:shell:update-idle',(e,token)=>{
+  const pending=_updateRestart;
+  if(!pending || token!==pending.token || !pending.pending.has(e.sender.id)) return false;
+  pending.pending.delete(e.sender.id);
+  if(pending.pending.size) return true;
+  _updateRestart=null;
+  /* The shipped helper owns TERM, singleton-lock cleanup, canonical environment recovery and the
+   * proof that both replacement surfaces mapped. Never duplicate that fragile sequence here. */
+  setTimeout(()=>{ try{ const child=require('child_process').spawn(
+    '/usr/local/bin/pc-shell-restart',[],{detached:true,stdio:'ignore',env:process.env});child.unref();
+  }catch(e){console.warn('[update restart]',e&&e.message||e);} },250);
+  return true;
+});
 async function forwardShellTick(ev){
   let targets=BrowserWindow.getAllWindows();
   /* One desktop renderer exists per output. A global key belongs to the focused output only;
@@ -1122,7 +1147,8 @@ async function wireShellRecovery(){
          * Sway ran the physical Super binding but a slow renderer startup had never armed the
          * forwarding handler, so the tick died here in the main process. This subscription is
          * always installed for shell recovery; it is therefore the authoritative keyboard path. */
-        forwardShellTick(ev).catch(()=>{});
+        if(ev.payload==='pc:update-installed') requestSafeShellRestart();
+        else forwardShellTick(ev).catch(()=>{});
         return;
       }
       /* Keep the Wayland surface mapped. Killing Electron and racing its replacement against the
@@ -1142,6 +1168,16 @@ async function wireShellRecovery(){
     _shellRecoveryWired = false;
     console.warn('[shell recovery]', e && e.message || e);
   }
+}
+
+function watchInstalledBundle(){
+  if(!SHELL_MODE || !app.isPackaged) return;
+  const bundle=path.join(process.resourcesPath,'app.asar');
+  let identity='';
+  try{const s=fs.statSync(bundle);identity=`${s.dev}:${s.ino}:${s.size}:${s.mtimeMs}`;}catch(_){return;}
+  const check=()=>{try{const s=fs.statSync(bundle),next=`${s.dev}:${s.ino}:${s.size}:${s.mtimeMs}`;
+    if(next!==identity && requestSafeShellRestart()) identity=next;}catch(_){}};
+  setInterval(check,30000).unref();
 }
 
 /* ONE DESKTOP SURFACE PER OUTPUT. Sway cannot stretch one Wayland surface across unrelated
@@ -2204,6 +2240,7 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
     }
     await reconcileShellDisplays();
     wireShellRecovery();
+    watchInstalledBundle();
     background.init({
       show: showWindow,
       syncNow: () => { try { win && !win.isDestroyed() && win.webContents.send('pc:sync:now'); } catch (_) {} },
