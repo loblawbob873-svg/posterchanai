@@ -106,6 +106,9 @@ if(PCConcord.conversationIsVisible(true,false,false) ||
    !PCConcord.conversationIsVisible(true,true,false) ||
    !PCConcord.conversationIsVisible(false,false,false))
   throw new Error('mobile conversation visibility/read-state rule is wrong');
+if(PCConcord.repaintScrollTop(false,420,2400)!==420 ||
+   PCConcord.repaintScrollTop(true,420,2400)!==2400)
+  throw new Error('Concord repaint moved an unpinned reader or failed to follow a pinned room');
 const xdcUrl='https://files.example/game.xdc';
 const xdcMessage={id:'xdc-message',text:'play this '+xdcUrl,tags:[['imeta',`url ${xdcUrl}`,'m application/x-webxdc','webxdc game-1','summary Game']]};
 window.PCWebxdc={cardHtml:()=>'<div class="xdc-card">Game</div>'};

@@ -22,3 +22,11 @@ def test_explicit_room_and_channel_entry_mark_the_scroller_pinned():
     assert "if(!inDrawer)scrollChatBottom()" not in server
     assert "if(state.community===community&&state.channel===channel)enterChatBottom();" in channel
     assert "[0,60,180,450,900,1600]" in JS
+
+
+def test_live_append_preserves_exact_offset_after_user_scrolls_up():
+    preserve = JS.split("function preserveChatScroll(fn)", 1)[1].split("function restoreChatScroll", 1)[0]
+    assert "repaintScrollTop(st.pinned,top,box.scrollHeight)" in preserve
+    assert "top+(box.scrollHeight-height)" not in preserve
+    assert "function repaintScrollTop(pinned,top,scrollHeight)" in JS
+    assert "pinned!==false?scrollHeight" in JS
