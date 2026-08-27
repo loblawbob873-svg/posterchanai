@@ -2734,24 +2734,67 @@
    * lives inside one Electron surface, while adopted Firefox/Telegram windows are represented in
    * this same list. Creation order is stable as focus changes, so advancing from the focused frame
    * visits every window instead of bouncing between the two highest z-indices. */
-  function cycleWindows(direction){
-    const rows=wins.slice();if(!rows.length)return false;
-    const current=rows.findIndex(w=>w.el.classList.contains('focused')&&!w.min);
-    const step=direction==='previous'?-1:1;
-    const target=rows[(current<0?(step>0?0:rows.length-1):(current+step+rows.length)%rows.length)];
-    if(!target)return false;
-    toggleStart(false);hideCtx();
-    if(target.native!=null){focusWin(target,false);return true;}
-    /* A tick arrives while Firefox may still own compositor focus. Changing DOM z-order alone
-     * would paint the target behind it and leave typing in Firefox, so focus this output's shell
-     * surface before activating the internal frame. Failure still leaves a recoverable DOM focus. */
-    const activate=()=>{if(wins.includes(target))focusWin(target,false);};
-    try{Promise.resolve(pcWM.windows()).then(list=>{
-      const shell=(list||[]).find(x=>/^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i.test(String(x.app||'')));
-      return shell?Promise.resolve(pcWM.focus(shell.id)).then(activate,activate):activate();
-    },activate);}catch(_){activate();}
+  let _altSwitch=null;
+  const _switchRows=()=>wins.filter(w=>w&&w.el&&w.el.isConnected!==false&&
+    String(w.title||w.view||'').trim()&&!w.closing);
+  function _closeAltSwitch(commit){
+    const s=_altSwitch;if(!s)return false;_altSwitch=null;clearTimeout(s.timer);
+    if(s.el)try{s.el.remove();}catch(_){}
+    const target=commit?s.rows[s.index]:s.initial;
+    if(target&&wins.includes(target))focusWin(target,false);
     return true;
   }
+  function _drawAltSwitch(s){
+    if(!s.el){s.el=document.createElement('div');s.el.className='os-alt-switch';
+      s.el.setAttribute('role','listbox');s.el.setAttribute('aria-label','Open windows');
+      document.body.appendChild(s.el);}
+    s.el.innerHTML='';
+    s.rows.forEach((w,i)=>{
+      const b=document.createElement('div');b.className='os-alt-card'+(i===s.index?' selected':'');
+      b.setAttribute('role','option');b.setAttribute('aria-selected',i===s.index?'true':'false');
+      const p=document.createElement('div');p.className='os-alt-preview';
+      const nativeBg=w.el.style.getPropertyValue('--native-stash-preview');
+      if(nativeBg)p.style.backgroundImage=nativeBg;
+      else{
+        const src=w.body||w.slot;
+        if(src){const clone=src.cloneNode(true);clone.querySelectorAll('[id]').forEach(n=>n.removeAttribute('id'));
+          clone.querySelectorAll('iframe,video,audio,canvas').forEach(n=>n.remove());
+          if(clone.childElementCount||String(clone.textContent||'').trim())p.appendChild(clone);}
+      }
+      if(!p.children.length&&!p.style.backgroundImage)p.classList.add('empty');
+      const label=document.createElement('div');label.className='os-alt-title';
+      label.innerHTML=iconSvg(w.icon||'i-grid')+'<span>'+enc(w.title||w.view||'Window')+'</span>';
+      b.appendChild(p);b.appendChild(label);s.el.appendChild(b);
+      if(i===s.index&&b.scrollIntoView)try{b.scrollIntoView({block:'nearest',inline:'nearest'});}catch(_){}
+    });
+  }
+  function cycleWindows(direction){
+    const rows=_switchRows();if(!rows.length)return false;
+    const step=direction==='previous'?-1:1;
+    if(!_altSwitch){
+      const initial=rows.find(w=>w.el.classList.contains('focused')&&!w.min)||null;
+      const current=rows.indexOf(initial);
+      _altSwitch={rows,initial,index:current<0?(step>0?0:rows.length-1):
+        (current+step+rows.length)%rows.length,el:null,timer:0};
+      toggleStart(false);hideCtx();
+      /* The switcher belongs to this output's shell. Bring that surface forward while selection is
+         staged; native targets are focused only on commit, otherwise their opaque surface would
+         cover the chooser and turn Alt+Tab back into an invisible shortcut. */
+      try{Promise.resolve(pcWM.windows()).then(list=>{const shell=(list||[]).find(x=>
+        /^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i.test(String(x.app||'')));
+        if(shell)return pcWM.focus(shell.id);}).catch(()=>{});}catch(_){}
+    }else{
+      _altSwitch.rows=rows;
+      _altSwitch.index=(_altSwitch.index+step+rows.length)%rows.length;
+    }
+    _drawAltSwitch(_altSwitch);
+    clearTimeout(_altSwitch.timer);
+    _altSwitch.timer=setTimeout(()=>_closeAltSwitch(true),2500);
+    return true;
+  }
+  document.addEventListener('keyup',e=>{if(_altSwitch&&e.key==='Alt')_closeAltSwitch(true);},true);
+  document.addEventListener('keydown',e=>{if(_altSwitch&&e.key==='Escape'){
+    e.preventDefault();e.stopPropagation();_closeAltSwitch(false);}},true);
 
   // ---- snapping (Windows 11 style) ------------------------------------------------------------
   // Drag a window against a screen edge and it snaps: the sides give halves, the top maximises, the

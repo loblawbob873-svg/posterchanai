@@ -7361,6 +7361,24 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 .osw.osw-document .osw-ico .ic{color:#cbd5e1;filter:none}
 /* Cyberpunk's fixed scanline layer otherwise crosses the white PDF/Office/email page. */
 .pc-document-focus .scanlines{display:none!important}
+
+/* Alt+Tab is a visible choice, not a focus shortcut. It is centered on this renderer/output and
+   every card retains an icon/title even when a native thumbnail is temporarily unavailable. */
+.os-alt-switch{position:fixed;z-index:2147483500;left:50%;top:50%;transform:translate(-50%,-50%);
+  display:flex;gap:14px;max-width:min(92vw,1120px);padding:18px;border:1px solid var(--border);
+  border-radius:18px;background:rgba(15,18,24,.94);box-shadow:0 28px 90px rgba(0,0,0,.65);
+  overflow-x:auto;overflow-y:hidden;backdrop-filter:blur(18px);scrollbar-width:none}
+.os-alt-card{flex:0 0 210px;min-width:0;padding:8px;border:2px solid transparent;border-radius:12px;
+  background:rgba(255,255,255,.045)}
+.os-alt-card.selected{border-color:var(--accent);background:rgba(var(--accent-rgb),.16);
+  box-shadow:0 0 0 2px rgba(var(--accent-rgb),.16)}
+.os-alt-preview{height:126px;overflow:hidden;border-radius:8px;background-size:cover;
+  background-position:center;background-color:#11151b;pointer-events:none}
+.os-alt-preview.empty{background:linear-gradient(145deg,#202734,#11151b)}
+.os-alt-preview>*{width:480px!important;height:288px!important;transform:scale(.42);transform-origin:top left;
+  pointer-events:none!important}
+.os-alt-title{display:flex;align-items:center;gap:8px;margin-top:9px;min-width:0;color:#f4f7fb}
+.os-alt-title .ic{width:22px;height:22px;flex:none}.os-alt-title span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .osw.minimised{display:none}
 /* The start button's LAST resort. When the instance logo cannot be fetched and the bundled PNG is
    missing too, the button draws the sprite flower — sized to match the image it replaces, so the
