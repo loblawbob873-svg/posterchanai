@@ -515,6 +515,15 @@ def test_concord_webxdc_mentions_live_sync_and_scroll_are_integrated():
     assert 'scrollStates' in CONCORD and 'st.pinned' in CONCORD and 'preserveChatScroll' in CONCORD
 
 
+def test_playable_webxdc_card_replaces_only_its_redundant_raw_url():
+    content = CONCORD.split('function messageContentHtml(p,m)', 1)[1].split('async function decryptAttachment', 1)[0]
+    assert 'const mini=webxdcOf(m)' in content
+    assert 'window.PCWebxdc&&PCWebxdc.cardHtml' in content
+    assert "text=text.split(mini.url).join('')" in content
+    # The URL remains available as a normal link when no playable-card implementation is loaded.
+    assert 'if(canPlayMini)' in content
+
+
 def test_mobile_room_list_and_drawer_do_not_consume_channel_unread_state():
     assert "function conversationIsVisible(narrow,chatOpen,drawerOpen)" in CONCORD
     assert "return !narrow||(!!chatOpen&&!drawerOpen)" in CONCORD

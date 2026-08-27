@@ -172,6 +172,12 @@
   function messageContentHtml(p,m){
     const files=encryptedAttachments(m); let text=String(m&&m.text||'');
     for(const f of files)text=text.split(f.url).join('').trim();
+    /* A Webxdc imeta is an attachment, not two messages. When its playable card is available,
+     * remove only that exact attachment URL from prose so linkify/link-preview cannot paint a raw
+     * Blossom link above the card. Keep the URL when Webxdc is unavailable: it remains the user's
+     * download/open fallback instead of turning into an invisible attachment. */
+    const mini=webxdcOf(m),canPlayMini=!!(mini&&window.PCWebxdc&&PCWebxdc.cardHtml);
+    if(canPlayMini)text=text.split(mini.url).join('').replace(/\s{2,}/g,' ').trim();
     const body=text?`<p>${p.linkify?p.linkify(text):p.enc(text)}</p>${p.linkCardHtml?p.linkCardHtml(text):''}`:'';
     const media=files.map((f,i)=>`<div class="cc-encrypted-attachment" data-cc-attachment="${p.enc(messageId(m))}" data-cc-attachment-index="${i}"><span>🔒 Decrypting ${p.enc(f.name||f.mime)}…</span></div>`).join('');
     return body+media;

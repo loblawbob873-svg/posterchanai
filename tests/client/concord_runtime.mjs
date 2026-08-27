@@ -106,6 +106,15 @@ if(PCConcord.conversationIsVisible(true,false,false) ||
    !PCConcord.conversationIsVisible(true,true,false) ||
    !PCConcord.conversationIsVisible(false,false,false))
   throw new Error('mobile conversation visibility/read-state rule is wrong');
+const xdcUrl='https://files.example/game.xdc';
+const xdcMessage={id:'xdc-message',text:'play this '+xdcUrl,tags:[['imeta',`url ${xdcUrl}`,'m application/x-webxdc','webxdc game-1','summary Game']]};
+window.PCWebxdc={cardHtml:()=>'<div class="xdc-card">Game</div>'};
+const playableXdc=PCConcord.messageContentHtml({enc:String,linkify:String,linkCardHtml:s=>'PREVIEW:'+s},xdcMessage);
+if(playableXdc.includes(xdcUrl)||!playableXdc.includes('play this'))
+  throw new Error('playable Webxdc duplicated or erased its message text');
+delete window.PCWebxdc;
+const fallbackXdc=PCConcord.messageContentHtml({enc:String,linkify:String,linkCardHtml:()=>''},xdcMessage);
+if(!fallbackXdc.includes(xdcUrl))throw new Error('Webxdc URL fallback disappeared without a card renderer');
 const iconRoom={icon:'https://old.example/icon.png'};
 if(!await PCConcord.applyRoomIconMetadata(iconRoom,{icon:''},'icon-clear') || iconRoom.icon!=='')
   throw new Error('explicit community icon removal was ignored');
