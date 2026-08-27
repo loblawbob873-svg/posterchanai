@@ -20,3 +20,12 @@ def test_simulations_accept_an_installed_payload_override():
     hostfiles = (ROOT / "tests/client/hostfiles_click_sim.js").read_text(encoding="utf-8")
     assert "process.env.PC_INSTALLED_APP_JS" in open_with
     assert "process.env.PC_INSTALLED_HOSTFILES_JS" in hostfiles
+
+
+def test_installed_selector_sim_covers_document_media_and_cancel_lifecycle():
+    src = (ROOT / "tests/client/open_with_selector_sim.js").read_text(encoding="utf-8")
+    for fixture in ("manual.pdf", "server.conf", "sheet.csv", "photo.jpg", "movie.mp4",
+                    "recording.ogg", "letter.docx", "book.ods", "slides.pptx"):
+        assert fixture in src
+    assert "cancel launched a handler" in src
+    assert "close before launching the selected handler" in src
