@@ -46,7 +46,10 @@ cp "$SRC"/static/*.png "$SRC"/static/*.webp "$SRC"/static/*.svg \
    "$SRC"/static/*.jpg "$SRC"/static/*.ico  www/static/ 2>/dev/null || true
 
 # The rendered shell (auth gate + app scaffold) — take the LIVE one so the app matches the site exactly.
-curl -fsSL https://poster.place/client -o www/index.html
+curl --fail --silent --show-error --location \
+  --retry 5 --retry-all-errors --retry-delay 2 \
+  https://poster.place/client -o www/index.html
+test -s www/index.html
 
 # Inject bundled-mode (API base + fetch/WS shim) right before </head>, ahead of every app script. Also
 # strip cache-busting ?v= from local asset URLs (served from the bundle, not the network) and drop the
