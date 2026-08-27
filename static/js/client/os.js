@@ -2136,6 +2136,11 @@
   let _natShell = null, _natShellAt = 0, _natSent = new Map(), _natBusy = false, _natAgain = false;
 
   const nativeWins = () => wins.filter(w => w.native != null);
+  function _nativePreview(w,data){
+    if(!w||!w.el)return;
+    if(data){w.el.style.setProperty('--native-stash-preview',`url("${String(data).replace(/["\\]/g,'')}")`);w.el.classList.add('native-stash-preview');}
+    else{w.el.style.removeProperty('--native-stash-preview');w.el.classList.remove('native-stash-preview');}
+  }
   function _focusNativeWhenShown(w, attempt){
     const id=w&&Number(w.native); if(!id || !wins.includes(w))return;
     Promise.resolve(nsync()).then(()=>{
@@ -2410,8 +2415,9 @@
            * window and focusing it raises/restores the native surface; only the lie that its pixels
            * are currently present is hidden. */
           if(_natSent.get(it.native) !== 'hidden'){
-            try{ await pcWM.hide(it.native); _natSent.set(it.native, 'hidden'); }
-            catch(_){ it.w.el.classList.remove('native-stashed'); continue; }
+            let preview='';try{if(pcWM.preview)preview=await pcWM.preview(it.native);}catch(_){}
+            try{ await pcWM.hide(it.native); _natSent.set(it.native, 'hidden'); _nativePreview(it.w,preview); }
+            catch(_){ _nativePreview(it.w,'');it.w.el.classList.remove('native-stashed'); continue; }
           }
           /* Do not paint an opaque empty-state over live Firefox until Sway confirms its pixels
            * are parked. A rejected hide followed by focus otherwise leaves a permanent black body. */
@@ -2463,12 +2469,14 @@
                 /* `restore` is atomic: the surface is visible at this rectangle now. */
                 _natSent.set(it.native, rect);
                 was = rect;
+                _nativePreview(it.w,'');
               }else{
                 /* `show` only leaves the scratchpad. It has not placed the surface, so do not
                  * record the requested rectangle until the `place` below succeeds. */
                 await pcWM.show(it.native);
                 _natSent.delete(it.native);
                 was = null;
+                _nativePreview(it.w,'');
               }
             }
             catch(_){ _natSent.set(it.native, 'hidden'); continue; }
@@ -2640,6 +2648,7 @@
      * a window nobody can reach — it is floating above a desktop that has forgotten it. */
     if(w.native != null){
       _natSent.delete(w.native);
+      _nativePreview(w,'');
       /* The `.catch` is not decoration. This is a PROMISE, so a `try` around the call catches only
        * a synchronous throw — a rejection sails past it to the client's unhandledrejection handler,
        * which puts "action failed" on screen. Reported exactly that way, on closing firefox. */

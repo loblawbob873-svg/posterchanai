@@ -101,6 +101,7 @@ if (isOurPage) {
     /* `windows` is this shell surface's ownership view; `allIds` distinguishes an app that moved
      * to another output from one that actually exited. */
     snapshot: () => ipcRenderer.invoke('pc:wm:snapshot'),
+    preview: (id) => ipcRenderer.invoke('pc:wm:preview', Number(id)),
     focus: (id) => ipcRenderer.invoke('pc:wm:focus', Number(id)),
     close: (id) => ipcRenderer.invoke('pc:wm:close', Number(id)),
     place: (id, x, y, w, h) => ipcRenderer.invoke('pc:wm:place', Number(id), Number(x), Number(y),

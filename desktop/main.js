@@ -1247,6 +1247,20 @@ ipcMain.handle('pc:wm:handoff-ready', (e, ready) => {
   return true;
 });
 ipcMain.handle('pc:wm:focus', (e, id) => { fsGuard(e); return wm().focus(Number(id)); });
+ipcMain.handle('pc:wm:preview', async (e, id) => {
+  fsGuard(e); id=Number(id); if(!Number.isFinite(id))return '';
+  const rows=scopedWindows(e,await wm().windows()),target=rows.find(row=>Number(row.id)===id);
+  if(!target||target.stashed||target.visible===false||!target.rect)return '';
+  /* grim captures screen pixels, not a con_id. Refuse if another native client intersects the
+   * requested surface: an exact rectangle is not enough if it could contain somebody else's app.
+   * The PosterChan shell is tiled behind the target and is the only safe overlap. */
+  const shell=/^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i;
+  const r=target.rect,overlap=rows.some(row=>Number(row.id)!==id&&!row.stashed&&row.visible!==false&&
+    !shell.test(String(row.app||''))&&row.rect&&r.x<row.rect.x+row.rect.width&&
+    r.x+r.width>row.rect.x&&r.y<row.rect.y+row.rect.height&&r.y+r.height>row.rect.y);
+  if(overlap)return '';
+  try{return await require('./native-preview.js').capture(r);}catch(_){return '';}
+});
 ipcMain.handle('pc:wm:close', (e, id) => { fsGuard(e); return wm().close(Number(id)); });
 ipcMain.handle('pc:wm:place', (e, id, x, y, w, h) => {
   fsGuard(e); return wm().place(Number(id), Number(x), Number(y), Number(w), Number(h));
