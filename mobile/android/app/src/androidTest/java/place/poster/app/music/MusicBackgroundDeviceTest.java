@@ -17,6 +17,8 @@ import androidx.lifecycle.Lifecycle;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry;
+import androidx.test.runner.lifecycle.Stage;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -77,10 +79,11 @@ public class MusicBackgroundDeviceTest {
             // ActivityScenario.moveToState(RESUMED) only drives lifecycle callbacks; it cannot
             // remove an independent HOME task that is actually covering this singleTask activity.
             // Exercise the same path as tapping PosterChan in Recents/the launcher instead.
-            relaunchMainTask(ctx, scenario);
+            relaunchMainTask(ctx, activity);
             AtomicReference<WebView> resumed = new AtomicReference<WebView>();
             AtomicInteger resumedTask = new AtomicInteger();
-            scenario.onActivity(a -> {
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                MainActivity a = activity.get();
                 resumed.set(findWebView(a.findViewById(android.R.id.content)));
                 resumedTask.set(a.getTaskId());
             });
@@ -90,10 +93,12 @@ public class MusicBackgroundDeviceTest {
                     "localStorage.getItem('osMode')+'|'+window.__pcTabletLifecycle.windows.join(',')+'|'"
                     + "+window.__pcTabletLifecycle.focus+'|'+window.__pcTabletLifecycle.snap"));
 
-            scenario.onActivity(a -> a.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT));
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> activity.get()
+                    .setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT));
             SystemClock.sleep(500);
             AtomicReference<WebView> rotated = new AtomicReference<WebView>();
-            scenario.onActivity(a -> rotated.set(findWebView(a.findViewById(android.R.id.content))));
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> rotated.set(findWebView(
+                    activity.get().findViewById(android.R.id.content))));
             assertTrue("foreground rotation replaced Desktop's live WebView", web == rotated.get());
             assertEquals("\"true|messages\"", eval(web,
                     "localStorage.getItem('osMode')+'|'+window.__pcTabletLifecycle.focus"));
@@ -193,28 +198,30 @@ public class MusicBackgroundDeviceTest {
             try { shell("cmd role add-role-holder android.app.role.HOME " + oldHome); }
             catch (Throwable ignored) { }
         try {
-            relaunchMainTask(ctx, scenario);
+            relaunchMainTask(ctx, activity);
         } catch (Throwable ignored) { }
         try { scenario.close(); } catch (Throwable ignored) { }
         try { HomeRoles.enableLauncherComponent(ctx, wasEnabled); } catch (Throwable ignored) { }
     }
 
-    private static void relaunchMainTask(Context ctx, ActivityScenario<MainActivity> scenario)
+    private static void relaunchMainTask(Context ctx, AtomicReference<MainActivity> activity)
             throws Exception {
         ctx.startActivity(new Intent(ctx, MainActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
         for (int i = 0; i < 50; i++) {
-            try {
-                // ActivityScenario.getState() itself throws while ActivityLifecycleMonitor is
-                // between STARTED and RESUMED. That is the transition we are waiting for, not a
-                // failed relaunch; sample again until it publishes a stable lifecycle stage.
-                if (scenario.getState() == Lifecycle.State.RESUMED) return;
-            } catch (NullPointerException transitionIncomplete) { /* sample again */ }
+            AtomicReference<Stage> stage = new AtomicReference<Stage>();
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                MainActivity a = activity.get();
+                if (a != null) stage.set(ActivityLifecycleMonitorRegistry.getInstance()
+                        .getLifecycleStageOf(a));
+            });
+            /* ActivityScenario keys its observer to the original launch Intent. singleTask
+             * relaunch correctly calls onNewIntent, so Scenario ignores the very RESUMED event we
+             * need to prove. Observe the held activity instance instead. */
+            if (stage.get() == Stage.RESUMED) return;
             SystemClock.sleep(100);
         }
-        Lifecycle.State state = null;
-        try { state = scenario.getState(); } catch (NullPointerException ignored) { }
-        throw new AssertionError("relaunch did not resume Desktop task: " + state);
+        throw new AssertionError("relaunch did not resume existing Desktop activity");
     }
 
     private static String shell(String cmd) throws Exception {
