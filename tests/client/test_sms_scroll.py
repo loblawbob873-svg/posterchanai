@@ -25,7 +25,7 @@ def test_texts_repaint_and_desktop_parking_use_the_same_scroll_contract():
     assert "S.scroll[oldKey] = scrollState(oldList)" in SMS
     assert "putScroll(list, saved)" in SMS
     assert "if(list.dataset.osParking === '1') return" in SMS
-    assert "before.top + (l.scrollHeight - before.height)" in SMS
+    assert "restoreHydratedScroll(l, before)" in SMS
     assert "['sms-msgs','#sms-msgs']" in OS
 
 
@@ -35,4 +35,14 @@ def test_stale_attachment_hydration_cannot_move_a_repainted_conversation():
     )[0]
     guard = "if(!l || l !== list || !before) return"
     assert guard in hydration
-    assert hydration.index(guard) < hydration.index("l.scrollTop =")
+    assert hydration.index(guard) < hydration.index("restoreHydratedScroll(l, before)")
+
+
+def test_attachment_hydration_anchors_the_visible_message_not_total_height():
+    out = subprocess.check_output(
+        ["node", str(ROOT / "tests/client/sms_sim.js"),
+         json.dumps({"hydrationProbe": True})], text=True,
+    )
+    probe = json.loads(out)["hydrationProbe"]
+    assert probe["belowTop"] == 240, "media below the reader moved the thread"
+    assert probe["aboveTop"] == 440, "media above the reader did not preserve its message anchor"

@@ -345,8 +345,21 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
     scrollProbe = {savedReading, restoredReading:reading.scrollTop,
                    savedPinned, restoredPinned:pinned.scrollTop};
   }
+  let hydrationProbe = null;
+  if(opt.hydrationProbe){
+    const anchor={offsetTop:300,offsetHeight:80,isConnected:true};
+    const list={scrollTop:240,scrollHeight:1200,clientHeight:400,
+      querySelectorAll(){return [anchor];},contains(el){return el===anchor;}};
+    const below=S._hydrationScrollState(list);
+    list.scrollHeight=1400; S._restoreHydratedScroll(list,below);
+    const belowTop=list.scrollTop;
+    list.scrollTop=240;list.scrollHeight=1200;anchor.offsetTop=300;
+    const above=S._hydrationScrollState(list);
+    anchor.offsetTop=500;list.scrollHeight=1400;S._restoreHydratedScroll(list,above);
+    hydrationProbe={belowTop,aboveTop:list.scrollTop};
+  }
   console.log(JSON.stringify({
-    calls, published, notified, uploads, scrollProbe,
+    calls, published, notified, uploads, scrollProbe, hydrationProbe,
     drive: { folders:Array.from(driveFolders).sort(), files:driveFiles, batch:driveBatch },
     rows: rows.map(r => r.doc),
     relay: Array.from(relay.keys()).sort(),

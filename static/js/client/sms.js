@@ -1977,6 +1977,28 @@
     el.appendChild(b);
   }
 
+  /* Preserve the message being read while async attachment media takes its real height. A total
+   * scrollHeight delta cannot say WHERE growth happened: a video below the viewport used to push
+   * the reader down as though it had loaded above them. The first visible bubble is a stable anchor
+   * within this paint; keeping its top gap handles either side correctly. */
+  function hydrationScrollState(list){
+    if(!list) return null;
+    const top=Number(list.scrollTop)||0;
+    const bubbles=Array.from(list.querySelectorAll('.bubble[data-doc]'));
+    const anchor=bubbles.find(el => Number(el.offsetTop)+Number(el.offsetHeight)>top) || null;
+    return {top, bottom:Number(list.scrollHeight)-top-Number(list.clientHeight)<80,
+      anchor, gap:anchor ? Number(anchor.offsetTop)-top : 0};
+  }
+
+  function restoreHydratedScroll(list, before){
+    if(!list || !before) return;
+    if(before.bottom){ list.scrollTop=list.scrollHeight; return; }
+    const a=before.anchor;
+    if(a && a.isConnected && list.contains(a))
+      list.scrollTop=Math.max(0, Number(a.offsetTop)-Number(before.gap||0));
+    else list.scrollTop=Math.max(0, Number(before.top)||0);
+  }
+
   // ---------------------------------------------------------------- view
 
   function textsOnScreen(){
@@ -2525,8 +2547,7 @@
        what keeps it there instead of drifting backwards through the conversation as the photos
        above resolve. Guarded on there BEING attachments, so an ordinary text thread does no work. */
     if(t.msgs.some(m => (m.parts || []).length)){
-      const before = list ? { top:list.scrollTop, height:list.scrollHeight,
-        bottom:list.scrollHeight-list.scrollTop-list.clientHeight<80 } : null;
+      const before = hydrationScrollState(list);
       hydrateAtt(feed, t.msgs).then(() => {
         const l = feed.querySelector('.sms-msgs');
         /* Hydration belongs to THIS rendered element, not merely this thread key. A focus sync can
@@ -2535,10 +2556,7 @@
            new DOM and throw that reader toward the middle/bottom. The replacement paint owns its
            own restoration/hydration pass, so stale work must not touch it. */
         if(!l || l !== list || !before) return;
-        /* Media resolving above the viewport must not move the message being read. Compensate by
-           the height gained; a bottom-pinned reader remains bottom-pinned. */
-        l.scrollTop = before.bottom ? l.scrollHeight
-          : Math.max(0, before.top + (l.scrollHeight - before.height));
+        restoreHydratedScroll(l, before);
         S.scroll[t.key] = {top:l.scrollTop,
           bottom:l.scrollHeight-l.scrollTop-l.clientHeight<80};
       }, () => {});
@@ -2729,6 +2747,8 @@
                    // Pure scroll primitives let the window-lifecycle suite exercise actual state
                    // transitions without replacing this implementation with a test-only copy.
                    _scrollState: scrollState, _putScroll: putScroll,
+                   _hydrationScrollState: hydrationScrollState,
+                   _restoreHydratedScroll: restoreHydratedScroll,
                    // The attachment identity rules, for tests/test_android_mms.py — which runs them
                    // against SmsKeys.partKey/partsKey in Java, because a picture message filed at
                    // two addresses appears twice in the thread.
