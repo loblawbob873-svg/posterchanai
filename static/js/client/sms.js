@@ -49,7 +49,12 @@
   /* v5 invalidates the v4 latch because v4 could still declare the migration complete when the
    * SMS provider answered but the independently-guarded MMS table refused. That exact state leaves
    * every old conversation present as text while only new picture messages have media. */
-  const HWM_BLOSSOM = () => HWM() + '_blossom_v5';
+  /* v6 invalidates the v5 latch because the strict backward-page repair shipped after v5. A phone
+   * that had already written v5 returns at the top of migrateLocalHistory, so it never executes the
+   * repaired cursor walk: new MMS is mirrored by the live sweep while older media remains absent
+   * forever. A pagination/schema repair is not effective until every earlier completion claim is
+   * re-audited through it. */
+  const HWM_BLOSSOM = () => HWM() + '_blossom_v6';
   /* AND A SEPARATE MARKER FOR THE REWIND ITSELF, because rewinding is a ONE-TIME ACT and finishing
    * the migration is a different question entirely.
    *
