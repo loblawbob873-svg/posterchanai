@@ -14302,7 +14302,7 @@
      * group being absent, so hiding every Files row shows an empty sheet rather than resurrecting
      * the literal below over the user's own choice. */
     if(rows.length || $('#files-sub .nav-item')) return _filesSheet(rows);
-    return _filesSheet([{ v:'blossom', svg:ICO('flower'), label:'Blossom' },
+    return _filesSheet([{ v:'blossom', svg:ICO('flower'), label:'File Manager' },
                         { v:'__music', svg:ICO('music'),  label:'Music' },
                         { v:'sync',    svg:ICO('refresh'), label:'Folder Sync' }]);
   }
@@ -16876,8 +16876,7 @@
   async function renderBlossom(){
     const feed=$('#feed');
     feed.innerHTML=`<div class="files-tabs">
-        <button class="ftab${_filesTab==='public'?' active':''}" data-ft="public"><svg class="ic b-ic" aria-hidden="true"><use href="#i-flower"></use></svg>My Files</button>
-        ${_hostFs()?`<button class="ftab${_filesTab==='computer'?' active':''}" data-ft="computer"><svg class="ic b-ic" aria-hidden="true"><use href="#i-monitor"></use></svg>This Computer</button>`:''}
+        <button class="ftab${(_filesTab==='public'||_filesTab==='computer')?' active':''}" data-ft="public"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Files</button>
         ${_standalone()?'':`<button class="ftab${_filesTab==='ai'?' active':''}" data-ft="ai"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg>AI Chat</button>`}
         ${IS_ADMIN?`<button class="ftab${_filesTab==='admin'?' active':''}" data-ft="admin"><svg class="ic b-ic" aria-hidden="true"><use href="#i-shield"></use></svg>Admin</button>`:''}
       </div><div id="files-pane"></div>`;
@@ -17904,6 +17903,8 @@
    * Absent everywhere the bridge is (a browser tab has no filesystem), which is what `available()`
    * answers — so the chip is simply not drawn rather than drawn and broken. */
   let _hostOn = false;
+  let _fxBlossomOpen = localStorage.getItem('pc.files.tree.blossom') !== '0';
+  let _fxComputerOpen = localStorage.getItem('pc.files.tree.computer') !== '0';
   const _hostFs = () => (window.PCHostFiles && PCHostFiles.available()) ? PCHostFiles : null;
   /* ONE opener for both surfaces. The sidebar chip and the home-screen tile are two ways to the
    * same place, and two copies of "where does this start" is how they end up starting somewhere
@@ -18663,12 +18664,14 @@
    * .folder-chip[data-folder] and every handler they had still finds them. */
   function _fxSideHTML(){
     const folders = FilesIdx.folders();
-    return `<div class="folder-bar">
+    return `<div class="fx-tree"><section class="fx-tree-node">
+      <button class="fx-tree-head${(!_hostOn)?' active':''}" data-fxtoggle="blossom" aria-expanded="${_fxBlossomOpen?'true':'false'}"><span class="chev">${_fxBlossomOpen?'▾':'▸'}</span><svg class="ic b-ic" aria-hidden="true"><use href="#i-flower"></use></svg><b>Blossom</b></button>
+      <div class="fx-tree-children${_fxBlossomOpen?'':' hidden'}" data-fxtree="blossom"><div class="folder-bar">
         <button class="folder-chip${(!_syncRoot&&_filesFolder==='')?' active':''}" data-folder=""><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>All</button>
         ${folders.map(f=>`<button class="folder-chip${(!_syncRoot&&_filesFolder===f)?' active':''}" data-folder="${enc(f)}">${f==='Music'?'🎵':(FilesIdx.isEncFolder(f)?'🔒':'📁')} ${enc(f)}</button>`).join('')}
         <button class="folder-chip newfolder" id="bl-newfolder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New folder</button>
         ${(!_syncRoot && _filesFolder && _filesFolder!=='Music') ? `<button class="folder-chip delfolder" id="bl-delfolder" title="Delete this folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete “${enc(_filesFolder)}”</button>` : ''}
-      </div>` + _fxHostHTML() + _fxSyncedHTML() + _fxDeletedHTML();
+      </div>` + _fxSyncedHTML() + _fxDeletedHTML() + `</div></section>` + _fxHostHTML() + `</div>`;
   }
   /* "This computer", beside the drive's folders and the synced ones — one tree, three sources,
    * which is the whole reason they share a screen instead of having three. */
@@ -18678,9 +18681,7 @@
      * own. An invented one has no stylesheet behind it, so the heading renders as unstyled body
      * text in a sidebar where every other heading is a small cyan caption: it looks like a bug in
      * the theme rather than a section nobody wrote CSS for. */
-    return '<div class="fx-sec"><b>This computer</b>'
-      + `<button class="folder-chip${_hostOn ? ' active' : ''}" data-host="1"
-           title="Browse this machine's own files">💻 Files on this computer</button></div>`;
+    return `<section class="fx-tree-node"><button class="fx-tree-head${_hostOn?' active':''}" data-fxtoggle="computer" aria-expanded="${_fxComputerOpen?'true':'false'}"><span class="chev">${_fxComputerOpen?'▾':'▸'}</span><svg class="ic b-ic" aria-hidden="true"><use href="#i-monitor"></use></svg><b>My Computer</b></button><div class="fx-tree-children${_fxComputerOpen?'':' hidden'}" data-fxtree="computer"><button class="folder-chip${_hostOn ? ' active' : ''}" data-host="1" title="Browse this machine's own files"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Home</button></div></section>`;
   }
   /* \u267b DELETED ON EVERY DEVICE — the account-wide undo, beside the per-device trash. Entries
    * the record marks deleted BUT whose address was retained (executors keep sha/chunks on
@@ -18755,6 +18756,14 @@
   }
   function _fxBindSide(root){
     const r = root || document;
+    $$('[data-fxtoggle]',r).forEach(b=>b.onclick=()=>{
+      const which=b.dataset.fxtoggle;
+      if(which==='blossom')_fxBlossomOpen=!_fxBlossomOpen;
+      else if(which==='computer')_fxComputerOpen=!_fxComputerOpen;
+      else return;
+      localStorage.setItem('pc.files.tree.'+which,(which==='blossom'?_fxBlossomOpen:_fxComputerOpen)?'1':'0');
+      renderBlossom();
+    });
     /* EVERY move remembers where it came from, or Back only undoes the ones made from the crumbs —
      * which is the half of browsing nobody uses. */
     $$('.folder-chip[data-folder]', r).forEach(b=> b.onclick=()=>{ _fxRemember(); _syncRoot=''; _syncPath=''; _hostOn=false; _filesFolder=b.dataset.folder; renderBlossom(); });

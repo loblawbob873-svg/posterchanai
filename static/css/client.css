@@ -7978,6 +7978,15 @@ html.os-on #upload-badge.upbadge{z-index:333}
 .fx-nb:disabled{opacity:.35;cursor:default}
 .fx-side{border-inline-end:1px solid var(--line);background:var(--panel2);padding:10px;min-width:0;
   max-height:70vh;overflow-y:auto}
+.fx-tree{display:flex;flex-direction:column;gap:4px}
+.fx-tree-node{display:flex;flex-direction:column;gap:2px}
+.fx-tree-head{display:flex;align-items:center;gap:7px;width:100%;padding:8px;border:0;border-radius:8px;
+  background:none;color:var(--text);text-align:start;cursor:pointer;font:inherit}
+.fx-tree-head:hover,.fx-tree-head.active{background:rgba(var(--accent-rgb),.12)}
+.fx-tree-head .chev{width:12px;color:var(--muted);font-size:12px;text-align:center}
+.fx-tree-head b{font-size:13px}
+.fx-tree-children{padding-inline-start:20px;border-inline-start:1px solid var(--line);margin-inline-start:13px}
+.fx-tree-children.hidden{display:none}
 .fx-main{min-width:0;padding:12px;display:flex;flex-direction:column;gap:10px}
 /* The chips become tree rows: full width, left-aligned, one per line. */
 .fx-side .folder-bar{display:flex;flex-direction:column;gap:2px;padding:0;margin:0;overflow:visible}
@@ -8000,6 +8009,7 @@ html.os-on #upload-badge.upbadge{z-index:333}
   .fx-side .folder-chip{width:auto;flex:0 0 auto;border:1px solid var(--line);border-radius:999px;
     padding:8px 12px;min-height:36px}
   .fx-side .folder-chip.newfolder{margin-top:0;border-top:1px solid var(--line);border-radius:999px;padding-top:8px}
+  .fx-tree-children{padding-inline-start:12px;margin-inline-start:9px}
 }
 
 /* ---- Synced folders, as roots beside the drive's own folders --------------------------------- */

@@ -15,6 +15,8 @@ compare-and-swap.
 """
 import os
 import re
+import shutil
+import subprocess
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -142,6 +144,17 @@ class TheEditorOpensAndSavesThem(unittest.TestCase):
         self.assertIn("const openable = u.openable", render)
         self.assertIn("openable(nm", render)
         self.assertNotIn("const openable", rows)
+
+    def test_clicking_a_this_computer_video_executes_the_real_handler(self):
+        """Paint and click the shipped row. This fails with the production `openable is not
+        defined` exception; merely checking that the word exists in the file does not."""
+        node = shutil.which("node") or shutil.which("nodejs")
+        if not node:
+            self.skipTest("node is unavailable")
+        sim = os.path.join(ROOT, "tests", "client", "hostfiles_click_sim.js")
+        result = subprocess.run([node, sim], capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("This Computer video click holds", result.stdout)
 
 
 if __name__ == "__main__":
