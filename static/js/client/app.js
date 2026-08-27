@@ -892,7 +892,7 @@
     const rows = navRows();
     // Its own TAB, so an empty one has to say why rather than being a blank panel.
     if(!rows.length) return `<div class="muted small">Nothing to arrange — this install has no sidebar to read.</div>`;
-    return `<div class="muted small">Turn off anything you don't use and it leaves the left sidebar, the phone's ☰ More sheet and the desktop. The \u25b2\u25bc arrows reorder — the sidebar and the ☰ sheet follow, and it syncs across your devices. Nothing is deleted and nothing stops working: the feature still runs and still opens from a link, and turning the switch back on brings it back everywhere. Syncs across your devices.<br>Settings, Bookmarks and Blossom aren't listed: Settings is how you get back to this screen, and the other two are the only lists of what you saved and uploaded.</div>
+    return `<div class="muted small">Turn off anything you don't use and it leaves the left sidebar, the phone's ☰ More sheet and the desktop. The \u25b2\u25bc arrows reorder — the sidebar and the ☰ sheet follow, and it syncs across your devices. Nothing is deleted and nothing stops working: the feature still runs and still opens from a link, and turning the switch back on brings it back everywhere. Syncs across your devices.<br>Settings, Bookmarks and File Manager aren't listed: Settings is how you get back to this screen, and the other two are the only lists of what you saved and uploaded.</div>
       <div class="search-section-title" style="margin-top:14px">Bottom bar (phone)</div>
       <div class="muted small">The four view buttons beside Compose and \u2630 More. Compose and More stay put \u2014 one is the point, the other is the way back.</div>
       <div id="mnav-slots">${mobileNavList().map((v,i)=>`
@@ -6438,6 +6438,7 @@
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v || (v==='concord'&&b.dataset.view==='messages')));
     _syncRightbar();
     $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', concord:'Concord', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', shorts:'Shorts 🎬', communities:'Communities', calls:'Calls 📞', pics:'Pics', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', code:'PosterChan Code 💻', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    if(v==='blossom') $('#view-title').textContent='File Manager';
     if(v==='concord') $('#view-title').textContent='Messages';
     if(v==='signer') $('#view-title').textContent = 'Signer';
     // "New post" is a fixed sidebar button now, so it needs no per-view toggling — it never appears in a
