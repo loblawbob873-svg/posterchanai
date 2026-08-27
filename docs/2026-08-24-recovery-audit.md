@@ -276,3 +276,27 @@ browser-only interaction into a current installed pass.
   live held-lock test proved a second updater remained blocked with no output or overlay access; 110
   updater/profile tests plus 35 subtests pass. This prevents concurrent launches from leaving a
   zero-byte loose Git object and then falsely reporting a stale package as current.
+
+### Final Desktop 1.0.1117 containment and installed interaction evidence
+
+- Desktop workflow 33126883850 published immutable 1.0.1117 from exact commit `bed842aa8`; the
+  Linux asset is 152,172,723 bytes. Both authorized Gentoo machines installed Desktop 1.0.1117 and
+  shell 1.0.20260827234100. The shell helper was held inert during the Desktop merge, restored only
+  by its owning shell package, and then invoked with one exact canonical PID per machine.
+- After restart, the dual-output process PID 907620 and laptop PID 1587165 remained unchanged for
+  150 seconds. Sway reported exactly two visible 3840×2560 shell surfaces on DP-1/DP-2 and exactly
+  one visible 1920×1080 surface on eDP-1; every surface matched its output rectangle and no Error
+  window existed. The earlier repeated-restart incident was traced to the installed-bundle watcher;
+  `bed842aa8` now requires two stable 30-second mismatch observations, persists the accepted bundle
+  identity across processes, ignores the compositor's synthetic first tick and consumes a missing
+  helper's asynchronous error instead of opening an Electron error window.
+- A loopback-only installed 1.0.1117 diagnostic passed authenticated Files/Blossom completeness
+  (6,005/6,005 files; two sync roots with relay = manifest = local counts 11,954 and 5,834), native
+  Files open-with/Preview, Collabora HTTP 200 plus interactive WOPI save, Code real Git diff/restore,
+  and Code/Terminal focus sizing. A second isolated compositor targeted only disposable Firefox
+  con_id 6: managed-window overlap produced a nonblack preview (mean 48.66, variance 6,128.37), the
+  same frame restored the same native surface, and the Start-overlay cycle remained nonblack (mean
+  178.71, variance 9,720.86, near-black fraction 0.1626). All diagnostic profiles, fixtures,
+  processes, private compositors and tunnels were removed; canonical PIDs and surfaces were
+  unchanged afterward. User Firefox/VM windows, physical Android/tablet/USB, carrier and external
+  two-identity gates were not targeted and remain separate open gates.
