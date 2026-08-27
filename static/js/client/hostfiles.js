@@ -269,7 +269,7 @@
            <span class="spacer"></span>
            ${_sel.size ? `<span class="muted small">${_sel.size} selected</span>
              ${oneSelected && typeof u.shareFile === 'function'
-               ? '<button class="btn btn-cyan small hf-share">Share with Blossom</button>' : ''}
+               ? '<button class="btn btn-cyan small hf-share">Save to Files</button>' : ''}
              <button class="btn btn-ghost small hf-copy">Copy</button>
              <button class="btn btn-ghost small hf-cut">Cut</button>
              <button class="btn btn-ghost small hf-rename"${_sel.size === 1 ? '' : ' disabled'}>Rename</button>

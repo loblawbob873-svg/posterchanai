@@ -349,7 +349,7 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert 'event.preventDefault(); void uploadAttachments(images)' in CONCORD
     assert 'p.uploadBlob' in CONCORD
     assert 'p.blossomPicker(null,insertBlossomAttachment' in CONCORD
-    assert '🌸 Blossom folders' in CONCORD
+    assert '📁 Files' in CONCORD
     assert 'pendingAttachments.set(url,tag)' in CONCORD
     assert 'id="cc-emoji"' in CONCORD and 'p.openEmojiPopover' in CONCORD
     assert 'id="cc-members"' in CONCORD and "members.onclick" in CONCORD

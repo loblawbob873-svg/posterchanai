@@ -7628,8 +7628,8 @@
     // The inline composer went straight to the file dialog, so the only way to attach something you
     // had ALREADY uploaded was to open the full modal instead.
     $('#tl-cmp-attach',box).onclick=()=>{
-      const opts = window.Capacitor ? [['camera','📷 Camera'],['local','🖼️ Photos / files'],['blossom','🌸 Blossom']]
-                                    : [['local','💻 Local'],['blossom','🌸 Blossom']];
+      const opts = window.Capacitor ? [['camera','📷 Camera'],['local','🖼️ Photos / files'],['blossom','📁 Files']]
+                                    : [['local','💻 Local'],['blossom','📁 Files']];
       /* THE TIMELINE COMPOSER IS A SECOND ATTACH MENU, and it is the one people actually use — the
        * modal is what you get from the New Post button. A feature added to one of them and not the
        * other is invisible to almost everybody, which is exactly how this shipped the first time
@@ -10063,7 +10063,7 @@
       ${watchUrl?`<label class="fld">Watch link <span class="muted small">— share this; it opens the player</span><span class="copyrow"><input class="input" id="gl-watch" readonly value="${enc(watchUrl)}"><button class="btn btn-ghost small" data-copy="gl-watch">Copy</button></span></label>`:''}
       <label class="fld">Cover image <span class="muted small">— the thumbnail on Discover → Streams</span></label>
       <img id="gl-img-prev" class="gl-img-prev hidden" alt="">
-      <div class="gl-cover-acts"><button class="btn btn-ghost small" id="gl-img-pick"><svg class="ic b-ic" aria-hidden="true"><use href="#i-flower"></use></svg>Choose from your drive</button>
+      <div class="gl-cover-acts"><button class="btn btn-ghost small" id="gl-img-pick"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Choose from your drive</button>
         <button class="btn btn-ghost small hidden" id="gl-img-clear"><svg class="ic b-ic" aria-hidden="true"><use href="#i-close"></use></svg>Clear</button></div>
       <input type="hidden" id="gl-img">
       <p class="muted small">Start OBS, then tap below to announce it on Nostr (Discover → Streams).</p>
@@ -14812,8 +14812,8 @@
       });
       // 📎 Attach → pick Local (this device) or Blossom (your uploaded files)
       $('#cmp-attach',root).onclick=()=>{
-        const opts = window.Capacitor ? [['camera','📷 Camera'],['local','🖼️ Photos / files'],['blossom','🌸 Blossom']]
-                                       : [['local','💻 Local'],['blossom','🌸 Blossom']];
+        const opts = window.Capacitor ? [['camera','📷 Camera'],['local','🖼️ Photos / files'],['blossom','📁 Files']]
+                                       : [['local','💻 Local'],['blossom','📁 Files']];
         // 🎮 A webxdc mini app — a game, a poll, a shared editor — attached as a playable card.
         // Its own entry rather than a file among files: a .xdc is a zip, so picking it from "Local"
         // would upload it as an anonymous archive with no way to know it can be played.
@@ -16282,7 +16282,7 @@
       // The picker follows File Manager's navigation instead of maintaining a third, flat UI. The
       // Blossom root and its folders are a real collapsible tree; importantly, the full folder name
       // stays visible instead of being hidden inside a native select whose state was easy to miss.
-      fbar.innerHTML = `<section class="fx-tree-node"><button type="button" class="fx-tree-head active" id="bp-tree-toggle" aria-expanded="true"><span class="chev">▾</span><svg class="ic b-ic" aria-hidden="true"><use href="#i-flower"></use></svg><b>Blossom</b></button>
+      fbar.innerHTML = `<section class="fx-tree-node"><button type="button" class="fx-tree-head active" id="bp-tree-toggle" aria-expanded="true"><span class="chev">▾</span><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg><b>Files</b></button>
         <div class="fx-tree-children" id="bp-tree-children"><div class="folder-bar">${folders.map(([v,l])=>
           `<button type="button" class="folder-chip${v===''?' active':''}" data-folder="${enc(v)}">${enc(l)}</button>`).join('')}</div></div></section>`;
       const toggle=fbar.querySelector('#bp-tree-toggle'), children=fbar.querySelector('#bp-tree-children');
@@ -18713,7 +18713,7 @@
   function _fxSideHTML(){
     const folders = FilesIdx.folders();
     return `<div class="fx-side-mobile-head"><b>Locations</b><button class="fx-nb" id="fx-locations-close" aria-label="Close locations"><svg class="ic b-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div><div class="fx-tree"><section class="fx-tree-node">
-      <button class="fx-tree-head${(!_hostOn&&!_syncRoot)?' active':''}${_fxMobileSource==='blossom'?' mobile-on':''}" data-fxtoggle="blossom" aria-expanded="${_fxBlossomOpen?'true':'false'}"><span class="chev">${_fxBlossomOpen?'▾':'▸'}</span><svg class="ic b-ic" aria-hidden="true"><use href="#i-flower"></use></svg><b>Blossom</b></button>
+      <button class="fx-tree-head${(!_hostOn&&!_syncRoot)?' active':''}${_fxMobileSource==='blossom'?' mobile-on':''}" data-fxtoggle="blossom" aria-expanded="${_fxBlossomOpen?'true':'false'}"><span class="chev">${_fxBlossomOpen?'▾':'▸'}</span><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg><b>Files</b></button>
       <div class="fx-tree-children${_fxBlossomOpen?'':' hidden'}" data-fxtree="blossom"><div class="folder-bar">
         <button class="folder-chip${(!_syncRoot&&_filesFolder==='')?' active':''}" data-folder=""><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>All</button>
         ${folders.map(f=>`<button class="folder-chip${(!_syncRoot&&_filesFolder===f)?' active':''}" data-folder="${enc(f)}">${f==='Music'?'🎵':(FilesIdx.isEncFolder(f)?'🔒':'📁')} ${enc(f)}</button>`).join('')}
@@ -19770,7 +19770,7 @@
           <div class="up-queue" id="bl-queue"></div></div>`
       : `<div class="blossom-locked glass"><b>🔒 Upload access needed</b>
            <p class="muted small">You don't have permission to upload files to this server yet. Request access and the admin can grant it from Admin → Users.</p>
-           <button class="btn btn-cyan" id="bl-request"><svg class="ic b-ic" aria-hidden="true"><use href="#i-flower"></use></svg>Request upload access</button></div>`;
+           <button class="btn btn-cyan" id="bl-request"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Request upload access</button></div>`;
     /* EXPLORER LAYOUT. The folder list is a left PANE and everything else a right one, which is the
      * shape every file manager has settled on because it is the one that scales: a row of chips wraps
      * into three lines the moment you have eight folders, and then the files start below the fold.
@@ -24191,7 +24191,7 @@
         onPick({ name, type: type || 'application/octet-stream', b64: _abB64(await r.arrayBuffer()) });
         toast('attached');
       }catch(err){ toast('could not attach that file'); }
-    }, { title: '🌸 Attach from Blossom' });
+    }, { title: '📁 Attach from Files' });
   }
 
   /* Keyboard for the mail client — mutt/Gmail single keys, scoped to this screen.
@@ -24854,7 +24854,7 @@
         <input class="input" id="cm-cc" placeholder="Cc (optional)" value="${enc(cc)}" autocomplete="off">
         <input class="input" id="cm-subj" placeholder="Subject" value="${enc(subj)}">
         <textarea class="input" id="cm-body" placeholder="Write your message…">${enc(body)}</textarea>
-        <div class="row cm-actions"><button class="btn btn-ghost small" id="cm-contacts">👤 Contacts</button><button class="btn btn-ghost small" id="cm-attach">📎 Attach</button><button class="btn btn-ghost small" id="cm-blossom">🌸 Blossom</button><button class="btn btn-ghost small" id="cm-draft">💾 Save draft</button><button class="btn btn-ghost small" id="cm-nmail" title="Encrypt the body to a Nostr key (nostr-mail): the mail travels as ordinary email, unreadable to every server on the way">🔐 Encrypt</button><input type="file" id="cm-file" multiple hidden><span id="cm-atts" class="muted small cm-atts"></span></div>
+        <div class="row cm-actions"><button class="btn btn-ghost small" id="cm-contacts">👤 Contacts</button><button class="btn btn-ghost small" id="cm-attach">📎 Attach</button><button class="btn btn-ghost small" id="cm-blossom">📁 Files</button><button class="btn btn-ghost small" id="cm-draft">💾 Save draft</button><button class="btn btn-ghost small" id="cm-nmail" title="Encrypt the body to a Nostr key (nostr-mail): the mail travels as ordinary email, unreadable to every server on the way">🔐 Encrypt</button><input type="file" id="cm-file" multiple hidden><span id="cm-atts" class="muted small cm-atts"></span></div>
         <div class="fld hidden" id="cm-nmail-row"><label class="muted small">Recipient's Nostr key (npub)<input class="input" id="cm-nmail-pk" placeholder="npub1\u2026" autocomplete="off" style="font-size:16px"></label>
           <label class="bg-chk muted small"><input type="checkbox" id="cm-nmail-dm" checked> Also notify them by Nostr DM (sends the subject)</label>
           <div class="muted small">The body is NIP-44-encrypted to this key; the subject stays readable. The recipient opens it with nostr-mail or PosterChan.</div></div>`,
@@ -25029,7 +25029,7 @@
       <div id="dm-ac" class="mention-box hidden"></div>
       <textarea id="dm-body" placeholder="encrypted message… (paste an image to attach)"></textarea>
       <div class="dm-atts" id="dm-atts-new" hidden></div>
-      <div class="row cmp-tools"><button class="btn btn-ghost small" id="dm-attach"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg>Attach</button><button class="btn btn-ghost small" id="dm-files"><svg class="ic b-ic" aria-hidden="true"><use href="#i-flower"></use></svg>Files</button>${CFG.gif_enabled?`<button class="btn btn-ghost small" id="dm-gif"><svg class="ic b-ic" aria-hidden="true"><use href="#i-film"></use></svg>GIF</button>`:''}<input type="file" id="dm-file" multiple hidden><span class="spacer"></span><button class="btn btn-neon" id="dm-go">Send ▶</button></div>
+      <div class="row cmp-tools"><button class="btn btn-ghost small" id="dm-attach"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg>Attach</button><button class="btn btn-ghost small" id="dm-files"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Files</button>${CFG.gif_enabled?`<button class="btn btn-ghost small" id="dm-gif"><svg class="ic b-ic" aria-hidden="true"><use href="#i-film"></use></svg>GIF</button>`:''}<input type="file" id="dm-file" multiple hidden><span class="spacer"></span><button class="btn btn-neon" id="dm-go">Send ▶</button></div>
       <div class="muted small" id="dm-status"></div>`, root=>{
       let toPk=null; const to=$('#dm-to',root), ac=$('#dm-ac',root), body=$('#dm-body',root);
       const _newSync=wireImgAttach(body, $('#dm-atts-new',root), {enc:true});   // paste-to-attach + preview strip here too
@@ -25275,7 +25275,7 @@
         <div class="dm-atts" id="dm-atts" hidden></div>
         <div class="dm-row">
           <button class="mini" id="dm-attach" title="attach"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg></button>
-          <button class="mini" id="dm-files" title="your Blossom files"><svg class="ic x-ic" aria-hidden="true"><use href="#i-flower"></use></svg></button>
+          <button class="mini" id="dm-files" title="your Files"><svg class="ic x-ic" aria-hidden="true"><use href="#i-folder"></use></svg></button>
           ${CFG.gif_enabled?`<button class="mini" id="dm-gif" title="GIF"><svg class="ic b-ic" aria-hidden="true"><use href="#i-film"></use></svg></button>`:''}
           <input type="file" id="dm-file" multiple hidden>
           <textarea class="input dm-in" id="dm-in" rows="1" placeholder="Message…">${enc(_dmDrafts.get(pk)||'')}</textarea>
@@ -26680,8 +26680,8 @@
       // re-upload something already on your drive. Blossom picks are fetched into a real attachment
       // (bytes base64'd for the model), not pasted as a URL in the message.
       const opts = window.Capacitor
-        ? [['camera','📷 Camera'],['local','🖼️ Photos / files'],['blossom','🌸 Blossom']]
-        : [['local','💻 Local file'],['blossom','🌸 Blossom']];
+        ? [['camera','📷 Camera'],['local','🖼️ Photos / files'],['blossom','📁 Files']]
+        : [['local','💻 Local file'],['blossom','📁 Files']];
       openMenuPopover($('#ai-attach'), opts, async a=>{
         if(a==='camera'){ const f=await _cameraPhoto(); if(f) aiAddFiles([f]); }
         else if(a==='blossom'){ blossomPicker(null, ({url,type,ext})=>aiAttachFromBlossom(url,type,ext)); }
@@ -27354,7 +27354,7 @@
       <div class="vs-src">
         <button class="btn btn-cyan small" id="vs-rec"><svg class="ic b-ic" aria-hidden="true"><use href="#i-mic"></use></svg>Record</button>
         <button class="btn btn-cyan small" id="vs-up"><svg class="ic b-ic" aria-hidden="true"><use href="#i-upload"></use></svg>Upload</button>
-        <button class="btn btn-cyan small" id="vs-blossom"><svg class="ic b-ic" aria-hidden="true"><use href="#i-flower"></use></svg>My drive</button>
+        <button class="btn btn-cyan small" id="vs-blossom"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>My Files</button>
       </div>
       <div class="vs-active" id="vs-active"></div>
       <label class="mb-f"><span>What should it say?</span>
@@ -28190,7 +28190,7 @@
     // data-kind: the save handler routes AUDIO to the music library, and this row is rendered from
     // persisted markdown that carries nothing else to tell a song from a screenshot.
     // data-name: …and nothing else to tell it what the song is CALLED (see _artName).
-    const save=`<button class="btn btn-cyan small ai-savefile" data-url="${enc(u)}" data-kind="${enc(kind||'')}" data-name="${nm}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Save to Blossom</button>`;
+    const save=`<button class="btn btn-cyan small ai-savefile" data-url="${enc(u)}" data-kind="${enc(kind||'')}" data-name="${nm}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Save to Files</button>`;
     const dl=`<button class="btn btn-cyan small ai-dlfile" data-url="${enc(u)}" data-name="${nm}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Download</button>`;
     const nt=`<button class="btn btn-cyan small ai-notefile" data-url="${enc(u)}" data-name="${nm}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-note"></use></svg>Save to Notes</button>`;
     // 🎵 only where there IS an audio track. This row renders from the PERSISTED markdown, which
@@ -28238,7 +28238,7 @@
       _keptToast(r);
       if(btn){ _btnText(btn, r.library ? '✓ in Music' : '✓ saved'); btn.disabled=false; }
     }
-    catch(e){ toast('save failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; _btnText(btn,'Save to Blossom'); } }
+    catch(e){ toast('save failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; _btnText(btn,'Save to Files'); } }
   }
   // Download an artifact to the device. The URL is AUTHED, so an <a download> pointing at it would
   // 401 — fetch with credentials, then click an object URL of the bytes.
@@ -28486,7 +28486,7 @@
     const dl=`<button class="btn btn-cyan small ai-dl-fx" data-mid="${mid}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Download</button>`;
     const copy=`<button class="btn btn-cyan small ai-copy-fx" data-mid="${mid}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Copy link</button>`;
     const post=`<button class="btn btn-neon small ai-post-fx" data-mid="${mid}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-send"></use></svg>Post</button>`;
-    const save=`<button class="btn btn-cyan small ai-save-fx" data-mid="${mid}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Save to Blossom</button>`;
+    const save=`<button class="btn btn-cyan small ai-save-fx" data-mid="${mid}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Save to Files</button>`;
     const nt=`<button class="btn btn-cyan small ai-note-fx" data-mid="${mid}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-note"></use></svg>Save to Notes</button>`;
     // Same "keep working on the result" button the ARTIFACT row (_aiFileActions) has carried all along.
     // It was missing here, which is the whole of "no Meme Builder after geni": a generated image arrives
@@ -28565,7 +28565,7 @@
       if(btn){ _btnText(btn, r.library ? '✓ in Music' : '✓ saved'); btn.disabled=false; }
     }catch(e){
       toast('save failed: '+((e&&e.message)||e));
-      if(btn){ btn.disabled=false; _btnText(btn,'Save to Blossom'); }
+      if(btn){ btn.disabled=false; _btnText(btn,'Save to Files'); }
     }
   }
   // Upload generated media to Blossom and copy its URL — paste the link into any reply yourself.
@@ -31629,7 +31629,7 @@
       +sec('On a selected news item', [['S','Share (also Markets)'],['U','Summarize'],['Enter','Open the article']])
       +sec('On a selected web-search result', [['S','Share'],['N','Save to Notes'],['U','Summarize'],
                                               ['Enter','Open the page'],['Esc','Back to results']])
-      +sec('Viewing an image', [['C','Copy'],['S','Save'],['B','Save to Blossom'],['← / →','Previous / next'],
+      +sec('Viewing an image', [['C','Copy'],['S','Save'],['B','Save to Files'],['← / →','Previous / next'],
                                 ['Esc','Close']])
       +sec('Games', [['A – Z','Guess a letter (Hangman)'],['1 – 9','Play that square / drop that column'],
                      ['Type a move','Chess']])
@@ -32496,7 +32496,7 @@
       await copyValue(url, 'saved to Blossom — link copied', 'Saved. The link:');
     }catch(err){
       if(typeof _blossomDenied==='function' && _blossomDenied(err)){ requestBlossomAccess(); toast('🔒 No upload access — requested it from the admin.'); }
-      else toast('Blossom save failed: '+((err&&err.message)||err));
+      else toast('Files save failed: '+((err&&err.message)||err));
     }
   }
 
@@ -32551,7 +32551,7 @@
     // A MONOCHROME florette (U+2740), not the 🌸 emoji: the emoji keeps its own pink and clashes with the
     // button's neon-gradient fill, where every other lb-btn is a clean white glyph. ︎ forces text (not
     // emoji) presentation so it stays white on every platform.
-    const blossomB=mkBtn('❀︎','Save to Blossom  (B)', ()=>_lbToBlossom(items[idx].src));
+    const blossomB=mkBtn('📁','Save to Files  (B)', ()=>_lbToBlossom(items[idx].src));
     bar.appendChild(copyB); bar.appendChild(saveB); bar.appendChild(blossomB); bar.appendChild(mkBtn('✕','Close  (Esc)', close));
     bg.appendChild(bar);
     // Tab stays on the toolbar instead of walking the page behind the image, and the buttons are then

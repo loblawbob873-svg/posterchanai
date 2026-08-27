@@ -1884,7 +1884,7 @@
       addLayer(/^audio\//.test(type||'') ? 'audio' : /^video\//.test(type||'') ? 'video' : 'image', url);
       render();
     }, {
-      title: '🌸 Add from Blossom',
+      title: '📁 Add from Files',
       filter: b => /^(image|video|audio)\//.test(b.type||''),
       empty: 'Nothing on your Blossom drive yet — upload some in the Files tab.',
     });
@@ -1907,7 +1907,7 @@
       const doc = JSON.stringify(Object.assign({ [PROJ_MARK]: 1, savedAt: Math.floor(Date.now()/1000) }, P));
       const f = new File([doc], 'meme-project.json', { type: 'application/json' });
       const url = await uploadBlob(f);
-      toast('“' + (P.name || 'project') + '” saved to Blossom');
+      toast('“' + (P.name || 'project') + '” saved to Files');
       return url;
     }catch(err){ toast('save failed: ' + ((err&&err.message)||err)); }
   }
@@ -1925,7 +1925,7 @@
         if(j && j[PROJ_MARK] && Array.isArray(j.layers)) found.push({ b, j });
       }catch(_){ }
     }
-    if(!found.length){ toast('no saved projects found on Blossom'); return; }
+    if(!found.length){ toast('no saved projects found in Files'); return; }
     found.sort((x,y)=>(y.j.savedAt||0)-(x.j.savedAt||0));
     const row = (f,i) => `<button class="btn btn-ghost full mb-projrow" data-i="${i}">`
       + `<b>${enc(f.j.name || 'Untitled')}</b><br><span class="muted small">`
@@ -2416,7 +2416,7 @@
     PC.modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Add to the meme</h3>
       <div class="mb-addgrp">A picture, clip or track</div>
       <button class="btn btn-cyan full mb-addb" id="mbm-local"><b>📱 From this device</b><i>A photo, a video or a music track off your phone or computer</i></button>
-      <button class="btn btn-cyan full mb-addb" id="mbm-blossom"><b>🌸 From my Blossom drive</b><i>A picture, a clip or a track you already uploaded</i></button>
+      <button class="btn btn-cyan full mb-addb" id="mbm-blossom"><b>📁 From Files</b><i>A picture, a clip or a track you already uploaded</i></button>
       <button class="btn btn-cyan full mb-addb" id="mbm-ai"><b>🎨 Generate one with AI</b><i>Describe a picture and it lands on the timeline</i></button>
       <div class="mb-addgrp">Made here</div>
       <button class="btn btn-cyan full mb-addb" id="mba-sticker"><b>😀 Sticker</b><i>An emoji (or a custom one) as its own draggable layer</i></button>
@@ -3982,7 +3982,7 @@
   function projectMenu(){
     PC.modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-folder"></use></svg>${enc(P.name || 'Untitled')}</h3>
       <div class="muted small" style="margin-bottom:10px">${P.layers.length} layer${P.layers.length===1?'':'s'} · ${P.w}×${P.h} · ${projEnd().toFixed(1)}s</div>
-      <button class="btn btn-neon full" id="mbp-save"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Save to my Blossom drive</button>
+      <button class="btn btn-neon full" id="mbp-save"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Save to Files</button>
       <button class="btn btn-cyan full" id="mbp-open"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Open a saved project…</button>
       <button class="btn btn-cyan full" id="mbp-name"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>Rename this project</button>
       <button class="btn btn-cyan full" id="mbp-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Start a new project</button>

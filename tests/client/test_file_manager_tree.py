@@ -10,7 +10,7 @@ def test_file_manager_uses_collapsible_blossom_and_computer_roots():
     assert 'data-fxtoggle="blossom"' in APP
     assert 'data-fxtoggle="computer"' in APP
     assert 'data-fxtoggle="synced"' in APP
-    assert '<b>Blossom</b>' in APP
+    assert '<b>Files</b>' in APP
     assert '<b>My Computer</b>' in APP
     assert '<b>Synced Folders</b>' in APP
     assert "pc.files.tree." in APP
@@ -86,7 +86,7 @@ def test_blossom_picker_uses_the_same_collapsible_file_manager_tree():
     assert 'class="bp-explorer"' in picker
     assert 'aria-label="Blossom folders"' in picker
     assert 'id="bp-tree-toggle"' in picker
-    assert '<b>Blossom</b>' in picker
+    assert '<b>Files</b>' in picker
     assert 'data-folder=' in picker
     assert 'bp-folder-sel' not in picker
     assert "toggle.setAttribute('aria-expanded'" in picker

@@ -2300,7 +2300,7 @@
                    +(ext&&!String(url).split(/[?#]/)[0].includes('.')?'.'+ext:'');
         acceptFile(new File([blob],name,{type:type||blob.type||'image/jpeg'}));
       }catch(e){ PC.toast('could not attach Blossom photo: '+String(e&&e.message||e)); }
-    }, {title:'🌸 Attach photo from Blossom',filter:b=>String(b.type||'').startsWith('image/')});
+    }, {title:'📁 Attach photo from Files',filter:b=>String(b.type||'').startsWith('image/')});
     if(blossomLaunch){blossomLaunch=false;setTimeout(fromBlossom,0);}
     attachBtn.onclick = async () => {
       /* Electron's hidden file input is not reliable when the Texts window has just changed focus
@@ -2318,7 +2318,7 @@
         return;
       }
       if(PC.blossomPicker && PC.modal){
-        PC.modal('<h3>Add a photo</h3><div class="sms-attach-sources"><button class="btn" id="sms-src-camera">Camera</button><button class="btn" id="sms-src-device">Device</button><button class="btn" id="sms-src-blossom">🌸 Blossom</button></div>', root=>{
+        PC.modal('<h3>Add a photo</h3><div class="sms-attach-sources"><button class="btn" id="sms-src-camera">Camera</button><button class="btn" id="sms-src-device">Device</button><button class="btn" id="sms-src-blossom">📁 Files</button></div>', root=>{
           root.querySelector('#sms-src-camera').onclick=()=>{PC.closeModal();camera.click();};
           root.querySelector('#sms-src-device').onclick=()=>{PC.closeModal();pick.click();};
           root.querySelector('#sms-src-blossom').onclick=()=>{PC.closeModal();fromBlossom();};

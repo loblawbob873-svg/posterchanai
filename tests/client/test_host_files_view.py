@@ -107,7 +107,7 @@ class HostFilesView(unittest.TestCase):
     def test_one_selected_file_can_be_shared_to_blossom(self):
         host = open(MOD, encoding="utf-8").read()
         app = open(APP, encoding="utf-8").read()
-        self.assertIn("Share with Blossom", host)
+        self.assertIn("Save to Files", host)
         self.assertIn("!e.dir", host, "folders are being offered as uploadable files")
         self.assertIn("shareFile: _shareHostFile", app)
         share = app[app.index("async function _shareHostFile"):]
