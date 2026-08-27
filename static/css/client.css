@@ -9224,6 +9224,10 @@ audio.sms-att-img{min-width:220px}
    the frame take everything the head and the buttons do not. Without it the iframe keeps the
    modal's viewport-relative height and spills out of a window somebody just made smaller. */
 .office-win{display:flex;flex-direction:column;height:100%;min-height:0;padding:10px;gap:8px}
+/* A no-feed document lives in `.osw-slot` permanently, including while focused. The generic slot
+   is a subdued parked-app snapshot (opacity + outer padding + scrolling); none of those belong on
+   a live maximised editor. Keep Office's own deliberate 10px inner spacing. */
+.osw-slot.office-win{opacity:1;overflow:hidden;padding:10px}
 .office-win > *{flex:0 0 auto}
 .office-win .office-frame{flex:1 1 auto;width:100%;height:auto;min-height:0;border:0}
 @media(max-width:900px){
@@ -9247,7 +9251,10 @@ audio.sms-att-img{min-width:220px}
    window rather than by the viewport — a viewer that ignores its window is the "tiny white box"
    the office editor was. */
 .pv-host{display:flex;flex-direction:column;min-height:0;background:var(--bg);color:var(--text)}
+/* Preview owns its black media canvas edge to edge. It is also a permanent `.osw-slot`, so undo
+   the parked snapshot's dimming/inset/scroll container rather than showing a grey padded viewer. */
 .pv-win{height:100%}
+.osw-slot.pv-win{opacity:1;overflow:hidden;padding:0}
 .pv-sheet{position:fixed;inset:0;z-index:1200}
 .pv-bar{display:flex;align-items:center;gap:10px;padding:8px 10px;flex:0 0 auto;
   border-bottom:1px solid var(--line);background:var(--panel)}

@@ -112,6 +112,8 @@ class PreviewIsReachable(unittest.TestCase):
         self.assertIn("w.el.classList.add('osw-document')", osjs)
         self.assertIn("snapTo(w, 'max')", osjs)
         self.assertIn(".osw.osw-document", self.css)
+        self.assertIn(".osw-slot.office-win{opacity:1;overflow:hidden;padding:10px}", self.css)
+        self.assertIn(".osw-slot.pv-win{opacity:1;overflow:hidden;padding:0}", self.css)
         self.assertIn(".pc-document-focus .scanlines", self.css)
         self.assertIn("classList.remove('pc-document-focus')", osjs)
 
