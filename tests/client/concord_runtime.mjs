@@ -95,6 +95,19 @@ const alice={id:'root',pubkey:'b'.repeat(64),tags:[]};
 const bob={id:'child',pubkey:'c'.repeat(64),reply:{id:'root'},tags:[['e','root']]};
 const participants=PCConcord.threadParticipants([alice,bob],bob,'a'.repeat(64));
 if(participants.length!==2 || !participants.includes(alice.pubkey) || !participants.includes(bob.pubkey)) throw new Error('thread participant inheritance failed');
+const mentionRoom={naddr:'mention-room',channels:[{name:'general'},{name:'support',id:'support-id'}]};
+data.set('pc.concord.test.mention-room',JSON.stringify([{id:'m1',pubkey:'b'.repeat(64),text:'general'}]));
+data.set('pc.concord.test.mention-room.support-id',JSON.stringify([{id:'m2',pubkey:'c'.repeat(64),text:'support'}]));
+const roomPeople=PCConcord.roomParticipants(mentionRoom,'a'.repeat(64));
+if(roomPeople.length!==3 || !roomPeople.includes('c'.repeat(64)))
+  throw new Error('community member pool omitted a participant from another channel');
+const profiles=new Map([
+  ['b'.repeat(64),{display_name:'Other User'}],
+  ['c'.repeat(64),{name:'support.mod'}],
+]);
+const typed=PCConcord.typedMentionRecipients('hello @Other_User and @support.mod',roomPeople,pk=>profiles.get(pk));
+if(typed.length!==2 || !typed.includes('b'.repeat(64)) || !typed.includes('c'.repeat(64)))
+  throw new Error('typed community mentions were not resolved to Nostr recipients');
 PCConcord.render();
 
 control('cc-community-name').value='Runtime Test';
