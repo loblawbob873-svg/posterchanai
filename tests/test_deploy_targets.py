@@ -13,6 +13,7 @@ error in any log. So anything unrecognised must map to everything.
 import importlib.util
 import os
 import unittest
+from pathlib import Path
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _spec = importlib.util.spec_from_file_location(
@@ -62,6 +63,25 @@ class Mapping(unittest.TestCase):
             got = dt.units_for([p])
             self.assertIn(dt.APP, got, p)
             self.assertNotIn(dt.RELAY, got, p)
+
+    def test_nostr_store_restarts_media_because_media_imports_it_transitively(self):
+        """The media role imports ``stream_service -> settings_store -> nostr_store``.
+
+        This is intentionally different from a relay-store change: changing
+        ``app/services/nostr_relay/store.py`` only restarts the relay, while changing the datastore
+        client must also restart media or that long-running process keeps executing the old module.
+        Keep this explicit because the two similarly named stores made a correct intelligent deploy
+        look like an unrelated media restart during the folder-pagination repair.
+        """
+        self.assertEqual(dt.units_for(["app/services/nostr_relay/store.py"]), [dt.RELAY])
+        got = dt.units_for(["app/services/nostr_store.py"])
+        self.assertIn(dt.MEDIA, got)
+        self.assertNotIn(dt.RELAY, got)
+
+        stream = (Path(REPO) / "app/services/stream_service.py").read_text(encoding="utf-8")
+        settings = (Path(REPO) / "app/services/settings_store.py").read_text(encoding="utf-8")
+        self.assertIn("from app.services import settings_store", stream)
+        self.assertIn("from app.services import nostr_store as store", settings)
 
     def test_a_bot_change_restarts_only_the_bots(self):
         self.assertEqual(dt.units_for(["botframework/main.py"]), [dt.BOTS])
