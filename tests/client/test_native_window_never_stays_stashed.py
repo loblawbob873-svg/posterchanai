@@ -110,11 +110,10 @@ class NothingIsRecordedBeforeItSucceeds(unittest.TestCase):
 
 
 class AStashedSurfaceIsNotDrawnAsABlackWindow(unittest.TestCase):
-    def test_ordinary_focus_overlap_never_parks_live_native_pixels(self):
-        """Inactive Firefox remains rendered; only minimise or a shell overlay may park it."""
+    def test_ordinary_focus_overlap_parks_only_the_covered_native_pixels(self):
+        """Otherwise floating Firefox remains above every PosterChan window regardless of focus."""
         sync = body(OS_JS.read_text(), "async function nsync")
-        self.assertIn("stashPlan(items, overlayRects())", sync)
-        self.assertNotIn("htmls.concat(overlayRects())", sync)
+        self.assertIn("stashPlan(items, htmls.concat(overlayRects()))", sync)
 
     def test_the_frame_of_a_stashed_app_stays_on_the_desktop(self):
         """THIS ASSERTION USED TO BE ITS OWN OPPOSITE, and both versions were bugs.

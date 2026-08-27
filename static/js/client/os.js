@@ -2424,14 +2424,16 @@
       const items = nativeWins().map(w => ({ native: w.native, z: _zOf(w),
                                              minimised: !!w.min,
                                              rect: _frameRect(w), w }));
-      /* Native windows remain mapped during ordinary focus changes. Only explicit minimise/zero
-       * geometry may park one; treating overlap as minimise made Firefox and Telegram disappear. */
-      /* Do not turn an unfocused Firefox/Telegram window into an empty black proxy merely because
-       * an HTML frame overlaps it. Native pixels must remain live across ordinary focus changes;
-       * only an explicit minimise (carried on `items`) or a transient shell overlay may park the
-       * compositor surface. The latter is necessary because a start menu/modal otherwise cannot be
-       * reached at all: floating Wayland clients are above the tiled shell. */
-      const plan = NAT().stashPlan(items, overlayRects());
+      /* A native surface is a floating Sway window and the desktop renderer is tiled, so a native
+       * surface wins compositor stacking even when one of our HTML windows has the higher desktop
+       * z-index. Park only the native surfaces actually covered by a higher PosterChan window (or
+       * transient overlay), keeping their decorated HTML frame and captured preview in place. This
+       * is what makes clicking Terminal put it in front of Firefox without either losing its frame
+       * or leaving a black rectangle. Focusing the native frame raises its z and the same plan
+       * restores its real surface immediately. */
+      const htmls = wins.filter(w => w.native == null)
+        .map(w => ({z:_zOf(w), minimised:!!w.min, rect:_frameRect(w)}));
+      const plan = NAT().stashPlan(items, htmls.concat(overlayRects()));
       const stash = new Set(plan.stash);
       for(const it of items){
         /* A destination handoff frame is measured while hidden, before the real Wayland surface
