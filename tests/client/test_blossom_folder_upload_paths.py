@@ -39,4 +39,24 @@ def test_folder_import_registers_every_production_target_before_uploading():
     upload = upload[: upload.index("// ---- Music:")]
     assert "const _subFolder=(i)=>_uploadTargetFolder(folder,_relPaths[i])" in upload
     assert "FilesIdx.addFolder(tf)" in upload
-    assert "folder:_subFolder(i)" in upload
+    assert "folder:_targetFolders[i]" in upload
+
+
+def test_folder_import_waits_for_index_before_deciding_encryption():
+    upload = APP[APP.index("async function uploadFilesSeq(files)") :]
+    upload = upload[: upload.index("// ---- Music:")]
+    assert "const _importsFolder=_relPaths.some" in upload
+    assert "(folder || _importsFolder) && !FilesIdx._pullDone" in upload
+
+
+def test_encrypted_destination_is_decided_per_file_not_from_current_screen():
+    upload = APP[APP.index("async function uploadFilesSeq(files)") :]
+    upload = upload[: upload.index("// ---- Music:")]
+    assert "const _targetFolders=files.map((_,i)=>_subFolder(i))" in upload
+    assert "const _targetEncrypted=_targetFolders.map(tf=>!music && FilesIdx.isEncFolder(tf))" in upload
+    assert "else if(_targetEncrypted[i])" in upload
+    assert "uploadEncFile(files[i], _targetFolders[i], stat)" in upload
+
+
+def test_encrypted_folder_rule_inherits_into_nested_import_paths():
+    assert "encFolders.some(root=>name===root||name.startsWith(root+'/'))" in APP

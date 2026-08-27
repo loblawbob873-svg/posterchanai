@@ -17580,7 +17580,12 @@
       }
     },
     folders(){ return this._norm().folders; },
-    isEncFolder(name){ return name==='Music' || this._norm().encFolders.includes(name); },   // Music is always encrypted
+    /* Encryption belongs to the folder TREE, not only its exact root spelling. A directory import
+     * can resolve `Private/photos/a.jpg` to `Private/photos`; checking only that exact child misses
+     * the encrypted `Private` ancestor and uploads the file in plaintext. The longest/first ancestor
+     * distinction does not matter here: any encrypted ancestor makes every descendant encrypted. */
+    isEncFolder(name){ name=String(name||'').replace(/^\/+|\/+$/g,'');
+      return name==='Music' || this._norm().encFolders.some(root=>name===root||name.startsWith(root+'/')); },
     addFolder(name, enc){ name=(name||'').trim().slice(0,40); if(!name||this._norm().folders.includes(name)) return false; this.data.folders.push(name); if(enc&&!this.data.encFolders.includes(name)) this.data.encFolders.push(name); this.push(); return true; },
     removeFolder(name){ this._norm(); if(name==='Music'||!name) return false; this.data.folders=this.data.folders.filter(f=>f!==name); this.data.encFolders=this.data.encFolders.filter(f=>f!==name); for(const sha in this.data.files){ if(this.data.files[sha].folder===name) this.data.files[sha].folder=''; } this.push(); return true; },
     meta(sha){ return this._norm().files[sha]||null; },
@@ -20667,10 +20672,17 @@
     // FAIL-CLOSED: never upload into a NAMED folder before the index has loaded. If the folder's
     // encrypted flag isn't known yet, uploading would silently take the PLAINTEXT path and put a
     // world-readable blob on Blossom (the leaked-file bug). Refuse until we know the folder's status.
-    if(!music && folder && !FilesIdx._pullDone){ toast('One sec — still loading your folders. Try that again in a moment.'); return; }
+    const _importsFolder=_relPaths.some(p=>String(p||'').includes('/'));
+    if(!music && (folder || _importsFolder) && !FilesIdx._pullDone){ toast('One sec — still loading your folders. Try that again in a moment.'); return; }
     _uploadCancel=false;
     _uploading++;
-    const encFolder=!music && FilesIdx.isEncFolder(folder);   // non-Music encrypted folder → encrypt every file
+    /* Resolve security PER FILE. A drop can contain several directories, and from Home one of them
+       may target an existing encrypted tree while another is public. One batch-wide `encFolder`
+       derived from the current screen (`null` on Home) sent the former to public Blossom as plain
+       bytes. Descendants inherit encryption through isEncFolder(). */
+    const _targetFolders=files.map((_,i)=>_subFolder(i));
+    const _targetEncrypted=_targetFolders.map(tf=>!music && FilesIdx.isEncFolder(tf));
+    const encFolder=_targetEncrypted.some(Boolean);
     const big=files.length>20;   // a folder import → compact summary, not 2000 DOM rows
     const q=$('#bl-queue');
     if(q) q.innerHTML = big ? `<div class="up-summary" id="up-sum">Preparing ${files.length} files…</div>`
@@ -20685,9 +20697,9 @@
     // Register the subfolders this upload will populate — setFile only TAGS a file; folders() is a
     // separate registry, so an unregistered folder wouldn't appear in the Files list. Deduped up front
     // (a handful per import, not per file), plain uploads only.
-    if(!music && !encFolder){
+    if(!music){
       const _seen=new Set(FilesIdx.folders());
-      for(let i=0;i<files.length;i++){ const tf=_subFolder(i); if(tf && !_seen.has(tf)){ _seen.add(tf); try{ FilesIdx.addFolder(tf); }catch(_){} } }
+      for(let i=0;i<files.length;i++){ const tf=_targetFolders[i]; if(tf && !_targetEncrypted[i] && !_seen.has(tf)){ _seen.add(tf); try{ FilesIdx.addFolder(tf); }catch(_){} } }
     }
     /* "skipped" was one bucket covering two very different outcomes — a file REJECTED as non-audio
      * and a file ALREADY imported — and in a batch of more than 20 there are no per-file rows, so all
@@ -20715,14 +20727,14 @@
             if(stat){ stat.textContent='already imported ✓'; stat.className='up-stat ok'; } }   // resume
           else { await uploadMusicTrack(files[i], stat); ok++; if(stat){ stat.textContent='✓'; stat.className='up-stat ok'; }
             if(++done%25===0){ await FilesIdx.endBatch(); FilesIdx.beginBatch(); } }   // checkpoint so a crash keeps progress
-        } else if(encFolder){
-          await uploadEncFile(files[i], folder, stat);
+        } else if(_targetEncrypted[i]){
+          await uploadEncFile(files[i], _targetFolders[i], stat);
           ok++; if(stat){ stat.textContent='🔒'; stat.className='up-stat ok'; }
           if(++done%25===0){ await FilesIdx.endBatch(); FilesIdx.beginBatch(); }
         } else {
           if(stat) stat.textContent='uploading…';
           const url=await uploadBlob(files[i]); const sha=_shaFromUrl(url);
-          if(sha) FilesIdx.setFile(sha, {name:files[i].name, folder:_subFolder(i), mime:files[i].type||'', size:files[i].size, ts:Math.floor(Date.now()/1000)});
+          if(sha) FilesIdx.setFile(sha, {name:files[i].name, folder:_targetFolders[i], mime:files[i].type||'', size:files[i].size, ts:Math.floor(Date.now()/1000)});
           ok++; if(stat){ stat.textContent='✓'; stat.className='up-stat ok'; }
           if(++done%25===0){ await FilesIdx.endBatch(); FilesIdx.beginBatch(); }
         }
