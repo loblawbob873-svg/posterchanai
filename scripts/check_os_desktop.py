@@ -309,6 +309,16 @@ DRIVE = r"""(async () => {
   out.classicFeedText = (document.getElementById('feed')||{}).textContent;
   PCOS.enter(); await sleep(150);
   out.entered   = PCOS.isOn();
+  /* Settings categories survive one unavailable hardware bridge. This harness deliberately has
+     no pcDisplays: Appearance/About must remain real pages rather than a dashboard-wide error. */
+  PCOS.openSystemSettings(); await sleep(300);
+  const appearance=document.querySelector('.os-set-nav [data-page="appearance"]');
+  if(appearance){appearance.click();await sleep(80);}
+  out.settings={opened:!!document.querySelector('.os-settings'),appearance:!!appearance,
+    visible:document.querySelector('[data-settings-page="appearance"]')?.hidden===false,
+    pages:document.querySelectorAll('[data-settings-page]').length,
+    widgets:document.querySelectorAll('[data-widget-add],[data-widget-size],[data-widget-remove]').length};
+  document.querySelector('.osw.focused .osw-x')?.click(); await sleep(80);
   const nb = document.querySelector('#os-new');
   out.hasNew = !!nb;
   if (nb) nb.click();
@@ -1503,6 +1513,15 @@ async def drive(url):
                 if r is None:
                     print(f"SKIP  {label}: the desktop script did not evaluate")
                     return 2
+
+                settings = r.get("settings") or {}
+                if not (settings.get("opened") and settings.get("appearance") and
+                        settings.get("visible") and settings.get("pages", 0) >= 4):
+                    problems.append((label, "settings-not-separated",
+                                     f"settings without display bridge rendered {settings}"))
+                if settings.get("widgets"):
+                    problems.append((label, "settings-mixed-widgets",
+                                     f"settings included {settings['widgets']} dashboard widget controls"))
 
                 # Exercise the browser input path, not merely the CSS declaration. A regression
                 # once left Social with no usable wheel scrolling even though the feed still had

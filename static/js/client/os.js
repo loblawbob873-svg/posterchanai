@@ -1686,13 +1686,16 @@
 
   async function renderSystemSettings(){
     const host=document.getElementById('feed');
-    if(!host || !window.pcDisplays){ if(host) host.innerHTML='<div class="empty">System settings are unavailable.</div>'; return; }
+    if(!host) return;
     const owner=wins.find(w=>w.body===host.parentElement), token={}; host._pcOsSettings=token;
     const alive=()=>host._pcOsSettings===token && (!owner || host.parentElement===owner.body);
     host.className='feed os-settings-feed';
     host.innerHTML='<div class="spinner"></div>';
-    let outs=[], power={}, system={}; try{ outs=await pcDisplays.status(); }
-    catch(e){ if(alive()) host.innerHTML='<div class="empty">Could not read displays: '+enc(String(e&&e.message||e))+'</div>'; return; }
+    /* Displays is one settings page, not the gatekeeper for every page. A missing/crashed display
+       bridge must not also erase Appearance, Power and About. Degrade this page locally. */
+    let outs=[], power={}, system={}, displayError='';
+    try{ outs=window.pcDisplays?await pcDisplays.status():[]; }
+    catch(e){ outs=[];displayError='Could not read displays: '+String(e&&e.message||e); }
     if(!alive()) return;
     try{ power=window.pcPower?await pcPower.status():{}; }catch(_){ power={}; }
     if(!alive()) return;
@@ -1730,7 +1733,7 @@
         ${window.pcLiveUSB?`<option value="page:liveusb" ${_osSettingsPage==='liveusb'?'selected':''}>LiveUSB</option>`:''}
       </select></label><section data-settings-page="displays" ${_osSettingsPage==='displays'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('monitor')}</div><span><h2>Displays</h2><p>Arrange monitors, choose resolution and scaling, then preview safely before saving.</p></span></header>
         <section class="os-set-card"><div class="os-set-cardhead"><b>Monitor arrangement</b><span>Drag each numbered screen to match its physical position on your desk.</span></div>
-        <div class="os-display-map" style="height:${Math.max(180,(maxY-minY)*scale+40)}px">${rows.map((r,i)=>
+        ${displayError?`<div class="empty">${enc(displayError)}</div>`:''}<div class="os-display-map" style="height:${Math.max(180,(maxY-minY)*scale+40)}px">${rows.map((r,i)=>
           `<button class="os-display ${i===selected?'selected':''} ${r.enabled?'':'off'}" data-i="${i}"
            style="left:${20+(r.x-minX)*scale}px;top:${20+(r.y-minY)*scale}px;width:${Math.max(90,r.w*scale)}px;height:${Math.max(60,r.h*scale)}px">
            <b>${i+1}</b><span>${enc(r.label)}</span><small>${r.w} × ${r.h}</small></button>`).join('')}</div>
@@ -7137,7 +7140,8 @@
                    * Leave the windowed desktop for this session without changing the user's saved
                    * desktop preference; an ordinary later launch may restore it. */
                   mobileLanding: () => { if(on) exit(false); },
-                  isOn: () => on, openDoc, focusDoc, closeDoc, routeView, snapTo, documentWindow, osToast,
+                  isOn: () => on, openDoc, focusDoc, closeDoc, routeView, snapTo, documentWindow,
+                  openSystemSettings, osToast,
                   // app.js calls this when the player's state changes — the Now-playing widget has
                   // nothing to subscribe to, and polling an element we could be told about is the
                   // mistake the games were just fixed for.

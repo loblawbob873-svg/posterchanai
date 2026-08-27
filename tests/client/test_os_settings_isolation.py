@@ -50,6 +50,17 @@ def test_system_settings_categories_are_separate_pages_without_widget_cards():
         assert marker not in render
 
 
+def test_a_missing_display_bridge_does_not_hide_unrelated_settings_pages():
+    render = OS[OS.index("async function renderSystemSettings()"):
+                OS.index("function openTaskManager", OS.index("async function renderSystemSettings()"))]
+    assert "if(!host) return" in render
+    assert "outs=window.pcDisplays?await pcDisplays.status():[]" in render
+    assert "displayError='Could not read displays:" in render
+    assert "System settings are unavailable" not in render
+    public = OS[OS.index("window.PCOS = {"):]
+    assert "openSystemSettings" in public
+
+
 def test_mobile_settings_keeps_every_category_reachable_when_sidebar_is_hidden():
     render = OS[OS.index("async function renderSystemSettings()"):
                 OS.index("function openTaskManager", OS.index("async function renderSystemSettings()"))]
