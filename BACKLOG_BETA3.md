@@ -82,6 +82,9 @@ test, deployment/package, and relevant real-device check are complete. The insta
 
 ## 7. Release gates and ISO — only after sections 1–6
 
+- [ ] A newly generated LiveCD boots in virt-viewer without display flicker, intermittent black
+      frames, compositor restart loops, or a permanently black screen. Cover the boot graphics and
+      graphical-session startup path with a repeatable VM smoke test before publishing any ISO.
 - [ ] Full repository suite passes, including JavaScript syntax, Java compilation, Android emulator,
       packaged `app.asar`, dependency/security, web, relay, window-manager, installer, and ISO tests.
 - [ ] Current desktop and APK artifacts are installed and smoke-tested on real phone, laptop, and
