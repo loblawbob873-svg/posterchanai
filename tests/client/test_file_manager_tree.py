@@ -33,6 +33,16 @@ def test_mobile_uses_source_switcher_and_only_active_source_locations():
     assert "explorer.classList.remove('fx-locations-on')" in APP
 
 
+def test_mobile_locations_backdrop_closes_without_opening_an_underlying_file():
+    start = APP.index("function _fxBindSide(")
+    bind = APP[start:start + 8000]
+    assert "explorer.addEventListener('click',e=>{" in bind
+    assert "!explorer.classList.contains('fx-locations-on')" in bind
+    assert "e.target.closest('.fx-side')" in bind
+    assert "e.preventDefault();e.stopPropagation()" in bind
+    assert "},true)" in bind
+
+
 def test_mobile_source_heads_navigate_instead_of_repainting_the_same_drawer():
     start = APP.index("function _fxBindSide(")
     bind = APP[start:start + 7000]

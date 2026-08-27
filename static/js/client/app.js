@@ -18823,7 +18823,16 @@
   function _fxBindSide(root){
     const r = root || document;
     { const close=$('#fx-locations-close',r), explorer=$('.fx-explorer',r);
-      if(close && explorer) close.onclick=()=>explorer.classList.remove('fx-locations-on'); }
+      if(close && explorer) close.onclick=()=>explorer.classList.remove('fx-locations-on');
+      /* The phone drawer's dark surround is a box-shadow, not a DOM backdrop. The narrow exposed
+       * strip therefore belongs to .fx-main underneath it; without a capture guard, tapping there
+       * opens whichever file happens to be under your finger and leaves Locations open. Treat any
+       * tap outside .fx-side as the conventional backdrop dismissal before file handlers see it. */
+      if(explorer) explorer.addEventListener('click',e=>{
+        const mobile=!!(window.matchMedia&&matchMedia('(max-width:820px)').matches);
+        if(!mobile||!explorer.classList.contains('fx-locations-on')||e.target.closest('.fx-side'))return;
+        explorer.classList.remove('fx-locations-on');e.preventDefault();e.stopPropagation();
+      },true); }
     $$('[data-files-mode]',r).forEach(b=>b.onclick=()=>{
       _filesAdminPk=null; _filesTab=b.dataset.filesMode; renderBlossom();
     });
