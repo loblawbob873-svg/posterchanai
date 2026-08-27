@@ -118,6 +118,14 @@ This is evidence from the recovery pass, not a declaration that the whole queue 
 
 ## 2026-08-27 current-package verification
 
+| Recovery requirement | Current repeatable evidence | Remaining boundary |
+|---|---|---|
+| Files / Blossom opening | `check_installed_files_open_with.sh` executes the immutable ASAR's open-with, folder-drop/upload, native-host and Preview routes; `check_installed_native_files.py` drives the packaged native bridge | Authenticated index/sync completeness remains in `check_installed_desktop_account.py` |
+| Office document workspace | `check_installed_document_apps.sh` executes the immutable Office/Email workspace and attachment routing; the account gate performs real Collabora WOPI edit/save/readback | Requires an authenticated diagnostic CDP launch for live WOPI evidence |
+| Code Git/diff/restore/focus | `check_installed_code_package.sh` executes immutable native Git restore and Code browser behavior; `check_installed_code.py` and `check_installed_code_focus.py` retain disposable-repository and focus sizing coverage | Interactive gate requires a disposable repository and diagnostic CDP launch |
+| WM black-output / monitor coverage | `check_installed_shell_surfaces.py` requires exactly one visible, full-geometry, package-backed shell surface on every active output. Desktop 1.0.1095 passed with two 3840×2560 outputs and two surfaces | Cold start without inherited `SWAYSOCK` remains the disruptive recurrence gate |
+| Native focus/handoff/snap | Installed focus, handoff and snap scripts bind actions to exact compositor and renderer identities | Disposable Firefox/Telegram windows remain required; never target an arbitrary user's window |
+
 - Desktop 1.0.1083 and shell 1.0.20260827182039 are installed on both the dual-monitor desktop and
   laptop from the public Gentoo overlay. The immutable tarball checksum was verified before the
   overlay was published; the diagnostic shell was removed afterward and the canonical no-CDP shell
