@@ -1312,13 +1312,11 @@
    * a display disappearing mid-gesture) must never leave only a sliver of the title bar behind. */
   function keepFrameReachable(w){
     if(!w || !w.el) return;
-    const maxW=Math.max(MIN_W,vwL()-24), maxH=Math.max(MIN_H,vhL()-TASKBAR-24);
-    const ww=Math.max(MIN_W,Math.min(maxW,w.el.offsetWidth||MIN_W));
-    const hh=Math.max(MIN_H,Math.min(maxH,w.el.offsetHeight||MIN_H));
-    const x=Math.max(12,Math.min(vwL()-ww-12,parseFloat(w.el.style.left)||12));
-    const y=Math.max(12,Math.min(vhL()-TASKBAR-hh-12,parseFloat(w.el.style.top)||12));
-    Object.assign(w.el.style,{left:Math.round(x)+'px',top:Math.round(y)+'px',
-      width:Math.round(ww)+'px',height:Math.round(hh)+'px'});
+    const at=NAT().clampLocalRect({x:parseFloat(w.el.style.left),y:parseFloat(w.el.style.top),
+      w:w.el.offsetWidth||parseFloat(w.el.style.width),h:w.el.offsetHeight||parseFloat(w.el.style.height)},
+      {width:vwL(),height:vhL()-TASKBAR},{width:MIN_W,height:MIN_H,gap:12});
+    Object.assign(w.el.style,{left:at.x+'px',top:at.y+'px',width:at.w+'px',height:at.h+'px'});
+    if(!w.snap&&!w.max)w.rect={x:at.x,y:at.y,w:at.w,h:at.h};
   }
 
   /* HOW BIG A WINDOW OPENS, and where.
@@ -2354,10 +2352,13 @@
            * scratchpad. That rectangle was the reported black window. The taskbar still owns the
            * window and focusing it raises/restores the native surface; only the lie that its pixels
            * are currently present is hidden. */
-          it.w.el.classList.add('native-stashed');
           if(_natSent.get(it.native) !== 'hidden'){
-            try{ await pcWM.hide(it.native); _natSent.set(it.native, 'hidden'); }catch(_){}
+            try{ await pcWM.hide(it.native); _natSent.set(it.native, 'hidden'); }
+            catch(_){ it.w.el.classList.remove('native-stashed'); continue; }
           }
+          /* Do not paint an opaque empty-state over live Firefox until Sway confirms its pixels
+           * are parked. A rejected hide followed by focus otherwise leaves a permanent black body. */
+          it.w.el.classList.add('native-stashed');
           continue;
         }
         const rect = NAT().mapRect(_bodyRect(it.w), scale);
@@ -2775,6 +2776,7 @@
     w.el.classList.remove('maximised', 'snapped');
     Object.assign(w.el.style, { left: w.rect.x + 'px', top: w.rect.y + 'px',
                                 width: w.rect.w + 'px', height: w.rect.h + 'px' });
+    keepFrameReachable(w);
     if(nativeWins().length) nsync();
   }
 
@@ -3126,6 +3128,7 @@
       hideGhost();
       if(previewDir && pcWM.previewFrame){ try{ pcWM.previewFrame(null,previewDir); }catch(_){} }
       if(cancelled){
+        keepFrameReachable(w);
         _natGesture(w,false);
         if(nativeWins().length)nsync();
         return;
@@ -3139,8 +3142,9 @@
          * and can park it in Sway's scratchpad: taskbar icon, no Firefox window. */
         try{ Promise.resolve(pcWM.handoff(id,handoff)).then(result=>{
           if(result && wins.includes(w)) closeWin(w,{killNative:false,preserveFocus:true});
-          else if(!result){ _natGesture(w,false); nsync(); }
-        }).catch(()=>{ _natGesture(w,false); nsync(); }); }catch(_){ _natGesture(w,false); nsync(); }
+          else if(!result){ keepFrameReachable(w); _natGesture(w,false); nsync(); }
+        }).catch(()=>{ keepFrameReachable(w); _natGesture(w,false); nsync(); }); }
+        catch(_){ keepFrameReachable(w); _natGesture(w,false); nsync(); }
         return;
       }
       if(handoff && w.native == null && pcWM.handoffFrame){
@@ -3153,7 +3157,7 @@
        * and never resizes; the previous order therefore moved Firefox into the right tile at its
        * old size and never issued the final full placement. */
       if(zone) snapTo(w, zone);
-      else if(nativeWins().length) nsync();
+      else { keepFrameReachable(w); if(nativeWins().length) nsync(); }
     };
     const cancel = (e) => up(e,true);
     document.addEventListener('pointermove', move);
@@ -6512,6 +6516,9 @@
             w.el.style.top=Math.round(/up|down/.test(dir)
               ? (dir==='up' ? Math.max(12,vhL()-TASKBAR-hh-12) : 12)
               : Math.max(12,Math.min(vhL()-TASKBAR-hh-12,parseInt(w.el.style.top,10)||12)))+'px';
+            /* Mixed display sizes can make MIN_W/MIN_H larger than the destination's usable area.
+             * Use the same final clamp as drag/resize and remember this as the new floating rect. */
+            keepFrameReachable(w);
             /* openApp already focused and rendered it. Calling focusWin again here re-ran every
              * renderer a second time: two fetches, two spinners and iframe apps visibly restarting. */
             restoreHandoffUI(w,p.ui);
@@ -6731,6 +6738,10 @@
     // sit under the taskbar — visible only by scrolling, which is how they got "cut off".
     drawDesktop();
     wins.forEach(w => {
+      /* The floating restore rectangle outlives a snap. Clamp that saved geometry too, or a window
+       * looks correct while tiled and jumps partly onto a removed monitor when later unsnapped. */
+      if(w.rect) w.rect=NAT().clampLocalRect(w.rect,{width:vwL(),height:vhL()-TASKBAR},
+        {width:MIN_W,height:MIN_H,gap:12});
       if(w.snap){
         const css = rectOf(w.snap);
         if(css) Object.assign(w.el.style, css);
@@ -6741,20 +6752,11 @@
        * viewport (content clipped off-screen: "the Files UI does not resize with the window"), or
        * marooned outside it entirely. Clamp size to the desk and drag the window back on-screen;
        * a window the user sized deliberately keeps that size whenever it still fits. */
-      try{
-        const dw = desk.clientWidth, dh = desk.clientHeight;
-        if(!dw || !dh) return;
-        const r = w.el;
-        let cw = r.offsetWidth, ch = r.offsetHeight;
-        if(cw > dw){ r.style.width = Math.max(1, dw - 16) + 'px'; cw = r.offsetWidth; }
-        if(ch > dh){ r.style.height = Math.max(1, dh - 16) + 'px'; ch = r.offsetHeight; }
-        const x = r.offsetLeft, y = r.offsetTop;
-        if(x < 0) r.style.left = '0px';
-        if(y < 0) r.style.top = '0px';
-        if(x + cw > dw) r.style.left = Math.max(0, dw - cw) + 'px';
-        if(y + ch > dh) r.style.top = Math.max(0, dh - ch) + 'px';
-      }catch(_){}
+      try{ keepFrameReachable(w); }catch(_){}
     });
+    /* A display removal/scale change moves HTML frames immediately; hosted Wayland surfaces must
+     * follow in the same resize pass rather than remain on the old output as black holes. */
+    if(nativeWins().length)nsync();
   }
 
   function onKey(e){

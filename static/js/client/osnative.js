@@ -54,6 +54,21 @@
     return { x, y, w, h };
   }
 
+  /* Clamp a PosterChan frame to one renderer/output's usable rectangle. Kept DOM-free because the
+   * same rule must govern floating geometry saved before a snap and live frame geometry. */
+  function clampLocalRect(rect, bounds, minimum){
+    const b=bounds||{}, r=rect||{}, m=minimum||{}, gap=Math.max(0,Number(m.gap)||0);
+    const bw=Math.max(1,Number(b.width)||1), bh=Math.max(1,Number(b.height)||1);
+    const roomW=Math.max(1,bw-gap*2), roomH=Math.max(1,bh-gap*2);
+    const minW=Math.min(roomW,Math.max(1,Number(m.width)||1));
+    const minH=Math.min(roomH,Math.max(1,Number(m.height)||1));
+    const w=Math.min(roomW,Math.max(minW,Number(r.w)||minW));
+    const h=Math.min(roomH,Math.max(minH,Number(r.h)||minH));
+    const x=Math.min(Math.max(Number(r.x)||0,gap),Math.max(gap,bw-gap-w));
+    const y=Math.min(Math.max(Number(r.y)||0,gap),Math.max(gap,bh-gap-h));
+    return {x:Math.round(x),y:Math.round(y),w:Math.round(w),h:Math.round(h)};
+  }
+
   const overlaps = (a, b) => !!(a && b)
     && a.left < b.left + b.width && b.left < a.left + a.width
     && a.top < b.top + b.height && b.top < a.top + a.height;
@@ -104,7 +119,7 @@
     return prev.x !== next.x || prev.y !== next.y || prev.w !== next.w || prev.h !== next.h;
   }
 
-  const API = { scaleFrom, mapRect, overlaps, stashPlan, changed };
+  const API = { scaleFrom, mapRect, clampLocalRect, overlaps, stashPlan, changed };
   root.PCOSNative = API;
   if(typeof module !== 'undefined' && module.exports) module.exports = API;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

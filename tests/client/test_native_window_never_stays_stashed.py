@@ -69,6 +69,18 @@ class NothingIsRecordedBeforeItSucceeds(unittest.TestCase):
                          "the hide is recorded before it is attempted, so a refusal is remembered "
                          "as a success")
 
+    def test_failed_focus_out_hide_never_covers_live_firefox_with_an_empty_frame(self):
+        """Firefox -> another window -> Firefox remains usable even if Sway rejects the park."""
+        raw = body(OS_JS.read_text(), "async function nsync")
+        branch = raw[raw.index("if(stash.has(it.native))"):
+                     raw.index("const rect = NAT().mapRect", raw.index("if(stash.has(it.native))"))]
+        hide = branch.index("await pcWM.hide(it.native)")
+        notice = branch.index("classList.add('native-stashed')")
+        failure = branch.index("classList.remove('native-stashed')")
+        self.assertLess(hide, notice, "the black/empty cover is painted before Firefox is parked")
+        self.assertLess(failure, notice, "a failed park can leave the black/empty cover behind")
+        self.assertIn("continue", branch[failure:notice])
+
     def test_place_is_recorded_after_the_call(self):
         i = self.sync.index("pcWM.place(")
         seg = self.sync[max(0, i - 200):i]

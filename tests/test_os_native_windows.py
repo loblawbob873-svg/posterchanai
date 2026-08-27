@@ -75,6 +75,37 @@ class NativeWindowGeometry(unittest.TestCase):
         self.assertIsNone(out["b"])
         self.assertIsNotNone(out["c"])
 
+    def test_frames_are_clamped_wholly_inside_the_usable_output(self):
+        out = self.js("""
+          out.right = N.clampLocalRect({x:1800,y:900,w:900,h:700},
+            {width:1920,height:1008},{width:420,height:260,gap:12});
+          out.left = N.clampLocalRect({x:-700,y:-90,w:800,h:600},
+            {width:1920,height:1008},{width:420,height:260,gap:12});
+          out.huge = N.clampLocalRect({x:400,y:300,w:4000,h:3000},
+            {width:1024,height:528},{width:420,height:260,gap:12});
+        """)
+        self.assertEqual(out["right"], {"x":1008,"y":296,"w":900,"h":700})
+        self.assertEqual(out["left"], {"x":12,"y":12,"w":800,"h":600})
+        self.assertEqual(out["huge"], {"x":12,"y":12,"w":1000,"h":504})
+
+    def test_removed_monitor_geometry_clamps_saved_unsnap_position(self):
+        out = self.js("""
+          out.r = N.clampLocalRect({x:2100,y:40,w:1100,h:800},
+            {width:1920,height:1008},{width:420,height:260,gap:12});
+        """)
+        self.assertEqual(out["r"], {"x":808,"y":40,"w":1100,"h":800})
+
+    def test_every_final_window_path_uses_the_same_usable_output_clamp(self):
+        src = open(os.path.join(ROOT, "static", "js", "client", "os.js"), encoding="utf-8").read()
+        drag = src[src.index("function startDrag"):src.index("function startResize")]
+        resize = src[src.index("function startResize"):src.index("// ---- desktop, taskbar")]
+        unsnap = src[src.index("function unsnap"):src.index("function toggleMax")]
+        changed = src[src.index("function onResize"):src.index("function onKey")]
+        handoff = src[src.index("if(pcWM.onHandoffFrame"):src.index("if(pcWM.onPreviewFrame")]
+        for name, block in (("drag", drag), ("resize", resize), ("unsnap", unsnap),
+                            ("display change", changed), ("handoff", handoff)):
+            self.assertIn("keepFrameReachable(w)", block, name + " can leave a window off-screen")
+
     # ---- stashing ----------------------------------------------------------------------------
     def test_a_window_in_front_of_it_puts_it_away(self):
         """CLICKING A WINDOW PUTS IT IN FRONT — which for a native app means its surface leaves the
