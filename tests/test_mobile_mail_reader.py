@@ -20,3 +20,16 @@ def test_packaged_mail_attachments_use_the_configured_instance():
     app = (ROOT / 'static/js/client/app.js').read_text()
     assert 'const dlBase=_instanceBase();' in app
     assert 'href="${enc(dlBase)}/api/mail/dl/' in app
+
+
+def test_viewable_mail_attachments_open_in_the_fitted_preview_app():
+    app = (ROOT / 'static/js/client/app.js').read_text()
+    render = app[app.index('_msgBlock(m, folder, acct, expanded)'):
+                 app.index('_nmailHtml(nm, m)', app.index('_msgBlock(m, folder, acct, expanded)'))]
+    thread = app[app.index('_renderThread(pane, thread, folder, acct, seedUid)'):
+                 app.index('_msgText(msg)', app.index('_renderThread(pane, thread, folder, acct, seedUid)'))]
+    assert '_previewable(name,type)' in render
+    assert 'data-mail-preview="1"' in render
+    assert "fetch(a.href,{credentials:'include'" in thread
+    assert "_withModule('preview.js','PCPreview')" in thread
+    assert "P.open({name:a.dataset.name||'attachment'" in thread
