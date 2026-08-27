@@ -118,6 +118,23 @@ class PosterfetchTests(unittest.TestCase):
         got = json.loads(subprocess.check_output(["node", "-e", js], cwd=ROOT, text=True))
         self.assertEqual(got, "Navi 21 [Radeon RX 6800/6800 XT]")
 
+    def test_amd_model_does_not_depend_on_optional_uevent_pci_id(self):
+        """The canonical sysfs vendor/device files remain sufficient when uevent only names the
+        driver. This was the path that printed the generic `AMD amdgpu`."""
+        ids = "1002  Advanced Micro Devices\n\t744c  Navi 31 [Radeon RX 7900 XT/7900 XTX]\n"
+        js = ("const p=require('./desktop/posterfetch.js');"
+              f"console.log(JSON.stringify(p.gpuLabel({json.dumps(ids)},'0x1002','0x744c',"
+              "'amdgpu','')))" )
+        got = json.loads(subprocess.check_output(["node", "-e", js], cwd=ROOT, text=True))
+        self.assertEqual(got, "AMD Navi 31 [Radeon RX 7900 XT/7900 XTX]")
+
+    def test_platform_gpu_product_name_beats_a_generic_driver_fallback(self):
+        js = ("const p=require('./desktop/posterfetch.js');"
+              "console.log(JSON.stringify(p.gpuLabel('', '0x1002', '0xffff', 'amdgpu', "
+              "'AMD Radeon 780M')))" )
+        got = json.loads(subprocess.check_output(["node", "-e", js], cwd=ROOT, text=True))
+        self.assertEqual(got, "AMD Radeon 780M")
+
     def test_posterchanos_explicitly_ships_the_pci_model_database(self):
         """A clean minimal image must not depend on another package incidentally installing pci.ids."""
         installer = (ROOT / "os/gentoo.sh").read_text()
@@ -131,6 +148,8 @@ class PosterfetchTests(unittest.TestCase):
         body = src[start:src.index("function network()", start)]
         self.assertIn("rows.push", body)
         self.assertIn("rows.join", body)
+        self.assertIn("path.join(dir, 'device')", body,
+                      "GPU models still depend on optional uevent PCI_ID")
         self.assertNotRegex(body, r"if \(name \|\| driver\) return",
                             "a second GPU would never be inspected")
 

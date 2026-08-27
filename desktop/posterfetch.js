@@ -81,18 +81,30 @@ function pciModel(ids, vendor, device) {
   }
   return '';
 }
+function gpuLabel(ids, vendor, device, driver, product) {
+  const v = String(vendor || '').replace(/^0x/i, '').toLowerCase();
+  const d = String(device || '').replace(/^0x/i, '').toLowerCase();
+  const maker = ({'1002':'AMD', '10de':'NVIDIA', '8086':'Intel'})[v] || '';
+  /* product_name is useful on platform/embedded GPUs; PCI model data is more specific on discrete
+   * cards and is shipped explicitly by PosterChanOS. The driver is the last-resort truth only. */
+  const model = pciModel(ids, v, d) || clean(product) || clean(driver);
+  const prefix = maker && !new RegExp('^'+maker+'(?:\\s|$)','i').test(model) ? maker : '';
+  return clean([prefix, model].filter(Boolean).join(' '));
+}
 function gpu() {
   try {
     const rows = [];
     for (const card of fs.readdirSync('/sys/class/drm').filter(x => /^card\d+$/.test(x))) {
       const dir = path.join('/sys/class/drm', card, 'device');
       const vendor = one(path.join(dir, 'vendor')).toLowerCase();
+      const device = one(path.join(dir, 'device')).toLowerCase();
       const uevent = one(path.join(dir, 'uevent'));
       const driver = uevent.match(/^DRIVER=(.+)$/m);
       const pci = uevent.match(/^PCI_ID=([0-9a-f]{4}):([0-9a-f]{4})$/im);
-      const maker = ({'0x1002':'AMD', '0x10de':'NVIDIA', '0x8086':'Intel'})[vendor] || '';
-      const model = pci ? pciModel(pciIdsText(), pci[1], pci[2]) : '';
-      const label = clean([maker, model || (driver && driver[1])].filter(Boolean).join(' '));
+      /* vendor/device are the canonical PCI sysfs attributes. Some kernels omit PCI_ID from
+       * uevent; using only that optional copy reduced a known AMD card to `AMD amdgpu`. */
+      const label = gpuLabel(pciIdsText(), vendor || (pci && pci[1]),
+        device || (pci && pci[2]), driver && driver[1], one(path.join(dir, 'product_name')));
       if (label && !rows.includes(label)) rows.push(label);
     }
     if (rows.length) return rows.join(' / ');
@@ -240,4 +252,4 @@ function render(env, cols) {
   return `\r\n${lines.join('\r\n')}\r\n\r\n`;
 }
 
-module.exports = { render, human, duration, meter, pciModel, LOGO };
+module.exports = { render, human, duration, meter, pciModel, gpuLabel, LOGO };
