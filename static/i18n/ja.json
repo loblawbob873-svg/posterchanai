@@ -2756,7 +2756,7 @@
  "no reading": "まだ読み込んでいません",
  "no relays found for that NIP-05": "そのNIP-05に対応するリレーが見つかりません",
  "no save dialog on this device — building the archive in memory": "このデバイスには保存ダイアログがありません — メモリ上にアーカイブを作成中",
- "no saved projects found on Blossom": "Blossom に保存されたプロジェクトが見つかりません",
+ "no saved projects found in Files": "ファイルに保存されたプロジェクトが見つかりません",
  "no valid one-time code secret on this entry": "このエントリに有効なワンタイムコードのシークレットがありません",
  "nobody yet": "まだ誰もいません",
  "node agent": "ノードエージェント",
