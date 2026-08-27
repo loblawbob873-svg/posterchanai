@@ -141,6 +141,7 @@
   }
   function markRead(room,name){ if(room&&room.naddr)localStorage.setItem(channelReadKey(room,name),String(Date.now())); }
   function isUnread(room){ return channelsOf(room).some(c=>testMessages(channelStoreId(room,c.name)).some(m=>(Number(m.at)||0)>seenAt(room,c.name))); }
+  function conversationIsVisible(narrow,chatOpen,drawerOpen){ return !narrow||(!!chatOpen&&!drawerOpen); }
   function messageId(m){ return String((m&&m.id)||`${Number(m&&m.at)||0}:${String(m&&m.pubkey||'')}`); }
   function imetaFields(tag){
     const out={}; if(!Array.isArray(tag)||tag[0]!=='imeta')return out;
@@ -557,7 +558,12 @@
     const current=state.community==null?null:rooms[state.community];
     const visibleChannels=current?orderedChannels(current):[];
     if(current&&visibleChannels.length&&!visibleChannels.some(c=>c.name===(state.channel||'general')))state.channel=visibleChannels[0].name;
-    if(current)markRead(current,state.channel||'general');
+    /* On phones a selected community does not mean its conversation is visible: the initial
+     * workspace and the open drawer show rooms/channels instead. Relay and metadata repaints used
+     * to call markRead here anyway, erasing the bold unread marker before the person opened the
+     * channel. Desktop always shows the conversation; mobile marks it only after the drawer closes. */
+    const narrow=!!(window.matchMedia&&window.matchMedia('(max-width:820px)').matches);
+    if(current&&conversationIsVisible(narrow,mobileChatOpen,mobileDrawerOpen))markRead(current,state.channel||'general');
     const currentChannel=current?visibleChannels.find(c=>c.name===(state.channel||'general')):null;
     const channelPrivate=!!(currentChannel&&currentChannel.private);
     const messages=current&&(current.local||current.cord)?activeMessages(current):[];
@@ -678,5 +684,5 @@
     $$('[data-cc-react-toggle]').forEach(b=>b.onclick=()=>toggleReaction(b.dataset.ccReactToggle,b.dataset.ccEmoji));
     $$('[data-cc-react]').forEach(b=>b.onclick=()=>{ reactionTarget=b.dataset.ccReact; const choices=['👍','❤️','😂','😮','😢','😡','🎉','💯']; const old=document.querySelector('.cc-reaction-picker'); if(old)old.remove(); const pop=document.createElement('div'); pop.className='cc-reaction-picker'; pop.innerHTML=choices.map(x=>`<button data-emoji="${x}">${x}</button>`).join(''); b.closest('.cc-message-body').appendChild(pop); pop.querySelectorAll('button').forEach(x=>x.onclick=e=>{ e.stopPropagation(); toggleReaction(reactionTarget,x.dataset.emoji); }); });
   }
-  window.PCConcord={render,openInvite:openInviteLink,inviteParts,normalizeIcon,notifyMentions,discoverInvites,threadParticipants,roomParticipants,typedMentionRecipients,encryptedAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff};
+  window.PCConcord={render,openInvite:openInviteLink,inviteParts,normalizeIcon,notifyMentions,discoverInvites,threadParticipants,roomParticipants,typedMentionRecipients,conversationIsVisible,encryptedAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff};
 })();

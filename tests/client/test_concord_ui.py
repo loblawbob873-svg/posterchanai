@@ -500,6 +500,13 @@ def test_concord_webxdc_mentions_live_sync_and_scroll_are_integrated():
     assert 'scrollStates' in CONCORD and 'st.pinned' in CONCORD and 'preserveChatScroll' in CONCORD
 
 
+def test_mobile_room_list_and_drawer_do_not_consume_channel_unread_state():
+    assert "function conversationIsVisible(narrow,chatOpen,drawerOpen)" in CONCORD
+    assert "return !narrow||(!!chatOpen&&!drawerOpen)" in CONCORD
+    assert "conversationIsVisible(narrow,mobileChatOpen,mobileDrawerOpen)" in CONCORD
+    assert "if(current)markRead(current,state.channel||'general')" not in CONCORD
+
+
 def test_entering_channel_wins_scroll_race_with_history_and_media():
     assert 'function enterChatBottom()' in CONCORD
     assert "[0,60,180,450,900,1600]" in CONCORD

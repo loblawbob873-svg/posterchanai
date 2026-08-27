@@ -95,6 +95,11 @@ const alice={id:'root',pubkey:'b'.repeat(64),tags:[]};
 const bob={id:'child',pubkey:'c'.repeat(64),reply:{id:'root'},tags:[['e','root']]};
 const participants=PCConcord.threadParticipants([alice,bob],bob,'a'.repeat(64));
 if(participants.length!==2 || !participants.includes(alice.pubkey) || !participants.includes(bob.pubkey)) throw new Error('thread participant inheritance failed');
+if(PCConcord.conversationIsVisible(true,false,false) ||
+   PCConcord.conversationIsVisible(true,true,true) ||
+   !PCConcord.conversationIsVisible(true,true,false) ||
+   !PCConcord.conversationIsVisible(false,false,false))
+  throw new Error('mobile conversation visibility/read-state rule is wrong');
 const mentionRoom={naddr:'mention-room',channels:[{name:'general'},{name:'support',id:'support-id'}]};
 data.set('pc.concord.test.mention-room',JSON.stringify([{id:'m1',pubkey:'b'.repeat(64),text:'general'}]));
 data.set('pc.concord.test.mention-room.support-id',JSON.stringify([{id:'m2',pubkey:'c'.repeat(64),text:'support'}]));
