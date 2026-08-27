@@ -59,6 +59,8 @@ test, deployment/package, and relevant real-device check are complete. The insta
 - [ ] Playing video survives monitor movement at the same playback time/state and fitted scale.
 - [ ] Firefox/Telegram retain decorations, focus normally, never remain always-on-top, move where
       dropped, snap by mouse and Super+arrows, and private windows are decorated.
+- [ ] Mouse edge/corner snapping works on every monitor, including cross-monitor drags; preview,
+      completed snap, cancelled drag, and unsnap preserve the original app, decorations and geometry.
 - [ ] Taskbar right-click offers Close and Move. Alt+Tab switcher works. Clipboard works between
       Firefox/Telegram and PosterChan. Black-screen and exhaustive app handoff tests are release gates.
 
@@ -87,3 +89,9 @@ test, deployment/package, and relevant real-device check are complete. The insta
 - [ ] Build clean installable ISO, boot it in a VM, complete a hard-drive installation, eject ISO,
       reboot installed system, verify graphical first-run desktop and core apps, then publish path and
       checksum.
+
+## 8. Post-stability polish — only after the backlog above is empty
+
+- [ ] Add PosterChanOS compositing with modern shadows, transitions, smooth movement and restrained
+      transparency/blur; include a low-power/off setting and regression/performance tests proving it
+      cannot cause black windows, focus errors, input lag, or cross-monitor state loss.
