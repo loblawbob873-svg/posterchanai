@@ -136,9 +136,22 @@ class TheBuilderShipsTheInstaller(unittest.TestCase):
         boot = self.src[self.src.index("bootloader() {"):
                         self.src.index("\n}\n", self.src.index("bootloader() {"))]
         self.assertIn('DISK_PASSWORD="$PC_INSTALL_PASSWORD"', boot)
-        setup_lines = self.src[self.src.index("sed -i '1i set -e'"):
+        setup_lines = self.src[self.src.index("printf '%s\\n' '#!/usr/bin/bash' 'set -e'"):
                                self.src.index("# Do not carry the LiveCD operator")]
         self.assertNotIn("PC_INSTALL_PASSWORD", setup_lines)
+
+    def test_clean_image_gets_a_fresh_fail_fast_finalizer(self):
+        """Clean media omits the build host's /setup.sh, so finalization must not rely on rsync
+        having copied one.  Otherwise the append operations recreate it without `set -e` and a
+        failed bootloader is followed by a false Installation Complete message."""
+        finalize = self.src[self.src.index("finalizeInstall() {"):
+                            self.src.index("\n}\n\ninstallPackages()", self.src.index("finalizeInstall() {"))]
+        create = finalize.index(': >"$TARGET/setup.sh" || return 1')
+        fail_fast = finalize.index("printf '%s\\n' '#!/usr/bin/bash' 'set -e'")
+        bootloader = finalize.index("gentoo.sh bootloader")
+        self.assertLess(create, fail_fast)
+        self.assertLess(fail_fast, bootloader)
+        self.assertNotIn("sed -i '1i set -e'", finalize)
 
     def test_completed_live_install_returns_success_without_home(self):
         i = self.src.index("liveISOinstall() {")

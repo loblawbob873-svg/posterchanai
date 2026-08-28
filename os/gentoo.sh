@@ -636,7 +636,12 @@ finalizeInstall() {
 	# A bootloader/initramfs failure is an INSTALL failure. setup.sh used to continue into accounts
 	# and services after bootloader() returned non-zero, so the menu reported completion and the
 	# first honest error appeared only after reboot at the maintenance prompt.
-	sed -i '1i set -e' $TARGET/setup.sh
+	# A clean release image deliberately does not carry the build host's /setup.sh. Appending the
+	# three commands below happened to create a replacement, but then this sed ran against a missing
+	# file and the replacement had no `set -e`: a failed bootloader could still end with
+	# "Installation Complete". Create this target-owned transaction script explicitly every time.
+	: >"$TARGET/setup.sh" || return 1
+	printf '%s\n' '#!/usr/bin/bash' 'set -e' >"$TARGET/setup.sh" || return 1
 	echo 'bash /usr/bin/gentoo.sh bootloader' >>$TARGET/setup.sh
 	echo 'bash /usr/bin/gentoo.sh accounts' >>$TARGET/setup.sh
 	echo 'bash /usr/bin/gentoo.sh services' >>$TARGET/setup.sh
