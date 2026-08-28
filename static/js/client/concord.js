@@ -55,12 +55,13 @@
    * selection after every repaint. This deliberately stays in renderer memory: drafts are private
    * plaintext and must not be written to localStorage. */
   const composerDrafts=new Map(),sendingDrafts=new Set();
-  /* Replacing a focused textarea makes Chromium move document.activeElement to <body> until our
-   * requestAnimationFrame callback focuses its replacement. A second relay/profile repaint can run
-   * inside that gap. It must inherit the pending focus restoration, but only while focus is on the
-   * browser's fallback node: if somebody deliberately focused a button or another input, leave it
-   * there. The token also makes callbacks from older replacements harmless. */
-  let composerFocusRestore=null,composerFocusToken=0;
+  /* Relay messages, profiles, icons and decrypted attachments may all finish while the on-screen
+   * keyboard owns a control inside Concord. Replacing #feed at that moment destroys the real DOM
+   * textarea; restoring its value/focus later still closes and reopens Android's keyboard. Defer
+   * background paints until focus leaves the workspace. Data is already committed to the in-memory
+   * stores, and one eventual paint coalesces every pending update. User actions still call render()
+   * directly, so navigation and Send are immediate. */
+  let backgroundRenderPending=false,backgroundFocusHost=null;
   let activeMentionState={choices:[],index:0,recipients:new Map()};
   const attachmentCache=new Map(),attachmentLoads=new Map();
   const scrollStates=new Map();
@@ -70,22 +71,31 @@
   function save(v){ try{ localStorage.setItem('pc.concord.invites',JSON.stringify(v.slice(0,50),(key,value)=>key==='icon'&&/^blob:/i.test(String(value||''))?'':value)); }catch(_){} }
   function scrollKey(){ const room=state.community==null?null:saved()[state.community]; return `${room&&(room.communityId||room.naddr||room.url)||'home'}:${state.channel||'general'}`; }
   function composerKey(room,channel){return `${room&&(room.communityId||room.naddr||room.url)||'home'}:${channel||'general'}`;}
-  function composerFocusFallback(active){return !active||active===document.body||active===document.documentElement||active.isConnected===false;}
   function captureComposer(){
     const input=(document.querySelector&&document.querySelector('#cc-input'))||(PC()&&PC().$&&PC().$('#cc-input'));
     if(!input)return;
     const room=state.community==null?null:saved()[state.community],key=input.dataset&&input.dataset.ccDraftKey||composerKey(room,state.channel),start=Number.isFinite(input.selectionStart)?input.selectionStart:String(input.value||'').length,
       end=Number.isFinite(input.selectionEnd)?input.selectionEnd:start;
-    const prior=composerDrafts.get(key),active=document.activeElement,
-      pending=!!(composerFocusRestore&&composerFocusRestore.key===key&&composerFocusRestore.input===input),
-      focused=active===input||!!(prior&&prior.focused&&pending&&composerFocusFallback(active));
-    if(pending&&!focused)composerFocusRestore=null;
+    const focused=document.activeElement===input;
     composerDrafts.set(key,{value:String(input.value||''),start,end,direction:input.selectionDirection||'none',
       focused,replyTarget,mentionChoices:[...(activeMentionState.choices||[])],
       mentionIndex:Number(activeMentionState.index)||0,mentionRecipients:new Map(activeMentionState.recipients||[])});
   }
-  function restoreComposerFocus(key,input){const token=++composerFocusToken,later=window.requestAnimationFrame||((fn)=>setTimeout(fn,0));composerFocusRestore={key,input,token};later(()=>{const pending=composerFocusRestore;if(!pending||pending.token!==token)return;const active=document.activeElement;if(input.isConnected!==false&&(active===input||composerFocusFallback(active))){try{input.focus({preventScroll:true});}catch(_){input.focus();}}else{const draft=composerDrafts.get(key);if(draft&&draft.focused)composerDrafts.set(key,{...draft,focused:false});}if(composerFocusRestore&&composerFocusRestore.token===token)composerFocusRestore=null;});}
-  function clearComposer(key){const input=(document.querySelector&&document.querySelector('#cc-input'))||(PC()&&PC().$&&PC().$('#cc-input'));if(input){const room=state.community==null?null:saved()[state.community],liveKey=input.dataset&&input.dataset.ccDraftKey||composerKey(room,state.channel);if(liveKey===key){input.value='';try{input.setSelectionRange(0,0);}catch(_){}}}if(composerFocusRestore&&composerFocusRestore.key===key)composerFocusRestore=null;composerDrafts.delete(key);activeMentionState={choices:[],index:0,recipients:new Map()};replyTarget=null;}
+  function clearComposer(key){const input=(document.querySelector&&document.querySelector('#cc-input'))||(PC()&&PC().$&&PC().$('#cc-input'));if(input){const room=state.community==null?null:saved()[state.community],liveKey=input.dataset&&input.dataset.ccDraftKey||composerKey(room,state.channel);if(liveKey===key){input.value='';try{input.setSelectionRange(0,0);}catch(_){}}}composerDrafts.delete(key);activeMentionState={choices:[],index:0,recipients:new Map()};replyTarget=null;}
+  function backgroundRender(){
+    const p=PC(),feed=p&&p.$&&p.$('#feed'),active=document.activeElement,
+      inside=!!(feed&&active&&active!==document.body&&active!==document.documentElement&&active.isConnected!==false&&
+        ((feed.contains&&feed.contains(active))||active===(document.querySelector&&document.querySelector('#cc-input'))));
+    if(inside){
+      backgroundRenderPending=true;
+      if(backgroundFocusHost!==feed&&feed.addEventListener){
+        backgroundFocusHost=feed;
+        feed.addEventListener('focusout',()=>{backgroundFocusHost=null;setTimeout(()=>{if(backgroundRenderPending)backgroundRender();},0);},{once:true,capture:true});
+      }
+      return false;
+    }
+    backgroundRenderPending=false;backgroundFocusHost=null;render();return true;
+  }
   function handoffState(){ const room=state.community==null?null:saved()[state.community],key=scrollKey(),scroll=readScroll(key); return {room:room&&(room.communityId||room.naddr||room.url)||'',channel:state.channel||'general',mobileChatOpen:!!mobileChatOpen,mobileDrawerOpen:!!mobileDrawerOpen,scroll:{top:Number(scroll.top)||0,height:Number(scroll.height)||0,pinned:scroll.pinned!==false}}; }
   function acceptHandoff(value){ const v=value&&typeof value==='object'?value:{},rooms=saved(),i=rooms.findIndex(room=>(room.communityId||room.naddr||room.url)===String(v.room||'')); state.community=i>=0?i:(rooms.length?Math.max(0,Math.min(Number(localStorage.getItem('pc.concord.active'))||0,rooms.length-1)):null);state.channel=String(v.channel||'general').slice(0,80);mobileChatOpen=!!v.mobileChatOpen;mobileDrawerOpen=!!v.mobileDrawerOpen;if(state.community!=null&&v.scroll){const key=scrollKey(),st={top:Math.max(0,Number(v.scroll.top)||0),height:Math.max(0,Number(v.scroll.height)||0),pinned:v.scroll.pinned!==false};writeScroll(key,st);} }
   function readScroll(key){ if(scrollStates.has(key))return scrollStates.get(key); try{ const v=JSON.parse(sessionStorage.getItem('pc.concord.scroll.'+key)||'null'); if(v&&typeof v==='object')return v; }catch(_){} return {pinned:true}; }
@@ -422,7 +432,7 @@
     try{
       const changed=await applyRoomIconMetadata(room,{icon:room.iconPointer},loadKey);
       if(changed){const rooms=saved(),i=rooms.findIndex(x=>roomIdentity(x)===roomIdentity(room));if(i>=0){rooms[i].iconPointer=room.iconPointer;if(/^blob:/i.test(String(rooms[i].icon||'')))rooms[i].icon='';save(rooms);}}
-      if(document.body.classList.contains('concord-view'))render();
+      if(document.body.classList.contains('concord-view'))backgroundRender();
     }finally{storedIconLoads.delete(loadKey);}
   }
   function reactionSummary(p,m){
@@ -484,8 +494,8 @@
   function startDiscovery(p){
     if(discoveryStarted||!p.relaySubscribe)return; discoveryStarted=true;
     const bySigner=new Map();
-    const onEvent=ev=>{ for(const item of discoverInvites(ev.content,ev)){ const old=bySigner.get(item.naddr); if(!old||Number(ev.created_at)>Number(old.source.created_at))bySigner.set(item.naddr,item); recoverOwnedInvite(p,item); } discovered=[...bySigner.values()].sort((a,b)=>Number(b.source.created_at)-Number(a.source.created_at)); discovered.slice(0,24).forEach(item=>hydrateDiscoveredIcon(p,item)); if(state.community==null)render(); };
-    const onEose=()=>{ discoveryLoaded=true; if(state.community==null)render(); };
+    const onEvent=ev=>{ for(const item of discoverInvites(ev.content,ev)){ const old=bySigner.get(item.naddr); if(!old||Number(ev.created_at)>Number(old.source.created_at))bySigner.set(item.naddr,item); recoverOwnedInvite(p,item); } discovered=[...bySigner.values()].sort((a,b)=>Number(b.source.created_at)-Number(a.source.created_at)); discovered.slice(0,24).forEach(item=>hydrateDiscoveredIcon(p,item)); if(state.community==null)backgroundRender(); };
+    const onEose=()=>{ discoveryLoaded=true; if(state.community==null)backgroundRender(); };
     const filters=[{kinds:[1],search:'armada.buzz/invite',limit:100},{kinds:[1],search:'poster.place/invite',limit:100}];
     try{ p.relaySubscribe(filters,{onEvent,onEose,live:true}); if(p.relayQueryFrom)p.relayQueryFrom(DISCOVER_RELAYS,filters,{timeout:6000,max:2}).then(events=>{events.forEach(onEvent);onEose();}); }catch(_){ discoveryLoaded=true; }
   }
@@ -521,7 +531,7 @@
       const info=reader.inspectControl(bundle,wraps||[]);
       item.name=info.name||item.name; item.description=info.description||item.description;
       if(info.icon)item.icon=typeof info.icon==='string'?info.icon:await decryptImagePointer(info.icon);
-      if(state.community==null)render();
+      if(state.community==null)backgroundRender();
     }catch(_){} finally{ discoveryIconLoads.delete(item.naddr); }
   }
   function inviteRefUrl(ref){ const s=String(ref||''); if(/^https?:/i.test(s))return s; const [naddr,frag]=s.split('#'); return naddr&&frag?`https://armada.buzz/invite/${naddr}#${frag}`:''; }
@@ -619,7 +629,7 @@
         if(i<0){rooms.push(room);changed=true;}
         else if(!rooms[i].cord||rooms[i].cord.armadaList){rooms[i]={...rooms[i],...room};changed=true;}
       }
-      if(changed){save(rooms);render();}
+      if(changed){save(rooms);backgroundRender();}
     }catch(e){ console.warn('Concord membership sync failed',e); }
     finally{
       membershipBusy=false;
@@ -682,7 +692,7 @@
       };
       /* Paint the encrypted on-device copy before opening sockets. This is the offline/reload path,
        * and also prevents relay latency from looking like an empty room. */
-      if(controlWraps.length){await applyControl(controlWraps);for(const channel of room.channels||[]){const wraps=await cachedEnvelopes(envelopeCacheKey(loadKey,channel.id));if(wraps.length)await applyChannel(channel,wraps);}if(state.community===index)render();}
+      if(controlWraps.length){await applyControl(controlWraps);for(const channel of room.channels||[]){const wraps=await cachedEnvelopes(envelopeCacheKey(loadKey,channel.id));if(wraps.length)await applyChannel(channel,wraps);}if(state.community===index)backgroundRender();}
       const completeControl=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,controlWraps),fetchedControl=completeControl.filter(ev=>!controlWraps.some(old=>old.id===ev.id));
       controlWraps=completeControl;await cacheEnvelopes(controlKey,fetchedControl);
       const channelCount=await applyControl(controlWraps);
@@ -697,7 +707,7 @@
        * pass the durable identity explicitly because saved array positions can change meanwhile. */
       const current=saved()[index],stillSelected=state.community===index&&
         (!expectedIdentity||roomIdentity(current)===expectedIdentity);
-      if(stillSelected){render();scrollChatBottom();}
+      if(stillSelected){backgroundRender();scrollChatBottom();}
     })().finally(()=>roomLoads.delete(loadKey)); roomLoads.set(loadKey,job); return job;
   }
   async function publishCordMessage(p,room,channelName,text,extraTags=[],kind=9){
@@ -714,7 +724,7 @@
   }
   async function refreshActiveChannel(p){
     if(liveBusy||state.community==null||!document.body.classList.contains('concord-view'))return; liveBusy=true;
-    try{ const rooms=saved(),room=rooms[state.community],channel=room&&(room.channels||[]).find(c=>c.name===(state.channel||'general')),bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader;if(!room||!channel||!bundle||!reader)return; const loadKey=room.communityId||room.naddr,controlWraps=roomControls.get(loadKey);if(!controlWraps)return; const relays=[...new Set([...(bundle.relays||[]),...CORD_RELAYS])].slice(0,8),storeId=channelStoreId(room,channel.name),prior=testMessages(storeId),since=Math.max(0,Math.floor((prior.reduce((n,m)=>Math.max(n,Number(m.at)||0),0)-60000)/1000)),wraps=await cordQuery(p,relays,[{kinds:[1059],authors:channel.streamPubkeys,since,limit:500}],{timeout:6000,max:8});await cacheEnvelopes(envelopeCacheKey(loadKey,channel.id),wraps);const opened=await reader.inspectChat(bundle,controlWraps,channel.id,wraps||[]),incoming=(opened.messages||[]).map(m=>{const pr=p.profOf?p.profOf(m.pubkey):{};return {id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:m.text,at:m.at,kind:m.kind,tags:m.tags||[],reactions:{},remote:true};}),merged=mergeRelayMessages(prior,incoming),byId=new Map(merged.map(m=>[messageId(m),m])); let changed=JSON.stringify(merged)!==JSON.stringify(prior),urlGroups=new Map(opened.reactionUrls||[]); for(const [target,groups] of opened.reactions||[]){const m=byId.get(target);if(!m)continue;const next={},nextUrls={};for(const [emoji,people] of groups)next[emoji]=people;for(const [emoji,url] of urlGroups.get(target)||[])nextUrls[emoji]=url;if(JSON.stringify(m.reactions||{})!==JSON.stringify(next)||JSON.stringify(m.reactionUrls||{})!==JSON.stringify(nextUrls)){m.reactions=next;m.reactionUrls=nextUrls;changed=true;}} if(changed){preserveChatScroll(()=>{saveTestMessages(storeId,[...byId.values()].sort((a,b)=>Number(a.at)-Number(b.at)));render();});}
+    try{ const rooms=saved(),room=rooms[state.community],channel=room&&(room.channels||[]).find(c=>c.name===(state.channel||'general')),bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader;if(!room||!channel||!bundle||!reader)return; const loadKey=room.communityId||room.naddr,controlWraps=roomControls.get(loadKey);if(!controlWraps)return; const relays=[...new Set([...(bundle.relays||[]),...CORD_RELAYS])].slice(0,8),storeId=channelStoreId(room,channel.name),prior=testMessages(storeId),since=Math.max(0,Math.floor((prior.reduce((n,m)=>Math.max(n,Number(m.at)||0),0)-60000)/1000)),wraps=await cordQuery(p,relays,[{kinds:[1059],authors:channel.streamPubkeys,since,limit:500}],{timeout:6000,max:8});await cacheEnvelopes(envelopeCacheKey(loadKey,channel.id),wraps);const opened=await reader.inspectChat(bundle,controlWraps,channel.id,wraps||[]),incoming=(opened.messages||[]).map(m=>{const pr=p.profOf?p.profOf(m.pubkey):{};return {id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:m.text,at:m.at,kind:m.kind,tags:m.tags||[],reactions:{},remote:true};}),merged=mergeRelayMessages(prior,incoming),byId=new Map(merged.map(m=>[messageId(m),m])); let changed=JSON.stringify(merged)!==JSON.stringify(prior),urlGroups=new Map(opened.reactionUrls||[]); for(const [target,groups] of opened.reactions||[]){const m=byId.get(target);if(!m)continue;const next={},nextUrls={};for(const [emoji,people] of groups)next[emoji]=people;for(const [emoji,url] of urlGroups.get(target)||[])nextUrls[emoji]=url;if(JSON.stringify(m.reactions||{})!==JSON.stringify(next)||JSON.stringify(m.reactionUrls||{})!==JSON.stringify(nextUrls)){m.reactions=next;m.reactionUrls=nextUrls;changed=true;}} if(changed){preserveChatScroll(()=>{saveTestMessages(storeId,[...byId.values()].sort((a,b)=>Number(a.at)-Number(b.at)));backgroundRender();});}
     }catch(e){console.warn('Concord live sync failed',e);}finally{liveBusy=false;}
   }
   async function refreshRoomMetadata(p){
@@ -738,7 +748,7 @@
       if(await applyRoomIconMetadata(room,info,loadKey))changed=true;
       const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);
       if(channels.length)assign('channels',channels);
-      if(changed){rooms[selected.index]=room;save(rooms);preserveChatScroll(()=>render());}
+      if(changed){rooms[selected.index]=room;save(rooms);preserveChatScroll(()=>backgroundRender());}
     }catch(e){console.warn('Concord metadata sync failed',e);}finally{metadataBusy=false;}
   }
   function startLiveSync(p){ if(liveTimer||!document.body.classList.contains)return; liveTimer=setInterval(()=>{refreshRoomMetadata(p);refreshActiveChannel(p);},4000); }
@@ -753,6 +763,9 @@
     return {name,icon,description:'',channels:[{name:'general',private:false,id:made.generalChannelId}],local:false,naddr:inviteParts(made.url).naddr,url:made.url,cord:{...made,bundle}};
   }
   function render(){
+    // An explicit/user render supersedes any coalesced background paint. A focusout listener from
+    // the old workspace may still fire, but it observes false and cannot paint twice.
+    backgroundRenderPending=false;backgroundFocusHost=null;
     const p=PC();
     /* Every async Concord path eventually calls render(). The feed belongs to the CURRENT app, not
      * to whichever request finished last. This guard protects Code and every other shared-feed view
@@ -827,7 +840,7 @@
     hydrateEncryptedAttachments(messages);
     hydrateWebxdcCards(current);
     bind(me);
-    if(draft){const input=p.$('#cc-input');if(input){const end=String(input.value||'').length,start=Math.max(0,Math.min(Number(draft.start)||0,end)),finish=Math.max(start,Math.min(Number(draft.end)||start,end));try{input.setSelectionRange(start,finish,draft.direction||'none');}catch(_){}if(draft.focused)restoreComposerFocus(draftKey,input);}}
+    if(draft){const input=p.$('#cc-input');if(input){const end=String(input.value||'').length,start=Math.max(0,Math.min(Number(draft.start)||0,end)),finish=Math.max(start,Math.min(Number(draft.end)||start,end));try{input.setSelectionRange(start,finish,draft.direction||'none');}catch(_){}if(draft.focused){const later=window.requestAnimationFrame||((fn)=>setTimeout(fn,0));later(()=>{if(input.isConnected!==false&&(!document.activeElement||document.activeElement===document.body||document.activeElement===document.documentElement))input.focus({preventScroll:true});});}}}
     if(autoOpen>=0)setTimeout(()=>{ const button=document.querySelector(`[data-cc-server="${autoOpen}"]`); if(button)button.click(); },0);
     /* render() replaces the scroller on EVERY relay/history/metadata repaint, not only when the app
      * first returns to the feed. Restore after every replacement: pinned rooms land at the newest
@@ -962,7 +975,7 @@
     $$('[data-cc-react-toggle]').forEach(b=>b.onclick=()=>toggleReaction(b.dataset.ccReactToggle,b.dataset.ccEmoji));
     $$('[data-cc-react]').forEach(b=>b.onclick=()=>{ const target=b.dataset.ccReact;closeMessageActions();reactionTarget=target; const choices=['👍','❤️','😂','😮','😢','😡','🎉','💯']; const pop=document.createElement('div'); pop.className='cc-reaction-picker'; pop.innerHTML=choices.map(x=>`<button data-emoji="${x}">${x}</button>`).join(''); b.closest('.cc-message-body').appendChild(pop); pop.querySelectorAll('button').forEach(x=>x.onclick=e=>{ e.stopPropagation();const id=reactionTarget;closeMessageActions();toggleReaction(id,x.dataset.emoji); }); });
   }
-  window.PCConcord={render,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,reactionSummary,notifyMentions,discoverInvites,decodeMembershipLists,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff};
+  window.PCConcord={render,backgroundRender,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,reactionSummary,notifyMentions,discoverInvites,decodeMembershipLists,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */

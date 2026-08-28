@@ -10,7 +10,10 @@ globalThis.localStorage = {
 const makeClassList = () => ({added:[],removed:[],values:new Set(),add(...x){this.added.push(...x);x.forEach(v=>this.values.add(v));},remove(...x){this.removed.push(...x);x.forEach(v=>this.values.delete(v));},contains(x){return this.values.has(x);},toggle(x,on){const yes=on===undefined?!this.values.has(x):!!on;yes?this.values.add(x):this.values.delete(x);return yes;}});
 const classList = makeClassList();
 let feedHtml='',replaceComposerOnWrite=false;
-const feed = { classList, insertAdjacentHTML(){}, get innerHTML(){return feedHtml;}, set innerHTML(value){feedHtml=String(value);if(replaceComposerOnWrite){const old=controls.get('cc-input');if(old){old.isConnected=false;if(document.activeElement===old)document.activeElement=document.body;}controls.delete('cc-input');const textarea=feedHtml.match(/<textarea id="cc-input" data-cc-draft-key="([^"]*)"[^>]*>([\s\S]*?)<\/textarea>/);if(textarea){const next=control('cc-input');next.dataset.ccDraftKey=textarea[1];next.value=textarea[2];}}} };
+const feedListeners=new Map();
+const feed = { classList, insertAdjacentHTML(){},contains(node){return [...controls.values()].includes(node);},
+  addEventListener(name,fn){feedListeners.set(name,fn);},
+  get innerHTML(){return feedHtml;}, set innerHTML(value){feedHtml=String(value);if(replaceComposerOnWrite){const old=controls.get('cc-input');if(old){old.isConnected=false;if(document.activeElement===old)document.activeElement=document.body;}controls.delete('cc-input');const textarea=feedHtml.match(/<textarea id="cc-input" data-cc-draft-key="([^"]*)"[^>]*>([\s\S]*?)<\/textarea>/);if(textarea){const next=control('cc-input');next.dataset.ccDraftKey=textarea[1];next.value=textarea[2];}}} };
 const controls = new Map();
 function control(id){
   if(!controls.has(id)) controls.set(id, { id, value:'', dataset:{}, selectionStart:0,selectionEnd:0,selectionDirection:'none',isConnected:true,classList:makeClassList(),
@@ -378,27 +381,26 @@ draftInput.value='thread response '+draftUrl+' @bb';
 draftInput.setSelectionRange(draftInput.value.length-2,draftInput.value.length,'backward');
 draftInput.focus();draftInput.dispatchEvent({type:'input'});
 replaceComposerOnWrite=true;
-PCConcord.render(); // remote-message poll
-PCConcord.render(); // profile/community-icon hydration
-PCConcord.render(); // attachment-card hydration
+PCConcord.backgroundRender(); // remote-message poll
+PCConcord.backgroundRender(); // profile/community-icon hydration
+PCConcord.backgroundRender(); // attachment-card hydration
 await new Promise(resolve=>setTimeout(resolve,0));
 const repaintedInput=control('cc-input');
-if(repaintedInput===draftInput || repaintedInput.value!=='thread response '+draftUrl+' @bb' ||
+if(repaintedInput!==draftInput || repaintedInput.value!=='thread response '+draftUrl+' @bb' ||
    repaintedInput.selectionStart!==repaintedInput.value.length-2 ||
    repaintedInput.selectionEnd!==repaintedInput.value.length || document.activeElement!==repaintedInput ||
    !feed.innerHTML.includes('Replying to'))
-  throw new Error('Concord repaint lost composer state: '+JSON.stringify({same:repaintedInput===draftInput,
+  throw new Error('Concord background repaint replaced or changed composer state: '+JSON.stringify({same:repaintedInput===draftInput,
     value:repaintedInput.value,start:repaintedInput.selectionStart,end:repaintedInput.selectionEnd,
     focused:document.activeElement===repaintedInput,active:document.activeElement&&document.activeElement.id,
     reply:feed.innerHTML.includes('Replying to')}));
 // Focus restoration is a latch, not a focus trap. If the person deliberately focuses another
 // control after a repaint but before its rAF, the pending composer callback must not steal it back.
-const intentionalTarget={isConnected:true,focus(){document.activeElement=this;}};
-repaintedInput.focus();
-PCConcord.render();
+const intentionalTarget=control('cc-emoji');
 intentionalTarget.focus();
+PCConcord.backgroundRender();
 await new Promise(resolve=>setTimeout(resolve,0));
-if(document.activeElement!==intentionalTarget)
+if(document.activeElement!==intentionalTarget||control('cc-input')!==repaintedInput)
   throw new Error('Concord repaint stole focus back from an intentional target');
 const afterIntentionalFocus=control('cc-input');
 afterIntentionalFocus.focus();

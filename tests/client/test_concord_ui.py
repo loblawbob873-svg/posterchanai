@@ -570,8 +570,29 @@ def test_all_joined_community_metadata_repaints_live_without_moving_chat():
     assert "assign('name'" in block and "assign('description'" in block
     assert "await applyRoomIconMetadata(room,info,loadKey)" in block
     assert 'const roomIconRefs=new Map()' in CONCORD
-    assert 'rooms[selected.index]=room;save(rooms);preserveChatScroll(()=>render())' in block
+    assert 'rooms[selected.index]=room;save(rooms);preserveChatScroll(()=>backgroundRender())' in block
     assert 'scrollChatBottom' not in block
+
+
+def test_background_repaints_never_replace_a_focused_workspace_control():
+    helper = CONCORD.split('function backgroundRender()', 1)[1].split('function handoffState', 1)[0]
+    assert 'feed.contains&&feed.contains(active)' in helper
+    assert 'backgroundRenderPending=true' in helper
+    assert "feed.addEventListener('focusout'" in helper
+    assert 'if(backgroundRenderPending)backgroundRender()' in helper
+    assert 'backgroundRenderPending=false;backgroundFocusHost=null;render();return true' in helper
+    assert 'window.PCConcord={render,backgroundRender,' in CONCORD
+
+    # These are the async paths that used to rebuild #feed underneath Android's keyboard.
+    live = CONCORD.split('async function refreshActiveChannel(p)', 1)[1].split(
+        'async function refreshRoomMetadata(p)', 1)[0]
+    metadata = CONCORD.split('async function refreshRoomMetadata(p)', 1)[1].split(
+        'function startLiveSync', 1)[0]
+    hydrate = CONCORD.split('async function hydrateRoomStreams', 1)[1].split(
+        'async function publishCordMessage', 1)[0]
+    assert 'backgroundRender()' in live
+    assert 'backgroundRender()' in metadata
+    assert hydrate.count('backgroundRender()') >= 2
 
 
 def test_icon_removal_and_failure_cannot_block_room_history_hydration():
