@@ -142,9 +142,18 @@ class ItUpdatesBothHalves(unittest.TestCase):
     def test_a_restored_overlay_repairs_only_portages_checkout(self):
         """A recreated release repository may have unrelated history. The updater may reset the
         disposable Portage checkout, but must never apply that recovery to a user directory."""
-        self.assertIn("git -C /var/db/repos/posterchan fetch --prune origin main", self.src)
-        self.assertIn("git -C /var/db/repos/posterchan reset --hard FETCH_HEAD", self.src)
+        self.assertIn('git -C "$repo" fetch --prune origin main', self.src)
+        self.assertIn('git -C "$repo" reset --hard FETCH_HEAD', self.src)
         self.assertNotIn("git reset --hard /", self.src)
+
+    def test_a_missing_or_colliding_overlay_is_rebuilt_before_replacement(self):
+        repair = self.src[self.src.index("_pc_repair_overlay()"):
+                          self.src.index("# ---------------------------------------------------------------- how this machine")]
+        self.assertIn('mktemp -d "$parent/.posterchan-repair.XXXXXX"', repair)
+        self.assertIn('git clone -q https://gentoo.poster.place/posterchan-overlay.git', repair)
+        self.assertIn('if [ -e "$repo" ]', repair)
+        self.assertLess(repair.index('git clone -q'), repair.index('mv "$repo" "$backup"'))
+        self.assertIn('mv "$backup" "$repo"', repair)
 
     def test_a_stale_lan_proxy_retries_the_same_tls_host_through_public_dns(self):
         """A cached LAN 404 must not make a restored public overlay look permanently absent."""

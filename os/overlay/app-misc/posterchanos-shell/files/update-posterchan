@@ -42,7 +42,7 @@ command -v emerge >/dev/null 2>&1 || {
 # hostname through DNS-over-HTTPS and give libcurl only the resulting address.  TLS still validates
 # gentoo.poster.place; this does not trust an alternate repository or bypass certificate checks.
 _pc_fetch_overlay_public_dns() {
-	local answer ip
+	local repo="${1:-/var/db/repos/posterchan}" answer ip
 	command -v curl >/dev/null 2>&1 || return 1
 	command -v python3 >/dev/null 2>&1 || return 1
 	answer="$(curl -fsS --max-time 10 \
@@ -60,9 +60,37 @@ except (KeyError, StopIteration, TypeError, ValueError):
 	case "$ip" in
 		*[!0-9.]*|'') return 1 ;;
 	esac
-	git -C /var/db/repos/posterchan \
+	git -C "$repo" \
 		-c "http.curloptResolve=gentoo.poster.place:443:$ip" \
 		fetch --prune origin main
+}
+
+# Repair all three disposable-cache failures: unrelated history/corrupt objects, a missing checkout,
+# and a non-Git directory colliding with Portage's configured location. Build a missing replacement
+# beside the target and rename it only after FETCH_HEAD exists; a failed repair restores the old
+# directory exactly as it was.
+_pc_repair_overlay() {
+	local repo=/var/db/repos/posterchan parent=/var/db/repos replacement backup
+	if [ -d "$repo/.git" ]; then
+		{ git -C "$repo" fetch --prune origin main || _pc_fetch_overlay_public_dns "$repo"; } \
+			&& git -C "$repo" reset --hard FETCH_HEAD
+		return
+	fi
+	replacement="$(mktemp -d "$parent/.posterchan-repair.XXXXXX")" || return 1
+	if ! git clone -q https://gentoo.poster.place/posterchan-overlay.git "$replacement/repo"; then
+		mkdir -p "$replacement/repo" || return 1
+		git -C "$replacement/repo" init -q || return 1
+		git -C "$replacement/repo" remote add origin https://gentoo.poster.place/posterchan-overlay.git || return 1
+		_pc_fetch_overlay_public_dns "$replacement/repo" || return 1
+		git -C "$replacement/repo" reset --hard FETCH_HEAD || return 1
+	fi
+	if [ -e "$repo" ]; then backup="$parent/.posterchan-old.$$"; mv "$repo" "$backup" || return 1; fi
+	if mv "$replacement/repo" "$repo"; then
+		rm -rf "$replacement"; [ -n "${backup:-}" ] && rm -rf "$backup"
+		return 0
+	fi
+	[ -n "${backup:-}" ] && mv "$backup" "$repo"
+	return 1
 }
 
 # ---------------------------------------------------------------- how this machine got its desktop
@@ -88,10 +116,7 @@ if [ -n "$have_pkgs" ]; then
 		# an installed checkout and the restored release channel have unrelated Git histories, and
 		# Portage's ordinary sync refuses to cross them. This directory is only Portage's disposable
 		# overlay cache: fetch and reset that one bounded checkout, never user files or /etc.
-		if [ -d /var/db/repos/posterchan/.git ] \
-			&& { git -C /var/db/repos/posterchan fetch --prune origin main \
-				|| _pc_fetch_overlay_public_dns; } \
-			&& git -C /var/db/repos/posterchan reset --hard FETCH_HEAD; then
+		if _pc_repair_overlay; then
 			echo "${GRN}Repaired the local PosterChanOS overlay checkout.${OFF}"
 		else
 			echo "${YEL}Could not reach the overlay — trying the update with what is already here.${OFF}"

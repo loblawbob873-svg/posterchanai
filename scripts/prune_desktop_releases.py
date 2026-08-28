@@ -14,9 +14,23 @@ import json
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 
 TAG = re.compile(r"^desktop-v(\d+)\.(\d+)\.(\d+)$")
+OVERLAY = Path("os/overlay/app-misc/posterchan-desktop")
+
+
+def overlay_release(directory: Path = OVERLAY) -> str:
+    """The immutable release Portage currently needs; refuse unsafe pruning if ambiguous."""
+    ebuilds = sorted(directory.glob("posterchan-desktop-*.ebuild"))
+    if len(ebuilds) != 1:
+        raise RuntimeError(f"expected one overlay desktop ebuild in {directory}, found {len(ebuilds)}")
+    version = ebuilds[0].name.removeprefix("posterchan-desktop-").removesuffix(".ebuild")
+    tag = f"desktop-v{version}"
+    if not TAG.fullmatch(tag):
+        raise RuntimeError(f"overlay desktop ebuild has an invalid version: {ebuilds[0].name}")
+    return tag
 
 
 def stale_tags(releases: list[dict], keep: int, protect: set[str]) -> list[str]:
@@ -46,7 +60,12 @@ def main() -> int:
         text=True,
     )
     releases = json.loads(raw)
-    doomed = stale_tags(releases, args.keep, set(args.protect))
+    # The overlay is consumed asynchronously by installed machines. CI may publish build N+1 while
+    # the public overlay still pins N; deleting N in that window makes `emerge` 404. Protection is
+    # automatic rather than another workflow argument somebody can forget.
+    protect = set(args.protect)
+    protect.add(overlay_release())
+    doomed = stale_tags(releases, args.keep, protect)
     for tag in doomed:
         print(f"prune obsolete Desktop release {tag}")
         if not args.dry_run:
