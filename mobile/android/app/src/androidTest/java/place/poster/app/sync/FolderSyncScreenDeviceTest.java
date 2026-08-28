@@ -72,6 +72,18 @@ public final class FolderSyncScreenDeviceTest {
             assertTrue("Folder Sync did not survive opening the older large cache: " + result,
                     result.contains("\\\"alive\\\":true") && result.contains("\\\"view\\\":true")
                     && result.contains("\\\"card\\\":true") && result.contains("\\\"posts\\\":0"));
+
+            // Opening is not the end of the failure window. paint() coalesces another pass and
+            // startAll() schedules its startup nudge; the reported APK appeared briefly and then
+            // Chromium died. Keep the real renderer alive through both delayed turns and prove the
+            // screen still did not promote this UI-only cache read into a network/full-state read.
+            SystemClock.sleep(2500);
+            String settled = eval(web, "(()=>JSON.stringify({alive:true,view:__PC.isView('sync'),"
+                    + "card:!!document.querySelector('.sync-card'),posts:window.__fsStatePosts,"
+                    + "marker:window.__fsDevice}))()");
+            assertTrue("Folder Sync crashed after its delayed paint/startup work: " + settled,
+                    settled.contains("\\\"alive\\\":true") && settled.contains("\\\"view\\\":true")
+                    && settled.contains("\\\"card\\\":true") && settled.contains("\\\"posts\\\":0"));
         } finally { scenario.close(); }
     }
 
