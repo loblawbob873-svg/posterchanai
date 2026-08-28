@@ -263,6 +263,10 @@ jobs:
           node ../tests/client/messages_handoff_destination_runtime.mjs www/static/js/client/concord.js
           grep -Fq '__pcConcordHandoff' www/static/js/client/os.js
           grep -Fq 'messagesHandoffState' www/static/js/client/app.js
+          # Terminal tabs are session identities, not indexes. Exercise a three-tab move and return
+          # against the packaged term.js so stale bundle contents cannot reintroduce tab switching.
+          node ../tests/client/terminal_handoff_runtime.mjs www/static/js/client/term.js
+          grep -Fq 'PCTerm.acceptHandoff(p.state)' www/static/js/client/os.js
           test -s www/static/js/client/cord-protocol.js
           grep -q 'data-view="messages"' www/index.html
           grep -q 'static/css/concord.css' www/index.html
