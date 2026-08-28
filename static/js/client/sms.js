@@ -509,8 +509,41 @@
   }
 
   let _cacheDrain = null;
+  /* ONE DAMAGED LOCAL EVENT MUST NOT CUT THE ARCHIVE IN HALF.
+   *
+   * Store.query returns the whole pinned Texts library.  The progressive loader used to hand 128
+   * events to absorb() and discard the continuation promise on its first exception. A malformed
+   * tag (or any one unexpected old envelope) therefore hid that row AND every older row behind it;
+   * old MMS media was disproportionately affected because it lives at the tail. Reopening could
+   * appear to heal a newer page while the discarded tail remained absent.
+   *
+   * Keep the fast batch path. Only bisect a failing batch until the bad individual event is
+   * isolated, then continue with every sibling. Nothing sensitive is logged: only the fact that one
+   * archive record was skipped. absorb() is idempotent/newest-wins, so replaying the prefix after a
+   * partial batch failure cannot roll a document backwards. */
+  async function absorbResilient(events){
+    const batch=(events||[]).filter(Boolean);
+    if(!batch.length)return;
+    try{ await absorb(batch); return; }
+    catch(_){
+      if(batch.length===1){
+        try{ console.warn('[texts] skipped one malformed archive record'); }catch(_e){}
+        return;
+      }
+      const mid=Math.floor(batch.length/2);
+      await absorbResilient(batch.slice(0,mid));
+      await absorbResilient(batch.slice(mid));
+    }
+  }
+  let _loadingArchive = null;
   async function load(force){
     if(S.ready && !force) return;
+    /* render(), focus and a late module route can all ask for the first load together. Without one
+     * shared promise they race the same S.ready=false transition, paint different partial maps and
+     * let the losing call leave a stale spinner/error which closing and reopening Texts happens to
+     * clear. The first open owns one complete cache transaction and every caller awaits it. */
+    if(_loadingArchive) return _loadingArchive;
+    _loadingArchive=(async()=>{
     S.loading = true;
     // CACHE FIRST, network behind it — the rule every list in this app follows, and the archive is
     // entirely the user's own already-synced data.
@@ -523,21 +556,24 @@
      * Older events cannot replace a newer `_at`, even when this continuation overlaps a relay read. */
     cached.sort((a,b) => (b.created_at||0) - (a.created_at||0));
     const first = cached.splice(0, 32);
-    await absorb(first);
+    await absorbResilient(first);
     S.ready = true;
     S.loading = false;
     paint();
     if(cached.length && !_cacheDrain){
       _cacheDrain = (async () => {
         while(cached.length){
-          await absorb(cached.splice(0, 128));
+          await absorbResilient(cached.splice(0, 128));
           if(textsOnScreen()) paint();
           /* Give navigation, typing and the compositor a turn between decrypt batches. */
           await new Promise(resolve => setTimeout(resolve, 0));
         }
-      })().catch(() => {}).finally(() => { _cacheDrain = null; });
+      })().finally(() => { _cacheDrain = null; });
     }
     refresh();
+    })();
+    try{ return await _loadingArchive; }
+    finally{ S.loading=false; _loadingArchive=null; }
   }
 
   let _refreshing = false;
@@ -549,7 +585,7 @@
       // FOLDED IN, NEVER OVER. A relay that returns nothing — unreachable, throttled, merely slow —
       // must leave the archive alone. That asymmetry is the anti-wipe rule this codebase keeps
       // relearning, and here the local copy may be the only one outside the handset.
-      if(live && live.length){ await absorb(live); paint(); }
+      if(live && live.length){ await absorbResilient(live); paint(); }
     }catch(_){ }
     finally{ _refreshing = false; }
   }
@@ -562,7 +598,7 @@
       delete f.limit;
       _sub = Relay().subscribe([f], { live:true, onEvent: async (ev) => {
         const before = S.msgs.size;
-        await absorb([ev]);
+        await absorbResilient([ev]);
         /* A cancellation/tombstone mutates an existing entry to `gone`; the Map size is unchanged.
          * Repainting only when size changed left deleted attachments visible on an open phone until
          * navigation/reload. Always repaint the active Texts view after a live archive event. */

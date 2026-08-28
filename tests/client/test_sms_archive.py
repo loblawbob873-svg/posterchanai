@@ -119,6 +119,45 @@ class Mirror(unittest.TestCase):
         res = run(isPhone=False, cached=cached, relayEmpty=True, steps=["load", "settle"])
         self.assertEqual(res["docs"], [rows[0]["doc"]])
 
+    def test_first_open_skips_one_malformed_cache_record_and_renders_the_rest(self):
+        """A damaged newest cache row used to reject render(), leaving Texts on its loading view.
+        Closing and reopening retried the route, which is the exact user-visible workaround. The
+        first open must isolate that row and paint the valid archive immediately."""
+        good = ev("pcai:sms:first-open", {
+            "address": "+15550100", "body": "visible on first open", "date": 2,
+            "incoming": True,
+        }, at=1999)
+        malformed = {"kind": 30078, "content": "enc:{}", "created_at": 2000,
+                     "pubkey": "me", "id": "bad", "tags": {"not": "an array"}}
+        res = run(isPhone=False, cached=[malformed, good], relayEmpty=True,
+                  steps=["concurrentRenderFocus", "settle"])
+        self.assertEqual(res["docs"], ["pcai:sms:first-open"])
+        self.assertEqual(calls_of(res, "storeQuery"), [["storeQuery"]],
+                         "cold route and focus started two competing archive loads")
+
+    def test_one_malformed_cache_record_cannot_hide_the_older_media_tail(self):
+        """The background cache drain used to abandon its remaining 128-row batch on one throw.
+        Old MMS attachments sit behind newer texts, so this presented as complete recent history
+        with old media missing on Web/OS."""
+        cached = []
+        expected = []
+        for i in range(96):
+            doc = "pcai:sms:tail-%03d" % i
+            expected.append(doc)
+            payload = {"address": "+15550100", "body": "message %d" % i,
+                       "date": 1000 + i, "incoming": True}
+            if i == 95:
+                payload["att"] = [{"ct": "image/jpeg", "name": "old.jpg", "bytes": 123,
+                                   "sha": "a" * 64, "thumb": "b" * 64}]
+            cached.append(ev(doc, payload, at=3000 - i))
+        cached.append({"kind": 30078, "content": "enc:{}", "created_at": 2960,
+                       "pubkey": "me", "id": "bad-tail", "tags": {"not": "an array"}})
+        res = run(isPhone=False, cached=cached, relayEmpty=True,
+                  steps=["load", "settle"])
+        self.assertEqual(res["docs"], sorted(expected))
+        tail = next(t for t in res["threads"] if "pcai:sms:tail-095" in t["order"])
+        self.assertEqual(tail["parts"][tail["order"].index("pcai:sms:tail-095")], 1)
+
     def test_one_person_written_two_ways_is_one_conversation(self):
         """The same rule the phone uses (SmsKeys.matchKey): the last seven digits. A thread that
         splits in two because one app writes `+1 555 010 4477` and another writes `5550104477` is a

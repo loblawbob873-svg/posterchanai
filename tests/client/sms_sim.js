@@ -212,7 +212,7 @@ global.localStorage = (() => {
  * `Store().query(...)` — so `window.Store` is the object itself. A stub that was a factory made
  * `.query` undefined, every read threw into its own catch, and every test failed as though the
  * device simply had no messages. */
-global.Store = { query: () => (opt.cached || []).slice() };
+global.Store = { query: () => { calls.push(['storeQuery']); return (opt.cached || []).slice(); } };
 global.Relay = {
   async query(){
     if(opt.relayDown) throw new Error('no relay');
@@ -358,6 +358,11 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
                   (r && (r.where || r.error)) || '', (r && r.warning) || '']);
     }
     else if(step === 'render'){ await S.render(); }
+    /* A cold route and the desktop focus callback can arrive in the same turn. They must share the
+       first cache transaction rather than racing two partial paints. */
+    else if(step === 'concurrentRenderFocus'){
+      await Promise.all([S.render(), document._fire('visibilitychange')]);
+    }
     else if(step === 'why'){
       const w = await S.emptyWhy();
       calls.push(['why', w.fix || '', w.why]);
