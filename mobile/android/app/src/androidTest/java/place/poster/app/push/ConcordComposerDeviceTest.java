@@ -87,8 +87,10 @@ public class ConcordComposerDeviceTest {
                     // Enter #general through the real channel control and reacquire the textarea
                     // after that click's render replacement before seeding the draft.
                     "const r=a.getBoundingClientRect();if(r.width<=1||r.height<=1){"+
-                    "if(!opened){opened=true;const channel=document.querySelector('[data-cc-channel=\"general\"]');"+
-                    "if(channel){channel.click();setTimeout(seed,100);return;}}"+
+                    "if(!opened){const channel=document.querySelector('[data-cc-channel=\"general\"]');"+
+                    // Room discovery/rendering is asynchronous. Do not consume the one-shot latch
+                    // until the channel control actually exists and receives its click.
+                    "if(channel){opened=true;channel.click();setTimeout(seed,100);return;}}"+
                     "if(tries++<50){setTimeout(seed,100);return;}throw new Error('composer stayed hidden');}"+
                     "a.value='draft survives repaint';window.__ccDeviceOldInvites=old;"+
                     "window.__ccDeviceResult='ready-for-touch';"+
