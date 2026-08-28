@@ -929,6 +929,7 @@
      * windows, and they must not share a listener. */
     function Session(app, files){
       this.app = app;                    // {url, sha, uuid, name}
+      this.transport = app.transport || null;
       this.files = files;
       this.frame = null;
       this.origin = '';
@@ -1080,7 +1081,7 @@
     Session.prototype.absorb = function(evs){
       let added = false;
       for(const ev of (evs || [])){
-        if(!ev || ev.kind !== KIND_UPDATE || this.seen.has(ev.id)) continue;
+        if(!ev || (!this.transport && ev.kind !== KIND_UPDATE) || this.seen.has(ev.id)) continue;
         this.seen.set(ev.id, 0);
         this.ordered.push(ev);
         added = true;
@@ -1117,18 +1118,22 @@
       this.delivered = this.wantSerial;
       const filter = { kinds:[KIND_UPDATE], '#i':[this.app.uuid], limit: 1000 };
       let evs = [];
-      try{ evs = await Relay.query([filter]); }catch(_){ evs = []; }
-      try{ (window.Store.query([filter]) || []).forEach(e => evs.push(e)); }catch(_){}
+      if(this.transport&&window.PCConcord&&PCConcord.webxdcQuery){try{evs=await PCConcord.webxdcQuery(this.transport,this.app.uuid);}catch(_){evs=[];}}
+      else{try{ evs = await Relay.query([filter]); }catch(_){ evs = []; }
+      try{ (window.Store.query([filter]) || []).forEach(e => evs.push(e)); }catch(_){} }
       this.absorb(evs);
       if(this.dead) return;
       this.deliver();
       // Live from here. A game is two people taking turns; without this the second player's move
       // arrives only if something else happens to re-query.
       try{
-        this.sub = Relay.subscribe([filter], { onEvent: (ev) => {
+        const receive=(ev) => {
           if(this.dead) return;
           if(this.absorb([ev])) this.deliver();
-        } });
+        };
+        this.sub=this.transport&&window.PCConcord&&PCConcord.webxdcSubscribe
+          ? await PCConcord.webxdcSubscribe(this.transport,this.app.uuid,false,receive)
+          : Relay.subscribe([filter],{onEvent:receive});
       }catch(_){}
     };
 
@@ -1149,8 +1154,10 @@
       if(u.summary) tags.push(['summary', str(u.summary, 200)]);
       // publish() answers {ev, ok, …} — the SIGNED EVENT is on `.ev`, and it is there even when the
       // relay refused it (the outbox may have queued it), which is what makes the echo below right.
-      const r = await publish(KIND_UPDATE, content, tags);
-      const ev = r && r.ev;
+      const r = this.transport&&window.PCConcord&&PCConcord.webxdcPublish
+        ? await PCConcord.webxdcPublish(this.transport,this.app.uuid,content,u,false)
+        : await publish(KIND_UPDATE, content, tags);
+      const ev = r && (r.ev || (r.id||r.rumorId ? {id:r.id||r.rumorId,kind:this.transport?0:KIND_UPDATE,created_at:Math.floor((r.ms||Date.now())/1000),pubkey:'',tags,content}:null));
       /* Feed it back to ourselves rather than waiting for the relay to echo it. The spec is explicit
        * that the sender receives its own updates, and a game whose own move does not appear until a
        * round trip completes feels broken on a slow connection — and never appears at all if the
@@ -1205,6 +1212,7 @@
      * a slow relay or a busy tab must never build a backlog of stale positions — it is simply no
      * longer the thing standing between a remote-signer player and a playable game. */
     Session.prototype.rtSend = function(b64){
+      if(this.transport&&window.PCConcord&&PCConcord.webxdcPublish){PCConcord.webxdcPublish(this.transport,this.app.uuid,b64,null,true).catch(()=>{});return;}
       this._rtNext = b64;
       if(this._rtBusy) return;
       this._rtBusy = true;
@@ -1435,7 +1443,15 @@
              * Two minutes costs nothing to be wrong about: 20932 is ephemeral, so this relay stores
              * none of it and there is no backlog to replay — the window only decides how much clock
              * skew the channel survives. */
-            this.rtSub = Relay.subscribe([{ kinds:[KIND_REALTIME], '#i':[this.app.uuid],
+            const receiveRt=(ev) => {
+                if(this.dead || !ev || (!this.transport&&ev.kind !== KIND_REALTIME)) return;
+                if(ev.pubkey && this.rtPk && ev.pubkey === this.rtPk) return;
+                this.post({ jsonrpc:'2.0', method:'webxdc.realtime', params:{ b64: ev.content || '' } });
+              };
+            if(this.transport&&window.PCConcord&&PCConcord.webxdcSubscribe){
+              this.rtSub={pending:true};
+              PCConcord.webxdcSubscribe(this.transport,this.app.uuid,true,receiveRt).then(sub=>{if(this.dead){try{Relay.close(sub);}catch(_){}}else this.rtSub=sub;},()=>{this.rtSub=null;});
+            }else this.rtSub = Relay.subscribe([{ kinds:[KIND_REALTIME], '#i':[this.app.uuid],
                                             since: Math.floor(Date.now() / 1000) - 120 }], {
               onEvent: (ev) => {
                 if(this.dead || !ev || ev.kind !== KIND_REALTIME) return;

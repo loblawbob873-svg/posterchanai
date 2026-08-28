@@ -9349,8 +9349,10 @@ var PosterCordReader = (() => {
   __export(pc_cord_reader_exports, {
     createBanWrap: () => createBanWrap,
     createChatWrap: () => createChatWrap,
+    createWebxdcWrap: () => createWebxdcWrap,
     createMetadataWrap: () => createMetadataWrap,
     inspectChat: () => inspectChat,
+    inspectWebxdc: () => inspectWebxdc,
     inspectControl: () => inspectControl
   });
   init_define_import_meta_env();
@@ -26687,6 +26689,27 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const rumor = buildRumor({ kind, content, pubkey, ms, tags: [...channelBindingTags(channel.idHex, channel.current.epoch), ...extraTags] });
     const seal = await sealRumor(rumor, 20013, channel.current.group, { signEvent });
     return { rumorId: rumor.id, wrap: wrapSeal(seal, channel.current.group), ms };
+  }
+  /* Webxdc uses the same authenticated encrypted channel stream as chat, but is not timeline
+   * traffic. Keep this primitive explicit so callers cannot accidentally make kind-3310 visible as
+   * a message, and so realtime can select Armada's ephemeral 21059 outer wrap. */
+  async function createWebxdcWrap(bundle, controlWraps, channelId, content, pubkey, signEvent, extraTags = [], ephemeral = false) {
+    const { channels } = control(bundle, controlWraps);
+    const channel = channels.find((ch) => ch.idHex === channelId);
+    if (!channel) throw new Error("channel is not writable with this membership");
+    const ms = Date.now();
+    const rumor = buildRumor({ kind: 3310, content, pubkey, ms, tags: [...channelBindingTags(channel.idHex, channel.current.epoch), ...extraTags] });
+    const seal = await sealRumor(rumor, 20013, channel.current.group, { signEvent });
+    return { rumorId: rumor.id, wrap: wrapSeal(seal, channel.current.group, { ephemeral }), ms };
+  }
+  async function inspectWebxdc(bundle, controlWraps, channelId, wraps, uuid, realtime = false) {
+    const { channels } = control(bundle, controlWraps);
+    const channel = channels.find((ch) => ch.idHex === channelId);
+    if (!channel) throw new Error("channel is not readable with this membership");
+    const opened = await openChatBatch(wraps || [], channel);
+    return opened.filter((ev) => ev.kind === 3310 && ev.tags.some((t) => t[0] === "i" && t[1] === uuid) &&
+      (realtime ? ev.tags.some((t) => t[0] === "rt" && t[1] === "1") : !ev.tags.some((t) => t[0] === "rt" && t[1] === "1")))
+      .map((ev) => ({ id: ev.rumorId, pubkey: ev.author, content: ev.content, tags: ev.tags, created_at: ev.createdAt, at: ev.ms }));
   }
   return __toCommonJS(pc_cord_reader_exports);
 })();
