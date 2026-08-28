@@ -150,7 +150,7 @@ def test_kvm_gate_uses_the_host_cpu_that_the_release_image_targets(tmp_path, mon
     assert command[command.index("-cpu"):command.index("-cpu") + 2] == ["-cpu", "host"]
 
 
-def test_tcg_gate_does_not_request_an_unsupported_host_cpu(tmp_path, monkeypatch):
+def test_tcg_gate_uses_its_complete_emulated_cpu_for_x86_64_v3(tmp_path, monkeypatch):
     iso = tmp_path / "live.iso"
     real_exists = MOD.Path.exists
 
@@ -159,7 +159,7 @@ def test_tcg_gate_does_not_request_an_unsupported_host_cpu(tmp_path, monkeypatch
 
     monkeypatch.setattr(MOD.Path, "exists", exists)
     command = MOD.qemu_command(iso, False, tmp_path / "monitor", tmp_path / "serial")
-    assert "-cpu" not in command
+    assert command[command.index("-cpu"):command.index("-cpu") + 2] == ["-cpu", "max"]
 
 
 def test_missing_installed_disk_fails_before_qemu(tmp_path):

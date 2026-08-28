@@ -122,9 +122,13 @@ def qemu_command(source: Path, installed_disk: bool, monitor: Path, serial: Path
     # machine that produced it and its userspace can legally use newer instructions; booting that
     # image with the generic CPU made init take SIGILL and panic with "Attempted to kill init".
     # KVM host passthrough is also the profile used by the independent UEFI boot gate.  TCG cannot
-    # use `host`, so retain its portable default for developer machines without /dev/kvm.
+    # use `host`, but its default CPU is old enough to SIGILL on the x86-64-v3 systemd shipped by a
+    # host-built image. `max` is TCG's own complete emulated CPU and keeps the software-only gate
+    # useful on builders where nested KVM is unavailable.
     if kvm:
         cmd += ["-cpu", "host"]
+    else:
+        cmd += ["-cpu", "max"]
     cmd += ["-m", "4096", "-smp", "2"]
     if installed_disk:
         # Deliberately NO cdrom device: this is the post-installer eject/reboot gate, not another
