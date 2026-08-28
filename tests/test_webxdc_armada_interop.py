@@ -75,6 +75,15 @@ def test_scoped_sessions_do_not_fall_through_to_global_nip_dc_bus():
     assert "const KIND_REALTIME = 20932" in WEBXDC
 
 
+def test_static_updates_page_full_channel_history_and_cache_before_replay():
+    query = CONCORD.split("async function webxdcQuery", 1)[1].split("async function webxdcPublish", 1)[0]
+    assert "queryEnvelopeHistory" in query
+    assert "cachedEnvelopes" in query
+    assert "cacheEnvelopes" in query
+    assert "inspectWebxdc" in query
+    assert "static-replay" in query
+
+
 def test_running_app_and_realtime_echo_are_scoped_like_armada():
     # Armada identifies an active app by conversation scope AND its attachment session id. A UUID
     # alone can otherwise focus the still-running iframe from another room after forwarding.

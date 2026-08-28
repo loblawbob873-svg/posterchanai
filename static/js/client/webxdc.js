@@ -1429,6 +1429,7 @@
       if(d.method === 'webxdc.crash'){
         const p = d.params || {};
         const m = String(p.message || '').slice(0, 200);
+        rtDiagnostic('app-crash',m+(p.where?' @ '+p.where:''));
         // Once per distinct message: a game that throws every frame must not become a toast storm.
         this._crashed = this._crashed || new Set();
         if(!this._crashed.has(m)){
@@ -1483,7 +1484,10 @@
            * top.addEventListener throws a SecurityError before the game starts. Events on the app's
            * own window have the same lifecycle here; rewrite only these two exact listener targets,
            * leaving every other cross-origin access blocked by the browser. */
-          if((path==='/'||/\/index\.html$/i.test(path))&&body){try{const dec=new TextDecoder(),src=dec.decode(body),safe=src.replace(/window\.(?:top|parent)\.addEventListener\s*\(/g,'window.addEventListener(');if(safe!==src)body=new TextEncoder().encode(safe);}catch(_){}}
+          if((path==='/'||/\.(?:html?|m?js)$/i.test(path))&&body){try{const dec=new TextDecoder(),src=dec.decode(body),safe=src
+            .replace(/window\.(?:top|parent)\.addEventListener\s*\(/g,'window.addEventListener(')
+            .replace(/window\.parent\.__webxdcRealtimeChannel/g,'window.__webxdcRealtimeChannel');
+            if(safe!==src)body=new TextEncoder().encode(safe);}catch(_){}}
           const v = (body && body.buffer) ? body : null;
           const buf = !v ? null
                     : (v.byteOffset === 0 && v.byteLength === v.buffer.byteLength) ? v.buffer

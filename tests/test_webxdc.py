@@ -383,6 +383,8 @@ class HandAssembledJavaScript(unittest.TestCase):
         src = WEBXDC_JS.read_text()
         self.assertIn("window\\.(?:top|parent)\\.addEventListener", src)
         self.assertIn("'window.addEventListener('", src)
+        self.assertIn("window\\.parent\\.__webxdcRealtimeChannel", src)
+        self.assertIn("'window.__webxdcRealtimeChannel'", src)
 
     def test_the_blob_fallback_shim_parses(self):
         """It is an ARRAY OF STRINGS joined with newlines, so a missing comma or an unbalanced quote
