@@ -2056,6 +2056,8 @@
       let app = null;
       try{ app = JSON.parse(card.dataset.xdc || 'null'); }catch(_){}
       if(!app) return;
+      if(window.PCConcord&&PCConcord.resolveWebxdcCard)app=PCConcord.resolveWebxdcCard(card,app)||app;
+      rtDiagnostic('card-play',(app.uuid||'derived:'+String(app.urlTopicMessageId||''))+' '+String(app.url||''));
       /* RESET IS THE WAY OUT, and it exists because there was not one. A mini app keeps state in two
        * places a reader cannot see — the archive cached here, and whatever the app wrote on the
        * sandbox origin — and either going bad makes every launch fail identically for ever. The only

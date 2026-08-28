@@ -429,6 +429,12 @@
      * canonical URL plus this message id; deriving from room scope silently creates a private lobby. */
     const url=(String(m&&m.text||'').slice(0,200000).match(/https?:\/\/[^\s<>]+\.xdc(?:\?[^\s<>]*)?/i)||[])[0]; return url?{url,sha:'',uuid:'',urlTopicMessageId:messageId(m),name:'Mini app',transport}:null;
   }
+  /* A delegated Webxdc click may observe a card produced by the generic link hydrator before the
+   * room-specific render settles. Resolve identity from the authoritative decrypted CORD message
+   * at launch time, so stale DOM can never move a player into a URL-derived private lobby. */
+  function resolveWebxdcCard(card,fallback){
+    try{const row=card&&card.closest&&card.closest('.cc-message[data-message-id]'),room=saved()[state.community],id=row&&row.dataset&&row.dataset.messageId,m=room&&activeMessages(room).find(x=>messageId(x)===id);return (m&&webxdcOf(m,room,state.channel))||fallback;}catch(_){return fallback;}
+  }
   async function deriveWebxdcUrlTopic(url,messageId){if(!window.PCWebxdc||!PCWebxdc.deriveUrlTopic)throw new Error('Webxdc topic support is unavailable');return PCWebxdc.deriveUrlTopic(url,messageId);}
   function mintWebxdcTopic(){if(!window.PCWebxdc||!PCWebxdc.mintTopic)throw new Error('Webxdc topic support is unavailable');return PCWebxdc.mintTopic();}
   function webxdcHtml(m,room,channel){ const app=webxdcOf(m,room,channel); return app&&window.PCWebxdc&&PCWebxdc.cardHtml?PCWebxdc.cardHtml(app):''; }
@@ -1199,7 +1205,7 @@
     close.publish=event=>(R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={render,backgroundRender,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,reactionSummary,notifyMentions,discoverInvites,decodeMembershipLists,mergeArmadaBundle,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerPublish,webxdcPeerSubscribe};
+  window.PCConcord={render,backgroundRender,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,reactionSummary,notifyMentions,discoverInvites,decodeMembershipLists,mergeArmadaBundle,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerPublish,webxdcPeerSubscribe};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */
