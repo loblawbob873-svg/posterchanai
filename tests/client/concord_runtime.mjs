@@ -180,10 +180,12 @@ const liveArmada=PCConcord.webxdcOf({id:'75d8530b4eace74e24abd58092bb855dc424080
 if(!liveArmada||liveArmada.uuid!==liveArmadaTopic||liveArmada.name!=='Quake III Arena (OpenArena)')
   throw new Error('live Armada vendor-MIME attachment lost its shared Webxdc topic');
 const xdcMessage={id:'xdc-message',text:'play this '+xdcUrl,tags:[['imeta',`url ${xdcUrl}`,'m application/x-webxdc','webxdc game-1','summary Game']]};
-window.PCWebxdc={cardHtml:()=>'<div class="xdc-card">Game</div>'};
-const playableXdc=PCConcord.messageContentHtml({enc:String,linkify:String,linkCardHtml:s=>'PREVIEW:'+s},xdcMessage);
+window.PCWebxdc={cardHtml:app=>`<div class="xdc-card" data-topic="${app.uuid}">Game</div>`};
+const playableXdc=PCConcord.messageContentHtml({enc:String,linkify:String,linkCardHtml:s=>'PREVIEW:'+s},xdcMessage,armadaRoom,'general');
 if(playableXdc.includes(xdcUrl)||!playableXdc.includes('play this'))
   throw new Error('playable Webxdc duplicated or erased its message text');
+const liveCard=PCConcord.messageContentHtml({enc:String,linkify:String,linkCardHtml:()=>''},{id:'75d8530b4eace74e24abd58092bb855dc42408077f91e9a025cd8b65aaa8119b',text:xdcUrl,tags:[['imeta',`url ${xdcUrl}`,'m application/vnd.webxdc+zip',`webxdc-topic ${liveArmadaTopic}`,`webxdc ${liveArmadaTopic}`]]},armadaRoom,'general');
+if(!liveCard.includes(`data-topic="${liveArmadaTopic}"`))throw new Error('rendered live Armada card did not retain explicit lobby topic');
 delete window.PCWebxdc;
 const fallbackXdc=PCConcord.messageContentHtml({enc:String,linkify:String,linkCardHtml:()=>''},xdcMessage);
 if(!fallbackXdc.includes(xdcUrl))throw new Error('Webxdc URL fallback disappeared without a card renderer');

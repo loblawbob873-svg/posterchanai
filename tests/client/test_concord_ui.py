@@ -536,12 +536,21 @@ def test_concord_webxdc_mentions_live_sync_and_scroll_are_integrated():
 
 
 def test_playable_webxdc_card_replaces_only_its_redundant_raw_url():
-    content = CONCORD.split('function messageContentHtml(p,m)', 1)[1].split('async function decryptAttachment', 1)[0]
-    assert 'const mini=webxdcOf(m)' in content
+    content = CONCORD.split('function messageContentHtml(p,m,room,channelName)', 1)[1].split('async function decryptAttachment', 1)[0]
+    assert 'const mini=webxdcOf(m,room,channelName)' in content
     assert 'window.PCWebxdc&&PCWebxdc.cardHtml' in content
     assert "text=text.split(mini.url).join('')" in content
     # The URL remains available as a normal link when no playable-card implementation is loaded.
     assert 'if(canPlayMini)' in content
+    assert 'PCWebxdc.cardHtml(mini)' in content
+
+
+def test_concord_replaces_stale_bare_link_card_with_explicit_armada_topic():
+    hydrate = CONCORD.split('function hydrateWebxdcCards(room)', 1)[1].split('function hexBytes', 1)[0]
+    assert "prior.uuid!==app.uuid" in hydrate
+    assert "prior.urlTopicMessageId!==app.urlTopicMessageId" in hydrate
+    assert "old.remove()" in hydrate
+    assert "mime==='application/vnd.webxdc+zip'" in CONCORD.split('function publicAttachments', 1)[1].split('function messageContentHtml', 1)[0]
 
 
 def test_mobile_room_list_and_drawer_do_not_consume_channel_unread_state():
@@ -648,7 +657,7 @@ def test_armada_encrypted_attachments_are_decrypted_before_media_rendering():
     assert "f['encryption-algorithm']" in CONCORD
     assert "crypto.subtle.decrypt({name:'AES-GCM'" in CONCORD
     assert "hash!==file.hash" in CONCORD
-    assert 'messageContentHtml(p,m)' in CONCORD
+    assert 'messageContentHtml(p,m,current,state.channel)' in CONCORD
     assert 'hydrateEncryptedAttachments(messages)' in CONCORD
     assert 'class="cc-attachment-open"' in CONCORD
     assert 'attachmentLightbox(p,host,got.url,null)' in CONCORD
