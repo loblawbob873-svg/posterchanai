@@ -599,6 +599,51 @@ DRIVE = r"""(async () => {
     document.dispatchEvent(new PointerEvent('pointerup', {bubbles:true, clientX:700, clientY:340, pointerId:1}));
     await sleep(80);
     out.unsnapped = Math.abs(w0.getBoundingClientRect().width - b0.width) < 24;
+    /* Electron on mixed-scale dual monitors can report screenX in a different unit from
+       innerWidth. One edge sample must therefore remain a snap on BOTH sides, even when its
+       screen coordinate appears far outside the renderer. If a later sample proves a real
+       crossing but the other renderer rejects it, the same drop must still become a snap. */
+    const snapWithScreen = async (side, screens, id, cross=false) => {
+      const r=w0.getBoundingClientRect(), x=side==='right'?innerWidth-3:3;
+      bar.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,
+        clientX:r.left+80,clientY:r.top+12,screenX:(window.screenX||0)+r.left+80,
+        screenY:(window.screenY||0)+r.top+12,pointerId:id,pointerType:'mouse',buttons:1}));
+      for(let i=0;i<screens.length;i++){
+        const screenX=screens[i], clientX=cross&&i===screens.length-1?innerWidth+40:x;
+        document.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,clientX,clientY:300,
+          screenX,screenY:(window.screenY||0)+300,pointerId:id,pointerType:'mouse',buttons:1}));
+        await sleep(20);
+      }
+      document.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,clientX:cross?innerWidth+40:x,clientY:300,
+        screenX:screens[screens.length-1],screenY:(window.screenY||0)+300,
+        pointerId:id,pointerType:'mouse',buttons:0}));
+      await sleep(100);
+      return w0.classList.contains('snapped') && w0.offsetWidth < desk.clientWidth*.6 &&
+        (side==='left' ? w0.offsetLeft < desk.clientWidth*.1 : w0.offsetLeft > desk.clientWidth*.4);
+    };
+    const pullOff = async id => {
+      const r=w0.getBoundingClientRect();
+      bar.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,clientX:r.left+80,
+        clientY:r.top+12,pointerId:id,pointerType:'mouse',buttons:1}));
+      document.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,clientX:innerWidth/2,
+        clientY:360,pointerId:id,pointerType:'mouse',buttons:1})); await sleep(20);
+      document.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,clientX:innerWidth/2+80,
+        clientY:390,pointerId:id,pointerType:'mouse',buttons:1})); await sleep(20);
+      document.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,clientX:innerWidth/2+80,
+        clientY:390,pointerId:id,pointerType:'mouse',buttons:0})); await sleep(60);
+    };
+    const savedWM=window.pcWM;
+    let rejectedHandoffs=0;
+    window.pcWM=Object.assign({},savedWM||{},
+      {previewFrame:()=>{},handoffFrame:async()=>{rejectedHandoffs++;return false;}});
+    out.scaledLeftSnap=await snapWithScreen('left',[-240],31); await pullOff(32);
+    out.scaledRightSnap=await snapWithScreen('right',[innerWidth+240],33); await pullOff(34);
+    out.rejectedRightSnap=await snapWithScreen('right',[innerWidth+40,innerWidth+80],35,true);
+    out.rejectedHandoffs=rejectedHandoffs;
+    out.rejectedRightState={snapped:w0.classList.contains('snapped'),left:w0.offsetLeft,
+      width:w0.offsetWidth,desk:desk.clientWidth,connected:w0.isConnected};
+    await pullOff(36);
+    window.pcWM=savedWM;
     // A drag must not be able to outlive the button. Reported as "click on it, sticks to the mouse,
     // never persists": the release is lost — the browser starts its own drag of the title, the OS
     // claims the gesture, the pointerup lands somewhere we never see — and the window then follows
@@ -1760,13 +1805,17 @@ async def drive(url):
                                      f"— survives-pointercancel={r.get('stuckOnCancel')} "
                                      f"survives-a-lost-pointerup={r.get('stuckOnLostUp')}"))
                 if not (r.get("ghostShown") and r.get("snappedHalf") and r.get("snappedFullHeight") and r.get("ghostHidden")
-                        and r.get("unsnapped")):
+                        and r.get("unsnapped") and r.get("scaledLeftSnap") and r.get("scaledRightSnap")
+                        and r.get("rejectedRightSnap") and r.get("rejectedHandoffs") == 1):
                     problems.append((label, "snap-broken",
                                      "Windows-11 edge snapping is not working — "
                                      f"preview={r.get('ghostShown')} snapped-to-half={r.get('snappedHalf')} "
                                      f"full-usable-height={r.get('snappedFullHeight')} "
                                      f"preview-cleared={r.get('ghostHidden')} "
-                                     f"restored-on-drag-off={r.get('unsnapped')} {r.get('dbg')}"))
+                                     f"restored-on-drag-off={r.get('unsnapped')} "
+                                     f"scaled-left={r.get('scaledLeftSnap')} scaled-right={r.get('scaledRightSnap')} "
+                                     f"rejected-right={r.get('rejectedRightSnap')} "
+                                     f"handoffs={r.get('rejectedHandoffs')} state={r.get('rejectedRightState')} {r.get('dbg')}"))
                 pair = r.get("pairedTerminalDrag") or {}
                 cycles = pair.get("cycles") or []
                 if not pair.get("setup") or len(cycles) != 3 or not all(

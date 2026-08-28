@@ -59,8 +59,27 @@ def test_mouse_edge_snap_is_not_stolen_by_a_timed_monitor_handoff():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
     drag = src[src.index("function startDrag"):src.index("function startResize")]
     assert "edgeHoldAt" not in drag
-    assert "return edgeOverflow(e,dir)>8?dir:''" in drag
+    assert "return realScreen&&clientOverflow>8?dir:''" in drag
     assert "if(handoff && w.native != null && pcWM.handoff)" in drag
+
+
+def test_scaled_screen_coordinates_need_outward_edge_travel_before_handoff():
+    src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+    drag = src[src.index("function startDrag"):src.index("function startResize")]
+    handoff = drag[drag.index("const handoffDirection ="):drag.index("const preview =")]
+    assert "e.clientX-window.innerWidth" in handoff
+    assert "Math.max(0,-e.clientX)" in handoff
+    assert "edgeOverflow(e,dir)>8" not in handoff
+
+
+def test_rejected_html_handoff_falls_back_to_the_requested_edge_snap():
+    src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+    drag = src[src.index("function startDrag"):src.index("function startResize")]
+    branch = drag[drag.index("if(handoff && w.native == null && pcWM.handoffFrame)"):
+                  drag.index("if(zone){ _natGesture", drag.index("if(handoff && w.native == null"))]
+    assert "zoneAt(dropEvent.clientX,dropEvent.clientY) : zone" in branch
+    assert "if(snapZone)snapTo(w,snapZone)" in branch
+    assert branch.index("if(snapZone)snapTo(w,snapZone)") < branch.index("sendFrameHandoff")
 
 
 def test_zero_screen_coordinates_cannot_glue_a_left_snapped_window_to_the_edge():

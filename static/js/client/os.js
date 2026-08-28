@@ -3280,7 +3280,13 @@
        * as a monitor handoff after 280ms, so anyone who paused to look at the preview could never
        * snap Firefox/Telegram. Cross-monitor drag requires actual virtual-desktop overflow; the
        * title-bar Move-to-monitor action remains the deterministic path where Wayland clamps it. */
-      return edgeOverflow(e,dir)>8?dir:'';
+      /* screenX and innerWidth can use different units on scaled outputs. Require the renderer's
+       * client coordinate to corroborate an ordinary cross-output release. Wayland's clamped
+       * crossing remains covered by lostpointercapture below, which is its explicit seam signal. */
+      const clientOverflow=dir==='right'?Math.max(0,e.clientX-window.innerWidth)
+        :dir==='left'?Math.max(0,-e.clientX):dir==='down'?Math.max(0,e.clientY-window.innerHeight)
+        :dir==='up'?Math.max(0,-e.clientY):0;
+      return realScreen&&clientOverflow>8?dir:'';
     };
     const preview = (e) => {
       if(!window.pcWM || !pcWM.previewFrame) return;
@@ -3382,6 +3388,14 @@
         return;
       }
       if(handoff && w.native == null && pcWM.handoffFrame){
+        const dropEvent=endEvent||lastMove;
+        const snapZone=dropEvent&&Number.isFinite(dropEvent.clientX)&&Number.isFinite(dropEvent.clientY)
+          ? zoneAt(dropEvent.clientX,dropEvent.clientY) : zone;
+        _natGesture(w,false);
+        /* Commit the edge drop before the asynchronous transfer. A successful handoff closes this
+         * source frame; a rejected one therefore remains in the requested tile instead of jumping
+         * back to its floating rectangle. */
+        if(snapZone)snapTo(w,snapZone);
         sendFrameHandoff(w,handoff,edgeOverflow(endEvent||lastMove,handoff));
         if(nativeWins().length) nsync();
         return;
