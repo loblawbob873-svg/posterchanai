@@ -8989,7 +8989,11 @@ html.osfr-on body > .app, html.osfr-on #os-root{ visibility:hidden; }
 .sms-wrap{display:flex;flex-direction:column;height:100%;min-height:0;gap:12px}
 .sms-head{display:flex;gap:8px;align-items:center;flex:none}
 .sms-head .input{flex:1;min-width:0}
-.sms-title{font-size:1.05rem;font-weight:600;color:var(--text)}
+.sms-title{font-size:1.05rem;font-weight:600;color:var(--text);min-width:0;flex:1;display:flex;flex-direction:column;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sms-title small{font-size:.72rem;font-weight:400;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
+.sms-contact-actions{display:flex;gap:6px;flex:none}
+@media(max-width:420px){.sms-contact-actions .btn{padding-inline:8px}}
 .sms-threads{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:8px}
 .sms-thread{display:flex;gap:12px;align-items:center;width:100%;text-align:left;
   padding:12px;border:1px solid var(--line);border-radius:var(--r);background:var(--panel);

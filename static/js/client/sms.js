@@ -2369,7 +2369,11 @@
       <div class="sms-wrap">
         <div class="sms-head">
           <button class="btn small" id="sms-back">${ICO('arrow-left','b-ic')}</button>
-          <div class="sms-title">${enc(who)}</div>
+          <div class="sms-title"><span>${enc(who)}</span>${who!==t.address?`<small>${enc(t.address)}</small>`:''}</div>
+          <div class="sms-contact-actions">
+            <button class="btn small" id="sms-call" aria-label="Call ${enc(who)}">Call</button>
+            <button class="btn small" id="sms-copy-number" aria-label="Copy phone number">Copy</button>
+          </div>
         </div>
         ${blankNote(blankCount(t.msgs))}
         <div class="sms-msgs dm-msgs" id="sms-msgs" data-thread-key="${enc(t.key)}">${t.msgs.map((m, i) => {
@@ -2411,6 +2415,12 @@
         </div>
       </div>`;
     PC.$('#sms-back').onclick = () => { clearAttachment(); S.open = ''; paint(); };
+    const call=PC.$('#sms-call');if(call)call.onclick=()=>{
+      window.location.href='tel:'+encodeURIComponent(String(t.address||''));
+    };
+    const copyNumber=PC.$('#sms-copy-number');if(copyNumber)copyNumber.onclick=()=>{
+      if(PC.copyValue)PC.copyValue(String(t.address||''),'','number copied');
+    };
     const input = PC.$('#sms-in'), btn = PC.$('#sms-send');
     const emojiBtn = PC.$('#sms-emoji');
     emojiBtn.onclick = () => PC.openEmojiPopover(emojiBtn, (emoji, close) => {
