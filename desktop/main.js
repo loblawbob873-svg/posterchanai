@@ -2042,6 +2042,12 @@ ipcMain.handle('pc:net:radio', (e, on) => { fsGuard(e); return net.radio(!!on); 
  * well-formed npub, because it runs as root and its input comes from a login screen). */
 ipcMain.handle('pc:os:provision', (e, npub) => {
   fsGuard(e);
+  /* Installed-package diagnostics run in an isolated profile and nested compositor, but they are
+   * still the real packaged binary and therefore used to retain this privileged bridge. A UI test
+   * that signed in a throwaway identity consequently provisioned a real Unix account, rewrote
+   * tty1's autologin and restarted getty, terminating the operator's desktop. Diagnostic mode is
+   * evidence-gathering only: it must never mutate the host login/session. */
+  if (diagnostic) return { ok: false, why: 'OS account changes are disabled in diagnostics' };
   const id = String(npub || '');
   if (!/^npub1[023456789acdefghjklmnpqrstuvwxyz]{58}$/.test(id)) throw new Error('not an npub');
   return new Promise((resolve) => {
@@ -2074,6 +2080,7 @@ ipcMain.handle('pc:os:identity', (e) => {
 });
 ipcMain.handle('pc:os:switch', (e, npub, handoff) => {
   fsGuard(e);
+  if (diagnostic) return { ok: false, why: 'OS session changes are disabled in diagnostics' };
   const id = String(npub || '');
   if (!/^npub1[023456789acdefghjklmnpqrstuvwxyz]{58}$/.test(id))
     return { ok: false, why: 'not an npub' };
@@ -2095,6 +2102,7 @@ ipcMain.handle('pc:os:switch', (e, npub, handoff) => {
 });
 ipcMain.handle('pc:os:logout', (e) => {
   fsGuard(e);
+  if (diagnostic) return { ok: false, why: 'OS session changes are disabled in diagnostics' };
   return new Promise((resolve) => {
     const { execFile } = require('child_process');
     execFile('sudo', ['-n', '/usr/local/bin/pc-session-switch', '--greeter'], { timeout: 10000 },
