@@ -40,6 +40,8 @@
     const KIND_UPDATE = 4932;          // NIP-DC state update (regular event)
     const KIND_REALTIME = 20932;       // NIP-DC realtime data (EPHEMERAL: relays forward, store nothing)
     const MIME = 'application/x-webxdc';
+    const MIME_VENDOR = 'application/vnd.webxdc+zip';
+    const isWebxdcMime = value => { const mime=String(value||'').toLowerCase();return mime===MIME||mime===MIME_VENDOR; };
     /* 256 MB. Not a guess: the published Half-Life port is 178 MB, because it ships the three demo
      * campaigns (dayone.zip 75 MB, hldm.zip 62 MB, uplink.zip 29 MB) beside a 3.7 MB Xash wasm. A cap
      * sized for "a zip of HTML and sprites" refuses the most impressive app in the ecosystem, and the
@@ -1709,7 +1711,7 @@
       if(!ev || !Array.isArray(ev.tags)) return null;
       if(ev.kind === 1063){
         const get = (n) => { const t = ev.tags.find(x => x[0] === n); return (t && t[1]) || ''; };
-        if((get('m') || '').toLowerCase() !== MIME) return null;
+        if(!isWebxdcMime(get('m'))) return null;
         const url = get('url');
         if(!/^https?:\/\//i.test(url)) return null;
         /* `image` and `size` are Ditto's, and they are what make the gallery a gallery rather than a
@@ -1727,7 +1729,7 @@
           const s = String(t[i] || ''), sp = s.indexOf(' ');
           if(sp > 0) f[s.slice(0, sp)] = s.slice(sp + 1);
         }
-        if((f.m || '').toLowerCase() !== MIME) continue;
+        if(!isWebxdcMime(f.m)) continue;
         if(!/^https?:\/\//i.test(f.url || '')) continue;
         return { url:f.url, sha:f.x || '', uuid:f.webxdc || '', name:(f.summary || '').slice(0, 80) };
       }
@@ -1856,7 +1858,7 @@
          * instruction from the poll composer would have produced nothing, with no error anywhere. */
         let net = [];
         try{
-          net = await Relay.query([{ kinds:[1063], '#m':[MIME], limit:GAL_LIMIT },
+          net = await Relay.query([{ kinds:[1063], '#m':[MIME,MIME_VENDOR], limit:GAL_LIMIT },
                                    { kinds:[1, 1068, 1111, 1621], '#t':['webxdc'], limit:GAL_LIMIT }], 9000) || [];
         }catch(_){}
         soak(net);

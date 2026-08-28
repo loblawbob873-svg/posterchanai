@@ -153,6 +153,12 @@ if(armadaRaw.uuid!==`concord2|${armadaChannel}|webxdc`||armadaRaw.transport.chan
   throw new Error('raw Webxdc link does not use Armada concord2 scope/session identity');
 const armadaUploaded=PCConcord.webxdcOf({id:'upload-event',text:xdcUrl,tags:[['imeta',`url ${xdcUrl}`,'m application/x-webxdc','webxdc fixture-uuid']]},armadaRoom,'general');
 if(armadaUploaded.uuid!=='fixture-uuid')throw new Error('explicit Armada Webxdc UUID was replaced');
+/* Captured from Armada's live Gamers/#xdc Quake post. Armada uses the registered vendor MIME,
+   not PosterChan's older x-webxdc alias; losing this topic puts ioquake in a different room. */
+const liveArmadaTopic='FBSTBOCHXLXTUPWPCLPAGBZDFNBSK5HKMTTMTVAKHY2EGNJFYMLQ';
+const liveArmada=PCConcord.webxdcOf({id:'75d8530b4eace74e24abd58092bb855dc42408077f91e9a025cd8b65aaa8119b',text:xdcUrl,tags:[['imeta',`url ${xdcUrl}`,'m application/vnd.webxdc+zip',`webxdc-topic ${liveArmadaTopic}`,`webxdc ${liveArmadaTopic}`,'summary Quake III Arena (OpenArena)']]},armadaRoom,'general');
+if(!liveArmada||liveArmada.uuid!==liveArmadaTopic||liveArmada.name!=='Quake III Arena (OpenArena)')
+  throw new Error('live Armada vendor-MIME attachment lost its shared Webxdc topic');
 const xdcMessage={id:'xdc-message',text:'play this '+xdcUrl,tags:[['imeta',`url ${xdcUrl}`,'m application/x-webxdc','webxdc game-1','summary Game']]};
 window.PCWebxdc={cardHtml:()=>'<div class="xdc-card">Game</div>'};
 const playableXdc=PCConcord.messageContentHtml({enc:String,linkify:String,linkCardHtml:s=>'PREVIEW:'+s},xdcMessage);

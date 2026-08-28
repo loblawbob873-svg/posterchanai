@@ -167,6 +167,16 @@ class AttachmentParsing(unittest.TestCase):
         self.assertEqual(got["sha"], "a" * 64)
         self.assertEqual(got["uuid"], "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d")
 
+    def test_armada_vendor_mime_preserves_shared_topic(self):
+        ev = {"kind": 9, "content": "https://blossom.example.com/quake.xdc", "tags": [[
+            "imeta", "url https://blossom.example.com/quake.xdc",
+            "m application/vnd.webxdc+zip",
+            "webxdc FBSTBOCHXLXTUPWPCLPAGBZDFNBSK5HKMTTMTVAKHY2EGNJFYMLQ",
+            "summary Quake III Arena (OpenArena)"]]}
+        got = self.app_of(ev)
+        self.assertEqual(got["uuid"], "FBSTBOCHXLXTUPWPCLPAGBZDFNBSK5HKMTTMTVAKHY2EGNJFYMLQ")
+        self.assertEqual(got["name"], "Quake III Arena (OpenArena)")
+
     def test_a_kind_1063_file_event_is_found(self):
         ev = {"kind": 1063, "content": "A collaborative chess game.", "tags": [
             ["url", "https://blossom.example.com/abc.xdc"], ["m", "application/x-webxdc"],
