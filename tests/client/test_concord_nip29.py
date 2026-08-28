@@ -12,13 +12,17 @@ def test_nip29_runtime():
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_signer_only_self_decrypt_and_read_only_write_boundary():
+def test_signer_decrypt_and_authenticated_write_boundary():
     app = (ROOT / "static/js/client/app.js").read_text()
     concord = (ROOT / "static/js/client/concord.js").read_text()
     relay = (ROOT / "static/js/client/relay.js").read_text()
     assert "nip04dec: (peer, ct)" in app
     assert "verifyRelayEvents:" in app
-    assert "NIP-29 sending is read-only" in concord
+    assert "publishNip29Authed:" in app
+    assert "kind:22242" in app and "['challenge',String(challenge||'')]" in app
+    assert "pubkey:ME.pubkey" in app
+    assert "room&&room.protocol==='nip29'?publishNip29Message" in concord
+    assert "room.protocol!=='nip29'" in concord
     assert "else if(loaded&&loaded.protocol==='nip29')await hydrateNip29Room" in concord
     assert "exact=false" in relay and "exact || !this._conns.has(u)" in relay
     assert "...(p.relayUrls?p.relayUrls():[]),...CORD_RELAYS" in concord

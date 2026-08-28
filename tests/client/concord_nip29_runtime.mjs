@@ -28,5 +28,21 @@ if(!listedQueries.slice(-2).every(q=>q.relays.length===1&&q.relays[0]==='wss://g
 let metadataReads=0;const rOnly={...membership,id:'r-only',created_at:50,tags:[['r','wss://all.example']],content:''};
 await api.syncNip29Memberships({viewer:()=>viewer,relayUrls:()=>[],relayQuery:async()=>[rOnly],relayQueryFrom:async(_r,filters)=>{if(filters[0].kinds[0]===39000)metadataReads++;return [rOnly];},verifyRelayEvents:async events=>events},viewer);
 if(metadataReads!==0)throw new Error('bare r tag enumerated every public group as joined');
+const folded=api.foldNip29History([
+  {id:'m1',kind:9,created_at:1,pubkey:'alice',tags:[['h','private']],content:'one'},
+  {id:'rx',kind:7,created_at:2,pubkey:'bob',tags:[['h','private'],['e','m1']],content:'👍'},
+  {id:'del-rx',kind:5,created_at:3,pubkey:'bob',tags:[['h','private'],['e','rx']],content:''},
+  {id:'m2',kind:1111,created_at:4,pubkey:'alice',tags:[['h','private'],['e','m1']],content:'reply'},
+  {id:'bad-del',kind:5,created_at:5,pubkey:'mallory',tags:[['h','private'],['e','m1']],content:''}
+],{profOf:()=>({})},'private');
+if(folded.length!==2||folded[0].reactions['👍']||folded.some(m=>[5,7].includes(m.kind))||!folded.find(m=>m.kind===1111).reply)throw new Error('NIP-29 delete/reaction/reply fold is incorrect');
+const plusFold=api.foldNip29History([{id:'target',kind:9,created_at:1,pubkey:'alice',tags:[['h','private']],content:'x'},{id:'plus',kind:7,created_at:2,pubkey:'bob',tags:[['h','private'],['e','target']],content:'+'}],{profOf:()=>({})},'private');
+if(!plusFold[0].reactions['👍'].includes('bob'))throw new Error('generic NIP-25 reaction was not normalized');
+const previous=api.nip29PreviousTags([{id:'11111111old',remote:true,pubkey:'me'},{id:'pending',remote:false,pubkey:'x'},{id:'aaaaaaaa0',remote:true,pubkey:'x'},{id:'bbbbbbbb0',remote:true,pubkey:'y'},{id:'cccccccc0',remote:true,pubkey:'z'}],'me');
+if(previous.length!==1||previous[0].length!==4||previous[0][1]!=='aaaaaaaa'||previous[0][3]!=='cccccccc')throw new Error('recommended previous tag was not bounded, shortened, or own-event filtered');
+const publishCalls=[],made=await api.publishNip29Message({publishNip29Authed:async(relay,template)=>{publishCalls.push({relay,template});return{id:'signed',created_at:99,...template};}},
+  {protocol:'nip29',relay:'wss://groups.example',groupId:'private',communityId:'nip29:wss://groups.example#private',channels:[{name:'general',id:'private'}]},'general','sent',[['e','m1']],1111);
+if(made.rumorId!=='signed'||publishCalls[0].relay!=='wss://groups.example'||publishCalls[0].template.kind!==1111||!publishCalls[0].template.tags.some(t=>t[0]==='h'&&t[1]==='private'))throw new Error('native NIP-29 publish template was wrong');
+let rejected=false;try{await api.publishNip29Message({publishNip29Authed:async()=>{throw new Error('blocked: not a member');}},{protocol:'nip29',relay:'wss://groups.example',groupId:'private'},'general','nope');}catch(e){rejected=e.message.includes('not a member');}if(!rejected)throw new Error('NIP-29 relay rejection was reported as success');
 const legacy=api.nip29MembershipTags([['group','x','not-a-relay']]);if(legacy.groups.length)throw new Error('invalid relay accepted');
 console.log('concord nip29 runtime ok');

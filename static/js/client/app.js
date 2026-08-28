@@ -34254,6 +34254,15 @@
     relayQuery: (filters, timeout) => Relay.query(filters, timeout),
     relayQueryFrom: (relays, filters, opts) => Relay.queryFrom(relays, filters, opts),
     verifyRelayEvents: async events => { const list=Array.isArray(events)?events:[],result=await Relay.worker.call('verifyBatch',{events:list}),valid=new Set((result||[]).filter(r=>r.valid).map(r=>r.id));return list.filter(event=>valid.has(event.id)); },
+    publishNip29Authed: async (relay, template) => {
+      const url=new URL(String(relay||''));if(!/^wss?:$/.test(url.protocol))throw new Error('invalid NIP-29 relay');
+      const tags=Array.isArray(template&&template.tags)?template.tags:[];
+      if(!ME||!ME.pubkey||![5,7,9,10,11,12,1111].includes(Number(template&&template.kind)))throw new Error('invalid NIP-29 event');
+      if(!tags.some(t=>t[0]==='h'&&t[1]))throw new Error('NIP-29 group tag is required');
+      const event=await signer.signEvent({...template,pubkey:ME.pubkey,tags}),result=await Relay.publishAuthed(url.href.replace(/\/$/,''),event,
+        challenge=>signer.signEvent({kind:22242,pubkey:ME.pubkey,created_at:Math.floor(Date.now()/1000),content:'',tags:[['relay',url.href.replace(/\/$/,'')],['challenge',String(challenge||'')]]}));
+      if(!result||!result.ok)throw new Error(result&&result.msg||'NIP-29 relay rejected the event');return event;
+    },
     relayUrls: () => _writeRelays().slice(),
     signTemplate: template => signer.signEvent(template),
     /* THE ONE PLACE AN OS NOTIFICATION IS RAISED, for the sub-modules. It is not a convenience: it
