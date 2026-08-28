@@ -5,6 +5,7 @@ import asyncio, json, os, re, shutil, subprocess, tempfile, urllib.request
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP = os.path.join(ROOT, "static/js/client/app.js")
 PORT = 9497
+VIEWPORTS = ((360, 780), (412, 915))
 
 
 def lift(src, start, end):
@@ -39,7 +40,7 @@ const q=s=>document.querySelector(s),qa=s=>[...document.querySelectorAll(s)],r=e
 const grid=q('#bp-grid'),side=q('#bp-folders'),picker=q('.bp-file-picker'),head=q('.bp-head'),explorer=q('.bp-explorer'),trigger=q('.bp-locations'),cards=qa('.bp-pick-card').filter(vis),previews=cards.map(x=>x.querySelector('.bp-pick-preview')),pr=r(picker),hr=r(head);
 const smallWidth=r(cards[0]).width, smallCols=new Set(cards.filter(x=>Math.abs(r(x).y-r(cards[0]).y)<2).map(x=>Math.round(r(x).x))).size;
 trigger.click(); const folders=qa('.folder-chip').filter(vis);
-const out={errors:window.__errors||[],overflow:document.documentElement.scrollWidth>innerWidth+1,fullViewport:Math.abs(pr.x)<1&&Math.abs(pr.y)<1&&Math.abs(pr.width-innerWidth)<1&&Math.abs(pr.height-innerHeight)<1,compactHeader:hr.height>=48&&hr.height<=72,contentHeight:r(explorer).height,drawerOpened:explorer.classList.contains('bp-locations-on')&&trigger.getAttribute('aria-expanded')==='true',folders:folders.length,cards:cards.length,smallCols,vertical:folders.length>1&&Math.abs(r(folders[0]).x-r(folders[1]).x)<2&&r(folders[1]).y>r(folders[0]).y,folderReadable:folders.every(x=>r(x).width>=220&&r(x).height>=36&&x.scrollWidth<=x.clientWidth+2),sideScroll:side.scrollHeight>side.clientHeight,gridScroll:grid.scrollHeight>grid.clientHeight,square:previews.every(x=>Math.abs(r(x).width-r(x).height)<2),nonImageSquare:!!cards[0].querySelector('.file-icon')&&Math.abs(r(cards[0].querySelector('.file-icon')).width-r(cards[0].querySelector('.file-icon')).height)<2,fileReadable:cards.every(x=>r(x).width>=44&&r(x).height>=44&&x.querySelector('.fname')&&x.querySelector('small')&&(x.querySelector('img')||x.querySelector('.file-icon')))};
+const out={errors:window.__errors||[],overflow:document.documentElement.scrollWidth>innerWidth+1,fullViewport:Math.abs(pr.x)<1&&Math.abs(pr.y)<1&&Math.abs(pr.width-innerWidth)<1&&Math.abs(pr.height-innerHeight)<1,compactHeader:hr.height>=48&&hr.height<=72,contentHeight:r(explorer).height,drawerOpened:explorer.classList.contains('bp-locations-on')&&trigger.getAttribute('aria-expanded')==='true',folders:folders.length,cards:cards.length,smallCols,tile:{w:Math.round(r(cards[0]).width*10)/10,h:Math.round(r(cards[0]).height*10)/10},preview:{w:Math.round(r(previews[0]).width*10)/10,h:Math.round(r(previews[0]).height*10)/10},vertical:folders.length>1&&Math.abs(r(folders[0]).x-r(folders[1]).x)<2&&r(folders[1]).y>r(folders[0]).y,folderReadable:folders.every(x=>r(x).width>=220&&r(x).height>=36&&x.scrollWidth<=x.clientWidth+2),sideScroll:side.scrollHeight>side.clientHeight,gridScroll:grid.scrollHeight>grid.clientHeight,square:previews.every(x=>Math.abs(r(x).width-r(x).height)<2),nonImageSquare:!!cards[0].querySelector('.file-icon')&&Math.abs(r(cards[0].querySelector('.file-icon')).width-r(cards[0].querySelector('.file-icon')).height)<2,fileReadable:cards.every(x=>r(x).width>=44&&r(x).height>=44&&x.querySelector('.fname')&&x.querySelector('small')&&(x.querySelector('img')||x.querySelector('.file-icon')))};
 document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}));out.escapeClosed=!explorer.classList.contains('bp-locations-on');trigger.click();grid.click();out.backdropClosed=!explorer.classList.contains('bp-locations-on');trigger.click();folders[0].click();out.drawerClosed=!explorer.classList.contains('bp-locations-on')&&trigger.getAttribute('aria-expanded')==='false';out.fullWidthAfterSelect=r(grid).width>=innerWidth-4;out.usableContent=out.contentHeight>=innerHeight*.80;
 q('[data-bp-size="medium"]').click();out.toggleEffect=explorer.classList.contains('bp-medium')&&r(qa('.bp-pick-card')[0]).width>smallWidth+20&&q('[data-bp-size="medium"]').getAttribute('aria-pressed')==='true';qa('.bp-pick-card')[0].click();out.picked=!!window.__picked;return out;})()'''
 
@@ -74,20 +75,23 @@ async def run():
                     if m.get('id')==n:return m.get('result',{})
             await call('Page.enable')
             await call('Runtime.enable')
-            await call('Emulation.setDeviceMetricsOverride',{'width':360,'height':780,'deviceScaleFactor':3,'mobile':True})
-            await call('Page.navigate',{'url':f'http://127.0.0.1:{PORT}/'})
-            await asyncio.sleep(.3)
-            for _ in range(40):
-                await asyncio.sleep(.1); z=await call('Runtime.evaluate',{'expression':'window.__ready===true','returnByValue':True})
-                if z.get('result',{}).get('value'):break
-            z=await call('Runtime.evaluate',{'expression':AUDIT,'returnByValue':True}); out=z.get('result',{}).get('value')
-            if not out and z.get('exceptionDetails'):
-                why=await call('Runtime.evaluate',{'expression':'JSON.stringify({url:location.href,errors:window.__errors,body:document.body.innerHTML.slice(0,500)})','returnByValue':True})
-                print('audit exception',z['exceptionDetails'],why)
-            required={'errors':[], 'overflow':False,'fullViewport':True,'compactHeader':True,'usableContent':True,'drawerOpened':True,'escapeClosed':True,'backdropClosed':True,'drawerClosed':True,'fullWidthAfterSelect':True,'folders':21,'cards':24,'smallCols':3,'vertical':True,'folderReadable':True,'sideScroll':True,'gridScroll':True,'square':True,'nonImageSquare':True,'fileReadable':True,'toggleEffect':True,'picked':True}
-            bad={k:(out and out.get(k),v) for k,v in required.items() if not out or out.get(k)!=v}
-            if bad: print('Blossom picker FAIL',bad,'actual=',out);return 1
-            print('Blossom picker mobile runtime/layout: clean',out);return 0
+            results=[]
+            for width,height in VIEWPORTS:
+                await call('Emulation.setDeviceMetricsOverride',{'width':width,'height':height,'deviceScaleFactor':3,'mobile':True})
+                await call('Page.navigate',{'url':f'http://127.0.0.1:{PORT}/'})
+                await asyncio.sleep(.3)
+                for _ in range(40):
+                    await asyncio.sleep(.1); z=await call('Runtime.evaluate',{'expression':'window.__ready===true','returnByValue':True})
+                    if z.get('result',{}).get('value'):break
+                z=await call('Runtime.evaluate',{'expression':AUDIT,'returnByValue':True}); out=z.get('result',{}).get('value')
+                if not out and z.get('exceptionDetails'):
+                    why=await call('Runtime.evaluate',{'expression':'JSON.stringify({url:location.href,errors:window.__errors,body:document.body.innerHTML.slice(0,500)})','returnByValue':True})
+                    print('audit exception',z['exceptionDetails'],why)
+                required={'errors':[], 'overflow':False,'fullViewport':True,'compactHeader':True,'usableContent':True,'drawerOpened':True,'escapeClosed':True,'backdropClosed':True,'drawerClosed':True,'fullWidthAfterSelect':True,'folders':21,'cards':24,'smallCols':3 if width==360 else 4,'vertical':True,'folderReadable':True,'sideScroll':True,'gridScroll':True,'square':True,'nonImageSquare':True,'fileReadable':True,'toggleEffect':True,'picked':True}
+                bad={k:(out and out.get(k),v) for k,v in required.items() if not out or out.get(k)!=v}
+                if bad: print(f'Blossom picker FAIL at {width}x{height}',bad,'actual=',out);return 1
+                results.append({'viewport':f'{width}x{height}', **out})
+            print('Blossom picker mobile runtime/layout: clean',results);return 0
     finally: proc.terminate();srv.shutdown();td.cleanup()
 
 if __name__=='__main__': raise SystemExit(asyncio.run(run()))
