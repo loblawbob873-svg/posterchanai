@@ -42,6 +42,24 @@ public class ConcordComposerDeviceTest {
             assertTrue("bundled Concord client never became ready: " + stable,
                     stable.contains("|complete|true"));
 
+            // JavaScript focus() is ignored when the WebView itself does not own Android window
+            // focus (notably after launcher/lifecycle tests). Establish the real native precondition
+            // first; otherwise this test asks backgroundRender to protect an unfocused textarea and
+            // reports the expected rebuild as a product failure.
+            final WebView underTest = web;
+            scenario.onActivity(a -> {
+                underTest.requestFocus(View.FOCUS_DOWN);
+                underTest.requestFocusFromTouch();
+            });
+            String nativeFocus = "";
+            for (int i = 0; i < 30; i++) {
+                nativeFocus = eval(web, "document.hasFocus()+'|'+document.visibilityState");
+                if (nativeFocus.contains("true|visible")) break;
+                SystemClock.sleep(100);
+            }
+            assertTrue("WebView never received foreground focus: " + nativeFocus,
+                    nativeFocus.contains("true|visible"));
+
             String js = "(()=>{window.__ccDeviceResult='pending';"+
                     "const old=localStorage.getItem('pc.concord.invites');"+
                     "localStorage.setItem('pc.concord.invites',JSON.stringify([{name:'Device draft gate',"+
@@ -58,10 +76,12 @@ public class ConcordComposerDeviceTest {
                     "try{if(!a)throw new Error('composer absent; view='+__PC.isView('concord')+"+
                     "', desktop='+(!!(window.PCOS&&PCOS.isOn&&PCOS.isOn())));"+
                     "a.value='draft survives repaint';a.focus();a.setSelectionRange(6,14,'backward');"+
+                    "const initiallyFocused=document.activeElement===a;"+
+                    "if(!initiallyFocused)throw new Error('textarea did not receive focus before repaint');"+
                     "PCConcord.backgroundRender();PCConcord.backgroundRender();PCConcord.backgroundRender();requestAnimationFrame(()=>{"+
                     "requestAnimationFrame(()=>{const b=document.querySelector('#cc-input');"+
                     "const before={value:b&&b.value,start:b&&b.selectionStart,end:b&&b.selectionEnd,"+
-                    "focused:document.activeElement===b,replaced:a!==b};"+
+                    "initiallyFocused,focused:document.activeElement===b,replaced:a!==b};"+
                     // A restoration latch must not become a focus trap. Move focus to another real
                     // control after one more replacement but before its rAF callback.
                     "const target=document.querySelector('#cc-emoji');target.focus();PCConcord.backgroundRender();"+
@@ -81,6 +101,7 @@ public class ConcordComposerDeviceTest {
             assertTrue("APK Concord repaint lost draft state: " + result,
                     result.contains("draft survives repaint") && result.contains("\\\"start\\\":6") &&
                     result.contains("\\\"end\\\":14") && result.contains("\\\"focused\\\":true") &&
+                    result.contains("\\\"initiallyFocused\\\":true") &&
                     result.contains("\\\"replaced\\\":false") &&
                     result.contains("\\\"notStolen\\\":true"));
         } finally { scenario.close(); }

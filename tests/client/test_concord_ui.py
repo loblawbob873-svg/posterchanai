@@ -576,9 +576,12 @@ def test_all_joined_community_metadata_repaints_live_without_moving_chat():
 
 def test_background_repaints_never_replace_a_focused_workspace_control():
     helper = CONCORD.split('function backgroundRender()', 1)[1].split('function handoffState', 1)[0]
+    # Native/mobile Concord is not guaranteed to live under the classic #feed host. The composer
+    # itself must independently qualify for deferral or a relay update replaces it and the IME.
+    assert 'active===input||' in helper
     assert 'feed.contains&&feed.contains(active)' in helper
     assert 'backgroundRenderPending=true' in helper
-    assert "feed.addEventListener('focusout'" in helper
+    assert "active.addEventListener('focusout'" in helper
     assert 'if(backgroundRenderPending)backgroundRender()' in helper
     assert 'backgroundRenderPending=false;backgroundFocusHost=null;render();return true' in helper
     assert 'window.PCConcord={render,backgroundRender,' in CONCORD

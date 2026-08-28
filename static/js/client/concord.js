@@ -84,13 +84,20 @@
   function clearComposer(key){const input=(document.querySelector&&document.querySelector('#cc-input'))||(PC()&&PC().$&&PC().$('#cc-input'));if(input){const room=state.community==null?null:saved()[state.community],liveKey=input.dataset&&input.dataset.ccDraftKey||composerKey(room,state.channel);if(liveKey===key){input.value='';try{input.setSelectionRange(0,0);}catch(_){}}}composerDrafts.delete(key);activeMentionState={choices:[],index:0,recipients:new Map()};replyTarget=null;}
   function backgroundRender(){
     const p=PC(),feed=p&&p.$&&p.$('#feed'),active=document.activeElement,
-      inside=!!(feed&&active&&active!==document.body&&active!==document.documentElement&&active.isConnected!==false&&
-        ((feed.contains&&feed.contains(active))||active===(document.querySelector&&document.querySelector('#cc-input'))));
+      input=document.querySelector&&document.querySelector('#cc-input'),
+      concordHost=input&&(input.closest&&input.closest('.cc-shell,.cc-layout,[data-view="concord"]')),
+      inside=!!(active&&active!==document.body&&active!==document.documentElement&&active.isConnected!==false&&
+        (active===input||(concordHost&&concordHost.contains&&concordHost.contains(active))||
+          (feed&&feed.contains&&feed.contains(active))));
     if(inside){
       backgroundRenderPending=true;
-      if(backgroundFocusHost!==feed&&feed.addEventListener){
-        backgroundFocusHost=feed;
-        feed.addEventListener('focusout',()=>{backgroundFocusHost=null;setTimeout(()=>{if(backgroundRenderPending)backgroundRender();},0);},{once:true,capture:true});
+      /* The native mobile handoff can briefly detach or replace the classic #feed host while the
+       * real textarea remains connected in Concord's managed window. Tying protection to #feed made
+       * that exact state repaint the composer and close Android's keyboard. Follow the focused
+       * control itself; focusout is the lifecycle signal we actually need and works in every host. */
+      if(backgroundFocusHost!==active&&active.addEventListener){
+        backgroundFocusHost=active;
+        active.addEventListener('focusout',()=>{backgroundFocusHost=null;setTimeout(()=>{if(backgroundRenderPending)backgroundRender();},0);},{once:true,capture:true});
       }
       return false;
     }

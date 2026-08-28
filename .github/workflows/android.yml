@@ -103,6 +103,7 @@ jobs:
           echo "found: $APK"
           cp "$APK" posterchan.apk
           ls -la posterchan.apk
+          python3 scripts/check_android_apk_assets.py posterchan.apk "$PWD"
 
       # GitHub stamps a release's publish date ONCE, when the release object is created — replacing the asset
       # under a rolling tag never touches it. So apk-latest kept showing "2 days ago" next to a brand-new APK,
