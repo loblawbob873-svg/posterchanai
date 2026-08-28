@@ -35,4 +35,6 @@ def test_composer_focus_precondition_comes_from_native_webview_input():
     assert "MotionEvent.ACTION_DOWN" in COMPOSER and "MotionEvent.ACTION_UP" in COMPOSER
     assert "underTest.dispatchTouchEvent(down)" in COMPOSER
     assert "native tap did not focus the Concord textarea" in COMPOSER
+    assert 'data-cc-channel=\\"general\\"' in COMPOSER
+    assert "composer stayed hidden" in COMPOSER
     assert "a.focus()" not in setup

@@ -73,10 +73,18 @@ public class ConcordComposerDeviceTest {
                     // the same supported transition phoneshell.js uses when Android opens the mobile
                     // app; this is a mobile composer test, not a hidden-desktop-window test.
                     "if(window.PCOS&&PCOS.mobileLanding)PCOS.mobileLanding();__PC.switchView('concord');"+
-                    "let tries=0;const seed=()=>{const a=document.querySelector('#cc-input');"+
+                    "let tries=0,opened=false;const seed=()=>{const a=document.querySelector('#cc-input');"+
                     "if(!a&&tries++<50){setTimeout(seed,100);return;}"+
                     "try{if(!a)throw new Error('composer absent; view='+__PC.isView('concord')+"+
                     "', desktop='+(!!(window.PCOS&&PCOS.isOn&&PCOS.isOn())));"+
+                    // Selecting a community intentionally leaves a phone on its channel list. Its
+                    // hidden conversation already has a textarea, but a finger cannot reach it.
+                    // Enter #general through the real channel control and reacquire the textarea
+                    // after that click's render replacement before seeding the draft.
+                    "const r=a.getBoundingClientRect();if(r.width<=1||r.height<=1){"+
+                    "if(!opened){opened=true;const channel=document.querySelector('[data-cc-channel=\"general\"]');"+
+                    "if(channel){channel.click();setTimeout(seed,100);return;}}"+
+                    "if(tries++<50){setTimeout(seed,100);return;}throw new Error('composer stayed hidden');}"+
                     "a.value='draft survives repaint';window.__ccDeviceOldInvites=old;"+
                     "window.__ccDeviceResult='ready-for-touch';"+
                     "}catch(e){if(old===null)localStorage.removeItem('pc.concord.invites');"+
