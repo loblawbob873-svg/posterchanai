@@ -329,7 +329,7 @@ class HandAssembledJavaScript(unittest.TestCase):
         global.requestAnimationFrame = () => 1;
         vm.runInThisContext(%s);
         const exit = { name:'ExitStatus', status:1, stack:'ExitStatus: 1\\n at quit_' };
-        for(const fn of listeners.error || []) fn({ error:exit,
+        for(const fn of listeners.error || []) fn({ error:exit, message:'Uncaught [object Object]',
           filename:'https://xdc/ioquake3_opengl2.wasm32.js', lineno:80 });
         console.log(JSON.stringify(sent.filter(x => x.method === 'webxdc.crash').pop()));
         """ % json.dumps('var __XDC = { addr:"", name:"", ns:"game" };\n' + body))

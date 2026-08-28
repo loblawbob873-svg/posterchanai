@@ -549,8 +549,10 @@
         detail = bits.join(': ') || JSON.stringify(r);
       }else if(r !== undefined && r !== null) detail = String(r);
     }catch(x){}
+    var reported = e && e.message;
+    if(reported && /\[object Object\]/.test(String(reported)) && detail) reported = detail;
     send({ jsonrpc:'2.0', method:'webxdc.crash', params:{
-      message: (e && e.message) || detail || 'error',
+      message: reported || detail || 'error',
       where: (e && e.filename ? String(e.filename).split('/').pop() + ':' + e.lineno : ''),
       stack: (r && r.stack ? String(r.stack).slice(0, 1200) : '') } });
   });
