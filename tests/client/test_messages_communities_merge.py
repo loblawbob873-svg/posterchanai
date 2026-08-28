@@ -22,7 +22,29 @@ def test_messages_separates_direct_messages_and_communities_inside_one_app():
     assert "switchView('concord')" in APP
     assert 'class="messages-tabs"' in CONCORD
     assert 'id="messages-direct"' in CONCORD
-    assert "p.switchView('messages')" in CONCORD
+    assert "(p.switchMessagesTab||p.switchView)('messages')" in CONCORD
+
+
+def test_internal_messages_tabs_bypass_desktop_window_routing():
+    assert "function switchMessagesTab(v){" in APP
+    helper = APP[APP.index("function switchMessagesTab(v){"):]
+    helper = helper[:helper.index("\n  }") + 4]
+    assert "switchView._osIn=1" in helper
+    assert "finally{ switchView._osIn=prior; }" in helper
+
+
+def test_successful_dm_send_does_not_remount_messages():
+    send = APP[APP.index("async function sendDm(pk, text){"):]
+    send = send[:send.index("\n  }") + 4]
+    assert "renderMessages()" not in send
+    assert "await ingestWrap(toSelf, false)" in send
+
+
+def test_successful_dm_send_runtime_stays_in_open_thread():
+    runtime = ROOT / "tests/client/dm_send_stays_open_runtime.mjs"
+    run = subprocess.run(["node", str(runtime)], capture_output=True, text=True, timeout=30)
+    assert run.returncode == 0, run.stderr
+    assert "dm send stayed in the open thread" in run.stdout
 
 
 def test_android_launcher_uses_unambiguous_texts_and_messages_names():

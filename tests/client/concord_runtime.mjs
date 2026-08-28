@@ -76,6 +76,8 @@ window.__PC = {
   relayUrls:()=>['wss://relay.example'], signTemplate:async template=>template,
   relayPublish:async()=>({ok:true}), relayPublishTo:async(_relays,event)=>{calls.wraps.push(event);return 1;},
   publish:async()=>({}),
+  switchView:()=>{ throw new Error('Communities tab used the desktop app router'); },
+  switchMessagesTab:view=>{ calls.messagesTab=view; activeView=view; },
   profOf:()=>({}), LOGO:'', linkify:s=>String(s), linkCardHtml:()=>'', hydrateLinkCards:()=>{},
 };
 globalThis.location={origin:'https://poster.place'};
@@ -228,6 +230,10 @@ if(!PCConcord.textMentionsViewer('hello @Other_User',['Other User']) ||
    PCConcord.textMentionsViewer('email Other_User@example.test',['Other User']))
   throw new Error('notification mention matching is not token-exact');
 PCConcord.render();
+control('messages-direct').click();
+if(calls.messagesTab!=='messages' || activeView!=='messages')
+  throw new Error('Direct Messages tab did not repaint its owning Messages frame');
+activeView='concord';
 
 control('cc-community-name').value='Runtime Test';
 control('cc-community-icon').value='🚀';

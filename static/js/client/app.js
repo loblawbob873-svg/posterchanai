@@ -6478,6 +6478,15 @@
      * returns and lands the window where the user left it. */
     else if(_TL_SUB_VIEWS.includes(v) && !subs[v]) renderView(false);
   }
+  // Direct Messages and Communities are tabs inside ONE Messages window. An in-app tab change must
+  // repaint the frame that owns the clicked tab; sending it through the desktop app router can focus
+  // or create another Messages frame and leave the visible Communities tab unchanged.
+  function switchMessagesTab(v){
+    const prior=switchView._osIn;
+    switchView._osIn=1;
+    try{ return switchView(v); }
+    finally{ switchView._osIn=prior; }
+  }
   function renderModuleView(view, file, global, method){
     if(VIEW !== view) return false;
     const run = mod => {
@@ -23842,7 +23851,9 @@
       const { toPeer, toSelf } = await signer.nip17wrap(pk, text);
       Store.saveEvent(toSelf); await ingestWrap(toSelf, false);   // show our own message right away
       const r1=await Relay.publish(toPeer); await Relay.publish(toSelf);
-      if(VIEW==='messages') renderMessages();   // our message already shows (ingestWrap above) — don't block on delivery
+      // ingestWrap already schedules the visible thread's in-place refresh. Rebuilding all of
+      // Messages here replaced the mobile overlay/composer and could drop the sender back on the
+      // conversation list immediately after Send.
       // NIP-17 outbox delivery (backgrounded): push the wrap to the RECIPIENT's own DM-inbox relays
       // (kind 10050) so clients that don't read our relay (0xchat/Amethyst) receive it. publishTo skips
       // relays already in our pool + is bounded, so it's a no-op when the peer reads our relay. We only
@@ -34271,7 +34282,7 @@
      * on the web. sms.js needs it for a picture message's attachments, which are bytes the client
      * holds and nothing else can fetch. */
     saveBlobAs, fetchMediaBlob,
-    ensureProfile: _ensureProfile, NT, compose, switchView, timelineTop,
+    ensureProfile: _ensureProfile, NT, compose, switchView, switchMessagesTab, timelineTop,
     /* The Messages frame crosses monitor renderers, so its selected conversation cannot remain
      * only in this renderer's dmActive binding. The OS applies this before switchView('messages'),
      * allowing the normal render to reopen the same thread without a popout or second frame. */
