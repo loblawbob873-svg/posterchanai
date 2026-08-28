@@ -69,6 +69,8 @@ def test_room_realtime_listens_on_managed_and_external_relays():
     """
     assert "const pooled=R.subscribe(filters,{onEvent:receive})" in CONCORD
     assert "external=R.subscribeFrom(urls,filters,{onEvent:receive})" in CONCORD
-    assert "if(external.ready&&!(await external.ready))" in CONCORD
+    assert "R.waitForSubscription(pooled,urls)" in CONCORD
+    assert "if(external.hasTargets&&external.ready)" in CONCORD
+    assert "await Promise.any(gates)" in CONCORD
     assert "return ()=>{try{R.close(pooled);}" in CONCORD
     assert "typeof this.rtSub==='function'?this.rtSub():Relay.close(this.rtSub)" in WEBXDC

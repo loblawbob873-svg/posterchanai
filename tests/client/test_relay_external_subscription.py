@@ -37,7 +37,7 @@ def test_external_call_signaling_is_verified_delivered_and_closed(tmp_path):
       const sub=ws.sent[0][1];
       ws.receive(['EVENT',sub,{{id:'bad',sig:'bad',tags:[]}}]);
       ws.receive(['EVENT',sub,{{id:'ok',sig:'good'}}]);
-      setTimeout(()=>{{stop();console.log(JSON.stringify({{sent:ws.sent[0],got,closed:ws.closed,ready}}));}},20);
+      setTimeout(()=>{{const hasTargets=stop.hasTargets;stop();console.log(JSON.stringify({{sent:ws.sent[0],got,closed:ws.closed,ready,hasTargets}}));}},20);
     """), encoding="utf-8")
     run = subprocess.run(["node", str(driver)], capture_output=True, text=True, timeout=10)
     assert run.returncode == 0, run.stderr
@@ -48,3 +48,4 @@ def test_external_call_signaling_is_verified_delivered_and_closed(tmp_path):
     assert result["got"][0]["tags"] == []
     assert result["closed"] is True
     assert result["ready"] is True
+    assert result["hasTargets"] is True

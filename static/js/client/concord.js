@@ -1151,7 +1151,10 @@
      * therefore subscribed to NOTHING for the common case where a Concord relay was also a normal
      * account relay. Listen on the pool and only use temporary sockets for the remaining URLs. */
     const pooled=R.subscribe(filters,{onEvent:receive}),external=R.subscribeFrom(urls,filters,{onEvent:receive});
-    if(external.ready&&!(await external.ready)){R.close(pooled);external();throw new Error('room relay subscription could not open');}
+    const gates=[];
+    if(R.waitForSubscription)gates.push(R.waitForSubscription(pooled,urls).then(ok=>{if(!ok)throw new Error('managed room relay did not open');}));
+    if(external.hasTargets&&external.ready)gates.push(external.ready.then(ok=>{if(!ok)throw new Error('external room relay did not open');}));
+    try{if(gates.length)await Promise.any(gates);}catch(_){R.close(pooled);external();throw new Error('room relay subscription could not open');}
     return ()=>{try{R.close(pooled);}catch(_){}try{external();}catch(_){}};
   }
   window.PCConcord={render,backgroundRender,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,reactionSummary,notifyMentions,discoverInvites,decodeMembershipLists,mergeArmadaBundle,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe};

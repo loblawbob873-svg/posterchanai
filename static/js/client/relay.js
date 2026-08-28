@@ -406,6 +406,18 @@
       if (live && onEose) sub._eoseTimer = setTimeout(()=>{ this._fireEose(sub); }, 12000);
       return id;
     },
+    /* Resolve only after this subscription's REQ was written to one of the requested managed
+     * sockets. Merely having a Conn in _conns is not readiness: during reconnect it exists with a
+     * closed/connecting websocket and subscribe() quite correctly records no URL in `sent`. */
+    waitForSubscription(subId, urls, timeout=8000){
+      const wanted=new Set((urls||[]).filter(Boolean));
+      return new Promise(resolve=>{
+        let done=false,iv=null;
+        const finish=ok=>{if(done)return;done=true;if(iv)clearInterval(iv);clearTimeout(tm);resolve(!!ok);};
+        const check=()=>{const sub=this._subs.get(subId);if(!sub)return finish(false);for(const url of sub.sent)if(wanted.has(url))return finish(true);};
+        const tm=setTimeout(()=>finish(false),timeout);iv=setInterval(check,25);check();
+      });
+    },
     // Deliver a sub's onEose exactly once (whoever gets there first: the last relay's EOSE, or the
     // backstop timer above).
     _fireEose(sub){
@@ -622,6 +634,7 @@
       const markReady=ok=>{if(!readyDone){readyDone=true;readyResolve(!!ok);}};
       const stop=()=>{ if(closed)return;closed=true;if(tm)clearTimeout(tm);sockets.forEach(ws=>{try{ws.close();}catch(_){}}); };
       stop.ready=ready;
+      stop.hasTargets=targets.length>0;
       if(!targets.length)markReady(true); // every requested URL is already in the managed pool
       if(timeout>0) tm=setTimeout(stop,timeout);
       targets.forEach((u,n)=>{
