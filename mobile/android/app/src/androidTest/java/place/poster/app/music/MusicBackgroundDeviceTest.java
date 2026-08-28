@@ -160,9 +160,10 @@ public class MusicBackgroundDeviceTest {
                     .putExtra(MusicService.EXTRA_POSITION, before)
                     .putExtra(MusicService.EXTRA_DURATION, 30.0);
             ContextCompat.startForegroundService(ctx, service);
-            SystemClock.sleep(500);
-            assertTrue("the native playback service did not enter foreground MediaSession state",
-                    backgroundPlaybackActive());
+            String playbackState = waitForBackgroundPlayback(5000);
+            assertTrue("the native playback service did not enter foreground MediaSession state: "
+                            + playbackState,
+                    playbackState.startsWith("active"));
             assertEquals("background-device-test", MusicService.nowTitle());
 
             InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_HOME);
@@ -310,5 +311,39 @@ public class MusicBackgroundDeviceTest {
             return foreground.getBoolean(service) && mediaSession != null &&
                     Boolean.TRUE.equals(mediaSession.getClass().getMethod("isActive").invoke(mediaSession));
         } catch (Throwable ignored) { return false; }
+    }
+
+    /** Starting a foreground service is scheduled by Android, even when the caller and service live
+     * in one process. A single 500 ms sample intermittently ran before onStartCommand on a loaded
+     * emulator. Poll the same strict three-part invariant (playing + foreground + active session),
+     * and preserve the final component state so a real failure says what never became ready. */
+    private static String waitForBackgroundPlayback(long timeoutMs) {
+        long until = SystemClock.elapsedRealtime() + timeoutMs;
+        String state = backgroundPlaybackState();
+        while (!state.startsWith("active") && SystemClock.elapsedRealtime() < until) {
+            SystemClock.sleep(100);
+            state = backgroundPlaybackState();
+        }
+        return state;
+    }
+
+    private static String backgroundPlaybackState() {
+        try {
+            MusicService service = MusicService.INSTANCE;
+            if (service == null) return "service=null";
+            java.lang.reflect.Field foreground = MusicService.class.getDeclaredField("foreground");
+            foreground.setAccessible(true);
+            java.lang.reflect.Field session = MusicService.class.getDeclaredField("session");
+            session.setAccessible(true);
+            Object mediaSession = session.get(service);
+            boolean active = mediaSession != null && Boolean.TRUE.equals(
+                    mediaSession.getClass().getMethod("isActive").invoke(mediaSession));
+            boolean playing = MusicService.nowPlaying();
+            boolean fg = foreground.getBoolean(service);
+            return playing && fg && active ? "active" :
+                    "playing=" + playing + ",foreground=" + fg + ",sessionActive=" + active;
+        } catch (Throwable error) {
+            return "inspection-error=" + error.getClass().getSimpleName() + ":" + error.getMessage();
+        }
     }
 }
