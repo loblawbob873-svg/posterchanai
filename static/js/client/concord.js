@@ -40,6 +40,7 @@
   const state={ community:null, channel:null };
   let replyTarget=null, reactionTarget=null, mobileChatOpen=false, mobileDrawerOpen=false, discoveryOpen=false;
   let discovered=[], discoveryStarted=false, discoveryLoaded=false, membershipBusy=false, membershipRetryTimer=null;
+  let discoveryPaintPending=false;
   let membershipViewer='';const membershipDocs=new Map();
   let nip29Busy=false,nip29RetryTimer=null,webxdcHydrationEpoch=0;
   const discoveryIconLoads=new Set();
@@ -257,6 +258,13 @@
     return channels.length?channels:[{name:'general',private:false}];
   }
   function activeMessages(room){ return testMessages(channelStoreId(room,state.channel)); }
+  /* A CORD stream may retain 5,000 decrypted messages in renderer memory. Building every row,
+   * link preview and media control in one innerHTML assignment blocks Android's UI thread (and can
+   * make desktop Chromium report the window as frozen). The durable encrypted cache still keeps
+   * the complete history; the conversation paints a bounded newest window, matching the 300-row
+   * cache page used during cold launch. */
+  const MAX_PAINTED_MESSAGES=300;
+  function paintedMessages(room){const all=activeMessages(room);return all.length>MAX_PAINTED_MESSAGES?all.slice(-MAX_PAINTED_MESSAGES):all;}
   function roomParticipants(room,viewerPubkey=''){
     return [...new Set([viewerPubkey,...channelsOf(room).flatMap(channel=>
       testMessages(channelStoreId(room,channel.name)).map(message=>message&&message.pubkey)
@@ -323,7 +331,10 @@
     return out;
   }
   function messageContentHtml(p,m){
-    const files=encryptedAttachments(m),publicFiles=publicAttachments(m); let text=String(m&&m.text||'');
+    const files=encryptedAttachments(m),publicFiles=publicAttachments(m);
+    /* Chat content is relay input. Keep the complete rumor in memory/cache, but never hand a
+     * multi-megabyte corrupt field to linkify, preview detection and innerHTML on the launch path. */
+    let text=String(m&&m.text||'').slice(0,65536);
     for(const f of [...files,...publicFiles])text=text.split(f.url).join('').trim();
     /* A Webxdc imeta is an attachment, not two messages. When its playable card is available,
      * remove only that exact attachment URL from prose so linkify/link-preview cannot paint a raw
@@ -531,8 +542,13 @@
   function startDiscovery(p){
     if(discoveryStarted||!p.relaySubscribe)return; discoveryStarted=true;
     const bySigner=new Map();
-    const onEvent=ev=>{ for(const item of discoverInvites(ev.content,ev)){ const old=bySigner.get(item.naddr); if(!old||Number(ev.created_at)>Number(old.source.created_at))bySigner.set(item.naddr,item); recoverOwnedInvite(p,item); } discovered=[...bySigner.values()].sort((a,b)=>Number(b.source.created_at)-Number(a.source.created_at)); discovered.slice(0,24).forEach(item=>hydrateDiscoveredIcon(p,item)); if(state.community==null)backgroundRender(); };
-    const onEose=()=>{ discoveryLoaded=true; if(state.community==null)backgroundRender(); };
+    /* Some relay pools replay their in-memory result set synchronously from subscribe(). Calling
+     * render() from each callback re-entered the launch render (or replaced the home DOM hundreds
+     * of times in one task), leaving Concord apparently frozen. Coalesce discovery paint to the
+     * next task; the room list itself is updated immediately. */
+    const paintDiscovery=()=>{if(discoveryPaintPending)return;discoveryPaintPending=true;setTimeout(()=>{discoveryPaintPending=false;if(state.community==null)backgroundRender();},0);};
+    const onEvent=ev=>{ for(const item of discoverInvites(ev.content,ev)){ const old=bySigner.get(item.naddr); if(!old||Number(ev.created_at)>Number(old.source.created_at))bySigner.set(item.naddr,item); recoverOwnedInvite(p,item); } discovered=[...bySigner.values()].sort((a,b)=>Number(b.source.created_at)-Number(a.source.created_at)); discovered.slice(0,24).forEach(item=>hydrateDiscoveredIcon(p,item)); paintDiscovery(); };
+    const onEose=()=>{ discoveryLoaded=true; paintDiscovery(); };
     const filters=[{kinds:[1],search:'armada.buzz/invite',limit:100},{kinds:[1],search:'poster.place/invite',limit:100}];
     try{ p.relaySubscribe(filters,{onEvent,onEose,live:true}); if(p.relayQueryFrom)p.relayQueryFrom(DISCOVER_RELAYS,filters,{timeout:6000,max:2}).then(events=>{events.forEach(onEvent);onEose();}); }catch(_){ discoveryLoaded=true; }
   }
@@ -945,7 +961,7 @@
     activeMentionState=draft?{choices:[...(draft.mentionChoices||[])],index:Number(draft.mentionIndex)||0,
       recipients:new Map(draft.mentionRecipients||[])}:{choices:[],index:0,recipients:new Map()};
     const channelPrivate=!!(currentChannel&&currentChannel.private);
-    const messages=current&&(current.local||current.cord||current.protocol==='nip29')?activeMessages(current):[];
+    const messages=current&&(current.local||current.cord||current.protocol==='nip29')?paintedMessages(current):[];
     const joinedRooms=''; // Active communities use the server rail/channel navigator, not home-page cards.
     const ownerPk=String((current&&current.cord&&current.cord.bundle&&(current.cord.bundle.owner||current.cord.bundle.creator_npub))||''),
       isOwner=!!ownerPk&&ownerPk===viewer.pubkey,banned=new Set(current&&current.banned||[]),

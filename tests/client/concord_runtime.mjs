@@ -232,6 +232,21 @@ if(!PCConcord.textMentionsViewer('hello @Other_User',['Other User']) ||
    PCConcord.textMentionsViewer('hello @Other_Username',['Other User']) ||
    PCConcord.textMentionsViewer('email Other_User@example.test',['Other User']))
   throw new Error('notification mention matching is not token-exact');
+
+// A busy/corrupt persisted room used to synchronously construct all 5,000 message DOM rows and
+// their link previews before the composer could accept input. This is the production launch-freeze
+// shape: a valid room plus the maximum retained history and unusually large relay-controlled text.
+const stressRoom={local:true,naddr:'launch-stress',name:'Busy room',channels:[{name:'general',private:false}]};
+const stressMessages=Array.from({length:5000},(_,i)=>({id:'stress-'+i,pubkey:'b'.repeat(64),by:'member',at:i,text:'x'.repeat(1024)}));
+data.set('pc.concord.invites',JSON.stringify([stressRoom]));
+data.set('pc.concord.active','0');
+data.set('pc.concord.test.launch-stress',JSON.stringify(stressMessages));
+const launchStarted=performance.now();
+PCConcord.render();
+const launchElapsed=performance.now()-launchStarted,painted=(feed.innerHTML.match(/class="cc-message"/g)||[]).length;
+if(!feed.innerHTML.includes('id="cc-input"')||painted!==300||launchElapsed>2000)
+  throw new Error(`pathological Concord launch stayed blocked: ${painted} rows in ${launchElapsed.toFixed(0)}ms`);
+data.delete('pc.concord.invites');data.delete('pc.concord.active');data.delete('pc.concord.test.launch-stress');
 PCConcord.render();
 control('messages-direct').click();
 if(calls.messagesTab!=='messages' || activeView!=='messages')
