@@ -23757,13 +23757,13 @@
     if(!r || !Array.isArray(r.tags)) return out;
     if(r.kind===15){
       const f={}; for(const t of r.tags){ if(t&&t[0]&&t[1]!=null && f[t[0]]==null) f[t[0]]=t[1]; }
-      if(/^https?:\/\//i.test(r.content||'')) out.push({url:r.content,mime:f['file-type']||f.m||'',name:f.name||'',enc:_dmEncOf(f)});
+      if(/^https?:\/\//i.test(r.content||'')) out.push({url:r.content,mime:f['file-type']||f.m||'',name:f.name||'',ox:f.ox||'',webxdc:f['webxdc-topic']||f.webxdc||'',enc:_dmEncOf(f)});
       return out;
     }
     for(const t of r.tags){
       if(!t || t[0]!=='imeta') continue;
       const f={}; for(const p of t.slice(1)){ const n=String(p).indexOf(' '); if(n>0) f[p.slice(0,n)]=p.slice(n+1); }
-      if(/^https?:\/\//i.test(f.url||'')) out.push({url:f.url,mime:f.m||'',name:f.name||'',enc:_dmEncOf(f)});
+      if(/^https?:\/\//i.test(f.url||'')) out.push({url:f.url,mime:f.m||'',name:f.name||'',ox:f.ox||'',webxdc:f['webxdc-topic']||f.webxdc||'',enc:_dmEncOf(f)});
     }
     return out;
   }
@@ -23786,13 +23786,21 @@
     for(const el of root.querySelectorAll('[data-dm-file]:not([data-ready])')){
       el.dataset.ready='1'; const m=_dmFind(el.dataset.dmFile), a=m&&m.atts&&m.atts[Number(el.dataset.ai)||0]; if(!a)continue;
       try{
-        let u=_dmAttUrls.get(m.id+':'+el.dataset.ai);
-        if(!u){ const b=await _dmDecryptAttachment(a); u=URL.createObjectURL(b); _dmAttUrls.set(m.id+':'+el.dataset.ai,u);
-          if(_dmAttUrls.size>64){ const k=_dmAttUrls.keys().next().value; URL.revokeObjectURL(_dmAttUrls.get(k)); _dmAttUrls.delete(k); } }
+        let u=a.url;
+        if(a.enc){
+          u=_dmAttUrls.get(m.id+':'+el.dataset.ai);
+          if(!u){ const b=await _dmDecryptAttachment(a); u=URL.createObjectURL(b); _dmAttUrls.set(m.id+':'+el.dataset.ai,u);
+            if(_dmAttUrls.size>64){ const k=_dmAttUrls.keys().next().value; URL.revokeObjectURL(_dmAttUrls.get(k)); _dmAttUrls.delete(k); } }
+        }
         const mime=String(a.mime||'');
-        if(/^image\//i.test(mime)) el.outerHTML=`<img class="dm-file-media" src="${enc(u)}" alt="${enc(a.name||'attachment')}">`;
+        const xdc=/application\/(?:x-webxdc|vnd\.webxdc\+zip)/i.test(mime)||/\.xdc(?:[?#]|$)/i.test(a.name||a.url||'');
+        if(xdc && window.PCWebxdc){
+          const app={url:u,sha:a.enc&&a.enc.ox?a.enc.ox:a.ox||'',uuid:a.webxdc||'',
+                     urlTopicMessageId:a.webxdc?'':(m.rumorId||''),name:a.name||'Mini app'};
+          el.outerHTML=PCWebxdc.cardHtml(app);
+        } else if(/^image\//i.test(mime)) el.outerHTML=`<img class="dm-file-media" src="${enc(u)}" alt="${enc(a.name||'attachment')}">`;
         else if(/^video\//i.test(mime)) el.outerHTML=`<video class="dm-file-media" src="${enc(u)}" controls playsinline></video>`;
-        else { el.textContent='📎 '+(a.name||'Open attachment'); el.onclick=async()=>saveBlobAs(await fetch(u).then(r=>r.blob()),a.name||'attachment'); }
+        else el.outerHTML=`<a class="dm-file-att" href="${enc(u)}" target="_blank" rel="noopener noreferrer">📎 ${enc(a.name||'Open attachment')}</a>`;
       }catch(err){ el.textContent='🔒 Attachment could not be decrypted'; el.classList.add('bad'); }
     }
   }
@@ -23818,7 +23826,7 @@
     if(!dmPeers.has(peer)) dmPeers.set(peer, []);
     const arr=dmPeers.get(peer); if(arr.find(m=>m.id===ev.id)) return false;
     const atts=_dmAttachmentMeta(rumor);
-    arr.push({ id:ev.id, mine, text:rumor.kind===15?'':rumor.content, t:rumor.created_at, nip17:true, atts,
+    arr.push({ id:ev.id, rumorId:rumor.id||'', mine, text:rumor.kind===15?'':rumor.content, t:rumor.created_at, nip17:true, atts,
                em:(rumor.tags||[]).filter(t=>t[0]==='emoji') }); arr.sort((a,b)=>a.t-b.t);
     // COUNT on freshness, not on `live`. `live` is a network signal (the sub's EOSE) and it can never
     // arrive — a relay in the user's list that is down/DNS-dead is still counted in the pool, so the
