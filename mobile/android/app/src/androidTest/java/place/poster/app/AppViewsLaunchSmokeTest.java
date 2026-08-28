@@ -58,6 +58,11 @@ public final class AppViewsLaunchSmokeTest {
 
             JSONArray names = new JSONArray(eval(web,
                     "(()=>{const seen=new Set();return [...document.querySelectorAll('.sidebar .nav .nav-item[data-view]')]"
+                    // Runtime capability gating keeps unavailable rows in the DOM so changing the
+                    // configured instance can bring them back without replacing the shell.  They
+                    // are not launchable routes: switchView deliberately normalises them to a
+                    // timeline.  Testing them made standalone/nostr-only AI look like a crash.
+                    + ".filter(x=>!x.classList.contains('hidden'))"
                     + ".map(x=>x.dataset.view).filter(x=>x&&!seen.has(x)&&seen.add(x));})()"));
             // This catches a stale/empty bundled shell turning a dynamic test into a green no-op.
             assertTrue("shipped app registry is unexpectedly small: " + names, names.length() >= 35);

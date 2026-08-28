@@ -424,7 +424,13 @@
     document.body.classList.toggle('standalone', solo);
     try{
       $$('.nav-item[data-view]').forEach(b => {
-        if(INSTANCE_VIEWS.has(b.dataset.view)) b.classList.toggle('hidden', solo);
+        if(INSTANCE_VIEWS.has(b.dataset.view)){
+          /* A configured Nostr-only instance is not standalone, but AI and Markets still normalise
+           * to Home in switchView because the backend capability is absent.  Keep those dead rows
+           * out of bundled shells too; otherwise the APK offers an app that can never open. */
+          const aiOff = !!window.PC_NOSTR_ONLY && (b.dataset.view==='ai' || b.dataset.view==='markets');
+          b.classList.toggle('hidden', solo || aiOff);
+        }
       });
       const music = $('#nav-music'); if(music) music.classList.toggle('hidden', solo);
       // Files → Blossom is not simply server-backed: it lists blobs on whatever media server is
