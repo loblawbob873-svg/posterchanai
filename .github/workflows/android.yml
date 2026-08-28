@@ -125,9 +125,20 @@ jobs:
           chmod 600 "$RUNNER_TEMP/posterchan-old-release.keystore"
           chmod +x gradlew
           # Build unsigned; the next step applies both signers and their lineage atomically.
-          POSTERCHAN_ANDROID_KEYSTORE='' POSTERCHAN_ANDROID_STORE_PASSWORD='' \
-          POSTERCHAN_ANDROID_KEY_ALIAS='' POSTERCHAN_ANDROID_KEY_PASSWORD='' \
-            ./gradlew assembleRelease -PversionCode=$VCODE -PversionName=$VNAME
+          # JitPack occasionally times out while resolving the MMS/streaming libraries. Retry the
+          # identical unsigned build; signing and certificate verification still happen only once,
+          # after a complete build succeeds.
+          built=0
+          for attempt in 1 2 3; do
+            if POSTERCHAN_ANDROID_KEYSTORE='' POSTERCHAN_ANDROID_STORE_PASSWORD='' \
+               POSTERCHAN_ANDROID_KEY_ALIAS='' POSTERCHAN_ANDROID_KEY_PASSWORD='' \
+                 ./gradlew assembleRelease -PversionCode=$VCODE -PversionName=$VNAME; then
+              built=1
+              break
+            fi
+            echo "::warning::Android dependency/build attempt $attempt failed"
+          done
+          test "$built" = 1 || { echo '::error::Android release build failed after 3 attempts'; exit 1; }
 
       - name: Collect the APK
         env:
