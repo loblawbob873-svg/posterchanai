@@ -22915,18 +22915,6 @@
   // and, when it's newer than the build baked into this bundle (__PC_APP_BUILD__), surface the SAME
   // "Update available" row — but applyUpdate downloads the new APK instead of reloading the SW.
   let _apkUpdate=false, _lastApkCheck=0;
-  /* WHO INSTALLED THIS BUILD. A Zapstore install must update THROUGH Zapstore — it verifies the
-   * signature and tracks versions; sideloading /apk over it orphans the install from its store.
-   * Asked once, natively; '' = sideload/unknown, which keeps today's direct-download path. */
-  let _installer = '';
-  async function _learnInstaller(){
-    try{
-      const P = window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.ShareTarget;
-      if(!P || !P.installer) return;
-      const r = await P.installer();
-      _installer = String((r && r.installer) || '');
-    }catch(_){ }
-  }
   /* THE DESKTOP LEARNS ABOUT UPDATES TOO. Its bundle bakes the SW cache version it was built
    * from (__PC_DESKTOP_BUILD__ — see desktop/build-www.sh); the server's live sw.js names the
    * current one, and I bump that number on every client change — so the comparison is free, needs
@@ -22948,11 +22936,9 @@
       }
     }catch(_){}
   }
-  const _fromZapstore = () => /zapstore/i.test(_installer);
   async function _checkApkUpdate(){
     if(!window.Capacitor || !window.__PC_API_BASE__) return;   // bundled native app only (no-op in PWA)
     if(_apkUpdate) return;                                      // already found one — the row/badge is up
-    if(!_installer) await _learnInstaller();
     const mine=+(window.__PC_APP_BUILD__||0); if(!mine) return;
     let latest=0;
     // One retry: this often runs seconds after a cold start / resume, when the radio is still waking and the
@@ -23006,23 +22992,14 @@
         try{ (window.__PC && __PC.openExternal ? __PC.openExternal(u) : window.open(u,'_blank')); }catch(_){ try{ location.href=u; }catch(e){} }
         try{ toast('Opening the download page \u2014 install the new build over this one'); }catch(_){} return;
       }
-      if(_fromZapstore()){
-        /* Their store, their update — and the STORE APP, not its website: "mine just tries to open
-         * zapstore.dev, not the actual zapstore app". The native launch opens whatever package
-         * installed us (the installer answer IS the package id); the site is only the fallback for
-         * a store that vanished or an APK too old to carry the launch method. */
-        (async()=>{
-          let ok=false;
-          try{ const P=window.Capacitor&&Capacitor.Plugins&&Capacitor.Plugins.ShareTarget;
-               if(P&&P.launch){ const r=await P.launch({pkg:_installer}); ok=!!(r&&r.ok); } }catch(_){}
-          if(!ok){ try{ window.open('https://zapstore.dev','_blank'); }catch(_){ try{ location.href='https://zapstore.dev'; }catch(e){} } }
-          try{ toast(ok?'Opening your store \u2014 update from there':'Update it from Zapstore \u2014 this install came from there'); }catch(_){}
-        })();
-        return;
-      }
+      /* One signed update path regardless of which catalog discovered the app. The CI APK carries
+       * Android proof-of-rotation from the predecessor certificate to the active certificate.
+       * Android's package installer—not a relay and not this page—verifies package name, signature,
+       * and lineage before replacing the installed app. This avoids trapping a Zapstore install in
+       * a catalog that currently rejects valid rotation metadata. Install in place; never uninstall. */
       const u=(window.__PC_API_BASE__||'')+'/apk';
       try{ window.open(u,'_blank'); }catch(_){ try{ location.href=u; }catch(e){} }
-      try{ toast('Downloading the app update…'); }catch(_){} return; }
+      try{ toast('Downloading the signed update… install it over this app'); }catch(_){} return; }
     if(_updApplying) return;   // one tap only
     _updApplying=true;
     if(VIEW==='notifications'){ try{ renderNotifications(); }catch(_){} }   // row flips to "Updating…"

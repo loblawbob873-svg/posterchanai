@@ -31,8 +31,8 @@ class DesktopUpdateBanner(unittest.TestCase):
         seg = APP[a:a + 1600]
         self.assertIn("_desktopUpdate", seg)
         self.assertIn("/desktop/", seg)
-        self.assertLess(seg.index("_desktopUpdate"), seg.index("_fromZapstore"),
-                        "the desktop branch must be checked before the APK ones")
+        self.assertLess(seg.index("_desktopUpdate"), seg.index("'/apk'"),
+                        "the desktop branch must be checked before the APK download")
 
     def test_the_check_is_wired_to_the_boot_and_hourly_triggers(self):
         self.assertIn("_checkDesktopUpdate(); }catch(_){} }, 4000)", APP.replace("_checkApkUpdate(); ", ""))
