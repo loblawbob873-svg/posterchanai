@@ -379,7 +379,10 @@ async function gitStatus(root){
   const records=raw.split('\0').filter(Boolean),files=[];
   for(let i=0;i<records.length;i++){
     const rec=records[i],xy=rec.slice(0,2);let p=rec.slice(3);
-    if((xy[0]==='R'||xy[0]==='C')&&records[i+1])p=records[++i];
+    /* In porcelain v1 -z, a rename/copy is `XY NEW\0OLD\0`: unlike the printable form the
+       destination comes first. The following record is metadata, not another changed file and not
+       the path Git actions should target. Keeping OLD made Diff/Restore fail on the visible row. */
+    if((xy[0]==='R'||xy[0]==='C'||xy[1]==='R'||xy[1]==='C')&&records[i+1])i++;
     files.push({xy,path:p});
   }
   return {root:top,branch,origin,nostr:/^nostr:/i.test(origin),files};
@@ -394,15 +397,23 @@ async function gitAction(root,action,paths,message){
   const ps=(paths||[]).map(_gitPath);
   if(action==='stage')await _git(root,['add','--'].concat(ps));
   else if(action==='unstage')await _git(root,['restore','--staged','--'].concat(ps));
-  else if(action==='restore')for(const p of ps){
+  else if(action==='restore'){
+    /* A rename is one Source Control row but two index paths. Restoring only its visible NEW path
+       removes that file and leaves OLD staged as deleted. Recover the paired source from porcelain
+       before changing the index, then restore both halves under one confirmed UI action. */
+    const raw=await _git(root,['status','--porcelain=v1','-z','--untracked-files=all']),renameSources=new Map(),records=raw.split('\0').filter(Boolean);
+    for(let i=0;i<records.length;i++){const rec=records[i],xy=rec.slice(0,2),dest=rec.slice(3);if((xy.includes('R')||xy.includes('C'))&&records[i+1])renameSources.set(dest,_gitPath(records[++i]));}
+    for(const p of ps){
+    const restorePaths=[p,...(renameSources.has(p)?[renameSources.get(p)]:[])];
     let tracked=true;try{await _git(root,['ls-files','--error-unmatch','--',p]);}catch(_){tracked=false;}
     /* “Discard changes” means the same thing in the native desktop and the server API: restore
      * both the index and working tree from HEAD. Restoring only --worktree leaves a staged edit in
      * Source Control, so the destructive action reports success while the file remains modified. */
-    if(tracked)await _git(root,['restore','--staged','--worktree','--',p]);
+    if(tracked)await _git(root,['restore','--staged','--worktree','--'].concat(restorePaths));
     else {const top=(await _git(root,['rev-parse','--show-toplevel'])).trim(),abs=path.resolve(top,p);
       if(abs!==top&&!abs.startsWith(top+path.sep))throw new Error('invalid Git path');
       fs.rmSync(abs,{recursive:true,force:true});}
+    }
   }
   else if(action==='commit'){if(!String(message||'').trim())throw new Error('write a commit message');await _git(root,['commit','-m',String(message).slice(0,5000)]);}
   else if(action==='pull'||action==='push')await _git(root,[action],120000);

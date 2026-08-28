@@ -74,3 +74,13 @@ def test_nostr_remote_is_recognized_without_special_user_setup(repo):
     subprocess.run(["git", "-C", repo, "remote", "add", "origin", "nostr://npub1example/repo"], check=True)
     st = run(C.git_status(db=None, current_user=User()))
     assert st["nostr"] is True
+
+
+def test_rename_status_has_one_row_with_the_new_actionable_path(repo):
+    subprocess.run(["git", "-C", repo, "mv", "a.txt", "renamed.txt"], check=True)
+    st = run(C.git_status(db=None, current_user=User()))
+    assert st["files"] == [{"xy": "R ", "path": "renamed.txt"}]
+    run(C.git_action(C.GitBody(action="restore", paths=["renamed.txt"]), None, User()))
+    assert not run(C.git_status(db=None, current_user=User()))["files"]
+    assert os.path.exists(os.path.join(repo, "a.txt"))
+    assert not os.path.exists(os.path.join(repo, "renamed.txt"))

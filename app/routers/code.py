@@ -337,9 +337,16 @@ async def git_status(db: Session = Depends(get_db), current_user: User = Depends
         raise HTTPException(status_code=400, detail=(p.stderr or "git status failed").strip())
     rows = p.stdout.split("\0"); head = rows.pop(0) if rows else ""
     files = []
-    for row in rows:
+    i = 0
+    while i < len(rows):
+        row = rows[i]; i += 1
         if not row: continue
         files.append({"xy": row[:2], "path": row[3:]})
+        # Porcelain v1 -z writes rename/copy pairs as `XY NEW\0OLD\0`. NEW is the actionable
+        # path already recorded above; consume OLD so it cannot become a second phantom row.
+        xy = row[:2]
+        if ("R" in xy or "C" in xy) and i < len(rows):
+            i += 1
     remote = _git(repo, ["remote", "get-url", "origin"])
     return {"repo": _rel(repo, root), "branch": head[3:] if head.startswith("## ") else head,
             "files": files, "origin": remote.stdout.strip() if remote.returncode == 0 else "",
@@ -375,10 +382,23 @@ async def git_action(body: GitBody, db: Session = Depends(get_db),
         # staged copy); an untracked file has no HEAD copy, so discarding it means deleting that one
         # explicitly resolved file. Never pass an untracked path to `git clean`: its directory-level
         # behavior is broader than the item the person confirmed in the UI.
+        status = _git(repo, ["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+        records = [r for r in status.stdout.split("\0") if r] if status.returncode == 0 else []
+        rename_sources = {}
+        i = 0
+        while i < len(records):
+            row = records[i]; i += 1
+            if ("R" in row[:2] or "C" in row[:2]) and i < len(records):
+                rename_sources[row[3:]] = records[i]
+                i += 1
         for rel in paths:
             tracked = _git(repo, ["ls-files", "--error-unmatch", "--", rel])
             if tracked.returncode == 0:
-                p = _git(repo, ["restore", "--staged", "--worktree", "--", rel])
+                restore_paths = [rel]
+                if rel in rename_sources:
+                    source = _rel(_resolve(rename_sources[rel], repo, must_exist=False), repo)
+                    restore_paths.append(source)
+                p = _git(repo, ["restore", "--staged", "--worktree", "--", *restore_paths])
                 if p.returncode:
                     raise HTTPException(status_code=409, detail=(p.stderr or "Git restore failed").strip())
             else:

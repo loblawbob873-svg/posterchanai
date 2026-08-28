@@ -29,7 +29,18 @@ const run = (...args) => cp.execFileSync('git', ['-C', root, ...args], {stdio:'p
       throw new Error('packaged bridge did not return the staged diff');
     if ((after.files || []).length || fs.readFileSync(changed, 'utf8') !== 'const staged = false;\n')
       throw new Error('packaged Restore left the index or worktree dirty: ' + JSON.stringify(after));
-    console.log('installed native Git diff/staged restore holds');
+    run('mv', 'changed.js', 'renamed.js');
+    const renamed = await H.gitStatus(root);
+    if (JSON.stringify(renamed.files) !== JSON.stringify([{xy:'R ', path:'renamed.js'}]))
+      throw new Error('packaged bridge did not expose the actionable rename destination once: ' + JSON.stringify(renamed));
+    const renameDiff = await H.gitDiff(root, 'renamed.js');
+    if (!String(renameDiff.diff || '').includes('renamed.js'))
+      throw new Error('packaged bridge could not open the renamed path diff');
+    await H.gitAction(root, 'restore', ['renamed.js'], '');
+    const renameRestored = await H.gitStatus(root);
+    if ((renameRestored.files || []).length || !fs.existsSync(changed) || fs.existsSync(path.join(root, 'renamed.js')))
+      throw new Error('packaged Restore did not undo the rename: ' + JSON.stringify(renameRestored));
+    console.log('installed native Git staged diff/restore and rename diff/restore hold');
   } finally {
     fs.rmSync(root, {recursive:true, force:true});
   }

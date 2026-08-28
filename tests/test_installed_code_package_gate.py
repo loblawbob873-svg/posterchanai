@@ -25,6 +25,8 @@ def test_installed_git_sim_uses_a_disposable_real_repository():
     assert "fs.mkdtempSync" in sim
     assert "H.gitDiff" in sim and "H.gitAction" in sim
     assert "'restore', ['changed.js']" in sim
+    assert "'restore', ['renamed.js']" in sim
+    assert "path:'renamed.js'" in sim
     assert "fs.rmSync(root, {recursive:true, force:true})" in sim
 
 

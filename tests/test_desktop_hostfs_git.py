@@ -47,4 +47,26 @@ def test_native_discard_restores_staged_and_worktree_changes(tmp_path):
 
 def test_native_and_server_discard_share_index_and_worktree_semantics():
     src = HOSTFS.read_text(encoding="utf-8")
-    assert "['restore','--staged','--worktree','--',p]" in src
+    assert "['restore','--staged','--worktree','--'].concat(restorePaths)" in src
+    assert "renameSources.set(dest,_gitPath(records[++i]))" in src
+
+
+@pytest.mark.skipif(not NODE, reason="node is unavailable")
+def test_native_rename_row_uses_the_new_actionable_path_once(tmp_path):
+    repo = tmp_path / "project"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "Test"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "test@example.invalid"], check=True)
+    (repo / "old.js").write_text("const renamed = true;\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "old.js"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "initial"], check=True)
+    subprocess.run(["git", "-C", str(repo), "mv", "old.js", "new.js"], check=True)
+    script = """
+      const H=require(%s);
+      H.gitStatus(%s).then(x=>process.stdout.write(JSON.stringify(x)))
+        .catch(e=>{console.error(e&&e.stack||e);process.exit(1)});
+    """ % (json.dumps(str(HOSTFS)), json.dumps(str(repo)))
+    result = subprocess.run([NODE, "-e", script], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["files"] == [{"xy": "R ", "path": "new.js"}]
