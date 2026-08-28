@@ -6925,6 +6925,20 @@
             if(/^doc:pv:/.test(String(p.view)) && p.state && window.PCPreview && PCPreview.acceptHandoff){
               Promise.resolve(PCPreview.acceptHandoff(p.state)).catch(()=>{});return;
             }
+            /* A Webxdc document key is deliberately opaque and cannot repaint the app. Recreate
+             * the sandbox from its transferred attachment/room identity instead of passing the
+             * doc:* key through generic openApp, whose fallback owns #feed and paints Social. */
+            if(/^doc:webxdc:/.test(String(p.view)) && p.state && window.PCWebxdc && PCWebxdc.acceptHandoff){
+              Promise.resolve(PCWebxdc.acceptHandoff(p.state)).then(session=>{
+                const moved=session&&session.window;if(!moved||!wins.includes(moved))return;
+                const ww=Math.max(MIN_W,Math.min(vwL()-24,Number(p.width)||moved.el.offsetWidth));
+                const hh=Math.max(MIN_H,Math.min(vhL()-TASKBAR-24,Number(p.height)||moved.el.offsetHeight));
+                moved.el.style.width=Math.round(ww)+'px';moved.el.style.height=Math.round(hh)+'px';
+                moved.el.style.left=String(p.direction||'')==='left'
+                  ? Math.round(Math.max(12,vwL()-ww-12))+'px':'12px';
+                keepFrameReachable(moved);restoreHandoffUI(moved,p.ui);
+              }).catch(()=>{});return;
+            }
             const w=openApp(String(p.view), String(p.title||''), String(p.icon||''));
             if(!w) return;
             /* Terminal state is adopted before openApp so its stable PTY is selected by the first

@@ -1737,6 +1737,19 @@
         const w = PCOS.openDoc('webxdc:' + key, name, '#i-gamepad', () => {}, true);
         const host = w && (w.slot || w.body);
         if(!host){ toast('could not open a window for that app'); return session; }
+        /* Each monitor is a separate Electron renderer, so moving a document window recreates it
+         * on the destination.  `doc:webxdc:*` is only a uniqueness key; openApp cannot reconstruct
+         * a game from it and historically fell through to the shared Social feed.  Put the actual
+         * attachment identity on the window.  Keep this data-only (IPC structured-clones it), and
+         * let the destination call open() so it rebuilds the sandbox in the same conversation and
+         * realtime topic before the source window is destroyed. */
+        if(w) w.handoffState = () => ({ app: {
+          url:String(app.url||''), sha:String(app.sha||''), uuid:String(app.uuid||''),
+          urlTopicMessageId:String(app.urlTopicMessageId||''), name:String(name||''),
+          transport:app.transport&&typeof app.transport==='object'
+            ? Object.assign({},app.transport) : null
+        }});
+        session.window = w;
         host.classList.add('xdc-slot');
         host.innerHTML = '';
         mountInto(host);
@@ -2174,7 +2187,14 @@
      * receives. Every part of that path fails silently — a filter that matches nothing, a self-drop
      * that drops everybody, a base64 round trip that mangles high bytes — and none of it is visible
      * from either browser. See tests/test_webxdc.py::TwoPlayers. */
-    window.PCWebxdc = { open, appOf, cardHtml, attach, sheetOpen, closeSheet, deriveUrlTopic, mintTopic, canonicalXdcUrl, rtDiagnostic, rtDiagnostics:()=>_rtDiagnostics.slice(),
+    async function acceptHandoff(state){
+      const app=state&&state.app;
+      if(!app||typeof app!=='object'||!String(app.url||''))
+        throw new Error('that moved mini app has no attachment');
+      return open(app);
+    }
+
+    window.PCWebxdc = { open, acceptHandoff, appOf, cardHtml, attach, sheetOpen, closeSheet, deriveUrlTopic, mintTopic, canonicalXdcUrl, rtDiagnostic, rtDiagnostics:()=>_rtDiagnostics.slice(),
                         // Games → Webxdc. `__gal` is the directory's own state, exposed so
                         // tests/test_webxdc_gallery.py can drive the merge/sort against real events.
                         gallery, __galLoad: galLoad, __galKey: _galKey, __galTile: galTile,
