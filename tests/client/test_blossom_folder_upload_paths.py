@@ -11,6 +11,7 @@ from pathlib import Path
 
 
 APP = (Path(__file__).parents[2] / "static/js/client/app.js").read_text(encoding="utf-8")
+ROOT = Path(__file__).parents[2]
 
 
 def test_folder_chooser_preserves_the_selected_directory_and_nested_tree():
@@ -82,3 +83,23 @@ def test_encrypted_destination_is_decided_per_file_not_from_current_screen():
 
 def test_encrypted_folder_rule_inherits_into_nested_import_paths():
     assert "encFolders.some(root=>name===root||name.startsWith(root+'/'))" in APP
+
+
+def test_completed_folder_upload_commits_and_repaints_the_source_listing():
+    """Run the production upload function, not just assertions over its source text."""
+    result = subprocess.run(
+        ["node", str(ROOT / "tests/client/folder_upload_completion_sim.js")],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "installed folder upload completion holds" in result.stdout
+
+
+def test_completed_folder_upload_refresh_is_not_deferred_to_a_timer():
+    upload = APP[APP.index("async function uploadFilesSeq(files)") :]
+    upload = upload[: upload.index("// ---- Music:")]
+    assert "if(VIEW==='blossom') renderBlossom();" in upload
+    assert "setTimeout(()=>{ if(VIEW==='blossom')" not in upload

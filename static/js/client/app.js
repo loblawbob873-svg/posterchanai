@@ -20877,7 +20877,10 @@
     _uploadBadge(summary, true);   // self-removes after 12s (timer lives in _uploadBadge)
     if(big&&q){ const s=$('#up-sum'); if(s) s.textContent=summary; }
     toast(summary);
-    setTimeout(()=>{ if(VIEW==='blossom') renderBlossom(); }, 700);
+    // endBatch() has committed the folder registry and file rows, so repaint from that exact state.
+    // Deferring this used to leave a completed directory import invisible for an arbitrary 700ms;
+    // it could remain invisible indefinitely when the page was backgrounded before the timer ran.
+    if(VIEW==='blossom') renderBlossom();
   }
 
   // ---- Music: Opus-compressed + AES-256-GCM-encrypted tracks in the Music folder ----------------------
