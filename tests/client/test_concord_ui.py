@@ -616,10 +616,12 @@ def test_background_repaints_never_replace_a_focused_workspace_control():
 
 def test_icon_removal_and_failure_cannot_block_room_history_hydration():
     helper = CONCORD.split('async function applyRoomIconMetadata', 1)[1].split('function reactionSummary', 1)[0]
+    decrypt = CONCORD.split('async function decryptImagePointer', 1)[1].split('async function applyRoomIconMetadata', 1)[0]
     hydrate = CONCORD.split('async function hydrateRoomStreams', 1)[1].split('async function publishCordMessage', 1)[0]
     assert "hasOwnProperty.call(info,'icon')" in helper
     assert "const icon=value?" in helper and ":''" in helper
     assert "console.warn('Concord community icon could not be loaded'" in helper
+    assert 'nonce.byteLength!==16&&nonce.byteLength!==12' in decrypt
     assert 'return false' in helper
     assert 'await applyRoomIconMetadata(room,info,loadKey)' in hydrate
     assert hydrate.index('await applyRoomIconMetadata') < hydrate.index('for(const channel of networkOrder)')

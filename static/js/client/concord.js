@@ -461,7 +461,11 @@
   async function decryptImagePointer(pointer,loadKey,ref){
     try{const cached=window.PCConcordCache&&await window.PCConcordCache.getIcon(loadKey,ref);if(cached)return URL.createObjectURL(new Blob([cached.bytes],{type:cached.mime||'image/*'}));}catch(e){console.warn('Concord icon cache read failed',e);}
     const url=new URL(String(pointer&&pointer.url||''),location.href);if(!/^https?:$/.test(url.protocol))throw new Error('invalid community icon URL');
-    const rawKey=hexBytes(pointer.key),nonce=hexBytes(pointer.nonce);if(rawKey.byteLength!==32||nonce.byteLength!==12||!(/^[0-9a-f]{64}$/i.test(String(pointer.hash||''))))throw new Error('invalid encrypted image pointer');
+    const rawKey=hexBytes(pointer.key),nonce=hexBytes(pointer.nonce);
+    /* CORD-02/Armada/Vector use a 16-byte AES-GCM nonce for encrypted community
+     * images. Older PosterChan-created pointers used WebCrypto's common 12-byte
+     * nonce, so retain read compatibility without accepting arbitrary IV sizes. */
+    if(rawKey.byteLength!==32||(nonce.byteLength!==16&&nonce.byteLength!==12)||!(/^[0-9a-f]{64}$/i.test(String(pointer.hash||''))))throw new Error('invalid encrypted image pointer');
     const max=(window.PCConcordCache&&PCConcordCache.MAX_ICON_BYTES)||5*1024*1024,
       res=await fetch(url.href); if(!res.ok)throw new Error('community icon download failed');
     const encrypted=await boundedImageBytes(res,max+32),key=await crypto.subtle.importKey('raw',rawKey,'AES-GCM',false,['decrypt']);

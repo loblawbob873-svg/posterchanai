@@ -205,7 +205,7 @@ if(!await PCConcord.applyRoomIconMetadata(iconRoom,{icon:''},'icon-clear') || ic
   throw new Error('explicit community icon removal was ignored');
 if(!await PCConcord.applyRoomIconMetadata(iconRoom,{icon:'🛸'},'icon-plain') || iconRoom.icon!=='🛸')
   throw new Error('plain community icon update was ignored');
-const iconPlain=new Uint8Array([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1,2,3,4]),iconKey=crypto.getRandomValues(new Uint8Array(32)),iconNonce=crypto.getRandomValues(new Uint8Array(12));
+const iconPlain=new Uint8Array([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1,2,3,4]),iconKey=crypto.getRandomValues(new Uint8Array(32)),iconNonce=crypto.getRandomValues(new Uint8Array(16));
 const iconCryptoKey=await crypto.subtle.importKey('raw',iconKey,'AES-GCM',false,['encrypt']);
 const iconCipher=await crypto.subtle.encrypt({name:'AES-GCM',iv:iconNonce},iconCryptoKey,iconPlain);
 const hex=a=>[...new Uint8Array(a)].map(x=>x.toString(16).padStart(2,'0')).join('');
@@ -232,11 +232,21 @@ const coldStored=JSON.parse(data.get('pc.concord.invites'))[0];
 if(!coldStored.iconPointer||String(coldStored.icon||'').startsWith('blob:'))
   throw new Error('community icon persisted an ephemeral blob instead of its encrypted pointer');
 data.delete('pc.concord.invites');
+const legacyNonce=crypto.getRandomValues(new Uint8Array(12));
+const legacyCipher=await crypto.subtle.encrypt({name:'AES-GCM',iv:legacyNonce},iconCryptoKey,iconPlain);
+const legacyPointer={...iconPointer,nonce:hex(legacyNonce)};
+globalThis.fetch=async()=>new Response(legacyCipher,{status:200});
+const legacyIconRoom={communityId:'legacy-icon',icon:''};
+if(!await PCConcord.applyRoomIconMetadata(legacyIconRoom,{icon:legacyPointer},'legacy-icon') || JSON.stringify(legacyIconRoom.iconPointer)!==JSON.stringify(legacyPointer))
+  throw new Error('legacy 12-byte encrypted community icon stopped loading');
 const priorFetch=globalThis.fetch;
 globalThis.fetch=async()=>{throw new Error('offline icon host');};
 const beforeBadIcon=JSON.stringify(iconRoom);
 if(await PCConcord.applyRoomIconMetadata(iconRoom,{icon:{url:'https://bad.example/icon',key:'00',nonce:'00',hash:'00'}},'icon-bad') || JSON.stringify(iconRoom)!==beforeBadIcon)
   throw new Error('failed encrypted icon damaged room metadata');
+const beforeOddNonce=JSON.stringify(iconRoom);
+if(await PCConcord.applyRoomIconMetadata(iconRoom,{icon:{...iconPointer,nonce:'00'.repeat(8)}},'icon-odd-nonce') || JSON.stringify(iconRoom)!==beforeOddNonce)
+  throw new Error('non-CORD encrypted icon nonce was accepted');
 globalThis.fetch=priorFetch;
 const leaveFixture=[{communityId:'first'},{communityId:'leave-me'},{communityId:'last'}];
 const left=PCConcord.removeCommunityByIdentity(leaveFixture,'leave-me');
