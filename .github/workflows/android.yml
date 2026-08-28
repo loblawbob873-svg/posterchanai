@@ -174,16 +174,28 @@ jobs:
             --v3-signing-enabled true --v4-signing-enabled true \
             --out "$RUNNER_TEMP/posterchan-rotated.apk" "$APK"
           APK="$RUNNER_TEMP/posterchan-rotated.apk"
-          ACTUAL_CERT=$($APKSIGNER verify --min-sdk-version 28 --print-certs "$APK" \
-            | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -1 | tr '[:lower:]' '[:upper:]')
+          ROTATED_VERIFY=$($APKSIGNER verify --min-sdk-version 28 --verbose --print-certs "$APK" 2>&1) || {
+            printf '%s\n' "$ROTATED_VERIFY"
+            echo '::error::apksigner rejected the rotated APK for Android 9+'; exit 1;
+          }
+          printf '%s\n' "$ROTATED_VERIFY"
+          ACTUAL_CERT=$(printf '%s\n' "$ROTATED_VERIFY" \
+            | sed -nE 's/.*certificate SHA-256 digest:[[:space:]]*([0-9A-Fa-f:]+).*/\1/p' \
+            | head -1 | tr -d ':' | tr '[:lower:]' '[:upper:]')
           EXPECTED_CERT=$(printf '%s' "$ANDROID_SIGNING_CERT_SHA256" \
             | tr -d ':[:space:]' | tr '[:lower:]' '[:upper:]')
           test -n "$ACTUAL_CERT" || { echo '::error::The release APK is unsigned'; exit 1; }
           test "$ACTUAL_CERT" = "$EXPECTED_CERT" || {
             echo "::error::Release signer mismatch (actual $ACTUAL_CERT)"; exit 1;
           }
-          LEGACY_CERT=$($APKSIGNER verify --min-sdk-version 26 --max-sdk-version 27 --print-certs "$APK" \
-            | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -1 | tr '[:lower:]' '[:upper:]')
+          LEGACY_VERIFY=$($APKSIGNER verify --min-sdk-version 26 --max-sdk-version 27 --verbose --print-certs "$APK" 2>&1) || {
+            printf '%s\n' "$LEGACY_VERIFY"
+            echo '::error::apksigner rejected the rotated APK for Android 8'; exit 1;
+          }
+          printf '%s\n' "$LEGACY_VERIFY"
+          LEGACY_CERT=$(printf '%s\n' "$LEGACY_VERIFY" \
+            | sed -nE 's/.*certificate SHA-256 digest:[[:space:]]*([0-9A-Fa-f:]+).*/\1/p' \
+            | head -1 | tr -d ':' | tr '[:lower:]' '[:upper:]')
           test "$LEGACY_CERT" = "EDDF3A7983DF49221A5ACE0D0CA52C899D34EB88A4155B0829B05C0AFC31F342" || {
             echo "::error::Android 8 compatibility signer mismatch (actual $LEGACY_CERT)"; exit 1;
           }
