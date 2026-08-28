@@ -34257,6 +34257,7 @@
     relaySubscribe: (filters, handlers) => Relay.subscribe(filters, handlers),
     relayPublish: ev => Relay.publish(ev),
     relayPublishTo: (relays, ev) => Relay.publishTo(relays, ev),
+    relayPublishFastTo: (relays, ev) => Relay.publishFastTo(relays, ev),
     relayQuery: (filters, timeout) => Relay.query(filters, timeout),
     relayQueryFrom: (relays, filters, opts) => Relay.queryFrom(relays, filters, opts),
     verifyRelayEvents: async events => { const list=Array.isArray(events)?events:[],result=await Relay.worker.call('verifyBatch',{events:list}),valid=new Set((result||[]).filter(r=>r.valid).map(r=>r.id));return list.filter(event=>valid.has(event.id)); },

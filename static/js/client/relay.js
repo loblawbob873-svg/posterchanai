@@ -595,6 +595,16 @@
       c._send(['EVENT', event]);
       return true;
     },
+    /* Send once to an OPEN managed socket that is actually one of `urls`. Room-scoped realtime
+     * traffic must not fall back to an unrelated account relay: Armada is listening on the room's
+     * relay set, not whichever socket happens to be first in ours. */
+    publishFastTo(urls,event){
+      for(const url of (urls||[])){
+        const c=this._conns.get(url);
+        if(c&&c.ws&&c.ws.readyState===1&&c._send(['EVENT',event]))return true;
+      }
+      return false;
+    },
     // One-shot publish to EXTERNAL relays NOT in the pool — e.g. a DM recipient's NIP-17 inbox relays
     // (their kind-10050) so gift-wrapped DMs reach clients like 0xchat/Amethyst that don't read our
     // relay. Opens a short-lived socket per URL, sends the EVENT, waits for its OK, then closes — no
@@ -635,6 +645,7 @@
       const stop=()=>{ if(closed)return;closed=true;if(tm)clearTimeout(tm);sockets.forEach(ws=>{try{ws.close();}catch(_){}}); };
       stop.ready=ready;
       stop.hasTargets=targets.length>0;
+      stop.publish=event=>{let sent=0;for(const ws of sockets){try{if(!closed&&ws.readyState===1){ws.send(JSON.stringify(['EVENT',event]));sent++;}}catch(_){}}return sent;};
       if(!targets.length)markReady(true); // every requested URL is already in the managed pool
       if(timeout>0) tm=setTimeout(stop,timeout);
       targets.forEach((u,n)=>{

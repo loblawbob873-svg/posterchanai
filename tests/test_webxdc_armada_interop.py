@@ -72,5 +72,8 @@ def test_room_realtime_listens_on_managed_and_external_relays():
     assert "R.waitForSubscription(pooled,urls)" in CONCORD
     assert "if(external.hasTargets&&external.ready)" in CONCORD
     assert "await Promise.any(gates)" in CONCORD
-    assert "return ()=>{try{R.close(pooled);}" in CONCORD
+    assert "const close=()=>{try{R.close(pooled);}" in CONCORD
+    assert "close.publish=event=>(R.publishFastTo&&R.publishFastTo(urls,event)?1:0)" in CONCORD
+    assert "liveSub&&liveSub.publish?liveSub.publish(made.wrap):0" in CONCORD
+    assert "relayPublishFastTo: (relays, ev) => Relay.publishFastTo(relays, ev)" in (ROOT / "static/js/client/app.js").read_text()
     assert "typeof this.rtSub==='function'?this.rtSub():Relay.close(this.rtSub)" in WEBXDC

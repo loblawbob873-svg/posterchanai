@@ -1248,7 +1248,7 @@
      * a slow relay or a busy tab must never build a backlog of stale positions — it is simply no
      * longer the thing standing between a remote-signer player and a playable game. */
     Session.prototype.rtSend = function(b64){
-      if(this.transport&&window.PCConcord&&PCConcord.webxdcPublish){PCConcord.webxdcPublish(this.transport,this.app.uuid,b64,null,true).catch(()=>{});return;}
+      if(this.transport&&window.PCConcord&&PCConcord.webxdcPublish){PCConcord.webxdcPublish(this.transport,this.app.uuid,b64,null,true,this.rtSub).catch(()=>{});return;}
       this._rtNext = b64;
       if(this._rtBusy) return;
       this._rtBusy = true;
