@@ -3197,7 +3197,9 @@
       terminalSid:terminal&&window.PCTerm&&PCTerm.sessionId
         ? PCTerm.sessionId() : '',
       path:topPath ? '' : appPath,ui:captureHandoffUI(w),
-      state:terminal&&window.PCTerm&&PCTerm.handoffState
+      state:w&&typeof w.handoffState==='function'
+        ? w.handoffState()
+        : terminal&&window.PCTerm&&PCTerm.handoffState
         ? PCTerm.handoffState()
         : w.view==='websearch'&&window.PCWebSearch&&PCWebSearch.handoffState
         ? PCWebSearch.handoffState()
@@ -3219,9 +3221,9 @@
          * main-process loading/listener guard; repair the exact renderer lifecycle transition. */
         rearmFrameHandoffDestination(pcWM);
       }
-      else if(!result&&recover){keepFrameReachable(w);_natGesture(w,false);if(nativeWins().length)nsync();}
+      else if(!result&&recover){try{if(typeof w.handoffCancel==='function')w.handoffCancel();}catch(_){}keepFrameReachable(w);_natGesture(w,false);if(nativeWins().length)nsync();}
       return result;
-    }).catch(()=>{if(recover){keepFrameReachable(w);_natGesture(w,false);if(nativeWins().length)nsync();}return false;});
+    }).catch(()=>{if(recover){try{if(typeof w.handoffCancel==='function')w.handoffCancel();}catch(_){}keepFrameReachable(w);_natGesture(w,false);if(nativeWins().length)nsync();}return false;});
   }
 
   function rearmFrameHandoffDestination(bridge){
@@ -6916,6 +6918,12 @@
             }
             if(p.messagesTab==='messages' && p.state && PC().acceptMessagesHandoff)
               PC().acceptMessagesHandoff(p.state);
+            /* Preview owns renderer-local blob bytes, not #feed. Rebuild those bytes before making
+             * a generic doc:* frame; otherwise the frame moves successfully but its destination is
+             * an empty shared-feed window. acceptHandoff opens its own neutral/maximised document. */
+            if(/^doc:pv:/.test(String(p.view)) && p.state && window.PCPreview && PCPreview.acceptHandoff){
+              Promise.resolve(PCPreview.acceptHandoff(p.state)).catch(()=>{});return;
+            }
             const w=openApp(String(p.view), String(p.title||''), String(p.icon||''));
             if(!w) return;
             /* Terminal state is adopted before openApp so its stable PTY is selected by the first

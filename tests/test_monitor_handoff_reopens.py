@@ -102,7 +102,8 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
         i = self.os.index("function handoffPayload(")
         payload = self.os[i:self.os.index("function sendFrameHandoff", i)]
         self.assertIn("const terminal = w.view === 'terminal'", payload)
-        self.assertIn("view:handoffIdentity(w)", payload)
+        self.assertIn("const identity=handoffIdentity(w)", payload)
+        self.assertIn("view:identity", payload)
         self.assertIn("const appPath = terminal || websearch || music ? ''", payload,
                       "the destination would adopt the PTY and then route it back to Social")
 
@@ -194,7 +195,7 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
 
     def test_the_destination_routes_it(self):
         i = self.os.index("onHandoffFrame")
-        body = self.os[i:i + 3000]
+        body = self.os[i:self.os.index("if(pcWM.onPreviewFrame)", i)]
         self.assertIn("routePath", body, "the destination never acts on the path it was sent")
         self.assertIn("p.path!=='/' && p.path!=='/index.html'", body,
                       "web and packaged roots are non-entity screens; routing either would create "

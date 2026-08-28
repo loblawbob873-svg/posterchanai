@@ -282,7 +282,7 @@
     close();                                  // one at a time; the previous URL is revoked by its own close
     var url = URL.createObjectURL(blob);
     var key = 'pv:' + Math.random().toString(36).slice(2, 9);
-    var shut = function () {};
+    var shut = function () {}, transferring = false;
     var done = function () {
       /* STOP THE SOUND. A <video> detached from the document keeps playing in Chromium until it is
        * garbage collected, so closing the window left a voice coming out of nowhere. */
@@ -291,7 +291,9 @@
         if (av) { av.pause(); av.removeAttribute('src'); av.load(); }
       } catch (_) {}
       if (_open && _open.key === key) _open = null;
-      try { URL.revokeObjectURL(url); } catch (_) {}
+      /* A monitor handoff transfers this URL to another renderer, which fetches the bytes and owns
+       * a fresh URL. Revoking here would race that fetch and produce a perfectly moved blank frame. */
+      if (!transferring) try { URL.revokeObjectURL(url); } catch (_) {}
       root.removeEventListener('keydown', onKey, true);
     };
     var onKey = function (e) { if (e.key === 'Escape') { e.stopPropagation(); shut(); } };
@@ -308,6 +310,12 @@
         host.classList.add('pv-host', 'pv-win');
         shut = function () { try { root.PCOS.closeDoc(key); } catch (_) {} done(); };
         if (w) w.onClose = done;
+        if (w) {
+          w.handoffState = function () { transferring = true; return {
+            preview: true, name: String(name || ''), mime: String(mime || ''), url: String(url || '')
+          }; };
+          w.handoffCancel = function () { transferring = false; };
+        }
         mount(host, name, mime, blob.size, kind, url, shut, blob);
         _open = { key: key, close: shut };
         root.addEventListener('keydown', onKey, true);
@@ -327,7 +335,15 @@
     return true;
   }
 
-  root.PCPreview = { open: open, handles: handles, kindOf: kindOf,
+  async function acceptHandoff(state) {
+    var s = state && typeof state === 'object' ? state : {};
+    if (!s.preview || !/^blob:/i.test(String(s.url || ''))) return false;
+    var response = await fetch(String(s.url)), blob = await response.blob();
+    try { URL.revokeObjectURL(String(s.url)); } catch (_) {}
+    return open({ name:String(s.name || 'Preview'), mime:String(s.mime || blob.type || ''), blob:blob });
+  }
+
+  root.PCPreview = { open: open, acceptHandoff: acceptHandoff, handles: handles, kindOf: kindOf,
                      isImage: isImage, isVideo: isVideo, isAudio: isAudio, isPdf: isPdf,
                      loadPdfJs: loadPdfJs, isOpen: isOpen, close: close };
 })(window);

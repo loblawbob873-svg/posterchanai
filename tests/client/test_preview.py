@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -28,6 +29,26 @@ class PreviewSim(unittest.TestCase):
         self.assertEqual(r.returncode, 0, (r.stdout + r.stderr)[-3000:])
         self.assertIn("preview holds", r.stdout)
         self.assertIn("it requests the maximised neutral document workspace", r.stdout)
+        self.assertIn("destination reconstructs Preview from transferred bytes", r.stdout)
+
+    def test_supplied_packaged_preview_runs_monitor_transfer(self):
+        with tempfile.TemporaryDirectory() as td:
+            packaged = os.path.join(td, "preview.js")
+            shutil.copyfile(os.path.join(ROOT, "static/js/client/preview.js"), packaged)
+            env = dict(os.environ, PC_INSTALLED_PREVIEW_JS=packaged)
+            r = subprocess.run([NODE, SIM], env=env, capture_output=True, text=True, timeout=120)
+            self.assertEqual(r.returncode, 0, (r.stdout + r.stderr)[-3000:])
+            self.assertIn("destination reconstructs Preview from transferred bytes", r.stdout)
+
+    def test_monitor_handoff_routes_preview_state_before_generic_document_open(self):
+        osjs = _read("static/js/client/os.js")
+        payload = osjs[osjs.index("function handoffPayload"):osjs.index("function sendFrameHandoff")]
+        receive = osjs[osjs.index("if(pcWM.onHandoffFrame)"):osjs.index("if(pcWM.onPreviewFrame)")]
+        self.assertIn("typeof w.handoffState==='function'", payload)
+        self.assertIn("PCPreview.acceptHandoff(p.state)", receive)
+        self.assertLess(receive.index("PCPreview.acceptHandoff(p.state)"), receive.index("const w=openApp"))
+        send = osjs[osjs.index("function sendFrameHandoff"):osjs.index("function rearmFrameHandoffDestination")]
+        self.assertIn("typeof w.handoffCancel==='function'", send)
 
 
 class PreviewIsReachable(unittest.TestCase):

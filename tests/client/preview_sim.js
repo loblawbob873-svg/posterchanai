@@ -179,5 +179,21 @@ console.log('an old Blossom MP4 returned as generic binary is playable');
   P.close();
 }
 
-console.log(failures ? '\nFAILED ' + failures : '\nOK  preview holds');
-process.exit(failures ? 1 : 0);
+console.log('a desktop monitor handoff transfers the live blob before source cleanup');
+(async()=>{
+  let sourceWindow=null, destinationWindow=null, opens=0;
+  const slot=()=>El('div');
+  window.PCOS={isOn:()=>true,openDoc(){const w={slot:slot()};if(!opens++)sourceWindow=w;else destinationWindow=w;return w;},
+    documentWindow(){},closeDoc(){}};
+  P.open({name:'handoff.jpg',mime:'image/jpeg',blob:new global.Blob([],{type:'image/jpeg'})});
+  const state=sourceWindow.handoffState();
+  P.close();
+  check('source close preserves the transferring blob URL',global.URL._live===1);
+  check('handoff payload names Preview and its blob URL',state.preview===true&&/^blob:/.test(state.url));
+  check('destination reconstructs Preview from transferred bytes',await P.acceptHandoff(state)===true);
+  check('destination owns a real Preview document',!!destinationWindow&&destinationWindow.slot.classList.contains('pv-win'));
+  check('old transfer URL was replaced, not leaked',global.URL._live===1);
+  P.close();delete window.PCOS;
+  console.log(failures ? '\nFAILED ' + failures : '\nOK  preview holds');
+  process.exitCode=failures?1:0;
+})().catch(e=>{console.error(e&&e.stack||e);process.exitCode=1;});
