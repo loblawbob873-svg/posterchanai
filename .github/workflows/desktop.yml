@@ -340,6 +340,10 @@ jobs:
     if: needs.build.result == 'success'
     runs-on: ubuntu-latest
     steps:
+      # The publish job runs on a fresh runner. Release pruning is a repository script, so without
+      # checkout every platform artifact publishes successfully and the job then fails at cleanup.
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
