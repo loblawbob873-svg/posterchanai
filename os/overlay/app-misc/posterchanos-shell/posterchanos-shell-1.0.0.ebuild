@@ -111,6 +111,13 @@ pkg_postinst() {
 		# These are package-owned bindings inside an otherwise user-owned file. Remove every older
 		# form first; merely checking for the keycode retained a stale command forever.
 		sed -i -E '/Ctrl\+Mod1\+(BackSpace|22).*pc-shell-(start|restart)/d' "${cfg}"
+		# Old migrations appended the two labels below on every upgrade even though their bindings
+		# were replaced. Besides growing the config without bound, that made a private config drift
+		# farther from the package-owned source on every release. They are package comments, not user
+		# settings, so remove all copies before writing the single current recovery block below.
+		sed -i -E \
+			'/^# Screenshots work even while the desktop renderer is restarting\.$/d; /^# Restart only the PosterChan desktop shell; native applications remain open\.$/d' \
+			"${cfg}"
 		# Super+Return also fires the bare-Super release binding on some Sway/XKB paths, opening
 		# Start over the terminal. Alt+Return is the shipped shortcut now; repair private configs
 		# created by an older image so an update changes the key people actually use.

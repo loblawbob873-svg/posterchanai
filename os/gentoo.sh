@@ -1601,11 +1601,6 @@ PROFILE
 	# PosterChanOS — the shell owns the screen; PosterChan decides what goes where.
 	set $mod Mod4
 
-	# Start Xwayland before startup commands. Electron renders natively through Wayland, but GTK
-	# still queries X11-backed theme metrics during its first frame. Lazy Xwayland leaves DISPLAY
-	# unset on a clean boot and GTK aborts before the shell maps.
-	xwayland force
-
 	# The desktop itself. Not a layer-shell surface: Electron cannot make one, and a fullscreen
 	# window at the bottom of the stack is the same thing from the person's side, with the whole
 	# client working unmodified in a browser and the APK as well.

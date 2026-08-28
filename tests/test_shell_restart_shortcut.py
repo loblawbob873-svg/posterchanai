@@ -104,6 +104,23 @@ def test_upgrade_removes_optioned_printscreen_bindings_before_adding_one_copy():
     assert "floating_modifier $mod normal" in ebuild
 
 
+def test_upgrade_cleans_generated_recovery_labels_before_readding_them():
+    """Repeated shell upgrades must not grow or eventually corrupt a private Sway config."""
+    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
+    cleanup = ebuild.index("Old migrations appended the two labels")
+    append = ebuild.index('cat >>"${cfg}"', cleanup)
+    block = ebuild[cleanup:append]
+    assert "Screenshots work even while the desktop renderer is restarting" in block
+    assert "Restart only the PosterChan desktop shell; native applications remain open" in block
+    assert "sed -i -E" in block
+
+
+def test_reloadable_sway_config_has_no_startup_only_xwayland_force():
+    """`xwayland force` is accepted at startup but raises a Sway config error on every reload."""
+    cfg = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config").read_text()
+    assert "xwayland force" not in cfg
+
+
 def test_super_is_a_global_physical_key_binding_not_a_bare_modifier_binding():
     cfg = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config").read_text()
     assert "bindsym --release --no-repeat Super_L exec swaymsg -t send_tick pc:start" in cfg
