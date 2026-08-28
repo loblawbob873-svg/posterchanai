@@ -413,9 +413,16 @@ class TheLiveInitramfsStartsFromNothing(unittest.TestCase):
         """A public live image needs neither crypt module.  Its empty config directory prevents
         host keys from being selected; explicitly omitting both modules also prevents dracut from
         auto-selecting systemd-cryptsetup without its deliberately omitted crypt dependency."""
+        self.assertIn('local LIVE_OMIT="crypt crypt-gpg crypt-loop"', self.body)
+        self.assertIn('[[ "$DRACUT_MODULE" == *systemd* ]] && LIVE_OMIT+=', self.body)
         i = self.body.index("dracut --force")
         call = self.body[i:i + 500]
-        self.assertIn('--omit "crypt crypt-gpg crypt-loop systemd-cryptsetup"', call)
+        self.assertIn('--omit "$LIVE_OMIT"', call)
+
+    def test_live_initramfs_uses_the_non_systemd_switch_root(self):
+        """systemd 258 loops while cleaning the dmsquash /run mount tree after pivot_root fails."""
+        self.assertIn('dracut --list-modules', self.body)
+        self.assertIn('*systemd*', self.body)
 
     def test_dracuts_own_output_reaches_the_log(self):
         """"dracut failed" with no reason is the report. Its output is what names the module."""

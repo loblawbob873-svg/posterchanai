@@ -483,6 +483,10 @@ class TheLiveSessionActuallyStarts(unittest.TestCase):
         self.assertIn("Before=getty@tty1.service", self.fn)
         self.assertIn("multi-user.target.d/posterchan-live-network.conf", self.fn)
 
+    def test_clean_disc_does_not_inherit_the_build_hosts_enabled_servers(self):
+        self.assertIn("etc/systemd/system/multi-user.target.wants\n", self.fn)
+        self.assertIn("multi-user.target.wants/NetworkManager.service s 777", self.fn)
+
     def test_it_starts_the_compositor(self):
         i = self.fn.index('cat >"$WORK/live.bash_profile"')
         profile = self.fn[i:self.fn.index("\nPROFILE", i)]

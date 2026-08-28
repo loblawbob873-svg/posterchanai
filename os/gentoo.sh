@@ -2764,6 +2764,11 @@ liveCD() {
 		# profile was scrubbed, so the Welcome flow deliberately stays hidden. It also assigns the
 		# first real login's administrator rights to an npub that is not present on the disc.
 		EXCLUDES+=(var/lib/posterchanos etc/sudoers.d/posterchan-admin
+			# Enabled services are machine policy, not installed software.  Copying this directory
+			# made a LiveCD built on a server wait for nginx, PostgreSQL and a host firewall before
+			# graphical.target; tty1 never started and the framebuffer stayed black.  Recreate only
+			# the networking link required by the live desktop in the pseudo tree below.
+			etc/systemd/system/multi-user.target.wants
 			etc/systemd/system/boot-snapshot.service
 			etc/systemd/system/boot-snapshot.timer
 			etc/systemd/system/default.target.wants/boot-snapshot.timer
@@ -3067,6 +3072,8 @@ FSTAB
 			pseudoput "etc/shadow" f 640 0 0 cat "$WORK/shadow"
 			pseudoput "etc/sudoers" f 440 0 0 cat "$WORK/sudoers"
 			pseudoput "etc/systemd/system/posterchan-live-network.service" f 644 0 0 cat "$WORK/live-network.service"
+			echo "etc/systemd/system/multi-user.target.wants d 755 0 0"
+			echo "etc/systemd/system/multi-user.target.wants/NetworkManager.service s 777 0 0 /usr/lib/systemd/system/NetworkManager.service"
 			echo "etc/systemd/system/multi-user.target.d d 755 0 0"
 			pseudoput "etc/systemd/system/multi-user.target.d/posterchan-live-network.conf" f 644 0 0 cat "$WORK/live-multi-user.conf"
 			echo "home d 755 0 0"
@@ -3388,9 +3395,19 @@ DESKTOP
 	# has a hard dependency on the crypt module deliberately omitted for a public live image. Omit
 	# both sides: the empty configuration is what keeps the host keyfile out.
 	mkdir -p "$WORK/dracut.conf.d"
+	# systemd 258's initrd switch-root fallback loops forever when dmsquash-live's writable root is
+	# backed by mounts below /run: pivot_root returns EINVAL, then the cleanup walker repeatedly sees
+	# /sysroot/run/rootfsbase and never reaches the real root.  Dracut's traditional init performs
+	# the same live-root setup with switch_root(8) and is not affected.  Omit every installed dracut
+	# module in the systemd family (the exact auxiliary module set varies by dracut release).
+	local LIVE_OMIT="crypt crypt-gpg crypt-loop"
+	local DRACUT_MODULE
+	while IFS= read -r DRACUT_MODULE; do
+		[[ "$DRACUT_MODULE" == *systemd* ]] && LIVE_OMIT+=" $DRACUT_MODULE"
+	done < <(dracut --list-modules)
 	dracut --force --no-hostonly --nolvmconf --nomdadmconf \
 		--conf /dev/null --confdir "$WORK/dracut.conf.d" \
-		--add "dmsquash-live" --omit "crypt crypt-gpg crypt-loop systemd-cryptsetup" \
+		--add "dmsquash-live" --omit "$LIVE_OMIT" \
 		--kver "$KVER" "$WORK/iso/boot/initramfs.img" 2>&1 | tee -a "$LOG"
 	# PIPESTATUS, not the pipeline's — `tee` succeeds whatever dracut did.
 	if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
