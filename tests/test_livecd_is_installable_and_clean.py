@@ -156,7 +156,9 @@ class TheBuilderShipsTheInstaller(unittest.TestCase):
     def test_installer_staging_directories_are_idempotent(self):
         """The command dispatcher is sourced repeatedly inside the target chroot. Existing
         staging directories are normal and must not emit scary, false `cannot create` errors."""
-        self.assertIn('mkdir -p "$TARGET"', self.src)
+        preamble = self.src[:self.src.index("######################################",
+                                            self.src.index("TARGET='/tmp/install'"))]
+        self.assertNotRegex(preamble, r"(?m)^mkdir .*TARGET")
         fstab = self.src[self.src.index("fstab() {"):
                          self.src.index("\n}", self.src.index("fstab() {"))]
         self.assertIn('mkdir -p "$TARGET/etc"', fstab)

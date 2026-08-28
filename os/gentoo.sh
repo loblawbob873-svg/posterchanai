@@ -107,10 +107,10 @@ done
 COLOR_RED="\033[1;31m"; COLOR_CYAN="\033[1;36m"; COLOR_MAGENTA="\033[1;35m"; COLOR_YELLOW="\033[1;33m"
 COLOR_GREEN="\033[1;32m"; COLOR_RESET="\033[0m"; COLOR_BOLD="\033[1;97m"
 TARGET='/tmp/install'
-# Every command mode sources this file, including commands already running inside the target
-# chroot.  The staging directory may already exist, or its /tmp parent may have been omitted from a
-# clean image.  Creating it idempotently avoids printing a false installer error before dispatch.
-mkdir -p "$TARGET"
+# Do not create the staging tree while merely loading the command dispatcher. Every host-side phase
+# that uses it creates its own mount points. Inside the installed chroot /tmp may deliberately be a
+# not-yet-mounted link to /var/tmp, so this old global side effect emitted a false "No such file"
+# error before bootloader/accounts/services even started.
 ######################################
 echo
 HARD_DISK=$2
