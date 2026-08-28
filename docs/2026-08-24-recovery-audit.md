@@ -407,3 +407,34 @@ carrier SMS/MMS migration and sending, cross-device notifications, live two-iden
 and moderation/attachments/Webxdc, native Firefox/Telegram editable-field clipboard use, sustained
 real Codex/Claude terminal repaint use, unrelated external-storage providers and physical USB boot
 also remain open.
+
+## 2026-08-28 post-1.0.1133 recovery audit at `313f11652`
+
+This section is a current-state correction, not a new release declaration. The authoritative branch
+head inspected here is `313f1165285f73b305a18789388aa8164056e124`. Desktop 1.0.1136 and Android
+1.0.1853 are the newest completed immutable/rolling artifacts, but both were built from
+`4b33df6788c3eb6812a46484c7950341a7aa7a07`; the commits after that boundary are source-only until
+the workflows already queued/running at this head finish and their payloads are independently
+identified. No installed-device result for 1.0.1136 was found in this pass.
+
+| Requirement | Current authoritative evidence | State / missing proof |
+|---|---|---|
+| Desktop/Gentoo artifact propagation | Desktop workflow `33138798022` succeeded for exact commit `4b33df678`; immutable `desktop-v1.0.1136` targets that commit and publishes a 152,213,063-byte Linux tarball with SHA-256 `37267594149c5738d1d8e8e0aa9c24fea79dadafda82395174a00cd7de4226c7`. Head `313f11652` pins the 1.0.1136 ebuild and Manifest to the same size and SHA-512 `ff23aad1e5e25922c166c62317f207450c0892b280af92d71bee43d5f516867d1e47efcd639d12b804625a857521ae553d201d282294e9ca0c252971ff743afd` | Published/pinned only through `4b33df678`. Installation on `.102`/`.154`, package identity, authenticated Files/Office/Code interaction and every post-`4b33df678` change remain open |
+| Code Git tree/diff/restore | `43ab8f9df` reproduces porcelain-v1 `-z` rename ordering (`NEW`, then `OLD`), makes desktop/server status expose the actionable new path once and restores both paths. The source native-Git simulation passes staged and rename diff/restore; 24 focused Git/UI/package tests and the real-Chrome editor/workdir/focus/height harness pass | The strengthened immutable-package gate fails the previously installed ASAR at the rename assertion, as intended. A new package must pass it and then repeat installed Git/diff/restore plus Code/Terminal focus sizing |
+| Files selection/action integrity | `5d939fe7b` keeps bulk selection scoped to the visible folder and disables actions that cannot honestly operate on the selected backend; its focused runtime/source tests pass | Source/runtime proof only. Authenticated Gentoo Files/Blossom counts, chooser/actions and installed UI remain open at this boundary |
+| Office edit/save/readback | No newer authenticated WOPI interaction was produced after the explicit 1.0.1133 skip | Open. Package-route tests and historical installed saves do not prove the current package/account |
+| Concord composer stability | `e5357f6f5` preserved draft/selection across replacement, but emulator run `33138798044` proved that approach still replaced the textarea and lost focus. `1cc97a443` changes background updates to retain the native textarea node and strengthens `ConcordComposerDeviceTest` to require node identity, value, selection, focus and no focus theft | Current source fix is plausible and source tests pass, but the exact-head emulator run `33139397404` was queued when inspected. Keep Android composer behavior and artifact propagation open until that run is green and its report is inspected; physical keyboard/OEM behavior remains open |
+| Vector/Armada joined-room recovery | Public metadata for the affected identity exists across the expected relays: newest kind-13302 membership event `ac8b166a…99c0` is present on computingcache, jskitty, ditto and dreamith; older kind-33302 `d=0` fragments remain on ditto/dreamith/Vector Asia. The supplied invite bundle decrypts to the expected community and three bootstrap relays. `beac8de12` accepts seed-only membership snapshots and recursively normalizes fragmented `held_roots`/channel `priors`; focused Vector/invite and Concord runtime tests pass | Self-encrypted membership content was not safely decrypted through an affected installed signer, and no fresh installed client showed the recovered room. Cross-device room visibility/history therefore remains open despite relay and source evidence |
+| Direct Messages/Terminal/Preview monitor handoff | `8d01bc0b8` and `a92f96456` add destination-runtime coverage for selected DM and Terminal route ownership. `a7742478b` transfers Preview document state and object bytes across a renderer handoff; focused Preview/runtime tests pass | These commits are later than the completed 1.0.1136 artifact. Actual installed move/return, state, focus, sizing, and Preview-byte verification remain open |
+| Android background Music | `747e96437` strengthens the emulator assertion to require the real foreground-service notification while playback advances after Home. Earlier APK/emulator runs prove the weaker playback-time assertion, but emulator runs `33136589066`, `33137419501`, `33138564565` and `33138798044` all failed the newly added Concord composer device test; they are not green whole-device gates | The rolling APK 1.0.1853 is 20,423,408 bytes with SHA-256 `77700836b4e625ad31d81327931eed76ea050573eaff7709fb50a6f406c46a4d` and provenance `4b33df678`, but no complete green exact-commit emulator report covers it. Exact-head emulator, physical audible playback after Home, notification/service persistence, OEM/Bluetooth behavior and physical phone/tablet lifecycle all remain open |
+| Final ISO and physical recovery media | The newest previously proved ISO still contains historical Desktop 1.0.980 | A new ISO containing the final Desktop/Gentoo boundary, structural/virtual verification, and physical USB boot are all open |
+
+Highest-risk unresolved gates are therefore: (1) a green exact-head Android emulator report for the
+native Concord composer plus foreground Music assertion, followed by signed-APK identity and physical
+device playback/keyboard checks; (2) a new immutable Desktop/Gentoo artifact containing every commit
+through `313f11652`, installed on both authorized machines and exercised with authenticated Files,
+Office WOPI and Code focus/Git gates; (3) affected-account Vector membership recovery through a real
+signed-in bridge; and (4) a final ISO built from that installed boundary and booted from physical USB.
+Live two-identity Concord writes/moderation/attachments/Webxdc, real carrier SMS/MMS migration/send,
+cross-device notifications, external native-app clipboard sessions and sustained real agent-terminal
+use remain independent open requirements and are not implied by any row above.
