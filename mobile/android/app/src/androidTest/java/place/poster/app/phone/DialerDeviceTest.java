@@ -146,6 +146,26 @@ public class DialerDeviceTest {
                 assertTrue("Call action is not clickable", call.hasOnClickListeners());
                 assertEquals(a.getString(R.string.tel_text_number), text.getContentDescription());
                 assertEquals(a.getString(R.string.tel_call), call.getContentDescription());
+
+                // Measure the actual shipped row at 320dp, below the width of the emulator and the
+                // narrow end of Android phones we support. Presence alone missed layouts where the
+                // two actions existed but were clipped off-screen or crushed the contact label.
+                int width = Math.round(320 * a.getResources().getDisplayMetrics().density);
+                row.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+                row.layout(0, 0, row.getMeasuredWidth(), row.getMeasuredHeight());
+                View who = row.findViewById(R.id.pc_rc_who);
+                assertEquals("contact row did not honor the 320dp viewport", width,
+                        row.getMeasuredWidth());
+                assertTrue("Text action is clipped on a 320dp phone",
+                        text.getLeft() >= 0 && text.getRight() <= width && text.getWidth() > 0);
+                assertTrue("Call action is clipped on a 320dp phone",
+                        call.getLeft() >= 0 && call.getRight() <= width && call.getWidth() > 0);
+                assertTrue("Text and Call overlap on a 320dp phone",
+                        text.getRight() <= call.getLeft());
+                assertTrue("the contact name was crushed by its actions on a 320dp phone",
+                        who != null && who.getWidth() >= Math.round(72 *
+                                a.getResources().getDisplayMetrics().density));
             });
         } finally {
             screen.close();
@@ -160,7 +180,18 @@ public class DialerDeviceTest {
         ActivityScenario<DialerActivity> dialer = ActivityScenario.launch(DialerActivity.class);
         android.app.Activity opened = null;
         try {
-            dialer.onActivity(a -> a.openTextNumber(" +1 (555) 010-4477 "));
+            dialer.onActivity(a -> {
+                View row = LayoutInflater.from(a).inflate(R.layout.tel_recent_row, null, false);
+                DialerActivity.Row contact = new DialerActivity.Row();
+                contact.label = "Ada";
+                contact.number = " +1 (555) 010-4477 ";
+                contact.contactId = 42;
+                contact.icon = R.drawable.ic_pc_user;
+                a.bindRow(row, contact);
+                View text = row.findViewById(R.id.pc_rc_text);
+                assertNotNull("bound contact row lost its Text action", text);
+                assertTrue("the actual Text action refused the tap", text.performClick());
+            });
             opened = monitor.waitForActivityWithTimeout(5000);
             assertNotNull("Text did not route to PosterChan's conversation screen", opened);
             Intent got = opened.getIntent();

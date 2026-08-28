@@ -46,15 +46,26 @@ public class ConcordComposerDeviceTest {
                     "const old=localStorage.getItem('pc.concord.invites');"+
                     "localStorage.setItem('pc.concord.invites',JSON.stringify([{name:'Device draft gate',"+
                     "naddr:'device-draft-gate',local:true,channels:[{name:'general',private:false}]}]));"+
-                    "localStorage.setItem('pc.concord.active','0');__PC.switchView('concord');"+
-                    "setTimeout(()=>{try{const a=document.querySelector('#cc-input');"+
+                    "localStorage.setItem('pc.concord.active','0');"+
+                    // Earlier device tests deliberately exercise desktop mode. MainActivity and its
+                    // WebView survive between those tests, so switchView would correctly route the
+                    // request into a desktop window while this test looked in the classic feed. Use
+                    // the same supported transition phoneshell.js uses when Android opens the mobile
+                    // app; this is a mobile composer test, not a hidden-desktop-window test.
+                    "if(window.PCOS&&PCOS.mobileLanding)PCOS.mobileLanding();__PC.switchView('concord');"+
+                    "let tries=0;const seed=()=>{const a=document.querySelector('#cc-input');"+
+                    "if(!a&&tries++<50){setTimeout(seed,100);return;}"+
+                    "try{if(!a)throw new Error('composer absent; view='+__PC.isView('concord')+"+
+                    "', desktop='+(!!(window.PCOS&&PCOS.isOn&&PCOS.isOn())));"+
                     "a.value='draft survives repaint';a.focus();a.setSelectionRange(6,14,'backward');"+
                     "PCConcord.render();PCConcord.render();PCConcord.render();requestAnimationFrame(()=>{"+
                     "requestAnimationFrame(()=>{const b=document.querySelector('#cc-input');"+
                     "window.__ccDeviceResult=JSON.stringify({value:b&&b.value,start:b&&b.selectionStart,"+
                     "end:b&&b.selectionEnd,focused:document.activeElement===b,replaced:a!==b});"+
                     "if(old===null)localStorage.removeItem('pc.concord.invites');else localStorage.setItem('pc.concord.invites',old);"+
-                    "});});}catch(e){window.__ccDeviceResult='error:'+e;}},250);return true;})()";
+                    "});});}catch(e){if(old===null)localStorage.removeItem('pc.concord.invites');"+
+                    "else localStorage.setItem('pc.concord.invites',old);window.__ccDeviceResult='error:'+e;}};"+
+                    "seed();return true;})()";
             eval(web, js);
             String result = "";
             for (int i = 0; i < 80; i++) {
