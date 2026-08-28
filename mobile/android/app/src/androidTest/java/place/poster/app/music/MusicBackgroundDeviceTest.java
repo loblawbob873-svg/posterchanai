@@ -12,7 +12,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.WebView;
 
-import androidx.core.content.ContextCompat;
 import androidx.lifecycle.Lifecycle;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
@@ -108,7 +107,7 @@ public class MusicBackgroundDeviceTest {
     }
 
     @Test
-    public void aPlayingWebViewTrackKeepsAdvancingAfterHome() throws Exception {
+    public void aRealMusicPlayerTrackKeepsAdvancingAfterHome() throws Exception {
         Context ctx = InstrumentationRegistry.getInstrumentation().getTargetContext();
         boolean wasEnabled = HomeRoles.launcherComponentEnabled(ctx);
         String oldHome = firstRoleHolder(shell("cmd role get-role-holders android.app.role.HOME"));
@@ -127,9 +126,10 @@ public class MusicBackgroundDeviceTest {
             WebView web = waitForWebView(ref, scenario);
             waitForClientPage(web);
 
-            // A small generated audible WAV avoids network, account and Blossom dependencies. Looping it
-            // exercises Chromium's real media clock while MusicService reproduces production's
-            // foreground-playback condition.
+            // A small generated audible WAV avoids network, account and Blossom dependencies. It is
+            // played through the shipped MusicPlayer, not a test-only Audio plus a direct service
+            // Intent: the test therefore crosses the real MusicPlayer -> MusicControls.update ->
+            // foreground MusicService/MediaSession path before Home backgrounds the WebView.
             /* Thirty seconds, not four. Starting the foreground service and sending Home through
              * instrumentation can take several seconds on a loaded emulator. With the former
              * four-second looping WAV, healthy continuous playback wrapped currentTime from 1.14
@@ -143,8 +143,14 @@ public class MusicBackgroundDeviceTest {
                     + "v.setUint32(28,8000,true);v.setUint16(32,1,true);v.setUint16(34,8,true);"
                     + "s(36,'data');v.setUint32(40,n,true);for(let i=44;i<44+n;i++)"
                     + "v.setUint8(i,128+Math.round(32*Math.sin(2*Math.PI*440*(i-44)/8000)));"
-                    + "let a=new Audio(URL.createObjectURL(new Blob([b],{type:'audio/wav'})));"
-                    + "a.loop=true;window.__pcBackgroundAudio=a;return a.play().then(()=>a.currentTime)})()";
+                    + "const A=window.Audio;window.Audio=function(...x){const a=new A(...x);"
+                    + "window.__pcBackgroundAudio=a;return a};"
+                    + "const p=__PC.MusicPlayer,idx=__PC.filesIdx();p.ensure();window.Audio=A;"
+                    + "idx.data.files['device-test-track']={name:'background-device-test.wav',"
+                    + "folder:'Music',enc:true,mime:'audio/wav'};p.cur='device-test-track';"
+                    + "p.queue=['device-test-track'];const a=window.__pcBackgroundAudio;"
+                    + "a.src=URL.createObjectURL(new Blob([b],{type:'audio/wav'}));a.loop=true;"
+                    + "return a.play().then(()=>{p._media();return a.currentTime})})()";
             eval(web, start);
             double before = 0;
             for (int i = 0; i < 30 && before <= 0.15; i++) {
@@ -153,18 +159,11 @@ public class MusicBackgroundDeviceTest {
             }
             assertTrue("the injected track never began playing: " + before, before > 0.15);
 
-            Intent service = new Intent(ctx, MusicService.class).setAction(MusicService.ACTION_UPDATE)
-                    .putExtra(MusicService.EXTRA_TITLE, "background-device-test")
-                    .putExtra(MusicService.EXTRA_ARTIST, "PosterChan")
-                    .putExtra(MusicService.EXTRA_PLAYING, true)
-                    .putExtra(MusicService.EXTRA_POSITION, before)
-                    .putExtra(MusicService.EXTRA_DURATION, 30.0);
-            ContextCompat.startForegroundService(ctx, service);
             String playbackState = waitForBackgroundPlayback(5000);
             assertTrue("the native playback service did not enter foreground MediaSession state: "
                             + playbackState,
                     playbackState.startsWith("active"));
-            assertEquals("background-device-test", MusicService.nowTitle());
+            assertEquals("background-device-test.wav", MusicService.nowTitle());
 
             InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_HOME);
             SystemClock.sleep(1600);

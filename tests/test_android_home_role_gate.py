@@ -46,6 +46,16 @@ def test_music_device_test_requires_our_launcher_and_restores_prior_state():
     assert "HomeRoles.enableLauncherComponent(ctx, wasEnabled)" in TEST
 
 
+def test_background_track_uses_the_shipped_player_and_plugin_path():
+    body = TEST.split("aRealMusicPlayerTrackKeepsAdvancingAfterHome", 1)[1].split(
+        "private static void restoreDeviceState", 1)[0]
+    assert "__PC.MusicPlayer" in body
+    assert "p._media()" in body
+    assert "__PC.filesIdx()" in body
+    assert "ContextCompat.startForegroundService" not in body
+    assert "new Intent(ctx, MusicService.class).setAction(MusicService.ACTION_UPDATE)" not in body
+
+
 def test_music_device_cleanup_works_while_main_activity_is_stopped_at_home():
     cleanup = TEST.split("private static void restoreDeviceState", 1)[1].split(
         "private static String shell", 1)[0]
@@ -60,7 +70,7 @@ def test_music_device_cleanup_works_while_main_activity_is_stopped_at_home():
 
 def test_tablet_returns_from_real_home_by_relaunching_the_existing_main_task():
     body = TEST.split("tabletDesktopStateSurvivesHomeAndRotationInBothTasks", 1)[1].split(
-        "aPlayingWebViewTrackKeepsAdvancingAfterHome", 1)[0]
+        "aRealMusicPlayerTrackKeepsAdvancingAfterHome", 1)[0]
     helper = TEST.split("private static void relaunchMainTask", 1)[1].split(
         "private static String shell", 1)[0]
     assert "scenario.moveToState(Lifecycle.State.RESUMED)" not in body
