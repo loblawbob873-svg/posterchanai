@@ -277,7 +277,7 @@ jobs:
           # Zapstore's relay currently rejects repeated apk_certificate_hash tags even though its
           # client model consumes them. The patched publisher sends the lineage asset first and
           # sends release/app events only to relays that accepted it, preventing dangling releases.
-          RELAY_URLS: wss://relay.primal.net,wss://relay.zapstore.dev
+          RELAY_URLS: wss://relay.poster.place,wss://relay.primal.net,wss://relay.zapstore.dev
           POSTERCHAN_ANDROID_KEYSTORE: ${{ runner.temp }}/posterchan-release.keystore
           POSTERCHAN_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
           POSTERCHAN_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
