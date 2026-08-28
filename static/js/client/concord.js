@@ -480,7 +480,11 @@
     try{
       const changed=await applyRoomIconMetadata(room,{icon:room.iconPointer},loadKey);
       if(changed){const rooms=saved(),i=rooms.findIndex(x=>roomIdentity(x)===roomIdentity(room));if(i>=0){rooms[i].iconPointer=room.iconPointer;if(/^blob:/i.test(String(rooms[i].icon||'')))rooms[i].icon='';save(rooms);}}
-      if(document.body.classList.contains('concord-view'))backgroundRender();
+      /* Repaint only after hydration produced an icon. On a corrupt pointer applyRoomIconMetadata
+       * records backoff and returns false. Repainting anyway calls roomIcon() again after this
+       * promise clears storedIconLoads, producing an unbounded fail -> render -> fail microtask
+       * loop (observed at ~7 GB / 90% CPU in the packaged desktop). */
+      if(roomIconRefs.has(loadKey)&&document.body.classList.contains('concord-view'))backgroundRender();
     }finally{storedIconLoads.delete(loadKey);}
   }
   function reactionSummary(p,m){

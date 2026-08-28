@@ -24,6 +24,10 @@ let BrowserWindow, shell, session, Menu, clipboard, dialog, systemPreferences, s
 const path = require('path');
 const fsbridge = require('./fsbridge');
 const fs = require('fs');
+/* Electron's patched fs treats an asar as a virtual filesystem. statSync(app.asar) can therefore
+ * report synthetic inode values that change on every call, making the installed-bundle watcher
+ * announce a phantom update forever. original-fs observes the archive file on disk. */
+let archiveFs=fs;try{archiveFs=require('original-fs');}catch(_){}
 const tor = require('./tor');
 let background = null; // background.js imports Tray, so require it only after app.ready too.
 const vm = require('./vm');
@@ -1211,9 +1215,9 @@ function watchInstalledBundle(){
   if(!SHELL_MODE || !app.isPackaged) return;
   const bundle=path.join(process.resourcesPath,'app.asar');
   let identity='';
-  try{const s=fs.statSync(bundle);identity=`${s.dev}:${s.ino}:${s.size}:${s.mtimeMs}`;}catch(_){return;}
+  try{const s=archiveFs.statSync(bundle);identity=`${s.dev}:${s.ino}:${s.size}:${s.mtimeMs}`;}catch(_){return;}
   let candidate='',stable=0;
-  const check=()=>{try{const s=fs.statSync(bundle),next=`${s.dev}:${s.ino}:${s.size}:${s.mtimeMs}`;
+  const check=()=>{try{const s=archiveFs.statSync(bundle),next=`${s.dev}:${s.ino}:${s.size}:${s.mtimeMs}`;
     if(next===identity){candidate='';stable=0;return;}
     /* Remember the immutable bundle accepted before spawning the replacement. A new process must
      * never interpret that same file as another update and form a restart loop. */

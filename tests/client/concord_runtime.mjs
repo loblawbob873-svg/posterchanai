@@ -9,11 +9,11 @@ globalThis.localStorage = {
 
 const makeClassList = () => ({added:[],removed:[],values:new Set(),add(...x){this.added.push(...x);x.forEach(v=>this.values.add(v));},remove(...x){this.removed.push(...x);x.forEach(v=>this.values.delete(v));},contains(x){return this.values.has(x);},toggle(x,on){const yes=on===undefined?!this.values.has(x):!!on;yes?this.values.add(x):this.values.delete(x);return yes;}});
 const classList = makeClassList();
-let feedHtml='',replaceComposerOnWrite=false;
+let feedHtml='',replaceComposerOnWrite=false,feedWrites=0;
 const feedListeners=new Map();
 const feed = { classList, insertAdjacentHTML(){},contains(node){return [...controls.values()].includes(node);},
   addEventListener(name,fn){feedListeners.set(name,fn);},
-  get innerHTML(){return feedHtml;}, set innerHTML(value){feedHtml=String(value);if(replaceComposerOnWrite){const old=controls.get('cc-input');if(old){old.isConnected=false;if(document.activeElement===old)document.activeElement=document.body;}controls.delete('cc-input');const textarea=feedHtml.match(/<textarea id="cc-input" data-cc-draft-key="([^"]*)"[^>]*>([\s\S]*?)<\/textarea>/);if(textarea){const next=control('cc-input');next.dataset.ccDraftKey=textarea[1];next.value=textarea[2];}}} };
+  get innerHTML(){return feedHtml;}, set innerHTML(value){feedWrites++;feedHtml=String(value);if(replaceComposerOnWrite){const old=controls.get('cc-input');if(old){old.isConnected=false;if(document.activeElement===old)document.activeElement=document.body;}controls.delete('cc-input');const textarea=feedHtml.match(/<textarea id="cc-input" data-cc-draft-key="([^"]*)"[^>]*>([\s\S]*?)<\/textarea>/);if(textarea){const next=control('cc-input');next.dataset.ccDraftKey=textarea[1];next.value=textarea[2];}}} };
 const controls = new Map();
 function control(id){
   if(!controls.has(id)) controls.set(id, { id, value:'', dataset:{}, selectionStart:0,selectionEnd:0,selectionDirection:'none',isConnected:true,classList:makeClassList(),
@@ -247,6 +247,16 @@ const launchElapsed=performance.now()-launchStarted,painted=(feed.innerHTML.matc
 if(!feed.innerHTML.includes('id="cc-input"')||painted!==300||launchElapsed>2000)
   throw new Error(`pathological Concord launch stayed blocked: ${painted} rows in ${launchElapsed.toFixed(0)}ms`);
 data.delete('pc.concord.invites');data.delete('pc.concord.active');data.delete('pc.concord.test.launch-stress');
+
+// A malformed encrypted icon is persisted by older clients. Opening that room must try once and
+// settle; the former finally{} repaint retriggered roomIcon immediately and grew the renderer by
+// gigabytes while clicks appeared dead.
+const brokenIconRoom={local:true,communityId:'broken-icon-room',naddr:'broken-icon-room',name:'Broken icon',channels:[{name:'general'}],iconPointer:{url:'https://bad.example/icon',key:'00',nonce:'00',hash:'00'}};
+data.set('pc.concord.invites',JSON.stringify([brokenIconRoom]));data.set('pc.concord.active','0');
+const writesBeforeBrokenIcon=feedWrites;PCConcord.render();
+await new Promise(resolve=>setTimeout(resolve,30));
+if(feedWrites-writesBeforeBrokenIcon!==1)throw new Error('failed Concord icon caused a repaint loop');
+data.delete('pc.concord.invites');data.delete('pc.concord.active');
 PCConcord.render();
 control('messages-direct').click();
 if(calls.messagesTab!=='messages' || activeView!=='messages')
