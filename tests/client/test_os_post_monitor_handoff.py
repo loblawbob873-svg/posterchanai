@@ -36,5 +36,6 @@ def test_receiver_builds_document_before_routing_exact_post_path():
 
 def test_payload_carries_document_key_and_deep_path_together():
     payload = _block("function handoffPayload(w, overflow){", "function sendFrameHandoff")
-    assert "view:handoffIdentity(w)" in payload
+    assert "const identity=handoffIdentity(w)" in payload
+    assert "view:identity" in payload
     assert "path:topPath ? '' : appPath" in payload

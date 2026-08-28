@@ -3185,8 +3185,12 @@
      * Only deeper paths identify content that the view name cannot restore by itself. */
     const appPath = terminal || websearch || music ? '' : String(w.appPath || '');
     const topPath = appPath==='/' || appPath==='/index.html';
-    const messagesTab=selectedMessagesTab(w);
-    return {view:handoffIdentity(w),messagesTab,title:w.title||'',icon:w.icon||'',
+    const identity=handoffIdentity(w);
+    /* Messages selection is meaningful only on the canonical Messages frame. A page-global
+     * Concord repaint can leave appView stale on an unrelated frame; never let that optional field
+     * acquire authority over Terminal's explicit application identity at the destination. */
+    const messagesTab=identity==='messages'?selectedMessagesTab(w):'';
+    return {view:identity,messagesTab,title:w.title||'',icon:w.icon||'',
       width:w.el.offsetWidth,height:w.el.offsetHeight,overflow:Number(overflow)||0,
       scrollTop:Math.max(0,Number(realFeed&&realFeed.parentElement===w.body
         ? realFeed.scrollTop : w.slot&&w.parked ? w.slot.scrollTop : w.scrollTop)||0),
@@ -6914,6 +6918,15 @@
               PC().acceptMessagesHandoff(p.state);
             const w=openApp(String(p.view), String(p.title||''), String(p.icon||''));
             if(!w) return;
+            /* Terminal state is adopted before openApp so its stable PTY is selected by the first
+             * render. Reassert the route after the frame exists: the destination renderer can still
+             * have a delayed/global Messages route from its previous window, and allowing that
+             * shared view to win leaves a correctly identified Terminal frame painted as Messages. */
+            if(p.view==='terminal'){
+              w.appView='terminal';w.appPath='';repainting++;
+              try{PC().switchView&&PC().switchView('terminal');}catch(_){}
+              finally{repainting--;}
+            }
             /* A monitor handoff recreates the one Messages frame, then restores its selected tab.
              * Do this for BOTH tabs. Relying on openApp('messages') to incidentally paint Direct
              * Messages left the page-global Concord view in charge on some receiving renderers;

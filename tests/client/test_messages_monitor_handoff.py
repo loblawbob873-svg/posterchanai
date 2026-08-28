@@ -40,7 +40,7 @@ def test_direct_messages_carries_the_selected_conversation():
 
 
 def test_handoff_uses_one_canonical_messages_window_then_restores_its_tab():
-    assert "return {view:handoffIdentity(w),messagesTab" in OS
+    assert "return {view:identity,messagesTab" in OS
     assert "if(p.messagesTab==='concord'||p.messagesTab==='messages')" in OS
     assert "w.appView=p.messagesTab;w.appPath='';repainting++" in OS
     assert "PC().switchView&&PC().switchView(p.messagesTab)" in OS
@@ -108,4 +108,5 @@ console.log(JSON.stringify([
 
 def test_main_process_forwards_only_the_two_messages_tabs():
     main = (ROOT / "desktop/main.js").read_text(encoding="utf-8")
-    assert "messagesTab:p.messagesTab==='concord'||p.messagesTab==='messages'?p.messagesTab:''" in main
+    assert "messagesTab:String(p.view||'')==='messages'&&" in main
+    assert "(p.messagesTab==='concord'||p.messagesTab==='messages')?p.messagesTab:''" in main
