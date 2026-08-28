@@ -266,6 +266,40 @@ class HandAssembledJavaScript(unittest.TestCase):
         self.assertEqual(out["every"], "number")
         self.assertTrue(out["rejectsPlainArrays"], "realtime data must be a Uint8Array, per the spec")
 
+    def test_an_object_exception_reports_emscripten_exit_status_not_object_object(self):
+        """Emscripten's `quit_` throws an ExitStatus object. ioquake3 therefore surfaced only
+        `Uncaught [object Object]` unless the bridge serialised object fields itself."""
+        src = WEBXDC_JS.read_text()
+        m = re.search(r"const BRIDGE = `((?:[^`\\]|\\.)*)`;", src, re.S)
+        body = re.sub(r"\$\{[^}]*\}", "1000", m.group(1)).replace("\\`", "`")
+        out = _node("""
+        const vm = require('vm');
+        const sent = [], listeners = {};
+        global.window = { addEventListener(t, fn){ (listeners[t] ||= []).push(fn); } };
+        global.parent = { postMessage(m){ sent.push(m); } };
+        global.document = { hidden:true, body:{}, documentElement:{},
+          createElement: () => ({ getContext: () => ({}) }), addEventListener(){} };
+        global.requestAnimationFrame = () => 1;
+        vm.runInThisContext(%s);
+        const exit = { name:'ExitStatus', status:1, stack:'ExitStatus: 1\\n at quit_' };
+        for(const fn of listeners.error || []) fn({ error:exit,
+          filename:'https://xdc/ioquake3_opengl2.wasm32.js', lineno:80 });
+        console.log(JSON.stringify(sent.filter(x => x.method === 'webxdc.crash').pop()));
+        """ % json.dumps('var __XDC = { addr:"", name:"", ns:"game" };\n' + body))
+        self.assertEqual(out["params"]["message"], "ExitStatus: status 1")
+        self.assertNotIn("[object Object]", out["params"]["message"])
+        self.assertEqual(out["params"]["where"], "ioquake3_opengl2.wasm32.js:80")
+        self.assertIn("quit_", out["params"]["stack"])
+
+    def test_live_webxdc_identity_includes_the_concord_room(self):
+        """The same attachment UUID forwarded between rooms must not focus the old room's live
+        iframe. Armada keys an active app by chat scope plus session id, not session id alone."""
+        src = WEBXDC_JS.read_text()
+        self.assertIn("__liveKey: _liveKey", src)
+        self.assertIn("['concord2', t.room || '', t.channelId || t.channel || ''].join('|')", src)
+        self.assertIn("['nip29', t.relay || '', t.groupId || ''].join('|')", src)
+        self.assertIn("_transportKey(app && app.transport)", src)
+
     def test_the_blob_fallback_shim_parses(self):
         """It is an ARRAY OF STRINGS joined with newlines, so a missing comma or an unbalanced quote
         is a runtime surprise inside somebody else's app rather than a build error here."""

@@ -40,3 +40,15 @@ def test_scoped_sessions_do_not_fall_through_to_global_nip_dc_bus():
     # Ordinary timeline/post apps retain Ditto NIP-DC interoperability.
     assert "const KIND_UPDATE = 4932" in WEBXDC
     assert "const KIND_REALTIME = 20932" in WEBXDC
+
+
+def test_running_app_and_realtime_echo_are_scoped_like_armada():
+    # Armada identifies an active app by conversation scope AND its attachment session id. A UUID
+    # alone can otherwise focus the still-running iframe from another room after forwarding.
+    assert "_transportKey(app && app.transport)" in WEBXDC
+    assert "['concord2', t.room || '', t.channelId || t.channel || ''].join('|')" in WEBXDC
+    assert "['nip29', t.relay || '', t.groupId || ''].join('|')" in WEBXDC
+    # Concord and NIP-29 realtime frames are signed by the member account. The generic webxdc bus
+    # uses a throwaway rt key; checking only that key feeds every chat-scoped packet back to sender.
+    assert "this.accountPk = (me && me.pubkey) || ''" in WEBXDC
+    assert "this.accountPk && ev.pubkey === this.accountPk" in WEBXDC

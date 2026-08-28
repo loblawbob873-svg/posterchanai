@@ -509,14 +509,39 @@
      context that fails to create, a missing file, or a throw during boot all look identical from
      outside: nothing. These forward to the parent, which shows them. */
   window.addEventListener('error', function(e){
+    var r = e && e.error;
+    /* Emscripten exits by throwing an ExitStatus OBJECT. String(object) is only
+       "[object Object]", which hid both the status and the useful stack for ioquake3. */
+    var detail = '';
+    try{
+      if(r && typeof r === 'object'){
+        var bits = [];
+        if(r.name) bits.push(String(r.name));
+        if(r.message) bits.push(String(r.message));
+        if(r.status !== undefined) bits.push('status ' + String(r.status));
+        detail = bits.join(': ') || JSON.stringify(r);
+      }else if(r !== undefined && r !== null) detail = String(r);
+    }catch(x){}
     send({ jsonrpc:'2.0', method:'webxdc.crash', params:{
-      message: (e && (e.message || (e.error && e.error.message))) || 'error',
-      where: (e && e.filename ? String(e.filename).split('/').pop() + ':' + e.lineno : '') } });
+      message: (e && e.message) || detail || 'error',
+      where: (e && e.filename ? String(e.filename).split('/').pop() + ':' + e.lineno : ''),
+      stack: (r && r.stack ? String(r.stack).slice(0, 1200) : '') } });
   });
   window.addEventListener('unhandledrejection', function(e){
     var r = e && e.reason;
+    var detail = '';
+    try{
+      if(r && typeof r === 'object'){
+        var bits = [];
+        if(r.name) bits.push(String(r.name));
+        if(r.message) bits.push(String(r.message));
+        if(r.status !== undefined) bits.push('status ' + String(r.status));
+        detail = bits.join(': ') || JSON.stringify(r);
+      }else if(r !== undefined && r !== null) detail = String(r);
+    }catch(x){}
     send({ jsonrpc:'2.0', method:'webxdc.crash', params:{
-      message: (r && (r.message || String(r))) || 'unhandled rejection', where: '' } });
+      message: detail || 'unhandled rejection', where: '',
+      stack: (r && r.stack ? String(r.stack).slice(0, 1200) : '') } });
   });
   /* CAN THIS FRAME DRAW AT ALL? A game that renders through WebGL and cannot get a context paints
      nothing and often says nothing — a black rectangle, which is indistinguishable from "still
@@ -949,6 +974,7 @@
       this._rtBusy = false;
       this._rtSk = null;            // the realtime channel's own key — see rtKey()
       this.rtPk = '';               // its pubkey, which is how we drop our own packets
+      this.accountPk = '';          // Concord/NIP-29 realtime wraps use the account signer
       this.seen = new Map();             // event id -> serial
       this.ordered = [];                 // events, oldest first
       this.listening = false;
@@ -1242,6 +1268,7 @@
        * is honest — there is no key to name. */
       try{
         const me = (PC.me && PC.me()) || null;
+        this.accountPk = (me && me.pubkey) || '';
         this.self.addr = (me && (me.npub || me.pubkey)) || '';
         const prof = (me && me.pubkey && PC.profOf) ? (PC.profOf(me.pubkey) || {}) : {};
         this.self.name = String(prof.display_name || prof.name || '').slice(0, 60);
@@ -1445,7 +1472,11 @@
              * skew the channel survives. */
             const receiveRt=(ev) => {
                 if(this.dead || !ev || (!this.transport&&ev.kind !== KIND_REALTIME)) return;
-                if(ev.pubkey && this.rtPk && ev.pubkey === this.rtPk) return;
+                /* Armada signs chat-scoped realtime wraps with the member account, unlike the
+                 * global bus below which uses this session's throwaway rt key. Without this half
+                 * of the self-drop every packet came straight back to ioquake3 as a remote packet. */
+                if(ev.pubkey && ((this.accountPk && ev.pubkey === this.accountPk) ||
+                                 (this.rtPk && ev.pubkey === this.rtPk))) return;
                 this.post({ jsonrpc:'2.0', method:'webxdc.realtime', params:{ b64: ev.content || '' } });
               };
             if(this.transport&&window.PCConcord&&PCConcord.webxdcSubscribe){
@@ -1510,7 +1541,15 @@
      * the DOM; on a phone it was a second full-screen sheet stacked on the first. Keyed the way the
      * window is keyed, so the two can never disagree about what "already open" means. */
     const _live = new Map();
-    const _liveKey = (app) => String((app && (app.uuid || app.sha)) || (app && app.url) || '');
+    const _transportKey = (t) => !t ? '' : t.protocol === 'nip29'
+      ? ['nip29', t.relay || '', t.groupId || ''].join('|')
+      : ['concord2', t.room || '', t.channelId || t.channel || ''].join('|');
+    /* A webxdc UUID identifies an attachment INSIDE a conversation. The same attachment can be
+     * forwarded to another room, and Armada keys its active app by BOTH chat scope and session id.
+     * UUID alone focused the already-running iframe from the previous room, so clicking Play in
+     * room B visibly left the player joined to room A. */
+    const _liveKey = (app) => _transportKey(app && app.transport) + '|' +
+      String((app && (app.uuid || app.sha)) || (app && app.url) || '');
 
     /* Open an app. On the DESKTOP it gets a real window — movable, resizable, and able to sit beside
      * the timeline, which is what a game wants; everywhere else it is a full-screen sheet, because a
@@ -2045,7 +2084,7 @@
                                        if(!isFinite(v) || v < 0 || v >= 0.9) return 'give a number 0-0.89';
                                        try{ localStorage.setItem('pc_xdc_dead', String(v)); }catch(e){}
                                        return 'deadzone ' + v + ' — reopen the game'; },
-                        MIME, KIND_UPDATE, Session };
+                        MIME, KIND_UPDATE, Session, __liveKey: _liveKey };
 
     /* THE APK'S CONTROLLER, PATCHED IN FROM ANDROID.
      *
