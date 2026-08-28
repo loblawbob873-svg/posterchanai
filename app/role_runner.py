@@ -65,6 +65,13 @@ def _bootstrap_settings() -> None:
     db = SessionLocal()
     try:
         n = settings_store.hydrate_from_db(db)
+        # hydrate_from_db deliberately catches database errors because app startup can continue on
+        # defaults.  A split role is different: it has no later hydration pass.  If Postgres is
+        # still recovering during boot and we accept that empty cache, setting-gated services return
+        # False and this process remains "active" forever while supervising nothing.  Make systemd's
+        # Restart=always perform the retry it was intended to perform.
+        if not settings_store.is_hydrated():
+            raise RuntimeError("relay settings are not hydrated yet")
         logger.info("[role] hydrated %d setting(s) from the relay", n)
     finally:
         db.close()

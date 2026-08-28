@@ -13,6 +13,7 @@
 [Unit]
 Description=Posterchan AI — HTTP proxy fronting Tor
 After=network.target posterchanai-tor.service
+Wants=posterchanai-tor.service
 
 [Service]
 Type=simple

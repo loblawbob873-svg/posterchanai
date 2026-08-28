@@ -328,6 +328,81 @@ class RunPyDispatch(unittest.TestCase):
         self.assertIn("return 1", failed[:900])
         self.assertNotIn("services may use defaults", failed[:900])
 
+    def test_bootstrap_rejects_a_swallowed_database_hydrate_failure(self):
+        """Postgres recovery is reported by hydrate as 0 + not-hydrated, not an exception."""
+        from app import role_runner
+        from app.services import settings_store
+
+        fake_db = mock.Mock()
+        with mock.patch.object(settings_store, "load_local"), \
+             mock.patch.object(settings_store, "hydrate_from_db", return_value=0), \
+             mock.patch.object(settings_store, "is_hydrated", return_value=False), \
+             mock.patch("app.database.SessionLocal", return_value=fake_db):
+            with self.assertRaisesRegex(RuntimeError, "not hydrated"):
+                role_runner._bootstrap_settings()
+        fake_db.close.assert_called_once()
+
+
+class ProxyBootDefaults(unittest.TestCase):
+    """The split Tor/proxy roles must survive the empty-cache window at early boot."""
+
+    def test_proxy_missing_settings_uses_the_canonical_enabled_defaults(self):
+        from app.services import http_proxy_service as proxy
+        from app.services import settings_store
+
+        def missing(_key, default=None):
+            return default
+
+        with mock.patch.object(settings_store, "get_bool", side_effect=missing), \
+             mock.patch.object(settings_store, "get", side_effect=missing), \
+             mock.patch.object(settings_store, "get_int", side_effect=missing), \
+             mock.patch.object(proxy, "start_http_proxy_process") as start, \
+             mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("POSTERCHANAI_PROXY_ENABLED", None)
+            os.environ.pop("POSTERCHANAI_PROXY_SOCKS_HOST", None)
+            self.assertTrue(proxy.start_from_settings())
+
+        kwargs = start.call_args.kwargs
+        self.assertEqual(kwargs["listen_port"], 8118)
+        self.assertEqual(kwargs["socks_host"], "127.0.0.1")
+        self.assertEqual(kwargs["socks_ports"], ["9052:us", "9062:ca"])
+
+    def test_proxy_explicit_off_still_wins(self):
+        from app.services import http_proxy_service as proxy
+        from app.services import settings_store
+
+        with mock.patch.object(settings_store, "get_bool", return_value=False), \
+             mock.patch.object(proxy, "start_http_proxy_process") as start:
+            self.assertFalse(proxy.start_from_settings())
+        start.assert_not_called()
+
+    def test_tor_missing_settings_uses_the_canonical_enabled_defaults(self):
+        from app.services import settings_store
+        from app.services import tor_service
+
+        def missing(_key, default=None):
+            return default
+
+        with mock.patch.object(settings_store, "get_bool", side_effect=missing), \
+             mock.patch.object(settings_store, "get", side_effect=missing), \
+             mock.patch.object(settings_store, "get_int", side_effect=missing), \
+             mock.patch.object(tor_service, "start_tor_service", return_value=object()) as start, \
+             mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("POSTERCHANAI_TOR_ENABLED", None)
+            os.environ.pop("POSTERCHANAI_TOR2_ENABLED", None)
+            self.assertTrue(tor_service.start_from_settings())
+
+        self.assertEqual(start.call_count, 2)
+        self.assertEqual(start.call_args_list[0].kwargs["socks_port"], 9052)
+        self.assertEqual(start.call_args_list[1].kwargs["socks_port"], 9062)
+
+    def test_installed_proxy_unit_pulls_in_tor(self):
+        root = os.path.dirname(os.path.dirname(__file__))
+        template = open(os.path.join(root, "posterchanai-proxy.service"), encoding="utf-8").read()
+        installer = open(os.path.join(root, "scripts", "install_services.sh"), encoding="utf-8").read()
+        self.assertIn("Wants=posterchanai-tor.service", template)
+        self.assertIn("echo 'Wants=posterchanai-tor.service'", installer)
+
 
 if __name__ == "__main__":
     unittest.main()

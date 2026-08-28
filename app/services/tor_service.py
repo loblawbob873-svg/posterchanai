@@ -482,7 +482,13 @@ def start_from_settings() -> bool:
     """
     import os as _os
     from app.services import settings_store as _ss
-    if not _ss.get_bool("tor_enabled"):
+    # A split role may boot before relay-backed settings exist.  Missing must mean the same thing as
+    # app.database's canonical first-run default (enabled), not get_bool()'s generic False default;
+    # otherwise systemd reports an active Tor role that owns no daemon and the :8118 proxy has no
+    # backend until an unrelated later deploy happens to restart it.
+    _enabled_default = _os.environ.get("POSTERCHANAI_TOR_ENABLED", "true").strip().lower() \
+        in ("1", "true", "yes", "on")
+    if not _ss.get_bool("tor_enabled", _enabled_default):
         return False
     listen_host = _ss.get("tor_listen_host", "127.0.0.1")
     socks_port = int(_ss.get("tor_socks_port", "9052"))
@@ -504,7 +510,9 @@ def start_from_settings() -> bool:
     # Second daemon (different exit region) so the HTTP proxy can load-balance across two independent
     # circuits / exit IPs — dodges per-IP rate limits + geo-blocks. Own ports + data dir; DNS derives
     # from its control port (+2), like #1.
-    if _ss.get_bool("tor2_enabled"):
+    _tor2_default = _os.environ.get("POSTERCHANAI_TOR2_ENABLED", "true").strip().lower() \
+        in ("1", "true", "yes", "on")
+    if _ss.get_bool("tor2_enabled", _tor2_default):
         t2_control = _ss.get_int("tor2_control_port", 9063)
         t2_socks = _ss.get_int("tor2_socks_port", 9062)
         t2_exits = _ss.get("tor2_exit_nodes", "{ca}")

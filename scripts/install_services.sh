@@ -82,6 +82,10 @@ for r in "${UNITS[@]}"; do
     body="[Unit]
 Description=Posterchan AI — $desc
 After=network.target $after
+# Ordering does not pull another unit into the transaction.  The proxy must start Tor as well when
+# an administrator starts/enables it directly, otherwise systemd can report an active :8118 role
+# whose configured SOCKS backend was never launched.
+$(if [ "$r" = proxy ]; then echo 'Wants=posterchanai-tor.service'; fi)
 # Ordering only — systemd does not wait for READINESS. The processes keep their own
 # _wait_for_relay() loops, which are the actual gate.
 

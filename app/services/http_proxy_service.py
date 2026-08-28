@@ -606,9 +606,18 @@ def start_from_settings() -> bool:
     tor_service.start_from_settings for why this is not duplicated into the role runner.
     """
     from app.services import settings_store as _ss
-    if not _ss.get_bool("proxy_enabled"):
+    # Split roles can reach this point before the relay has an operator/settings document (most
+    # visibly during boot).  The canonical first-run default in app.database is ON; using
+    # get_bool()'s generic False default here silently inverted that default and left the role
+    # process healthy while nothing listened on :8118.  Keep the service-local fallback identical
+    # to the canonical/env-controlled default so a temporarily empty cache cannot disable egress.
+    _enabled_default = os.environ.get("POSTERCHANAI_PROXY_ENABLED", "true").strip().lower() \
+        in ("1", "true", "yes", "on")
+    if not _ss.get_bool("proxy_enabled", _enabled_default):
         return False
-    socks_host = _ss.get("proxy_socks_host", "")
+    socks_host = _ss.get(
+        "proxy_socks_host", os.environ.get("POSTERCHANAI_PROXY_SOCKS_HOST", "127.0.0.1")
+    )
     if not socks_host:
         logger.warning("[PROXY] enabled but no SOCKS5 target host configured")
         return False
@@ -619,7 +628,11 @@ def start_from_settings() -> bool:
     # when this deployment actually runs it, else it is a dead port.
     _l1 = ((_ss.get("tor_exit_nodes", "{us}") or "{us}").strip().strip("{}").split(",")[0] or "tor")
     _socks_ports = [f"{_ss.get_int('proxy_socks_port', 9052)}:{_l1}"]
-    if _ss.get_bool("tor_enabled") and _ss.get_bool("tor2_enabled"):
+    _tor_default = os.environ.get("POSTERCHANAI_TOR_ENABLED", "true").strip().lower() \
+        in ("1", "true", "yes", "on")
+    _tor2_default = os.environ.get("POSTERCHANAI_TOR2_ENABLED", "true").strip().lower() \
+        in ("1", "true", "yes", "on")
+    if _ss.get_bool("tor_enabled", _tor_default) and _ss.get_bool("tor2_enabled", _tor2_default):
         _l2 = ((_ss.get("tor2_exit_nodes", "{ca}") or "{ca}").strip().strip("{}").split(",")[0] or "tor2")
         _socks_ports.append(f"{_ss.get_int('tor2_socks_port', 9062)}:{_l2}")
     # Second listener: Tor1 → Tor2 → DIRECT. This is what the node's own SearXNG points at, so a
