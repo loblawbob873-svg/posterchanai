@@ -24483,6 +24483,34 @@
       + rows.map(([k, d]) => `<kbd>${enc(k)}</kbd><span>${enc(d)}</span>`).join('') + '</div>');
   }
 
+  function _mailAttachmentUrl(m, folder, acct, i){
+    const base=_instanceBase();
+    // Packaged clients run at app://posterchan or https://localhost. A missing instance must be an
+    // unavailable attachment, never a relative URL that silently resolves to either package host.
+    if(!/^https?:\/\//i.test(base)) return '';
+    return base+'/api/mail/dl/'+encodeURIComponent(m.account||acct)+'/'+encodeURIComponent(m.folder||folder)
+      +'/'+encodeURIComponent(m.uid)+'/'+encodeURIComponent(i);
+  }
+  async function _openMailAttachment(a){
+    if(!a || a.dataset.loading==='1') return false;
+    a.dataset.loading='1';a.setAttribute('aria-busy','true');
+    try{
+      const url=a.dataset.mailUrl||'';
+      if(!/^https?:\/\//i.test(url)) throw new Error('connect this app to your PosterChan instance first');
+      const r=await fetch(url,{credentials:'include',headers:_aiToken
+        ?{'Authorization':'Bearer '+_aiToken}:{}});
+      if(!r.ok)throw new Error('attachment returned '+r.status);
+      const blob=await r.blob();
+      if(a.dataset.mailPreview==='1'){
+        const P=await _withModule('preview.js','PCPreview');
+        if(!P||!P.open({name:a.dataset.name||'attachment',mime:a.dataset.mime||blob.type,blob}))
+          throw new Error('Preview cannot open this attachment');
+      }else await saveBlobAs(blob,a.dataset.name||'attachment');
+      return true;
+    }catch(err){toast('could not open attachment: '+((err&&err.message)||err));return false;}
+    finally{delete a.dataset.loading;a.removeAttribute('aria-busy');}
+  }
+
   const Mail = {
     unread:0, root:null, accounts:[], acct:null, folder:'INBOX', folders:['INBOX','Sent','Drafts'], folderLabels:{}, msgs:[], openUid:null, q:'', _syncing:false, sel:null,
     async api(path, opts){ const r=await fetch('/api/mail'+path, opts); if(!r.ok) throw new Error('http '+r.status); return r.json(); },
@@ -24723,11 +24751,11 @@
       /* A relative download URL belongs to the page that rendered it. That is correct on the web,
        * but packaged clients render at app://posterchan (desktop) or https://localhost (Android),
        * neither of which hosts Mail. Always bind the attachment to the configured instance. */
-      const dlBase=_instanceBase();
       const atts=(m.attachments||[]).map((at,i)=>{
         const name=String(at.name||'attachment'), type=String(at.type||'application/octet-stream');
         const pv=_previewable(name,type);
-        return `<a class="mail-att" data-mail-attachment="1" href="${enc(dlBase)}/api/mail/dl/${encodeURIComponent(m.account||acct)}/${encodeURIComponent(m.folder||folder)}/${encodeURIComponent(m.uid)}/${i}" target="_blank" rel="noopener" data-name="${enc(name)}" data-mime="${enc(type)}"${pv?' data-mail-preview="1"':''}>📎 ${enc(name)} <span class="muted small">${_fmtBytes(at.size||0)}</span></a>`;
+        const url=_mailAttachmentUrl(m,folder,acct,i);
+        return `<a class="mail-att" data-mail-attachment="1" data-mail-url="${enc(url)}" href="${enc(url||'#')}" target="_blank" rel="noopener" data-name="${enc(name)}" data-mime="${enc(type)}"${pv?' data-mail-preview="1"':''}>📎 ${enc(name)} <span class="muted small">${_fmtBytes(at.size||0)}</span></a>`;
       }).join('');
       /* Untrusted email HTML → sandboxed iframe (no scripts, no forms, no same-origin); else text.
        *
@@ -24829,25 +24857,7 @@
       $$('[data-act]',pane).forEach(b=> b.onclick=()=>this.action(b.dataset.act, target, target.folder||folder, target.account||acct));
       $$('[data-mail-attachment]',pane).forEach(a=> a.onclick=async e=>{
         e.preventDefault();
-        if(a.dataset.loading==='1')return;
-        a.dataset.loading='1';a.setAttribute('aria-busy','true');
-        try{
-          /* Packaged clients live at app://posterchan or https://localhost. The href is already
-           * pinned to the configured instance; fetch those same authenticated bytes and hand them
-           * to Preview or the platform save flow instead of asking a package-origin new tab to
-           * display them. This applies to EVERY attachment: a normal anchor navigation cannot add
-           * the bearer token, so non-previewable archives used to fail even though images worked. */
-          const r=await fetch(a.href,{credentials:'include',headers:_aiToken
-            ?{'Authorization':'Bearer '+_aiToken}:{}});
-          if(!r.ok)throw new Error('attachment returned '+r.status);
-          const blob=await r.blob();
-          if(a.dataset.mailPreview==='1'){
-            const P=await _withModule('preview.js','PCPreview');
-            if(!P||!P.open({name:a.dataset.name||'attachment',mime:a.dataset.mime||blob.type,blob}))
-              throw new Error('Preview cannot open this attachment');
-          }else await saveBlobAs(blob,a.dataset.name||'attachment');
-        }catch(err){toast('could not open attachment: '+((err&&err.message)||err));}
-        finally{delete a.dataset.loading;a.removeAttribute('aria-busy');}
+        await _openMailAttachment(a);
       });
 
     },

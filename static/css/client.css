@@ -4262,7 +4262,7 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .mi-date{font-size:11.5px;color:var(--muted);flex:0 0 auto}
 .mi-subj{font-size:13.5px;color:var(--text);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mi-prev{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
-.mail-read{display:flex;flex-direction:column;min-height:0;overflow-y:auto}
+.mail-read{display:flex;flex-direction:column;min-width:0;min-height:0;overflow-y:auto}
 .mail-read>.empty{margin:auto;color:var(--muted)}
 .mail-read-hd{flex:0 0 auto;display:flex;gap:10px;align-items:flex-start;padding:16px 18px 8px;border-bottom:1px solid var(--line)}
 .mail-back{display:none}
@@ -4274,7 +4274,7 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
    footprint compact and stable; flex-wrap only matters when a genuinely narrow split pane cannot
    fit the seven 40px controls. The phone reader overrides this with a full-width touch grid below. */
 .mail-actions{flex:0 0 auto;display:flex;flex-wrap:wrap;
-  gap:6px;padding:10px 18px;border-bottom:1px solid var(--line);align-items:stretch}
+  gap:6px;padding:10px 18px;border-bottom:1px solid var(--line);align-items:stretch;max-width:100%;overflow:hidden}
 .mail-actions .btn{flex:0 0 40px;width:40px;min-height:36px;min-width:0;justify-content:center;padding:7px 6px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   background:color-mix(in srgb, var(--neon) 16%, var(--panel2));

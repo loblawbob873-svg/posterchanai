@@ -1,0 +1,63 @@
+"""Responsive Email reader and packaged attachment behavior in shipped code."""
+from pathlib import Path
+import json, re, shutil, subprocess, tempfile
+import pytest
+
+ROOT=Path(__file__).resolve().parents[1]
+APP=(ROOT/'static/js/client/app.js').read_text()
+CSS=(ROOT/'static/css/client.css').read_text()
+CHROME=shutil.which('google-chrome-stable') or shutil.which('chromium')
+
+def extract(name):
+    pos=APP.index('function '+name+'('); start=pos-6 if APP[pos-6:pos]=='async ' else pos
+    brace=APP.index('{',pos); depth=0
+    for i in range(brace,len(APP)):
+        if APP[i]=='{':depth+=1
+        elif APP[i]=='}':
+            depth-=1
+            if depth==0:return APP[start:i+1]
+    raise AssertionError(name)
+
+def test_packaged_attachment_runtime_uses_instance_and_preview():
+    js=extract('_mailAttachmentUrl')+'\n'+extract('_openMailAttachment')
+    script=f'''let BASE='https://poster.example',fetched='',opened=0,saved=0,toasts=[];
+    const _instanceBase=()=>BASE,_aiToken='token',toast=x=>toasts.push(x),saveBlobAs=async()=>saved++;
+    const _withModule=async()=>({{open:o=>{{opened++;return o.name==='photo.png'&&o.mime==='image/png'}}}});
+    globalThis.fetch=async u=>{{fetched=u;return new Response(new Blob(['png'],{{type:'image/png'}}),{{status:200}})}};
+    {js}
+    (async()=>{{
+      const u=_mailAttachmentUrl({{account:'me@example.test',folder:'IN BOX',uid:'7'}},'bad','bad',2);
+      const a={{dataset:{{mailUrl:u,mailPreview:'1',name:'photo.png',mime:'image/png'}},setAttribute(){{}},removeAttribute(){{}}}};
+      const ok=await _openMailAttachment(a); BASE=''; const absent=_mailAttachmentUrl({{uid:'1'}},'INBOX','a',0);
+      process.stdout.write(JSON.stringify({{u,fetched,opened,saved,ok,absent,toasts}}));
+    }})().catch(e=>{{console.error(e);process.exitCode=1}});'''
+    with tempfile.TemporaryDirectory() as td:
+        p=Path(td)/'mail.js';p.write_text(script)
+        r=subprocess.run(['node',p],text=True,capture_output=True,timeout=20)
+    assert r.returncode==0,r.stderr
+    got=json.loads(r.stdout)
+    assert got['u']=='https://poster.example/api/mail/dl/me%40example.test/IN%20BOX/7/2'
+    assert got['fetched']==got['u'] and got['opened']==1 and got['saved']==0 and got['ok'] is True
+    assert got['absent']=='' and 'localhost' not in json.dumps(got).lower()
+
+@pytest.mark.skipif(not CHROME,reason='Chrome unavailable')
+@pytest.mark.parametrize('width,mobile',[(360,True),(1280,False)])
+def test_reader_toolbar_stays_inside_viewport_in_real_chromium(width,mobile):
+    buttons=''.join('<button class="btn icon-only">x</button>' for _ in range(7))
+    html=f'''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>{CSS}</style>
+    <div class="mail-read has-open"><div class="mail-read-hd"><div class="mr-subj">A deliberately long subject that must not widen the reader</div></div><div class="mail-actions">{buttons}</div><div class="mail-body">message</div></div><pre id=o></pre><script>
+    const bar=document.querySelector('.mail-actions'),bs=[...bar.children],r=bar.getBoundingClientRect(),br=bs.map(x=>x.getBoundingClientRect());
+    document.querySelector('#o').textContent=JSON.stringify({{iw:innerWidth,left:r.left,right:r.right,overflow:document.documentElement.scrollWidth-innerWidth,widths:br.map(x=>x.width),cssWidths:bs.map(x=>getComputedStyle(x).width),tops:[...new Set(br.map(x=>Math.round(x.top)))]}});
+    </script>'''
+    with tempfile.TemporaryDirectory() as td:
+        p=Path(td)/'mail.html';p.write_text(html)
+        r=subprocess.run([CHROME,'--headless=new','--no-sandbox','--disable-gpu',f'--window-size={width},800','--force-device-scale-factor=1','--dump-dom',p.as_uri()],text=True,capture_output=True,timeout=30)
+    assert r.returncode==0,r.stderr[-1000:]
+    m=re.search(r'<pre id="o">(.*?)</pre>',r.stdout,re.S);assert m
+    got=json.loads(m.group(1).replace('&quot;','"'))
+    assert got['left']>=0 and got['right']<=got['iw']+1 and got['overflow']<=0
+    if mobile:
+        assert len(got['tops'])==1 and min(got['widths'])>=40
+    else:
+        assert all(39.9<=float(x[:-2])<=40.1 for x in got['cssWidths'])
+        assert max(got['widths'])-min(got['widths'])<.1

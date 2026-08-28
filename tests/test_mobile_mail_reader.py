@@ -27,8 +27,9 @@ def test_mobile_reader_actions_are_compact_accessible_icons():
 
 def test_packaged_mail_attachments_use_the_configured_instance():
     app = (ROOT / 'static/js/client/app.js').read_text()
-    assert 'const dlBase=_instanceBase();' in app
-    assert 'href="${enc(dlBase)}/api/mail/dl/' in app
+    assert 'function _mailAttachmentUrl(' in app
+    assert "if(!/^https?:\\/\\//i.test(base)) return '';" in app
+    assert 'data-mail-url="${enc(url)}"' in app
 
 
 def test_viewable_mail_attachments_open_in_the_fitted_preview_app():
@@ -39,9 +40,11 @@ def test_viewable_mail_attachments_open_in_the_fitted_preview_app():
                  app.index('_msgText(msg)', app.index('_renderThread(pane, thread, folder, acct, seedUid)'))]
     assert '_previewable(name,type)' in render
     assert 'data-mail-preview="1"' in render
-    assert "fetch(a.href,{credentials:'include'" in thread
-    assert "_withModule('preview.js','PCPreview')" in thread
-    assert "P.open({name:a.dataset.name||'attachment'" in thread
+    assert 'await _openMailAttachment(a)' in thread
+    opener = app[app.index('async function _openMailAttachment'):app.index('const Mail =', app.index('async function _openMailAttachment'))]
+    assert "fetch(url,{credentials:'include'" in opener
+    assert "_withModule('preview.js','PCPreview')" in opener
+    assert "P.open({name:a.dataset.name||'attachment'" in opener
 
 
 def test_every_mail_attachment_uses_authenticated_fetch_then_preview_or_save():
@@ -52,6 +55,7 @@ def test_every_mail_attachment_uses_authenticated_fetch_then_preview_or_save():
                  app.index('_msgText(msg)', app.index('_renderThread(pane, thread, folder, acct, seedUid)'))]
     assert 'data-mail-attachment="1"' in render
     assert "$$('[data-mail-attachment]',pane)" in thread
-    assert "'Authorization':'Bearer '+_aiToken" in thread
-    assert "if(a.dataset.mailPreview==='1')" in thread
-    assert "else await saveBlobAs(blob,a.dataset.name||'attachment')" in thread
+    opener = app[app.index('async function _openMailAttachment'):app.index('const Mail =', app.index('async function _openMailAttachment'))]
+    assert "'Authorization':'Bearer '+_aiToken" in opener
+    assert "if(a.dataset.mailPreview==='1')" in opener
+    assert "else await saveBlobAs(blob,a.dataset.name||'attachment')" in opener
