@@ -264,7 +264,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/zsp
-          key: zsp-v0.4.11-posterchan-lineage-v1
+          key: zsp-v0.4.11-posterchan-lineage-v2
 
       # BEST EFFORT, AND THAT IS THE POINT. Everything this step needs has already happened: the APK
       # is built, signed, and published to the rolling GitHub Release that poster.place/apk serves.
@@ -279,6 +279,10 @@ jobs:
           SIGN_WITH: ${{ secrets.ZAPSTORE_SIGN_WITH }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ZSP_CACHE: ~/.cache/zsp
+          # Zapstore's relay currently rejects repeated apk_certificate_hash tags even though its
+          # client model consumes them. Publish the lineage asset to Primal first and use that as
+          # the release's relay hint; still publish the release itself to Zapstore's relay.
+          RELAY_URLS: wss://relay.primal.net,wss://relay.zapstore.dev
           POSTERCHAN_ANDROID_KEYSTORE: ${{ runner.temp }}/posterchan-release.keystore
           POSTERCHAN_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
           POSTERCHAN_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
