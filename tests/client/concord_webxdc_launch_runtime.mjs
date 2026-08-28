@@ -1,0 +1,13 @@
+import fs from 'fs';import vm from 'vm';
+const src=fs.readFileSync(new URL('../../static/js/client/concord.js',import.meta.url),'utf8'),queue=[];
+const messages=Array.from({length:40},(_,i)=>({id:'m'+i,text:'https://example.test/game.xdc',tags:[],at:i,remote:true}));
+const rows=messages.map(m=>({dataset:{messageId:m.id},querySelector:()=>({querySelector:()=>null,insertAdjacentHTML:()=>{}})}));
+const noop=()=>{},document={querySelectorAll:s=>s==='.cc-message[data-message-id]'?rows:[],querySelector:()=>null,createElement:()=>({dataset:{}}),head:{appendChild:noop},documentElement:{appendChild:noop},addEventListener:noop};
+let cards=0;const PCWebxdc={cardHtml:()=>{cards++;return '<div class="xdc-card"></div>';}},window={document,PCWebxdc,addEventListener:noop,requestAnimationFrame:fn=>queue.push(fn)};
+const localStorage={getItem:key=>key==='pc.concord.test.room'?JSON.stringify(messages):null,setItem:noop,removeItem:noop};
+vm.runInNewContext(src,{window,document,PCWebxdc,console,setTimeout:fn=>queue.push(fn),clearTimeout:noop,URL,atob,crypto:{},localStorage,sessionStorage:{getItem:()=>null,setItem:noop}});
+window.PCConcord.hydrateWebxdcCards({naddr:'room',channels:[{name:'general'}]});
+if(cards!==0||queue.length!==1)throw new Error('Webxdc cards blocked Concord launch synchronously');
+queue.shift()();if(cards!==8||queue.length!==1)throw new Error('Webxdc hydration did not yield after its bounded batch');
+while(queue.length)queue.shift()();if(cards!==40)throw new Error('deferred Webxdc cards did not finish');
+console.log('concord webxdc launch runtime ok');
