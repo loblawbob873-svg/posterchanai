@@ -30,3 +30,10 @@ def test_titlebar_probe_defers_frame_recovery_until_every_direction_rejects():
                    source.index("function startDrag", source.index("async function moveToOtherMonitor"))]
     assert "sendFrameHandoff(w,direction,0,false)" in block
     assert "tryMonitorDirections" in block
+
+
+def test_successful_frame_handoff_rearms_the_empty_source_for_the_return_trip():
+    source = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+    block = source[source.index("function sendFrameHandoff"):
+                   source.index("async function tryMonitorDirections")]
+    assert block.index("closeWin(w,{preserveFocus:true})") < block.index("rearmFrameHandoffDestination(pcWM)")

@@ -3206,10 +3206,25 @@
   function sendFrameHandoff(w,direction,overflow,recover=true){
     if(!w || !wins.includes(w) || !window.pcWM || !pcWM.handoffFrame)return Promise.resolve(false);
     return Promise.resolve(pcWM.handoffFrame(handoffPayload(w,overflow),direction)).then(result=>{
-      if(result && wins.includes(w))closeWin(w,{preserveFocus:true});
+      if(result && wins.includes(w)){
+        closeWin(w,{preserveFocus:true});
+        /* The source renderer remains a live Desktop surface after its last frame moves away and is
+         * now the destination for the return trip. Reassert readiness after close/releaseFeed: that
+         * teardown can race the earlier ready registration, leaving main's guarded destination set
+         * stale even though all three listeners and #os-root are still mounted. Do not weaken the
+         * main-process loading/listener guard; repair the exact renderer lifecycle transition. */
+        rearmFrameHandoffDestination(pcWM);
+      }
       else if(!result&&recover){keepFrameReachable(w);_natGesture(w,false);if(nativeWins().length)nsync();}
       return result;
     }).catch(()=>{if(recover){keepFrameReachable(w);_natGesture(w,false);if(nativeWins().length)nsync();}return false;});
+  }
+
+  function rearmFrameHandoffDestination(bridge){
+    try{
+      if(!bridge||!bridge.handoffReady)return false;
+      Promise.resolve(bridge.handoffReady(true)).catch(()=>{});return true;
+    }catch(_){return false;}
   }
 
   async function tryMonitorDirections(run,recover){
@@ -7443,6 +7458,7 @@
                   __shouldSelectMessagesTab: shouldSelectMessagesTab,
                   __selectedMessagesTab: selectedMessagesTab,
                   __tryMonitorDirections: tryMonitorDirections,
+                  __rearmFrameHandoffDestination: rearmFrameHandoffDestination,
                   /* The launcher's own list, for the same reason: "a row switched off in Settings →
                    * Sidebar is gone from the desktop too" is invisible when it is wrong — you get a
                    * desktop, just one still carrying the app you removed. tests/client/test_nav_hide.py
