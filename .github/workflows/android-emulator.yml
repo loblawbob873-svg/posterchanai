@@ -80,6 +80,10 @@ jobs:
           PC_APP_BUILD: ${{ github.run_number }}
         run: bash build-www.sh
 
+      - name: Test bundled Concord composer repaint safety
+        working-directory: mobile
+        run: node ../tests/client/concord_runtime.mjs www/static/js/client/concord.js
+
       - name: Capacitor sync
         working-directory: mobile
         run: npx cap sync android

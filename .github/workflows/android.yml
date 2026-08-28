@@ -80,6 +80,10 @@ jobs:
         working-directory: mobile
         run: bash build-www.sh      # reads PC_APP_BUILD → bakes __PC_APP_BUILD__ into the bundle for the updater
 
+      - name: Test bundled Concord composer repaint safety
+        working-directory: mobile
+        run: node ../tests/client/concord_runtime.mjs www/static/js/client/concord.js
+
       - name: Capacitor sync
         working-directory: mobile
         run: npx cap sync android

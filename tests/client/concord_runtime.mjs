@@ -103,7 +103,10 @@ globalThis.document = {
   removeEventListener(name,fn){if(documentListeners.get(name)===fn)documentListeners.delete(name);},
 };
 
-vm.runInThisContext(fs.readFileSync(new URL('../../static/js/client/concord.js', import.meta.url), 'utf8'),
+const concordSource=process.argv[2]
+  ? new URL(`file://${process.cwd()}/${process.argv[2].replace(/^\/+/, '')}`)
+  : new URL('../../static/js/client/concord.js', import.meta.url);
+vm.runInThisContext(fs.readFileSync(concordSource, 'utf8'),
                     {filename:'concord.js'});
 const publicLinks=PCConcord.discoverInvites('Join us https://armada.buzz/invite/naddr1qqqq#abc_DEF',{created_at:1});
 if(publicLinks.length!==1 || publicLinks[0].name!=='Join us') throw new Error('public discovery parser failed');
