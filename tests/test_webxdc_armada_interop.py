@@ -50,6 +50,9 @@ def test_peer_ads_use_the_open_room_sockets_not_an_unrelated_pool():
     assert "close.publish=event=>(R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)" in sub
     iroh = (ROOT / "static/js/client/webxdc-iroh.js").read_text()
     assert "webxdcPeerPublish(ctx,JSON.stringify({op:'ad',topic,addr:encodeAddr(node.nodeAddrJson())}),off)" in iroh
+    assert "await PCConcord.webxdcPeerQuery(ctx)" in iroh
+    assert "await node.join(topicBytes,initial" in iroh
+    assert "diag('peer-bootstrap',String(initial.length))" in iroh
     assert "sealRumor(rumor, 20013, channel.current.group" in READER
     assert "['rt','1']" in CONCORD
     assert "kind=realtime?21059:1059" in CONCORD

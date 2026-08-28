@@ -31,7 +31,13 @@
     const topicBytes=decode32(topic);if(!topicBytes||topicBytes.length!==32)throw new Error('attachment has no interoperable Webxdc topic');
     if(!ctx||ctx.protocol!=='concord2'||!window.PCConcord)throw new Error('Iroh multiplayer is available in Concord rooms');
     const node=await transport(),self=node.publicKeyHex(),key=hexBytes(self),latest=new Map();let dead=false,seq=0,off=null;diag('iroh-node',self.slice(0,16));
-    await node.join(topicBytes,[],bytes=>{if(dead)return;const got=unframe(bytes);if(got&&got.sender!==self)onMessage(got.payload);},msg=>{try{console.debug('[webxdc] iroh:',msg);}catch(_){}});
+    /* Armada supplies known peers in the initial gossip join. Our old path joined an empty mesh and
+     * learned every address later; addPeer could mark the id joined before its relay QUIC connection
+     * completed, leaving two advertised players with no gossip neighbor. Fold durable CORD-04 ads
+     * first and bootstrap the topic with their complete endpoint addresses. */
+    let initial=[];
+    try{const rows=PCConcord.webxdcPeerQuery?await PCConcord.webxdcPeerQuery(ctx):[];for(const row of rows){const sig=parseSignal(row,topic);if(!sig)continue;const at=Number(row.at)||Number(row.created_at)*1000||0,prior=latest.get(row.pubkey);if(prior&&(prior.at>at||(prior.at===at&&prior.op==='left')))continue;latest.set(row.pubkey,{at,op:sig.op,addr:sig.addr});}for(const value of latest.values())if(value.op==='ad'){const addr=decodeAddr(value.addr);if(addr)initial.push(addr);}diag('peer-bootstrap',String(initial.length));}catch(e){diag('peer-bootstrap-failed',e&&e.message||e);}
+    await node.join(topicBytes,initial,bytes=>{if(dead)return;const got=unframe(bytes);if(got&&got.sender!==self)onMessage(got.payload);},msg=>{try{console.debug('[webxdc] iroh:',msg);}catch(_){};diag('iroh-event',msg);});
     diag('iroh-joined',topic);
     try{
       off=await PCConcord.webxdcPeerSubscribe(ctx,row=>{if(dead)return;const sig=parseSignal(row,topic);if(!sig)return;const at=Number(row.at)||Number(row.created_at)*1000||0,prior=latest.get(row.pubkey);if(prior&&(prior.at>at||(prior.at===at&&prior.op==='left')))return;latest.set(row.pubkey,{at,op:sig.op});if(sig.op!=='ad')return;const addr=decodeAddr(sig.addr);if(!addr){diag('peer-address-invalid',row.pubkey||'');return;}try{if(JSON.parse(addr).id===self)return;}catch(_){return;}diag('peer-dial',row.pubkey||'');void node.addPeer(topicBytes,addr).then(()=>diag('peer-added',row.pubkey||'')).catch(e=>diag('peer-add-failed',e&&e.message||e));});
