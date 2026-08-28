@@ -2,9 +2,11 @@
 """Prove installed PosterChan keeps Code and Terminal sizing isolated across focus changes."""
 
 import asyncio
+import json
 import urllib.error
+import urllib.request
 
-from check_installed_desktop_account import CDP, choose_authenticated_page
+from check_installed_desktop_account import BASE, CDP
 
 
 DRIVE = r"""(async()=>{
@@ -51,8 +53,24 @@ CLEANUP = r"""(async()=>{
 })()"""
 
 
+async def choose_page():
+    """Pick the installed shell without requiring account state.
+
+    Code and Terminal window ownership is local Electron/DOM behaviour. Requiring a signed-in
+    account made this release gate impossible to run in its deliberately isolated profile and
+    encouraged copying a person's multi-gigabyte Chromium profile into /tmp. The native Files gate
+    already uses the same safe rule: require the packaged app:// page and then let the runtime
+    assertions below prove the shell and bridge are present.
+    """
+    pages = [p for p in json.load(urllib.request.urlopen(BASE + "/json/list", timeout=5))
+             if p.get("type") == "page" and p.get("url", "").startswith("app://posterchan/")]
+    if not pages:
+        raise RuntimeError("no installed PosterChan page is attached")
+    return pages[0]
+
+
 async def main():
-    page = await choose_authenticated_page()
+    page = await choose_page()
     async with CDP(page["webSocketDebuggerUrl"]) as cdp:
         try:
             result = await cdp.eval(DRIVE)

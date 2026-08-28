@@ -16,6 +16,12 @@ def test_focus_gate_drives_real_desktop_windows():
     assert "new PointerEvent('pointerdown'" in SRC
 
 
+def test_focus_gate_needs_no_account_or_profile_copy():
+    assert "choose_authenticated_page" not in SRC
+    assert 'startswith("app://posterchan/")' in SRC
+    assert "no installed PosterChan page is attached" in SRC
+
+
 def test_focus_gate_removes_only_created_windows_and_restores_prior_focus():
     assert "finally:" in SRC
     assert "__pcInstalledCodeFocusBackup={before,focused:" in SRC
