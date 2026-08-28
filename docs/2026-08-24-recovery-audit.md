@@ -304,10 +304,9 @@ browser-only interaction into a current installed pass.
 ## 2026-08-28 current release evidence
 
 This section supersedes earlier uses of “current” only; it does not erase their historical evidence.
-The current packaged boundary is commit `56c2179ed7f74954560bb462a33b5254699c9c71`, Desktop
-`1.0.1125`, and Android `1.0.1843`. Repository HEAD `afacc3d0872206d2ec6b939fff86d4b3daec67ff`
-only updates the overlay to that already-published Desktop release and is not a newer application
-payload.
+This was the packaged boundary when the section was written: commit
+`56c2179ed7f74954560bb462a33b5254699c9c71`, Desktop `1.0.1125`, and Android `1.0.1843`.
+It is retained as historical evidence and is superseded by the later boundary recorded below.
 
 - Desktop workflow `33130280572` succeeded at the exact release commit for Linux, Windows, macOS,
   bundled-Concord audit, immutable publish, immutable-tag verification and rolling publish. Release
@@ -346,3 +345,37 @@ payload.
   history/media migration, physical USB boot, native Firefox/Telegram editable-field clipboard session,
   sustained real Codex/Claude terminal repaint session, and every physical-device item above all remain
   open. The former stash contents likewise remain unrecoverable and unverified.
+
+## 2026-08-28 Desktop 1.0.1127 / Android 1.0.1845 boundary and superseding fix
+
+This is the latest evidence audited through repository commit
+`bb764dbeda70e1259f861d18b877d328f06650b3`. Desktop `1.0.1127` and Android `1.0.1845`
+were built from application commit `e54e90c83486b6bba40338faea249acb026874d7`; they are real,
+independently identified artifacts, but they are **provisional and superseded** for the next release.
+Commit `bb764dbed` subsequently fixed Messages/Communities and Direct Messages state preservation
+during monitor handoff. No evidence in this audit proves that a Desktop, Gentoo or Android artifact
+containing that newer commit has completed publication and installed-device verification.
+
+| Requirement | Authoritative evidence through `bb764dbed` | State / remaining boundary |
+|---|---|---|
+| Desktop artifact | Desktop workflow `33132153653` completed Linux, Windows, macOS and publish for `e54e90c83`. Immutable release `desktop-v1.0.1127` targets that exact commit. Its Linux tarball is 152,187,868 bytes with SHA-256 `98d489be03da2d212687f07110217d3e62db44731293576d40de21eea7496bb4` | Published and identified, but superseded by `bb764dbed`; a new immutable Desktop release is required |
+| Gentoo propagation | The public overlay at revision `9d3817ec227eb0717fffd1001551b85df125f4aa` pins Desktop 1.0.1127 and shell 1.0.20260828011706. Overlay resolution/Manifest focused tests passed | Correct for 1.0.1127 only; the post-release Messages fix still requires a new pin, Manifest, public-overlay verification, installation and restart |
+| Installed package identity | Both authorized Gentoo machines reported Desktop 1.0.1127 and shell 1.0.20260828011706. Their installed ASAR SHA-256 was `dbdd7c2976018c18039aa4718df3fb922f78dff27cf144e393de5c79641e86fb` | Exact 1.0.1127 identity verified on both machines; this does not prove `bb764dbed` is installed |
+| Installed shell/native windowing | The dual-monitor desktop exposed exactly two visible 3840×2560 package-backed shell surfaces; the laptop exposed one 1920×1080 surface. A disposable native probe passed right-edge preview/snap at full height, actual PointerEvent handoff to the other renderer and return with the same native ID, and ten stable snapshots over two seconds. No user Firefox/Telegram window was selected | Verified for installed 1.0.1127. Future package installation must repeat the exact installed handoff/snap gate; sustained user Firefox/Telegram interaction remains manual/open |
+| Installed Files/Preview | On both machines, the exact installed package listed disposable native fixtures, offered Code and host choices, rendered SVG in Preview and emitted no runtime errors. The immutable-ASAR package gates also passed Files open-with, folder upload/drop, This Computer video, Preview image/video/PDF/audio, blob cleanup, bundled PDF and generic MP4 paths | Installed disposable path verified for 1.0.1127. Authenticated current-account File Manager index/sync completeness and physical/mobile external-storage behavior were not rerun and remain open |
+| Installed Code/Terminal | Exact installed package gates passed native Git diff/staged restore and browser Code behavior. Installed diagnostic focus isolation kept Code and Terminal in distinct windows with mutually exclusive feed classes | Disposable/package behavior verified for 1.0.1127. No claim is made about arbitrary non-disposable user repositories; a newer package must rerun this gate |
+| Installed Office/Email | Exact installed immutable-ASAR Office/Email workspace and mobile-email gates passed | This is package-route evidence only. No authenticated 1.0.1127 Collabora/WOPI edit/save/readback was performed, so that current-account interaction remains open |
+| News focus/state | Installed 1.0.1127 retained the same News window, feed and focus with one News instance and unchanged `navigationStart` | Verified for 1.0.1127; exhaustive every-app navigation/focus/scroll sequences remain open |
+| Android artifact | Android workflow `33132153694` published signed APK 1.0.1845 from `e54e90c83`. The rolling artifact is 20,412,023 bytes with SHA-256 `28a57c12176ee385b9f542226a2ecbfbc9d5f1f9596b4a4fc1f79f528e6ea906`; a local mirror matched that digest and reported version 1845 | Published and identified, but it predates `bb764dbed`; a new APK and artifact-identity verification are required |
+| Android emulator behavior | Exact-commit emulator workflow `33132153658` completed 74 tests with zero failures, errors or skips. Its XML records `aPlayingWebViewTrackKeepsAdvancingAfterHome` (4.185s) and `tabletDesktopStateSurvivesHomeAndRotationInBothTasks` (10.982s) | Background playback and tablet lifecycle are proven on API-34 emulator for 1.0.1845. Audible playback after Home on a physical/OEM device, Bluetooth behavior and physical phone/tablet UI remain open |
+| Mobile Files layout | Runtime browser checks at 360×780 and 412×915 rendered three and four columns respectively, with square previews, working layout/selection/drawer/scroll interactions and no horizontal overflow; picker checks covered the same compact behavior | Browser runtime geometry verified. Physical Android interaction and external-storage-provider behavior remain open |
+| Messages monitor handoff | `bb764dbed` carries the selected Communities tab, community/channel/scroll handoff state, and selected Direct Message peer into a cold destination before first render. `messages_handoff_destination_runtime.mjs` executes the destination sequence; the focused gate passed 72 tests plus seven runtime subtests | Source/runtime regression fixed. It is not release-complete until a new immutable Desktop/Gentoo package is installed on the two-monitor machine and the actual Communities-room and Direct-peer move/return sequence proves no popout, duplicate or state reset. Android/Web artifact propagation must also be identified |
+
+The 1.0.1127 installed run used disposable/private diagnostics and did not attach the canonical
+authenticated account to the test harness. Consequently it cannot replace the earlier authenticated
+Files-index/sync or Office/WOPI evidence, and it cannot establish current account behavior after the
+new Messages commit. Physical Android playback, complete carrier SMS/MMS migration and sending,
+cross-device notifications, live two-identity Concord write/moderation/attachment/Webxdc behavior,
+external native-app editable-field/clipboard sessions and physical USB boot are still open. A final
+ISO must not be called a release candidate until the `bb764dbed` application boundary is packaged,
+installed and passed through the relevant current-package gates.
