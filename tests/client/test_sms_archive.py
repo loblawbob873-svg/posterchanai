@@ -167,6 +167,18 @@ class Deleting(unittest.TestCase):
         result = calls_of(res, "removeResult")[0]
         self.assertEqual(result[1], 0, "it claimed to have deleted the archive copy")
 
+    def test_a_partial_provider_delete_does_not_tombstone_the_whole_archive(self):
+        """Some OEMs accept the SMS URI and refuse MMS (or vice versa). A non-zero aggregate is
+        not proof that every selected message disappeared; tombstoning all of them makes the
+        survivor reappear on the next mirror after the UI claimed success."""
+        rows = [msg(1), msg(2)]
+        res = run(rows=rows, deleteLimit=1,
+                  steps=["load", "mirror", "remove:" + rows[0]["doc"] + "," + rows[1]["doc"]])
+        self.assertEqual(sorted(res["relay"]), sorted(r["doc"] for r in rows),
+                         "a partial phone delete tombstoned the complete archive selection")
+        result = calls_of(res, "removeResult")[0]
+        self.assertEqual(result[1], 0, "a partial provider result claimed archive deletion")
+
     def test_a_tombstone_removes_the_message_everywhere_it_is_read(self):
         cached = [
             ev("pcai:sms:a", {"address": "+15550100", "body": "one", "date": 1, "incoming": True}, at=10),

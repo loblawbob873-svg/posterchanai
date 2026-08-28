@@ -54,7 +54,11 @@
    * repaired cursor walk: new MMS is mirrored by the live sweep while older media remains absent
    * forever. A pagination/schema repair is not effective until every earlier completion claim is
    * re-audited through it. */
-  const HWM_BLOSSOM = () => HWM() + '_blossom_v6';
+  /* v7 invalidates the v6 latch because v6 still filled its migration set with one oversized
+   * provider query. Android capped that query at the newest MMS slice, so v6 could truthfully
+   * finish everything it had been shown while never seeing older photo/video rows. The paged phone
+   * load below is not a repair for an account that returns early on its old completion marker. */
+  const HWM_BLOSSOM = () => HWM() + '_blossom_v7';
   /* AND A SEPARATE MARKER FOR THE REWIND ITSELF, because rewinding is a ONE-TIME ACT and finishing
    * the migration is a different question entirely.
    *
@@ -918,25 +922,33 @@
    * "MOST MESSAGES I SENT ARE MISSING", and it has nothing to do with the relay: the messages were
    * on the handset the whole time and the screen never asked for them.
    *
-   * `since: 0` returns the newest N, so ONE call with a large N is the whole store. Asked in
-   * growing steps rather than at the ceiling every time: most phones are answered by the first,
-   * and a bigger ask is a superset of a smaller one, so a full answer is the signal to ask for
-   * more. The last step is a bound, not a target — a store larger than that is not going to be
-   * read into a web page, and stopping there is better than an unbounded transfer.
+   * THE MMS PROVIDER HAS ITS OWN PER-QUERY CEILING. Asking it for 50,000 does not make that ceiling
+   * larger: it returns its newest 2,000 pictures, reports a cap, and the old growing-step loop saw
+   * `2000 < 10000` and declared the combined store exhausted. Text bodies therefore reached every
+   * device while older photos/videos never entered S, never reached the migration, and never became
+   * visible on PosterChanOS. Walk strict `before` pages instead. Every page is below Android's MMS
+   * ceiling, so the cursor crosses it rather than repeatedly asking for a larger version of page 1.
+   *
+   * 400 pages is a safety bound of 160,000 messages. Hitting it is recorded as incomplete so the
+   * encrypted archive cannot write a false completion latch. Yield between pages so a large phone
+   * history does not freeze Android's WebView while it is being converged.
    */
   async function loadFromPhone(onProgress){
     const P = plug('list');
     if(!P) return { loaded: 0 };
-    const STEPS = [1000, 10000, 50000];
-    let total = 0, refused = false, rows = [];
+    const PAGE = 400, MAX_PAGES = 400;
+    let total = 0, refused = false, rows = [], edge = Date.now() + 1, exhausted = false;
     /* LOCAL, then assigned once at the end — it must describe THIS read. Latched on the state
        object it could only ever go true, so a phone whose picture table failed once wore the
        notice for the rest of the session with its photos on the screen underneath it. */
     let mmsRef = false, mmsCap = false;
-    for(let i = 0; i < STEPS.length; i++){
+    const byDoc = new Map();
+    for(let page = 0; page < MAX_PAGES; page++){
+      let pageRows = [], offered = 0;
       try{
-        const answer = (await P.list({ since: 0, limit: STEPS[i] })) || {};
-        rows = answer.messages || [];
+        const answer = (await P.list({ before: edge, limit: PAGE })) || {};
+        offered = (answer.messages || []).length;
+        pageRows = (answer.messages || []).filter(r => r && Number(r.date) < edge);
         /* REFUSED IS NOT EMPTY. The plugin returns `[]` for a phone with no texts and for a provider
          * that would not let us look; without this the caller cannot tell, and the screen reported
          * "no messages" over a full inbox with nothing to do about it. */
@@ -952,9 +964,22 @@
          * those builds have always effectively claimed. */
         if(answer.mmsCapped) mmsCap = true;
       }catch(_){ break; }
-      // A short answer means the store is exhausted; a full one means there may be more behind it.
-      if(rows.length < STEPS[i]) break;
+      let oldest = edge;
+      for(const r of pageRows){
+        if(r && r.doc) byDoc.set(r.doc, r);
+        if(Number(r && r.date) && Number(r.date) < oldest) oldest = Number(r.date);
+      }
+      if(onProgress && byDoc.size) try{ onProgress(byDoc.size); }catch(_){ }
+      // A short answer means the combined provider is exhausted. No progress means an old APK
+      // ignored `before`; fail incomplete instead of rereading page one four hundred times.
+      if(offered && !pageRows.length){ mmsCap = true; break; }
+      if(pageRows.length < PAGE){ exhausted = true; break; }
+      if(oldest >= edge){ mmsCap = true; break; }
+      edge = oldest;
+      await new Promise(resolve => setTimeout(resolve, 0));
     }
+    rows = Array.from(byDoc.values());
+    if(!exhausted) mmsCap = true;
     S.lastRead = rows.length;      // what the PROVIDER returned, before any of our filtering
     for(const r of rows){
       if(!r || !r.doc) continue;
@@ -1668,10 +1693,14 @@
           (r.mms ? mmsIds : ids).push(r.id);
         }
         if(ids.length || mmsIds.length){
+          const expected = ids.length + mmsIds.length;
           phone = (((await P.delete({ ids, mmsIds })) || {}).deleted) || 0;
-          // Asked to remove rows and removed none: the provider refused. Leave the archive alone —
-          // a half-delete that the next sync reverses is worse than one that plainly did not happen.
-          if(!phone) refused = true;
+          // Every selected provider row must be gone. An OEM can accept one URI and refuse the
+          // other, so merely checking for a non-zero result tombstoned BOTH archive documents after
+          // deleting only one phone row. The survivor then came back on the next mirror while the
+          // UI had reported success. Keep the archive intact unless the provider confirms the exact
+          // count; the next reconciliation can show what remains instead of hiding a partial act.
+          if(phone !== expected) refused = true;
         }
       }catch(_){ refused = true; }
     }

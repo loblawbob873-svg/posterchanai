@@ -34,6 +34,16 @@ let driveBatch = 0;
 // The system message store. `doc` is what SmsPlugin computes on a real handset (SmsKeys.docId); the
 // sim carries it the same way, because the client never derives it and must not start.
 let rows = (opt.rows || []).slice();
+// Large-provider regression inputs stay generated inside the simulator. Passing two thousand full
+// MMS rows through argv exceeds Linux's per-argument bound before Node gets a chance to test them.
+if(opt.generatedPictures){
+  const base = Number(opt.now) || Date.now();
+  for(let i=1;i<=Number(opt.generatedPictures);i++) rows.push({
+    id:i,thread:1,address:'+15550100',body:'',date:base-i*60000,type:1,incoming:true,
+    read:true,mms:true,parts:[{id:900+i,ct:'image/jpeg',name:'p'+i+'.jpg',bytes:2048}],
+    doc:'pcai:sms:generated'+String(i).padStart(12,'0')
+  });
+}
 const isPhone = () => opt.isPhone !== false;
 
 // READ_SMS is a RUNTIME grant and is not implied by the SMS role — two switches, and the app used
@@ -77,12 +87,19 @@ const PLUGIN = {
     // have no messages", over a full inbox.
     let found = rows.filter(r => before ? r.date < before : r.date > since)
                     .sort((x, y) => before ? y.date - x.date : x.date - y.date);
-    if(a && a.limit) found = found.slice(0, Math.max(1, Number(a.limit) || 1));
+    if(a && a.limit){
+      let want = Math.max(1, Number(a.limit) || 1);
+      // Android's MMS reader caps one provider query. Asking for a larger first page never exposes
+      // the older media; only strict `before` pages cross the boundary.
+      if(opt.providerPageCap) want = Math.min(want, Math.max(1, Number(opt.providerPageCap) || 1));
+      found = found.slice(0, want);
+    }
     const out = { messages: found };
     if(opt.mmsRefused) out.mmsRefused = true;
     // TRUNCATED, not exhausted — MmsStore.MAX_ROWS hands back the newest 2,000 and there is no way
     // to ask for the rest. The stub reports it the way the plugin does, on every reply.
-    if(opt.mmsCapped) out.mmsCapped = true;
+    if(opt.mmsCapped || (opt.providerPageCap && a && Number(a.limit) > Number(opt.providerPageCap)
+                         && found.length >= Number(opt.providerPageCap))) out.mmsCapped = true;
     return out;
   },
   /* WHAT THIS CARRIER SAYS AN MMS MAY WEIGH. `opt.mmsLimit` sets it; `opt.noMmsLimit` models an
@@ -117,7 +134,12 @@ const PLUGIN = {
     const before = rows.length;
     // The stub is the PROVIDER, so it enforces the provider's rule: an id offered down the wrong
     // path removes nothing at all.
-    rows = rows.filter(r => !(r.mms ? mms.has(r.id) : sms.has(r.id)));
+    let left = opt.deleteLimit === undefined ? Infinity : Math.max(0, Number(opt.deleteLimit) || 0);
+    rows = rows.filter(r => {
+      const hit = r.mms ? mms.has(r.id) : sms.has(r.id);
+      if(hit && left > 0){ left--; return false; }
+      return true;
+    });
     return { deleted: before - rows.length };
   },
   /* ONE ATTACHMENT'S BYTES. Three answers, not two: the data, "too large for the bridge" (a real
@@ -395,7 +417,7 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
     mmsRefused: !!st.mmsRefused,
     mmsCapped: !!st.mmsCapped,
     blossomDone: !!global.localStorage._all[Object.keys(global.localStorage._all)
-                    .filter(k => k.indexOf('_blossom_v6') > 0)[0]],
+                    .filter(k => /_blossom_v\d+$/.test(k))[0]],
     /* THE MARK ITSELF, not whichever `pc_sms_hwm*` key happens to come first. The marker keys are
      * siblings of it (`_blossom_v6`, `_blossom_rewound_v4`, `_oldest_first_v1`) and all hold "1",
      * so an unanchored filter reported a high-water mark of 1 -- a plausible-looking number that

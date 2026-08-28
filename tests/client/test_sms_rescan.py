@@ -1,6 +1,6 @@
 """THE WAY BACK OUT OF "ALREADY DONE".
 
-Every marker the message archive keeps is a LATCH, and the completion one — `..._blossom_v6` — is
+Every marker the message archive keeps is a LATCH, and the completion one — `..._blossom_v7` — is
 read at the top of `migrateLocalHistory` and returns immediately when it is set. That is correct
 when it was set correctly. When it was set by an older build that believed a truncated or walled-off
 read was the whole phone, it is permanent: the device installs every fix that follows, opens Texts,
@@ -69,7 +69,7 @@ class AStuckCompletionMarker(unittest.TestCase):
                          ME: str(NOW)}, ["phoneLoad", "migrateAll"])
         self.assertEqual(len(mms_files(res)), 3,
                          "the obsolete v5 latch still hid historical MMS media")
-        self.assertTrue(res["blossomDone"], "the v6 audit did not record its own completion")
+        self.assertTrue(res["blossomDone"], "the current audit did not record its own completion")
 
     def test_backfill_archives_media_already_visible_from_the_phone(self):
         """Provider rows are loaded into the screen first. They are not thereby archived: a photo
@@ -92,6 +92,26 @@ class AStuckCompletionMarker(unittest.TestCase):
         archived = [d for d in res["docs"] if d.startswith("pcai:sms:dense")]
         self.assertEqual(len(archived), 405,
                          "strict backward paging skipped part of a dense history window")
+
+    def test_phone_load_pages_past_the_mms_provider_ceiling(self):
+        """A large `recent` request is still capped by Android's MMS table. The old 1k/10k/50k
+        growth loop stopped at the 2k answer and older media never entered the migration set."""
+        res = run([], {}, ["phoneLoad"], {"providerPageCap": 2000,
+                                          "generatedPictures": 2105})
+        self.assertEqual(len(res["docs"]), 2105,
+                         "phone history stopped at the MMS provider's first-page ceiling")
+        before = [c[2] for c in res["calls"] if c[0] == "list"]
+        self.assertGreater(len(before), 5, "history was not read through bounded before-pages")
+        self.assertTrue(all(v > 0 for v in before), "a history page did not carry a strict cursor")
+        self.assertFalse(res["mmsCapped"], "an exhausted paged read was reported as truncated")
+
+    def test_v6_completion_is_reaudited_by_the_paged_provider_reader(self):
+        """v6 could mark the newest capped MMS slice complete. That latch must not make the new
+        provider pager unreachable on precisely the established phones missing old desktop media."""
+        rows = [picture(i, NOW - i * 60000) for i in range(1, 6)]
+        res = run(rows, {ME + "_blossom_v6": "1"}, ["phoneLoad", "migrateAll"])
+        self.assertEqual(len(mms_files(res)), 5, "the obsolete v6 latch hid old MMS again")
+        self.assertTrue(res["blossomDone"])
 
     def test_completed_first_page_does_not_hide_older_mms_media(self):
         """A second backfill normally starts over already-archived recent rows. Its provider
@@ -122,7 +142,7 @@ class AStuckCompletionMarker(unittest.TestCase):
         """THE BUG, stated as the thing the user sees. The latch is set, so the whole history is
         skipped and not one picture reaches encrypted storage — with no error anywhere."""
         rows = [picture(i, NOW - (100 + i) * 86400000) for i in range(1, 6)]
-        res = run(rows, {ME + "_blossom_v6": "1", ME + "_oldest_first_v1": "1", ME: str(NOW)},
+        res = run(rows, {ME + "_blossom_v7": "1", ME + "_oldest_first_v1": "1", ME: str(NOW)},
                   ["phoneLoad", "migrateAll"])
         self.assertEqual(mms_files(res), [],
                          "the latch did not actually block the migration — this test proves nothing")
@@ -130,7 +150,7 @@ class AStuckCompletionMarker(unittest.TestCase):
     def test_a_rescan_clears_the_latch_and_copies_the_whole_phone(self):
         """The way out. Same phone, same latch, one deliberate re-scan."""
         rows = [picture(i, NOW - (100 + i) * 86400000) for i in range(1, 6)]
-        res = run(rows, {ME + "_blossom_v6": "1", ME + "_oldest_first_v1": "1", ME: str(NOW)},
+        res = run(rows, {ME + "_blossom_v7": "1", ME + "_oldest_first_v1": "1", ME: str(NOW)},
                   ["phoneLoad", "rescan"])
         self.assertEqual(len(mms_files(res)), 5,
                          "the re-scan did not reach the pictures the latch was hiding")
@@ -140,7 +160,7 @@ class AStuckCompletionMarker(unittest.TestCase):
         sweep start at `now` rather than at the beginning, so a re-scan that left it would re-run a
         migration that still could not reach anything old."""
         rows = [picture(i, NOW - (100 + i) * 86400000) for i in range(1, 4)]
-        res = run(rows, {ME + "_blossom_v6": "1", ME + "_oldest_first_v1": "1", ME: str(NOW)},
+        res = run(rows, {ME + "_blossom_v7": "1", ME + "_oldest_first_v1": "1", ME: str(NOW)},
                   ["phoneLoad", "rescan"])
         # Behind the first-run boundary, which is what lets the ordinary sweep reach back at all.
         self.assertLess(res["hwm"], NOW - 20 * 86400000,
@@ -150,8 +170,8 @@ class AStuckCompletionMarker(unittest.TestCase):
         """It is a button somebody will press twice. The second pass must not duplicate the
         uploads — the archive is keyed on the message, not on when it was read."""
         rows = [picture(i, NOW - (100 + i) * 86400000) for i in range(1, 4)]
-        once = run(rows, {ME + "_blossom_v6": "1"}, ["phoneLoad", "rescan"])
-        twice = run(rows, {ME + "_blossom_v6": "1"}, ["phoneLoad", "rescan", "rescan"])
+        once = run(rows, {ME + "_blossom_v7": "1"}, ["phoneLoad", "rescan"])
+        twice = run(rows, {ME + "_blossom_v7": "1"}, ["phoneLoad", "rescan", "rescan"])
         self.assertEqual(len(mms_files(once)), 3)
         self.assertEqual(len(mms_files(twice)), len(mms_files(once)),
                          "a second re-scan re-uploaded everything")

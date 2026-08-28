@@ -81,11 +81,11 @@ class TheScreenSaysWhichKindOfEmpty(unittest.TestCase):
         self.assertIn("refused: refused", body)
 
     def test_a_refusal_on_any_attempt_counts(self):
-        """The reader asks in growing steps; a refusal on any of them means the answer is not the
-        phone's real total. Cleared inside the loop, only the last attempt would count."""
+        """The reader asks in strict history pages; a refusal on any page means the answer is not
+        the phone's real total. Cleared inside the loop, only the last page would count."""
         body = self.src[self.src.index("async function loadFromPhone"):]
         body = body[:body.index("\n  }")]
-        loop = body[body.index("for(let i = 0"):]
+        loop = body[body.index("for(let page = 0"):]
         self.assertNotIn("refused = false", loop,
                          "the flag is reset inside the loop, so only the last attempt counts")
         self.assertIn("if(answer.refused) refused = true;", loop)
