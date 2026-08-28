@@ -36,6 +36,35 @@ command -v emerge >/dev/null 2>&1 || {
 	exit 1
 }
 
+# A LAN reverse proxy may cache a missing bare-Git path long after the public release channel has
+# recovered.  Ordinary DNS then keeps returning that proxy, so both `emaint` and a plain Git retry
+# fail and the updater misleadingly declares its stale checkout current.  Resolve the SAME HTTPS
+# hostname through DNS-over-HTTPS and give libcurl only the resulting address.  TLS still validates
+# gentoo.poster.place; this does not trust an alternate repository or bypass certificate checks.
+_pc_fetch_overlay_public_dns() {
+	local answer ip
+	command -v curl >/dev/null 2>&1 || return 1
+	command -v python3 >/dev/null 2>&1 || return 1
+	answer="$(curl -fsS --max-time 10 \
+		-H 'accept: application/dns-json' \
+		'https://cloudflare-dns.com/dns-query?name=gentoo.poster.place&type=A' 2>/dev/null)" \
+		|| return 1
+	ip="$(printf '%s' "$answer" | python3 -c '
+import json, sys
+try:
+    rows = json.load(sys.stdin).get("Answer", [])
+    print(next(row["data"] for row in rows if row.get("type") == 1))
+except (KeyError, StopIteration, TypeError, ValueError):
+    raise SystemExit(1)
+' 2>/dev/null)" || return 1
+	case "$ip" in
+		*[!0-9.]*|'') return 1 ;;
+	esac
+	git -C /var/db/repos/posterchan \
+		-c "http.curloptResolve=gentoo.poster.place:443:$ip" \
+		fetch --prune origin main
+}
+
 # ---------------------------------------------------------------- how this machine got its desktop
 #
 # TWO WAYS, and asking which is the whole of this script's job.
@@ -60,7 +89,8 @@ if [ -n "$have_pkgs" ]; then
 		# Portage's ordinary sync refuses to cross them. This directory is only Portage's disposable
 		# overlay cache: fetch and reset that one bounded checkout, never user files or /etc.
 		if [ -d /var/db/repos/posterchan/.git ] \
-			&& git -C /var/db/repos/posterchan fetch --prune origin main \
+			&& { git -C /var/db/repos/posterchan fetch --prune origin main \
+				|| _pc_fetch_overlay_public_dns; } \
 			&& git -C /var/db/repos/posterchan reset --hard FETCH_HEAD; then
 			echo "${GRN}Repaired the local PosterChanOS overlay checkout.${OFF}"
 		else

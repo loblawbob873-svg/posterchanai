@@ -146,6 +146,15 @@ class ItUpdatesBothHalves(unittest.TestCase):
         self.assertIn("git -C /var/db/repos/posterchan reset --hard FETCH_HEAD", self.src)
         self.assertNotIn("git reset --hard /", self.src)
 
+    def test_a_stale_lan_proxy_retries_the_same_tls_host_through_public_dns(self):
+        """A cached LAN 404 must not make a restored public overlay look permanently absent."""
+        self.assertIn("_pc_fetch_overlay_public_dns", self.src)
+        self.assertIn("https://cloudflare-dns.com/dns-query?name=gentoo.poster.place&type=A",
+                      self.src)
+        self.assertIn("http.curloptResolve=gentoo.poster.place:443:$ip", self.src)
+        self.assertIn("|| _pc_fetch_overlay_public_dns", self.src)
+        self.assertNotIn("http.sslVerify=false", self.src)
+
 
 class ItBehavesLikeACommandSomebodyTypes(unittest.TestCase):
     @classmethod
