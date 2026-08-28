@@ -23445,6 +23445,14 @@
    * not the wrap being unreadable, and it must be retried when the transport comes back. One that
    * decodes to something that is not ours stays marked — it will never become ours. */
   const _wrapTried = new Set();
+  /* Private Webxdc carrier for one-to-one NIP-17 conversations. These control rows are ordinary
+   * gift-wrapped DMs, but a reserved invisible prefix keeps them out of the visible transcript.
+   * Both recipients unwrap the same kind-14 rumor id, which is the stable attachment identity. */
+  const DM_XDC_PREFIX='\u2063pc-webxdc-v1:', _dmXdcRows=new Map(), _dmXdcListeners=new Set();
+  function _dmConversation(peer){return [ME.pubkey,String(peer||'')].sort().join(':');}
+  function _dmXdcKey(peer,topic,type){return _dmConversation(peer)+'|'+String(topic||'')+'|'+String(type||'update');}
+  function _dmXdcDecode(text){if(!String(text||'').startsWith(DM_XDC_PREFIX))return null;try{const v=JSON.parse(String(text).slice(DM_XDC_PREFIX.length));return v&&v.v===1&&/^[A-Z2-7]{52}$/.test(v.topic||'')&&['update','peer'].includes(v.type)?v:null;}catch(_){return null;}}
+  function _dmXdcAccept(peer,rumor){const v=_dmXdcDecode(rumor.content);if(!v)return false;const tags=[['i',v.topic]];for(const n of ['info','document','summary'])if(v[n])tags.push([n,String(v[n]).slice(0,200)]);const row={id:rumor.id,pubkey:rumor.pubkey,content:String(v.content||''),tags,created_at:rumor.created_at,at:Number(rumor.created_at)*1000},key=_dmXdcKey(peer,v.topic,v.type),rows=_dmXdcRows.get(key)||[];if(!rows.some(x=>x.id===row.id)){rows.push(row);rows.sort((a,b)=>a.created_at-b.created_at);_dmXdcRows.set(key,rows.slice(-1000));for(const fn of _dmXdcListeners)try{fn(key,row);}catch(_){}}return true;}
   /* The counter lives HERE, with the work, because three different passes do this work and only one
    * of them used to count (see ensureDMs). `_dmTotal` grows as wraps are discovered — the backfill
    * drain finds them a page at a time — which looks odd for a moment and is the truth: a total that
@@ -23742,11 +23750,13 @@
     if(!rumor || rumor.kind!==14 || rumor.content==null) return false;
     const mine = rumor.pubkey===ME.pubkey;
     const peer = mine ? (rumor.tags.find(t=>t[0]==='p')||[])[1] : rumor.pubkey;
-    if(!peer) return false; needProfile(peer);
+    if(!peer) return false;
+    if(_dmXdcAccept(peer,rumor))return true;
+    needProfile(peer);
     if(!dmPeers.has(peer)) dmPeers.set(peer, []);
     const arr=dmPeers.get(peer); if(arr.find(m=>m.id===ev.id)) return false;
-    arr.push({ id:ev.id, mine, text:rumor.content, t:rumor.created_at, nip17:true,
-               em:(rumor.tags||[]).filter(t=>t[0]==='emoji') }); arr.sort((a,b)=>a.t-b.t);
+    arr.push({ id:ev.id, rumorId:rumor.id, mine, text:rumor.content, t:rumor.created_at, nip17:true,
+               tags:rumor.tags||[],em:(rumor.tags||[]).filter(t=>t[0]==='emoji') }); arr.sort((a,b)=>a.t-b.t);
     // COUNT on freshness, not on `live`. `live` is a network signal (the sub's EOSE) and it can never
     // arrive — a relay in the user's list that is down/DNS-dead is still counted in the pool, so the
     // "everyone EOSE'd" test is never met and every incoming DM was classified as login backlog: no
@@ -23859,6 +23869,15 @@
       const ct=await signer.nip04enc(pk, text); await publish(4, ct, [['p',pk]]);
     }
   }
+  async function _dmXdcPublish(ctx,type,topic,content,meta){if(!ctx||ctx.protocol!=='dm'||!ctx.peer)throw new Error('invalid DM Webxdc scope');const value={v:1,type,topic,content:String(content||'')};for(const n of ['info','document','summary'])if(meta&&meta[n])value[n]=String(meta[n]).slice(0,200);const key=_dmXdcKey(ctx.peer,topic,type),before=new Set((_dmXdcRows.get(key)||[]).map(x=>x.id));await sendDm(ctx.peer,DM_XDC_PREFIX+JSON.stringify(value));const row=(_dmXdcRows.get(key)||[]).find(x=>!before.has(x.id));if(!row)throw new Error('DM Webxdc update was not stored');return row;}
+  window.PCDmWebxdc={
+    webxdcQuery:async(ctx,topic)=>[...(_dmXdcRows.get(_dmXdcKey(ctx.peer,topic,'update'))||[])],
+    webxdcPublish:async(ctx,topic,content,meta)=>({ev:await _dmXdcPublish(ctx,'update',topic,content,meta),ok:true}),
+    webxdcSubscribe:async(ctx,topic,realtime,onEvent)=>{if(realtime)throw new Error('DM realtime uses Iroh');const key=_dmXdcKey(ctx.peer,topic,'update'),fn=(k,row)=>{if(k===key)onEvent(row);};_dmXdcListeners.add(fn);return()=>_dmXdcListeners.delete(fn);},
+    webxdcPeerQuery:async ctx=>[...(_dmXdcRows.get(_dmXdcKey(ctx.peer,ctx.topic,'peer'))||[])],
+    webxdcPeerPublish:async(ctx,content)=>_dmXdcPublish(ctx,'peer',ctx.topic,content),
+    webxdcPeerSubscribe:async(ctx,onEvent)=>{const key=_dmXdcKey(ctx.peer,ctx.topic,'peer'),fn=(k,row)=>{if(k===key)onEvent(row);};_dmXdcListeners.add(fn);const close=()=>_dmXdcListeners.delete(fn);close.publish=()=>0;return close;}
+  };
   function bumpDm(){ $$('#dm-badge,#dm-badge-m').forEach(b=>{ if(_dmUnread){ b.textContent=_dmUnread>99?'99+':_dmUnread; b.classList.remove('hidden'); } else b.classList.add('hidden'); }); }
   // Startup count of what's unread. Notes to SELF count here for the same reason they do in
   // ingestWrap — that's how the server delivers notifications — and this is the path that catches one
@@ -25280,10 +25299,21 @@
    *
    * A reply arrives as "> quoted\n\nmessage" (see _dmReply): render that leading quote as a block so it
    * reads like a reply instead of a stray angle bracket. */
+  function _dmWebxdcApp(m,pk){
+    if(!window.PCWebxdc||!m||!m.text)return null;
+    const app=PCWebxdc.appOf({id:m.rumorId||m.id,content:m.text,tags:m.tags||[]});
+    if(!app)return null;
+    app.transport={protocol:'dm',peer:pk,conversation:_dmConversation(pk)};
+    return app;
+  }
   function _dmBodyHtml(m){
-    const mq = /^>\s?([^\n]*)\n\n([\s\S]*)$/.exec(m.text||'');
+    const pk=arguments[1]||dmActive;
+    const app=_dmWebxdcApp(m,pk);
+    const text=app?String(m.text||'').replace(app.url,'').trim():m.text;
+    const mq = /^>\s?([^\n]*)\n\n([\s\S]*)$/.exec(text||'');
     const _em = ev => applyEmojis(ev, { tags: m.em||[] });   // the RUMOR's own NIP-30 tags
-    return mq ? `<span class="b-quote">${enc(mq[1])}</span>${_em(linkify(mq[2]))}` : _em(linkify(m.text));
+    const body=mq ? `<span class="b-quote">${enc(mq[1])}</span>${_em(linkify(mq[2]))}` : _em(linkify(text));
+    return body+(app?PCWebxdc.cardHtml(app):'');
   }
   function _scheduleDmRefresh(){
     if(_dmRefreshTimer || VIEW!=='messages') return;
@@ -25393,7 +25423,7 @@
       const sep = newDay && m.t ? `<div class="dm-day"><span>${enc(_dmDayLabel(m.t))}</span></div>` : '';
       // A reply arrives as "> quoted\n\nmessage" (see _dmReply). Render that leading quote as a
       // block so it reads like a reply instead of a stray angle bracket.
-      const body = m.text==null ? '<span class="muted small">decrypting…</span>' : _dmBodyHtml(m);
+      const body = m.text==null ? '<span class="muted small">decrypting…</span>' : _dmBodyHtml(m,pk);
       return `${sep}<div class="bubble ${m.mine?'out':'in'}${startsGroup?' grp':' cont'}" data-mid="${m.id}">`
         + `<span class="b-txt">${body}</span>`
         + `<span class="b-meta">${enc(_dmClock(m.t))}${m.mine?'<span class="b-tick" title="sent">✓</span>':''}</span></div>`;
@@ -25556,8 +25586,8 @@
         // message, since DMs decrypt lazily — so timestamps vanished and patched bubbles laid out
         // differently from unpatched ones.
         const _t = el.querySelector('.b-txt');
-        if(_t) _t.innerHTML = _dmBodyHtml(mm);
-        else el.innerHTML = _dmBodyHtml(mm);
+        if(_t) _t.innerHTML = _dmBodyHtml(mm,pk);
+        else el.innerHTML = _dmBodyHtml(mm,pk);
         decorateEncAtts(_t || el);   // 🔒 placeholders only exist once the text is in — the pane's own pass ran before this
         _patched=true;
       } } }
