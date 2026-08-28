@@ -379,3 +379,31 @@ cross-device notifications, live two-identity Concord write/moderation/attachmen
 external native-app editable-field/clipboard sessions and physical USB boot are still open. A final
 ISO must not be called a release candidate until the `bb764dbed` application boundary is packaged,
 installed and passed through the relevant current-package gates.
+
+## 2026-08-28 Desktop 1.0.1133 / Android 1.0.1850 current boundary
+
+This section supersedes earlier uses of “latest” or “current”; those sections remain historical
+evidence only. The final application boundary audited here is
+`d3dba2320a0f08e9f2dcbe4eb491e95cb2ff9654`. The overlay-only follow-up `4ddff065f` pins the
+artifact built from that exact application commit and does not change the packaged application.
+
+| Requirement | Current evidence | State / remaining boundary |
+|---|---|---|
+| Web propagation | The deployed `app.js`, `os.js`, `concord.js` and `code.js` byte-for-byte match the current tree. Their SHA-256 values are respectively `d09a56bf95e8f1d8e9d1f507064dd32d78685cff24a8e4d650787e711f3cfe19`, `ef0006dacd086587db6b1e224c534c44c6ccbf35605d96a4f1462220dd10553d`, `733dbbd2227213f93bbf95f89f6262edbf3a675deeb1c71e2510c107152096c5`, and `8e5f3fff83b027dbf6563fe7363568d9f07051eb12267fc1a7d68957ab9313cd` | Exact checked web payload verified for these four recovery surfaces; this is not an exhaustive live-account matrix |
+| Source/client regression gate | The full client suite passed **1,823 tests plus 99 subtests**, with no failure or skip reported | Green at the final source boundary; installed and hardware gates below remain independent |
+| Desktop artifact and Gentoo propagation | Desktop workflow `33136589091` succeeded for exact commit `d3dba2320`. Immutable release `desktop-v1.0.1133` contains a 152,202,144-byte Linux tarball with SHA-256 `9aff744623eef98614c23d3d65ac5c288cab91fe071aca7be08003ff47085c22`. The 1.0.1133 ebuild uses the immutable per-version URL and its Manifest records the same size plus SHA-512 `bdec093107198f04d4511c4218bc7fb7b91cce6b3c09ff78faa743410ff671a0d645ee61d922c9e6ecf155c5ac1ba622e8f489446d19c74d5c4859ed82d55f7b` | Immutable artifact and repository overlay pin verified |
+| Installed package identity | Both authorized Gentoo machines (`.102` and `.154`) installed Desktop 1.0.1133. Their package-owned ASARs matched SHA-256 `c73c3bd3` at the recorded abbreviated identity | Exact package installed on both machines |
+| Messages and Terminal handoff | On the installed two-output package, actual Communities, Direct Messages and Terminal frames each moved left → right → left and retained the selected live tab/state without a popout, duplicate or reset | The requested installed move/return regression is verified; the exhaustive every-app matrix remains open |
+| Files / Open With / Preview | Immutable/package Files, Open With, Preview and responsive gates passed against 1.0.1133 | Current package behavior verified by the focused gates. Authenticated current-account Files/index/sync completeness was not rerun in this pass and remains open |
+| Code Git/diff/restore | The current immutable native-Git package gate passed Git tree, real diff and restore behavior | Package gate verified. The authenticated installed Code/Terminal focus interaction skipped and remains open; older installed passes are historical, not a substitute |
+| Office | The current immutable Office route/package checks remain covered | The authenticated Collabora HTTP-200 plus WOPI edit/save/readback gate skipped and remains open |
+| Android artifact | Android workflow `33136589055` succeeded at exact commit `d3dba2320` and published signed APK 1.0.1850. The rolling APK is 20,421,612 bytes with SHA-256 `fbf43761e8b9b965b4ef0dbaaa251a4e3386e793ccb4abbc1d61c8803fc36641`; release provenance names the full commit, and Zapstore publication plus certificate linkage succeeded on all three configured relays | Exact final APK publication and identity verified |
+| Android emulator / background Music | Exact-commit emulator workflow `33136589066` was still in progress when this evidence was recorded | Keep the entire exact-commit emulator gate open, including Music-after-Home, until the completed result and test report are inspected. Physical/OEM audible playback after Home, Bluetooth, phone/tablet layout and launcher interactions remain open regardless of the emulator result |
+| ISO | The latest proved ISO remains `posterchan-live-20260826.iso`, which contains historical Desktop 1.0.980 rather than this boundary | Build and structurally/virtually verify a new ISO containing the final package, then boot it from physical USB; neither gate is closed |
+
+The authenticated installed-account run reported explicit skips for Office/WOPI and Code focus, so
+neither may be promoted from package checks or older installed evidence. Physical Android playback,
+carrier SMS/MMS migration and sending, cross-device notifications, live two-identity Concord writes
+and moderation/attachments/Webxdc, native Firefox/Telegram editable-field clipboard use, sustained
+real Codex/Claude terminal repaint use, unrelated external-storage providers and physical USB boot
+also remain open.
