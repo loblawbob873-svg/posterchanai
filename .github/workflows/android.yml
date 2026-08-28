@@ -124,7 +124,10 @@ jobs:
           chmod 600 "$POSTERCHAN_ANDROID_KEYSTORE"
           chmod 600 "$RUNNER_TEMP/posterchan-old-release.keystore"
           chmod +x gradlew
-          ./gradlew assembleRelease -PversionCode=$VCODE -PversionName=$VNAME
+          # Build unsigned; the next step applies both signers and their lineage atomically.
+          POSTERCHAN_ANDROID_KEYSTORE='' POSTERCHAN_ANDROID_STORE_PASSWORD='' \
+          POSTERCHAN_ANDROID_KEY_ALIAS='' POSTERCHAN_ANDROID_KEY_PASSWORD='' \
+            ./gradlew assembleRelease -PversionCode=$VCODE -PversionName=$VNAME
 
       - name: Collect the APK
         env:
@@ -155,17 +158,23 @@ jobs:
             --ks-pass env:POSTERCHAN_ANDROID_STORE_PASSWORD \
             --key-pass env:POSTERCHAN_ANDROID_KEY_PASSWORD \
             --lineage "$RUNNER_TEMP/signing-lineage" \
+            --rotation-min-sdk-version 28 \
             --v1-signing-enabled true --v2-signing-enabled true \
             --v3-signing-enabled true --v4-signing-enabled true \
             --out "$RUNNER_TEMP/posterchan-rotated.apk" "$APK"
           APK="$RUNNER_TEMP/posterchan-rotated.apk"
-          ACTUAL_CERT=$($APKSIGNER verify --print-certs "$APK" \
+          ACTUAL_CERT=$($APKSIGNER verify --min-sdk-version 28 --print-certs "$APK" \
             | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -1 | tr '[:lower:]' '[:upper:]')
           EXPECTED_CERT=$(printf '%s' "$ANDROID_SIGNING_CERT_SHA256" \
             | tr -d ':[:space:]' | tr '[:lower:]' '[:upper:]')
           test -n "$ACTUAL_CERT" || { echo '::error::The release APK is unsigned'; exit 1; }
           test "$ACTUAL_CERT" = "$EXPECTED_CERT" || {
             echo "::error::Release signer mismatch (actual $ACTUAL_CERT)"; exit 1;
+          }
+          LEGACY_CERT=$($APKSIGNER verify --min-sdk-version 26 --max-sdk-version 27 --print-certs "$APK" \
+            | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -1 | tr '[:lower:]' '[:upper:]')
+          test "$LEGACY_CERT" = "EDDF3A7983DF49221A5ACE0D0CA52C899D34EB88A4155B0829B05C0AFC31F342" || {
+            echo "::error::Android 8 compatibility signer mismatch (actual $LEGACY_CERT)"; exit 1;
           }
           cp "$APK" posterchan.apk
           ls -la posterchan.apk

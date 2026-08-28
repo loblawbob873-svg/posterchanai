@@ -52,8 +52,11 @@ def test_workflow_uses_github_secrets_for_signing():
 
     assert "posterchan-release.keystore -srcstorepass posterchan" not in workflow
     assert "KEYSTORE_PASSWORD=posterchan" not in workflow
-    assert '$APKSIGNER verify --print-certs' in workflow
+    assert '$APKSIGNER verify --min-sdk-version 28 --print-certs' in workflow
     assert '$APKSIGNER sign' in workflow
     assert '--lineage "$RUNNER_TEMP/signing-lineage"' in workflow
     assert '--next-signer --ks "$POSTERCHAN_ANDROID_KEYSTORE"' in workflow
     assert 'test "$ACTUAL_CERT" = "$EXPECTED_CERT"' in workflow
+    assert '--rotation-min-sdk-version 28' in workflow
+    assert '--min-sdk-version 26 --max-sdk-version 27 --print-certs' in workflow
+    assert "POSTERCHAN_ANDROID_KEYSTORE='' POSTERCHAN_ANDROID_STORE_PASSWORD=''" in workflow
