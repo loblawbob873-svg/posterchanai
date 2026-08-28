@@ -4640,7 +4640,7 @@
     else if(!_consumeLaunchParams()){
       let _osHome = false;
       try{ _osHome = !!(window.PCOS && PCOS.isOn()); }catch(_){}
-      if(!_osHome){ switchView(_startView()); _onLandingView = true; }
+      if(!_osHome && !_publicViewRequests){ switchView(_startView()); _onLandingView = true; }
     }
     // Drain a file/text shared IN from another app (a fresh OS-share launch, OR a guest who has just
     // logged in with a share still waiting). Self-guards on GUEST (prompts + keeps the stash) and on an
@@ -6330,6 +6330,25 @@
   // Every delayed scroll restore carries this generation. A deliberate Home-to-top invalidates
   // an older restore that may still be retrying against a feed whose layout was not ready.
   let _scrollRestoreGen = 0;
+
+  /* A VIEW REQUESTED BY AN OUTSIDE OWNER MUST SURVIVE THE REST OF BOOT.
+   *
+   * `window.__PC` is published before async boot has finished loading config/storage. That is
+   * intentional: native launcher intents and module-backed apps need a callable bridge as soon as
+   * the document exists. But the ordinary boot landing used to run afterwards unconditionally. A
+   * fast launcher/module request could therefore paint AI (or Files/Texts), then the delayed
+   * `switchView(_startView())` replaced it with Social. The all-app Android smoke caught the race as
+   * `ai: route was replaced by another view`.
+   *
+   * Do not resurrect the old `_viewChosen` latch. Internal boot work calls switchView too (notably
+   * instance gating), so that latch once made boot skip its own required landing. Count only calls
+   * made through the PUBLIC bridge. Internal setup continues to call switchView directly; native
+   * intents and sub-modules call __PC.switchView and therefore own the requested destination. */
+  let _publicViewRequests = 0;
+  function requestView(v, quiet){
+    _publicViewRequests++;
+    return switchView(v, quiet);
+  }
 
   /* REMEMBER WHERE THEY WERE READING. Called by every route that leaves a timeline, which is more
    * than switchView: renderThread and renderProfileView set VIEW themselves and never go through it,
@@ -34383,7 +34402,7 @@
      * on the web. sms.js needs it for a picture message's attachments, which are bytes the client
      * holds and nothing else can fetch. */
     saveBlobAs, fetchMediaBlob,
-    ensureProfile: _ensureProfile, NT, compose, switchView, switchMessagesTab, timelineTop,
+    ensureProfile: _ensureProfile, NT, compose, switchView:requestView, switchMessagesTab, timelineTop,
     /* The Messages frame crosses monitor renderers, so its selected conversation cannot remain
      * only in this renderer's dmActive binding. The OS applies this before switchView('messages'),
      * allowing the normal render to reopen the same thread without a popout or second frame. */
