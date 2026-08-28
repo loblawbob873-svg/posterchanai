@@ -136,6 +136,15 @@ class TheDrainRefusesWhatItMustRefuse(unittest.TestCase):
     def test_an_already_done_request_is_left_alone(self):
         self.assertIn('req.optBoolean("done", false)', self.src)
 
+    def test_a_cancelled_request_cannot_return_from_a_lagging_relay(self):
+        """Addressable-event convergence is eventually consistent. If a cancellation reaches the
+        phone before an older copy of its request, that stale copy must not cross the SMS radio."""
+        cancelled = self.src.index("if (isCancelled(ctx, doc)) return null;")
+        claim = self.src.index("if (!claim(ctx, doc)) return null;")
+        sms = self.src.index("r = SmsSender.send(ctx, to, body);")
+        self.assertLess(cancelled, claim)
+        self.assertLess(cancelled, sms)
+
     def test_it_is_sealed_to_the_users_own_key(self):
         """The request is NIP-44 to the account's own key -- the same thing the client wrote it
         with. Asking any other peer would decrypt nothing."""

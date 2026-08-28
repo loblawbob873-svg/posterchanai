@@ -217,6 +217,14 @@ public final class SmsOutbox {
             JSONObject attachment = req.optJSONObject("attachment");
             if (to.isEmpty() || (body.isEmpty() && attachment == null)) return null;
 
+            /* RELAYS CAN HAND US AN OLDER REQUEST AFTER ITS CANCELLATION. The cancellation event
+             * is addressable and normally replaces the request, but a lagging relay/socket may
+             * still deliver both (and may deliver newest first). `cancel()` deliberately persists
+             * that fact; consult it before claiming or touching either radio path. Previously only
+             * MMS checked after its download, so a cancelled plain SMS could still be transmitted
+             * when the stale request arrived later. */
+            if (isCancelled(ctx, doc)) return null;
+
             long asked = req.optLong("at", 0L);
             if (System.currentTimeMillis() - asked > MAX_AGE_MS) {
                 return marker(ctx, sec, me, doc, false, "too old", to, body, asked, attachment);
