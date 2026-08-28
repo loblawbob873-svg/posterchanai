@@ -3437,8 +3437,19 @@ GRUB
 	local PUBLISH_ISO
 	PUBLISH_ISO="${PC_ISO_PUBLISH:-y}"
 	if [[ "${CLEAN,,}" == y* && "${PUBLISH_ISO,,}" == y* ]]; then
-		local PUBLISHER
-		PUBLISHER="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/publish_iso.sh"
+		local PUBLISHER REPO_PUBLISHER INSTALLED_PUBLISHER
+		# In the checkout this script is os/gentoo.sh, so ../scripts is correct.  The Gentoo
+		# package installs the same canonical script as /usr/bin/gentoo.sh, where that calculation
+		# incorrectly becomes /usr/scripts and automatic publication silently has no executable.
+		# The package owns an immutable companion under libexec; retain the checkout path for
+		# development and ISO-builder runs directly from the repository.
+		REPO_PUBLISHER="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/publish_iso.sh"
+		INSTALLED_PUBLISHER="/usr/local/libexec/posterchanos/publish_iso.sh"
+		if [[ -x "$INSTALLED_PUBLISHER" ]]; then
+			PUBLISHER="$INSTALLED_PUBLISHER"
+		else
+			PUBLISHER="$REPO_PUBLISHER"
+		fi
 		if [[ ! -x "$PUBLISHER" ]]; then
 			_lcd_fail "ISO is complete but its publisher is missing or not executable: $PUBLISHER"
 			return

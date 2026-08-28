@@ -93,6 +93,11 @@ cp -r "$SRC/." "$TMP/"
 # The ebuild owns /usr/bin/gentoo.sh, so every ordinary update now refreshes the LiveUSB/repair tool.
 install -m 0755 "$(dirname "$SRC")/gentoo.sh" \
   "$TMP/app-misc/posterchanos-shell/files/gentoo.sh"
+# The installed gentoo.sh publishes a verified clean image after all build/content checks.  It must
+# not depend on a repository checkout existing on an installed machine; inject the one canonical
+# publisher beside the canonical installer into every timestamped shell package.
+install -m 0755 "$(dirname "$SRC")/../scripts/publish_iso.sh" \
+  "$TMP/app-misc/posterchanos-shell/files/publish_iso.sh"
 
 # A changed ebuild with the same version is invisible to Portage. The shell used to stay 1.0.0 for
 # ever, which is why installed machines said “Already up to date” while keeping an old launcher.

@@ -45,6 +45,10 @@ src_install() {
 	# The installed recovery/LiveUSB tool is package-owned too. publish_overlay.sh injects the
 	# canonical os/gentoo.sh into FILESDIR, so an ordinary update cannot leave an older installer.
 	dobin "${FILESDIR}/gentoo.sh"
+	# Automatic clean-image publication is part of the installed LiveCD command, not repository-only
+	# tooling. Keep the publisher outside PATH: gentoo.sh invokes it by this exact package-owned path.
+	exeinto /usr/local/libexec/posterchanos
+	doexe "${FILESDIR}/publish_iso.sh"
 
 	# The greeter may create an identity account, and an identity session may switch to another
 	# identity. Keep both grants package-owned: gentoo.sh writes the same rules during an install,

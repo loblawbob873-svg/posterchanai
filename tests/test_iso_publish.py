@@ -41,6 +41,17 @@ def test_livecd_only_publishes_after_success_and_only_when_clean():
     assert "Personal rescue image: not publishing it." in src
 
 
+def test_installed_livecd_has_a_package_owned_publisher():
+    """The packaged /usr/bin/gentoo.sh must not resolve its helper as /usr/scripts."""
+    src = GENTOO.read_text()
+    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
+    overlay = (ROOT / "scripts/publish_overlay.sh").read_text()
+    assert 'INSTALLED_PUBLISHER="/usr/local/libexec/posterchanos/publish_iso.sh"' in src
+    assert 'doexe "${FILESDIR}/publish_iso.sh"' in ebuild
+    assert 'scripts/publish_iso.sh' in overlay
+    assert src.index('[[ -x "$INSTALLED_PUBLISHER" ]]') < src.index('"$PUBLISHER" "$ISO"')
+
+
 def test_publish_script_parses_and_rejects_no_artifact():
     parsed = subprocess.run(["bash", "-n", str(PUBLISH)], capture_output=True, text=True)
     assert parsed.returncode == 0, parsed.stderr
