@@ -16286,6 +16286,7 @@
     const bg=document.createElement('div'); bg.className='modal-bg modal-sub bp-picker-bg';
     bg.innerHTML=`<div class="modal glass neon-border bp-modal bp-file-picker">
       <div class="bp-head"><button type="button" class="mini bp-locations" aria-expanded="false">☰ Locations</button><h3>${enc(opts.title||'📁 Choose from File Manager')}</h3>
+        <label class="bp-sort"><span>Sort</span><select aria-label="Sort files"><option value="date">Newest</option><option value="name">Name</option><option value="size">Size</option></select></label>
         <span class="bp-density" aria-label="Thumbnail size"><button type="button" class="mini active" data-bp-size="small" aria-pressed="true" title="Small thumbnails">S</button><button type="button" class="mini" data-bp-size="medium" aria-pressed="false" title="Medium thumbnails">M</button></span>
         <button type="button" class="mini bp-close" aria-label="Cancel file selection">×</button></div>
       <div class="bp-explorer"><nav id="bp-folders" class="bp-folders" aria-label="Blossom folders"></nav>
@@ -16314,20 +16315,29 @@
     });
     FilesIdx.loadLocal();
     (async()=>{
+      /* The public blob list and the encrypted folder index are independent sources. Fetch them in
+       * parallel: a relay that stalls while loading the index must not leave "All" as a permanent
+       * spinner even though the Blossom server is healthy. Folder metadata can catch up later; the
+       * complete root listing is the reliable fallback. */
+      const listing=(async()=>{
+        try{
+          const r=await fetch(server+'/list/'+ME.pubkey,{cache:'no-store'});
+          if(!r.ok)return [];
+          const body=await r.json();
+          return Array.isArray(body)?body:(Array.isArray(body&&body.blobs)?body.blobs:[]);
+        }catch(_){return [];}
+      })();
       // Folder names live in the encrypted Files index, which is only fetched when you OPEN Files —
       // so without this pull the picker showed a flat drive to anyone who hadn't been there yet.
-      try{ await FilesIdx.ensure(); }catch(_){ }
+      try{ await Promise.race([FilesIdx.ensure(),new Promise(resolve=>setTimeout(resolve,4000))]); }catch(_){ }
       let list=[]; try{
-        const r=await fetch(server+'/list/'+ME.pubkey,{cache:'no-store'});
-        if(r.ok){
-          const rows=await r.json();
+          const rows=await listing;
           if(Array.isArray(rows)) list=rows.filter(b=>b&&b.sha256).map(b=>Object.assign({},b,{
             /* A Blossom list entry is allowed to omit `url`. File Manager already canonicalises
              * that response; the picker did not, so All rendered cards whose image and click URL
              * were both empty on a conforming server. Keep the two consumers byte-for-byte aligned. */
             url:b.url || (server.replace(/\/$/,'')+'/'+b.sha256)
           }));
-        }
       }catch(_){}
       // Same filter as the Files grid: hide the octet-stream noise (encrypted ciphertext, stale/live
       // index blobs, unnamed binaries) — none of it renders as media in a post, and it floods the picker.
@@ -16357,9 +16367,13 @@
       // Social folder containing encrypted items) appear deleted after a partial list or filter.
       const folders=[['','🗂 All']].concat(
         FilesIdx.folders().filter(f=>!FilesIdx.isEncFolder(f)).map(f=>[f,'📁 '+f]));
-      let cur='';
+      let cur='', sort='date';
       const draw=()=>{
-        const shown=list.filter(b=> cur==='' || (FilesIdx.folderOf(b.sha256)||'')===cur);
+        const shown=list.filter(b=> cur==='' || (FilesIdx.folderOf(b.sha256)||'')===cur).slice().sort((a,b)=>{
+          if(sort==='name')return String((FilesIdx.meta(a.sha256)||{}).name||a.name||'').localeCompare(String((FilesIdx.meta(b.sha256)||{}).name||b.name||''));
+          if(sort==='size')return (Number(b.size)||0)-(Number(a.size)||0);
+          return (Number(b.uploaded||b.created_at)||0)-(Number(a.uploaded||a.created_at)||0);
+        });
         grid.innerHTML = shown.length ? shown.map(b=>{
           const m=FilesIdx.meta(b.sha256)||{};
           const ext=extOfBlob(b,m), name=m.name||b.name||downloadName(b,'',ext);
@@ -16369,7 +16383,8 @@
            * frames (and every document icon) are otherwise indistinguishable, while the Files view
            * itself already carries the name and size. Keep the same metadata directly under the
            * preview and return it to the caller so an MMS part is not named with its blob hash. */
-          return `<button type="button" class="file-card bp-pick-card" data-url="${enc(b.url)}" data-type="${enc(type)}" data-name="${enc(name)}"><span class="bp-pick-preview">${blobThumb(Object.assign({},b,{type}),ext)}</span><span class="meta"><b class="fname">${enc(fileLabel(name,ext,b.size))}</b><small>${enc(_fmtBytes(b.size||0))}${type?' · '+enc(type.replace(/;.*/,'')):''}</small></span></button>`;
+          const when=Number(b.uploaded||b.created_at)||0;
+          return `<button type="button" class="file-card bp-pick-card" data-url="${enc(b.url)}" data-type="${enc(type)}" data-name="${enc(name)}"><span class="bp-pick-preview">${blobThumb(Object.assign({},b,{type}),ext)}</span><span class="meta"><b class="fname">${enc(fileLabel(name,ext,b.size))}</b><small>${enc(_fmtBytes(b.size||0))}${type?' · '+enc(type.replace(/;.*/,'')):''}</small>${when?`<small class="bp-pick-date">${enc(new Date(when*1000).toLocaleDateString())}</small>`:''}</span></button>`;
         }).join('')
           : `<div class="empty">${cur?'Nothing in this folder.':enc(opts.empty||'No files yet — upload some in the Files tab.')}</div>`;
         _bindThumbFallback(grid);   // same markup as the Files grid, so the same fallback
@@ -16391,6 +16406,8 @@
           ta.dispatchEvent(new Event('input',{bubbles:true})); toast('attached'); });
 
       };
+      const sorter=bg.querySelector('.bp-sort select');
+      if(sorter)sorter.onchange=()=>{sort=sorter.value||'date';draw();};
       // The picker follows File Manager's navigation instead of maintaining a third, flat UI. The
       // Blossom root and its folders are a real collapsible tree; importantly, the full folder name
       // stays visible instead of being hidden inside a native select whose state was easy to miss.

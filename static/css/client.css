@@ -5137,6 +5137,9 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .bp-head h3{margin:0 0 6px}
 .bp-file-picker .bp-head{position:relative;display:flex;align-items:center;gap:10px;flex:0 0 auto;padding-bottom:10px}
 .bp-file-picker .bp-head h3{margin:0;flex:1 1 auto}
+.bp-sort{display:flex;align-items:center;gap:5px;color:var(--muted);font-size:12px;white-space:nowrap}
+.bp-sort select{min-height:36px;max-width:112px;border:1px solid var(--line);border-radius:8px;
+  padding:4px 22px 4px 8px;background:var(--panel2);color:var(--text);font:inherit}
 .bp-close{font-size:22px;line-height:1}
 .bp-explorer{display:grid;grid-template-columns:220px minmax(0,1fr);min-height:0;flex:1 1 auto;
   border:1px solid var(--line);background:var(--panel);overflow:hidden}
@@ -5178,6 +5181,7 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
   .bp-file-picker .bp-head{box-sizing:border-box;margin:0;padding:calc(8px + env(safe-area-inset-top)) 12px 8px;
     position:relative;min-height:48px}
   .bp-file-picker .bp-head h3{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bp-sort span{display:none}.bp-sort select{width:88px;max-width:88px;min-height:38px}
   .bp-locations{display:inline-flex;flex:0 0 auto;min-height:38px;align-items:center}
   .bp-density{display:flex;flex:0 0 auto;gap:2px}.bp-density .mini{min-width:36px;min-height:38px;padding:5px}
   .bp-density .mini.active{color:var(--neon);background:rgba(var(--accent-rgb),.18)}
