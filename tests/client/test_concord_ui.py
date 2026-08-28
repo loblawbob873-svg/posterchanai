@@ -553,6 +553,7 @@ def test_concord_replaces_stale_bare_link_card_with_explicit_armada_topic():
     assert "old.remove()" in hydrate
     assert "mime==='application/vnd.webxdc+zip'" in CONCORD.split('function publicAttachments', 1)[1].split('function messageContentHtml', 1)[0]
     assert 'function resolveWebxdcCard(card,fallback)' in CONCORD
+    assert 'if(fallback&&fallback.uuid)return fallback' in CONCORD
     assert 'activeMessages(room).find(x=>messageId(x)===id)' in CONCORD
     assert 'PCConcord.resolveWebxdcCard(card,app)' in WEBXDC
     assert "rtDiagnostic('card-play'" in WEBXDC

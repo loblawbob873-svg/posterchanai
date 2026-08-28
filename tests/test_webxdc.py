@@ -379,6 +379,11 @@ class HandAssembledJavaScript(unittest.TestCase):
         self.assertIn("for(const n of ['info','document','summary'])", app)
         self.assertIn("webxdcPublish:async(ctx,topic,content,meta)", app)
 
+    def test_cross_origin_loader_rewrites_only_app_lifecycle_listeners(self):
+        src = WEBXDC_JS.read_text()
+        self.assertIn("window\\.(?:top|parent)\\.addEventListener", src)
+        self.assertIn("'window.addEventListener('", src)
+
     def test_the_blob_fallback_shim_parses(self):
         """It is an ARRAY OF STRINGS joined with newlines, so a missing comma or an unbalanced quote
         is a runtime surprise inside somebody else's app rather than a build error here."""

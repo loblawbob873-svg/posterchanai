@@ -433,7 +433,11 @@
    * room-specific render settles. Resolve identity from the authoritative decrypted CORD message
    * at launch time, so stale DOM can never move a player into a URL-derived private lobby. */
   function resolveWebxdcCard(card,fallback){
-    try{const row=card&&card.closest&&card.closest('.cc-message[data-message-id]'),room=saved()[state.community],id=row&&row.dataset&&row.dataset.messageId,m=room&&activeMessages(room).find(x=>messageId(x)===id);return (m&&webxdcOf(m,room,state.channel))||fallback;}catch(_){return fallback;}
+    /* An explicit topic is the attachment author's lobby and is authoritative. A partially hydrated
+     * room cache may temporarily expose the same URL as a bare link; re-deriving from that row's id
+     * silently moves a running Armada game into a different lobby. */
+    if(fallback&&fallback.uuid)return fallback;
+    try{const row=card&&card.closest&&card.closest('.cc-message[data-message-id]'),room=saved()[state.community],id=row&&row.dataset&&row.dataset.messageId,m=room&&activeMessages(room).find(x=>messageId(x)===id),resolved=m&&webxdcOf(m,room,state.channel);return (resolved&&resolved.uuid?resolved:fallback)||resolved;}catch(_){return fallback;}
   }
   async function deriveWebxdcUrlTopic(url,messageId){if(!window.PCWebxdc||!PCWebxdc.deriveUrlTopic)throw new Error('Webxdc topic support is unavailable');return PCWebxdc.deriveUrlTopic(url,messageId);}
   function mintWebxdcTopic(){if(!window.PCWebxdc||!PCWebxdc.mintTopic)throw new Error('Webxdc topic support is unavailable');return PCWebxdc.mintTopic();}

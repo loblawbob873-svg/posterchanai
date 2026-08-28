@@ -1477,7 +1477,14 @@
            * 178 MB Half-Life archive: all 21 entries own their buffer), but that is a property of a
            * file two directories away, and this is the line that depends on it. So it is checked
            * HERE, where the transfer happens, and a shared view is copied instead. */
-          const v = (r.body && r.body.buffer) ? r.body : null;
+          let body=r.body;
+          /* Webxdc apps commonly use `window.top` only to observe pagehide (Delta Chat's Quake is
+           * one). Our app has a deliberately cross-origin loader above it, so merely reading
+           * top.addEventListener throws a SecurityError before the game starts. Events on the app's
+           * own window have the same lifecycle here; rewrite only these two exact listener targets,
+           * leaving every other cross-origin access blocked by the browser. */
+          if((path==='/'||/\/index\.html$/i.test(path))&&body){try{const dec=new TextDecoder(),src=dec.decode(body),safe=src.replace(/window\.(?:top|parent)\.addEventListener\s*\(/g,'window.addEventListener(');if(safe!==src)body=new TextEncoder().encode(safe);}catch(_){}}
+          const v = (body && body.buffer) ? body : null;
           const buf = !v ? null
                     : (v.byteOffset === 0 && v.byteLength === v.buffer.byteLength) ? v.buffer
                     : v.slice().buffer;
