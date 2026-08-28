@@ -304,6 +304,15 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
       const r = await S.send(to, rest.join(':'), f);
       calls.push(['sendFileResult', r.ok, r.where || r.error || '', r.link || '']);
     }
+    /* Extension-only video from a desktop/network picker. File.type is genuinely empty on some
+       platforms, so this exercises production MIME inference and the remote-phone outbox. */
+    else if(step.slice(0, 10) === 'sendvideo:'){
+      const [to, size, ...rest] = step.slice(10).split(':');
+      const bytes = new Uint8Array(Number(size) || 0);
+      const f = new File([bytes], 'clip.mp4', { type:'' });
+      const r = await S.send(to, rest.join(':'), f);
+      calls.push(['sendVideoResult', r.ok, r.where || r.error || '']);
+    }
     else if(step.slice(0, 5) === 'send:'){
       const [to, ...rest] = step.slice(5).split(':');
       const r = await S.send(to, rest.join(':'));

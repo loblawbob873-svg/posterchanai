@@ -151,6 +151,17 @@
   let blossomLaunch=false;
   function clearAttachment(){ S.attach=null; }
   function isMmsFile(file){ return !!file&&(/^(?:image|video)\//i.test(file.type||'')||/\.(?:jpe?g|png|gif|webp|heic|heif|avif|mp4|m4v|mov|webm|3gp)$/i.test(file.name||'')); }
+  /* Native and browser pickers do not always supply File.type (notably files selected by extension
+   * from mounted/network storage). Keep one inference rule for direct-radio and remote outbox MMS;
+   * otherwise a valid MP4 is either rejected on desktop or handed to Android as image/jpeg. */
+  function mmsMime(file){
+    const supplied=String((file&&file.type)||'').replace(/;.*/, '').trim().toLowerCase();
+    if(/^(?:image|video)\//.test(supplied)) return supplied;
+    const ext=((String((file&&file.name)||'').match(/\.([a-z0-9]+)$/i)||[])[1]||'').toLowerCase();
+    return ({jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',gif:'image/gif',webp:'image/webp',
+             heic:'image/heic',heif:'image/heif',avif:'image/avif',mp4:'video/mp4',m4v:'video/mp4',
+             mov:'video/quicktime',webm:'video/webm','3gp':'video/3gpp'})[ext]||'application/octet-stream';
+  }
 
   const now = () => Math.floor(Date.now() / 1000);
   const ME = () => PC.ME || {};
@@ -1235,9 +1246,10 @@
       const P = plug(file ? 'sendMms' : 'send');
       if(!P) return { ok:false, error:'no messages plugin' };
       let r = null;
+      const mediaMime=file ? mmsMime(file) : '';
       try{
         r = file ? await P.sendMms({ to, body, data:await fileB64(file),
-                                     mime:file.type||'image/jpeg', name:file.name||'photo.jpg' })
+                                     mime:mediaMime, name:file.name||(mediaMime.startsWith('video/')?'video.mp4':'photo.jpg') })
                  : await P.send({ to, body });
       }catch(e){ return { ok:false, error:String(e) }; }
       if(r && r.ok){
@@ -1265,7 +1277,7 @@
                 await ensureMmsFolder();
                 const sha = await PC.uploadEncFile(file, 'MMS');
                 m.mms = true;
-                m.parts = [{ ct:file.type||'image/jpeg', name:file.name||'photo.jpg',
+                m.parts = [{ ct:mediaMime, name:file.name||(mediaMime.startsWith('video/')?'video.mp4':'photo.jpg'),
                              bytes:file.size, sha }];
               }catch(_){
                 /* The carrier send already succeeded. Keep the truthful text record even when
@@ -1298,10 +1310,10 @@
     const doc = await outboxId(to, body, at);
     let attachment = null;
     if(file){
-      if(!/^image\//i.test(file.type||'')) return {ok:false,error:'MMS currently supports photos'};
       try{
         const sha = await PC.uploadEncFile(file, 'MMS');
-        attachment = {sha, mime:file.type||'image/jpeg', name:file.name||'photo.jpg', bytes:file.size};
+        const mime=mmsMime(file);
+        attachment = {sha, mime, name:file.name||(mime.startsWith('video/')?'video.mp4':'photo.jpg'), bytes:file.size};
       }catch(e){ return {ok:false,error:'could not encrypt attachment: '+String(e&&e.message||e)}; }
     }
     /* COMMANDS STAY INLINE. Message archives use encrypted Blossom to keep history off the relay,

@@ -78,6 +78,19 @@ def published(res, doc):
 @unittest.skipIf(shutil.which("node") is None, "node not installed")
 class ThreadsHoldBothKinds(unittest.TestCase):
 
+    def test_desktop_can_queue_extension_only_video_for_the_phone(self):
+        """The Files picker offers video on desktop; it must survive the remote-phone outbox."""
+        res = run(isPhone=False, telephony=False,
+                  steps=["sendvideo:+15550100:1024:camera clip"])
+        self.assertEqual(calls_of(res, "sendVideoResult")[0][1:], [True, "queued"])
+        requests = [json.loads(e["content"][4:]) for e in res["relayEvents"]
+                    if e["d"].startswith("pcai:smsout:") and e["content"].startswith("enc:")]
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0]["attachment"]["mime"], "video/mp4")
+        self.assertEqual(requests[0]["attachment"]["name"], "clip.mp4")
+        self.assertTrue(res["threads"][0]["pending"][0])
+        self.assertEqual(res["threads"][0]["parts"], [1])
+
     def test_remote_send_keeps_the_uploaded_attachment_in_pending_and_ack_bubbles(self):
         src = Path(ROOT, "static/js/client/sms.js").read_text()
         self.assertIn("const sentParts=sent.attachment?", src)

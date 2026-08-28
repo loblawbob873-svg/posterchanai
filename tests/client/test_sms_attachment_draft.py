@@ -28,6 +28,24 @@ def test_mms_send_captures_the_displayed_file_and_accepts_photos_or_videos_only(
     assert "if(S.attach===attachment)clearAttachment();" in JS
 
 
+def test_video_uses_the_same_mms_route_on_phone_and_remote_clients():
+    send = JS[JS.index("async function send(to, body, file)"):
+              JS.index("async function outboxId", JS.index("async function send(to, body, file)"))]
+    assert "MMS currently supports photos" not in send
+    assert "mmsMime(file)" in send
+    assert "attachment = {sha, mime" in send
+    assert "mime, name:file.name" in send
+
+
+def test_extension_only_video_is_not_mislabeled_as_a_photo():
+    mime = JS[JS.index("function mmsMime(file)"):
+              JS.index("const now =", JS.index("function mmsMime(file)"))]
+    assert "mp4:'video/mp4'" in mime
+    assert "mov:'video/quicktime'" in mime
+    assert "webm:'video/webm'" in mime
+    assert "'3gp':'video/3gpp'" in mime
+
+
 def test_texts_attachment_menu_offers_camera_device_and_readable_files():
     assert 'id="sms-camera" type="file" accept="image/*" capture="environment"' in JS
     assert 'id="sms-src-camera"' in JS
