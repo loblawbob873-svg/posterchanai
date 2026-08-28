@@ -25,6 +25,7 @@ const calls = [];        // every plugin call, in order
 const published = [];    // every event handed to publish(), in order
 const notified = [];
 const uploads = Object.create(null);
+for(const [sha, item] of Object.entries(opt.uploads || {})) uploads[sha] = Object.assign({}, item);
 const driveFolders = new Set();
 const driveFiles = [];
 let driveBatch = 0;
@@ -220,7 +221,10 @@ global.Relay = {
     // differently — this is the switch that lets a test show it.
     return opt.relayEmpty ? [] : Array.from(relay.values());
   },
-  subscribe(){ return { id: 'sub' }; },
+  subscribe(filters, handlers){
+    global.__smsLiveEvent = handlers && handlers.onEvent;
+    return { id: 'sub' };
+  },
   close(){},
 };
 
@@ -255,7 +259,7 @@ global.__PC = {
     driveFiles.push({ sha, folder:String(folder), name:String(file.name) });
     return sha;
   },
-  encFileUrl: async sha => 'blob:' + sha,
+  encFileUrl: async sha => { calls.push(['encFileUrl', sha]); return 'blob:' + sha; },
   /* Encrypt-and-upload for somebody who is NOT us. The real one (app.js) mints a random AES key,
      uploads the ciphertext and returns `<blobUrl>#pcenc1=<b64u(JSON{k,m,n})>`. The sim reproduces
      the SHAPE exactly -- the shape is what sms.js parses to build the recipient's link -- with a
@@ -295,7 +299,14 @@ global.fetch = async url => {
   const sha = String(url || '').replace(/^blob:/, '');
   const item = uploads[sha];
   if(!item) return { ok:false, async json(){ throw new Error('missing encrypted blob ' + sha); } };
-  return { ok:true, async json(){ return JSON.parse(item.text); } };
+  /* encFileUrl returns a URL consumed as bytes by attachment rendering/retry, and as JSON by the
+   * encrypted message envelope. A browser Response supports both. Giving the simulator only json()
+   * made the shipped Web/OS attachment path look broken in tests even though the browser can open
+   * it, and left the old-media URL itself completely unexercised. */
+  return { ok:true,
+           async json(){ return JSON.parse(item.text); },
+           async blob(){ return new Blob([Buffer.from(item.text)],
+                              {type:item.type || 'application/octet-stream'}); } };
 };
 
 require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
@@ -369,6 +380,10 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
     }
     else if(step === 'settle'){ await new Promise(r => setTimeout(r, 20)); }
     else if(step === 'absorbRaw'){ await S._absorb(opt.rawEvents || []); }
+    else if(step === 'liveEvent'){
+      if(typeof global.__smsLiveEvent !== 'function') throw new Error('Texts live subscription missing');
+      await global.__smsLiveEvent((opt.rawEvents || [])[0]);
+    }
     else if(step === 'absorbConcurrent'){
       await Promise.all((opt.rawEvents || []).map(ev => S._absorb([ev])));
     }

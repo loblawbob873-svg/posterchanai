@@ -379,6 +379,26 @@ class SendingFromAnotherDevice(unittest.TestCase):
         self.assertEqual(res["threads"][0]["failed"], [False])
         self.assertEqual(res["threads"][0]["pending"], [True])
 
+    def test_web_retry_resolves_archived_attachment_through_encrypted_media_url(self):
+        """The portable hash is useful only if Web/OS turns it back into browser-readable bytes.
+        Exercise the same partData path used by old MMS hydration, without a handset provider."""
+        sha = "a" * 64
+        receipt = {
+            "kind": 30078, "created_at": 1700000010, "pubkey": "me",
+            "tags": [["d", "pcai:smsout:failed-media"], ["l", "pcai-sms"]],
+            "content": 'enc:{"done":true,"ok":false,"error":"radio rejected it",'
+                       '"request":{"to":"+15550100","body":"photo",'
+                       '"at":1700000000000,"attachment":{"sha":"' + sha + '",'
+                       '"mime":"image/jpeg","name":"old.jpg","bytes":1}}}',
+        }
+        res = run(isPhone=False, telephony=False, relay=[receipt],
+                  uploads={sha: {"text": "x", "type": "image/jpeg"}},
+                  steps=["render", "settle", "retryFailed"])
+        self.assertEqual(calls_of(res, "retryFailedResult")[0][1:3], [True, "queued"])
+        self.assertIn(["encFileUrl", sha], res["calls"])
+        self.assertFalse(any(c[0] == "attachment" for c in res["calls"]),
+                         "web/OS tried to read a handset-only provider part")
+
     def test_retry_never_repeats_an_ambiguous_carrier_outcome(self):
         receipt = {
             "kind": 30078,
