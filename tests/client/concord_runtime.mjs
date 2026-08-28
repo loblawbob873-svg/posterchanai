@@ -10,7 +10,7 @@ globalThis.localStorage = {
 const makeClassList = () => ({added:[],removed:[],values:new Set(),add(...x){this.added.push(...x);x.forEach(v=>this.values.add(v));},remove(...x){this.removed.push(...x);x.forEach(v=>this.values.delete(v));},contains(x){return this.values.has(x);},toggle(x,on){const yes=on===undefined?!this.values.has(x):!!on;yes?this.values.add(x):this.values.delete(x);return yes;}});
 const classList = makeClassList();
 let feedHtml='',replaceComposerOnWrite=false;
-const feed = { classList, insertAdjacentHTML(){}, get innerHTML(){return feedHtml;}, set innerHTML(value){feedHtml=String(value);if(replaceComposerOnWrite){const old=controls.get('cc-input');if(old)old.isConnected=false;controls.delete('cc-input');const textarea=feedHtml.match(/<textarea id="cc-input" data-cc-draft-key="([^"]*)"[^>]*>([\s\S]*?)<\/textarea>/);if(textarea){const next=control('cc-input');next.dataset.ccDraftKey=textarea[1];next.value=textarea[2];}}} };
+const feed = { classList, insertAdjacentHTML(){}, get innerHTML(){return feedHtml;}, set innerHTML(value){feedHtml=String(value);if(replaceComposerOnWrite){const old=controls.get('cc-input');if(old){old.isConnected=false;if(document.activeElement===old)document.activeElement=document.body;}controls.delete('cc-input');const textarea=feedHtml.match(/<textarea id="cc-input" data-cc-draft-key="([^"]*)"[^>]*>([\s\S]*?)<\/textarea>/);if(textarea){const next=control('cc-input');next.dataset.ccDraftKey=textarea[1];next.value=textarea[2];}}} };
 const controls = new Map();
 function control(id){
   if(!controls.has(id)) controls.set(id, { id, value:'', dataset:{}, selectionStart:0,selectionEnd:0,selectionDirection:'none',isConnected:true,classList:makeClassList(),
@@ -96,7 +96,8 @@ window.PosterCordReader={
   createChatWrap:async(_bundle,_wraps,_channel,text,_author,_sign,tags,kind)=>{calls.lastChat={text,tags,kind};return {rumorId:'f'.repeat(64),wrap:{kind:1059},ms:1234};},
 };
 globalThis.document = {
-  body:{classList}, head:{appendChild(){}}, documentElement:{appendChild(){}},activeElement:null,
+  body:{classList,isConnected:true}, head:{appendChild(){}},
+  documentElement:{appendChild(){},isConnected:true},activeElement:null,
   createElement:()=>({dataset:{}}),
   querySelector:s=>s==='link[data-concord-css]'?{}:(s==='#cc-input'?controls.get('cc-input')||null:null),
   addEventListener(name,fn){documentListeners.set(name,fn);},
@@ -364,6 +365,9 @@ if(disclosureRow.classList.contains('cc-actions-open')||disclosure.attributes['a
 // whole-workspace render path. Exercise actual textarea replacement (not merely a source assertion)
 // while a reply, attachment URL, mention query, focus and non-collapsed selection are active.
 const draftInput=control('cc-input'),draftUrl='https://files.example/photo.png';
+// Let the earlier settings-dialog focus timer settle; this scenario begins with the composer as the
+// intentional active control, exactly like a person typing when relay/profile repaints arrive.
+await new Promise(resolve=>setTimeout(resolve,25));
 draftInput.value='thread response '+draftUrl+' @bb';
 draftInput.setSelectionRange(draftInput.value.length-2,draftInput.value.length,'backward');
 draftInput.focus();draftInput.dispatchEvent({type:'input'});
@@ -377,12 +381,26 @@ if(repaintedInput===draftInput || repaintedInput.value!=='thread response '+draf
    repaintedInput.selectionStart!==repaintedInput.value.length-2 ||
    repaintedInput.selectionEnd!==repaintedInput.value.length || document.activeElement!==repaintedInput ||
    !feed.innerHTML.includes('Replying to'))
-  throw new Error('Concord repaint lost composer text, selection, focus or reply target');
+  throw new Error('Concord repaint lost composer state: '+JSON.stringify({same:repaintedInput===draftInput,
+    value:repaintedInput.value,start:repaintedInput.selectionStart,end:repaintedInput.selectionEnd,
+    focused:document.activeElement===repaintedInput,active:document.activeElement&&document.activeElement.id,
+    reply:feed.innerHTML.includes('Replying to')}));
+// Focus restoration is a latch, not a focus trap. If the person deliberately focuses another
+// control after a repaint but before its rAF, the pending composer callback must not steal it back.
+const intentionalTarget={isConnected:true,focus(){document.activeElement=this;}};
+repaintedInput.focus();
+PCConcord.render();
+intentionalTarget.focus();
+await new Promise(resolve=>setTimeout(resolve,0));
+if(document.activeElement!==intentionalTarget)
+  throw new Error('Concord repaint stole focus back from an intentional target');
+const afterIntentionalFocus=control('cc-input');
+afterIntentionalFocus.focus();
 // The mention candidates live outside the replaced DOM as well. Tab must still accept the candidate
 // selected before the repaint, and the eventual message must carry its Nostr p tag.
-repaintedInput.setSelectionRange(repaintedInput.value.length,repaintedInput.value.length);
-await repaintedInput.onkeydown({key:'Tab',ctrlKey:false,metaKey:false,preventDefault(){}});
-await repaintedInput.onkeydown({key:'Enter',ctrlKey:true,metaKey:false,preventDefault(){}});
+afterIntentionalFocus.setSelectionRange(afterIntentionalFocus.value.length,afterIntentionalFocus.value.length);
+await afterIntentionalFocus.onkeydown({key:'Tab',ctrlKey:false,metaKey:false,preventDefault(){}});
+await afterIntentionalFocus.onkeydown({key:'Enter',ctrlKey:true,metaKey:false,preventDefault(){}});
 if(calls.lastChat?.kind!==1111 || !calls.lastChat.tags.some(t=>t[0]==='e'&&t[1]===permanentId) ||
    !calls.lastChat.tags.some(t=>t[0]==='p'&&t[1]==='b'.repeat(64)) ||
    !calls.lastChat.tags.some(t=>t[0]==='imeta'&&t.some(x=>String(x).includes(draftUrl))) ||

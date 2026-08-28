@@ -55,6 +55,12 @@
    * selection after every repaint. This deliberately stays in renderer memory: drafts are private
    * plaintext and must not be written to localStorage. */
   const composerDrafts=new Map(),sendingDrafts=new Set();
+  /* Replacing a focused textarea makes Chromium move document.activeElement to <body> until our
+   * requestAnimationFrame callback focuses its replacement. A second relay/profile repaint can run
+   * inside that gap. It must inherit the pending focus restoration, but only while focus is on the
+   * browser's fallback node: if somebody deliberately focused a button or another input, leave it
+   * there. The token also makes callbacks from older replacements harmless. */
+  let composerFocusRestore=null,composerFocusToken=0;
   let activeMentionState={choices:[],index:0,recipients:new Map()};
   const attachmentCache=new Map(),attachmentLoads=new Map();
   const scrollStates=new Map();
@@ -64,17 +70,22 @@
   function save(v){ try{ localStorage.setItem('pc.concord.invites',JSON.stringify(v.slice(0,50),(key,value)=>key==='icon'&&/^blob:/i.test(String(value||''))?'':value)); }catch(_){} }
   function scrollKey(){ const room=state.community==null?null:saved()[state.community]; return `${room&&(room.communityId||room.naddr||room.url)||'home'}:${state.channel||'general'}`; }
   function composerKey(room,channel){return `${room&&(room.communityId||room.naddr||room.url)||'home'}:${channel||'general'}`;}
+  function composerFocusFallback(active){return !active||active===document.body||active===document.documentElement||active.isConnected===false;}
   function captureComposer(){
     const input=(document.querySelector&&document.querySelector('#cc-input'))||(PC()&&PC().$&&PC().$('#cc-input'));
     if(!input)return;
     const room=state.community==null?null:saved()[state.community],key=input.dataset&&input.dataset.ccDraftKey||composerKey(room,state.channel),start=Number.isFinite(input.selectionStart)?input.selectionStart:String(input.value||'').length,
       end=Number.isFinite(input.selectionEnd)?input.selectionEnd:start;
-    const prior=composerDrafts.get(key),focused=document.activeElement===input||!!(prior&&prior.focused&&document.activeElement&&document.activeElement.isConnected===false);
+    const prior=composerDrafts.get(key),active=document.activeElement,
+      pending=!!(composerFocusRestore&&composerFocusRestore.key===key&&composerFocusRestore.input===input),
+      focused=active===input||!!(prior&&prior.focused&&pending&&composerFocusFallback(active));
+    if(pending&&!focused)composerFocusRestore=null;
     composerDrafts.set(key,{value:String(input.value||''),start,end,direction:input.selectionDirection||'none',
       focused,replyTarget,mentionChoices:[...(activeMentionState.choices||[])],
       mentionIndex:Number(activeMentionState.index)||0,mentionRecipients:new Map(activeMentionState.recipients||[])});
   }
-  function clearComposer(key){const input=(document.querySelector&&document.querySelector('#cc-input'))||(PC()&&PC().$&&PC().$('#cc-input'));if(input){const room=state.community==null?null:saved()[state.community],liveKey=input.dataset&&input.dataset.ccDraftKey||composerKey(room,state.channel);if(liveKey===key){input.value='';try{input.setSelectionRange(0,0);}catch(_){}}}composerDrafts.delete(key);activeMentionState={choices:[],index:0,recipients:new Map()};replyTarget=null;}
+  function restoreComposerFocus(key,input){const token=++composerFocusToken,later=window.requestAnimationFrame||((fn)=>setTimeout(fn,0));composerFocusRestore={key,input,token};later(()=>{const pending=composerFocusRestore;if(!pending||pending.token!==token)return;const active=document.activeElement;if(input.isConnected!==false&&(active===input||composerFocusFallback(active))){try{input.focus({preventScroll:true});}catch(_){input.focus();}}else{const draft=composerDrafts.get(key);if(draft&&draft.focused)composerDrafts.set(key,{...draft,focused:false});}if(composerFocusRestore&&composerFocusRestore.token===token)composerFocusRestore=null;});}
+  function clearComposer(key){const input=(document.querySelector&&document.querySelector('#cc-input'))||(PC()&&PC().$&&PC().$('#cc-input'));if(input){const room=state.community==null?null:saved()[state.community],liveKey=input.dataset&&input.dataset.ccDraftKey||composerKey(room,state.channel);if(liveKey===key){input.value='';try{input.setSelectionRange(0,0);}catch(_){}}}if(composerFocusRestore&&composerFocusRestore.key===key)composerFocusRestore=null;composerDrafts.delete(key);activeMentionState={choices:[],index:0,recipients:new Map()};replyTarget=null;}
   function handoffState(){ const room=state.community==null?null:saved()[state.community],key=scrollKey(),scroll=readScroll(key); return {room:room&&(room.communityId||room.naddr||room.url)||'',channel:state.channel||'general',mobileChatOpen:!!mobileChatOpen,mobileDrawerOpen:!!mobileDrawerOpen,scroll:{top:Number(scroll.top)||0,height:Number(scroll.height)||0,pinned:scroll.pinned!==false}}; }
   function acceptHandoff(value){ const v=value&&typeof value==='object'?value:{},rooms=saved(),i=rooms.findIndex(room=>(room.communityId||room.naddr||room.url)===String(v.room||'')); state.community=i>=0?i:(rooms.length?Math.max(0,Math.min(Number(localStorage.getItem('pc.concord.active'))||0,rooms.length-1)):null);state.channel=String(v.channel||'general').slice(0,80);mobileChatOpen=!!v.mobileChatOpen;mobileDrawerOpen=!!v.mobileDrawerOpen;if(state.community!=null&&v.scroll){const key=scrollKey(),st={top:Math.max(0,Number(v.scroll.top)||0),height:Math.max(0,Number(v.scroll.height)||0),pinned:v.scroll.pinned!==false};writeScroll(key,st);} }
   function readScroll(key){ if(scrollStates.has(key))return scrollStates.get(key); try{ const v=JSON.parse(sessionStorage.getItem('pc.concord.scroll.'+key)||'null'); if(v&&typeof v==='object')return v; }catch(_){} return {pinned:true}; }
@@ -815,7 +826,7 @@
     hydrateEncryptedAttachments(messages);
     hydrateWebxdcCards(current);
     bind(me);
-    if(draft){const input=p.$('#cc-input');if(input){const end=String(input.value||'').length,start=Math.max(0,Math.min(Number(draft.start)||0,end)),finish=Math.max(start,Math.min(Number(draft.end)||start,end));try{input.setSelectionRange(start,finish,draft.direction||'none');}catch(_){}if(draft.focused){const later=window.requestAnimationFrame||((fn)=>setTimeout(fn,0));later(()=>{if(input.isConnected!==false)input.focus({preventScroll:true});});}}}
+    if(draft){const input=p.$('#cc-input');if(input){const end=String(input.value||'').length,start=Math.max(0,Math.min(Number(draft.start)||0,end)),finish=Math.max(start,Math.min(Number(draft.end)||start,end));try{input.setSelectionRange(start,finish,draft.direction||'none');}catch(_){}if(draft.focused)restoreComposerFocus(draftKey,input);}}
     if(autoOpen>=0)setTimeout(()=>{ const button=document.querySelector(`[data-cc-server="${autoOpen}"]`); if(button)button.click(); },0);
     /* render() replaces the scroller on EVERY relay/history/metadata repaint, not only when the app
      * first returns to the feed. Restore after every replacement: pinned rooms land at the newest

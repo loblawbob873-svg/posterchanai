@@ -60,10 +60,15 @@ public class ConcordComposerDeviceTest {
                     "a.value='draft survives repaint';a.focus();a.setSelectionRange(6,14,'backward');"+
                     "PCConcord.render();PCConcord.render();PCConcord.render();requestAnimationFrame(()=>{"+
                     "requestAnimationFrame(()=>{const b=document.querySelector('#cc-input');"+
-                    "window.__ccDeviceResult=JSON.stringify({value:b&&b.value,start:b&&b.selectionStart,"+
-                    "end:b&&b.selectionEnd,focused:document.activeElement===b,replaced:a!==b});"+
+                    "const before={value:b&&b.value,start:b&&b.selectionStart,end:b&&b.selectionEnd,"+
+                    "focused:document.activeElement===b,replaced:a!==b};"+
+                    // A restoration latch must not become a focus trap. Move focus to another real
+                    // control after one more replacement but before its rAF callback.
+                    "PCConcord.render();const target=document.querySelector('#cc-emoji');target.focus();"+
+                    "requestAnimationFrame(()=>{requestAnimationFrame(()=>{window.__ccDeviceResult="+
+                    "JSON.stringify({...before,notStolen:document.activeElement===target});"+
                     "if(old===null)localStorage.removeItem('pc.concord.invites');else localStorage.setItem('pc.concord.invites',old);"+
-                    "});});}catch(e){if(old===null)localStorage.removeItem('pc.concord.invites');"+
+                    "});});});});}catch(e){if(old===null)localStorage.removeItem('pc.concord.invites');"+
                     "else localStorage.setItem('pc.concord.invites',old);window.__ccDeviceResult='error:'+e;}};"+
                     "seed();return true;})()";
             eval(web, js);
@@ -76,7 +81,8 @@ public class ConcordComposerDeviceTest {
             assertTrue("APK Concord repaint lost draft state: " + result,
                     result.contains("draft survives repaint") && result.contains("\\\"start\\\":6") &&
                     result.contains("\\\"end\\\":14") && result.contains("\\\"focused\\\":true") &&
-                    result.contains("\\\"replaced\\\":true"));
+                    result.contains("\\\"replaced\\\":true") &&
+                    result.contains("\\\"notStolen\\\":true"));
         } finally { scenario.close(); }
     }
 
