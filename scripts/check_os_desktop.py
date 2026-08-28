@@ -103,6 +103,9 @@ Assertions, each a way a window manager breaks:
                        in front — so the timeline prepends its live posts, redraws on EOSE and
                        paginates on scroll into a Profile or Post window. Shipped as "opened a
                        profile in a new window and timeline posts started filling it in".
+  news-focus-reloads    News keeps its live DOM while a self-contained app has focus. Clicking back
+                       must only raise it: same node, selection, scroll and media state, with zero
+                       additional render or fetch calls.
 
 Exit 0 = clean, 1 = problems (printed), 2 = could not run (no Chrome / websockets).
 """
@@ -183,6 +186,7 @@ window.__PC = {
   switchView: (v, quiet) => {
     window.__view = v; window.__rendered.push(v);
     if (quiet) return;
+    if (v === 'news') window.__newsFetches = (window.__newsFetches || 0) + 1;
     const f = document.getElementById('feed');
     if (f) {
       f.innerHTML = '<div class="stub-view" data-v="' + v + '">' + v + ' rendered'
@@ -310,6 +314,29 @@ DRIVE = r"""(async () => {
   out.classicFeedText = (document.getElementById('feed')||{}).textContent;
   PCOS.enter(); await sleep(150);
   out.entered   = PCOS.isOn();
+  /* Exact focus regression: a no-feed app can take focus without borrowing #feed, so News keeps
+     its original live DOM. Returning by clicking the News frame must raise that existing instance,
+     not invoke switchView/fetch/render again. Keep identity, arbitrary selection state, scroll and
+     a playing-media-shaped property so this catches replacement as well as visible similarity. */
+  PCOS.routeView('news'); await sleep(100);
+  {
+    const news=document.querySelector('.osw.focused');
+    const feed=document.getElementById('feed');
+    const marker=document.createElement('div');marker.id='__news_identity';marker.dataset.selected='article-17';
+    marker.style.cssText='display:block;height:1800px';
+    marker.mediaState={currentTime:37,paused:false};feed.appendChild(marker);
+    feed.scrollTop=611;const scroll=feed.scrollTop;
+    const renders=window.__rendered.length,fetches=window.__newsFetches||0;
+    PCOS.openDoc('__focus_probe','Focus probe','i-grid',()=>{},true);await sleep(50);
+    news.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerId:901,buttons:1}));await sleep(100);
+    const after=document.getElementById('__news_identity');
+    out.newsFocusPreserved={sameNode:after===marker,selected:after?.dataset.selected,
+      scrollBefore:scroll,scroll:document.getElementById('feed')?.scrollTop,mediaTime:after?.mediaState?.currentTime,
+      playing:after?.mediaState?.paused===false,renders:window.__rendered.length-renders,
+      fetches:(window.__newsFetches||0)-fetches};
+    document.querySelector('.osw.focused .osw-x')?.click();await sleep(50);
+    document.querySelector('.osw.focused .osw-x')?.click();await sleep(50);
+  }
   /* Settings categories survive one unavailable hardware bridge. This harness deliberately has
      no pcDisplays: Appearance/About must remain real pages rather than a dashboard-wide error. */
   PCOS.openSystemSettings(); await sleep(300);
@@ -1775,6 +1802,17 @@ async def drive(url):
                                      f"(feature={r.get('viewOnFeature')!r} doc={r.get('viewOnDoc')!r} "
                                      f"kept-its-dom={r.get('docFeedBack')} "
                                      f"left-open={r.get('viewWinsClosed')})"))
+                news_focus = r.get("newsFocusPreserved") or {}
+                if not (news_focus.get("sameNode") and news_focus.get("selected") == "article-17"
+                        and news_focus.get("scrollBefore", 0) > 0
+                        and news_focus.get("scroll") == news_focus.get("scrollBefore")
+                        and news_focus.get("mediaTime") == 37
+                        and news_focus.get("playing") and news_focus.get("renders") == 0
+                        and news_focus.get("fetches") == 0):
+                    problems.append((label, "news-focus-reloads",
+                                     "clicking back to the existing News frame reloaded it instead "
+                                     "of only raising it; expected the identical DOM/selection/scroll/"
+                                     f"media and no render/fetch, got {news_focus}"))
                 if not r.get("startOnTop") or not r.get("startOnTopLate"):
                     problems.append((label, "startmenu-buried",
                                      "the start menu does not render over the windows — it hits "

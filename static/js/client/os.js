@@ -1208,6 +1208,16 @@
 
   function focusWin(w, render){
     if(!w) return;
+    /* A self-contained window (folder, native surface, etc.) does not claim #feed.  Consequently
+     * the feature behind it keeps its live DOM in its own frame.  Remember that fact BEFORE focus
+     * bookkeeping: claimFeed quite correctly becomes a no-op below, but the old repaint tail then
+     * treated that no-op as permission to run switchView again.  Returning to News fetched and
+     * rebuilt the whole reader even though its original nodes, selection, scroll and media were
+     * still sitting untouched in the frame.
+     *
+     * This is a focus, not a refresh.  Parked windows take the lossless `w.restored` path; a window
+     * that never had to park takes this one.  New windows still paint once from openApp. */
+    const keptLiveFeed = !w.noFeed && !!(realFeed && realFeed.parentElement === w.body);
     /* Focusing another window is not minimising Firefox/Telegram. Older builds parked every native
      * surface in Sway's scratchpad here; from the user's perspective the app simply disappeared.
      * Only the explicit minimise/taskbar toggle paths are allowed to hide a native window. */
@@ -1257,7 +1267,7 @@
     drawBar();
     // Re-render the feature into ITS window. Cheap for these modules — they hold their own state
     // and repaint from it, which is exactly what leaving and returning to a view already does.
-    if(render !== false){
+    if(render !== false && !keptLiveFeed){
       // A DOCUMENT window (a single post) repaints itself; a FEATURE window repaints by switching
       // the client back to its view. Both are needed because the one live #feed moves between
       // windows on every focus, so whatever it holds must be redrawn on arrival.
