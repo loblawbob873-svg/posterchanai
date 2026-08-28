@@ -1007,6 +1007,17 @@
     async _saveCache(key, c){
       try{ await _IDB._tx('readwrite', st => st.put(c, _SKEY(key))); }catch(_){}
     },
+    /* A SCREEN PAINT MAY READ THE CACHE; IT MAY NOT REFRESH IT.
+     *
+     * load() is intentionally much stronger than its name sounds: once a cache is old (and once
+     * for every cache written before `fullAt` existed) it requests and decrypts the ENTIRE record
+     * set. Calling that while Folder Sync paints made opening the screen kill Android's renderer on
+     * established 10k+ file folders. A sweep is the right owner for the periodic re-anchor. The UI
+     * only needs the last count already on disk, and a cache miss honestly means "no count yet". */
+    async cached(key){
+      const c = await this._cache(key);
+      return c && c.entries && typeof c.entries === 'object' ? c.entries : null;
+    },
     async clear(key){
       try{ await _IDB._tx('readwrite', st => st.delete(_SKEY(key))); }catch(_){}
     },
@@ -2430,11 +2441,12 @@
      * is a cached delta rather than a first read. */
     const _f0 = folders().find(x => keyOf(x) === key);
     if(_f0 && !_f0.lastScanOkAt && !_f0.lastSyncAt){ _done(); }
-    else stateS.load(key).then(st => {
+    else stateS.cached(key).then(entries => {
+      if(!entries) return;
       let shared = 0, gone = 0;
-      for(const p in st.state){ if(st.state[p] && st.state[p].deletedAt) gone++; else shared++; }
+      for(const p in entries){ if(entries[p] && entries[p].deletedAt) gone++; else shared++; }
       _bump({ shared, gone });
-    }).catch(() => { /* could not read the folder — say nothing rather than say zero */ }).then(_done);
+    }).catch(() => { /* could not read the cache — say nothing rather than say zero */ }).then(_done);
     return hit || null;
   }
 
