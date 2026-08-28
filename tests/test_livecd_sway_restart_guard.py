@@ -32,6 +32,28 @@ def test_packaged_and_installer_launchers_stay_identical():
     assert LAUNCHERS[0].read_bytes() == LAUNCHERS[1].read_bytes()
 
 
+def test_live_profile_and_launcher_establish_home_before_first_use():
+    profile = INSTALLER.split("cat >\"$WORK/live.bash_profile\" <<'PROFILE'", 1)[1].split(
+        "\nPROFILE", 1
+    )[0]
+    assert profile.index('HOME=$(getent passwd "$(id -un)" | cut -d: -f6)') < profile.index(
+        "[[ -f ~/.bashrc ]]"
+    )
+    for launcher in LAUNCHERS:
+        source = launcher.read_text(encoding="utf-8")
+        home = source.index('HOME=$(getent passwd "$(id -un)" | cut -d: -f6)')
+        first_use = source.index('"/run/user/$(id -u)/posterchan-shell-start.lock"')
+        assert home < first_use
+
+
+def test_shell_binds_gtk_to_native_wayland_before_electron_launch():
+    for launcher in LAUNCHERS:
+        source = launcher.read_text(encoding="utf-8")
+        backend = source.index('export GDK_BACKEND="${GDK_BACKEND:-wayland}"')
+        launch = source.index('"$PC_DESKTOP_LAUNCHER" --shell --ozone-platform=wayland')
+        assert backend < launch
+
+
 def test_reloadable_sway_configs_do_not_force_xwayland_at_startup():
     """Sway accepts this startup directive but reports it as an error on every live reload."""
     packaged = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config").read_text(

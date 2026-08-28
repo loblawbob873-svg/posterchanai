@@ -9,6 +9,17 @@
 #
 # So the window is found FIRST and pinned second — the same order wm.js uses for anything it
 # launches, and for the same reason: an app that has not appeared cannot be placed.
+
+# Some minimal autologin/getty paths start the session without HOME even though the account has a
+# valid home directory. Resolve it before any config, log, or Electron profile path is touched.
+# Falling back to /tmp keeps the failure diagnosable for a malformed account instead of writing
+# into / and dying with an unrelated permission error.
+if [ -z "${HOME:-}" ]; then
+  HOME=$(getent passwd "$(id -un)" | cut -d: -f6)
+  HOME=${HOME:-/tmp/posterchan-$(id -u)}
+  export HOME
+fi
+
 [ -n "$SWAYSOCK" ] || {
   # Old compositor sockets survive an unclean Sway restart. Filename order is not liveness: taking
   # the first one attached Electron's window manager bridge to a dead socket, so Super, placement
@@ -34,6 +45,10 @@ flock -n 9 || exit 0
 # Children launched by PosterChan inherit this too, giving one dark desktop instead of mixed chrome.
 export GTK_THEME="${GTK_THEME:-Adwaita:dark}"
 export GTK_APPLICATION_PREFER_DARK_THEME=1
+# GTK is used for Electron theme integration even when Chromium renders through Ozone. Bind it to
+# the compositor that is already verified above; otherwise it guesses unavailable X11 on a clean
+# boot and aborts before the first shell window maps.
+export GDK_BACKEND="${GDK_BACKEND:-wayland}"
 # The shell is the desktop; a startup failure otherwise leaves only a black screen. Electron's
 # diagnostics go to Sway's per-session log (the profile redirects stderr), never to the UI.
 export ELECTRON_ENABLE_LOGGING=1

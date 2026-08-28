@@ -3152,6 +3152,12 @@ FSTAB
 	# The live user's login shell, identical to the one accounts() writes for a real user — see the
 	# pseudo-file above.
 	cat >"$WORK/live.bash_profile" <<'PROFILE'
+# A minimal tty autologin can omit HOME. Establish it before even ~/.bashrc is resolved.
+if [ -z "${HOME:-}" ]; then
+	HOME=$(getent passwd "$(id -un)" | cut -d: -f6)
+	HOME=${HOME:-/tmp/posterchan-$(id -u)}
+	export HOME
+fi
 [[ -f ~/.bashrc ]] && . ~/.bashrc
 if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
 	# Welcome is the live machine's network setup UI, so its API must exist before Sway starts.
