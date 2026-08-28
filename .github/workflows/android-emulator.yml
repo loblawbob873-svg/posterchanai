@@ -162,11 +162,13 @@ jobs:
           # Bound each half independently. A wedged adb/Gradle/instrumentation command used to sit
           # inside this opaque combined step until the job-wide 60-minute timeout, at which point
           # the artifact-upload steps had no useful report to publish. These limits are several
-          # times the normal duration and `--foreground` still delivers the runner's cancellation
-          # signal. Crucially, the second half runs even when the first times out, and the always()
-          # uploads below retain whichever diagnostics were produced.
+          # times the normal duration. Each command gets its own process group plus a hard KILL
+          # grace period: a foreground timeout can signal the emulator owned by this action, while
+          # TERM alone is insufficient when adb has printed "Complete" but kept its socket open.
+          # Crucially, the second half runs even when the first times out, and the always() uploads
+          # below retain whichever diagnostics were produced.
           script: |
-            timeout --foreground 15m bash scripts/android_device_checks.sh; a=$?; timeout --foreground 25m bash scripts/android_instrumented.sh; b=$?; echo "device=$a instrumented=$b"; [ $a -eq 0 ] && [ $b -eq 0 ]
+            timeout --kill-after=30s 15m bash scripts/android_device_checks.sh; a=$?; timeout --kill-after=30s 25m bash scripts/android_instrumented.sh; b=$?; echo "device=$a instrumented=$b"; [ $a -eq 0 ] && [ $b -eq 0 ]
 
       - name: Upload logcat
         if: always()

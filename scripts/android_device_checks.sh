@@ -50,13 +50,16 @@ say "launch"
 # for 31 minutes. `-W` gives ActivityManager's own result, an outer timeout bounds a broken transport,
 # and one ADB-server restart distinguishes a transient host channel from an app that cannot launch.
 launch_main() {
-  timeout --foreground 30s adb shell am start -W -n "$PKG/$PKG.MainActivity"
+  # adb can print ActivityManager's final "Complete" line and still never close its host socket.
+  # A TERM-only foreground timeout does not stop that state, and the surrounding workflow's
+  # foreground timeout can then signal the emulator itself. Isolate this command and escalate.
+  timeout --kill-after=5s 30s adb shell am start -W -n "$PKG/$PKG.MainActivity"
 }
 if ! launch_main >"$OUT/pc-device-launch.txt" 2>&1; then
   echo "    first launch did not return; restarting the ADB transport"
   adb kill-server >/dev/null 2>&1 || true
-  timeout --foreground 15s adb start-server >/dev/null 2>&1 || true
-  timeout --foreground 30s adb wait-for-device >/dev/null 2>&1 || true
+  timeout --kill-after=5s 15s adb start-server >/dev/null 2>&1 || true
+  timeout --kill-after=5s 30s adb wait-for-device >/dev/null 2>&1 || true
   if ! launch_main >>"$OUT/pc-device-launch.txt" 2>&1; then
     cat "$OUT/pc-device-launch.txt" 2>/dev/null || true
     fail "launch failed after ADB restart"
