@@ -30,3 +30,14 @@ def test_successful_shell_mapping_rearms_recovery_for_later_restarts():
 
 def test_packaged_and_installer_launchers_stay_identical():
     assert LAUNCHERS[0].read_bytes() == LAUNCHERS[1].read_bytes()
+
+
+def test_sway_starts_xwayland_before_the_shell_needs_gtk_theme_metrics():
+    packaged = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config").read_text(
+        encoding="utf-8"
+    )
+    installer = (ROOT / "os/gentoo.sh").read_text(encoding="utf-8")
+    for source in (packaged, installer):
+        xwayland = source.index("xwayland force")
+        launch = source.index("/usr/local/bin/pc-shell-start", xwayland)
+        assert xwayland < launch
