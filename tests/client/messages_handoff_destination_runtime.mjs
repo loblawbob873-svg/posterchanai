@@ -2,7 +2,12 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 
-const source=fs.readFileSync(new URL('../../static/js/client/concord.js',import.meta.url),'utf8');
+/* A path argument lets packaging CI execute the same behavior against the bytes inside the
+ * Electron bundle.  With no argument this remains the fast source-tree regression test. */
+const sourcePath=process.argv[2]
+  ? new URL(`file://${process.cwd()}/${process.argv[2].replace(/^\/+/, '')}`)
+  : new URL('../../static/js/client/concord.js',import.meta.url);
+const source=fs.readFileSync(sourcePath,'utf8');
 const rooms=[{communityId:'community:armada',name:'Armada'}];
 const local=new Map([['pc.concord.invites',JSON.stringify(rooms)]]),session=new Map();
 const window={__pcConcordHandoff:{room:'community:armada',channel:'support',

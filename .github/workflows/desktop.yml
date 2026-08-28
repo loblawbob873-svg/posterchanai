@@ -258,6 +258,11 @@ jobs:
           test -s www/static/css/concord.css
           test -s www/static/js/client/concord.js
           test -s www/static/js/client/cord-reader.js
+          # Execute the monitor-destination behavior against the files that will be packaged.  A
+          # source-only test cannot catch build-www omitting or replacing the fixed Concord bundle.
+          node ../tests/client/messages_handoff_destination_runtime.mjs www/static/js/client/concord.js
+          grep -Fq '__pcConcordHandoff' www/static/js/client/os.js
+          grep -Fq 'messagesHandoffState' www/static/js/client/app.js
           test -s www/static/js/client/cord-protocol.js
           grep -q 'data-view="messages"' www/index.html
           grep -q 'static/css/concord.css' www/index.html
