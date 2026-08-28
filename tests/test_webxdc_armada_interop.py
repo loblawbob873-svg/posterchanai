@@ -59,3 +59,16 @@ def test_ioquake_host_election_waits_for_the_armada_wire_subscription():
     assert "rtReady.then(function(){ if(joined) rpc('webxdc.rtSend'" in WEBXDC
     assert "const sub=await PCConcord.webxdcSubscribe" in WEBXDC
     assert "this._rtJoinReady.then(()=>this.reply(id,null)" in WEBXDC
+
+
+def test_room_realtime_listens_on_managed_and_external_relays():
+    """A room relay already present in Relay._conns is intentionally skipped by subscribeFrom.
+
+    Concord must therefore install a normal pooled subscription too; otherwise the helper returns a
+    closer successfully while listening to zero sockets, which split Armada and PosterChan games.
+    """
+    assert "const pooled=R.subscribe(filters,{onEvent:receive})" in CONCORD
+    assert "external=R.subscribeFrom(urls,filters,{onEvent:receive})" in CONCORD
+    assert "if(external.ready&&!(await external.ready))" in CONCORD
+    assert "return ()=>{try{R.close(pooled);}" in CONCORD
+    assert "typeof this.rtSub==='function'?this.rtSub():Relay.close(this.rtSub)" in WEBXDC

@@ -613,18 +613,28 @@
      * function, so discovering an IP never silently changes the user's saved relay list. */
     subscribeFrom(urls, filters, { onEvent, timeout=60000, max=4 } = {}){
       const targets=[...new Set((urls||[]).filter(Boolean))].filter(u=>!this._conns.has(u)).slice(0,max);
-      const sockets=[]; let closed=false,tm=null;
+      const sockets=[]; let closed=false,tm=null,readyDone=false,readyResolve;
+      /* Callers that bridge a realtime protocol must not report "joined" before an external
+       * socket has actually sent its REQ.  The old API returned its closer immediately, while the
+       * websocket was still connecting; ioquake then sent host-election packets into the gap.  A
+       * function is still returned for compatibility, with a readiness promise attached. */
+      const ready=new Promise(resolve=>{readyResolve=resolve;});
+      const markReady=ok=>{if(!readyDone){readyDone=true;readyResolve(!!ok);}};
       const stop=()=>{ if(closed)return;closed=true;if(tm)clearTimeout(tm);sockets.forEach(ws=>{try{ws.close();}catch(_){}}); };
+      stop.ready=ready;
+      if(!targets.length)markReady(true); // every requested URL is already in the managed pool
       if(timeout>0) tm=setTimeout(stop,timeout);
       targets.forEach((u,n)=>{
         let ws; const id='xf'+Math.random().toString(36).slice(2,9)+n;
         try{ws=new WebSocket(u);sockets.push(ws);}catch(_){return;}
-        ws.onopen=()=>{try{ws.send(JSON.stringify(['REQ',id,...filters]));}catch(_){}};
+        ws.onopen=()=>{try{ws.send(JSON.stringify(['REQ',id,...filters]));markReady(true);}catch(_){}};
         ws.onmessage=async e=>{let m;try{m=JSON.parse(e.data);}catch(_){return;}
           if(closed||m[0]!=='EVENT'||m[1]!==id||!m[2])return;
           try{const rs=await worker.call('verifyBatch',{events:[m[2]]});
             if(!closed&&rs&&rs[0]&&rs[0].valid&&onEvent)onEvent(this._normTags(m[2]));}catch(_){} };
       });
+      /* Do not let a failed external relay leave a realtime join pending for a full minute. */
+      if(targets.length)setTimeout(()=>markReady(false),8000);
       return stop;
     },
     // One-shot AUTHENTICATED publish to a single EXTERNAL relay (e.g. a NIP-29 group relay like

@@ -1498,7 +1498,7 @@
               this.rtSub={pending:true};
               try{
                 const sub=await PCConcord.webxdcSubscribe(this.transport,this.app.uuid,true,receiveRt);
-                if(this.dead){try{Relay.close(sub);}catch(_){}}else this.rtSub=sub;
+                if(this.dead){try{typeof sub==='function'?sub():Relay.close(sub);}catch(_){}}else this.rtSub=sub;
               }catch(e){this.rtSub=null;throw e;}
             }else this.rtSub = Relay.subscribe([{ kinds:[KIND_REALTIME], '#i':[this.app.uuid],
                                             since: Math.floor(Date.now() / 1000) - 120 }], {
@@ -1525,7 +1525,7 @@
         return;
       }
       if(d.method === 'webxdc.rtLeave'){
-        try{ if(this.rtSub) Relay.close(this.rtSub); }catch(_){}
+        try{ if(this.rtSub) typeof this.rtSub==='function'?this.rtSub():Relay.close(this.rtSub); }catch(_){}
         this.rtSub = null;
         this._rtJoinReady = null;
         this.reply(id, null);

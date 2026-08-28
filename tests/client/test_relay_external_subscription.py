@@ -32,11 +32,12 @@ def test_external_call_signaling_is_verified_delivered_and_closed(tmp_path):
       require({json.dumps(str(RELAY))});
       const got=[];
       const stop=Relay.subscribeFrom(['wss://peer.test'],[{{kinds:[25050]}}],{{onEvent:e=>got.push(e),timeout:5000}});
+      let ready=false;stop.ready.then(v=>{{ready=v;}});
       const ws=FakeWS.all[0];ws.open();
       const sub=ws.sent[0][1];
       ws.receive(['EVENT',sub,{{id:'bad',sig:'bad',tags:[]}}]);
       ws.receive(['EVENT',sub,{{id:'ok',sig:'good'}}]);
-      setTimeout(()=>{{stop();console.log(JSON.stringify({{sent:ws.sent[0],got,closed:ws.closed}}));}},20);
+      setTimeout(()=>{{stop();console.log(JSON.stringify({{sent:ws.sent[0],got,closed:ws.closed,ready}}));}},20);
     """), encoding="utf-8")
     run = subprocess.run(["node", str(driver)], capture_output=True, text=True, timeout=10)
     assert run.returncode == 0, run.stderr
@@ -46,3 +47,4 @@ def test_external_call_signaling_is_verified_delivered_and_closed(tmp_path):
     assert [event["id"] for event in result["got"]] == ["ok"]
     assert result["got"][0]["tags"] == []
     assert result["closed"] is True
+    assert result["ready"] is True
