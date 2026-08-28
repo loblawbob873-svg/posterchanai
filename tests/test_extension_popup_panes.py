@@ -144,6 +144,9 @@ def test_every_tab_reveals_its_pane():
                 # that renders and whose buttons go nowhere is the same failure one step later.
                 r2 = await call("Runtime.evaluate", {"expression": '''(async () => {
                   window.__sent = [];
+                  document.getElementById('tab-list').click();
+                  document.getElementById('auto-save-passwords').checked = true;
+                  document.getElementById('auto-save-passwords').dispatchEvent(new Event('change'));
                   document.getElementById('bm-tab').click();
                   document.getElementById('bm-on').checked = true;
                   document.getElementById('bm-on').dispatchEvent(new Event('change'));
@@ -174,6 +177,8 @@ def test_every_tab_reveals_its_pane():
             f"does nothing (messages seen: {sent})")
         assert "relays-set" in sent, (
             f"saving relays did not message the background (messages seen: {sent})")
+        assert "auto-save-set" in sent, (
+            f"the automatic-save switch did not persist its choice (messages seen: {sent})")
         # The share pane has to compose a draft on its own — an empty box refuses to post, so a Post
         # button that sends nothing means the draft never got built from the tab.
         assert "share-post" in sent, (

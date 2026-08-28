@@ -152,6 +152,7 @@ textarea.input{
 /* The note under a control carries the reason something did or did not happen — it wraps, it is not
    a fixed height, and it must not be so dim that nobody reads the one line that explains the state. */
 #bm-note, #relay-note, #ed-note, #post-note{ margin:8px 0 10px; line-height:1.45; opacity:.75; }
+#auto-save-note{ margin:-2px 0 10px; line-height:1.4; opacity:.75; }
 #bm-note b, #relay-note b, #ed-note b, #post-note b{ opacity:1; }
 
 /* The share draft is PROSE, not a relay list. The generic textarea rule is monospace 11px with

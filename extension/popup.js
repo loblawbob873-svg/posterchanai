@@ -118,6 +118,8 @@ async function boot(){
     return;
   }
   vaultCount = st.count || 0;
+  const autoSave = $('#auto-save-passwords');
+  if(autoSave) autoSave.checked = st.autoSavePasswords === true;
   $('#status').textContent = `${st.count} · ${st.status}${st.mode === 'ro' ? ' · read-only' : ''}`;
   _mode = st.mode; _bmOn = !!st.bmOn; _bmCount = st.bmCount || 0; _bmPending = st.bmPending || 0;
   show('pane-list');
@@ -357,6 +359,14 @@ async function paintSites(){
   }
 }
 $('#sites-tab').onclick = () => { show('pane-sites'); paintSites(); };
+$('#auto-save-passwords').onchange = async (e) => {
+  const wanted = e.target.checked === true;
+  const r = await send({ type:'auto-save-set', on:wanted });
+  if(!r || !r.ok){
+    e.target.checked = !wanted;
+    $('#status').textContent = 'could not save that setting';
+  }
+};
 $('#sync').onclick = async () => { await send({ type:'sync' }); $('#status').textContent = 'syncing…'; setTimeout(boot, 1200); };
 /* Two taps, in-page. A native confirm() can dismiss a Firefox action popup outright — the await
  * would then never resume and Unpair would silently do nothing — and this project's rule against

@@ -57,10 +57,13 @@ const conns = new Map();         // url -> { ws, timer, backoff, ready }
 let ws = null, wsTimer = null, backoff = 1000;   // the primary, kept for publishAndWait
 const okWaiters = new Map();     // event id -> resolver, for publishAndWait
 let lastSync = 0, status = 'not paired';
+/* Browser-local and explicitly opt-in; absent on existing installs means OFF. */
+let autoSavePasswords = false;
 
 async function loadCfg(){
-  const got = await B.storage.local.get(['cfg', 'items', 'outbox', 'relays']);
+  const got = await B.storage.local.get(['cfg', 'items', 'outbox', 'relays', 'autoSavePasswords']);
   userRelays = Array.isArray(got.relays) ? got.relays : [];
+  autoSavePasswords = got.autoSavePasswords === true;
   cfg = got.cfg || null;
   if(cfg && cfg.key) key = V.fromB64(cfg.key);
   initBookmarks();                  // safe to call twice; the engine only wires its listeners once
@@ -1203,6 +1206,7 @@ B.runtime.onMessage.addListener((msg, sender, reply) => {
       switch(msg && msg.type){
         case 'state':
           return reply({ paired: !!cfg, mode: cfg && cfg.mode, count: items.size, status, lastSync,
+                         autoSavePasswords,
                          bmOn: !!(BM && BM.engine && BM.engine.enabled()),
                          bmCount: (BM && BM.engine) ? BM.engine.count() : 0,
                          // The confirm a bulk delete is waiting on, so the popup can offer it on OPEN —
@@ -1301,7 +1305,14 @@ B.runtime.onMessage.addListener((msg, sender, reply) => {
             .filter(i => (i.username || '') === (msg.username || ''));
           const exact = here.find(i => (i.password || '') === (msg.password || ''));
           return reply({ known: !!exact, rotating: !exact && here.length > 0,
+                         autoSave: autoSavePasswords,
                          id: here.length ? here[0].id : '' });
+        }
+        case 'auto-save-set': {
+          if(!_fromPopup(sender)) return reply({ ok:false, error:'not available to a page' });
+          autoSavePasswords = msg.on === true;
+          await B.storage.local.set({ autoSavePasswords });
+          return reply({ ok:true, on:autoSavePasswords });
         }
         case 'nostr':
           return reply(await handleNostr(msg, sender));

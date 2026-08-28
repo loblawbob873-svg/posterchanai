@@ -395,10 +395,10 @@
   window.addEventListener('scroll', place, true);
   window.addEventListener('resize', place);
 
-  /* Offer to save what was just typed. On submit, not on every keystroke: the value at submit time
+  /* Offer to save what was just typed (or save it under the explicit browser-local opt-in). On
+   * submit, not on every keystroke: the value at submit time
    * is the one that was actually used, and a manager that saves drafts fills your vault with typos.
-   * The offer is a bar, never an automatic write — this extension does not put things in your vault
-   * without being told to. */
+   * Automatic writes remain off unless the user enables them in the extension popup. */
   document.addEventListener('submit', (e) => {
     try{
       const form = e.target;
@@ -423,6 +423,15 @@
     if(!res || res.known) return;
     const rotating = !!res.rotating;
     const same = res.id ? [{ id: res.id }] : [];
+    const save = async () => {
+      try{ return await B.runtime.sendMessage({ type:'save', item: {
+        id: rotating ? same[0].id : undefined,     // update in place, never a second copy
+        kind:'login', title: location.hostname.replace(/^www\./,''),
+        username: cred.username, password: cred.password,
+        uris: [location.origin] } }); }
+      catch(_){ return null; }
+    };
+    if(res.autoSave){ await save(); return; }
     document.querySelectorAll('.pcpw-savebar').forEach(b => b.remove());   // never stack two
     const bar = document.createElement('div');
     bar.className = 'pcpw-savebar';
@@ -433,19 +442,11 @@
     const close = () => bar.remove();
     bar.querySelector('.pcpw-no').onclick = close;
     bar.querySelector('.pcpw-yes').onclick = async () => {
-      let r = null;
-      try{ r = await B.runtime.sendMessage({ type:'save', item: {
-        id: rotating ? same[0].id : undefined,     // update in place, never a second copy
-        kind:'login', title: location.hostname.replace(/^www\./,''),
-        username: cred.username, password: cred.password,
-        uris: [location.origin] } }); }
-      catch(_){ r = null; }
+      const r = await save();
       bar.innerHTML = `<span>${!r ? 'Couldn’t reach PosterChan — nothing was saved.' : r.queued
         ? 'Saved here — it will sync when you next open the PosterChan app.'
         : 'Saved.'}</span><button class="pcpw-no">OK</button>`;
       bar.querySelector('.pcpw-no').onclick = close;
-      setTimeout(close, 6000);
     };
-    setTimeout(() => { if(bar.isConnected) close(); }, 20000);
   }
 })();
