@@ -144,6 +144,8 @@
     <string name="tel_no_permission">PosterChan has not been allowed to place calls or read your call history yet.</string>
     <string name="tel_cannot_call">This phone could not place that call</string>
     <string name="tel_nothing_to_call">Type a number first</string>
+    <string name="tel_nothing_to_text">This contact has no number to text</string>
+    <string name="tel_cannot_text">Messages could not open this conversation</string>
     <string name="tel_recent_empty">No recent calls</string>
     <string name="tel_search">Search contacts and calls</string>
     <string name="tel_tab_keypad">Keypad</string>

@@ -52,6 +52,23 @@ import java.util.List;
 public class SmsPlugin extends Plugin {
 
     /**
+     * Contacts lives in the main WebView but Texts is a native Android screen. Cross that boundary
+     * explicitly instead of navigating an sms: URL: URL resolution can show a chooser or create a
+     * second task, while this direct child keeps Contacts underneath for Back.
+     */
+    @PluginMethod
+    public void openConversation(PluginCall call) {
+        Intent open = SmsRoutes.conversation(getActivity(), call.getString("address", ""));
+        if (open == null) { call.resolve(new JSObject().put("opened", false)); return; }
+        try {
+            getActivity().startActivity(open);
+            call.resolve(new JSObject().put("opened", true));
+        } catch (Exception t) {
+            call.reject("could not open this conversation", t);
+        }
+    }
+
+    /**
      * STATIC, like the music service's counters and for the same reason: an incoming message is
      * delivered to a BROADCAST RECEIVER, which frequently runs when there is no plugin instance and
      * no WebView at all. The receiver must be able to call this without caring, and the app finds

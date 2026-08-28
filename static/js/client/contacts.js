@@ -357,6 +357,9 @@
         </div>
         <div class="row" style="margin-top:14px">
           <button class="btn btn-cyan" id="cc-save">Save</button>
+          ${isNew || !(c.tels||[]).some(t=>String((t&&t.value)||'').trim()) ? '' :
+            '<button class="btn btn-ghost" id="cc-call"><svg class="ic b-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Call</button>'+
+            '<button class="btn btn-ghost" id="cc-text"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chat"></use></svg>Text</button>'}
           ${isNew ? '' : '<button class="btn btn-ghost" id="cc-share"><svg class="ic b-ic" aria-hidden="true"><use href="#i-share"></use></svg>Share</button>'}
           ${isNew ? '' : '<button class="btn btn-ghost" id="cc-del">Delete</button>'}
         </div>`, root => {
@@ -412,6 +415,23 @@
         };
         const del = $('#cc-del', root);
         const share = $('#cc-share', root);
+        const firstNumber = () => String((((c.tels||[]).find(t=>String((t&&t.value)||'').trim()))||{}).value||'').trim();
+        const call = $('#cc-call', root);
+        if(call) call.onclick = ()=>{ const n=firstNumber();if(n)window.location.href='tel:'+encodeURIComponent(n); };
+        const text = $('#cc-text', root);
+        if(text) text.onclick = async ()=>{
+          const n=firstNumber(); if(!n)return;
+          const open = PC.capPlugin ? PC.capPlugin('Sms', 'openConversation') : null;
+          if(open){
+            try{ const r=await open({address:n});if(r&&r.opened)return; }catch(err){
+              toast('could not open Texts: '+((err&&err.message)||'error')); return;
+            }
+          }
+          /* Browser/PosterChanOS: use the existing Texts window, never a popup. Its late loader can
+             finish after switchView, so carry the requested recipient until render consumes it. */
+          window.__PC_SMS_OPEN_ADDRESS=n;
+          PC.switchView('texts');
+        };
         if(share) share.onclick = async ()=>{
           const name = V().displayName(c) || 'Contact';
           const vcf = V().serialize(c);

@@ -12,6 +12,8 @@ import android.content.pm.ResolveInfo;
 import android.content.pm.ServiceInfo;
 import android.net.Uri;
 import android.telecom.Call;
+import android.view.LayoutInflater;
+import android.view.View;
 
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
@@ -21,6 +23,9 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import java.util.List;
+
+import place.poster.app.R;
+import place.poster.app.sms.ThreadActivity;
 
 /**
  * THE DIALER, ON A REAL ANDROID.
@@ -117,6 +122,70 @@ public class DialerDeviceTest {
         } finally {
             s.close();
         }
+    }
+
+    @Test
+    public void everyContactRowRendersTextBesideCall() {
+        ActivityScenario<DialerActivity> screen = ActivityScenario.launch(DialerActivity.class);
+        try {
+            screen.onActivity(a -> {
+                // A real CONTACT-shaped row, bound by the same method the Contacts tab's adapter
+                // calls. It does not depend on the test device containing a private address book.
+                View row = LayoutInflater.from(a).inflate(R.layout.tel_recent_row, null, false);
+                DialerActivity.Row contact = new DialerActivity.Row();
+                contact.label = "Ada";
+                contact.number = "+1 (555) 010-4477";
+                contact.contactId = 42;
+                contact.icon = R.drawable.ic_pc_user;
+                a.bindRow(row, contact);
+                View text = row.findViewById(R.id.pc_rc_text);
+                View call = row.findViewById(R.id.pc_rc_call);
+                assertNotNull("contact row has no Text action", text);
+                assertNotNull("contact row lost its Call action", call);
+                assertTrue("Text action is not clickable", text.hasOnClickListeners());
+                assertTrue("Call action is not clickable", call.hasOnClickListeners());
+                assertEquals(a.getString(R.string.tel_text_number), text.getContentDescription());
+                assertEquals(a.getString(R.string.tel_call), call.getContentDescription());
+            });
+        } finally {
+            screen.close();
+        }
+    }
+
+    @Test
+    public void contactTextOpensTheNormalizedConversationInTheSameTask() throws Exception {
+        android.app.Instrumentation inst = InstrumentationRegistry.getInstrumentation();
+        android.app.Instrumentation.ActivityMonitor monitor = inst.addMonitor(
+                ThreadActivity.class.getName(), null, false);
+        ActivityScenario<DialerActivity> dialer = ActivityScenario.launch(DialerActivity.class);
+        android.app.Activity opened = null;
+        try {
+            dialer.onActivity(a -> a.openTextNumber(" +1 (555) 010-4477 "));
+            opened = monitor.waitForActivityWithTimeout(5000);
+            assertNotNull("Text did not route to PosterChan's conversation screen", opened);
+            Intent got = opened.getIntent();
+            assertEquals("+15550104477", got.getStringExtra(ThreadActivity.EXTRA_ADDRESS));
+            assertEquals("the route left PosterChan's task and made a pop-out",
+                    dialerTaskId(dialer), opened.getTaskId());
+
+            // Finishing the conversation is the Back operation this route promises. The Phone
+            // activity must still exist underneath it rather than being recreated or replaced.
+            opened.finish();
+            inst.waitForIdleSync();
+            final boolean[] alive = new boolean[]{ false };
+            dialer.onActivity(a -> alive[0] = !a.isFinishing() && !a.isDestroyed());
+            assertTrue("Back from Messages did not return to Phone", alive[0]);
+        } finally {
+            if (opened != null && !opened.isFinishing()) opened.finish();
+            dialer.close();
+            inst.removeMonitor(monitor);
+        }
+    }
+
+    private static int dialerTaskId(ActivityScenario<DialerActivity> scenario) {
+        final int[] id = new int[]{ -1 };
+        scenario.onActivity(a -> id[0] = a.getTaskId());
+        return id[0];
     }
 
     @Test

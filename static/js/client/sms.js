@@ -2611,6 +2611,16 @@
      * exactly like the second one instead of requiring the person to close and reopen Texts. */
     if(!S.ready) await load();
     else paint();
+    /* Contacts may route here before this late-loaded module existed. Consume it only AFTER load:
+       load rebuilds the thread index, so consuming first made a brand-new recipient disappear. */
+    const contactLanding=String(window.__PC_SMS_OPEN_ADDRESS||'').trim();
+    if(contactLanding){
+      delete window.__PC_SMS_OPEN_ADDRESS;
+      clearAttachment(); S.open=key(contactLanding);
+      if(!S.threads.some(t=>t.key===S.open))
+        S.threads.unshift({key:S.open,address:contactLanding,msgs:[],date:0,unread:0});
+      paint();
+    }
     /* WHY IT IS EMPTY, asked once per visit and never on a keystroke — `emptyWhy` calls the plugin,
      * and paint() runs on every character typed in the search box. Painted again once the answer is
      * in, so the empty list is only briefly the useless kind. */

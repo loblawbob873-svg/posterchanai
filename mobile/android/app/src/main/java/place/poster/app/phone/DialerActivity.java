@@ -34,6 +34,7 @@ import place.poster.app.R;
 import place.poster.app.MainActivity;
 import place.poster.app.home.LaunchView;
 import place.poster.app.sms.PhoneBook;
+import place.poster.app.sms.SmsRoutes;
 import place.poster.app.ui.PcActivity;
 import place.poster.app.ui.Skin;
 
@@ -391,6 +392,20 @@ public class DialerActivity extends PcActivity {
         catch (Throwable t) { say(getString(R.string.tel_cannot_call)); }
     }
 
+    /**
+     * Open this number in PosterChan Messages, in this activity's task.  ACTION_SENDTO is useful
+     * when another app asks Android which messages app to use, but using it from our own Contacts
+     * screen can launch a resolver or a second app task.  A direct child activity preserves the
+     * Phone -> conversation -> Phone back stack and ThreadActivity's singleTop mode reuses an
+     * already-open conversation at the top of that stack.
+     */
+    void openTextNumber(String raw) {
+        Intent open = SmsRoutes.conversation(this, raw);
+        if (open == null) { say(getString(R.string.tel_nothing_to_text)); return; }
+        try { startActivity(open); }
+        catch (Throwable t) { say(getString(R.string.tel_cannot_text)); }
+    }
+
     private void callVoicemail() {
         String n = Voicemail.number(this);
         // SAY SO rather than dialling "1" at a stranger. A phone with no voicemail configured has no
@@ -440,10 +455,7 @@ public class DialerActivity extends PcActivity {
                             switch (acts.get(w)) {
                                 case 0: placeNumber(r.number); break;
                                 case 1:
-                                    try {
-                                        startActivity(new Intent(Intent.ACTION_SENDTO,
-                                                Uri.parse("smsto:" + Uri.encode(r.number))));
-                                    } catch (Throwable ignored) { }
+                                    openTextNumber(r.number);
                                     break;
                                 case 2:
                                     try {
@@ -465,6 +477,41 @@ public class DialerActivity extends PcActivity {
         } catch (Throwable ignored) { }
     }
 
+    /** Bind one concrete contact/call row. Package-visible so the installed Android test can draw
+     * an actual Contacts-tab row without depending on the emulator having somebody's address book. */
+    void bindRow(View v, final Row r) {
+        TextView who = (TextView) v.findViewById(R.id.pc_rc_who);
+        TextView when = (TextView) v.findViewById(R.id.pc_rc_when);
+        ImageView kind = (ImageView) v.findViewById(R.id.pc_rc_kind);
+        ImageView text = (ImageView) v.findViewById(R.id.pc_rc_text);
+        ImageView call = (ImageView) v.findViewById(R.id.pc_rc_call);
+        View card = v.findViewById(R.id.pc_rc_card);
+        card.setBackground(Skin.panel(DialerActivity.this, pal));
+        who.setText(r.label);
+        who.setTextColor(r.missed ? pal.danger : pal.text);
+        when.setText(r.sub);
+        when.setTextColor(pal.muted);
+        when.setVisibility(r.sub.isEmpty() ? View.GONE : View.VISIBLE);
+        kind.setImageDrawable(tint(r.icon, r.missed ? pal.danger : pal.muted));
+        text.setImageDrawable(tint(R.drawable.ic_pc_chat, pal.accent));
+        text.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View x) { openTextNumber(r.number); }
+        });
+        call.setImageDrawable(tint(R.drawable.ic_pc_call, pal.accent));
+        call.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View x) { placeNumber(r.number); }
+        });
+        /* A contact row means "open this person"; the phone glyph is the explicit call action. */
+        card.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View x) {
+                if (r.contactId >= 0) openPosterContact(r); else rowMenu(r);
+            }
+        });
+        card.setOnLongClickListener(new View.OnLongClickListener() {
+            @Override public boolean onLongClick(View x) { rowMenu(r); return true; }
+        });
+    }
+
     // ---------------------------------------------------------------- adapter
 
     private final class Rows extends BaseAdapter {
@@ -483,36 +530,8 @@ public class DialerActivity extends PcActivity {
             if (v == null) v = LayoutInflater.from(DialerActivity.this)
                     .inflate(R.layout.tel_recent_row, parent, false);
             final Row r = at(i);
-            TextView who = (TextView) v.findViewById(R.id.pc_rc_who);
-            TextView when = (TextView) v.findViewById(R.id.pc_rc_when);
-            ImageView kind = (ImageView) v.findViewById(R.id.pc_rc_kind);
-            ImageView call = (ImageView) v.findViewById(R.id.pc_rc_call);
-            View card = v.findViewById(R.id.pc_rc_card);
             if (r == null) return v;
-            card.setBackground(Skin.panel(DialerActivity.this, pal));
-            who.setText(r.label);
-            who.setTextColor(r.missed ? pal.danger : pal.text);
-            when.setText(r.sub);
-            when.setTextColor(pal.muted);
-            when.setVisibility(r.sub.isEmpty() ? View.GONE : View.VISIBLE);
-            kind.setImageDrawable(tint(r.icon, r.missed ? pal.danger : pal.muted));
-            call.setImageDrawable(tint(R.drawable.ic_pc_call, pal.accent));
-            call.setOnClickListener(new View.OnClickListener() {
-                @Override public void onClick(View x) { placeNumber(r.number); }
-            });
-            /* A contact row means "open this person"; the phone glyph is the explicit call action.
-             * Previously the large row did nothing and Open contact was buried in a menu that was
-             * not wired here either, so the Contacts tab looked selectable but was inert. */
-            card.setOnClickListener(new View.OnClickListener() {
-                @Override public void onClick(View x) {
-                    if (r.contactId >= 0) {
-                        openPosterContact(r);
-                    } else rowMenu(r);
-                }
-            });
-            card.setOnLongClickListener(new View.OnLongClickListener() {
-                @Override public boolean onLongClick(View x) { rowMenu(r); return true; }
-            });
+            bindRow(v, r);
             return v;
         }
     }

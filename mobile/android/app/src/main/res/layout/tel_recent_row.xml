@@ -26,6 +26,10 @@
             android:layout_height="wrap_content" android:maxLines="1" android:textSize="12sp" />
     </LinearLayout>
 
+    <ImageView android:id="@+id/pc_rc_text" android:layout_width="40dp"
+        android:layout_height="40dp" android:padding="10dp"
+        android:contentDescription="@string/tel_text_number" />
+
     <ImageView android:id="@+id/pc_rc_call" android:layout_width="40dp"
         android:layout_height="40dp" android:padding="10dp"
         android:contentDescription="@string/tel_call" />
