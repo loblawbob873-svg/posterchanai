@@ -34253,6 +34253,7 @@
     relayPublishTo: (relays, ev) => Relay.publishTo(relays, ev),
     relayQuery: (filters, timeout) => Relay.query(filters, timeout),
     relayQueryFrom: (relays, filters, opts) => Relay.queryFrom(relays, filters, opts),
+    verifyRelayEvents: async events => { const list=Array.isArray(events)?events:[],result=await Relay.worker.call('verifyBatch',{events:list}),valid=new Set((result||[]).filter(r=>r.valid).map(r=>r.id));return list.filter(event=>valid.has(event.id)); },
     relayUrls: () => _writeRelays().slice(),
     signTemplate: template => signer.signEvent(template),
     /* THE ONE PLACE AN OS NOTIFICATION IS RAISED, for the sub-modules. It is not a convenience: it
@@ -34492,6 +34493,9 @@
     // NIP-44 decrypt with the current signer (any login type) — games use it to read their own
     // encrypted hole cards from a public game-state doc.
     nip44dec: (peer, ct) => (signer && signer.nip44dec) ? signer.nip44dec(peer, ct) : Promise.reject(new Error('no nip44')),
+    // NIP-51 kind-10009 may keep private NIP-29 memberships in NIP-04 ciphertext to SELF.
+    // Expose only decryption through the current signer; the module never receives key material.
+    nip04dec: (peer, ct) => (signer && signer.nip04dec) ? signer.nip04dec(peer, ct) : Promise.reject(new Error('no nip04')),
     // …and the encrypt side, for a sub-module that keeps PRIVATE data of its own in a kind-30078 doc
     // (budget.js). Self-encryption is nip44enc(ME.pubkey, …) — every signer mode implements it (local
     // key via the worker, nip07, Amber/NIP-55, NIP-46), so the ciphertext is readable by this user's
