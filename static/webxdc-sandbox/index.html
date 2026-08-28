@@ -33,7 +33,8 @@
   var VERSION = 1;
   var msg = document.getElementById('m');
   var parentOrigin = null;            // learned from the first message; never assumed
-  var pending = {};                   // rpc id -> resolve
+  var pending = {};                   // rpc id -> resolve, for THIS document's own requests
+  var MINE = 'sbx:';                  // ...which is what marks them as ours; see rpc()
   var nextId = 1;
   var started = false;
   var firstFetch = null;          // set once the app frame exists, to narrate the first loads
@@ -69,9 +70,14 @@
     try{ parent.postMessage(m, parentOrigin, transfer || []); }catch(_){}
   }
 
-  /* A request to the parent, which is the only place file bytes can come from. */
+  /* A request to the parent, which is the only place file bytes can come from.
+   *
+   * THE ID IS PREFIXED, and that is not decoration. This document and the app inside it
+   * both talk JSON-RPC to the same parent over the same channel, and both number their
+   * requests from 1 — so an id alone does not say whose it is. Prefixing ours makes the
+   * two sequences unmistakable in the one place it matters: the reply coming back. */
   function rpc(method, params){
-    var id = nextId++;
+    var id = MINE + (nextId++);
     return new Promise(function(resolve, reject){
       pending[id] = { resolve: resolve, reject: reject };
       post({ jsonrpc:'2.0', id:id, method:method, params:params });
@@ -93,8 +99,22 @@
 
     if(d.method === 'init'){ boot(d.params || {}); return; }
     if(d.id !== undefined && d.method === undefined){
-      var p = pending[d.id];
-      if(!p) return;
+      var p = Object.prototype.hasOwnProperty.call(pending, d.id) ? pending[d.id] : null;
+      /* A REPLY TO SOMETHING THE APP ASKED, not to anything this document asked.
+       *
+       * It used to be dropped right here: `pending` holds only our own requests, the
+       * lookup missed, and the message was swallowed on the way to the frame that was
+       * waiting for it. Everything the webxdc bridge does as a REQUEST rather than a
+       * push died at this line — and silently, because a promise that never settles
+       * throws nothing and logs nothing. joinRealtimeChannel() never resolved, so its
+       * send() queued every packet behind a `.then()` that could not run: an app could
+       * send one a frame, for ever, and not a byte left the sandbox. Multiplayer was
+       * dead in every mini app while single-player looked perfect. */
+      if(!p){
+        var rf = document.getElementById('f');
+        if(rf && rf.contentWindow) try{ rf.contentWindow.postMessage(d, location.origin); }catch(_){}
+        return;
+      }
       delete pending[d.id];
       if(d.error) p.reject(new Error(d.error.message || 'rpc error'));
       else p.resolve(d.result);
