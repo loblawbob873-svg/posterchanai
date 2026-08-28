@@ -554,3 +554,35 @@ for `82525b986`; they do not close any aggregate checkbox in `BACKLOG_BETA3.md`.
 the final rebuilt ISO, real carrier SMS/MMS, affected-account Vector/Armada hydration, live
 two-identity Concord notifications/moderation/attachments/Webxdc, physical Android behavior and the
 installed native-window matrix remain open.
+
+## 2026-08-28 installed Gentoo Desktop 1.0.1183 evidence
+
+The public overlay was published from a clean archive of overlay commit `362f183c5`, so concurrent
+LiveCD working-tree changes were neither copied nor disturbed.  The public-overlay verifier fetched
+the immutable release and confirmed Desktop 1.0.1183 against the exact 153,293,916-byte artifact.
+The normal `update-posterchan` path then installed Desktop 1.0.1183 and shell
+1.0.20260828214757 on the authorized desktop at `.102`; no manual desktop/getty restart was used.
+
+| Requirement | Installed evidence on `.102` | State / remaining boundary |
+|---|---|---|
+| Package identity and diagnostic authority | Package-owned `/opt/posterchan/resources/app.asar` is 18,719,984 bytes with SHA-256 `7457a15ac046506ede887547fbef7a6b484e05a9f7332afbe61a14b7555c6a1a`, byte-identical to the freshly extracted immutable release. Its extracted `main.js` contains fail-closed diagnostic guards for account provisioning and session switch/logout. Before the throwaway login, the installed renderer dynamically called both guarded bridges with deliberately invalid identities and received only `disabled in diagnostics` results | Exact installed package and authority guard verified on `.102`. This does not prove the laptop or a normal signed-in user's account state |
+| Files / Open With / Preview | The exact ASAR passed the selector, directory drop/upload completion, This Computer video, image/video/PDF/audio Preview, bundled PDF.js, generic-MP4 repair, maximized document workspace, blob cleanup/handoff and responsive Explorer gates. In an isolated installed renderer, two bounded host fixtures then passed native Files navigation, `.conf` Code/host choices and SVG Preview | Installed account-independent native path verified. Authenticated final-version Files-index and per-root server = manifest = disk counts, arbitrary user projects, Android document providers and physical media interaction remain open |
+| Code / Terminal | The exact package passed real staged-file and rename Git diff/restore simulations. The installed renderer opened Code and Terminal as distinct windows and retained exclusive full-height view ownership when focus moved between them | Installed isolated focus behavior verified. Real user projects, monitor movement, sustained Foot/Codex/Claude repaint and native multi-monitor interaction remain open |
+| System Settings | The installed renderer switched every expected separate category, found no widget-dashboard controls, moved focus to another packaged app and returned to a complete isolated Settings surface | Installed focus/category regression verified. Physical display, network, Bluetooth, power, user and LiveUSB actions remain independent manual/hardware gates |
+| Office / WOPI | After the installed authority guard passed, a throwaway nsec stored only inside the bounded diagnostic directory authenticated normally. The gate created a temporary ODT, received Collabora editor HTTP 200, attached to a real writable editor, entered text, saved through WOPI and read the saved sentinel back before deleting the Office session | Authenticated installed HTTP-200 interactive edit/save/readback verified. Existing-user documents, mobile Office engines and physical interaction remain open |
+
+These installed UI checks are **stateful and must run sequentially against one renderer**. An initial
+parallel invocation made Files and Code interfere by switching the shared view while the other gate
+was asserting it; both passed when rerun serially, as did Settings and Office. Future release
+automation must serialize these gates or give each one its own isolated renderer/profile.
+
+Cleanup was explicit and bounded: the recorded diagnostic Electron and nested headless Sway PIDs,
+loopback SSH tunnel, remote fixtures and unprinted local throwaway key were removed. Final inspection
+found zero diagnostic/CDP processes, exactly the original canonical Sway process, and tty1 autologin
+still naming `pc-5ac337fb7cb82127`. No account was provisioned or switched and getty was not restarted.
+
+The optional laptop at `.154` accepted SSH transport but returned no output even for read-only
+`whoami`, `hostname`, package-list and ASAR-identity commands. Its package version and installed
+runtime therefore remain **unverified**; no update or diagnostic mutation was attempted there.
+Physical laptop/multi-monitor use, native Firefox/Telegram behavior, physical Android, carrier MMS,
+external providers and physical USB boot also remain open and are not inferred from `.102`.
