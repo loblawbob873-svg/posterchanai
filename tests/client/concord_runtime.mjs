@@ -9,10 +9,14 @@ globalThis.localStorage = {
 
 const makeClassList = () => ({added:[],removed:[],values:new Set(),add(...x){this.added.push(...x);x.forEach(v=>this.values.add(v));},remove(...x){this.removed.push(...x);x.forEach(v=>this.values.delete(v));},contains(x){return this.values.has(x);},toggle(x,on){const yes=on===undefined?!this.values.has(x):!!on;yes?this.values.add(x):this.values.delete(x);return yes;}});
 const classList = makeClassList();
-const feed = { innerHTML:'', classList, insertAdjacentHTML(){} };
+let feedHtml='',replaceComposerOnWrite=false;
+const feed = { classList, insertAdjacentHTML(){}, get innerHTML(){return feedHtml;}, set innerHTML(value){feedHtml=String(value);if(replaceComposerOnWrite){const old=controls.get('cc-input');if(old)old.isConnected=false;controls.delete('cc-input');const textarea=feedHtml.match(/<textarea id="cc-input" data-cc-draft-key="([^"]*)"[^>]*>([\s\S]*?)<\/textarea>/);if(textarea){const next=control('cc-input');next.dataset.ccDraftKey=textarea[1];next.value=textarea[2];}}} };
 const controls = new Map();
 function control(id){
-  if(!controls.has(id)) controls.set(id, { id, value:'', classList:makeClassList(), focus(){}, click(){ return this.onclick?.(); } });
+  if(!controls.has(id)) controls.set(id, { id, value:'', dataset:{}, selectionStart:0,selectionEnd:0,selectionDirection:'none',isConnected:true,classList:makeClassList(),
+    focus(){document.activeElement=this;},setSelectionRange(start,end,direction='none'){this.selectionStart=start;this.selectionEnd=end;this.selectionDirection=direction;},
+    setRangeText(value,start,end,mode){this.value=this.value.slice(0,start)+value+this.value.slice(end);this.selectionStart=this.selectionEnd=mode==='end'?start+value.length:start;},
+    addEventListener(name,fn){this['_listener_'+name]=fn;},dispatchEvent(event){this['_listener_'+event.type]?.(event);},click(){ return this.onclick?.(); } });
   return controls.get(id);
 }
 const dollar = selector => selector === '#feed' ? feed : control(selector.slice(1));
@@ -92,9 +96,9 @@ window.PosterCordReader={
   createChatWrap:async(_bundle,_wraps,_channel,text,_author,_sign,tags,kind)=>{calls.lastChat={text,tags,kind};return {rumorId:'f'.repeat(64),wrap:{kind:1059},ms:1234};},
 };
 globalThis.document = {
-  body:{classList}, head:{appendChild(){}}, documentElement:{appendChild(){}},
+  body:{classList}, head:{appendChild(){}}, documentElement:{appendChild(){}},activeElement:null,
   createElement:()=>({dataset:{}}),
-  querySelector:s=>s==='link[data-concord-css]'?{}:null,
+  querySelector:s=>s==='link[data-concord-css]'?{}:(s==='#cc-input'?controls.get('cc-input')||null:null),
   addEventListener(name,fn){documentListeners.set(name,fn);},
   removeEventListener(name,fn){if(documentListeners.get(name)===fn)documentListeners.delete(name);},
 };
@@ -353,14 +357,38 @@ disclosure.onclick({stopPropagation(){}});
 reply.onclick();
 if(disclosureRow.classList.contains('cc-actions-open')||disclosure.attributes['aria-expanded']!=='false')
   throw new Error('choosing a message action did not close its disclosure');
-input.value='thread response';
-await input.onkeydown({key:'Enter',ctrlKey:true,metaKey:false,preventDefault(){}});
+// A live relay message, profile/icon metadata hydration and attachment hydration each call the same
+// whole-workspace render path. Exercise actual textarea replacement (not merely a source assertion)
+// while a reply, attachment URL, mention query, focus and non-collapsed selection are active.
+const draftInput=control('cc-input'),draftUrl='https://files.example/photo.png';
+draftInput.value='thread response '+draftUrl+' @bb';
+draftInput.setSelectionRange(draftInput.value.length-2,draftInput.value.length,'backward');
+draftInput.focus();draftInput.dispatchEvent({type:'input'});
+replaceComposerOnWrite=true;
+PCConcord.render(); // remote-message poll
+PCConcord.render(); // profile/community-icon hydration
+PCConcord.render(); // attachment-card hydration
+await new Promise(resolve=>setTimeout(resolve,0));
+const repaintedInput=control('cc-input');
+if(repaintedInput===draftInput || repaintedInput.value!=='thread response '+draftUrl+' @bb' ||
+   repaintedInput.selectionStart!==repaintedInput.value.length-2 ||
+   repaintedInput.selectionEnd!==repaintedInput.value.length || document.activeElement!==repaintedInput ||
+   !feed.innerHTML.includes('Replying to'))
+  throw new Error('Concord repaint lost composer text, selection, focus or reply target');
+// The mention candidates live outside the replaced DOM as well. Tab must still accept the candidate
+// selected before the repaint, and the eventual message must carry its Nostr p tag.
+repaintedInput.setSelectionRange(repaintedInput.value.length,repaintedInput.value.length);
+await repaintedInput.onkeydown({key:'Tab',ctrlKey:false,metaKey:false,preventDefault(){}});
+await repaintedInput.onkeydown({key:'Enter',ctrlKey:true,metaKey:false,preventDefault(){}});
 if(calls.lastChat?.kind!==1111 || !calls.lastChat.tags.some(t=>t[0]==='e'&&t[1]===permanentId) ||
-   !calls.lastChat.tags.some(t=>t[0]==='p'&&t[1]==='b'.repeat(64)))
-  throw new Error('reply did not publish thread context and participant tags');
+   !calls.lastChat.tags.some(t=>t[0]==='p'&&t[1]==='b'.repeat(64)) ||
+   !calls.lastChat.tags.some(t=>t[0]==='imeta'&&t.some(x=>String(x).includes(draftUrl))) ||
+   control('cc-input').value!=='')
+  throw new Error('successful draft send did not preserve reply/mention/attachment tags or clear once');
+replaceComposerOnWrite=false;
 
 PCConcord.render();
-const sent=JSON.parse(data.get(raceKey)).find(m=>m.text==='thread response');
+const sent=JSON.parse(data.get(raceKey)).find(m=>m.text.startsWith('thread response'));
 const deletion=dollars('[data-cc-delete]').find(b=>b.dataset.ccDelete===sent?.id);
 if(!deletion)throw new Error('own rendered message has no delete control');
 window.__PC.uiConfirm=async()=>true;
