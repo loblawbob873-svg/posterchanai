@@ -107,7 +107,10 @@ done
 COLOR_RED="\033[1;31m"; COLOR_CYAN="\033[1;36m"; COLOR_MAGENTA="\033[1;35m"; COLOR_YELLOW="\033[1;33m"
 COLOR_GREEN="\033[1;32m"; COLOR_RESET="\033[0m"; COLOR_BOLD="\033[1;97m"
 TARGET='/tmp/install'
-mkdir $TARGET
+# Every command mode sources this file, including commands already running inside the target
+# chroot.  The staging directory may already exist, or its /tmp parent may have been omitted from a
+# clean image.  Creating it idempotently avoids printing a false installer error before dispatch.
+mkdir -p "$TARGET"
 ######################################
 echo
 HARD_DISK=$2
@@ -2022,7 +2025,7 @@ locale() {
 }
 
 fstab() {
-	mkdir $TARGET/etc
+	mkdir -p "$TARGET/etc"
 	echo "UUID=$(/sbin/blkid -s UUID -o value $EFI)  /boot vfat defaults,fmask=0077,dmask=0077 0 1" >$TARGET/etc/fstab
 	echo "UUID=$(/sbin/blkid -s UUID -o value $ROOT_MAPPER_NAME) / btrfs noatime,nodiratime,autodefrag,$COMPRESSION,subvol=@$ROOT_NAME 0 1" >>$TARGET/etc/fstab
 	echo "UUID=$(/sbin/blkid -s UUID -o value $ROOT_MAPPER_NAME) /.snapshots btrfs noatime,nodiratime,autodefrag,$COMPRESSION,subvol=@.snapshots 0 1" >>$TARGET/etc/fstab

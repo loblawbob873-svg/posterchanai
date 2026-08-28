@@ -153,6 +153,15 @@ class TheBuilderShipsTheInstaller(unittest.TestCase):
         self.assertLess(fail_fast, bootloader)
         self.assertNotIn("sed -i '1i set -e'", finalize)
 
+    def test_installer_staging_directories_are_idempotent(self):
+        """The command dispatcher is sourced repeatedly inside the target chroot. Existing
+        staging directories are normal and must not emit scary, false `cannot create` errors."""
+        self.assertIn('mkdir -p "$TARGET"', self.src)
+        fstab = self.src[self.src.index("fstab() {"):
+                         self.src.index("\n}", self.src.index("fstab() {"))]
+        self.assertIn('mkdir -p "$TARGET/etc"', fstab)
+        self.assertNotRegex(self.src, r"(?m)^mkdir \\$TARGET$")
+
     def test_completed_live_install_returns_success_without_home(self):
         i = self.src.index("liveISOinstall() {")
         end = self.src.index("\n}\n\nbackupOS()", i)
