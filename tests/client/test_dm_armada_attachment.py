@@ -47,3 +47,10 @@ def test_ingest_preserves_both_file_rumor_kinds_and_fails_closed():
     assert '(rumor.kind!==14 && rumor.kind!==15)' in APP
     assert "if(a.enc.algorithm!=='aes-gcm'" in APP
     assert "if(hex!==a.enc.ox) throw new Error('attachment hash mismatch')" in APP
+
+def test_plain_armada_attachment_bypasses_the_decryptor():
+    block=APP[APP.index('async function _decorateDmFileAtts'):APP.index('async function ingestWrap')]
+    assert 'let u=a.url;' in block
+    assert 'if(a.enc){' in block
+    assert 'target="_blank" rel="noopener noreferrer"' in block
+    assert "if(!a || !a.enc) throw new Error('not encrypted')" not in block

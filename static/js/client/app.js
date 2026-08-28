@@ -23786,13 +23786,21 @@
     for(const el of root.querySelectorAll('[data-dm-file]:not([data-ready])')){
       el.dataset.ready='1'; const m=_dmFind(el.dataset.dmFile), a=m&&m.atts&&m.atts[Number(el.dataset.ai)||0]; if(!a)continue;
       try{
-        let u=_dmAttUrls.get(m.id+':'+el.dataset.ai);
-        if(!u){ const b=await _dmDecryptAttachment(a); u=URL.createObjectURL(b); _dmAttUrls.set(m.id+':'+el.dataset.ai,u);
-          if(_dmAttUrls.size>64){ const k=_dmAttUrls.keys().next().value; URL.revokeObjectURL(_dmAttUrls.get(k)); _dmAttUrls.delete(k); } }
+        // Armada uses the same kind-14/kind-15 attachment shapes for plaintext and encrypted files.
+        // Encryption is present only when `encryption-algorithm` is declared; routing every file
+        // through the decryptor made an ordinary link fail with the false message "Attachment could
+        // not be decrypted". Keep declared encryption fail-closed, but use a validated plaintext URL
+        // directly when no encryption metadata exists.
+        let u=a.url;
+        if(a.enc){
+          u=_dmAttUrls.get(m.id+':'+el.dataset.ai);
+          if(!u){ const b=await _dmDecryptAttachment(a); u=URL.createObjectURL(b); _dmAttUrls.set(m.id+':'+el.dataset.ai,u);
+            if(_dmAttUrls.size>64){ const k=_dmAttUrls.keys().next().value; URL.revokeObjectURL(_dmAttUrls.get(k)); _dmAttUrls.delete(k); } }
+        }
         const mime=String(a.mime||'');
         if(/^image\//i.test(mime)) el.outerHTML=`<img class="dm-file-media" src="${enc(u)}" alt="${enc(a.name||'attachment')}">`;
         else if(/^video\//i.test(mime)) el.outerHTML=`<video class="dm-file-media" src="${enc(u)}" controls playsinline></video>`;
-        else { el.textContent='📎 '+(a.name||'Open attachment'); el.onclick=async()=>saveBlobAs(await fetch(u).then(r=>r.blob()),a.name||'attachment'); }
+        else el.outerHTML=`<a class="dm-file-att" href="${enc(u)}" target="_blank" rel="noopener noreferrer">📎 ${enc(a.name||'Open attachment')}</a>`;
       }catch(err){ el.textContent='🔒 Attachment could not be decrypted'; el.classList.add('bad'); }
     }
   }
