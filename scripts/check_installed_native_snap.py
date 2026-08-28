@@ -71,6 +71,16 @@ async def main():
             assert shell["width"] * .4 < native["width"] < shell["width"] * .6, snapped
             assert native["x"] >= shell["x"] + shell["width"] / 2 - 80, snapped
             assert abs(native["width"] - snapped["frame"]["w"]) < 40, snapped
+            # A right-edge drop is a half-screen tile, not merely a horizontal move. Check both
+            # authorities: the HTML frame must span the usable output vertically and Firefox /
+            # Telegram's compositor surface must fill that frame's body. Small differences are
+            # the PosterChan frame border/title bar, never a retained floating-window height.
+            usable_height = shell["height"] - 72
+            assert abs(snapped["frame"]["y"]) <= 16, snapped
+            assert abs(snapped["frame"]["h"] - usable_height) <= 32, snapped
+            assert abs(native["y"] - snapped["frame"]["y"]) <= 80, snapped
+            assert native["height"] >= snapped["frame"]["h"] - 100, snapped
+            assert native["height"] <= snapped["frame"]["h"] + 24, snapped
         finally:
             await cdp.eval(f"(async()=>{{await pcWM.restore({native_id},{int(original['x'])},"
                            f"{int(original['y'])},{int(original['width'])},{int(original['height'])});"

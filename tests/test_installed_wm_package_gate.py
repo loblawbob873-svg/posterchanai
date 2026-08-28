@@ -14,6 +14,9 @@ def test_gate_extracts_wm_from_the_immutable_asar():
     assert 'extract-file "$asar" www/static/js/client/os.js' in gate
     assert "PC_INSTALLED_OS_JS=" in gate
     assert "alt_tab_switcher_sim.js" in gate
+    assert 'extract-file "$asar" www/static/css/client.css' in gate
+    assert "PC_INSTALLED_CLIENT_CSS=" in gate
+    assert "installed_alt_tab_cross_output_sim.js" in gate
 
 
 def test_sim_uses_a_live_disposable_process_family():
@@ -23,3 +26,10 @@ def test_sim_uses_a_live_disposable_process_family():
     assert "spawn('sleep'" in sim
     assert "wm.waitForWindow(root.pid" in sim
     assert "root.kill('SIGTERM')" in sim
+
+
+def test_live_pointer_snap_gate_requires_full_usable_output_height_for_frame_and_surface():
+    gate = (ROOT / "scripts/check_installed_native_snap.py").read_text(encoding="utf-8")
+    assert 'usable_height = shell["height"] - 72' in gate
+    assert 'snapped["frame"]["h"] - usable_height' in gate
+    assert 'native["height"] >= snapped["frame"]["h"] - 100' in gate
