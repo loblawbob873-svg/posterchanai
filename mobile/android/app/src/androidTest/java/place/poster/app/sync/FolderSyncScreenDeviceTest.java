@@ -56,14 +56,17 @@ public final class FolderSyncScreenDeviceTest {
                     + "const rq=indexedDB.open('pcsync',1);rq.onupgradeneeded=()=>{if(!rq.result.objectStoreNames.contains('base'))"
                     + "rq.result.createObjectStore('base');};rq.onerror=()=>window.__fsDevice='error:'+rq.error;rq.onsuccess=()=>{"
                     + "const tx=rq.result.transaction('base','readwrite');tx.objectStore('base').put({era:'old',cursor:99,entries:entries,d2p:{}},'state:'+key);"
-                    + "tx.oncomplete=()=>{if(window.PCOS&&PCOS.mobileLanding)PCOS.mobileLanding();__PC.switchView('sync');"
-                    + "setTimeout(()=>window.__fsDevice=JSON.stringify({posts:window.__fsStatePosts,view:__PC.isView('sync'),"
-                    + "card:!!document.querySelector('.sync-card'),alive:true}),2500);};tx.onerror=()=>window.__fsDevice='error:'+tx.error;};return true;})()");
+                    + "tx.oncomplete=()=>{const prior=__PC.switchView._osIn;__PC.switchView._osIn=1;"
+                    + "try{__PC.switchView('sync');window.__fsDevice='opened';}catch(e){window.__fsDevice='error:'+e;}"
+                    + "finally{__PC.switchView._osIn=prior;}};tx.onerror=()=>window.__fsDevice='error:'+tx.error;};return true;})()");
 
             String result = "";
-            for (int i = 0; i < 100; i++) {
-                result = eval(web, "window.__fsDevice||''");
-                if (result.contains("alive") || result.contains("error:")) break;
+            for (int i = 0; i < 150; i++) {
+                result = eval(web, "(()=>{if(String(window.__fsDevice||'').indexOf('error:')===0)return window.__fsDevice;"
+                        + "return JSON.stringify({opened:window.__fsDevice==='opened',posts:window.__fsStatePosts,"
+                        + "view:__PC.isView('sync'),card:!!document.querySelector('.sync-card'),alive:true});})()");
+                if (result.contains("error:") || (result.contains("\\\"opened\\\":true")
+                        && result.contains("\\\"view\\\":true") && result.contains("\\\"card\\\":true"))) break;
                 SystemClock.sleep(100);
             }
             assertTrue("Folder Sync did not survive opening the older large cache: " + result,
