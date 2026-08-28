@@ -177,6 +177,35 @@ class AttachmentParsing(unittest.TestCase):
         self.assertEqual(got["uuid"], "FBSTBOCHXLXTUPWPCLPAGBZDFNBSK5HKMTTMTVAKHY2EGNJFYMLQ")
         self.assertEqual(got["name"], "Quake III Arena (OpenArena)")
 
+    def test_current_topic_wins_over_legacy_alias(self):
+        ev = {"id": "msg", "kind": 1, "content": "", "tags": [[
+            "imeta", "url https://x.org/app.xdc", "m application/vnd.webxdc+zip",
+            "webxdc legacy", "webxdc-topic " + "A" * 52]]}
+        got = self.app_of(ev)
+        self.assertEqual(got["uuid"], "A" * 52)
+        self.assertEqual(got["urlTopicMessageId"], "")
+
+    def test_bare_social_link_is_derived_from_note_id(self):
+        ev = {"id": "msg1", "kind": 1,
+              "content": "play https://x.org/old.xdc/path/app.xdc?download=1#x", "tags": []}
+        got = self.app_of(ev)
+        self.assertEqual(got["url"], "https://x.org/old.xdc/path/app.xdc?download=1#x")
+        self.assertEqual(got["uuid"], "")
+        self.assertEqual(got["urlTopicMessageId"], "msg1")
+
+    def test_shared_topic_derivation_matches_vector_fixture(self):
+        boot = (
+            "global.window={addEventListener(){},__PC:{$:()=>null,enc:s=>s,toast(){},me:()=>null,"
+            "profOf:()=>({}),apiBase:()=>'https://example.com'}};"
+            "global.document={addEventListener(){},querySelectorAll:()=>[]};"
+            "global.location={hostname:'example.com',href:'https://example.com/'};"
+            "global.crypto=require('crypto').webcrypto;"
+            f"require({json.dumps(str(WEBXDC_JS))});"
+            "window.PCWebxdc.deriveUrlTopic('https://x.org/app.xdc?download=1#x','msg1')"
+            ".then(x=>console.log(JSON.stringify(x)));"
+        )
+        self.assertEqual(_node(boot), "QOLP2F6LAQZYTDGUKNGHFGESA5Q3P2HTWCTBZHBOQMLZ2DYHQDPQ")
+
     def test_a_kind_1063_file_event_is_found(self):
         ev = {"kind": 1063, "content": "A collaborative chess game.", "tags": [
             ["url", "https://blossom.example.com/abc.xdc"], ["m", "application/x-webxdc"],

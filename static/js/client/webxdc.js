@@ -41,6 +41,10 @@
     const KIND_REALTIME = 20932;       // NIP-DC realtime data (EPHEMERAL: relays forward, store nothing)
     const MIME = 'application/x-webxdc';
     const MIME_VENDOR = 'application/vnd.webxdc+zip';
+    const base32Topic = (bytes) => { const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'; let out='',buf=0,bits=0; for(const b of bytes){buf=(buf<<8)|b;bits+=8;while(bits>=5){bits-=5;out+=alphabet[(buf>>>bits)&31];}} if(bits)out+=alphabet[(buf<<(5-bits))&31]; return out; };
+    function canonicalXdcUrl(url){ const raw=String(url||''),lower=raw.toLowerCase(); for(let at=lower.lastIndexOf('.xdc');at>=0;at=lower.lastIndexOf('.xdc',at-1)){const next=raw[at+4];if(next===undefined||next==='?'||next==='#'||/\s/.test(next))return raw.slice(0,at+4);} return raw; }
+    async function deriveUrlTopic(url,messageId){ const bytes=new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(`webxdc-url-realtime-v1:${canonicalXdcUrl(url)}:${messageId}`))); return base32Topic(bytes); }
+    function mintTopic(){ return base32Topic(crypto.getRandomValues(new Uint8Array(32))); }
     const isWebxdcMime = value => { const mime=String(value||'').toLowerCase();return mime===MIME||mime===MIME_VENDOR; };
     /* 256 MB. Not a guess: the published Half-Life port is 178 MB, because it ships the three demo
      * campaigns (dayone.zip 75 MB, hldm.zip 62 MB, uplink.zip 29 MB) beside a 3.7 MB Xash wasm. A cap
@@ -1612,8 +1616,8 @@
      * phone has no room for anything else. */
     async function open(app, opts){
       if(!app || !app.url){ toast('that post has no app in it'); return; }
-      if(!app.uuid&&app.urlTopicMessageId&&window.PCConcord&&PCConcord.deriveWebxdcUrlTopic){
-        app=Object.assign({},app,{uuid:await PCConcord.deriveWebxdcUrlTopic(app.url,app.urlTopicMessageId)});
+      if(!app.uuid&&app.urlTopicMessageId){
+        app=Object.assign({},app,{uuid:await deriveUrlTopic(app.url,app.urlTopicMessageId)});
       }
       const reset = !!(opts && opts.reset);
       const key = _liveKey(app);
@@ -1741,7 +1745,8 @@
          * one place that knows how an app is described, and ignored by the timeline card, which has
          * no room for a cover. A kind-1 imeta carries neither — those tiles fall back to the glyph. */
         const img = get('image');
-        return { url, sha:get('x'), uuid:get('webxdc'), name:(get('alt') || '').replace(/^Webxdc app:\s*/i, ''),
+        const explicit=get('webxdc-topic')||get('webxdc');
+        return { url, sha:get('x'), uuid:explicit, urlTopicMessageId:explicit?'':String(ev.id||''), name:(get('alt') || '').replace(/^Webxdc app:\s*/i, ''),
                  image: /^https?:\/\//i.test(img) ? img : '', size: Number(get('size')) || 0 };
       }
       for(const t of ev.tags){
@@ -1753,8 +1758,11 @@
         }
         if(!isWebxdcMime(f.m)) continue;
         if(!/^https?:\/\//i.test(f.url || '')) continue;
-        return { url:f.url, sha:f.x || '', uuid:f.webxdc || '', name:(f.summary || '').slice(0, 80) };
+        const explicit=f['webxdc-topic']||f.webxdc||'';
+        return { url:f.url, sha:f.x || '', uuid:explicit, urlTopicMessageId:explicit?'':String(ev.id||''), name:(f.summary || '').slice(0, 80) };
       }
+      const bare=(String(ev.content||'').match(/https?:\/\/[^\s<>]+\.xdc(?:[?#][^\s<>]*)?/ig)||[]).pop();
+      if(bare)return {url:bare,sha:'',uuid:'',urlTopicMessageId:String(ev.id||''),name:'Mini app'};
       return null;
     }
 
@@ -2096,9 +2104,8 @@
                               { type: MIME });
           const url = await PC.uploadBlob(up);
           if(!url) throw new Error('the upload did not come back with a URL');
-          const uuid = (crypto.randomUUID ? crypto.randomUUID()
-                                          : _hex(crypto.getRandomValues(new Uint8Array(16))));
-          if(PC.mediaMeta) PC.mediaMeta(url, { m: MIME, x: sha, webxdc: uuid, summary: name || '' });
+          const uuid = mintTopic();
+          if(PC.mediaMeta) PC.mediaMeta(url, { m: MIME_VENDOR, x: sha, 'webxdc-topic':uuid, webxdc:uuid, summary:name||'' });
           // Into the post, where the composer's own imeta pass will pick the URL up.
           if(ta){
             const cur = String(ta.value || '');
@@ -2117,7 +2124,7 @@
      * receives. Every part of that path fails silently — a filter that matches nothing, a self-drop
      * that drops everybody, a base64 round trip that mangles high bytes — and none of it is visible
      * from either browser. See tests/test_webxdc.py::TwoPlayers. */
-    window.PCWebxdc = { open, appOf, cardHtml, attach, sheetOpen, closeSheet,
+    window.PCWebxdc = { open, appOf, cardHtml, attach, sheetOpen, closeSheet, deriveUrlTopic, mintTopic, canonicalXdcUrl,
                         // Games → Webxdc. `__gal` is the directory's own state, exposed so
                         // tests/test_webxdc_gallery.py can drive the merge/sort against real events.
                         gallery, __galLoad: galLoad, __galKey: _galKey, __galTile: galTile,

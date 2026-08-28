@@ -15898,12 +15898,13 @@
       const parts=['url '+u]; if(m.m) parts.push('m '+m.m); if(m.dim) parts.push('dim '+m.dim); if(m.x) parts.push('x '+m.x);
       // A webxdc mini app carries one more property: the identifier that makes two people the same
       // GAME. Without it the app still runs and its state goes nowhere — see NOSTR_WEBXDC.
+      if(m['webxdc-topic']) parts.push('webxdc-topic '+m['webxdc-topic']);
       if(m.webxdc) parts.push('webxdc '+m.webxdc);
       if(m.summary) parts.push('summary '+m.summary);
       out.push(['imeta', ...parts]);
     }
     // One `t`, however many apps are in the post, and only when there is one.
-    if(out.some(t => t.includes('m application/x-webxdc'))) out.push(['t', 'webxdc']);
+    if(out.some(t => t.includes('m application/x-webxdc')||t.includes('m application/vnd.webxdc+zip'))) out.push(['t', 'webxdc']);
     return out;
   }
   // ---- Blossom access (request-to-upload) ----

@@ -11,12 +11,22 @@ def test_concord_cards_carry_protocol_and_armada_default_session():
     assert "{protocol,room:roomIdentity(room),channel:channelName||'general'" in CONCORD
     assert "`nip29|${room.relay}|${room.groupId}`" in CONCORD
     assert "`concord2|${channel.id}`" in CONCORD
-    assert "webxdc-url-realtime-v1:${source}:${messageId}" in CONCORD
+    assert "webxdc-url-realtime-v1:${canonicalXdcUrl(url)}:${messageId}" in WEBXDC
+    assert "PCWebxdc.deriveUrlTopic(url,messageId)" in CONCORD
     assert "scope+'|webxdc'" not in CONCORD
     # cardHtml serialises the whole launch object; the delegated click reparses it and passes it to open.
     assert 'data-xdc="${enc(JSON.stringify(app))}"' in WEBXDC
     assert "app = JSON.parse(card.dataset.xdc || 'null')" in WEBXDC
     assert "open(app);" in WEBXDC
+
+
+def test_social_uploads_publish_the_canonical_topic_contract():
+    app = (ROOT / "static/js/client/app.js").read_text()
+    assert "m: MIME_VENDOR" in WEBXDC
+    assert "'webxdc-topic':uuid, webxdc:uuid" in WEBXDC
+    assert "m['webxdc-topic']" in app
+    assert "webxdc-topic '+m['webxdc-topic']" in app
+    assert "application/vnd.webxdc+zip" in app
 
 
 def test_nip29_webxdc_uses_group_scoped_armada_kinds():
