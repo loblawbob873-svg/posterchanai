@@ -31,5 +31,8 @@ def test_mirror_is_atomic_and_refuses_downgrades():
 
 def test_deploy_uses_the_versioned_source_controlled_mirror_script():
     sync = (ROOT / "sync.sh").read_text()
-    assert "./scripts/refresh_apk.sh" in sync
+    # A rolling GitHub release can briefly serve the replaced asset from a stale CDN node. A single
+    # delayed fetch reproduced /apk remaining four builds behind; retries must outlive that window.
+    assert sync.count("./scripts/refresh_apk.sh") >= 3
+    assert "sleep 240" in sync and "sleep 120" in sync
     assert "/home/verita84/posterchan-apk/refresh.sh" not in sync
