@@ -681,10 +681,18 @@ finalizeInstall() {
 	# process inside the target, where the historical source default would otherwise become 123456
 	# again and `luksAddKey` would fail with "No key available with this passphrase". Pass it through
 	# the chroot environment for this one operation; it is never written to setup.sh or the target.
-	PC_INSTALL_PASSWORD="$DISK_PASSWORD" chroot "$TARGET" /setup.sh
+	# A chroot changes `/`, not the environment.  The live installer runs with HOME beneath its
+	# staging tree, so carrying that value into the new root makes otherwise harmless helpers try to
+	# create `/tmp/install` through the installed image's deliberately redirected `/tmp`.  Apart from
+	# the noisy diagnostics, any tool which actually persisted state would put it in the wrong user's
+	# home.  Finalization is root work: give every command in setup.sh a root identity and a terminal
+	# value which is valid inside the target.
+	PC_INSTALL_PASSWORD="$DISK_PASSWORD" HOME=/root USER=root LOGNAME=root TERM="${TERM:-dumb}" \
+		chroot "$TARGET" /setup.sh
 	# accounts() creates `posterchan`; configure its graphical session only after that. Doing this
 	# before accounts selected the LiveCD's `live` account and copied its autologin onto the NVMe.
-	chroot $TARGET /usr/bin/bash /usr/bin/gentoo.sh posterchan-shell
+	HOME=/root USER=root LOGNAME=root TERM="${TERM:-dumb}" \
+		chroot "$TARGET" /usr/bin/bash /usr/bin/gentoo.sh posterchan-shell
 	# FINALIZATION OWNS THE BOOT SESSION. posterchan-shell also writes these for upgrades and live
 	# sessions, but an installed disk must not depend on which overlay/package branch that helper
 	# took, nor on USER/HOME inherited through chroot. Write the two tiny boot-critical files against

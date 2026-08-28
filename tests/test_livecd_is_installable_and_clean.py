@@ -132,7 +132,9 @@ class TheBuilderShipsTheInstaller(unittest.TestCase):
     def test_selected_luks_password_reaches_target_bootloader_without_persistence(self):
         finalize = self.src[self.src.index("finalizeInstall() {"):
                             self.src.index("\n}\n\ninstallPackages()", self.src.index("finalizeInstall() {"))]
-        self.assertIn('PC_INSTALL_PASSWORD="$DISK_PASSWORD" chroot "$TARGET" /setup.sh', finalize)
+        self.assertIn('PC_INSTALL_PASSWORD="$DISK_PASSWORD" HOME=/root USER=root LOGNAME=root',
+                      finalize)
+        self.assertIn('chroot "$TARGET" /setup.sh', finalize)
         boot = self.src[self.src.index("bootloader() {"):
                         self.src.index("\n}\n", self.src.index("bootloader() {"))]
         self.assertIn('DISK_PASSWORD="$PC_INSTALL_PASSWORD"', boot)
@@ -177,6 +179,25 @@ class TheBuilderShipsTheInstaller(unittest.TestCase):
             self.assertIsNotNone(match, f"missing {mode} dispatcher")
             snippet = match.group("body")
             self.assertIn("TARGET=/", snippet, f"{mode} does not target the chroot root")
+
+    def test_finalizer_does_not_leak_live_installer_home_into_chroot(self):
+        """chroot preserves HOME unless it is replaced.  The live value points at the host-side
+        staging tree and caused each target command to emit a `/tmp/install` mkdir diagnostic."""
+        finalize = self.src[self.src.index("finalizeInstall() {"):
+                            self.src.index("\n}\n\ninstallPackages()", self.src.index("finalizeInstall() {"))]
+        self.assertIn('PC_INSTALL_PASSWORD="$DISK_PASSWORD" HOME=/root USER=root LOGNAME=root',
+                      finalize)
+        self.assertIn('HOME=/root USER=root LOGNAME=root TERM="${TERM:-dumb}"', finalize)
+        self.assertRegex(
+            finalize,
+            r'PC_INSTALL_PASSWORD="\$DISK_PASSWORD" HOME=/root USER=root LOGNAME=root '
+            r'TERM="\$\{TERM:-dumb\}" \\\n\s*chroot "\$TARGET" /setup\.sh',
+        )
+        self.assertRegex(
+            finalize,
+            r'HOME=/root USER=root LOGNAME=root TERM="\$\{TERM:-dumb\}" \\\n'
+            r'\s*chroot "\$TARGET" /usr/bin/bash /usr/bin/gentoo\.sh posterchan-shell',
+        )
 
     def test_completed_live_install_returns_success_without_home(self):
         i = self.src.index("liveISOinstall() {")
