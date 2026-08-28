@@ -87,26 +87,37 @@ function gpuLabel(ids, vendor, device, driver, product) {
   const maker = ({'1002':'AMD', '10de':'NVIDIA', '8086':'Intel'})[v] || '';
   /* product_name is useful on platform/embedded GPUs; PCI model data is more specific on discrete
    * cards and is shipped explicitly by PosterChanOS. The driver is the last-resort truth only. */
-  const model = pciModel(ids, v, d) || clean(product) || clean(driver);
+  const genericDriver = /^(?:amdgpu|radeon|i915|xe|nouveau|nvidia)$/i.test(clean(driver));
+  /* A kernel module is not a model. If hwdata is temporarily unavailable, retain the PCI identity
+   * needed to identify the card instead of telling every AMD owner that their GPU is `amdgpu`. */
+  const model = pciModel(ids, v, d) || clean(product) ||
+    (v && d ? `GPU [${v}:${d}]` : (genericDriver ? 'GPU' : clean(driver)));
   const prefix = maker && !new RegExp('^'+maker+'(?:\\s|$)','i').test(model) ? maker : '';
   return clean([prefix, model].filter(Boolean).join(' '));
 }
+function gpuRows(cards, read, ids) {
+  const rows = [];
+  for (const card of cards.filter(x => /^card\d+$/.test(x)).sort((a,b) =>
+    Number(a.slice(4))-Number(b.slice(4)))) {
+    const dir = path.join('/sys/class/drm', card, 'device');
+    const vendor = read(path.join(dir, 'vendor')).toLowerCase();
+    const device = read(path.join(dir, 'device')).toLowerCase();
+    const uevent = read(path.join(dir, 'uevent'));
+    const driver = uevent.match(/^DRIVER=(.+)$/m);
+    const pci = uevent.match(/^PCI_ID=([0-9a-f]{4}):([0-9a-f]{4})$/im);
+    /* vendor/device are the canonical PCI sysfs attributes. Some kernels omit PCI_ID from
+     * uevent; using only that optional copy reduced a known AMD card to `AMD amdgpu`. */
+    const label = gpuLabel(ids, vendor || (pci && pci[1]), device || (pci && pci[2]),
+      driver && driver[1], read(path.join(dir, 'product_name')));
+    /* Do not deduplicate: two equal labels can be two physical cards, and posterfetch promises to
+     * report all of them. DRM's cardN entries are already one row per primary GPU. */
+    if (label) rows.push(label);
+  }
+  return rows;
+}
 function gpu() {
   try {
-    const rows = [];
-    for (const card of fs.readdirSync('/sys/class/drm').filter(x => /^card\d+$/.test(x))) {
-      const dir = path.join('/sys/class/drm', card, 'device');
-      const vendor = one(path.join(dir, 'vendor')).toLowerCase();
-      const device = one(path.join(dir, 'device')).toLowerCase();
-      const uevent = one(path.join(dir, 'uevent'));
-      const driver = uevent.match(/^DRIVER=(.+)$/m);
-      const pci = uevent.match(/^PCI_ID=([0-9a-f]{4}):([0-9a-f]{4})$/im);
-      /* vendor/device are the canonical PCI sysfs attributes. Some kernels omit PCI_ID from
-       * uevent; using only that optional copy reduced a known AMD card to `AMD amdgpu`. */
-      const label = gpuLabel(pciIdsText(), vendor || (pci && pci[1]),
-        device || (pci && pci[2]), driver && driver[1], one(path.join(dir, 'product_name')));
-      if (label && !rows.includes(label)) rows.push(label);
-    }
+    const rows = gpuRows(fs.readdirSync('/sys/class/drm'), one, pciIdsText());
     if (rows.length) return rows.join(' / ');
   } catch (_) {}
   return 'not reported';
@@ -252,4 +263,4 @@ function render(env, cols) {
   return `\r\n${lines.join('\r\n')}\r\n\r\n`;
 }
 
-module.exports = { render, human, duration, meter, pciModel, gpuLabel, LOGO };
+module.exports = { render, human, duration, meter, pciModel, gpuLabel, gpuRows, LOGO };

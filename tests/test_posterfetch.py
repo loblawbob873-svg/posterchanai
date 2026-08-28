@@ -135,6 +135,38 @@ class PosterfetchTests(unittest.TestCase):
         got = json.loads(subprocess.check_output(["node", "-e", js], cwd=ROOT, text=True))
         self.assertEqual(got, "AMD Radeon 780M")
 
+    def test_generic_amd_driver_fallback_keeps_the_pci_identity(self):
+        js = ("const p=require('./desktop/posterfetch.js');"
+              "console.log(JSON.stringify(p.gpuLabel('', '0x1002', '0x744c', 'amdgpu', '')))" )
+        got = json.loads(subprocess.check_output(["node", "-e", js], cwd=ROOT, text=True))
+        self.assertEqual(got, "AMD GPU [1002:744c]")
+
+    def test_sysfs_fixture_reports_every_gpu_in_card_order_including_equal_models(self):
+        ids = ("1002  Advanced Micro Devices\n"
+               "\t73bf  Navi 21 [Radeon RX 6800/6800 XT]\n"
+               "\t744c  Navi 31 [Radeon RX 7900 XT/7900 XTX]\n")
+        files = {
+            "/sys/class/drm/card0/device/vendor": "0x1002",
+            "/sys/class/drm/card0/device/device": "0x73bf",
+            "/sys/class/drm/card0/device/uevent": "DRIVER=amdgpu",
+            "/sys/class/drm/card1/device/vendor": "0x1002",
+            "/sys/class/drm/card1/device/device": "0x744c",
+            "/sys/class/drm/card1/device/uevent": "DRIVER=amdgpu",
+            "/sys/class/drm/card2/device/vendor": "0x1002",
+            "/sys/class/drm/card2/device/device": "0x744c",
+            "/sys/class/drm/card2/device/uevent": "DRIVER=amdgpu",
+        }
+        js = ("const p=require('./desktop/posterfetch.js');"
+              f"const files={json.dumps(files)},ids={json.dumps(ids)};"
+              "const got=p.gpuRows(['renderD128','card2','card0','card1'],"
+              " f=>files[f]||'',ids);console.log(JSON.stringify(got))")
+        got = json.loads(subprocess.check_output(["node", "-e", js], cwd=ROOT, text=True))
+        self.assertEqual(got, [
+            "AMD Navi 21 [Radeon RX 6800/6800 XT]",
+            "AMD Navi 31 [Radeon RX 7900 XT/7900 XTX]",
+            "AMD Navi 31 [Radeon RX 7900 XT/7900 XTX]",
+        ])
+
     def test_posterchanos_explicitly_ships_the_pci_model_database(self):
         """A clean minimal image must not depend on another package incidentally installing pci.ids."""
         installer = (ROOT / "os/gentoo.sh").read_text()
@@ -144,10 +176,9 @@ class PosterfetchTests(unittest.TestCase):
 
     def test_gpu_probe_does_not_stop_at_the_first_card(self):
         src = (ROOT / "desktop/posterfetch.js").read_text()
-        start = src.index("function gpu()")
-        body = src[start:src.index("function network()", start)]
+        start = src.index("function gpuRows(")
+        body = src[start:src.index("function gpu()", start)]
         self.assertIn("rows.push", body)
-        self.assertIn("rows.join", body)
         self.assertIn("path.join(dir, 'device')", body,
                       "GPU models still depend on optional uevent PCI_ID")
         self.assertNotRegex(body, r"if \(name \|\| driver\) return",
