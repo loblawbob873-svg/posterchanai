@@ -59,6 +59,7 @@ WANT = [
     "function _dmReplyBanner(){",
     "function _dmMsgMenu(anchorEl, pk, mid){",
     "function _wireBubbleActions(box, pk){",
+    "function bindDmMediaActions(){",
     "function _dmPinBottom(m){",
     "function _threadSig(pk){",
     "async function renderDmThread(pk){",
@@ -171,6 +172,7 @@ const sendDm = async (pk, body) => {
 };
 
 __EXTRACTED__
+bindDmMediaActions();
 
 // ---- helpers -------------------------------------------------------------------------------
 const mount = () => { $('#feed').innerHTML =

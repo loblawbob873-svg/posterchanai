@@ -4816,6 +4816,7 @@
     document.addEventListener('click', e=>{ if(e.target.closest && e.target.closest('#btn-more-m')){ e.preventDefault(); moreMenu(); } });
     bindSearch();
     bindFeedActions();
+    bindDmMediaActions();
     $('#feed').addEventListener('scroll', onFeedScroll, { passive:true });   // infinite scroll-back
     bindMobileGestures();   // pull-to-refresh + swipe between primary tabs (mobile/PWA)
     // Perf/battery: pause ALL CSS animations (cyberpunk city parallax, glows) when the tab/PWA is
@@ -12635,6 +12636,18 @@
       if(a==='pin') return togglePin(id);
       if(a==='block') return doBlock(pk);
       if(a==='menu') return openPostMenu(id, pk, art, btn);
+    });
+  }
+  /* Permanent delegation: #dm-msgs survives ordinary refreshes, but a restored/handoff thread can
+   * enter through the reuse path without ever executing the fresh-render binding. The image exists
+   * and decodes in that state, yet tapping it does nothing. One document listener follows every
+   * replacement/restoration and cannot accumulate per conversation. */
+  function bindDmMediaActions(){
+    document.addEventListener('click', e=>{
+      const im=e.target&&e.target.closest&&e.target.closest('#dm-msgs img:not(.emoji-inline)');
+      if(!im)return;
+      e.preventDefault();e.stopPropagation();
+      openLightbox(im.currentSrc||im.src);
     });
   }
   // ---------- zaps (NIP-57 lightning) ----------
@@ -25528,12 +25541,6 @@
       ta.addEventListener('dm-reset', ()=>{ grow(); keep(); });
       grow(); }
     _wireBubbleActions($('#dm-msgs'), pk);
-    { const m=$('#dm-msgs'); if(m)
-      // Click a DM image to open it full-size (the feed lightbox handler is bound to #feed only, so DM
-      // images otherwise had no way to enlarge — the reported "images too small, can't click" issue).
-      // `:not(.emoji-inline)` — a NIP-30 custom emoji is an <img> in the message text too, and a
-      // lightbox of a 20px smiley is nobody's intent.
-      m.addEventListener('click', ce=>{ const im=ce.target.closest('img:not(.emoji-inline)'); if(im){ ce.preventDefault(); openLightbox(im.currentSrc||im.src); } }); }
     }   // end of the fresh-render branch — its body is left at the original indentation on purpose, so
         // the diff that introduced the reuse path shows the two lines that changed and not the 60 that
         // moved sideways.
