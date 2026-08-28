@@ -82,6 +82,14 @@ def test_rejected_html_handoff_falls_back_to_the_requested_edge_snap():
     assert branch.index("if(snapZone)snapTo(w,snapZone)") < branch.index("sendFrameHandoff")
 
 
+def test_capture_loss_at_monitor_seam_commits_local_mouse_snap_without_inventing_handoff():
+    """A clamped edge is a snap gesture; only measured overflow may transfer displays."""
+    src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+    block = src[src.index("const lostCapture ="):src.index("w.el.addEventListener('lostpointercapture'", src.index("const lostCapture ="))]
+    assert "up(lastMove,false)" in block
+    assert "handoff=dir" not in block
+
+
 def test_zero_screen_coordinates_cannot_glue_a_left_snapped_window_to_the_edge():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
     drag = src[src.index("function startDrag"):src.index("function startResize")]
@@ -91,13 +99,14 @@ def test_zero_screen_coordinates_cannot_glue_a_left_snapped_window_to_the_edge()
     assert reject < proximity
 
 
-def test_wayland_capture_loss_at_a_previewed_edge_commits_monitor_handoff():
+def test_wayland_capture_loss_at_a_previewed_edge_commits_local_snap():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
     drag = src[src.index("function startDrag"):src.index("function startResize")]
     lost = drag[drag.index("const lostCapture ="):drag.index("document.addEventListener('pointermove'")]
     assert "handoff||previewDir||edgeDirection(lastMove)" in lost
     assert "hadButtons && dir && edgeDirection(lastMove)===dir" in lost
-    assert "handoff=dir;up(lastMove,false)" in lost
+    assert "up(lastMove,false)" in lost
+    assert "handoff=dir" not in lost
     assert "else cancel(e)" in lost
 
 

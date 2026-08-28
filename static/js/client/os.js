@@ -3479,14 +3479,15 @@
     const cancel = (e) => up(e,true);
     const lostCapture = (e) => {
       if(ended)return;
-      /* Wayland commonly revokes capture at the exact boundary between the two Electron output
-       * surfaces. Waiting for >8px overflow made frame handoff a race: one coalesced event beyond
-       * the seam worked, the usual edge-clamped sequence rolled the drag back. Capture loss while
-       * the mouse is still held at the previewed edge is the missing positive crossing signal.
-       * A normal edge snap ends with pointerup (whose listener is removed before releaseCapture),
-       * while cancellation away from an edge retains the rollback path below. */
+      /* Losing capture AT a display seam is not proof that the user crossed it.  Wayland revokes
+       * capture at the boundary even when the pointer is clamped there, and promoting that event to
+       * a handoff stole the ordinary right-edge snap on every multi-monitor desktop: the frame
+       * either jumped outputs or returned to its old rectangle.  `handoffDirection()` above records
+       * a handoff only after real coordinate overflow.  Preserve that positive observation, but an
+       * edge-only capture loss commits the previewed LOCAL snap.  Moving between monitors remains
+       * available through genuine overflow and the title-bar/taskbar monitor actions. */
       const dir=handoff||previewDir||edgeDirection(lastMove);
-      if(hadButtons && dir && edgeDirection(lastMove)===dir){handoff=dir;up(lastMove,false);}
+      if(hadButtons && dir && edgeDirection(lastMove)===dir)up(lastMove,false);
       else cancel(e);
     };
     document.addEventListener('pointermove', move);
