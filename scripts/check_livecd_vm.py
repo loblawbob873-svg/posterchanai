@@ -129,7 +129,11 @@ def qemu_command(source: Path, installed_disk: bool, monitor: Path, serial: Path
         cmd += ["-cpu", "host"]
     else:
         cmd += ["-cpu", "max"]
-    cmd += ["-m", "4096", "-smp", "2"]
+    # The implicit stdvga device can reach a text console and then leave wlroots with no usable DRM
+    # output, producing a permanently black framebuffer after systemd reaches graphical.target.
+    # Match the virtio GPU used by PosterChan's libvirt domains so the boot gate tests the actual
+    # Wayland desktop rather than firmware-era VGA compatibility.
+    cmd += ["-m", "4096", "-smp", "2", "-device", "virtio-vga"]
     if installed_disk:
         # Deliberately NO cdrom device: this is the post-installer eject/reboot gate, not another
         # successful boot from the LiveCD masquerading as proof that the installed disk works.

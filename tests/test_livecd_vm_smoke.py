@@ -136,6 +136,7 @@ def test_live_gate_still_attaches_iso_and_boots_it_first(tmp_path):
     command = MOD.qemu_command(iso, False, tmp_path / "monitor", tmp_path / "serial")
     assert command[command.index("-cdrom") + 1] == str(iso)
     assert ["-boot", "d"] == command[command.index("-boot"):command.index("-boot") + 2]
+    assert command[command.index("-device"):command.index("-device") + 2] == ["-device", "virtio-vga"]
 
 
 def test_kvm_gate_uses_the_host_cpu_that_the_release_image_targets(tmp_path, monkeypatch):
