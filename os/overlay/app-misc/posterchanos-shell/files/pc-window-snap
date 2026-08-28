@@ -37,8 +37,14 @@ def process_chain(pid):
             raw = open(f"/proc/{pid}/cmdline", "rb").read().replace(b"\0", b" ")
             yield raw.decode("utf-8", "replace")
             with open(f"/proc/{pid}/stat", "r", encoding="utf-8") as handle:
-                fields = handle.read().split()
-            pid = int(fields[3])
+                stat = handle.read()
+            # comm is parenthesised but may itself contain spaces and `)`.  Only the final closing
+            # parenthesis is structural; after it the first field is state and the second is ppid.
+            end = stat.rfind(")")
+            if end < 0:
+                return
+            fields = stat[end + 1:].split()
+            pid = int(fields[1])
         except (OSError, ValueError, IndexError):
             return
 

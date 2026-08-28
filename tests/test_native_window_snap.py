@@ -1,3 +1,4 @@
+import builtins
 import re
 import runpy
 from pathlib import Path
@@ -42,6 +43,34 @@ def test_electron_44_reverse_dns_shell_identity_needs_no_pid_fallback():
     module["is_posterchan_shell"].__globals__["process_chain"] = lambda _pid: (_ for _ in ()).throw(
         AssertionError("stable app_id must not need process ancestry"))
     assert module["is_posterchan_shell"]({"app_id": "place.poster.desktop", "pid": 0}) is True
+
+
+def test_process_ancestry_survives_spaces_and_parentheses_in_proc_comm(monkeypatch):
+    """A renderer name must not corrupt ppid parsing and expose its whole shell to native snap."""
+    helper = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap"
+    module = runpy.run_path(str(helper), run_name="pc_window_snap_proc_stat_test")
+    opened = {
+        "/proc/4242/cmdline": b"/usr/lib/electron/electron\0--type=renderer\0",
+        "/proc/4242/stat": "4242 (Web Content) X11) S 3131 1 1 0 0\n",
+        "/proc/3131/cmdline": b"/opt/posterchan/posterchan-desktop\0--shell\0",
+        "/proc/3131/stat": "3131 (posterchan-desktop) S 1 1 1 0 0\n",
+        "/proc/1/cmdline": b"/sbin/init\0",
+        "/proc/1/stat": "1 (init) S 0 1 1 0 0\n",
+    }
+
+    class FakeFile:
+        def __init__(self, value):
+            self.value = value
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            return False
+        def read(self):
+            return self.value
+
+    monkeypatch.setattr(builtins, "open",
+                        lambda path, mode="r", **_kw: FakeFile(opened[path]))
+    assert module["is_posterchan_shell"]({"app_id": "", "pid": 4242}) is True
 
 
 def test_repeated_super_arrows_route_to_the_internal_window_without_resizing_shell(monkeypatch):
