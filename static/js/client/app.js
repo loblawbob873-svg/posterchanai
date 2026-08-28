@@ -12648,7 +12648,7 @@
       if(!im)return;
       e.preventDefault();e.stopPropagation();
       openLightbox(im.currentSrc||im.src);
-    });
+    },true);
   }
   // ---------- zaps (NIP-57 lightning) ----------
   // sats in a zap RECEIPT (kind 9735): trust the embedded zap-request `amount` tag (millisats)

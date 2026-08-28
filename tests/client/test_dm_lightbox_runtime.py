@@ -29,6 +29,9 @@ def test_encrypted_dm_image_click_opens_visible_decoded_lightbox():
     {open_box}
     {bind_dm}
     bindDmMediaActions();
+    // Restored app panes have their own click routing. Reproduce a closer handler swallowing the
+    // bubble; the permanent media action must run during capture before that can happen.
+    document.querySelector('#dm-msgs').addEventListener('click',e=>e.stopImmediatePropagation());
     document.querySelector('#dm').click();
     const done=()=>{{const bg=document.querySelector(':root > .lightbox'),im=bg&&bg.querySelector('img'),r=bg&&bg.getBoundingClientRect(),s=bg&&getComputedStyle(bg);document.querySelector('#out').textContent=JSON.stringify({{root:bg&&bg.parentNode===document.documentElement,decoded:im&&im.naturalWidth>0&&im.naturalHeight>0,visible:!!(r&&r.width>0&&r.height>0&&r.bottom>0&&r.right>0&&s.display!=='none'&&s.visibility!=='hidden'),z:s&&Number(s.zIndex)}});document.title='done'}};
     const x=document.querySelector('.lightbox img');if(x.complete)done();else x.addEventListener('load',done);
@@ -45,3 +48,4 @@ def test_encrypted_dm_image_click_opens_visible_decoded_lightbox():
 def test_dm_uses_the_tested_delegated_image_handler():
     assert "bindDmMediaActions();" in APP
     assert "closest('#dm-msgs img:not(.emoji-inline)')" in APP
+    assert "openLightbox(im.currentSrc||im.src);\n    },true);" in APP
