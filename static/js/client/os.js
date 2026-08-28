@@ -3177,7 +3177,9 @@
       terminalSid:terminal&&window.PCTerm&&PCTerm.sessionId
         ? PCTerm.sessionId() : '',
       path:topPath ? '' : appPath,ui:captureHandoffUI(w),
-      state:w.view==='websearch'&&window.PCWebSearch&&PCWebSearch.handoffState
+      state:terminal&&window.PCTerm&&PCTerm.handoffState
+        ? PCTerm.handoffState()
+        : w.view==='websearch'&&window.PCWebSearch&&PCWebSearch.handoffState
         ? PCWebSearch.handoffState()
         : messagesTab==='concord'&&window.PCConcord&&PCConcord.handoffState
           ? PCConcord.handoffState()
@@ -6852,8 +6854,10 @@
           if(pcWM.onHandoffFrame) _handoffOff = pcWM.onHandoffFrame((p) => {
             if(_handoffPreviewEl){ _handoffPreviewEl.remove(); _handoffPreviewEl=null; }
             if(!p || !p.view) return;
-            if(p.view==='terminal' && p.terminalSid && window.PCTerm && PCTerm.adoptSession)
-              PCTerm.adoptSession(p.terminalSid);
+            if(p.view==='terminal' && window.PCTerm){
+              if(p.state && PCTerm.acceptHandoff) PCTerm.acceptHandoff(p.state);
+              else if(p.terminalSid && PCTerm.adoptSession) PCTerm.adoptSession(p.terminalSid);
+            }
             if(p.view==='websearch' && p.state && window.PCWebSearch && PCWebSearch.acceptHandoff)
               PCWebSearch.acceptHandoff(p.state);
             if(p.messagesTab==='concord' && p.state){

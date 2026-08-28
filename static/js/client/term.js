@@ -74,6 +74,9 @@
     let sid = '', cursor = 0, retry = 0, retryT = null, want = false, live = [];
     let findHits = [], findAt = -1;
     let followBottom = true, scrollingByUs = false;
+    /* A monitor handoff crosses renderers. Tabs are PTY session identities, never numeric indexes:
+     * the local/server session list may arrive in a different order on the destination monitor. */
+    let handoffOrder = [], handoffScroll = null;
     /* xterm's write callback means that its parser consumed the bytes; it does NOT mean Chromium
      * has finished laying out the enlarged scrollback element.  A large reattach measured in the
      * packaged desktop landed at scrollTop 2224 with an actual maximum of 3824 even though the
@@ -648,6 +651,24 @@
       _pinBottomAfterLayout();
     }
 
+    function _restoreHandoffScroll(){
+      const saved=handoffScroll;
+      if(!saved || !term) return;
+      handoffScroll=null;
+      followBottom=saved.pinned!==false;
+      if(followBottom){ _pinBottomAfterLayout(); return; }
+      const above=Math.max(0,Number(saved.aboveBottom)||0);
+      const apply=()=>{
+        if(!term || followBottom) return;
+        try{
+          const b=term.buffer&&term.buffer.active;
+          if(b) term.scrollToLine(Math.max(0,Number(b.baseY||0)-above));
+        }catch(_){}
+      };
+      try{ requestAnimationFrame(()=>requestAnimationFrame(apply)); }catch(_){ apply(); }
+      setTimeout(apply,120);
+    }
+
     async function connect(){
       const sel = $('#tty-host'); if(!sel) return;
       host = sel.value;
@@ -694,6 +715,10 @@
       cursor = 0;                          // no local scrollback for it — replay from the start of
                                            // what the server still holds
       _resetForReplay();
+      /* Explicit tab clicks intentionally go to the prompt. A monitor handoff is different: it is
+       * the same visible tab crossing a seam, so reinstate whether the person was reading history
+       * after reset's programmatic onScroll guard has been armed. */
+      if(handoffScroll) followBottom=handoffScroll.pinned!==false;
       _open({ resume: id, host: hostName || '', label });
     }
 
@@ -846,7 +871,8 @@
             const followThisWrite=followBottom;
             if(followThisWrite) scrollingByUs=true;
             term.write(m.d, function(){
-              if(followThisWrite) _pinBottomAfterLayout();
+              if(handoffScroll) _restoreHandoffScroll();
+              else if(followThisWrite) _pinBottomAfterLayout();
             });
             _histSaw(m.d);
             // The CURSOR is what a reconnect resumes from, so it advances only for bytes that reached
@@ -1000,6 +1026,11 @@
       const tabs = live.slice();
       if(sid && !tabs.some(x => x.sid === sid))
         tabs.unshift({ sid, host:host || 'local', label, age:0, alive:true });
+      if(handoffOrder.length){
+        const rank=new Map(handoffOrder.map((id,n)=>[String(id),n]));
+        tabs.sort((a,b)=>(rank.has(String(a.sid))?rank.get(String(a.sid)):1e9)
+          -(rank.has(String(b.sid))?rank.get(String(b.sid)):1e9));
+      }
       box.hidden = false;
       box.innerHTML = '<span class="tty-sess-lbl">tabs</span>' + tabs.map((x, n) => {
         const lab = String(x.label || '');
@@ -1340,8 +1371,34 @@
      * owned by the desktop/server and is therefore attachable from the destination renderer; only
      * its id must cross before render() runs. */
     function adoptSession(id){
-      id=String(id||'');
+      return acceptHandoff({activeSid:id});
+    }
+
+    function handoffState(){
+      let aboveBottom=handoffScroll?Math.max(0,Number(handoffScroll.aboveBottom)||0):0;
+      try{
+        const b=term&&term.buffer&&term.buffer.active;
+        if(b) aboveBottom=Math.max(0,Number(b.baseY||0)-Number(b.viewportY||0));
+      }catch(_){}
+      return {activeSid:String(sid||''),host:String(host||''),label:String(label||''),
+        tabs:live.map(x=>({sid:String(x.sid||''),host:String(x.host||''),label:String(x.label||'')}))
+          .filter(x=>x.sid),scroll:{pinned:followBottom!==false,aboveBottom}};
+    }
+
+    function acceptHandoff(state){
+      state=state&&typeof state==='object'?state:{};
+      const id=String(state.activeSid||state.sid||'');
       if(!id) return false;
+      const tabs=Array.isArray(state.tabs)?state.tabs.filter(x=>x&&x.sid).map(x=>({
+        sid:String(x.sid),host:String(x.host||''),label:String(x.label||'')})):[];
+      handoffOrder=tabs.map(x=>x.sid);
+      if(tabs.length) live=tabs;
+      const active=tabs.find(x=>x.sid===id);
+      host=String(state.host||(active&&active.host)||host||'');
+      label=String(state.label||(active&&active.label)||'');
+      handoffScroll=state.scroll&&typeof state.scroll==='object'?{
+        pinned:state.scroll.pinned!==false,aboveBottom:Math.max(0,Number(state.scroll.aboveBottom)||0)}:null;
+      followBottom=!handoffScroll||handoffScroll.pinned!==false;
       _remember(id);
       _want=isLocalSid(id)?'local':'';
       cursor=0;
@@ -1349,7 +1406,7 @@
     }
 
     window.PCTerm = { render, unmount, isOpen: () => !!mounted, connected: () => connected,
-                      openLocal, sessionId: () => sid, adoptSession };
+                      openLocal, sessionId: () => sid, adoptSession, handoffState, acceptHandoff };
   }
   init();
 })();
