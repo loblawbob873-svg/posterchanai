@@ -16235,9 +16235,9 @@
      * a class rather than an inline z-index, because an inline value beats every stylesheet rule —
      * including the one that lifts modals above the PosterChan OS desktop, which is why attaching
      * from Blossom silently did nothing there while Local (a native file input) worked. */
-    const bg=document.createElement('div'); bg.className='modal-bg modal-sub';
+    const bg=document.createElement('div'); bg.className='modal-bg modal-sub bp-picker-bg';
     bg.innerHTML=`<div class="modal glass neon-border bp-modal bp-file-picker">
-      <div class="bp-head"><h3>${enc(opts.title||'📁 Choose from File Manager')}</h3>
+      <div class="bp-head"><button type="button" class="mini bp-locations" aria-expanded="false">☰ Locations</button><h3>${enc(opts.title||'📁 Choose from File Manager')}</h3>
         <button type="button" class="mini bp-close" aria-label="Cancel file selection">×</button></div>
       <div class="bp-explorer"><nav id="bp-folders" class="bp-folders" aria-label="Blossom folders"></nav>
         <div id="bp-grid" class="files-grid"><div class="spinner"></div></div></div></div>`;
@@ -16250,7 +16250,10 @@
     $('#modal-root').appendChild(bg);
     document.body.classList.add('modal-open');
     bg.querySelector('.bp-close').onclick=close;
-    _trapFocus(bg.querySelector('.modal'), close);
+    const closeOrDrawer=()=>{ const explorer=bg.querySelector('.bp-explorer');
+      if(explorer&&explorer.classList.contains('bp-locations-on')){ explorer.classList.remove('bp-locations-on'); const b=bg.querySelector('.bp-locations'); if(b)b.setAttribute('aria-expanded','false'); return; }
+      close(); };
+    _trapFocus(bg.querySelector('.modal'), closeOrDrawer);
     // The grid is a grid of DIVs — nothing focusable, so Tab could never reach a file and Enter had
     // nothing to press. _popKeys is the app's grid cursor (arrows, and hjkl when Vim keys are on, with
     // the row length measured from the layout), the same one the effects and emoji pickers use.
@@ -16292,7 +16295,9 @@
         if(opts.filter && !opts.filter(b)) return false;            // caller's own narrowing (e.g. media only)
         return true;
       });
-      const grid=bg.querySelector('#bp-grid'), fbar=bg.querySelector('#bp-folders');
+      const grid=bg.querySelector('#bp-grid'), fbar=bg.querySelector('#bp-folders'), explorer=bg.querySelector('.bp-explorer'), locations=bg.querySelector('.bp-locations');
+      locations.onclick=()=>{ const open=explorer.classList.toggle('bp-locations-on'); locations.setAttribute('aria-expanded',open?'true':'false'); };
+      explorer.addEventListener('click',e=>{ if(explorer.classList.contains('bp-locations-on')&&!e.target.closest('.bp-folders')&&!e.target.closest('.bp-locations')){ e.preventDefault();e.stopPropagation();closeOrDrawer(); } },true);
       // The folder bar represents the encrypted index, not this request's filtered blob listing.
       // Hiding a folder with no currently selectable public blob made real folders (for example a
       // Social folder containing encrypted items) appear deleted after a partial list or filter.
@@ -16338,7 +16343,7 @@
       fbar.querySelectorAll('[data-folder]').forEach(btn=>btn.onclick=()=>{
         cur=btn.dataset.folder||'';
         fbar.querySelectorAll('[data-folder]').forEach(x=>x.classList.toggle('active',x===btn));
-        draw();
+        draw(); explorer.classList.remove('bp-locations-on'); locations.setAttribute('aria-expanded','false');
       });
       draw();
     })();

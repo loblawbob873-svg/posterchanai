@@ -5162,17 +5162,25 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .bp-folderlbl{display:flex;align-items:center;gap:8px}
 .bp-folder-sel{margin:0;flex:1 1 auto;min-width:0;font-size:17px;min-height:44px}  /* 16px: iOS zoom */
 @media (max-width:820px){
-  .bp-head{margin:0 -16px 8px;padding:12px 16px 0}
-  .bp-file-picker{width:100%;height:min(88vh,760px)}
-  .bp-file-picker .bp-head{padding-bottom:10px}
-  .bp-explorer{display:flex;flex-direction:column}
-  .bp-explorer>.bp-folders{flex:0 0 auto;max-height:min(32vh,240px);overflow-y:auto;padding:6px;border-inline-end:0;border-bottom:1px solid var(--line)}
+  .modal-bg.bp-picker-bg{inset:0;padding:0;place-items:stretch;background:var(--bg2);overflow:hidden}
+  .bp-picker-bg>.bp-file-picker{box-sizing:border-box;width:100vw;max-width:none;height:100vh;max-height:none;
+    height:100dvh;margin:0;border:0;border-radius:0;padding:0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);overflow:hidden}
+  .bp-file-picker .bp-head{box-sizing:border-box;margin:0;padding:calc(8px + env(safe-area-inset-top)) 12px 8px;
+    position:relative;min-height:48px}
+  .bp-file-picker .bp-head h3{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bp-locations{display:inline-flex;flex:0 0 auto;min-height:38px;align-items:center}
+  .bp-explorer{display:flex;flex-direction:column;position:relative}
+  .bp-explorer>.bp-folders{position:absolute;z-index:5;inset:0 auto 0 0;width:min(88vw,330px);max-height:none;overflow-y:auto;padding:8px;
+    border-inline-end:1px solid var(--line);border-bottom:0;transform:translateX(-105%);transition:transform .16s ease;background:var(--bg2);box-shadow:12px 0 28px rgba(0,0,0,.38)}
+  .bp-explorer.bp-locations-on::after{content:"";position:absolute;z-index:4;inset:0;background:rgba(0,0,0,.52)}
+  .bp-explorer.bp-locations-on>.bp-folders{transform:translateX(0)}
   .bp-explorer .fx-tree-children{padding-inline-start:0;margin-inline-start:0}
   .bp-explorer .folder-bar{flex-direction:column;overflow:visible;padding-bottom:2px}
   .bp-explorer .folder-chip{width:100%;min-width:0;padding:10px 12px;text-align:start;white-space:normal;overflow-wrap:anywhere}
   .bp-explorer>.files-grid{flex:1 1 auto;padding:8px;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
   .bp-explorer>.files-grid>.file-card{min-height:154px}
 }
+@media (min-width:821px){.bp-locations{display:none}}
 @media (max-width:380px){.bp-explorer>.files-grid{grid-template-columns:minmax(0,1fr)}}
 /* file-mode fields in the Make-something sheet */
 .gen-file-btn{margin-top:8px;min-height:46px}

@@ -107,9 +107,12 @@ def test_file_picker_has_bounded_desktop_and_mobile_layouts():
                      ".bp-explorer>.files-grid"):
         assert selector in CSS
     assert "height:min(720px,calc(100vh - 28px))" in CSS
-    assert ".bp-explorer{display:flex;flex-direction:column}" in CSS
+    assert ".bp-explorer{display:flex;flex-direction:column;position:relative}" in CSS
     assert "grid-template-columns:repeat(2,minmax(0,1fr))" in CSS
-    assert "max-height:min(32vh,240px);overflow-y:auto" in CSS
+    assert ".modal-bg.bp-picker-bg{inset:0;padding:0;place-items:stretch" in CSS
+    assert "height:100dvh;margin:0;border:0;border-radius:0" in CSS
+    assert "transform:translateX(-105%)" in CSS
+    assert ".bp-explorer.bp-locations-on>.bp-folders{transform:translateX(0)}" in CSS
     assert ".bp-explorer .folder-bar{flex-direction:column;overflow:visible" in CSS
     assert "white-space:normal;overflow-wrap:anywhere" in CSS
 
