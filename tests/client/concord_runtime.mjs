@@ -162,7 +162,7 @@ if(!await PCConcord.applyRoomIconMetadata(iconRoom,{icon:''},'icon-clear') || ic
   throw new Error('explicit community icon removal was ignored');
 if(!await PCConcord.applyRoomIconMetadata(iconRoom,{icon:'🛸'},'icon-plain') || iconRoom.icon!=='🛸')
   throw new Error('plain community icon update was ignored');
-const iconPlain=new TextEncoder().encode('durable icon bytes'),iconKey=crypto.getRandomValues(new Uint8Array(32)),iconNonce=crypto.getRandomValues(new Uint8Array(12));
+const iconPlain=new Uint8Array([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1,2,3,4]),iconKey=crypto.getRandomValues(new Uint8Array(32)),iconNonce=crypto.getRandomValues(new Uint8Array(12));
 const iconCryptoKey=await crypto.subtle.importKey('raw',iconKey,'AES-GCM',false,['encrypt']);
 const iconCipher=await crypto.subtle.encrypt({name:'AES-GCM',iv:iconNonce},iconCryptoKey,iconPlain);
 const hex=a=>[...new Uint8Array(a)].map(x=>x.toString(16).padStart(2,'0')).join('');

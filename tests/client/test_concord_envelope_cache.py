@@ -32,15 +32,20 @@ class ConcordEnvelopeCache(unittest.TestCase):
               }
               document.body.dataset.step='delete';indexedDB.deleteDatabase(C.DB); await new Promise(r=>setTimeout(r,80)); C._reset();
               const events=Array.from({length:1257},(_,i)=>({id:'id-'+String(i).padStart(4,'0'),kind:1059,created_at:i,content:'cipher-'+i,tags:[['p','wrapped-key-'+i]]}));
+              events[17].plaintext='decrypted-secret';events[17].decoded={text:'decrypted-secret'};
               document.body.dataset.step='put';await C.put(stream,events,{limit:2000});
               await C.put(stream,[events[700],events[701]],{limit:2000});
               const all=await C.get(stream),pages=[];let before='';do{const p=await C.page(stream,{before,limit:137});pages.push(...p.events.map(x=>x.id));before=p.before;if(p.done)break;}while(true);
               await C.put('other-room',[{id:'other',kind:1059,created_at:4,content:'other-cipher'}]);
               await C.putIcon('room-A','ref-1',new Uint8Array([1,2,3]),'image/png');
               await C.putIcon('room-A','ref-2',new Uint8Array([7,8,9,10]),'image/webp');
+              const hugeIcon=await C.putIcon('too-big','ref',new Uint8Array(C.MAX_ICON_BYTES+1),'image/png'),badMime=await C.putIcon('html','ref',new Uint8Array([60,1]),'text/html');
+              const roomA=JSON.stringify(['a:b','c']),roomB=JSON.stringify(['a','b:c']);await C.put(roomA,[{id:'collision-a',kind:1059,content:'cipher'}]);await C.put(roomB,[{id:'collision-b',kind:1059,content:'cipher'}]);const collision=[(await C.get(roomA)).length,(await C.get(roomB)).length];
+              const prefixA=JSON.stringify(['prefix-A','c']),prefixB=JSON.stringify(['prefix-AB','c']);await C.put(prefixA,[{id:'prefix-a',kind:1059,content:'cipher'}]);await C.put(prefixB,[{id:'prefix-b',kind:1059,content:'cipher'}]);await C.dropRoom('prefix-A');const prefixDrop=[(await C.get(prefixA)).length,(await C.get(prefixB)).length];
+              const invalid=await C.put('invalid',[{id:'wrong-kind',kind:1,content:'plaintext'},{id:'huge',kind:1059,content:'x'.repeat(C.MAX_EVENT_BYTES+1)}]);
               const many=Array.from({length:5100},(_,i)=>({id:'evict-'+i,kind:1059,created_at:i,content:'opaque'}));await C.put('bounded',many);const bounded=await C.get('bounded');
               window.__phase1={count:all.length,first:all[0].id,last:all.at(-1).id,unique:new Set(all.map(x=>x.id)).size,pageCount:pages.length,pageUnique:new Set(pages).size,other:(await C.get('other-room')).length,plaintext:JSON.stringify(all).includes('decrypted-secret')};
-              window.__phase1.boundedCount=bounded.length;window.__phase1.boundedFirst=bounded[0].id;sessionStorage.setItem('phase-result',JSON.stringify(window.__phase1));
+              window.__phase1.boundedCount=bounded.length;window.__phase1.boundedFirst=bounded[0].id;window.__phase1.invalid=invalid;window.__phase1.collision=collision;window.__phase1.prefixDrop=prefixDrop;window.__phase1.hugeIcon=hugeIcon;window.__phase1.badMime=badMime;sessionStorage.setItem('phase-result',JSON.stringify(window.__phase1));
               sessionStorage.setItem('phase','reload'); location.reload();
             }catch(e){out.textContent=JSON.stringify({threw:String(e.stack||e)})}})();
             </script>"""
@@ -87,11 +92,20 @@ class ConcordEnvelopeCache(unittest.TestCase):
     def test_cache_contains_no_decrypted_test_plaintext(self):
         self.assertFalse(self.result['plaintext'])
 
+    def test_malformed_and_oversize_untrusted_records_are_rejected(self):
+        self.assertEqual(self.result['invalid'], 0)
+
+    def test_room_keys_do_not_collide_or_prefix_delete_each_other(self):
+        self.assertEqual(self.result['collision'], [1, 1])
+        self.assertEqual(self.result['prefixDrop'], [0, 1])
+
     def test_icon_rotation_and_offline_reload_return_exact_bytes(self):
         self.assertFalse(self.result['oldIcon'])
         self.assertEqual(self.result['icon'], [7, 8, 9, 10])
         self.assertEqual(self.result['mime'], 'image/webp')
         self.assertTrue(self.result['iconUrl'])
+        self.assertFalse(self.result['hugeIcon'])
+        self.assertFalse(self.result['badMime'])
 
     def test_stream_eviction_is_bounded_and_deterministic(self):
         self.assertEqual(self.result['boundedCount'], 5000)

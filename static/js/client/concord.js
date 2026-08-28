@@ -20,7 +20,9 @@
     for(const ev of batches.flat())if(ev&&ev.id)byId.set(ev.id,ev);
     return [...byId.values()];
   }
-  function envelopeCacheKey(loadKey,stream){return String(loadKey||'')+':'+String(stream||'control');}
+  /* Tuple encoding prevents room/channel boundary collisions (`a:b`+`c` versus `a`+`b:c`) and
+   * lets cache cleanup compare the room identity exactly instead of prefix-deleting another room. */
+  function envelopeCacheKey(loadKey,stream){return JSON.stringify([String(loadKey||''),String(stream||'control')]);}
   function mergeEnvelopes(...groups){const byId=new Map();for(const ev of groups.flat())if(ev&&ev.id)byId.set(ev.id,ev);return [...byId.values()];}
   async function cachedEnvelopes(key){try{return window.PCConcordCache?await window.PCConcordCache.get(key):[];}catch(e){console.warn('Concord cache read failed',e);return [];}}
   async function cacheEnvelopes(key,events){try{if(window.PCConcordCache&&events&&events.length)await window.PCConcordCache.put(key,events);}catch(e){console.warn('Concord cache write failed',e);}}
@@ -363,14 +365,25 @@
   function hydrateWebxdcCards(room){ if(!window.PCWebxdc||!PCWebxdc.cardHtml||!document.querySelectorAll)return; const byId=new Map(activeMessages(room).map(m=>[messageId(m),m])); document.querySelectorAll('.cc-message[data-message-id]').forEach(el=>{ const m=byId.get(el.dataset.messageId),html=m&&webxdcHtml(m),body=el.querySelector('.cc-message-body'); if(html&&body&&!body.querySelector('.xdc-card'))body.insertAdjacentHTML('beforeend',html); }); }
   function hexBytes(s){ const h=String(s||''); if(!/^[0-9a-f]+$/i.test(h)||h.length%2)throw new Error('invalid encrypted image key'); return new Uint8Array(h.match(/../g).map(x=>parseInt(x,16))); }
   function bytesHex(a){ return [...new Uint8Array(a)].map(x=>x.toString(16).padStart(2,'0')).join(''); }
-  function imageMime(a){ return a[0]===0x89&&a[1]===0x50?'image/png':a[0]===0xff&&a[1]===0xd8?'image/jpeg':a[0]===0x47&&a[1]===0x49?'image/gif':a[0]===0x52&&a[1]===0x49&&a[8]===0x57?'image/webp':'image/*'; }
+  function imageMime(a){ return a[0]===0x89&&a[1]===0x50?'image/png':a[0]===0xff&&a[1]===0xd8?'image/jpeg':a[0]===0x47&&a[1]===0x49?'image/gif':a[0]===0x52&&a[1]===0x49&&a[8]===0x57?'image/webp':''; }
+  async function boundedImageBytes(res,max){
+    const announced=Number(res.headers&&res.headers.get&&res.headers.get('content-length'))||0;
+    if(announced>max)throw new Error('community icon is too large');
+    if(!res.body||!res.body.getReader){const bytes=new Uint8Array(await res.arrayBuffer());if(bytes.byteLength>max)throw new Error('community icon is too large');return bytes;}
+    const reader=res.body.getReader(),parts=[];let size=0;
+    try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>max){await reader.cancel();throw new Error('community icon is too large');}parts.push(value);}}finally{try{reader.releaseLock();}catch(_){}}
+    const out=new Uint8Array(size);let at=0;for(const part of parts){out.set(part,at);at+=part.byteLength;}return out;
+  }
   async function decryptImagePointer(pointer,loadKey,ref){
     try{const cached=window.PCConcordCache&&await window.PCConcordCache.getIcon(loadKey,ref);if(cached)return URL.createObjectURL(new Blob([cached.bytes],{type:cached.mime||'image/*'}));}catch(e){console.warn('Concord icon cache read failed',e);}
-    const res=await fetch(pointer.url); if(!res.ok)throw new Error('community icon download failed');
-    const key=await crypto.subtle.importKey('raw',hexBytes(pointer.key),'AES-GCM',false,['decrypt']);
-    const plain=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:hexBytes(pointer.nonce)},key,await res.arrayBuffer()));
+    const url=new URL(String(pointer&&pointer.url||''),location.href);if(!/^https?:$/.test(url.protocol))throw new Error('invalid community icon URL');
+    const rawKey=hexBytes(pointer.key),nonce=hexBytes(pointer.nonce);if(rawKey.byteLength!==32||nonce.byteLength!==12||!(/^[0-9a-f]{64}$/i.test(String(pointer.hash||''))))throw new Error('invalid encrypted image pointer');
+    const max=(window.PCConcordCache&&PCConcordCache.MAX_ICON_BYTES)||5*1024*1024,
+      res=await fetch(url.href); if(!res.ok)throw new Error('community icon download failed');
+    const encrypted=await boundedImageBytes(res,max+32),key=await crypto.subtle.importKey('raw',rawKey,'AES-GCM',false,['decrypt']);
+    const plain=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:nonce},key,encrypted));if(plain.byteLength>max)throw new Error('community icon is too large');
     const hash=bytesHex(await crypto.subtle.digest('SHA-256',plain)); if(hash!==String(pointer.hash).toLowerCase())throw new Error('community icon failed integrity check');
-    const mime=imageMime(plain);try{if(window.PCConcordCache)await window.PCConcordCache.putIcon(loadKey,ref,plain,mime);}catch(e){console.warn('Concord icon cache write failed',e);}return URL.createObjectURL(new Blob([plain],{type:mime}));
+    const mime=imageMime(plain);if(!mime)throw new Error('community icon is not a supported image');try{if(window.PCConcordCache)await window.PCConcordCache.putIcon(loadKey,ref,plain,mime);}catch(e){console.warn('Concord icon cache write failed',e);}return URL.createObjectURL(new Blob([plain],{type:mime}));
   }
   async function applyRoomIconMetadata(room,info,loadKey){
     if(!room||!info||!Object.prototype.hasOwnProperty.call(info,'icon'))return false;
