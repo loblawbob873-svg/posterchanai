@@ -46,6 +46,13 @@ def test_live_profile_and_launcher_establish_home_before_first_use():
         assert home < first_use
 
 
+def test_live_profile_uses_tty1_when_pam_omits_xdg_vtnr():
+    profile = INSTALLER.split("cat >\"$WORK/live.bash_profile\" <<'PROFILE'", 1)[1].split(
+        "\nPROFILE", 1
+    )[0]
+    assert '[ "${XDG_VTNR:-}" = 1 ] || [ "$(tty)" = /dev/tty1 ]' in profile
+
+
 def test_shell_binds_gtk_to_native_wayland_before_electron_launch():
     for launcher in LAUNCHERS:
         source = launcher.read_text(encoding="utf-8")

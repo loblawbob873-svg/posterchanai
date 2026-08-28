@@ -3159,7 +3159,10 @@ if [ -z "${HOME:-}" ]; then
 	export HOME
 fi
 [[ -f ~/.bashrc ]] && . ~/.bashrc
-if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
+# pam_systemd normally exports XDG_VTNR, but a minimal LiveCD autologin can omit it. tty1 itself is
+# authoritative: refusing to start Sway because optional session metadata is absent leaves QEMU
+# and real hardware at an inactive display forever.
+if [ -z "$WAYLAND_DISPLAY" ] && { [ "${XDG_VTNR:-}" = 1 ] || [ "$(tty)" = /dev/tty1 ]; }; then
 	# Welcome is the live machine's network setup UI, so its API must exist before Sway starts.
 	# Enabled units remain the primary boot path; this also repairs stale enablement inherited from
 	# a build host instead of presenting it to the user as missing network hardware.
