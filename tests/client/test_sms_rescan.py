@@ -1,6 +1,6 @@
 """THE WAY BACK OUT OF "ALREADY DONE".
 
-Every marker the message archive keeps is a LATCH, and the completion one — `..._blossom_v7` — is
+Every marker the message archive keeps is a LATCH, and the completion one — `..._blossom_v8` — is
 read at the top of `migrateLocalHistory` and returns immediately when it is set. That is correct
 when it was set correctly. When it was set by an older build that believed a truncated or walled-off
 read was the whole phone, it is permanent: the device installs every fix that follows, opens Texts,
@@ -59,6 +59,21 @@ def mms_files(res):
 
 @unittest.skipIf(not NODE, "no node on this node")
 class AStuckCompletionMarker(unittest.TestCase):
+
+    def test_v7_reaudits_mms_through_the_dedicated_provider_pager(self):
+        """Representative Android provider rows: SMS history can be complete while the combined
+        timeline omitted old MMS. The independent provider walk must still upload each part and
+        publish a portable sha for Web/OS, even when the prior release marked migration complete."""
+        rows = [picture(i, NOW - (1000 + i) * 60000) for i in range(1, 406)]
+        res = run(rows, {ME + "_blossom_v7": "1", ME: str(NOW)},
+                  ["phoneLoad", "migrateAll"], {"combinedOmitsMms": True})
+        self.assertEqual(len(mms_files(res)), 405)
+        self.assertGreaterEqual(sum(1 for c in res["calls"] if c[0] == "listMms"), 2,
+                                "MMS-only strict-before paging did not cross its first page")
+        part_shas = [sha for thread in res["threads"] for row in thread["partShas"] for sha in row]
+        self.assertEqual(len(part_shas), 405)
+        self.assertTrue(all(part_shas),
+                        "an old provider part reached the archive without a portable media sha")
 
     def test_v5_completion_is_reaudited_through_the_fixed_history_pager(self):
         """The history pager was repaired after v5 shipped. Keeping that old latch makes the fix
@@ -142,7 +157,7 @@ class AStuckCompletionMarker(unittest.TestCase):
         """THE BUG, stated as the thing the user sees. The latch is set, so the whole history is
         skipped and not one picture reaches encrypted storage — with no error anywhere."""
         rows = [picture(i, NOW - (100 + i) * 86400000) for i in range(1, 6)]
-        res = run(rows, {ME + "_blossom_v7": "1", ME + "_oldest_first_v1": "1", ME: str(NOW)},
+        res = run(rows, {ME + "_blossom_v8": "1", ME + "_oldest_first_v1": "1", ME: str(NOW)},
                   ["phoneLoad", "migrateAll"])
         self.assertEqual(mms_files(res), [],
                          "the latch did not actually block the migration — this test proves nothing")

@@ -88,6 +88,10 @@ const PLUGIN = {
     // have no messages", over a full inbox.
     let found = rows.filter(r => before ? r.date < before : r.date > since)
                     .sort((x, y) => before ? y.date - x.date : x.date - y.date);
+    // Captured failure shape: the combined timeline still returns all SMS text rows, but its
+    // interleaving/truncation never surfaces historical MMS rows. listMms below represents the
+    // direct content://mms audit added for that already-deployed state.
+    if(opt.combinedOmitsMms) found = found.filter(r => !r.mms);
     if(a && a.limit){
       let want = Math.max(1, Number(a.limit) || 1);
       // Android's MMS reader caps one provider query. Asking for a larger first page never exposes
@@ -102,6 +106,15 @@ const PLUGIN = {
     if(opt.mmsCapped || (opt.providerPageCap && a && Number(a.limit) > Number(opt.providerPageCap)
                          && found.length >= Number(opt.providerPageCap))) out.mmsCapped = true;
     return out;
+  },
+  async listMms(a){
+    calls.push(['listMms', a && a.before || 0]);
+    if(!canRead) return { messages: [], mmsRefused:true };
+    const before = (a && a.before) || 0;
+    let found = rows.filter(r => r.mms && (!before || r.date < before))
+                    .sort((x, y) => y.date - x.date);
+    if(a && a.limit) found = found.slice(0, Math.max(1, Number(a.limit) || 1));
+    return { messages:found };
   },
   /* WHAT THIS CARRIER SAYS AN MMS MAY WEIGH. `opt.mmsLimit` sets it; `opt.noMmsLimit` models an
    * older APK with no such method, which must fall back rather than refuse to send. */
@@ -173,6 +186,7 @@ if(!opt.oldApk) PLUGIN.ensureRead = async function(){
   if(opt.grantOnAsk) canRead = true;
   return { granted: canRead };
 };
+if(opt.oldApk) delete PLUGIN.listMms;
 
 /* ---- the stub relay -------------------------------------------------------------------------- */
 

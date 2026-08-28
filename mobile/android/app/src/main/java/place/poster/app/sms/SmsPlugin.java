@@ -387,6 +387,28 @@ public class SmsPlugin extends Plugin {
         call.resolve(o);
     }
 
+    /**
+     * Walk the MMS provider directly.  The ordinary list is intentionally a combined SMS/MMS
+     * timeline and truncates that timeline to its requested size.  On a text-dense phone that is
+     * not a proof that the MMS provider itself was exhausted, so archive repair uses this endpoint
+     * for an independent, strict-before audit of every historical picture-message row and part.
+     */
+    @PluginMethod
+    public void listMms(PluginCall call) {
+        long before = call.getLong("before", 0L);
+        int limit = call.getInt("limit", 500);
+        List<SmsMsg> rows = before > 0
+                ? MmsStore.before(getContext(), before, limit)
+                : MmsStore.recent(getContext(), limit);
+        boolean refused = MmsStore.refused();
+        boolean capped = MmsStore.capped();
+        JSObject o = new JSObject();
+        o.put("messages", toJson(rows));
+        o.put("mmsRefused", refused);
+        o.put("mmsCapped", capped);
+        call.resolve(o);
+    }
+
     @PluginMethod
     public void threads(PluginCall call) {
         JSONArray arr = new JSONArray();

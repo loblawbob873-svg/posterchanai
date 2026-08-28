@@ -58,7 +58,7 @@
    * provider query. Android capped that query at the newest MMS slice, so v6 could truthfully
    * finish everything it had been shown while never seeing older photo/video rows. The paged phone
    * load below is not a repair for an account that returns early on its old completion marker. */
-  const HWM_BLOSSOM = () => HWM() + '_blossom_v7';
+  const HWM_BLOSSOM = () => HWM() + '_blossom_v8';
   /* AND A SEPARATE MARKER FOR THE REWIND ITSELF, because rewinding is a ONE-TIME ACT and finishing
    * the migration is a different question entirely.
    *
@@ -1013,6 +1013,37 @@
       if(oldest >= edge){ mmsCap = true; break; }
       edge = oldest;
       await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    /* Audit MMS independently. A combined 400-row timeline can be filled entirely by SMS on a
+       busy phone, which makes that page say nothing about whether older content://mms rows exist.
+       The native endpoint enumerates MMS parts directly; old APKs do not have it and retain the
+       compatible combined pass above. v8's completion latch ensures phones previously called
+       complete get this one-time media audit after installing the new APK. */
+    const M = plug('listMms');
+    if(M && M.listMms){
+      let mmsEdge = Date.now() + 1, mmsExhausted = false;
+      for(let page = 0; page < MAX_PAGES; page++){
+        let pageRows = [], offered = 0;
+        try{
+          const answer = (await M.listMms({ before:mmsEdge, limit:PAGE })) || {};
+          offered = (answer.messages || []).length;
+          pageRows = (answer.messages || []).filter(r => r && Number(r.date) < mmsEdge);
+          if(answer.mmsRefused) mmsRef = true;
+          if(answer.mmsCapped) mmsCap = true;
+        }catch(_){ mmsCap = true; break; }
+        let oldest = mmsEdge;
+        for(const r of pageRows){
+          if(r && r.doc) byDoc.set(r.doc, r);
+          if(Number(r && r.date) && Number(r.date) < oldest) oldest = Number(r.date);
+        }
+        if(onProgress && byDoc.size) try{ onProgress(byDoc.size); }catch(_){ }
+        if(offered && !pageRows.length){ mmsCap = true; break; }
+        if(pageRows.length < PAGE){ mmsExhausted = true; break; }
+        if(oldest >= mmsEdge){ mmsCap = true; break; }
+        mmsEdge = oldest;
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+      if(!mmsExhausted) mmsCap = true;
     }
     rows = Array.from(byDoc.values());
     if(!exhausted) mmsCap = true;
