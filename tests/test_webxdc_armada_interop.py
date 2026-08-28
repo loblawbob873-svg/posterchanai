@@ -50,7 +50,7 @@ def test_peer_ads_use_the_open_room_sockets_not_an_unrelated_pool():
     assert "close.publish=event=>(R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)" in sub
     iroh = (ROOT / "static/js/client/webxdc-iroh.js").read_text()
     assert "webxdcPeerPublish(ctx,JSON.stringify({op:'ad',topic,addr:encodeAddr(node.nodeAddrJson())}),off)" in iroh
-    assert "await peerApi.webxdcPeerQuery(ctx)" in iroh
+    assert "await PCConcord.webxdcPeerQuery(ctx)" in iroh
     assert "await node.join(topicBytes,initial" in iroh
     assert "diag('peer-bootstrap',String(initial.length))" in iroh
     # Two clients commonly use the same Nostr identity. Keep every distinct device address after
@@ -67,8 +67,8 @@ def test_peer_ads_use_the_open_room_sockets_not_an_unrelated_pool():
 
 
 def test_scoped_sessions_do_not_fall_through_to_global_nip_dc_bus():
-    assert "transportApi.webxdcQuery(this.transport,this.app.uuid)" in WEBXDC
-    assert "transportApi.webxdcPublish(this.transport,this.app.uuid,content,u,false)" in WEBXDC
+    assert "PCConcord.webxdcQuery(this.transport,this.app.uuid)" in WEBXDC
+    assert "PCConcord.webxdcPublish(this.transport,this.app.uuid,content,u,false)" in WEBXDC
     assert "PCWebxdcIroh.join(this.app.uuid,this.transport" in WEBXDC
     # Ordinary timeline/post apps retain Ditto NIP-DC interoperability.
     assert "const KIND_UPDATE = 4932" in WEBXDC

@@ -1176,8 +1176,7 @@
       this.delivered = this.wantSerial;
       const filter = { kinds:[KIND_UPDATE], '#i':[this.app.uuid], limit: 1000 };
       let evs = [];
-      const transportApi=this.transport&&this.transport.protocol==='dm'?window.PCDmWebxdc:window.PCConcord;
-      if(this.transport&&transportApi&&transportApi.webxdcQuery){try{evs=await transportApi.webxdcQuery(this.transport,this.app.uuid);}catch(_){evs=[];}}
+      if(this.transport&&window.PCConcord&&PCConcord.webxdcQuery){try{evs=await PCConcord.webxdcQuery(this.transport,this.app.uuid);}catch(_){evs=[];}}
       else{try{ evs = await Relay.query([filter]); }catch(_){ evs = []; }
       try{ (window.Store.query([filter]) || []).forEach(e => evs.push(e)); }catch(_){} }
       this.absorb(evs);
@@ -1190,8 +1189,8 @@
           if(this.dead) return;
           if(this.absorb([ev])) this.deliver();
         };
-        this.sub=this.transport&&transportApi&&transportApi.webxdcSubscribe
-          ? await transportApi.webxdcSubscribe(this.transport,this.app.uuid,false,receive)
+        this.sub=this.transport&&window.PCConcord&&PCConcord.webxdcSubscribe
+          ? await PCConcord.webxdcSubscribe(this.transport,this.app.uuid,false,receive)
           : Relay.subscribe([filter],{onEvent:receive});
       }catch(_){}
     };
@@ -1213,9 +1212,8 @@
       if(u.summary) tags.push(['summary', str(u.summary, 200)]);
       // publish() answers {ev, ok, …} — the SIGNED EVENT is on `.ev`, and it is there even when the
       // relay refused it (the outbox may have queued it), which is what makes the echo below right.
-      const transportApi=this.transport&&this.transport.protocol==='dm'?window.PCDmWebxdc:window.PCConcord;
-      const r = this.transport&&transportApi&&transportApi.webxdcPublish
-        ? await transportApi.webxdcPublish(this.transport,this.app.uuid,content,u,false)
+      const r = this.transport&&window.PCConcord&&PCConcord.webxdcPublish
+        ? await PCConcord.webxdcPublish(this.transport,this.app.uuid,content,u,false)
         : await publish(KIND_UPDATE, content, tags);
       const ev = r && (r.ev || (r.id||r.rumorId ? {id:r.id||r.rumorId,kind:this.transport?0:KIND_UPDATE,created_at:Math.floor((r.ms||Date.now())/1000),pubkey:'',tags,content}:null));
       /* Feed it back to ourselves rather than waiting for the relay to echo it. The spec is explicit
@@ -1549,7 +1547,7 @@
                                  (this.rtPk && ev.pubkey === this.rtPk))) return;
                 this.post({ jsonrpc:'2.0', method:'webxdc.realtime', params:{ b64: ev.content || '' } });
               };
-            if(this.transport&&(this.transport.protocol==='concord2'||this.transport.protocol==='dm')&&window.PCWebxdcIroh){
+            if(this.transport&&this.transport.protocol==='concord2'&&window.PCWebxdcIroh){
               this.rtSub={pending:true};
               try{
                 this.rtIroh=await PCWebxdcIroh.join(this.app.uuid,this.transport,bytes=>{
@@ -1628,7 +1626,6 @@
     const _live = new Map();
     const _transportKey = (t) => !t ? '' : t.protocol === 'nip29'
       ? ['nip29', t.relay || '', t.groupId || ''].join('|')
-      : t.protocol === 'dm' ? ['dm', t.conversation || ''].join('|')
       : ['concord2', t.room || '', t.channelId || t.channel || ''].join('|');
     /* A webxdc UUID identifies an attachment INSIDE a conversation. The same attachment can be
      * forwarded to another room, and Armada keys its active app by BOTH chat scope and session id.

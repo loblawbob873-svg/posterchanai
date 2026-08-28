@@ -29,26 +29,25 @@
   async function join(topic,ctx,onMessage){
     diag('iroh-start',topic);
     const topicBytes=decode32(topic);if(!topicBytes||topicBytes.length!==32)throw new Error('attachment has no interoperable Webxdc topic');
-    if(!ctx||(ctx.protocol!=='concord2'&&ctx.protocol!=='dm')||(ctx.protocol==='concord2'&&!window.PCConcord)||(ctx.protocol==='dm'&&!window.PCDmWebxdc))throw new Error('Iroh multiplayer is unavailable in this conversation');
-    ctx=Object.assign({},ctx,{topic});const peerApi=ctx.protocol==='dm'?window.PCDmWebxdc:window.PCConcord;
+    if(!ctx||ctx.protocol!=='concord2'||!window.PCConcord)throw new Error('Iroh multiplayer is available in Concord rooms');
     const node=await transport(),self=node.publicKeyHex(),key=hexBytes(self),lastLeft=new Map(),seenAddr=new Set();let dead=false,seq=0,off=null;diag('iroh-node',self.slice(0,16));
     /* Armada supplies known peers in the initial gossip join. Our old path joined an empty mesh and
      * learned every address later; addPeer could mark the id joined before its relay QUIC connection
      * completed, leaving two advertised players with no gossip neighbor. Fold durable CORD-04 ads
      * first and bootstrap the topic with their complete endpoint addresses. */
     let initial=[];
-    try{const rows=peerApi.webxdcPeerQuery?await peerApi.webxdcPeerQuery(ctx):[],parsed=[];for(const row of rows){const sig=parseSignal(row,topic);if(!sig)continue;const at=Number(row.at)||Number(row.created_at)*1000||0;parsed.push({row,sig,at});if(sig.op==='left')lastLeft.set(row.pubkey,Math.max(lastLeft.get(row.pubkey)||0,at));}for(const {row,sig,at} of parsed){if(sig.op!=='ad'||at<=(lastLeft.get(row.pubkey)||0)||seenAddr.has(sig.addr))continue;const addr=decodeAddr(sig.addr);if(!addr)continue;try{if(JSON.parse(addr).id===self)continue;}catch(_){continue;}seenAddr.add(sig.addr);initial.push(addr);if(initial.length>=16)break;}diag('peer-bootstrap',String(initial.length));}catch(e){diag('peer-bootstrap-failed',e&&e.message||e);}
+    try{const rows=PCConcord.webxdcPeerQuery?await PCConcord.webxdcPeerQuery(ctx):[],parsed=[];for(const row of rows){const sig=parseSignal(row,topic);if(!sig)continue;const at=Number(row.at)||Number(row.created_at)*1000||0;parsed.push({row,sig,at});if(sig.op==='left')lastLeft.set(row.pubkey,Math.max(lastLeft.get(row.pubkey)||0,at));}for(const {row,sig,at} of parsed){if(sig.op!=='ad'||at<=(lastLeft.get(row.pubkey)||0)||seenAddr.has(sig.addr))continue;const addr=decodeAddr(sig.addr);if(!addr)continue;try{if(JSON.parse(addr).id===self)continue;}catch(_){continue;}seenAddr.add(sig.addr);initial.push(addr);if(initial.length>=16)break;}diag('peer-bootstrap',String(initial.length));}catch(e){diag('peer-bootstrap-failed',e&&e.message||e);}
     await node.join(topicBytes,initial,bytes=>{if(dead)return;const got=unframe(bytes);if(got&&got.sender!==self)onMessage(got.payload);},msg=>{try{console.debug('[webxdc] iroh:',msg);}catch(_){};diag('iroh-event',msg);});
     diag('iroh-joined',topic);
     try{
-      off=await peerApi.webxdcPeerSubscribe(ctx,row=>{if(dead)return;const sig=parseSignal(row,topic);if(!sig)return;const at=Number(row.at)||Number(row.created_at)*1000||0;if(sig.op==='left'){lastLeft.set(row.pubkey,Math.max(lastLeft.get(row.pubkey)||0,at));return;}if(at<=(lastLeft.get(row.pubkey)||0)||seenAddr.has(sig.addr))return;const addr=decodeAddr(sig.addr);if(!addr){diag('peer-address-invalid',row.pubkey||'');return;}try{if(JSON.parse(addr).id===self)return;}catch(_){return;}seenAddr.add(sig.addr);diag('peer-dial',row.pubkey||'');void node.addPeer(topicBytes,addr).then(()=>diag('peer-added',row.pubkey||'')).catch(e=>{seenAddr.delete(sig.addr);diag('peer-add-failed',e&&e.message||e);});});
+      off=await PCConcord.webxdcPeerSubscribe(ctx,row=>{if(dead)return;const sig=parseSignal(row,topic);if(!sig)return;const at=Number(row.at)||Number(row.created_at)*1000||0;if(sig.op==='left'){lastLeft.set(row.pubkey,Math.max(lastLeft.get(row.pubkey)||0,at));return;}if(at<=(lastLeft.get(row.pubkey)||0)||seenAddr.has(sig.addr))return;const addr=decodeAddr(sig.addr);if(!addr){diag('peer-address-invalid',row.pubkey||'');return;}try{if(JSON.parse(addr).id===self)return;}catch(_){return;}seenAddr.add(sig.addr);diag('peer-dial',row.pubkey||'');void node.addPeer(topicBytes,addr).then(()=>diag('peer-added',row.pubkey||'')).catch(e=>{seenAddr.delete(sig.addr);diag('peer-add-failed',e&&e.message||e);});});
       diag('peer-subscribed',topic);
-      await peerApi.webxdcPeerPublish(ctx,JSON.stringify({op:'ad',topic,addr:encodeAddr(node.nodeAddrJson())}),off);
+      await PCConcord.webxdcPeerPublish(ctx,JSON.stringify({op:'ad',topic,addr:encodeAddr(node.nodeAddrJson())}),off);
       diag('peer-advertised',topic);
     }catch(e){diag('peer-setup-failed',e&&e.message||e);try{node.leave(topicBytes);}catch(_){}throw e;}
     return{
       send(data){if(dead)return;seq++;return node.send(topicBytes,frame(new Uint8Array(data),seq,key));},
-      async leave(){if(dead)return;dead=true;try{await peerApi.webxdcPeerPublish(ctx,JSON.stringify({op:'left',topic}),off);}catch(_){}try{off&&off();}catch(_){}try{node.leave(topicBytes);}catch(_){}}
+      async leave(){if(dead)return;dead=true;try{await PCConcord.webxdcPeerPublish(ctx,JSON.stringify({op:'left',topic}),off);}catch(_){}try{off&&off();}catch(_){}try{node.leave(topicBytes);}catch(_){}}
     };
   }
   window.PCWebxdcIroh={join,decodeTopic:decode32,encodeNodeAddr:encodeAddr,decodeNodeAddr:decodeAddr,frame,unframe,parseSignal};

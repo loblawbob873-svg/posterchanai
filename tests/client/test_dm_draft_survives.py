@@ -54,7 +54,6 @@ WANT = [
     "function _dmHide(id){",
     # Called by renderDmThread. Left out when it was extracted from the render path into its own
     # function, which made the whole harness throw before a single assertion ran.
-    "function _dmWebxdcApp(m,pk){",
     "function _dmBodyHtml(m){",
     "function _dmQuoteOf(text){",
     "function _dmReplyBanner(){",

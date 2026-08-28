@@ -347,45 +347,12 @@ class HandAssembledJavaScript(unittest.TestCase):
         self.assertIn("['nip29', t.relay || '', t.groupId || ''].join('|')", src)
         self.assertIn("_transportKey(app && app.transport)", src)
 
-    def test_dm_recipients_share_one_session_but_forwarded_dm_is_isolated(self):
-        """Both ends sort the same participant pair into one key; forwarding the identical app to
-        another recipient must create another live app/lobby rather than joining the first DM."""
-        boot = (
-            "global.window={addEventListener(){},__PC:{$:()=>null,enc:s=>s,toast(){},me:()=>null,"
-            "profOf:()=>({}),apiBase:()=>'https://example.com'}};"
-            "global.document={addEventListener(){},querySelectorAll:()=>[]};"
-            "global.location={hostname:'example.com',href:'https://example.com/'};"
-            f"require({json.dumps(str(WEBXDC_JS))});"
-            "const x='QOLP2F6LAQZYTDGUKNGHFGESA5Q3P2HTWCTBZHBOQMLZ2DYHQDPQ';"
-            "const k=(c,p)=>window.PCWebxdc.__liveKey({uuid:x,transport:{protocol:'dm',conversation:c,peer:p}});"
-            "console.log(JSON.stringify([k('alice:bob','bob'),k('alice:bob','alice'),k('alice:carol','carol')]));"
-        )
-        keys = _node(boot)
-        self.assertEqual(keys[0], keys[1])
-        self.assertNotEqual(keys[0], keys[2])
-
-    def test_dm_webxdc_uses_private_hidden_carriers_and_actual_rumor_ids(self):
-        app = (ROOT / "static/js/client/app.js").read_text()
-        iroh = (ROOT / "static/js/client/webxdc-iroh.js").read_text()
-        self.assertIn("DM_XDC_PREFIX='\\u2063pc-webxdc-v1:'", app)
-        self.assertIn("if(_dmXdcAccept(peer,rumor))return true", app)
-        self.assertIn("id:m.rumorId||m.id", app)
-        self.assertIn("protocol:'dm',peer:pk,conversation:_dmConversation(pk)", app)
-        self.assertIn("if(!row)throw new Error('DM Webxdc update was not stored')", app)
-        self.assertIn("ctx.protocol==='dm'?window.PCDmWebxdc:window.PCConcord", iroh)
-
-    def test_dm_static_updates_keep_delta_chat_webxdc_metadata(self):
-        app = (ROOT / "static/js/client/app.js").read_text()
-        self.assertIn("for(const n of ['info','document','summary'])", app)
-        self.assertIn("webxdcPublish:async(ctx,topic,content,meta)", app)
-
     def test_cross_origin_loader_rewrites_only_app_lifecycle_listeners(self):
         src = WEBXDC_JS.read_text()
         self.assertIn("window\\.(?:top|parent)\\.addEventListener", src)
         self.assertIn("'window.addEventListener('", src)
         self.assertIn("window\\.parent\\.__webxdcRealtimeChannel", src)
         self.assertIn("'window.__webxdcRealtimeChannel'", src)
-
     def test_the_blob_fallback_shim_parses(self):
         """It is an ARRAY OF STRINGS joined with newlines, so a missing comma or an unbalanced quote
         is a runtime surprise inside somebody else's app rather than a build error here."""
