@@ -172,7 +172,9 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
         script = fn + "\nconsole.log(JSON.stringify(" + json.dumps(cases) + ".map(handoffIdentity)))"
         got = json.loads(subprocess.run([NODE, "-e", script], capture_output=True, text=True,
                                         check=True).stdout)
-        self.assertEqual(got, simple_views + ["terminal"] +
+        canonical = ["messages" if view in ("messages", "concord") else view
+                     for view in simple_views]
+        self.assertEqual(got, canonical + ["terminal"] +
                          [view for _ in range(20) for view in ("terminal", "websearch")] +
                          ["__music", "repo", "admin"])
 

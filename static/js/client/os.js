@@ -1476,7 +1476,7 @@
        * window opened on the other tab and created a second frame. Focus the one Messages frame,
        * then repaint the requested tab under the repaint guard so switchView cannot route outward
        * and manufacture the very duplicate this branch is preventing. */
-      focusWin(existing, false); existing.appView = view; existing.appPath = '';
+      focusWin(existing, false); existing.appView = view; existing.appPath = '';existing.messagesTab=view;
       repainting++;
       try{ PC().switchView && PC().switchView(view); }catch(_){}
       finally{ repainting--; }
@@ -1509,7 +1509,8 @@
     // #feed into a window with no use for it — blanking whichever window was actually showing something.
     const w = { id: ++seq, view, title: label, icon, el, body: $('.osw-body', el),
                 slot: $('.osw-slot', el), min: false, max: false, rect: r,
-                render: render || null, noFeed: !!noFeed };
+                render: render || null, noFeed: !!noFeed,
+                messagesTab:(view==='messages'||view==='concord')?view:'' };
     wins.push(w);
 
     $('.osw-bar', el).addEventListener('pointerdown', e => {
@@ -2050,6 +2051,7 @@
     const w = wins.find(x => realFeed.parentElement === x.body);
     if(w){
       w.appView = v; try{ w.appPath = (PC().viewPath && PC().viewPath()) || ''; }catch(_){}
+      if(v==='messages'||v==='concord')w.messagesTab=v;
       /* Concord is selected inside the canonical Messages frame, after routing has already chosen
        * that frame. This render notification is therefore the authoritative place to apply its
        * full three-pane workspace policy on tablets and on restored Direct Messages windows. */
@@ -3138,8 +3140,7 @@
     /* Messages has one canonical window identity. The selected Direct/Communities tab travels in
      * handoffPayload; recreating the frame as the historical `concord` alias made a later Direct
      * click depend on alias lookup and could manufacture a second frame. */
-    if((opened==='messages'||opened==='concord')&&
-       (current==='messages'||current==='concord')) return 'messages';
+    if(opened==='messages'||opened==='concord') return 'messages';
     /* Music is opened by the __music launcher action, which in turn creates a doc:music window.
      * doc:music is a uniqueness key, not a launcher/render identity: handing that key to another
      * renderer creates a generic shared-feed document and can display Social inside a Music frame.
@@ -3157,7 +3158,8 @@
   }
 
   function selectedMessagesTab(w){
-    if(!sameAppWindow(String(w&&w.view||''),String(w&&w.appView||w&&w.view||'')))return '';
+    const opened=String(w&&w.view||'');
+    if(opened!=='messages'&&opened!=='concord')return '';
     /* appView is normally updated by noteView(), but the monitor button can be pressed in the same
      * event turn as the in-window Communities tab. The feed and the global client view are then
      * already authoritative while the frame's cached label can still say Direct Messages. Read
@@ -3169,7 +3171,9 @@
         !!(w.body&&w.body.querySelector&&w.body.querySelector('#feed'));
       if(owns)live=String(PC().VIEW||'');
     }catch(_){}
-    const current=(live==='concord'||live==='messages')?live:String(w.appView||w.view||'');
+    const remembered=String(w&&w.messagesTab||'');
+    const current=(live==='concord'||live==='messages')?live
+      :(remembered==='concord'||remembered==='messages')?remembered:String(w.appView||w.view||'');
     return current==='concord'?'concord':'messages';
   }
 
@@ -6955,7 +6959,7 @@
              * Messages left the page-global Concord view in charge on some receiving renderers;
              * the next Direct click then routed outward and produced a second window. */
             if(p.messagesTab==='concord'||p.messagesTab==='messages'){
-              w.appView=p.messagesTab;w.appPath='';repainting++;
+              w.appView=p.messagesTab;w.messagesTab=p.messagesTab;w.appPath='';repainting++;
               try{PC().switchView&&PC().switchView(p.messagesTab);}catch(_){}
               finally{repainting--;}
             }
@@ -7491,6 +7495,7 @@
                   __layout: (list, doc) => computeLayout(list, doc), __normDoc: (d) => _normDoc(d),
                   __fitIcons: (items,pos,maxX,maxY) => fitIconPositions(items,pos,maxX,maxY),
                   __sameAppWindow: sameAppWindow,
+                  __handoffIdentity: handoffIdentity,
                   __shouldSelectMessagesTab: shouldSelectMessagesTab,
                   __selectedMessagesTab: selectedMessagesTab,
                   __tryMonitorDirections: tryMonitorDirections,

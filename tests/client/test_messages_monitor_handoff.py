@@ -11,7 +11,7 @@ APP = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
 
 def test_messages_handoff_keeps_the_selected_communities_tab():
     assert "(opened==='messages'||opened==='concord')" in OS
-    assert "(current==='messages'||current==='concord')" in OS
+    assert "if(opened==='messages'||opened==='concord') return 'messages'" in OS
     assert "messagesTab==='concord'" in OS
 
 
@@ -42,7 +42,7 @@ def test_direct_messages_carries_the_selected_conversation():
 def test_handoff_uses_one_canonical_messages_window_then_restores_its_tab():
     assert "return {view:identity,messagesTab" in OS
     assert "if(p.messagesTab==='concord'||p.messagesTab==='messages')" in OS
-    assert "w.appView=p.messagesTab;w.appPath='';repainting++" in OS
+    assert "w.appView=p.messagesTab;w.messagesTab=p.messagesTab;w.appPath='';repainting++" in OS
     assert "PC().switchView&&PC().switchView(p.messagesTab)" in OS
 
 
@@ -104,6 +104,30 @@ console.log(JSON.stringify([
     run = subprocess.run(["node", "-e", boot], capture_output=True, text=True, timeout=30)
     assert run.returncode == 0, run.stderr
     assert json.loads(run.stdout) == ["concord", "messages"]
+
+
+def test_messages_identity_and_tab_survive_a_stale_cross_window_repaint():
+    """Communities -> move -> Direct must not become a new Social/DM popout."""
+    os_js = ROOT / "static/js/client/os.js"
+    boot = f"""
+global.window={{__PC:{{VIEW:'global'}}}};
+global.document={{addEventListener(){{}},querySelector(){{return null;}},querySelectorAll(){{return [];}}}};
+global.getComputedStyle=()=>({{zoom:'1'}});
+require({json.dumps(str(os_js))});
+const identity=window.PCOS.__handoffIdentity;
+const selected=window.PCOS.__selectedMessagesTab;
+const moved={{view:'messages',appView:'global',messagesTab:'concord',body:{{querySelector:()=>null}}}};
+console.log(JSON.stringify([identity(moved),selected(moved)]));
+"""
+    run = subprocess.run(["node", "-e", boot], capture_output=True, text=True, timeout=30)
+    assert run.returncode == 0, run.stderr
+    assert json.loads(run.stdout) == ["messages", "concord"]
+
+
+def test_destination_records_restored_tab_on_the_window_not_only_global_view():
+    receive = OS[OS.index("if(pcWM.onHandoffFrame)"):OS.index("if(pcWM.onPreviewFrame)")]
+    assert "w.appView=p.messagesTab;w.messagesTab=p.messagesTab;w.appPath=''" in receive
+    assert "if(v==='messages'||v==='concord')w.messagesTab=v" in OS
 
 
 def test_main_process_forwards_only_the_two_messages_tabs():
