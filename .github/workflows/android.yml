@@ -264,24 +264,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/zsp
-          key: zsp-v0.4.11-posterchan-lineage-v2
+          key: zsp-v0.4.11-posterchan-lineage-v3
 
-      # BEST EFFORT, AND THAT IS THE POINT. Everything this step needs has already happened: the APK
-      # is built, signed, and published to the rolling GitHub Release that poster.place/apk serves.
-      # Nothing here can un-publish it. So when Zapstore (or the CDN in front of its tool) is down,
-      # failing the job does not protect anything — it just paints the run red and reports "the
-      # Android build is failing" about an APK that shipped fine, which is exactly how it was read.
-      # The failure is surfaced as a warning ANNOTATION naming the store, so a real Zapstore problem
-      # is still visible rather than swallowed.
+      # The APK is already safe on GitHub Releases, but this step must still fail loudly if Zapstore
+      # rejects its asset. A green workflow previously hid a listing whose newest release pointed at
+      # an asset AppCatalog could not fetch, leaving installed clients at "Certificate mismatch".
       - name: Publish to Zapstore
-        continue-on-error: true
         env:
           SIGN_WITH: ${{ secrets.ZAPSTORE_SIGN_WITH }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ZSP_CACHE: ~/.cache/zsp
           # Zapstore's relay currently rejects repeated apk_certificate_hash tags even though its
-          # client model consumes them. Publish the lineage asset to Primal first and use that as
-          # the release's relay hint; still publish the release itself to Zapstore's relay.
+          # client model consumes them. The patched publisher sends the lineage asset first and
+          # sends release/app events only to relays that accepted it, preventing dangling releases.
           RELAY_URLS: wss://relay.primal.net,wss://relay.zapstore.dev
           POSTERCHAN_ANDROID_KEYSTORE: ${{ runner.temp }}/posterchan-release.keystore
           POSTERCHAN_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
@@ -293,8 +288,7 @@ jobs:
           ZSP_ANDROID_PREVIOUS_CERTIFICATE_HASHES: eddf3a7983df49221a5ace0d0ca52c899d34eb88a4155b0829b05c0afc31f342
         run: |
           set -o pipefail
-          fail(){ echo "::warning title=Zapstore publish failed::The APK WAS built, signed and published to GitHub Releases (poster.place/apk serves it). Only the Zapstore listing did not update: $1"; exit 0; }
-          trap 'fail "see the step log above"' ERR
+          fail(){ echo "::error title=Zapstore publish failed::The APK was published to GitHub Releases, but Zapstore was not updated: $1"; exit 1; }
           # Surface the skip as a run ANNOTATION, not just a log line: this step exits 0 either way (a fork
           # with no key must still build an APK), so a silent skip renders as a green tick and reads exactly
           # like a successful publish. Say which one actually happened.
@@ -317,7 +311,7 @@ jobs:
             echo "zsp restored from cache"
           else
             git clone --depth 1 --branch v0.4.11 https://github.com/zapstore/zsp.git /tmp/zsp-src
-            git -C /tmp/zsp-src apply "$GITHUB_WORKSPACE/scripts/zsp-signing-lineage.patch"
+            git -C /tmp/zsp-src apply --unidiff-zero "$GITHUB_WORKSPACE/scripts/zsp-signing-lineage.patch"
             (cd /tmp/zsp-src && go build -trimpath -o /tmp/zsp .)
             mkdir -p "$ZSP_CACHE" && cp /tmp/zsp "$ZSP_CACHE/zsp"
           fi
@@ -342,7 +336,9 @@ jobs:
             > /tmp/cert.json 2>/tmp/cert.err || true
           pip install -q websockets
           python3 scripts/publish_cert_proof.py /tmp/cert.json /tmp/cert.err
-          /tmp/zsp publish -q zapstore.yaml 2>&1 | tee /tmp/zsp-publish.log
+          if ! /tmp/zsp publish -q zapstore.yaml 2>&1 | tee /tmp/zsp-publish.log; then
+            fail 'zsp could not publish a complete release'
+          fi
           # A secondary relay accepting the event is not enough: Zapstore's current client resolves
           # latestAsset directly from its AppCatalog relay and does not follow the release e-tag hint.
           # Never report a successful Zapstore publish while that relay rejected the lineage asset.

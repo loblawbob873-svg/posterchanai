@@ -32,7 +32,7 @@ index 17de8b3..e180fd7 100644
  	return &nostr.Event{
  		Kind:      KindSoftwareAsset,
 diff --git a/internal/nostr/relay.go b/internal/nostr/relay.go
-index 3b27f03..6aa220a 100644
+index 3b27f03..b6ff19d 100644
 --- a/internal/nostr/relay.go
 +++ b/internal/nostr/relay.go
 @@ -97,10 +97,23 @@ func (p *Publisher) publishToRelay(ctx context.Context, url string, event *nostr
@@ -63,3 +63,41 @@ index 3b27f03..6aa220a 100644
  		}
  		result.Error = fmt.Errorf("failed to publish: %w", err)
  		return result
+@@ -118,3 +131,7 @@ func (p *Publisher) PublishEventSet(ctx context.Context, events *EventSet) (map[
+-	// Publish Software Application (skipped when --skip-app-event is used)
+-	if events.AppMetadata != nil {
+-		results["software_application"] = p.Publish(ctx, events.AppMetadata)
++	// Assets are the root of the release graph. Publish them first, then publish
++	// the release and application only to relays which accepted every asset. A
++	// release whose e-tag cannot be fetched from that same relay leaves clients
++	// with a newer version they cannot verify or install.
++	accepted := make(map[string]bool, len(p.relayURLs))
++	for _, url := range p.relayURLs {
++		accepted[url] = true
+@@ -122,5 +138,0 @@ func (p *Publisher) PublishEventSet(ctx context.Context, events *EventSet) (map[
+-
+-	// Publish Software Release
+-	results["software_release"] = p.Publish(ctx, events.Release)
+-
+-	// Publish all Software Assets
+@@ -132 +144,19 @@ func (p *Publisher) PublishEventSet(ctx context.Context, events *EventSet) (map[
+-		results[key] = p.Publish(ctx, asset)
++		for _, url := range p.relayURLs {
++			result := p.publishToRelay(ctx, url, asset)
++			results[key] = append(results[key], result)
++			if !result.Success {
++				accepted[url] = false
++			}
++		}
++	}
++
++	for _, url := range p.relayURLs {
++		if !accepted[url] {
++			continue
++		}
++		if events.AppMetadata != nil {
++			results["software_application"] = append(results["software_application"],
++				p.publishToRelay(ctx, url, events.AppMetadata))
++		}
++		results["software_release"] = append(results["software_release"],
++			p.publishToRelay(ctx, url, events.Release))
