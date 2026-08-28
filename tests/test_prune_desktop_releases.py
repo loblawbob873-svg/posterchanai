@@ -21,3 +21,8 @@ def test_explicitly_protected_overlay_release_is_never_pruned():
         {"tagName": "desktop-v1.0.10"},
     ]
     assert stale_tags(releases, keep=1, protect={"desktop-v1.0.10"}) == ["desktop-v1.0.11"]
+
+
+def test_default_retention_is_one_release(monkeypatch):
+    source = (__import__("pathlib").Path(__file__).parents[1] / "scripts/prune_desktop_releases.py").read_text()
+    assert 'parser.add_argument("--keep", type=int, default=1)' in source

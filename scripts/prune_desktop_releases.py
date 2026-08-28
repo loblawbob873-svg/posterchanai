@@ -34,7 +34,7 @@ def stale_tags(releases: list[dict], keep: int, protect: set[str]) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", required=True)
-    parser.add_argument("--keep", type=int, default=5)
+    parser.add_argument("--keep", type=int, default=1)
     parser.add_argument("--protect", action="append", default=[])
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
