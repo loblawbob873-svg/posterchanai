@@ -257,7 +257,9 @@ jobs:
           set -euo pipefail
           test -s www/static/css/concord.css
           test -s www/static/js/client/concord.js
+          test -s www/static/js/client/concord-cache.js
           test -s www/static/js/client/cord-reader.js
+          node --check www/static/js/client/concord-cache.js
           # Execute the monitor-destination behavior against the files that will be packaged.  A
           # source-only test cannot catch build-www omitting or replacing the fixed Concord bundle.
           node ../tests/client/messages_handoff_destination_runtime.mjs www/static/js/client/concord.js

@@ -82,7 +82,10 @@ jobs:
 
       - name: Test bundled Concord composer repaint safety
         working-directory: mobile
-        run: node ../tests/client/concord_runtime.mjs www/static/js/client/concord.js
+        run: |
+          test -s www/static/js/client/concord-cache.js
+          node --check www/static/js/client/concord-cache.js
+          node ../tests/client/concord_runtime.mjs www/static/js/client/concord.js
 
       - name: Capacitor sync
         working-directory: mobile
