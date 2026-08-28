@@ -1462,6 +1462,7 @@ ipcMain.handle('pc:wm:handoff-frame', async (e, payload, direction) => {
     overflow:Number(p.overflow)||0,
     scrollTop:Math.max(0,Number(p.scrollTop)||0),
     terminalSid:String(p.terminalSid||''),
+    messagesTab:p.messagesTab==='concord'||p.messagesTab==='messages'?p.messagesTab:'',
     /* THIS LIST IS AN ALLOWLIST, so a field the renderer sends and this does not name is dropped
      * in silence — the payload arrives, looks complete, and one thing is simply missing.
      *

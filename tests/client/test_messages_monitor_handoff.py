@@ -104,3 +104,8 @@ console.log(JSON.stringify([
     run = subprocess.run(["node", "-e", boot], capture_output=True, text=True, timeout=30)
     assert run.returncode == 0, run.stderr
     assert json.loads(run.stdout) == ["concord", "messages"]
+
+
+def test_main_process_forwards_only_the_two_messages_tabs():
+    main = (ROOT / "desktop/main.js").read_text(encoding="utf-8")
+    assert "messagesTab:p.messagesTab==='concord'||p.messagesTab==='messages'?p.messagesTab:''" in main

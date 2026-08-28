@@ -3203,13 +3203,21 @@
             ? PC().messagesHandoffState() : null};
   }
 
-  function sendFrameHandoff(w,direction,overflow){
+  function sendFrameHandoff(w,direction,overflow,recover=true){
     if(!w || !wins.includes(w) || !window.pcWM || !pcWM.handoffFrame)return Promise.resolve(false);
     return Promise.resolve(pcWM.handoffFrame(handoffPayload(w,overflow),direction)).then(result=>{
       if(result && wins.includes(w))closeWin(w,{preserveFocus:true});
-      else if(!result){keepFrameReachable(w);_natGesture(w,false);if(nativeWins().length)nsync();}
+      else if(!result&&recover){keepFrameReachable(w);_natGesture(w,false);if(nativeWins().length)nsync();}
       return result;
-    }).catch(()=>{keepFrameReachable(w);_natGesture(w,false);if(nativeWins().length)nsync();return false;});
+    }).catch(()=>{if(recover){keepFrameReachable(w);_natGesture(w,false);if(nativeWins().length)nsync();}return false;});
+  }
+
+  async function tryMonitorDirections(run,recover){
+    for(const direction of ['right','left','down','up']){
+      if(await Promise.resolve(run(direction)).catch(()=>false))return true;
+    }
+    try{ recover(); }catch(_){}
+    return false;
   }
 
   /* A cross-output drag is convenient when Chromium reports virtual-desktop pointer coordinates.
@@ -3219,13 +3227,14 @@
   async function moveToOtherMonitor(w,button){
     if(button)button.disabled=true;
     try{
-      for(const direction of ['right','left','down','up']){
-        const result=w.native!=null&&pcWM.handoff
+      const result=await tryMonitorDirections(async direction=>{
+        const moved=w.native!=null&&pcWM.handoff
           ? await Promise.resolve(pcWM.handoff(w.native,direction)).catch(()=>false)
-          : await sendFrameHandoff(w,direction,0);
-        if(result&&w.native!=null&&wins.includes(w))closeWin(w,{killNative:false,preserveFocus:true});
-        if(result)return true;
-      }
+          : await sendFrameHandoff(w,direction,0,false);
+        if(moved&&w.native!=null&&wins.includes(w))closeWin(w,{killNative:false,preserveFocus:true});
+        return moved;
+      },()=>{keepFrameReachable(w);_natGesture(w,false);if(nativeWins().length)nsync();});
+      if(result)return true;
       try{PC().toast('No other monitor is available');}catch(_){}
       return false;
     }finally{if(button&&button.isConnected)button.disabled=false;}
@@ -7433,6 +7442,7 @@
                   __sameAppWindow: sameAppWindow,
                   __shouldSelectMessagesTab: shouldSelectMessagesTab,
                   __selectedMessagesTab: selectedMessagesTab,
+                  __tryMonitorDirections: tryMonitorDirections,
                   /* The launcher's own list, for the same reason: "a row switched off in Settings →
                    * Sidebar is gone from the desktop too" is invisible when it is wrong — you get a
                    * desktop, just one still carrying the app you removed. tests/client/test_nav_hide.py
