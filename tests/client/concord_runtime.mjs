@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { webcrypto } from 'node:crypto';
 
 const data = new Map();
 globalThis.localStorage = {
@@ -57,6 +58,17 @@ const relayFixtures=filters=>{
 };
 
 globalThis.window = globalThis;
+/* Production loads webxdc.js immediately before concord.js. This harness isolates Concord, so
+ * provide that preceding module's public topic seam rather than testing an impossible load order. */
+window.PCWebxdc={
+  async deriveUrlTopic(url,messageId){
+    const raw=String(url),lower=raw.toLowerCase();let source=raw;
+    for(let at=lower.lastIndexOf('.xdc');at>=0;at=lower.lastIndexOf('.xdc',at-1)){const next=raw[at+4];if(next===undefined||next==='?'||next==='#'||/\s/.test(next)){source=raw.slice(0,at+4);break;}}
+    const bytes=new Uint8Array(await webcrypto.subtle.digest('SHA-256',new TextEncoder().encode(`webxdc-url-realtime-v1:${source}:${messageId}`))),alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';let out='',buf=0,bits=0;
+    for(const b of bytes){buf=(buf<<8)|b;bits+=8;while(bits>=5){bits-=5;out+=alphabet[(buf>>>bits)&31];}}if(bits)out+=alphabet[(buf<<(5-bits))&31];return out;
+  },
+  mintTopic(){return 'A'.repeat(52);},
+};
 const documentListeners=new Map(),windowListeners=new Map();
 window.addEventListener=(name,fn)=>windowListeners.set(name,fn);
 window.removeEventListener=(name,fn)=>{if(windowListeners.get(name)===fn)windowListeners.delete(name);};
