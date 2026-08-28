@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 
 ROOT = Path(__file__).parents[1]
@@ -48,9 +49,20 @@ def test_working_directory_can_be_changed_on_desktop_and_browser():
 
 
 def test_deleted_native_workspace_returns_to_folder_picker_instead_of_throwing_forever():
-    assert "/ENOENT|no such file or directory/i" in CODE
+    assert "e.code === 'ENOENT'" in CODE
+    assert "e.cause && e.cause.code === 'ENOENT'" in CODE
     assert "S.hostRoot='';S.root='No folder open';S.cwd='';S.tree=[]" in CODE
     assert "That project folder is no longer available" in CODE
+
+
+def test_files_can_hand_code_a_folder_without_risking_the_current_project():
+    assert "openHostFolder," in CODE[CODE.index("window.PCCode = {"):]
+    run = subprocess.run(
+        ["node", str(ROOT / "tests/client/code_host_folder_sim.js")],
+        cwd=ROOT, capture_output=True, text=True, timeout=10,
+    )
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "code host folder runtime: ok" in run.stdout
 
 
 def test_save_uses_the_same_primary_button_treatment_as_other_editor_actions():

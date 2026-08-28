@@ -380,6 +380,14 @@
 
     // ---- files -------------------------------------------------------------------------------
 
+    function missingPathError(e){
+      /* Electron may preserve ENOENT as a structured error code while replacing the message with
+       * "Error invoking remote method".  Looking at the prose alone leaves a deleted saved
+       * workspace installed forever. */
+      return !!e && (e.code === 'ENOENT' || (e.cause && e.cause.code === 'ENOENT') ||
+        /ENOENT|no such file or directory/i.test(String(e.message || e)));
+    }
+
     async function loadConfig(){
       /* A packaged desktop edits the folder the person selected. A clean profile has selected
        * nothing, so it must not fall through to /api/code/config and quietly open PosterChan's own
@@ -417,7 +425,7 @@
         if(t.truncated) status('This folder has more files than the tree will show', 'warn');
         }
       }catch(e){
-        if(S.hostRoot && /ENOENT|no such file or directory/i.test(String(e&&e.message||e))){
+        if(S.hostRoot && missingPathError(e)){
           /* A selected folder can be deleted, unmounted, or be a temporary installed-test folder
              that has already been cleaned up. Never reopen a dead path forever from localStorage. */
           S.hostRoot='';S.root='No folder open';S.cwd='';S.tree=[];
@@ -431,6 +439,25 @@
       S.treeBusy = false;
       save();
       if(inView()) paint();
+    }
+
+    async function openHostFolder(desc){
+      const path=String(typeof desc==='string'?desc:(desc&&desc.path)||'').trim();
+      const h=window.pcHost;
+      if(!path)return false;
+      if(!h||!h.list){status('this build cannot browse local folders','err');return false;}
+      /* Validate before dropping open buffers. Files may hand us a stale shortcut or an unmounted
+       * drive; failing to open that must not also discard the project that is already open. */
+      let t;
+      try{t=await h.list(path);}
+      catch(e){status((e&&e.message)||'Could not open that folder','err');return false;}
+      S.hostRoot=path;S.cwd=t.path||path;S.root=path;S.gate='';
+      S.tree=(t.entries||[]).map(e=>({name:e.name,path:e.path,dir:!!e.dir,lang:langOf(e.name)}));
+      S.treeErr='';S.open=[];S.active=-1;S.gitOpen=false;S.gitDiff=null;S.git=null;
+      _incoming=true;
+      save(true);
+      if(inView())paint();
+      return true;
     }
 
     async function loadGit(){
@@ -1002,8 +1029,7 @@
         const h=window.pcHost;
         if(h&&h.pickDirectory){
           const picked=await h.pickDirectory();if(!picked)return;
-          S.hostRoot=picked;S.cwd=picked;S.open=[];S.active=-1;S.gitOpen=false;S.gitDiff=null;
-          await loadTree(picked);save(true);return;
+          await openHostFolder(picked);return;
         }
         /* Browser builds cannot invoke an OS folder picker. The server API already confines paths
          * to its configured workspace, so accept a workspace-relative directory and let /tree
@@ -1206,7 +1232,9 @@
       open: openPath,
       openBlob,
       openHostFile,
+      openHostFolder,
       _state: S,
+      _missingPathError: missingPathError,
       _highlight: highlight,
       _langOf: langOf,
     };
