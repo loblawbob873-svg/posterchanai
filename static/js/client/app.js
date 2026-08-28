@@ -16342,7 +16342,12 @@
           : `<div class="empty">${cur?'Nothing in this folder.':enc(opts.empty||'No files yet — upload some in the Files tab.')}</div>`;
         _bindThumbFallback(grid);   // same markup as the Files grid, so the same fallback
         grid.querySelectorAll('[data-url]').forEach(el=> el.onclick=()=>{
-          const type=el.dataset.type||''; const ext=_MIME_EXT[type]||''; const url=el.dataset.url;
+          const type=el.dataset.type||'';
+          // MIME parameters describe the representation, not a different file type. Exact lookup
+          // turned `application/pdf; charset=binary` into no extension, so Texts and other picker
+          // callers received an otherwise-openable document without its useful filename suffix.
+          const bareType=type.replace(/;.*/, '').trim().toLowerCase();
+          const ext=_MIME_EXT[bareType]||''; const url=el.dataset.url;
           const name=el.dataset.name||'';
           close();
           if(onPick){ try{ onPick({url, type, ext, name}); }catch(_){} return; }

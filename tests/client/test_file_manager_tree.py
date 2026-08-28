@@ -136,6 +136,13 @@ def test_picker_recovers_video_mime_from_index_or_filename_before_filtering():
     assert picker.index("b.type=mimeForName") < picker.index("if(opts.filter")
 
 
+def test_picker_strips_mime_parameters_before_deriving_the_extension():
+    picker = APP[APP.index("function blossomPicker(ta, onPick, opts={})"):
+                 APP.index("// ---------- Pics:")]
+    assert "const bareType=type.replace(/;.*/, '').trim().toLowerCase()" in picker
+    assert "const ext=_MIME_EXT[bareType]||''" in picker
+
+
 def test_large_file_picker_results_cannot_squash_thumbnails_into_lines():
     """A bounded grid with many implicit rows must scroll, never divide its height among them."""
     assert ".bp-explorer>.files-grid{grid-auto-rows:max-content" in CSS
