@@ -342,5 +342,11 @@ jobs:
             > /tmp/cert.json 2>/tmp/cert.err || true
           pip install -q websockets
           python3 scripts/publish_cert_proof.py /tmp/cert.json /tmp/cert.err
-          /tmp/zsp publish -q zapstore.yaml
+          /tmp/zsp publish -q zapstore.yaml 2>&1 | tee /tmp/zsp-publish.log
+          # A secondary relay accepting the event is not enough: Zapstore's current client resolves
+          # latestAsset directly from its AppCatalog relay and does not follow the release e-tag hint.
+          # Never report a successful Zapstore publish while that relay rejected the lineage asset.
+          if grep -Fq 'software_asset -> wss://relay.zapstore.dev: FAILED' /tmp/zsp-publish.log; then
+            fail 'Zapstore AppCatalog rejected the APK signing-lineage asset'
+          fi
           echo "::notice title=Zapstore::Published 1.0.${{ github.run_number }} to Zapstore."

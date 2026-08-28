@@ -16,3 +16,5 @@ def test_zapstore_publisher_advertises_rotated_signing_lineage():
     assert "fingerprint != strings.ToLower(meta.CertFingerprint)" in patch
     assert "relay reported duplicate but event %s cannot be retrieved" in patch
     assert "nostr.Filter{IDs: []string{event.ID}, Limit: 1}" in patch
+    assert "Zapstore AppCatalog rejected the APK signing-lineage asset" in workflow
+    assert "software_asset -> wss://relay.zapstore.dev: FAILED" in workflow
