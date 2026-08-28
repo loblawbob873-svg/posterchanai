@@ -90,6 +90,14 @@ def test_pointerup_recomputes_the_snap_zone_from_its_final_coordinate():
     assert up.index("zone = zoneAt(endEvent.clientX,endEvent.clientY)") < up.index("if(zone){ _natGesture")
 
 
+def test_mouse_snap_geometry_uses_the_measured_desktop_work_area():
+    src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+    work = src[src.index("function snapWorkArea"):src.index("function zoneAt")]
+    assert "desk.getBoundingClientRect" in work
+    assert "r.height/k" in work
+    assert "const work=snapWorkArea(), vw=work.width, vh=work.height" in work
+
+
 def test_free_drag_is_clamped_before_native_gesture_commits_placement():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
     drag = src[src.index("function startDrag"):src.index("function startResize")]

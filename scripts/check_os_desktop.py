@@ -536,14 +536,15 @@ DRIVE = r"""(async () => {
     const b0 = w0.getBoundingClientRect();
     bar.dispatchEvent(new PointerEvent('pointerdown',
       {bubbles:true, clientX:b0.left+80, clientY:b0.top+12, pointerId:1}));
-    for (const x of [400, 200, 60, 4]) {
+    for (const x of [700, 900, window.innerWidth-60, window.innerWidth-4]) {
       document.dispatchEvent(new PointerEvent('pointermove',
         {bubbles:true, clientX:x, clientY:300, pointerId:1}));
       await sleep(16);
     }
     const g = document.querySelector('.os-ghost');
     out.ghostShown = !!(g && getComputedStyle(g).display !== 'none' && g.offsetWidth > 100);
-    document.dispatchEvent(new PointerEvent('pointerup', {bubbles:true, clientX:4, clientY:300, pointerId:1}));
+    document.dispatchEvent(new PointerEvent('pointerup',
+      {bubbles:true, clientX:window.innerWidth-4, clientY:300, pointerId:1}));
     await sleep(120);
     const b1 = w0.getBoundingClientRect();
     const desk = document.querySelector('.os-desk');
@@ -551,7 +552,10 @@ DRIVE = r"""(async () => {
                 innerW: window.innerWidth, deskW: desk.clientWidth,
                 winOffW: w0.offsetWidth, winOffL: w0.offsetLeft,
                 rectW: Math.round(b1.width), rectL: Math.round(b1.left) };
-    out.snappedHalf = Math.abs(w0.offsetWidth - (desk.clientWidth/2 - 16)) < 24 && w0.offsetLeft < 24;
+    out.snappedHalf = Math.abs(w0.offsetWidth - (desk.clientWidth/2 - 16)) < 24 &&
+                      w0.offsetLeft >= desk.clientWidth/2 - 24;
+    out.snappedFullHeight = w0.offsetTop === 8 &&
+                            Math.abs(w0.offsetHeight - (desk.clientHeight - 16)) < 3;
     // The drag must also track the cursor 1:1 — under body{zoom} it used to lag behind it.
 
     out.ghostHidden = !document.querySelector('.os-ghost') ||
@@ -1728,11 +1732,12 @@ async def drive(url):
                                      "a window keeps following the pointer after the button is gone "
                                      f"— survives-pointercancel={r.get('stuckOnCancel')} "
                                      f"survives-a-lost-pointerup={r.get('stuckOnLostUp')}"))
-                if not (r.get("ghostShown") and r.get("snappedHalf") and r.get("ghostHidden")
+                if not (r.get("ghostShown") and r.get("snappedHalf") and r.get("snappedFullHeight") and r.get("ghostHidden")
                         and r.get("unsnapped")):
                     problems.append((label, "snap-broken",
                                      "Windows-11 edge snapping is not working — "
                                      f"preview={r.get('ghostShown')} snapped-to-half={r.get('snappedHalf')} "
+                                     f"full-usable-height={r.get('snappedFullHeight')} "
                                      f"preview-cleared={r.get('ghostHidden')} "
                                      f"restored-on-drag-off={r.get('unsnapped')} {r.get('dbg')}"))
                 pair = r.get("pairedTerminalDrag") or {}

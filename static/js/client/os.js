@@ -2882,8 +2882,20 @@
   const vhL = () => window.innerHeight / zf();
   let ghost = null, layoutFor = null, layoutT = 0;
 
+  /* Snap against the area windows actually live in.  Deriving this from innerHeight and the
+   * nominal taskbar constant disagrees with the flex layout on scaled laptop/tablet desktops.
+   * Keyboard snapping of compositor windows uses the output work area, which is why Super+Right
+   * filled the height while releasing the mouse at the same edge left a short pane.  `desk` is the
+   * authority for HTML frames; convert its rendered rectangle back to layout pixels exactly as
+   * place() does. */
+  function snapWorkArea(){
+    const k=zf(), r=desk&&desk.getBoundingClientRect?desk.getBoundingClientRect():null;
+    return { width:r&&r.width>0?r.width/k:vwL(),
+             height:r&&r.height>0?r.height/k:vhL()-TASKBAR };
+  }
+
   function zones(){
-    const vw = vwL(), vh = vhL() - TASKBAR;
+    const work=snapWorkArea(), vw=work.width, vh=work.height;
     const hw = Math.round(vw / 2), hh = Math.round(vh / 2);
     return { max:  { x: 0,       y: 0,       w: vw, h: vh },
              left: { x: 0,       y: 0,       w: hw, h: vh },
