@@ -127,7 +127,7 @@ public class MusicBackgroundDeviceTest {
             WebView web = waitForWebView(ref, scenario);
             waitForClientPage(web);
 
-            // A small generated WAV avoids network, account and Blossom dependencies. Looping it
+            // A small generated audible WAV avoids network, account and Blossom dependencies. Looping it
             // exercises Chromium's real media clock while MusicService reproduces production's
             // foreground-playback condition.
             /* Thirty seconds, not four. Starting the foreground service and sending Home through
@@ -141,7 +141,8 @@ public class MusicBackgroundDeviceTest {
                     + "s(0,'RIFF');v.setUint32(4,36+n,true);s(8,'WAVEfmt ');v.setUint32(16,16,true);"
                     + "v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,8000,true);"
                     + "v.setUint32(28,8000,true);v.setUint16(32,1,true);v.setUint16(34,8,true);"
-                    + "s(36,'data');v.setUint32(40,n,true);for(let i=44;i<44+n;i++)v.setUint8(i,128);"
+                    + "s(36,'data');v.setUint32(40,n,true);for(let i=44;i<44+n;i++)"
+                    + "v.setUint8(i,128+Math.round(32*Math.sin(2*Math.PI*440*(i-44)/8000)));"
                     + "let a=new Audio(URL.createObjectURL(new Blob([b],{type:'audio/wav'})));"
                     + "a.loop=true;window.__pcBackgroundAudio=a;return a.play().then(()=>a.currentTime)})()";
             eval(web, start);
@@ -160,6 +161,9 @@ public class MusicBackgroundDeviceTest {
                     .putExtra(MusicService.EXTRA_DURATION, 30.0);
             ContextCompat.startForegroundService(ctx, service);
             SystemClock.sleep(500);
+            assertTrue("the native playback service did not enter foreground MediaSession state",
+                    backgroundPlaybackActive());
+            assertEquals("background-device-test", MusicService.nowTitle());
 
             InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_HOME);
             SystemClock.sleep(1600);
@@ -175,6 +179,8 @@ public class MusicBackgroundDeviceTest {
                     scenario.getState() == Lifecycle.State.CREATED);
             assertTrue("Home backgrounded the player but did not show PosterChan's launcher",
                     LauncherState.atHome());
+            assertTrue("Home dropped the foreground playback service or MediaSession",
+                    backgroundPlaybackActive());
         } finally {
             try { ctx.startService(new Intent(ctx, MusicService.class).setAction(MusicService.ACTION_STOP)); }
             catch (Throwable ignored) { }
@@ -287,5 +293,22 @@ public class MusicBackgroundDeviceTest {
     private static double number(String json) {
         try { return Double.parseDouble(json == null ? "0" : json.replace("\"", "")); }
         catch (Exception ignored) { return 0; }
+    }
+
+    /** Observe the real private Android state without adding a production/plugin API solely for a
+     * test. `foreground` flips only after startForeground succeeds; the session must independently
+     * remain active and the service must still report the WebView as playing. */
+    private static boolean backgroundPlaybackActive() {
+        try {
+            MusicService service = MusicService.INSTANCE;
+            if (service == null || !MusicService.nowPlaying()) return false;
+            java.lang.reflect.Field foreground = MusicService.class.getDeclaredField("foreground");
+            foreground.setAccessible(true);
+            java.lang.reflect.Field session = MusicService.class.getDeclaredField("session");
+            session.setAccessible(true);
+            Object mediaSession = session.get(service);
+            return foreground.getBoolean(service) && mediaSession != null &&
+                    Boolean.TRUE.equals(mediaSession.getClass().getMethod("isActive").invoke(mediaSession));
+        } catch (Throwable ignored) { return false; }
     }
 }
