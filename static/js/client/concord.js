@@ -564,7 +564,14 @@
   }
   function cordListMaterial(material,communityId){
     const m=material&&typeof material==='object'?material:{};
-    return {...m,community_id:cordListHex(communityId),owner:cordListHex(m.owner),owner_salt:cordListHex(m.owner_salt),community_root:cordListHex(m.community_root),control_pk:m.control_pk?cordListHex(m.control_pk):m.control_pk,control_root:m.control_root?cordListHex(m.control_root):m.control_root,channels:(m.channels||[]).map(c=>({...c,id:cordListHex(c.id),key:c.key?cordListHex(c.key):c.key}))};
+    /* Fragment encoding applies to every 32-byte value at every depth. `held_roots` and a private
+       channel's `priors` are deliberately open extension fields, but Vector uses them for history
+       across root/channel rotations. Leaving those values as base64url lets the room appear while
+       silently making its older control plane and messages unreadable. */
+    const held=(m.held_roots||[]).map(root=>({...root,key:cordListHex(root&&root.key)}));
+    const channels=(m.channels||[]).map(c=>({...c,id:cordListHex(c.id),key:c.key?cordListHex(c.key):c.key,
+      priors:(c.priors||[]).map(prior=>({...prior,key:cordListHex(prior&&prior.key)}))}));
+    return {...m,community_id:cordListHex(communityId),owner:cordListHex(m.owner),owner_salt:cordListHex(m.owner_salt),community_root:cordListHex(m.community_root),control_pk:m.control_pk?cordListHex(m.control_pk):m.control_pk,control_root:m.control_root?cordListHex(m.control_root):m.control_root,held_roots:held,channels};
   }
   function decodeMembershipLists(decrypted){
     /* Resolve addressable coordinates exactly as relays do, before unioning fragments. Without
@@ -578,7 +585,7 @@
     }
     const docs=[...ordinary,...[...coordinates.values()].map(x=>x.doc)],entries=[],tombstones=[];
     for(const doc of docs){
-      for(const e of Array.isArray(doc.entries)?doc.entries:[]){const cid=cordListHex(e.community_id),current=cordListMaterial(e.current,cid),seed=cordListMaterial(e.seed||e.current,cid);entries.push({...e,community_id:cid,current,seed});}
+      for(const e of Array.isArray(doc.entries)?doc.entries:[]){const cid=cordListHex(e.community_id),source=e.current||e.seed;if(!source)continue;const current=cordListMaterial(source,cid),seed=cordListMaterial(e.seed||source,cid);entries.push({...e,community_id:cid,current,seed});}
       for(const t of Array.isArray(doc.tombstones)?doc.tombstones:[])tombstones.push({...t,community_id:cordListHex(t.community_id)});
     }
     return {entries,tombstones};
@@ -598,7 +605,15 @@
       }
       const list=decodeMembershipLists(decrypted);
       for(const t of list.tombstones){if(t&&t.community_id)tombs.set(t.community_id,Math.max(Number(tombs.get(t.community_id))||0,Number(t.removed_at)||0));}
-      for(const e of list.entries){if(!e||!e.community_id||!e.current)continue;const old=entries.get(e.community_id);if(!old||Number(e.added_at||0)>Number(old.added_at||0))entries.set(e.community_id,e);}
+      for(const e of list.entries){
+        if(!e||!e.community_id||!(e.current||e.seed))continue;
+        /* The first released 13302 writers stored only `seed`; `current` was added for instant
+           latest-epoch recovery. The protocol defines a missing current snapshot as the seed, and
+           the CORD reader already accepts that material. Rejecting it here hid every such joined
+           Vector room before validation or hydration had a chance to run. */
+        const compatible=e.current?e:{...e,current:e.seed};
+        const old=entries.get(e.community_id);if(!old||Number(e.added_at||0)>Number(old.added_at||0))entries.set(e.community_id,compatible);
+      }
       const live=[...entries.values()].filter(e=>Number(e.added_at||0)>Number(tombs.get(e.community_id)||0)); if(!live.length)return;
       const rooms=saved(); let changed=false;
       for(const e of live){
