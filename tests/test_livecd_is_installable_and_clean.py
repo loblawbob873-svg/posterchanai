@@ -168,7 +168,10 @@ class TheBuilderShipsTheInstaller(unittest.TestCase):
         """setup.sh runs these modes inside the target. Leaving the historical /tmp/install
         default makes service/profile writes disappear into a nested staging tree."""
         dispatcher = self.src[self.src.index('if [ "$1" = "services" ]'):]
+        preamble = self.src[:self.src.index("######################################",
+                                            self.src.index("TARGET='/tmp/install'"))]
         for mode in ("services", "accounts", "bootloader", "posterchan-shell"):
+            self.assertIn(mode, preamble, f"{mode} is not selected before shared initialization")
             match = re.search(rf'(?:if|elif) \[ "\$1" = "{re.escape(mode)}" \]; then\n'
                               r'(?P<body>.*?)(?=elif \[|else\n|fi\n)', dispatcher, re.S)
             self.assertIsNotNone(match, f"missing {mode} dispatcher")
