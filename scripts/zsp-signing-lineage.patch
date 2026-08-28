@@ -1,0 +1,33 @@
+diff --git a/internal/nostr/events.go b/internal/nostr/events.go
+index 17de8b3..e180fd7 100644
+--- a/internal/nostr/events.go
++++ b/internal/nostr/events.go
+@@ -2,8 +2,10 @@
+ package nostr
+ 
+ import (
++	"os"
+ 	"path/filepath"
+ 	"strconv"
++	"strings"
+ 	"time"
+ 
+ 	"github.com/nbd-wtf/go-nostr"
+@@ -253,6 +255,17 @@ func BuildSoftwareAssetEvent(meta *AssetMetadata, pubkey string) *nostr.Event {
+ 	if meta.CertFingerprint != "" {
+ 		tags = append(tags, nostr.Tag{"apk_certificate_hash", meta.CertFingerprint})
+ 	}
++	// Android accepts an APK signed by a rotated key when its proof-of-rotation
++	// links back to the installed signer. Zapstore currently preflights updates
++	// by intersecting the installed hash with these tags, before PackageInstaller
++	// can validate that lineage. Advertise prior approved lineage certificates as
++	// additional hashes while keeping CertFingerprint (the active signer) first.
++	for _, fingerprint := range strings.Split(os.Getenv("ZSP_ANDROID_PREVIOUS_CERTIFICATE_HASHES"), ",") {
++		fingerprint = strings.ToLower(strings.TrimSpace(fingerprint))
++		if fingerprint != "" && fingerprint != strings.ToLower(meta.CertFingerprint) {
++			tags = append(tags, nostr.Tag{"apk_certificate_hash", fingerprint})
++		}
++	}
+ 
+ 	return &nostr.Event{
+ 		Kind:      KindSoftwareAsset,

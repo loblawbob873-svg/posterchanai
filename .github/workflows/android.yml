@@ -263,7 +263,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/zsp
-          key: zsp-v0.4.11
+          key: zsp-v0.4.11-posterchan-lineage-v1
 
       # BEST EFFORT, AND THAT IS THE POINT. Everything this step needs has already happened: the APK
       # is built, signed, and published to the rolling GitHub Release that poster.place/apk serves.
@@ -282,6 +282,10 @@ jobs:
           POSTERCHAN_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
           POSTERCHAN_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           POSTERCHAN_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          # Zapstore's current UI compares the installed signer to asset tags before Android gets a
+          # chance to validate the APK's proof-of-rotation. Keep the compromised signer out of the
+          # APK, but advertise it as an approved predecessor alongside the new active certificate.
+          ZSP_ANDROID_PREVIOUS_CERTIFICATE_HASHES: eddf3a7983df49221a5ace0d0ca52c899d34eb88a4155b0829b05c0afc31f342
         run: |
           set -o pipefail
           fail(){ echo "::warning title=Zapstore publish failed::The APK WAS built, signed and published to GitHub Releases (poster.place/apk serves it). Only the Zapstore listing did not update: $1"; exit 0; }
@@ -307,8 +311,9 @@ jobs:
             cp "$ZSP_CACHE/zsp" /tmp/zsp
             echo "zsp restored from cache"
           else
-            curl -sSfLo /tmp/zsp --retry 4 --retry-delay 5 --retry-all-errors --connect-timeout 20 \
-              https://github.com/zapstore/zsp/releases/download/v0.4.11/zsp-0.4.11-linux-amd64
+            git clone --depth 1 --branch v0.4.11 https://github.com/zapstore/zsp.git /tmp/zsp-src
+            git -C /tmp/zsp-src apply "$GITHUB_WORKSPACE/scripts/zsp-signing-lineage.patch"
+            (cd /tmp/zsp-src && go build -trimpath -o /tmp/zsp .)
             mkdir -p "$ZSP_CACHE" && cp /tmp/zsp "$ZSP_CACHE/zsp"
           fi
           chmod +x /tmp/zsp
