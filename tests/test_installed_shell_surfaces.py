@@ -44,3 +44,12 @@ def test_inactive_outputs_do_not_require_a_renderer():
     disconnected = output("DP-2", 1920)
     disconnected["active"] = False
     assert GATE.validate([output("DP-1", 0), disconnected], tree(surface(10, 0)))["outputs"] == 1
+
+
+def test_headless_host_is_an_explicit_missing_prerequisite(monkeypatch):
+    monkeypatch.setattr(GATE.subprocess, "run", lambda *args, **kwargs:
+                        type("Result", (), {"stdout": "XDG_RUNTIME_DIR=/run/user/1\n"})())
+    monkeypatch.delenv("SWAYSOCK", raising=False)
+    monkeypatch.delenv("I3SOCK", raising=False)
+    with pytest.raises(GATE.PrerequisiteMissing, match="no installed Sway IPC session"):
+        GATE.session_env()

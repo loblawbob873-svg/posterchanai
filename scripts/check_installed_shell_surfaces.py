@@ -11,6 +11,10 @@ import sys
 APP_IDS = {"place.poster.desktop", "posterchan-desktop"}
 
 
+class PrerequisiteMissing(RuntimeError):
+    """The installed package may exist, but there is no live Sway session to inspect."""
+
+
 def walk(node):
     yield node
     for child in node.get("nodes", []) + node.get("floating_nodes", []):
@@ -48,6 +52,9 @@ def session_env():
             key, value = line.split("=", 1)
             if key in {"SWAYSOCK", "I3SOCK", "XDG_RUNTIME_DIR", "WAYLAND_DISPLAY", "DISPLAY"}:
                 env[key] = value
+    if not env.get("SWAYSOCK") and not env.get("I3SOCK"):
+        raise PrerequisiteMissing(
+            "no installed Sway IPC session; run this gate on the active PosterChanOS desktop")
     return env
 
 
@@ -70,6 +77,9 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except PrerequisiteMissing as exc:
+        print(f"SKIP {exc}", file=sys.stderr)
+        raise SystemExit(2)
     except Exception as exc:
         print(f"Installed shell output gate failed: {exc}", file=sys.stderr)
         raise SystemExit(1)
