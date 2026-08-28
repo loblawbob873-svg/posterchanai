@@ -1176,6 +1176,16 @@
       this.delivered = this.wantSerial;
       const filter = { kinds:[KIND_UPDATE], '#i':[this.app.uuid], limit: 1000 };
       let evs = [];
+      /* ASK A SOCKET THAT CAN ANSWER. `_send` DROPS a REQ whose socket is not OPEN (relay.js), and
+       * opening a game is the likeliest moment in the whole client to be holding a connecting one:
+       * a cold start, a tap from a notification, a phone coming back from sleep. The query then
+       * returns nothing at its timeout and the history is simply absent — both players sit looking
+       * at an empty board, with nothing in any log, because from here the query SUCCEEDED and the
+       * answer was "no moves". That is "we both opened the same post and nothing happened".
+       *
+       * Every other view that queries on entry already waits; this one never did. */
+      try{ if(!this.transport && window.Relay && Relay.ready) await Relay.ready(); }catch(_){}
+      if(this.dead) return;
       if(this.transport&&window.PCConcord&&PCConcord.webxdcQuery){try{evs=await PCConcord.webxdcQuery(this.transport,this.app.uuid);}catch(_){evs=[];}}
       else{try{ evs = await Relay.query([filter]); }catch(_){ evs = []; }
       try{ (window.Store.query([filter]) || []).forEach(e => evs.push(e)); }catch(_){} }
@@ -1562,7 +1572,11 @@
                 const sub=await PCConcord.webxdcSubscribe(this.transport,this.app.uuid,true,receiveRt);
                 if(this.dead){try{typeof sub==='function'?sub():Relay.close(sub);}catch(_){}}else this.rtSub=sub;
               }catch(e){this.rtSub=null;throw e;}
-            }else this.rtSub = Relay.subscribe([{ kinds:[KIND_REALTIME], '#i':[this.app.uuid],
+            }else{
+            // Same rule as start(): a REQ written to a connecting socket is dropped, and this one is
+            // the live channel — losing it means the other player moves and nothing ever arrives.
+            try{ if(window.Relay && Relay.ready) await Relay.ready(); }catch(_){}
+            this.rtSub = Relay.subscribe([{ kinds:[KIND_REALTIME], '#i':[this.app.uuid],
                                             since: Math.floor(Date.now() / 1000) - 120 }], {
               onEvent: (ev) => {
                 if(this.dead || !ev || ev.kind !== KIND_REALTIME) return;
@@ -1573,6 +1587,7 @@
                 this.post({ jsonrpc:'2.0', method:'webxdc.realtime', params:{ b64: ev.content || '' } });
               },
             });
+            }
           }catch(e){this.rtSub=null;throw e;}
         }
         })();

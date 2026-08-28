@@ -1143,3 +1143,81 @@ class XdcProxyFallback(unittest.TestCase):
         self.assertLess(send, gen,
                         "the upstream request is inside the generator, so its failure cannot be a status")
         self.assertIn("status_code=502", seg, "an upstream failure is not reported as an error")
+
+
+class AGameOpenedOnASocketThatCannotAnswer(unittest.TestCase):
+    """OPENING A GAME IS THE LIKELIEST MOMENT IN THE CLIENT TO BE HOLDING A CONNECTING SOCKET, and
+    `_send` DROPS a REQ whose socket is not open (relay.js says so in as many words: "the first
+    queries fire before the sockets finish connecting, and every one of them returns empty at its 6s
+    timeout").
+
+    So the opening query for a game's moves came back empty and the session started with no history —
+    on a cold start, on a tap from a notification, on a phone coming back from sleep. Nothing logs
+    anything, because from the session's side the query SUCCEEDED and the answer was "no moves".
+    Two people open the same post and neither sees the other: the failure reads as the game being
+    broken rather than as the client having asked too early.
+
+    Every other view that queries on entry already waits for `Relay.ready()`. This one never did.
+    """
+
+    def run_start(self, guard: bool):
+        """Drive the REAL Session.start against a relay that answers only once it is connected.
+
+        `guard=False` re-creates the pre-fix behaviour by taking `ready` off the stub, so this test
+        is shown to fail against the code it was written for rather than merely passing.
+        """
+        return _node("""
+        const MOVES = [{ id:'m1', kind:4932, created_at:100, pubkey:'them', content:'{}',
+                         tags:[['i','topic-1'],['info','they moved']] },
+                       { id:'m2', kind:4932, created_at:101, pubkey:'them', content:'{}',
+                         tags:[['i','topic-1'],['info','and again']] }];
+        const out = { delivered: [], queriedWhileConnecting: false, subscribed: 0 };
+        let open = false;
+        const RELAY = {
+          %s
+          async query(){ if(!open){ out.queriedWhileConnecting = true; return []; }   // the dropped REQ
+                         return MOVES.slice(); },
+          subscribe(){ out.subscribed++; return 's1'; },
+          close(){},
+        };
+        global.window = { addEventListener(){}, removeEventListener(){},
+          Relay: RELAY, Store: { query: () => [] },
+          NostrTools: { generateSecretKey: () => new Uint8Array(32), getPublicKey: () => 'pk',
+                        finalizeEvent: (t) => Object.assign({}, t, { id:'x', pubkey:'pk', sig:'s' }) },
+          __PC: { $: () => null, enc: s => s, toast(){}, me: () => ({ pubkey:'me' }),
+                  profOf: () => ({}), publish: async () => ({ ok:true }),
+                  apiBase: () => 'https://example.com' } };
+        global.Relay = RELAY;
+        global.document = { addEventListener(){}, querySelectorAll: () => [],
+          createElement: () => ({ setAttribute(){}, classList:{add(){}}, appendChild(){}, style:{} }) };
+        global.location = { hostname:'example.com', href:'https://example.com/' };
+        global.crypto = require('crypto').webcrypto;
+        require(%s);
+
+        const s = new window.PCWebxdc.Session({ url:'https://x/a.xdc', uuid:'topic-1', name:'g' },
+                                              { index:new Map(), bytes:new Uint8Array() });
+        s.origin = 'https://xdc.example';
+        s.frame = { contentWindow: { postMessage(m){
+          if(m && m.method === 'webxdc.update') out.delivered.push(m);
+        } } };
+        s.start(0).then(() => { console.log(JSON.stringify(out)); },
+                        e => { console.log(JSON.stringify(Object.assign(out, { threw:String(e) }))); });
+        """ % ("""/* connected after a tick, the way a socket that was opening becomes usable */
+          async ready(){ await new Promise(r => setTimeout(r, 5)); open = true; return true; },""" if guard else "",
+               json.dumps(str(WEBXDC_JS))))
+
+    def test_it_waits_for_a_socket_that_can_answer(self):
+        got = self.run_start(guard=True)
+        self.assertFalse(got.get("threw"), got.get("threw"))
+        self.assertFalse(got["queriedWhileConnecting"],
+                         "the moves were asked for before the socket could answer")
+        self.assertEqual(len(got["delivered"]), 2,
+                         f"the game opened with no history: {got}")
+
+    def test_and_without_the_wait_the_history_is_simply_missing(self):
+        """The same session against a relay with no `ready()` — i.e. what shipped. It asks
+        immediately, is answered with nothing, and hands the app an empty game."""
+        got = self.run_start(guard=False)
+        self.assertTrue(got["queriedWhileConnecting"])
+        self.assertEqual(got["delivered"], [],
+                         "this test no longer reproduces the bug it was written for")
