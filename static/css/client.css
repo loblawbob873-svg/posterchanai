@@ -2912,7 +2912,17 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
      channel NAME keeps the width instead of being crushed to a few pixels. */
   .chatroom-head .btn .lbl{display:none}
   .chatroom-head .btn{padding:8px 10px}
-  .files-grid{grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;padding:12px}
+  /* Files on a phone are an icon gallery, not a stack of landscape preview cards. 92px yields three
+     useful columns on a 360px screen; square artwork makes mixed photos/videos/documents line up and
+     leaves the filename below instead of spending most of the viewport on each preview. */
+  .files-grid{grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:7px;padding:8px}
+  .files-grid:not(.details) .file-card>img,
+  .files-grid:not(.details) .file-card>video,
+  .files-grid:not(.details) .file-card>.file-icon,
+  .files-grid:not(.details) .file-card>a>.file-icon,
+  .files-grid:not(.details) .file-card>a>img,
+  .files-grid:not(.details) .file-card>a>video{width:100%;height:auto;aspect-ratio:1;object-fit:cover}
+  .files-grid:not(.details) .file-card .meta{padding:6px 4px}
   .media-grid{gap:4px;padding:4px}   /* tighter phone gallery, still 3 across */
   .media-grid img,.media-grid video{border-radius:6px}
   .modal{padding:16px}
