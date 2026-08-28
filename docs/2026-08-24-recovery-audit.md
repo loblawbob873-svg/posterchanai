@@ -531,3 +531,26 @@ installed or hardware result. The successful `c4e917cb2` artifacts do not contai
 
 No aggregate checkbox in `BACKLOG_BETA3.md` is closed by this matrix. The “still required” column is
 part of each requirement's definition of done, not optional follow-up work.
+
+## 2026-08-28 exact `82525b986` release evidence
+
+This section supersedes the artifact/emulator statements in the preceding post-`5f5a3426e` matrix,
+but it does not promote any physical, carrier, account-dependent, native-application or external
+interoperability item.  Application commit
+`82525b9860c27ebe5eb8e5fbfde84f9f755f65df` includes the delayed Folder Sync startup guard and the
+complete Texts provider pager.  The later overlay-only commit `362f183c5` pins the immutable Desktop
+artifact; it does not change that application payload.
+
+| Requirement | Authoritative evidence | Proven boundary | Still required |
+|---|---|---|---|
+| Texts complete history paging | The focused archive/rescan/refusal family passes **68 tests**. `test_phone_load_pages_past_the_mms_provider_ceiling` generates 2,105 MMS picture rows behind a simulated 2,000-row provider ceiling, requires all 2,105 documents, more than five strict nonzero `before` cursors and a clean exhausted result. The same family covers a 405-row dense time window, obsolete v5/v6 completion latches, an already-complete first page hiding older media, and refusal on a later page without treating a partial answer as an empty phone | Source/runtime paging and archive semantics at `82525b986` | A representative long device-provider history with old media, carrier/APN sends and retry/cancel/delete reconciliation across physical phone and web/Desktop |
+| Android app-open, Folder Sync and background Music | Exact-head emulator workflow `33213455585` completed successfully. Its independently downloaded API-34 XML reports **79 tests, zero failures, errors or skips** in 199.505s. It records `AppViewsLaunchSmokeTest.everyShippedViewOpensWithoutKillingOrReplacingTheApp` (34.165s), `FolderSyncScreenDeviceTest.openingEstablishedLargeFolderUsesCacheAndKeepsRendererAlive` (4.496s), `MusicBackgroundDeviceTest.aPlayingWebViewTrackKeepsAdvancingAfterHome` (4.858s), and `tabletDesktopStateSurvivesHomeAndRotationInBothTasks` (6.758s) | Exact application commit on the API-34 emulator, including delayed Folder Sync paint/startup work | Physical/OEM phone and tablet with representative old/large sync data, external document providers, audible playback after Home, Bluetooth, rotation, launcher and notification-deep-link interaction |
+| Signed Android artifact | Workflow `33213455563` succeeded from the same exact commit and published APK 1.0.1912. The independently downloaded 21,524,431-byte APK has SHA-256 `b3c394724c234ab64c4cf6b86e93effce727d73b15dec38343180e442827bcfc`, matching the GitHub asset digest; package identity is `place.poster.app`, versionCode/versionName `1912`/`1.0.1912`, target SDK 35. APK Signature Schemes v2 and v3 verify with one RSA-4096 signer whose certificate SHA-256 is `c696595f4ffa6e5f9f010fb0d9faedda2faffa42ba38338163381227f935b31b`. Zapstore accepted certificate publication on two of three relays | Exact signed and published artifact identity | Physical installation/update compatibility, especially supported older signer lineages; the third relay's failed acceptance is not silently counted as success |
+| Immutable Desktop artifact | Workflow `33213455557` succeeded for Linux, Windows, macOS, bundled Concord audit and immutable publication. Release `desktop-v1.0.1183` targets the exact full application commit. Its 153,293,916-byte Linux tarball has SHA-256 `2c28c70b6bcf3a13e698e60b33113ce291051b200adcd8083d5cd22652f48987`, matching the release digest; the published SHA-512 sidecar verifies. A fresh extraction gives `resources/app.asar` SHA-256 `7457a15ac046506ede887547fbef7a6b484e05a9f7332afbe61a14b7555c6a1a` and embedded version `1.0.1183` | Exact immutable release payload | Installed/account-dependent Files, Office, Code, Texts and every-app monitor/focus/state gates on this version; native Firefox/Telegram, sustained terminal and laptop recurrence remain open |
+| Gentoo propagation | Overlay commit `362f183c5` adds the immutable 1.0.1183 ebuild and a Manifest for the exact 153,293,916-byte artifact, including SHA-512 `3885980b9f3893f70a1ca6de52bf390b926c712b440bafc20cbc7c56418fb4514cb05d5f35897c480ec5348de1de2c6c9c800ff99b71de970a50f9dcc18209bf` | Repository pin and local Manifest identity | Public-overlay fetch, installation on each authorized Gentoo machine, package-owned ASAR identity, intelligent restart and the installed interaction gates above |
+
+The exact emulator and package results close the previously open *artifact identification* boundary
+for `82525b986`; they do not close any aggregate checkbox in `BACKLOG_BETA3.md`. Physical USB boot,
+the final rebuilt ISO, real carrier SMS/MMS, affected-account Vector/Armada hydration, live
+two-identity Concord notifications/moderation/attachments/Webxdc, physical Android behavior and the
+installed native-window matrix remain open.
