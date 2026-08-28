@@ -137,7 +137,7 @@ public class ConcordComposerDeviceTest {
             assertTrue("native tap did not focus the Concord textarea: " + focused,
                     focused.contains("true"));
 
-            eval(web, "(()=>{const a=document.querySelector('#cc-input'),old=window.__ccDeviceOldInvites;"
+            eval(web, "(()=>{window.__ccDeviceResult='pending';const a=document.querySelector('#cc-input'),old=window.__ccDeviceOldInvites;"
                     + "try{a.setSelectionRange(6,14,'backward');const initiallyFocused=document.activeElement===a;"
                     + "PCConcord.backgroundRender();PCConcord.backgroundRender();PCConcord.backgroundRender();"
                     + "requestAnimationFrame(()=>{requestAnimationFrame(()=>{const b=document.querySelector('#cc-input');"
