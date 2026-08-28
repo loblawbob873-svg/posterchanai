@@ -43,6 +43,10 @@ def test_workflow_uses_github_secrets_for_signing():
         "ANDROID_KEY_PASSWORD",
         "ANDROID_SIGNING_CERT_SHA256",
         "ANDROID_SIGNING_LINEAGE_BASE64",
+        "ANDROID_OLD_KEYSTORE_BASE64",
+        "ANDROID_OLD_STORE_PASSWORD",
+        "ANDROID_OLD_KEY_ALIAS",
+        "ANDROID_OLD_KEY_PASSWORD",
     ):
         assert f"secrets.{name}" in workflow
 
@@ -51,4 +55,5 @@ def test_workflow_uses_github_secrets_for_signing():
     assert '$APKSIGNER verify --print-certs' in workflow
     assert '$APKSIGNER sign' in workflow
     assert '--lineage "$RUNNER_TEMP/signing-lineage"' in workflow
+    assert '--next-signer --ks "$POSTERCHAN_ANDROID_KEYSTORE"' in workflow
     assert 'test "$ACTUAL_CERT" = "$EXPECTED_CERT"' in workflow

@@ -104,6 +104,10 @@ jobs:
           POSTERCHAN_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           ANDROID_SIGNING_CERT_SHA256: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
           ANDROID_SIGNING_LINEAGE_BASE64: ${{ secrets.ANDROID_SIGNING_LINEAGE_BASE64 }}
+          ANDROID_OLD_KEYSTORE_BASE64: ${{ secrets.ANDROID_OLD_KEYSTORE_BASE64 }}
+          POSTERCHAN_ANDROID_OLD_STORE_PASSWORD: ${{ secrets.ANDROID_OLD_STORE_PASSWORD }}
+          POSTERCHAN_ANDROID_OLD_KEY_ALIAS: ${{ secrets.ANDROID_OLD_KEY_ALIAS }}
+          POSTERCHAN_ANDROID_OLD_KEY_PASSWORD: ${{ secrets.ANDROID_OLD_KEY_PASSWORD }}
         run: |
           test -n "$ANDROID_KEYSTORE_BASE64" || { echo '::error::ANDROID_KEYSTORE_BASE64 is not configured'; exit 1; }
           test -n "$POSTERCHAN_ANDROID_STORE_PASSWORD" || { echo '::error::ANDROID_STORE_PASSWORD is not configured'; exit 1; }
@@ -111,8 +115,14 @@ jobs:
           test -n "$POSTERCHAN_ANDROID_KEY_PASSWORD" || { echo '::error::ANDROID_KEY_PASSWORD is not configured'; exit 1; }
           test -n "$ANDROID_SIGNING_CERT_SHA256" || { echo '::error::ANDROID_SIGNING_CERT_SHA256 is not configured'; exit 1; }
           test -n "$ANDROID_SIGNING_LINEAGE_BASE64" || { echo '::error::ANDROID_SIGNING_LINEAGE_BASE64 is not configured; refusing to ship a signer change that existing Android installations cannot verify'; exit 1; }
+          test -n "$ANDROID_OLD_KEYSTORE_BASE64" || { echo '::error::ANDROID_OLD_KEYSTORE_BASE64 is required for pre-rotation Android upgrades'; exit 1; }
+          test -n "$POSTERCHAN_ANDROID_OLD_STORE_PASSWORD" || { echo '::error::ANDROID_OLD_STORE_PASSWORD is not configured'; exit 1; }
+          test -n "$POSTERCHAN_ANDROID_OLD_KEY_ALIAS" || { echo '::error::ANDROID_OLD_KEY_ALIAS is not configured'; exit 1; }
+          test -n "$POSTERCHAN_ANDROID_OLD_KEY_PASSWORD" || { echo '::error::ANDROID_OLD_KEY_PASSWORD is not configured'; exit 1; }
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$POSTERCHAN_ANDROID_KEYSTORE"
+          printf '%s' "$ANDROID_OLD_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/posterchan-old-release.keystore"
           chmod 600 "$POSTERCHAN_ANDROID_KEYSTORE"
+          chmod 600 "$RUNNER_TEMP/posterchan-old-release.keystore"
           chmod +x gradlew
           ./gradlew assembleRelease -PversionCode=$VCODE -PversionName=$VNAME
 
@@ -124,6 +134,10 @@ jobs:
           POSTERCHAN_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
           POSTERCHAN_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           POSTERCHAN_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          POSTERCHAN_ANDROID_OLD_KEYSTORE: ${{ runner.temp }}/posterchan-old-release.keystore
+          POSTERCHAN_ANDROID_OLD_STORE_PASSWORD: ${{ secrets.ANDROID_OLD_STORE_PASSWORD }}
+          POSTERCHAN_ANDROID_OLD_KEY_ALIAS: ${{ secrets.ANDROID_OLD_KEY_ALIAS }}
+          POSTERCHAN_ANDROID_OLD_KEY_PASSWORD: ${{ secrets.ANDROID_OLD_KEY_PASSWORD }}
         run: |
           APK=$(find mobile/android -path '*release*' -name '*.apk' | head -1)
           echo "found: $APK"
@@ -132,7 +146,11 @@ jobs:
           test -n "$APKSIGNER" || { echo '::error::apksigner was not found'; exit 1; }
           printf '%s' "$ANDROID_SIGNING_LINEAGE_BASE64" | base64 --decode > "$RUNNER_TEMP/signing-lineage"
           $APKSIGNER sign \
-            --ks "$POSTERCHAN_ANDROID_KEYSTORE" \
+            --ks "$POSTERCHAN_ANDROID_OLD_KEYSTORE" \
+            --ks-key-alias "$POSTERCHAN_ANDROID_OLD_KEY_ALIAS" \
+            --ks-pass env:POSTERCHAN_ANDROID_OLD_STORE_PASSWORD \
+            --key-pass env:POSTERCHAN_ANDROID_OLD_KEY_PASSWORD \
+            --next-signer --ks "$POSTERCHAN_ANDROID_KEYSTORE" \
             --ks-key-alias "$POSTERCHAN_ANDROID_KEY_ALIAS" \
             --ks-pass env:POSTERCHAN_ANDROID_STORE_PASSWORD \
             --key-pass env:POSTERCHAN_ANDROID_KEY_PASSWORD \
