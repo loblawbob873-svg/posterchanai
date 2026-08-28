@@ -253,6 +253,8 @@ global.__PC = {
   nip44enc: async (pk, s) => 'enc:' + s,
   nip44dec: async (pk, ct) => {
     if(String(ct).slice(0, 4) !== 'enc:') throw new Error('not ours');
+    for(const [needle, ms] of Object.entries(opt.decryptDelays || {}))
+      if(String(ct).includes(needle)) await new Promise(r => setTimeout(r, Number(ms) || 0));
     return String(ct).slice(4);
   },
   async publish(kind, content, tags, o){
@@ -340,6 +342,9 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
     }
     else if(step === 'settle'){ await new Promise(r => setTimeout(r, 20)); }
     else if(step === 'absorbRaw'){ await S._absorb(opt.rawEvents || []); }
+    else if(step === 'absorbConcurrent'){
+      await Promise.all((opt.rawEvents || []).map(ev => S._absorb([ev])));
+    }
   }
   await new Promise(r => setTimeout(r, 20));
   const st = S._state();
@@ -381,6 +386,7 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
                                    // The order a thread is READ in, so a merge that interleaves
                                    // wrongly is visible rather than merely counted.
                                    order: t.msgs.map(m => m.doc),
+                                   bodies: t.msgs.map(m => m.body || ''),
                                    parts: t.msgs.map(m => (m.parts || []).length),
                                    partIds: t.msgs.map(m => (m.parts || []).map(p => Number(p.id)||0)),
                                    partShas: t.msgs.map(m => (m.parts || []).map(p => String(p.sha||''))),

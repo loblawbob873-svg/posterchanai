@@ -429,6 +429,12 @@
       }
       catch(_){ continue; }                       // not ours, or not decryptable with this key
       if(!obj || typeof obj !== 'object') continue;
+      /* Decryption and Blossom body loading yield. Live subscriptions may deliver two replaceable
+       * versions of one message while the older one is still opening; the check above then sees
+       * the same old state in both tasks, and whichever finishes last wins. Re-check at the commit
+       * point so a slow body-only archive can never erase a newer MMS/media version. */
+      const current = S.msgs.get(d);
+      if(current && current._at >= ev.created_at) continue;
       obj.doc = d; obj._at = ev.created_at;
       /* THE ARCHIVE NAMES ATTACHMENTS BUT DOES NOT CARRY THEM (see publishOne), so they arrive
        * without the provider row ids this device would need to fetch them. Normalised to the same
