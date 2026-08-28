@@ -486,3 +486,25 @@ exposes the resulting shell as 1.0.20260828101723 without changing the Desktop c
 | Production web | The deployed Concord bundle and source bundle both hash to SHA-256 `4edac0032e2769d51488a1f22ea12076834ef38784e53397f2c4d518f840cdc0` | Byte-identical deployment verified |
 | Android emulator / physical device | Final exact-head run `33152177005` built the debug APK, verified bundled web provenance and passed all **77** real API-34 device tests in 187.104 seconds with zero failure, error or skip. The downloaded XML independently records the native Concord textarea draft/selection/focus surviving three whole-workspace repaints (6.298s), a playing WebView track advancing after Home (8.109s), and tablet desktop state surviving Home plus rotation in both tasks (19.127s) | Emulator acceptance is green. Physical audible/OEM/Bluetooth/keyboard testing remains open and is not implied by emulation |
 | ISO | Clean `/home/pc-5ac337fb7cb82127/livecd-real-final/posterchan-live-20260828.iso` is 3,571,888,128 bytes, SHA-256 `baf4bef75d32d22ebdd6ce32253e2b00114ffeefc90ab026ba667bcfe475693f`. It retains hybrid MBR/GPT and bootable BIOS/UEFI El Torito entries and contains Desktop 1.0.1141 plus shell 1.0.20260828101723. The exact image completed a fresh encrypted 64-GiB virtual-disk install; with installer media detached, that disk produced three consecutive stable post-grace graphical frames. The VPS reconstructed 32 transferred chunks to the exact byte count, independently matched the complete SHA-256, and only then atomically replaced the ISO and sidecar. External HTTP reports the exact content length and digest | Structural, live-VM, disposable encrypted install, detached installed-disk boot and publication gates are green. Three non-fatal `/tmp/install` mkdir diagnostics remain in the automated install transcript and require attribution even though finalization and boot succeed. Physical USB boot remains open |
+
+## 2026-08-28 complete-backlog reconciliation at `5f5a3426e`
+
+The five hardware/account boundaries in the preceding table are not the whole Beta 3 backlog.
+`BACKLOG_BETA3.md` remains authoritative: it contains 43 requirements, and an unchecked aggregate
+requirement is not promoted merely because its source tests pass.  Current-head focused gates were
+rerun by product section rather than inferred from the earlier whole-suite result:
+
+| Backlog section | Current-head focused evidence | Boundary which remains independent |
+|---|---|---|
+| SMS/MMS/Texts | 243 tests pass: migration/paging, media, deduplication, retry/cancel/delete, camera/device/Files attachment sources, fitted viewer, scroll anchoring, instance GIF routing and oversized-media fallback | Exact signed APK on an OEM phone with a real long provider history, carrier/APN sends and cross-device web/Desktop reconciliation |
+| Messages/Concord | 249 tests pass: merged ownership/handoff, room entry/scroll, NIP-29/Vector, replies, reactions, member actions, notifications, attachments and Webxdc | Affected npub's private list through its active signer plus live two-identity writes, notification, attachment/Webxdc and moderation |
+| File Manager/open-with | 358 tests plus 3 subtests pass. The unchanged 1.0.1141 installed-account evidence remains 6,019/6,019 index entries and exact server=manifest=disk sync-root counts | Physical Android/external document-provider behavior |
+| Android shell/media | 220 tests plus 30 subtests pass. Signed 1.0.1864 and its exact-head API-34 77/77 device report remain the released artifact evidence | Physical audible/OEM/Bluetooth/keyboard behavior |
+| Window manager | 270 tests plus 14 subtests pass: nonblack stash fallback, focus, identity, handoff, snap, Alt+Tab, clipboard, auto-clean ownership and state preservation | Laptop is unreachable; sustained disposable Firefox/Telegram and agent-terminal use on all real outputs is not inferred |
+| Remaining desktop apps | 224 tests pass: Code Git/diff/restore, document apps, VM contracts, Settings separation, posterfetch and Social position | Installed/manual gates remain required where the aggregate backlog item names external/native behavior |
+| Installer/overlay | `cab2eca81` gives target finalization a root chroot environment instead of leaking the live `HOME=/tmp/install`; 243 installer/ISO tests plus 65 subtests pass. `5f5a3426e` retries a stale LAN overlay path through fresh public DNS while preserving TLS hostname validation; 62 updater tests plus 2 subtests pass | A newly built image must reproduce the install without the three diagnostics; the already-published ISO predates these two source commits |
+
+The public overlay now exposes shell `1.0.20260828133742`.  The reachable desktop installed that
+exact version, its installed `gentoo.sh` matched the corrected source byte-for-byte, and a subsequent
+ordinary `update-posterchan` completed repository sync and correctly reported the packages current.
+The laptop remained unreachable and no ADB device was present during this reconciliation.
