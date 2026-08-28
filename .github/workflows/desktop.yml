@@ -419,10 +419,35 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release delete desktop-latest --yes --repo "$GITHUB_REPOSITORY" || true
 
+      # Deleting a GitHub release does NOT delete its tag.  action-gh-release reuses an existing
+      # tag, so without this the freshly replaced installers appear under `desktop-latest` while
+      # that tag (and the release's source archive links) still names the commit from the first
+      # Desktop release.  Move the explicitly mutable tag before recreating the release.  Handle a
+      # manually deleted tag too, rather than making recovery require another manual GitHub edit.
+      - name: Advance rolling release tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/desktop-latest" >/dev/null 2>&1; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/desktop-latest" \
+              -f sha="$GITHUB_SHA" -F force=true >/dev/null
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/tags/desktop-latest" -f sha="$GITHUB_SHA" >/dev/null
+          fi
+          actual="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/desktop-latest" --jq .object.sha)"
+          test "$actual" = "$GITHUB_SHA" || {
+            echo "::error::desktop-latest names $actual, not $GITHUB_SHA"
+            exit 1
+          }
+
       - name: Publish rolling release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: desktop-latest
+          target_commitish: ${{ github.sha }}
           name: PosterChan Desktop (latest)
           body: |
             PosterChan desktop app — auto-built from `desktop/`. Version 1.0.${{ github.run_number }}.

@@ -104,6 +104,21 @@ class TheOverlayPinsSomethingThatExists(unittest.TestCase):
         self.assertIn("target_commitish: ${{ github.sha }}", wf[publish:verify])
         self.assertIn('test "$actual" = "$GITHUB_SHA"', wf[verify:])
 
+    def test_rolling_release_tag_advances_with_the_assets(self):
+        """Recreating a release leaves its tag behind unless CI moves it explicitly."""
+        with open(os.path.join(ROOT, ".github", "workflows", "desktop.yml"), encoding="utf-8") as fh:
+            wf = fh.read()
+        retire = wf.index("name: Retire the previous rolling release")
+        advance = wf.index("name: Advance rolling release tag")
+        publish = wf.index("name: Publish rolling release")
+        self.assertLess(retire, advance)
+        self.assertLess(advance, publish)
+        step = wf[advance:publish]
+        self.assertIn("git/refs/tags/desktop-latest", step)
+        self.assertIn('-f sha="$GITHUB_SHA" -F force=true', step)
+        self.assertIn('test "$actual" = "$GITHUB_SHA"', step)
+        self.assertIn("target_commitish: ${{ github.sha }}", wf[publish:])
+
     def test_bump_refuses_a_desktop_payload_without_concord(self):
         """A checksum proves which bytes arrived, not that those bytes contain the app."""
         with open(os.path.join(ROOT, "scripts", "bump_desktop_overlay.py"), encoding="utf-8") as fh:
