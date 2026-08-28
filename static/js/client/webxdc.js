@@ -1248,7 +1248,6 @@
      * a slow relay or a busy tab must never build a backlog of stale positions — it is simply no
      * longer the thing standing between a remote-signer player and a playable game. */
     Session.prototype.rtSend = function(b64){
-      if(this.transport&&window.PCConcord&&PCConcord.webxdcPublish){PCConcord.webxdcPublish(this.transport,this.app.uuid,b64,null,true,this.rtSub).catch(()=>{});return;}
       this._rtNext = b64;
       if(this._rtBusy) return;
       this._rtBusy = true;
@@ -1257,12 +1256,28 @@
           const payload = this._rtNext;
           this._rtNext = null;
           try{
-            const NT = window.NostrTools;
-            const ev = NT.finalizeEvent({ kind: KIND_REALTIME, content: payload,
-                                          tags: [['i', this.app.uuid]],
-                                          created_at: Math.floor(Date.now() / 1000) }, this.rtKey());
-            Relay.publishFast(ev);
-          }catch(_){ break; }        // stop this burst rather than spin; the game itself is fine
+            if(this.transport&&window.PCConcord&&PCConcord.webxdcPublish){
+              /* Concord wraps require the member signature. Games emit several election/movement
+               * packets while the browser signer is still answering the first one; firing every
+               * promise concurrently made extension signers drop the host-election burst and each
+               * player silently created a private ioquake room. Use the same newest-wins pump as
+               * the native realtime bus: the first packet leaves immediately and stale movement is
+               * replaced, never accumulated into a signer prompt storm. */
+              await PCConcord.webxdcPublish(this.transport,this.app.uuid,payload,null,true,this.rtSub);
+            }else{
+              const NT = window.NostrTools;
+              const ev = NT.finalizeEvent({ kind: KIND_REALTIME, content: payload,
+                                            tags: [['i', this.app.uuid]],
+                                            created_at: Math.floor(Date.now() / 1000) }, this.rtKey());
+              Relay.publishFast(ev);
+            }
+          }catch(e){
+            /* Realtime is best-effort to the app API, but it must not be invisible to us. A relay
+             * or signer failure here is precisely the difference between joining the Armada room
+             * and opening an empty one. Rate-limit the diagnostic to one line per burst. */
+            try{console.warn('[webxdc] room realtime send failed:',e&&e.message||e);}catch(_){}
+            break;
+          }
         }
         this._rtBusy = false;
       };

@@ -61,6 +61,22 @@ def test_ioquake_host_election_waits_for_the_armada_wire_subscription():
     assert "this._rtJoinReady.then(()=>this.reply(id,null)" in WEBXDC
 
 
+def test_concord_realtime_serializes_member_signing_and_keeps_newest_packet():
+    """A browser signer cannot safely service ioquake's overlapping 300ms election burst.
+
+    The chat-scoped path must enter the same bounded newest-wins pump as ordinary Webxdc instead of
+    returning early with an unobserved promise for every packet.
+    """
+    body = WEBXDC.split("Session.prototype.rtSend = function(b64){", 1)[1].split(
+        "Session.prototype.mount", 1
+    )[0]
+    assert "this._rtNext = b64" in body
+    assert "if(this._rtBusy) return" in body
+    assert "await PCConcord.webxdcPublish" in body
+    assert ".webxdcPublish(this.transport,this.app.uuid,b64" not in body
+    assert "room realtime send failed" in body
+
+
 def test_room_realtime_listens_on_managed_and_external_relays():
     """A room relay already present in Relay._conns is intentionally skipped by subscribeFrom.
 
