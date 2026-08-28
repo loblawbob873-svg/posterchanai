@@ -26,3 +26,13 @@ def test_installed_settings_gate_closes_only_its_created_windows():
     assert "__pcInstalledSettingsBackup={before,focused:" in SRC
     assert ".filter(w=>!backup.before.has(w))" in SRC
     assert "const close=w.querySelector('.osw-x');if(close)close.click()" in SRC
+
+
+def test_installed_diagnostic_cannot_write_the_real_sway_outputs_file():
+    """The nested HEADLESS output must never escape into the signed-in desktop's config."""
+    main = (Path(__file__).parents[1] / "desktop" / "main.js").read_text(encoding="utf-8")
+    start = main.index("function displays(){")
+    block = main[start:main.index("ipcMain.handle('pc:wm:available'", start)]
+    assert "diagnostic.profile" in block
+    assert "sway-outputs.conf" in block
+    assert "new Displays(wm(), opts)" in block

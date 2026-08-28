@@ -1306,7 +1306,15 @@ function scheduleDisplayReconcile(){
 const net = require('./net.js');
 let _displays = null;
 function displays(){
-  if(!_displays){ const { Displays } = require('./displays.js'); _displays = new Displays(wm()); }
+  if(!_displays){
+    const { Displays } = require('./displays.js');
+    /* An installed-package diagnostic owns a nested compositor, but it still inherits the real
+     * account's HOME. Letting Displays use its default path therefore writes HEADLESS-1 into the
+     * person's live ~/.config/sway/outputs.conf when the diagnostic repairs its synthetic layout.
+     * Keep every persistent display byte inside the already-validated diagnostic token domain. */
+    const opts = diagnostic ? { file: path.join(diagnostic.profile, 'sway-outputs.conf') } : undefined;
+    _displays = new Displays(wm(), opts);
+  }
   return _displays;
 }
 
