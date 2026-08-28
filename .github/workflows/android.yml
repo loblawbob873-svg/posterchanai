@@ -18,6 +18,7 @@ on:
       - 'templates/client.html'
       - 'mobile/**'
       - 'zapstore.yaml'
+      - 'scripts/zsp-signing-lineage.patch'
       - '.github/workflows/android.yml'
   workflow_dispatch:
 
