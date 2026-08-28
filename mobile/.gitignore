@@ -10,5 +10,4 @@ android/local.properties
 *.keystore
 release.keystore
 
-# committed self-sign key (sideload) — CI signs with it, no secrets needed
-!android/posterchan-release.keystore
+# Signing keys are never source files. CI reconstructs its keystore from an encrypted secret.

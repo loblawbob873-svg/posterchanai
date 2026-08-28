@@ -93,7 +93,19 @@ jobs:
 
       - name: Build & sign release APK
         working-directory: mobile/android
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          POSTERCHAN_ANDROID_KEYSTORE: ${{ runner.temp }}/posterchan-release.keystore
+          POSTERCHAN_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          POSTERCHAN_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          POSTERCHAN_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
+          test -n "$ANDROID_KEYSTORE_BASE64" || { echo '::error::ANDROID_KEYSTORE_BASE64 is not configured'; exit 1; }
+          test -n "$POSTERCHAN_ANDROID_STORE_PASSWORD" || { echo '::error::ANDROID_STORE_PASSWORD is not configured'; exit 1; }
+          test -n "$POSTERCHAN_ANDROID_KEY_ALIAS" || { echo '::error::ANDROID_KEY_ALIAS is not configured'; exit 1; }
+          test -n "$POSTERCHAN_ANDROID_KEY_PASSWORD" || { echo '::error::ANDROID_KEY_PASSWORD is not configured'; exit 1; }
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$POSTERCHAN_ANDROID_KEYSTORE"
+          chmod 600 "$POSTERCHAN_ANDROID_KEYSTORE"
           chmod +x gradlew
           ./gradlew assembleRelease -PversionCode=$VCODE -PversionName=$VNAME
 
@@ -180,6 +192,10 @@ jobs:
           SIGN_WITH: ${{ secrets.ZAPSTORE_SIGN_WITH }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ZSP_CACHE: ~/.cache/zsp
+          POSTERCHAN_ANDROID_KEYSTORE: ${{ runner.temp }}/posterchan-release.keystore
+          POSTERCHAN_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          POSTERCHAN_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          POSTERCHAN_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -o pipefail
           fail(){ echo "::warning title=Zapstore publish failed::The APK WAS built, signed and published to GitHub Releases (poster.place/apk serves it). Only the Zapstore listing did not update: $1"; exit 0; }
@@ -212,19 +228,21 @@ jobs:
           chmod +x /tmp/zsp
           # Prove the APK's signing certificate belongs to this npub (NIP-C1, kind 30509). Without it Zapstore
           # can't tie the app to a developer key and warns users it "cannot reach signer key" — and `publish -q`
-          # auto-SKIPS this step, so it has to be run explicitly. The keystore + its password are already in the
-          # repo (see app/build.gradle): this key signs a public APK, it isn't a secret.
+          # auto-SKIPS this step, so it has to be run explicitly. Use the CI-only signing key material
+          # reconstructed by the build step; a private APK signing key must never live in source control.
           #
           # zsp rejects a Java KeyStore ("JKS format is not supported directly") and wants PKCS12, so convert a
           # throwaway copy first. Gradle keeps signing from the original JKS — nothing about the APK changes.
           keytool -importkeystore -noprompt \
-            -srckeystore mobile/android/posterchan-release.keystore -srcstorepass posterchan \
-            -destkeystore /tmp/release.p12 -deststoretype PKCS12 -deststorepass posterchan
+            -srckeystore "$POSTERCHAN_ANDROID_KEYSTORE" -srcstorepass "$POSTERCHAN_ANDROID_STORE_PASSWORD" \
+            -srcalias "$POSTERCHAN_ANDROID_KEY_ALIAS" -srckeypass "$POSTERCHAN_ANDROID_KEY_PASSWORD" \
+            -destkeystore /tmp/release.p12 -deststoretype PKCS12 \
+            -deststorepass "$POSTERCHAN_ANDROID_KEY_PASSWORD" -destkeypass "$POSTERCHAN_ANDROID_KEY_PASSWORD"
           # `zsp identity` has NO non-interactive flag: it prints a "private key found in environment" warning
           # and waits at a confirmation prompt, which in CI just hangs up and exits non-zero. So take the path
           # its own docs give for automation — --offline emits the SIGNED kind-30509 and we publish it
           # ourselves (their example pipes it to `nak event`).
-          KEYSTORE_PASSWORD=posterchan /tmp/zsp identity --link-key /tmp/release.p12 --offline \
+          KEYSTORE_PASSWORD="$POSTERCHAN_ANDROID_KEY_PASSWORD" /tmp/zsp identity --link-key /tmp/release.p12 --offline \
             > /tmp/cert.json 2>/tmp/cert.err || true
           pip install -q websockets
           python3 scripts/publish_cert_proof.py /tmp/cert.json /tmp/cert.err

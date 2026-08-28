@@ -16,21 +16,32 @@ android {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    def releaseKeystorePath = System.getenv('POSTERCHAN_ANDROID_KEYSTORE')
+    def releaseStorePassword = System.getenv('POSTERCHAN_ANDROID_STORE_PASSWORD')
+    def releaseKeyAlias = System.getenv('POSTERCHAN_ANDROID_KEY_ALIAS')
+    def releaseKeyPassword = System.getenv('POSTERCHAN_ANDROID_KEY_PASSWORD')
+    def releaseSigningConfigured = [releaseKeystorePath, releaseStorePassword,
+                                    releaseKeyAlias, releaseKeyPassword].every { it }
+
     signingConfigs {
-        release {
-            storeFile file("$rootDir/posterchan-release.keystore")
-            storePassword "posterchan"
-            keyAlias "android"
-            keyPassword "posterchan"
-            enableV1Signing true
-            enableV2Signing true
-            enableV3Signing true
-            enableV4Signing true
+        if (releaseSigningConfigured) {
+            release {
+                storeFile file(releaseKeystorePath)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+                enableV1Signing true
+                enableV2Signing true
+                enableV3Signing true
+                enableV4Signing true
+            }
         }
     }
     buildTypes {
         release {
-            signingConfig signingConfigs.release
+            if (releaseSigningConfigured) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
