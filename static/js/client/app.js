@@ -16238,6 +16238,7 @@
     const bg=document.createElement('div'); bg.className='modal-bg modal-sub bp-picker-bg';
     bg.innerHTML=`<div class="modal glass neon-border bp-modal bp-file-picker">
       <div class="bp-head"><button type="button" class="mini bp-locations" aria-expanded="false">☰ Locations</button><h3>${enc(opts.title||'📁 Choose from File Manager')}</h3>
+        <span class="bp-density" aria-label="Thumbnail size"><button type="button" class="mini active" data-bp-size="small" aria-pressed="true" title="Small thumbnails">S</button><button type="button" class="mini" data-bp-size="medium" aria-pressed="false" title="Medium thumbnails">M</button></span>
         <button type="button" class="mini bp-close" aria-label="Cancel file selection">×</button></div>
       <div class="bp-explorer"><nav id="bp-folders" class="bp-folders" aria-label="Blossom folders"></nav>
         <div id="bp-grid" class="files-grid"><div class="spinner"></div></div></div></div>`;
@@ -16258,6 +16259,11 @@
     // nothing to press. _popKeys is the app's grid cursor (arrows, and hjkl when Vim keys are on, with
     // the row length measured from the layout), the same one the effects and emoji pickers use.
     _popKeys(bg, '#bp-grid .file-card', el=>el.click(), close);
+    bg.querySelectorAll('[data-bp-size]').forEach(btn=>btn.onclick=()=>{
+      const medium=btn.dataset.bpSize==='medium', explorer=bg.querySelector('.bp-explorer');
+      explorer.classList.toggle('bp-medium',medium);
+      bg.querySelectorAll('[data-bp-size]').forEach(x=>{ const on=x===btn; x.classList.toggle('active',on); x.setAttribute('aria-pressed',on?'true':'false'); });
+    });
     FilesIdx.loadLocal();
     (async()=>{
       // Folder names live in the encrypted Files index, which is only fetched when you OPEN Files —
