@@ -13,6 +13,25 @@ def test_installed_account_gate_uses_loopback_cdp_and_requires_authentication():
     assert "sys.exit(2)" in SCRIPT
 
 
+def test_office_only_runtime_uses_a_real_throwaway_login_and_fails_closed():
+    assert "PC_INSTALLED_TEST_NSEC_FILE" in SCRIPT
+    assert r"/tmp/pc-installed-diagnostic\.[a-z0-9]{12,64}/test\.nsec" in SCRIPT
+    assert "TEST_LOGIN" in SCRIPT
+    assert "__PC.signAuth('login')" in SCRIPT
+    assert "'/api/auth/nostr-login'" in SCRIPT
+    assert "office-only mode requires the bounded throwaway diagnostic account" in SCRIPT
+    assert "auth bypass" in SCRIPT  # explanatory invariant: setup is an ordinary signed login
+
+
+def test_throwaway_login_proves_installed_identity_mutation_is_disabled_first():
+    assert "DIAGNOSTIC_IDENTITY_GUARD" in SCRIPT
+    assert "pcOS.switch('diagnostic-probe',{})" in SCRIPT
+    assert "pcOS.provision('diagnostic-probe')" in SCRIPT
+    assert "disabled in diagnostics" in SCRIPT
+    assert "installed diagnostic lacks the host identity guard; refusing login" in SCRIPT
+    assert SCRIPT.index("cdp.eval(DIAGNOSTIC_IDENTITY_GUARD)") < SCRIPT.index("cdp.eval(TEST_LOGIN")
+
+
 def test_installed_account_gate_checks_real_blossom_render_without_reading_names():
     assert "__PC.switchView('blossom')" in SCRIPT
     assert "folderTiles:q('.fx-home-tile')" in SCRIPT

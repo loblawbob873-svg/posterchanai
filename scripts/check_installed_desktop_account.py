@@ -18,6 +18,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 import sys
 import urllib.error
@@ -83,6 +84,68 @@ async def choose_authenticated_page():
             if await cdp.eval("!!(window.__PC && __PC.me && __PC.me())"):
                 return page
     raise RuntimeError("no authenticated installed PosterChan page is attached")
+
+
+TEST_LOGIN = r"""(async nsec=>{
+  const sleep=ms=>new Promise(r=>setTimeout(r,ms)), $=s=>document.querySelector(s);
+  for(let i=0;i<80&&!(window.__PC&&__PC.me);i++)await sleep(100);
+  try{sessionStorage.clear()}catch(_){}
+  document.body.classList.remove('guest');
+  const gate=$('#auth-gate'),login=$('#auth-login');if(gate)gate.classList.remove('hidden');if(login)login.classList.remove('hidden');
+  const mode=$('#btn-nsec');if(mode)mode.click();await sleep(80);
+  const input=$('#nsec-input'),go=$('#btn-nsec-login');if(!input||!go)return {ok:false,why:'nsec login controls missing'};
+  input.value=nsec;go.click();
+  for(let i=0;i<80&&!(__PC.me&&__PC.me());i++)await sleep(125);
+  if(!(__PC.me&&__PC.me()))return {ok:false,why:'throwaway login did not complete'};
+  const auth=await __PC.signAuth('login');
+  const response=await fetch('/api/auth/nostr-login',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({pubkey:__PC.me().pubkey,auth:btoa(JSON.stringify(auth))})});
+  return {ok:response.ok,status:response.status};
+})"""
+
+DIAGNOSTIC_IDENTITY_GUARD = r"""(async()=>{
+  if(!window.pcOS||typeof pcOS.switch!=='function'||typeof pcOS.provision!=='function')
+    return {ok:false,why:'PosterChanOS identity bridge is absent'};
+  // Both values are deliberately invalid. An older build rejects them before reaching sudo, while
+  // a protected diagnostic build rejects them even earlier with the diagnostic authority guard.
+  // This makes the compatibility probe safe against the exact old binary that caused the incident.
+  let switched=null,provisioned=null;
+  try{switched=await pcOS.switch('diagnostic-probe',{});}catch(e){switched={why:String(e&&e.message||e)}}
+  try{provisioned=await pcOS.provision('diagnostic-probe');}catch(e){provisioned={why:String(e&&e.message||e)}}
+  const reasons=[switched&&switched.why,provisioned&&provisioned.why].map(String);
+  return {ok:reasons.length===2&&reasons.every(x=>x.includes('disabled in diagnostics')),reasons};
+})()"""
+
+
+async def choose_test_page():
+    """Use a normal signed-in page, or log a throwaway key into an isolated diagnostic profile.
+
+    This is entirely renderer-side test setup: no product auth bypass, no signer replacement, and no
+    production-only switch. The key file must live inside the diagnostic temp domain and is never
+    printed. Office-only mode is accepted only through this path so a release cannot accidentally
+    skip the account Files checks.
+    """
+    secret_file = os.environ.get("PC_INSTALLED_TEST_NSEC_FILE", "").strip()
+    if not secret_file:
+        return await choose_authenticated_page()
+    resolved = str(Path(secret_file).resolve())
+    if not re.fullmatch(r"/tmp/pc-installed-diagnostic\.[a-z0-9]{12,64}/test\.nsec", resolved):
+        raise RuntimeError("test nsec file must be inside a bounded installed diagnostic directory")
+    nsec = Path(resolved).read_text(encoding="utf-8").strip()
+    if not re.fullmatch(r"nsec1[023456789acdefghjklmnpqrstuvwxyz]{40,80}", nsec):
+        raise RuntimeError("invalid throwaway test nsec")
+    pages = [p for p in json.load(urllib.request.urlopen(BASE + "/json/list", timeout=5))
+             if p.get("type") == "page" and p.get("url", "").startswith("app://posterchan/")]
+    if not pages:
+        raise RuntimeError("no installed PosterChan page is attached")
+    async with CDP(pages[0]["webSocketDebuggerUrl"]) as cdp:
+        guard = await cdp.eval(DIAGNOSTIC_IDENTITY_GUARD)
+        if not guard or not guard.get("ok"):
+            raise RuntimeError("installed diagnostic lacks the host identity guard; refusing login")
+        result = await cdp.eval(TEST_LOGIN + "(" + json.dumps(nsec) + ")")
+    if not result or not result.get("ok"):
+        raise RuntimeError("throwaway signed login failed: " + str((result or {}).get("status") or (result or {}).get("why") or "unknown"))
+    return pages[0]
 
 
 FILES_CHECK = r"""(async()=>{
@@ -262,7 +325,10 @@ OFFICE_CONTENT_CHECK = r"""(async()=>{
 
 
 async def main():
-    page = await choose_authenticated_page()
+    page = await choose_test_page()
+    office_only = os.environ.get("PC_INSTALLED_OFFICE_ONLY") == "1"
+    if office_only and not os.environ.get("PC_INSTALLED_TEST_NSEC_FILE"):
+        raise RuntimeError("office-only mode requires the bounded throwaway diagnostic account")
     supplied_fixture = os.environ.get("PC_INSTALLED_FIXTURE_DIR", "")
     if supplied_fixture and not supplied_fixture.startswith("/tmp/posterchan-installed-files-"):
         raise RuntimeError("PC_INSTALLED_FIXTURE_DIR must be a disposable /tmp/posterchan-installed-files-* path")
@@ -276,27 +342,31 @@ async def main():
             '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8">'
             '<rect width="8" height="8" fill="#713dd8"/></svg>', encoding="utf-8")
       async with CDP(page["webSocketDebuggerUrl"]) as cdp:
-        files = await cdp.eval(FILES_CHECK)
-        assert files["view"] == "blossom", files
+        files = {"folderTiles": 0, "folderChips": 0, "serverFiles": 0, "clientFiles": 0,
+                 "syncedRoots": 0, "syncAudit": []}
+        native_files = {}
+        if not office_only:
+          files = await cdp.eval(FILES_CHECK)
+          assert files["view"] == "blossom", files
         # Files has used both home tiles and the denser folder-chip surface.  Requiring both made a
         # valid compact layout fail merely because it no longer duplicated every folder twice.
-        assert files["explorers"] == 1 and files["folderTiles"] + files["folderChips"] > 0, files
-        assert files["syncedRoots"] > 0, files
-        assert files["pullOk"] and files["indexHTTP"] == 200 and files["indexOK"], files
-        assert files["clientFiles"] == files["serverFiles"], files
+          assert files["explorers"] == 1 and files["folderTiles"] + files["folderChips"] > 0, files
+          assert files["syncedRoots"] > 0, files
+          assert files["pullOk"] and files["indexHTTP"] == 200 and files["indexOK"], files
+          assert files["clientFiles"] == files["serverFiles"], files
         # Account roots are intentionally visible before this particular machine maps them to local
         # directories. Audit only local mappings; requiring one for every account root made a fresh
         # laptop fail despite its complete 5,992-entry account index being present and correct.
-        assert len(files["syncAudit"]) == files["localFolders"], files
-        assert all(not row.get("error") and row["server"] == row["manifest"] == row["local"]
-                   and row["skipped"] == 0 for row in files["syncAudit"]), files
-        assert not files["overflow"] and not files["errors"], files
+          assert len(files["syncAudit"]) == files["localFolders"], files
+          assert all(not row.get("error") and row["server"] == row["manifest"] == row["local"]
+                     and row["skipped"] == 0 for row in files["syncAudit"]), files
+          assert not files["overflow"] and not files["errors"], files
 
-        native_files = await cdp.eval(native_files_check(fixture))
-        assert native_files["path"] and native_files["rows"] == 2, native_files
-        assert "code" in native_files["confChoices"], native_files
-        assert "host" in native_files["confChoices"], native_files
-        assert native_files["preview"] and not native_files["errors"], native_files
+          native_files = await cdp.eval(native_files_check(fixture))
+          assert native_files["path"] and native_files["rows"] == 2, native_files
+          assert "code" in native_files["confChoices"], native_files
+          assert "host" in native_files["confChoices"], native_files
+          assert native_files["preview"] and not native_files["errors"], native_files
 
         await cdp.call("Network.enable")
         await cdp.call("Runtime.enable")
@@ -391,7 +461,8 @@ async def main():
         finally:
             await cdp.eval(OFFICE_CLEANUP)
 
-    print("OK installed authenticated Files/Blossom and Office/WOPI/editor checks")
+    print("OK installed " + ("Office/WOPI/editor" if office_only else
+          "authenticated Files/Blossom and Office/WOPI/editor") + " checks")
     print(json.dumps({"folders": files["folderTiles"], "folderEntries": files["folderChips"],
                       "serverFiles": files["serverFiles"], "clientFiles": files["clientFiles"],
                       "syncedRoots": files["syncedRoots"], "syncAudit": files["syncAudit"],
