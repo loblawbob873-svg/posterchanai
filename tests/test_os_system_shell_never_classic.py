@@ -15,9 +15,11 @@ def test_real_posterchanos_can_enter_even_during_a_narrow_surface_measurement():
 
 def test_real_posterchanos_resize_can_never_fall_through_to_classic():
     resize = _body("function onResize(){", "function onKey")
-    assert "if(!fits() && !isSystemShell())" in resize
-    guarded = resize.split("if(!fits() && !isSystemShell())", 1)[1]
-    assert "exit();" in guarded
+    # Resize preserves the desktop for every already-entered surface. Browsers/tablets use the
+    # portrait layout below; the real system shell also remains entered. Only enter() owns the
+    # initial width refusal, so a transient compositor measurement can never call exit().
+    assert "const portrait=!fits() && !isSystemShell()" in resize
+    assert "exit();" not in resize
 
 
 def test_browser_and_tablet_desktop_still_keep_the_width_gate():

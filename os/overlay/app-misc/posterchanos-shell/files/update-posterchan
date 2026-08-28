@@ -144,6 +144,9 @@ else
 	chmod -R a+rX "$NEW"
 	chmod 0755 "$NEW/AppRun" 2>/dev/null || true
 	[ -f "$NEW/posterchan-desktop" ] && chmod 0755 "$NEW/posterchan-desktop"
+	# Archives and Portage's doins path can both flatten this extraResource to 0644.  A present Tor
+	# binary is not a usable one: first-run then fails at spawn with EACCES after the user opts in.
+	[ -f "$NEW/resources/tor/tor/tor" ] && chmod 0755 "$NEW/resources/tor/tor/tor"
 	# Electron will not start unless its sandbox helper is setuid root, and no archive can carry that
 	# bit. The alternative is --no-sandbox, i.e. turning the renderer sandbox off.
 	[ -f "$NEW/chrome-sandbox" ] && chown root:root "$NEW/chrome-sandbox" && chmod 4755 "$NEW/chrome-sandbox"

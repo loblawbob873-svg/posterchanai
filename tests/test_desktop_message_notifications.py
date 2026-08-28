@@ -19,7 +19,8 @@ def test_native_notification_click_focuses_the_app_and_preserves_route():
     assert "owner.show();owner.focus()" in MAIN
     assert "pc:host:notification-click" in MAIN
     assert "onNotificationClick" in PRELOAD
-    assert "pcHost.onNotificationClick(route=>" in APP
+    assert "pcHost.onNotificationClick(openOsNotificationRoute)" in APP
+    assert "window.PCOpenNotificationRoute=openOsNotificationRoute" in APP
 
 
 def test_dms_and_community_mentions_use_the_shared_os_notifier():

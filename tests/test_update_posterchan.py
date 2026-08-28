@@ -20,6 +20,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CMD = ROOT / "os" / "bin" / "update-posterchan"
+PACKAGED_CMD = ROOT / "os/overlay/app-misc/posterchanos-shell/files/update-posterchan"
 GENTOO = ROOT / "os" / "gentoo.sh"
 EBUILD = ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild"
 
@@ -33,6 +34,10 @@ class TheCommandExists(unittest.TestCase):
     def test_it_parses(self):
         r = subprocess.run(["bash", "-n", str(CMD)], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_installer_and_packaged_helpers_are_identical(self):
+        """The direct installer and Portage package must execute the same updater."""
+        self.assertEqual(CMD.read_bytes(), PACKAGED_CMD.read_bytes())
 
     def test_both_installers_ship_it(self):
         """Installed by the script AND by the ebuild — a machine built either way must have it."""

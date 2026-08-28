@@ -120,8 +120,12 @@ def test_plugin_is_registered_and_named_the_same_on_both_sides():
     # Every name the client asks for has to be one Java answers to. A typo here is invisible: the
     # lookup returns null, which every caller reads as "not the packaged app".
     asked = set(re.findall(r"capPlugin\(\s*'([A-Za-z]+)'", CONTACTS_JS))
-    assert asked == {"ContactSync", "ContactShare"}, f"contacts.js asks for {asked}"
+    # Opening a contact's phone number now hands off to the native SMS conversation route. Sms is
+    # registered by SmsPlugin; keep it in this inventory so a typo in any of the three bridge names
+    # is still caught rather than treating the intentional cross-feature handoff as drift.
+    assert asked == {"ContactSync", "ContactShare", "Sms"}, f"contacts.js asks for {asked}"
     assert "registerPlugin(place.poster.app.contacts.ContactSharePlugin.class)" in MAIN
+    assert "registerPlugin(place.poster.app.sms.SmsPlugin.class)" in MAIN
 
 
 def test_the_plugin_is_registered_before_the_bridge_is_built():

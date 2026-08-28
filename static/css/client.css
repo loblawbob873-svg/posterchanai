@@ -7395,7 +7395,7 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 /* Alt+Tab is a visible choice, not a focus shortcut. It is centered on this renderer/output and
    every card retains an icon/title even when a native thumbnail is temporarily unavailable. */
 .os-alt-switch{position:fixed;z-index:2147483500;left:50%;top:50%;transform:translate(-50%,-50%);
-  display:flex;gap:14px;max-width:min(92vw,1120px);padding:18px;border:1px solid var(--border);
+  display:flex;gap:14px;max-width:min(92vw,1120px);padding:18px;border:1px solid var(--line);
   border-radius:18px;background:rgba(15,18,24,.94);box-shadow:0 28px 90px rgba(0,0,0,.65);
   overflow-x:auto;overflow-y:hidden;backdrop-filter:blur(18px);scrollbar-width:none}
 .os-alt-card{flex:0 0 210px;min-width:0;padding:8px;border:2px solid transparent;border-radius:12px;
