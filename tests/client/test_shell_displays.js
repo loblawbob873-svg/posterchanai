@@ -16,6 +16,16 @@ assert.deepStrictEqual(S.windowsFor([
 const cmds=S.placement(88,p[1]);
 assert(cmds.includes('move workspace to output "DP-1"'));
 assert(cmds.includes('[con_id=88] move container to workspace number 2'));
+
+assert.strictEqual(S.needsPlacement(
+  {workspace:'2',visible:true,rect:{x:1920,y:0,width:1920,height:1080}},
+  {workspace:'2',rect:{x:1920,y:0,width:1920,height:1080}}), false);
+assert.strictEqual(S.needsPlacement(
+  {workspace:'2',visible:true,rect:{x:0,y:0,width:1920,height:1080}},
+  {workspace:'2',rect:{x:1920,y:0,width:1920,height:1080}}), true);
+assert.strictEqual(S.needsPlacement(
+  {workspace:'2',visible:false,rect:{x:1920,y:0,width:1920,height:1080}},
+  {workspace:'2',rect:{x:1920,y:0,width:1920,height:1080}}), true);
 assert(cmds.includes('[con_id=88] floating disable'));
 assert.throws(()=>S.placement(0,p[0]),/invalid/);
 console.log('ALL OK');

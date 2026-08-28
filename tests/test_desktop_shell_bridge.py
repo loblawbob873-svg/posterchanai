@@ -167,6 +167,16 @@ class Bridge(unittest.TestCase):
         self.assertIn("if(!own) own = await newShellContainer(rows)", self.main)
         self.assertIn("setTimeout(() => reconcileShellDisplays(), 1200)", self.main)
 
+    def test_moving_a_shell_surface_reconciles_before_a_monitor_stays_black(self):
+        events = self.main[self.main.index("const NAMES = ['window'"):]
+        events = events[:events.index("let window = null")]
+        self.assertIn("appId==='place.poster.desktop'", events)
+        self.assertIn("pid===process.pid", events)
+        self.assertGreaterEqual(events.count("scheduleDisplayReconcile()"), 2)
+        reconcile = self.main[self.main.index("async function reconcileShellDisplays()"):
+                              self.main.index("function scheduleDisplayReconcile()")]
+        self.assertIn("shellDisplays.needsPlacement(current,assignment)", reconcile)
+
     def test_a_shell_restart_recovers_which_monitor_owned_a_stashed_app(self):
         """Sway keeps scratchpad apps across an Electron restart; the in-memory owner map is lost."""
         self.assertIn("function ownerFromRect(row)", self.main)

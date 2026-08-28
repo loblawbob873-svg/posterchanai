@@ -1266,6 +1266,7 @@ async function reconcileShellDisplays(){
     let used = new Set(Array.from(_shellSurfaces.values()).map(r => Number(r.conId)));
     for(const assignment of assignments){
       let record = _shellSurfaces.get(assignment.output);
+      let fresh = false;
       if(record && (!record.browser || record.browser.isDestroyed())){
         _shellSurfaces.delete(assignment.output);
         record = null;
@@ -1278,16 +1279,23 @@ async function reconcileShellDisplays(){
         let own = rows.find(row => Number(row.pid) === process.pid && !used.has(Number(row.id)));
         if(!own) own = await newShellContainer(rows);
         record = { browser: win, conId: Number(own.id), assignment };
+        fresh = true;
       }else if(!record){
         const before = await wm().windows();
         const browser = createWindow(assignment);
         browser.show();
         const own = await newShellContainer(before);
         record = { browser, conId: Number(own.id), assignment };
+        fresh = true;
       }
       used.add(Number(record.conId));
       _shellSurfaces.set(assignment.output, record);
-      await placeShellSurface(record, assignment);
+      const current=rows.find(row=>Number(row.id)===Number(record.conId));
+      if(fresh||shellDisplays.needsPlacement(current,assignment)) await placeShellSurface(record, assignment);
+      else{
+        record.assignment=assignment;
+        _shellScopes.set(record.browser.webContents.id,assignment);
+      }
       if(!record.browser.isVisible()) record.browser.show();
     }
   })().catch(e => {
@@ -1825,6 +1833,15 @@ ipcMain.handle('pc:wm:subscribe', async (e) => {
   for (const name of NAMES) {
     w.on(name, (ev) => {
       if(name === 'output') scheduleDisplayReconcile();
+      /* A shell surface can be moved by the same compositor command path used for native/window
+       * handoffs.  Output topology did not change, so listening only for `output` left the moved
+       * renderer alive on a hidden workspace while its monitor showed an empty black workspace.
+       * Reconcile only shell-window events: ordinary application moves must not churn the desktop,
+       * and the debounce absorbs the placement commands' own follow-up event. */
+      if(name === 'window' && ev && ev.container){
+        const c=ev.container, appId=String(c.app_id||''), pid=Number(c.pid);
+        if(appId==='place.poster.desktop' || pid===process.pid) scheduleDisplayReconcile();
+      }
       /* window::new already contains the container we need. Throwing it away forced the renderer
        * to ask for the entire sway tree (and PCOSShell to ask once more) before it could draw a
        * frame around a freshly launched app. On a busy terminal launch that is visibly late: btop

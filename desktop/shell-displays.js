@@ -36,4 +36,12 @@ function placement(id, assignment){
   ];
 }
 
-module.exports={plan,windowsFor,placement};
+function needsPlacement(row, assignment){
+  if(!row||!assignment) return true;
+  const actual=row.rect||{}, wanted=assignment.rect||{};
+  return String(row.workspace||'')!==String(assignment.workspace||'') || row.visible===false ||
+    Number(actual.x)!==Number(wanted.x)||Number(actual.y)!==Number(wanted.y)||
+    Number(actual.width)!==Number(wanted.width)||Number(actual.height)!==Number(wanted.height);
+}
+
+module.exports={plan,windowsFor,placement,needsPlacement};
