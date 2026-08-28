@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -131,6 +132,29 @@ class HostFilesView(unittest.TestCase):
         self.assertIn("hf-cut", host)
         self.assertIn("hf-paste", host)
         self.assertIn("HOST().transfer", host)
+
+    def test_select_all_toggle_announces_the_action_it_will_take(self):
+        out = self.js("""
+          const rows=[{path:'/a'},{path:'/b'}];
+          out.none=F.allSelected(rows,new Set());
+          out.some=F.allSelected(rows,new Set(['/a']));
+          out.all=F.allSelected(rows,new Set(['/a','/b']));
+        """)
+        self.assertEqual(out, {"none": False, "some": False, "all": True})
+        host = open(MOD, encoding="utf-8").read()
+        self.assertIn("everySelected?'Deselect all':'Select all'", host)
+        self.assertIn('aria-pressed="${everySelected?', host)
+
+    def test_packaged_select_all_state_runs_from_supplied_module(self):
+        with tempfile.TemporaryDirectory() as td:
+            packaged = os.path.join(td, "hostfiles.js")
+            shutil.copyfile(MOD, packaged)
+            src = ("const F=require(%s);const rows=[{path:'/a'},{path:'/b'}];"
+                   "process.stdout.write(JSON.stringify([F.allSelected(rows,new Set()),"
+                   "F.allSelected(rows,new Set(['/a','/b']))]));" % json.dumps(packaged))
+            run = subprocess.run([NODE, "-e", src], capture_output=True, text=True, timeout=30)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertEqual(json.loads(run.stdout), [False, True])
 
     def test_details_name_stays_aligned_with_selectable_rows(self):
         """This Computer rows carry a checkbox, so the header and CSS must reserve that same

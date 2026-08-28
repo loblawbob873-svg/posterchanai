@@ -78,6 +78,13 @@
     return cs.length > 1 ? cs[cs.length - 2].path : null;
   }
 
+  /* This control toggles, so its announced action must toggle too. On touch there is no checkbox
+   * hover state to explain why a button still labelled “Select all” will actually clear the set. */
+  function allSelected(rows, selected){
+    const paths=(rows||[]).map(r=>String(r&&r.path||'')).filter(Boolean);
+    return !!paths.length && paths.every(p=>selected&&selected.has(p));
+  }
+
   /* A HOME-RELATIVE LABEL, because `/home/npub1fdtthaq…/Documents` is unreadable and the leading
    * two thirds of it never change. The full path is still what every operation uses. */
   function pretty(p, home){
@@ -100,7 +107,8 @@
          + 'them back from any file manager on it.';
   }
 
-  const API = { available, keyOf, order, crumbs, parentPath, pretty, deletePrompt, extOf, barCrumbs, H };
+  const API = { available, keyOf, order, crumbs, parentPath, pretty, deletePrompt, extOf, barCrumbs,
+                allSelected, H };
 
   /* ── the visible half ────────────────────────────────────────────────────────────────────────
    *
@@ -258,11 +266,12 @@
     const bar = u.bar ? u.bar(barCrumbs(_path, _home)) : '';
     const oneSelected = _sel.size === 1
       ? rows.find(e => e.path === [..._sel][0] && !e.dir) : null;
+    const everySelected=allSelected(rows,_sel);
     pane.innerHTML = bar
       + `<div class="fx-actions">
            <button class="btn btn-ghost small hf-up"${listing.parent ? '' : ' disabled'}>Up</button>
            <button class="btn btn-ghost small hf-new">New folder</button>
-           <button class="btn btn-ghost small hf-all">Select all${rows.length ? ' (' + rows.length + ')' : ''}</button>
+           <button class="btn btn-ghost small hf-all" aria-pressed="${everySelected?'true':'false'}">${everySelected?'Deselect all':'Select all'}${rows.length ? ' (' + rows.length + ')' : ''}</button>
            <button class="btn btn-ghost small hf-none"${_sel.size ? '' : ' disabled'}>Select none</button>
            ${_clipboard ? `<button class="btn btn-cyan small hf-paste">${_clipboard.move ? 'Move' : 'Paste'} here</button>` : ''}
            <button class="btn btn-ghost small hf-hidden">${_hidden ? 'Hide dotfiles' : 'Show dotfiles'}</button>
@@ -292,7 +301,7 @@
 
     if(listing.parent){ const up = $('.hf-up'); if(up) up.onclick = () => { enter(listing.parent); again(); }; }
     { const allBtn=$('.hf-all'); if(allBtn) allBtn.onclick = () => {
-        const paths=rows.map(r=>r.path), all=paths.length && paths.every(p=>_sel.has(p));
+        const paths=rows.map(r=>r.path), all=allSelected(rows,_sel);
         if(all) paths.forEach(p=>_sel.delete(p)); else paths.forEach(p=>_sel.add(p));
         again();
       }; }
