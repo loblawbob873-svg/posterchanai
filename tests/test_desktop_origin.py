@@ -92,3 +92,20 @@ class TestIsOurs:
     def test_garbage_is_not_ours(self):
         for u in ("", "not a url", "javascript:alert(1)", "file:///etc/passwd"):
             assert call("isOurs", u, APP, "https://poster.place") is False, u
+
+
+class TestWebxdcSandbox:
+    def test_the_deployed_sandbox_origin_is_recognised(self):
+        assert call("isWebxdcSandbox", "https://xdc.poster.place/__sandbox__/", "https://poster.place") is True
+
+    def test_the_optional_per_app_origin_is_recognised(self):
+        label = "0" * 49 + "a"
+        assert call("isWebxdcSandbox", f"https://{label}.poster.place/", "https://poster.place") is True
+
+    def test_lookalikes_and_arbitrary_subdomains_are_rejected(self):
+        for url in ("https://xdc.poster.place.evil.test/", "https://evil-xdc.poster.place/",
+                    "https://account.poster.place/", "http://xdc.poster.place/"):
+            assert call("isWebxdcSandbox", url, "https://poster.place") is False, url
+
+    def test_a_sandbox_is_not_promoted_to_ours(self):
+        assert call("isOurs", "https://xdc.poster.place/", APP, "https://poster.place") is False

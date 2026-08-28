@@ -159,10 +159,11 @@ function instance() {
 // non-special scheme, which made isOurs() false for our OWN pages. Read the header there before
 // touching this; it is the difference between a working app and one that hands its own URLs to
 // Windows, denies itself the camera, and ignores its own IPC.
-const { originOf, isOurs: _isOurs } = require('./origin');
+const { originOf, isOurs: _isOurs, isWebxdcSandbox: _isWebxdcSandbox } = require('./origin');
 // "Ours" = the bundle, plus the instance's own pages (the client frames <instance>/admin). With no
 // instance only the bundle qualifies, which is exactly right.
 function isOurs(url) { return _isOurs(url, APP_ORIGIN, instance()); }
+function isWebxdcSandbox(url) { return _isWebxdcSandbox(url, instance()); }
 
 // ---- the sign-in round trip is not an off-site link -------------------------------------------
 // "Sign in with Google / a fediverse account" leaves our origin BY DESIGN and comes back carrying a
@@ -789,11 +790,18 @@ function wirePermissions() {
   // OS save dialog, so nothing is written anywhere they did not choose.
   const ALLOW = new Set(['media', 'notifications', 'fullscreen', 'clipboard-read',
     'clipboard-sanitized-write', 'display-capture', 'pointerLock', 'background-sync', 'fileSystem']);
+  // Untrusted Webxdc frames are not "ours" and must stay that way. These are the only capabilities
+  // a game origin may request; notably absent are media, display capture, clipboard and filesystem.
+  const WEBXDC_ALLOW = new Set(['pointerLock', 'fullscreen']);
   const ses = session.defaultSession;
+
+  const permissionAllowed = (permission, from) =>
+    ALLOW.has(permission) && (isOurs(from)
+      || (WEBXDC_ALLOW.has(permission) && isWebxdcSandbox(from)));
 
   ses.setPermissionRequestHandler(async (wc, permission, cb, details) => {
     const from = (details && (details.requestingUrl || details.securityOrigin)) || (wc && wc.getURL()) || '';
-    if (!ALLOW.has(permission) || !isOurs(from)) { console.warn('[perm] denied', permission, from); return cb(false); }
+    if (!permissionAllowed(permission, from)) { console.warn('[perm] denied', permission, from); return cb(false); }
     // macOS gates camera/mic behind TCC on top of the page grant: without asking, the OS hands the
     // renderer a silent black/silent stream. askForMediaAccess is what raises the system prompt.
     if (process.platform === 'darwin' && permission === 'media') {
@@ -810,7 +818,7 @@ function wirePermissions() {
   // means nothing on its own.
   ses.setPermissionCheckHandler((wc, permission, requestingOrigin, details) => {
     const from = requestingOrigin || (details && details.securityOrigin) || (wc && wc.getURL()) || '';
-    return ALLOW.has(permission) && isOurs(from);
+    return permissionAllowed(permission, from);
   });
 
   // Screen share. getDisplayMedia does NOT go through the handlers above: Electron rejects it outright

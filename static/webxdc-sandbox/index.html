@@ -220,7 +220,16 @@
        * two documents up. Best-effort at every level; none of it may throw into the boot path. */
       var _focusInner = function(){ try{ f.focus(); }catch(_){}
                                     try{ f.contentWindow && f.contentWindow.focus(); }catch(_){} };
-      f.addEventListener('load', _focusInner);
+      var _armInnerInput = function(){
+        _focusInner();
+        /* Focus in the SAME trusted pointer gesture that the game uses to call requestPointerLock().
+         * Events inside an iframe do not bubble to the iframe ELEMENT, so listening for pointerdown
+         * on `f` in the parent client never ran for an actual game click.  This frame and the app are
+         * same-origin, which lets the loader install a capturing listener in the app document.  It
+         * runs before a canvas/engine handler and preserves the user activation for pointer lock. */
+        try{ f.contentDocument.addEventListener('pointerdown', _focusInner, true); }catch(_){}
+      };
+      f.addEventListener('load', _armInnerInput);
       window.addEventListener('focus', _focusInner);
       setTimeout(_focusInner, 250);
       /* THE STATUS LINE STAYS UNTIL THE APP HAS ACTUALLY ASKED FOR SOMETHING.
@@ -331,7 +340,11 @@
           document.body.appendChild(f2);
           var _focusF2 = function(){ try{ f2.focus(); }catch(_){}
                                      try{ f2.contentWindow && f2.contentWindow.focus(); }catch(_){} };
-          f2.addEventListener('load', _focusF2);
+          var _armF2Input = function(){
+            _focusF2();
+            try{ f2.contentDocument.addEventListener('pointerdown', _focusF2, true); }catch(_){}
+          };
+          f2.addEventListener('load', _armF2Input);
           window.addEventListener('focus', _focusF2);
           setTimeout(_focusF2, 250);
           say('starting the app…');

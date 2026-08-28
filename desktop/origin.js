@@ -47,4 +47,28 @@ function isOurs(url, appOrigin, instance) {
   return !!inst && o === inst;
 }
 
-module.exports = { originOf, isOurs };
+/* Webxdc is deliberately NOT "ours": untrusted mini apps run on another origin so they cannot read
+ * the client's keys or storage.  Electron still has to recognise that origin for the tiny set of
+ * game permissions delegated by the embedding iframe (pointer lock/fullscreen/gamepad).  Keep this
+ * separate from isOurs() so it can never accidentally inherit camera, display capture, clipboard,
+ * filesystem or IPC access.
+ *
+ * The ordinary deployment is xdc.<instance>.  An operator with a wildcard certificate may enable
+ * the per-app form, whose label is the 50-character lower-case base36 HMAC emitted by webxdc.js.
+ * Accept exactly those two shapes and the configured instance's scheme/port; lookalike suffixes and
+ * arbitrary sibling subdomains do not qualify. */
+function isWebxdcSandbox(url, instance) {
+  let u, base;
+  try { u = new URL(url); base = new URL(instance || ''); } catch (_) { return false; }
+  if (!u.origin || u.origin === 'null' || !base.hostname) return false;
+  if (u.protocol !== base.protocol || u.port !== base.port) return false;
+  const host = u.hostname.toLowerCase();
+  const root = base.hostname.toLowerCase();
+  if (host === 'xdc.' + root) return true;
+  const suffix = '.' + root;
+  if (!host.endsWith(suffix)) return false;
+  const label = host.slice(0, -suffix.length);
+  return /^[0-9a-z]{50}$/.test(label);
+}
+
+module.exports = { originOf, isOurs, isWebxdcSandbox };

@@ -62,8 +62,18 @@ class DesktopPermissions(unittest.TestCase):
             src = fh.read()
         req = src.index("setPermissionRequestHandler")
         chk = src.index("setPermissionCheckHandler")
-        self.assertIn("isOurs", src[req:req + 900])
-        self.assertIn("isOurs", src[chk:chk + 500])
+        self.assertIn("permissionAllowed(permission, from)", src[req:req + 900])
+        self.assertIn("permissionAllowed(permission, from)", src[chk:chk + 500])
+        gate = src[src.index("const permissionAllowed"):req]
+        self.assertIn("isOurs(from)", gate)
+
+    def test_webxdc_gets_only_game_permissions(self):
+        with open(MAIN, encoding="utf-8") as fh:
+            src = fh.read()
+        m = re.search(r"const WEBXDC_ALLOW = new Set\(\[(.*?)\]\)", src, re.S)
+        self.assertIsNotNone(m)
+        self.assertEqual(set(re.findall(r"'([^']+)'", m.group(1))), {"pointerLock", "fullscreen"})
+        self.assertIn("WEBXDC_ALLOW.has(permission) && isWebxdcSandbox(from)", src)
 
     def test_downloads_are_still_wired(self):
         """The in-memory fallback saves through an <a download>, which in Electron only reaches a
