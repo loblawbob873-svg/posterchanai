@@ -1,0 +1,35 @@
+[package]
+name = "webxdc-rt"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Browser-side iroh-gossip transport for webxdc realtime channels"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Relay-only by necessity in a browser, which is the mode Vector chose anyway.
+# `default-features = false` drops tls-ring too, and without a crypto provider
+# the build succeeds and bind() fails at runtime — so name it explicitly.
+iroh = { version = "1", default-features = false, features = ["tls-ring"] }
+iroh-gossip = { version = "0.101", default-features = false, features = ["net"] }
+getrandom = { version = "0.3", features = ["wasm_js"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+futures-util = "0.3"
+futures-channel = "0.3"
+serde_json = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[package.metadata.wasm-pack.profile.release]
+# Homebrew binaryen 129 rejects this output ("error validating input"); it
+# predates the wasm features iroh emits. Re-enable with a newer toolchain.
+wasm-opt = false

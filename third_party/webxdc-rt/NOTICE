@@ -1,0 +1,9 @@
+This browser Iroh transport is derived from Armada's `crates/webxdc-rt` at
+commit 17e16be1, authored by the Armada contributors.
+
+Canonical source: nostr://npub10qdp2fc9ta6vraczxrcs8prqnv69fru2k6s2dj48gqjcylulmtjsg9arpj/armada
+License: GNU Affero General Public License version 3 (see LICENSE).
+
+The checked-in JavaScript and WebAssembly under static/vendor/webxdc-rt are the
+wasm-bindgen/wasm-pack release output of that source. The corresponding source,
+Cargo.lock and build instructions are retained in this directory.

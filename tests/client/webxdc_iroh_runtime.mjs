@@ -1,0 +1,14 @@
+import fs from 'node:fs';
+import vm from 'node:vm';
+import {TextEncoder,TextDecoder} from 'node:util';
+const context={window:{},TextEncoder,TextDecoder,Uint8Array,DataView,ArrayBuffer,console,setTimeout,clearTimeout};
+context.globalThis=context;vm.createContext(context);
+vm.runInContext(fs.readFileSync('static/js/client/webxdc-iroh.js','utf8'),context);
+const x=context.window.PCWebxdcIroh;
+const topic='FBSTBOCHXLXTUPWPCLPAGBZDFNBSK5HKMTTMTVAKHY2EGNJFYMLQ';
+const addr='{"id":"0123456789abcdef","addrs":[{"Relay":"https://euc1-1.relay.n0.iroh.link./"}]}';
+const encoded=x.encodeNodeAddr(addr),decoded=x.decodeNodeAddr(encoded);
+const key=Uint8Array.from({length:32},(_,i)=>i),payload=Uint8Array.from([0,1,2,250,255]);
+const framed=x.frame(payload,0x78563412,key),opened=x.unframe(framed);
+const signal=x.parseSignal({content:JSON.stringify({op:'ad',topic,addr:encoded})},topic);
+console.log(JSON.stringify({topicBytes:[...x.decodeTopic(topic)],encoded,decoded,frame:[...framed],payload:[...opened.payload],sender:opened.sender,signal}));

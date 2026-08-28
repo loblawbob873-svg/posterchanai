@@ -9353,6 +9353,7 @@ var PosterCordReader = (() => {
     createMetadataWrap: () => createMetadataWrap,
     inspectChat: () => inspectChat,
     inspectWebxdc: () => inspectWebxdc,
+    inspectWebxdcSignals: () => inspectWebxdcSignals,
     inspectControl: () => inspectControl
   });
   init_define_import_meta_env();
@@ -26709,6 +26710,18 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const opened = await openChatBatch(wraps || [], channel);
     return opened.filter((ev) => ev.kind === 3310 && ev.tags.some((t) => t[0] === "i" && t[1] === uuid) &&
       (realtime ? ev.tags.some((t) => t[0] === "rt" && t[1] === "1") : !ev.tags.some((t) => t[0] === "rt" && t[1] === "1")))
+      .map((ev) => ({ id: ev.rumorId, pubkey: ev.author, content: ev.content, tags: ev.tags, created_at: ev.createdAt, at: ev.ms }));
+  }
+  /* CORD-04 Webxdc peer advertisements deliberately have no `i` tag: the topic is inside the
+   * encrypted JSON body.  Keep them off inspectWebxdc's update stream, but expose a bounded reader
+   * for the Iroh lobby.  Parsing remains in the caller so a malformed member event cannot make the
+   * crypto reader throw or couple this protocol bundle to one Webxdc transport version. */
+  async function inspectWebxdcSignals(bundle, controlWraps, channelId, wraps) {
+    const { channels } = control(bundle, controlWraps);
+    const channel = channels.find((ch) => ch.idHex === channelId);
+    if (!channel) throw new Error("channel is not readable with this membership");
+    const opened = await openChatBatch((wraps || []).slice(-2000), channel);
+    return opened.filter((ev) => ev.kind === 3310 && !ev.tags.some((t) => t[0] === "i"))
       .map((ev) => ({ id: ev.rumorId, pubkey: ev.author, content: ev.content, tags: ev.tags, created_at: ev.createdAt, at: ev.ms }));
   }
   return __toCommonJS(pc_cord_reader_exports);

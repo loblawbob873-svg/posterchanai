@@ -50,6 +50,8 @@
     const MAX_XDC = 256 * 1024 * 1024;
     const UPDATE_MAX = 128000;         // the spec's sendUpdateMaxSize default
     const UPDATE_INTERVAL = 1000;      // we are not an email network; a move should land immediately
+    const rtB64 = bytes => {let s='';bytes=new Uint8Array(bytes);for(let i=0;i<bytes.length;i+=0x8000)s+=String.fromCharCode.apply(null,bytes.subarray(i,i+0x8000));return btoa(s);};
+    const rtBytes = value => {const s=atob(String(value||'')),out=new Uint8Array(s.length);for(let i=0;i<s.length;i++)out[i]=s.charCodeAt(i);return out;};
 
     // ---- the sandbox origin ---------------------------------------------------------------------
 
@@ -982,6 +984,7 @@
                                       : _hex(crypto.getRandomValues(new Uint8Array(16))));
       this.sub = null;
       this.rtSub = null;            // the realtime channel, when an app joins one
+      this.rtIroh = null;           // interoperable Armada/Vector/Delta Chat gossip session
       this._rtNext = null;          // the newest unsent realtime packet (newest wins)
       this._rtBusy = false;
       this._rtSk = null;            // the realtime channel's own key — see rtKey()
@@ -1015,6 +1018,8 @@
       this.sub = null;
       try{ if(this.rtSub) Relay.close(this.rtSub); }catch(_){}
       this.rtSub = null;
+      try{ if(this.rtIroh) void this.rtIroh.leave(); }catch(_){}
+      this.rtIroh = null;
       if(this._onMsg) window.removeEventListener('message', this._onMsg);
       this._onMsg = null;
       if(this.frame && this.frame.parentElement) this.frame.remove();
@@ -1250,6 +1255,10 @@
      * a slow relay or a busy tab must never build a backlog of stale positions — it is simply no
      * longer the thing standing between a remote-signer player and a playable game. */
     Session.prototype.rtSend = function(b64){
+      /* Concord's interoperable carrier is Iroh Gossip. Never mirror one packet onto the old Nostr
+       * realtime plane: that makes two independent lobbies and duplicate/self packets for clients
+       * which happen to implement both. */
+      if(this.rtIroh){try{void this.rtIroh.send(rtBytes(b64));}catch(e){try{console.warn('[webxdc] iroh send failed:',e&&e.message||e);}catch(_){}}return;}
       this._rtNext = b64;
       if(this._rtBusy) return;
       this._rtBusy = true;
@@ -1486,7 +1495,7 @@
           return;
         }
         this._rtJoinReady=(async()=>{
-        if(!this.rtSub){
+        if(!this.rtSub&&!this.rtIroh){
           // Mint the channel key BEFORE subscribing: it is what tells our own packets from everyone
           // else's, and a packet that arrives before it exists would be delivered back to the app.
           try{ this.rtKey(); }catch(_){}
@@ -1511,7 +1520,15 @@
                                  (this.rtPk && ev.pubkey === this.rtPk))) return;
                 this.post({ jsonrpc:'2.0', method:'webxdc.realtime', params:{ b64: ev.content || '' } });
               };
-            if(this.transport&&window.PCConcord&&PCConcord.webxdcSubscribe){
+            if(this.transport&&this.transport.protocol==='concord2'&&window.PCWebxdcIroh){
+              this.rtSub={pending:true};
+              try{
+                this.rtIroh=await PCWebxdcIroh.join(this.app.uuid,this.transport,bytes=>{
+                  if(!this.dead)this.post({jsonrpc:'2.0',method:'webxdc.realtime',params:{b64:rtB64(bytes)}});
+                });
+                this.rtSub=null;
+              }catch(e){this.rtSub=null;this.rtIroh=null;throw e;}
+            }else if(this.transport&&window.PCConcord&&PCConcord.webxdcSubscribe){
               this.rtSub={pending:true};
               try{
                 const sub=await PCConcord.webxdcSubscribe(this.transport,this.app.uuid,true,receiveRt);
@@ -1542,6 +1559,8 @@
         return;
       }
       if(d.method === 'webxdc.rtLeave'){
+        try{if(this.rtIroh)void this.rtIroh.leave();}catch(_){}
+        this.rtIroh=null;
         try{ if(this.rtSub) typeof this.rtSub==='function'?this.rtSub():Relay.close(this.rtSub); }catch(_){}
         this.rtSub = null;
         this._rtJoinReady = null;
