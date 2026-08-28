@@ -41,6 +41,8 @@ def test_composer_focus_precondition_comes_from_native_webview_input():
     assert "underTest.dispatchTouchEvent(down)" in COMPOSER
     assert "native tap did not focus the Concord textarea" in COMPOSER
     assert 'data-cc-channel=\\"general\\"' in COMPOSER
+    assert "a.closest('.cc-app')" in COMPOSER
+    assert "inputs.find(x=>" in COMPOSER
     assert "if(channel){opened=true;channel.click()" in COMPOSER
     assert "composer stayed hidden" in COMPOSER
     assert "Concord route did not stay active" in COMPOSER

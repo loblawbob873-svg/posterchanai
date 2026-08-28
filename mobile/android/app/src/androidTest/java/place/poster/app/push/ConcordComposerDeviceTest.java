@@ -79,7 +79,9 @@ public class ConcordComposerDeviceTest {
                     // composer: require the real Concord route and re-enter it until it is stable.
                     "if(!__PC.isView('concord')){__PC.switchView('concord');"+
                     "if(tries++<50){setTimeout(seed,100);return;}throw new Error('Concord route did not stay active');}"+
-                    "const a=document.querySelector('#cc-input');if(!a&&tries++<50){setTimeout(seed,100);return;}"+
+                    "const inputs=[...document.querySelectorAll('#cc-input')],"+
+                    "a=inputs.find(x=>{const q=x.getBoundingClientRect();return q.width>1&&q.height>1;})||inputs[inputs.length-1];"+
+                    "if(!a&&tries++<50){setTimeout(seed,100);return;}"+
                     "try{if(!a)throw new Error('composer absent; view='+__PC.isView('concord')+"+
                     "', desktop='+(!!(window.PCOS&&PCOS.isOn&&PCOS.isOn())));"+
                     // Selecting a community intentionally leaves a phone on its channel list. Its
@@ -87,7 +89,7 @@ public class ConcordComposerDeviceTest {
                     // Enter #general through the real channel control and reacquire the textarea
                     // after that click's render replacement before seeding the draft.
                     "const r=a.getBoundingClientRect();if(r.width<=1||r.height<=1){"+
-                    "if(!opened){const channel=document.querySelector('[data-cc-channel=\"general\"]');"+
+                    "if(!opened){const app=a.closest('.cc-app'),channel=app&&app.querySelector('[data-cc-channel=\"general\"]');"+
                     // Room discovery/rendering is asynchronous. Do not consume the one-shot latch
                     // until the channel control actually exists and receives its click.
                     "if(channel){opened=true;channel.click();setTimeout(seed,100);return;}}"+
