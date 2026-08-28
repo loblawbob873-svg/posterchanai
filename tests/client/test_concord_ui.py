@@ -195,7 +195,7 @@ def test_mobile_reopens_the_last_server_then_drills_into_a_channel_like_discord(
     assert "return channels.length?channels:[{name:'general',private:false}]" in CONCORD
     assert 'channelSectionsHtml(p,current,visibleChannels)' in CONCORD
     assert 'if(channels.length)room.channels=channels' in CONCORD
-    assert "if(room&&room.cord&&!room.cord.hydrated)" in CONCORD
+    assert "if(room&&room.cord&&!hydratedRoomViews.has(roomIdentity(room)))" in CONCORD
     assert "await hydrateRoomStreams(p,state.community)" in CONCORD
     assert "if(state.community==null){ const rooms=saved(),wanted=Number(localStorage.getItem('pc.concord.active')" in CONCORD
     assert "state.community==null?'Back to rooms':'Rooms and channels'" in CONCORD
@@ -397,7 +397,7 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert 'scrollChatBottom()' in CONCORD
     assert "if(file&&input)file.onchange=async()=>" in CONCORD
     assert 'room.cord.hydrated=true' in CONCORD
-    assert "if(loaded&&loaded.cord&&!loaded.cord.hydrated)" in CONCORD
+    assert "if(loaded&&loaded.cord&&!hydratedRoomViews.has(roomIdentity(loaded)))" in CONCORD
     assert 'let loaded=room;' in CONCORD and 'state.community=i' in CONCORD
     assert 'await p.nip44dec(viewer.pubkey,event.content)' in CONCORD
     assert 'cc-public-copy' in CONCORD and '.cc-public-copy' in CONCORD_CSS
@@ -625,7 +625,7 @@ def test_icon_removal_and_failure_cannot_block_room_history_hydration():
     assert hydrate.index('await applyRoomIconMetadata') < hydrate.index('for(const channel of networkOrder)')
 
 
-def test_armada_membership_refresh_preserves_hydrated_cache_and_clicks_do_not_refetch():
+def test_armada_membership_refresh_preserves_hydrated_cache_and_clicks_restore_once_per_process():
     sync = CONCORD.split('async function syncArmadaMemberships', 1)[1].split(
         'async function persistArmadaMembership', 1)[0]
     assert 'mergeArmadaBundle(priorBundle,current)' in sync
@@ -634,7 +634,8 @@ def test_armada_membership_refresh_preserves_hydrated_cache_and_clicks_do_not_re
     server = CONCORD.split("$$('[data-cc-server]')", 1)[1].split(
         "$$('[data-cc-discover]')", 1)[0]
     assert '(!room.cord||!room.cord.bundle)' in server
-    assert 'loaded&&loaded.cord&&!loaded.cord.hydrated' in server
+    assert 'loaded&&loaded.cord&&!hydratedRoomViews.has(roomIdentity(loaded))' in server
+    assert 'hydratedRoomViews.add(identity)' in CONCORD
     assert 'room.cord.armadaList' not in server
     assert "if(membershipViewer!==viewer.pubkey){membershipViewer=viewer.pubkey;membershipDocs.clear();}" in sync
     assert 'let doc=membershipDocs.get(event.id)' in sync

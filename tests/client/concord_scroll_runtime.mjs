@@ -49,7 +49,18 @@ context.api.enterChatBottom();
 while(timers.length)timers.shift()();
 if(box.scrollTop!==900)throw Error('delayed history moved entry away from latest');
 
+// Explicit entry follows delayed growth only until the reader takes control of the scroll.
+box.scrollHeight=1000;
+context.api.enterChatBottom();
+timers.shift()();
+const entered=context.api.readScroll('room:general');
+entered.pinned=false;entered.top=240;box.scrollTop=240;
+box.scrollHeight=1600;
+while(timers.length)timers.shift()();
+if(box.scrollTop!==240)throw Error('entry retries overrode a deliberate reader scroll');
+
 // An image resolves later than every retry; ResizeObserver is the indefinite pin.
+entered.pinned=true;
 context.api.watchPinnedRoomGrowth(box);
 box.scrollHeight=1400;resizeCallback();
 if(box.scrollTop!==1400)throw Error('delayed media growth moved pinned room away from latest');

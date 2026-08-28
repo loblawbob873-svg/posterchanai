@@ -46,6 +46,10 @@
   const discoveryIconLoads=new Set();
   const recoveredOwnedInvites=new Set();
   const roomLoads=new Map();
+  /* `room.cord.hydrated` is durable membership metadata, not renderer state. Treating it as a
+   * process-local cache flag made a fresh browser/Desktop process skip IndexedDB restoration and
+   * show an empty room until the live poll happened to run. */
+  const hydratedRoomViews=new Set();
   const roomLoadNotices=new Map();
   const roomControls=new Map();
   /* Blob URLs die with their renderer. Keep encrypted icon pointer identity in memory so a saved
@@ -136,7 +140,7 @@
   /* Entering a room is different from preserving a room somebody is already reading. History,
    * decrypted attachments and link previews all grow the scroller asynchronously, so one rAF can
    * reach what was the bottom and still leave the person hundreds of pixels above the final bottom. */
-  function enterChatBottom(){ const key=scrollKey(),token=Date.now()+Math.random();enterChatBottom.token=token;const st=readScroll(key);st.pinned=true;st.top=Number.MAX_SAFE_INTEGER;writeScroll(key,st);for(const delay of [0,60,180,450,900,1600])setTimeout(()=>{if(enterChatBottom.token!==token||scrollKey()!==key)return;const box=document.querySelector('.cc-messages');if(!box)return;setProgrammaticScroll(box,box.scrollHeight,()=>{st.top=box.scrollTop;st.height=box.scrollHeight;st.pinned=true;writeScroll(key,st);});},delay); }
+  function enterChatBottom(){ const key=scrollKey(),token=Date.now()+Math.random();enterChatBottom.token=token;const st=readScroll(key);st.pinned=true;st.top=Number.MAX_SAFE_INTEGER;writeScroll(key,st);for(const delay of [0,60,180,450,900,1600])setTimeout(()=>{if(enterChatBottom.token!==token||scrollKey()!==key||st.pinned===false)return;const box=document.querySelector('.cc-messages');if(!box)return;setProgrammaticScroll(box,box.scrollHeight,()=>{st.top=box.scrollTop;st.height=box.scrollHeight;writeScroll(key,st);});},delay); }
   function repaintScrollTop(pinned,top,scrollHeight){ return pinned!==false?scrollHeight:Math.max(0,Number(top)||0); }
   function preserveChatScroll(fn){
     const key=scrollKey(),old=document.querySelector('.cc-messages'),st=readScroll(key),
@@ -252,7 +256,7 @@
     }
     return uniqueMessages(out);
   }
-  function channelStoreId(room,name){ const channel=name||'general',c=room&&Array.isArray(room.channels)&&room.channels.find(x=>x.name===channel); return room&&room.naddr+(channel!=='general'&&c&&c.id?'.'+c.id:''); }
+  function channelStoreId(room,name){ const channel=name||'general',c=room&&Array.isArray(room.channels)&&room.channels.find(x=>x.name===channel),identity=String(room&&(room.naddr||room.communityId||room.url)||''); return identity+(channel!=='general'?'.'+(c&&c.id||channel):''); }
   function channelsOf(room){
     const channels=room&&Array.isArray(room.channels)?room.channels.filter(c=>c&&c.name):[];
     return channels.length?channels:[{name:'general',private:false}];
@@ -868,13 +872,15 @@
         const cacheKey=envelopeCacheKey(loadKey,channel.id),cached=await cachedEnvelopes(cacheKey),wraps=await queryEnvelopeHistory(p,relays,channel.streamPubkeys,cached),fetched=wraps.filter(ev=>!cached.some(old=>old.id===ev.id));
         await cacheEnvelopes(cacheKey,fetched);await applyChannel(channel,wraps);
       }
-      room.cord.hydrated=true;if(!persistRoom())return;
+      room.cord.hydrated=true;hydratedRoomViews.add(identity);if(!persistRoom())return;
       /* A relay answer may return after the reader chose another community. Persisting the fetched
        * room is still useful, but repainting/scrolling the new room is not. Notification launches
        * pass the durable identity explicitly because saved array positions can change meanwhile. */
       const currentRooms=saved(),current=state.community==null?null:currentRooms[state.community],stillSelected=roomIdentity(current)===identity&&
         (!expectedIdentity||roomIdentity(current)===expectedIdentity);
-      if(stillSelected){backgroundRender();scrollChatBottom();}
+      /* Explicit room/channel handlers own the initial jump to latest. A network refresh finishing
+       * later must preserve a reader who has deliberately scrolled up meanwhile. */
+      if(stillSelected)backgroundRender();
     })().finally(()=>roomLoads.delete(loadKey)); roomLoads.set(loadKey,job); return job;
   }
   async function publishCordNative(p,room,channelName,text,extraTags=[],kind=9){
@@ -1123,9 +1129,9 @@
        * left the placeholder #general on screen with no id, icon or history, so a successful Armada
        * invite looked like an empty broken community until somebody switched away and back. */
       await hydrateRoomStreams(p,state.community); enterChatBottom(); p.toast('community joined'); }catch(e){ go.disabled=false; p.toast('could not join: '+(e&&e.message||e)); } };
-    $$('[data-cc-server]').forEach(b=>b.onclick=async()=>{ const i=+b.dataset.ccServer,a=saved(),room=a[i],inDrawer=mobileChatOpen&&mobileDrawerOpen; let loaded=room; discoveryOpen=false; localStorage.setItem('pc.concord.active',String(i)); state.community=i; state.channel='general'; mobileChatOpen=inDrawer; mobileDrawerOpen=inDrawer; render(); enterChatBottom(); try{ if(room&&room.url&&(!room.cord||!room.cord.bundle)){ loaded={...room,...await hydrateInvite(p,room.url)}; a[i]=loaded; save(a); render(); } if(loaded&&loaded.cord&&!loaded.cord.hydrated)await hydrateRoomStreams(p,i);else if(loaded&&loaded.protocol==='nip29'&&!loaded.nip29Hydrated)await hydrateNip29Room(p,i); roomLoadNotices.delete(roomIdentity(loaded)); }catch(e){ if(loaded&&loaded.protocol==='nip29')loaded.nip29Hydrated=false; save(a); roomLoadWarning(p,roomIdentity(loaded),'could not refresh community: ',e); }finally{ if(state.community===i)enterChatBottom(); } });
+    $$('[data-cc-server]').forEach(b=>b.onclick=async()=>{ const i=+b.dataset.ccServer,a=saved(),room=a[i],inDrawer=mobileChatOpen&&mobileDrawerOpen; let loaded=room; discoveryOpen=false; localStorage.setItem('pc.concord.active',String(i)); state.community=i; state.channel='general'; mobileChatOpen=inDrawer; mobileDrawerOpen=inDrawer; render(); enterChatBottom(); try{ if(room&&room.url&&(!room.cord||!room.cord.bundle)){ loaded={...room,...await hydrateInvite(p,room.url)}; a[i]=loaded; save(a); render(); } if(loaded&&loaded.cord&&!hydratedRoomViews.has(roomIdentity(loaded)))await hydrateRoomStreams(p,i);else if(loaded&&loaded.protocol==='nip29'&&!loaded.nip29Hydrated)await hydrateNip29Room(p,i); roomLoadNotices.delete(roomIdentity(loaded)); }catch(e){ if(loaded&&loaded.protocol==='nip29')loaded.nip29Hydrated=false; save(a); roomLoadWarning(p,roomIdentity(loaded),'could not refresh community: ',e); }finally{ if(state.community===i)enterChatBottom(); } });
     $$('[data-cc-discover]').forEach(b=>b.onclick=async()=>{ const v=discovered[+b.dataset.ccDiscover]; if(!v)return; const a=saved(); let i=a.findIndex(x=>x.naddr===v.naddr); if(i<0){a.push(v);i=a.length-1;} save(a); state.community=i; state.channel='general'; render(); enterChatBottom(); p.toast('fetching and decrypting community…'); try{ a[i]={...a[i],...await hydrateInvite(p,v.url)}; save(a); await persistArmadaMembership(p,a[i]); await hydrateRoomStreams(p,i); p.toast('community joined'); }catch(e){ p.toast('could not load community: '+(e&&e.message||e)); }finally{if(state.community===i)enterChatBottom();} });
-    $$('[data-cc-channel]').forEach(b=>b.onclick=async()=>{ const community=state.community,channel=b.dataset.ccChannel; state.channel=channel; mobileChatOpen=true; mobileDrawerOpen=false; render(); enterChatBottom(); const rooms=saved(),room=rooms[community],noticeKey=roomIdentity(room)+':'+channel; try{if(room&&room.cord&&!room.cord.hydrated)await hydrateRoomStreams(p,community);else if(room&&room.protocol==='nip29'&&!room.nip29Hydrated)await hydrateNip29Room(p,community);roomLoadNotices.delete(noticeKey);}catch(e){roomLoadWarning(p,noticeKey,'could not refresh room history: ',e);} if(state.community===community&&state.channel===channel)enterChatBottom(); });
+    $$('[data-cc-channel]').forEach(b=>b.onclick=async()=>{ const community=state.community,channel=b.dataset.ccChannel; state.channel=channel; mobileChatOpen=true; mobileDrawerOpen=false; render(); enterChatBottom(); const rooms=saved(),room=rooms[community],noticeKey=roomIdentity(room)+':'+channel; try{if(room&&room.cord&&!hydratedRoomViews.has(roomIdentity(room)))await hydrateRoomStreams(p,community);else if(room&&room.protocol==='nip29'&&!room.nip29Hydrated)await hydrateNip29Room(p,community);roomLoadNotices.delete(noticeKey);}catch(e){roomLoadWarning(p,noticeKey,'could not refresh room history: ',e);} if(state.community===community&&state.channel===channel)enterChatBottom(); });
     $$('[data-cc-star]').forEach(b=>b.onclick=e=>{ if(e&&e.stopPropagation)e.stopPropagation(); const room=saved()[state.community],name=b.dataset.ccStar; if(!room||!name)return; setChannelStarred(room,name,!channelStarred(room,name)); render(); });
     const bc=$('#cc-back-communities'); if(bc)bc.onclick=()=>{ discoveryOpen=true; state.community=null; state.channel=null; render(); };
     const bh=$('#cc-back-channels'); if(bh)bh.onclick=()=>{ if(state.community==null){ const rooms=saved(),wanted=Number(localStorage.getItem('pc.concord.active')||0); discoveryOpen=false; state.community=rooms.length&&wanted>=0&&wanted<rooms.length?wanted:(rooms.length?0:null); state.channel=state.community==null?null:'general'; mobileChatOpen=false; mobileDrawerOpen=false; }else if(mobileChatOpen){mobileDrawerOpen=!mobileDrawerOpen;}else mobileChatOpen=true; render(); };
