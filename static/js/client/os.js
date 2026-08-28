@@ -3180,7 +3180,9 @@
       state:w.view==='websearch'&&window.PCWebSearch&&PCWebSearch.handoffState
         ? PCWebSearch.handoffState()
         : messagesTab==='concord'&&window.PCConcord&&PCConcord.handoffState
-          ? PCConcord.handoffState() : null};
+          ? PCConcord.handoffState()
+          : messagesTab==='messages'&&PC().messagesHandoffState
+            ? PC().messagesHandoffState() : null};
   }
 
   function sendFrameHandoff(w,direction,overflow){
@@ -6854,8 +6856,18 @@
               PCTerm.adoptSession(p.terminalSid);
             if(p.view==='websearch' && p.state && window.PCWebSearch && PCWebSearch.acceptHandoff)
               PCWebSearch.acceptHandoff(p.state);
-            if(p.messagesTab==='concord' && p.state && window.PCConcord && PCConcord.acceptHandoff)
-              PCConcord.acceptHandoff(p.state);
+            if(p.messagesTab==='concord' && p.state){
+              /* Concord is lazy-loaded. On a cold destination renderer it does not exist until
+               * switchView below appends concord.js, so calling acceptHandoff only here silently
+               * discarded the room/channel. concord.js consumes this one-shot value before its
+               * first render; the eager case consumes and clears it here. */
+              window.__pcConcordHandoff=p.state;
+              if(window.PCConcord && PCConcord.acceptHandoff){
+                PCConcord.acceptHandoff(p.state);delete window.__pcConcordHandoff;
+              }
+            }
+            if(p.messagesTab==='messages' && p.state && PC().acceptMessagesHandoff)
+              PC().acceptMessagesHandoff(p.state);
             const w=openApp(String(p.view), String(p.title||''), String(p.icon||''));
             if(!w) return;
             /* A monitor handoff recreates the one Messages frame, then restores its selected tab.

@@ -34272,6 +34272,11 @@
      * holds and nothing else can fetch. */
     saveBlobAs, fetchMediaBlob,
     ensureProfile: _ensureProfile, NT, compose, switchView, timelineTop,
+    /* The Messages frame crosses monitor renderers, so its selected conversation cannot remain
+     * only in this renderer's dmActive binding. The OS applies this before switchView('messages'),
+     * allowing the normal render to reopen the same thread without a popout or second frame. */
+    messagesHandoffState: () => ({peer:dmActive||''}),
+    acceptMessagesHandoff: value => { dmActive=safePk(String(value&&value.peer||''))||null; },
     // compose → News "Share as note"; switchView → nav; timelineTop → fresh desktop Social window
     timelineTop,
     /* PosterChan Code saves a Files document back to Files. The editor holds the text; the drive

@@ -6,6 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 OS = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
 CONCORD = (ROOT / "static/js/client/concord.js").read_text(encoding="utf-8")
+APP = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
 
 
 def test_messages_handoff_keeps_the_selected_communities_tab():
@@ -20,6 +21,22 @@ def test_community_and_channel_identity_cross_to_the_other_renderer():
     assert "PCConcord.acceptHandoff(p.state)" in OS
     assert "room.communityId||room.naddr||room.url" in CONCORD
     assert "channel:state.channel||'general'" in CONCORD
+
+
+def test_cold_destination_adopts_communities_state_before_first_render():
+    run = subprocess.run(
+        ["node", str(ROOT / "tests/client/messages_handoff_destination_runtime.mjs")],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert run.returncode == 0, run.stderr
+    assert "messages handoff destination runtime: ok" in run.stdout
+
+
+def test_direct_messages_carries_the_selected_conversation():
+    assert "messagesHandoffState: () => ({peer:dmActive||''})" in APP
+    assert "acceptMessagesHandoff: value =>" in APP
+    assert "messagesTab==='messages'&&PC().messagesHandoffState" in OS
+    assert "PC().acceptMessagesHandoff(p.state)" in OS
 
 
 def test_handoff_uses_one_canonical_messages_window_then_restores_its_tab():

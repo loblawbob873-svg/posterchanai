@@ -888,4 +888,10 @@
     $$('[data-cc-react]').forEach(b=>b.onclick=()=>{ const target=b.dataset.ccReact;closeMessageActions();reactionTarget=target; const choices=['👍','❤️','😂','😮','😢','😡','🎉','💯']; const pop=document.createElement('div'); pop.className='cc-reaction-picker'; pop.innerHTML=choices.map(x=>`<button data-emoji="${x}">${x}</button>`).join(''); b.closest('.cc-message-body').appendChild(pop); pop.querySelectorAll('button').forEach(x=>x.onclick=e=>{ e.stopPropagation();const id=reactionTarget;closeMessageActions();toggleReaction(id,x.dataset.emoji); }); });
   }
   window.PCConcord={render,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,reactionSummary,notifyMentions,discoverInvites,decodeMembershipLists,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff};
+  /* A monitor destination may load this module only after its frame-handoff callback has returned.
+   * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
+   * later Communities open cannot replay an old monitor move. */
+  if(window.__pcConcordHandoff){
+    try{acceptHandoff(window.__pcConcordHandoff);}finally{delete window.__pcConcordHandoff;}
+  }
 })();
