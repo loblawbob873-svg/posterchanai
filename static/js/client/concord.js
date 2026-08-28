@@ -1192,7 +1192,7 @@
   async function webxdcPeerQuery(ctx){
     if(!ctx||ctx.protocol!=='concord2')throw new Error('Iroh peer signalling requires a Concord channel');
     const x=await webxdcCordParts(ctx);if(!x.reader.inspectWebxdcSignals)throw new Error('peer signalling unavailable');
-    const filters=[{kinds:[1059],authors:x.streamPubkeys,limit:1000}],history=await cordQuery(x.p,x.relays,filters,{timeout:10000,max:8});
+    const filters=[{kinds:[1059],authors:x.streamPubkeys,limit:5000}],history=await cordQuery(x.p,x.relays,filters,{timeout:10000,max:8});
     return x.reader.inspectWebxdcSignals(x.bundle,x.controls,x.channel.id,history);
   }
   async function webxdcPeerSubscribe(ctx,onEvent){

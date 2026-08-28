@@ -53,6 +53,13 @@ def test_peer_ads_use_the_open_room_sockets_not_an_unrelated_pool():
     assert "await PCConcord.webxdcPeerQuery(ctx)" in iroh
     assert "await node.join(topicBytes,initial" in iroh
     assert "diag('peer-bootstrap',String(initial.length))" in iroh
+    # Two clients commonly use the same Nostr identity. Keep every distinct device address after
+    # that author's last leave; reducing advertisements to one row per pubkey strands one device.
+    assert "lastLeft=new Map(),seenAddr=new Set()" in iroh
+    assert "at<=(lastLeft.get(row.pubkey)||0)||seenAddr.has(sig.addr)" in iroh
+    assert "initial.length>=16" in iroh
+    assert "limit:5000" in CONCORD
+    assert "sort((a, b) => Number(a.created_at) - Number(b.created_at)).slice(-5000)" in READER
     assert "sealRumor(rumor, 20013, channel.current.group" in READER
     assert "['rt','1']" in CONCORD
     assert "kind=realtime?21059:1059" in CONCORD

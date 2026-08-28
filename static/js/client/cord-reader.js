@@ -26720,7 +26720,11 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const { channels } = control(bundle, controlWraps);
     const channel = channels.find((ch) => ch.idHex === channelId);
     if (!channel) throw new Error("channel is not readable with this membership");
-    const opened = await openChatBatch((wraps || []).slice(-2000), channel);
+    /* Relay result order is not contractual. Busy channels can return thousands of ordinary chat
+     * wraps around a handful of peer ads; slicing before ordering randomly discarded the newest
+     * lobby advertisements and produced peer-bootstrap 0. */
+    const recent = [...(wraps || [])].sort((a, b) => Number(a.created_at) - Number(b.created_at)).slice(-5000);
+    const opened = await openChatBatch(recent, channel);
     return opened.filter((ev) => ev.kind === 3310 && !ev.tags.some((t) => t[0] === "i"))
       .map((ev) => ({ id: ev.rumorId, pubkey: ev.author, content: ev.content, tags: ev.tags, created_at: ev.createdAt, at: ev.ms }));
   }
