@@ -159,8 +159,14 @@ jobs:
           # BOTH RUN, ALWAYS, and the step fails if either did. Chained with `&&` the instrumented
           # tests were skipped whenever a lifecycle check failed — which is exactly when their answer
           # is most wanted, and it kept them from running a second time after the `sh` fix.
+          # Bound each half independently. A wedged adb/Gradle/instrumentation command used to sit
+          # inside this opaque combined step until the job-wide 60-minute timeout, at which point
+          # the artifact-upload steps had no useful report to publish. These limits are several
+          # times the normal duration and `--foreground` still delivers the runner's cancellation
+          # signal. Crucially, the second half runs even when the first times out, and the always()
+          # uploads below retain whichever diagnostics were produced.
           script: |
-            bash scripts/android_device_checks.sh; a=$?; bash scripts/android_instrumented.sh; b=$?; echo "device=$a instrumented=$b"; [ $a -eq 0 ] && [ $b -eq 0 ]
+            timeout --foreground 15m bash scripts/android_device_checks.sh; a=$?; timeout --foreground 25m bash scripts/android_instrumented.sh; b=$?; echo "device=$a instrumented=$b"; [ $a -eq 0 ] && [ $b -eq 0 ]
 
       - name: Upload logcat
         if: always()

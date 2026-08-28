@@ -1,0 +1,28 @@
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+WORKFLOW = (ROOT / ".github/workflows/android-emulator.yml").read_text()
+DEVICE = (ROOT / "scripts/android_device_checks.sh").read_text()
+
+
+def test_lifecycle_and_instrumented_device_checks_have_independent_bounds():
+    """A single hung adb/test command must not consume the job timeout and lose diagnostics."""
+    assert "timeout --foreground 15m bash scripts/android_device_checks.sh; a=$?" in WORKFLOW
+    assert "timeout --foreground 25m bash scripts/android_instrumented.sh; b=$?" in WORKFLOW
+    assert "device=$a instrumented=$b" in WORKFLOW
+
+
+def test_device_diagnostics_still_upload_after_a_timeout():
+    tail = WORKFLOW.split("timeout --foreground 15m", 1)[1]
+    assert tail.count("if: always()") >= 3
+    assert "Upload logcat" in tail
+    assert "Upload instrumented test report" in tail
+    assert "Upload screenshots" in tail
+
+
+def test_first_activity_launch_cannot_hang_the_entire_device_gate():
+    assert "launch_main()" in DEVICE
+    assert "timeout --foreground 30s adb shell am start -W" in DEVICE
+    assert "adb kill-server" in DEVICE and "adb start-server" in DEVICE
+    assert "launch failed after ADB restart" in DEVICE

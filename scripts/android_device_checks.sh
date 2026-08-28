@@ -44,7 +44,25 @@ say "launch"
 # of the top activity was answering a question about a different screen. It is what put
 # `place.poster.app/.phone.Phone` on top in the run that then reported "the launcher would not start
 # at all", which was true of neither.
-adb shell am start -n $PKG/$PKG.MainActivity >/dev/null 2>&1
+#
+# `adb shell am start` itself can wedge after a cached AVD boots. Run 33139397404 proved the shape:
+# install returned Success, the launch heading printed, and then no command or artifact progressed
+# for 31 minutes. `-W` gives ActivityManager's own result, an outer timeout bounds a broken transport,
+# and one ADB-server restart distinguishes a transient host channel from an app that cannot launch.
+launch_main() {
+  timeout --foreground 30s adb shell am start -W -n "$PKG/$PKG.MainActivity"
+}
+if ! launch_main >"$OUT/pc-device-launch.txt" 2>&1; then
+  echo "    first launch did not return; restarting the ADB transport"
+  adb kill-server >/dev/null 2>&1 || true
+  timeout --foreground 15s adb start-server >/dev/null 2>&1 || true
+  timeout --foreground 30s adb wait-for-device >/dev/null 2>&1 || true
+  if ! launch_main >>"$OUT/pc-device-launch.txt" 2>&1; then
+    cat "$OUT/pc-device-launch.txt" 2>/dev/null || true
+    fail "launch failed after ADB restart"
+    exit 1
+  fi
+fi
 sleep 20
 
 crash_scan() {   # $1 = label
