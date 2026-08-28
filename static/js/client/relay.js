@@ -680,8 +680,11 @@
     // non-WoT peer's NIP-17 inbox list (kind 10050), which our WoT-only relay never stored. Same
     // bounded ephemeral-socket pattern as publishTo: REQ, collect until EOSE/timeout, close. Events
     // are UNVERIFIED here (untrusted relays) — the caller must verify signatures before trusting them.
-    queryFrom(urls, filters, { timeout=4000, max=4 } = {}){
-      const targets = [...new Set((urls||[]).filter(Boolean))].filter(u => !this._conns.has(u)).slice(0, max);
+    queryFrom(urls, filters, { timeout=4000, max=4, exact=false } = {}){
+      /* Most external discovery reads should avoid duplicating a connected pool socket. Some
+       * protocols bind truth to one named relay (notably NIP-29), so exact=true deliberately opens
+       * that relay even when it is also present in the shared pool. */
+      const targets = [...new Set((urls||[]).filter(Boolean))].filter(u => exact || !this._conns.has(u)).slice(0, max);
       if (!targets.length) return Promise.resolve([]);
       const subId = 'qf' + Math.random().toString(36).slice(2,9);
       return Promise.all(targets.map(u => new Promise(resolve => {

@@ -553,7 +553,9 @@
   }
   async function nip29Memberships(p,viewer){
     if(!viewer.pubkey)return {groups:[],relays:[]};
-    const filters=[{kinds:[10009],authors:[viewer.pubkey],limit:8}],queried=await cordQuery(p,CORD_RELAYS,filters,{timeout:8000,max:5}),events=p.verifyRelayEvents?await p.verifyRelayEvents(queried):[],
+    const filters=[{kinds:[10009],authors:[viewer.pubkey],limit:8}],relays=[...new Set([...(p.relayUrls?p.relayUrls():[]),...CORD_RELAYS])],
+      [pool,listed]=await Promise.all([p.relayQuery?p.relayQuery(filters,8000):[],p.relayQueryFrom?p.relayQueryFrom(relays,filters,{timeout:8000,max:12,exact:true}):[]]),
+      queried=[...new Map([...(pool||[]),...(listed||[])].map(e=>[e.id,e])).values()],events=p.verifyRelayEvents?await p.verifyRelayEvents(queried):[],
       event=events.sort((a,b)=>Number(b.created_at)-Number(a.created_at)||String(a.id).localeCompare(String(b.id)))[0];
     if(!event)return {groups:[],relays:[]};
     const all=[...(event.tags||[])];
@@ -561,7 +563,7 @@
     if(ciphertext){const methods=/\?iv=/.test(ciphertext)?['nip04dec','nip44dec']:['nip44dec','nip04dec'];for(const method of methods){if(!p[method])continue;try{const privateTags=JSON.parse(await p[method](viewer.pubkey,ciphertext));if(Array.isArray(privateTags))all.push(...privateTags);break;}catch(_){}}}
     return nip29MembershipTags(all);
   }
-  async function nip29RelayQuery(p,relay,filters,timeout=8000){if(!p.relayQueryFrom||!p.verifyRelayEvents)throw new Error('verified listed relay queries are unavailable');const events=await p.relayQueryFrom([relay],filters,{timeout,max:1})||[];return await p.verifyRelayEvents(events);}
+  async function nip29RelayQuery(p,relay,filters,timeout=8000){if(!p.relayQueryFrom||!p.verifyRelayEvents)throw new Error('verified listed relay queries are unavailable');const events=await p.relayQueryFrom([relay],filters,{timeout,max:1,exact:true})||[];return await p.verifyRelayEvents(events);}
   async function nip29Metadata(p,relay,groupIds=[]){
     const filter={kinds:[39000],limit:200};if(groupIds.length)filter['#d']=groupIds;
     const events=await nip29RelayQuery(p,relay,[filter]),newest=new Map(),requested=new Set(groupIds);
@@ -570,8 +572,8 @@
   }
   async function syncNip29Memberships(p,viewer){
     if(nip29Busy||!viewer.pubkey)return;nip29Busy=true;let recovered=false;
-    try{const membership=await nip29Memberships(p,viewer),byRelay=new Map();for(const g of membership.groups){if(!byRelay.has(g.relay))byRelay.set(g.relay,[]);byRelay.get(g.relay).push(g);}for(const relay of membership.relays)if(!byRelay.has(relay))byRelay.set(relay,[]);
-      const found=[];for(const [relay,listed] of byRelay){const metas=await nip29Metadata(p,relay,listed.map(g=>g.id)),metaById=new Map(metas.map(m=>[m.id,m]));for(const g of listed){const meta=metaById.get(g.id)||g;found.push({...meta,id:g.id,relay,name:g.name||meta.name||g.id});}if(!listed.length)found.push(...metas);}recovered=found.length>0;
+    try{const membership=await nip29Memberships(p,viewer),byRelay=new Map();for(const g of membership.groups){if(!byRelay.has(g.relay))byRelay.set(g.relay,[]);byRelay.get(g.relay).push(g);}
+      const found=[];for(const [relay,listed] of byRelay){const metas=await nip29Metadata(p,relay,listed.map(g=>g.id)),metaById=new Map(metas.map(m=>[m.id,m]));for(const g of listed){const meta=metaById.get(g.id)||g;found.push({...meta,id:g.id,relay,name:g.name||meta.name||g.id});}}recovered=found.length>0;
       if(found.length){const rooms=saved();let changed=false;for(const g of found){const identity='nip29:'+g.relay+'#'+g.id,i=rooms.findIndex(r=>roomIdentity(r)===identity),room={protocol:'nip29',communityId:identity,naddr:identity,groupId:g.id,relay:g.relay,name:g.name||g.id,description:g.description||'',icon:g.icon||'',channels:[{name:'general',id:g.id,private:false}],local:false};if(i<0){rooms.push(room);changed=true;}else if(rooms[i].protocol==='nip29'&&JSON.stringify(rooms[i])!==JSON.stringify({...rooms[i],...room})){rooms[i]={...rooms[i],...room};changed=true;}}if(changed){save(rooms);backgroundRender();}}
     }catch(e){console.warn('NIP-29 membership sync failed',e);}finally{nip29Busy=false;clearTimeout(nip29RetryTimer);nip29RetryTimer=setTimeout(()=>syncNip29Memberships(p,p.viewer?p.viewer():viewer),recovered?60000:5000);}
   }
