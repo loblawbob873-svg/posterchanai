@@ -43,7 +43,8 @@ def test_composer_focus_precondition_comes_from_native_webview_input():
     assert 'data-cc-channel=\\"general\\"' in COMPOSER
     assert "a.closest('.cc-app')" in COMPOSER
     assert "inputs.find(x=>" in COMPOSER
-    assert "if(channel){opened=true;channel.click()" in COMPOSER
+    assert "if(channel){channel.click();setTimeout(seed,100);return;}" in COMPOSER
+    assert "opened=true" not in COMPOSER
     assert "composer stayed hidden" in COMPOSER
     assert "Concord route did not stay active" in COMPOSER
     assert "a.focus()" not in setup
