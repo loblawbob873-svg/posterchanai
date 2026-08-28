@@ -431,6 +431,19 @@ jobs:
           make_latest: false
           files: artifacts/*
 
+      # Per-build Desktop releases provide immutable bytes for Portage, but keeping every CI build
+      # forever buries the APK, extension and other downloads on GitHub's Releases page.  Retain a
+      # five-build rollback window and explicitly protect the version this workflow just published.
+      # Cleanup runs only after both immutable and rolling releases were published successfully.
+      - name: Prune obsolete Desktop build releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/prune_desktop_releases.py \
+            --repo "$GITHUB_REPOSITORY" \
+            --keep 5 \
+            --protect "desktop-v1.0.${{ github.run_number }}"
+
       # THE GENTOO OVERLAY PINS A VERSION, AND A ROLLING TAG CANNOT HOLD ONE.
       #
       # app-misc/posterchan-desktop carries a Manifest, so portage needs the EXACT bytes it was
