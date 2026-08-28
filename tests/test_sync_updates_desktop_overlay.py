@@ -26,3 +26,10 @@ def test_overlay_publisher_preserves_history_when_public_http_briefly_404s():
     authoritative = publish.index('git clone -q "ssh://$NAS$DEST" "$TMP/repo"')
     initialise = publish.index('git -C "$TMP/repo" init -q -b main')
     assert public < authoritative < initialise
+
+
+def test_overlay_publisher_excludes_host_python_bytecode():
+    publish = (ROOT / "scripts/publish_overlay.sh").read_text()
+    assert "--exclude='__pycache__'" in publish
+    assert "--exclude='*.pyc'" in publish
+    assert 'cp -r "$SRC/." "$TMP/"' not in publish

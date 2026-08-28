@@ -86,7 +86,11 @@ fi
 STAGE="$TMP/repo"
 find "$STAGE" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf -- {} +
 TMP="$STAGE"
-cp -r "$SRC/." "$TMP/"
+# Copy only source-owned overlay content. Python's focused test runs can leave ignored
+# `__pycache__` trees beside executable helpers; plain `cp -r` published those host-specific bytecode
+# files even though Git correctly ignored them. They are not package inputs and must never enter a
+# release repository.
+tar -C "$SRC" --exclude='__pycache__' --exclude='*.pyc' -cf - . | tar -C "$TMP" -xf -
 
 # ONE CANONICAL INSTALLER. Keeping a second 3,000-line gentoo.sh under FILESDIR guarantees drift;
 # instead inject the repository's os/gentoo.sh into the staging tree that becomes the real overlay.
