@@ -73,8 +73,13 @@ public class ConcordComposerDeviceTest {
                     // the same supported transition phoneshell.js uses when Android opens the mobile
                     // app; this is a mobile composer test, not a hidden-desktop-window test.
                     "if(window.PCOS&&PCOS.mobileLanding)PCOS.mobileLanding();__PC.switchView('concord');"+
-                    "let tries=0,opened=false;const seed=()=>{const a=document.querySelector('#cc-input');"+
-                    "if(!a&&tries++<50){setTimeout(seed,100);return;}"+
+                    "let tries=0,opened=false;const seed=()=>{"+
+                    // A preceding tablet/desktop lifecycle callback can finish its Classic landing
+                    // after our first switch. Do not mistake that test-order race for a missing
+                    // composer: require the real Concord route and re-enter it until it is stable.
+                    "if(!__PC.isView('concord')){__PC.switchView('concord');"+
+                    "if(tries++<50){setTimeout(seed,100);return;}throw new Error('Concord route did not stay active');}"+
+                    "const a=document.querySelector('#cc-input');if(!a&&tries++<50){setTimeout(seed,100);return;}"+
                     "try{if(!a)throw new Error('composer absent; view='+__PC.isView('concord')+"+
                     "', desktop='+(!!(window.PCOS&&PCOS.isOn&&PCOS.isOn())));"+
                     // Selecting a community intentionally leaves a phone on its channel list. Its
