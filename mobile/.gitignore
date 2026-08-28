@@ -8,6 +8,9 @@ android/.gradle/
 android/captures/
 android/local.properties
 *.keystore
+*.jks
+*.p12
+*.pfx
 release.keystore
 
 # Signing keys are never source files. CI reconstructs its keystore from an encrypted secret.

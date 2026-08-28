@@ -55,6 +55,8 @@ captures/
 # Keystore files
 *.jks
 *.keystore
+*.p12
+*.pfx
 
 # External native build folder generated in Android Studio 2.2 and later
 .externalNativeBuild

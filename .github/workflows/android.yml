@@ -49,6 +49,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Reject committed Android signing secrets
+        run: python3 scripts/check_no_android_signing_secrets.py
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -99,20 +102,53 @@ jobs:
           POSTERCHAN_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
           POSTERCHAN_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           POSTERCHAN_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_SIGNING_CERT_SHA256: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
+          ANDROID_SIGNING_LINEAGE_BASE64: ${{ secrets.ANDROID_SIGNING_LINEAGE_BASE64 }}
         run: |
           test -n "$ANDROID_KEYSTORE_BASE64" || { echo '::error::ANDROID_KEYSTORE_BASE64 is not configured'; exit 1; }
           test -n "$POSTERCHAN_ANDROID_STORE_PASSWORD" || { echo '::error::ANDROID_STORE_PASSWORD is not configured'; exit 1; }
           test -n "$POSTERCHAN_ANDROID_KEY_ALIAS" || { echo '::error::ANDROID_KEY_ALIAS is not configured'; exit 1; }
           test -n "$POSTERCHAN_ANDROID_KEY_PASSWORD" || { echo '::error::ANDROID_KEY_PASSWORD is not configured'; exit 1; }
+          test -n "$ANDROID_SIGNING_CERT_SHA256" || { echo '::error::ANDROID_SIGNING_CERT_SHA256 is not configured'; exit 1; }
+          test -n "$ANDROID_SIGNING_LINEAGE_BASE64" || { echo '::error::ANDROID_SIGNING_LINEAGE_BASE64 is not configured; refusing to ship a signer change that existing Android installations cannot verify'; exit 1; }
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$POSTERCHAN_ANDROID_KEYSTORE"
           chmod 600 "$POSTERCHAN_ANDROID_KEYSTORE"
           chmod +x gradlew
           ./gradlew assembleRelease -PversionCode=$VCODE -PversionName=$VNAME
 
       - name: Collect the APK
+        env:
+          ANDROID_SIGNING_CERT_SHA256: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
+          ANDROID_SIGNING_LINEAGE_BASE64: ${{ secrets.ANDROID_SIGNING_LINEAGE_BASE64 }}
+          POSTERCHAN_ANDROID_KEYSTORE: ${{ runner.temp }}/posterchan-release.keystore
+          POSTERCHAN_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          POSTERCHAN_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          POSTERCHAN_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           APK=$(find mobile/android -path '*release*' -name '*.apk' | head -1)
           echo "found: $APK"
+          test -n "$APK" || { echo '::error::No release APK was produced'; exit 1; }
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)
+          test -n "$APKSIGNER" || { echo '::error::apksigner was not found'; exit 1; }
+          printf '%s' "$ANDROID_SIGNING_LINEAGE_BASE64" | base64 --decode > "$RUNNER_TEMP/signing-lineage"
+          $APKSIGNER sign \
+            --ks "$POSTERCHAN_ANDROID_KEYSTORE" \
+            --ks-key-alias "$POSTERCHAN_ANDROID_KEY_ALIAS" \
+            --ks-pass env:POSTERCHAN_ANDROID_STORE_PASSWORD \
+            --key-pass env:POSTERCHAN_ANDROID_KEY_PASSWORD \
+            --lineage "$RUNNER_TEMP/signing-lineage" \
+            --v1-signing-enabled true --v2-signing-enabled true \
+            --v3-signing-enabled true --v4-signing-enabled true \
+            --out "$RUNNER_TEMP/posterchan-rotated.apk" "$APK"
+          APK="$RUNNER_TEMP/posterchan-rotated.apk"
+          ACTUAL_CERT=$($APKSIGNER verify --print-certs "$APK" \
+            | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -1 | tr '[:lower:]' '[:upper:]')
+          EXPECTED_CERT=$(printf '%s' "$ANDROID_SIGNING_CERT_SHA256" \
+            | tr -d ':[:space:]' | tr '[:lower:]' '[:upper:]')
+          test -n "$ACTUAL_CERT" || { echo '::error::The release APK is unsigned'; exit 1; }
+          test "$ACTUAL_CERT" = "$EXPECTED_CERT" || {
+            echo "::error::Release signer mismatch (actual $ACTUAL_CERT)"; exit 1;
+          }
           cp "$APK" posterchan.apk
           ls -la posterchan.apk
           python3 scripts/check_android_apk_assets.py posterchan.apk "$PWD"
