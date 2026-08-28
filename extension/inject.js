@@ -33,7 +33,7 @@ var __pcNostrProvider = function () {
   });
 
   function call(method, params) {
-    return new Promise((resolve, reject) => {
+    const promise = new Promise((resolve, reject) => {
       const id = 'pc' + (++seq) + '.' + Math.random().toString(36).slice(2);
       pending.set(id, { resolve, reject });
       window.postMessage({ __pcnostr: 'req', id, method, params }, '*');
@@ -45,6 +45,28 @@ var __pcNostrProvider = function () {
         reject(new Error('PosterChan Passwords did not answer'));
       }, 120000);
     });
+    // A page may deliberately fire-and-forget a signer operation. Keep the rejection observable to
+    // callers that await it, but mark it handled here as well so a refused/invalid request does not
+    // become a global `unhandledrejection` that PosterChan turns into an unrelated action-failed UI.
+    promise.catch(() => {});
+    return promise;
+  }
+
+  function rejected(message) {
+    const promise = Promise.reject(new Error(message));
+    promise.catch(() => {});
+    return promise;
+  }
+
+  function nip44Encrypt(pubkey, plaintext) {
+    const text = String(plaintext == null ? '' : plaintext);
+    const size = new TextEncoder().encode(text).length;
+    // NIP-44 v2 is one event and has an absolute 1..65535-byte plaintext bound. Chunking here would
+    // invent an incompatible protocol. Large media belongs in Blossom with only its pointer/key
+    // metadata encrypted in the event.
+    if (size < 1 || size > 65535)
+      return rejected('NIP-44 plaintext is ' + size + ' bytes; it must be 1..65535. Store large data as an attachment and encrypt only its pointer.');
+    return call('nip44.encrypt', { pubkey, plaintext:text });
   }
 
   const nostr = {
@@ -56,7 +78,7 @@ var __pcNostrProvider = function () {
       decrypt: (pubkey, ciphertext) => call('nip04.decrypt', { pubkey, ciphertext }),
     },
     nip44: {
-      encrypt: (pubkey, plaintext) => call('nip44.encrypt', { pubkey, plaintext }),
+      encrypt: nip44Encrypt,
       decrypt: (pubkey, ciphertext) => call('nip44.decrypt', { pubkey, ciphertext }),
     },
   };
