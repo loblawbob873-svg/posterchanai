@@ -953,7 +953,12 @@
     for(const r of rows){
       if(!r || !r.doc) continue;
       const old = S.msgs.get(r.doc);
-      if(old && !needsArchiveUpgrade(r, old)) continue;
+      /* A complete ARCHIVE row is not yet a complete PHONE row. Archive attachments deliberately
+       * carry id:0 because provider part ids are device-local. Skipping merely because the sha is
+       * portable leaves this handset unable to fall back to its own old photo/video when encrypted
+       * storage is offline. Materialise the provider row once (`_local`), preserve its portable
+       * hashes below, and only then use the cheap no-upgrade skip on later reads. */
+      if(old && old._local && !needsArchiveUpgrade(r, old)) continue;
       const local = fromRow(r);
       /* On the handset, prefer its live provider part ids so the attachment can be opened now.
        * Preserve portable hashes already present in the archive by position while a repair upload

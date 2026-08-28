@@ -78,6 +78,28 @@ def published(res, doc):
 @unittest.skipIf(shutil.which("node") is None, "node not installed")
 class ThreadsHoldBothKinds(unittest.TestCase):
 
+    def test_phone_materialises_local_part_ids_from_a_complete_remote_archive(self):
+        """Portable hashes serve desktop/web; the handset must still retain provider fallback."""
+        row = picture(7)
+        sha = "a" * 64
+        archived = {
+            "kind": 30078,
+            "created_at": int(row["date"] / 1000) + 10,
+            "pubkey": "me",
+            "tags": [["d", row["doc"]], ["l", "pcai-sms"]],
+            "content": "enc:" + json.dumps({
+                "address": row["address"], "body": row["body"], "date": row["date"],
+                "incoming": row["incoming"], "mms": True,
+                "parts": [{"ct": "image/jpeg", "name": "p7.jpg", "bytes": 1234,
+                           "sha": sha, "nt": 1}],
+            }, separators=(",", ":")),
+        }
+        res = run(rows=[row], relay=[archived], steps=["load", "settle", "phoneLoad"])
+        self.assertEqual(res["threads"][0]["partIds"], [[907]],
+                         "complete archive metadata prevented local old-media fallback")
+        self.assertEqual(res["threads"][0]["partShas"], [[sha]],
+                         "materialising the provider row discarded its portable archive copy")
+
     def test_desktop_can_queue_extension_only_video_for_the_phone(self):
         """The Files picker offers video on desktop; it must survive the remote-phone outbox."""
         res = run(isPhone=False, telephony=False,

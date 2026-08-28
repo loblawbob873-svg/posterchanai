@@ -382,6 +382,8 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
                                    // wrongly is visible rather than merely counted.
                                    order: t.msgs.map(m => m.doc),
                                    parts: t.msgs.map(m => (m.parts || []).length),
+                                   partIds: t.msgs.map(m => (m.parts || []).map(p => Number(p.id)||0)),
+                                   partShas: t.msgs.map(m => (m.parts || []).map(p => String(p.sha||''))),
                                    pending: t.msgs.map(m => !!m.pending),
                                    failed: t.msgs.map(m => !!m.failed) })),
     mmsRefused: !!st.mmsRefused,
