@@ -43,15 +43,14 @@ class TestTheButton(unittest.TestCase):
         self.assertIn("mus-delall", self.body, "there is still no way to delete a music library")
 
     def test_it_is_not_offered_inside_a_playlist(self):
-        m = re.search(r"\$\{\(tracks\.length && !only\) \? `<button[^`]*mus-delall", self.body)
-        self.assertIsNotNone(
-            m, "the bulk delete is drawn inside a playlist view, where it reads as 'empty this "
-               "playlist' and would delete the songs instead")
+        self.assertIn('${!only ? `<button class="btn btn-ghost small" id="mus-delall"', self.body,
+                      "the bulk delete is drawn inside a playlist view, where it reads as 'empty "
+                      "this playlist' and would delete the songs instead")
 
     def test_it_deletes_what_is_on_screen_and_says_so(self):
         """A search narrows the list, so the count in the label has to be the filtered one."""
         self.assertIn("const doomed = tracks.map(t=>t.sha);", self.body)
-        self.assertIn("these ${tracks.length}", self.body,
+        self.assertIn("`Delete ${tracks.length} match${tracks.length===1?'':'es'}`", self.body,
                       "with a search active the button does not say how many it would delete")
 
     def test_the_index_write_is_batched_and_checkpointed(self):

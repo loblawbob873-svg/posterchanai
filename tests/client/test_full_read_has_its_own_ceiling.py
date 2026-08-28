@@ -77,8 +77,10 @@ class AFullReadIsNotASmallPost(unittest.TestCase):
         waiting four minutes for one is a hang."""
         fn = self._fn("async load(key, onTick){")
         self.assertIn("body.since ? _POST_TIMEOUT_MS : _FULL_READ_TIMEOUT_MS", fn)
-        self.assertIn("if(cache && cache.cursor){ body.since", fn,
+        self.assertIn("if(cache && cache.cursor && cache.fullAt", fn,
                       "the delta condition moved — re-check which requests are full reads")
+        self.assertIn("(Date.now() - cache.fullAt) < this._FULL_REANCHOR_MS", fn,
+                      "a stale cache must re-anchor with a full read rather than delta forever")
 
 
 if __name__ == "__main__":

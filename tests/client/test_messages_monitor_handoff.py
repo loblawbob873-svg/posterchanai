@@ -83,3 +83,24 @@ console.log(JSON.stringify([
     run = subprocess.run(["node", "-e", boot], capture_output=True, text=True, timeout=30)
     assert run.returncode == 0, run.stderr
     assert json.loads(run.stdout) == [True, False, True, True, False]
+
+
+def test_handoff_reads_the_live_tab_when_the_frame_owns_the_feed():
+    """Click Communities and immediately press the titlebar monitor action."""
+    os_js = ROOT / "static/js/client/os.js"
+    boot = f"""
+const feed={{}}; const body={{querySelector:s=>s==='#feed'?feed:null}};
+global.window={{__PC:{{VIEW:'concord'}}}};
+global.document={{ addEventListener(){{}}, querySelector(s){{return s==='#feed'?feed:null;}},
+                  querySelectorAll(){{return [];}} }};
+global.getComputedStyle=()=>({{zoom:'1'}});
+require({json.dumps(str(os_js))});
+const selected=window.PCOS.__selectedMessagesTab;
+console.log(JSON.stringify([
+  selected({{view:'messages',appView:'messages',body}}),
+  selected({{view:'messages',appView:'messages',body:{{querySelector:()=>null}}}})
+]));
+"""
+    run = subprocess.run(["node", "-e", boot], capture_output=True, text=True, timeout=30)
+    assert run.returncode == 0, run.stderr
+    assert json.loads(run.stdout) == ["concord", "messages"]

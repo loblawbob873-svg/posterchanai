@@ -21512,7 +21512,7 @@
         <button class="btn btn-ghost small" id="mus-refresh" title="Fetch the library again — songs added on another device appear here">
           <svg class="ic b-ic" aria-hidden="true"><use href="#i-refresh"></use></svg>Refresh</button>
         ${!only ? `<button class="btn btn-ghost small" id="mus-delall"${tracks.length?'':' disabled'}
-          title="${needle ? 'Delete the songs matching this search — from your library, not just this view' : 'Delete every song in your library'}">${needle ? 'Delete matches' : 'Delete All'}</button>` : ''}
+          title="${needle ? 'Delete the songs matching this search — from your library, not just this view' : 'Delete every song in your library'}">${needle ? `Delete ${tracks.length} match${tracks.length===1?'':'es'}` : 'Delete All'}</button>` : ''}
       </div>
       <span class="music-count muted small" aria-live="polite">${needle
           ? `${tracks.length} of ${all.length} track${all.length===1?'':'s'}`

@@ -3156,6 +3156,23 @@
     return opened||current;
   }
 
+  function selectedMessagesTab(w){
+    if(!sameAppWindow(String(w&&w.view||''),String(w&&w.appView||w&&w.view||'')))return '';
+    /* appView is normally updated by noteView(), but the monitor button can be pressed in the same
+     * event turn as the in-window Communities tab. The feed and the global client view are then
+     * already authoritative while the frame's cached label can still say Direct Messages. Read
+     * the live view only when THIS frame owns #feed; that ownership check prevents another
+     * window's page-global VIEW from leaking into the handoff. */
+    let live='';
+    try{
+      const owns=(realFeed&&realFeed.parentElement===w.body)||
+        !!(w.body&&w.body.querySelector&&w.body.querySelector('#feed'));
+      if(owns)live=String(PC().VIEW||'');
+    }catch(_){}
+    const current=(live==='concord'||live==='messages')?live:String(w.appView||w.view||'');
+    return current==='concord'?'concord':'messages';
+  }
+
   function handoffPayload(w, overflow){
     /* A terminal is a live PTY, not a route inside the shared social feed. The page-wide VIEW can
      * change while another window has focus; never let that stale route turn a moved terminal into
@@ -3168,8 +3185,7 @@
      * Only deeper paths identify content that the view name cannot restore by itself. */
     const appPath = terminal || websearch || music ? '' : String(w.appPath || '');
     const topPath = appPath==='/' || appPath==='/index.html';
-    const messagesTab=sameAppWindow(String(w.view||''),String(w.appView||w.view||''))
-      ? (String(w.appView||w.view)==='concord'?'concord':'messages') : '';
+    const messagesTab=selectedMessagesTab(w);
     return {view:handoffIdentity(w),messagesTab,title:w.title||'',icon:w.icon||'',
       width:w.el.offsetWidth,height:w.el.offsetHeight,overflow:Number(overflow)||0,
       scrollTop:Math.max(0,Number(realFeed&&realFeed.parentElement===w.body
@@ -7416,6 +7432,7 @@
                   __fitIcons: (items,pos,maxX,maxY) => fitIconPositions(items,pos,maxX,maxY),
                   __sameAppWindow: sameAppWindow,
                   __shouldSelectMessagesTab: shouldSelectMessagesTab,
+                  __selectedMessagesTab: selectedMessagesTab,
                   /* The launcher's own list, for the same reason: "a row switched off in Settings →
                    * Sidebar is gone from the desktop too" is invisible when it is wrong — you get a
                    * desktop, just one still carrying the app you removed. tests/client/test_nav_hide.py

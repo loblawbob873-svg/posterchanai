@@ -21,8 +21,11 @@ const classes={contains:()=>false,add(){},remove(){},toggle(){}};
 const feed={innerHTML:'',insertAdjacentHTML(){}};
 globalThis.document={body:{classList:classes},head:{appendChild(){}},documentElement:{appendChild(){}},
   createElement:()=>({dataset:{}}),querySelector:s=>s==='link[data-concord-css]'?{}:null,
-  querySelectorAll:s=>s==='.cc-message[data-message-id]'?[row,...(data.has('pc.concord.test.cold.cold-support')?[coldRow]:[])]:[],addEventListener(){}};
+  /* Both rows model already-rendered DOM. Concord's target lookup chooses by data-message-id; it no
+   * longer writes decrypted relay history to localStorage merely to make a row discoverable. */
+  querySelectorAll:s=>s==='.cc-message[data-message-id]'?[row,coldRow]:[],addEventListener(){},removeEventListener(){}};
 globalThis.window=globalThis; window.matchMedia=()=>({matches:false}); window.requestAnimationFrame=f=>f();
+window.addEventListener=()=>{}; window.removeEventListener=()=>{};
 window.__PC={isView:v=>v==='concord',$:s=>s==='#feed'?feed:null,$$:()=>[],enc:String,viewer:()=>({}),
   profOf:()=>({}),linkify:String,linkCardHtml:()=>'',hydrateLinkCards(){},LOGO:''};
 window.__PC.relayQueryFrom=async()=>[{id:'relay-wrap'}];
