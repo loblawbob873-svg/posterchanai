@@ -1171,11 +1171,13 @@
    * intentionally omit the update stream's `i` tag. Reusing webxdcPublish/webxdcSubscribe would
    * therefore create a private PosterChan-only lobby: our reader filters updates by `i`, while the
    * ecosystem peers never emit one. */
-  async function webxdcPeerPublish(ctx,content){
+  async function webxdcPeerPublish(ctx,content,liveSub){
     if(!ctx||ctx.protocol!=='concord2')throw new Error('Iroh peer signalling requires a Concord channel');
     const x=await webxdcCordParts(ctx),viewer=x.p.viewer(),made=await x.reader.createWebxdcWrap(x.bundle,x.controls,x.channel.id,content,viewer.pubkey,x.p.signTemplate,[],false);
-    const [pool,external]=await Promise.all([x.p.relayPublish(made.wrap),x.p.relayPublishTo(x.relays,made.wrap)]);
-    if(!(pool&&pool.ok)&&!external)throw new Error(pool&&pool.msg||'room relays rejected the peer signal');
+    /* Publish on the room subscription's actual sockets. A generic pool success may be an unrelated
+     * account relay and cannot prove an Armada peer can see this advertisement. */
+    const sent=(x.p.relayPublishFastTo?x.p.relayPublishFastTo(x.relays,made.wrap):0)+(liveSub&&liveSub.publish?liveSub.publish(made.wrap):0);
+    if(!sent){const accepted=await x.p.relayPublishTo(x.relays,made.wrap);if(!accepted)throw new Error('room relays rejected the peer signal');}
     return made;
   }
   async function webxdcPeerSubscribe(ctx,onEvent){
@@ -1190,7 +1192,9 @@
      * query. The live listener is already installed; fold the durable advertisements when their
      * backfill arrives. */
     void cordQuery(x.p,x.relays,filters,{timeout:10000,max:8}).then(history=>x.reader.inspectWebxdcSignals(x.bundle,x.controls,x.channel.id,history)).then(rows=>{for(const row of rows)if(!seen.has(row.id)){seen.add(row.id);onEvent(row);}}).catch(()=>{});
-    return()=>{try{R.close(pooled);}catch(_){}try{external();}catch(_){}};
+    const close=()=>{try{R.close(pooled);}catch(_){}try{external();}catch(_){}};
+    close.publish=event=>(R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
+    return close;
   }
   window.PCConcord={render,backgroundRender,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,reactionSummary,notifyMentions,discoverInvites,decodeMembershipLists,mergeArmadaBundle,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerPublish,webxdcPeerSubscribe};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.

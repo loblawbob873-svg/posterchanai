@@ -38,6 +38,18 @@ def test_nip29_webxdc_uses_group_scoped_armada_kinds():
 def test_concord_v2_webxdc_uses_3310_in_durable_and_ephemeral_wraps():
     assert "kind: 3310" in READER
     assert "wrapSeal(seal, channel.current.group, { ephemeral })" in READER
+
+
+def test_peer_ads_use_the_open_room_sockets_not_an_unrelated_pool():
+    body = CONCORD.split("async function webxdcPeerPublish", 1)[1].split("async function webxdcPeerSubscribe", 1)[0]
+    assert "relayPublishFastTo(x.relays,made.wrap)" in body
+    assert "liveSub&&liveSub.publish?liveSub.publish(made.wrap):0" in body
+    assert "relayPublishTo(x.relays,made.wrap)" in body
+    assert ".relayPublish(made.wrap)" not in body
+    sub = CONCORD.split("async function webxdcPeerSubscribe", 1)[1].split("window.PCConcord", 1)[0]
+    assert "close.publish=event=>(R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)" in sub
+    iroh = (ROOT / "static/js/client/webxdc-iroh.js").read_text()
+    assert "webxdcPeerPublish(ctx,JSON.stringify({op:'ad',topic,addr:encodeAddr(node.nodeAddrJson())}),off)" in iroh
     assert "sealRumor(rumor, 20013, channel.current.group" in READER
     assert "['rt','1']" in CONCORD
     assert "kind=realtime?21059:1059" in CONCORD

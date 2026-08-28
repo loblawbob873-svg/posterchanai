@@ -32,11 +32,11 @@
     await node.join(topicBytes,[],bytes=>{if(dead)return;const got=unframe(bytes);if(got&&got.sender!==self)onMessage(got.payload);},msg=>{try{console.debug('[webxdc] iroh:',msg);}catch(_){}});
     try{
       off=await PCConcord.webxdcPeerSubscribe(ctx,row=>{if(dead)return;const sig=parseSignal(row,topic);if(!sig)return;const at=Number(row.at)||Number(row.created_at)*1000||0,prior=latest.get(row.pubkey);if(prior&&(prior.at>at||(prior.at===at&&prior.op==='left')))return;latest.set(row.pubkey,{at,op:sig.op});if(sig.op!=='ad')return;const addr=decodeAddr(sig.addr);if(!addr)return;try{if(JSON.parse(addr).id===self)return;}catch(_){return;}void node.addPeer(topicBytes,addr).catch(()=>{});});
-      await PCConcord.webxdcPeerPublish(ctx,JSON.stringify({op:'ad',topic,addr:encodeAddr(node.nodeAddrJson())}));
+      await PCConcord.webxdcPeerPublish(ctx,JSON.stringify({op:'ad',topic,addr:encodeAddr(node.nodeAddrJson())}),off);
     }catch(e){try{node.leave(topicBytes);}catch(_){}throw e;}
     return{
       send(data){if(dead)return;seq++;return node.send(topicBytes,frame(new Uint8Array(data),seq,key));},
-      async leave(){if(dead)return;dead=true;try{await PCConcord.webxdcPeerPublish(ctx,JSON.stringify({op:'left',topic}));}catch(_){}try{off&&off();}catch(_){}try{node.leave(topicBytes);}catch(_){}}
+      async leave(){if(dead)return;dead=true;try{await PCConcord.webxdcPeerPublish(ctx,JSON.stringify({op:'left',topic}),off);}catch(_){}try{off&&off();}catch(_){}try{node.leave(topicBytes);}catch(_){}}
     };
   }
   window.PCWebxdcIroh={join,decodeTopic:decode32,encodeNodeAddr:encodeAddr,decodeNodeAddr:decodeAddr,frame,unframe,parseSignal};
