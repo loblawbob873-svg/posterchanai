@@ -144,13 +144,21 @@ if(PCConcord.pendingEchoMatch(samePending,{pubkey:'a',text:'same',kind:9,at:1900
 if(PCConcord.pendingEchoMatch(samePending,{pubkey:'a',text:'same',kind:9,at:1500})!==null)
   throw new Error('ambiguous identical relay echo guessed and could collapse a real send');
 const xdcUrl='https://files.example/game.xdc';
-/* Cross-client fixture copied from Armada's AppsContext contract: a raw .xdc URL has no explicit
-   webxdc field, so defaultSessionId(concord2 scope, webxdc app) is
-   `concord2|<channel.idHex>|webxdc`. An uploaded game keeps its explicit UUID. */
+/* Armada/Vector's bare-link contract derives the Iroh topic from URL + message id. */
 const armadaChannel='ab'.repeat(32),armadaRoom={cord:{bundle:{}},communityId:'community-1',naddr:'naddr-1',channels:[{id:armadaChannel,name:'general'}]};
 const armadaRaw=PCConcord.webxdcOf({id:'raw-event',text:xdcUrl,tags:[['imeta',`url ${xdcUrl}`,'m application/x-webxdc']]},armadaRoom,'general');
-if(armadaRaw.uuid!==`concord2|${armadaChannel}|webxdc`||armadaRaw.transport.channelId!==armadaChannel)
-  throw new Error('raw Webxdc link does not use Armada concord2 scope/session identity');
+if(armadaRaw.uuid!==''||!armadaRaw.urlTopicMessageId||armadaRaw.transport.channelId!==armadaChannel)
+  throw new Error('raw Webxdc link was assigned a private room-scope topic');
+const rawTopic=await PCConcord.deriveWebxdcUrlTopic(xdcUrl,'raw-event');
+if(rawTopic!=='TXCRSLERCKAST3RD65EPSQ2EKHOMV32VBEY5HW7YXIIJX5T46BQA')
+  throw new Error('raw Webxdc URL topic does not match Armada SHA-256 fixture');
+if(await PCConcord.deriveWebxdcUrlTopic('https://x.org/app.xdc','msg1')!=='QOLP2F6LAQZYTDGUKNGHFGESA5Q3P2HTWCTBZHBOQMLZ2DYHQDPQ')
+  throw new Error('raw topic does not match Vector fixture');
+const bare=await PCConcord.deriveWebxdcUrlTopic('https://x.org/app.xdc','msg1');
+if(await PCConcord.deriveWebxdcUrlTopic('https://x.org/app.xdc?v=2','msg1')!==bare||await PCConcord.deriveWebxdcUrlTopic('https://x.org/app.xdc#top','msg1')!==bare)
+  throw new Error('query/hash changed the Vector bare-link topic');
+if(await PCConcord.deriveWebxdcUrlTopic('https://cdn.xdc.io/game.xdc','msg1')===await PCConcord.deriveWebxdcUrlTopic('https://cdn.xdc','msg1'))
+  throw new Error('URL topic did not use the last .xdc delimiter');
 const armadaUploaded=PCConcord.webxdcOf({id:'upload-event',text:xdcUrl,tags:[['imeta',`url ${xdcUrl}`,'m application/x-webxdc','webxdc fixture-uuid']]},armadaRoom,'general');
 if(armadaUploaded.uuid!=='fixture-uuid')throw new Error('explicit Armada Webxdc UUID was replaced');
 /* Captured from Armada's live Gamers/#xdc Quake post. Armada uses the registered vendor MIME,

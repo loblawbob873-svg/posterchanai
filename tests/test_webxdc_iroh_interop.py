@@ -34,7 +34,7 @@ def test_concord_realtime_uses_iroh_only_and_cord04_signals():
 
 
 def test_current_topic_tag_wins_and_new_uploads_mint_interop_topic():
-    assert "uuid:f['webxdc-topic']||f.webxdc" in CONCORD
+    assert "explicit=f['webxdc-topic']||f.webxdc||''" in CONCORD
     assert "`webxdc-topic ${topic}`" in CONCORD
     assert "application/vnd.webxdc+zip" in CONCORD
 

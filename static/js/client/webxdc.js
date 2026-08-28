@@ -1612,6 +1612,9 @@
      * phone has no room for anything else. */
     async function open(app, opts){
       if(!app || !app.url){ toast('that post has no app in it'); return; }
+      if(!app.uuid&&app.urlTopicMessageId&&window.PCConcord&&PCConcord.deriveWebxdcUrlTopic){
+        app=Object.assign({},app,{uuid:await PCConcord.deriveWebxdcUrlTopic(app.url,app.urlTopicMessageId)});
+      }
       const reset = !!(opts && opts.reset);
       const key = _liveKey(app);
       const prev = _live.get(key);

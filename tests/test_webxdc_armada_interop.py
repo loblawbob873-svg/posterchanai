@@ -11,7 +11,8 @@ def test_concord_cards_carry_protocol_and_armada_default_session():
     assert "{protocol,room:roomIdentity(room),channel:channelName||'general'" in CONCORD
     assert "`nip29|${room.relay}|${room.groupId}`" in CONCORD
     assert "`concord2|${channel.id}`" in CONCORD
-    assert "scope+'|webxdc'" in CONCORD
+    assert "webxdc-url-realtime-v1:${source}:${messageId}" in CONCORD
+    assert "scope+'|webxdc'" not in CONCORD
     # cardHtml serialises the whole launch object; the delegated click reparses it and passes it to open.
     assert 'data-xdc="${enc(JSON.stringify(app))}"' in WEBXDC
     assert "app = JSON.parse(card.dataset.xdc || 'null')" in WEBXDC
