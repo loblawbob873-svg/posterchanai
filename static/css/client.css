@@ -2716,7 +2716,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 @keyframes spin{to{transform:rotate(360deg)}}
 .badge{display:inline-grid;place-items:center;min-width:21px;height:21px;padding:0 6px;border-radius:11px;background:var(--neon);color:#fff;font-size:12px;font-weight:700;margin-inline-start:6px;box-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 
-.lightbox{position:fixed;inset:0;z-index:400;background:rgba(4,2,12,.92);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;cursor:zoom-out;animation:fade .15s}
+.lightbox{position:fixed;inset:0;z-index:100000;background:rgba(4,2,12,.92);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;cursor:zoom-out;animation:fade .15s}
 /* leave ~16vh at the bottom for the toolbar + counter so they sit BELOW the media (and clear of a
    video's own controls) instead of overlapping it */
 .lightbox img,.lightbox video{max-width:100%;max-height:84vh;width:auto;height:auto;border-radius:10px;border:1px solid var(--neon);box-shadow:0 0 40px rgba(var(--accent-rgb),.4)}

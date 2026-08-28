@@ -91,7 +91,8 @@ def test_texts_media_opens_in_the_shared_fullscreen_viewer():
     render = lightbox[lightbox.index("function openLightbox"):
                        lightbox.index("function _lbZoom")]
     assert "el.playsInline=true" in render
-    assert ".lightbox{position:fixed;inset:0" in css
+    assert ".lightbox{position:fixed;inset:0;z-index:100000" in css
+    assert "document.documentElement.appendChild(bg)" in render
     assert ".lightbox img,.lightbox video{max-width:100%;max-height:84vh;width:auto;height:auto" in css
     assert ".sms-att-open{" in css
 

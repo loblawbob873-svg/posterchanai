@@ -1505,6 +1505,7 @@
         return;
       }
       if(d.method === 'webxdc.sendUpdate'){
+        rtDiagnostic('send-update',this.app&&this.app.uuid||'');
         this.sendUpdate((d.params || {}).update, (d.params || {}).descr)
           .then(() => this.reply(id, null), (e) => this.fail(id, (e && e.message) || 'could not send'));
         return;
@@ -1596,6 +1597,7 @@
       }
       if(d.method === 'webxdc.setUpdateListener'){
         const from = Number((d.params || {}).serial) || 0;
+        rtDiagnostic('set-update-listener',(this.app&&this.app.uuid||'')+' '+from);
         if(this.listening){
           // A second call is undefined behaviour per the spec; replaying from the given serial is the
           // least surprising thing to do with it. It rewinds the delivered mark, which is the ONE

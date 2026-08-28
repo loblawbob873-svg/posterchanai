@@ -32765,7 +32765,11 @@
     }
     render();
     bg.onclick=(e)=>{ if(e.target===bg) close(); };   // tap the backdrop to close too
-    document.body.appendChild(bg); }
+    /* A desktop app surface can itself establish a stacking/visibility context. Mounting this as a
+     * child of body then records a successful image click while drawing the viewer behind the OS
+     * window. A direct documentElement child is the top-level overlay layer on classic, mobile and
+     * PosterChanOS alike. */
+    document.documentElement.appendChild(bg); }
   // Continuous zoom + pan for a lightbox <img>. scale=1 is the fitted view (CSS max-width/height); we
   // transform ABOVE that, so even a small, low-res post magnifies (the old toggle only went to natural
   // size — useless when natural < fitted). Wheel/pinch zoom toward the cursor, drag/one-finger to pan,

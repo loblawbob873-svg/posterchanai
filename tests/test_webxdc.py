@@ -353,6 +353,11 @@ class HandAssembledJavaScript(unittest.TestCase):
         self.assertIn("'window.addEventListener('", src)
         self.assertIn("window\\.parent\\.__webxdcRealtimeChannel", src)
         self.assertIn("'window.__webxdcRealtimeChannel'", src)
+
+    def test_static_api_calls_are_visible_in_runtime_diagnostics(self):
+        src = WEBXDC_JS.read_text()
+        self.assertIn("rtDiagnostic('send-update'", src)
+        self.assertIn("rtDiagnostic('set-update-listener'", src)
     def test_the_blob_fallback_shim_parses(self):
         """It is an ARRAY OF STRINGS joined with newlines, so a missing comma or an unbalanced quote
         is a runtime surprise inside somebody else's app rather than a build error here."""
