@@ -500,6 +500,31 @@ def stop_http_proxy():
 _proxy_process: Optional[subprocess.Popen] = None
 
 
+def _wait_proxy_listener(process: subprocess.Popen, host: str, port: int,
+                         timeout: float = 10.0) -> None:
+    """Do not report a booted proxy until its child owns the configured TCP listener.
+
+    Popen success only proves fork/exec.  Bind failures happen in the child's asyncio loop a moment
+    later, which previously left the role process healthy forever with nothing on :8118.  Requiring
+    both a live child and a connectable socket makes systemd's Restart=always retry the whole role.
+    """
+    deadline = time.monotonic() + max(0.1, float(timeout))
+    connect_host = "127.0.0.1" if str(host) in ("", "0.0.0.0", "::") else str(host)
+    last_error = None
+    while time.monotonic() < deadline:
+        code = process.poll()
+        if code is not None:
+            raise RuntimeError(f"HTTP proxy exited before readiness (status {code})")
+        try:
+            with socket.create_connection((connect_host, int(port)), timeout=0.25):
+                if process.poll() is None:
+                    return
+        except OSError as exc:
+            last_error = exc
+        time.sleep(0.05)
+    raise RuntimeError(f"HTTP proxy did not listen on {connect_host}:{port}: {last_error}")
+
+
 def start_http_proxy_process(
     listen_host: str = "127.0.0.1",
     listen_port: int = 8118,
@@ -523,10 +548,27 @@ def start_http_proxy_process(
     if fallback_port:
         argv += ["--fallback-port", str(fallback_port)]
     _proxy_process = subprocess.Popen(argv)
+    try:
+        _wait_proxy_listener(_proxy_process, listen_host, listen_port)
+    except Exception:
+        try:
+            if _proxy_process.poll() is None:
+                _proxy_process.terminate()
+                _proxy_process.wait(timeout=2)
+        except Exception:
+            try: _proxy_process.kill()
+            except Exception: pass
+        _proxy_process = None
+        raise
     logger.info(f"HTTP proxy subprocess started (pid {_proxy_process.pid}) on "
                 f"{listen_host}:{listen_port} → SOCKS5 {socks_host}:[{ports_csv}]"
                 + (f" (+ direct-fallback listener on {fallback_port})" if fallback_port else ""))
     return _proxy_process
+
+
+def role_healthy() -> bool:
+    """Health contract consumed by role_runner after startup readiness has succeeded."""
+    return _proxy_process is not None and _proxy_process.poll() is None
 
 
 def stop_http_proxy_process():

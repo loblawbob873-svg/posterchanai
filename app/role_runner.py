@@ -123,7 +123,24 @@ def run_role(role: str) -> int:
 
     signal.signal(signal.SIGTERM, _sig)
     signal.signal(signal.SIGINT, _sig)
-    stop.wait()
+    unhealthy = False
+    while not stop.wait(1.0):
+        # Optional service-specific liveness contract. Most roles supervise internally; the proxy
+        # is a child process and must make its parent's systemd unit fail when that child disappears.
+        for label, module, _stop_fn in started:
+            try:
+                import importlib
+                check = getattr(importlib.import_module(module), "role_healthy", None)
+                if check is not None and not check():
+                    logger.error("[role] %s became unhealthy — exiting so systemd restarts it", label)
+                    unhealthy = True
+                    stop.set()
+                    break
+            except Exception as e:
+                logger.error("[role] health check failed for %s: %s", label, e, exc_info=True)
+                unhealthy = True
+                stop.set()
+                break
 
     for label, module, stop_fn in reversed(started):
         try:
@@ -132,4 +149,4 @@ def run_role(role: str) -> int:
             logger.info("[role] stopped %s", label)
         except Exception as e:
             logger.warning("[role] error stopping %s: %s", label, e)
-    return 0
+    return 1 if unhealthy else 0

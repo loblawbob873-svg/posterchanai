@@ -403,6 +403,56 @@ class ProxyBootDefaults(unittest.TestCase):
         self.assertIn("Wants=posterchanai-tor.service", template)
         self.assertIn("echo 'Wants=posterchanai-tor.service'", installer)
 
+    def test_proxy_readiness_rejects_a_child_that_exits_before_bind(self):
+        from app.services import http_proxy_service as proxy
+
+        child = mock.Mock()
+        child.poll.return_value = 98
+        with self.assertRaisesRegex(RuntimeError, "before readiness"):
+            proxy._wait_proxy_listener(child, "127.0.0.1", 8118, timeout=0.1)
+
+    def test_proxy_readiness_requires_the_configured_listener(self):
+        from app.services import http_proxy_service as proxy
+
+        child = mock.Mock()
+        child.poll.return_value = None
+        clock = iter((0.0, 0.0, 0.2, 0.2))
+        with mock.patch.object(proxy.time, "monotonic", side_effect=lambda: next(clock)), \
+             mock.patch.object(proxy.time, "sleep"), \
+             mock.patch.object(proxy.socket, "create_connection",
+                               side_effect=ConnectionRefusedError("not listening")):
+            with self.assertRaisesRegex(RuntimeError, "did not listen"):
+                proxy._wait_proxy_listener(child, "127.0.0.1", 8118, timeout=0.1)
+
+    def test_failed_readiness_cleans_child_and_allows_systemd_retry(self):
+        from app.services import http_proxy_service as proxy
+
+        child = mock.Mock()
+        child.poll.return_value = None
+        with mock.patch.object(proxy.subprocess, "Popen", return_value=child), \
+             mock.patch.object(proxy, "_wait_proxy_listener", side_effect=RuntimeError("bind failed")):
+            with self.assertRaisesRegex(RuntimeError, "bind failed"):
+                proxy.start_http_proxy_process()
+        child.terminate.assert_called_once()
+        child.wait.assert_called_once_with(timeout=2)
+        self.assertIsNone(proxy._proxy_process)
+
+    def test_role_runner_monitors_a_started_child_after_readiness(self):
+        from app import role_runner
+
+        src = open(role_runner.__file__, encoding="utf-8").read()
+        self.assertIn('getattr(importlib.import_module(module), "role_healthy", None)', src)
+        self.assertIn("return 1 if unhealthy else 0", src)
+        from app.services import http_proxy_service as proxy
+        child = mock.Mock()
+        child.poll.side_effect = (None, 1)
+        proxy._proxy_process = child
+        try:
+            self.assertTrue(proxy.role_healthy())
+            self.assertFalse(proxy.role_healthy())
+        finally:
+            proxy._proxy_process = None
+
 
 if __name__ == "__main__":
     unittest.main()
