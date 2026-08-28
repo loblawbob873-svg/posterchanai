@@ -1305,7 +1305,15 @@
               const ev = NT.finalizeEvent({ kind: KIND_REALTIME, content: payload,
                                             tags: [['i', this.app.uuid]],
                                             created_at: Math.floor(Date.now() / 1000) }, this.rtKey());
-              Relay.publishFast(ev);
+              /* To EVERY open relay, not one. We listen on the whole pool but used to send to a
+               * single socket, so a player was heard only if their one relay happened to be in the
+               * other's pool — and 20932 is ephemeral, so nothing stores or forwards it afterwards.
+               * The count is checked because a dropped packet is otherwise invisible: publishFast
+               * returned false into nothing, which is a lobby that never forms and no error. */
+              const sent = Relay.publishFastAll ? Relay.publishFastAll(ev)
+                                                : (Relay.publishFast(ev) ? 1 : 0);
+              if(!sent){ if(!this._rtDropped){ this._rtDropped = 1; rtDiagnostic('rt-send-dropped', this.app.uuid + ' no open relay'); } }
+              else if(!this._rtSent){ this._rtSent = 1; rtDiagnostic('rt-first-send', this.app.uuid + ' to ' + sent + ' relay(s)'); }
             }
           }catch(e){
             /* Realtime is best-effort to the app API, but it must not be invisible to us. A relay

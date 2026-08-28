@@ -139,3 +139,52 @@ def test_with_nothing_connected_it_reports_the_failure():
     """ % {"dead": json.dumps(DEAD), "pkt": PACKET})
     assert r["ok"] is False
     assert r["landed"] == []
+
+
+def test_a_realtime_packet_reaches_every_open_relay_not_just_one():
+    """TWO PLAYERS WHOSE POOLS ONLY PARTLY OVERLAP MUST STILL MEET.
+
+    A subscription is placed on the WHOLE pool, but the send picked ONE socket — so a packet was
+    heard only if the sender's single relay happened to be in the receiver's pool. One player on the
+    instance's own relay and one who enabled their own list broadcast into relays the other never
+    reads, and because kind 20932 is EPHEMERAL nothing stores it or forwards it on. Both screens look
+    perfectly healthy and the lobby never forms.
+    """
+    r = _run("""
+        Relay.configure({ urls: [%(a)s, %(b)s], verify: false });
+        await sleep(120);
+        const n = Relay.publishFastAll(%(pkt)s);
+        out({ n, landed: landed('pkt1').sort() });
+    """ % {"a": json.dumps(LIVE_A), "b": json.dumps(LIVE_B), "pkt": PACKET})
+    assert r["n"] == 2, r
+    assert r["landed"] == sorted([LIVE_A, LIVE_B]), r
+
+
+def test_the_fan_out_is_bounded_and_starts_with_the_primary():
+    """The single-relay rule existed for a reason — a moving player sends 20-30 packets a second, and
+    fanning those across a ten-relay pool is real upstream traffic. So the fan-out is capped, and the
+    primary (the relay two default clients share) is never the one dropped by the cap."""
+    r = _run("""
+        Relay.configure({ urls: ['wss://p-one/', 'wss://p-two/', 'wss://p-three/',
+                                 'wss://p-four/', 'wss://p-five/'], verify: false });
+        await sleep(120);
+        const n = Relay.publishFastAll(%(pkt)s, { max: 3 });
+        out({ n, landed: landed('pkt1') });
+    """ % {"pkt": PACKET})
+    assert r["n"] == 3, r
+    assert len(r["landed"]) == 3, r
+    assert r["landed"][0] == "wss://p-one/", f"the primary must be sent to first: {r}"
+
+
+def test_a_dead_first_relay_does_not_cost_the_others():
+    """The reconnecting-primary case, for the fan-out: a socket that is down keeps its entry in the
+    pool for the whole session, so it must be skipped rather than counted."""
+    r = _run("""
+        Relay.configure({ urls: [%(dead)s, %(a)s, %(b)s], verify: false });
+        await sleep(120);
+        const n = Relay.publishFastAll(%(pkt)s);
+        out({ n, landed: landed('pkt1').sort() });
+    """ % {"dead": json.dumps(DEAD), "a": json.dumps(LIVE_A), "b": json.dumps(LIVE_B),
+           "pkt": PACKET})
+    assert r["n"] == 2, r
+    assert r["landed"] == sorted([LIVE_A, LIVE_B]), r

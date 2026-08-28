@@ -595,6 +595,35 @@
       c._send(['EVENT', event]);
       return true;
     },
+    /* SENDING TO ONE RELAY WHILE LISTENING ON ALL OF THEM IS WHY TWO PLAYERS NEVER MEET.
+     *
+     * A subscription is placed on the WHOLE pool; publishFast picks a SINGLE socket (the caller's,
+     * else the primary, else any). So a packet is heard only if the sender's one relay happens to be
+     * in the receiver's pool. Two people whose lists merely START with different hosts — one on the
+     * instance's relay, one who enabled their own — broadcast into relays the other never reads, and
+     * both screens look perfectly healthy while nothing arrives. Kind 20932 is EPHEMERAL: no relay
+     * stores it and no relay forwards it onward, so there is no second chance.
+     *
+     * Bounded on purpose. The single-relay rule existed because a moving player sends 20-30 packets
+     * a second and fanning those across somebody's ten-relay pool is real upstream traffic; `max`
+     * keeps that at a small multiple while making the common two-or-three-relay case simply work.
+     * The primary goes first so the relay both default clients share is never the one dropped.
+     * Returns how many sockets took it — 0 means the packet went nowhere, which the caller must not
+     * discard silently. */
+    publishFastAll(event, { max = 4 } = {}){
+      const up = (c) => !!(c && c.ws && c.ws.readyState === 1);
+      const seen = new Set();
+      const order = [];
+      const primary = this._conns.get(this.url);
+      if (up(primary)) { order.push(primary); seen.add(primary); }
+      for (const c of this._conns.values()){
+        if (order.length >= max) break;
+        if (up(c) && !seen.has(c)){ order.push(c); seen.add(c); }
+      }
+      let n = 0;
+      for (const c of order){ try{ c._send(['EVENT', event]); n++; }catch(_){} }
+      return n;
+    },
     /* Send once to an OPEN managed socket that is actually one of `urls`. Room-scoped realtime
      * traffic must not fall back to an unrelated account relay: Armada is listening on the room's
      * relay set, not whichever socket happens to be first in ours. */
