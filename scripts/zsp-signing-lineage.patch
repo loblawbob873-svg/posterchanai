@@ -31,3 +31,35 @@ index 17de8b3..e180fd7 100644
  
  	return &nostr.Event{
  		Kind:      KindSoftwareAsset,
+diff --git a/internal/nostr/relay.go b/internal/nostr/relay.go
+index 3b27f03..6aa220a 100644
+--- a/internal/nostr/relay.go
++++ b/internal/nostr/relay.go
+@@ -97,10 +97,23 @@ func (p *Publisher) publishToRelay(ctx context.Context, url string, event *nostr
+ 	if err != nil {
+ 		// Check if this is a duplicate error (event already exists)
+ 		if isDuplicateError(err) {
+-			result.Success = true
+-			result.IsDuplicate = true
+-			result.Error = err // Keep error for informational purposes
+-			return result
++			// A duplicate acknowledgement is only success if the event can actually
++			// be fetched. relay.zapstore.dev has returned "already exists" for an
++			// asset that it did not retain, leaving the release's e-tag dangling.
++			// Retry the read briefly for relays whose index trails their write path.
++			filter := nostr.Filter{IDs: []string{event.ID}, Limit: 1}
++			for attempt := 0; attempt < 3; attempt++ {
++				events, queryErr := relay.QuerySync(ctx, filter)
++				if queryErr == nil && len(events) > 0 {
++					result.Success = true
++					result.IsDuplicate = true
++					result.Error = err
++					return result
++				}
++				time.Sleep(time.Second)
++			}
++			result.Error = fmt.Errorf("relay reported duplicate but event %s cannot be retrieved", event.ID)
++			return result
+ 		}
+ 		result.Error = fmt.Errorf("failed to publish: %w", err)
+ 		return result
