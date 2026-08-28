@@ -20,6 +20,20 @@
     for(const ev of batches.flat())if(ev&&ev.id)byId.set(ev.id,ev);
     return [...byId.values()];
   }
+  function envelopeCacheKey(loadKey,stream){return String(loadKey||'')+':'+String(stream||'control');}
+  function mergeEnvelopes(...groups){const byId=new Map();for(const ev of groups.flat())if(ev&&ev.id)byId.set(ev.id,ev);return [...byId.values()];}
+  async function cachedEnvelopes(key){try{return window.PCConcordCache?await window.PCConcordCache.get(key):[];}catch(e){console.warn('Concord cache read failed',e);return [];}}
+  async function cacheEnvelopes(key,events){try{if(window.PCConcordCache&&events&&events.length)await window.PCConcordCache.put(key,events);}catch(e){console.warn('Concord cache write failed',e);}}
+  async function queryEnvelopeHistory(p,relays,authors,cached=[]){
+    let all=mergeEnvelopes(cached),until=null;
+    for(let page=0;page<6&&(page===0||all.length<5000);page++){
+      const filter={kinds:[1059],authors,limit:1000};if(until!=null)filter.until=until;
+      const batch=await cordQuery(p,relays,[filter],{timeout:10000,max:8});
+      const merged=mergeEnvelopes(all,batch),oldest=batch.reduce((n,event)=>Math.min(n,Number(event.created_at)||n),Infinity);
+      all=merged;if(batch.length<1000||!Number.isFinite(oldest)||oldest<=0||until===oldest-1)break;until=oldest-1;
+    }
+    return all.sort((a,b)=>(Number(a.created_at)||0)-(Number(b.created_at)||0)).slice(-5000);
+  }
   const state={ community:null, channel:null };
   let replyTarget=null, reactionTarget=null, mobileChatOpen=false, mobileDrawerOpen=false, discoveryOpen=false;
   let discovered=[], discoveryStarted=false, discoveryLoaded=false, membershipBusy=false, membershipRetryTimer=null;
@@ -157,8 +171,11 @@
     }
     return [...byId.values()];
   }
-  function testMessages(id){ try{ const v=JSON.parse(localStorage.getItem('pc.concord.test.'+id)||'[]'); return uniqueMessages(v); }catch(_){ return []; } }
-  function saveTestMessages(id,v){ try{ localStorage.setItem('pc.concord.test.'+id,JSON.stringify(uniqueMessages(v).slice(-200))); }catch(_){} }
+  const remoteMessages=new Map(),remoteStoreIds=new Set();
+  function testMessages(id){ if(remoteMessages.has(id))return uniqueMessages(remoteMessages.get(id));try{ const v=JSON.parse(localStorage.getItem('pc.concord.test.'+id)||'[]'); return uniqueMessages(v); }catch(_){ return []; } }
+  function markRemoteStore(id){if(!remoteMessages.has(id))remoteMessages.set(id,testMessages(id));remoteStoreIds.add(id);try{localStorage.removeItem('pc.concord.test.'+id);}catch(_){} }
+  function saveTestMessages(id,v){const clean=uniqueMessages(v);if(remoteStoreIds.has(id)){remoteMessages.set(id,clean.slice(-5000));try{localStorage.removeItem('pc.concord.test.'+id);}catch(_){}return;}try{localStorage.setItem('pc.concord.test.'+id,JSON.stringify(clean.slice(-200)));}catch(_){} }
+  async function clearRoomCache(room){const loadKey=room&&(room.communityId||room.naddr);if(!loadKey)return;try{if(window.PCConcordCache)await window.PCConcordCache.dropRoom(loadKey);}catch(e){console.warn('Concord room cache cleanup failed',e);}for(const channel of channelsOf(room)){const id=channelStoreId(room,channel.name);remoteMessages.delete(id);remoteStoreIds.delete(id);try{localStorage.removeItem('pc.concord.test.'+id);}catch(_){}}for(const id of [...remoteMessages.keys()])if(room.naddr&&id.startsWith(room.naddr)){remoteMessages.delete(id);remoteStoreIds.delete(id);}const icon=roomIconRefs.get(loadKey);if(icon&&/^blob:/i.test(String(icon.url||'')))try{URL.revokeObjectURL(icon.url);}catch(_){}roomIconRefs.delete(loadKey);}
   function pendingEchoMatch(messages,remote){
     const candidates=(messages||[]).filter(m=>m&&m.pending&&String(m.pubkey||'')===String(remote&&remote.pubkey||'')&&String(m.text||'')===String(remote&&remote.text||'')&&Number(m.kind||9)===Number(remote&&remote.kind||9)).map(m=>({message:m,gap:Math.abs(Number(m.at||0)-Number(remote&&remote.at||0))})).filter(x=>x.gap<120000).sort((a,b)=>a.gap-b.gap);
     if(!candidates.length)return null;
@@ -347,12 +364,13 @@
   function hexBytes(s){ const h=String(s||''); if(!/^[0-9a-f]+$/i.test(h)||h.length%2)throw new Error('invalid encrypted image key'); return new Uint8Array(h.match(/../g).map(x=>parseInt(x,16))); }
   function bytesHex(a){ return [...new Uint8Array(a)].map(x=>x.toString(16).padStart(2,'0')).join(''); }
   function imageMime(a){ return a[0]===0x89&&a[1]===0x50?'image/png':a[0]===0xff&&a[1]===0xd8?'image/jpeg':a[0]===0x47&&a[1]===0x49?'image/gif':a[0]===0x52&&a[1]===0x49&&a[8]===0x57?'image/webp':'image/*'; }
-  async function decryptImagePointer(pointer){
+  async function decryptImagePointer(pointer,loadKey,ref){
+    try{const cached=window.PCConcordCache&&await window.PCConcordCache.getIcon(loadKey,ref);if(cached)return URL.createObjectURL(new Blob([cached.bytes],{type:cached.mime||'image/*'}));}catch(e){console.warn('Concord icon cache read failed',e);}
     const res=await fetch(pointer.url); if(!res.ok)throw new Error('community icon download failed');
     const key=await crypto.subtle.importKey('raw',hexBytes(pointer.key),'AES-GCM',false,['decrypt']);
     const plain=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:hexBytes(pointer.nonce)},key,await res.arrayBuffer()));
     const hash=bytesHex(await crypto.subtle.digest('SHA-256',plain)); if(hash!==String(pointer.hash).toLowerCase())throw new Error('community icon failed integrity check');
-    return URL.createObjectURL(new Blob([plain],{type:imageMime(plain)}));
+    const mime=imageMime(plain);try{if(window.PCConcordCache)await window.PCConcordCache.putIcon(loadKey,ref,plain,mime);}catch(e){console.warn('Concord icon cache write failed',e);}return URL.createObjectURL(new Blob([plain],{type:mime}));
   }
   async function applyRoomIconMetadata(room,info,loadKey){
     if(!room||!info||!Object.prototype.hasOwnProperty.call(info,'icon'))return false;
@@ -360,7 +378,8 @@
     const cached=roomIconRefs.get(loadKey);
     if(cached&&cached.ref===ref)return false;
     try{
-      const icon=value?(typeof value==='string'?value:await decryptImagePointer(value)):'';
+      const icon=value?(typeof value==='string'?value:await decryptImagePointer(value,loadKey,ref)):'';
+      if(cached&&cached.url&&/^blob:/i.test(cached.url)&&cached.url!==icon)try{URL.revokeObjectURL(cached.url);}catch(_){}
       roomIconRefs.set(loadKey,{ref,url:icon});
       const before=JSON.stringify([room.icon,room.iconPointer]);
       if(value&&typeof value==='object'){room.iconPointer=value;if(/^blob:/i.test(String(room.icon||'')))room.icon='';}
@@ -623,27 +642,30 @@
   }
   async function hydrateRoomStreams(p,index,expectedIdentity=''){
     const rooms=saved(),room=rooms[index],reader=window.PosterCordReader,bundle=room&&room.cord&&room.cord.bundle;
-    if(!room||!bundle||!reader||!p.relayQueryFrom)return;
+    if(!room||!bundle||!reader)return;
     const loadKey=room.communityId||room.naddr; if(roomLoads.has(loadKey))return roomLoads.get(loadKey);
     const job=(async()=>{
       const seed=reader.inspectControl(bundle,[]), relays=[...new Set([...(bundle.relays||[]),...CORD_RELAYS])].slice(0,8);
-      const controlWraps=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8});
-      const info=reader.inspectControl(bundle,controlWraps||[]);
-      roomControls.set(loadKey,controlWraps||[]);
-      room.name=info.name||room.name; room.description=info.description||room.description;
-      room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];
-      await applyRoomIconMetadata(room,info,loadKey);
-      const hydratedChannels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);
-      if(!hydratedChannels.length)throw new Error('the control stream returned no readable channels');
-      room.channels=hydratedChannels;
-      rooms[index]=room; save(rooms);
-      for(const channel of room.channels){
-        const wraps=await cordQuery(p,relays,[{kinds:[1059],authors:channel.streamPubkeys,limit:1000}],{timeout:10000,max:8});
+      const controlKey=envelopeCacheKey(loadKey,'control');
+      let controlWraps=await cachedEnvelopes(controlKey);
+      const applyControl=async wraps=>{const info=reader.inspectControl(bundle,wraps||[]);roomControls.set(loadKey,wraps||[]);room.name=info.name||room.name;room.description=info.description||room.description;room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];await applyRoomIconMetadata(room,info,loadKey);const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);if(channels.length)room.channels=channels;for(const channel of room.channels||[])markRemoteStore(channelStoreId(room,channel.name));rooms[index]=room;save(rooms);return channels.length;};
+      const applyChannel=async(channel,wraps)=>{
         const opened=await reader.inspectChat(bundle,controlWraps||[],channel.id,wraps||[]);
         const reactions=new Map(opened.reactions||[]),reactionIds=new Map(opened.reactionIds||[]),reactionUrls=new Map(opened.reactionUrls||[]),msgs=(opened.messages||[]).map(m=>{ const pr=p.profOf?p.profOf(m.pubkey):{},rs={},ri={},ru={}; for(const [emoji,people] of reactions.get(m.id)||[])rs[emoji]=people;for(const [emoji,entries] of reactionIds.get(m.id)||[])ri[emoji]=Object.fromEntries(entries);for(const [emoji,url] of reactionUrls.get(m.id)||[])ru[emoji]=url; return {id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:m.text,at:m.at,kind:m.kind,tags:m.tags||[],reactions:rs,reactionIds:ri,reactionUrls:ru,remote:true}; });
         const msgById=new Map(msgs.map(m=>[m.id,m])); for(const m of msgs){if(m.kind!==1111)continue;const parentId=((m.tags||[]).find(t=>t[0]==='e')||[])[1],parent=msgById.get(parentId);if(parent)m.reply={id:parent.id,by:parent.by,text:parent.text};}
-        const storeId=channelStoreId(room,channel.name),prior=testMessages(storeId);
+        const storeId=channelStoreId(room,channel.name);markRemoteStore(storeId);const prior=testMessages(storeId);
         saveTestMessages(storeId,mergeRelayMessages(prior,msgs).sort((a,b)=>Number(a.at)-Number(b.at)));
+      };
+      /* Paint the encrypted on-device copy before opening sockets. This is the offline/reload path,
+       * and also prevents relay latency from looking like an empty room. */
+      if(controlWraps.length){await applyControl(controlWraps);for(const channel of room.channels||[]){const wraps=await cachedEnvelopes(envelopeCacheKey(loadKey,channel.id));if(wraps.length)await applyChannel(channel,wraps);}if(state.community===index)render();}
+      const completeControl=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,controlWraps),fetchedControl=completeControl.filter(ev=>!controlWraps.some(old=>old.id===ev.id));
+      controlWraps=completeControl;await cacheEnvelopes(controlKey,fetchedControl);
+      const channelCount=await applyControl(controlWraps);
+      if(!channelCount)throw new Error('the control stream returned no readable channels');
+      for(const channel of room.channels){
+        const cacheKey=envelopeCacheKey(loadKey,channel.id),cached=await cachedEnvelopes(cacheKey),wraps=await queryEnvelopeHistory(p,relays,channel.streamPubkeys,cached),fetched=wraps.filter(ev=>!cached.some(old=>old.id===ev.id));
+        await cacheEnvelopes(cacheKey,fetched);await applyChannel(channel,wraps);
       }
       room.cord.hydrated=true; rooms[index]=room; save(rooms);
       /* A relay answer may return after the reader chose another community. Persisting the fetched
@@ -660,14 +682,15 @@
     const channel=(room.channels||[]).find(c=>c.name===channelName); if(!channel||!channel.id)throw new Error('channel key is unavailable');
     const loadKey=room.communityId||room.naddr,relays=[...new Set([...(bundle.relays||[]),...CORD_RELAYS])].slice(0,8);
     let controlWraps=roomControls.get(loadKey);
-    if(!controlWraps){ const seed=reader.inspectControl(bundle,[]); controlWraps=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8}); roomControls.set(loadKey,controlWraps||[]); }
+    if(!controlWraps){ const seed=reader.inspectControl(bundle,[]),key=envelopeCacheKey(loadKey,'control'),cached=await cachedEnvelopes(key);controlWraps=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,cached);await cacheEnvelopes(key,controlWraps.filter(ev=>!cached.some(old=>old.id===ev.id)));roomControls.set(loadKey,controlWraps||[]); }
     const made=await reader.createChatWrap(bundle,controlWraps||[],channel.id,text,viewer.pubkey,p.signTemplate,extraTags,kind);
     const accepted=await p.relayPublishTo(relays,made.wrap); if(!accepted)throw new Error('community relays rejected the message');
+    await cacheEnvelopes(envelopeCacheKey(loadKey,channel.id),[made.wrap]);
     return made;
   }
   async function refreshActiveChannel(p){
     if(liveBusy||state.community==null||!document.body.classList.contains('concord-view'))return; liveBusy=true;
-    try{ const rooms=saved(),room=rooms[state.community],channel=room&&(room.channels||[]).find(c=>c.name===(state.channel||'general')),bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader;if(!room||!channel||!bundle||!reader)return; const loadKey=room.communityId||room.naddr,controlWraps=roomControls.get(loadKey);if(!controlWraps)return; const relays=[...new Set([...(bundle.relays||[]),...CORD_RELAYS])].slice(0,8),storeId=channelStoreId(room,channel.name),prior=testMessages(storeId),since=Math.max(0,Math.floor((prior.reduce((n,m)=>Math.max(n,Number(m.at)||0),0)-60000)/1000)),wraps=await cordQuery(p,relays,[{kinds:[1059],authors:channel.streamPubkeys,since,limit:500}],{timeout:6000,max:8}),opened=await reader.inspectChat(bundle,controlWraps,channel.id,wraps||[]),incoming=(opened.messages||[]).map(m=>{const pr=p.profOf?p.profOf(m.pubkey):{};return {id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:m.text,at:m.at,kind:m.kind,tags:m.tags||[],reactions:{},remote:true};}),merged=mergeRelayMessages(prior,incoming),byId=new Map(merged.map(m=>[messageId(m),m])); let changed=JSON.stringify(merged)!==JSON.stringify(prior),urlGroups=new Map(opened.reactionUrls||[]); for(const [target,groups] of opened.reactions||[]){const m=byId.get(target);if(!m)continue;const next={},nextUrls={};for(const [emoji,people] of groups)next[emoji]=people;for(const [emoji,url] of urlGroups.get(target)||[])nextUrls[emoji]=url;if(JSON.stringify(m.reactions||{})!==JSON.stringify(next)||JSON.stringify(m.reactionUrls||{})!==JSON.stringify(nextUrls)){m.reactions=next;m.reactionUrls=nextUrls;changed=true;}} if(changed){preserveChatScroll(()=>{saveTestMessages(storeId,[...byId.values()].sort((a,b)=>Number(a.at)-Number(b.at)));render();});}
+    try{ const rooms=saved(),room=rooms[state.community],channel=room&&(room.channels||[]).find(c=>c.name===(state.channel||'general')),bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader;if(!room||!channel||!bundle||!reader)return; const loadKey=room.communityId||room.naddr,controlWraps=roomControls.get(loadKey);if(!controlWraps)return; const relays=[...new Set([...(bundle.relays||[]),...CORD_RELAYS])].slice(0,8),storeId=channelStoreId(room,channel.name),prior=testMessages(storeId),since=Math.max(0,Math.floor((prior.reduce((n,m)=>Math.max(n,Number(m.at)||0),0)-60000)/1000)),wraps=await cordQuery(p,relays,[{kinds:[1059],authors:channel.streamPubkeys,since,limit:500}],{timeout:6000,max:8});await cacheEnvelopes(envelopeCacheKey(loadKey,channel.id),wraps);const opened=await reader.inspectChat(bundle,controlWraps,channel.id,wraps||[]),incoming=(opened.messages||[]).map(m=>{const pr=p.profOf?p.profOf(m.pubkey):{};return {id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:m.text,at:m.at,kind:m.kind,tags:m.tags||[],reactions:{},remote:true};}),merged=mergeRelayMessages(prior,incoming),byId=new Map(merged.map(m=>[messageId(m),m])); let changed=JSON.stringify(merged)!==JSON.stringify(prior),urlGroups=new Map(opened.reactionUrls||[]); for(const [target,groups] of opened.reactions||[]){const m=byId.get(target);if(!m)continue;const next={},nextUrls={};for(const [emoji,people] of groups)next[emoji]=people;for(const [emoji,url] of urlGroups.get(target)||[])nextUrls[emoji]=url;if(JSON.stringify(m.reactions||{})!==JSON.stringify(next)||JSON.stringify(m.reactionUrls||{})!==JSON.stringify(nextUrls)){m.reactions=next;m.reactionUrls=nextUrls;changed=true;}} if(changed){preserveChatScroll(()=>{saveTestMessages(storeId,[...byId.values()].sort((a,b)=>Number(a.at)-Number(b.at)));render();});}
     }catch(e){console.warn('Concord live sync failed',e);}finally{liveBusy=false;}
   }
   async function refreshRoomMetadata(p){
@@ -681,9 +704,9 @@
       const selected=eligible[metadataCursor++%eligible.length],room=selected.room,bundle=room.cord.bundle,
         reader=window.PosterCordReader,loadKey=room.communityId||room.naddr,
         seed=reader.inspectControl(bundle,[]),relays=[...new Set([...(bundle.relays||[]),...CORD_RELAYS])].slice(0,8),
-        wraps=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:6000,max:8}),
+        cachedWraps=await cachedEnvelopes(envelopeCacheKey(loadKey,'control')),wraps=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,cachedWraps),freshWraps=wraps.filter(ev=>!cachedWraps.some(old=>old.id===ev.id)),
         info=reader.inspectControl(bundle,wraps||[]);
-      roomControls.set(loadKey,wraps||[]);
+      await cacheEnvelopes(envelopeCacheKey(loadKey,'control'),freshWraps);roomControls.set(loadKey,wraps||[]);
       let changed=false;
       const assign=(key,value)=>{if(value!==undefined&&JSON.stringify(room[key])!==JSON.stringify(value)){room[key]=value;changed=true;}};
       assign('name',info.name||room.name); assign('description',info.description===undefined?room.description:info.description);
@@ -877,7 +900,7 @@
     const copyLink=$('#cc-copy-link'); if(copyLink)copyLink.onclick=async()=>{ const a=saved(),room=a[state.community]; if(!room)return; if(room.url){ p.copyValue(room.url); return; } copyLink.disabled=true; try{ p.toast('upgrading this room to a public relay community…'); const priorMessages=testMessages(room.naddr), upgraded=await mintPublicRoom(p,room.name,room.icon); upgraded.description=room.description||''; a[state.community]=upgraded; save(a); if(priorMessages.length)saveTestMessages(upgraded.naddr,priorMessages); render(); p.copyValue(upgraded.url); p.toast('room upgraded — invite link copied'); }catch(e){ copyLink.disabled=false; p.toast('could not create invite: '+(e&&e.message||e)); } };
     const publishListing=$('#cc-publish-listing'); if(publishListing)publishListing.onclick=async()=>{ const room=saved()[state.community]; if(!room||!room.url||!room.cord||!Array.isArray(room.cord.events)){ p.toast('This is an old local sandbox; create a relay community to list it'); return; } publishListing.disabled=true; try{ p.toast('publishing to Armada relays…'); for(const ev of room.cord.events)await p.relayPublishTo(CORD_RELAYS,ev); const announcement=await p.publish(1,`${room.name}\n\n${room.url}`,[['t','concord'],['t','community']]); const accepted=await p.relayPublishTo(DISCOVER_RELAYS,announcement.ev); if(!accepted)throw new Error('Armada discovery relays rejected the listing'); p.toast('published to Armada Discover'); }catch(e){ p.toast('could not publish listing: '+(e&&e.message||e)); }finally{ publishListing.disabled=false; } };
     const settingsCancel=$('#cc-settings-cancel'); if(settingsCancel)settingsCancel.onclick=()=>$('#cc-settings-dialog').classList.add('hidden');
-    const leave=$('#cc-leave-community');if(leave)leave.onclick=async()=>{const initial=saved(),index=state.community,room=initial[index],leavingId=roomIdentity(room);if(!room||!leavingId)return;if(typeof window.confirm==='function'&&!window.confirm('Leave '+roomName(room,index)+'?'))return;leave.disabled=true;try{await leaveArmadaMembership(p,room);/* Signing and relay publication can take long enough for membership sync or navigation to change the list. Reload it and remove by durable identity, never by the stale numeric index captured above. */const latest=saved(),activeBefore=latest[state.community],activeId=roomIdentity(activeBefore),removed=removeCommunityByIdentity(latest,leavingId),rooms=removed.rooms;save(rooms);if(activeId===leavingId||!activeId){state.community=rooms.length?Math.min(Math.max(removed.index,0),rooms.length-1):null;state.channel=state.community==null?null:'general';mobileChatOpen=false;}else{const activeIndex=rooms.findIndex(item=>roomIdentity(item)===activeId);state.community=activeIndex>=0?activeIndex:(rooms.length?0:null);}if(state.community!=null)localStorage.setItem('pc.concord.active',String(state.community));else localStorage.removeItem('pc.concord.active');render();p.toast('community left');}catch(e){leave.disabled=false;p.toast('could not leave community: '+(e&&e.message||e));}};
+    const leave=$('#cc-leave-community');if(leave)leave.onclick=async()=>{const initial=saved(),index=state.community,room=initial[index],leavingId=roomIdentity(room);if(!room||!leavingId)return;if(typeof window.confirm==='function'&&!window.confirm('Leave '+roomName(room,index)+'?'))return;leave.disabled=true;try{await leaveArmadaMembership(p,room);/* Signing and relay publication can take long enough for membership sync or navigation to change the list. Reload it and remove by durable identity, never by the stale numeric index captured above. */const latest=saved(),activeBefore=latest[state.community],activeId=roomIdentity(activeBefore),removed=removeCommunityByIdentity(latest,leavingId),rooms=removed.rooms;save(rooms);await clearRoomCache(room);if(activeId===leavingId||!activeId){state.community=rooms.length?Math.min(Math.max(removed.index,0),rooms.length-1):null;state.channel=state.community==null?null:'general';mobileChatOpen=false;}else{const activeIndex=rooms.findIndex(item=>roomIdentity(item)===activeId);state.community=activeIndex>=0?activeIndex:(rooms.length?0:null);}if(state.community!=null)localStorage.setItem('pc.concord.active',String(state.community));else localStorage.removeItem('pc.concord.active');render();p.toast('community left');}catch(e){leave.disabled=false;p.toast('could not leave community: '+(e&&e.message||e));}};
     const settingsSave=$('#cc-settings-save'); if(settingsSave)settingsSave.onclick=async()=>{ const a=saved(),room=a[state.community]; if(!room)return; const description=String($('#cc-description-value').value||'').trim().slice(0,1000),icon=normalizeIcon($('#cc-settings-icon').value); settingsSave.disabled=true; try{ if(!room.local){const viewer=p.viewer?p.viewer():{},reader=window.PosterCordReader,bundle=room.cord&&room.cord.bundle,loadKey=room.communityId||room.naddr,relays=[...new Set([...(bundle&&bundle.relays||[]),...CORD_RELAYS])].slice(0,8);if(!reader||!reader.createMetadataWrap||!bundle)throw new Error('community profile is not ready');let wraps=roomControls.get(loadKey);if(!wraps){const seed=reader.inspectControl(bundle,[]);wraps=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8});}const made=await reader.createMetadataWrap(bundle,wraps||[],{name:room.name,description,icon},viewer.pubkey,p.signTemplate),accepted=await p.relayPublishTo(relays,made.wrap);if(!accepted)throw new Error('community relays rejected the profile update');roomControls.set(loadKey,[...(wraps||[]),made.wrap]);} room.description=description; room.icon=icon; if(!Array.isArray(room.channels))room.channels=[]; let channel=room.channels.find(c=>c.name===(state.channel||'general')); if(!channel){ channel={name:state.channel||'general'}; room.channels.push(channel); } channel.private=$('#cc-channel-visibility').value==='private'; save(a); render(); p.toast('community profile updated'); }catch(e){settingsSave.disabled=false;p.toast('community profile was not updated: '+(e&&e.message||e));} };
     const notify=$('#cc-notify'); if(notify)notify.onclick=async()=>{ const result=p.askOsNotify?await p.askOsNotify():'unsupported'; p.toast(result==='granted'?'community notifications enabled':result==='denied'?'notifications were denied':'notifications are unavailable here'); };
     const call=$('#cc-call'); if(call)call.onclick=()=>{ const room=saved()[state.community],viewerPk=p.viewer&&p.viewer().pubkey,peers=roomParticipants(room,viewerPk).filter(pk=>pk!==viewerPk); if(!peers.length){ p.toast('No other community members are available to call yet'); return; } p.startGroupCall(peers,false); };

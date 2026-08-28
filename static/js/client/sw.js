@@ -72,6 +72,7 @@ const SHELL = [
   '/static/js/client/concord.js',
   '/static/js/client/cord-protocol.js',
   '/static/js/client/cord-reader.js',
+  '/static/js/client/concord-cache.js',
   '/static/js/client/news.js',
   '/static/js/client/websearch.js',
   '/static/js/client/term.js',

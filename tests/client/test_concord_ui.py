@@ -193,7 +193,7 @@ def test_mobile_reopens_the_last_server_then_drills_into_a_channel_like_discord(
     assert "discoveryOpen=!rooms.length" in CONCORD
     assert "return channels.length?channels:[{name:'general',private:false}]" in CONCORD
     assert 'channelSectionsHtml(p,current,visibleChannels)' in CONCORD
-    assert 'room.channels=hydratedChannels' in CONCORD
+    assert 'if(channels.length)room.channels=channels' in CONCORD
     assert "if(room&&room.cord&&!room.cord.hydrated)" in CONCORD
     assert "await hydrateRoomStreams(p,state.community)" in CONCORD
     assert "if(state.community==null){ const rooms=saved(),wanted=Number(localStorage.getItem('pc.concord.active')" in CONCORD
@@ -242,8 +242,11 @@ def test_relay_echo_racing_optimistic_send_cannot_leave_two_messages():
     assert "if(candidates.length>1)return null" in CONCORD
     assert "Object.assign(pending,remote,{pending:false,remote:true})" in CONCORD
     assert "mergeRelayMessages(prior,incoming)" in CONCORD
-    assert "JSON.stringify(uniqueMessages(v).slice(-200))" in CONCORD, \
-        "the relay-before-publish race can still be persisted"
+    assert "JSON.stringify(clean.slice(-200))" in CONCORD, \
+        "local test-room relay races can still be persisted"
+    assert "remoteMessages.set(id,clean.slice(-5000))" in CONCORD
+    assert "localStorage.removeItem('pc.concord.test.'+id)" in CONCORD, \
+        "remote decrypted rumors must not remain as plaintext localStorage"
 
 
 def test_desktop_recovery_merges_armada_list_shards_and_retries_early_empty_queries():
@@ -414,7 +417,8 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert "lower.includes('@'+h)" not in CONCORD
     assert 'import_meta.env' not in CORD_READER
     assert 'CapacitorException' not in CORD_READER and 'registerPlugin' not in CORD_READER
-    assert 'await decryptImagePointer(value)' in CONCORD and "crypto.subtle.decrypt({name:'AES-GCM'" in CONCORD
+    assert 'await decryptImagePointer(value,loadKey,ref)' in CONCORD and "crypto.subtle.decrypt({name:'AES-GCM'" in CONCORD
+    assert 'await window.PCConcordCache.getIcon(loadKey,ref)' in CONCORD
     assert "search:'armada.buzz/invite'" in CONCORD and "search:'poster.place/invite'" in CONCORD
     assert 'data-cc-discover' in CONCORD and 'relaySubscribe:' in APP
     assert 'class="cc-message-avatar"' in CONCORD and '.cc-message-avatar' in CONCORD_CSS
@@ -515,7 +519,7 @@ def test_room_history_reads_pool_and_external_relays_without_erasing_cached_mess
     assert 'async function cordQuery(' in CONCORD
     assert 'if(p.relayQuery)jobs.push' in CONCORD
     assert 'if(p.relayQueryFrom)jobs.push' in CONCORD
-    assert 'const storeId=channelStoreId(room,channel.name),prior=testMessages(storeId)' in CONCORD
+    assert 'const storeId=channelStoreId(room,channel.name);markRemoteStore(storeId);const prior=testMessages(storeId)' in CONCORD
     assert 'mergeRelayMessages(prior,msgs)' in CONCORD
     assert 'since,limit:500' in CONCORD
 

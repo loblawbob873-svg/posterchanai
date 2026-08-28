@@ -182,7 +182,7 @@ const coldIconRoom={communityId:'icon-after-reload',name:'Cold icon',icon:'',ico
 data.set('pc.concord.invites',JSON.stringify([coldIconRoom]));
 const coldFirst=PCConcord.roomIcon({enc:String},coldIconRoom,0);
 if(coldFirst.includes('blob:'))throw new Error('cold community icon reused another room cache entry');
-await new Promise(resolve=>setTimeout(resolve,0));
+await new Promise(resolve=>setTimeout(resolve,20));
 const coldHydrated=PCConcord.roomIcon({enc:String},coldIconRoom,0);
 if(!coldHydrated.includes('blob:'))throw new Error('encrypted community icon did not rehydrate after reload/re-enter');
 const coldStored=JSON.parse(data.get('pc.concord.invites'))[0];
@@ -434,8 +434,10 @@ const afterJoin=JSON.parse(data.get('pc.concord.invites'));
 const joined=afterJoin.find(r=>r.communityId===JOIN_BUNDLE.community_id);
 if(!joined || !joined.cord?.hydrated || joined.icon!=='🛸' || joined.channels.length!==2)
   throw new Error('direct invite did not hydrate metadata and channels before completing: '+JSON.stringify({joined,rooms:afterJoin,toasts:calls.toasts.slice(-4)}));
-if(![...data.entries()].some(([key,value])=>key.startsWith('pc.concord.test.') && value.includes('joined history')))
-  throw new Error('direct invite did not hydrate room history before completing');
+if(!feed.innerHTML.includes('joined history'))
+  throw new Error('direct invite did not render room history before completing');
+if([...data.entries()].some(([key,value])=>key.startsWith('pc.concord.test.') && value.includes('joined history')))
+  throw new Error('remote decrypted history leaked into localStorage');
 if(!calls.toasts.some(x=>x==='community joined')) throw new Error('hydrated join never completed');
 
 // A relay/deferred callback can render after the user has opened Code. It must not own the shared
