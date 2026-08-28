@@ -7,6 +7,7 @@
   'use strict';
   const B32='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567',TRAILER=36,MAX_ADDR=2048;
   let nodePromise=null;
+  function diag(stage,detail){try{if(window.PCWebxdc&&PCWebxdc.rtDiagnostic)PCWebxdc.rtDiagnostic(stage,detail||'');else console.info('[webxdc realtime]',stage,detail||'');}catch(_){}}
   function decode32(s){
     if(!/^[A-Z2-7]{52}$/.test(String(s||'')))return null;
     let out=[],buf=0,bits=0;for(const c of s){buf=(buf<<5)|B32.indexOf(c);bits+=5;if(bits>=8){bits-=8;out.push((buf>>>bits)&255);}}
@@ -26,14 +27,18 @@
     return nodePromise;
   }
   async function join(topic,ctx,onMessage){
+    diag('iroh-start',topic);
     const topicBytes=decode32(topic);if(!topicBytes||topicBytes.length!==32)throw new Error('attachment has no interoperable Webxdc topic');
     if(!ctx||ctx.protocol!=='concord2'||!window.PCConcord)throw new Error('Iroh multiplayer is available in Concord rooms');
-    const node=await transport(),self=node.publicKeyHex(),key=hexBytes(self),latest=new Map();let dead=false,seq=0,off=null;
+    const node=await transport(),self=node.publicKeyHex(),key=hexBytes(self),latest=new Map();let dead=false,seq=0,off=null;diag('iroh-node',self.slice(0,16));
     await node.join(topicBytes,[],bytes=>{if(dead)return;const got=unframe(bytes);if(got&&got.sender!==self)onMessage(got.payload);},msg=>{try{console.debug('[webxdc] iroh:',msg);}catch(_){}});
+    diag('iroh-joined',topic);
     try{
-      off=await PCConcord.webxdcPeerSubscribe(ctx,row=>{if(dead)return;const sig=parseSignal(row,topic);if(!sig)return;const at=Number(row.at)||Number(row.created_at)*1000||0,prior=latest.get(row.pubkey);if(prior&&(prior.at>at||(prior.at===at&&prior.op==='left')))return;latest.set(row.pubkey,{at,op:sig.op});if(sig.op!=='ad')return;const addr=decodeAddr(sig.addr);if(!addr)return;try{if(JSON.parse(addr).id===self)return;}catch(_){return;}void node.addPeer(topicBytes,addr).catch(()=>{});});
+      off=await PCConcord.webxdcPeerSubscribe(ctx,row=>{if(dead)return;const sig=parseSignal(row,topic);if(!sig)return;const at=Number(row.at)||Number(row.created_at)*1000||0,prior=latest.get(row.pubkey);if(prior&&(prior.at>at||(prior.at===at&&prior.op==='left')))return;latest.set(row.pubkey,{at,op:sig.op});if(sig.op!=='ad')return;const addr=decodeAddr(sig.addr);if(!addr){diag('peer-address-invalid',row.pubkey||'');return;}try{if(JSON.parse(addr).id===self)return;}catch(_){return;}diag('peer-dial',row.pubkey||'');void node.addPeer(topicBytes,addr).then(()=>diag('peer-added',row.pubkey||'')).catch(e=>diag('peer-add-failed',e&&e.message||e));});
+      diag('peer-subscribed',topic);
       await PCConcord.webxdcPeerPublish(ctx,JSON.stringify({op:'ad',topic,addr:encodeAddr(node.nodeAddrJson())}),off);
-    }catch(e){try{node.leave(topicBytes);}catch(_){}throw e;}
+      diag('peer-advertised',topic);
+    }catch(e){diag('peer-setup-failed',e&&e.message||e);try{node.leave(topicBytes);}catch(_){}throw e;}
     return{
       send(data){if(dead)return;seq++;return node.send(topicBytes,frame(new Uint8Array(data),seq,key));},
       async leave(){if(dead)return;dead=true;try{await PCConcord.webxdcPeerPublish(ctx,JSON.stringify({op:'left',topic}),off);}catch(_){}try{off&&off();}catch(_){}try{node.leave(topicBytes);}catch(_){}}

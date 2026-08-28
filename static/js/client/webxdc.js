@@ -41,6 +41,8 @@
     const KIND_REALTIME = 20932;       // NIP-DC realtime data (EPHEMERAL: relays forward, store nothing)
     const MIME = 'application/x-webxdc';
     const MIME_VENDOR = 'application/vnd.webxdc+zip';
+    const _rtDiagnostics=[];
+    function rtDiagnostic(stage,detail){const row={at:Date.now(),stage:String(stage||''),detail:String(detail||'').slice(0,240)};_rtDiagnostics.push(row);if(_rtDiagnostics.length>80)_rtDiagnostics.shift();try{localStorage.setItem('pc_webxdc_rt_diag',JSON.stringify(_rtDiagnostics));}catch(_){}try{console.warn('[webxdc realtime]',row.stage,row.detail);}catch(_){}return row;}
     const base32Topic = (bytes) => { const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'; let out='',buf=0,bits=0; for(const b of bytes){buf=(buf<<8)|b;bits+=8;while(bits>=5){bits-=5;out+=alphabet[(buf>>>bits)&31];}} if(bits)out+=alphabet[(buf<<(5-bits))&31]; return out; };
     function canonicalXdcUrl(url){ const raw=String(url||''),lower=raw.toLowerCase(); for(let at=lower.lastIndexOf('.xdc');at>=0;at=lower.lastIndexOf('.xdc',at-1)){const next=raw[at+4];if(next===undefined||next==='?'||next==='#'||/\s/.test(next))return raw.slice(0,at+4);} return raw; }
     async function deriveUrlTopic(url,messageId){ const bytes=new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(`webxdc-url-realtime-v1:${canonicalXdcUrl(url)}:${messageId}`))); return base32Topic(bytes); }
@@ -504,6 +506,12 @@
       /* Do not let an app send until the messenger's relay listener exists. ioquake3 sends its
          host-election packets immediately after join; losing those makes both peers start servers. */
       rtReady = rpc('webxdc.rtJoin', {});
+      rtReady.catch(function(e){
+        send({ jsonrpc:'2.0', method:'webxdc.crash', params:{
+          message:'realtime channel could not start: '+String(e&&e.message||e||'unknown error'),
+          where:'joinRealtimeChannel'
+        }});
+      });
       var joined = true;
       return {
         setListener: function(cb){ if(!joined) throw new Error('Channel has been left.'); rtListener = cb; },
@@ -1494,6 +1502,7 @@
        * relay that does keep a few is not going to replay a minute of somebody else's movement into
        * a game that just started. */
       if(d.method === 'webxdc.rtJoin'){
+        rtDiagnostic('rpc-join',this.app&&this.app.uuid||'');
         if(this._rtJoinReady){
           this._rtJoinReady.then(()=>this.reply(id,null),e=>this.fail(id,(e&&e.message)||'realtime channel unavailable'));
           return;
@@ -1531,7 +1540,7 @@
                   if(!this.dead)this.post({jsonrpc:'2.0',method:'webxdc.realtime',params:{b64:rtB64(bytes)}});
                 });
                 this.rtSub=null;
-              }catch(e){this.rtSub=null;this.rtIroh=null;throw e;}
+              }catch(e){this.rtSub=null;this.rtIroh=null;rtDiagnostic('join-failed',e&&e.message||e);throw e;}
             }else if(this.transport&&window.PCConcord&&PCConcord.webxdcSubscribe){
               this.rtSub={pending:true};
               try{
@@ -2124,7 +2133,7 @@
      * receives. Every part of that path fails silently — a filter that matches nothing, a self-drop
      * that drops everybody, a base64 round trip that mangles high bytes — and none of it is visible
      * from either browser. See tests/test_webxdc.py::TwoPlayers. */
-    window.PCWebxdc = { open, appOf, cardHtml, attach, sheetOpen, closeSheet, deriveUrlTopic, mintTopic, canonicalXdcUrl,
+    window.PCWebxdc = { open, appOf, cardHtml, attach, sheetOpen, closeSheet, deriveUrlTopic, mintTopic, canonicalXdcUrl, rtDiagnostic, rtDiagnostics:()=>_rtDiagnostics.slice(),
                         // Games → Webxdc. `__gal` is the directory's own state, exposed so
                         // tests/test_webxdc_gallery.py can drive the merge/sort against real events.
                         gallery, __galLoad: galLoad, __galKey: _galKey, __galTile: galTile,

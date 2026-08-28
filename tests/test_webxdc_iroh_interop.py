@@ -46,3 +46,13 @@ def test_wasm_transport_is_shipped_not_optional_at_runtime():
     assert wasm.stat().st_size > 1_000_000
     assert "/static/vendor/webxdc-rt/webxdc_rt_bg.wasm" in js.read_text()
     assert '<script src="/static/js/client/webxdc-iroh.js?v={{ ver }}"></script>' in (ROOT / "templates/client.html").read_text()
+
+
+def test_realtime_startup_is_observable_instead_of_failing_silently():
+    iroh = (ROOT / "static/js/client/webxdc-iroh.js").read_text()
+    for stage in ("iroh-start", "iroh-node", "iroh-joined", "peer-subscribed", "peer-advertised", "peer-setup-failed"):
+        assert f"diag('{stage}'" in iroh
+    assert "rtDiagnostic('rpc-join'" in WEBXDC
+    assert "rtDiagnostic('join-failed'" in WEBXDC
+    assert "realtime channel could not start:" in WEBXDC
+    assert "rtDiagnostics:()=>_rtDiagnostics.slice()" in WEBXDC
