@@ -23,7 +23,7 @@ def test_signer_decrypt_and_authenticated_write_boundary():
     assert "pubkey:ME.pubkey" in app
     assert "room&&room.protocol==='nip29'?publishNip29Message" in concord
     assert "room.protocol!=='nip29'" in concord
-    assert "else if(loaded&&loaded.protocol==='nip29')await hydrateNip29Room" in concord
+    assert "else if(loaded&&loaded.protocol==='nip29'&&!loaded.nip29Hydrated)await hydrateNip29Room" in concord
     assert "exact=false" in relay and "exact || !this._conns.has(u)" in relay
     assert "...(p.relayUrls?p.relayUrls():[]),...CORD_RELAYS" in concord
     assert "for(const relay of membership.relays)" not in concord

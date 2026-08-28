@@ -25,6 +25,7 @@
   function envelopeCacheKey(loadKey,stream){return JSON.stringify([String(loadKey||''),String(stream||'control')]);}
   function mergeEnvelopes(...groups){const byId=new Map();for(const ev of groups.flat())if(ev&&ev.id)byId.set(ev.id,ev);return [...byId.values()];}
   async function cachedEnvelopes(key){try{return window.PCConcordCache?await window.PCConcordCache.get(key):[];}catch(e){console.warn('Concord cache read failed',e);return [];}}
+  async function cachedEnvelopePage(key,limit=300){try{if(!window.PCConcordCache)return[];if(window.PCConcordCache.page){const got=await window.PCConcordCache.page(key,{limit});return got&&Array.isArray(got.events)?got.events:[];}return await window.PCConcordCache.get(key);}catch(e){console.warn('Concord cache read failed',e);return[];}}
   async function cacheEnvelopes(key,events){try{if(window.PCConcordCache&&events&&events.length)await window.PCConcordCache.put(key,events);}catch(e){console.warn('Concord cache write failed',e);}}
   async function queryEnvelopeHistory(p,relays,authors,cached=[]){
     let all=mergeEnvelopes(cached),until=null;
@@ -39,16 +40,18 @@
   const state={ community:null, channel:null };
   let replyTarget=null, reactionTarget=null, mobileChatOpen=false, mobileDrawerOpen=false, discoveryOpen=false;
   let discovered=[], discoveryStarted=false, discoveryLoaded=false, membershipBusy=false, membershipRetryTimer=null;
+  let membershipViewer='';const membershipDocs=new Map();
   let nip29Busy=false,nip29RetryTimer=null;
   const discoveryIconLoads=new Set();
   const recoveredOwnedInvites=new Set();
   const roomLoads=new Map();
+  const roomLoadNotices=new Map();
   const roomControls=new Map();
   /* Blob URLs die with their renderer. Keep encrypted icon pointer identity in memory so a saved
    * room never suppresses re-decryption after the next browser/native-shell launch. */
   /* Durable storage keeps the encrypted pointer; only this renderer keeps its decrypted blob URL.
    * A blob: URL written to localStorage is guaranteed dead after reload. */
-  const roomIconRefs=new Map(),storedIconLoads=new Set();
+  const roomIconRefs=new Map(),storedIconLoads=new Set(),failedIconRefs=new Map();
   const pendingAttachments=new Map();
   /* A relay poll, profile/icon hydration or decrypted attachment can repaint the whole Concord
    * workspace while somebody is typing. The textarea is part of that workspace, so the browser
@@ -419,17 +422,22 @@
     const value=info.icon,ref=typeof value==='string'?value:JSON.stringify(value||null);
     const cached=roomIconRefs.get(loadKey);
     if(cached&&cached.ref===ref)return false;
+    const failed=failedIconRefs.get(loadKey);
+    if(failed&&failed.ref===ref&&Date.now()-failed.at<60000)return false;
     try{
       const icon=value?(typeof value==='string'?value:await decryptImagePointer(value,loadKey,ref)):'';
       if(cached&&cached.url&&/^blob:/i.test(cached.url)&&cached.url!==icon)try{URL.revokeObjectURL(cached.url);}catch(_){}
       roomIconRefs.set(loadKey,{ref,url:icon});
+      failedIconRefs.delete(loadKey);
       const before=JSON.stringify([room.icon,room.iconPointer]);
       if(value&&typeof value==='object'){room.iconPointer=value;if(/^blob:/i.test(String(room.icon||'')))room.icon='';}
       else{delete room.iconPointer;room.icon=icon;}
       return before!==JSON.stringify([room.icon,room.iconPointer]);
     }catch(error){
-      /* An icon is decoration, never a prerequisite for channels or history. Do not remember the
-       * failed pointer so the metadata rotation retries it, but let hydration continue immediately. */
+      /* An icon is decoration, never a prerequisite for channels or history. Back off this exact
+       * broken pointer for a minute: metadata refresh runs every four seconds, and retrying an
+       * invalid encrypted value on every pass starves message work and floods Android's renderer. */
+      failedIconRefs.set(loadKey,{ref,at:Date.now()});
       console.warn('Concord community icon could not be loaded',error);
       return false;
     }
@@ -618,6 +626,22 @@
       priors:(c.priors||[]).map(prior=>({...prior,key:cordListHex(prior&&prior.key)}))}));
     return {...m,community_id:cordListHex(communityId),owner:cordListHex(m.owner),owner_salt:cordListHex(m.owner_salt),community_root:cordListHex(m.community_root),control_pk:m.control_pk?cordListHex(m.control_pk):m.control_pk,control_root:m.control_root?cordListHex(m.control_root):m.control_root,held_roots:held,channels};
   }
+  /* Armada's membership `current` value is a control snapshot, while the invite-derived bundle
+   * contains channel secrets and older roots needed to decrypt history.  Refreshing membership must
+   * update newer scalar material without throwing away those join-only fields. */
+  function mergeArmadaBundle(prior,current){
+    const old=prior&&typeof prior==='object'?prior:{},fresh=current&&typeof current==='object'?current:{},next={...old};
+    for(const [key,value] of Object.entries(fresh))if(value!==undefined&&value!==null&&value!=='')next[key]=value;
+    next.channels=Array.isArray(fresh.channels)&&fresh.channels.length?fresh.channels:(Array.isArray(old.channels)?old.channels:[]);
+    next.held_roots=Array.isArray(fresh.held_roots)&&fresh.held_roots.length?fresh.held_roots:(Array.isArray(old.held_roots)?old.held_roots:[]);
+    next.relays=[...new Set([...(Array.isArray(fresh.relays)?fresh.relays:[]),...(Array.isArray(old.relays)?old.relays:[])])];
+    return next;
+  }
+  function sameJson(a,b){try{return JSON.stringify(a)===JSON.stringify(b);}catch(_){return false;}}
+  function roomLoadWarning(p,key,prefix,error){
+    const message=String(error&&error.message||error),now=Date.now(),old=roomLoadNotices.get(key);
+    if(!old||old.message!==message||now-old.at>30000){roomLoadNotices.set(key,{message,at:now});p.toast(prefix+message);}
+  }
   function decodeMembershipLists(decrypted){
     /* Resolve addressable coordinates exactly as relays do, before unioning fragments. Without
        this, an older d=0 sibling can resurrect rooms that a newer fragment tombstoned. */
@@ -639,13 +663,16 @@
     if(membershipBusy||!viewer.pubkey||!p.nip44dec)return; membershipBusy=true;
     let recovered=false;
     try{
+      if(membershipViewer!==viewer.pubkey){membershipViewer=viewer.pubkey;membershipDocs.clear();}
       const candidates=await membershipEvents(p,viewer.pubkey);
       // Armada has emitted both kinds and may leave several list shards on relays. Decode every
       // valid snapshot: choosing one newest event can hide communities stored in another shard.
       const entries=new Map(),tombs=new Map(),decrypted=[];
       for(const event of candidates){
         try{
-          decrypted.push({event,doc:JSON.parse(await p.nip44dec(viewer.pubkey,event.content))}); recovered=true;
+          let doc=membershipDocs.get(event.id);
+          if(!doc){doc=JSON.parse(await p.nip44dec(viewer.pubkey,event.content));membershipDocs.set(event.id,doc);while(membershipDocs.size>256)membershipDocs.delete(membershipDocs.keys().next().value);}
+          decrypted.push({event,doc}); recovered=true;
         }catch(_){}
       }
       const list=decodeMembershipLists(decrypted);
@@ -670,24 +697,29 @@
         // a fresh device. Existing hydrated rooms need no work. For a missing room, resolve the
         // invite_ref exactly as Armada does and use the bundle carried by that invite.
         if(i>=0&&rooms[i].cord&&!rooms[i].cord.armadaList)continue;
-        let hydrated=null,bundle=current;
+        const existing=i>=0?rooms[i]:null,priorBundle=existing&&existing.cord&&existing.cord.bundle;
+        let hydrated=null,bundle=mergeArmadaBundle(priorBundle,current);
         try{
           if(!window.PosterCordReader||!window.PosterCordReader.inspectControl)continue;
           window.PosterCordReader.inspectControl(bundle,[]);
         }catch(_){
           if(!url)continue;
-          try{hydrated=await hydrateInvite(p,url);bundle=hydrated.cord.bundle;}
+          try{hydrated=await hydrateInvite(p,url);bundle=mergeArmadaBundle(hydrated.cord.bundle,current);}
           catch(__){continue;}
         }
         const channels=(bundle.channels||[]).map(c=>({name:c.name||'private',private:true,id:c.id}))
           .filter(c=>c.name!=='general');
-        const room={...(hydrated||{}),communityId:e.community_id,
-          name:current.name||(hydrated&&hydrated.name)||'Concord community',description:'',
-          channels:[{name:'general',private:false},...channels],local:false,
-          naddr:url?(inviteParts(url)||{}).naddr:'community-'+e.community_id,url,
-          cord:{bundle,armadaList:true}};
+        const derivedChannels=[{name:'general',private:false},...channels],bundleUnchanged=!!priorBundle&&sameJson(priorBundle,bundle);
+        const room={...(existing||{}),...(hydrated||{}),communityId:e.community_id,
+          name:current.name||(existing&&existing.name)||(hydrated&&hydrated.name)||'Concord community',
+          description:(existing&&existing.description)||(hydrated&&hydrated.description)||'',
+          channels:channels.length?derivedChannels:(existing&&existing.channels||derivedChannels),local:false,
+          naddr:url?(inviteParts(url)||{}).naddr:(existing&&existing.naddr)||'community-'+e.community_id,
+          url:url||(existing&&existing.url)||'',
+          cord:{...(existing&&existing.cord||{}),...(hydrated&&hydrated.cord||{}),bundle,armadaList:true,
+            hydrated:!!(existing&&existing.cord&&existing.cord.hydrated&&bundleUnchanged)}};
         if(i<0){rooms.push(room);changed=true;}
-        else if(!rooms[i].cord||rooms[i].cord.armadaList){rooms[i]={...rooms[i],...room};changed=true;}
+        else if((!rooms[i].cord||rooms[i].cord.armadaList)&&!sameJson(rooms[i],room)){rooms[i]=room;changed=true;}
       }
       if(changed){save(rooms);backgroundRender();}
     }catch(e){ console.warn('Concord membership sync failed',e); }
@@ -737,12 +769,17 @@
   async function hydrateRoomStreams(p,index,expectedIdentity=''){
     const rooms=saved(),room=rooms[index],reader=window.PosterCordReader,bundle=room&&room.cord&&room.cord.bundle;
     if(!room||!bundle||!reader)return;
-    const loadKey=room.communityId||room.naddr; if(roomLoads.has(loadKey))return roomLoads.get(loadKey);
+    const loadKey=room.communityId||room.naddr,identity=roomIdentity(room);
+    if(roomLoads.has(loadKey))return roomLoads.get(loadKey);
     const job=(async()=>{
+      /* Membership refresh and Leave can finish while relay history is in flight. Persist by room
+       * identity, never the numeric array slot captured before an await, or a slow response can
+       * overwrite another community or resurrect one the user left. */
+      const persistRoom=()=>{const latest=saved(),at=latest.findIndex(item=>roomIdentity(item)===identity);if(at<0)return false;latest[at]={...latest[at],...room,cord:{...(latest[at].cord||{}),...(room.cord||{})}};save(latest);return true;};
       const seed=reader.inspectControl(bundle,[]), relays=[...new Set([...(bundle.relays||[]),...CORD_RELAYS])].slice(0,8);
       const controlKey=envelopeCacheKey(loadKey,'control');
       let controlWraps=await cachedEnvelopes(controlKey);
-      const applyControl=async wraps=>{const info=reader.inspectControl(bundle,wraps||[]);roomControls.set(loadKey,wraps||[]);room.name=info.name||room.name;room.description=info.description||room.description;room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];await applyRoomIconMetadata(room,info,loadKey);const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);if(channels.length)room.channels=channels;for(const channel of room.channels||[])markRemoteStore(channelStoreId(room,channel.name));rooms[index]=room;save(rooms);return channels.length;};
+      const applyControl=async wraps=>{const info=reader.inspectControl(bundle,wraps||[]);roomControls.set(loadKey,wraps||[]);room.name=info.name||room.name;room.description=info.description||room.description;room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];await applyRoomIconMetadata(room,info,loadKey);const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);if(channels.length)room.channels=channels;for(const channel of room.channels||[])markRemoteStore(channelStoreId(room,channel.name));persistRoom();return channels.length;};
       const applyChannel=async(channel,wraps)=>{
         const opened=await reader.inspectChat(bundle,controlWraps||[],channel.id,wraps||[]);
         const reactions=new Map(opened.reactions||[]),reactionIds=new Map(opened.reactionIds||[]),reactionUrls=new Map(opened.reactionUrls||[]),msgs=(opened.messages||[]).map(m=>{ const pr=p.profOf?p.profOf(m.pubkey):{},rs={},ri={},ru={}; for(const [emoji,people] of reactions.get(m.id)||[])rs[emoji]=people;for(const [emoji,entries] of reactionIds.get(m.id)||[])ri[emoji]=Object.fromEntries(entries);for(const [emoji,url] of reactionUrls.get(m.id)||[])ru[emoji]=url; return {id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:m.text,at:m.at,kind:m.kind,tags:m.tags||[],reactions:rs,reactionIds:ri,reactionUrls:ru,remote:true}; });
@@ -752,20 +789,33 @@
       };
       /* Paint the encrypted on-device copy before opening sockets. This is the offline/reload path,
        * and also prevents relay latency from looking like an empty room. */
-      if(controlWraps.length){await applyControl(controlWraps);for(const channel of room.channels||[]){const wraps=await cachedEnvelopes(envelopeCacheKey(loadKey,channel.id));if(wraps.length)await applyChannel(channel,wraps);}if(state.community===index)backgroundRender();}
+      if(controlWraps.length){
+        await applyControl(controlWraps);
+        const selected=state.channel||'general',ordered=[...(room.channels||[])].sort((a,b)=>(a.name===selected?-1:b.name===selected?1:0));
+        /* Decrypt only the newest page first and paint the selected channel immediately. Loading
+         * 5,000 envelopes for every channel before the first render made a healthy encrypted cache
+         * look indistinguishable from a relay miss, and could exhaust an Android WebView renderer. */
+        for(const channel of ordered){
+          const wraps=await cachedEnvelopePage(envelopeCacheKey(loadKey,channel.id),300);
+          if(wraps.length)await applyChannel(channel,wraps);
+          if(channel.name===selected&&state.community===index)backgroundRender();
+        }
+        if(state.community===index)backgroundRender();
+      }
       const completeControl=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,controlWraps),fetchedControl=completeControl.filter(ev=>!controlWraps.some(old=>old.id===ev.id));
       controlWraps=completeControl;await cacheEnvelopes(controlKey,fetchedControl);
       const channelCount=await applyControl(controlWraps);
       if(!channelCount)throw new Error('the control stream returned no readable channels');
-      for(const channel of room.channels){
+      const selected=state.channel||'general',networkOrder=[...room.channels].sort((a,b)=>(a.name===selected?-1:b.name===selected?1:0));
+      for(const channel of networkOrder){
         const cacheKey=envelopeCacheKey(loadKey,channel.id),cached=await cachedEnvelopes(cacheKey),wraps=await queryEnvelopeHistory(p,relays,channel.streamPubkeys,cached),fetched=wraps.filter(ev=>!cached.some(old=>old.id===ev.id));
         await cacheEnvelopes(cacheKey,fetched);await applyChannel(channel,wraps);
       }
-      room.cord.hydrated=true; rooms[index]=room; save(rooms);
+      room.cord.hydrated=true;if(!persistRoom())return;
       /* A relay answer may return after the reader chose another community. Persisting the fetched
        * room is still useful, but repainting/scrolling the new room is not. Notification launches
        * pass the durable identity explicitly because saved array positions can change meanwhile. */
-      const current=saved()[index],stillSelected=state.community===index&&
+      const currentRooms=saved(),current=state.community==null?null:currentRooms[state.community],stillSelected=roomIdentity(current)===identity&&
         (!expectedIdentity||roomIdentity(current)===expectedIdentity);
       if(stillSelected){backgroundRender();scrollChatBottom();}
     })().finally(()=>roomLoads.delete(loadKey)); roomLoads.set(loadKey,job); return job;
@@ -1016,9 +1066,9 @@
        * left the placeholder #general on screen with no id, icon or history, so a successful Armada
        * invite looked like an empty broken community until somebody switched away and back. */
       await hydrateRoomStreams(p,state.community); enterChatBottom(); p.toast('community joined'); }catch(e){ go.disabled=false; p.toast('could not join: '+(e&&e.message||e)); } };
-    $$('[data-cc-server]').forEach(b=>b.onclick=async()=>{ const i=+b.dataset.ccServer,a=saved(),room=a[i],inDrawer=mobileChatOpen&&mobileDrawerOpen; let loaded=room; discoveryOpen=false; localStorage.setItem('pc.concord.active',String(i)); state.community=i; state.channel='general'; mobileChatOpen=inDrawer; mobileDrawerOpen=inDrawer; render(); enterChatBottom(); try{ if(room&&room.url&&(!room.cord||room.cord.armadaList)){ loaded={...room,...await hydrateInvite(p,room.url)}; a[i]=loaded; save(a); render(); } if(loaded&&loaded.cord)await hydrateRoomStreams(p,i);else if(loaded&&loaded.protocol==='nip29')await hydrateNip29Room(p,i); }catch(e){ if(loaded&&loaded.cord)loaded.cord.hydrated=false;if(loaded&&loaded.protocol==='nip29')loaded.nip29Hydrated=false; save(a); p.toast('could not load community: '+(e&&e.message||e)); }finally{ if(state.community===i)enterChatBottom(); } });
+    $$('[data-cc-server]').forEach(b=>b.onclick=async()=>{ const i=+b.dataset.ccServer,a=saved(),room=a[i],inDrawer=mobileChatOpen&&mobileDrawerOpen; let loaded=room; discoveryOpen=false; localStorage.setItem('pc.concord.active',String(i)); state.community=i; state.channel='general'; mobileChatOpen=inDrawer; mobileDrawerOpen=inDrawer; render(); enterChatBottom(); try{ if(room&&room.url&&(!room.cord||!room.cord.bundle)){ loaded={...room,...await hydrateInvite(p,room.url)}; a[i]=loaded; save(a); render(); } if(loaded&&loaded.cord&&!loaded.cord.hydrated)await hydrateRoomStreams(p,i);else if(loaded&&loaded.protocol==='nip29'&&!loaded.nip29Hydrated)await hydrateNip29Room(p,i); roomLoadNotices.delete(roomIdentity(loaded)); }catch(e){ if(loaded&&loaded.protocol==='nip29')loaded.nip29Hydrated=false; save(a); roomLoadWarning(p,roomIdentity(loaded),'could not refresh community: ',e); }finally{ if(state.community===i)enterChatBottom(); } });
     $$('[data-cc-discover]').forEach(b=>b.onclick=async()=>{ const v=discovered[+b.dataset.ccDiscover]; if(!v)return; const a=saved(); let i=a.findIndex(x=>x.naddr===v.naddr); if(i<0){a.push(v);i=a.length-1;} save(a); state.community=i; state.channel='general'; render(); enterChatBottom(); p.toast('fetching and decrypting community…'); try{ a[i]={...a[i],...await hydrateInvite(p,v.url)}; save(a); await persistArmadaMembership(p,a[i]); await hydrateRoomStreams(p,i); p.toast('community joined'); }catch(e){ p.toast('could not load community: '+(e&&e.message||e)); }finally{if(state.community===i)enterChatBottom();} });
-    $$('[data-cc-channel]').forEach(b=>b.onclick=async()=>{ const community=state.community,channel=b.dataset.ccChannel; state.channel=channel; mobileChatOpen=true; mobileDrawerOpen=false; render(); enterChatBottom(); const rooms=saved(),room=rooms[community]; try{if(room&&room.cord&&!room.cord.hydrated)await hydrateRoomStreams(p,community);else if(room&&room.protocol==='nip29'&&!room.nip29Hydrated)await hydrateNip29Room(p,community);}catch(e){p.toast('could not load room history: '+(e&&e.message||e));} if(state.community===community&&state.channel===channel)enterChatBottom(); });
+    $$('[data-cc-channel]').forEach(b=>b.onclick=async()=>{ const community=state.community,channel=b.dataset.ccChannel; state.channel=channel; mobileChatOpen=true; mobileDrawerOpen=false; render(); enterChatBottom(); const rooms=saved(),room=rooms[community],noticeKey=roomIdentity(room)+':'+channel; try{if(room&&room.cord&&!room.cord.hydrated)await hydrateRoomStreams(p,community);else if(room&&room.protocol==='nip29'&&!room.nip29Hydrated)await hydrateNip29Room(p,community);roomLoadNotices.delete(noticeKey);}catch(e){roomLoadWarning(p,noticeKey,'could not refresh room history: ',e);} if(state.community===community&&state.channel===channel)enterChatBottom(); });
     $$('[data-cc-star]').forEach(b=>b.onclick=e=>{ if(e&&e.stopPropagation)e.stopPropagation(); const room=saved()[state.community],name=b.dataset.ccStar; if(!room||!name)return; setChannelStarred(room,name,!channelStarred(room,name)); render(); });
     const bc=$('#cc-back-communities'); if(bc)bc.onclick=()=>{ discoveryOpen=true; state.community=null; state.channel=null; render(); };
     const bh=$('#cc-back-channels'); if(bh)bh.onclick=()=>{ if(state.community==null){ const rooms=saved(),wanted=Number(localStorage.getItem('pc.concord.active')||0); discoveryOpen=false; state.community=rooms.length&&wanted>=0&&wanted<rooms.length?wanted:(rooms.length?0:null); state.channel=state.community==null?null:'general'; mobileChatOpen=false; mobileDrawerOpen=false; }else if(mobileChatOpen){mobileDrawerOpen=!mobileDrawerOpen;}else mobileChatOpen=true; render(); };
@@ -1043,7 +1093,7 @@
     $$('[data-cc-react-toggle]').forEach(b=>b.onclick=()=>toggleReaction(b.dataset.ccReactToggle,b.dataset.ccEmoji));
     $$('[data-cc-react]').forEach(b=>b.onclick=()=>{ const target=b.dataset.ccReact;closeMessageActions();reactionTarget=target; const choices=['👍','❤️','😂','😮','😢','😡','🎉','💯']; const pop=document.createElement('div'); pop.className='cc-reaction-picker'; pop.innerHTML=choices.map(x=>`<button data-emoji="${x}">${x}</button>`).join(''); b.closest('.cc-message-body').appendChild(pop); pop.querySelectorAll('button').forEach(x=>x.onclick=e=>{ e.stopPropagation();const id=reactionTarget;closeMessageActions();toggleReaction(id,x.dataset.emoji); }); });
   }
-  window.PCConcord={render,backgroundRender,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,reactionSummary,notifyMentions,discoverInvites,decodeMembershipLists,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff};
+  window.PCConcord={render,backgroundRender,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,reactionSummary,notifyMentions,discoverInvites,decodeMembershipLists,mergeArmadaBundle,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */

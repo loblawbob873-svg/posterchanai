@@ -24,4 +24,13 @@ const seedOnly=got.entries.find(e=>e.community_id===hex('c'));
 if(!seedOnly||seedOnly.current.community_id!==hex('c')||seedOnly.current.owner!==hex('1'))
   throw new Error('released seed-only membership was dropped instead of using seed as current');
 if(got.tombstones.length!==1||got.tombstones[0].community_id!==hex('a'))throw new Error('fragment tombstone was lost');
+const complete={owner:'old-owner',owner_salt:'salt',community_root:'old-root',root_epoch:1,
+  channels:[{id:'general-id',key:'general-key',name:'general'}],held_roots:[{epoch:0,key:'old-key'}],
+  relays:['wss://old.example']};
+const snapshot={owner:'new-owner',community_root:'new-root',root_epoch:2,name:'Updated name',
+  relays:['wss://new.example']};
+const merged=window.PCConcord.mergeArmadaBundle(complete,snapshot);
+if(merged.community_root!=='new-root'||merged.owner!=='new-owner'||merged.channels[0].key!=='general-key'||
+   merged.held_roots[0].key!=='old-key'||merged.relays.length!==2)
+  throw new Error('membership refresh discarded invite-only history material');
 console.log('vector membership runtime ok');

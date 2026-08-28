@@ -111,5 +111,12 @@ class ConcordEnvelopeCache(unittest.TestCase):
         self.assertEqual(self.result['boundedCount'], 5000)
         self.assertEqual(self.result['boundedFirst'], 'evict-100')
 
+    def test_hot_page_is_cursor_bounded_not_get_all_then_slice(self):
+        source = open(MODULE, encoding='utf-8').read()
+        page = source.split('async function page(', 1)[1].split('async function drop(', 1)[0]
+        self.assertIn("index('streamCreated').openCursor", page)
+        self.assertNotIn('await all(', page)
+        self.assertIn('rows.length>=cap', page)
+
 
 if __name__ == '__main__': unittest.main()

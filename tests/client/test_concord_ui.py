@@ -327,7 +327,7 @@ def test_concord_create_and_send_flow_executes_without_runtime_errors():
 def test_armada_membership_snapshot_is_resolved_through_its_invite_bundle():
     assert "Armada's vault `current` is a CONTROL SNAPSHOT" in CONCORD
     assert "hydrated=await hydrateInvite(p,url)" in CONCORD
-    assert "bundle=hydrated.cord.bundle" in CONCORD
+    assert "bundle=mergeArmadaBundle(hydrated.cord.bundle,current)" in CONCORD
     assert "catch(__){continue;}" in CONCORD
 
 
@@ -396,7 +396,7 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert 'scrollChatBottom()' in CONCORD
     assert "if(file&&input)file.onchange=async()=>" in CONCORD
     assert 'room.cord.hydrated=true' in CONCORD
-    assert "if(loaded&&loaded.cord)" in CONCORD
+    assert "if(loaded&&loaded.cord&&!loaded.cord.hydrated)" in CONCORD
     assert 'let loaded=room;' in CONCORD and 'state.community=i' in CONCORD
     assert 'await p.nip44dec(viewer.pubkey,event.content)' in CONCORD
     assert 'cc-public-copy' in CONCORD and '.cc-public-copy' in CONCORD_CSS
@@ -606,7 +606,41 @@ def test_icon_removal_and_failure_cannot_block_room_history_hydration():
     assert "console.warn('Concord community icon could not be loaded'" in helper
     assert 'return false' in helper
     assert 'await applyRoomIconMetadata(room,info,loadKey)' in hydrate
-    assert hydrate.index('await applyRoomIconMetadata') < hydrate.index('for(const channel of room.channels)')
+    assert hydrate.index('await applyRoomIconMetadata') < hydrate.index('for(const channel of networkOrder)')
+
+
+def test_armada_membership_refresh_preserves_hydrated_cache_and_clicks_do_not_refetch():
+    sync = CONCORD.split('async function syncArmadaMemberships', 1)[1].split(
+        'async function persistArmadaMembership', 1)[0]
+    assert 'mergeArmadaBundle(priorBundle,current)' in sync
+    assert 'bundleUnchanged' in sync
+    assert 'existing.cord.hydrated&&bundleUnchanged' in sync
+    server = CONCORD.split("$$('[data-cc-server]')", 1)[1].split(
+        "$$('[data-cc-discover]')", 1)[0]
+    assert '(!room.cord||!room.cord.bundle)' in server
+    assert 'loaded&&loaded.cord&&!loaded.cord.hydrated' in server
+    assert 'room.cord.armadaList' not in server
+    assert "if(membershipViewer!==viewer.pubkey){membershipViewer=viewer.pubkey;membershipDocs.clear();}" in sync
+    assert 'let doc=membershipDocs.get(event.id)' in sync
+    assert 'while(membershipDocs.size>256)' in sync
+
+
+def test_room_history_errors_are_coalesced_instead_of_toaster_spam():
+    assert 'const roomLoadNotices=new Map()' in CONCORD
+    warning = CONCORD.split('function roomLoadWarning', 1)[1].split(
+        'function decodeMembershipLists', 1)[0]
+    assert 'now-old.at>30000' in warning
+    channel = CONCORD.split("$$('[data-cc-channel]')", 1)[1].split(
+        "$$('[data-cc-star]')", 1)[0]
+    assert "roomLoadWarning(p,noticeKey,'could not refresh room history: ',e)" in channel
+
+
+def test_slow_history_load_persists_by_room_identity_not_stale_array_index():
+    hydrate = CONCORD.split('async function hydrateRoomStreams', 1)[1].split(
+        'async function publishCordNative', 1)[0]
+    assert 'latest.findIndex(item=>roomIdentity(item)===identity)' in hydrate
+    assert 'if(!persistRoom())return' in hydrate
+    assert 'rooms[index]=room' not in hydrate
 
 
 def test_armada_encrypted_attachments_are_decrypted_before_media_rendering():
