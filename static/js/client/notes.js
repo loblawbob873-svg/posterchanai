@@ -57,7 +57,7 @@
     ({ $, $$, enc, toast, uiConfirm, uiPrompt, modal, closeModal, publish, mdToHtml } = PC);
     window.PCNotes = {
       render(){ if(document.querySelector('.nt-wrap')) return; render(); },
-      unmount(){ _sel=null; unwatch(); },
+      unmount(){ _sel=null; _draft=null; unwatch(); },
       /* LEAVING THE SCREEN DROPS THE SUBSCRIPTION, keeping everything else.
        *
        * `unmount` was never called by anything — renderView replaces #feed and tells no view it is
@@ -181,6 +181,11 @@
   let _lib = null;          // {notes:Map, folders:Map}
   let _loading = null;
   let _sel = null;          // id of the open note
+  /* A brand-new note does not exist in `_lib.notes` until its first save has been signed.
+   * Keep that editor model separately meanwhile. A relay refresh may repaint the Notes shell in
+   * the gap between clicking New note and typing the first character; previously `_paint()` saw a
+   * selected id absent from the library and silently rebuilt the list over the empty editor. */
+  let _draft = null;
   let _filter = { folder:FOLDER_ALL, q:'', tag:'' };
 
   const FILTER = () => ({ authors:[ME().pubkey], kinds:[KIND], '#l':[L_TAG], limit:5000 });
@@ -648,7 +653,10 @@
 
     // Both of them: the sidebar's and the phone toolbar's. $ returns the FIRST match, so wiring
     // this with $ would leave whichever one the markup happens to emit second doing nothing.
-    $$('.nt-new', feed).forEach(b => b.onclick = () => openNote(blankNote(_filter.folder), true));
+    $$('.nt-new', feed).forEach(b => b.onclick = () => {
+      _draft = blankNote(_filter.folder);
+      openNote(_draft, true);
+    });
     _wireDrawer(feed);
     $('.nt-import', feed).onclick = openImport;
     $('.nt-export', feed).onclick = exportBackup;
@@ -664,8 +672,15 @@
     // over the list you just filtered means every pick costs a second tap to see the result.
     $$('.nt-folder[data-f]', feed).forEach(b => b.onclick = () => { _filter.folder = b.dataset.f; _filter.tag=''; _drawer(false); render(); });
     $$('.nt-tag', feed).forEach(b => b.onclick = () => { _filter.tag = (_filter.tag===b.dataset.t?'':b.dataset.t); _drawer(false); render(); });
-    $$('.nt-item', feed).forEach(b => b.onclick = () => { _drawer(false); const n=_lib.notes.get(b.dataset.id); if(n) openNote(n, false); });
-    if(_sel && _lib.notes.has(_sel)) openNote(_lib.notes.get(_sel), false);
+    $$('.nt-item', feed).forEach(b => b.onclick = () => {
+      _drawer(false); const n=_lib.notes.get(b.dataset.id);
+      if(n){ _draft=null; openNote(n, false); }
+    });
+    if(_sel){
+      const saved = _lib.notes.get(_sel);
+      if(saved) openNote(saved, false);
+      else if(_draft && _draft.id === _sel) openNote(_draft, true);
+    }
   }
 
   /* The folder tree, on a phone.
@@ -790,6 +805,7 @@
       try{
         const r = await save(n, 'note');
         _dirty = false;
+        if((r.ok || r.queued) && _draft === n) _draft = null;
         mark(r.ok ? 'saved' : r.queued ? 'saved on this device — will sync' : 'NOT saved');
         if(!r.ok && !r.queued) toast('couldn’t save that note');
       }catch(e){
@@ -811,7 +827,11 @@
     // laptop lid inside that 700ms is exactly when the edit would be lost.
     body.onblur = title.onblur = flushEdit;
 
-    $('.nt-back', host).onclick = () => { flushEdit(); _sel=null; document.querySelector('.nt-wrap').classList.remove('nt-open'); render(); };
+    $('.nt-back', host).onclick = () => {
+      flushEdit();
+      if(_draft === n && !_dirty) _draft = null;
+      _sel=null; document.querySelector('.nt-wrap').classList.remove('nt-open'); render();
+    };
     const tog = $('.nt-preview', host);
     const setMode = (read) => {
       const r = $('.nt-render', host);
@@ -834,6 +854,7 @@
     $('.nt-del', host).onclick = async () => {
       if(!await uiConfirm(`Delete “${n.title||'Untitled'}”? This can’t be undone.`, {ok:'Delete', danger:true})) return;
       await remove(n, 'note');
+      if(_draft === n) _draft = null;
       _sel = null;
       render();
     };
