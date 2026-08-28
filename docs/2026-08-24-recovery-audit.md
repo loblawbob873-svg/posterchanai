@@ -300,3 +300,49 @@ browser-only interaction into a current installed pass.
   processes, private compositors and tunnels were removed; canonical PIDs and surfaces were
   unchanged afterward. User Firefox/VM windows, physical Android/tablet/USB, carrier and external
   two-identity gates were not targeted and remain separate open gates.
+
+## 2026-08-28 current release evidence
+
+This section supersedes earlier uses of “current” only; it does not erase their historical evidence.
+The current packaged boundary is commit `56c2179ed7f74954560bb462a33b5254699c9c71`, Desktop
+`1.0.1125`, and Android `1.0.1843`. Repository HEAD `afacc3d0872206d2ec6b939fff86d4b3daec67ff`
+only updates the overlay to that already-published Desktop release and is not a newer application
+payload.
+
+- Desktop workflow `33130280572` succeeded at the exact release commit for Linux, Windows, macOS,
+  bundled-Concord audit, immutable publish, immutable-tag verification and rolling publish. Release
+  `desktop-v1.0.1125` targets that full commit; its Linux tarball is 152,178,848 bytes with SHA-256
+  `311d4a70e718ef52b9fea77e4771e068c7c54541cf4a43b18a7ba9b18dbd6671`. Commit `afacc3d0`
+  pins the overlay ebuild and Manifest to the same size and SHA-512
+  `6bf42be9c7e6fc930c530be14d68fddfc3658abd6b81ba73c38ae0e4bd5f711e8b5944ba7318446e84e3c759fb712d7693cde773958e78f829106a32cbbb1a8f`.
+  No installed-1.0.1125 interaction is recorded here, so all older installed Desktop evidence remains
+  historical rather than proof of this package.
+- Android workflow `33130280597` succeeded at the same full commit and published rolling APK
+  `1.0.1843`: 20,411,084 bytes, SHA-256
+  `46c86aadda9965ac156eb121a97dff84e476d780bf1f2523267e0c473e5ad344`; its release provenance names
+  the full commit. Exact-head emulator workflow `33130280574` passed its device script and instrumented
+  script (`device=0 instrumented=0`) and the uploaded XML reports **74/74 tests**, zero failures,
+  errors or test skips. The workflow's cached-AVD creation step was conditionally skipped; that is not
+  an instrumented-test skip. Physical phone/tablet, Bluetooth, carrier SMS/MMS/APN and cross-device
+  notification behavior remain open.
+- The active right-edge snap report is implemented by `56c2179e`: scaled `screenX` alone can no longer
+  steal an edge drop as a cross-monitor handoff, and a rejected HTML-frame handoff commits the requested
+  right tile instead of restoring the old floating rectangle. The focused source gate passed 19/19 and
+  `scripts/check_os_desktop.py` passed, including scaled left/right and rejected-right-handoff cases.
+  This is source/browser and packaged-payload evidence; an installed 1.0.1125 right snap on the affected
+  scaled display, plus disposable native Firefox/Telegram focus, preview, restore and cross-output
+  repetition, remains open.
+- The mobile File Manager attachment picker request is implemented by `c306ecd9`, an ancestor of both
+  current packages: small density renders three square columns, non-image previews remain square, and a
+  medium-square toggle is exposed. `scripts/check_blossom_picker_mobile.py` passed with 24 cards,
+  `smallCols=3`, square image/non-image previews, no overflow or runtime errors, and a working medium
+  toggle. A physical Android 1.0.1843 picker interaction and unrelated external-storage providers remain
+  open.
+- No focused gate run above failed or test-skipped. This audit did not run the full suite, deploy web,
+  install either package, inspect a current authenticated account, boot USB, contact a carrier, create
+  relay events, or exercise external applications. Therefore the current web revision, exhaustive
+  installed app-isolation/navigation/scroll matrix, live two-identity Concord write/notification/
+  attachment/Webxdc/moderation flow, Social offline reply/thread/reading-position flow, real carrier
+  history/media migration, physical USB boot, native Firefox/Telegram editable-field clipboard session,
+  sustained real Codex/Claude terminal repaint session, and every physical-device item above all remain
+  open. The former stash contents likewise remain unrecoverable and unverified.
