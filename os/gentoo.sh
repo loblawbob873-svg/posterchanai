@@ -3932,6 +3932,9 @@ fix-build-boot() {
 }
 
 if [ "$1" = "services" ]; then
+	# finalizeInstall invokes this command inside the target chroot. The script-wide staging default
+	# must not turn service paths into /tmp/install/... inside the newly installed machine.
+	export TARGET=/
 	services
 elif [ "$1" = "upgrade-system" ]; then
 	upgrade-system
@@ -3944,6 +3947,8 @@ elif [ "$1" = "upgrade" ]; then
 elif [ "$1" = "wifi" ]; then
 	wifi
 elif [ "$1" = "accounts" ]; then
+	# Same chroot contract as services/bootloader/posterchan-shell.
+	export TARGET=/
 	accounts
 elif [ "$1" = "hibernate" ]; then
 	hibernateSetup

@@ -164,6 +164,17 @@ class TheBuilderShipsTheInstaller(unittest.TestCase):
         self.assertIn('mkdir -p "$TARGET/etc"', fstab)
         self.assertNotRegex(self.src, r"(?m)^mkdir \\$TARGET$")
 
+    def test_target_finalization_commands_dispatch_at_chroot_root(self):
+        """setup.sh runs these modes inside the target. Leaving the historical /tmp/install
+        default makes service/profile writes disappear into a nested staging tree."""
+        dispatcher = self.src[self.src.index('if [ "$1" = "services" ]'):]
+        for mode in ("services", "accounts", "bootloader", "posterchan-shell"):
+            match = re.search(rf'(?:if|elif) \[ "\$1" = "{re.escape(mode)}" \]; then\n'
+                              r'(?P<body>.*?)(?=elif \[|else\n|fi\n)', dispatcher, re.S)
+            self.assertIsNotNone(match, f"missing {mode} dispatcher")
+            snippet = match.group("body")
+            self.assertIn("TARGET=/", snippet, f"{mode} does not target the chroot root")
+
     def test_completed_live_install_returns_success_without_home(self):
         i = self.src.index("liveISOinstall() {")
         end = self.src.index("\n}\n\nbackupOS()", i)
