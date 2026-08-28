@@ -146,6 +146,7 @@ const dmEncOn = () => !!ClientSettings.get('dmEncryptAtts');
 const dmPickMedia = () => () => {};
 const dmPickGif = () => () => {};
 const decorateEncAtts = () => {};
+const _decorateDmFileAtts = () => {};
 const openMenuPopover = () => {};
 const renderProfileView = () => {};
 const toggleMute = () => Promise.resolve();

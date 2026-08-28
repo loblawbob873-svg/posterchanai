@@ -23569,7 +23569,7 @@
         const pt = await crypto.subtle.decrypt({ name:'AES-GCM', iv:new Uint8Array(rec.iv) },
                                                key, new Uint8Array(rec.ct));
         const r = JSON.parse(new TextDecoder().decode(pt));
-        return (r && r.kind === 14) ? r : null;
+        return (r && (r.kind === 14 || r.kind === 15)) ? r : null;
       }catch(_){ return null; }
     },
     async put(id, rumor){
@@ -23645,7 +23645,7 @@
         let n = 0;
         for(const id in map){
           const rumor = map[id];
-          if(!rumor || rumor.kind !== 14) continue;
+          if(!rumor || (rumor.kind !== 14 && rumor.kind !== 15)) continue;
           await this.put(id, rumor);              // re-encrypted per record, same key
           n++;
         }
@@ -23738,6 +23738,65 @@
     },
   };
 
+  // Armada/0xChat encrypted NIP-17 attachments. Metadata is inside the decrypted rumor: kind 14
+  // uses NIP-94 `imeta` fields, while kind 15 puts the same fields in top-level tags. Never trust
+  // Blossom's Content-Type here: encrypted blobs commonly retain image/png and are ciphertext.
+  function _dmKeyBytes(s){
+    s=String(s||'').trim();
+    if(/^[0-9a-f]+$/i.test(s) && !(s.length&1)) return new Uint8Array(s.match(/../g).map(x=>parseInt(x,16)));
+    try{ const b=atob(s.replace(/-/g,'+').replace(/_/g,'/')); return Uint8Array.from(b,x=>x.charCodeAt(0)); }catch(_){ return null; }
+  }
+  function _dmEncOf(fields){
+    if(!fields['encryption-algorithm']) return null;
+    return { algorithm:String(fields['encryption-algorithm']).toLowerCase(),
+      key:String(fields['decryption-key']||''), nonce:String(fields['decryption-nonce']||''),
+      ox:/^[0-9a-f]{64}$/i.test(fields.ox||'')?String(fields.ox).toLowerCase():'' };
+  }
+  function _dmAttachmentMeta(r){
+    const out=[];
+    if(!r || !Array.isArray(r.tags)) return out;
+    if(r.kind===15){
+      const f={}; for(const t of r.tags){ if(t&&t[0]&&t[1]!=null && f[t[0]]==null) f[t[0]]=t[1]; }
+      if(/^https?:\/\//i.test(r.content||'')) out.push({url:r.content,mime:f['file-type']||f.m||'',name:f.name||'',enc:_dmEncOf(f)});
+      return out;
+    }
+    for(const t of r.tags){
+      if(!t || t[0]!=='imeta') continue;
+      const f={}; for(const p of t.slice(1)){ const n=String(p).indexOf(' '); if(n>0) f[p.slice(0,n)]=p.slice(n+1); }
+      if(/^https?:\/\//i.test(f.url||'')) out.push({url:f.url,mime:f.m||'',name:f.name||'',enc:_dmEncOf(f)});
+    }
+    return out;
+  }
+  const _dmAttUrls=new Map();
+  async function _dmDecryptAttachment(a){
+    if(!a || !a.enc) throw new Error('not encrypted');
+    const key=_dmKeyBytes(a.enc.key), iv=_dmKeyBytes(a.enc.nonce);
+    if(a.enc.algorithm!=='aes-gcm' || !key || key.length!==32 || !iv || !iv.length) throw new Error('unsupported encryption');
+    const r=await fetch(a.url,{cache:'force-cache'}); if(!r.ok) throw new Error('attachment http '+r.status);
+    const declared=Number(r.headers.get('content-length')||0); if(declared>64*1024*1024) throw new Error('attachment too large');
+    const ct=await r.arrayBuffer(); if(ct.byteLength>64*1024*1024) throw new Error('attachment too large');
+    const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv},await crypto.subtle.importKey('raw',key,{name:'AES-GCM'},false,['decrypt']),ct);
+    if(a.enc.ox){ const h=new Uint8Array(await crypto.subtle.digest('SHA-256',pt));
+      const hex=[...h].map(x=>x.toString(16).padStart(2,'0')).join(''); if(hex!==a.enc.ox) throw new Error('attachment hash mismatch'); }
+    return new Blob([pt],{type:a.mime||'application/octet-stream'});
+  }
+  function _dmFind(mid){ for(const arr of dmPeers.values()){ const m=arr.find(x=>x.id===mid); if(m)return m; } return null; }
+  async function _decorateDmFileAtts(root){
+    if(!root)return;
+    for(const el of root.querySelectorAll('[data-dm-file]:not([data-ready])')){
+      el.dataset.ready='1'; const m=_dmFind(el.dataset.dmFile), a=m&&m.atts&&m.atts[Number(el.dataset.ai)||0]; if(!a)continue;
+      try{
+        let u=_dmAttUrls.get(m.id+':'+el.dataset.ai);
+        if(!u){ const b=await _dmDecryptAttachment(a); u=URL.createObjectURL(b); _dmAttUrls.set(m.id+':'+el.dataset.ai,u);
+          if(_dmAttUrls.size>64){ const k=_dmAttUrls.keys().next().value; URL.revokeObjectURL(_dmAttUrls.get(k)); _dmAttUrls.delete(k); } }
+        const mime=String(a.mime||'');
+        if(/^image\//i.test(mime)) el.outerHTML=`<img class="dm-file-media" src="${enc(u)}" alt="${enc(a.name||'attachment')}">`;
+        else if(/^video\//i.test(mime)) el.outerHTML=`<video class="dm-file-media" src="${enc(u)}" controls playsinline></video>`;
+        else { el.textContent='📎 '+(a.name||'Open attachment'); el.onclick=async()=>saveBlobAs(await fetch(u).then(r=>r.blob()),a.name||'attachment'); }
+      }catch(err){ el.textContent='🔒 Attachment could not be decrypted'; el.classList.add('bad'); }
+    }
+  }
+
   async function ingestWrap(ev, live){
     if(!signer || !signer.nip17unwrap) return false;
     if(!ev || !ev.id || _wrapTried.has(ev.id)) return false;
@@ -23749,16 +23808,17 @@
     if(!rumor){
       try{ rumor=await signer.nip17unwrap(ev); }
       catch(_){ _wrapTried.delete(ev.id); _dmDone++; _dmTick(); return false; }
-      if(rumor && rumor.kind === 14) DmCache.put(ev.id, rumor);
+      if(rumor && (rumor.kind === 14 || rumor.kind === 15)) DmCache.put(ev.id, rumor);
     }
     _dmDone++; _dmTick();
-    if(!rumor || rumor.kind!==14 || rumor.content==null) return false;
+    if(!rumor || (rumor.kind!==14 && rumor.kind!==15) || rumor.content==null) return false;
     const mine = rumor.pubkey===ME.pubkey;
     const peer = mine ? (rumor.tags.find(t=>t[0]==='p')||[])[1] : rumor.pubkey;
     if(!peer) return false; needProfile(peer);
     if(!dmPeers.has(peer)) dmPeers.set(peer, []);
     const arr=dmPeers.get(peer); if(arr.find(m=>m.id===ev.id)) return false;
-    arr.push({ id:ev.id, mine, text:rumor.content, t:rumor.created_at, nip17:true,
+    const atts=_dmAttachmentMeta(rumor);
+    arr.push({ id:ev.id, mine, text:rumor.kind===15?'':rumor.content, t:rumor.created_at, nip17:true, atts,
                em:(rumor.tags||[]).filter(t=>t[0]==='emoji') }); arr.sort((a,b)=>a.t-b.t);
     // COUNT on freshness, not on `live`. `live` is a network signal (the sub's EOSE) and it can never
     // arrive — a relay in the user's list that is down/DNS-dead is still counted in the pool, so the
@@ -25294,9 +25354,15 @@
    * A reply arrives as "> quoted\n\nmessage" (see _dmReply): render that leading quote as a block so it
    * reads like a reply instead of a stray angle bracket. */
   function _dmBodyHtml(m){
-    const mq = /^>\s?([^\n]*)\n\n([\s\S]*)$/.exec(m.text||'');
+    let text=String(m.text||'');
+    // An encrypted URL is a ciphertext locator, not media. Remove only that exact token from the
+    // normal linkifier and append a verified/decrypted attachment slot instead.
+    for(const a of (m.atts||[])) if(a.enc) text=text.split(a.url).join('').trim();
+    const files=(m.atts||[]).map((a,i)=>`<button class="dm-file-att" data-dm-file="${enc(m.id)}" data-ai="${i}">🔒 decrypting attachment…</button>`).join('');
+    const mq = /^>\s?([^\n]*)\n\n([\s\S]*)$/.exec(text);
     const _em = ev => applyEmojis(ev, { tags: m.em||[] });   // the RUMOR's own NIP-30 tags
-    return mq ? `<span class="b-quote">${enc(mq[1])}</span>${_em(linkify(mq[2]))}` : _em(linkify(m.text));
+    const body=mq ? `<span class="b-quote">${enc(mq[1])}</span>${_em(linkify(mq[2]))}` : _em(linkify(text));
+    return body+files;
   }
   function _scheduleDmRefresh(){
     if(_dmRefreshTimer || VIEW!=='messages') return;
@@ -25427,6 +25493,7 @@
       // repaint those two in place.
       _prev.innerHTML = _msgsHtml;
       decorateEncAtts(_prev);   // bubbles are rebuilt here, so their 🔒 placeholders are new ones
+      _decorateDmFileAtts(_prev);
       { const mb=$('#dm-mute'); if(mb) mb.textContent=_muteLabel; }
       { const nm=wrap.querySelector('.dm-peer-name'); if(nm) nm.innerHTML=_peerName; }
     } else {
@@ -25465,6 +25532,7 @@
     // Paste-to-attach + removable preview strip (📎 Attach / 🌸 Files / 🎬 GIF also feed it via 'input').
     const _syncAtts = wireImgAttach(inp, $('#dm-atts'), {enc:true});
     decorateEncAtts($('#dm-msgs'));   // first paint of this thread
+    _decorateDmFileAtts($('#dm-msgs'));
     $('#dm-attach').onclick=()=>$('#dm-file').click();
     // 🔒 is opt-in and OFF by default: an encrypted file is unreadable to anyone not running this
     // client, so it can't be the silent default for a conversation with a Damus user. Remembered per
@@ -25566,6 +25634,7 @@
         if(_t) _t.innerHTML = _dmBodyHtml(mm);
         else el.innerHTML = _dmBodyHtml(mm);
         decorateEncAtts(_t || el);   // 🔒 placeholders only exist once the text is in — the pane's own pass ran before this
+        _decorateDmFileAtts(_t || el);
         _patched=true;
       } } }
     // Bubbles grew from placeholders to full text — if we were pinned to the bottom, stay pinned.
