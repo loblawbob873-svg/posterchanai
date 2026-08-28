@@ -678,6 +678,40 @@
       handoffRestoreT=setTimeout(()=>{handoffRestoreT=null;_restoreHandoffScroll();},160);
     }
 
+    /* A LOCAL REATTACH HAS TWO INPUTS: the cumulative backlog snapshot and the live IPC push.
+     * Subscribe-before-snapshot is necessary (otherwise bytes printed between the two calls are
+     * lost), but drawing pushes immediately is not safe. Chromium may hold an unfocused renderer's
+     * IPC callback until focus returns. That old callback can then race the new snapshot and either
+     * draw the same bytes twice or advance the cumulative cursor past bytes which have not been
+     * drawn at all. Hold pushes behind one small gate until the snapshot has crossed `_frame`;
+     * `_frame`'s sequence check then removes the overlap and the remaining suffix is delivered once.
+     * `current` also invalidates callbacks already queued by Electron before removeListener ran. */
+    function _makeLocalReplayGate(current, deliver){
+      let pending=[], ready=false;
+      return {
+        push(ev){
+          if(!current()) return;
+          if(!ready){ pending.push(ev); return; }
+          deliver(ev);
+        },
+        finish(snapshot){
+          if(!current()){ pending=[]; return false; }
+          if(snapshot) deliver(snapshot);
+          ready=true;
+          const queued=pending; pending=[];
+          /* IPC preserves order, but sequence sorting makes the invariant explicit and keeps an
+           * unsequenced `end` behind all output if a platform ever batches the callbacks. */
+          queued.sort((a,b)=>{
+            const as=typeof a.seq==='number'?a.seq:Number.MAX_SAFE_INTEGER;
+            const bs=typeof b.seq==='number'?b.seq:Number.MAX_SAFE_INTEGER;
+            return as-bs;
+          });
+          for(const ev of queued){ if(current()) deliver(ev); }
+          return current();
+        }
+      };
+    }
+
     async function connect(){
       const sel = $('#tty-host'); if(!sel) return;
       host = sel.value;
@@ -803,6 +837,9 @@
       if(!T){ _frame({ t: 'err', m: 'this build has no shell of its own' }); return; }
       let id = String(frame.resume || '').replace(/^local:/, '');
       let stop = null, gone = false;
+      const replay=_makeLocalReplayGate(
+        ()=>!gone && opening===openEpoch,
+        ev=>_frame(ev));
       link = {
         kind: 'local',
         send(o){
@@ -844,7 +881,7 @@
           /* Subscribe FIRST, then take the snapshot. This closes the otherwise unavoidable gap
            * where the shell can print after backlog() but before attach(). The cumulative sequence
            * guard in _frame makes the overlap safe whichever IPC message reaches us first. */
-          stop = T.onData((ev) => { if(String(ev.id) === id) _frame(ev); });
+          stop = T.onData((ev) => { if(String(ev.id) === id) replay.push(ev); });
           await T.attach(id);
           b = await T.backlog(id, fresh ? 0 : (Number(cursor) || 0));
           if(gone || opening !== openEpoch) return;
@@ -853,9 +890,13 @@
             /* Redraw what was missed, and say so when the gap is bigger than what is still kept —
              * a fragment presented as the whole history is how scrollback loses its middle. */
             if(b.truncated) term.write('\r\n\x1b[90m— earlier output is no longer kept —\x1b[0m\r\n');
-            if(b.d) _frame({ t: 'out', d: b.d, seq: b.seq });
-            if(!b.alive) _frame({ t: 'end', m: 'that shell has exited' });
+            /* An empty snapshot still carries the authoritative cumulative cursor. Advancing it
+             * prevents a delayed pre-focus callback at that same sequence from being mistaken for
+             * new output merely because there were zero replay bytes. */
+            replay.finish(typeof b.seq==='number' ? { t: 'out', d: b.d || '', seq: b.seq } : null);
+            if(!b.alive) replay.push({ t: 'end', m: 'that shell has exited' });
           }
+          else replay.finish(null);
         }catch(e){
           _frame({ t: 'err', m: String((e && e.message) || e) });
         }
