@@ -22,8 +22,7 @@ def test_native_monitor_handoff_prepares_and_acks_before_moving_surface():
 
 def test_destination_adopts_and_decorates_before_periodic_reconciliation():
     assert "onNativeHandoff" in PRELOAD
-    receiver = OS.split("if(pcWM.onNativeHandoff)", 1)[1].split(
-        "if(pcWM.onHandoffFrame)", 1)[0]
+    receiver = OS[OS.index("function wireNativeHandoff()") : OS.index("function enter()")]
     assert "adoptNative(row)" in receiver
     assert "pcWM.decorate(id)" in receiver
     assert "requestAnimationFrame(()=>nsync())" in receiver
@@ -33,10 +32,34 @@ def test_destination_adopts_and_decorates_before_periodic_reconciliation():
 def test_prepared_frame_is_hidden_and_excluded_from_native_reconciliation():
     assert "native-handoff-prepared{visibility:hidden;pointer-events:none}" in CSS
     assert "if(it.w.nativeHandoffToken) continue" in OS
-    prepare = OS.split("if(pcWM.onNativeHandoffPrepare)", 1)[1].split(
-        "if(pcWM.onNativeHandoff)", 1)[0]
+    prepare = OS[OS.index("function wireNativeHandoff()") : OS.index("function enter()")]
     assert "NAT().mapRect(_bodyRect(w),scale)" in prepare
     assert "pcWM.nativeHandoffAck(token,rect)" in prepare
+
+
+def test_handoff_listeners_are_armed_before_optional_shell_watchers_and_repaired_on_refresh():
+    """A partial early enter can set `on` before reaching the historical late listener block.
+
+    The desktop then looks healthy, but every cross-output request waits for an ACK no renderer can
+    send. Wiring before the tick/status setup and from refresh makes registration idempotent and
+    recoverable without reloading the user's desktop.
+    """
+    enter = OS[OS.index("function enter()") : OS.index("function exit(")]
+    assert enter.index("wireNativeHandoff()") < enter.index("pcWM.onEvent")
+    refresh = OS[OS.index("function refresh()") : OS.index("function suspend()")]
+    assert "wireNativeHandoff()" in refresh
+    wire = OS[OS.index("function wireNativeHandoff()") : OS.index("function enter()")]
+    for guard in ("!_nativeHandoffPrepareOff", "!_nativeHandoffOff", "!_nativeHandoffAbortOff"):
+        assert guard in wire
+
+
+def test_scoped_reconciliation_cannot_close_a_prepared_destination_frame():
+    adopt = OS[OS.index("async function adoptAll()") : OS.index("function closeWin(w, opts)")]
+    missing = adopt[adopt.index("if(!r){") : adopt.index("changed=true", adopt.index("if(!r){"))]
+    assert "if(w.nativeHandoffToken) continue" in missing
+    assert missing.index("if(w.nativeHandoffToken) continue") < missing.index("closeWin(w")
+    sync = OS[OS.index("async function nsync()") : OS.index("function adoptNative")]
+    assert "if(!w.nativeHandoffToken&&!live.has(Number(w.native)))" in sync
 
 
 def test_dragging_an_html_terminal_temporarily_parks_only_overlapping_native_pixels():

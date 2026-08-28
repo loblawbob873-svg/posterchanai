@@ -17,7 +17,9 @@ dragging a window's corner looked fine and only the maximise button, which is a 
 This reads the shipped os.js rather than a copy, and checks the calls are inside the two functions
 rather than merely present in the file.
 """
+import json
 import re
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -109,6 +111,48 @@ class TheOtherGeometryPathsStillSync(unittest.TestCase):
         for fn in ("function snapTo", "function unsnap", "function minimise"):
             with self.subTest(fn=fn):
                 self.assertIn("nsync()", body(src, fn))
+
+
+class VisualViewportGeometry(unittest.TestCase):
+    def test_zoomed_bounding_rect_is_not_scaled_twice(self):
+        """The installed failure was exact: body zoom .5 made a 629px frame a 312px surface.
+
+        getBoundingClientRect and innerWidth are both visual coordinates.  clientWidth is the
+        unzoomed 2560px layout width and must never be paired with that body rectangle.
+        """
+        native = ROOT / "static" / "js" / "client" / "osnative.js"
+        script = """
+const N=require(process.argv[1]);
+const shell={x:0,y:0,width:1280,height:800}, body={left:645.5,top:5.359375,width:629.125,height:757.109375};
+console.log(JSON.stringify({visual:N.mapRect(body,N.scaleFrom(shell,1280,800)),
+  layout:N.mapRect(body,N.scaleFrom(shell,2560,1600))}));
+"""
+        got = json.loads(subprocess.check_output(["node", "-e", script, str(native)], text=True))
+        self.assertEqual(got["visual"]["w"], 629)
+        self.assertEqual(got["visual"]["h"], 757)
+        self.assertEqual(got["layout"]["w"], 315)  # the measured installed regression
+
+    def test_sync_and_handoff_use_visual_viewport_dimensions(self):
+        src = OS_JS.read_text(encoding="utf-8")
+        sync = body(src, "async function nsync")
+        receiver = body(src, "function wireNativeHandoff")
+        for block in (sync, receiver):
+            self.assertIn("visual&&visual.width>0?visual.width:window.innerWidth", block)
+            self.assertIn("visual&&visual.height>0?visual.height:window.innerHeight", block)
+            self.assertNotIn("document.documentElement.clientWidth", block)
+
+    def test_floating_a_native_window_remeasures_the_exact_shell_surface(self):
+        src = OS_JS.read_text(encoding="utf-8")
+        sync = body(src, "async function nsync")
+        self.assertIn("shellId = Number(snap && snap.shellId)", sync)
+        self.assertIn("list.find(x=>Number(x.id)===shellId)", sync)
+        place = sync[sync.index("await pcWM.place(it.native"):]
+        self.assertIn("_natShell=null; _natShellAt=0; _natAgain=true", place)
+
+    def test_snap_drops_a_shell_rectangle_measured_before_floating_settled(self):
+        snap = body(OS_JS.read_text(encoding="utf-8"), "function snapTo")
+        self.assertIn("_natShell=null; _natShellAt=0", snap)
+        self.assertLess(snap.index("_natShell=null"), snap.index("requestAnimationFrame"))
 
 
 if __name__ == "__main__":

@@ -20,7 +20,9 @@ def test_installed_handoff_requires_one_frame_and_no_spurious_html_app():
     assert "assert_paired(moved[destination])" in SCRIPT
     assert 'row["chrome"] and row["border"]' in SCRIPT
     assert 'row["frameFocused"] and row["native"]["focused"]' in SCRIPT
-    assert 'abs(mapped[k] - native[k if k in ("x", "y")' in SCRIPT
+    assert 'abs(mapped["x"] - native["x"]) <= 3' in SCRIPT
+    assert 'abs(mapped["w"] - native["width"]) <= 3' in SCRIPT
+    assert 'abs(mapped["h"] - native["height"]) <= 12' in SCRIPT
 
 
 def test_installed_handoff_returns_the_same_native_id_and_privacy_state():

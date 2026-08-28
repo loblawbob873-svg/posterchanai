@@ -2383,19 +2383,21 @@
        * rarely: it changes when a display does, not when a window moves. */
       const now = Date.now();
       if(!_natShell || now - _natShellAt > 4000){
-        let list, allIds = null;
+        let list, allIds = null, shellId = null;
         if(pcWM.snapshot){
           const snap = await pcWM.snapshot();
           list = Array.isArray(snap && snap.windows) ? snap.windows : [];
           allIds = new Set(Array.isArray(snap && snap.allIds) ? snap.allIds.map(Number) : []);
+          shellId = Number(snap && snap.shellId);
         }else list = await pcWM.windows();
-        _natShell = list.find(x => /^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i.test(String(x.app || ''))) || null;
+        _natShell = (Number.isFinite(shellId) && list.find(x=>Number(x.id)===shellId))
+          || list.find(x => /^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i.test(String(x.app || ''))) || null;
         _natShellAt = now;
         /* A native window the compositor no longer has is one the app closed by itself — from its
          * own File menu, or by crashing. Our frame has to go with it, or the desktop keeps a window
          * for something that is not running. */
         const live = new Set(list.map(x => Number(x.id)));
-        for(const w of nativeWins()) if(!live.has(Number(w.native)))
+        for(const w of nativeWins()) if(!w.nativeHandoffToken&&!live.has(Number(w.native)))
           closeWin(w, { killNative: !(allIds && allIds.has(Number(w.native))),
                         preserveFocus: !!(allIds && allIds.has(Number(w.native))) });
         if(!nativeWins().length) return;
@@ -2426,9 +2428,16 @@
           try{ await pcWM.fullscreen(_natShell.id, false); _natShell.fullscreen = false; }catch(_){}
         }
       }
+      /* `_bodyRect()` below is a getBoundingClientRect() measurement: its coordinates already
+       * include the responsive body zoom.  documentElement.clientWidth is the unzoomed layout
+       * width (2560 on a 1280px output at zoom .5), so mixing the two applies zoom twice and makes
+       * the real Wayland surface exactly half the HTML frame.  The visual viewport is the matching
+       * coordinate space; innerWidth/innerHeight are stable in Electron where visualViewport may
+       * be absent. */
+      const visual=window.visualViewport;
       const scale = NAT().scaleFrom(_natShell && _natShell.rect,
-                                    document.documentElement.clientWidth,
-                                    document.documentElement.clientHeight);
+                                    visual&&visual.width>0?visual.width:window.innerWidth,
+                                    visual&&visual.height>0?visual.height:window.innerHeight);
       if(!scale) return;
 
       const items = nativeWins().map(w => ({ native: w.native, z: _zOf(w),
@@ -2548,6 +2557,11 @@
           _natSent.set(it.native, rect);
           it.w.el.classList.remove('native-stashed');
           _natRetry = 0;              // something landed: the budget is for a STUCK measure
+          /* `floating enable` can change the shell from half of a tiled output to the whole output.
+           * The conversion above was measured before that compositor transaction, so retaining it
+           * for four seconds reproduces the exact installed failure: a 629px frame receives a
+           * 312px native surface. Re-read the exact shellId on one serial follow-up pass. */
+          _natShell=null; _natShellAt=0; _natAgain=true;
         }
       }
     }catch(_){ }
@@ -2661,6 +2675,11 @@
     for(const w of nativeWins()){
       const r=rows.find(x=>Number(x.id)===Number(w.native));
       if(!r){
+        /* During two-phase monitor handoff the destination frame deliberately exists before the
+         * compositor surface moves into this scoped workspace. A routine tree event in those two
+         * layout frames must not interpret that absence as Quit and detach the very frame whose
+         * body geometry main is waiting to receive. Commit/abort owns this token-marked frame. */
+        if(w.nativeHandoffToken) continue;
         /* `window::close` is the authoritative moment the native pixels disappear. Waiting for
          * nsync's four-second shell refresh leaves this HTML frame over the desktop with nothing
          * behind it — Firefox → hamburger → Quit visibly becomes a black window. Remove the frame
@@ -2978,6 +2997,7 @@
        * a full placement on the next frame; otherwise a right/left tile can retain Firefox's old
        * size even though its PosterChan frame already fills the half-screen. */
       _natSent.delete(Number(w.native));
+      _natShell=null; _natShellAt=0;
       requestAnimationFrame(() => requestAnimationFrame(nsync));
     }else if(nativeWins().length) nsync();
   }
@@ -6626,6 +6646,54 @@
     try{ return !!(window.PCOSShell && PCOSShell.available()); }catch(_){ return false; }
   }
 
+  /* Renderer startup can enter Desktop before every compositor listener is ready. `on` is set at
+   * the beginning of enter(), so a later refresh used to see a healthy-looking desktop and never
+   * repair a missing native handoff listener. Keep this small listener group independently
+   * idempotent and re-arm it from refresh as well as initial entry. */
+  function wireNativeHandoff(){
+    if(!window.pcWM)return;
+    if(!_nativeHandoffPrepareOff&&pcWM.onNativeHandoffPrepare)
+      _nativeHandoffPrepareOff=pcWM.onNativeHandoffPrepare(async(p)=>{
+        const row=p&&p.row, token=String(p&&p.token||'');
+        if(!row || row.id==null || !token)return;
+        _nativeAdoptPass++;
+        const w=adoptNative(row); if(!w)return;
+        w.nativeHandoffToken=token;w.el.classList.add('native-handoff-prepared');
+        await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+        if(!wins.includes(w)||w.nativeHandoffToken!==token)return;
+        try{
+          const snap=await pcWM.snapshot(), rows=Array.isArray(snap&&snap.windows)?snap.windows:[];
+          const shell=rows.find(x=>Number(x.id)===Number(snap.shellId));
+          const visual=window.visualViewport;
+          const scale=NAT().scaleFrom(shell&&shell.rect,
+            visual&&visual.width>0?visual.width:window.innerWidth,
+            visual&&visual.height>0?visual.height:window.innerHeight);
+          const rect=NAT().mapRect(_bodyRect(w),scale);
+          if(rect)await pcWM.nativeHandoffAck(token,rect);
+        }catch(_){}
+      });
+    if(!_nativeHandoffOff&&pcWM.onNativeHandoff)
+      _nativeHandoffOff=pcWM.onNativeHandoff((p)=>{
+        const row=p&&p.row?p.row:p, token=String(p&&p.token||'');
+        if(!row || row.id==null)return;
+        _nativeAdoptPass++;
+        const w=adoptNative(row);
+        if(w){
+          const id=Number(row.id);if(token&&w.nativeHandoffToken!==token)return;
+          w.nativeHandoffToken='';w.machineApp=row;w.el.classList.remove('native-handoff-prepared');
+          if(p&&p.rect)_natSent.set(id,p.rect);
+          if(pcWM.decorate)Promise.resolve(pcWM.decorate(id)).catch(()=>{});
+          drawBar();requestAnimationFrame(()=>nsync());
+        }
+      });
+    if(!_nativeHandoffAbortOff&&pcWM.onNativeHandoffAbort)
+      _nativeHandoffAbortOff=pcWM.onNativeHandoffAbort((p)=>{
+        const token=String(p&&p.token||''),id=Number(p&&p.id);
+        const w=nativeWins().find(x=>Number(x.native)===id&&x.nativeHandoffToken===token);
+        if(w)closeWin(w,{killNative:false,preserveFocus:true});
+      });
+  }
+
   function enter(){
     if(on) return;
     if(!fits() && !isSystemShell()){
@@ -6672,6 +6740,7 @@
         /* The start menu, a tray popover and every modal are painted by this page and a native app
          * floats above all of them — so opening one has to be able to put the app away. */
         _watchOverlays();
+        wireNativeHandoff();
         /* THE SUPER KEY OPENS THE START MENU, and it has to work when something else has the
          * keyboard — which is most of the time, since you press it to leave whatever you are in.
          * A key handler in this page cannot see that press at all: the compositor gave the keyboard
@@ -6778,49 +6847,6 @@
          * monitors are separate Electron renderers, so no DOM node can literally cross between
          * them; its app identity and size can, and the destination owns it from this point on. */
         try{
-          if(pcWM.onNativeHandoffPrepare) _nativeHandoffPrepareOff=pcWM.onNativeHandoffPrepare(async(p)=>{
-            const row=p&&p.row, token=String(p&&p.token||'');
-            if(!row || row.id==null || !token)return;
-            _nativeAdoptPass++;
-            const w=adoptNative(row); if(!w)return;
-            w.nativeHandoffToken=token;
-            w.el.classList.add('native-handoff-prepared');
-            /* Two frames: openApp inserts the node on the first, layout supplies body geometry on
-             * the second. Ack only the compositor-space body rectangle actually measured here. */
-            await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-            if(!wins.includes(w)||w.nativeHandoffToken!==token)return;
-            try{
-              const snap=await pcWM.snapshot(), rows=Array.isArray(snap&&snap.windows)?snap.windows:[];
-              const shell=rows.find(x=>Number(x.id)===Number(snap.shellId));
-              const scale=NAT().scaleFrom(shell&&shell.rect,document.documentElement.clientWidth,
-                                          document.documentElement.clientHeight);
-              const rect=NAT().mapRect(_bodyRect(w),scale);
-              if(rect)await pcWM.nativeHandoffAck(token,rect);
-            }catch(_){}
-          });
-          if(pcWM.onNativeHandoff) _nativeHandoffOff=pcWM.onNativeHandoff((p)=>{
-            const row=p&&p.row?p.row:p, token=String(p&&p.token||'');
-            if(!row || row.id==null)return;
-            /* A tree read begun before the compositor moved this surface still says it belongs to
-             * the source output. Invalidate that read before establishing destination ownership. */
-            _nativeAdoptPass++;
-            const w=adoptNative(row);
-            if(w){
-              const id=Number(row.id);
-              if(token && w.nativeHandoffToken!==token)return;
-              w.nativeHandoffToken='';
-              w.machineApp=row;
-              w.el.classList.remove('native-handoff-prepared');
-              if(p&&p.rect)_natSent.set(id,p.rect);
-              if(pcWM.decorate) Promise.resolve(pcWM.decorate(id)).catch(()=>{});
-              drawBar(); requestAnimationFrame(()=>nsync());
-            }
-          });
-          if(pcWM.onNativeHandoffAbort) _nativeHandoffAbortOff=pcWM.onNativeHandoffAbort((p)=>{
-            const token=String(p&&p.token||''), id=Number(p&&p.id);
-            const w=nativeWins().find(x=>Number(x.native)===id&&x.nativeHandoffToken===token);
-            if(w)closeWin(w,{killNative:false,preserveFocus:true});
-          });
           if(pcWM.onHandoffFrame) _handoffOff = pcWM.onHandoffFrame((p) => {
             if(_handoffPreviewEl){ _handoffPreviewEl.remove(); _handoffPreviewEl=null; }
             if(!p || !p.view) return;
@@ -7290,6 +7316,7 @@
    * therefore had them, which is what "it is in the start menu but not on the desktop" was. */
   function refresh(){
     if(!on) return;
+    wireNativeHandoff();
     drawDesktop();
     drawBar();
     // Signing in is also when the layout becomes readable at all — a remembered desktop opens during
@@ -7334,6 +7361,11 @@
    * desktop rather than per menu opening: a scan parses every .desktop file on the disk and
    * programs are not installed while somebody is holding the menu open. */
   let _machineApps = null;
+
+  /* Register against the preload bridge as soon as the module is complete. `handoffReady(true)`
+   * still controls whether main may send anything while Desktop mode is off; early registration
+   * only guarantees that a partially completed enter cannot miss the prepare event forever. */
+  try{ wireNativeHandoff(); }catch(_){}
 
   window.PCOS = { enter, exit, suspend, toggle, restore, refresh,
                   /* Android launcher tiles are MOBILE destinations even on a landscape tablet.
