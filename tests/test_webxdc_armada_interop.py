@@ -52,3 +52,10 @@ def test_running_app_and_realtime_echo_are_scoped_like_armada():
     # uses a throwaway rt key; checking only that key feeds every chat-scoped packet back to sender.
     assert "this.accountPk = (me && me.pubkey) || ''" in WEBXDC
     assert "this.accountPk && ev.pubkey === this.accountPk" in WEBXDC
+
+
+def test_ioquake_host_election_waits_for_the_armada_wire_subscription():
+    assert "rtReady = rpc('webxdc.rtJoin', {})" in WEBXDC
+    assert "rtReady.then(function(){ if(joined) rpc('webxdc.rtSend'" in WEBXDC
+    assert "const sub=await PCConcord.webxdcSubscribe" in WEBXDC
+    assert "this._rtJoinReady.then(()=>this.reply(id,null)" in WEBXDC

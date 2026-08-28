@@ -390,7 +390,7 @@
      *
      * It speaks JSON-RPC to `parent` — the sandbox loader — which forwards to this document. */
     const BRIDGE = `(function(){
-  var nextId = 1, pending = {}, listener = null, ready = null, rtListener = null;
+  var nextId = 1, pending = {}, listener = null, ready = null, rtListener = null, rtReady = null;
   /* A controller read by ANDROID and handed in, for the engine that will not hand one to the page.
      Same shape as a Gamepad (standard-mapping buttons + axes) so the shim below cannot tell the
      difference; 'padAt' is what makes a stale one fall back to the real API rather than pinning the
@@ -492,15 +492,25 @@
        typed array through two frames behaves differently across WebViews, and this is the one path
        that carries a packet every frame. */
     joinRealtimeChannel: function(){
-      rpc('webxdc.rtJoin', {});
+      if(rtReady) throw new Error('Already joined a realtime channel. Leave first.');
+      /* Do not let an app send until the messenger's relay listener exists. ioquake3 sends its
+         host-election packets immediately after join; losing those makes both peers start servers. */
+      rtReady = rpc('webxdc.rtJoin', {});
+      var joined = true;
       return {
-        setListener: function(cb){ rtListener = cb; },
+        setListener: function(cb){ if(!joined) throw new Error('Channel has been left.'); rtListener = cb; },
         send: function(data){
+          if(!joined) throw new Error('Channel has been left.');
           if(!(data instanceof Uint8Array)) throw new Error('realtime data must be a Uint8Array');
           if(data.length > ${UPDATE_MAX}) throw new Error('realtime packet too large');
-          rpc('webxdc.rtSend', { b64: b64(data) });
+          var wire = b64(data);
+          rtReady.then(function(){ if(joined) rpc('webxdc.rtSend', { b64: wire }); });
         },
-        leave: function(){ rtListener = null; rpc('webxdc.rtLeave', {}); },
+        leave: function(){
+          if(!joined) return;
+          joined = false; rtListener = null;
+          rtReady.then(function(){ rpc('webxdc.rtLeave', {}); rtReady = null; });
+        },
       };
     },
   };
@@ -1454,6 +1464,11 @@
        * relay that does keep a few is not going to replay a minute of somebody else's movement into
        * a game that just started. */
       if(d.method === 'webxdc.rtJoin'){
+        if(this._rtJoinReady){
+          this._rtJoinReady.then(()=>this.reply(id,null),e=>this.fail(id,(e&&e.message)||'realtime channel unavailable'));
+          return;
+        }
+        this._rtJoinReady=(async()=>{
         if(!this.rtSub){
           // Mint the channel key BEFORE subscribing: it is what tells our own packets from everyone
           // else's, and a packet that arrives before it exists would be delivered back to the app.
@@ -1481,7 +1496,10 @@
               };
             if(this.transport&&window.PCConcord&&PCConcord.webxdcSubscribe){
               this.rtSub={pending:true};
-              PCConcord.webxdcSubscribe(this.transport,this.app.uuid,true,receiveRt).then(sub=>{if(this.dead){try{Relay.close(sub);}catch(_){}}else this.rtSub=sub;},()=>{this.rtSub=null;});
+              try{
+                const sub=await PCConcord.webxdcSubscribe(this.transport,this.app.uuid,true,receiveRt);
+                if(this.dead){try{Relay.close(sub);}catch(_){}}else this.rtSub=sub;
+              }catch(e){this.rtSub=null;throw e;}
             }else this.rtSub = Relay.subscribe([{ kinds:[KIND_REALTIME], '#i':[this.app.uuid],
                                             since: Math.floor(Date.now() / 1000) - 120 }], {
               onEvent: (ev) => {
@@ -1493,9 +1511,10 @@
                 this.post({ jsonrpc:'2.0', method:'webxdc.realtime', params:{ b64: ev.content || '' } });
               },
             });
-          }catch(_){}
+          }catch(e){this.rtSub=null;throw e;}
         }
-        this.reply(id, null);
+        })();
+        this._rtJoinReady.then(()=>this.reply(id,null),e=>{this._rtJoinReady=null;this.fail(id,(e&&e.message)||'realtime channel unavailable');});
         return;
       }
       if(d.method === 'webxdc.rtSend'){
@@ -1508,6 +1527,7 @@
       if(d.method === 'webxdc.rtLeave'){
         try{ if(this.rtSub) Relay.close(this.rtSub); }catch(_){}
         this.rtSub = null;
+        this._rtJoinReady = null;
         this.reply(id, null);
         return;
       }

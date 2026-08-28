@@ -144,6 +144,15 @@ if(PCConcord.pendingEchoMatch(samePending,{pubkey:'a',text:'same',kind:9,at:1900
 if(PCConcord.pendingEchoMatch(samePending,{pubkey:'a',text:'same',kind:9,at:1500})!==null)
   throw new Error('ambiguous identical relay echo guessed and could collapse a real send');
 const xdcUrl='https://files.example/game.xdc';
+/* Cross-client fixture copied from Armada's AppsContext contract: a raw .xdc URL has no explicit
+   webxdc field, so defaultSessionId(concord2 scope, webxdc app) is
+   `concord2|<channel.idHex>|webxdc`. An uploaded game keeps its explicit UUID. */
+const armadaChannel='ab'.repeat(32),armadaRoom={cord:{bundle:{}},communityId:'community-1',naddr:'naddr-1',channels:[{id:armadaChannel,name:'general'}]};
+const armadaRaw=PCConcord.webxdcOf({id:'raw-event',text:xdcUrl,tags:[['imeta',`url ${xdcUrl}`,'m application/x-webxdc']]},armadaRoom,'general');
+if(armadaRaw.uuid!==`concord2|${armadaChannel}|webxdc`||armadaRaw.transport.channelId!==armadaChannel)
+  throw new Error('raw Webxdc link does not use Armada concord2 scope/session identity');
+const armadaUploaded=PCConcord.webxdcOf({id:'upload-event',text:xdcUrl,tags:[['imeta',`url ${xdcUrl}`,'m application/x-webxdc','webxdc fixture-uuid']]},armadaRoom,'general');
+if(armadaUploaded.uuid!=='fixture-uuid')throw new Error('explicit Armada Webxdc UUID was replaced');
 const xdcMessage={id:'xdc-message',text:'play this '+xdcUrl,tags:[['imeta',`url ${xdcUrl}`,'m application/x-webxdc','webxdc game-1','summary Game']]};
 window.PCWebxdc={cardHtml:()=>'<div class="xdc-card">Game</div>'};
 const playableXdc=PCConcord.messageContentHtml({enc:String,linkify:String,linkCardHtml:s=>'PREVIEW:'+s},xdcMessage);

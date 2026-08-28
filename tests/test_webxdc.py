@@ -236,6 +236,7 @@ class HandAssembledJavaScript(unittest.TestCase):
         global.parent = { postMessage(m){ sent.push(m); } };
         global.document = { createElement: () => ({ getContext: () => ({}) }) };
         vm.runInThisContext(%s);
+        (async()=>{
         const w = window.webxdc, ch = w.joinRealtimeChannel();
         let threw = false;
         try { ch.send([1, 2, 3]); } catch (e) { threw = true; }
@@ -245,6 +246,10 @@ class HandAssembledJavaScript(unittest.TestCase):
            discards as malformed. */
         const BYTES = [0, 1, 127, 128, 200, 255, 13, 10, 0];
         ch.send(Uint8Array.from(BYTES));
+        const beforeJoin = sent.filter(m => m.method === 'webxdc.rtSend').length;
+        const join = sent.find(m => m.method === 'webxdc.rtJoin');
+        for (const fn of listeners) fn({ data:{ jsonrpc:'2.0', id:join.id, result:null } });
+        await Promise.resolve();
         const outgoing = sent.filter(m => m.method === 'webxdc.rtSend').pop();
         let heard = null;
         ch.setListener((data) => { heard = [...data]; });
@@ -253,10 +258,13 @@ class HandAssembledJavaScript(unittest.TestCase):
         console.log(JSON.stringify({ keys: Object.keys(w).sort(), channel: Object.keys(ch).sort(),
           addr: w.selfAddr, name: w.selfName, max: typeof w.sendUpdateMaxSize,
           every: typeof w.sendUpdateInterval, rejectsPlainArrays: threw,
-          wire: outgoing.params.b64, sent: BYTES, heard }));
+          wire: outgoing.params.b64, sent: BYTES, heard, beforeJoin }));
+        })();
         """ % json.dumps('var __XDC = { addr:"npub1abc", name:"Ann", ns:"game" };\n' + body))
         self.assertEqual(out["heard"], out["sent"], "the realtime codec does not round-trip bytes")
         self.assertEqual(out["wire"], "AAF/gMj/DQoA", "the wire form is not base64 of those bytes")
+        self.assertEqual(out["beforeJoin"], 0,
+                         "ioquake host-election data escaped before the relay listener was ready")
         self.assertEqual(out["keys"], ["joinRealtimeChannel", "selfAddr", "selfName", "sendUpdate",
                                        "sendUpdateInterval", "sendUpdateMaxSize", "setUpdateListener"])
         self.assertEqual(out["channel"], ["leave", "send", "setListener"])
