@@ -438,3 +438,29 @@ signed-in bridge; and (4) a final ISO built from that installed boundary and boo
 Live two-identity Concord writes/moderation/attachments/Webxdc, real carrier SMS/MMS migration/send,
 cross-device notifications, external native-app clipboard sessions and sustained real agent-terminal
 use remain independent open requirements and are not implied by any row above.
+
+## 2026-08-28 Desktop 1.0.1137 / Android 1.0.1854 recovery boundary
+
+This section supersedes the post-1.0.1133 package statements above. The immutable Desktop and Android
+builds use application commit `313f1165285f73b305a18789388aa8164056e124`; overlay-only commit
+`0e08106f7` pins Desktop 1.0.1137 and does not change the application payload.
+
+| Requirement | Current authoritative evidence | State / missing proof |
+|---|---|---|
+| Full client gate | The final source boundary passed **1,832 tests plus 99 subtests** in 470.40 seconds, with no failure | Green for source/client behavior; installed, authenticated, hardware and external-service gates remain independent |
+| Desktop artifact / Gentoo | Immutable Desktop 1.0.1137 Linux is 152,211,444 bytes, SHA-256 `6684d496a1143725e4d583566b83c6f55e82917041188d65e67a309ce174c714`. The public overlay pins 1.0.1137 to this immutable artifact | Published and pinned |
+| Installed identity | Both authorized machines report `app-misc/posterchan-desktop-1.0.1137`. Their package-owned ASARs are 15,682,003 bytes with SHA-256 `9fc12010db69cc970d3af59fa046e07bd21c1cda8c4cf6e1017b087515928285`; each machine has exactly one canonical shell after the intelligent restart | Exact package identity and stable canonical process count verified |
+| Files / Preview | The immutable ASAR independently passed open-with, folder drop/upload, This Computer video, Preview image/video/PDF/audio, bundled PDF.js, generic MP4, maximized neutral layout, blob handoff/cleanup and responsive Explorer gates. A disposable installed fixture passed date column, unified search, Select all/none, nested folder navigation and SVG Preview | Current installed/package behavior verified. Current authenticated Files/index/sync completeness and physical Android/external-provider behavior remain open |
+| Code Git/diff/restore/focus | Both installed ASARs passed staged and rename diff/restore. The rename fixture proves porcelain-v1 `-z` NEW/OLD ordering is parsed correctly, the new path appears once, its diff opens, and restore cleans both paths. Browser editor/workdir/focus/sizing also passed | Current package gate verified; arbitrary user repositories remain outside destructive automation by design |
+| Office / Email | Both installed ASARs passed the immutable Office/Email route, policy, workspace and mobile layout gates; Collabora editor POST routing is present | No authenticated 1.0.1137 Collabora edit/save/readback was performed, so current-account Office remains open |
+| Messages / Terminal / Preview handoff | Installed two-renderer gates proved Direct Messages remains in its owning Messages frame, DM send retains the open thread, stale Concord cannot repaint Terminal after handoff, a live three-tab Terminal retains its PTY/route, and Preview transfers real bytes and reconstructs one destination Preview without an object-URL leak. A real dual-output Preview titlebar move retained the same image document and focus with one destination host and none left in the source | Current installed recovery behavior verified; exhaustive every-app/user-native-window sequences remain open |
+| Vector/Armada membership | The supplied user npub decodes to `5e759c2ca4a4e222ba7af89e6ff315e1d27843fe8bd0a3e7e61e4ba5b1c07326`, exactly matching the identity whose public 13302/33302 membership coordinates were inspected. The current package accepts released seed-only entries, fragmented lists and nested historical roots | Identity and relay targeting are exact, but no affected signed-in installed client has yet shown the recovered rooms/history; keep live hydration open |
+| Android artifact | Android workflow published signed rolling APK 1.0.1854, 20,424,112 bytes, SHA-256 `39e041e18dca2b3fbe0022442e56a809328fbc236d26a2d183349e83bca07f98`, from the same application commit. APK web-asset provenance passed in the exact-head emulator workflow | Artifact identified; acceptance remains conditional on the whole exact-head emulator result below |
+| Android emulator / Music / Concord typing | Exact-head run `33139397404` built the debug APK, byte-verified the packaged Concord asset and passed the bundled composer repaint check, then entered real API-34 device checks | The device step was still running when this row was written. Do not accept the APK until its completed XML proves the Concord textarea node/value/selection/focus assertions and foreground Music-after-Home assertions. Physical audible/OEM/Bluetooth and keyboard behavior remain open regardless |
+| ISO | The newest proved ISO remains the historical 2026-08-26 image containing Desktop 1.0.980 | A new image containing this final boundary, structural/virtual install verification and physical USB boot are all open |
+
+The current package gates used disposable fixtures and privacy-preserving counts. They did not expose
+account filenames, room names, messages, keys or invite material. They also do not imply the open
+authenticated Office save, affected-user Vector hydration, physical Android playback/keyboard,
+carrier SMS/MMS, cross-device notification, live two-identity Concord write/moderation/attachment/
+Webxdc, external native-app clipboard, sustained agent-terminal, or physical USB requirements.
