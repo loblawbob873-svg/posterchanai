@@ -12,6 +12,14 @@ def test_terminal_monitor_handoff_runtime_uses_session_identity_and_returns_clea
     assert "terminal monitor handoff runtime: ok" in run.stdout
 
 
+def test_terminal_handoff_restores_scrollback_even_when_there_is_no_replay_output():
+    run = subprocess.run(
+        ["node", str(ROOT / "tests/client/terminal_empty_handoff_scroll_runtime.mjs")],
+        cwd=ROOT, text=True, capture_output=True, check=True,
+    )
+    assert "terminal empty handoff viewport runtime: ok" in run.stdout
+
+
 def test_os_transfers_terminal_state_before_opening_destination_window():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
     payload = src[src.index("function handoffPayload"):src.index("function sendFrameHandoff")]

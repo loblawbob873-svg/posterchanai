@@ -83,7 +83,7 @@
      * callback had called scrollToBottom().  Keep one generation of post-layout pinning alive until
      * the newest write has crossed two paint frames and a short layout quiescence.  Older callbacks
      * may never release the guard underneath a newer write. */
-    let bottomPinEpoch = 0, bottomPinT = null;
+    let bottomPinEpoch = 0, bottomPinT = null, handoffRestoreT = null;
 
     function _stopFollowing(){
       /* A write may keep `scrollingByUs` true across two paints while xterm grows its viewport.
@@ -654,6 +654,7 @@
     function _restoreHandoffScroll(){
       const saved=handoffScroll;
       if(!saved || !term) return;
+      if(handoffRestoreT){clearTimeout(handoffRestoreT);handoffRestoreT=null;}
       handoffScroll=null;
       followBottom=saved.pinned!==false;
       if(followBottom){ _pinBottomAfterLayout(); return; }
@@ -667,6 +668,14 @@
       };
       try{ requestAnimationFrame(()=>requestAnimationFrame(apply)); }catch(_){ apply(); }
       setTimeout(apply,120);
+    }
+
+    function _scheduleHandoffScroll(){
+      /* A handoff usually restores after replay's write callback, once xterm has grown the buffer.
+       * A fully caught-up session has no replay frame, though, so that callback never exists. READY
+       * schedules the no-output fallback; any real replay cancels it in _restoreHandoffScroll. */
+      if(!handoffScroll||handoffRestoreT)return;
+      handoffRestoreT=setTimeout(()=>{handoffRestoreT=null;_restoreHandoffScroll();},160);
     }
 
     async function connect(){
@@ -906,6 +915,7 @@
              * attaches already call _resetForReplay(), which arms followBottom before READY, so
              * they still open at current output. A terminal that was pinned also remains pinned. */
             if(followBottom) _pinBottomAfterLayout();
+            else if(handoffScroll) _scheduleHandoffScroll();
             /* A NEW PTY IS A NEW TAB. Starting one used to update `sid` but never repaint the tab
              * strip, so the shell existed while the only visible tab was still the previous one.
              * The next press appeared to do nothing useful and switching was impossible until a
@@ -1340,6 +1350,7 @@
       if(term){ try{ term.dispose(); }catch(_){} term = null; fit = null; }
       ++bottomPinEpoch;
       if(bottomPinT){ clearTimeout(bottomPinT); bottomPinT = null; }
+      if(handoffRestoreT){ clearTimeout(handoffRestoreT); handoffRestoreT = null; }
       scrollingByUs = false;
       _fitPixels = '';
       if(_fitT){ clearTimeout(_fitT); _fitT = null; }
