@@ -41,6 +41,7 @@
     const KIND_REALTIME = 20932;       // NIP-DC realtime data (EPHEMERAL: relays forward, store nothing)
     const MIME = 'application/x-webxdc';
     const MIME_VENDOR = 'application/vnd.webxdc+zip';
+    /* Bounded local trace: enough to locate startup failures without collecting packet contents. */
     const _rtDiagnostics=[];
     function rtDiagnostic(stage,detail){const row={at:Date.now(),stage:String(stage||''),detail:String(detail||'').slice(0,240)};_rtDiagnostics.push(row);if(_rtDiagnostics.length>80)_rtDiagnostics.shift();try{localStorage.setItem('pc_webxdc_rt_diag',JSON.stringify(_rtDiagnostics));}catch(_){}try{console.warn('[webxdc realtime]',row.stage,row.detail);}catch(_){}return row;}
     const base32Topic = (bytes) => { const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'; let out='',buf=0,bits=0; for(const b of bytes){buf=(buf<<8)|b;bits+=8;while(bits>=5){bits-=5;out+=alphabet[(buf>>>bits)&31];}} if(bits)out+=alphabet[(buf<<(5-bits))&31]; return out; };
