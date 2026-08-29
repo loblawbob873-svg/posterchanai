@@ -137,6 +137,11 @@ const concordSource=process.argv[2]
   : new URL('../../static/js/client/concord.js', import.meta.url);
 vm.runInThisContext(fs.readFileSync(concordSource, 'utf8'),
                     {filename:'concord.js'});
+const exactRoomRelays=PCConcord.roomRelays({relays:['wss://relay.poster.place']});
+if(JSON.stringify(exactRoomRelays)!==JSON.stringify(['wss://relay.poster.place']))
+  throw new Error('room relay was polluted with global Concord defaults: '+JSON.stringify(exactRoomRelays));
+if(!PCConcord.roomRelays({relays:[]}).length)throw new Error('legacy room lost bootstrap fallback');
+
 const publicLinks=PCConcord.discoverInvites('Join us https://armada.buzz/invite/naddr1qqqq#abc_DEF',{created_at:1});
 if(publicLinks.length!==1 || publicLinks[0].name!=='Join us') throw new Error('public discovery parser failed');
 const alice={id:'root',pubkey:'b'.repeat(64),tags:[]};
