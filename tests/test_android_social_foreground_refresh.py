@@ -33,3 +33,11 @@ def test_duplicate_native_foreground_signals_do_not_duplicate_queries():
 def test_a_real_pause_still_reopens_live_delivery():
     body = _resume_body()
     assert "if(wasPaused && !subs[view]) fullSub()" in body
+
+
+def test_visible_offline_recovery_runs_the_scroll_preserving_catchup():
+    """An online event can happen without background/foreground when Wi-Fi drops in place."""
+    assert "window.addEventListener('online', ()=>{ _tlForeground(); _resumeRelay(); });" in APPJS
+    assert "if(e && e.persisted){ _tlForeground(); _resumeRelay(); }" in APPJS
+    body = _resume_body()
+    assert "_drawTimeline(true)" in body

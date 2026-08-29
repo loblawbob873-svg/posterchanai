@@ -196,7 +196,7 @@ def test_every_resume_signal_is_wired_and_they_share_one_debounce():
     """visibilitychange is the least reliable of the four on a frozen Android process, and it was the
     only one the relay reconnect listened to."""
     for sig in ("addListener('resume'", "addListener('appStateChange'",
-                "addEventListener('online', _resumeRelay)", "pageshow"):
+                "addEventListener('online', ()=>{ _tlForeground(); _resumeRelay(); })", "pageshow"):
         assert sig in APPJS, f"the {sig} resume signal is not wired"
     i = APPJS.index("function _resumeRelay(){")
     assert "_lastWake < 4000" in APPJS[i:i + 300], "the four signals would fire four reconnects"
