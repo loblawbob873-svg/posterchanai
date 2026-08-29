@@ -201,6 +201,7 @@ let refusals = Number(opt.refuseAfter != null ? opt.refuseAfter : -1);
 
 global.window = global;
 global.crypto = webcrypto;
+global.ICO = () => '';
 const documentListeners = new Map();
 global.document = {
   visibilityState: 'visible',
@@ -257,10 +258,20 @@ const filesIdx = {
 };
 global.window = global.window || {};
 global.window.__PC_API_BASE__ = (opt.apiBase === undefined ? 'https://node.example' : opt.apiBase);
+const visibleFeed = opt.desktopOwnershipRace ? {
+  innerHTML:'<div class="spinner"></div>', className:'feed feed-texts',
+  querySelectorAll(){ return []; }, querySelector(){ return null; }
+} : null;
+if(opt.desktopOwnershipRace) global.PCOS = {
+  isOn: () => true,
+  // Reproduce the feed-handoff turn: the route callback is active, but OS bookkeeping has not yet
+  // made the conservative background-paint predicate true.
+  ownsFeedView: () => false,
+};
 global.__PC = {
-  VIEW: 'timeline',                 // NOT texts, so paint() is a no-op and needs no DOM
+  VIEW: opt.desktopOwnershipRace ? 'texts' : 'timeline',
   ME: { pubkey: 'me' },
-  $: () => null,
+  $: sel => sel === '#feed' ? visibleFeed : null,
   enc: s => String(s == null ? '' : s),
   toast(){},
   uiConfirm: async () => true,
@@ -440,6 +451,7 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
   }
   console.log(JSON.stringify({
     calls, published, notified, uploads, scrollProbe, hydrationProbe,
+    feedHtml: visibleFeed ? visibleFeed.innerHTML : '',
     drive: { folders:Array.from(driveFolders).sort(), files:driveFiles, batch:driveBatch },
     rows: rows.map(r => r.doc),
     relay: Array.from(relay.keys()).sort(),

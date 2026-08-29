@@ -2153,8 +2153,12 @@
     return PC.VIEW === 'texts';
   }
 
-  function paint(){
-    if(!textsOnScreen()) return;
+  function paint(force){
+    /* The explicit route render owns the feed even during PosterChanOS's one-turn feed handoff.
+     * Background decrypt/subscription work must still prove ownership before painting, but applying
+     * that asynchronous predicate to the route's own first paint can leave app.js's spinner in
+     * place forever with a completely loaded S.msgs map. */
+    if(!force && !textsOnScreen()) return;
     const feed = PC.$('#feed');
     if(!feed) return;
     const enc = PC.enc;
@@ -2758,7 +2762,10 @@
      * route already installed a spinner; awaiting the first cache pass makes the first visit behave
      * exactly like the second one instead of requiring the person to close and reopen Texts. */
     if(!S.ready) await load();
-    else paint();
+    /* load() paints through the conservative background ownership gate. The desktop can still be
+     * between claimFeed() and noteView() in this exact callback, so make the route-owned paint
+     * explicit after the data transaction settles. This is what replaces app.js's spinner. */
+    paint(true);
     /* Contacts may route here before this late-loaded module existed. Consume it only AFTER load:
        load rebuilds the thread index, so consuming first made a brand-new recipient disappear. */
     const contactLanding=String(window.__PC_SMS_OPEN_ADDRESS||'').trim();

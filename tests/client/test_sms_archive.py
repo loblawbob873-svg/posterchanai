@@ -94,6 +94,17 @@ class ColdArchiveFailures(unittest.TestCase):
         self.assertEqual(res["docs"], [])
         self.assertEqual(calls_of(res, "storeQuery"), [["storeQuery"]])
 
+    def test_desktop_route_replaces_spinner_during_feed_ownership_handoff(self):
+        """The route callback is authoritative for its first paint. PCOS ownership bookkeeping can
+        lag that callback by one turn; treating it like a background repaint leaves the spinner even
+        though the encrypted archive has loaded successfully."""
+        cached = [ev("pcai:sms:visible", {"address": "+15550100", "body": "loaded",
+                                          "date": 1, "incoming": True})]
+        res = run(isPhone=False, cached=cached, relayEmpty=True, desktopOwnershipRace=True,
+                  steps=["render", "settle"])
+        self.assertIn("loaded", res["feedHtml"])
+        self.assertNotIn('class="spinner"', res["feedHtml"])
+
 
 @unittest.skipIf(shutil.which("node") is None, "node not installed")
 class Mirror(unittest.TestCase):
@@ -340,7 +351,7 @@ class SendingFromAnotherDevice(unittest.TestCase):
 
     def test_desktop_live_repaint_requires_the_texts_window_to_own_the_feed(self):
         web = (ROOT / "static/js/client/sms.js").read_text()
-        visible = web[web.index("function textsOnScreen()") : web.index("function paint()")]
+        visible = web[web.index("function textsOnScreen()") : web.index("function paint(force)")]
         self.assertIn("PCOS.ownsFeedView('texts')", visible)
         self.assertIn("PCOS.isOn()", visible)
 
