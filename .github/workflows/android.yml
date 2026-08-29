@@ -105,10 +105,6 @@ jobs:
           POSTERCHAN_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           ANDROID_SIGNING_CERT_SHA256: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
           ANDROID_SIGNING_LINEAGE_BASE64: ${{ secrets.ANDROID_SIGNING_LINEAGE_BASE64 }}
-          ANDROID_OLD_KEYSTORE_BASE64: ${{ secrets.ANDROID_OLD_KEYSTORE_BASE64 }}
-          POSTERCHAN_ANDROID_OLD_STORE_PASSWORD: ${{ secrets.ANDROID_OLD_STORE_PASSWORD }}
-          POSTERCHAN_ANDROID_OLD_KEY_ALIAS: ${{ secrets.ANDROID_OLD_KEY_ALIAS }}
-          POSTERCHAN_ANDROID_OLD_KEY_PASSWORD: ${{ secrets.ANDROID_OLD_KEY_PASSWORD }}
         run: |
           test -n "$ANDROID_KEYSTORE_BASE64" || { echo '::error::ANDROID_KEYSTORE_BASE64 is not configured'; exit 1; }
           test -n "$POSTERCHAN_ANDROID_STORE_PASSWORD" || { echo '::error::ANDROID_STORE_PASSWORD is not configured'; exit 1; }
@@ -116,16 +112,11 @@ jobs:
           test -n "$POSTERCHAN_ANDROID_KEY_PASSWORD" || { echo '::error::ANDROID_KEY_PASSWORD is not configured'; exit 1; }
           test -n "$ANDROID_SIGNING_CERT_SHA256" || { echo '::error::ANDROID_SIGNING_CERT_SHA256 is not configured'; exit 1; }
           test -n "$ANDROID_SIGNING_LINEAGE_BASE64" || { echo '::error::ANDROID_SIGNING_LINEAGE_BASE64 is not configured; refusing to ship a signer change that existing Android installations cannot verify'; exit 1; }
-          test -n "$ANDROID_OLD_KEYSTORE_BASE64" || { echo '::error::ANDROID_OLD_KEYSTORE_BASE64 is required for pre-rotation Android upgrades'; exit 1; }
-          test -n "$POSTERCHAN_ANDROID_OLD_STORE_PASSWORD" || { echo '::error::ANDROID_OLD_STORE_PASSWORD is not configured'; exit 1; }
-          test -n "$POSTERCHAN_ANDROID_OLD_KEY_ALIAS" || { echo '::error::ANDROID_OLD_KEY_ALIAS is not configured'; exit 1; }
-          test -n "$POSTERCHAN_ANDROID_OLD_KEY_PASSWORD" || { echo '::error::ANDROID_OLD_KEY_PASSWORD is not configured'; exit 1; }
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$POSTERCHAN_ANDROID_KEYSTORE"
-          printf '%s' "$ANDROID_OLD_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/posterchan-old-release.keystore"
           chmod 600 "$POSTERCHAN_ANDROID_KEYSTORE"
-          chmod 600 "$RUNNER_TEMP/posterchan-old-release.keystore"
           chmod +x gradlew
-          # Build unsigned; the next step applies both signers and their lineage atomically.
+          # Build unsigned; the next step applies only the current signer plus the already-verified
+          # public proof-of-rotation. The retired private key must never enter a runner again.
           # JitPack occasionally times out while resolving the MMS/streaming libraries. Retry the
           # identical unsigned build; signing and certificate verification still happen only once,
           # after a complete build succeeds.
@@ -149,10 +140,6 @@ jobs:
           POSTERCHAN_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
           POSTERCHAN_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           POSTERCHAN_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          POSTERCHAN_ANDROID_OLD_KEYSTORE: ${{ runner.temp }}/posterchan-old-release.keystore
-          POSTERCHAN_ANDROID_OLD_STORE_PASSWORD: ${{ secrets.ANDROID_OLD_STORE_PASSWORD }}
-          POSTERCHAN_ANDROID_OLD_KEY_ALIAS: ${{ secrets.ANDROID_OLD_KEY_ALIAS }}
-          POSTERCHAN_ANDROID_OLD_KEY_PASSWORD: ${{ secrets.ANDROID_OLD_KEY_PASSWORD }}
         run: |
           APK=$(find mobile/android -path '*release*' -name '*.apk' | head -1)
           echo "found: $APK"
@@ -160,22 +147,33 @@ jobs:
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)
           test -n "$APKSIGNER" || { echo '::error::apksigner was not found'; exit 1; }
           printf '%s' "$ANDROID_SIGNING_LINEAGE_BASE64" | base64 --decode > "$RUNNER_TEMP/signing-lineage"
+          UNSIGNED_APK="$APK"
+          # One safe artifact cannot cover both generations. v1/v2 require the oldest private key
+          # when a lineage is supplied, and that key is retired. The primary artifact is therefore
+          # v3-only for Android 9+ upgrades; Android 8 gets a separate current-signer reinstall APK.
           $APKSIGNER sign \
-            --ks "$POSTERCHAN_ANDROID_OLD_KEYSTORE" \
-            --ks-key-alias "$POSTERCHAN_ANDROID_OLD_KEY_ALIAS" \
-            --ks-pass env:POSTERCHAN_ANDROID_OLD_STORE_PASSWORD \
-            --key-pass env:POSTERCHAN_ANDROID_OLD_KEY_PASSWORD \
-            --next-signer --ks "$POSTERCHAN_ANDROID_KEYSTORE" \
+            --min-sdk-version 28 \
+            --ks "$POSTERCHAN_ANDROID_KEYSTORE" \
             --ks-key-alias "$POSTERCHAN_ANDROID_KEY_ALIAS" \
             --ks-pass env:POSTERCHAN_ANDROID_STORE_PASSWORD \
             --key-pass env:POSTERCHAN_ANDROID_KEY_PASSWORD \
             --lineage "$RUNNER_TEMP/signing-lineage" \
             --rotation-min-sdk-version 28 \
+            --v1-signing-enabled false --v2-signing-enabled false \
+            --v3-signing-enabled true --v4-signing-enabled true \
+            --out "$RUNNER_TEMP/posterchan-api28.apk" "$UNSIGNED_APK"
+          $APKSIGNER sign \
+            --min-sdk-version 26 \
+            --ks "$POSTERCHAN_ANDROID_KEYSTORE" \
+            --ks-key-alias "$POSTERCHAN_ANDROID_KEY_ALIAS" \
+            --ks-pass env:POSTERCHAN_ANDROID_STORE_PASSWORD \
+            --key-pass env:POSTERCHAN_ANDROID_KEY_PASSWORD \
             --v1-signing-enabled true --v2-signing-enabled true \
             --v3-signing-enabled true --v4-signing-enabled true \
-            --out "$RUNNER_TEMP/posterchan-rotated.apk" "$APK"
-          APK="$RUNNER_TEMP/posterchan-rotated.apk"
-          ROTATED_VERIFY=$($APKSIGNER verify --min-sdk-version 28 --verbose --print-certs "$APK" 2>&1) || {
+            --out "$RUNNER_TEMP/posterchan-android8.apk" "$UNSIGNED_APK"
+          API28_APK="$RUNNER_TEMP/posterchan-api28.apk"
+          ANDROID8_APK="$RUNNER_TEMP/posterchan-android8.apk"
+          ROTATED_VERIFY=$($APKSIGNER verify --min-sdk-version 28 --verbose --print-certs "$API28_APK" 2>&1) || {
             printf '%s\n' "$ROTATED_VERIFY"
             echo '::error::apksigner rejected the rotated APK for Android 9+'; exit 1;
           }
@@ -189,20 +187,38 @@ jobs:
           test "$ACTUAL_CERT" = "$EXPECTED_CERT" || {
             echo "::error::Release signer mismatch (actual $ACTUAL_CERT)"; exit 1;
           }
-          LEGACY_VERIFY=$($APKSIGNER verify --min-sdk-version 26 --max-sdk-version 27 --verbose --print-certs "$APK" 2>&1) || {
-            printf '%s\n' "$LEGACY_VERIFY"
-            echo '::error::apksigner rejected the rotated APK for Android 8'; exit 1;
+          printf '%s\n' "$ROTATED_VERIFY" | grep -Eq 'Verified using v3 scheme.*:[[:space:]]*true' || {
+            echo '::error::The Android 9+ APK does not contain a v3 proof-of-rotation'; exit 1;
           }
-          printf '%s\n' "$LEGACY_VERIFY"
-          LEGACY_CERT=$(printf '%s\n' "$LEGACY_VERIFY" \
+          if $APKSIGNER verify --min-sdk-version 26 --max-sdk-version 27 "$API28_APK" >/dev/null 2>&1; then
+            echo '::error::The Android 9+ lineage APK unexpectedly claims Android 8 compatibility'; exit 1;
+          fi
+          FRESH_ANDROID8_VERIFY=$($APKSIGNER verify --min-sdk-version 26 --max-sdk-version 27 --verbose --print-certs "$ANDROID8_APK" 2>&1) || {
+            printf '%s\n' "$FRESH_ANDROID8_VERIFY"
+            echo '::error::apksigner rejected the current-signer APK for an Android 8 fresh install'; exit 1;
+          }
+          printf '%s\n' "$FRESH_ANDROID8_VERIFY"
+          FRESH_ANDROID8_CERT=$(printf '%s\n' "$FRESH_ANDROID8_VERIFY" \
             | sed -nE 's/.*certificate SHA-256 digest:[[:space:]]*([0-9A-Fa-f:]+).*/\1/p' \
             | head -1 | tr -d ':' | tr '[:lower:]' '[:upper:]')
-          test "$LEGACY_CERT" = "EDDF3A7983DF49221A5ACE0D0CA52C899D34EB88A4155B0829B05C0AFC31F342" || {
-            echo "::error::Android 8 compatibility signer mismatch (actual $LEGACY_CERT)"; exit 1;
+          test "$FRESH_ANDROID8_CERT" = "$EXPECTED_CERT" || {
+            echo "::error::Android 8 APK unexpectedly uses a retired signer (actual $FRESH_ANDROID8_CERT)"; exit 1;
           }
-          cp "$APK" posterchan.apk
-          ls -la posterchan.apk
+          ANDROID8_JAR_VERIFY=$($APKSIGNER verify --min-sdk-version 23 --max-sdk-version 23 --verbose "$ANDROID8_APK" 2>&1) || {
+            printf '%s\n' "$ANDROID8_JAR_VERIFY"
+            echo '::error::The Android 8 reinstall APK has no usable v1 signature'; exit 1;
+          }
+          printf '%s\n' "$ANDROID8_JAR_VERIFY" | grep -Eq 'Verified using v1 scheme.*:[[:space:]]*true' || {
+            echo '::error::The Android 8 reinstall APK lacks a v1 signature'; exit 1;
+          }
+          printf '%s\n' "$FRESH_ANDROID8_VERIFY" | grep -Eq 'Verified using v2 scheme.*:[[:space:]]*true' || {
+            echo '::error::The Android 8 reinstall APK lacks a v2 signature'; exit 1;
+          }
+          cp "$API28_APK" posterchan.apk
+          cp "$ANDROID8_APK" posterchan-android8-reinstall.apk
+          ls -la posterchan.apk posterchan-android8-reinstall.apk
           python3 scripts/check_android_apk_assets.py posterchan.apk "$PWD"
+          python3 scripts/check_android_apk_assets.py posterchan-android8-reinstall.apk "$PWD"
 
       # GitHub stamps a release's publish date ONCE, when the release object is created — replacing the asset
       # under a rolling tag never touches it. So apk-latest kept showing "2 days ago" next to a brand-new APK,
@@ -250,11 +266,18 @@ jobs:
           body: |
             Latest PosterChan Android APK — auto-built from the web client. Version 1.0.${{ github.run_number }}.
 
+            `posterchan.apk` is the Android 9+ update with signing-key lineage. Android 8/8.1 users
+            must export their data, uninstall the old-key build, then install
+            `posterchan-android8-reinstall.apk`; it is not an in-place update.
+
             ${{ env.NOTES }}
-          files: posterchan.apk
+          files: |
+            posterchan.apk
+            posterchan-android8-reinstall.apk
           make_latest: true
 
-      # Publish the SAME APK to Zapstore (the Nostr app store) so every build lands there too. Config lives in
+      # Publish only the API 28+ lineage APK to Zapstore. The Android 8 current-signer reinstall is a
+      # separately named GitHub asset so no store can mistake it for an in-place old-signer update. Config lives in
       # zapstore.yaml; `zsp` reads the version straight out of the APK, uploads it to Blossom and publishes the
       # NIP-82 app/release events. Skipped (not failed) when SIGN_WITH isn't set, so forks still build an APK.
       # NB: -q, not -y — the upstream docs advertise a -y flag the binary doesn't actually have.
@@ -274,9 +297,9 @@ jobs:
           SIGN_WITH: ${{ secrets.ZAPSTORE_SIGN_WITH }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ZSP_CACHE: ~/.cache/zsp
-          # Publish a clean current-signer listing. Existing installations signed by the retired
-          # key upgrade through poster.place/apk, where Android verifies the APK's embedded
-          # proof-of-rotation; Zapstore's catalog currently cannot represent that lineage safely.
+          # Publish the API 28+ current-signer listing. Existing Android 9+ installations signed by
+          # the retired key upgrade through the APK's embedded proof-of-rotation. Android 8's
+          # explicitly named reinstall artifact is never offered through this store path.
           RELAY_URLS: wss://relay.poster.place,wss://relay.primal.net,wss://relay.zapstore.dev
           POSTERCHAN_ANDROID_KEYSTORE: ${{ runner.temp }}/posterchan-release.keystore
           POSTERCHAN_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}

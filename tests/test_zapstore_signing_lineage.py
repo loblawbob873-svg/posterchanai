@@ -13,6 +13,9 @@ def test_zapstore_publisher_creates_clean_current_signer_listing():
     assert 'apply --unidiff-zero "$GITHUB_WORKSPACE/scripts/zsp-signing-lineage.patch"' in workflow
     assert "zsp-v0.4.11-posterchan-lineage-v3" in workflow
     assert "RELAY_URLS: wss://relay.poster.place,wss://relay.primal.net,wss://relay.zapstore.dev" in workflow
+    assert "Publish only the API 28+ lineage APK to Zapstore" in workflow
+    assert "Android 8's" in workflow
+    assert "release_source: ./posterchan.apk" in (ROOT / "zapstore.yaml").read_text()
     assert "proof-of-rotation" in workflow
     assert 'nostr.Tag{\"apk_certificate_hash\", fingerprint}' in patch
     assert "fingerprint != strings.ToLower(meta.CertFingerprint)" in patch
