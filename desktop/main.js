@@ -1636,6 +1636,14 @@ ipcMain.handle('pc:wm:launch', async (e, argv, opts) => {
       WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY || 'wayland-1',
     }) });
   }
+  /* Firefox's private-window command delegates to an already-running profile. Its new surface
+   * belongs to the OLD browser PID, not to the short-lived command we spawn, so ancestry matching
+   * can never see it. Snapshot exact con_ids before launch and accept only a new Firefox surface. */
+  let firefoxBefore=[];
+  if(firefoxRunning){
+    try{firefoxBefore=(await wm().windows()).filter(w=>/firefox/i.test(String(w.app||''))).map(w=>w.id);}
+    catch(_){firefoxBefore=[];}
+  }
   const started = wm().launch(list, launchOpts);
   /* The window is matched by PID and reported back, so the desktop can place what it just opened
    * rather than guessing which of several windows appeared. Null when it never shows — an app that
@@ -1644,8 +1652,12 @@ ipcMain.handle('pc:wm:launch', async (e, argv, opts) => {
    * RACED AGAINST THE FAILURE, because spawn reports a missing program asynchronously: waiting only
    * for a window turns "not installed" into fifteen seconds of a launcher that appears to do
    * nothing, and then a null that says no more than a timeout would. */
+  const waitMs=(opts && opts.waitMs) || 15000;
+  const appeared=firefoxRunning
+    ? wm().waitForNewWindow(firefoxBefore,waitMs,w=>/firefox/i.test(String(w.app||'')))
+    : wm().waitForWindow(started.pid,waitMs);
   const settled = await Promise.race([
-    wm().waitForWindow(started.pid, (opts && opts.waitMs) || 15000).then((w) => ({ window: w })),
+    appeared.then((w) => ({ window: w })),
     (started.failed || new Promise(() => {})).then((why) => ({ why })),
   ]);
   if (settled.why) return { pid: null, window: null, why: settled.why };

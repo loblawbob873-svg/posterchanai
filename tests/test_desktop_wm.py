@@ -325,6 +325,16 @@ server.listen(sock,async()=>{delete process.env.SWAYSOCK;delete process.env.I3SO
         out = self.run_js("out.w = await wm.waitForWindow(4242, 600);")
         self.assertIsNone(out.get("w", "sentinel"))
 
+    def test_existing_browser_launch_matches_only_a_new_surface(self):
+        out = self.run_js("""
+          let pass=0;
+          wm.windows=async()=>pass++ ? [
+            {id:11,app:'firefox',title:'old'}, {id:44,app:'firefox',title:'Private Browsing'}
+          ] : [{id:11,app:'firefox',title:'old'}];
+          out.w=await wm.waitForNewWindow([11],600,w=>w.app==='firefox');
+        """)
+        self.assertEqual(out["w"]["id"], 44)
+
 
 if __name__ == "__main__":
     unittest.main()

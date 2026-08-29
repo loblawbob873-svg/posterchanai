@@ -507,6 +507,19 @@ class WM {
       await new Promise(r => setTimeout(r, 250));
     }
   }
+
+  /** A newly mapped window matching `accept`, excluding every surface present before launch. */
+  async waitForNewWindow(before, ms, accept){
+    const old = new Set((before || []).map(Number));
+    const deadline = Date.now() + (ms || 15000);
+    for(;;){
+      let list=[];try{list=await this.windows();}catch(_){list=[];}
+      const hit=list.find(w=>!old.has(Number(w.id))&&(!accept||accept(w)));
+      if(hit)return hit;
+      if(Date.now()>deadline)return null;
+      await new Promise(r=>setTimeout(r,250));
+    }
+  }
 }
 
 module.exports = { WM, frame, decoder, flatten, clampRectToOutputs, pidFamily, MSG, EVENT, EVENT_BIT };
