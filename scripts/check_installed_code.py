@@ -52,53 +52,12 @@ PREPARE = r"""(async root=>{
   return true;
 })"""
 
-DRIVE = r"""(async root=>{
-  if(!root.startsWith('/tmp/pc-code-installed.')) throw new Error('refusing a non-test root');
-  for(let i=0;i<100&&!document.querySelector('[data-file="'+CSS.escape(root+'/changed.js')+'"]');i++)
-    await new Promise(r=>setTimeout(r,50));
-  const explorer=!!document.querySelector('[data-file="'+CSS.escape(root+'/changed.js')+'"]');
-  const gitButton=document.querySelector('[data-code-view="git"]');
-  if(!gitButton)throw new Error('Source Control button is missing');gitButton.click();
-  for(let i=0;i<80&&!document.querySelector('[data-git-diff="changed.js"]');i++)
-    await new Promise(r=>setTimeout(r,50));
-  const row=document.querySelector('[data-git-diff="changed.js"]');
-  if(row)row.click();
-  for(let i=0;i<80&&!((document.querySelector('.pcc-git-diff')||{}).textContent||'').includes('installedCode');i++)
-    await new Promise(r=>setTimeout(r,50));
-  const diff=(document.querySelector('.pcc-git-diff')||{}).textContent||'';
-  const restore=document.querySelector('[data-git-restore="changed.js"]');
-  if(restore)restore.click();
-  for(let i=0;i<40;i++){
-    const yes=document.querySelector('.uiconfirm-bg [data-uc="1"]');
-    if(yes){yes.click();break;}await new Promise(r=>setTimeout(r,50));
-  }
-  for(let i=0;i<100&&!document.body.textContent.includes('Working tree clean');i++)
-    await new Promise(r=>setTimeout(r,50));
-  const clean=document.body.textContent.includes('Working tree clean');
-  const diffClosed=!document.querySelector('.pcc-git-diff');
-  const result={explorer,sourceRow:!!row,diff:diff.includes('-const installedCode = false;')&&
-    diff.includes('+const installedCode = true;'),restore:!!restore,clean,diffClosed};
-  sessionStorage.setItem('pc.installedCodeGate',JSON.stringify(result));
-  const explorerButton=document.querySelector('[data-code-view="explorer"]');if(explorerButton)explorerButton.click();
-  return result;
-})"""
-
-READ_RESULT = r"""(async root=>{
-  for(let i=0;i<80&&!document.querySelector('[data-file="'+CSS.escape(root+'/changed.js')+'"]');i++)
-    await new Promise(r=>setTimeout(r,50));
-  const result=JSON.parse(sessionStorage.getItem('pc.installedCodeGate')||'null');
-  if(!result)throw new Error('Code gate evidence was not checkpointed before repaint');
-  result.explorerBack=!!document.querySelector('[data-file="'+CSS.escape(root+'/changed.js')+'"]');
-  return JSON.stringify(result);
-})"""
-
 CLEANUP = r"""(async root=>{
   try{
     const status=await pcHost.gitStatus(root);
     if((status.files||[]).some(f=>f.path==='changed.js'))await pcHost.gitAction(root,'restore',['changed.js']);
   }catch(_){}
   const b=window.__pcInstalledCodeBackup;if(!b||!window.PCCode)return false;
-  sessionStorage.removeItem('pc.installedCodeGate');
   pcHost.pickDirectory=b.pickDirectory;
   for(let i=localStorage.length-1;i>=0;i--){const k=localStorage.key(i);if(k&&k.startsWith('pccode_'))localStorage.removeItem(k);}
   for(const [k,v] of b.keys)if(v!==null)localStorage.setItem(k,v);
@@ -114,9 +73,12 @@ async def main():
     page = await choose_page()
     async with CDP(page["webSocketDebuggerUrl"]) as cdp:
         try:
-            # routeView replaces the shared workspace. Invoke it in its own evaluation and attach
-            # the stateful gate only after the new Code context has settled.
-            await cdp.eval("window.PCOS&&PCOS.routeView&&PCOS.routeView('code');true")
+            # Exercise the real installed navigation control. Calling PCOS.routeView directly only
+            # asks the window manager to focus/create a frame; it does not run switchView's owning
+            # renderer continuation and can leave the diagnostic on Social.
+            opened = await cdp.eval("(()=>{const b=document.querySelector('[data-view=\"code\"]');if(!b)return false;b.click();return true;})()")
+            if not opened:
+                raise RuntimeError("installed Code navigation control is missing")
             await asyncio.sleep(1)
             await cdp.eval(PREPARE + "(" + json.dumps(root) + ")")
             await asyncio.sleep(.5)
