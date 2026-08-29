@@ -6911,6 +6911,11 @@
               const w=wins.find(x=>x.el.classList.contains('focused'));
               if(w)moveWindowToMonitor(w,p.slice(15));
             }
+            else if(/^pc:move-native:\d+:(left|right|up|down)$/.test(p)){
+              const parts=p.split(':'),id=Number(parts[2]),direction=parts[3];
+              const w=nativeWins().find(x=>Number(x.native)===id);
+              if(w)moveWindowToMonitor(w,direction);
+            }
           });
           /* Arm compositor delivery immediately. PCOSShell.watch() also subscribes, but only after
            * its first hardware/status refresh has completed. A slow or stuck NetworkManager,

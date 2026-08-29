@@ -121,15 +121,17 @@ def test_cross_monitor_shortcut_still_moves_a_native_app(monkeypatch):
     module = runpy.run_path(str(helper), run_name="pc_window_move_native_test")
     calls = []
     monkeypatch.setattr(module["sys"], "argv", ["pc-window-snap", "move-left"])
-    monkeypatch.setitem(module["main"].__globals__, "sway", lambda *_: '{"nodes":[]}')
+    sent = []
+    monkeypatch.setitem(module["main"].__globals__, "sway",
+                        lambda *args: sent.append(args) or '{"nodes":[]}')
     monkeypatch.setitem(module["main"].__globals__, "focused",
                         lambda _tree: ({"id": 91, "app_id": "firefox", "pid": 7},
                                        {"rect": {"x": 1920, "y": 0, "width": 1920, "height": 1080}}))
     monkeypatch.setattr(module["subprocess"], "check_call",
                         lambda argv, **_kw: calls.append(argv))
     module["main"]()
-    assert calls == [["swaymsg", "[con_id=91]", "move", "container", "to", "output",
-                      "left", ",", "focus"]]
+    assert sent[-1] == ("-t", "send_tick", "pc:move-native:91:left")
+    assert calls == [], "native shortcut bypassed the state-preserving renderer handoff"
 
 
 def test_shell_move_tick_uses_state_preserving_monitor_handoff():
@@ -140,6 +142,8 @@ def test_shell_move_tick_uses_state_preserving_monitor_handoff():
                src.index("function startDrag", src.index("async function moveWindowToMonitor"))]
     assert "pcWM.handoff(w.native,direction)" in move
     assert "sendFrameHandoff(w,direction,0,false)" in move
+    assert "/^pc:move-native:\\d+:(left|right|up|down)$/.test(p)" in src
+    assert "nativeWins().find(x=>Number(x.native)===id)" in src
 
 
 def test_mouse_edge_release_cannot_snap_the_reverse_dns_shell_surface(monkeypatch):

@@ -88,10 +88,10 @@ def main():
             sway("-t", "send_tick", "pc:snap:" + side)
         return
     if side in moves:
-        criteria = "[con_id=%d]" % int(win["id"])
-        subprocess.check_call(
-            ["swaymsg", criteria, "move", "container", "to", "output", moves[side], ",", "focus"],
-            stdout=subprocess.DEVNULL)
+        # Native Firefox/Telegram surfaces are paired with an HTML frame in exactly one output
+        # renderer. A raw compositor move strands that frame/owner behind as a black window. Every
+        # renderer sees the tick, so include con_id; only the renderer that owns it may hand it off.
+        sway("-t", "send_tick", "pc:move-native:%d:%s" % (int(win["id"]), moves[side]))
         return
     box = out.get("rect") or {}
     x, y = int(box.get("x", 0)), int(box.get("y", 0))
