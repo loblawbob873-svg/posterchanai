@@ -604,3 +604,17 @@ class GroupMembershipTests(unittest.TestCase):
         self.assertIn("insertBefore(el, grp.nextSibling)", body)
         # …and the editor offers the way out by name
         self.assertIn("Top level (its own row)", app)
+
+
+class SidebarRecoveryTests(unittest.TestCase):
+    def test_show_all_is_a_real_persisted_recovery_not_cosmetic_boxes(self):
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        app = open(os.path.join(root, "static", "js", "client", "app.js"), encoding="utf-8").read()
+        self.assertIn('id="nav-show-all"', app)
+        at = app.index("const showAll = $('#nav-show-all')")
+        body = app[at:at + 900]
+        self.assertIn("cb.checked = true", body)
+        self.assertIn("await setNavHidden(keep)", body)
+        self.assertIn("!shown.has(k)", body,
+                      "showing this device must preserve unavailable instance-only choices")

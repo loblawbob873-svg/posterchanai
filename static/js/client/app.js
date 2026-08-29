@@ -921,6 +921,7 @@
             return cs.map(c=>`<option value="${enc(c.v)}"${c.v===v?' selected':''}>${enc(c.label)}</option>`).join(''); })()}</select>
         </label>`).join('')}</div>
       <div class="search-section-title" style="margin-top:14px">Sidebar rows</div>
+      <div class="row" style="justify-content:flex-end;margin:6px 0 10px"><button type="button" class="btn btn-ghost small" id="nav-show-all">Show all</button></div>
       <div class="nav-hide-list" id="nav-hide-list">${rows.map(r=>`
         <label class="fld nav-hide-row${r.sub?' sub':''}${r.group?' grp':''}" data-navrow="${enc(r.key)}" style="flex-direction:row;align-items:center;gap:8px">
           ${r.sub?'<span class="nav-ord"></span>':`<span class="nav-ord"><button type="button" class="mini" data-ordup="${enc(r.key)}" title="Move up">\u25b2</button><button type="button" class="mini" data-orddown="${enc(r.key)}" title="Move down">\u25bc</button></span>`}
@@ -938,6 +939,16 @@
   }
   function _wireNavHide(){
     const list = $('#nav-hide-list'); if(!list) return;
+    const showAll = $('#nav-show-all');
+    if(showAll) showAll.addEventListener('click', async () => {
+      const boxes = $$('input[data-navkey]', list);
+      boxes.forEach(cb => { if(!cb.disabled) cb.checked = true; });
+      // Preserve keys unavailable on this deployment; showing everything here must not silently
+      // rewrite another device's instance-only choices.
+      const shown = new Set(boxes.map(cb => cb.dataset.navkey));
+      const keep = [...navHiddenSet()].filter(k => !shown.has(k));
+      await setNavHidden(keep);
+    });
     /* ▦ GROUP PICKER — the sheet the Move menu uses, so it is already right on both shapes. The
      * choice is an OVERRIDE: "(top level)" is the answer to "I care about Calendar but not the
      * rest of its group" — the row leaves the group and becomes its own orderable unit. */
