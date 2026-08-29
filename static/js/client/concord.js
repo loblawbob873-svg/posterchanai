@@ -905,12 +905,6 @@
     }
     return {entries,tombstones};
   }
-  /* CAN THIS BUNDLE OPEN A CHANNEL? `room.channels` is the sidebar's list and says nothing about
-   * whether the material to READ one is present; `bundle.channels` is the material. They disagree
-   * on any room restored from an Armada membership vault, which carries a control snapshot only. */
-  function hasJoinMaterial(bundle){
-    return !!(bundle&&Array.isArray(bundle.channels)&&bundle.channels.length);
-  }
   async function syncArmadaMemberships(p,viewer,localOnly=false){
     if((state.community!=null&&!localOnly)||membershipBusy||!viewer.pubkey||!p.nip44dec)return; membershipBusy=true;
     let recovered=false;
@@ -951,27 +945,12 @@
         // the catch used to `continue`, silently hiding every otherwise valid Armada membership on
         // a fresh device. Existing hydrated rooms need no work. For a missing room, resolve the
         // invite_ref exactly as Armada does and use the bundle carried by that invite.
-        /* SKIPPING AN ALREADY-HYDRATED ROOM IS RIGHT; SKIPPING AN UNREADABLE ONE IS NOT.
-         * Measured on a real account: three of four saved communities carried `channels` for the
-         * sidebar (1, 13 and 7 of them) and a `cord.bundle` whose OWN channel list was EMPTY —
-         * because Armada's vault `current` is a control snapshot, not the join bundle. `inspectChat`
-         * looks the channel up in the bundle, finds nothing, and throws "channel is not readable
-         * with this membership" on EVERY live-sync tick, four seconds apart, for the life of the
-         * visit. Reported as "every time I change rooms". The room draws, the channel list draws,
-         * and nothing in it can ever be opened.
-         *
-         * `hasJoinMaterial` is the question that was never asked. A room missing it goes back
-         * through the invite below exactly as a brand-new one does. */
-        if(i>=0&&rooms[i].cord&&!rooms[i].cord.armadaList&&hasJoinMaterial(rooms[i].cord.bundle))continue;
+        if(i>=0&&rooms[i].cord&&!rooms[i].cord.armadaList)continue;
         const existing=i>=0?rooms[i]:null,priorBundle=existing&&existing.cord&&existing.cord.bundle;
         let hydrated=null,bundle=mergeArmadaBundle(priorBundle,current);
         try{
           if(!window.PosterCordReader||!window.PosterCordReader.inspectControl)continue;
           window.PosterCordReader.inspectControl(bundle,[]);
-          /* inspectControl only needs an owner and a root, so it ACCEPTS a bundle with no channels
-           * — which is exactly the shape the vault snapshot produces. Treat that as the miss it is
-           * and take the same route a fresh join does. */
-          if(!hasJoinMaterial(bundle))throw new Error('bundle carries no channel material');
         }catch(_){
           /* `localOnly` IS TRUE ON THE PASS THAT ACTUALLY RUNS. render() calls this with
            * 'recovery' whenever a room is already open — which is every ordinary launch for
@@ -1503,7 +1482,7 @@
     close.publish=event=>(R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={render,backgroundRender,wake,iconRef,warmRoomIcons,hasJoinMaterial,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,membershipEvents,decodeMembershipLists,mergeArmadaBundle,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
+  window.PCConcord={render,backgroundRender,wake,iconRef,warmRoomIcons,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,membershipEvents,decodeMembershipLists,mergeArmadaBundle,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */
