@@ -5156,7 +5156,8 @@
   /* Which relays this session actually talks to.
    *
    * Three cases, and the third is the one that makes a standalone build work at all:
-   *   1. the user turned on their own relays  → those, signature-verified (they aren't ours to trust);
+   *   1. the user turned on their own relays  → those PLUS our managed discovery relays,
+   *      signature-verified (the mixed pool is not wholly ours to trust);
    *   2. an instance told us its relay        → that one, trusted (the built-in WoT relay);
    *   3. NO instance, or one that never answered → the defaults above, verified.
    * Case 3 used to call Relay.connect(undefined), which opens a socket to the page's own origin and
@@ -5165,6 +5166,15 @@
   function connectRelays(){
     _dropLegacyAutoRelays();
     let list = ClientSettings.get('relaysEnabled') ? userRelays() : [];
+    /* A PERSONAL RELAY LIST IS AN ADDITION TO DISCOVERY, NOT AN OFF SWITCH FOR SOCIAL.
+     *
+     * Replacing the pool here made the symptom account/device-specific: logged-out users still read
+     * the instance/public relay, while a signed-in browser with a private relay saw only its own
+     * posts (or no new posts at all).  Keep the preference exactly as the user saved it; only the
+     * runtime pool is the union.  This also keeps the normal Relay.subscribe() path live on every
+     * managed relay, rather than doing a one-shot supplemental query that would fix initial paint
+     * and then silently stop receiving new posts. */
+    if(list.length) list = [...new Set([...list, ...defaultRelays().filter(Boolean)])];
     if (!list.length && CFG && CFG.relay_url) return Relay.connect(CFG.relay_url);
     if (!list.length) list = defaultRelays().filter(Boolean);
     if (list.length) Relay.configure({ urls: list, verify: true });
