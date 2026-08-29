@@ -1155,8 +1155,20 @@ liveISOinstall() {
 	# tree is the mounted squashfs at /run/rootfsbase. Copying the overlay made the result depend on
 	# its mount topology and produced a target with directory stubs but no usable systemd OS tree.
 	local ROOTSRC="/run/rootfsbase"
+	# Some dracut versions keep the lower layer attached to `/` after switch-root while removing the
+	# traversable `/run/rootfsbase` mount.  The overlay still works, but there is no directory tree for
+	# rsync to read.  We already located the immutable optical medium above; mount its squashfs
+	# directly and copy that exact image rather than falling back to the mutable live overlay.
+	if [ ! -s "$ROOTSRC/usr/lib/systemd/systemd" ] \
+		&& [ -n "$LIVEDIR" ] && [ -f "$LIVEDIR/LiveOS/squashfs.img" ]; then
+		ROOTSRC=/run/posterchan-live-root
+		sudo mkdir -p "$ROOTSRC"
+		if ! mountpoint -q "$ROOTSRC"; then
+			sudo mount -o loop,ro "$LIVEDIR/LiveOS/squashfs.img" "$ROOTSRC" >/dev/null 2>&1 || true
+		fi
+	fi
 	if [ ! -s "$ROOTSRC/usr/lib/systemd/systemd" ]; then
-		echo -e "${COLOR_YELLOW}The LiveCD squashfs is not mounted at $ROOTSRC.${COLOR_RESET}"
+		echo -e "${COLOR_YELLOW}The LiveCD squashfs could not be mounted as a source tree.${COLOR_RESET}"
 		echo -e "${COLOR_YELLOW}Refusing to copy the transient overlay as an installed OS.${COLOR_RESET}"
 		return 1
 	fi

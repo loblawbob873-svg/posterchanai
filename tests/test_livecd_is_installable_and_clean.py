@@ -867,6 +867,11 @@ class InstallingTheLiveImageIsItsOwnJob(unittest.TestCase):
         self.assertIn('[ "$type" = iso9660 ] || [ "$type" = udf ]', self.fn)
         self.assertIn('sudo mount -o ro "$dev" "$media"', self.fn)
 
+    def test_installer_can_remount_a_non_traversable_squashfs_lower_layer(self):
+        self.assertIn("/run/posterchan-live-root", self.fn)
+        self.assertIn('"$LIVEDIR/LiveOS/squashfs.img"', self.fn)
+        self.assertIn('sudo mount -o loop,ro', self.fn)
+
     def test_success_is_gated_on_the_final_encrypted_boot_chain(self):
         """The bootloader can succeed and a later phase can still replace one of its files. The
         finalizer must inspect what the firmware will actually use before it locks root."""
