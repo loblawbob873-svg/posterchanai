@@ -93,6 +93,16 @@ class PreviewIsReachable(unittest.TestCase):
         self.assertIn("encFileUrl", body, "an encrypted file cannot be previewed")
         self.assertIn("d.url", body, "a plain drive file cannot be previewed")
 
+    def test_lazy_viewer_failure_is_caught_in_the_file_open_transaction(self):
+        """A missing packaged preview module must report an error, not leave a black/no-op screen."""
+        i = self.app.index("async function openPreviewFile(")
+        body = self.app[i:self.app.index("function _handlersFor(", i)]
+        self.assertIn("const P = await _withModule('preview.js', 'PCPreview')", body)
+        self.assertIn("if(!P || typeof P.open!=='function')", body)
+        self.assertNotIn("_withModule('preview.js', 'PCPreview', P =>", body)
+        self.assertLess(body.index("try{"), body.index("await _withModule"))
+        self.assertLess(body.index("await _withModule"), body.index("catch(err)"))
+
     def test_media_click_opens_preview_directly_in_every_source(self):
         self.assertGreaterEqual(self.app.count("if(_previewable(_openFileName("), 2,
                                 "Blossom and synced media must bypass the Open With chooser")

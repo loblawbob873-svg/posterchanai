@@ -20397,10 +20397,13 @@
     try{
       toast(d.enc === '1' ? 'decrypting…' : 'opening…');
       const blob = await _previewBytes(d, opts);
-      _withModule('preview.js', 'PCPreview', P => {
-        if(!P.open({ name: d.name || 'file', mime: d.mime || blob.type || '', blob }))
-          toast('nothing here can show that file');
-      });
+      /* Keep lazy module loading inside this try/catch. The callback form returns before preview.js
+       * loads, so a missing packaged asset or an exception from P.open becomes an unhandled promise
+       * and Files appears to open a black/nothing screen. Every source funnels through here. */
+      const P = await _withModule('preview.js', 'PCPreview');
+      if(!P || typeof P.open!=='function') throw new Error('the preview viewer did not load');
+      if(!P.open({ name: d.name || 'file', mime: d.mime || blob.type || '', blob }))
+        toast('nothing here can show that file');
     }catch(err){ toast('could not open that: ' + ((err && err.message) || err)); }
   }
 
