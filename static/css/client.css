@@ -9412,3 +9412,21 @@ audio.sms-att-img{min-width:220px}
 .cc-thread-bar button{background:transparent;border:0;color:inherit;cursor:pointer;font-size:13px;padding:2px 6px}
 .cc-thread-bar b{font-size:13px}
 .cc-thread-bar span{opacity:.7;font-size:12px}
+
+/* A POLL, IN CONCORD'S OWN CHAT STYLE — not the timeline's poll card, which is a note with an
+   avatar, a header and an action bar, none of which belongs inside a chat bubble. Built from the
+   same tokens as the thread controls above, for the same reason: a poll is a message. */
+.cc-poll{display:flex;flex-direction:column;gap:6px;margin-top:6px;max-width:420px}
+.cc-poll-opt{position:relative;display:flex;align-items:center;gap:8px;width:100%;
+  padding:7px 10px;border-radius:8px;border:1px solid var(--cc-line,#2a2f3a);
+  background:transparent;color:inherit;cursor:pointer;font-size:13px;text-align:left;overflow:hidden}
+.cc-poll-opt:hover:not(:disabled){background:var(--cc-hover,rgba(122,162,247,.12))}
+.cc-poll-opt:disabled{cursor:default;opacity:.85}
+.cc-poll-opt.voted{border-color:var(--cc-accent,#7aa2f7)}
+/* The bar is BEHIND the label, and the label carries its own stacking context — a percentage
+   filling the row must never push the text it is describing. */
+.cc-poll-bar{position:absolute;left:0;top:0;bottom:0;z-index:0;
+  background:var(--cc-hover,rgba(122,162,247,.18));transition:width .18s ease}
+.cc-poll-label{position:relative;z-index:1;flex:1;min-width:0;overflow-wrap:anywhere}
+.cc-poll-count{position:relative;z-index:1;opacity:.7;font-size:12px;font-variant-numeric:tabular-nums}
+.cc-poll-foot{opacity:.7;font-size:12px}

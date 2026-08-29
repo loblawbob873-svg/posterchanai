@@ -26679,7 +26679,12 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       reactionIds: [...timeline.reactions].map(([target, byEmoji]) => [target, [...byEmoji].map(([emoji3, entry]) => [emoji3, [...entry.reactors.entries()]])]),
       /* Preserve NIP-30 reaction assets. foldTimeline already validates/extracts the emoji tag, but
        * the public reader used to discard its URL here, leaving Concord to render :carlJAM: text. */
-      reactionUrls: [...timeline.reactions].map(([target, byEmoji]) => [target, [...byEmoji].filter(([, entry]) => entry.url).map(([emoji3, entry]) => [emoji3, entry.url])])
+      reactionUrls: [...timeline.reactions].map(([target, byEmoji]) => [target, [...byEmoji].filter(([, entry]) => entry.url).map(([emoji3, entry]) => [emoji3, entry.url])]),
+      /* Poll votes, for the same reason reactionUrls is here: foldTimeline already folds kind-1018
+       * into pollVotes and the public reader then dropped it on the floor, so a poll posted from
+       * Armada arrived in Concord as a question nobody could see the answers to — and Concord
+       * cannot count them itself, because the votes are sealed inside the channel's wraps. */
+      pollVotes: [...timeline.pollVotes].map(([target, list]) => [target, list.map((v) => ({ pubkey: v.pubkey, optionIds: v.optionIds, ms: v.ms }))])
     };
   }
   async function createChatWrap(bundle, controlWraps, channelId, content, pubkey, signEvent, extraTags = [], kind = KIND_MESSAGE) {

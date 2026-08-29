@@ -372,6 +372,49 @@
     }
     return out;
   }
+  /* A POLL IS A MESSAGE, DRAWN AS A POLL.
+   *
+   * Armada's reader accepts kind 1068 beside 9 and 1111, so a poll posted there arrives here as an
+   * ordinary message whose content is the question and whose options are `option` tags — and
+   * Concord, which had no idea 1068 existed, drew the question as bare text with the options
+   * nowhere. The answers are kind-1018 votes sealed in the same channel stream (see the pollVotes
+   * patch in cord-reader.js); a public NIP-88 tally query finds none of them.
+   *
+   * Drawn in this app's own chat style rather than the timeline's poll card, which is a note with
+   * an avatar, a header and an action bar — none of which belongs inside a chat bubble. */
+  function pollOf(m){
+    if(Number(m&&m.kind)!==1068)return null;
+    const options=(m.tags||[]).filter(t=>t[0]==='option'&&t[1]).map(t=>({id:String(t[1]),label:String(t[2]||t[1])}));
+    if(!options.length)return null;
+    const endsAt=Number(((m.tags||[]).find(t=>t[0]==='endsAt')||[])[1]||0);
+    return { options, multi:String(((m.tags||[]).find(t=>t[0]==='polltype')||[])[1]||'')==='multiplechoice',
+             endsAt, ended:!!endsAt&&endsAt<Math.floor(Date.now()/1000), votes:m.votes||[] };
+  }
+  function pollHtml(p,m){
+    const poll=pollOf(m); if(!poll)return '';
+    const viewer=p.viewer?p.viewer():{},mine=new Set();
+    /* ONE PERSON, ONE ANSWER — their LATEST. A vote is an ordinary event, so somebody who changes
+     * their mind leaves two behind and counting both would let anyone inflate a poll by voting
+     * repeatedly. */
+    const latest=new Map();
+    for(const v of poll.votes){const at=Number(v&&v.ms)||0,held=latest.get(v&&v.pubkey);
+      if(!held||at>=held.ms)latest.set(v.pubkey,{ms:at,optionIds:(v&&v.optionIds)||[]});}
+    const tally=new Map();
+    for(const [pk,v] of latest){ for(const id of v.optionIds){ tally.set(id,(tally.get(id)||0)+1);
+      if(pk===viewer.pubkey)mine.add(id); } }
+    const total=latest.size;
+    const rows=poll.options.map(o=>{
+      const n=tally.get(o.id)||0,pct=total?Math.round(n*100/total):0,voted=mine.has(o.id);
+      return `<button class="cc-poll-opt${voted?' voted':''}" data-cc-poll="${p.enc(messageId(m))}" `+
+        `data-cc-option="${p.enc(o.id)}"${poll.ended?' disabled':''}>`+
+        `<span class="cc-poll-bar" style="width:${pct}%"></span>`+
+        `<span class="cc-poll-label">${p.enc(o.label)}</span>`+
+        `<span class="cc-poll-count">${pct}%</span></button>`;
+    }).join('');
+    return `<div class="cc-poll">${rows}<div class="cc-poll-foot">`+
+      `${total} ${total===1?'vote':'votes'}${poll.multi?' · multiple choice':''}`+
+      `${poll.ended?' · ended':''}</div></div>`;
+  }
   function messageContentHtml(p,m,room,channelName){
     const files=encryptedAttachments(m),publicFiles=publicAttachments(m);
     /* Chat content is relay input. Keep the complete rumor in memory/cache, but never hand a
@@ -385,12 +428,13 @@
     const mini=webxdcOf(m,room,channelName),canPlayMini=!!(mini&&window.PCWebxdc&&PCWebxdc.cardHtml);
     if(canPlayMini)text=text.split(mini.url).join('').replace(/\s{2,}/g,' ').trim();
     const body=text?`<p>${p.linkify?p.linkify(text):p.enc(text)}</p>${p.linkCardHtml?p.linkCardHtml(text):''}`:'';
+    const poll=pollHtml(p,m);
     const publicMedia=publicFiles.map(f=>{const url=p.enc(f.url),label=p.enc(f.name||'attachment');if(f.mime.startsWith('image/'))return `<div class="cc-plain-attachment"><img src="${url}" alt="${label}" loading="lazy"></div>`;if(f.mime.startsWith('video/'))return `<div class="cc-plain-attachment cc-attachment-media"><video src="${url}" controls playsinline preload="metadata" title="Double-click to expand"></video></div>`;if(f.mime.startsWith('audio/'))return `<div class="cc-plain-attachment"><audio src="${url}" controls preload="metadata"></audio></div>`;return `<div class="cc-plain-attachment"><a href="${url}" download="${label}">Download ${label}</a></div>`;}).join('');
     const media=files.map((f,i)=>`<div class="cc-encrypted-attachment" data-cc-attachment="${p.enc(messageId(m))}" data-cc-attachment-index="${i}"><span>🔒 Decrypting ${p.enc(f.name||f.mime)}…</span></div>`).join('');
     /* Paint the canonical room-aware card with the message. A deferred generic link card could
      * otherwise win the render race and replace Armada's explicit webxdc-topic. */
     const miniCard=canPlayMini?PCWebxdc.cardHtml(mini):'';
-    return body+miniCard+publicMedia+media;
+    return body+poll+miniCard+publicMedia+media;
   }
   async function decryptAttachment(file){
     const ck=file.url+'\0'+file.hash; if(attachmentCache.has(ck))return attachmentCache.get(ck);
@@ -1307,7 +1351,7 @@
   }
   async function absorbChatWraps(p,reader,bundle,controlWraps,room,channel,wraps,storeId){
     const prior=testMessages(storeId);
-    const opened=await readChat(p,reader,bundle,controlWraps,room,channel,wraps||[]),incoming=(opened.messages||[]).map(m=>{const pr=p.profOf?p.profOf(m.pubkey):{};return {id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:m.text,at:m.at,kind:m.kind,tags:m.tags||[],reactions:{},remote:true};}),merged=mergeRelayMessages(prior,incoming),byId=new Map(merged.map(m=>[messageId(m),m])); let changed=JSON.stringify(merged)!==JSON.stringify(prior),urlGroups=new Map(opened.reactionUrls||[]); for(const [target,groups] of opened.reactions||[]){const m=byId.get(target);if(!m)continue;const next={},nextUrls={};for(const [emoji,people] of groups)next[emoji]=people;for(const [emoji,url] of urlGroups.get(target)||[])nextUrls[emoji]=url;if(JSON.stringify(m.reactions||{})!==JSON.stringify(next)||JSON.stringify(m.reactionUrls||{})!==JSON.stringify(nextUrls)){m.reactions=next;m.reactionUrls=nextUrls;changed=true;}} if(changed){const next=[...byId.values()].sort((a,b)=>Number(a.at)-Number(b.at)),viewer=p.viewer?p.viewer():{},profile=viewer.profile||{},me=profile.display_name||profile.name||(viewer.npub?viewer.npub.slice(0,12)+'…':'You');notifyMentions(p,room,next,viewer,me,channel.name);if(document.body.classList.contains('concord-view'))preserveChatScroll(()=>{saveTestMessages(storeId,next);backgroundRender();});else saveTestMessages(storeId,next);}
+    const opened=await readChat(p,reader,bundle,controlWraps,room,channel,wraps||[]),incoming=(opened.messages||[]).map(m=>{const pr=p.profOf?p.profOf(m.pubkey):{};return {id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:m.text,at:m.at,kind:m.kind,tags:m.tags||[],reactions:{},remote:true};}),merged=mergeRelayMessages(prior,incoming),byId=new Map(merged.map(m=>[messageId(m),m])); let changed=JSON.stringify(merged)!==JSON.stringify(prior),urlGroups=new Map(opened.reactionUrls||[]); /* POLL ANSWERS RIDE WITH THE POLL. They are sealed in the channel's own wraps, so nothing  * outside this stream can count them — a public kind-1018 query finds nothing here. */ for(const [target,list] of opened.pollVotes||[]){const m=byId.get(target);if(!m)continue; if(JSON.stringify(m.votes||[])!==JSON.stringify(list)){m.votes=list;changed=true;}} for(const [target,groups] of opened.reactions||[]){const m=byId.get(target);if(!m)continue;const next={},nextUrls={};for(const [emoji,people] of groups)next[emoji]=people;for(const [emoji,url] of urlGroups.get(target)||[])nextUrls[emoji]=url;if(JSON.stringify(m.reactions||{})!==JSON.stringify(next)||JSON.stringify(m.reactionUrls||{})!==JSON.stringify(nextUrls)){m.reactions=next;m.reactionUrls=nextUrls;changed=true;}} if(changed){const next=[...byId.values()].sort((a,b)=>Number(a.at)-Number(b.at)),viewer=p.viewer?p.viewer():{},profile=viewer.profile||{},me=profile.display_name||profile.name||(viewer.npub?viewer.npub.slice(0,12)+'…':'You');notifyMentions(p,room,next,viewer,me,channel.name);if(document.body.classList.contains('concord-view'))preserveChatScroll(()=>{saveTestMessages(storeId,next);backgroundRender();});else saveTestMessages(storeId,next);}
     
   }
   async function refreshActiveChannel(p){
@@ -1619,6 +1663,39 @@
     document.addEventListener('pointerdown',dismissPointer,true);document.addEventListener('keydown',dismissKey,true);window.addEventListener('blur',dismissBlur);
     actionDismissOff=()=>{document.removeEventListener('pointerdown',dismissPointer,true);document.removeEventListener('keydown',dismissKey,true);window.removeEventListener('blur',dismissBlur);};
     $$('[data-cc-delete]').forEach(button=>button.onclick=async()=>{ closeMessageActions();const room=saved()[state.community],storeId=channelStoreId(room,state.channel),messages=testMessages(storeId),id=button.dataset.ccDelete,found=messages.find(m=>messageId(m)===id),viewer=p.viewer?p.viewer():{}; if(!found||!viewer.pubkey||found.pubkey!==viewer.pubkey)return; const confirmed=p.uiConfirm?await p.uiConfirm('Delete this message?',{ok:'Delete',danger:true}):(typeof window.confirm!=='function'||window.confirm('Delete this message?')); if(!confirmed)return; button.disabled=true; try{ if(!room.local)await publishCordMessage(p,room,state.channel,'',[['e',id],['k',String(found.kind||9)]],5); saveTestMessages(storeId,messages.filter(m=>messageId(m)!==id)); if(!removeMessageRow(id))preserveChatScroll(()=>render()); }catch(e){ button.disabled=false; p.toast('message was not deleted: '+(e&&e.message||e)); } });
+    /* VOTING IS A MESSAGE TOO — kind 1018 into this channel's own stream, which is what makes the
+     * answers readable by everybody in the room and by nobody outside it. `response` is Armada's
+     * tag (its reader collects exactly that), and the `e` tag names the poll. A single-choice poll
+     * replaces the voter's previous answer rather than adding to it: one person, one answer, and
+     * the tally below already resolves to each voter's latest. */
+    $$('[data-cc-poll]').forEach(b=>b.onclick=async()=>{
+      const room=saved()[state.community],storeId=channelStoreId(room,state.channel),
+        messages=testMessages(storeId),id=b.dataset.ccPoll,option=b.dataset.ccOption,
+        found=messages.find(m=>messageId(m)===id),poll=found&&pollOf(found),
+        viewer=p.viewer?p.viewer():{};
+      if(!found||!poll||poll.ended||!viewer.pubkey)return;
+      const mine=new Set();
+      let newest=-1;
+      for(const v of poll.votes||[]) if(v&&v.pubkey===viewer.pubkey&&(Number(v.ms)||0)>=newest){
+        newest=Number(v.ms)||0; mine.clear(); for(const o of v.optionIds||[])mine.add(o); }
+      const picked=poll.multi
+        ? (mine.has(option)?[...mine].filter(x=>x!==option):[...mine,option])
+        : [option];
+      b.disabled=true;
+      try{
+        if(!room.local){
+          const tags=[['e',id],...picked.map(o=>['response',o])];
+          await publishCordMessage(p,room,state.channel,'',tags,1018);
+        }
+        /* Painted from our own vote straight away. The relay echo arrives through the live
+         * subscription and merges over this by pubkey — see the tally, which keeps only each
+         * voter's newest answer, so the optimistic row cannot double-count itself. */
+        found.votes=[...(found.votes||[]).filter(v=>v&&v.pubkey!==viewer.pubkey),
+                     {pubkey:viewer.pubkey,optionIds:picked,ms:Date.now()}];
+        saveTestMessages(storeId,messages);
+        preserveChatScroll(()=>render());
+      }catch(e){ b.disabled=false; p.toast('vote was not sent: '+(e&&e.message||e)); }
+    });
     $$('[data-cc-thread]').forEach(b=>b.onclick=()=>{
       state.thread=b.dataset.ccThread;
       /* Replying inside a thread means replying to it, not to the channel — so the composer is
@@ -1700,7 +1777,7 @@
     close.publish=event=>(R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={render,backgroundRender,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,membershipEvents,decodeMembershipLists,mergeArmadaBundle,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
+  window.PCConcord={render,backgroundRender,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,membershipEvents,decodeMembershipLists,mergeArmadaBundle,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */
