@@ -483,6 +483,13 @@ if(PCConcord.memberViewportIsNarrow())throw new Error('desktop member viewport w
 memberViewportNarrow=true;
 if(!PCConcord.memberViewportIsNarrow())throw new Error('member viewport stayed desktop after a responsive resize');
 memberViewportNarrow=false;
+const picker={getBoundingClientRect:()=>({width:140,height:70})};
+let pickerAt=PCConcord.reactionPickerPosition({getBoundingClientRect:()=>({right:790,top:730,bottom:760})},picker,{width:800,height:768});
+if(pickerAt.left!==650||pickerAt.top!==654)
+  throw new Error('desktop last-message reaction picker did not flip above its trigger: '+JSON.stringify(pickerAt));
+pickerAt=PCConcord.reactionPickerPosition({getBoundingClientRect:()=>({right:358,top:590,bottom:624})},{getBoundingClientRect:()=>({width:172,height:92})},{width:360,height:640});
+if(pickerAt.left!==180||pickerAt.top!==492)
+  throw new Error('mobile bottom-edge reaction picker escaped the viewport: '+JSON.stringify(pickerAt));
 PCConcord.render();
 const disclosure=dollars('[data-cc-actions]').find(b=>b.dataset.ccActions===permanentId);
 const disclosureRow=messageRow(permanentId);
