@@ -3373,13 +3373,24 @@
        * as a monitor handoff after 280ms, so anyone who paused to look at the preview could never
        * snap Firefox/Telegram. Cross-monitor drag requires actual virtual-desktop overflow; the
        * title-bar Move-to-monitor action remains the deterministic path where Wayland clamps it. */
-      /* screenX and innerWidth can use different units on scaled outputs. Require the renderer's
-       * client coordinate to corroborate an ordinary cross-output release. Wayland's clamped
-       * crossing remains covered by lostpointercapture below, which is its explicit seam signal. */
+      /* Pointer capture clamps clientX/clientY to this renderer on Chromium. Requiring client
+       * overflow here made the branch impossible for a real Firefox/Telegram drag. `realScreen`
+       * was established at press time by matching screen and client coordinates, so virtual-screen
+       * overflow is the authority after that; also require the clamped client point to remain at
+       * the corresponding edge so a scale/origin discontinuity cannot invent a crossing. */
       const clientOverflow=dir==='right'?Math.max(0,e.clientX-window.innerWidth)
         :dir==='left'?Math.max(0,-e.clientX):dir==='down'?Math.max(0,e.clientY-window.innerHeight)
         :dir==='up'?Math.max(0,-e.clientY):0;
-      return realScreen&&clientOverflow>8?dir:'';
+      const clientAtEdge=dir==='right'?e.clientX>=window.innerWidth-12
+        :dir==='left'?e.clientX<=12:dir==='down'?e.clientY>=window.innerHeight-12:e.clientY<=12;
+      return realScreen&&clientAtEdge&&(edgeOverflow(e,dir)>8||clientOverflow>8)?dir:'';
+    };
+    const handoffDrop = (dir, e) => {
+      const horizontal=/left|right/.test(dir);
+      const cross=horizontal ? curY/Math.max(1,vhL()-TASKBAR-w.el.offsetHeight)
+                             : curX/Math.max(1,vwL()-w.el.offsetWidth);
+      return {direction:dir,width:w.el.offsetWidth,height:w.el.offsetHeight,
+        overflow:edgeOverflow(e||lastMove,dir),cross:Math.max(0,Math.min(1,cross))};
     };
     const preview = (e) => {
       if(!window.pcWM || !pcWM.previewFrame) return;
@@ -3473,7 +3484,7 @@
         /* Keep the source frame until the compositor confirms the workspace move. Removing it
          * first creates an ownership gap in which reconciliation sees an unframed native window
          * and can park it in Sway's scratchpad: taskbar icon, no Firefox window. */
-        try{ Promise.resolve(pcWM.handoff(id,handoff)).then(result=>{
+        try{ Promise.resolve(pcWM.handoff(id,handoff,handoffDrop(handoff,endEvent||lastMove))).then(result=>{
           if(result && wins.includes(w)) closeWin(w,{killNative:false,preserveFocus:true});
           else if(!result){ keepFrameReachable(w); _natGesture(w,false); nsync(); }
         }).catch(()=>{ keepFrameReachable(w); _natGesture(w,false); nsync(); }); }
@@ -6732,6 +6743,22 @@
         if(!row || row.id==null || !token)return;
         _nativeAdoptPass++;
         const w=adoptNative(row); if(!w)return;
+        /* Adopt at the destination preview's measured drop instead of openApp's cascade point. */
+        const d=p&&p.drop&&typeof p.drop==='object'?p.drop:null;
+        if(d){
+          const ww=Math.max(MIN_W,Math.min(vwL()-24,Number(d.width)||MIN_W));
+          const hh=Math.max(MIN_H,Math.min(vhL()-TASKBAR-24,Number(d.height)||MIN_H));
+          const over=Math.max(0,Number(d.overflow)||0)/Math.max(1,zf());
+          const cross=Math.max(0,Math.min(1,Number(d.cross)||0));
+          let x=Math.round(cross*Math.max(0,vwL()-ww));
+          let y=Math.round(cross*Math.max(0,vhL()-TASKBAR-hh));
+          if(d.direction==='right')x=Math.min(vwL()-120,-ww+120+over);
+          else if(d.direction==='left')x=Math.max(-ww+120,vwL()-120-over);
+          else if(d.direction==='down')y=Math.min(vhL()-TASKBAR-80,-hh+80+over);
+          else if(d.direction==='up')y=Math.max(-hh+80,vhL()-TASKBAR-80-over);
+          Object.assign(w.el.style,{left:Math.round(x)+'px',top:Math.round(y)+'px',
+            width:Math.round(ww)+'px',height:Math.round(hh)+'px'});
+        }
         w.nativeHandoffToken=token;w.el.classList.add('native-handoff-prepared');
         await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
         if(!wins.includes(w)||w.nativeHandoffToken!==token)return;

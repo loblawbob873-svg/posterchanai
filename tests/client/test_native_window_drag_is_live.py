@@ -1,4 +1,6 @@
 from pathlib import Path
+import json
+import subprocess
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -59,7 +61,7 @@ def test_mouse_edge_snap_is_not_stolen_by_a_timed_monitor_handoff():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
     drag = src[src.index("function startDrag"):src.index("function startResize")]
     assert "edgeHoldAt" not in drag
-    assert "return realScreen&&clientOverflow>8?dir:''" in drag
+    assert "return realScreen&&clientAtEdge&&(edgeOverflow(e,dir)>8||clientOverflow>8)?dir:''" in drag
     assert "if(handoff && w.native != null && pcWM.handoff)" in drag
 
 
@@ -67,9 +69,38 @@ def test_scaled_screen_coordinates_need_outward_edge_travel_before_handoff():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
     drag = src[src.index("function startDrag"):src.index("function startResize")]
     handoff = drag[drag.index("const handoffDirection ="):drag.index("const preview =")]
-    assert "e.clientX-window.innerWidth" in handoff
-    assert "Math.max(0,-e.clientX)" in handoff
-    assert "edgeOverflow(e,dir)>8" not in handoff
+    assert "clientAtEdge" in handoff
+    assert "edgeOverflow(e,dir)>8" in handoff
+
+
+def test_native_drag_runtime_distinguishes_same_output_from_clamped_cross_output():
+    """Execute the shipped edge state machine with Chromium-style clamped client coordinates."""
+    src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+    drag = src[src.index("function startDrag"):src.index("function startResize")]
+    edge = drag[drag.index("const edgeDirection ="):drag.index("const preview =")]
+    script = f"""
+      global.window={{innerWidth:1000,innerHeight:700,screenX:0,screenY:0}};
+      const run=(screenX,clientX)=>{{ const realScreen=true; {edge}
+        return handoffDirection({{screenX,screenY:300,clientX,clientY:300}}); }};
+      process.stdout.write(JSON.stringify([run(995,995),run(1040,999)]));
+    """
+    got = json.loads(subprocess.check_output(["node", "-e", script], text=True))
+    assert got == ["", "right"]
+
+
+def test_cross_output_native_drop_geometry_reaches_destination_ack_frame():
+    src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+    preload = (ROOT / "desktop/preload.js").read_text(encoding="utf-8")
+    main = (ROOT / "desktop/main.js").read_text(encoding="utf-8")
+    drag = src[src.index("function startDrag"):src.index("function startResize")]
+    begin = src.index("pcWM.onNativeHandoffPrepare(async")
+    receiver = src[begin:src.index("if(!_nativeHandoffOff", begin)]
+    assert "handoffDrop(handoff,endEvent||lastMove)" in drag
+    assert "handoff: (id, direction, drop)" in preload
+    assert "drop=drop&&typeof drop==='object'?Object.assign({},drop,{direction}):{direction}" in main
+    assert "{token,row:before,direction,drop}" in main
+    assert "const d=p&&p.drop" in receiver
+    assert receiver.index("Object.assign(w.el.style") < receiver.index("pcWM.nativeHandoffAck(token,rect)")
 
 
 def test_rejected_html_handoff_falls_back_to_the_requested_edge_snap():

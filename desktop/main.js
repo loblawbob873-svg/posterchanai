@@ -1417,9 +1417,11 @@ function adjacentShellSurface(e, direction){
   return candidates.length ? candidates[0].record : null;
 }
 
-ipcMain.handle('pc:wm:handoff', async (e, id, direction) => {
+ipcMain.handle('pc:wm:handoff', async (e, id, direction, drop) => {
   fsGuard(e);
-  const record=adjacentShellSurface(e, String(direction||''));
+  direction=String(direction||'');
+  drop=drop&&typeof drop==='object'?Object.assign({},drop,{direction}):{direction};
+  const record=adjacentShellSurface(e, direction);
   if(!record) return false;
   /* Sending to a loading renderer succeeds but reaches no listener. Refuse before moving the real
    * native surface, so a cross-monitor drag during reload cannot lose Firefox/Telegram. */
@@ -1443,7 +1445,7 @@ ipcMain.handle('pc:wm:handoff', async (e, id, direction) => {
         _nativeHandoffAcks.set(token,{contentsId:Number(record.browser.webContents.id),resolve,timer});
       });
       record.browser.webContents.send('pc:wm:native-handoff-prepare',
-                                      {token,row:before,direction:String(direction||'')});
+                                      {token,row:before,direction,drop});
       return ack;
     },
     commit:async prepared=>{
