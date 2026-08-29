@@ -2649,6 +2649,28 @@
     return encRemember(key, {why: attLabel(p) + ' \u00b7 could not be opened from encrypted storage'});
   }
 
+  /* BASE64 TO BYTES WITHOUT A SIXTEEN-MILLION-ITERATION LOOP.
+   *
+   * `atob` then `for(i…) buf[i] = bin.charCodeAt(i)` is one synchronous pass per BYTE, on the same
+   * thread that draws. A twelve-megabyte picture is ~16 MB of base64 and ~16 million iterations —
+   * seconds of a WebView that cannot paint, scroll or take a tap, once per attachment. No amount of
+   * pacing between rows fixes that, because the freeze is inside a single row; it is why the copy
+   * still stuttered after the batch went from sixty to five.
+   *
+   * A `data:` URL hands the same decode to the browser, which does it natively and off this loop,
+   * and yields a Blob directly — which is what both callers actually wanted. The manual loop stays
+   * as a fallback for a context with no fetch. */
+  async function b64Blob(b64, type){
+    const mime = String(type || 'application/octet-stream');
+    try{
+      if(typeof fetch === 'function')
+        return await fetch('data:' + mime + ';base64,' + b64).then(r => r.blob());
+    }catch(_){ }
+    const bin = atob(b64), out = new Uint8Array(bin.length);
+    for(let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return new Blob([out], {type: mime});
+  }
+
   async function partData(p){
     const id = Number(p && p.id) || 0;
     const sha = String((p && p.sha) || '');
@@ -2717,9 +2739,8 @@
         chunked = true;
         if(q.error){ a = q; break; }
         if(q.data){
-          const bin = atob(q.data), u8 = new Uint8Array(bin.length);
-          for(let i=0;i<bin.length;i++) u8[i] = bin.charCodeAt(i);
-          chunks.push(u8); offset += u8.length;
+          const part = await b64Blob(q.data, p.ct);
+          chunks.push(part); offset += part.size;
         }
         if(q.done){
           const blob = new Blob(chunks, {type:p.ct || 'application/octet-stream'});
@@ -2735,10 +2756,7 @@
       r = { url: URL.createObjectURL(a.blob), blob:a.blob, ct:p.ct || '' };
     } else if(a && a.data){
       try{
-        const bin = atob(a.data);
-        const buf = new Uint8Array(bin.length);
-        for(let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
-        const blob = new Blob([buf], { type: p.ct || 'application/octet-stream' });
+        const blob = await b64Blob(a.data, p.ct);
         r = { url: URL.createObjectURL(blob), blob, ct: p.ct || '' };
       }catch(_){ r = { why: attLabel(p) + ' \u00b7 could not be decoded' }; }
     } else if(a && a.tooBig){
