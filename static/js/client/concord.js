@@ -1153,7 +1153,23 @@
     const channel=(room.channels||[]).find(c=>c.name===channelName); if(!channel||!channel.id)throw new Error('channel key is unavailable');
     const loadKey=room.communityId||room.naddr,relays=roomRelays(bundle);
     let controlWraps=roomControls.get(loadKey);
-    if(!controlWraps){ const seed=reader.inspectControl(bundle,[]),key=envelopeCacheKey(loadKey,'control'),cached=await cachedEnvelopes(key);controlWraps=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,cached);await cacheEnvelopes(key,controlWraps.filter(ev=>!cached.some(old=>old.id===ev.id)));roomControls.set(loadKey,controlWraps||[]); }
+    if(!controlWraps){ const seed=reader.inspectControl(bundle,[]),key=envelopeCacheKey(loadKey,'control'),cached=await cachedEnvelopes(key);controlWraps=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,cached);await cacheEnvelopes(key,controlWraps.filter(ev=>!cached.some(old=>old.id===ev.id)));
+      /* AN EMPTY CONTROL SET IS "COULD NOT ASK", NOT "THIS COMMUNITY HAS NO CHANNELS".
+       *
+       * A community's channels are DEFINED by its control events — Armada's own reader builds
+       * `channelsView` from `folded.channels`, which comes from those wraps and from nothing else.
+       * So with none of them the readable channel set is empty and `inspectChat` correctly refuses
+       * every id with "channel is not readable with this membership".
+       *
+       * `roomControls.set(loadKey, [])` then made that permanent for the session: `[]` is truthy,
+       * so the guard above reads it as "already fetched" and the room can never recover — the
+       * error repeats on every four-second live tick, which is exactly how it was reported. One
+       * unreachable relay at the wrong moment cost the whole visit.
+       *
+       * Remember only an answer that actually contained something; leave the miss unrecorded so
+       * the next tick asks again. */
+      if((controlWraps||[]).length) roomControls.set(loadKey,controlWraps);
+      else { roomLoadWarning(p,loadKey,'could not read this community yet: ','no control events came back — retrying'); return; } }
     const made=await reader.createChatWrap(bundle,controlWraps||[],channel.id,text,viewer.pubkey,p.signTemplate,extraTags,kind);
     const accepted=await p.relayPublishTo(relays,made.wrap); if(!accepted)throw new Error('community relays rejected the message');
     await cacheEnvelopes(envelopeCacheKey(loadKey,channel.id),[made.wrap]);

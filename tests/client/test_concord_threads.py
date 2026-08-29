@@ -63,3 +63,32 @@ def test_the_count_is_hidden_inside_a_thread():
     assert "_replies&&!state.thread" in SRC, (
         "the reply count is still offered while its own thread is open"
     )
+
+
+# ---------------------------------------------------------------- reading a community at all
+
+def test_an_empty_control_set_is_not_cached_as_the_answer():
+    """"CHANNEL IS NOT READABLE WITH THIS MEMBERSHIP", and it was not about membership.
+
+    A community's channels are DEFINED by its control events — Armada's own reader builds
+    `channelsView` from `folded.channels`, which comes from those wraps and nothing else. With none
+    of them the readable set is empty and `inspectChat` correctly refuses every id.
+
+    `roomControls.set(loadKey, [])` made that permanent for the session: `[]` is truthy, so the
+    "have I fetched these?" guard reads it as yes and the room can never recover. The error then
+    repeats on every four-second live tick, which is how it was reported. One unreachable relay at
+    the wrong moment cost the entire visit.
+    """
+    assert "if((controlWraps||[]).length) roomControls.set(loadKey,controlWraps);" in SRC, (
+        "an empty control-event set is still remembered as the answer, so a community that failed "
+        "to load once stays unreadable for the whole session"
+    )
+
+
+def test_a_community_that_could_not_be_read_says_so_instead_of_throwing_every_tick():
+    """Silence plus an exception every four seconds is not a report. Say it once, and leave."""
+    body = SRC.split("if((controlWraps||[]).length) roomControls.set", 1)[1][:400]
+    assert "roomLoadWarning" in body, (
+        "a community whose control events did not arrive fails silently apart from an exception "
+        "thrown on every live tick"
+    )
