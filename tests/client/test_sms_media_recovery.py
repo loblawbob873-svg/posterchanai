@@ -526,3 +526,40 @@ class TheProviderIsQuotedRatherThanParaphrased(unittest.TestCase):
         st = (res["statuses"] or [{}])[-1]
         self.assertIn("provider refused", str(st.get("partError", "")).lower(),
                       "the provider's own reason was replaced by a generic one: %r" % (st,))
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class ARefusedAttachmentIsSettled(unittest.TestCase):
+    """A refusal is recorded on the archived message and then LEFT ALONE.
+
+    Publishing the message instead of withholding it is what stops one permanently-refused
+    attachment freezing the high-water mark in front of everything newer. But a refusal that still
+    reads as "needs upgrading" swaps that wall for a treadmill: the same document republished on
+    every sweep, for ever — 1,284 relay writes per pass on the reporting account, plus a provider
+    read each. `rescan` is the deliberate way to offer them again, because a person asking is a
+    different thing from a timer asking."""
+
+    def _rows(self):
+        r = msg(1, addr="+15550100", body="", incoming=True)
+        r["mms"] = True
+        r["parts"] = [{"id": 900, "ct": "image/jpeg", "name": "p.jpg", "bytes": 20 * 1024 * 1024}]
+        return [r]
+
+    def test_two_sweeps_publish_a_refused_picture_once(self):
+        res = run(isPhone=True, rows=self._rows(), parts={"900": {"tooBig": True}},
+                  steps=["phoneLoad", "mirror", "mirror", "settle"])
+        doc = self._rows()[0]["doc"]
+        wrote = [p for p in res["published"] if p["d"] == doc]
+        self.assertEqual(len(wrote), 1,
+                         "a refused attachment is republished on every sweep — the wall became a "
+                         "treadmill: %d writes for one message" % (len(wrote),))
+
+    def test_a_person_pressed_rescan_offers_it_again(self):
+        """The escape hatch. Without it a refusal is permanent and nothing a person does can retry
+        it, which is the latch failure this codebase keeps relearning."""
+        res = run(isPhone=True, rows=self._rows(), parts={"900": {"tooBig": True}},
+                  steps=["phoneLoad", "mirror", "rescan", "settle"])
+        doc = self._rows()[0]["doc"]
+        wrote = [p for p in res["published"] if p["d"] == doc]
+        self.assertGreater(len(wrote), 1,
+                           "a rescan could not offer the refused attachment to the phone again")

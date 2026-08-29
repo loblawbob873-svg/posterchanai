@@ -199,9 +199,16 @@ class TheArchive(unittest.TestCase):
         res = run(rows=rows, parts={"904": {"tooBig": True}}, migrationBatch=60,
                   steps=["phoneLoad", "migrate"])
         bodies = [f for f in res["drive"]["files"] if f["folder"] == "Messages"]
-        self.assertEqual(len(bodies), 9, "the unreadable fourth row blocked later messages")
-        self.assertEqual(len(res["published"]), 9)
-        self.assertIsNone(published(res, rows[3]["doc"]), "a hollow MMS was published")
+        self.assertEqual(len(bodies), 10, "the unreadable fourth row blocked later messages")
+        self.assertEqual(len(res["published"]), 10)
+        # AND THE REFUSED ROW IS ARCHIVED TOO — see the sibling test below for why withholding it
+        # is what froze the high-water mark and made this whole class of wall possible.
+        body = published(res, rows[3]["doc"])
+        self.assertIsNotNone(body, "the refused picture message was withheld, freezing the mark")
+        att = (body.get("att") or [{}])[0]
+        self.assertFalse(att.get("sha"), "a refused attachment was published with an address")
+        self.assertTrue(att.get("err"),
+                        "archived without saying why it has no picture: %r" % (att,))
 
     def test_one_unreadable_mms_does_not_wall_off_the_ordinary_sweep(self):
         """THE SAME FAULT AS THE MIGRATION'S, IN THE PATH THAT ACTUALLY RUNS.
@@ -223,7 +230,27 @@ class TheArchive(unittest.TestCase):
                 continue
             self.assertIn(r["doc"], landed,
                           "the unreadable picture message walled off the ordinary sweep")
-        self.assertNotIn(rows[3]["doc"], landed, "a hollow MMS was published")
+        # AND THE PICTURE MESSAGE ITSELF LANDS, CARRYING WHY IT HAS NO BYTES.
+        #
+        # This assertion used to be `assertNotIn` — never publish a message whose attachment could
+        # not be archived — and that rule is what built the wall it was written to prevent. The row
+        # failed, so the mark froze at it, and the provider answers `since` OLDEST FIRST: measured
+        # on the reporting handset, 213 rows read, 10 attachments permanently refused, `published:
+        # 0`, and the high-water mark identical sweep after sweep. From outside that is
+        # indistinguishable from a relay that stopped accepting, and it is why "bring in older
+        # messages" and a rescan both appeared to do nothing.
+        #
+        # A refusal is now part of the message rather than a reason to withhold it: every device
+        # shows "Photo · <what the provider said>" instead of an empty bubble, the row is done, and
+        # the mark moves. `rescan` is the deliberate way to offer it again.
+        self.assertIn(rows[3]["doc"], landed,
+                      "the refused picture message was withheld, which freezes the mark at it")
+        body = published(res, rows[3]["doc"])
+        self.assertIsNotNone(body, "the refused picture message was not archived at all")
+        att = (body.get("att") or [{}])[0]
+        self.assertFalse(att.get("sha"), "a refused attachment was published with an address")
+        self.assertTrue(att.get("err"),
+                        "the message was archived without saying why it has no picture: %r" % (att,))
 
     def test_the_high_water_mark_is_rewound_once_and_not_on_every_sweep(self):
         """The rewind was keyed on the MIGRATION being finished rather than on having rewound. Any

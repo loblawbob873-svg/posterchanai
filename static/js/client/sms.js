@@ -110,14 +110,26 @@
     resetArchiveMarkers();
     S.archive.error = '';
     S.archive.published = 0;
-    await loadFromPhone();
-    const r = await migrateLocalHistory();
-    await mirror();
-    return r;
+    /* The one thing that offers a refused attachment to the phone again. Held for this pass only,
+     * and released in `finally` so a failure cannot leave the sweep permanently churning. */
+    _retryRefused = true;
+    try{
+      await loadFromPhone();
+      const r = await migrateLocalHistory();
+      await mirror();
+      return r;
+    }finally{ _retryRefused = false; }
   }
 
   let _messagesFolderReady = false;
   const _migrationFailed = new Set();
+  /* "TRY THE REFUSED ATTACHMENTS AGAIN" — true only for the length of a deliberate, person-pressed
+   * rescan. An attachment the provider refused is recorded on the archived document and then left
+   * alone, or every sweep republishes it for ever (1,284 relay writes per pass on the reporting
+   * account). A person asking is a different thing from a timer asking, which is the same
+   * distinction `resend` draws in folder sync: a name is somebody answering the question, never
+   * another inference from the same evidence. */
+  let _retryRefused = false;
   /* A cancelled outbox command is its own tombstone. Relay pools and the local Store can hand us
    * an older request after the newer cancellation (including in a later refresh); without keeping
    * this watermark, that stale request recreates a sending bubble and can reach drainOutbox again. */
@@ -1057,11 +1069,31 @@
       await ensureMmsFolder();
       body.att = [];
       for(const p of m.parts){
-        const sha = await archivePart(p);
-        const att = { ct: p.ct, name: p.name, bytes: p.bytes, sha, thumb: p.thumb || '' };
+        /* AN ATTACHMENT THE PHONE WILL NOT HAND OVER MUST NOT COST THE MESSAGE.
+         *
+         * This used to throw, which failed the whole row, which froze the high-water mark at it —
+         * and the provider answers `since` queries OLDEST FIRST, so ten permanent refusals at the
+         * old end of the store stood in front of everything newer. Measured on the reporting
+         * handset: 213 rows read, 10 attachments refused, `published: 0`, the mark unchanged at
+         * the same value sweep after sweep. From outside that is indistinguishable from a relay
+         * that stopped accepting — which is exactly how it was reported — and it is why "bring in
+         * older messages" and a rescan both appeared to do nothing.
+         *
+         * The refusal is now part of the message: the document is published with the attachment
+         * named and its reason recorded, the row is DONE, and the mark moves. Every other device
+         * shows "Photo · <what the provider said>" instead of an empty bubble, which is the truth
+         * and is also the only way anyone can see how many are affected. */
+        let sha = '';
+        try{ sha = await archivePart(p); }
+        catch(e){
+          p.err = String((e && e.message) || e).slice(0, 160);
+          if(!p.err) p.err = 'the attachment could not be read';
+        }
+        const att = { ct: p.ct, name: p.name, bytes: p.bytes, sha: sha || '', thumb: p.thumb || '' };
         // Only when it is true: an absent key keeps an ordinary picture message's document
         // byte-identical to the one every earlier build published.
         if(p.nothumb) att.nt = 1;
+        if(!sha && p.err) att.err = p.err;
         body.att.push(att);
       }
     }
@@ -1312,15 +1344,18 @@
         let ok = false;
         const sealedBefore = (m.parts || []).filter(p => p.sha).length;
         try{ ok = await publishOne(m); }
-        catch(e){
-          archiveError = String((e && e.message) || e); ok = false;
-          if((m.parts || []).length){
-            pass.partsFailed += (m.parts || []).length;
-            if(!pass.partError) pass.partError = archiveError;
-          }
-        }
+        catch(e){ archiveError = String((e && e.message) || e); ok = false; }
+        /* COUNTED FROM THE PARTS, NOT FROM A THROW. A refused attachment no longer fails the row —
+         * it is recorded on it and the message is archived anyway — so the reason lives on the part
+         * and nowhere else. Reading it from the catch made a refusal invisible the moment it
+         * stopped being fatal, which is precisely when it most needs reporting. */
         pass.partsUploaded += Math.max(0,
           (m.parts || []).filter(p => p.sha).length - sealedBefore);
+        for(const p of (m.parts || [])){
+          if(p.sha || !p.err) continue;
+          pass.partsFailed++;
+          if(!pass.partError) pass.partError = String(p.err);
+        }
         if(!ok){
           /* ONE MMS THE PROVIDER WILL NOT HAND OVER MUST NOT BLOCK THE REST OF THE PHONE FOR EVER,
            * AND THAT IS TRUE OF THIS SWEEP TOO.
@@ -1992,7 +2027,11 @@
                                      thumb: /^[0-9a-f]{64}$/i.test(String(p.thumb || ''))
                                        ? String(p.thumb).toLowerCase() : '',
                                      // `nt` on the wire, `nothumb` in memory — see archivePart.
-                                     nothumb: (p.nothumb || p.nt) ? 1 : 0 }));
+                                     nothumb: (p.nothumb || p.nt) ? 1 : 0,
+                                     /* WHY THIS ONE HAS NO BYTES, in the provider's words. Kept on
+                                      * the wire so every device can say it, and so a later sweep
+                                      * knows this was tried rather than never attempted. */
+                                     err: String(p.err || '').slice(0, 160) }));
   }
 
   /* An archived MMS is complete only when every attachment has a portable encrypted-store address.
@@ -2002,9 +2041,14 @@
     const src = (phone && phone.parts) || [];
     if(!src.length) return false;
     const dst = (archived && archived.parts) || [];
-    return dst.length !== src.length || dst.some(p =>
+    /* A PART THAT WAS TRIED AND REFUSED IS NOT AN UPGRADE WAITING TO HAPPEN. Without this the
+     * sweep republishes the same document on every visit for ever — one relay write per refused
+     * picture per pass, which on the reporting account is 1,284 of them. `rescan` clears the
+     * record deliberately, so a person can still say "try again"; nothing else does. */
+    const settled = p => !!String(p.err || '') && !_retryRefused;
+    return dst.length !== src.length || dst.some(p => !settled(p) && (
       !/^[0-9a-f]{64}$/i.test(String(p.sha || '')) ||
-      (isImage(p.ct) && !p.nothumb && !/^[0-9a-f]{64}$/i.test(String(p.thumb || ''))));
+      (isImage(p.ct) && !p.nothumb && !/^[0-9a-f]{64}$/i.test(String(p.thumb || '')))));
   }
 
   function needsArchiveUpgrade(phone, archived){
