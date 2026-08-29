@@ -636,3 +636,52 @@ class TheCopyWaitsUntilNobodyIsReading(unittest.TestCase):
         self.assertIn("scheduleBackup(8000)", sched,
                       "it gives up instead of re-arming, so a phone used mostly inside threads "
                       "never finishes its backup")
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class AChunkSizeIsNotAFileSize(unittest.TestCase):
+    """WHY NO PICTURE HAS EVER REACHED BLOSSOM.
+
+    `max` means "how much of this chunk" on the chunked read and "the biggest file you may return"
+    on the older one, and `MmsStore.partBytes` answers NULL — not a truncated buffer — when the file
+    exceeds the cap. So asking a non-chunking build for a 768 KB maximum returned nothing for every
+    photo over 768 KB: no bytes, no error, and no `tooBig` either, because that flag needs `sizeOf`
+    and it answers -1 on a row it cannot stat.
+
+    The native Texts screen passes 24 MB to the very same function. That is the whole difference
+    between a phone that shows its pictures perfectly and an archive that has never held one — not
+    a permission, not the provider, not the upload, and not the relay. The handset said so itself
+    once it could: "the phone answered with no bytes and no reason".
+    """
+
+    PART = {"id": 900, "ct": "image/jpeg", "name": "big.jpg", "bytes": 3 * 1024 * 1024}
+
+    def _rows(self):
+        r = msg(1, addr="+15550100", body="", incoming=True)
+        r["mms"] = True
+        r["parts"] = [self.PART]
+        return [r]
+
+    def test_a_photo_larger_than_one_chunk_still_reaches_blossom(self):
+        res = run(isPhone=True, rows=self._rows(),
+                  parts={"900": {"wholeFileOnly": 3 * 1024 * 1024, "data": "eA=="}},
+                  steps=["phoneLoad", "mirror", "settle"])
+        uploaded = [c for c in res["calls"] if c[0] == "uploadEncFile" and c[2] == "MMS"]
+        self.assertTrue(uploaded,
+                        "a photo bigger than one chunk was never stored — the chunk size was used "
+                        "as a file size: %r"
+                        % ([c for c in res["calls"] if c[0] == "attachment"],))
+
+    def test_it_asks_for_the_whole_file_only_after_the_chunked_answer_is_refused(self):
+        """Two reads of a multi-megabyte attachment is exactly the copy this avoids elsewhere. The
+        retry is for a build that ignored `offset`, not a first resort."""
+        # A NON-CHUNKING BUILD THAT ANSWERED WITH BYTES. It echoes no `offset`, so it takes the
+        # same branch as the failing case — and must NOT be asked again, because a second read of a
+        # multi-megabyte attachment across the bridge is exactly the copy this path avoids
+        # elsewhere. The retry is for an answer with nothing in it, not for every old build.
+        res = run(isPhone=True, rows=self._rows(),
+                  parts={"900": {"data": "eA=="}},
+                  steps=["phoneLoad", "mirror", "settle"])
+        asks = [c for c in res["calls"] if c[0] == "attachment"]
+        self.assertEqual(len(asks), 1,
+                         "a build that answered with bytes was asked all over again: %r" % (asks,))

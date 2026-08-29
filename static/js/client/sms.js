@@ -2516,6 +2516,10 @@
    * and therefore the order they were opened in. */
   const ATT_MAX = 120;
   const ATT_FAIL_RETRY_MS = 15000;
+  /* One chunk of a streamed attachment, and the ceiling for a build that will not stream. They are
+   * different questions and were the same number; see the fallback in partData. `WHOLE_BYTES`
+   * matches SmsPlugin.MAX_ATTACHMENT, which is what actually bounds the answer. */
+  const CHUNK_BYTES = 768 * 1024, WHOLE_BYTES = 12 * 1024 * 1024;
 
   function attRemember(id, v){
     if(v) v._at = Date.now();
@@ -2675,8 +2679,28 @@
       const chunks = [];
       let offset = 0, chunked = false;
       for(let guard = 0; guard < 256; guard++){
-        const q = await P.attachment({ part:id, offset, max:768 * 1024 });
-        if(!q || q.offset === undefined){ a = q; break; }
+        const q = await P.attachment({ part:id, offset, max:CHUNK_BYTES });
+        if(!q || q.offset === undefined){
+          /* A BUILD THAT DOES NOT CHUNK MUST NOT BE HANDED A CHUNK SIZE AS A WHOLE-FILE CAP.
+           *
+           * `max` means "how much of this chunk" on the chunked path and "the biggest file you may
+           * return" on the older one — and `MmsStore.partBytes` answers NULL, not a truncated
+           * buffer, when the file is bigger than the cap. So asking the non-chunking path for a
+           * 768 KB maximum meant every photo over 768 KB came back as nothing: no bytes, no error,
+           * no `tooBig` (that flag needs `sizeOf`, which returns -1 when the row cannot be
+           * stat'ed). The handset's own report, once it could speak, said exactly that — "the
+           * phone answered with no bytes and no reason".
+           *
+           * The native Texts screen passes 24 MB to the very same function, which is why a phone
+           * shows its pictures perfectly while the archive has never held one: not a permission, not
+           * the provider, not the upload — a chunk size used as a file size, on the fallback path
+           * only. Ask again for the whole thing. */
+          a = q;
+          if(q && !q.blob && !q.data && !q.tooBig){
+            try{ a = (await P.attachment({ part:id, max:WHOLE_BYTES })) || q; }catch(_){ }
+          }
+          break;
+        }
         chunked = true;
         if(q.error){ a = q; break; }
         if(q.data){

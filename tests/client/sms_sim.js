@@ -189,6 +189,15 @@ const PLUGIN = {
                total:all.length, done:at + piece.length >= all.length };
     }
     if(!part && known) return { data: 'eA==', bytes: 1 };
+    /* A BUILD THAT IGNORES `offset` AND TREATS `max` AS A WHOLE-FILE CAP. `MmsStore.partBytes`
+     * answers NULL — not a truncated buffer — when the file is bigger than the cap, and `tooBig`
+     * needs `sizeOf`, which returns -1 on a row it cannot stat. So the honest reproduction is: no
+     * offset echoed, no bytes, no reason. Anything asking for the whole file gets it. */
+    if(part && part.wholeFileOnly){
+      const big = Number(part.wholeFileOnly);
+      if(Number(a && a.max) < big) return { part:a && a.part, data:'', tooBig:false };
+      return { part:a && a.part, data: part.data || 'eA==', bytes: (part.data || 'x').length };
+    }
     if(!part) return { data: '', tooBig: false };
     if(part.tooBig) return { data: '', tooBig: true };
     return { data: part.data || '', bytes: (part.data || '').length };
