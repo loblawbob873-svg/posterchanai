@@ -18032,7 +18032,7 @@
     const up = crumbs.length > 1 ? crumbs[crumbs.length - 2].to : '';
     return `<div class="fx-bar">
       <div class="fx-nav">
-        <button class="fx-nb fx-locations-open" id="fx-locations-open" title="Locations" aria-label="Locations"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg></button>
+        <button class="fx-nb fx-locations-open" id="fx-locations-open" title="Locations" aria-label="Locations" aria-controls="fx-locations-panel" aria-expanded="false"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg></button>
         <button class="fx-nb" id="fx-back" title="Back" aria-label="Back"${canBack ? '' : ' disabled'}>‹</button>
         <button class="fx-nb" id="fx-up" title="Up one folder" aria-label="Up one folder"${up || crumbs.length > 1 ? '' : ' disabled'} data-to="${enc(up)}">↑</button>
       </div><nav class="fx-crumbs">${crumbs.map((c, i) => (i ? '<span class="fx-sep">›</span>' : '')
@@ -18050,7 +18050,10 @@
   }
   function _fxBindBar(pane){
     { const open=$('#fx-locations-open',pane), explorer=open&&open.closest('.fx-explorer');
-      if(open && explorer) open.onclick=()=>explorer.classList.add('fx-locations-on'); }
+      if(open && explorer) open.onclick=()=>{
+        explorer.classList.add('fx-locations-on'); open.setAttribute('aria-expanded','true');
+        const close=$('#fx-locations-close',explorer); if(close) close.focus();
+      }; }
     /* SEARCH. The drive outgrew browsing the moment Folder Sync started filing thousands of files
      * into it, and a folder is only findable if you remember which one you put it in.
      *
@@ -18973,7 +18976,7 @@
    * .folder-chip[data-folder] and every handler they had still finds them. */
   function _fxSideHTML(){
     const folders = FilesIdx.folders();
-    return `<div class="fx-side-mobile-head"><b>Locations</b><button class="fx-nb" id="fx-locations-close" aria-label="Close locations"><svg class="ic b-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div><div class="fx-tree"><section class="fx-tree-node">
+    return `<div class="fx-side-mobile-head" id="fx-locations-panel"><b>Locations</b><button class="fx-nb" id="fx-locations-close" aria-label="Close locations"><svg class="ic b-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div><div class="fx-tree"><section class="fx-tree-node">
       <button class="fx-tree-head${(!_hostOn&&!_syncRoot)?' active':''}${_fxMobileSource==='blossom'?' mobile-on':''}" data-fxtoggle="blossom" aria-expanded="${_fxBlossomOpen?'true':'false'}"><span class="chev">${_fxBlossomOpen?'▾':'▸'}</span><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg><b>Files</b></button>
       <div class="fx-tree-children${_fxBlossomOpen?'':' hidden'}" data-fxtree="blossom"><div class="folder-bar">
         <button class="folder-chip${(!_syncRoot&&_filesFolder==='')?' active':''}" data-folder=""><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>All</button>
@@ -19068,7 +19071,14 @@
     const r = root || document;
     { const close=$('#fx-locations-close',r), explorer=(close&&close.closest('.fx-explorer'))
         || (r.closest&&r.closest('.fx-explorer')) || $('.fx-explorer',r);
-      if(close && explorer) close.onclick=()=>explorer.classList.remove('fx-locations-on');
+      const shut=()=>{ if(!explorer)return; explorer.classList.remove('fx-locations-on');
+        const open=$('#fx-locations-open',explorer); if(open){ open.setAttribute('aria-expanded','false'); open.focus(); } };
+      if(close && explorer) close.onclick=shut;
+      if(explorer) explorer.addEventListener('keydown',e=>{
+        if(e.key==='Escape' && explorer.classList.contains('fx-locations-on')){
+          e.preventDefault(); e.stopPropagation(); shut();
+        }
+      });
       /* The phone drawer's dark surround is a box-shadow, not a DOM backdrop. The narrow exposed
        * strip therefore belongs to .fx-main underneath it; without a capture guard, tapping there
        * opens whichever file happens to be under your finger and leaves Locations open. Treat any
@@ -19076,7 +19086,7 @@
       if(explorer) explorer.addEventListener('click',e=>{
         const mobile=!!(window.matchMedia&&matchMedia('(max-width:820px)').matches);
         if(!mobile||!explorer.classList.contains('fx-locations-on')||e.target.closest('.fx-side'))return;
-        explorer.classList.remove('fx-locations-on');e.preventDefault();e.stopPropagation();
+        shut();e.preventDefault();e.stopPropagation();
       },true); }
     $$('[data-files-mode]',r).forEach(b=>b.onclick=()=>{
       _filesAdminPk=null; _filesTab=b.dataset.filesMode; renderBlossom();

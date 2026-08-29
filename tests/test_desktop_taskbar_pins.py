@@ -68,14 +68,31 @@ def test_adopted_native_task_gets_move_and_close_without_an_ephemeral_pin():
 def test_taskbar_context_menu_is_anchored_in_the_desktops_scaled_coordinate_space():
     start = SRC.index("function showCtx(")
     body = SRC[start:SRC.index("function iconMenu(", start)]
+    helper = SRC[SRC.index("function ctxPosition("):start]
     assert "desk.getBoundingClientRect()" in body
     assert "desk.offsetWidth" in body and "desk.offsetHeight" in body
-    assert "ar.left-dr.left" in body and "ar.top-dr.top" in body
+    assert "ar.left-dr.left" in helper and "ar.top-dr.top" in helper
     # Both native and PosterChan task buttons pass the button, not just viewport pointer coordinates.
     task = SRC[SRC.index("$$('.os-task', bar).forEach(b => b.oncontextmenu"):
                SRC.index("$$('.os-native-max'", SRC.index("$$('.os-task', bar).forEach(b => b.oncontextmenu"))]
     assert task.count("],b);") >= 1
     assert "showCtx(e.clientX, e.clientY, actions, b)" in task
+
+
+def test_taskbar_menu_runtime_does_not_reserve_the_taskbar_twice():
+    start = SRC.index("function ctxPosition(")
+    end = SRC.index("function showCtx(", start)
+    fn = SRC[start:end]
+    script = fn + """
+global.vwL=()=>800;global.vhL=()=>600;global.zf=()=>1;
+const p=ctxPosition({left:0,top:0,width:800,height:600},800,600,200,80,
+  {left:300,top:600},300,600);
+process.stdout.write(JSON.stringify(p));
+"""
+    run = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=False)
+    assert run.returncode == 0, run.stderr
+    assert run.stdout == '{"left":300,"top":514}'
+    assert "(dh||vhL())-mh-4" in fn
 
 
 def test_start_menu_can_add_and_remove_apps_from_desktop():

@@ -190,6 +190,19 @@ def test_shell_snap_tick_uses_the_focused_posterchan_window():
     assert "snapTo(w, p.slice(8)==='max' ? 'max' : p.slice(8))" in src
 
 
+def test_super_snap_and_monitor_move_suppress_the_trailing_start_release():
+    """Sway emits the command tick before its independent Super_L release binding emits Start."""
+    src = (ROOT / "static/js/client/os.js").read_text()
+    tick = src[src.index("const p = String(ev.payload || '')"):
+               src.index("if(p.startsWith('pc:update-installed:'))")]
+    assert "/^pc:(?:snap:|move-output:|move-native:)/.test(p)" in tick
+    assert "_suppressStartUntil=Date.now()+1200" in tick
+    assert "toggleStart(false)" in tick
+    start = src[src.index("if(p === 'pc:start')"):][:220]
+    assert "Date.now() < _suppressStartUntil" in start
+    assert "toggleStart(false)" in start
+
+
 def test_renderer_first_subscription_cannot_drop_all_super_shortcuts():
     """The renderer and recovery setup race; either one must subscribe the socket to tick."""
     main = (ROOT / "desktop/main.js").read_text()

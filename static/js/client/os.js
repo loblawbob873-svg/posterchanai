@@ -5667,6 +5667,16 @@
   }
   function _ctxAway(e){ if(!e.target.closest || !e.target.closest('.os-ctx')) hideCtx(); }
 
+  function ctxPosition(dr,dw,dh,mw,mh,ar,x,y){
+    const sx=dr.width/(dw||vwL())||zf(),sy=dr.height/(dh||vhL())||sx;
+    const lx=ar?(ar.left-dr.left)/sx:(x-dr.left)/sx;
+    const ly=ar?(ar.top-dr.top)/sy-mh-6:(y-dr.top)/sy;
+    /* `desk` already excludes the taskbar. Subtracting TASKBAR here a second time pushed every
+     * task menu 48 logical pixels too high (more in physical pixels under zoom). */
+    return {left:Math.max(4,Math.min((dw||vwL())-mw-4,lx)),
+      top:Math.max(4,Math.min((dh||vhL())-mh-4,ly))};
+  }
+
   function showCtx(x, y, rows, anchor){
     hideCtx();
     if(!rows.length) return;
@@ -5682,13 +5692,10 @@
      * Taskbar menus anchor above the button, as a real taskbar does; other context menus stay at the
      * pointer. */
     const dr=desk.getBoundingClientRect();
-    const sx=dr.width/(desk.offsetWidth||vwL())||zf(), sy=dr.height/(desk.offsetHeight||vhL())||sx;
     const w = m.offsetWidth || 200, h = m.offsetHeight || 80;
     const ar=anchor&&anchor.getBoundingClientRect?anchor.getBoundingClientRect():null;
-    const lx=ar ? (ar.left-dr.left)/sx : (x-dr.left)/sx;
-    const ly=ar ? (ar.top-dr.top)/sy-h-6 : (y-dr.top)/sy;
-    m.style.left = Math.max(4, Math.min((desk.offsetWidth||vwL()) - w - 4, lx)) + 'px';
-    m.style.top = Math.max(4, Math.min((desk.offsetHeight||vhL()) - TASKBAR - h - 4, ly)) + 'px';
+    const pos=ctxPosition(dr,desk.offsetWidth,desk.offsetHeight,w,h,ar,x,y);
+    m.style.left=pos.left+'px';m.style.top=pos.top+'px';
     $$('.os-ctx-b', m).forEach(b => b.onclick = () => {
       const r = rows[b.dataset.i | 0];
       hideCtx();
@@ -6925,6 +6932,15 @@
             }
             if(ev.name !== 'tick') return;
             const p = String(ev.payload || '');
+            /* Sway owns Super+Arrow and sends one of these ticks while Super is still held. Its
+             * separate bare-Super binding necessarily fires on the later key release as well;
+             * without remembering the chord, a successful snap/move immediately opened Start.
+             * Keep this bounded to Super-based window commands so an unrelated tick cannot eat a
+             * deliberate Start press. */
+            if(/^pc:(?:snap:|move-output:|move-native:)/.test(p)){
+              _suppressStartUntil=Date.now()+1200;
+              toggleStart(false);
+            }
             if(p.startsWith('pc:update-installed:')){
               const token=p.slice('pc:update-installed:'.length);
               let quiet=0;

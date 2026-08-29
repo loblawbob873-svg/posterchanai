@@ -33,6 +33,26 @@ def test_mobile_uses_source_switcher_and_only_active_source_locations():
     assert "explorer.classList.remove('fx-locations-on')" in APP
 
 
+def test_locations_button_announces_and_focuses_its_drawer():
+    bar = APP[APP.index("function _fxBarHTML("):
+              APP.index("function _fxBindBar(")]
+    bind = APP[APP.index("function _fxBindBar("):
+               APP.index("/* SEARCH.", APP.index("function _fxBindBar("))]
+    assert 'aria-controls="fx-locations-panel"' in bar
+    assert 'aria-expanded="false"' in bar
+    assert "open.setAttribute('aria-expanded','true')" in bind
+    assert "close.focus()" in bind
+
+
+def test_locations_drawer_escape_closes_and_restores_focus():
+    side = APP[APP.index("function _fxBindSide("):
+               APP.index("$$('[data-files-mode]'", APP.index("function _fxBindSide("))]
+    assert "e.key==='Escape'" in side
+    assert "open.setAttribute('aria-expanded','false')" in side
+    assert "open.focus()" in side
+    assert "shut();e.preventDefault();e.stopPropagation()" in side
+
+
 def test_mobile_locations_backdrop_closes_without_opening_an_underlying_file():
     start = APP.index("function _fxBindSide(")
     bind = APP[start:start + 8000]
