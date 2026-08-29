@@ -470,9 +470,7 @@
        * the 5,000-line scrollback. The buffer API is public xterm API, so this works in the web,
        * Android and desktop bundles without another CDN or a version-sensitive private property. */
       try{ term.attachCustomKeyEventHandler((ev) => {
-        if(ev.type==='keydown' && (ev.ctrlKey||ev.metaKey) && (ev.key==='PageUp'||ev.key==='PageDown')){
-          ev.preventDefault();_cycleTab(ev.key==='PageUp'?-1:1);return false;
-        }
+        if(_tabChord(ev)) return false;
         if(ev.type === 'keydown' && (ev.key === 'PageUp' || (ev.shiftKey && ev.key === 'ArrowUp')))
           _stopFollowing();
         if(ev.type === 'keydown' && (ev.ctrlKey || ev.metaKey) && ev.shiftKey
@@ -788,6 +786,17 @@
       let at=tabs.findIndex(x=>x.dataset.tab===sid);if(at<0)at=0;
       const next=tabs[(at+(step<0?-1:1)+tabs.length)%tabs.length];
       if(next&&next.dataset.tab!==sid)switchTab(next.dataset.tab,next.dataset.host,next.dataset.label);
+    }
+
+    /* The phone keyboard types through #tty-catch, not xterm's textarea. Keeping this chord only in
+     * attachCustomKeyEventHandler made Ctrl+PageUp/PageDown work with a desktop keyboard and do
+     * nothing on Android. Both input surfaces call this one owner; true means the key was consumed. */
+    function _tabChord(ev){
+      if(!ev || ev.type!=='keydown' || !(ev.ctrlKey||ev.metaKey)
+          || (ev.key!=='PageUp'&&ev.key!=='PageDown')) return false;
+      ev.preventDefault();
+      _cycleTab(ev.key==='PageUp'?-1:1);
+      return true;
     }
 
     function _open(frame){
@@ -1288,6 +1297,7 @@
           _send({ t: 'in', d });
         };
         c.onkeydown = (ev) => {
+          if(_tabChord(ev)) return;
           if(ev.key === 'Enter'){ ev.preventDefault(); _send({ t: 'in', d: '\r' }); return; }
           if(ev.key === 'Backspace'){ ev.preventDefault(); _send({ t: 'in', d: '\x7f' }); return; }
           if(SEQ[ev.key]){ ev.preventDefault(); _send({ t: 'in', d: SEQ[ev.key] }); }

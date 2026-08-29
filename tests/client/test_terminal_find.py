@@ -140,10 +140,13 @@ def test_focus_return_retries_a_fit_that_ran_before_xterms_viewport_was_ready():
 def test_ctrl_page_keys_cycle_terminal_tabs_and_wrap_locally():
     assert "function _cycleTab(step)" in TERM
     assert "(at+(step<0?-1:1)+tabs.length)%tabs.length" in TERM
+    chord = TERM[TERM.index("function _tabChord(ev)"):
+                 TERM.index("async function _sessions(", TERM.index("function _tabChord(ev)"))]
+    assert "ev.key!=='PageUp'&&ev.key!=='PageDown'" in chord
+    assert "_cycleTab(ev.key==='PageUp'?-1:1)" in chord
     keys = TERM[TERM.index("attachCustomKeyEventHandler"):
                 TERM.index("return true;", TERM.index("attachCustomKeyEventHandler"))]
-    assert "ev.key==='PageUp'||ev.key==='PageDown'" in keys
-    assert "_cycleTab(ev.key==='PageUp'?-1:1)" in keys
+    assert "if(_tabChord(ev))" in keys
     assert "return false" in keys
 
 
