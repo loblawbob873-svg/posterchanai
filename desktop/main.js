@@ -1459,6 +1459,7 @@ ipcMain.handle('pc:wm:handoff', async (e, id, direction, drop) => {
       const moved=(await wm().windows()).find(row=>Number(row.id)===nativeId);
       if(!moved) throw new Error('native surface disappeared during handoff');
       record.browser.webContents.send('pc:wm:native-handoff',{token,row:moved,rect:prepared});
+      await decorateNative(nativeId);
       await wm().focus(nativeId);
       return {output:target.output,workspace:target.workspace};
     },
@@ -1550,9 +1551,12 @@ ipcMain.handle('pc:remote:release', (e) => { fsGuard(e); return SHELL_MODE ? rem
  * seven idempotent commands once per session. Without this the colours come only from a config file
  * the machine may have been installed with months ago. */
 let _chromeDone = false;
+async function decorateNative(id){
+  if(!_chromeDone){ _chromeDone = true; try{ await wm().applyChrome(); }catch(_){ _chromeDone = false; } }
+  return wm().command('[con_id=' + Number(id) + '] border none, sticky disable');
+}
 ipcMain.handle('pc:wm:decorate', async (e, id) => {
   fsGuard(e);
-  if(!_chromeDone){ _chromeDone = true; try{ await wm().applyChrome(); }catch(_){ _chromeDone = false; } }
   /* The PosterChan HTML frame is the only chrome. A second Sway titlebar is the mismatched
    * Firefox/Telegram decoration users were seeing around it.
    *
@@ -1561,7 +1565,7 @@ ipcMain.handle('pc:wm:decorate', async (e, id) => {
    * workspace, appears above unrelated PosterChan frames and can be claimed by the wrong output.
    * Clear it by exact con_id whenever a surface is adopted. Do not blanket-disable fullscreen:
    * games and videos deliberately own that state and the renderer tracks it separately. */
-  return wm().command('[con_id=' + Number(id) + '] border none, sticky disable');
+  return decorateNative(id);
 });
 ipcMain.handle('pc:display:status', (e) => { fsGuard(e); return displays().status(); });
 ipcMain.handle('pc:display:preview', (e, rows) => { fsGuard(e); return displays().preview(rows); });

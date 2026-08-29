@@ -1255,7 +1255,7 @@
       /* Focusing a scratchpad container can make Sway reveal it at scratchpad geometry before our
        * frame is ready — the focus-loss black flash/tiny Firefox window. Restore and place first. */
       if(_natSent.get(Number(w.native))==='hidden') _focusNativeWhenShown(w);
-      else try{ pcWM.focus(w.native); }catch(_){}
+      else _focusNativeDecorated(w.native);
     }
     if(nativeWins().length) nsync();
     if(!w.noFeed) claimFeed(w);   // a folder owns its own contents and must never take the feed
@@ -2189,6 +2189,14 @@
     if(data){w.el.style.setProperty('--native-stash-preview',`url("${String(data).replace(/["\\]/g,'')}")`);w.el.classList.add('native-stash-preview');}
     else{w.el.style.removeProperty('--native-stash-preview');w.el.classList.remove('native-stash-preview');}
   }
+  function _focusNativeDecorated(id){
+    id=Number(id);if(!id||!window.pcWM)return Promise.resolve(false);
+    /* Firefox private windows and Telegram can reassert compositor state after startup. Decoration
+     * is therefore a focus invariant, not a one-time adoption side effect: clear stale sticky and
+     * native chrome before handing the application the keyboard. */
+    const decorated=pcWM.decorate?Promise.resolve(pcWM.decorate(id)).catch(()=>false):Promise.resolve(true);
+    return decorated.then(()=>pcWM.focus(id)).catch(()=>false);
+  }
   function _focusNativeWhenShown(w, attempt){
     const id=w&&Number(w.native); if(!id || !wins.includes(w))return;
     Promise.resolve(nsync()).then(()=>{
@@ -2196,7 +2204,7 @@
       if(_natSent.get(id)==='hidden' && (attempt||0)<8){
         setTimeout(()=>_focusNativeWhenShown(w,(attempt||0)+1),60); return;
       }
-      try{pcWM.focus(id);}catch(_){}
+      _focusNativeDecorated(id);
     },()=>{});
   }
   /* Native programs are real Sway windows. They deliberately do not get an HTML doppelganger:

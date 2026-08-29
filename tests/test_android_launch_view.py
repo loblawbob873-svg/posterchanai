@@ -338,6 +338,13 @@ class DoubleHomeRuns(unittest.TestCase):
         self.assertNotIn("HomeDoublePress.arrived", create,
                          "onCreate plus onStart can turn one slow cold launch into a double press")
 
+    def test_onstart_only_launcher_restore_returns_to_the_desktop(self):
+        """OEMs that omit onNewIntent must not restore a stale drawer/edit overlay."""
+        home = strip_comments((HOME / "HomeActivity.java").read_text())
+        start = method(home, "protected void onStart")
+        self.assertIn("closeDrawer()", start)
+        self.assertIn("desk.clearEditing()", start)
+
     def test_one_home_cannot_be_counted_by_start_then_new_intent(self):
         """OEMs may order one HOME as onStart -> onNewIntent, opposite the original guard."""
         home = strip_comments((HOME / "HomeActivity.java").read_text())

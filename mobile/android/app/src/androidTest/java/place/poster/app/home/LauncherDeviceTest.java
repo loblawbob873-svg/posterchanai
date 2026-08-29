@@ -167,6 +167,31 @@ public class LauncherDeviceTest {
     }
 
     @Test
+    public void onStartOnlyHomeRestoreClosesTransientLauncherOverlays() throws Exception {
+        /* Several OEMs resume HOME without onNewIntent. Open the real drawer, background the real
+         * activity, and resume it through lifecycle alone: it must return to the desktop. */
+        HomeRoles.enableLauncherComponent(ctx, true);
+        ActivityScenario<HomeActivity> s = ActivityScenario.launch(HomeActivity.class);
+        try {
+            s.onActivity(a -> {
+                try {
+                    java.lang.reflect.Method open = HomeActivity.class.getDeclaredMethod("openDrawer");
+                    open.setAccessible(true);
+                    open.invoke(a);
+                } catch (Exception e) { throw new RuntimeException(e); }
+                View drawer = a.findViewById(place.poster.app.R.id.pc_home_drawer);
+                assertEquals(View.VISIBLE, drawer.getVisibility());
+            });
+            s.moveToState(androidx.lifecycle.Lifecycle.State.CREATED);
+            s.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED);
+            s.onActivity(a -> assertEquals("onStart-only HOME restore left the app drawer open",
+                    View.GONE, a.findViewById(place.poster.app.R.id.pc_home_drawer).getVisibility()));
+        } finally {
+            s.close();
+        }
+    }
+
+    @Test
     public void oneHomeLifecyclePairDoesNotReopenPosterChanButTwoIntentsDo() throws Exception {
         /* A real OEM reported one physical HOME as onStart -> onNewIntent. Counting both callbacks
          * reopened MainActivity immediately, so sending PosterChan to the background appeared to

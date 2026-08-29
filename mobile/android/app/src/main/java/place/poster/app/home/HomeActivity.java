@@ -287,6 +287,11 @@ public class HomeActivity extends Activity implements DeskView.Host {
     @Override
     protected void onStart() {
         super.onStart();
+        /* Some OEMs restore an existing HOME activity through onStart only, with no onNewIntent.
+         * The intent path already resets these transient overlays; do the same here so returning
+         * from an app always lands on the desktop rather than the drawer/edit state left behind. */
+        closeDrawer();
+        if (desk != null) desk.clearEditing();
         // A hidden -> visible transition is the first Home press on launchers which resume an
         // existing activity without onNewIntent.  If onNewIntent already reported this same
         // transition, do not manufacture a second press from one physical tap.

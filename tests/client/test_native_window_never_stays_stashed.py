@@ -157,7 +157,9 @@ class AStashedSurfaceIsNotDrawnAsABlackWindow(unittest.TestCase):
         self.assertIn("_natSent.get(Number(w.native))==='hidden'", focus)
         self.assertIn("_focusNativeWhenShown(w)", focus)
         restore = body(raw, "function _focusNativeWhenShown")
-        self.assertLess(restore.index("nsync()"), restore.index("pcWM.focus(id)"))
+        self.assertLess(restore.index("nsync()"), restore.index("_focusNativeDecorated(id)"))
+        decorated = body(raw, "function _focusNativeDecorated")
+        self.assertLess(decorated.index("pcWM.decorate(id)"), decorated.index("pcWM.focus(id)"))
         self.assertIn("setTimeout", restore)
         self.assertIn("<8", restore, "a failed compositor restore must not poll forever")
 

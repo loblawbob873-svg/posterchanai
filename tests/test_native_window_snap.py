@@ -331,10 +331,24 @@ def test_the_native_palette_is_applied_at_RUNTIME_not_only_from_a_config_file():
 def test_every_adopted_native_window_loses_stale_sticky_state_by_identity():
     """A restored Firefox private/Telegram window must not follow every workspace or output."""
     main = (ROOT / "desktop/main.js").read_text()
-    decorate = main[main.index("ipcMain.handle('pc:wm:decorate'"):
+    decorate = main[main.index("async function decorateNative"):
                     main.index("ipcMain.handle('pc:display:status'")]
     assert "[con_id=' + Number(id) + '] border none, sticky disable" in decorate
     assert "fullscreen disable" not in decorate, "adoption must preserve app-requested fullscreen"
+
+
+def test_native_decoration_is_reasserted_before_focus_and_monitor_handoff_focus():
+    """Sticky state can change after adoption; focus and transfer must repair it every time."""
+    os_src = (ROOT / "static/js/client/os.js").read_text()
+    focus = os_src[os_src.index("function _focusNativeDecorated"):
+                   os_src.index("function _focusNativeWhenShown")]
+    assert "pcWM.decorate(id)" in focus and "pcWM.focus(id)" in focus
+    assert focus.index("pcWM.decorate(id)") < focus.index("pcWM.focus(id)")
+    main = (ROOT / "desktop/main.js").read_text()
+    handoff = main[main.index("ipcMain.handle('pc:wm:handoff'"):
+                   main.index("ipcMain.handle('pc:wm:handoff-frame'")]
+    assert "await decorateNative(nativeId)" in handoff
+    assert handoff.index("await decorateNative(nativeId)") < handoff.index("await wm().focus(nativeId)")
 
 
 def test_the_runtime_palette_matches_the_shipped_config():
