@@ -54,8 +54,14 @@ def test_the_per_user_setting_is_gone_from_the_schema_and_the_route():
 
 def test_the_bot_manager_injects_no_nitter_env():
     """The manager builds each bot's env from its JSON config; a leftover NITTER_FEEDS would be
-    handed to a `--nitter` mode that no longer exists."""
-    assert "nitter" not in _read("app/services/bot_manager_service.py").lower()
+    handed to a `--nitter` mode that no longer exists.
+
+    Scoped to the ENV BUILD, not to the word: the file must still name `--nitter` in `_RETIRED_MODES`
+    so a stored mode is stripped before it reaches the CLI (see below). A blanket word check here
+    would read that fix as the bug."""
+    src = _read("app/services/bot_manager_service.py")
+    assert "NITTER_FEEDS" not in src and "NITTER_POLL_SECONDS" not in src
+    assert "nitter_feeds" not in src
 
 
 def test_the_bot_cli_has_no_nitter_mode_and_still_parses():
@@ -97,6 +103,63 @@ def test_a_retired_config_key_is_SHOWN_not_silently_dropped():
     m = re.search(r"const known = new Set\(\[([^\]]*)\]\)", js)
     assert m, "the escape-hatch `known` set moved — re-point this test"
     assert "nitter" not in m.group(1)
+
+
+# ---------------------------------------------------------------- the stored `modes` column
+
+
+def test_a_stored_nitter_mode_never_reaches_the_cli():
+    """THE BUG THIS FILE ALMOST SHIPPED WITHOUT.
+
+    `bot.modes` is a stored comma list handed straight to `botframework/main.py`, and nothing
+    rewrites it when a mode is retired. argparse rejects the WHOLE invocation on one unknown flag
+    (exit 2) — so a `--pleroma,--nitter` bot does not merely lose Nitter, it loses its PLEROMA
+    LISTENER: it never starts, crash-loops, and is parked by the manager's 10-restarts-per-hour cap
+    until a human notices and re-saves it in Admin → Bots. Removing a CLI flag is therefore never
+    just a CLI change."""
+    from app.services.bot_manager_service import _cmd_for
+    cmd = _cmd_for({"name": "b", "platform": "pleroma", "modes": ["--pleroma", "--nitter"]})
+    assert "--nitter" not in cmd
+    assert "--pleroma" in cmd, "stripping the retired mode must not cost the bot its real listener"
+
+
+def test_a_bot_whose_ONLY_mode_was_nitter_still_gets_a_listener():
+    """Stripping the last mode must not leave an empty command: `_cmd_for` reads empty as "default
+    to the bot's own platform", so the fallback has to survive the filter or the bot silently
+    changes meaning."""
+    from app.services.bot_manager_service import _cmd_for
+    for platform, want in (("pleroma", "--pleroma"), ("nostr", "--nostr")):
+        cmd = _cmd_for({"name": "b", "platform": platform, "modes": ["--nitter"]})
+        assert "--nitter" not in cmd
+        assert want in cmd, (platform, cmd)
+
+
+def test_a_nostr_bot_whose_only_mode_was_nitter_remains_presence_only():
+    """Filtering the retired CLI flag must not silently opt the bot into mention replies."""
+    from app.services.bot_manager_service import _build_env
+    env = _build_env({"name": "b", "platform": "nostr", "modes": ["--nitter"]}, {})
+    assert env.get("NOSTR_PRESENCE_ONLY") == "1"
+
+
+def test_the_retired_set_is_explicit_not_a_catch_all():
+    """"Drop anything argparse doesn't know" would swallow a typo'd flag and turn a loud startup
+    failure into a bot quietly missing a feature. The list is named, so it is greppable and each
+    entry says why it is there."""
+    from app.services.bot_manager_service import _RETIRED_MODES, _cmd_for
+    assert "--nitter" in _RETIRED_MODES
+    cmd = _cmd_for({"name": "b", "platform": "nostr", "modes": ["--nostr", "--typoflag"]})
+    assert "--typoflag" in cmd, "an unknown flag must still reach the CLI and fail loudly"
+
+
+def test_the_migration_strips_the_dead_mode_without_emptying_the_column():
+    """The other half of the fix: `_cmd_for` un-breaks a RUNNING node, the migration takes the dead
+    flag out of the stored value so the Bots UI stops offering a feature that is gone. Asserted on
+    the SQL, since running it needs Postgres."""
+    src = _read("app/database.py")
+    assert "array_remove" in src and "--nitter" in src
+    assert "NULLIF" in src, ("the UPDATE must not leave an empty-string modes column — `_cmd_for` "
+                             "reads empty as 'default to this bot's platform', which is a different "
+                             "bot from one with no modes at all")
 
 
 # ---------------------------------------------------------------- deliberately kept

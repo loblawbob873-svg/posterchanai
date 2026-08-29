@@ -424,7 +424,8 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
             # When it's UNCHECKED, modes is empty and _cmd_for still defaults to `--nostr` so a stats /
             # identity bot goes live + publishes kind-0 — but it must NOT reply to mentions. Flag that
             # defaulted process as presence-only. (Explicit `--nostr` in modes ⇒ user wants replies.)
-            if not bot_dict.get("modes"):
+            kept_modes = [m for m in (bot_dict.get("modes") or []) if m not in _RETIRED_MODES]
+            if not kept_modes:
                 env["NOSTR_PRESENCE_ONLY"] = "1"
 
         tmh = bot_dict.get("trusted_media_hosts")
@@ -479,13 +480,27 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
     return env
 
 
+# Modes that main.py no longer accepts. A retired flag has to be dropped HERE, not merely deleted
+# from the CLI, because the `modes` column is stored per bot and nothing rewrites it: argparse
+# rejects the WHOLE invocation on one unknown flag (exit 2), so a bot that had the retired feature
+# as a SECONDARY one loses its primary listener too — a `--pleroma,--nitter` bot stops replying
+# entirely, then crash-loops until the manager's 10-restarts-per-hour cap parks it, and the only
+# way back is for someone to notice and re-save that bot in Admin → Bots.
+#
+# An EXPLICIT set, never "drop anything argparse doesn't know": that would silently swallow a typo'd
+# flag and turn a visible startup failure into a bot quietly missing a feature.
+_RETIRED_MODES = frozenset({"--nitter"})   # Nitter shut down 2026-08; see the Retired features note
+
+
 def _cmd_for(bot_dict: dict) -> list:
     if bot_dict.get("bot_type") == "image":
         return [sys.executable, str(MAIN_PY), "--image"]
     # Default to the bot's OWN platform when no feature modes are set — a Nostr bot (e.g. a
     # stats-only NostrStats) must run as --nostr (so it goes live + publishes its kind-0
     # name/nip05/avatar), not as the platform listener. Falls back to pleroma if platform is unset.
-    modes = bot_dict.get("modes") or ["--" + (bot_dict.get("platform") or "pleroma")]
+    modes = [m for m in (bot_dict.get("modes") or []) if m not in _RETIRED_MODES]
+    if not modes:
+        modes = ["--" + (bot_dict.get("platform") or "pleroma")]
     return [sys.executable, str(MAIN_PY)] + list(modes)
 
 
