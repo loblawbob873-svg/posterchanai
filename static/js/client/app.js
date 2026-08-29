@@ -18212,17 +18212,20 @@
   /* ONE opener for both surfaces. The sidebar chip and the home-screen tile are two ways to the
    * same place, and two copies of "where does this start" is how they end up starting somewhere
    * different. */
-  function _openHostFiles(){
+  function _openHostFiles(goHome=false){
     _syncRoot=''; _syncPath=''; _filesFolder=null; _hostOn=true; _filesTab='computer'; _fxMobileSource='computer';
     const H2 = _hostFs();
-    /* HOME on a fresh entry only. Walking into a folder and back out must not throw you back to
-     * your home directory, so the path is kept in the module between visits. */
-    if(H2 && !H2.at()){
+    /* The source heading resumes the last folder, but the child explicitly labelled Home must
+     * actually return home. Previously both called the same preserve-path branch, leaving a child
+     * folder on screen while the tree claimed Home was selected. Wait for root discovery before
+     * painting so an explicit Home click cannot briefly repaint that stale child. */
+    if(H2 && (goHome || !H2.at())){
       H2.roots().then(rs => {
         const home = (rs || []).find(x => x.kind === 'home') || (rs || [])[0];
         H2.enter(home ? home.path : '/');
         if(VIEW==='blossom' && _filesTab==='computer') renderBlossom();
-      }, () => {});
+      }, () => { if(VIEW==='blossom' && _filesTab==='computer') renderBlossom(); });
+      return;
     }
     renderBlossom();
   }
@@ -19107,7 +19110,7 @@
      * which is the half of browsing nobody uses. */
     $$('.folder-chip[data-folder]', r).forEach(b=> b.onclick=()=>{ _fxRemember(); _syncRoot=''; _syncPath=''; _hostOn=false; _fxMobileSource='blossom'; _filesFolder=b.dataset.folder; renderBlossom(); });
     $$('.folder-chip[data-synckey]', r).forEach(b=> b.onclick=()=>{ _fxRemember(); _syncRoot=b.dataset.synckey; _syncPath=''; _hostOn=false; _fxMobileSource='synced'; renderBlossom(); });
-    $$('.folder-chip[data-host]', r).forEach(b=> b.onclick=_openHostFiles);
+    $$('.folder-chip[data-host]', r).forEach(b=> b.onclick=()=>_openHostFiles(true));
     /* The trash's own bindings live with the LISTING now that it is a folder, not here beside the
      * chips — a set of handlers left behind for markup that no longer renders is how a dead control
      * survives a redesign and quietly does nothing. */
@@ -19832,7 +19835,7 @@
       _syncRoot=''; _syncPath=''; _hostOn=false; _filesFolder=b.dataset.folder; renderBlossom(); });
     $$('.fx-home-tile[data-synckey]', pane).forEach(b => b.onclick = () => {
       _syncRoot=b.dataset.synckey; _syncPath=''; _hostOn=false; renderBlossom(); });
-    $$('.fx-home-tile[data-hosthome]', pane).forEach(b => b.onclick = _openHostFiles);
+    $$('.fx-home-tile[data-hosthome]', pane).forEach(b => b.onclick = ()=>_openHostFiles());
   }
 
   /* The machine's own disk. The module draws it; this hands it the things that belong to the Files
@@ -23044,6 +23047,7 @@
     notifToast(`🔔 <b>${emojiName(fromPk, who)}</b> ${what}`, p.picture);   // render the sender's custom :emoji: in the toast
     const target=_notifCtxId(ev)||ev.id;
     osNotify('PosterChan', `${who} ${what}`, { icon:p.picture||LOGO,
+                                               tag:'nostr-'+ev.id,
                                                route:target?'post:'+target:'notifications',
                                                onClick:()=>target?openThread(target):switchView('notifications') });
   }
@@ -24721,6 +24725,10 @@
         const P=await _withModule('preview.js','PCPreview');
         if(!P||!P.open({name:a.dataset.name||'attachment',mime:a.dataset.mime||blob.type,blob}))
           throw new Error('Preview cannot open this attachment');
+      }else if(CFG.office_enabled && _officeable(a.dataset.name||'',a.dataset.mime||blob.type)){
+        const name=a.dataset.name||'document';
+        const file=fileFromBytes(await blob.arrayBuffer(),name,a.dataset.mime||blob.type);
+        await _officeSession(file, updated=>saveBlobAs(updated,name));
       }else await saveBlobAs(blob,a.dataset.name||'attachment');
       return true;
     }catch(err){toast('could not open attachment: '+((err&&err.message)||err));return false;}

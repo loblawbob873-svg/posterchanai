@@ -2858,6 +2858,17 @@
           if(clone.childElementCount||String(clone.textContent||'').trim())p.appendChild(clone);}
       }
       if(!p.children.length&&!p.style.backgroundImage)p.classList.add('empty');
+      if(w.native!=null&&pcWM.preview){
+        /* A native screenshot used to exist only when overlap reconciliation had stashed the app.
+         * Ordinary live Firefox/Telegram therefore showed an empty generic card in Alt+Tab even
+         * though the compositor can capture it safely. Cache once per switch gesture (grim is not
+         * a paint primitive), and never write into a chooser that has since closed/redrawn. */
+        s.nativePreviews=s.nativePreviews||new Map();const key=Number(w.native);
+        const apply=data=>{if(!data||_altSwitch!==s||!p.isConnected)return;
+          p.style.backgroundImage=`url("${String(data).replace(/["\\]/g,'')}")`;p.classList.remove('empty');};
+        if(s.nativePreviews.has(key))apply(s.nativePreviews.get(key));
+        else Promise.resolve(pcWM.preview(key)).then(data=>{s.nativePreviews.set(key,data||'');apply(data);}).catch(()=>{});
+      }
       const label=document.createElement('div');label.className='os-alt-title';
       label.innerHTML=iconSvg(w.icon||'i-grid')+'<span>'+enc(w.title||w.view||'Window')+'</span>';
       b.appendChild(p);b.appendChild(label);s.el.appendChild(b);
@@ -2879,7 +2890,8 @@
         return true;
       }
       _altSwitch={rows,initial,index:current<0?(step>0?0:rows.length-1):
-        entering?(step>0?0:rows.length-1):(current+step+rows.length)%rows.length,el:null,timer:0};
+        entering?(step>0?0:rows.length-1):(current+step+rows.length)%rows.length,
+        el:null,timer:0,nativePreviews:new Map()};
       toggleStart(false);hideCtx();
       /* The switcher belongs to this output's shell. Bring that surface forward while selection is
          staged; native targets are focused only on commit, otherwise their opaque surface would

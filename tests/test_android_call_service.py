@@ -287,7 +287,7 @@ def test_a_push_and_a_locally_raised_notification_use_one_builder():
     """Otherwise the same event looks different depending on whether the app happened to be running —
     and the call treatment (its own channel, a full-screen intent) is the part that would differ."""
     assert "public static void show(Context ctx" in PUSHSVC
-    assert "show(ctx, title, body, type, null, route);" in PUSHSVC, (
+    assert "show(ctx, title, body, type, eventTag, route);" in PUSHSVC, (
         "onMessage builds its own notification again instead of going through show()")
     assert "PushEventService.show(getContext()" in PUSHPLUG
 

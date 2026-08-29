@@ -40,6 +40,24 @@ def test_packaged_attachment_runtime_uses_instance_and_preview():
     assert got['fetched']==got['u'] and got['opened']==1 and got['saved']==0 and got['ok'] is True
     assert got['absent']=='' and 'localhost' not in json.dumps(got).lower()
 
+def test_office_attachment_runtime_opens_editor_and_saves_edited_copy():
+    js=extract('_openMailAttachment')
+    script=f'''let opened=0,saved=0,toasts=[];const _aiToken='',CFG={{office_enabled:true}};
+    const toast=x=>toasts.push(x),_officeable=(n,m)=>/\\.docx$/i.test(n),
+      fileFromBytes=(b,n,t)=>new File([b],n,{{type:t}}),saveBlobAs=async(f,n)=>{{saved++;}},
+      _officeSession=async(file,saveBack)=>{{opened++;await saveBack(new File(['edited'],file.name,{{type:file.type}}));}};
+    globalThis.fetch=async()=>new Response(new Blob(['doc'],{{type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}}),{{status:200}});
+    {js}
+    (async()=>{{const a={{dataset:{{mailUrl:'https://poster.example/api/mail/dl/a/INBOX/7/0',name:'report.docx',
+      mime:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}},setAttribute(){{}},removeAttribute(){{}}}};
+      const ok=await _openMailAttachment(a);process.stdout.write(JSON.stringify({{opened,saved,ok,toasts}}));
+    }})().catch(e=>{{console.error(e);process.exitCode=1}});'''
+    with tempfile.TemporaryDirectory() as td:
+        p=Path(td)/'mail-office.js';p.write_text(script)
+        r=subprocess.run(['node',p],text=True,capture_output=True,timeout=20)
+    assert r.returncode==0,r.stderr
+    assert json.loads(r.stdout)=={'opened':1,'saved':1,'ok':True,'toasts':[]}
+
 @pytest.mark.skipif(not CHROME,reason='Chrome unavailable')
 @pytest.mark.parametrize('width,mobile',[(360,True),(1280,False)])
 def test_reader_toolbar_stays_inside_viewport_in_real_chromium(width,mobile):

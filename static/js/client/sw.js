@@ -605,7 +605,10 @@ self.addEventListener('push', e => {
     requireInteraction: isCall,     // an incoming call stays up until you act on it
     renotify: isCall || undefined,
   };
-  // Calls and DMs are suppressed while a window is focused; everything else always shows.
+  // Every push is suppressed while a window is visible. The live relay path in app.js owns arrival
+  // classification there and already emits the in-app/native notification. Letting the service
+  // worker also show the server's independently classified push produced two alerts for one event
+  // — commonly “mentioned you” from push beside “replied to you” from the live event.
   //
   // Calls: the open app rings itself, and peers exchange kind-25050 all call long, which would
   // otherwise spam the CALLER.
@@ -617,14 +620,11 @@ self.addEventListener('push', e => {
   // leak NIP-17 exists to avoid.)
   // Reminders join them: an open app already shows its own full-screen reminder pop-up and beep, so
   // an OS notification on top is the same alert twice.
-  const suppressIfFocused = isCall || d.type === 'dm' || d.type === 'reminder';
   e.waitUntil(
-    (suppressIfFocused
-      ? clients.matchAll({ type: 'window', includeUncontrolled: true }).then(cs => {
-          if (cs.some(c => c.focused || c.visibilityState === 'visible')) return;
-          return self.registration.showNotification(title, opts);
-        })
-      : self.registration.showNotification(title, opts))
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(cs => {
+      if (cs.some(c => c.focused || c.visibilityState === 'visible')) return;
+      return self.registration.showNotification(title, opts);
+    })
   );
 });
 self.addEventListener('notificationclick', e => {

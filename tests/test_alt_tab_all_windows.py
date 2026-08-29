@@ -52,6 +52,9 @@ def test_switcher_is_visible_staged_and_never_draws_an_empty_card():
     assert "p.classList.add('empty')" in body
     assert "setTimeout(()=>_closeAltSwitch(true),2500)" in body
     assert "scrollIntoView({block:'nearest',inline:'nearest'})" in body
+    assert "pcWM.preview(key)" in body
+    assert "s.nativePreviews" in body
+    assert "_altSwitch!==s||!p.isConnected" in body
 
 
 def test_switcher_commits_on_alt_release_and_escape_restores_initial_window():

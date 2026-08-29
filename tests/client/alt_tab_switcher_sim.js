@@ -29,7 +29,10 @@ global.document={body:new El('body'),createElement:()=>new El(),
   addEventListener:(k,f)=>(listeners[k]=listeners[k]||[]).push(f)};
 const toggleStart=()=>{},hideCtx=()=>{},enc=String,iconSvg=x=>'<svg>'+x+'</svg>';
 const crossed=[];
-const pcWM={windows:async()=>[{id:90,app:'posterchan-desktop'}],focus:async()=>{},cycleOutput:async direction=>{crossed.push(direction);return true;}};
+const previewed=[];
+const pcWM={windows:async()=>[{id:90,app:'posterchan-desktop'}],focus:async()=>{},
+  preview:async id=>{previewed.push(id);return 'data:image/png;base64,firefox';},
+  cycleOutput:async direction=>{crossed.push(direction);return true;}};
 const focused=[];
 const focusWin=w=>{focused.push(w.title);wins.forEach(x=>x.el.classList.s.delete('focused'));
   w.el.classList.add('focused');w.min=false;};
@@ -63,6 +66,7 @@ listeners.keyup[0]({key:'Alt'});
 ok('native Firefox participates in the visual switcher',focused.at(-1)==='Firefox');
 __cycleWindows('next');
 setTimeout(()=>{
+  ok('live native card requests compositor pixels',previewed.includes(41));
   ok('end of one monitor hands Alt+Tab to the adjacent monitor',crossed.join(',')==='next');
   ok('local chooser does not wrap over the cross-monitor handoff',!document.body.children.some(x=>x.classList.contains('os-alt-switch')));
   console.log('OK Alt+Tab switcher holds');

@@ -45,18 +45,27 @@ public class PushEventService extends PushService {
     public void onMessage(@NonNull PushMessage message, @NonNull String instance) {
         Context ctx = this;
         String title = "PosterChan", body = "New activity", type = "", route = "notifications";
+        String eventTag = null;
         try {
             JSONObject j = new JSONObject(new String(message.getContent(), "UTF-8"));
             title = j.optString("title", title);
             body = j.optString("body", body);
             type = j.optString("type", "");
             String eid = j.optString("eid", "").trim();
+            eventTag = !eid.isEmpty() ? "nostr-" + eid : null;
             route = !eid.isEmpty() ? "post:" + eid : j.optString("view", route).trim();
         } catch (Throwable ignored) {
             // A payload we cannot parse is still a signal that SOMETHING happened; showing the
             // default beats swallowing it, which would look exactly like a delivery failure.
         }
-        show(ctx, title, body, type, null, route);
+        // gCompat/UnifiedPush and the visible WebView relay are two delivery paths for the SAME
+        // Nostr event.  While the Activity is visible the WebView owns notification classification
+        // and calls PushPlugin.notify itself; drawing this push too produced the paired
+        // "mentioned you" / "replied to you" notifications reported by phone users.
+        if (!"call".equals(type) && place.poster.app.sms.AppVisible.is()) return;
+        // If the Activity crossed into the background between the two deliveries, use the same
+        // event-id tag as the WebView so Android replaces the first card instead of stacking two.
+        show(ctx, title, body, type, eventTag, route);
     }
 
     /**

@@ -54,6 +54,24 @@ def test_mobile_source_heads_navigate_instead_of_repainting_the_same_drawer():
     assert "tree.classList.toggle('hidden',!open)" in bind
 
 
+def test_my_computer_home_node_returns_to_home_after_browsing_a_folder():
+    opener = APP[APP.index("function _openHostFiles("):
+                 APP.index("/* WHERE FILES HAS BEEN", APP.index("function _openHostFiles("))]
+    side = APP[APP.index("function _fxBindSide("):
+               APP.index("/* The trash's own bindings", APP.index("function _fxBindSide("))]
+    assert "function _openHostFiles(goHome=false)" in opener
+    assert "(goHome || !H2.at())" in opener
+    assert "H2.enter(home ? home.path : '/')" in opener
+    assert "b.onclick=()=>_openHostFiles(true)" in side
+
+
+def test_host_source_shortcuts_do_not_receive_click_event_as_home_flag():
+    home = APP[APP.index("function _renderDriveHome("):
+               APP.index("async function _renderHostRoot", APP.index("function _renderDriveHome("))]
+    assert "b.onclick = ()=>_openHostFiles()" in home
+    assert "b.onclick = _openHostFiles" not in home
+
+
 def test_view_buttons_leave_the_folder_dashboard_and_show_the_selected_file_view():
     bind = APP[APP.index("function _fxBindBar("):APP.index("let _filesFolder = null")]
     assert "ClientSettings.set('filesView', b.dataset.view)" in bind
