@@ -54,6 +54,22 @@ BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:3051"
 PORT = int(os.environ.get("PC_CHECK_PORT") or 9489)
 PROFILE = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-nip46-check"
 
+
+class CDPError(RuntimeError):
+    """A Chrome DevTools command failed before producing a result."""
+
+
+def _cdp_result(message, method):
+    if not isinstance(message, dict):
+        raise CDPError(f"Chrome returned no response for {method}")
+    if message.get("error"):
+        error = message["error"]
+        raise CDPError(f"Chrome {method} failed ({error.get('code', '?')}): "
+                       f"{error.get('message') or error}")
+    if "result" not in message:
+        raise CDPError(f"Chrome returned no result for {method}: {message}")
+    return message["result"]
+
 # --------------------------------------------------------------------------------------------
 # A minimal NIP-01 relay: enough to carry a signer handshake and nothing else.
 # --------------------------------------------------------------------------------------------
@@ -139,8 +155,12 @@ class Bunker:
         self.user_sk = os.urandom(32)
         self.user_pk = bip340.pubkey_from_seckey(self.user_sk).hex()
         self.seen = []           # every request method we decrypted, with its scheme
+        self._event_ids = set()  # a relay resend is the same signed event, not another approval
+        self._approval_delayed = False
         self._task = None
         self._stop = False
+        self.ready = asyncio.Event()
+        self.error = None
 
     def _decrypt(self, peer_hex, ct):
         from app.services.nostr import nip04, nip44
@@ -165,6 +185,7 @@ class Bunker:
         from app.services.nostr import event as nevent
         async with websockets.connect(self.relay_url) as ws:
             await ws.send(json.dumps(["REQ", "b1", {"kinds": [24133], "#p": [self.pk]}]))
+            self.ready.set()
             while not self._stop:
                 raw = await ws.recv()
                 try:
@@ -176,6 +197,12 @@ class Bunker:
                 ev = m[2]
                 if ev.get("kind") != 24133:
                     continue
+                # _RESEND_AT deliberately republishes identical signed events. A real signer
+                # deduplicates by event id; sleeping once per duplicate in this serial fake blocks
+                # its receive loop and turns a 16-second approval into a false 60-second timeout.
+                if ev.get("id") in self._event_ids:
+                    continue
+                self._event_ids.add(ev.get("id"))
                 pt, scheme = self._decrypt(ev["pubkey"], ev["content"])
                 if pt is None:
                     continue                       # cannot read this scheme — exactly like a real one
@@ -187,7 +214,11 @@ class Bunker:
                 if os.environ.get("PC_DEBUG"):
                     print(f"  DEBUG bunker <- {req.get('method')} {scheme} "
                           f"reqid={req.get('id')} evid={ev['id'][:8]}", flush=True)
-                if req.get("method") == "connect" and self.delay:
+                # The delay models the one human approval for this pairing. Once approved, a
+                # fallback connect is the same session and real signers answer it immediately;
+                # sleeping for every probe serializes the fake for 32+ seconds and loses replies.
+                if req.get("method") == "connect" and self.delay and not self._approval_delayed:
+                    self._approval_delayed = True
                     await asyncio.sleep(self.delay)
                 if req.get("method") == "connect":
                     result = "ack"
@@ -224,8 +255,17 @@ class Bunker:
     async def _guard(self):
         try:
             await self.run()
-        except Exception:
-            pass
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            self.error = error
+        finally:
+            self.ready.set()
+
+    async def wait_ready(self, timeout=5):
+        await asyncio.wait_for(self.ready.wait(), timeout)
+        if self.error:
+            raise RuntimeError(f"fake signer could not subscribe: {self.error}")
 
     def stop(self):
         self._stop = True
@@ -313,15 +353,22 @@ async def drive(url):
 
             async def call(method, params=None):
                 n[0] += 1
-                await ws.send(json.dumps({"id": n[0], "method": method, "params": params or {}}))
+                call_id = n[0]
+                await ws.send(json.dumps({"id": call_id, "method": method, "params": params or {}}))
                 while True:
                     msg = json.loads(await ws.recv())
-                    if msg.get("id") == n[0]:
-                        return msg.get("result")
+                    if msg.get("id") == call_id:
+                        return _cdp_result(msg, method)
 
             async def js(expr, awaited=False):
-                r = await call("Runtime.evaluate",
-                               {"expression": expr, "returnByValue": True, "awaitPromise": awaited})
+                try:
+                    r = await call("Runtime.evaluate",
+                                   {"expression": expr, "returnByValue": True, "awaitPromise": awaited})
+                except CDPError as error:
+                    # A diagnostic must report the browser failure, not replace it with
+                    # AttributeError: NoneType has no attribute get.
+                    print(f"  CDP: {error}", flush=True)
+                    return None
                 if r.get("exceptionDetails"):
                     if os.environ.get("PC_DEBUG"):
                         print("  DEBUG:", json.dumps(r["exceptionDetails"])[:800])
@@ -342,17 +389,31 @@ async def drive(url):
             if only:
                 cases = [c for c in cases if c[0] == only]
             for name, kw, uri_relays, on in cases:
+                event_start = (len(relay_a.events), len(relay_b.events))
                 bunker = Bunker(on, **kw)
                 bunker.start()
-                await asyncio.sleep(0.5)
+                try:
+                    await bunker.wait_ready()
+                except Exception as error:
+                    problems.append((name, str(error), "the client scenario was not started"))
+                    bunker.stop()
+                    continue
                 # A fresh page per case, SIGNED OUT: a login sticks, and an app that boots holding
                 # the previous case's session would both hide the gate and keep that session's
                 # sockets — which is how one connect went out twice. Clear, then load again.
                 async def load():
+                    # A same-URL navigation may reuse a document through Chromium's navigation
+                    # cache. Leave it first so no previous case keeps NIP-46 timers or sockets alive.
+                    await call("Page.navigate", {"url": "about:blank"})
+                    # Login also sets an HTTP session cookie. localStorage.clear() cannot remove it,
+                    # so without this the next case auto-enters the previous bunker account while
+                    # this gate is forcing the sign-in UI open on top of it.
+                    await call("Network.clearBrowserCookies")
                     await call("Page.navigate", {"url": url})
                     for _ in range(80):
                         await asyncio.sleep(0.25)
-                        if await js("!!document.querySelector('#btn-amber')"):
+                        if await js("typeof document.querySelector('#btn-amber')?.onclick==='function' && "
+                                    "typeof document.querySelector('#btn-amber-connect')?.onclick==='function'"):
                             return True
                     return False
                 if not await load():
@@ -366,13 +427,33 @@ async def drive(url):
                 r = await scenario(js, bunker, uri_relays)
                 took = time.time() - t0
                 if not r.get("ok"):
+                    case_events = relay_a.events[event_start[0]:] + relay_b.events[event_start[1]:]
+                    sent = [e for e in case_events if any(
+                        len(t) > 1 and t[0] == "p" and t[1] == bunker.pk
+                        for t in e.get("tags", []))]
+                    schemes = ["nip04" if "?iv=" in e.get("content", "") else "nip44"
+                               for e in sent]
                     problems.append((name, r.get("err") or "login did not complete",
-                                     f"signer saw {bunker.seen or 'nothing at all'} in {took:.0f}s"))
+                                     f"signer saw {bunker.seen or 'nothing at all'}; client published "
+                                     f"{schemes or 'nothing'}; signer task error "
+                                     f"{bunker.error or 'none'} in {took:.0f}s"))
                 elif r.get("pk") != bunker.user_pk:
                     problems.append((name, "signed in as the wrong key",
                                      f"got {str(r.get('pk'))[:12]}…, this bunker holds "
                                      f"{bunker.user_pk[:12]}…"))
                 elif kw.get("reads") == "both":
+                    # Closing the auth gate happens before the login's profile/session signatures
+                    # have all crossed the fake signer. Let that legitimate tail go quiet before
+                    # attributing any new signer traffic to the oversize request below.
+                    stable = 0
+                    previous = -1
+                    for _ in range(20):
+                        current = len(bunker.seen)
+                        stable = stable + 1 if current == previous else 0
+                        if stable >= 3:
+                            break
+                        previous = current
+                        await asyncio.sleep(0.1)
                     seen_before = len(bunker.seen)
                     b = await js(BIG, awaited=True) or {}
                     err = b.get("err") or ""
