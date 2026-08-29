@@ -42,3 +42,17 @@ def test_an_existing_room_with_no_join_material_is_repaired_not_skipped():
         "inspectControl accepts a bundle with no channels (it only needs an owner and a root), so "
         "the emptiness has to be asked about directly or the invite is never resolved"
     )
+
+
+def test_the_recovery_pass_is_allowed_to_resolve_an_invite():
+    """`localOnly` is truthy on the pass that actually runs: render() calls syncArmadaMemberships
+    with 'recovery' whenever a room is already open, which is every ordinary launch for somebody
+    who has joined anything — and that pass explicitly asks for `external:true`. Read as local-only
+    it skipped the invite hydration, so the empty-bundle repair correctly refused to skip the room
+    and then declined to fix it. Measured after the first attempt shipped: bundleChannels was still
+    0 on the reporting account."""
+    src = (ROOT / "static/js/client/concord.js").read_text()
+    assert "if(!url||(localOnly&&!activeRecovery))continue;" in src, (
+        "the recovery pass cannot resolve an invite, so a room with an empty bundle can never be "
+        "repaired on the path that actually runs"
+    )

@@ -973,7 +973,14 @@
            * and take the same route a fresh join does. */
           if(!hasJoinMaterial(bundle))throw new Error('bundle carries no channel material');
         }catch(_){
-          if(!url||localOnly)continue;
+          /* `localOnly` IS TRUE ON THE PASS THAT ACTUALLY RUNS. render() calls this with
+           * 'recovery' whenever a room is already open — which is every ordinary launch for
+           * somebody who has joined anything — and that pass is explicitly the one allowed to go
+           * to the network (it asks for `external:true` a few lines up). Treating it as local-only
+           * here skipped the invite hydration, so the repair above found the empty bundle,
+           * correctly refused to skip the room, and then declined to fix it: measured after the
+           * first attempt, `bundleChannels` was still 0. Only a genuinely local pass abstains. */
+          if(!url||(localOnly&&!activeRecovery))continue;
           try{hydrated=await hydrateInvite(p,url);if(state.community!=null&&!localOnly)return;bundle=mergeArmadaBundle(hydrated.cord.bundle,current);}
           catch(__){continue;}
         }
