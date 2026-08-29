@@ -569,13 +569,26 @@
       if(!await this.ready(Math.min(3000, timeout))) return { ok:false, msg:'offline' };
       return new Promise((res)=>{
         let settled = false;
-        const w = { settle: (r)=>{ if(!settled){ settled = true; clearTimeout(t); this._okWaiters.delete(event.id); res(r); } } };
+        let confirmT = null;
+        const w = { settle: (r)=>{ if(!settled){ settled = true; clearTimeout(t); clearTimeout(confirmT);
+                                               this._okWaiters.delete(event.id); res(r); } } };
         // The reason, when there was one: a refused publish must not be reported as silence.
         const t = setTimeout(()=>{ if(!settled){ settled = true; this._okWaiters.delete(event.id);
                                                 res({ ok:false, msg: w.why || 'timeout' }); } }, timeout);
         this._okWaiters.set(event.id, w);
         // How many relays were actually written to, so "every one of them refused" is answerable.
         w.sent = this._send(['EVENT', event]) || 0;
+        /* An EVENT can be committed while its separate OK frame is lost (observed on the desktop
+         * relay under load). Waiting the full eight seconds then queueing the already-published note
+         * makes posting look broken and a retry signs a duplicate. If no answer arrives promptly,
+         * ask the same managed pool for this exact immutable id. `_onMessage` treats a trusted relay
+         * echo as delivery evidence and settles this waiter before subscription dispatch. Normal
+         * publishes never pay for the REQ: their OK clears this timer. */
+        if(w.sent) confirmT=setTimeout(()=>{
+          if(settled) return;
+          try{ this.query([{ids:[event.id], limit:1}], Math.min(1800, Math.max(300, timeout-800))).catch(()=>{}); }
+          catch(_){}
+        }, Math.min(700, Math.max(100, timeout/3)));
       });
     },
     /* Fire-and-forget publish to ONE relay. For the webxdc realtime channel (ephemeral kind 20932),

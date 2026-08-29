@@ -103,6 +103,21 @@ const EV = { id: 'a'.repeat(64), kind: 1, content: 'hi', sig: 'f'.repeat(128),
     out.echoMsg = r.msg;
   }
 
+  // 5. The production failure did not conveniently echo on an existing live subscription. The
+  // client must ask for the immutable id before the long publish timeout and accept that answer as
+  // proof, otherwise a successful post sits Pending and pressing Send again creates a duplicate.
+  {
+    const t0 = Date.now();
+    const p = Relay.publish(EV, 5000);
+    await new Promise(r => setTimeout(r, 900));
+    const req = [...socks[0].sent].reverse().map(x=>JSON.parse(x)).find(x=>x[0]==='REQ' && x[2] && x[2].ids && x[2].ids[0]===EV.id);
+    out.confirmReq = !!req;
+    if(req) socks[0].reply(['EVENT', req[1], EV]);
+    const r = await p;
+    out.confirmOk = r.ok;
+    out.confirmFast = (Date.now()-t0) < 3000;
+  }
+
   console.log(JSON.stringify(out));
   process.exit(0);
 })();
@@ -147,6 +162,11 @@ class PublishRefusalTests(unittest.TestCase):
     def test_a_trusted_event_echo_clears_a_lost_ok_acknowledgement(self):
         self.assertTrue(self.r["echoAck"])
         self.assertEqual(self.r["echoMsg"], "relay echo")
+
+    def test_a_lost_ok_is_confirmed_by_exact_id_before_timeout(self):
+        self.assertTrue(self.r["confirmReq"], "publish never checked whether the relay stored it")
+        self.assertTrue(self.r["confirmOk"])
+        self.assertTrue(self.r["confirmFast"], "stored post waited out the full publish timeout")
 
 
 if __name__ == "__main__":
