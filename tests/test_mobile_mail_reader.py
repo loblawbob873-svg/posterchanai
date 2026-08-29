@@ -10,6 +10,13 @@ def test_mobile_reader_uses_readable_type_and_measure():
     assert '.mr-subj{font-size:20px;line-height:1.25' in CSS
 
 
+def test_single_html_message_fills_reader_without_a_decorative_document_inset():
+    assert '.mail-thread>.mail-msg:only-child' in CSS
+    assert '.mail-thread:only-child .mail-msg:only-child' not in CSS
+    assert '.mail-body:has(>.mail-html){padding:0}' in CSS
+    assert '.mail-html{width:100%;border:none;background:#fff;border-radius:0;' in CSS
+
+
 def test_mobile_actions_are_thumb_sized_and_fit_without_hidden_scrolling():
     assert 'grid-template-columns:repeat(7,minmax(0,1fr))' in CSS
     assert '.mail-actions .btn{width:auto;min-width:0;min-height:40px;height:40px' in CSS

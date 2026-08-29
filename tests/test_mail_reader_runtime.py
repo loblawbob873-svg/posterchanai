@@ -61,3 +61,28 @@ def test_reader_toolbar_stays_inside_viewport_in_real_chromium(width,mobile):
     else:
         assert all(39.9<=float(x[:-2])<=40.1 for x in got['cssWidths'])
         assert max(got['widths'])-min(got['widths'])<.1
+
+
+@pytest.mark.skipif(not CHROME,reason='Chrome unavailable')
+def test_single_html_message_uses_the_available_reader_width():
+    html=f'''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+    html,body{{margin:0;width:100%;height:100%}}{CSS}</style>
+    <div class="mail-read" style="width:900px;height:700px">
+      <div class="mail-read-hd">subject</div><div class="mail-actions">actions</div>
+      <div class="mail-thread"><div class="mail-msg open"><div class="mail-msg-hd">sender</div>
+        <div class="mail-msg-body"><div class="mail-body"><iframe class="mail-html"></iframe></div></div>
+      </div></div></div><pre id=o></pre><script>
+    const pane=document.querySelector('.mail-read').getBoundingClientRect();
+    const body=document.querySelector('.mail-body'), frame=document.querySelector('.mail-html').getBoundingClientRect();
+    o.textContent=JSON.stringify({{pane:pane.width,frame:frame.width,padding:getComputedStyle(body).padding,bottom:frame.bottom,paneBottom:pane.bottom}});
+    </script>'''
+    with tempfile.TemporaryDirectory() as td:
+        p=Path(td)/'mail-fill.html';p.write_text(html)
+        r=subprocess.run([CHROME,'--headless=new','--no-sandbox','--disable-gpu','--window-size=1000,800',
+                          '--force-device-scale-factor=1','--dump-dom',p.as_uri()],text=True,capture_output=True,timeout=30)
+    assert r.returncode==0,r.stderr[-1000:]
+    m=re.search(r'<pre id="o">(.*?)</pre>',r.stdout,re.S);assert m
+    got=json.loads(m.group(1).replace('&quot;','"'))
+    assert got['padding']=='0px'
+    assert got['frame'] >= got['pane']-1
+    assert got['bottom'] >= got['paneBottom']-1

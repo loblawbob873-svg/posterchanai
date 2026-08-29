@@ -4340,19 +4340,23 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .mail-att{display:inline-flex;align-items:center;gap:6px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:6px 10px;color:var(--cyan);text-decoration:none;font-size:13px}
 .mail-att:hover{border-color:var(--neon)}
 .mail-body{padding:16px 18px;color:var(--text);line-height:1.5;overflow-wrap:anywhere}
+/* HTML mail is already a complete document. Let it use the reader edge-to-edge instead of putting
+   a decorative card gutter around a second document viewport; plain text keeps the reading inset. */
+.mail-body:has(>.mail-html){padding:0}
 .mail-body .mail-text{white-space:pre-wrap}
 /* THE MESSAGE FILLS THE PANE. A fixed 55vh left a band of empty pane under every short mail and
    made every long one scroll inside a letterbox — two scrollbars, one inside the other.
    Divided by --zf for the reason .ws-frame is: desktop scales the page with body{zoom:.67-.77} and
    viewport units are NOT rescaled by it, so a raw vh paints at two thirds of what it asked for. */
-.mail-html{width:100%;border:none;background:#fff;border-radius:8px;
+.mail-html{width:100%;border:none;background:#fff;border-radius:0;
   height:calc((100dvh / var(--zf, 1)) - 300px);min-height:420px}
 /* When a thread holds ONE message (the common case) that message owns the pane, so the body grows
-   instead of the pane keeping slack under it. */
-.mail-thread:only-child .mail-msg:only-child{display:flex;flex-direction:column;min-height:0;flex:1}
-.mail-thread:only-child .mail-msg:only-child>.mail-msg-body{flex:1;min-height:0;display:flex;flex-direction:column}
-.mail-thread:only-child .mail-msg:only-child .mail-body{flex:1;min-height:0;display:flex;flex-direction:column}
-.mail-thread:only-child .mail-msg:only-child .mail-html{flex:1}
+   instead of the pane keeping slack under it. `.mail-thread` itself is never :only-child: the reader
+   header and action bar are its siblings, so only test the message count inside the thread. */
+.mail-thread>.mail-msg:only-child{display:flex;flex-direction:column;min-height:0;flex:1}
+.mail-thread>.mail-msg:only-child>.mail-msg-body{flex:1;min-height:0;display:flex;flex-direction:column}
+.mail-thread>.mail-msg:only-child .mail-body{flex:1;min-height:0;display:flex;flex-direction:column}
+.mail-thread>.mail-msg:only-child .mail-html{flex:1}
 .mail-acct-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
 .mar-meta{min-width:0}
 .mar-meta b{word-break:break-all}
