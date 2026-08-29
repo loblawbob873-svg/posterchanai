@@ -670,6 +670,42 @@
     }else if(tag[0]==='r'){const relay=normalizeRelay(tag[1]);if(relay)relays.push(relay);}}
     return {groups:[...new Map(groups.map(g=>[g.relay+'\0'+g.id,g])).values()],relays:[...new Set(relays)]};
   }
+  /* WHERE A MEMBERSHIP LIST IS LOOKED FOR, AND HOW OFTEN — one rule, used by both protocols.
+   *
+   * THE CHURN AND THE CORRECTNESS ARE DIFFERENT QUESTIONS, AND ANSWERING THEM TOGETHER BROKE
+   * COMMUNITIES. Opening six external sockets in parallel with the pool read — on startup and then
+   * again on every 60/120s recovery tick — is what filled a console with failed
+   * jskitty/asia.vectorapp/Damus connections and made Concord slow to appear. The fix for that was
+   * to skip the external read whenever the cache or the user's own relay answered at all, and that
+   * is the same mistake this codebase keeps making in a different costume: "the local copy
+   * returned SOMETHING" is not "the local copy is COMPLETE". Measured on this deployment, one
+   * account holds a 13302 from 08-27 and a 33302 from 08-24 on its own relay and NO kind-10009 at
+   * all — so an Armada vault newer than 08-27, or any NIP-29 list, lives only on the relays that
+   * gate then refused to open. Reported as "my concord community also does not show anymore".
+   *
+   * So the external read is a UNION THAT HAPPENS ONCE, never a fallback a local hit cancels: the
+   * first pass of a session reaches every compatibility relay (including the two historically
+   * blocked ones, which is where these lists actually live) and every pass after it is local-only.
+   * The recovery TIMER therefore costs nothing, which was the whole complaint; a fresh browser
+   * still finds its rooms, which is the whole feature.
+   *
+   * THE MARK BEATS `legacyRecovery`, AND THAT IS NOT A DETAIL. Nothing here is person-triggered:
+   * the "recovery" pass is what render() runs on an ordinary launch that already has a room open,
+   * so letting it ignore the mark fires the union from INSIDE that room — and an active room may
+   * only ever touch the relays in its own bundle (concord_runtime.mjs pins exactly that, and it
+   * caught this). One bounded cross-relay recovery per session, whichever path asks for it first,
+   * which is what the recovery pass was documented to be. `legacyRecovery` now only decides how
+   * wide a single sweep reaches. */
+  const _externalDone = new Set();
+  let _externalViewer = '';
+  function externalAllowed(pubkey, tag){
+    /* Keyed per account anyway; the reset only bounds the set when somebody switches accounts on a
+     * page that stays open. */
+    if(_externalViewer !== pubkey){ _externalViewer = pubkey; _externalDone.clear(); }
+    return !_externalDone.has(tag);
+  }
+  function externalDone(tag){ _externalDone.add(tag); }
+
   async function nip29Memberships(p,viewer,signal=null,legacyRecovery=false){
     if(!viewer.pubkey)return {groups:[],relays:[]};
     /* CACHE, THEN THE USER'S OWN POOL, AND ONLY THEN ANYBODY ELSE'S RELAY — the same rule
@@ -685,8 +721,13 @@
     let cached=[];try{cached=window.Store&&window.Store.query?window.Store.query(filters)||[]:[];}catch(_){}
     const pool=p.relayQuery?await Promise.resolve(p.relayQuery(filters,8000)).catch(()=>[]):[];
     const local=[...(cached||[]),...(pool||[])].filter(e=>e&&e.id);
-    const relays=legacyRecovery?[...CORD_RELAYS,...LEGACY_RECOVERY_RELAYS]:CORD_RELAYS;
-    const listed=!local.length&&p.relayQueryFrom?await Promise.resolve(p.relayQueryFrom(relays,filters,{timeout:8000,max:legacyRecovery?12:6,exact:true,signal,purpose:'concord nip29 memberships',minInterval:1800000,allowBlocked:legacyRecovery,failureCooldown:1800000})).catch(()=>[]):[];
+    const tag=viewer.pubkey+':10009',sweep=externalAllowed(viewer.pubkey,tag);
+    const relays=[...CORD_RELAYS,...LEGACY_RECOVERY_RELAYS];
+    let listed=[];
+    if(sweep&&p.relayQueryFrom){
+      listed=await Promise.resolve(p.relayQueryFrom(relays,filters,{timeout:8000,max:12,exact:true,signal,purpose:'concord nip29 memberships',minInterval:1800000,allowBlocked:true,failureCooldown:1800000})).catch(()=>[]);
+      externalDone(tag);
+    }
     const queried=[...new Map([...local,...(listed||[])].map(e=>[e.id,e])).values()],events=p.verifyRelayEvents?await p.verifyRelayEvents(queried):[],
       event=events.sort((a,b)=>Number(b.created_at)-Number(a.created_at)||String(a.id).localeCompare(String(b.id)))[0];
     if(!event)return {groups:[],relays:[]};
@@ -726,9 +767,13 @@
          Firefox with failed Damus/Ditto/Vector sockets. External recovery is a fallback only. The
          two historically blocked relays are reserved for an explicit recovery action. */
       const local=[...(cached||[]),...(pool||[])].filter(e=>e&&e.id);
-      const recoveryRelays=legacyRecovery?[...CORD_RELAYS,...LEGACY_RECOVERY_RELAYS]:CORD_RELAYS;
-      const remote=!local.length&&external&&p.relayQueryFrom
-        ?await Promise.resolve(p.relayQueryFrom(recoveryRelays,[filter],{timeout:8000,max:legacyRecovery?6:4,signal,purpose:'concord armada memberships '+String(filter.kinds&&filter.kinds[0])+(filter['#d']?':legacy':''),minInterval:1800000,allowBlocked:legacyRecovery,failureCooldown:1800000})).catch(()=>[]):[];
+      const tag=pubkey+':'+String(filter.kinds&&filter.kinds[0])+(filter['#d']?':legacy':'');
+      const sweep=external&&externalAllowed(pubkey,tag);
+      let remote=[];
+      if(sweep&&p.relayQueryFrom){
+        remote=await Promise.resolve(p.relayQueryFrom([...CORD_RELAYS,...LEGACY_RECOVERY_RELAYS],[filter],{timeout:8000,max:6,signal,purpose:'concord armada memberships '+String(filter.kinds&&filter.kinds[0])+(filter['#d']?':legacy':''),minInterval:1800000,allowBlocked:true,failureCooldown:1800000})).catch(()=>[]);
+        externalDone(tag);
+      }
       return [...new Map([...(cached||[]),...(pool||[]),...(remote||[])].filter(e=>e&&e.id).map(e=>[e.id,e])).values()];
     };
     const released=await query({kinds:[13302],authors:[pubkey],limit:1});

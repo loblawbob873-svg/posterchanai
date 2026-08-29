@@ -30,10 +30,17 @@ def test_signer_decrypt_and_authenticated_write_boundary():
     # ordinary startup read is cache → the user's own pool → nothing else; `concord_nip29_runtime.mjs`
     # is what proves that behaviourally (it counts the sockets), so this pins only the two facts a
     # runtime harness cannot see: which relay sets exist, and that the long circuit is still bounded.
-    assert "legacyRecovery?[...CORD_RELAYS,...LEGACY_RECOVERY_RELAYS]:CORD_RELAYS" in membership
-    assert "!local.length&&p.relayQueryFrom" in membership, (
-        "external membership relays are opened without first asking the cache and the user's pool"
+    # The union reaches every compatibility relay, including the two historically blocked ones —
+    # that is where these lists actually live. HOW OFTEN is the part that was wrong, and that is
+    # behaviour, so concord_nip29_runtime.mjs counts the sockets; this pins only the reach.
+    assert "[...CORD_RELAYS,...LEGACY_RECOVERY_RELAYS]" in membership
+    assert "externalAllowed(viewer.pubkey,tag)" in membership, (
+        "the external membership union is no longer bounded to once per session"
+    )
+    assert "!local.length&&p.relayQueryFrom" not in membership, (
+        "a local hit cancels the external union again — 'the pool returned something' is not "
+        "'the pool returned the complete list', and that is what hid a joined community"
     )
     assert "p.relayUrls" not in membership
-    assert "allowBlocked:legacyRecovery,failureCooldown:1800000" in membership
+    assert "allowBlocked:true,failureCooldown:1800000" in membership
     assert "for(const relay of membership.relays)" not in concord

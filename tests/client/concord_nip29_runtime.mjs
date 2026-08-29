@@ -15,22 +15,27 @@ const p={
 };
 const joined=await api.nip29Memberships(p,viewer);
 if(nip44Calls!==1||nip04Calls!==0||joined.groups.length!==2||joined.groups[1].id!=='private')throw new Error('NIP-44 private self-list was not decoded');
-/* THE POOL ANSWERED, SO NOBODY ELSE'S RELAY IS OPENED. A kind-10009 membership list is a
-   replaceable document the viewer published: if the cache or their own relay is holding it, no
-   external relay can improve on it. Six sockets opened in parallel with the pool read — on
-   startup, and again on the 60/120s recovery timer — is what filled a console with failed
-   jskitty/asia.vectorapp/Damus connections while Concord was still getting ready. */
-if(poolQueries!==1||listedQueries.length)throw new Error('normal NIP-29 membership startup opened external relays despite a pool hit');
-/* WITH NOTHING LOCAL IT IS STILL A REAL RECOVERY, and an explicit one still reaches the two
-   historically blocked relays behind a bounded long circuit. */
-const cold={...p,relayQuery:async()=>{poolQueries++;return [];}};
-const recovered=await api.nip29Memberships(cold,viewer,null,true);
-if(recovered.groups.length!==2)throw new Error('legacy NIP-29 membership recovery found nothing');
-if(!listedQueries.length||listedQueries[0].relays.includes('wss://current-app.example')||!listedQueries[0].relays.some(r=>/relay\.damus\.io/.test(r))||listedQueries[0].filters[0].kinds[0]!==10009||listedQueries[0].filters[0].authors[0]!==viewer.pubkey||!listedQueries[0].opts.exact||!listedQueries[0].opts.allowBlocked||listedQueries[0].opts.failureCooldown<1800000)throw new Error('kind-10009 recovery skipped connected/legacy membership sources or lacked a long failure circuit');
-/* AND AN ORDINARY (non-recovery) COLD READ STAYS OFF THE BLOCKED PAIR. */
-listedQueries.length=0;
-await api.nip29Memberships(cold,viewer);
-if(!listedQueries.length||listedQueries[0].opts.allowBlocked||listedQueries[0].relays.some(r=>/relay\.damus\.io|relay\.ditto\.pub/.test(r)))throw new Error('a normal cold read reached the blocked recovery relays');
+/* THE EXTERNAL READ IS A UNION THAT HAPPENS ONCE — never a fallback a local hit cancels.
+   "The pool returned SOMETHING" is not "the pool returned the COMPLETE list", and gating on it
+   hid real communities: measured on this deployment, an account holds a 13302 and a 33302 on its
+   own relay and NO kind-10009 at all, so its NIP-29 list lives only on the relays that gate
+   refused to open. The churn complaint is about how OFTEN, not about whether. */
+if(poolQueries!==1||!listedQueries.length)throw new Error('the first membership read skipped the external union');
+if(!listedQueries.every(q=>q.relays.includes('wss://relay.ditto.pub')&&q.relays.includes('wss://relay.damus.io')&&q.opts.allowBlocked&&q.opts.failureCooldown>=1800000))
+  throw new Error('the union omitted the recovery relays or lost its bounded long circuit');
+if(listedQueries[0].relays.includes('wss://current-app.example')||listedQueries[0].filters[0].kinds[0]!==10009||listedQueries[0].filters[0].authors[0]!==viewer.pubkey||!listedQueries[0].opts.exact)
+  throw new Error('kind-10009 union query was malformed or duplicated the connected pool relay');
+/* …AND EVERY PASS AFTER IT IS LOCAL-ONLY. That is what makes the 60/120s recovery timer free,
+   which was the actual complaint: sockets reopening for ever, not sockets opening once. */
+const sweeps=listedQueries.length;
+await api.nip29Memberships(p,viewer);
+await api.nip29Memberships(p,viewer);
+if(listedQueries.length!==sweeps)throw new Error('the recovery timer reopens external relays on every tick');
+/* …AND SO DOES THE "recovery" PASS, which is not person-triggered: render() runs it on an
+   ordinary launch that already has a room open, and an active room may only touch the relays in
+   its own bundle. One bounded cross-relay recovery per session, whichever path asks first. */
+await api.nip29Memberships(p,viewer,null,true);
+if(listedQueries.length!==sweeps)throw new Error('the recovery pass re-swept from inside an open room');
 listedQueries.length=0;
 const metadataEvent={id:'meta',kind:39000,created_at:30,tags:[['d','private'],['name','Private Room'],['about','from tags'],['picture','https://example.test/icon.png']],content:''};
 p.relayQueryFrom=async(relays,filters,opts)=>{listedQueries.push({relays,filters,opts});return [metadataEvent,{...metadataEvent,id:'forged-extra',tags:[['d','other']]}];};
