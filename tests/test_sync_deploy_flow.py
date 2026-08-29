@@ -336,8 +336,10 @@ def test_the_overlay_is_published_when_its_inputs_change():
         "a multi-commit deploy only checks its final commit, so earlier PosterChanOS changes never "
         "reach the overlay")
     assert "HEAD~1 HEAD" not in guard
-    assert "WARN" in src[i:i + 200], (
-        "a failed publish is silent; the deploy would report success with the overlay stale")
+    publish = src[i:i + 300]
+    assert "ERROR" in publish and "exit 1" in publish, (
+        "a failed overlay publish does not fail deployment; the deploy would report success while "
+        "installed machines cannot receive the release")
 
 
 def test_the_overlay_ebuild_tracks_the_desktop_build():

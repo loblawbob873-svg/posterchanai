@@ -3407,7 +3407,7 @@
       snap:w.snap || null, max:!!w.max, rect:w.rect ? Object.assign({},w.rect) : null,
       snapped:w.el.classList.contains('snapped'), maximised:w.el.classList.contains('maximised') };
     let curX = ox, curY = oy, zone = '', handoff = '', raf = 0, lastMove = ev,
-        previewDir='', previewAt=0;
+        previewDir='', previewAt=0, crossDir='', crossSamples=0;
     hideLayouts();
     /* Native apps follow the frame with position-only compositor moves. Resizing/re-floating on
      * every frame is still avoided; `_natGesture` makes nsync choose pcWM.move until release. */
@@ -3521,7 +3521,15 @@
       /* Touching an edge means SNAP. A monitor handoff begins only after the real desktop pointer
        * has crossed outside this renderer. The old edge-only test stole every ordinary left/right
        * snap whenever pcWM.handoffFrame existed. */
-      handoff=handoffDirection(e);
+      /* ONE OUTSIDE SAMPLE CAN BE A SCALE DISCONTINUITY, not a crossed monitor seam. Chromium on
+       * mixed-DPI outputs can jump screenX hundreds of pixels while clientX remains at the edge.
+       * Require two pointer-move samples naming the same outside direction; pointerup repeating a
+       * lone sample is not additional evidence. Real cross-output drags naturally produce a run. */
+      const candidate=handoffDirection(e);
+      if(candidate){
+        if(candidate===crossDir)crossSamples++;else{crossDir=candidate;crossSamples=1;}
+        handoff=crossSamples>=2?candidate:'';
+      }else{crossDir='';crossSamples=0;handoff='';}
       preview(e);
       if(!raf) raf = requestAnimationFrame(paint);
       const z = zoneAt(e.clientX, e.clientY);
@@ -3561,7 +3569,8 @@
         if(nativeWins().length)nsync();
         return;
       }
-      handoff = handoffDirection(endEvent) || handoff || handoffDirection(lastMove);
+      /* `handoff` is deliberately the proven, two-move result above. Counting pointerup as a
+       * second sample recreates the mixed-scale false handoff this proof exists to prevent. */
       if(handoff && w.native != null && pcWM.handoff){
         const dropEvent=endEvent||lastMove;
         const snapZone=dropEvent&&Number.isFinite(dropEvent.clientX)&&Number.isFinite(dropEvent.clientY)

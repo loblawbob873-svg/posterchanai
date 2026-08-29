@@ -73,6 +73,16 @@ def test_scaled_screen_coordinates_need_outward_edge_travel_before_handoff():
     assert "edgeOverflow(e,dir)>8" in handoff
 
 
+def test_cross_monitor_handoff_needs_two_move_samples_not_a_repeated_pointerup():
+    src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+    drag = src[src.index("function startDrag"):src.index("function startResize")]
+    move = drag[drag.index("const move = (e) =>"):drag.index("let ended = false")]
+    up = drag[drag.index("const up = (endEvent, cancelled) =>"):]
+    assert "candidate===crossDir" in move
+    assert "crossSamples>=2?candidate:''" in move
+    assert "handoffDirection(endEvent) || handoff" not in up
+
+
 def test_native_drag_runtime_distinguishes_same_output_from_clamped_cross_output():
     """Execute the shipped edge state machine with Chromium-style clamped client coordinates."""
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")

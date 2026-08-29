@@ -52,6 +52,22 @@ def test_sim_uses_a_live_disposable_process_family():
     assert "root.kill('SIGTERM')" in sim
 
 
+def test_clipboard_sim_reports_a_stale_package_instead_of_crashing_its_fixture(tmp_path):
+    stale = tmp_path / "clipboard.js"
+    stale.write_text("""
+exports.writeWaylandText = (_text, deps) => new Promise(resolve => {
+  const child = deps.spawn(); child.once('error', () => resolve(false)); child.stdin.end('x');
+});
+""")
+    sim = ROOT / "tests" / "client" / "installed_clipboard_sim.js"
+    env = {**os.environ, "PC_INSTALLED_CLIPBOARD_JS": str(stale)}
+    result = subprocess.run(["node", str(sim)], cwd=ROOT, env=env,
+                            capture_output=True, text=True)
+    assert result.returncode == 1
+    assert "lacks the bounded Wayland stdin error listener" in result.stderr
+    assert "pipeError is not a function" not in result.stderr
+
+
 def test_live_pointer_snap_gate_requires_full_usable_output_height_for_frame_and_surface():
     gate = (ROOT / "scripts/check_installed_native_snap.py").read_text(encoding="utf-8")
     assert 'usable_height = shell["height"] - 72' in gate

@@ -172,7 +172,10 @@ ssh router.lan "cd /srv/posterchanai && sudo git fetch origin && sudo git reset 
 # the next recovery medium). Keep the canonical script itself in the publish trigger.
 if git diff --name-only "$_PREV_HEAD..HEAD" 2>/dev/null | grep -qE '^os/(gentoo\.sh$|overlay/|bin/|plymouth/)'; then
     echo "[sync] overlay inputs changed — publishing"
-    ./scripts/publish_overlay.sh || echo "[sync] WARN: overlay publish failed (machines keep the last one)"
+    ./scripts/publish_overlay.sh || {
+        echo "[sync] ERROR: overlay publish failed; installed machines cannot receive this release" >&2
+        exit 1
+    }
 else
     echo "[sync] overlay unchanged"
 fi

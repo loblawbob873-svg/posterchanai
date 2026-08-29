@@ -24788,7 +24788,7 @@
      * loopback listener, so every attachment looked clickable and then failed against localhost.
      * Keep loopback valid for an explicitly local WEB development server; it is never an instance
      * address a bundled client may use. */
-    if(BUNDLED){
+    if(typeof BUNDLED!=='undefined'&&BUNDLED){
       try{
         const host=new URL(base).hostname.toLowerCase();
         if(host==='localhost'||/^127\./.test(host)||host==='::1'||host==='[::1]') return '';

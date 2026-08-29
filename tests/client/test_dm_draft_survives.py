@@ -61,6 +61,7 @@ WANT = [
     "function _wireBubbleActions(box, pk){",
     "function bindDmMediaActions(){",
     "function _dmPinBottom(m){",
+    "function _restoreDmScroll(el,state){",
     "function _threadSig(pk){",
     "async function renderDmThread(pk){",
 ]
@@ -96,6 +97,12 @@ def _sources():
     # The draft map itself.
     m = re.search(r"^\s*(const _dmDrafts = new Map\(\);)", src, re.M)
     assert m, "_dmDrafts is gone — the draft is no longer kept anywhere"
+    out.append(m.group(1))
+    # Monitor handoff contributes a one-shot scroll latch consumed by renderDmThread. Extract the
+    # real declaration as well as its restorer so this DOM-lifetime harness remains a valid isolated
+    # execution of the production renderer when handoff state is absent (the ordinary DM case).
+    m = re.search(r"^\s*(let _dmHandoffScroll = null;)", src, re.M)
+    assert m, "DM handoff scroll state is gone — re-audit the renderer extraction"
     out.append(m.group(1))
     return "\n".join(out)
 
