@@ -7126,20 +7126,31 @@
       if(!_tlPausedAt) _tlPausedAt=Math.floor(Date.now()/1000);
       _tlPaused=true;
     };
+    let _resumeCatchAt=0;
     _tlResume = ()=>{
-      if(!_tlPaused) return;
+      const wasPaused=_tlPaused;
       _tlPaused=false;
-      const since=Math.max(0,(_tlPausedAt||Math.floor(Date.now()/1000))-120);
+      /* Reconcile on EVERY foreground, not only after the 20-second battery pause fired. Android
+       * commonly freezes the WebView during a short app switch while the grace timer itself is
+       * throttled. The relay reconnect then replays missed notes through the live callback, where
+       * they can remain behind the new-posts buffer until a cold restart. Querying from the actual
+       * background instant redraws those notes from Store in timestamp order, preserving the card
+       * being read. Native resume + appStateChange often arrive as a pair, so coalesce them. */
+      const since=Math.max(0,(_tlPausedAt||Math.floor((_hiddenAt||Date.now())/1000))-120);
       _tlPausedAt=0;
-      if(myGen!==_tlGen || VIEW!==view || subs[view]) return;
+      if(myGen!==_tlGen || VIEW!==view) return;
       /* Re-open live delivery immediately, then explicitly fetch the interval the phone missed.
        * Relying on a subscription's generic `limit` made catch-up depend on relay ordering and could
        * leave the feed minutes behind after a long sleep. Store deduplicates by event id;
        * _drawTimeline reads its timestamp-sorted feed and preserves the visible-card anchor. */
-      fullSub();
+      if(wasPaused && !subs[view]) fullSub();
+      if(Date.now()-_resumeCatchAt < 4000) return;
+      _resumeCatchAt=Date.now();
       const catchFilters=timelineFilter().map(f=>Object.assign({},f,{since,
         limit:Math.max(Number(f.limit)||0,500)}));
-      Relay.query(catchFilters).then(evs=>{
+      /* A foreground signal can precede the radio becoming usable. Do not spend the one catch-up
+       * query on the CONNECTING/zombie socket; ready() repairs it and waits for an OPEN path. */
+      Relay.ready(8000).then(()=>Relay.query(catchFilters)).then(evs=>{
         if(myGen!==_tlGen || VIEW!==view) return;
         let changed=false;
         for(const ev of (evs||[])){
