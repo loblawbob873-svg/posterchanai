@@ -20,7 +20,7 @@ def extract(name):
 
 def test_packaged_attachment_runtime_uses_instance_and_preview():
     js=extract('_mailAttachmentUrl')+'\n'+extract('_openMailAttachment')
-    script=f'''let BASE='https://poster.example',fetched='',opened=0,saved=0,toasts=[];
+    script=f'''let BASE='https://poster.example',fetched='',opened=0,saved=0,toasts=[];const BUNDLED=true;
     const _instanceBase=()=>BASE,_aiToken='token',toast=x=>toasts.push(x),saveBlobAs=async()=>saved++;
     const _withModule=async()=>({{open:o=>{{opened++;return o.name==='photo.png'&&o.mime==='image/png'}}}});
     globalThis.fetch=async u=>{{fetched=u;return new Response(new Blob(['png'],{{type:'image/png'}}),{{status:200}})}};
@@ -29,7 +29,10 @@ def test_packaged_attachment_runtime_uses_instance_and_preview():
       const u=_mailAttachmentUrl({{account:'me@example.test',folder:'IN BOX',uid:'7'}},'bad','bad',2);
       const a={{dataset:{{mailUrl:u,mailPreview:'1',name:'photo.png',mime:'image/png'}},setAttribute(){{}},removeAttribute(){{}}}};
       const ok=await _openMailAttachment(a); BASE=''; const absent=_mailAttachmentUrl({{uid:'1'}},'INBOX','a',0);
-      process.stdout.write(JSON.stringify({{u,fetched,opened,saved,ok,absent,toasts}}));
+      BASE='https://localhost';const local=_mailAttachmentUrl({{uid:'1'}},'INBOX','a',0);
+      BASE='http://127.0.0.1:8080';const ipv4=_mailAttachmentUrl({{uid:'1'}},'INBOX','a',0);
+      BASE='http://[::1]:8080';const ipv6=_mailAttachmentUrl({{uid:'1'}},'INBOX','a',0);
+      process.stdout.write(JSON.stringify({{u,fetched,opened,saved,ok,absent,local,ipv4,ipv6,toasts}}));
     }})().catch(e=>{{console.error(e);process.exitCode=1}});'''
     with tempfile.TemporaryDirectory() as td:
         p=Path(td)/'mail.js';p.write_text(script)
@@ -38,7 +41,8 @@ def test_packaged_attachment_runtime_uses_instance_and_preview():
     got=json.loads(r.stdout)
     assert got['u']=='https://poster.example/api/mail/dl/me%40example.test/IN%20BOX/7/2'
     assert got['fetched']==got['u'] and got['opened']==1 and got['saved']==0 and got['ok'] is True
-    assert got['absent']=='' and 'localhost' not in json.dumps(got).lower()
+    assert got['absent']==got['local']==got['ipv4']==got['ipv6']==''
+    assert 'localhost' not in json.dumps(got).lower()
 
 def test_office_attachment_runtime_opens_editor_and_saves_edited_copy():
     js=extract('_openMailAttachment')

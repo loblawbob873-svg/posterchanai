@@ -24776,6 +24776,17 @@
     // Packaged clients run at app://posterchan or https://localhost. A missing instance must be an
     // unavailable attachment, never a relative URL that silently resolves to either package host.
     if(!/^https?:\/\//i.test(base)) return '';
+    /* A malformed packaged preference once supplied the WebView's own bootstrap origin as the API
+     * base. It passes the protocol check above but there is no Mail server on the phone/desktop's
+     * loopback listener, so every attachment looked clickable and then failed against localhost.
+     * Keep loopback valid for an explicitly local WEB development server; it is never an instance
+     * address a bundled client may use. */
+    if(BUNDLED){
+      try{
+        const host=new URL(base).hostname.toLowerCase();
+        if(host==='localhost'||/^127\./.test(host)||host==='::1'||host==='[::1]') return '';
+      }catch(_){ return ''; }
+    }
     return base+'/api/mail/dl/'+encodeURIComponent(m.account||acct)+'/'+encodeURIComponent(m.folder||folder)
       +'/'+encodeURIComponent(m.uid)+'/'+encodeURIComponent(i);
   }

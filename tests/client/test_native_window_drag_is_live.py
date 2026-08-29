@@ -193,6 +193,24 @@ def test_mouse_snap_geometry_uses_the_measured_desktop_work_area():
     assert "const work=snapWorkArea(), vw=work.width, vh=work.height" in work
 
 
+def test_bottom_corner_hit_testing_uses_rendered_work_area_at_runtime():
+    """A flex/scaled taskbar can make the desktop bottom differ from the nominal TASKBAR constant."""
+    src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+    block = src[src.index("function snapPointerArea"):
+                src.index("function rectOf", src.index("function snapPointerArea"))]
+    script = f"""
+      const EDGE=26,TASKBAR=48,zf=()=>1;
+      global.window={{innerWidth:1000,innerHeight:720}};
+      const desk={{getBoundingClientRect:()=>({{left:0,top:0,right:1000,bottom:640,width:1000,height:640}})}};
+      {block}
+      process.stdout.write(JSON.stringify([
+        zoneAt(998,638), zoneAt(2,638), zoneAt(998,300), zoneAt(500,2)
+      ]));
+    """
+    got = json.loads(subprocess.check_output(["node", "-e", script], text=True))
+    assert got == ["br", "bl", "right", "max"]
+
+
 def test_free_drag_is_clamped_before_native_gesture_commits_placement():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
     drag = src[src.index("function startDrag"):src.index("function startResize")]

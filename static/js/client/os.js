@@ -2977,10 +2977,22 @@
              br:   { x: vw - hw, y: vh - hh, w: hw, h: hh } };
   }
 
+  /* Pointer hit-testing must use the SAME rendered work area as zones().  The taskbar participates
+   * in a flex layout and its physical height is not always TASKBAR*zoom (font scale, safe-area and
+   * fractional output scale all move it).  Using the nominal subtraction here while rectOf used
+   * desk's measurement made the visible bottom corners report plain left/right: the ghost promised
+   * a half, or vanished, and release could not reach the bottom-quarter snap. */
+  function snapPointerArea(){
+    const r=desk&&desk.getBoundingClientRect?desk.getBoundingClientRect():null;
+    if(r&&r.width>0&&r.height>0)return {left:r.left,top:r.top,right:r.right,bottom:r.bottom};
+    return {left:0,top:0,right:window.innerWidth,bottom:window.innerHeight-TASKBAR*zf()};
+  }
+
   function zoneAt(x, y){
     // x/y come straight from a pointer event, so this one comparison stays in pointer pixels.
-    const vw = window.innerWidth, vh = window.innerHeight - TASKBAR * zf();
-    const L = x <= EDGE, R = x >= vw - EDGE, T = y <= EDGE, B = y >= vh - EDGE;
+    const a=snapPointerArea();
+    const L = x <= a.left+EDGE, R = x >= a.right-EDGE;
+    const T = y <= a.top+EDGE, B = y >= a.bottom-EDGE;
     if(T && L) return 'tl';
     if(T && R) return 'tr';
     if(B && L) return 'bl';
@@ -3112,15 +3124,27 @@
   function _handoffRoot(w){
     return realFeed && realFeed.parentElement===w.body ? realFeed : (w.slot||w.body);
   }
+  const _handoffFields=root=>[...root.querySelectorAll('input,textarea,select')];
+  const _fieldSig=el=>String(el&&el.tagName||'')+'\n'+String(el&&el.type||'')+'\n'+String(el&&el.name||'');
+  function _findHandoffField(root,x){
+    const all=_handoffFields(root);
+    if(x.id){const byId=[...root.querySelectorAll('[id]')].find(el=>el.id===x.id);if(byId)return byId;}
+    /* Forms commonly omit ids but keep stable names. Global ordinal is not stable across renderers:
+     * a feature flag or browser-injected hidden field shifts every field after it. */
+    if(x.name){const matches=all.filter(el=>_fieldSig(el)===String(x.sig||''));
+      if(matches[x.n||0])return matches[x.n||0];}
+    return all[x.i]||null;
+  }
   function captureHandoffUI(w){
     const root=_handoffRoot(w); if(!root) return null;
     const fields=[]; let fieldBytes=0;
-    root.querySelectorAll('input,textarea,select').forEach((el,i)=>{
+    const fieldEls=_handoffFields(root);
+    fieldEls.forEach((el,i)=>{
       if(el.type==='file'||fields.length>=160)return;
       const value=String(el.value==null?'':el.value).slice(0,Math.max(0,384*1024-fieldBytes));
       fieldBytes+=value.length;
-      const x={i,tag:el.tagName,type:el.type||'',id:el.id||'',name:el.name||'',
-               checked:!!el.checked,value};
+      const x={i,tag:el.tagName,type:el.type||'',id:el.id||'',name:el.name||'',sig:_fieldSig(el),
+               n:fieldEls.slice(0,i).filter(y=>_fieldSig(y)===_fieldSig(el)).length,checked:!!el.checked,value};
       if(typeof el.selectionStart==='number'){x.a=el.selectionStart;x.b=el.selectionEnd;}
       fields.push(x);
     });
@@ -3135,14 +3159,16 @@
       paused:!!el.paused,volume:el.volume,muted:!!el.muted,rate:el.playbackRate||1}));
     const active=document.activeElement;
     return {fields,scroll,media,active:active&&root.contains(active)?{id:active.id||'',
-      field:[...root.querySelectorAll('input,textarea,select')].indexOf(active)}:null};
+      field:fieldEls.indexOf(active),sig:_fieldSig(active),name:active.name||'',
+      n:fieldEls.slice(0,fieldEls.indexOf(active)).filter(y=>_fieldSig(y)===_fieldSig(active)).length}:null};
   }
   function restoreHandoffUI(w,snap){
     if(!snap||typeof snap!=='object')return;
     const pending={fields:(snap.fields||[]).slice(),scroll:(snap.scroll||[]).slice(),media:(snap.media||[]).slice()};
     let tries=0, timer=0;
     const byId=(root,id)=>id?[...root.querySelectorAll('[id]')].find(el=>el.id===id)||null:null;
-    const find=(root,x,sel)=>byId(root,x.id)||root.querySelectorAll(sel)[x.i]||null;
+    const find=(root,x,sel)=>sel==='input,textarea,select'?_findHandoffField(root,x)
+      :byId(root,x.id)||root.querySelectorAll(sel)[x.i]||null;
     const apply=()=>{
       if(!wins.includes(w))return;
       const root=_handoffRoot(w); if(!root)return;
@@ -3155,7 +3181,9 @@
         el.scrollTop=x.top||0;el.scrollLeft=x.left||0;return false;});
       pending.media=pending.media.filter(x=>{const el=find(root,x,'audio,video');if(!el)return true;
         try{el.currentTime=x.time||0;el.volume=x.volume==null?el.volume:x.volume;el.muted=!!x.muted;el.playbackRate=x.rate||1;if(!x.paused)el.play().catch(()=>{});}catch(_){} return false;});
-      if(snap.active){const el=byId(root,snap.active.id)||root.querySelectorAll('input,textarea,select')[snap.active.field];try{if(el)el.focus({preventScroll:true});}catch(_){}}
+      if(snap.active){const el=_findHandoffField(root,{id:snap.active.id,i:snap.active.field,
+        sig:snap.active.sig,name:snap.active.name,n:snap.active.n});
+        try{if(el)el.focus({preventScroll:true});}catch(_){}}
       if((pending.fields.length||pending.scroll.length||pending.media.length)&&++tries<30)timer=setTimeout(apply,50);
     };
     // Async views paint a spinner first. Observe briefly as well as retrying, but coalesce mutations.
