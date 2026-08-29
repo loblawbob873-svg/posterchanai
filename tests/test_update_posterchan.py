@@ -155,6 +155,17 @@ class ItUpdatesBothHalves(unittest.TestCase):
         self.assertLess(repair.index('git clone -q'), repair.index('mv "$repo" "$backup"'))
         self.assertIn('mv "$backup" "$repo"', repair)
 
+    def test_direct_release_is_audited_before_it_can_replace_opt(self):
+        audit = self.src.index('_pc_audit_desktop_asar "$NEW/resources/app.asar"')
+        install = self.src.index('mv "$NEW" /opt/posterchan')
+        self.assertLess(audit, install)
+        for asset in ("concord.js", "cord-reader.js", "code.js", "hostfiles.js",
+                      "preview.js", "wm.js", "clipboard.js"):
+            self.assertIn(asset, self.src)
+        for marker in ("messages-communities", "openHostFile", "openSyncCodeFile",
+                       "function taskbarMove(w)", "let _altSwitch=null"):
+            self.assertIn(marker, self.src)
+
     def test_a_stale_lan_proxy_retries_the_same_tls_host_through_public_dns(self):
         """A cached LAN 404 must not make a restored public overlay look permanently absent."""
         self.assertIn("_pc_fetch_overlay_public_dns", self.src)

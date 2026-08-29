@@ -23,5 +23,12 @@ public final class HomeDoublePress {
         return true;
     }
 
-    public static synchronized void clear() { lastAt = 0L; }
+    /** Clears an incomplete pair and reports whether one actually existed.  The launcher uses the
+     * answer across onStop -> onStart: otherwise the returning onStart/onNewIntent echo can replace
+     * the cancelled timestamp with two synthetic arrivals and immediately reopen the app. */
+    public static synchronized boolean clear() {
+        boolean incomplete = lastAt > 0L;
+        lastAt = 0L;
+        return incomplete;
+    }
 }

@@ -41,7 +41,11 @@ function build(outDir,includeHome){
   const now=new Date(), stamp=String(now.getFullYear())+String(now.getMonth()+1).padStart(2,'0')+String(now.getDate()).padStart(2,'0');
   const image=path.join(out,'posterchan-live-'+stamp+'.iso');
   return launch('build',SUDO,['-n','env','PC_ISO_OUT='+out,'PC_ISO_HOME='+(includeHome?'y':'n'),
-    'PC_ISO_CLEAN='+(includeHome?'n':'y'),'/usr/bin/gentoo.sh','livecd'],null,{path:image});
+    /* Settings builds an artifact for the boot/install/reboot gates and USB writer. Publication is
+     * a separate release action; gentoo.sh otherwise defaults a clean image to an immediate upload
+     * before any of those runtime gates have exercised it. */
+    'PC_ISO_CLEAN='+(includeHome?'n':'y'),'PC_ISO_PUBLISH=n',
+    '/usr/bin/gentoo.sh','livecd'],null,{path:image});
 }
 async function burn(iso,target){
   const image=path.resolve(String(iso||''));

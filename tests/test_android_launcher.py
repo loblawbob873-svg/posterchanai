@@ -658,6 +658,17 @@ class LauncherSources(unittest.TestCase):
         self.assertLess(stop.index("HomeDoublePress.clear()"),
                         stop.index("LauncherState.homeHidden()"))
 
+    def test_cancelled_double_home_cannot_be_rebuilt_by_the_return_lifecycle_echo(self):
+        src = _code(open(os.path.join(HOME, "HomeActivity.java")).read())
+        stop = src[src.index("protected void onStop()"):
+                   src.index("private final Runnable reloadSoon")]
+        intent = src[src.index("protected void onNewIntent(Intent intent)"):
+                     src.index("public void onBackPressed()")]
+        self.assertIn("cancelledPairBeforeStart = HomeDoublePress.clear()", stop)
+        self.assertIn("homeWindowFocused && !cancelledPairBeforeStart", intent)
+        self.assertLess(intent.index("cancelledPairBeforeStart = false"),
+                        intent.rindex("HomeDoublePress.arrived"))
+
     def test_music_is_a_real_launcher_app_and_deep_link(self):
         tiles = _code(open(os.path.join(HOME, "HomeTiles.java")).read())
         app = open(os.path.join(ROOT, "static", "js", "client", "app.js"), encoding="utf-8").read()

@@ -21,8 +21,8 @@ def test_settings_exposes_build_pick_burn_and_confirmation():
 def test_built_iso_path_flows_straight_into_the_usb_writer():
     """Building and writing are adjacent steps, not two unrelated file pickers."""
     assert "{path:image}" in (ROOT / "desktop/liveusb.js").read_text()
-    assert "if(s&&s.path)iso.value=s.path" in UI
-    assert "if(s.kind==='build'&&s.path&&(s.running||s.ok))iso.value=s.path" in UI
+    assert "if(s&&s.path)setIso(s.path)" in UI
+    assert "if(s.kind==='build'&&s.path&&(s.running||s.ok))setIso(s.path)" in UI
 
 
 def test_backend_returns_the_exact_iso_path_when_build_starts(tmp_path):
@@ -37,6 +37,23 @@ def test_backend_returns_the_exact_iso_path_when_build_starts(tmp_path):
     assert Path(got["path"]).parent == out
     assert Path(got["path"]).name.startswith("posterchan-live-")
     assert Path(got["path"]).suffix == ".iso"
+
+
+def test_gui_build_cannot_publish_before_runtime_release_gates(tmp_path):
+    """Building in Settings creates a candidate; it must not replace the public ISO."""
+    sudo, invoked = tmp_path / "sudo", tmp_path / "invoked"
+    sudo.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$PC_TEST_ARGS\"\n")
+    sudo.chmod(0o755)
+    out = tmp_path / "images"
+    out.mkdir()
+    js = "require('./desktop/liveusb').build(process.argv[1],false)"
+    env = {**os.environ, "PC_SUDO": str(sudo), "PC_TEST_ARGS": str(invoked)}
+    subprocess.check_call(["node", "-e", js, str(out)], cwd=ROOT, env=env)
+
+    args = invoked.read_text().splitlines()
+    assert "PC_ISO_CLEAN=y" in args
+    assert "PC_ISO_PUBLISH=n" in args
+    assert args.index("PC_ISO_PUBLISH=n") < args.index("/usr/bin/gentoo.sh")
 
 
 def test_device_scan_excludes_system_disk_and_marks_mounted_usb(tmp_path):

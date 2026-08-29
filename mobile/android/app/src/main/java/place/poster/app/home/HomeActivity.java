@@ -104,6 +104,10 @@ public class HomeActivity extends Activity implements DeskView.Host {
     private boolean homeVisible = false;
     private boolean homeIntentBeforeStart = false;
     private boolean homeStartPending = false;
+    /* onStop can cancel the first half of a double press. Remember that cancellation across the
+     * next start/intent lifecycle pair: focus may already be true when the OEM delivers the intent,
+     * but both callbacks still describe the ONE HOME press that returned to the launcher. */
+    private boolean cancelledPairBeforeStart = false;
     /* Activity.hasWindowFocus() is not a stable signal while HOME is being brought forward: some
      * Android builds update the framework's cached value after delivering onNewIntent.  Record the
      * actual focus callback instead so an onStart -> onNewIntent echo from one physical press can
@@ -114,6 +118,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
         @Override public void run() {
             if (!homeStartPending) return;
             homeStartPending = false;
+            cancelledPairBeforeStart = false;
             HomeDoublePress.arrived(SystemClock.elapsedRealtime());
         }
     };
@@ -337,7 +342,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
          * Keeping the first timestamp after a tile/app backgrounds this Activity makes the next
          * ordinary HOME return complete a stale pair and immediately reopen PosterChan, replacing
          * the launcher the user was trying to reach. */
-        HomeDoublePress.clear();
+        cancelledPairBeforeStart = HomeDoublePress.clear();
         LauncherState.homeHidden();
         repo.stopWatching();
         MusicService.setWatcher(null);
@@ -403,7 +408,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
              * 120 ms debounce window.  The old unconditional cancellation threw that first press
              * away, so a fast double-tap could never fire.  Commit the pending first press now;
              * the arrived() call below records the focused second one and completes the pair. */
-            if (homeWindowFocused) {
+            if (homeWindowFocused && !cancelledPairBeforeStart) {
                 HomeDoublePress.arrived(SystemClock.elapsedRealtime());
             }
         } else if (!homeVisible) {
@@ -411,6 +416,7 @@ public class HomeActivity extends Activity implements DeskView.Host {
         }
         // One HOME remains an ordinary launcher action. A quick second one explicitly opens Social
         // at its top through the same consume-once carrier every launcher tile uses.
+        cancelledPairBeforeStart = false;
         if (HomeDoublePress.arrived(SystemClock.elapsedRealtime())) {
             Log.i(TAG, "home double press: opening active feed at top");
             openApp("__feed_top");

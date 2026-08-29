@@ -93,6 +93,43 @@ _pc_repair_overlay() {
 	return 1
 }
 
+# The direct-install path must enforce the same minimum payload as the overlay publisher. A valid
+# Electron binary around an old/incomplete app.asar still boots; it just boots without whichever
+# client surface the build forgot to copy. Audit the DOWNLOADED tree before /opt is touched.
+_pc_audit_desktop_asar() {
+	local asar="$1"
+	command -v python3 >/dev/null 2>&1 || return 1
+	python3 - "$asar" <<-'PY'
+	import json, pathlib, sys
+	p = pathlib.Path(sys.argv[1])
+	try:
+	    payload = p.read_bytes()
+	    start = payload.find(b'{"files":')
+	    if start < 0: raise ValueError("no ASAR index")
+	    tree, _ = json.JSONDecoder().raw_decode(payload[start:].decode("latin1"))
+	    def present(name):
+	        node = tree
+	        for part in name.split('/'):
+	            node = (node.get('files') or {}).get(part) if isinstance(node, dict) else None
+	            if node is None: return False
+	        return True
+	    required = ('wm.js', 'clipboard.js', 'www/static/js/client/app.js',
+	        'www/static/js/client/concord.js', 'www/static/js/client/cord-reader.js',
+	        'www/static/js/client/cord-protocol.js', 'www/static/js/client/code.js',
+	        'www/static/js/client/hostfiles.js', 'www/static/js/client/preview.js',
+	        'www/static/css/concord.css', 'www/static/css/client.css')
+	    missing = [name for name in required if not present(name)]
+	    markers = (b'messages-communities', b'openHostFile',
+	        b"await _withModule('code.js', 'PCCode')", b'openSyncCodeFile',
+	        b'PCPreview', b'function taskbarMove(w)', b'let _altSwitch=null')
+	    missing += ['runtime marker '+m.decode('utf-8') for m in markers if m not in payload]
+	    if missing: raise ValueError(', '.join(missing))
+	except Exception as exc:
+	    print('desktop payload audit failed: '+str(exc), file=sys.stderr)
+	    raise SystemExit(1)
+	PY
+}
+
 # ---------------------------------------------------------------- how this machine got its desktop
 #
 # TWO WAYS, and asking which is the whole of this script's job.
@@ -205,6 +242,10 @@ else
 	# Electron will not start unless its sandbox helper is setuid root, and no archive can carry that
 	# bit. The alternative is --no-sandbox, i.e. turning the renderer sandbox off.
 	[ -f "$NEW/chrome-sandbox" ] && chown root:root "$NEW/chrome-sandbox" && chmod 4755 "$NEW/chrome-sandbox"
+	if ! _pc_audit_desktop_asar "$NEW/resources/app.asar"; then
+		echo "${RED}That desktop payload is incomplete or stale. Nothing was changed.${OFF}"
+		exit 1
+	fi
 
 	# IS IT ACTUALLY NEWER? Compared by the bytes of the launcher's own bundle rather than by a
 	# version string, because the rolling release re-uses one url and a machine that re-downloads the

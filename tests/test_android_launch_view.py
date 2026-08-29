@@ -286,6 +286,10 @@ public class DoubleHarness {
     ok(!HomeDoublePress.arrived(t+2500), "two ordinary visits became a pair");
     HomeDoublePress.clear(); ok(!HomeDoublePress.arrived(t), "first fired again");
     ok(!HomeDoublePress.arrived(t-1), "backwards clock fired");
+    HomeDoublePress.clear(); ok(!HomeDoublePress.clear(), "empty clear reported a press");
+    ok(!HomeDoublePress.arrived(t), "cancel fixture first press fired");
+    ok(HomeDoublePress.clear(), "clear did not report the cancelled incomplete press");
+    ok(!HomeDoublePress.arrived(t+1), "cancelled press survived clear");
     System.out.println("ALL OK");
   }
 }
@@ -354,7 +358,8 @@ class DoubleHomeRuns(unittest.TestCase):
         self.assertIn("if (homeStartPending)", new_intent)
         self.assertIn("homeStartPending = false", new_intent)
         self.assertIn("main.removeCallbacks(countHomeStart)", new_intent)
-        self.assertIn("if (homeWindowFocused)", new_intent)
+        self.assertIn("if (homeWindowFocused && !cancelledPairBeforeStart)", new_intent)
+        self.assertIn("cancelledPairBeforeStart = false", new_intent)
         focus = method(home, "public void onWindowFocusChanged")
         self.assertIn("homeWindowFocused = hasFocus", focus)
         self.assertGreaterEqual(new_intent.count("HomeDoublePress.arrived"), 2,
