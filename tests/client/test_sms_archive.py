@@ -675,7 +675,13 @@ class Permission(unittest.TestCase):
         """A phone that may READ shows its messages whether or not it RECEIVES them. Publishing the
         archive does not need the role: it reads the provider and publishes encrypted account data.
         Only writing back into Android's provider needs the default-SMS role."""
-        res = run(rows=[msg(1)], isPhone=False, canRead=True, steps=["render", "settle"])
+        # The BACKUP is deferred now — it does not run on the same turn as the paint, and not at
+        # all while a conversation is open, because a phone doing encrypted uploads while somebody
+        # reads a thread stutters. That is a timing change, not a permission one, so the rule this
+        # test protects is unchanged: drive the sweep explicitly and it must still publish without
+        # the role.
+        res = run(rows=[msg(1)], isPhone=False, canRead=True,
+                  steps=["render", "settle", "mirror", "settle"])
         self.assertEqual(res["docs"], ["pcai:sms:%024d" % 1])
         self.assertEqual(res["relay"], ["pcai:sms:%024d" % 1])
 

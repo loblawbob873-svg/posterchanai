@@ -599,3 +599,40 @@ class TheMigrationIsBoundedPerVisit(unittest.TestCase):
         self.assertTrue(len(res["published"]) > 120,
                         "a second visit added nothing: %d published" % (len(res["published"]),))
         self.assertIsNotNone(first)
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class TheCopyWaitsUntilNobodyIsReading(unittest.TestCase):
+    """"Encrypting and copying messages to Blossom…" is the banner for a sweep in progress, and it
+    was appearing the instant Texts opened — the copy started on the same turn as the first paint
+    and ran while the person scrolled. Each row is an encrypted upload AND a relay write; a phone
+    doing that while you read a conversation stutters however small the batch is, which is why
+    cutting 600 rows to 120 still came back as "still glitchy".
+
+    Deferred now, and skipped entirely while a conversation is open — reading is exactly when the
+    jank is felt. Nothing is lost by waiting: the queue is derived from what is unarchived, so the
+    next idle moment or the next visit continues it."""
+
+    def test_opening_texts_does_not_start_the_copy_on_the_same_turn(self):
+        res = run(isPhone=True, generatedPictures=200, steps=["render", "settle"])
+        self.assertEqual(len(res["published"]), 0,
+                         "the copy began while the screen was still painting: %d published"
+                         % (len(res["published"]),))
+
+    def test_the_render_path_does_not_await_the_copy(self):
+        """A route that awaits the sweep cannot complete until it finishes — the screen belongs to
+        the backlog. Source-level, because the harness cannot observe a route that never returns."""
+        src = (ROOT / "static" / "js" / "client" / "sms.js").read_text(encoding="utf-8")
+        self.assertNotIn("await migrateLocalHistory();\n    }", src,
+                         "the render path still awaits the migration")
+        self.assertIn("scheduleBackup();", src)
+
+    def test_it_stands_down_while_a_conversation_is_open(self):
+        src = (ROOT / "static" / "js" / "client" / "sms.js").read_text(encoding="utf-8")
+        sched = src.split("function scheduleBackup", 1)[1].split("\n  }", 1)[0]
+        self.assertIn("if(S.open)", sched,
+                      "the copy runs while a conversation is open, which is exactly when the "
+                      "stutter is felt")
+        self.assertIn("scheduleBackup(8000)", sched,
+                      "it gives up instead of re-arming, so a phone used mostly inside threads "
+                      "never finishes its backup")

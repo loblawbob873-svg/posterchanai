@@ -1176,8 +1176,13 @@
        * that did not work. The `?v=` the shell appends to every script is the answer. */
       client: (function(){
         try{
-          const el = document.querySelector('script[src*="client/sms.js"]');
-          return String(((el && el.src) || '').split('?v=')[1] || 'unknown').slice(0, 24);
+          /* Any script whose src ends in sms.js: the web shell serves
+           * `/static/js/client/sms.js?v=…` and a bundle may load it from another path entirely, so
+           * matching the directory reported `unknown` from the one place it was needed most. */
+          const el = Array.from(document.querySelectorAll('script[src]'))
+            .find(x => /sms\.js(\?|$)/.test(String(x.src || '')));
+          const src = String((el && el.src) || '');
+          return (src.split('?v=')[1] || (src ? 'no-v' : 'no-tag')).slice(0, 24);
         }catch(_){ return 'unknown'; }
       })(),
       // what the provider handed this phone on the pass that just ran
@@ -2080,6 +2085,27 @@
     return !archived || !archived._blob || needsPartUpgrade(phone, archived) || stateChanged;
   }
 
+  /* Deferred, coalesced, and skipped while a conversation is open — see the call site in render.
+   * Re-armed rather than dropped when a thread IS open, so opening Texts, reading, and coming back
+   * to the list still makes progress without ever competing with the scroll. */
+  let _migrationTimer = null;
+  function scheduleBackup(delay){
+    if(_migrationTimer) return;
+    _migrationTimer = setTimeout(async () => {
+      _migrationTimer = null;
+      if(!textsOnScreen()) return;                    // gone; the next visit picks it up
+      if(S.open){ scheduleBackup(8000); return; }      // somebody is reading — try again later
+      /* Recent first, then history: a text that arrived a minute ago matters more than one from
+       * three years ago, and mirror() is the cheaper of the two. */
+      try{ await mirror(); }catch(_){ }
+      if(S.open) return;                               // they opened a thread while that ran
+      try{ await migrateLocalHistory(); }catch(_){ }
+    }, Number(delay) || 5000);
+    /* Node's simulator hands back a ref-counted Timeout; a browser returns a number. Do not let a
+     * pending copy keep a test process alive. */
+    try{ if(_migrationTimer && _migrationTimer.unref) _migrationTimer.unref(); }catch(_){ }
+  }
+
   let _fullMigration = null;
   function migrateLocalHistory(){
     if(_fullMigration) return _fullMigration;
@@ -2594,7 +2620,16 @@
       if(d && d.url) return d;
       if(!id) return d;
     }
-    if(!id) return { why: attLabel(p) + ' \u00b7 on your phone' };
+    /* "ON YOUR PHONE" IS THE WRONG ANSWER WHEN THE PHONE ALREADY SAID NO.
+     *
+     * A message published with a refused attachment carries `err` and no address, and this branch
+     * read the missing address alone: every one of them said "Photo · on your phone", which is
+     * true, useless, and implies the picture is one tap away on a handset that has already
+     * declined to hand it over. The phone's own words are the answer, and they are the only thing
+     * that distinguishes a carrier that never delivered the media from a provider read that
+     * failed. */
+    if(!id) return { why: attLabel(p) + ' \u00b7 '
+      + (String(p.err || '').trim() || 'on your phone') };
     if(ATT.has(id)){
       const remembered=ATT.get(id);
       /* A provider refusal is a snapshot, not durable attachment state. MMS transactions can expose
@@ -2610,7 +2645,7 @@
       attRemember(id, r);
       return r;
     }
-    let a = null;
+    let a = null, threw = '';
     /* New APKs stream bounded pieces. Besides avoiding three simultaneous 16 MB+ copies across
      * Java/base64/JS, this means one large video no longer blocks the migration high-water mark and
      * every message behind it. Older APKs ignore/omit the chunk fields; fall back to their answer. */
@@ -2635,7 +2670,7 @@
         if(!q.data) { a = q; break; }
       }
       if(chunked && !a) a = { error:'attachment exceeded the safe transfer limit' };
-    }catch(_){ a = null; }
+    }catch(e){ a = null; threw = String((e && e.message) || e).slice(0, 120); }
     let r;
     if(a && a.blob){
       r = { url: URL.createObjectURL(a.blob), blob:a.blob, ct:p.ct || '' };
@@ -2658,9 +2693,20 @@
        * "would not hand it over" for four different causes. `total` is the useful half: a part row
        * that exists with zero bytes (an MMS whose media was never downloaded) and a read that threw
        * are the same sentence otherwise, and only one of them is worth retrying. */
+      /* FOUR OUTCOMES REACHED THE PERSON, THE LOG AND THE REPORT AS ONE SENTENCE, and the one
+       * that was actually happening could not be told from the other three. `threw` is the plugin
+       * call itself failing — a Capacitor bridge error, which is not the provider refusing
+       * anything; `a === null` with no throw is an answer with no bytes and no reason; `a.error` is
+       * the provider's own words; and a zero `total` says the part row exists with nothing in it,
+       * which is an MMS whose media the carrier never delivered and is therefore not a bug to fix
+       * here at all. */
       const said = String((a && a.error) || '').trim();
       const total = a && a.total !== undefined ? Number(a.total) : null;
-      r = { why: attLabel(p) + ' \u00b7 ' + (said || 'this phone would not hand it over')
+      const why = threw ? ('the attachment read failed: ' + threw)
+                : said ? said
+                : a ? 'the phone answered with no bytes and no reason'
+                : 'the attachment read returned nothing';
+      r = { why: attLabel(p) + ' \u00b7 ' + why
                  + (total !== null && total <= 0 ? ' (the provider reports ' + total
                     + ' bytes for it)' : '') };
     }
@@ -3507,11 +3553,17 @@
         S.emptyFix = '';
       }
       paint();
-      /* Only now do we possess the phone's COMPLETE provider read. The old call to mirror()
-       * below can publish recent arrivals, but its forward-only query cannot migrate older
-       * history. Walk the local set in resumable encrypted-drive batches. Awaiting also prevents
-       * the recent sweep from uploading the same rows alongside this one. */
-      await migrateLocalHistory();
+      /* THE COPY WAITS UNTIL NOBODY IS READING. Smaller batches were not enough — the complaint
+       * stayed "still glitchy" — because the sweep was starting the instant the screen appeared and
+       * running while the person scrolled. Each row is an encrypted upload and a relay write; a
+       * phone doing that WHILE you read a conversation stutters however small the batch is.
+       *
+       * So it is deferred, and it does not start at all while a thread is open: reading a
+       * conversation is exactly the moment the jank is felt, and the thread list is where somebody
+       * is merely deciding. The queue is derived from what is unarchived, so nothing is lost by
+       * waiting — the next visit, or the next few seconds of idleness, continues it. Deliberately
+       * NOT awaited: the route must complete on the painted screen. */
+      /* see scheduleBackup — the route must complete on the painted screen */
     }
     /* PUBLISHING needs to READ; performing a send another device asked for needs a RADIO. Two
      * jobs, two gates -- and this one used to name the role for the second, which contradicted the
@@ -3524,7 +3576,13 @@
      * unperformed on a phone perfectly able to send it, and the laptop said "waiting for your phone"
      * for ever, which is true and useless. The fix inside a function is not a fix while the only
      * thing that calls it disagrees. */
-    if(st.canRead) await mirror();
+    /* THE RECENT SWEEP IS DEFERRED TOO, and this is the half that was still stuttering. Bounding
+     * and deferring the HISTORY migration was not enough because the ordinary sweep runs on the
+     * same turn as the paint and publishes up to 400 rows — measured: 200 messages published
+     * before the screen had settled. Both are the same job at different distances from now, so
+     * they share one deferred, thread-aware slot: nothing is copied while somebody is reading, and
+     * nothing is awaited by the route. */
+    if(st.canRead) scheduleBackup();
     if(st.telephony) drainOutbox();
   }
 
