@@ -107,7 +107,11 @@
       const v = direct || parked;
       if(!v) return '';
       const now = Date.now();
-      if(v === _lastLaunchView && now - _lastLaunchAt < 2500) return v;
+      /* Feed-top is a repeatable gesture, not a destination. A person can double-HOME, scroll,
+       * then double-HOME again inside this carrier debounce; dropping the second action leaves the
+       * feed mid-page. Its direct + parked copies are already collapsed above by the single native
+       * take, and an extra top/refresh is harmless if an OEM genuinely echoes the event. */
+      if(v !== '__feed_top' && v === _lastLaunchView && now - _lastLaunchAt < 2500) return v;
       _lastLaunchView = v; _lastLaunchAt = now;
     /* THE PLAYER IS NOT A VIEW. app.js's own More menu spells it `__music` and opens it with
      * `openMusic()`; `switchView('__music')` would fall through to the default screen, which is

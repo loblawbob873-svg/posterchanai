@@ -3487,6 +3487,18 @@
       }
       handoff = handoffDirection(endEvent) || handoff || handoffDirection(lastMove);
       if(handoff && w.native != null && pcWM.handoff){
+        const dropEvent=endEvent||lastMove;
+        const snapZone=dropEvent&&Number.isFinite(dropEvent.clientX)&&Number.isFinite(dropEvent.clientY)
+          ? zoneAt(dropEvent.clientX,dropEvent.clientY) : zone;
+        const rejectNativeHandoff=()=>{
+          if(!wins.includes(w))return;
+          _natGesture(w,false);
+          /* Crossing an output seam is still an edge snap until the destination ACKs ownership.
+           * Falling back to the old floating rect made right-edge snap appear broken on a
+           * right-adjacent monitor (left worked), and also lost snapTo's full work-area height. */
+          if(snapZone)snapTo(w,snapZone);else keepFrameReachable(w);
+          nsync();
+        };
         w.gesturing=false; _natFocusHold=false;
         const id=w.native;
         /* Keep the source frame until the compositor confirms the workspace move. Removing it
@@ -3494,9 +3506,9 @@
          * and can park it in Sway's scratchpad: taskbar icon, no Firefox window. */
         try{ Promise.resolve(pcWM.handoff(id,handoff,handoffDrop(handoff,endEvent||lastMove))).then(result=>{
           if(result && wins.includes(w)) closeWin(w,{killNative:false,preserveFocus:true});
-          else if(!result){ keepFrameReachable(w); _natGesture(w,false); nsync(); }
-        }).catch(()=>{ keepFrameReachable(w); _natGesture(w,false); nsync(); }); }
-        catch(_){ keepFrameReachable(w); _natGesture(w,false); nsync(); }
+          else if(!result)rejectNativeHandoff();
+        }).catch(rejectNativeHandoff); }
+        catch(_){ rejectNativeHandoff(); }
         return;
       }
       if(handoff && w.native == null && pcWM.handoffFrame){
