@@ -1420,6 +1420,10 @@
         S.msgs.set(m.doc, m);
         n++;
         if(!stuck && r.date > top) top = r.date;
+        /* BETWEEN ROWS, NOT ONLY BETWEEN BATCHES. A row carrying a picture is megabytes of base64,
+         * an AES pass and an upload; without a yield here the whole batch is one unbroken stretch
+         * of work and the WebView cannot draw, scroll or take a tap for the duration of it. */
+        if((m.parts || []).length) await new Promise(resolve => setTimeout(resolve, 0));
       }
     }finally{
       try{ await endArchiveDrive(drive); }
@@ -2153,10 +2157,19 @@
        * week; the screen is not allowed to stutter. */
       const MAX_BATCHES = 2;
       for(let batch=0; batch<MAX_BATCHES; batch++){
-        /* SMALLER BURSTS. Sixty rows is sixty relay writes that come straight back through the
-         * live subscription; even coalesced, it is sixty documents absorbed before the screen can
-         * settle. Twenty keeps a pass short enough to be invisible. */
-        const r = await mirror({fullMigration:true, limit:20});
+        /* FIVE. NOT TWENTY, AND CERTAINLY NOT SIXTY.
+         *
+         * Sixty was chosen when this loop could not actually move a photo: every attachment failed,
+         * so a "row" was a small JSON body and a relay write. Now that the whole-file fallback works
+         * a row can be a TWELVE MEGABYTE picture — read across the Capacitor bridge as base64
+         * (~16 MB of string), AES-encrypted, and uploaded — and twenty of those in a burst is a
+         * phone that belongs to the sweep. Reported, accurately, as "glitching like crazy" the
+         * moment the media actually started moving.
+         *
+         * Five per batch, two batches, a second and a half apart: ten pictures a visit. A backlog
+         * of a thousand takes a while and nobody notices it happening, which is the correct trade
+         * for a background copy. The queue is derived from what is unarchived, so it resumes. */
+        const r = await mirror({fullMigration:true, limit:5});
         total += Number(r && r.published) || 0;
         if(!r || r.skipped || !r.remaining) return {published:total, remaining:(r&&r.remaining)||0,
                                                      failed:(r&&r.failed)||0, skipped:r&&r.skipped};
@@ -2176,7 +2189,7 @@
          * nothing else — the next batch starts on the very next frame and the WebView never gets a
          * chance to draw, scroll or accept a tap. A real pause is what makes a background copy feel
          * like one. */
-        await new Promise(resolve => setTimeout(resolve, 400));
+        await new Promise(resolve => setTimeout(resolve, 1500));
       }
       /* Not an error and not a stall: the bound above was reached with work still to do, and the
        * next foreground picks it up. Said plainly so the screen does not report a problem. */

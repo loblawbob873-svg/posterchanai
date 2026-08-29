@@ -294,16 +294,19 @@ class TheArchive(unittest.TestCase):
         document for one opening of the Texts screen."""
         # MORE PICTURES THAN ONE BATCH HOLDS, so a queue that stops shrinking still reports rows
         # remaining on every pass — the state the old loop answered by running to its safety limit.
-        rows = [picture(100 + i, date=NOW - (100 + i) * 86400000) for i in range(1, 71)]
+        rows = [picture(100 + i, date=NOW - (100 + i) * 86400000) for i in range(1, 26)]
         # A VISIT IS TWO BATCHES OF TWENTY. Sixty rows is sixty relay writes that come straight
         # back through the live subscription, which is what made the phone stutter; the copy is
         # deliberately small and resumable now, so 70 pictures take a few visits.
         res = run(rows=rows, migrationBatch=60,
                   storage={"pc_sms_hwm_me": NOW, "pc_sms_hwm_me_oldest_first_v1": "1"},
-                  steps=["phoneLoad"] + ["migrateAll"] * 3)
-        self.assertLessEqual(len(calls_of(res, "drivePull")), 4,
+                  steps=["phoneLoad"] + ["migrateAll"] * 4)
+        # One drive open per BATCH, two batches a visit — so the bound is about the loop stopping
+        # when the queue stops shrinking, not an absolute number. The old thousand-pass safety limit
+        # would put hundreds here.
+        self.assertLessEqual(len(calls_of(res, "drivePull")), 12,
                              "the migration kept re-opening the drive after it stopped progressing")
-        self.assertEqual(len([f for f in res["drive"]["files"] if f["folder"] == "MMS"]), 70,
+        self.assertEqual(len([f for f in res["drive"]["files"] if f["folder"] == "MMS"]), 25,
                          "not every picture reached the encrypted MMS folder")
 
     def test_a_truncated_picture_table_cannot_complete_the_migration(self):

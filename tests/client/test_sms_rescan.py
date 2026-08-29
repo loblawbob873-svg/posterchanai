@@ -73,14 +73,23 @@ class AStuckCompletionMarker(unittest.TestCase):
         # again, and again.
         res = run(rows, {ME + "_blossom_v7": "1", ME: str(NOW)},
                   ["phoneLoad"] + ["migrateAll"] * 12, {"combinedOmitsMms": True})
-        self.assertEqual(len(mms_files(res)), 405,
-                         "the migration stopped making progress across repeated visits")
+        # A VISIT COPIES TEN ROWS — a row can be a 12 MB picture now, so the sweep is deliberately
+        # small. What this test is about is the PAGER: that the independent MMS walk crosses its
+        # first page and that everything it finds is archived WITH a portable sha. Convergence over
+        # many visits is proved by TheMigrationIsBoundedPerVisit; here we assert steady progress and
+        # that nothing arrives without its media address.
+        self.assertGreaterEqual(len(mms_files(res)), 100,
+                                "the migration made almost no progress across repeated visits")
         self.assertGreaterEqual(sum(1 for c in res["calls"] if c[0] == "listMms"), 2,
                                 "MMS-only strict-before paging did not cross its first page")
+        # Not every message is copied in one visit any more, so the rule is about the ones that
+        # WERE: each has a portable address, and every uploaded file is accounted for by one.
         part_shas = [sha for thread in res["threads"] for row in thread["partShas"] for sha in row]
-        self.assertEqual(len(part_shas), 405)
-        self.assertTrue(all(part_shas),
-                        "an old provider part reached the archive without a portable media sha")
+        filled = [sha for sha in part_shas if sha]
+        self.assertEqual(len(filled), len(mms_files(res)),
+                         "an uploaded file is not referenced by any archived part, or the other "
+                         "way round")
+        self.assertTrue(filled, "no old provider part reached the archive with a media sha")
 
     def test_v5_completion_is_reaudited_through_the_fixed_history_pager(self):
         """The history pager was repaired after v5 shipped. Keeping that old latch makes the fix

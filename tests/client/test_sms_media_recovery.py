@@ -582,21 +582,21 @@ class TheMigrationIsBoundedPerVisit(unittest.TestCase):
     """
 
     def test_one_visit_does_a_bounded_amount_of_work(self):
-        res = run(isPhone=True, generatedPictures=900, migrationBatch=60,
+        res = run(isPhone=True, generatedPictures=60, migrationBatch=60,
                   steps=["phoneLoad", "migrateAll"])
         published = len(res["published"])
         self.assertGreater(published, 0, "the migration did nothing at all")
-        self.assertLessEqual(published, 80,
+        self.assertLessEqual(published, 24,
                              "one foreground published %d messages — the phone belongs to the sweep "
                              "for as long as that takes" % (published,))
 
     def test_it_resumes_rather_than_giving_up(self):
         """Bounded is only safe if the next visit continues. The queue is what is unarchived, so a
         second pass must publish more — otherwise a long history is silently truncated."""
-        res = run(isPhone=True, generatedPictures=900, migrationBatch=60,
+        res = run(isPhone=True, generatedPictures=60, migrationBatch=60,
                   steps=["phoneLoad", "migrateAll", "migrateAll"])
         first = next(c for c in res["calls"] if c[0] == "migrateAll")
-        self.assertTrue(len(res["published"]) > 40,
+        self.assertTrue(len(res["published"]) > 10,
                         "a second visit added nothing: %d published" % (len(res["published"]),))
         self.assertIsNotNone(first)
 
