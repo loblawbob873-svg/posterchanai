@@ -3081,11 +3081,15 @@ FSTAB
 	# from an SSH/build session with no seat; without it sway tries DRM first and reports a backend
 	# failure before it ever reaches the config parser.
 	mkdir -p "$WORK/sway-runtime" && chmod 0700 "$WORK/sway-runtime"
+	local SWAY_CHECK_LOG="$WORK/sway-config-check.log"
 	if ! XDG_RUNTIME_DIR="$WORK/sway-runtime" WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 \
-		sway -C -c "$LIVE_SWAY" >>"$LOG" 2>&1; then
+		sway -C -d -c "$LIVE_SWAY" >"$SWAY_CHECK_LOG" 2>&1 \
+		|| grep -q 'Overwriting binding' "$SWAY_CHECK_LOG"; then
+		cat "$SWAY_CHECK_LOG" >>"$LOG"
 		echo -e "${COLOR_RED}PosterChanOS Sway config is invalid; refusing to build the ISO.${COLOR_RESET}"
 		return 1
 	fi
+	cat "$SWAY_CHECK_LOG" >>"$LOG"
 	{
 		pseudoput "etc/fstab" f 644 0 0 cat "$LIVEFSTAB"
 		pseudoput "usr/local/bin/posterchan" f 755 0 0 cat "$WORK/posterchan-launcher"

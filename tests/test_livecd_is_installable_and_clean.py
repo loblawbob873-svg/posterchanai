@@ -281,7 +281,8 @@ class TheImageDoesNotCarryTheOperator(unittest.TestCase):
         """A host's stock config may name an excluded wallpaper and does not start our shell."""
         self.assertIn('pseudoput "etc/sway/config" f 644', self.fn)
         self.assertIn("pc-shell-start", self.fn)
-        self.assertIn("sway -C -c", self.fn)
+        self.assertIn("sway -C -d -c", self.fn)
+        self.assertIn("grep -q 'Overwriting binding'", self.fn)
 
     def test_it_grants_only_the_live_account(self):
         # The RULE, not the first mention of the word — "NOPASSWD" appears in the comment above it
