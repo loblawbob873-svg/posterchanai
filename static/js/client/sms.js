@@ -421,6 +421,20 @@
         catch(err){ out.set(ev, {err}); }
       }
     });
+    /* THE DRIVE KEY IS RESOLVED ONCE, BEFORE ANYTHING FANS OUT.
+     *
+     * `encFileUrl` pulls the file index on demand, and that pull resolves the master key. Sixteen
+     * of them starting together race it: `_pull` reaches `_masterDecrypt` while `mk` is still
+     * unset and SubtleCrypto refuses — "importKey: Argument 2 is not an object", once per lane,
+     * with the index reported unreadable. The narrow stage hid the race rather than not having it.
+     *
+     * Serialise the key, then widen. Failure is not fatal here: a drive that cannot be opened makes
+     * every body fail anyway, and it does so with its own message rather than this one. */
+    try{
+      const fi = PC.filesIdx ? PC.filesIdx() : null;
+      if(fi && fi._ensureMK) await fi._ensureMK();
+      else if(fi && fi.pull) await fi.pull();
+    }catch(_){ }
     /* Stage two: the drive, wide. */
     const bodies = queue.filter(ev => envelopes.has(ev));
     await stage(BODY_LANES, async () => {

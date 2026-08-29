@@ -63,3 +63,16 @@ if (api.threadIndex(orphan).size !== 0)
   throw new Error('a reply to a message we do not have was filed under a thread nobody can open');
 
 console.log('concord threads runtime ok');
+
+/* A THREAD WHOSE ROOT IS NOT IN THE CURRENT MESSAGES MUST NOT EMPTY THE CHANNEL.
+ *
+ * threadView answers [] for a root it cannot find, and a repaint can happen with a momentarily
+ * stale thread id — history reloaded, the room re-hydrated, a live batch replacing the list.
+ * Rendered literally that is a community with no messages, which is indistinguishable from the
+ * community being gone: "my posterchan concord community just disappeared". */
+if (api.threadView(rows, 'not-here').length !== 0)
+  throw new Error('threadView invented a thread for a root it does not have');
+const guard = fs.readFileSync(new URL('../../static/js/client/concord.js', import.meta.url), 'utf8');
+if (!guard.includes("if(!_t.length){ state.thread=null; return messages; }"))
+  throw new Error('an empty thread view still empties the channel instead of falling back to it');
+console.log('concord threads fallback ok');

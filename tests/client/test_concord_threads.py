@@ -30,7 +30,7 @@ def test_a_root_with_replies_offers_a_way_into_them():
 
 
 def test_the_open_thread_is_filtered_to_that_conversation():
-    assert "state.thread?threadView(messages,state.thread):messages" in SRC, (
+    assert "const _t=threadView(messages,state.thread);" in SRC, (
         "opening a thread does not narrow the list, so the replies stay interleaved with the "
         "channel — which is the thing threads exist to stop"
     )
