@@ -3,34 +3,7 @@
 This file is the release checklist. An item is complete only when its implementation, regression
 test, deployment/package, and relevant real-device check are complete. The installable ISO is last.
 
-## 1. SMS / MMS / Texts
-
-- [ ] Full SMS/MMS history and media converge between Android, web UI, and PosterChanOS.
-- [ ] Web/desktop can send MMS attachments through the phone; delivered messages are never reported
-      failed merely because the carrier callback is ambiguous.
-- [ ] Pending/failed sends reconcile, retry, cancel, and delete on every surface without ghosts or
-      duplicates. Old queued MMS retries intentionally.
-- [ ] Camera, device, and account-scoped Blossom attachment sources work on Android and web.
-- [ ] Images/video open in a fitted full-screen viewer; chat scroll survives focus/window changes.
-- [ ] GIF search uses the connected instance key. Oversize carrier media offers a Blossom link.
-
-## 2. Messages and Concord
-
-- [ ] One Messages app contains Direct Messages and Communities; neither tab can pop out after a
-      monitor move, invite, focus change, or restored session.
-- [ ] Room/community recovery, Armada history, icons, metadata, public discovery, invitations, and
-      relay membership converge across fresh sessions and devices.
-- [ ] Room entry/join/change lands on latest through delayed history/media; returning preserves a
-      deliberate user scroll. Uploads, previews, links, focus, and deletion do not move it.
-- [ ] No duplicate optimistic/relay-echo messages or attachment sends.
-- [ ] Armada-compatible mentions/autocomplete, mention notifications, reply-to-original navigation,
-      reply participant tagging, reactions, deletion, moderation, profile/DM menus, leave, starring,
-      editable visibility/description/icon, calls, copy/paste images, Blossom files, and Webxdc.
-- [ ] Desktop uses the full Matrix/Discord layout with persistent optional member pane; mobile uses
-      a clean collapsible room/channel drawer, hidden members by default, and no horizontal overflow.
-- [ ] Attachments and Webxdc render/play/open like post media. Unread rooms are visibly bold.
-
-## 3. Blossom and file opening
+## 1. Blossom and file opening
 
 - [x] All encrypted folders/files and sync manifests recover without destructive zero-entry writes,
       missing partial listings, lost folders, or stale signer state.
@@ -39,7 +12,7 @@ test, deployment/package, and relevant real-device check are complete. The insta
       office documents use Office. Cancel/open never leaves a black window or splits Classic/Desktop.
 - [ ] Folder upload completes, refreshes, and is visible in the expected Blossom folder.
 
-## 4. Android shell and media
+## 2. Android shell and media
 
 - [ ] Launcher remains visible when PosterChan backgrounds; no inert background-only APK.
 - [ ] Double-tap Home and double-tap Social reliably refresh the configured home timeline at top
@@ -50,7 +23,7 @@ test, deployment/package, and relevant real-device check are complete. The insta
       pinned, and Ctrl+PageUp/PageDown changes tabs.
 - [ ] Mobile Preview renders PDFs when possible and offers a useful native fallback otherwise.
 
-## 5. Window manager — release blocker
+## 3. Window manager — release blocker
 
 - [ ] No PosterChan or native app ever becomes an empty/black managed window after open, close, quit,
       cancel, focus, minimize, resize, monitor handoff, restart, snapping, or Ctrl+Alt+Backspace.
@@ -68,7 +41,7 @@ test, deployment/package, and relevant real-device check are complete. The insta
 - [ ] Foot never flashes or flickers while Codex or Claude streams sustained terminal output; cover
       focus, resize, damage/repaint, GPU acceleration, and multi-monitor movement in a runtime test.
 
-## 6. Remaining desktop applications
+## 4. Remaining desktop applications
 
 - [ ] Remote Desktop remains frozen until after Beta 3; retain its follow-up list separately.
 - [ ] PosterChan Code opens a user-selected local folder (never the repository by default), switches
@@ -84,7 +57,7 @@ test, deployment/package, and relevant real-device check are complete. The insta
 - [ ] Social refreshes after offline without destroying open replies/place; newly opened Social starts
       at top; timeline has a desktop scrollbar; article images have bounded height.
 
-## 7. Release gates and ISO — only after sections 1–6
+## 5. Release gates and ISO — only after sections 1–4
 
 - [ ] A newly generated LiveCD boots in virt-viewer without display flicker, intermittent black
       frames, compositor restart loops, or a permanently black screen. Cover the boot graphics and
@@ -97,7 +70,7 @@ test, deployment/package, and relevant real-device check are complete. The insta
       reboot installed system, verify graphical first-run desktop and core apps, then publish path and
       checksum.
 
-## 8. Post-stability polish — only after the backlog above is empty
+## 6. Post-stability polish — only after the backlog above is empty
 
 - [ ] Add PosterChanOS compositing with modern shadows, transitions, smooth movement and restrained
       transparency/blur; include a low-power/off setting and regression/performance tests proving it
