@@ -520,6 +520,14 @@ class TheOfficeEditorGetsTheScreen(unittest.TestCase):
         i = self.app.index("PCOS.openDoc('office:'")
         self.assertIn("PCOS.documentWindow(w)", self.app[i:i + 300])
 
+    def test_packaged_office_never_posts_a_session_to_its_local_bundle_origin(self):
+        body = _fn(self.app, "async function _officeSession(")
+        guard = "if(!/^https?:\\/\\//i.test(B))"
+        self.assertIn(guard, body)
+        self.assertIn("connect this app to your PosterChan instance", body)
+        self.assertLess(body.index(guard), body.index("new FormData()"))
+        self.assertLess(body.index(guard), body.index("fetch(B + '/client/office/session'"))
+
 
 class EmailGetsTheSameNeutralWorkspace(unittest.TestCase):
     def test_email_is_maximised_by_the_window_manager_not_by_its_renderer(self):

@@ -20446,6 +20446,12 @@
      * "office unavailable", whatever went wrong. */
     const B = _instanceBase();
     try{
+      /* Do not let a missing packaged-app instance turn these into relative requests. On desktop
+       * that means app://posterchan/client/office; in the APK it means https://localhost/client/office.
+       * Neither is the node that advertised Office, and retrying there only produces a white/empty
+       * editor after the file bytes have already been read. */
+      if(!/^https?:\/\//i.test(B))
+        throw new Error('connect this app to your PosterChan instance before opening Office');
       const fd=new FormData(); fd.append('file',file,file.name); fd.append('mode','edit');
       let r;
       try{ r=await fetch(B + '/client/office/session',{method:'POST',body:fd}); }
