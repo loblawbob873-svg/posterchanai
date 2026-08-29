@@ -47,3 +47,28 @@ def test_live_subscription_adds_old_media_without_reopening_texts():
     assert result["docs"] == [doc]
     assert result["threads"][0]["parts"] == [1]
     assert result["threads"][0]["partShas"] == [["d" * 64]]
+
+
+def test_cold_web_load_drains_full_history_and_keeps_old_conversation_media():
+    """The first cache paint is intentionally bounded.  Media older than that first page must
+    still be merged into the open conversation by the background drain, without a second visit."""
+    cached = []
+    for i in range(70):
+        doc = "pcai:sms:cold-%019d" % i
+        body = {"address": "+15550100", "body": "message %d" % i,
+                "date": 70_000 - i * 1000, "incoming": True}
+        if i == 69:
+            body["att"] = [{"ct": "image/jpeg", "name": "oldest.jpg", "bytes": 42,
+                            "sha": "f" * 64, "thumb": "e" * 64}]
+        cached.append({"kind": 30078, "created_at": 1000 - i,
+                       "tags": [["d", doc]], "content": "enc:" + json.dumps(body)})
+
+    payload = {"isPhone": False, "telephony": False, "cached": cached,
+               "relayEmpty": True, "steps": ["render", "settle"]}
+    run = subprocess.run(["node", str(SIM), json.dumps(payload)], cwd=ROOT, text=True,
+                         capture_output=True, timeout=30)
+    assert run.returncode == 0, run.stderr
+    result = json.loads(run.stdout.strip().splitlines()[-1])
+    assert result["threads"][0]["n"] == 70
+    assert result["threads"][0]["parts"][0] == 1
+    assert result["threads"][0]["partShas"][0] == ["f" * 64]
