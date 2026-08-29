@@ -892,7 +892,11 @@ def _kill_stale() -> None:
     if pid <= 0:
         return
     try:
-        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode("utf-8", "ignore")
+        proc = Path(f"/proc/{pid}")
+        cmdline = (proc / "cmdline").read_bytes().decode("utf-8", "ignore")
+        # Linux field 22 is the process start time. Keep it across the wait: if this pid exits and is
+        # reused, the replacement must never receive our later SIGKILL.
+        identity = (proc / "stat").read_text().rsplit(") ", 1)[1].split()[19]
     except Exception:
         _clear_pidfile()
         return
@@ -906,15 +910,37 @@ def _kill_stale() -> None:
     import signal as _sig
     try:
         os.kill(pid, _sig.SIGTERM)
-        for _ in range(30):                     # up to 3s for a clean exit
-            time.sleep(0.1)
-            os.kill(pid, 0)                     # raises once it is gone
-        os.kill(pid, _sig.SIGKILL)
+        if _wait_stale_exit(pid, identity, 3.0):
+            _clear_pidfile()
+            return
+        # Re-check the immutable start time immediately before escalation. A pid can disappear and
+        # be reused during the grace period; signalling the new owner is worse than leaving ports busy.
+        if _same_process(pid, identity):
+            os.kill(pid, _sig.SIGKILL)
+            _wait_stale_exit(pid, identity, 2.0)
     except (ProcessLookupError, PermissionError):
         pass
     except Exception as e:
         logger.warning("[stream] could not stop the stale mediamtx: %s", e)
     _clear_pidfile()
+
+
+def _same_process(pid: int, identity: str) -> bool:
+    """True only while the original live process still owns pid (zombies hold no ports)."""
+    try:
+        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()
+        return fields[0] != "Z" and fields[19] == identity
+    except (FileNotFoundError, ProcessLookupError, IndexError, OSError):
+        return False
+
+
+def _wait_stale_exit(pid: int, identity: str, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while _same_process(pid, identity):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+    return True
 
 
 def _clear_pidfile() -> None:

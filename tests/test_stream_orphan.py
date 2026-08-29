@@ -85,6 +85,30 @@ def test_a_reused_pid_is_never_signalled():
         proc.wait(timeout=5)
 
 
+def test_a_zombie_is_already_dead_for_port_cleanup(tmp_path):
+    """kill(pid, 0) says a zombie exists, but it cannot retain MediaMTX's listening sockets."""
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    deadline = time.monotonic() + 5
+    state = ""
+    while time.monotonic() < deadline:
+        try:
+            state = open(f"/proc/{proc.pid}/stat").read().rsplit(") ", 1)[1].split()[0]
+        except FileNotFoundError:
+            break
+        if state == "Z":
+            break
+        time.sleep(0.02)
+    try:
+        if state != "Z":
+            pytest.skip("host reaped the child before its zombie state could be observed")
+        identity = open(f"/proc/{proc.pid}/stat").read().rsplit(") ", 1)[1].split()[19]
+        started = time.monotonic()
+        assert stream_service._wait_stale_exit(proc.pid, identity, 2.0)
+        assert time.monotonic() - started < 0.5
+    finally:
+        proc.wait(timeout=5)
+
+
 def test_a_missing_or_junk_pidfile_is_harmless():
     stream_service._PIDFILE.write_text("not-a-pid")
     stream_service._kill_stale()          # must not raise

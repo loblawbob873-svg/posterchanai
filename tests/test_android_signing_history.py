@@ -5,6 +5,7 @@ import subprocess
 
 from scripts.check_no_android_signing_history import (
     HistoryUnavailable,
+    main,
     reachable_private_signing_paths,
 )
 
@@ -48,6 +49,22 @@ def test_deleted_keystore_remains_a_reachable_failure(tmp_path):
     assert reachable_private_signing_paths(repo) == [
         (object_id, "mobile/android/posterchan release.keystore")
     ]
+
+
+def test_failure_diagnostic_discloses_object_and_path_but_not_key_bytes(
+    tmp_path, capsys
+):
+    repo = repository(tmp_path)
+    object_id = commit_file(repo, "release.jks", b"do-not-copy-this-key")
+
+    assert main(["--repo", str(repo)]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "Android signing-history guard failed:\n"
+        f"  - reachable private signing blob: {object_id} release.jks\n"
+    )
+    assert "do-not-copy-this-key" not in captured.err
 
 
 def test_clean_complete_history_passes(tmp_path):
