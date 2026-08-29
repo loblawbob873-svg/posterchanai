@@ -227,7 +227,13 @@ global.localStorage = (() => {
  * `Store().query(...)` — so `window.Store` is the object itself. A stub that was a factory made
  * `.query` undefined, every read threw into its own catch, and every test failed as though the
  * device simply had no messages. */
-global.Store = { query: () => { calls.push(['storeQuery']); return (opt.cached || []).slice(); } };
+global.Store = { query: () => {
+  calls.push(['storeQuery']);
+  if(opt.coldLoadSignerFailure) return { sort(){
+    throw new Error('invalid plaintext size: must be between 1 and 65535 bytes');
+  } };
+  return (opt.cached || []).slice();
+} };
 global.Relay = {
   async query(){
     if(opt.relayDown) throw new Error('no relay');

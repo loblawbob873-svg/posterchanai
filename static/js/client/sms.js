@@ -2752,7 +2752,7 @@
     return d.toLocaleDateString(undefined, { month:'short', day:'numeric' });
   }
 
-  async function render(){
+  async function renderOnce(){
     watch();
     /* Do not paint a convincing empty inbox while the encrypted cache is still being opened. The
      * route already installed a spinner; awaiting the first cache pass makes the first visit behave
@@ -2835,6 +2835,22 @@
     if(st.telephony) drainOutbox();
   }
 
+  /* render() is invoked by app.js's lazy-module callback without awaiting the returned Promise.
+   * Firefox therefore reports any cold-start rejection as a global `unhandledrejection`; the app's
+   * global handler replaces the spinner with the generic "action failed" navigation repair. A
+   * signer rejection while opening old encrypted state must be a Texts-local load failure, never a
+   * rejected promise crossing that fire-and-forget module boundary. Archive/send helpers still
+   * report their own errors, and explicit send() calls remain rejecting/reporting as before. */
+  async function render(){
+    try{ return await renderOnce(); }
+    catch(e){
+      S.loading = false;
+      S.archive.error = String((e && e.message) || e || 'could not load messages');
+      try{ paint(); }catch(_){ }
+      try{ console.warn('[texts] cold load stopped:', S.archive.error); }catch(_){ }
+    }
+  }
+
   function init(){
     PC = window.__PC;
     if(!PC){ return setTimeout(init, 50); }
@@ -2874,7 +2890,13 @@
         await mirror();
       }
       if(st.telephony) drainOutbox();
-      })().finally(() => { foregrounding = null; });
+      })().catch(e => {
+        /* DOM focus/visibility event dispatchers do not observe returned promises. Keep a signer or
+         * relay rejection local to this refresh for the same reason render() is a non-rejecting
+         * module boundary. */
+        S.archive.error = String((e && e.message) || e || 'could not refresh messages');
+        try{ if(textsOnScreen()) paint(); }catch(_){ }
+      }).finally(() => { foregrounding = null; });
       return foregrounding;
     }
     document.addEventListener('visibilitychange', foreground);

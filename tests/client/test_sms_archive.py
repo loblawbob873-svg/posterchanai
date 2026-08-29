@@ -85,6 +85,15 @@ class ColdArchiveFailures(unittest.TestCase):
         self.assertTrue(any("ok 0" in bodies for bodies in
                             (thread["bodies"] for thread in res["threads"])))
 
+    def test_fire_and_forget_texts_render_contains_signer_rejection(self):
+        """app.js's lazy Texts callback does not await render(). Firefox turns a rejection crossing
+        that boundary into the global action-failed handler, leaving the route unusable. Reproduce a
+        signer plaintext-boundary failure during the cold cache transaction and require the public
+        render promise to settle instead of reaching window.unhandledrejection."""
+        res = run(isPhone=False, coldLoadSignerFailure=True, steps=["render", "settle"])
+        self.assertEqual(res["docs"], [])
+        self.assertEqual(calls_of(res, "storeQuery"), [["storeQuery"]])
+
 
 @unittest.skipIf(shutil.which("node") is None, "node not installed")
 class Mirror(unittest.TestCase):
