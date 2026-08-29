@@ -34,7 +34,11 @@ class StaleChannelIsRepaired(unittest.TestCase):
         """The runtime drives `readChat` directly, so this is what holds the WIRING: a live tick
         that called the reader itself would be green in there and broken on the screen."""
         src = open(CONCORD, encoding="utf-8").read()
-        tick = src[src.index("async function refreshActiveChannel("):]
+        # The channel read moved into absorbChatWraps when the live subscription was added, so
+        # both arrivals share one merge. This checks the function that actually reads the channel,
+        # whichever one that is — pinned to refreshActiveChannel it would have gone green on an
+        # extraction that quietly reintroduced a direct reader call next door.
+        tick = src[src.index("async function absorbChatWraps("):]
         tick = tick[:tick.index("async function refreshRoomMetadata(")]
         self.assertIn("readChat(p,reader,bundle,controlWraps,room,channel", tick,
                       "the live tick no longer goes through the repair")

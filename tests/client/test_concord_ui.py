@@ -610,7 +610,9 @@ def test_background_repaints_never_replace_a_focused_workspace_control():
     assert 'window.PCConcord={render,backgroundRender,' in CONCORD
 
     # These are the async paths that used to rebuild #feed underneath Android's keyboard.
-    live = CONCORD.split('async function refreshActiveChannel(p)', 1)[1].split(
+    # The channel's merge-and-paint moved into absorbChatWraps when the live subscription was
+    # added, so one implementation serves both the periodic tick and a pushed event.
+    live = CONCORD.split('async function absorbChatWraps(', 1)[1].split(
         'async function refreshRoomMetadata(p)', 1)[0]
     metadata = CONCORD.split('async function refreshRoomMetadata(p)', 1)[1].split(
         'function startLiveSync', 1)[0]

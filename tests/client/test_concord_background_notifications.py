@@ -5,7 +5,13 @@ JS = (Path(__file__).resolve().parents[2] / "static/js/client/concord.js").read_
 
 
 def _refresh():
-    return JS.split("async function refreshActiveChannel", 1)[1].split(
+    """THE WHOLE LIVE PATH, which is two functions now.
+
+    absorbChatWraps (merge, mention notifications, paint) sits immediately above
+    refreshActiveChannel (decide, fetch) so that one merge serves both the periodic tick and a
+    pushed subscription event. Slicing from the first of them keeps these assertions pointed at
+    the behaviour rather than at a function name."""
+    return JS.split("async function absorbChatWraps", 1)[1].split(
         "async function refreshRoomMetadata", 1
     )[0]
 

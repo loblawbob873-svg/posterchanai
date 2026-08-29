@@ -1224,11 +1224,77 @@
       return await reader.inspectChat(bundle,controlWraps,fixed.id,wraps);
     }
   }
+  /* MERGE WHAT CAME BACK AND PAINT IT. One implementation, because there are now two ways for a
+   * message to arrive — the periodic tick and the live subscription below — and two copies of a
+   * merge that dedupes, folds reactions and preserves scroll is how they drift. */
+  /* MESSAGES ARRIVE, THEY ARE NOT FETCHED FOR.
+   *
+   * The tick below runs every four seconds, but the query it makes carries `minInterval:60000` —
+   * so on any community whose relays are not already in the shared pool, a message could take a
+   * FULL MINUTE to appear. That is the "live message updates" complaint, and no amount of tightening
+   * the timer fixes it: polling a relay that is perfectly capable of pushing is the wrong shape.
+   *
+   * `p.relaySubscribe` already exists and discovery already uses it. Chat now does too.
+   *
+   * WRAPS ARE BUFFERED, NOT DECRYPTED ONE AT A TIME. Opening a wrap is real cryptography, and a
+   * busy channel would otherwise run it per event on the main thread. A short debounce turns a
+   * burst into one batch, which is also what makes a single repaint out of ten arrivals.
+   *
+   * The subscription is keyed on room+channel and closed whenever either changes, so switching
+   * channels cannot leave an old one feeding the new one's store. */
+  let chatSub=null,chatSubKey='',chatBuffer=[],chatFlush=null;
+  function stopChatLive(){
+    const sub=chatSub;chatSub=null;chatSubKey='';chatBuffer=[];
+    if(chatFlush){clearTimeout(chatFlush);chatFlush=null;}
+    if(sub&&typeof sub.close==='function')try{sub.close();}catch(_){}
+  }
+  function startChatLive(p,room,channel){
+    const key=roomIdentity(room)+'\n'+String(channel&&channel.id||'');
+    if(chatSub&&chatSubKey===key)return;
+    stopChatLive();
+    const authors=(channel&&channel.streamPubkeys)||[];
+    if(!p||!p.relaySubscribe||!authors.length)return;
+    chatSubKey=key;
+    /* A small look-back, not none: between the room's opening history read and this subscription
+     * being armed there is a gap, and a message that lands inside it would otherwise wait for the
+     * next tick — which is the very delay this exists to remove. */
+    const since=Math.max(0,Math.floor(Date.now()/1000)-180);
+    const onEvent=ev=>{
+      if(!ev||Number(ev.kind)!==1059||chatSubKey!==key)return;
+      chatBuffer.push(ev);
+      if(chatFlush)return;
+      chatFlush=setTimeout(()=>{chatFlush=null;void flushChatLive(p,key);},350);
+    };
+    try{ chatSub=p.relaySubscribe([{kinds:[1059],authors,since}],{onEvent,live:true})||null; }
+    catch(_){ chatSubKey=''; }
+  }
+  async function flushChatLive(p,key){
+    const wraps=chatBuffer;chatBuffer=[];
+    if(!wraps.length||chatSubKey!==key)return;
+    const rooms=saved(),room=rooms[state.community];
+    const channel=room&&(room.channels||[]).find(c=>c.name===(state.channel||'general'));
+    const bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader;
+    if(!room||!channel||!bundle||!reader)return;
+    /* THE VIEW MOVED WHILE THOSE BYTES WERE IN FLIGHT. Without this the events of the channel you
+     * just left are merged into the store of the one you just opened. */
+    if(roomIdentity(room)+'\n'+String(channel.id||'')!==key)return;
+    const loadKey=room.communityId||room.naddr,controlWraps=roomControls.get(loadKey);
+    if(!controlWraps)return;
+    const storeId=channelStoreId(room,channel.name);
+    try{
+      await cacheEnvelopes(envelopeCacheKey(loadKey,channel.id),wraps);
+      await absorbChatWraps(p,reader,bundle,controlWraps,room,channel,wraps,storeId);
+    }catch(e){ console.warn('Concord live message failed',e); }
+  }
+  async function absorbChatWraps(p,reader,bundle,controlWraps,room,channel,wraps,storeId){
+    const prior=testMessages(storeId);
+    const opened=await readChat(p,reader,bundle,controlWraps,room,channel,wraps||[]),incoming=(opened.messages||[]).map(m=>{const pr=p.profOf?p.profOf(m.pubkey):{};return {id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:m.text,at:m.at,kind:m.kind,tags:m.tags||[],reactions:{},remote:true};}),merged=mergeRelayMessages(prior,incoming),byId=new Map(merged.map(m=>[messageId(m),m])); let changed=JSON.stringify(merged)!==JSON.stringify(prior),urlGroups=new Map(opened.reactionUrls||[]); for(const [target,groups] of opened.reactions||[]){const m=byId.get(target);if(!m)continue;const next={},nextUrls={};for(const [emoji,people] of groups)next[emoji]=people;for(const [emoji,url] of urlGroups.get(target)||[])nextUrls[emoji]=url;if(JSON.stringify(m.reactions||{})!==JSON.stringify(next)||JSON.stringify(m.reactionUrls||{})!==JSON.stringify(nextUrls)){m.reactions=next;m.reactionUrls=nextUrls;changed=true;}} if(changed){const next=[...byId.values()].sort((a,b)=>Number(a.at)-Number(b.at)),viewer=p.viewer?p.viewer():{},profile=viewer.profile||{},me=profile.display_name||profile.name||(viewer.npub?viewer.npub.slice(0,12)+'…':'You');notifyMentions(p,room,next,viewer,me,channel.name);if(document.body.classList.contains('concord-view'))preserveChatScroll(()=>{saveTestMessages(storeId,next);backgroundRender();});else saveTestMessages(storeId,next);}
+    
+  }
   async function refreshActiveChannel(p){
     const foreground=document.body.classList.contains('concord-view'),parked=window.PCOS&&PCOS.isOn&&PCOS.isOn()&&PCOS.parkedSlot&&PCOS.parkedSlot('concord');
     if(liveBusy||state.community==null||(!foreground&&!parked))return; liveBusy=true;
-    try{ const rooms=saved(),room=rooms[state.community],channel=room&&(room.channels||[]).find(c=>c.name===(state.channel||'general')),bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader;if(!room||!channel||!bundle||!reader)return; const loadKey=room.communityId||room.naddr,controlWraps=roomControls.get(loadKey);if(!controlWraps)return; const relays=roomRelays(bundle),storeId=channelStoreId(room,channel.name),prior=testMessages(storeId),since=Math.max(0,Math.floor((prior.reduce((n,m)=>Math.max(n,Number(m.at)||0),0)-60000)/1000)),wraps=await cordQuery(p,relays,[{kinds:[1059],authors:channel.streamPubkeys,since,limit:500}],{timeout:6000,max:8,signal:ownRoomReads(roomIdentity(room)),purpose:'concord room live '+loadKey,minInterval:60000});await cacheEnvelopes(envelopeCacheKey(loadKey,channel.id),wraps);const opened=await readChat(p,reader,bundle,controlWraps,room,channel,wraps||[]),incoming=(opened.messages||[]).map(m=>{const pr=p.profOf?p.profOf(m.pubkey):{};return {id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:m.text,at:m.at,kind:m.kind,tags:m.tags||[],reactions:{},remote:true};}),merged=mergeRelayMessages(prior,incoming),byId=new Map(merged.map(m=>[messageId(m),m])); let changed=JSON.stringify(merged)!==JSON.stringify(prior),urlGroups=new Map(opened.reactionUrls||[]); for(const [target,groups] of opened.reactions||[]){const m=byId.get(target);if(!m)continue;const next={},nextUrls={};for(const [emoji,people] of groups)next[emoji]=people;for(const [emoji,url] of urlGroups.get(target)||[])nextUrls[emoji]=url;if(JSON.stringify(m.reactions||{})!==JSON.stringify(next)||JSON.stringify(m.reactionUrls||{})!==JSON.stringify(nextUrls)){m.reactions=next;m.reactionUrls=nextUrls;changed=true;}} if(changed){const next=[...byId.values()].sort((a,b)=>Number(a.at)-Number(b.at)),viewer=p.viewer?p.viewer():{},profile=viewer.profile||{},me=profile.display_name||profile.name||(viewer.npub?viewer.npub.slice(0,12)+'…':'You');notifyMentions(p,room,next,viewer,me,channel.name);if(document.body.classList.contains('concord-view'))preserveChatScroll(()=>{saveTestMessages(storeId,next);backgroundRender();});else saveTestMessages(storeId,next);}
-    }catch(e){console.warn('Concord live sync failed',e);}finally{liveBusy=false;}
+    try{ const rooms=saved(),room=rooms[state.community],channel=room&&(room.channels||[]).find(c=>c.name===(state.channel||'general')),bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader;if(!room||!channel||!bundle||!reader)return; const loadKey=room.communityId||room.naddr,controlWraps=roomControls.get(loadKey);if(!controlWraps)return; const relays=roomRelays(bundle),storeId=channelStoreId(room,channel.name),prior=testMessages(storeId),since=Math.max(0,Math.floor((prior.reduce((n,m)=>Math.max(n,Number(m.at)||0),0)-60000)/1000)),wraps=await cordQuery(p,relays,[{kinds:[1059],authors:channel.streamPubkeys,since,limit:500}],{timeout:6000,max:8,signal:ownRoomReads(roomIdentity(room)),purpose:'concord room live '+loadKey,minInterval:60000});await cacheEnvelopes(envelopeCacheKey(loadKey,channel.id),wraps);startChatLive(p,room,channel);await absorbChatWraps(p,reader,bundle,controlWraps,room,channel,wraps||[],storeId);}catch(e){console.warn('Concord live sync failed',e);}finally{liveBusy=false;}
   }
   async function refreshRoomMetadata(p){
     if(metadataBusy||!document.body.classList.contains('concord-view')||!window.PosterCordReader)return;
@@ -1254,6 +1320,7 @@
       if(changed){rooms[selected.index]=room;save(rooms);preserveChatScroll(()=>backgroundRender());}
     }catch(e){console.warn('Concord metadata sync failed',e);}finally{metadataBusy=false;}
   }
+  function stopLiveSync(){ if(liveTimer)clearTimeout(liveTimer); liveTimer=null; stopChatLive(); }
   function startLiveSync(p){ if(liveTimer||!document.body.classList.contains)return; liveTimer=setInterval(()=>{refreshRoomMetadata(p);refreshActiveChannel(p);},4000); }
   async function mintPublicRoom(p,name,icon){
     const viewer=p.viewer?p.viewer():{}; if(!viewer.pubkey||!window.PosterCord)throw new Error('sign in before creating a relay community');
@@ -1614,10 +1681,18 @@
     close.publish=event=>(R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={render,backgroundRender,wake,iconRef,readChat,reconcileChannels,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,membershipEvents,decodeMembershipLists,mergeArmadaBundle,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
+  window.PCConcord={render,backgroundRender,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,membershipEvents,decodeMembershipLists,mergeArmadaBundle,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */
+  /* Two doors for the runtime tests, and nothing else uses them: the view position and the
+   * channel store are module-private on purpose, and a live-message test cannot assert anything
+   * without being able to say "the room is open" and "what is in the store now". */
+  window.PCConcord.__testState=v=>{ if(v&&'community' in v)state.community=v.community;
+                                    if(v&&'channel' in v)state.channel=v.channel;
+                                    if(v&&v.controls)roomControls.set(v.controls[0],v.controls[1]);
+                                    return state; };
+  window.PCConcord.__testMessages=id=>testMessages(id);
   if(window.__pcConcordHandoff){
     try{acceptHandoff(window.__pcConcordHandoff);}finally{delete window.__pcConcordHandoff;}
   }
