@@ -184,7 +184,7 @@ def test_concord_has_honest_creation_and_public_discovery_empty_states():
 
 def test_mobile_reopens_the_last_server_then_drills_into_a_channel_like_discord():
     assert "localStorage.getItem('pc.concord.active')" in CONCORD
-    assert "localStorage.setItem('pc.concord.active',String(i))" in CONCORD
+    assert "localStorage.setItem('pc.concord.active',String(index))" in CONCORD
     assert 'mobileChatOpen=false, mobileDrawerOpen=false, discoveryOpen=false' in CONCORD
     assert "discoveryOpen=true; state.community=null" in CONCORD
     assert "state.channel=channel; mobileChatOpen=true; mobileDrawerOpen=false" in CONCORD
@@ -284,9 +284,11 @@ def test_every_room_entry_tracks_async_growth_all_the_way_to_latest():
     assert "function enterChatBottom()" in CONCORD
     assert "[0,60,180,450,900,1600]" in CONCORD
     server = CONCORD.split("$$('[data-cc-server]')", 1)[1].split("$$('[data-cc-discover]')", 1)[0]
+    activation = CONCORD.split('async function activateJoinedRoom', 1)[1].split('function render()', 1)[0]
     discover = CONCORD.split("$$('[data-cc-discover]')", 1)[1].split("$$('[data-cc-channel]')", 1)[0]
     channel = CONCORD.split("$$('[data-cc-channel]')", 1)[1].split("$$('[data-cc-star]')", 1)[0]
-    for handler in (server, discover, channel):
+    assert 'activateJoinedRoom(p,i,inDrawer)' in server
+    for handler in (activation, discover, channel):
         assert handler.count('enterChatBottom()') >= 2
 
 
@@ -397,8 +399,8 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert 'scrollChatBottom()' in CONCORD
     assert "if(file&&input)file.onchange=async()=>" in CONCORD
     assert 'room.cord.hydrated=true' in CONCORD
-    assert "if(loaded&&loaded.cord&&!hydratedRoomViews.has(roomIdentity(loaded)))" in CONCORD
-    assert 'let loaded=room;' in CONCORD and 'state.community=i' in CONCORD
+    assert "if(room.cord&&!hydratedRoomViews.has(roomIdentity(room)))" in CONCORD
+    assert 'let room=rooms[index]' in CONCORD and 'state.community=index' in CONCORD
     assert 'await p.nip44dec(viewer.pubkey,event.content)' in CONCORD
     assert 'cc-public-copy' in CONCORD and '.cc-public-copy' in CONCORD_CSS
     assert 'function isUnread(room)' in CONCORD
@@ -623,8 +625,24 @@ def test_icon_removal_and_failure_cannot_block_room_history_hydration():
     assert "console.warn('Concord community icon could not be loaded'" in helper
     assert 'nonce.byteLength!==16&&nonce.byteLength!==12' in decrypt
     assert 'return false' in helper
-    assert 'await applyRoomIconMetadata(room,info,loadKey)' in hydrate
-    assert hydrate.index('await applyRoomIconMetadata') < hydrate.index('for(const channel of networkOrder)')
+    assert 'void applyRoomIconMetadata(room,info,loadKey).then' in hydrate
+    assert 'await applyRoomIconMetadata(room,info,loadKey)' not in hydrate
+    assert 'const channelCount=applyControl(controlWraps)' in hydrate
+    assert 'const channelCount=await applyControl(controlWraps)' not in hydrate
+
+
+def test_cached_room_history_first_paint_never_waits_for_the_community_icon():
+    hydrate = CONCORD.split('async function hydrateRoomStreams', 1)[1].split(
+        'async function publishCordNative', 1
+    )[0]
+    cached = hydrate.split('if(controlWraps.length)', 1)[1].split(
+        'const completeControl=', 1
+    )[0]
+    assert 'applyControl(controlWraps);' in cached
+    assert 'await applyControl(controlWraps)' not in cached
+    assert 'cachedEnvelopePage' in cached
+    assert 'await applyChannel(channel,wraps)' in cached
+    assert cached.index('applyControl(controlWraps);') < cached.index('cachedEnvelopePage')
 
 
 def test_armada_membership_refresh_preserves_hydrated_cache_and_clicks_restore_once_per_process():
@@ -633,12 +651,11 @@ def test_armada_membership_refresh_preserves_hydrated_cache_and_clicks_restore_o
     assert 'mergeArmadaBundle(priorBundle,current)' in sync
     assert 'bundleUnchanged' in sync
     assert 'existing.cord.hydrated&&bundleUnchanged' in sync
-    server = CONCORD.split("$$('[data-cc-server]')", 1)[1].split(
-        "$$('[data-cc-discover]')", 1)[0]
-    assert '(!room.cord||!room.cord.bundle)' in server
-    assert 'loaded&&loaded.cord&&!hydratedRoomViews.has(roomIdentity(loaded))' in server
+    activation = CONCORD.split('async function activateJoinedRoom', 1)[1].split('function render()', 1)[0]
+    assert '(!room.cord||!room.cord.bundle)' in activation
+    assert 'room.cord&&!hydratedRoomViews.has(roomIdentity(room))' in activation
     assert 'hydratedRoomViews.add(identity)' in CONCORD
-    assert 'room.cord.armadaList' not in server
+    assert 'room.cord.armadaList' not in activation
     assert "if(membershipViewer!==viewer.pubkey){membershipViewer=viewer.pubkey;membershipDocs.clear();}" in sync
     assert 'let doc=membershipDocs.get(event.id)' in sync
     assert 'while(membershipDocs.size>256)' in sync

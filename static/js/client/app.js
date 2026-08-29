@@ -6461,8 +6461,10 @@
     // icon again must always reopen the browse grid; renderShorts() itself never calls switchView,
     // so scrolling/repainting inside the player still keeps the current short.
     if(v==='shorts') _shortsAt=-1;
+    const concordReentry=VIEW!=='concord'&&v==='concord';
     _navView(v);    // top-level views have no address of their own — the entry names them in its state
     VIEW = v;
+    if(concordReentry){try{window.PCConcord&&PCConcord.wake&&PCConcord.wake();}catch(_){}}
     /* Concord is an application workspace, not a prose-width timeline. Set this before paint so its
      * own sheet can remove the right rail and width cap without a one-frame layout jump. */
     document.body.classList.toggle('concord-view', v==='concord');

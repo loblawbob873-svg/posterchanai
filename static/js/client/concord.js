@@ -75,6 +75,7 @@
   const attachmentCache=new Map(),attachmentLoads=new Map();
   const scrollStates=new Map();
   let liveTimer=null,liveBusy=false,metadataBusy=false,metadataCursor=0;
+  let resumeRequested=false;
   let actionDismissOff=null;
   function saved(){ try{ const v=JSON.parse(localStorage.getItem('pc.concord.invites')||'[]'); return Array.isArray(v)?v:[]; }catch(_){ return []; } }
   function save(v){ try{ localStorage.setItem('pc.concord.invites',JSON.stringify(v.slice(0,50),(key,value)=>key==='icon'&&/^blob:/i.test(String(value||''))?'':value)); }catch(_){} }
@@ -844,7 +845,7 @@
       const seed=reader.inspectControl(bundle,[]), relays=[...new Set([...(bundle.relays||[]),...CORD_RELAYS])].slice(0,8);
       const controlKey=envelopeCacheKey(loadKey,'control');
       let controlWraps=await cachedEnvelopes(controlKey);
-      const applyControl=async wraps=>{const info=reader.inspectControl(bundle,wraps||[]);roomControls.set(loadKey,wraps||[]);room.name=info.name||room.name;room.description=info.description||room.description;room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];await applyRoomIconMetadata(room,info,loadKey);const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);if(channels.length)room.channels=channels;for(const channel of room.channels||[])markRemoteStore(channelStoreId(room,channel.name));persistRoom();return channels.length;};
+      const applyControl=wraps=>{const info=reader.inspectControl(bundle,wraps||[]);roomControls.set(loadKey,wraps||[]);room.name=info.name||room.name;room.description=info.description||room.description;room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];/* An encrypted icon can require an IndexedDB read, a remote download, AES-GCM and hashing. It is decoration, so never hold the cached channel list or first history paint behind it. Plain/cleared icons still mutate synchronously before this promise yields. Persist and repaint the icon when its bounded job finishes. */void applyRoomIconMetadata(room,info,loadKey).then(changed=>{if(!changed)return;if(!persistRoom())return;const active=saved()[state.community];if(roomIdentity(active)===identity)backgroundRender();});const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);if(channels.length)room.channels=channels;for(const channel of room.channels||[])markRemoteStore(channelStoreId(room,channel.name));persistRoom();return channels.length;};
       const applyChannel=async(channel,wraps)=>{
         const opened=await reader.inspectChat(bundle,controlWraps||[],channel.id,wraps||[]);
         const reactions=new Map(opened.reactions||[]),reactionIds=new Map(opened.reactionIds||[]),reactionUrls=new Map(opened.reactionUrls||[]),msgs=(opened.messages||[]).map(m=>{ const pr=p.profOf?p.profOf(m.pubkey):{},rs={},ri={},ru={}; for(const [emoji,people] of reactions.get(m.id)||[])rs[emoji]=people;for(const [emoji,entries] of reactionIds.get(m.id)||[])ri[emoji]=Object.fromEntries(entries);for(const [emoji,url] of reactionUrls.get(m.id)||[])ru[emoji]=url; return {id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:m.text,at:m.at,kind:m.kind,tags:m.tags||[],reactions:rs,reactionIds:ri,reactionUrls:ru,remote:true}; });
@@ -855,7 +856,7 @@
       /* Paint the encrypted on-device copy before opening sockets. This is the offline/reload path,
        * and also prevents relay latency from looking like an empty room. */
       if(controlWraps.length){
-        await applyControl(controlWraps);
+        applyControl(controlWraps);
         const selected=state.channel||'general',ordered=[...(room.channels||[])].sort((a,b)=>(a.name===selected?-1:b.name===selected?1:0));
         /* Decrypt only the newest page first and paint the selected channel immediately. Loading
          * 5,000 envelopes for every channel before the first render made a healthy encrypted cache
@@ -869,7 +870,7 @@
       }
       const completeControl=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,controlWraps),fetchedControl=completeControl.filter(ev=>!controlWraps.some(old=>old.id===ev.id));
       controlWraps=completeControl;await cacheEnvelopes(controlKey,fetchedControl);
-      const channelCount=await applyControl(controlWraps);
+      const channelCount=applyControl(controlWraps);
       if(!channelCount)throw new Error('the control stream returned no readable channels');
       const selected=state.channel||'general',networkOrder=[...room.channels].sort((a,b)=>(a.name===selected?-1:b.name===selected?1:0));
       for(const channel of networkOrder){
@@ -946,6 +947,35 @@
     const bundle={community_id:made.communityId,owner:viewer.pubkey,owner_salt:made.secrets.ownerSalt,community_root:made.secrets.root,root_epoch:0,channels:[],relays,name,creator_npub:viewer.pubkey};
     return {name,icon,description:'',channels:[{name:'general',private:false,id:made.generalChannelId}],local:false,naddr:inviteParts(made.url).naddr,url:made.url,cord:{...made,bundle}};
   }
+  async function activateJoinedRoom(p,index,inDrawer=false,expectedIdentity=''){
+    let rooms=saved();
+    if(expectedIdentity){const currentIndex=rooms.findIndex(room=>roomIdentity(room)===expectedIdentity);if(currentIndex<0)return false;index=currentIndex;}
+    let room=rooms[index];if(!room)return false;
+    const identity=roomIdentity(room);
+    discoveryOpen=false;localStorage.setItem('pc.concord.active',String(index));state.community=index;state.channel='general';mobileChatOpen=!!inDrawer;mobileDrawerOpen=!!inDrawer;
+    render();enterChatBottom();
+    try{
+      if(room.url&&(!room.cord||!room.cord.bundle)){room={...room,...await hydrateInvite(p,room.url)};rooms=saved();const at=rooms.findIndex(item=>roomIdentity(item)===identity);if(at<0)return false;rooms[at]=room;save(rooms);index=at;if(roomIdentity(rooms[state.community])===identity){state.community=at;render();}}
+      if(room.cord&&!hydratedRoomViews.has(roomIdentity(room)))await hydrateRoomStreams(p,index,identity);
+      else if(room.protocol==='nip29'&&!room.nip29Hydrated)await hydrateNip29Room(p,index);
+      roomLoadNotices.delete(roomIdentity(room));return true;
+    }catch(e){
+      if(room.protocol==='nip29'){rooms=saved();const at=rooms.findIndex(item=>roomIdentity(item)===identity);if(at>=0){rooms[at].nip29Hydrated=false;save(rooms);}}
+      roomLoadWarning(p,identity,'could not refresh community: ',e);return false;
+    }finally{
+      const active=saved()[state.community];if(roomIdentity(active)===identity)enterChatBottom();
+    }
+  }
+  async function resumeActiveRoom(p,identity){
+    const rooms=saved(),index=rooms.findIndex(room=>roomIdentity(room)===identity),room=rooms[index];
+    if(index<0||state.community==null||roomIdentity(rooms[state.community])!==identity)return;
+    try{
+      if(room.cord&&!hydratedRoomViews.has(identity))await hydrateRoomStreams(p,index,identity);
+      else if(room.cord)await refreshActiveChannel(p);
+      else if(room.protocol==='nip29'&&!room.nip29Hydrated)await hydrateNip29Room(p,index);
+    }catch(e){roomLoadWarning(p,identity,'could not refresh community: ',e);}
+  }
+  function wake(){resumeRequested=true;}
   function render(){
     // An explicit/user render supersedes any coalesced background paint. A focusout listener from
     // the old workspace may still fire, but it observes false and cannot paint twice.
@@ -1026,13 +1056,13 @@
     hydrateWebxdcCards(current);
     bind(me);
     if(draft){const input=p.$('#cc-input');if(input){const end=String(input.value||'').length,start=Math.max(0,Math.min(Number(draft.start)||0,end)),finish=Math.max(start,Math.min(Number(draft.end)||start,end));try{input.setSelectionRange(start,finish,draft.direction||'none');}catch(_){}if(draft.focused){const later=window.requestAnimationFrame||((fn)=>setTimeout(fn,0));later(()=>{if(input.isConnected!==false&&(!document.activeElement||document.activeElement===document.body||document.activeElement===document.documentElement))input.focus({preventScroll:true});});}}}
-    if(autoOpen>=0)setTimeout(()=>{ const button=document.querySelector(`[data-cc-server="${autoOpen}"]`); if(button)button.click(); },0);
+    if(autoOpen>=0){const identity=roomIdentity(rooms[autoOpen]);setTimeout(()=>{void activateJoinedRoom(p,autoOpen,false,identity);},0);}
     /* render() replaces the scroller on EVERY relay/history/metadata repaint, not only when the app
      * first returns to the feed. Restore after every replacement: pinned rooms land at the newest
      * message; a person who deliberately scrolled up keeps that saved offset. The old `returning`
      * gate is why entering a room briefly reached the bottom and then jumped into the middle when
      * its asynchronous history hydration rendered again. */
-    if(current)restoreChatScroll();
+    if(current){restoreChatScroll();if(resumeRequested){resumeRequested=false;const identity=roomIdentity(current);setTimeout(()=>{void resumeActiveRoom(p,identity);},0);}}
   }
   /* A notification identifies content, not merely the Concord application. Select with durable
    * room identity (saved array positions change), paint the named channel, then keep looking while
@@ -1090,7 +1120,7 @@
     const roomInvite=$('#cc-invite');if(roomInvite&&state.community!=null){roomInvite.title='Invite people';roomInvite.setAttribute&&roomInvite.setAttribute('aria-label','Invite people');roomInvite.onclick=()=>{const room=saved()[state.community];if(room&&room.url)p.copyValue(room.url);else $('#cc-join').classList.remove('hidden');};}
     const create=$('#cc-create'); if(create)create.onclick=()=>{ $('#cc-create-dialog').classList.remove('hidden'); setTimeout(()=>$('#cc-community-name').focus(),20); };
     const createCancel=$('#cc-create-cancel'); if(createCancel)createCancel.onclick=()=>$('#cc-create-dialog').classList.add('hidden');
-    const createGo=$('#cc-create-go'); if(createGo)createGo.onclick=async()=>{ const name=String($('#cc-community-name').value||'').trim(); if(!name){ p.toast('name your community'); return; } createGo.disabled=true; try{ p.toast('creating encrypted community…'); const room=await mintPublicRoom(p,name,normalizeIcon($('#cc-community-icon').value)); const a=saved(); a.push(room); save(a); state.community=a.length-1; state.channel='general'; render(); await persistArmadaMembership(p,room); p.copyValue(room.url); p.toast('public community created — invite link copied'); }catch(e){ createGo.disabled=false; p.toast('community creation failed: '+(e&&e.message||e)); } };
+    const createGo=$('#cc-create-go'); if(createGo)createGo.onclick=async()=>{ const name=String($('#cc-community-name').value||'').trim(); if(!name){ p.toast('name your community'); return; } createGo.disabled=true; try{ p.toast('creating encrypted community…'); const room=await mintPublicRoom(p,name,normalizeIcon($('#cc-community-icon').value)); const a=saved(); a.push(room); save(a);/* The creator already has the freshly generated control/channel state. Treat this renderer as hydrated so the first paint is not delayed by reading the just-published room back from relays. */hydratedRoomViews.add(roomIdentity(room));state.community=a.length-1; state.channel='general'; render(); await persistArmadaMembership(p,room); p.copyValue(room.url); p.toast('public community created — invite link copied'); }catch(e){ createGo.disabled=false; p.toast('community creation failed: '+(e&&e.message||e)); } };
     const editIcon=$('#cc-edit-icon'); if(editIcon)editIcon.onclick=()=>{ $('#cc-settings-dialog').classList.remove('hidden'); setTimeout(()=>$('#cc-description-value').focus(),20); };
     const iconCancel=$('#cc-icon-cancel'); if(iconCancel)iconCancel.onclick=()=>$('#cc-icon-dialog').classList.add('hidden');
     /* The compact icon dialog used to mutate only this renderer's localStorage and immediately say
@@ -1133,7 +1163,7 @@
        * left the placeholder #general on screen with no id, icon or history, so a successful Armada
        * invite looked like an empty broken community until somebody switched away and back. */
       await hydrateRoomStreams(p,state.community); enterChatBottom(); p.toast('community joined'); }catch(e){ go.disabled=false; p.toast('could not join: '+(e&&e.message||e)); } };
-    $$('[data-cc-server]').forEach(b=>b.onclick=async()=>{ const i=+b.dataset.ccServer,a=saved(),room=a[i],inDrawer=mobileChatOpen&&mobileDrawerOpen; let loaded=room; discoveryOpen=false; localStorage.setItem('pc.concord.active',String(i)); state.community=i; state.channel='general'; mobileChatOpen=inDrawer; mobileDrawerOpen=inDrawer; render(); enterChatBottom(); try{ if(room&&room.url&&(!room.cord||!room.cord.bundle)){ loaded={...room,...await hydrateInvite(p,room.url)}; a[i]=loaded; save(a); render(); } if(loaded&&loaded.cord&&!hydratedRoomViews.has(roomIdentity(loaded)))await hydrateRoomStreams(p,i);else if(loaded&&loaded.protocol==='nip29'&&!loaded.nip29Hydrated)await hydrateNip29Room(p,i); roomLoadNotices.delete(roomIdentity(loaded)); }catch(e){ if(loaded&&loaded.protocol==='nip29')loaded.nip29Hydrated=false; save(a); roomLoadWarning(p,roomIdentity(loaded),'could not refresh community: ',e); }finally{ if(state.community===i)enterChatBottom(); } });
+    $$('[data-cc-server]').forEach(b=>b.onclick=()=>{const i=+b.dataset.ccServer,inDrawer=mobileChatOpen&&mobileDrawerOpen;void activateJoinedRoom(p,i,inDrawer);});
     $$('[data-cc-discover]').forEach(b=>b.onclick=async()=>{ const v=discovered[+b.dataset.ccDiscover]; if(!v)return; const a=saved(); let i=a.findIndex(x=>x.naddr===v.naddr); if(i<0){a.push(v);i=a.length-1;} save(a); state.community=i; state.channel='general'; render(); enterChatBottom(); p.toast('fetching and decrypting community…'); try{ a[i]={...a[i],...await hydrateInvite(p,v.url)}; save(a); await persistArmadaMembership(p,a[i]); await hydrateRoomStreams(p,i); p.toast('community joined'); }catch(e){ p.toast('could not load community: '+(e&&e.message||e)); }finally{if(state.community===i)enterChatBottom();} });
     $$('[data-cc-channel]').forEach(b=>b.onclick=async()=>{ const community=state.community,channel=b.dataset.ccChannel; state.channel=channel; mobileChatOpen=true; mobileDrawerOpen=false; render(); enterChatBottom(); const rooms=saved(),room=rooms[community],noticeKey=roomIdentity(room)+':'+channel; try{if(room&&room.cord&&!hydratedRoomViews.has(roomIdentity(room)))await hydrateRoomStreams(p,community);else if(room&&room.protocol==='nip29'&&!room.nip29Hydrated)await hydrateNip29Room(p,community);roomLoadNotices.delete(noticeKey);}catch(e){roomLoadWarning(p,noticeKey,'could not refresh room history: ',e);} if(state.community===community&&state.channel===channel)enterChatBottom(); });
     $$('[data-cc-star]').forEach(b=>b.onclick=e=>{ if(e&&e.stopPropagation)e.stopPropagation(); const room=saved()[state.community],name=b.dataset.ccStar; if(!room||!name)return; setChannelStarred(room,name,!channelStarred(room,name)); render(); });
@@ -1225,7 +1255,7 @@
     close.publish=event=>(R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={render,backgroundRender,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,reactionSummary,notifyMentions,discoverInvites,decodeMembershipLists,mergeArmadaBundle,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
+  window.PCConcord={render,backgroundRender,wake,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,reactionSummary,notifyMentions,discoverInvites,decodeMembershipLists,mergeArmadaBundle,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */

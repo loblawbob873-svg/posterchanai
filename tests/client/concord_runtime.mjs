@@ -58,6 +58,14 @@ const relayFixtures=filters=>{
 };
 
 globalThis.window = globalThis;
+const concordEnvelopeCache=new Map();
+window.PCConcordCache={
+  MAX_ICON_BYTES:5*1024*1024,
+  async get(key){return concordEnvelopeCache.get(key)||[];},
+  async page(key,{limit}={}){const events=concordEnvelopeCache.get(key)||[];return{events:events.slice(-Number(limit||300))};},
+  async put(key,events){concordEnvelopeCache.set(key,[...(concordEnvelopeCache.get(key)||[]),...(events||[])]);},
+  async getIcon(){return null;},async putIcon(){},
+};
 /* Production loads webxdc.js immediately before concord.js. This harness isolates Concord, so
  * provide that preceding module's public topic seam rather than testing an impossible load order. */
 window.PCWebxdc={
@@ -102,8 +110,8 @@ window.PosterCord={
   openInvite:()=>({bundle:JOIN_BUNDLE,parsed:{linkSigner:'5'.repeat(64)}}),
 };
 window.PosterCordReader={
-  inspectControl:(_bundle,wraps)=>wraps.length
-    ? {name:'Joined Armada Room',description:'Loaded immediately',icon:'🛸',channels:[
+  inspectControl:(bundle,wraps)=>wraps.length
+    ? {name:'Joined Armada Room',description:'Loaded immediately',icon:bundle&&bundle.slowIcon||'🛸',channels:[
         {id:'joined-general',name:'general',private:false,streamPubkeys:['6'.repeat(64)]},
         {id:'joined-support',name:'support',private:false,streamPubkeys:['7'.repeat(64)]},
       ]}
@@ -232,6 +240,26 @@ const coldStored=JSON.parse(data.get('pc.concord.invites'))[0];
 if(!coldStored.iconPointer||String(coldStored.icon||'').startsWith('blob:'))
   throw new Error('community icon persisted an ephemeral blob instead of its encrypted pointer');
 data.delete('pc.concord.invites');
+
+// A remote encrypted community icon is decoration. Its fetch used to sit in applyControl's await
+// chain ahead of cachedEnvelopePage, so a slow/down icon host made a healthy cached room appear
+// empty for the full network timeout. Hold the icon response open and require cached history to
+// paint before it resolves.
+let releaseSlowIcon,slowIconStarted=false;
+const slowIconPointer={...iconPointer,url:'https://icons.example/intentionally-slow'};
+globalThis.fetch=async url=>String(url).includes('intentionally-slow')
+  ? (slowIconStarted=true,await new Promise(resolve=>{releaseSlowIcon=()=>resolve(new Response(iconCipher,{status:200}));}))
+  : new Response(iconCipher,{status:200});
+const slowRoom={communityId:'slow-room',naddr:'slow-room',name:'Slow icon room',channels:[{name:'general',id:'slow-general'}],cord:{bundle:{...JOIN_BUNDLE,slowIcon:slowIconPointer}}};
+data.set('pc.concord.invites',JSON.stringify([slowRoom]));
+concordEnvelopeCache.set(JSON.stringify(['slow-room','control']),[{id:'cached-control',kind:1059,created_at:1}]);
+concordEnvelopeCache.set(JSON.stringify(['slow-room','slow-general']),[{id:'cached-chat',kind:1059,created_at:2}]);
+const slowHydration=PCConcord.activateJoinedRoom(window.__PC,0,false,'slow-room');
+for(let i=0;i<20&&!feed.innerHTML.includes('joined history');i++)await new Promise(resolve=>setTimeout(resolve,5));
+if(!slowIconStarted||!feed.innerHTML.includes('joined history'))
+  throw new Error('cached Concord history waited for the encrypted community icon');
+releaseSlowIcon();await slowHydration;
+data.delete('pc.concord.invites');concordEnvelopeCache.clear();
 const legacyNonce=crypto.getRandomValues(new Uint8Array(12));
 const legacyCipher=await crypto.subtle.encrypt({name:'AES-GCM',iv:legacyNonce},iconCryptoKey,iconPlain);
 const legacyPointer={...iconPointer,nonce:hex(legacyNonce)};
@@ -356,8 +384,10 @@ control('cc-members').click();
 if(!control('cc-members-dialog').classList.removed.includes('hidden')) throw new Error('members control failed');
 await control('cc-notify').onclick();
 if(calls.notified!==1) throw new Error('notification control failed');
+const groupCallsBefore=calls.group;
 control('cc-call').click();
-if(!calls.toasts.some(x=>x.includes('No other community members'))) throw new Error('empty call state failed');
+if(calls.group===groupCallsBefore&&!calls.toasts.some(x=>x.includes('No other community members')))
+  throw new Error('call control neither called hydrated members nor reported an empty room');
 input.value='hello concord';
 let prevented=false;
 input.onkeydown({key:'Enter',ctrlKey:false,metaKey:false,preventDefault(){prevented=true;}});
