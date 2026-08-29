@@ -34,6 +34,27 @@ def test_installed_wm_gate_is_discovered_by_the_release_runner():
     assert job["registered"] is True
 
 
+def test_installed_foot_flicker_gate_is_a_serial_release_check():
+    jobs = {job["name"]: job for job in checkall.discover()}
+    job = jobs["check_installed_foot_flicker"]
+    assert job["serial"] is True
+    assert job["registered"] is True
+    gate = (ROOT / "scripts" / "check_installed_foot_flicker.py").read_text(encoding="utf-8")
+    for witness in ("sustained Codex Claude output", "focus-away", "resize-", "other-output",
+                    "grim", "blank/flat"):
+        assert witness in gate
+
+
+def test_installed_foot_gate_reports_non_sway_host_as_a_skip():
+    gate = ROOT / "scripts" / "check_installed_foot_flicker.py"
+    env = os.environ.copy()
+    env.pop("SWAYSOCK", None)
+    result = subprocess.run([sys.executable, str(gate)], cwd=ROOT, env=env,
+                            capture_output=True, text=True)
+    assert result.returncode == 2
+    assert "SKIP installed Foot flicker gate: SWAYSOCK is not available" in result.stdout
+
+
 def test_discoverable_gate_reports_missing_installed_artifact_as_a_skip(tmp_path):
     gate = ROOT / "scripts" / "check_installed_wm_release.py"
     env = {**os.environ, "PC_INSTALLED_ASAR": str(tmp_path / "missing.asar")}

@@ -256,6 +256,21 @@ server.listen(sock,async()=>{delete process.env.SWAYSOCK;delete process.env.I3SO
         self.assertEqual(geometry[0], "[con_id=11] floating enable, resize set 1256 696, "
                                      "move absolute position 1932 132")
 
+    def test_streaming_terminal_reconfigure_never_exposes_intermediate_geometry(self):
+        """The installed Foot pixel gate observes the result; this mock pins the command ordering.
+        Restore, resize and output handoff each have one compositor commit containing visibility,
+        floating state, final size and final position in that order."""
+        out = self.run_js("""
+          await wm.restore(11,100,50,800,600);
+          await wm.place(11,120,70,820,620);
+          await wm.placeOnOutput(11,{x:1920,y:120,width:1280,height:720},'right');
+        """)
+        cmds = [s["payload"] for s in out["seen"] if s["type"] == 0 and "con_id=11" in s["payload"]]
+        self.assertEqual(len(cmds), 3, cmds)
+        self.assertRegex(cmds[0], r"scratchpad show, floating enable, resize set 800 600, move absolute")
+        self.assertRegex(cmds[1], r"floating enable, resize set 820 620, move absolute position 120 70$")
+        self.assertRegex(cmds[2], r"floating enable, resize set 1256 696, move absolute position 1932 132$")
+
     def test_native_window_snaps_to_the_current_outputs_usable_half(self):
         out = self.run_js("out.ok = await wm.snap(11, 'right');")
         self.assertTrue(out["ok"])

@@ -141,10 +141,16 @@ CHECKS = {
                                               env={"PC_CHECK_PORT": "9223"}),
     "check_installed_native_files": dict(group="ui", secs=90, serial=True,
                                            env={"PC_CHECK_PORT": "9223"}),
+    # Reads Office workspace and Email attachment behavior from the immutable installed ASAR.
+    # The Python entry point delegates to the extraction/browser shell gate and makes it discoverable.
+    "check_installed_document_apps_release": dict(group="ui", secs=420, serial=True),
     # Extracts the immutable installed ASAR and runs the native-window ancestry, clipboard and
     # cross-output Alt+Tab simulators. Keep installed-artifact reads serial with the other installed
     # gates; the discoverable Python entry point delegates to check_installed_wm_package.sh.
     "check_installed_wm_release": dict(group="ui", secs=90, serial=True),
+    # Real Sway/Foot pixels under continuous output. It intentionally skips off PosterChanOS, and
+    # must run alone because it changes compositor focus/geometry for its disposable window.
+    "check_installed_foot_flicker": dict(group="ui", secs=120, serial=True),
     "check_sharelink":                 dict(group="ui", secs=420),
     "check_contacts_mobile":           dict(group="ui", secs=600),
     "check_vault_mobile":              dict(group="ui", secs=600),

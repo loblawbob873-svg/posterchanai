@@ -256,6 +256,21 @@ async function create(opts){
   const d=await virsh(['define',xf],30000); if(!d.ok){ await fs.promises.rm(dir,{recursive:true,force:true}); return d; }
   const s=await virsh(['start',name],30000); return s.ok?{ok:true,name}:s;
 }
+function launchViewer(command,args,start=spawn){
+  return new Promise(resolve=>{
+    let child,settled=false;
+    const finish=result=>{ if(settled) return; settled=true; resolve(result); };
+    const failed=error=>finish({ok:false,error:'Could not open VM display: '+String(error&&error.message||error)});
+    try{
+      child=start(command,args,{detached:true,stdio:'ignore'});
+      child.once('error',failed);
+      child.once('spawn',()=>{
+        try{ child.unref(); }catch(_){}
+        finish({ok:true});
+      });
+    }catch(error){ failed(error); }
+  });
+}
 async function view(name){
   name=cleanName(name); if(!name) return {ok:false,error:'invalid VM name'};
   const bin=['virt-viewer','remote-viewer'].find(b=>{ try{return fs.existsSync('/usr/bin/'+b);}catch(_){return false;} });
@@ -273,6 +288,9 @@ async function view(name){
   if(bin==='remote-viewer'){
     const d=await virsh(['domdisplay',name]); if(!d.ok) return d; args.push(...viewerArgs,d.out.trim());
   }
-  const p=spawn(bin,args,{detached:true,stdio:'ignore'}); p.unref(); return {ok:true};
+  /* Wait for Node's spawn acknowledgement.  Returning before it arrives makes an EACCES/ENOENT
+   * race look successful to the UI even though no display was opened.  Use the path we inspected
+   * above as well, rather than allowing a different PATH entry to win. */
+  return launchViewer('/usr/bin/'+bin,args);
 }
-module.exports={available,list,details,update,addDisk,changeIso,ejectIso,bootDisk,addNetwork,gamingMouse,create,action,remove,view,cleanName,successorInstaller};
+module.exports={available,list,details,update,addDisk,changeIso,ejectIso,bootDisk,addNetwork,gamingMouse,create,action,remove,view,launchViewer,cleanName,successorInstaller};

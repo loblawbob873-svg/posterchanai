@@ -18,6 +18,42 @@ class VmBackend(unittest.TestCase):
                         "v.cleanName('Windows 11'),v.cleanName('../../bad; reboot'),v.cleanName('')]))")
         self.assertEqual(json.loads(got), ["Windows-11", "bad-reboot", ""])
 
+    def test_viewer_launch_reports_real_spawn_result(self):
+        got = self.node(r"""
+const {EventEmitter}=require('events');
+const {launchViewer}=require('./desktop/vm');
+(async()=>{
+let invocation=null,unrefs=0;
+const success=await launchViewer('/usr/bin/virt-viewer',['--wait','Test VM'],(command,args,options)=>{
+  invocation={command,args,options};
+  const child=new EventEmitter();
+  child.unref=()=>{ unrefs++; };
+  queueMicrotask(()=>child.emit('spawn'));
+  return child;
+});
+const asyncFailure=await launchViewer('/usr/bin/virt-viewer',[],()=>{
+  const child=new EventEmitter();
+  child.unref=()=>{ unrefs++; };
+  queueMicrotask(()=>child.emit('error',new Error('permission denied')));
+  return child;
+});
+const syncFailure=await launchViewer('/usr/bin/virt-viewer',[],()=>{ throw new Error('not executable'); });
+console.log(JSON.stringify({success,asyncFailure,syncFailure,invocation,unrefs}));
+})();
+""")
+        result = json.loads(got)
+        self.assertEqual(result["success"], {"ok": True})
+        self.assertEqual(result["invocation"], {
+            "command": "/usr/bin/virt-viewer",
+            "args": ["--wait", "Test VM"],
+            "options": {"detached": True, "stdio": "ignore"},
+        })
+        self.assertEqual(result["unrefs"], 1)
+        self.assertFalse(result["asyncFailure"]["ok"])
+        self.assertIn("permission denied", result["asyncFailure"]["error"])
+        self.assertFalse(result["syncFailure"]["ok"])
+        self.assertIn("not executable", result["syncFailure"]["error"])
+
     def test_renderer_never_gets_a_command_string(self):
         src = (ROOT / "desktop" / "preload.js").read_text()
         self.assertIn("pc:vm:action", src)
