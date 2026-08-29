@@ -12,11 +12,12 @@
 
 [Unit]
 Description=Posterchan AI — HTTP proxy fronting Tor
-After=network.target posterchanai-tor.service
-Wants=posterchanai-tor.service
+After=network-online.target posterchanai-tor.service
+Wants=network-online.target posterchanai-tor.service
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
 User=YOUR_USER
 WorkingDirectory=/path/to/posterchanai
 Environment="PATH=/usr/local/bin:/usr/bin:/bin"

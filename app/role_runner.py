@@ -18,7 +18,9 @@ those same functions are still called from app/main.py exactly as before.
 from __future__ import annotations
 
 import logging
+import os
 import signal
+import socket
 import threading
 
 logger = logging.getLogger(__name__)
@@ -45,6 +47,23 @@ _ROLE_SERVICES = {
         ("ssh keeper", "app.services.ssh_keeper", "start_ssh_keeper", "stop_ssh_keeper"),
     ],
 }
+
+
+def _notify_ready() -> None:
+    """Tell a Type=notify unit that every role service passed its own startup readiness gate.
+
+    No systemd Python package is required. An abstract notify socket is spelled with ``@`` in the
+    environment and a leading NUL at the AF_UNIX layer. Outside systemd this is deliberately a
+    no-op, so direct role runs retain their existing behaviour.
+    """
+    address = os.environ.get("NOTIFY_SOCKET", "")
+    if not address:
+        return
+    if address.startswith("@"):
+        address = "\0" + address[1:]
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as notify:
+        notify.connect(address)
+        notify.sendall(b"READY=1")
 
 
 def _bootstrap_settings() -> None:
@@ -110,6 +129,21 @@ def run_role(role: str) -> int:
 
     if not started:
         logger.error("[role] nothing started for role %r — exiting so systemd restarts us", role)
+        return 1
+
+    # The proxy's start function returns only after its child owns the configured listener. Its
+    # Type=notify unit therefore cannot become active during the bind/readiness window, which made
+    # `enable --now` and boot both report success while :8118 was still absent.
+    try:
+        _notify_ready()
+    except OSError as e:
+        logger.error("[role] could not report startup readiness: %s", e, exc_info=True)
+        for _label, module, stop_fn in reversed(started):
+            try:
+                import importlib
+                getattr(importlib.import_module(module), stop_fn)()
+            except Exception:
+                pass
         return 1
 
     # Block. The supervisors run their own threads/subprocesses, so this process only has to stay

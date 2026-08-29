@@ -729,6 +729,11 @@ POSTERCHAN_PROFILE
 	# Wi-Fi is boot-critical. Enable it explicitly in the completed target rather than relying only
 	# on the earlier services loop, which may have been interrupted before finalization.
 	chroot "$TARGET" /bin/systemctl enable NetworkManager.service
+	# This desktop is launched by tty1's login profile, not a display manager. Pin the target that
+	# actually owns getty.target instead of inheriting default.target from the stage/build machine.
+	# A stale or host-specific default.target fails systemd's initial isolate before autologin, leaving
+	# a black/flickering boot even though every PosterChan file below is present and correct.
+	chroot "$TARGET" /bin/systemctl set-default multi-user.target || return 1
 	# This is a brand-new account tree, so its contents all belong to the account. Chowning only the
 	# `sway` child left ~/.config itself root:root 0755; Electron then could not create its userData
 	# directory and Chromium aborted with SIGTRAP before the first desktop window mapped.
@@ -747,6 +752,10 @@ POSTERCHAN_PROFILE
 	fi
 	if [ ! -e "$TARGET/etc/systemd/system/multi-user.target.wants/NetworkManager.service" ]; then
 		echo -e "\033[1;31mNetworkManager was not enabled in the installed system — refusing to report success.\033[0m"
+		return 1
+	fi
+	if [ "$(chroot "$TARGET" /bin/systemctl get-default 2>/dev/null)" != multi-user.target ]; then
+		echo -e "\033[1;31mThe installed system has no deterministic boot target — refusing to report success.\033[0m"
 		return 1
 	fi
 	if ! grep -q '^Theme=posterchanos$' "$TARGET/etc/plymouth/plymouthd.conf" 2>/dev/null; then

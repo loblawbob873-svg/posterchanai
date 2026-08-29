@@ -68,7 +68,7 @@ for r in "${UNITS[@]}"; do
         worker) desc="background worker (pollers/schedulers)";    after="posterchanai-relay.service" ;;
         media)  desc="streaming + TURN (mediamtx, pion-turn)";    after="network.target" ;;
         tor)    desc="Tor daemons (.onion + SOCKS egress)";       after="network.target" ;;
-        proxy)  desc="HTTP proxy fronting Tor";                   after="posterchanai-tor.service" ;;
+        proxy)  desc="HTTP proxy fronting Tor";                   after="network-online.target posterchanai-tor.service" ;;
         git)    desc="git host (GRASP git-over-nostr)";           after="network.target" ;;
         # The SSH terminal keeper. Split out for the OPPOSITE reason to everything else here: not
         # because restarting it is expensive, but because restarting the APP must not touch it. It
@@ -85,12 +85,13 @@ After=network.target $after
 # Ordering does not pull another unit into the transaction.  The proxy must start Tor as well when
 # an administrator starts/enables it directly, otherwise systemd can report an active :8118 role
 # whose configured SOCKS backend was never launched.
-$(if [ "$r" = proxy ]; then echo 'Wants=posterchanai-tor.service'; fi)
+$(if [ "$r" = proxy ]; then echo 'Wants=network-online.target posterchanai-tor.service'; fi)
 # Ordering only — systemd does not wait for READINESS. The processes keep their own
 # _wait_for_relay() loops, which are the actual gate.
 
 [Service]
-Type=simple
+Type=$(if [ "$r" = proxy ]; then echo notify; else echo simple; fi)
+$(if [ "$r" = proxy ]; then echo 'NotifyAccess=main'; fi)
 User=$USER_NAME
 WorkingDirectory=$REPO
 Environment=\"PATH=/usr/local/bin:/usr/bin:/bin\"

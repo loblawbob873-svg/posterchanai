@@ -400,8 +400,32 @@ class ProxyBootDefaults(unittest.TestCase):
         root = os.path.dirname(os.path.dirname(__file__))
         template = open(os.path.join(root, "posterchanai-proxy.service"), encoding="utf-8").read()
         installer = open(os.path.join(root, "scripts", "install_services.sh"), encoding="utf-8").read()
-        self.assertIn("Wants=posterchanai-tor.service", template)
-        self.assertIn("echo 'Wants=posterchanai-tor.service'", installer)
+        self.assertIn("Wants=network-online.target posterchanai-tor.service", template)
+        self.assertIn("echo 'Wants=network-online.target posterchanai-tor.service'", installer)
+
+    def test_proxy_waits_for_network_and_reports_only_listener_readiness(self):
+        root = os.path.dirname(os.path.dirname(__file__))
+        template = open(os.path.join(root, "posterchanai-proxy.service"), encoding="utf-8").read()
+        installer = open(os.path.join(root, "scripts", "install_services.sh"), encoding="utf-8").read()
+        self.assertIn("network-online.target", template)
+        self.assertIn("Type=notify", template)
+        self.assertIn("NotifyAccess=main", template)
+        self.assertIn('after="network-online.target posterchanai-tor.service"', installer)
+        self.assertIn('then echo notify', installer)
+        self.assertIn("echo 'NotifyAccess=main'", installer)
+
+    def test_role_notifies_systemd_after_service_start_readiness(self):
+        from app import role_runner
+
+        notify = mock.Mock()
+        context = mock.Mock()
+        context.__enter__ = mock.Mock(return_value=notify)
+        context.__exit__ = mock.Mock(return_value=False)
+        with mock.patch.dict(os.environ, {"NOTIFY_SOCKET": "@pc-proxy-ready"}), \
+             mock.patch.object(role_runner.socket, "socket", return_value=context):
+            role_runner._notify_ready()
+        notify.connect.assert_called_once_with("\0pc-proxy-ready")
+        notify.sendall.assert_called_once_with(b"READY=1")
 
     def test_proxy_readiness_rejects_a_child_that_exits_before_bind(self):
         from app.services import http_proxy_service as proxy

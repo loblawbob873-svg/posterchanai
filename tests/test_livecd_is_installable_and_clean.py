@@ -199,6 +199,17 @@ class TheBuilderShipsTheInstaller(unittest.TestCase):
             r'\s*chroot "\$TARGET" /usr/bin/bash /usr/bin/gentoo\.sh posterchan-shell',
         )
 
+    def test_installed_disk_pins_and_reads_back_the_getty_boot_target(self):
+        """The stage machine's default.target must not decide whether the installed disk reaches tty1."""
+        finalize = self.src[self.src.index("finalizeInstall() {"):
+                            self.src.index("\n}\n\ninstallPackages()", self.src.index("finalizeInstall() {"))]
+        set_default = 'systemctl set-default multi-user.target || return 1'
+        get_default = 'systemctl get-default 2>/dev/null)" != multi-user.target'
+        self.assertIn(set_default, finalize)
+        self.assertIn(get_default, finalize)
+        self.assertLess(finalize.index(set_default), finalize.index(get_default))
+        self.assertLess(finalize.index(get_default), finalize.index("Gentoo Installation Complete!"))
+
     def test_completed_live_install_returns_success_without_home(self):
         i = self.src.index("liveISOinstall() {")
         end = self.src.index("\n}\n\nbackupOS()", i)
