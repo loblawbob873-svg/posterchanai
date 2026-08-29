@@ -3103,6 +3103,13 @@
     if(!p) return _entityFromQuery();
     const seg = p.split('/');
     if(/^users$/i.test(seg[0]) && seg[1]) return { kind:'user', q: seg[1] };
+    /* `/r/<owner>/<repo-id>` — the READABLE address of a git repo, and the one people actually paste
+     * to each other. The owner segment is whatever a human can type: an npub, a hex pubkey, or a
+     * NIP-05 name this node granted (resolved server-side by the same rule). We only ever GENERATE
+     * the npub form — a profile's nip05 claim is unverified, so minting a link from one could point
+     * at whoever the node granted that name to instead of the repo's real owner. Accepting a typed
+     * name is safe; producing one is not. */
+    if(/^r$/i.test(seg[0]) && seg[1] && seg[2]) return { kind:'repo', owner: seg[1], repo: seg.slice(2).join('/') };
     /* Concord invite URLs are client routes too.  The # fragment never reaches the server, so keep
      * location.href here and hand it directly to Concord; treating the naddr as an ordinary entity
      * opens a kind-33301 event reader (or a 404 page) and loses the join action entirely. */
@@ -3124,6 +3131,12 @@
         const open=()=>{ if(window.PCConcord&&PCConcord.openInvite)PCConcord.openInvite(e.q,true); };
         if(window.PCConcord)open(); else _withModule('concord.js','PCConcord',open);
         return;
+      } else if(e.kind==='repo'){
+        let pk = safePk(e.owner);
+        if(!pk){ const name = e.owner.includes('@') ? e.owner : (e.owner + '@' + location.host);
+                 pk = await nip05Resolve(name.toLowerCase()); }
+        if(pk){ await openNaddr(pk, String(e.repo||''), 30617); return; }
+        toast('couldn’t work out whose repo that is');
       } else if(e.kind==='user'){
         let pk = safePk(e.q);
         if(!pk){ const name = e.q.includes('@') ? e.q : (e.q + '@' + location.host); pk = await nip05Resolve(name.toLowerCase()); }
@@ -9199,7 +9212,7 @@
       _mdUrl, _navUrl, _serverOrigin, _webLink, closeModal, copyValue, decorateProfiles, enc,
       attachMentionAutocomplete, imetaTagsFor, mdToHtml, mediaParts, mentionTags, modal, needProfile, openLightbox, openMenuPopover,
       openThread, profOf, publish, renderProfileView, requestBlossomAccess, sign, switchView,
-      timeAgo, toast, uiConfirm, uiPrompt, uploadBlob,
+      timeAgo, toast, uiConfirm, uiPrompt, uploadBlob, saveBlobAs, isNativeApp: _isNativeApp,
     }));
   }
   const repoCard     = (...a) => _git().repoCard(...a);
@@ -13598,7 +13611,7 @@
     return out + enc(s.slice(last));
   }
 
-  // 📸 Screenshot: render the post as a clean tweet-style CARD (just the post, like the Nitter cards)
+  // 📸 Screenshot: render the post as a clean tweet-style CARD (just the post)
   // server-side from the note's own fields — reliable + instance-branded, no live-SPA capture/timing.
   // The card PNG is uploaded to Blossom and its link copied (image-on-clipboard is unreliable after a
   // multi-second async op; a text link copies fine).
@@ -27236,7 +27249,7 @@
       blurb:'Paste a link — YouTube, TikTok, X, SoundCloud and friends.',
       ph:'https://www.youtube.com/watch?v=…', rows:1, kind:'url' },
     videodl: { go:'Download', cmd:'ytdl video', ic:'download', title:'Download a video',
-      blurb:'Paste a YouTube, X, TikTok or Nitter link. Trim or shrink it on the way down.',
+      blurb:'Paste a YouTube, X or TikTok link. Trim or shrink it on the way down.',
       ph:'https://www.youtube.com/watch?v=…', rows:1, kind:'url',
       // ytdl takes `clip <start> <end>` and `compress` as modifiers. They're worth surfacing for a
       // second reason: a PLAIN download is copied to server storage and only reported as a path,
@@ -29057,7 +29070,12 @@
     const url=isMagnet?text:um[0];
     const isTorrent=isMagnet || /\.torrent(\?|$)/i.test(url);
     const isYT=/(?:youtube\.com\/|youtu\.be\/)/i.test(url);
-    const isX=/\/\/[^/]*(?:x\.com|twitter\.com|nitter)/i.test(url);
+    /* An X post, or a mirror of one. `ytdl` rewrites a mirror link to x.com server-side
+     * (youtube_service._looks_like_nitter_host), so the buttons must appear for exactly the links
+     * that command can actually take — the alias list is mirrored here because it did NOT used to
+     * be, and a pasted xcancel.com link therefore showed the generic Summary/Screenshot row while
+     * `ytdl` would have downloaded it perfectly well. */
+    const isX=/\/\/[^/]*(?:x\.com|twitter\.com|nitter|xcancel\.com|twiiit\.com|lightbrd\.com)/i.test(url);
     let acts;   // [label, command, prefillOnly]
     if(isTorrent) acts=[['🧲 Add Torrent','torrents add '+url,0]];
     else if(isYT) acts=[['📋 Summary','yt '+url,0],['🎵 MP3','ytdl '+url,0],['🎬 Movie','ytdl video '+url,0],['✂️ Clip','ytdl video '+url+' clip 0:00 0:30',1],['📣 Post','post '+url,0]];
@@ -29988,7 +30006,6 @@
           <div id="us-tg-keybox" class="muted small"></div>
           <label class="fld">Notify me about <span class="muted small">(comma list: news,downloads,mentions,inbox)</span><input class="input" id="us-tg-notif" value="${enc(s.telegram_notifications||'')}"></label>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Relay notifications to Telegram<label class="switch"><input type="checkbox" id="us-social-notif" ${s.social_notif_enabled?'checked':''}><span class="slider"></span></label></label>
-          <label class="fld">Nitter feeds <span class="muted small">(one RSS URL per line)</span><textarea class="input" id="us-nitter" rows="4">${enc(s.nitter_feeds||'')}</textarea></label>
         </div>
         <div class="us-pane" data-pane="social">
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide fediverse posts in timelines<label class="switch"><input type="checkbox" id="set-hide-fedi" ${ClientSettings.get('hideFediBridge',true)?'checked':''}><span class="slider"></span></label></label>
@@ -30519,7 +30536,6 @@
                 fedi_bridge_enabled:_fc('#us-fedi-bridge'),
         fedi_crosspost_enabled:_fc('#us-fedi-crosspost'),
         pleroma_instance_url:_fv('#us-plr-url'),
-        nitter_feeds:($('#us-nitter')||{}).value||'',
         theme:($('#us-theme')&&$('#us-theme').value)||'cyberpunk',
         mail_accounts:usCollectMail() };
       const st=$('#us-save-status'); if(st) st.textContent='saving…';
@@ -31465,7 +31481,7 @@
       else if(/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)) tag=_media(u, 'video', 'm');
       else if(/\.(mp3|ogg|wav|m4a|aac|flac)(\?|#|$)/i.test(u)) tag=`<br><audio src="${u}" controls preload="none"></audio>`;
       // extensionless Blossom hash URLs (e.g. media.poster.place/<sha256>) — bots post these for
-      // nitter/fedi media. Try as an image; if it isn't one, swap to a plain link on error.
+      // fedi media. Try as an image; if it isn't one, swap to a plain link on error.
       else if(/\/[0-9a-f]{64}(\?|#|$)/i.test(u)) tag=_media(u, null, 'm', BLOBF);
       else tag=`<a href="${u}" target="_blank" rel="noopener" title="${u}">${_linkLabel(u)}</a>`;
       return _stash(tag)+tail;

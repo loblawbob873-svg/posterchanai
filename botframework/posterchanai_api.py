@@ -470,9 +470,8 @@ def render_post_card(handle, text, display_name="", timestamp="", media_bytes=No
     """Render a tweet-style post card on the backend (a screenshot of HTML built from
     these fields) and return (png_bytes, None) or (None, error_message).
 
-    Used by the Nitter poster so Pleroma gets an image of the post
-    instead of a bare link — link previews fail because Nitter's status pages are
-    empty. Tweet media and the author's profile picture are pre-fetched here and sent
+    Gives Pleroma an image of the post instead of a bare link, for sources whose pages
+    are empty. Post media and the author's profile picture are pre-fetched here and sent
     as bytes (the server does no outbound fetch). Mirrors capture_screenshot()'s shape.
     """
     api = f"{POSTERCHANAI_API_ENDPOINT}/api/media/render-post-card"

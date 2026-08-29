@@ -241,7 +241,7 @@ services:
       context: .
       args:
         GPU: nostr
-        INSTALL_BROWSER: "true"   # the `screenshot` command + nitter post-cards need headless Chrome,
+        INSTALL_BROWSER: "true"   # the `screenshot` command + post-cards need headless Chrome,
                                   # and both are available in the nostr-only client — so install it here
                                   # (adds ~Chrome to the image, but otherwise screenshots silently fail)
     environment:

@@ -14,7 +14,7 @@ DATABASE_URL = os.getenv("DATABASE_URL",
                          "postgresql+psycopg2://posterchan@127.0.0.1:5432/posterchan_relay")
 
 
-# Connection pool: the app's background schedulers/pollers (social/nitter/fedi/logs/relay)
+# Connection pool: the app's background schedulers/pollers (social/fedi/logs/relay)
 # each hold a session, and long GPU tasks hold one for minutes; 5+10 was far too small and
 # exhausted under normal load (slots stuck "idle in transaction" -> requests block -> instance
 # hangs). pool_timeout fails fast; idle_in_transaction_session_timeout lets PG reclaim a leaked txn.

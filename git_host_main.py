@@ -68,6 +68,8 @@ _MAX_BODY = 2 * 1024 * 1024 * 1024   # 2 GiB hard ceiling on a single request bo
 #   GET  /<owner>/<id>.git/log/<ref>[/<path>]         commit history JSON
 #   GET  /<owner>/<id>.git/refs                       branches + tags JSON
 #   GET  /<owner>/<id>.git/commit/<sha>               one commit + its diff JSON
+#   GET  /<owner>/<id>.git/archive/<ref>.tar.gz       the whole tree at <ref>, as a source tarball
+#   GET  /<owner>/<id>.git/paths/<ref>                every file path at <ref> (the file finder)
 # ...and ONE write route, authorized by a NIP-98 header from a repo MAINTAINER (never a password):
 #   POST /<owner>/<id>.git/edit                       commit a single file change (web editor)
 # Every browse/write route accepts `?ref=` to carry a ref whose name contains a slash
@@ -445,6 +447,24 @@ class _Handler(BaseHTTPRequestHandler):
             return self._serve_edit(owner_hex, repo_id)
         if method == "POST" and rest == "delete":
             return self._serve_delete(owner_hex, repo_id)
+        # PATHS: every file path at a ref, flat. This is the FILE FINDER's index, and it is a
+        # separate route from /tree on purpose: /tree labels each entry with the last commit that
+        # touched it, which is a history walk, and doing that for every file in a repository to
+        # answer a search box would be a wildly expensive way to fetch a list of names.
+        if method == "GET" and (rest == "paths" or rest.startswith("paths/")):
+            if not self._read_gate_ok(owner_hex, repo_id):
+                return self._deny(401, "authentication required (private repo)", auth=True)
+            return self._serve_paths(owner_hex, repo_id,
+                                     rest[6:] if rest.startswith("paths/") else "", parsed.query)
+        # ARCHIVE: the whole tree at a ref as one downloadable file — the "Download source" every
+        # forge has. Without it the only way to get a copy of a project you are looking at is to
+        # install git and clone it, which is a real wall for anybody who just wants the files.
+        # Read-gated like a clone (it IS a clone, flattened), and it costs the host no more than one:
+        # `git archive` streams, so nothing buffers a repo in Python.
+        if method == "GET" and rest.startswith("archive/"):
+            if not self._read_gate_ok(owner_hex, repo_id):
+                return self._deny(401, "authentication required (private repo)", auth=True)
+            return self._serve_archive(owner_hex, repo_id, rest[len("archive/"):], parsed.query)
         # TREE listing (Files browser):  GET /<owner>/<id>.git/tree/<ref>[/<subdir>]  ->  `git ls-tree`
         # JSON of the directory's entries. Read-gated like a clone.
         if method == "GET" and (rest == "tree" or rest.startswith("tree/")):
@@ -551,6 +571,7 @@ class _Handler(BaseHTTPRequestHandler):
             return self._deny(500, "read failed")
         try:
             self.send_response(200)
+            self._send_cors()   # every other response sends it; this one silently did not
             self.send_header("Content-Type", "application/octet-stream")
             self.send_header("Content-Length", str(size))
             self.send_header("Content-Disposition", 'attachment; filename="%s"' % safe)
@@ -570,6 +591,115 @@ class _Handler(BaseHTTPRequestHandler):
                 proc.stdout.close()
             except OSError:
                 pass
+            proc.wait()
+
+    # Archive formats we will produce, and the ONLY ones. `git archive` can be taught arbitrary
+    # formats through config; naming them here means a request can never select one the host has not
+    # been asked for. zip is offered because it is the format a phone and a Windows box both open.
+    _ARCHIVE_FORMATS = {
+        "tar.gz": ("tar.gz", "application/gzip"),
+        "tgz":    ("tar.gz", "application/gzip"),
+        "zip":    ("zip",    "application/zip"),
+    }
+
+    def _serve_archive(self, owner_hex: str, repo_id: str, spec: str, query: str = ""):
+        """`GET /<owner>/<id>.git/archive/<ref>.<ext>` -> the tree at <ref> as one streamed file.
+
+        The extension picks the format and is stripped to recover the ref, so `archive/master.tar.gz`
+        and `archive/v1.2.zip` both work. A ref containing a slash (refs/heads/feature/x) cannot be
+        spelled as one path segment, so `?ref=` overrides — the same escape hatch every browse route
+        here has.
+
+        Streamed CHUNKED because the size is unknowable without producing the whole thing first, and
+        producing it first would mean holding a repo in memory to save a header. There is no size cap
+        for the same reason a clone has none: this is the whole repository at one commit, and refusing
+        it at some arbitrary megabyte would only send people back to the clone that has no cap.
+        """
+        spec = (spec or "").strip("/")
+        fmt_key = ""
+        for ext in ("tar.gz", "tgz", "zip"):
+            if spec.lower().endswith("." + ext):
+                fmt_key = ext
+                spec = spec[: -(len(ext) + 1)]
+                break
+        if not fmt_key:
+            return self._deny(400, "archive format must be .tar.gz or .zip")
+        git_fmt, ctype = self._ARCHIVE_FORMATS[fmt_key]
+        ref = _pick_ref(spec, query)
+        if not _valid_ref(ref):
+            return self._deny(400, "bad ref")
+        repo_dir = ghs.repo_dir(owner_hex, repo_id)
+        if not repo_dir or not os.path.isdir(repo_dir):
+            return self._deny(404, "no such repo")
+        # Resolve the ref FIRST. `git archive` on a missing ref writes its complaint to stderr and
+        # exits nonzero having produced no bytes — after the 200 and the headers have gone out, which
+        # a browser saves as a zero-byte "download" with no error anywhere.
+        try:
+            rv = subprocess.run(["git", "--git-dir", repo_dir, "rev-parse", "--verify",
+                                 "%s^{commit}" % ref], capture_output=True, timeout=15)
+        except Exception:
+            return self._deny(500, "archive failed")
+        if rv.returncode != 0:
+            return self._deny(404, "no such ref")
+        safe_ref = re.sub(r"[^A-Za-z0-9._-]", "-", ref)[:60] or "HEAD"
+        safe_id = re.sub(r"[^A-Za-z0-9._-]", "-", repo_id)[:80] or "repo"
+        name = "%s-%s.%s" % (safe_id, safe_ref, fmt_key)
+        # The prefix is what makes the archive unpack into its own directory instead of spraying a
+        # repo across whatever the person was standing in.
+        prefix = "%s-%s/" % (safe_id, safe_ref)
+        try:
+            proc = subprocess.Popen(["git", "--git-dir", repo_dir, "archive",
+                                     "--format=%s" % git_fmt, "--prefix=%s" % prefix, ref],
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except Exception:
+            return self._deny(500, "archive failed")
+        try:
+            self.send_response(200)
+            self._send_cors()
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Disposition", 'attachment; filename="%s"' % name)
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+            while True:
+                data = proc.stdout.read(_CHUNK)
+                if not data:
+                    break
+                self.wfile.write(b"%X\r\n" % len(data) + data + b"\r\n")
+            # THE TERMINATOR IS A CLAIM THAT THE FILE IS COMPLETE, so it is only written when git
+            # says the file IS complete. The read loop above ends on EOF, and EOF is exactly what a
+            # `git archive` that was killed mid-stream looks like — an OOM, a disk error, a repo
+            # that goes away underneath it. Writing `0\r\n\r\n` regardless would frame a truncated
+            # tarball as a successful download: the same silent bad-download the pre-flight
+            # rev-parse above exists to prevent, just moved one stage later. On a nonzero exit the
+            # connection is dropped WITHOUT the terminator, so the client sees an incomplete chunked
+            # body and errors instead of saving a broken archive.
+            proc.stdout.close()
+            proc.wait()
+            if proc.returncode in (0, None):
+                self.wfile.write(b"0\r\n\r\n")
+            else:
+                err = b""
+                try:
+                    err = proc.stderr.read() or b""
+                except OSError:
+                    pass
+                log.warning("[git-host] archive rc=%s (truncated, connection dropped): %s",
+                            proc.returncode, err.decode("latin-1")[:300])
+                self.close_connection = True
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            try:
+                proc.stdout.close()
+            except OSError:
+                pass
+            try:
+                proc.stderr.close()
+            except OSError:
+                pass
+            if proc.poll() is None:
+                proc.kill()
             proc.wait()
 
     # Max commits walked to label a directory listing. A listing must stay cheap, and the entries a
@@ -791,6 +921,37 @@ class _Handler(BaseHTTPRequestHandler):
         commit["additions"] = sum(f["additions"] for f in out)
         commit["deletions"] = sum(f["deletions"] for f in out)
         return self._json_out(commit)
+
+    # How many paths one listing may carry. A file finder is only useful if it is instant, and a
+    # monorepo with a hundred thousand files would make the RESPONSE the slow part; past this the
+    # answer is honestly marked partial so the UI can say "narrow it down" rather than quietly
+    # searching a truncated list and reporting "no matches" about a file that is right there.
+    _PATHS_MAX = 20000
+
+    def _serve_paths(self, owner_hex: str, repo_id: str, refpath: str, query: str = ""):
+        """`GET /<owner>/<id>.git/paths/<ref>` -> {ref, paths:[...], truncated} — every file at a ref.
+
+        Names only: no sizes, no commits, no sorting beyond git's own. Everything this route leaves
+        out is something the file finder does not draw, and each of them costs a walk over history."""
+        ref = _pick_ref((refpath or "").strip("/"), query)
+        if not _valid_ref(ref):
+            return self._deny(400, "bad ref")
+        repo_dir = ghs.repo_dir(owner_hex, repo_id)
+        if not repo_dir or not os.path.isdir(repo_dir):
+            return self._deny(404, "no such repo")
+        try:
+            proc = subprocess.run(["git", "--git-dir", repo_dir, "ls-tree", "-r", "--name-only",
+                                   "-z", ref], capture_output=True, timeout=30)
+        except Exception:
+            return self._deny(500, "read failed")
+        if proc.returncode != 0:
+            return self._deny(404, "not found")
+        # -z, so a path containing a newline is one entry rather than two. Rare, and it would put a
+        # half-path in the finder that opens nothing.
+        paths = [p for p in (proc.stdout or b"").decode("utf-8", "ignore").split("\0") if p]
+        truncated = len(paths) > self._PATHS_MAX
+        return self._json_out({"ref": ref, "paths": paths[: self._PATHS_MAX],
+                               "count": len(paths), "truncated": truncated})
 
     def _serve_tree(self, owner_hex: str, repo_id: str, refpath: str, query: str = ""):
         """List a directory with `git ls-tree -l <ref> [<subdir>/]` -> JSON {ref, path, entries:[{name,

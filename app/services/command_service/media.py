@@ -87,19 +87,19 @@ Example: `yt https://youtube.com/watch?v=...`""",
         if not arg:
             return {
                 "type": "text",
-                "content": """## YouTube / X (Twitter) / Nitter Download
+                "content": """## YouTube / X (Twitter) Download
 
 **Usage:**
 - `ytdl <url>` - Download as MP3 to Music (default)
 - `ytdl mp3 <url>` - Download as MP3 to Music
 - `ytdl video <url>` - Download as video (MP4) to folder
 
-**Supported:** YouTube, X.com (Twitter), and Nitter links (any instance; resolved via X.com).
+**Supported:** YouTube and X.com (Twitter). A pasted Nitter-style mirror link (xcancel.com and
+friends) is rewritten to x.com, so those keep working too.
 
 **Examples:**
 - `ytdl https://youtube.com/watch?v=...` - Download as MP3
 - `ytdl video https://x.com/i/status/123...` - Download X video
-- `ytdl https://nitter.net/user/status/123...` - Download a Nitter post (as MP3)
 
 Files are saved to your Storage.""",
             }
@@ -147,7 +147,7 @@ Files are saved to your Storage.""",
 
         urls = extract_download_urls(url_arg)
         if not urls:
-            return {"type": "text", "content": "Could not find a valid YouTube, X (Twitter), or Nitter URL. Example: `ytdl https://x.com/i/status/123`, `ytdl https://nitter.net/user/status/123`, or `ytdl https://youtube.com/watch?v=...`"}
+            return {"type": "text", "content": "Could not find a valid YouTube or X (Twitter) URL. Example: `ytdl https://x.com/i/status/123` or `ytdl https://youtube.com/watch?v=...`"}
 
         target_url = urls[0]
 

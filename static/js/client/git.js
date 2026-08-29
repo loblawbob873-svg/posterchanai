@@ -36,7 +36,7 @@ window.PCGitFactory = function(dep){
     _mdUrl, _navUrl, _serverOrigin, _webLink, closeModal, copyValue, decorateProfiles, enc,
     attachMentionAutocomplete, imetaTagsFor, mdToHtml, mediaParts, mentionTags, modal, needProfile, openLightbox, openMenuPopover,
     openThread, profOf, publish, renderProfileView, requestBlossomAccess, sign, switchView,
-    timeAgo, toast, uiConfirm, uiPrompt, uploadBlob,
+    timeAgo, toast, uiConfirm, uiPrompt, uploadBlob, saveBlobAs, isNativeApp,
   } = dep;
 
   // ---------- git repos (NIP-34, kind 30617 repository announcements) ----------
@@ -325,7 +325,9 @@ window.PCGitFactory = function(dep){
       decorateProfiles();
       $$('.repo-card .name[data-prof]',feed).forEach(n=> n.onclick=ev=>{ ev.stopPropagation(); renderProfileView(n.dataset.prof); });
       $$('.repo-clone',feed).forEach(b=> b.onclick=ev=>{ ev.stopPropagation(); copyValue(b.dataset.clone, 'clone URL copied', 'Clone URL:'); });
-      $$('.repo-share',feed).forEach(b=> b.onclick=ev=>{ ev.stopPropagation(); copyValue(b.dataset.share, 'project link copied', 'Project link:'); });
+      $$('.repo-share',feed).forEach(b=> b.onclick=ev=>{ ev.stopPropagation();
+        const re=_repoEvents.get(b.dataset.id)||Store.get(b.dataset.id);
+        if(re) _repoShareMenu(b, re); else toast('this repository is no longer available — refresh Git'); });
       $$('.repo-card a[href]',feed).forEach(a=> a.onclick=ev=>ev.stopPropagation());   // ↗ Open must not also open the detail
       $$('.repo-star',feed).forEach(b=> b.onclick=async ev=>{ ev.stopPropagation();
         const e=Store.get(b.dataset.id); if(!e) return;
@@ -561,7 +563,7 @@ window.PCGitFactory = function(dep){
       <div class="repo-card-desc">${desc?enc(desc.slice(0,150)):'<span class="muted">git repository</span>'}</div>
       <div class="repo-card-by"><img class="repo-card-av" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'" data-prof="${e.pubkey}"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span>${
         _repoHostname(e)?`<span class="repo-host${_repoHostedHere(e)?' here':''}" title="${enc(_repoHostname(e))}">${enc(_repoHostname(e))}</span>`:''}</div>
-      <div class="repo-card-acts"><button class="btn btn-ghost small repo-star" data-id="${e.id}" title="${_starred(e)?'Unstar':'Star'}">${_starred(e)?'\u2b50':'\u2606'}</button>${clone.length?`<button class="btn btn-ghost small repo-clone" data-clone="${enc(clone[0])}">⧉ Clone</button>`:''}${share?`<button class="btn btn-ghost small repo-share" data-share="${enc(share)}" onclick="event.stopPropagation()"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Link</button>`:''}${_repoWebExternal(wurl)?`<a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Web</a>`:''}</div>
+      <div class="repo-card-acts"><button class="btn btn-ghost small repo-star" data-id="${e.id}" title="${_starred(e)?'Unstar':'Star'}">${_starred(e)?'\u2b50':'\u2606'}</button>${clone.length?`<button class="btn btn-ghost small repo-clone" data-clone="${enc(clone[0])}">⧉ Clone</button>`:''}${share?`<button class="btn btn-ghost small repo-share" data-id="${enc(e.id)}" onclick="event.stopPropagation()"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Link</button>`:''}${_repoWebExternal(wurl)?`<a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Web</a>`:''}</div>
     </article>`;
   }
   // ---------- NIP-34 repo detail (README + issues + patches) ----------
@@ -579,7 +581,61 @@ window.PCGitFactory = function(dep){
       return NT().nip19.naddrEncode({identifier:_repoTag(e,'d'), pubkey:e.pubkey, kind:30617, relays}); }
     catch(_){ return ''; }
   }
-  function _repoShareUrl(e){ const n=_repoNaddr(e); return n?_webLink(n):''; }
+  /* THE LINK PEOPLE HAND EACH OTHER: `<instance>/r/<npub>/<repo-id>`.
+   *
+   * It used to be `<instance>/<naddr1…>` — a correct Nostr coordinate and a 200-character blob that
+   * nobody can read, retype, dictate, or recognise in a chat log as "that project". The readable form
+   * names the owner and the repo, so the link is legible before it is clicked and the server can build
+   * a real preview card for it (see app/main.py:git_repo_page).
+   *
+   * ALWAYS the npub, never a NIP-05 name: a name is unverified in a profile, and a link minted from a
+   * spoofed one would resolve to whoever the *node* granted that name to — a different person's repo.
+   * The server accepts a typed name because a human typing one meant it; we never generate one.
+   *
+   * Falls back to the naddr link if the pubkey can't be encoded, so this never returns nothing. */
+  function _repoPath(e){
+    /* The `d` tag VERBATIM, never folded. openNaddr matches `#d` byte-for-byte and NIP-34 does not
+     * say an identifier is lowercase — only OUR host sanitises the ids it mints. Lowercasing here
+     * made a repo announced as `MyApp` push a URL that its own Back press and its own Share link
+     * could not resolve ("referenced post not found on the relay"), which the naddr form it replaced
+     * never did. Our own repos are lowercase already, so this costs nothing and fixes foreign ones. */
+    const d=_repoTag(e,'d'); if(!d) return '';
+    try{ return '/r/'+NT().nip19.npubEncode(e.pubkey)+'/'+encodeURIComponent(d); }
+    catch(_){ return ''; }
+  }
+  function _repoShareUrl(e){
+    /* NO INSTANCE, NO WEB LINK. The desktop/APK bundle can run with no PosterChan server at all
+     * (relays and a key), and there `_serverOrigin()` is '' — so building the page URL anyway yields
+     * a bare `/r/npub…/x`, a path relative to a bundle that has no router. That is a link that
+     * cannot work anywhere, handed out by the button whose entire job is to produce one that does.
+     * A `nostr:` naddr is the right answer there: it is the address of the repo itself, and every
+     * Nostr client (including this one, on any instance) can open it. */
+    const org=_serverOrigin();
+    const p=_repoPath(e);
+    if(org && p) return org+p;
+    const n=_repoNaddr(e);
+    if(!n) return '';
+    return org ? _webLink(n) : ('nostr:'+n);
+  }
+  /* Everything one repo can be shared AS, in one menu — because "share this project" means three
+   * different things to three different people and the header had room for one button. A person gets
+   * the readable page, a developer gets the clone URL, and another Nostr client gets the coordinate. */
+  function _repoShareMenu(btn, e){
+    const share=_repoShareUrl(e);
+    const clone=((e.tags.find(t=>t[0]==='clone')||[]).slice(1).filter(Boolean))[0]||'';
+    const naddr=_repoNaddr(e);
+    const items=[];
+    if(share) items.push(['page', share.indexOf('nostr:')===0 ? 'Nostr link — for any Nostr client'
+                                                             : 'Project link — for people']);
+    if(clone) items.push(['clone','Clone URL — for git']);
+    if(naddr && share.indexOf('nostr:')!==0) items.push(['naddr','Nostr address — for other clients']);
+    if(!items.length){ toast('nothing to share yet — this repo has no address'); return; }
+    openMenuPopover(btn, items, m=>{
+      if(m==='page')  copyValue(share, 'project link copied — share it anywhere', 'Project link:');
+      if(m==='clone') copyValue(clone, 'clone URL copied', 'Clone URL:');
+      if(m==='naddr') copyValue('nostr:'+naddr, 'nostr address copied', 'Nostr address:');
+    });
+  }
   // Everyone responsible for a repo: its 30617 author plus the `maintainers` tag — NIP-34 puts them as
   // extra VALUES on one tag (["maintainers", pk, pk, …]), not one tag each, which is why this slices.
   function _repoPeople(e){
@@ -588,6 +644,24 @@ window.PCGitFactory = function(dep){
     add(e&&e.pubkey);
     ((e&&e.tags)||[]).filter(t=>t[0]==='maintainers').forEach(t=>t.slice(1).forEach(add));
     return out;
+  }
+  /* THE PEOPLE WHO CAN PUSH, as faces. `_repoPeople` (owner ∪ `maintainers`) was already computed
+   * for the status ACL and drawn nowhere, so a repo with three maintainers looked exactly like a
+   * repo with one — and "who else is behind this project" is one of the first things anybody wants
+   * from a page they were sent a link to. The OWNER is already named beside this, so only the
+   * co-maintainers are drawn; an empty set renders nothing rather than an empty box. */
+  function _maintainerStrip(e){
+    const others=_repoPeople(e).filter(pk=>pk!==e.pubkey);
+    if(!others.length) return '';
+    const shown=others.slice(0,6);
+    shown.forEach(needProfile);
+    const faces=shown.map(pk=>{
+      const pr=profOf(pk);
+      return `<img class="rv-maint-av" data-prof="${pk}" src="${enc(pr.picture||S.LOGO)}"
+        onerror="this.src='${S.LOGO}'" title="${enc(pr.name||pr.display_name||'a maintainer')}">`;
+    }).join('');
+    const more=others.length>shown.length?`<span class="muted small">+${others.length-shown.length}</span>`:'';
+    return `<span class="rv-maints"><span class="muted small">with</span>${faces}${more}</span>`;
   }
   // True only when a repo's `web` tag is a REAL external forge (GitHub/Gitea/…), not our own origin —
   // "Web" on poster.place/client just reopens the generic app, so we hide it there in favour of Share.
@@ -662,7 +736,7 @@ window.PCGitFactory = function(dep){
     // Put the repo in history. It was never a history entry, so Back from an issue popped straight PAST
     // it to whatever came before — the "no way back from an issue" dead end. The naddr doubles as the
     // shareable/reloadable URL: routeFromPath → openNaddr already routes a 30617 back to openRepo.
-    { const n=_repoNaddr(e); if(n) _navUrl('/'+n); }
+    { const u=_repoPath(e)||(_repoNaddr(e)?'/'+_repoNaddr(e):''); if(u) _navUrl(u); }
     S.VIEW='repo'; _clearNav(); _gitKbBind(); $('#view-title').textContent='Repo';
     const feed=$('#feed'); const p=profOf(e.pubkey); needProfile(e.pubkey);
     const name=_repoTag(e,'name')||_repoTag(e,'d')||'(unnamed repo)';
@@ -689,7 +763,7 @@ window.PCGitFactory = function(dep){
           <img class="rv-avatar" src="${enc(p.picture||S.LOGO)}" onerror="this.src='${S.LOGO}'" data-prof="${e.pubkey}">
           <div class="rv-headmain">
             <h1 class="rv-title"><svg class="ic h-ic" aria-hidden="true"><use href="#i-git"></use></svg>${enc(name)}</h1>
-            <div class="rv-by"><span class="muted small">maintained by</span> <span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span></div>
+            <div class="rv-by"><span class="muted small">maintained by</span> <span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span>${_maintainerStrip(e)}</div>
           </div>
         </div>
         ${desc?`<div class="rv-desc">${enc(desc)}</div>`:''}
@@ -698,15 +772,16 @@ window.PCGitFactory = function(dep){
           <code class="rv-clone-url">${enc(cloneUrl)}</code>
           <div class="rv-acts">
             <button class="btn btn-neon small repo-clone" data-clone="${enc(cloneUrl)}" title="Copy clone URL">⧉ Copy</button>
-            ${shareUrl?`<button class="btn btn-ghost small rv-share" data-share="${enc(shareUrl)}" title="Copy a shareable link to this project"><svg class="ic b-ic" aria-hidden="true"><use href="#i-share"></use></svg>Share</button>`:''}
+            ${shareUrl?`<button class="btn btn-ghost small rv-share" title="Copy a shareable link to this project"><svg class="ic b-ic" aria-hidden="true"><use href="#i-share"></use></svg>Share</button>`:''}
             ${_repoWebExternal(wurl)?`<a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Web</a>`:''}
             ${isOwner?`<button class="btn btn-ghost small rv-edit" title="Edit this repository’s name and description (owner only)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>Edit</button>`:''}
             ${isOwner?`<button class="btn btn-ghost small rv-delete" title="Delete this repository (owner only)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>`:''}
           </div>
-        </div>`:`<div class="rv-clone"><div class="rv-acts">${shareUrl?`<button class="btn btn-neon small rv-share" data-share="${enc(shareUrl)}" title="Copy a shareable link to this project"><svg class="ic b-ic" aria-hidden="true"><use href="#i-share"></use></svg>Share</button>`:''}${_repoWebExternal(wurl)?`<a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Open web</a>`:''}${isOwner?`<button class="btn btn-ghost small rv-edit" title="Edit this repository’s name and description (owner only)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>Edit</button>`:''}${isOwner?`<button class="btn btn-ghost small rv-delete" title="Delete this repository (owner only)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>`:''}</div></div>`}
+        </div>`:`<div class="rv-clone"><div class="rv-acts">${shareUrl?`<button class="btn btn-neon small rv-share" title="Copy a shareable link to this project"><svg class="ic b-ic" aria-hidden="true"><use href="#i-share"></use></svg>Share</button>`:''}${_repoWebExternal(wurl)?`<a class="btn btn-ghost small" href="${enc(wurl)}" target="_blank" rel="noopener"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Open web</a>`:''}${isOwner?`<button class="btn btn-ghost small rv-edit" title="Edit this repository’s name and description (owner only)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>Edit</button>`:''}${isOwner?`<button class="btn btn-ghost small rv-delete" title="Delete this repository (owner only)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>`:''}</div></div>`}
         ${isGrasp?`<div class="rv-refbar">
           <button class="btn btn-ghost small rv-refbtn" id="rv-refpick" title="Switch branch or tag"><svg class="ic b-ic" aria-hidden="true"><use href="#i-branch"></use></svg><span id="rv-refname">default</span> ▾</button>
           <span class="muted small" id="rv-refnote"></span>
+          <button class="btn btn-ghost small rv-dlsrc" id="rv-dlsrc" title="Download this branch or tag as one file"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Source</button>
         </div>`:''}
       </div>
       <div class="rv-tabs" role="tablist">
@@ -740,7 +815,7 @@ window.PCGitFactory = function(dep){
     $('#repo-back',feed).onclick=()=>switchView('repos');
     $$('[data-prof]',feed).forEach(el=> el.onclick=ev=>{ ev.stopPropagation(); renderProfileView(el.dataset.prof); });
     { const cb=$('.repo-clone',feed); if(cb) cb.onclick=()=> copyValue(cb.dataset.clone, 'clone URL copied', 'Clone URL:'); }
-    { const sb=$('.rv-share',feed); if(sb) sb.onclick=()=> copyValue(sb.dataset.share, 'project link copied — share it anywhere', 'Project link:'); }
+    { const sb=$('.rv-share',feed); if(sb) sb.onclick=()=> _repoShareMenu(sb, e); }
     { const eb=$('.rv-edit',feed); if(eb) eb.onclick=()=>publishRepo(e); }
     { const xb=$('.rv-delete',feed); if(xb) xb.onclick=()=>deleteRepo(e); }
     { const ni=$('#rv-newissue',feed); if(ni) ni.onclick=()=>newRepoIssue(e); }
@@ -760,6 +835,48 @@ window.PCGitFactory = function(dep){
     if(opts && opts.restore && _naddr && _rvTab[_naddr] && _rvTab[_naddr]!=='readme'){
       const tb=$(`.rv-tab[data-tab="${_rvTab[_naddr]}"]`, feed); if(tb) tb.click();
     }
+    /* DOWNLOAD SOURCE — TWO PATHS, because the two shells save files in incompatible ways and only
+     * one of them can stream.
+     *
+     * WEB: navigate to the streaming endpoint. The archive of a real repository is tens or hundreds
+     * of megabytes and the browser writes it straight to disk; pulling it into JS to re-offer it
+     * would hold the whole thing in the tab for no gain.
+     *
+     * NATIVE (the APK): that navigation does NOTHING and throws nothing — the WebView registers no
+     * DownloadListener, so a click that looks like it worked saves no file (the same trap as a bare
+     * `<a download>`; see saveBlobAs in app.js). There the bytes have to come through JS and out via
+     * the share sheet, which does mean holding them, so the wait is announced and the button says
+     * SHARED rather than claiming a save the person has not made yet. */
+    { const db=$('#rv-dlsrc',feed); if(db) db.onclick=()=>{
+        if(!_rv) return;
+        openMenuPopover(db, [['tar.gz','.tar.gz — Linux / macOS'],['zip','.zip — Windows / phone']], async f=>{
+          const u=_rvUrl('archive',{fmt:f});
+          const nm=(_repoTag(e,'d')||'repo')+'-'+((_rv.refName||_rv.ref||'HEAD').replace(/[^A-Za-z0-9._-]/g,'-'))+'.'+f;
+          /* innerHTML, not textContent: the label is an inline <svg> plus a word, so reading the
+           * text captured "Source" alone and writing it back left a button with no icon for the
+           * life of the view — including on SUCCESS, which never restored anything at all. */
+          const was=db.innerHTML;
+          const done=(txt)=>{ db.innerHTML=enc(txt); setTimeout(()=>{ if(db.isConnected) db.innerHTML=was; }, 4000); };
+          if(!isNativeApp || !isNativeApp()){
+            /* target=_blank, NOT a same-tab navigation. On success the endpoint's
+             * Content-Disposition: attachment keeps the page put — but on `no such ref`, a dead
+             * host or a proxy 502 the answer is JSON with no disposition, and a same-tab click
+             * REPLACED the whole app with `{"ok":false,…}`, losing the reader's place in a repo. */
+            toast('preparing the archive — the download starts when it\u2019s ready');
+            try{ const a=document.createElement('a'); a.href=u; a.target='_blank'; a.rel='noopener';
+                 document.body.appendChild(a); a.click(); a.remove(); }
+            catch(_){ window.open(u, '_blank', 'noopener'); }
+            return;
+          }
+          db.disabled=true; db.innerHTML=enc('packing…');
+          try{
+            const r=await fetch(u); if(!r.ok) throw new Error('HTTP '+r.status);
+            const how=await saveBlobAs(await r.blob(), nm);
+            done(how==='shared' ? '✓ shared' : '✓ saved');
+          }catch(err){ toast('couldn’t download the source: '+((err&&err.message)||err)); db.innerHTML=was; }
+          finally{ db.disabled=false; }
+        });
+      }; }
     if(isGrasp) _rvLoadRefs(feed);
     // README — best-effort forge fetch; the server renders nothing, we render its markdown safely.
     (async()=>{
@@ -1104,6 +1221,100 @@ window.PCGitFactory = function(dep){
     $('#cmv-copy',box).onclick=()=> copyValue(j.sha||sha, 'commit sha copied', 'Commit:');
   }
   // ---------- Files browser (self-hosted GRASP repos) ----------
+  /* THE FILE FINDER — the one thing that makes a big repository browsable instead of merely
+   * navigable. Clicking down five directories to reach a file whose name you already know is the
+   * default experience of every tree view, and it is the reason GitHub bound this to a single key.
+   *
+   * The path index is fetched ONCE per (repo, ref) and cached: it is names only (see /git/paths),
+   * so it is small, and re-fetching it per keystroke would make the box slower the more it is used.
+   * A ref change invalidates it, because the file list at a tag is not the file list at a branch.
+   *
+   * Matching is subsequence-free on purpose — plain "every space-separated term appears in the
+   * path", case-insensitively — the same rule the repo search box above uses. A fuzzy matcher looks
+   * clever and then ranks `src/a.py` above `a.py` for the query "a.py"; this one cannot surprise
+   * anybody, and the shortest path wins ties, which is almost always the file that was meant. */
+  let _fbPaths=null;      // {key, list} — key is repo+ref, so a branch switch drops it
+  function _fbPathKey(){ return _rv ? (_rv.cloneUrl+'@'+_rv.ref) : ''; }
+  async function _fbLoadPaths(){
+    const key=_fbPathKey(); if(!key) return null;
+    if(_fbPaths && _fbPaths.key===key) return _fbPaths;
+    const j=await _rvJson('paths');
+    if(!j || !j.ok || !Array.isArray(j.paths)) return null;
+    if(_fbPathKey()!==key) return null;                 // the ref moved while we were asking
+    _fbPaths={ key, list:j.paths, truncated:!!j.truncated, count:j.count||j.paths.length };
+    return _fbPaths;
+  }
+  function _fbMatch(list, q){
+    const terms=q.toLowerCase().split(/\s+/).filter(Boolean);
+    if(!terms.length) return [];
+    const out=[];
+    for(const p of list){
+      const lp=p.toLowerCase();
+      let ok=true;
+      for(const t of terms){ if(lp.indexOf(t)<0){ ok=false; break; } }
+      if(ok){ out.push(p); if(out.length>2000) break; }   // ranking a whole monorepo helps nobody
+    }
+    // Shortest path first: for "readme" that puts README.md above docs/legacy/README.md.
+    out.sort((a,b)=> a.length-b.length || (a<b?-1:1));
+    return out.slice(0,60);
+  }
+  function _wireFileFinder(feed, box){
+    const inp=$('#fb-find',box), out=$('#fb-findout',box), list=$('.fb-list',box);
+    if(!inp || !out) return;
+    let t=null, sel=0, hits=[];
+    const hide=()=>{ out.hidden=true; out.innerHTML=''; if(list) list.hidden=false; hits=[]; sel=0; };
+    const paint=()=>{
+      if(!hits.length){
+        out.innerHTML=`<div class="muted small" style="padding:12px 4px">No file matches that.</div>`;
+        return;
+      }
+      out.innerHTML=hits.map((p,i)=>{
+        const dir=p.slice(0,p.lastIndexOf('/')+1), base=p.slice(p.lastIndexOf('/')+1);
+        return `<div class="fb-hit${i===sel?' on':''}" data-p="${enc(p)}" data-i="${i}">
+          <span class="fb-ico">📄</span><span class="fb-hitname">${enc(base)}</span><span class="fb-hitdir">${enc(dir)}</span></div>`;
+      }).join('');
+      $$('.fb-hit',out).forEach(h=> h.onclick=()=>_openFound(h.dataset.p));
+    };
+    const _openFound=async p=>{
+      // Land in the file's OWN directory, then open it — so ← up the breadcrumbs goes where the
+      // file lives rather than back to wherever the search started.
+      const dir=p.slice(0, p.lastIndexOf('/'));
+      await _loadRepoFiles(feed, dir);
+      const b2=$('#rv-files',feed); if(b2) _viewRepoFile(feed, p);
+    };
+    inp.oninput=()=>{
+      const q=inp.value.trim();
+      if(t) clearTimeout(t);
+      if(!q){ hide(); return; }
+      t=setTimeout(async()=>{
+        const idx=await _fbLoadPaths();
+        /* RE-READ THE BOX AFTER THE AWAIT. Clearing it cancels the pending timer, but a timer that
+         * already fired is sitting in this await — and it resumed, matched an empty query to zero
+         * hits, and still hid the file list behind "No file matches that." with an empty search box
+         * above it. The directory listing then stayed gone until the reader navigated away. */
+        const q2=inp.value.trim();
+        if(!q2){ hide(); return; }
+        if(!idx){ out.hidden=false; if(list) list.hidden=true;
+          out.innerHTML=`<div class="muted small" style="padding:12px 4px">Couldn’t read this repo’s file list.</div>`; return; }
+        hits=_fbMatch(idx.list, q2); sel=0;
+        out.hidden=false; if(list) list.hidden=true;
+        paint();
+        if(idx.truncated){
+          const n=document.createElement('div'); n.className='muted small'; n.style.padding='8px 4px';
+          n.textContent='searching the first '+idx.list.length.toLocaleString()+' of '+idx.count.toLocaleString()+' files — add another word to narrow it';
+          out.appendChild(n);
+        }
+      }, 90);
+    };
+    inp.onkeydown=ev=>{
+      if(ev.key==='Escape'){ inp.value=''; hide(); inp.blur(); return; }
+      if(!hits.length) return;
+      if(ev.key==='ArrowDown'||ev.key==='ArrowUp'){
+        ev.preventDefault(); sel=(sel+(ev.key==='ArrowDown'?1:hits.length-1))%hits.length; paint();
+        const el=$(`.fb-hit[data-i="${sel}"]`,out); if(el) el.scrollIntoView({block:'nearest'});
+      } else if(ev.key==='Enter'){ ev.preventDefault(); _openFound(hits[sel]); }
+    };
+  }
   async function _loadRepoFiles(feed, path){
     const box=$('#rv-files',feed); if(!box || !_rv) return;
     _rv.path=path||'';
@@ -1132,8 +1343,11 @@ window.PCGitFactory = function(dep){
       <span class="fb-hmsg">${enc(h.subject||'')}</span>
       <span class="fb-hby">${enc(h.author||'')}</span>
       <span class="fb-hwhen" title="${enc(new Date((h.at||0)*1000).toLocaleString())}">${enc(h.at?timeAgo(h.at):'')}</span></div>`:'';
-    const tools = _rvMayEdit()
-      ? `<div class="fb-tools"><button class="btn btn-ghost small" id="fb-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New file</button></div>` : '';
+    const tools = `<div class="fb-tools">
+      <input class="input fb-find" id="fb-find" type="search" autocomplete="off" spellcheck="false"
+             placeholder="🔍 Find a file — type any part of its path">
+      ${_rvMayEdit()?`<button class="btn btn-ghost small" id="fb-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New file</button>`:''}
+    </div><div class="fb-findout" id="fb-findout" hidden></div>`;
     box.innerHTML=`<div class="fb-crumbs">${crumbs}</div>${tools}${headBar}<div class="fb-list">${rows||'<div class="muted small" style="padding:14px">empty directory</div>'}</div><div id="rv-fileview"></div>`;
     $$('.fb-crumb',box).forEach(a=>{
       a.onclick=()=>_loadRepoFiles(feed,a.dataset.p);
@@ -1143,6 +1357,7 @@ window.PCGitFactory = function(dep){
       if(r.dataset.type==='tree') _loadRepoFiles(feed,r.dataset.path);
       else _viewRepoFile(feed,r.dataset.path);
     });
+    _wireFileFinder(feed, box);
     { const nb=$('#fb-new',box); if(nb) nb.onclick=async()=>{
         const dir=(path||'');
         const name=await uiPrompt('New file path', {value:dir?dir+'/':'', placeholder:'docs/notes.md'});
@@ -1151,6 +1366,32 @@ window.PCGitFactory = function(dep){
         if(!p){ toast('a path is required'); return; }
         _editRepoFile(feed, p, '', {isNew:true});
       }; }
+  }
+  /* A SOURCE FILE, RENDERED THE WAY A SOURCE FILE IS READ: numbered lines and coloured tokens.
+   *
+   * The highlighter is `window.PCCodeHL` — the SAME pure, node-tested one the Code editor uses
+   * (code.js), not a second copy and not a library. Two consequences worth stating: a language it
+   * cannot do returns escaped plain text rather than nothing, and its own size ceiling (HL_MAX)
+   * applies here for the reason it applies there — one regex pass over a very large file is a
+   * visible freeze, and plain text that appears instantly beats colour that arrives late.
+   *
+   * The gutter is a SIBLING column, never `::before` counters on each line: a counter is unselectable
+   * in some browsers and copied as text in others, and "select the code, paste it, and every line
+   * begins with its number" is the failure people actually hit. This way a copy takes the code alone.
+   */
+  function _codeBlock(text, name){
+    const HL=window.PCCodeHL;
+    const lines=String(text||'').split('\n');
+    if(lines.length && lines[lines.length-1]==='') lines.pop();   // a trailing \n is a terminator, not a line
+    const nums=lines.map((_,i)=>i+1).join('\n');
+    let body;
+    if(HL && text.length<=HL.HL_MAX){
+      try{ body=HL.highlight(String(text||''), HL.langOf(name)); }
+      catch(_){ body=enc(String(text||'')); }
+    } else body=enc(String(text||''));
+    const note=(HL && text.length>HL.HL_MAX)
+      ? `<div class="fb-hlnote muted small">${_fmtBytes(text.length)} — shown without colouring so it opens instantly</div>` : '';
+    return `${note}<div class="fb-codewrap"><pre class="fb-gutter" aria-hidden="true">${nums}</pre><pre class="fb-code pcc-hl">${body}</pre></div>`;
   }
   // ---------- One file: view / download / edit / history ----------
   async function _viewRepoFile(feed, path){
@@ -1164,6 +1405,7 @@ window.PCGitFactory = function(dep){
     // its own save flow — fetching the bytes into JS just to re-offer them would break on big files.
     const dl=_rvUrl('download',{path});
     const acts=`<span class="fb-fvacts">
+        <a class="btn btn-ghost small" href="${enc(_rvUrl('raw',{path}))}" target="_blank" rel="noopener" title="This file's raw bytes at a plain URL — quotable, curl-able, linkable"><svg class="ic b-ic" aria-hidden="true"><use href="#i-link"></use></svg>Raw</a>
         <a class="btn btn-ghost small" href="${enc(dl)}" download="${enc(name)}" title="Download this file"><svg class="ic b-ic" aria-hidden="true"><use href="#i-download"></use></svg>Download</a>
         <button class="btn btn-ghost small" id="fv-hist" title="Commits that touched this file"><svg class="ic b-ic" aria-hidden="true"><use href="#i-clock"></use></svg>History</button>
         ${(_rvMayEdit() && !j.binary)?`<button class="btn btn-neon small" id="fv-edit"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>Edit</button>`:''}
@@ -1174,7 +1416,7 @@ window.PCGitFactory = function(dep){
       fv.innerHTML=`<div class="fb-fileview">${hd}<div class="muted small" style="padding:14px">Binary file · ${_fmtBytes(j.size||0)} — download it or clone the repo to inspect it.</div></div>`;
     }else{
       const isMd=/\.(md|markdown)$/i.test(name);
-      const body=isMd?`<div class="markdown">${mdToHtml(j.text||'')}</div>`:`<pre class="fb-code">${enc(j.text||'')}</pre>`;
+      const body=isMd?`<div class="markdown">${mdToHtml(j.text||'')}</div>`:_codeBlock(j.text||'', name);
       fv.innerHTML=`<div class="fb-fileview">${hd}${body}</div>`;
       if(isMd) fv.querySelectorAll('img').forEach(im=> im.onclick=()=>openLightbox(im.currentSrc||im.src));
     }

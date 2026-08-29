@@ -15,7 +15,7 @@ A **bot** is one long-running listener (or a scheduled image poster) on one fedi
 
 - **Platforms:** Pleroma/Mastodon, Nostr.
 - **Types:** **text** (continuous listener) or **image** (scheduled poster, daily at 0/6/12/18).
-- **Features** (text bots) map to behaviours: reply to mentions, nitter relays, and the
+- **Features** (text bots) map to behaviours: reply to mentions and the
   blockbot / welcome / report / hashtag / unfollow daemons.
 
 Each bot stores its identity/filter fields as columns (`name`, `enabled`, `bot_type`,
@@ -71,14 +71,15 @@ The modal shows only the fields the chosen platform/type needs:
   node's hostname (so each node runs only its own bots).
 - **Credentials** — Pleroma: Server URL, Bot username, Access token (Pleroma report bot
   also needs an **admin token**).
-- **Features** (text bots) → `main.py` modes: Reply to mentions, Nitter feeds, Welcome, Block,
+- **Features** (text bots) → `main.py` modes: Reply to mentions, Welcome, Block,
   Report, Hashtag, Unfollow, **Data Vending Machine (NIP-90)**. (No raw `--flags` to type.)
 - **Personality prompt.**
 - **Voice / narration** — TTS voice/rate/pitch, auto-narrate.
 - **Pleroma database name** — for block/welcome/report bots.
 - **Per-feature content** — welcome message/prompt/image/lookback, block image/prompt, report
   image/prompt, unfollow image/silent-mode (shown only when that feature is enabled).
-- **Advanced (JSON)** — any extra keys (e.g. `nitter_feeds`, `shamebot_rooms`, `stickers_enabled`).
+- **Advanced (JSON)** — any extra keys (e.g. `shamebot_rooms`, `stickers_enabled`). A key from a
+  retired feature shows up here too, so you can see it and clear it rather than have it dropped.
 
 On/Off per bot toggles `enabled`; the manager reconciles within a few seconds. (Nothing runs
 unless the master kill-switch is also on.)

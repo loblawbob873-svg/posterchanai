@@ -186,6 +186,20 @@ def _static_version() -> str:
 @router.get("", response_class=HTMLResponse)
 @router.get("/", response_class=HTMLResponse)
 async def client_app(request: Request, db: Session = Depends(get_db)):
+    """The SPA shell at /client. A pure route: every parameter here is part of the REQUEST.
+
+    The `meta` link-preview card is NOT a parameter of this function, and that is load-bearing. It
+    was, briefly, and FastAPI reads a `dict`-typed argument on a route as the request BODY — so
+    `GET /client` with a JSON body rendered whatever it contained into <title> and every og:/twitter:
+    tag (measured: an attacker-chosen title and og:url), and a MALFORMED body answered 422 instead of
+    the app. A preview belongs to the routes that know what their URL is about, so it is a parameter
+    of the renderer below and reachable only from server code."""
+    return await render_client_shell(request, db)
+
+
+async def render_client_shell(request: Request, db, meta: dict | None = None):
+    """Render the SPA shell, optionally with a link-preview card. Called BY routes, never routed to
+    — see client_app for why `meta` must not be reachable from a request."""
     # `secure` gates the upgrade-insecure-requests CSP: harmless over HTTPS (server1 via Cloudflare),
     # but over plain HTTP (e.g. http://nas.lan:3051 on the LAN) it would force every script/CSS to
     # https://<host> — which a node serving bare HTTP doesn't have — breaking the whole page.
@@ -194,7 +208,7 @@ async def client_app(request: Request, db: Session = Depends(get_db)):
     nostr_only = os.getenv("POSTERCHANAI_NOSTR_ONLY", "0").lower() in ("1", "true", "yes", "on")
     return _TEMPLATES.TemplateResponse("client.html",
         {"request": request, "ver": _static_version(), "build": _build_sha(),
-         "secure": proto == "https",
+         "secure": proto == "https", "meta": meta,
          "nostr_only": nostr_only, "default_theme": _default_theme(db)},
         # This page sent NO Cache-Control, so Chromium (and the Electron desktop app, which loads the client
         # over HTTP) fell back to HEURISTIC caching and served a stale copy. The page is what carries the
@@ -677,7 +691,7 @@ async def _img_data_uri(url: str, base_domain: str) -> str:
 @router.post("/screenshot")
 async def client_screenshot(request: Request, db: Session = Depends(get_db)):
     """Render a Nostr note as a clean tweet-style post card PNG (the timeline ☰ → Screenshot action) —
-    JUST the post, like the Nitter cards. Reliable + instance-branded: built server-side from the
+    JUST the post. Reliable + instance-branded: built server-side from the
     note's fields via _render_post_card_png (no live-SPA capture). Avatar/image are fetched server-side
     (the client can't, due to cross-origin CORS) and embedded as data URIs. Returns a base64 PNG."""
     try:
@@ -2718,6 +2732,118 @@ async def git_download(url: str, path: str, ref: str = "HEAD"):
     if resp.headers.get("Content-Length"):
         headers["Content-Length"] = resp.headers["Content-Length"]
     return StreamingResponse(_body(), media_type="application/octet-stream", headers=headers)
+
+
+@router.get("/git/paths")
+async def git_paths(url: str, ref: str = "HEAD"):
+    """Every file path in a self-hosted repo at one ref — the index the Files tab's finder searches.
+
+    Names only, and deliberately so: /tree labels each row with the commit that last touched it,
+    which is a history walk per entry, and paying that to fill a search box would make the box the
+    slowest thing on the page."""
+    from urllib.parse import quote
+    tgt = _grasp_host_target(url)
+    if not tgt:
+        return JSONResponse({"ok": False, "error": "not a self-hosted repo"}, status_code=400)
+    host_base, owner_seg, rid = tgt
+    u = "%s/%s/%s.git/paths/HEAD?ref=%s" % (host_base, owner_seg, rid, quote(ref or "HEAD", safe=""))
+    j, err = await _grasp_json(u, timeout=30.0)
+    if err:
+        return err
+    return JSONResponse({"ok": True, **j})
+
+
+@router.get("/git/raw")
+async def git_raw(url: str, path: str, ref: str = "HEAD"):
+    """One file's bytes at a plain, linkable URL — what "Raw" opens and what `curl` can fetch.
+
+    ALWAYS `text/plain; charset=utf-8`, with `nosniff` and a sandbox CSP, whatever the file actually
+    is. This serves arbitrary repository content from the app's OWN origin, where the session and the
+    key live: an `index.html` in somebody's repo returned as `text/html` would be stored XSS against
+    every reader of that repo, and content sniffing would reach the same end from `text/plain`. The
+    forges that serve raw content as its real type all do it from a separate domain; we have one
+    origin, so the type is pinned instead. Binary still downloads through /git/download, which is an
+    attachment and therefore never rendered."""
+    from fastapi.responses import StreamingResponse
+    if not (path or "").strip("/"):
+        return JSONResponse({"ok": False, "error": "bad path"}, status_code=400)
+    u = _grasp_url(url, "raw", path, ref=ref)
+    if not u:
+        return JSONResponse({"ok": False, "error": "not a self-hosted repo"}, status_code=400)
+    import httpx
+    client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=4.0))
+    try:
+        resp = await client.send(client.build_request("GET", u), stream=True)
+    except Exception:
+        await client.aclose()
+        return JSONResponse({"ok": False, "error": "read failed"}, status_code=502)
+    if resp.status_code != 200:
+        await resp.aclose()
+        await client.aclose()
+        return JSONResponse({"ok": False, "error": "not found"}, status_code=404)
+
+    async def _body():
+        try:
+            async for chunk in resp.aiter_bytes():
+                yield chunk
+        finally:
+            await resp.aclose()
+            await client.aclose()
+
+    return StreamingResponse(_body(), media_type="text/plain; charset=utf-8",
+                             headers={"X-Content-Type-Options": "nosniff",
+                                      "Content-Security-Policy": "sandbox; default-src 'none'",
+                                      "Content-Disposition": "inline",
+                                      "Cache-Control": "no-cache"})
+
+
+@router.get("/git/archive")
+async def git_archive(url: str, ref: str = "HEAD", fmt: str = "tar.gz"):
+    """The whole repository at one ref, as a source tarball/zip — the "Download source" every forge
+    has, and the only way to get a copy of a project without installing git.
+
+    Streamed straight through from the git host: the archive is produced on the fly and never lands
+    in this process's memory, so a large repo costs the app nothing but the pipe. The size is unknown
+    until it is made, so there is no Content-Length to pass on — the browser shows an indeterminate
+    progress bar rather than a percentage, which is the honest thing to show."""
+    from fastapi.responses import StreamingResponse
+    from urllib.parse import quote
+    if fmt not in ("tar.gz", "zip"):
+        return JSONResponse({"ok": False, "error": "format must be tar.gz or zip"}, status_code=400)
+    tgt = _grasp_host_target(url)
+    if not tgt:
+        return JSONResponse({"ok": False, "error": "not a self-hosted repo"}, status_code=400)
+    host_base, owner_seg, rid = tgt
+    u = "%s/%s/%s.git/archive/HEAD.%s?ref=%s" % (host_base, owner_seg, rid, fmt,
+                                                 quote(ref or "HEAD", safe=""))
+    safe_ref = re.sub(r"[^A-Za-z0-9._-]", "-", ref or "HEAD")[:60] or "HEAD"
+    name = "%s-%s.%s" % (re.sub(r"[^A-Za-z0-9._-]", "-", rid)[:80] or "repo", safe_ref, fmt)
+    import httpx
+    # No overall read timeout: `git archive` on a big repo legitimately takes minutes, and a deadline
+    # here truncates a download that the host is still happily producing. The CONNECT timeout stays
+    # short — an unreachable host must still fail fast.
+    client = httpx.AsyncClient(timeout=httpx.Timeout(None, connect=5.0))
+    try:
+        resp = await client.send(client.build_request("GET", u), stream=True)
+    except Exception:
+        await client.aclose()
+        return JSONResponse({"ok": False, "error": "read failed"}, status_code=502)
+    if resp.status_code != 200:
+        await resp.aclose()
+        await client.aclose()
+        return JSONResponse({"ok": False, "error": "no such ref"}, status_code=404)
+
+    async def _body():
+        try:
+            async for chunk in resp.aiter_bytes():
+                yield chunk
+        finally:
+            await resp.aclose()
+            await client.aclose()
+
+    return StreamingResponse(_body(),
+                             media_type=("application/zip" if fmt == "zip" else "application/gzip"),
+                             headers={"Content-Disposition": 'attachment; filename="%s"' % name})
 
 
 class GitEditReq(BaseModel):
@@ -5837,6 +5963,9 @@ async def client_deeplink(path: str, request: Request, db: Session = Depends(get
     shell — an unknown /client/* API path still returns a clean JSON 404 (not an HTML 200), so JSON
     consumers aren't handed a shell document."""
     seg = (path or "").split("/")[0]
-    if not (_DEEPLINK_ENTITY.match(seg) or seg.lower() == "users"):
+    # "r" is the readable repo route (/client/r/<owner>/<repo>) — the same shape app/main.py serves at
+    # the root. It gets no preview here: /client/* is the app's own prefix, and the link people share
+    # is the root one.
+    if not (_DEEPLINK_ENTITY.match(seg) or seg.lower() in ("users", "r")):
         raise HTTPException(status_code=404, detail="Not Found")
-    return await client_app(request, db)
+    return await render_client_shell(request, db)

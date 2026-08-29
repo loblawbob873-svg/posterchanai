@@ -179,9 +179,9 @@ async def hydrate(db) -> int:
     return changed
 
 
-# ---- UserSetting key/value (mail accounts, nitter feeds, caldav/webdav/music configs, etc.) ----
+# ---- UserSetting key/value (mail accounts, caldav/webdav/music configs, etc.) ----
 # Mirrored to a per-user encrypted doc so these are Nostr events too, not just a SQLite/PG cache. The
-# server runs these features (mail/nitter/caldav), so it must read them → operator-key encrypted at
+# server runs these features (mail/caldav), so it must read them → operator-key encrypted at
 # rest (same model as the account doc + chats). EXEMPT: storage_nsec (it bootstraps the encryption —
 # lives in the keyfile), per-node sync cursors (*_since/_seen), and transient scratch.
 def _kv_exempt(key: str) -> bool:

@@ -26,7 +26,26 @@
          are the usual reasons a profile's name shows but its picture falls back to the logo. -->
     {% if secure %}<meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">{% endif %}
     <meta name="referrer" content="no-referrer">
-    <title>PosterChan · Nostr</title>
+    <title>{{ meta.title if meta else "PosterChan · Nostr" }}</title>
+    <!-- LINK PREVIEW. The client is one SPA behind many shareable URLs, so a shared link used to
+         render everywhere (Nostr, Telegram, Slack, iMessage) as the SAME generic title with no
+         description and no picture — indistinguishable from a dead link. A route that knows what its
+         URL is ABOUT passes `meta` and gets a real card; every other route is unchanged. og:image is
+         omitted entirely when there is no picture, because an empty content attribute makes some
+         crawlers render a blank box rather than fall back to the text card. -->
+    {% if meta %}
+    <meta name="description" content="{{ meta.description }}">
+    <meta property="og:type" content="{{ meta.type|default('website') }}">
+    <meta property="og:site_name" content="PosterChan">
+    <meta property="og:title" content="{{ meta.title }}">
+    <meta property="og:description" content="{{ meta.description }}">
+    {% if meta.url %}<meta property="og:url" content="{{ meta.url }}">{% endif %}
+    {% if meta.image %}<meta property="og:image" content="{{ meta.image }}">{% endif %}
+    <meta name="twitter:card" content="{{ 'summary_large_image' if meta.image else 'summary' }}">
+    <meta name="twitter:title" content="{{ meta.title }}">
+    <meta name="twitter:description" content="{{ meta.description }}">
+    {% if meta.image %}<meta name="twitter:image" content="{{ meta.image }}">{% endif %}
+    {% endif %}
     <link rel="manifest" href="/client/manifest.json">
     <!-- Lets a browser OFFER this node as a search engine (poster.place/search?q=…) instead of the
          user pasting the %s template in by hand. Served by /opensearch.xml. -->

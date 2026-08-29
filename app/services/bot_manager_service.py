@@ -323,7 +323,7 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
     existing_pp = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = repo_root + (os.pathsep + existing_pp if existing_pp else "")
 
-    # Route ALL of a bot's outbound internet traffic (fediverse/nostr relays, Nitter RSS +
+    # Route ALL of a bot's outbound internet traffic (fediverse/nostr relays,
     # media, web search, news, blossom uploads, image downloads) through the built-in HTTP
     # proxy (→ SOCKS5/Tor). requests, httpx and websockets all honour these standard env
     # vars, so this single injection covers every bot library without per-call wiring.
@@ -426,10 +426,6 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
             # defaulted process as presence-only. (Explicit `--nostr` in modes ⇒ user wants replies.)
             if not bot_dict.get("modes"):
                 env["NOSTR_PRESENCE_ONLY"] = "1"
-        # Nitter RSS feeds
-        if bot_dict.get("nitter_feeds"):
-            env["NITTER_FEEDS"] = json.dumps(bot_dict["nitter_feeds"])
-        setif("nitter_poll_seconds", "NITTER_POLL_SECONDS")
 
         tmh = bot_dict.get("trusted_media_hosts")
         if tmh:

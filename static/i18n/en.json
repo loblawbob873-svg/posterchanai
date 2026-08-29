@@ -1708,8 +1708,6 @@
  "NIP-05 name": "NIP-05 name",
  "NIP-05 verified": "NIP-05 verified",
  "NIP-96": "NIP-96",
- "Nitter Feeds": "Nitter Feeds",
- "Nitter feeds": "Nitter feeds",
  "No #blackjack bot is configured on this server yet — ask the admin to enable one in Admin → Bots.": "No #blackjack bot is configured on this server yet — ask the admin to enable one in Admin → Bots.",
  "No #chess bot is configured on this server yet — ask the admin to enable one in Admin → Bots.": "No #chess bot is configured on this server yet — ask the admin to enable one in Admin → Bots.",
  "No #connect4 bot is configured on this server yet — ask the admin to enable one in Admin → Bots.": "No #connect4 bot is configured on this server yet — ask the admin to enable one in Admin → Bots.",
@@ -3551,6 +3549,5 @@
  "🧹 Housekeeping": "🧹 Housekeeping",
  "🧹 Purge existing notes now": "🧹 Purge existing notes now",
  "🧽 Run auto-clean now": "🧽 Run auto-clean now",
- "🪪 NIP-05": "🪪 NIP-05",
- "Nitter feeds and SearX fetches. Required for torrents and Nitter.": "Nitter feeds and SearX fetches. Required for torrents and Nitter."
+ "🪪 NIP-05": "🪪 NIP-05"
 }

@@ -130,6 +130,13 @@ check_git_host() {
     done
     if [ -z "$GITBK" ]; then
         echo "  MISSING: git-http-backend (ships with git; check /usr/libexec/git-core or /usr/lib/git-core)"; return 1; fi
+    # gzip is what `git archive --format=tar.gz` shells out to (git's built-in tar.tgz.command is
+    # `gzip -cn`). It is Priority: required on Debian/Ubuntu and present in every base image we
+    # build on — VERIFIED in ubuntu:24.04 + git — so this is a note, not a gate: without it the
+    # source .zip download still works and only .tar.gz fails, which is worth naming here rather
+    # than leaving as one broken button on the repo page.
+    if command -v gzip >/dev/null 2>&1; then echo "  gzip: $(command -v gzip) (source .tar.gz downloads)"; else
+        echo "  NOTE: no gzip — 'Download source' will offer .zip only (.tar.gz needs gzip)"; fi
     echo "OK — enable the host in Admin → Git (git_server_enabled) and set its public base URL."
     echo "     Repos will live under <Storage Path>/git_repos. Guide: docs/GIT.md"
     return 0

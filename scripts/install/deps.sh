@@ -127,12 +127,12 @@ check_dependencies() {
     fi
 
     # Color emoji font. Without one, the browser renders emoji as tofu boxes (□) in
-    # screenshots and in the Nitter post-card images (emoji in tweet text). Checked via
+    # screenshots and in the post-card images (emoji in post text). Checked via
     # fontconfig (fc-list), so it needs fontconfig present too.
     if command -v fc-list &>/dev/null && fc-list 2>/dev/null | grep -qi emoji; then
         print_success "color emoji font found (emoji render in screenshots/post-cards)"
     else
-        print_warning "no color emoji font - emoji show as boxes in screenshots/Nitter cards"
+        print_warning "no color emoji font - emoji show as boxes in screenshots/post cards"
         case "$DISTRO" in
             gentoo) echo "  Install with: emerge -av media-fonts/noto-emoji && fc-cache -f" ;;
             arch)   echo "  Install with: pacman -S noto-fonts-emoji && fc-cache -f" ;;

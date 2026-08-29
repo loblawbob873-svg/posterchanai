@@ -50,7 +50,7 @@ _PLUMBING_KEYS = frozenset({
 # pollers, NOT via admin Save — so write-through never sees them and the relay copy goes stale. They
 # are also inherently per-node (each node has its own sync position), so they must stay local: never
 # hydrate (a stale relay cursor would reset progress → re-post old content) and never write-through.
-_RUNTIME_KEYS = frozenset({"nitter_seen", "autopost_last_runs", "autopost_daily_counts",
+_RUNTIME_KEYS = frozenset({"autopost_last_runs", "autopost_daily_counts",
                            "fedi_timeline_since", "stats_counters", "stats_counters_hourly"})
 _RUNTIME_SUFFIXES = ("_since", "_seen", "_cursor", "_last_runs", "_next_batch")
 
@@ -110,7 +110,7 @@ def _save_local_file() -> None:
     """Persist local-only keys to the JSON file — merging with what's on disk, under a lock.
 
     This file is shared by SEVERAL processes: the app (bot manager -> autopost_last_runs /
-    autopost_daily_counts) and the worker (fedi bridge + nitter -> *_since / *_cursor). Dumping this
+    autopost_daily_counts) and the worker (fedi bridge -> *_since / *_cursor). Dumping this
     process's whole cache used to clobber the other's keys: the worker writes a bridge cursor every
     poll, rewriting autopost_last_runs from the value IT read at startup, which silently reverted the
     manager's post times. A stale anchor makes `last_run + gap` permanently overdue, so every restart

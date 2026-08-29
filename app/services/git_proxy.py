@@ -47,8 +47,11 @@ _FORWARD_REQ_HEADERS = (
 # its credential helper — dropping it made every private repo unreadable through a proxy node while
 # working fine when hitting the host directly, which is exactly the bug that direct-to-host testing
 # hides. Test private-repo auth through the public URL, not against :3053.
+# content-disposition rides along for the same class of reason: the host sets it on `download` and
+# `archive` so the browser saves `posterchanai-master.tar.gz` and not a blob named after the URL.
+# Dropped, the file arrives with the right bytes and the wrong name, on the proxy nodes only.
 _FORWARD_RESP_HEADERS = ("content-type", "cache-control", "expires", "pragma", "content-encoding",
-                         "www-authenticate")
+                         "content-disposition", "www-authenticate")
 
 
 def cors_headers() -> dict:
@@ -90,13 +93,30 @@ async def proxy_git_request(request: Request, repo_path: str) -> StreamingRespon
     """Forward a smart-HTTP git request (`<npub>/<id>.git/...`) to the hosting node and stream back
     the reply. `repo_path` is everything after the `/git/` mount (already URL-path form)."""
     base = _base_url()
-    # Reject anything that isn't a smart-HTTP git endpoint or a raw-file read (don't become an open
-    # proxy). `.git/raw/<ref>/<path>` is the read-gated single-file read the client's repo view uses to
-    # render a README without cloning; the hosting node still applies the private-repo read gate.
+    # Reject anything that is not one of the git host's own routes (don't become an open proxy).
+    #
+    # THE BROWSE ROUTES BELONG HERE TOO, and their absence was invisible: a repo could be CLONED
+    # through a proxy node but not READ through one, so `<proxy>/git/<npub>/<id>.git/tree/HEAD` —
+    # the address a third-party Nostr git client (gitworkshop, ngit) derives from the announced clone
+    # URL — answered 404 while the clone URL beside it worked perfectly. Our own web UI never noticed,
+    # because it reads through `/client/git/*`, which proxies server-side by a different path.
+    #
+    # Every one of these is READ-GATED ON THE HOSTING NODE exactly like a clone (a private repo needs
+    # the same NIP-98 header either way), so forwarding them grants nothing a clone did not already.
+    # `edit`/`delete`/`create` are POSTs the host authorizes against the relay's maintainer ACL —
+    # the identical check a push goes through — so they forward on the same terms.
+    _BROWSE = ("/raw/", "/download/", "/tree/", "/log/", "/commit/", "/archive/", "/paths/")
     if not (repo_path.endswith("/info/refs")
             or repo_path.endswith("/git-upload-pack")
             or repo_path.endswith("/git-receive-pack")
-            or ".git/raw/" in repo_path):
+            or repo_path.endswith(".git/refs")
+            or repo_path.endswith(".git/tree")
+            or repo_path.endswith(".git/log")
+            or repo_path.endswith(".git/paths")
+            or repo_path.endswith(".git/edit")
+            or repo_path.endswith(".git/delete")
+            or repo_path.endswith(".git/create")
+            or any((".git" + seg) in repo_path for seg in _BROWSE)):
         raise HTTPException(status_code=404, detail="not a git smart-HTTP endpoint")
 
     target = "%s/%s" % (base, repo_path.lstrip("/"))

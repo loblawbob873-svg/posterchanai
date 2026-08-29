@@ -128,27 +128,85 @@ Nothing to log into. A **private** repo needs a signed header — see
 
 ---
 
-## 5. The web UI (Discover → Git)
+## 5. Sharing a repo — the public page
+
+Every repo has a **readable public address**:
+
+```
+https://your-domain/r/<owner-npub>/<repo-id>
+```
+
+Anyone can open it — no account, no login, nothing to install. It opens the repo straight to its
+README, with Files, Commits, Issues and Patches beside it.
+
+The owner segment accepts anything a person can actually type: an `npub`, a raw hex pubkey, or a
+**NIP-05 name this node has granted** (`/r/alice/my-app` works if `alice` is a name on your node).
+The app itself only ever *generates* the npub form — a nip05 name in a profile is unverified, and a
+link minted from a spoofed one would point at whoever your node granted that name to.
+
+**Link previews work.** Paste the URL into Nostr, Telegram, Slack, Discord or iMessage and it renders
+as a card with the repo's name, its description and the owner's avatar, because the server reads the
+repo's announcement off its own relay and puts real OpenGraph tags in the page. (Previously every
+shared repo link rendered as the generic app title, which looks exactly like a dead link.)
+
+The repo page's **Share** button offers all three addresses a repo has:
+
+| | For | Looks like |
+|---|---|---|
+| **Project link** | people | `https://your-domain/r/npub1…/my-app` |
+| **Clone URL** | git | `https://your-domain/git/npub1…/my-app.git` |
+| **Nostr address** | other Nostr clients (gitworkshop, ngit, …) | `nostr:naddr1…` |
+
+In a bundled desktop/APK build with **no instance configured**, there is no web page to link to, so
+Share hands out the `nostr:` address instead of a URL that could not work.
+
+> **Multi-node note.** A node set up as a git *proxy* (`git_server_proxy_url`) forwards the browse
+> API as well as clone/push, so `https://<proxy>/git/<npub>/<id>.git/tree/HEAD` and friends work
+> there too. That is what an in-browser Nostr git client reads when it follows your announced clone
+> URL; before, such a client could clone your repo but never render its code.
+
+---
+
+## 6. The web UI (Discover → Git)
 
 Open the client, go to **Discover → Git**, and tap a repo. Repos hosted on this node get the full
 browser; repos announced from GitHub/Gitea show their README and the Nostr issues/patches only.
 
-**Header** — the clone URL with a ⧉ copy button, and a **⎇ branch button**. Tap it to switch branch or
-tag; the file list and commit list both follow your choice.
+**Header** — the clone URL with a ⧉ copy button, a **Share** menu, and a **⎇ branch button**. Tap the
+branch button to switch branch or tag; the file list and commit list both follow your choice.
+**⬇ Source** beside it downloads the whole tree at the selected ref as a `.tar.gz` or `.zip` — the
+way to get a copy of a project without installing git. (In the Android app the archive comes out
+through the share sheet, because the WebView cannot save a download on its own.)
 
 **📖 README** — rendered markdown.
 
 **📁 Files** — click through directories; each row shows the last commit that touched it and when.
-Click a file to open it. In the file header you get:
+Click a file to open it.
+
+**🔍 Find a file** sits above the listing: type any part of a path and it searches the whole
+repository at the current ref, so a file five directories down is two keystrokes away instead of five
+clicks. ↑/↓ move, Enter opens, Esc clears. Opening a hit lands you in that file's own directory, so
+the breadcrumbs go where the file lives.
+
+A text file opens with **line numbers and syntax colouring** (the same highlighter the built-in Code
+editor uses). A very large file is shown as plain text and says so — colour that arrives late is
+worse than text that appears at once. In the file header you get:
 
 | Button | What it does |
 |---|---|
+| **🔗 Raw** | The file's bytes at a plain URL you can link or `curl`. Always served as `text/plain` (see below). |
 | **⬇ Download** | Saves the file to your device (works for binaries too). |
 | **🕘 History** | Just the commits that touched this file. |
 | **✏️ Edit** | Opens the editor (maintainers only). |
 | **🗑 Delete** | Removes the file in a commit (maintainers only). |
 
 Plus **＋ New file** above the listing to create one.
+
+> **Why Raw is always `text/plain`.** It serves arbitrary repository content from the app's own
+> origin, where your session and key live. An `index.html` in somebody's repo returned as `text/html`
+> would be stored XSS against every reader of that repo. The big forges solve this with a separate
+> raw domain; we have one origin, so the content type is pinned and `nosniff` is set instead.
+> Binaries still go through **Download**, which is an attachment and is never rendered.
 
 **🕘 Commits** — the history. **Tap any commit to see exactly what changed**: per-file patches with
 line numbers, added lines in green, removed in red, and a `+n / −n` summary per file. Big files start
@@ -183,7 +241,7 @@ offered a download instead).
 
 ---
 
-## 6. Which Nostr bits are used
+## 7. Which Nostr bits are used
 
 | Kind | Name | Used for |
 |---|---|---|
@@ -197,7 +255,7 @@ ngit, …) can see your repos and issues without any extra work on your part.
 
 ---
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|

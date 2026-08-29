@@ -31,8 +31,55 @@ class DesktopBundleRenders(unittest.TestCase):
         with open(DESKTOP, encoding="utf-8") as fh:
             cls.sh = fh.read()
 
+    def _dropped_blocks(self):
+        """The `{% if X %}…{% endif %}` conditions the desktop script DELETES outright.
+
+        Read out of the script rather than listed here, so this tracks it instead of drifting from
+        it. It matters because a dropped block takes its `{{ … }}` tags with it: `{% if secure %}`
+        contains none, so for a long time the distinction never came up, and then the link-preview
+        block (`{% if meta %}`, seven tags, all meaningless in a bundle nothing crawls) was reported
+        as seven unhandled tags while the script was already handling them.
+
+        Both spellings the script uses: the plain `re.sub(..., '')` for a flat block, and
+        `_drop_block(html, 'X')` for one that nests.
+        """
+        conds = set(re.findall(r"\\\{%\\s\*if\\s\+(\w+)\\s\*%\\\}\.\*\?"
+                               r"\\\{%\\s\*endif\\s\*%\\\}',\s*''", self.sh))
+        conds |= set(re.findall(r"\{%\\s\*if (\w+)\\s\*%\}\.\*\?", self.sh))
+        conds |= set(re.findall(r"_drop_block\(\s*html\s*,\s*['\"](\w+)['\"]\s*\)", self.sh))
+        return conds
+
+    @staticmethod
+    def _strip(src, cond):
+        """Remove `{% if cond %}…{% endif %}`, counting nested `{% if %}`s — mirroring the script's
+        `_drop_block`. A non-greedy regex stops at the first `{% endif %}`, which on a nesting block
+        keeps the tail (and the tags in it) and would report them as unhandled."""
+        open_re = re.compile(r"\{%\s*if\s+" + re.escape(cond) + r"\s*%\}")
+        any_if, any_end = re.compile(r"\{%\s*if\b"), re.compile(r"\{%\s*endif\s*%\}")
+        while True:
+            m = open_re.search(src)
+            if not m:
+                return src
+            i, depth = m.end(), 1
+            while depth:
+                a, b = any_if.search(src, i), any_end.search(src, i)
+                if not b:
+                    return src            # unbalanced template — let the tag check report it
+                if a and a.start() < b.start():
+                    depth, i = depth + 1, a.end()
+                else:
+                    depth, i = depth - 1, b.end()
+            src = src[:m.start()] + src[i:]
+
     def test_every_template_tag_is_substituted_by_the_desktop_build(self):
-        tags = sorted(set(re.findall(r"\{\{.*?\}\}", self.tpl, flags=re.S)))
+        dropped = self._dropped_blocks()
+        self.assertIn("meta", dropped,
+                      "the desktop build stopped dropping the link-preview block — its og:/twitter: "
+                      "tags would reach the bundle raw")
+        tpl = self.tpl
+        for cond in dropped:                      # strip what the script strips, then check the rest
+            tpl = self._strip(tpl, cond)
+        tags = sorted(set(re.findall(r"\{\{.*?\}\}", tpl, flags=re.S)))
         self.assertTrue(tags, "no tags found — the template moved, re-read this test")
         missing = []
         for t in tags:

@@ -106,6 +106,52 @@ host`, authorized by a **NIP-98 header verified against the repo's 30617 maintai
 and returns the 30618 tags for the client to sign. See `docs/GIT.md` (user guide) and
 `docs/GIT_OVER_NOSTR.md` (internals).
 
+**A REPO'S PUBLIC ADDRESS IS `/r/<npub>/<repo-id>`, AND IT IS THE ONE ROUTE THAT BUILDS A LINK
+PREVIEW.** The only shareable address a repo had was `poster.place/<naddr1…>` — a correct Nostr
+coordinate and a 200-character blob nobody can read, retype or recognise in a chat log as "that
+project" — and the client shell carried NO OpenGraph tags at all, so every repo link ever shared
+rendered as the generic app title with no description and no picture, which is indistinguishable
+from a dead link. `app/main.py:git_repo_page` reads the 30617 off this node's relay
+(`app/services/git_share.py`) and renders real `og:*` into `templates/client.html`; every other
+route passes no `meta` and is byte-identical to before. **Owner resolution is asymmetric on
+purpose**: the route ACCEPTS an npub, a hex key or a NIP-05 name this node granted, but the client
+only ever GENERATES the npub form — a profile's nip05 claim is unverified, so a link minted from a
+spoofed one would resolve to whoever the *node* granted that name to, i.e. a different person's
+repo. Hex is lowercased on the way in, because `to_pubkey_hex` returns an already-hex input verbatim
+and a relay `authors` filter is matched byte-for-byte — an exact-case miss reads as "this repo has
+no announcement". With NO instance (a bundled desktop/APK) Share hands out `nostr:<naddr>` instead:
+`_serverOrigin()` is `''` there, so a page URL would be a bare `/r/…` relative to a bundle that has
+no router. `tests/test_git_archive_and_share.py` renders the SHIPPED template (a preview correct in
+a helper and absent from `<head>` previews nothing) and asserts the card text is escaped — anyone
+can publish a 30617, so a quote in a repo name must not close the content attribute.
+
+**THE GIT PROXY FORWARDED CLONE AND PUSH AND 404'D EVERY BROWSE ROUTE, AND OUR OWN UI COULD NOT SEE
+IT.** `git_proxy` allowed `info/refs`, the two pack POSTs and `.git/raw/` only — so on a proxy node
+(which is what serves poster.place) `/git/<npub>/<id>.git/tree/HEAD` answered `not a git smart-HTTP
+endpoint` while the clone URL beside it worked perfectly. That is exactly the address an in-browser
+Nostr git client (gitworkshop, ngit) derives from an announced clone URL: it could copy the repo and
+never render a line of it. Invisible from here because the web client reads through `/client/git/*`,
+which proxies server-side by a different path. Every browse route is read-gated on the HOSTING node
+identically to a clone, so forwarding them grants nothing new. `content-disposition` joined the
+forwarded RESPONSE headers at the same time, or `download`/`archive` arrive with the right bytes
+under the wrong name — on the proxy nodes only.
+
+**NEW BROWSE ROUTES: `archive` (source tarball/zip) and `paths` (the file finder's index).** The ref
+for an archive is resolved with `rev-parse` BEFORE the response starts, because `git archive` on a
+missing ref exits nonzero having written nothing — after the 200 and the headers have gone out,
+which a browser saves as a zero-byte file with nothing in any log (the test reproduces exactly that:
+`(200, b'')`). `paths` is deliberately a SEPARATE route from `tree` rather than a `?recursive=` flag:
+`tree` labels every entry with the commit that last touched it, and paying that history walk per
+file to fill a search box would make the box the slowest thing on the page. In the APK the archive
+cannot be a navigation — the WebView registers no DownloadListener, so the click saves nothing and
+throws nothing — so that shell fetches and goes out through `saveBlobAs`, and the button says SHARED.
+The file viewer reuses `window.PCCodeHL` from code.js (one node-tested highlighter, not a second
+copy) and puts the line numbers in a SIBLING `<pre>`, so selecting the code copies the code and not
+a number on every line. **Raw is pinned to `text/plain` + `nosniff`**: it serves arbitrary repo
+content from the app's own origin, where the session and key live, so an `index.html` in somebody's
+repo returned as `text/html` would be stored XSS against every reader of that repo — the big forges
+use a separate raw domain, we have one origin.
+
 ## Bot framework (merged from `~/posterchan` → `botframework/`)
 
 The standalone `~/posterchan` bot framework now lives **in this repo** under `botframework/`
@@ -306,7 +352,7 @@ arg (`clip <start> <end>`).
 
 APScheduler `AsyncIOScheduler`. The pollers run in a **separate worker process**
 (`app/worker.py`, spawned from `app/main.py` **only on port 3051** so they can't double-run):
-`logs_scheduler`, `social_notifications_service`, `nitter_feeds_service`, `uptime_service`, and the
+`logs_scheduler`, `social_notifications_service`, `uptime_service`, and the
 three fediverse↔Nostr bridge services (`fedi_nostr_bridge_service`, `fedi_nostr_writeback_service`,
 `fedi_nostr_personal_service`). Each exposes idempotent `start_*`/`stop_*` helpers. The in-process
 port-3051 schedulers (relay, streams, bot manager, reminders, DVM, blossom cleanup, tor) stay in
@@ -362,6 +408,36 @@ process only READS the doc for the public `/client/uptime` endpoint. **Gotcha:**
 `_ws_query` otherwise returns `[]` for BOTH "no document" and "relay unreachable", and writing on the
 strength of that empty read replaces the whole history (the same replaceable-doc wipe that took out a
 drive's `pcai:files-index`; `scripts/restore_files_index.py` is the recovery for that one).
+
+## Retired features
+
+**NITTER IS GONE (2026-08-28), EXCEPT THE ONE PIECE THAT WAS NEVER A NITTER FEATURE.** Nitter shut
+down, so everything that FETCHED from it was removed: the per-user RSS poller
+(`nitter_feeds_service`, and its `nitter-feeds` entry in the worker), the bot's `--nitter` mode
+(`botframework/nitterListener.py`), the `nitter_feeds` UserSetting + its `UserSettingsResponse`
+fields and the auth route's load/save, the `nitter_seen` runtime key, and the admin/bot/user UI for
+all of it.
+
+**What stayed is `youtube_service`'s URL REWRITER, and a future "remove all Nitter references" pass
+will grep straight onto it — don't.** It fetches from no instance: it turns a pasted
+`https://<mirror>/<user>/status/<id>` into the canonical `x.com` form so yt-dlp's Twitter extractor
+can download it, and those links are still everywhere (old chat logs, plus the mirrors people still
+use — xcancel.com, twiiit.com, lightbrd.com). Deleting it breaks URLs that work today.
+`tests/test_nitter_removed.py` RUNS the rewriter and says so in its docstring.
+**`_render_post_card_png` also stayed** — it was the poller's renderer AND is what Nostr share-images
+and `/api/media/render-post-card` use, so deleting it with the poller would have taken out two live
+features that have nothing to do with Nitter.
+
+**Three things the removal nearly broke, each silent:** (1) deleting an argparse entry left an empty
+`parser.add_argument(\n)`, which raises TypeError at STARTUP for EVERY bot in every mode — caught by
+running `main.py --help`, not by any unit test of the removed feature; (2) `nitter_feeds` had to come
+OUT of admin-bots.js's `known` set, or an existing bot's leftover config key is silently dropped on
+its next save instead of surfacing in the Advanced JSON box where an operator can see and clear it;
+(3) removing `.nitter_seen.json` from `botframework/.gitignore` immediately staged a real 25 KB
+local state file — a `.gitignore` line is load-bearing until the file it hides is actually deleted.
+The client's link-action bar keeps its own copy of the mirror host list (it had only ever matched
+the literal string "nitter", so a pasted xcancel.com link showed no download buttons while `ytdl`
+would have handled it fine).
 
 ## Notable features
 

@@ -119,6 +119,75 @@ class RepoIdentityTests(unittest.TestCase):
         got = self._run("process.stdout.write(JSON.stringify(_repoHostname(%s) || ''))" % json.dumps(ev))
         self.assertEqual(got, "")
 
+    # ---- the shareable address ----------------------------------------------------------------
+    # These run the SHIPPED _repoPath/_repoShareUrl with a stub nip19, because the thing being
+    # checked is the URL SHAPE and the fallback ladder, not bech32 (which nostr-tools owns).
+
+    def _share(self, ev, origin="https://poster.place"):
+        js = """
+        const S = { ME: null, CFG: { relay_url: 'wss://r' } };
+        const NT = () => ({ nip19: {
+          npubEncode: pk => 'npub1' + pk.slice(0, 8),
+          naddrEncode: o => 'naddr1' + o.identifier,
+        }});
+        const _serverOrigin = () => %s;
+        const _webLink = e => _serverOrigin() + '/' + e;
+        %s
+        process.stdout.write(JSON.stringify([_repoPath(%s), _repoShareUrl(%s)]));
+        """ % (json.dumps(origin),
+               _lift(["_repoTag", "_repoNaddr", "_repoPath", "_repoShareUrl"]),
+               json.dumps(ev), json.dumps(ev))
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+        return json.loads(r.stdout or "null")
+
+    def test_the_link_people_get_names_the_owner_and_the_repo(self):
+        """It used to be `<origin>/<naddr1…>` — correct, and a 200-character blob nobody can read,
+        retype or recognise in a chat log as a particular project."""
+        path, url = self._share(self._ev(d="admintools", pubkey="a" * 64))
+        self.assertEqual(path, "/r/npub1aaaaaaaa/admintools")
+        self.assertEqual(url, "https://poster.place/r/npub1aaaaaaaa/admintools")
+
+    def test_the_generated_link_is_always_the_npub_never_a_name(self):
+        """A profile's nip05 claim is unverified, so a link minted from one would resolve to whoever
+        the NODE granted that name to — a different person's repo. Typed names are accepted
+        server-side; generated ones are not produced."""
+        _, url = self._share(self._ev(d="admintools", pubkey="a" * 64))
+        self.assertIn("/r/npub1", url)
+        self.assertNotIn("@", url)
+
+    def test_the_identifier_goes_into_the_link_VERBATIM(self):
+        """Not lowercased. `openNaddr` matches `#d` byte-for-byte and NIP-34 does not say an
+        identifier is lowercase — only OUR host sanitises the ids it mints. Folding it made a repo
+        announced as `AdminTools` push a URL that its own Back press and its own Share link could
+        not resolve ("referenced post not found on the relay"), which the naddr form it replaced
+        never did."""
+        _, url = self._share(self._ev(d="AdminTools", pubkey="a" * 64))
+        self.assertTrue(url.endswith("/r/npub1aaaaaaaa/AdminTools"), url)
+
+    def test_readable_repo_route_preserves_case_for_naddr_lookup(self):
+        """The SPA must query the exact NIP-34 ``d`` tag from a readable repo URL."""
+        with open(os.path.join(CLIENT, "app.js"), encoding="utf-8") as fh:
+            app = fh.read()
+        self.assertIn("openNaddr(pk, String(e.repo||''), 30617)", app)
+        self.assertNotIn("openNaddr(pk, String(e.repo||'').toLowerCase(), 30617)", app)
+
+    def test_with_no_instance_the_link_is_a_nostr_address_not_a_broken_path(self):
+        """A bundled desktop/APK can run with NO server, where `_serverOrigin()` is ''. Building the
+        page URL anyway yields a bare `/r/…` — a path relative to a bundle that has no router, i.e. a
+        link that cannot work anywhere, handed out by the button whose whole job is to make one that
+        does. The repo's own nostr address is the right answer there."""
+        _, url = self._share(self._ev(d="admintools", pubkey="a" * 64), origin="")
+        self.assertEqual(url, "nostr:naddr1admintools")
+
+    def test_a_repo_with_no_identifier_yields_no_link_rather_than_a_wrong_one(self):
+        ev = {"kind": 30617, "pubkey": "a" * 64, "tags": [], "content": ""}
+        path, url = self._share(ev)
+        self.assertEqual(path, "")
+        # naddrEncode with an empty identifier is still a valid coordinate, so the fallback stands —
+        # what must not happen is a path segment that names nothing.
+        self.assertNotIn("/r/", url)
+
     def test_search_matches_a_repo_by_name_and_by_identifier(self):
         ev = self._ev(d="admintools", name="Admin Tools")
         hay = self._run("process.stdout.write(JSON.stringify(_repoHaystack(%s)))" % json.dumps(ev))

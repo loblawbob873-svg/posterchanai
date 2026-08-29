@@ -30,7 +30,7 @@ write-through (`sync_*` / `mirror_*` / `*_blocking`). `enabled()` hard-returns `
 |--------|--------|-------|-----------------------|
 | Global settings | `settings_store` | `pcai:setting:<key>` | operator |
 | User account record (admin/can_*/quota) | `users_store` | `pcai:user:<npub>` | operator |
-| Per-user config (mail/nitter/social prefs) | `users_store` | `pcai:usercfg:<npub>` | operator |
+| Per-user config (mail/social prefs) | `users_store` | `pcai:usercfg:<npub>` | operator |
 | **Budget** (bills/plans) | `budget.js` (client) | `pcai:budget` | **the user's OWN key** — the server cannot read it |
 | Bot config | `bots_store` | `pcai:bot:<name>` | operator |
 | Conversation index (title/timestamps) | `chat_store` | `pcai:conv:<id>` | user storage key |

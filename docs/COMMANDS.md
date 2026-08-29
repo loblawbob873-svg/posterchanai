@@ -26,7 +26,7 @@ the LLM. The bots reply with TTS via `/narrate <message>`.
 | `search <query>` | Web search |
 | `images <query>` | Image search |
 | `yt <query>` | YouTube search |
-| `ytdl <url>` | Download audio (MP3 default); `ytdl video <url>` for video (YouTube/X/Nitter — Nitter links resolve via X.com). Add `clip <start> <end>` and/or `compress`, e.g. `ytdl video <url> clip 0:10 0:30 compress` |
+| `ytdl <url>` | Download audio (MP3 default); `ytdl video <url>` for video (YouTube/X — a pasted Nitter-style mirror link, e.g. xcancel.com, is rewritten to x.com). Add `clip <start> <end>` and/or `compress`, e.g. `ytdl video <url> clip 0:10 0:30 compress` |
 | `torrents <query>` / `nyaa <query>` | Torrent search / anime torrents |
 | `dailynews <source>` / `news <source>` | Headlines (e.g. `news drudge`) |
 | `geni <prompt>` | Generate an image |

@@ -83,10 +83,15 @@ def _sanitize_url(url: str) -> str:
     return "".join(c for c in url if c in _URL_SAFE_CHARS)
 
 
-# Nitter is a Twitter front-end with many (volatile) instances. yt-dlp has NO nitter extractor,
-# but a nitter status URL has the same /<user>/status/<id> path as Twitter — so we rewrite the host
-# to x.com and let yt-dlp's Twitter extractor download it. Detect nitter by hostname: any host with
-# "nitter" in it, plus well-known non-"nitter"-named aliases.
+# THIS IS A URL REWRITER, NOT A NITTER FEATURE — which is why it survived the removal of every
+# other one. Nitter itself shut down and the RSS-polling features that depended on it are gone, but
+# links in the shape it popularised are still everywhere: pasted from old chat logs, and live from
+# the mirrors people still use (xcancel.com and friends). Nothing here FETCHES from any of them.
+#
+# yt-dlp has no nitter extractor, and a nitter status URL has the same /<user>/status/<id> path as
+# Twitter — so the host is rewritten to x.com and yt-dlp's Twitter extractor does the download.
+# Detect by hostname: any host with "nitter" in it, plus the well-known aliases that lack the name.
+# Deleting this would break pasted links that work today, which is the opposite of the point.
 _NITTER_KNOWN_HOSTS = {"xcancel.com", "twiiit.com", "nitter.net", "lightbrd.com"}
 
 

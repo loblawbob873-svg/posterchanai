@@ -883,8 +883,6 @@ class UserSettingsUpdate(BaseModel):
     fedi_bridge_enabled: Optional[bool] = None
     # Cross-post my top-level Nostr notes to my linked Pleroma account
     fedi_crosspost_enabled: Optional[bool] = None
-    # Nitter RSS feeds (newline-separated URLs) posted as image cards to Telegram
-    nitter_feeds: Optional[str] = None
     # NOTE: the global relay/Blossom/GIF settings that used to live here were MOVED to
     # SettingsResponse (they're admin-global, not per-user) — see that class.
 
@@ -923,7 +921,5 @@ class UserSettingsResponse(BaseModel):
     fedi_bridge_enabled: bool = False
     # Cross-post my top-level Nostr notes to my linked Pleroma account
     fedi_crosspost_enabled: bool = False
-    # Nitter RSS feeds (newline-separated URLs) posted as image cards to Telegram
-    nitter_feeds: str = ""
 
 

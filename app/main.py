@@ -581,7 +581,7 @@ async def startup():
             logging.info("[role] running as '%s' — supervising only this role's components", _role)
         if app_port == 3051:
             try:
-                # Background pollers (social/nitter/logs)
+                # Background pollers (social/logs)
                 # run in a SEPARATE worker process so their polling/bridging doesn't contend
                 # with the web/API event loop (the bridge could otherwise stall the reactor).
                 # They're DB-mediated, so the app's reply/action endpoints keep working.
@@ -759,7 +759,7 @@ async def startup():
                     try:
                         from app.services import users_store
                         await users_store.hydrate(_db)
-                        await users_store.hydrate_user_kv(_db)   # mail/nitter/caldav kv from relay
+                        await users_store.hydrate_user_kv(_db)   # mail/caldav kv from relay
                         # SQL→relay catch-all: mirror every account's record + non-exempt kv up to the
                         # relay (closes gaps from auxiliary save paths — tz/caldav/webdav/music — that
                         # don't write-through), then keep doing it periodically.
@@ -902,8 +902,8 @@ async def shutdown():
     # Only stop schedulers on main instance (port 3051)
     app_port = int(os.environ.get("POSTERCHANAI_PORT", "3051"))
     if app_port == 3051:
-        # Stop the background worker process (fedi-timeline bridge + social/nitter/
-        # logs pollers all run there now).
+        # Stop the background worker process (fedi-timeline bridge + social/logs
+        # pollers all run there now).
         try:
             from app.worker import stop_worker_process
             if _owns('worker'): stop_worker_process()
@@ -1563,6 +1563,57 @@ async def concord_invite_page(entity: str, request: Request):
         raise StarletteHTTPException(status_code=404)
     from app.routers.client import client_app
     return await client_app(request)
+
+
+@app.get("/r/{owner}/{repo}", response_class=HTMLResponse)
+async def git_repo_page(owner: str, repo: str, request: Request):
+    """THE PUBLIC PAGE FOR ONE REPOSITORY — `poster.place/r/<npub-or-name>/<repo-id>`.
+
+    This is the link people hand each other. It exists because the only shareable address a repo had
+    was `poster.place/naddr1…`: a correct, self-describing Nostr coordinate and a ~200-character blob
+    nobody can read, retype, or recognise in a chat log as "that project". A repo already has a name
+    and an owner, so the URL says both.
+
+    It is also the one route that knows what its URL is ABOUT before the SPA boots, so it is where the
+    link preview comes from — the announcement is read off this node's relay and rendered into <head>
+    as OpenGraph. Everything below that is best-effort: an unannounced repo, an unreachable relay or a
+    name that resolves to nobody still serves the app, which routes client-side and can say so with a
+    real error. A crawler failure must never be a human failure.
+
+    Registered BEFORE the single-segment `/{entity}` catch-all so `/r/...` is never read as a Nostr
+    entity, and it is two segments so it cannot shadow anything that route claims.
+    """
+    from app.routers.client import render_client_shell
+    from app.services import git_share
+    meta = None
+    try:
+        owner_hex = git_share.resolve_owner(owner)
+        if owner_hex and git_share.valid_url_repo_id(repo):
+            from app.services import settings_store
+            port = int(settings_store.get("nostr_relay_port", "3052") or 3052)
+            card = await git_share.repo_card(port, owner_hex, repo)
+            if card:
+                # x-forwarded-*, not base_url — the same reason opensearch_descriptor above reads
+                # them: behind this deployment's proxy the upstream connection is plain HTTP, so
+                # base_url advertises http://…, and an `og:url` on the wrong scheme is a canonical
+                # link that either redirects or is dropped by the crawler that just read it.
+                fwd_host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+                fwd_proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+                base = (f"{fwd_proto}://{fwd_host}".rstrip("/") if fwd_host
+                        else str(request.base_url).rstrip("/"))
+                # The identifier as it was ASKED FOR, not as it was found: og:url must be the URL
+                # the reader is on, or a crawler canonicalises the card onto a different address.
+                meta = git_share.og_meta(card, "%s/r/%s/%s" % (base, owner, repo),
+                                         fallback_image=base + "/static/posterchan-relay.png")
+    except Exception as e:
+        # A logger fetched HERE, never a module-level `logger` — main.py has none, so the guard meant
+        # to keep a preview failure harmless would itself have raised NameError and 500'd the page.
+        logging.getLogger(__name__).warning("[git] repo page preview failed for %s/%s: %s", owner, repo, e)
+    # render_client_shell, not the client_app ROUTE: `meta` must never be a request parameter — a
+    # dict-typed argument on a FastAPI route is read as the request BODY, which made `GET /client`
+    # with a JSON body render an attacker's title and og:url (measured). db is the Depends sentinel
+    # here, as it is for every other client_app caller in this file; _setting ignores it.
+    return await render_client_shell(request, None, meta=meta)
 
 
 @app.get("/{entity}", response_class=HTMLResponse)

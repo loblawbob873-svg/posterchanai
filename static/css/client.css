@@ -3054,6 +3054,15 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-inline-end:4px;
   background:linear-gradient(90deg,var(--cyan),var(--neon));-webkit-background-clip:text;background-clip:text;color:transparent}
 .rv-by{display:flex;align-items:center;gap:6px;margin-top:4px;font-size:13px;color:var(--muted)}
 .rv-by .name{color:var(--text);cursor:pointer}.rv-by .name:hover{color:var(--neon)}
+/* Co-maintainers as faces, beside the owner's name. Overlapped, the way every forge draws a
+   contributor strip — and negative margin only BETWEEN them (:first-child resets), or the row's
+   first avatar slides under the word before it. */
+.rv-maints{display:inline-flex;align-items:center;gap:6px;margin-inline-start:8px;flex-wrap:wrap}
+.rv-maint-av{width:20px;height:20px;border-radius:50%;object-fit:cover;cursor:pointer;
+  border:1px solid var(--line);background:var(--panel);margin-inline-start:-6px}
+.rv-maint-av:first-of-type{margin-inline-start:0}
+.rv-maint-av:hover{border-color:var(--neon);z-index:1}
+@media(max-width:520px){.rv-by{flex-wrap:wrap}}
 .rv-desc{margin:12px 0 0;color:var(--text);line-height:1.45}
 .rv-clone{display:flex;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap}
 /* A sprite branch mark, not the ⎇ character: U+2387 is in no font this ships or can assume, so it
@@ -3174,10 +3183,40 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-inline-end:4px;
 .fb-fvacts{flex:none;display:flex;gap:6px;flex-wrap:wrap}
 .fb-fileview .markdown{padding:16px 20px}
 .fb-code{margin:0;padding:14px 16px;overflow-x:auto;font-family:var(--mono);font-size:12px;line-height:1.45;white-space:pre;color:var(--text)}
+/* A source file: a number column beside the code, both on ONE baseline grid.
+   The gutter is its own <pre> so selecting the code selects the CODE — a ::before counter is copied
+   as text in some browsers, which is how "paste the snippet" ends up with a number on every line.
+   Only the code column scrolls sideways; the numbers stay put, which is the whole reason they are
+   readable on a phone. The line-height/font-size are shared so line 200 is level with line 200. */
+.fb-codewrap{display:flex;align-items:stretch;min-width:0;background:var(--panel2)}
+.fb-gutter{margin:0;padding:14px 10px 14px 14px;flex:none;text-align:right;user-select:none;
+  color:var(--muted);opacity:.65;background:var(--panel);border-right:1px solid var(--line);
+  font-family:var(--mono);font-size:12px;line-height:1.45;white-space:pre}
+.fb-codewrap .fb-code{flex:1 1 auto;min-width:0;padding-left:14px}
+.fb-hlnote{padding:8px 14px;border-bottom:1px solid var(--line);background:rgba(var(--accent2-rgb),.05)}
 /* Branch / tag switcher */
 .rv-refbar{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
+/* "Source" sits at the far end of the ref bar: it downloads whatever the branch button says, so it
+   belongs on that row and nowhere else — and margin-inline-start (not margin-left) so it stays at
+   the end in an RTL locale rather than crossing to the other side of its own control. */
+.rv-dlsrc{margin-inline-start:auto}
 .rv-refbtn{font-family:var(--mono);font-size:12px}
-.fb-tools{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.fb-tools{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+/* File finder: the search box owns the row and the New file button keeps its natural width, so on a
+   phone the button wraps under a full-width box instead of squeezing it to nothing. */
+.fb-find{flex:1 1 220px;min-width:0;margin:0;font-size:13px}
+.fb-findout{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--panel2);
+  max-height:60vh;overflow-y:auto}
+.fb-hit{display:flex;align-items:baseline;gap:8px;padding:8px 12px;cursor:pointer;min-width:0;
+  border-bottom:1px solid var(--line)}
+.fb-hit:last-child{border-bottom:0}
+.fb-hit:hover,.fb-hit.on{background:rgba(var(--accent-rgb),.14)}
+.fb-hit.on{box-shadow:inset 2px 0 0 var(--neon)}
+.fb-hitname{font-weight:700;flex:none;max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* The DIRECTORY is the part that disambiguates two files with the same name, so when it does not fit
+   it is trimmed from the LEFT — the tail (`.../services/git.py`) is what tells them apart. */
+.fb-hitdir{color:var(--muted);font-size:12px;font-family:var(--mono);min-width:0;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
 .rv-scope{padding:8px 12px;margin-bottom:10px;border:1px dashed var(--line);border-radius:10px}
 /* Web editor: one monospace box, sized so a phone keyboard still leaves usable text visible. */
 .fb-edit{padding:12px 14px;display:flex;flex-direction:column;gap:10px}
@@ -9222,7 +9261,9 @@ audio.sms-att-img{min-width:220px}
 .pcc-gutter{flex:none;text-align:right;color:var(--muted);background:var(--panel);
   border-right:1px solid var(--line);overflow:hidden;user-select:none;min-width:3.5em}
 
-/* token colours — see the note at the top of this block */
+/* token colours — see the note at the top of this block.
+   Written once for BOTH surfaces that use PCCodeHL: the Code editor's overlay and the git file
+   viewer. A second copy scoped to .fb-code would be a second place for a theme to go stale in. */
 .pcc-hl .t-com{color:var(--code-com);font-style:italic}
 .pcc-hl .t-str{color:var(--code-str)}
 .pcc-hl .t-kw{color:var(--code-kw)}

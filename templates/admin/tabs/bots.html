@@ -213,7 +213,6 @@
                 <label>Features</label>
                 <div class="bot-features">
                     <label><input type="checkbox" id="bot_ft_reply" onchange="onBotFormChange()"> Reply to mentions</label>
-                    <label><input type="checkbox" id="bot_ft_nitter" onchange="onBotFormChange()"> Nitter feeds</label>
                     <label><input type="checkbox" id="bot_ft_welcome" onchange="onBotFormChange()"> Welcome new users</label>
                     <label><input type="checkbox" id="bot_ft_block" onchange="onBotFormChange()"> Block bot</label>
                     <label><input type="checkbox" id="bot_ft_report" onchange="onBotFormChange()"> Report bot</label>
@@ -322,18 +321,6 @@
             <div class="form-group" id="bot_grp_media" style="display:none">
                 <label for="bot_f_trusted_media_hosts">Trusted media hosts <span class="bots-dim">(comma-separated; LAN instances whose media to allow; optional)</span></label>
                 <input type="text" id="bot_f_trusted_media_hosts">
-            </div>
-
-            <!-- Nitter feeds -->
-            <div id="bot_grp_nitter" style="display:none">
-                <div class="form-group">
-                    <label for="bot_f_nitter_feeds">Nitter feeds <span class="bots-dim">(one per line: RSS URL, optionally a space then a target</span></label>
-                    <textarea id="bot_f_nitter_feeds" rows="4" placeholder="https://nitter.net/USERNAME/rss !roomid:server.tld"></textarea>
-                </div>
-                <div class="form-group">
-                    <label for="bot_f_nitter_poll_seconds">Poll interval (seconds) <span class="bots-dim">(optional)</span></label>
-                    <input type="text" id="bot_f_nitter_poll_seconds" placeholder="300">
-                </div>
             </div>
 
             <!-- Pleroma database (block / welcome / report) -->

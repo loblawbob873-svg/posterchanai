@@ -11,7 +11,7 @@ const BOT_KNOWN_KEYS = [
     'nostr_random_reply_quiet', 'nostr_random_reply_per_hour',
     'prompt',
     'sql_database', 'db_user', 'db_pass', 'db_host',
-    'nitter_poll_seconds', 'trusted_media_hosts',
+    'trusted_media_hosts',
     'tts_voice', 'tts_rate', 'tts_pitch',
     'welcome_message', 'welcome_image', 'welcome_lookback_minutes',
     'block_image', 'report_image', 'unfollow_image',
@@ -22,10 +22,9 @@ const BOT_KNOWN_KEYS = [
 ];
 // Config keys backed by a checkbox.
 const BOT_KNOWN_CHECKS = ['auto_narrate', 'unfollow_silent_mode', 'auto_post_enabled', 'random_scenes', 'nostr_random_reply'];
-// nitter_feeds is special (list of {rss} ↔ one URL per line) and handled separately.
 // feature checkbox id -> main.py mode flag
 const BOT_FEATURES = {
-    bot_ft_nitter: '--nitter', bot_ft_welcome: '--welcome', bot_ft_block: '--blockbot',
+    bot_ft_welcome: '--welcome', bot_ft_block: '--blockbot',
     bot_ft_report: '--report', bot_ft_hashtag: '--hashtagbot', bot_ft_unfollow: '--unfollowbot',
     bot_ft_dvm: '--dvm', bot_ft_chess: '--chess', bot_ft_ttt: '--ttt', bot_ft_hangman: '--hangman', bot_ft_connect4: '--connect4', bot_ft_blackjack: '--blackjack', bot_ft_holdem: '--holdem',
 };
@@ -157,7 +156,7 @@ function onBotFormChange() {
     // selected platform can't run. Fediverse-only features need the Pleroma DB or admin
     // token (block / welcome / report / unfollow → don't apply to Nostr); Nostr-only are
     // the NIP-90 DVM + the Nostr game referees (don't apply to Fediverse). Cross-platform
-    // ones (reply / Nitter / hashtag) always show.
+    // ones (reply / hashtag) always show.
     const isFedi = platform === 'pleroma';
     const showFeat = (f, on) => {
         const c = _g('bot_ft_' + f); if (!c) return;
@@ -170,7 +169,6 @@ function onBotFormChange() {
     show('bot_grp_stats', isNostr && ck('bot_ft_stats'));
 
     // Per-feature sections appear only when their feature is enabled.
-    show('bot_grp_nitter', !isImage && ck('bot_ft_nitter'));
     // block / welcome / report / unfollow all need the Pleroma DB.
     const needsDb = ck('bot_ft_block') || ck('bot_ft_welcome') || ck('bot_ft_report') || ck('bot_ft_unfollow');
     show('bot_grp_db', !isImage && needsDb);
@@ -180,7 +178,7 @@ function onBotFormChange() {
     show('bot_grp_block', !isImage && ck('bot_ft_block'));
     show('bot_grp_report', !isImage && ck('bot_ft_report'));
     show('bot_grp_unfollow', !isImage && ck('bot_ft_unfollow'));
-    show('bot_grp_media', !isImage && (ck('bot_ft_reply') || ck('bot_ft_nitter')));
+    show('bot_grp_media', !isImage && ck('bot_ft_reply'));
     show('bot_grp_voice', !isImage);
 
     // Scheduled auto-posting: offered for text bots; detail fields appear once enabled.
@@ -222,12 +220,6 @@ function openBotModal(id) {
     { const pv = _g('bot_avatar_preview'); const u = cfg.nostr_profile_picture;
       if (pv) { if (u) { pv.src = u; pv.style.display = ''; } else { pv.removeAttribute('src'); pv.style.display = 'none'; } } }
 
-    // nitter_feeds: [{rss, room?}] <-> one per line: "rss [room]" (room optional, preserved)
-    const feeds = Array.isArray(cfg.nitter_feeds)
-        ? cfg.nitter_feeds.filter(f => f && f.rss).map(f => f.room ? `${f.rss} ${f.room}` : f.rss)
-        : [];
-    _setVal('bot_f_nitter_feeds', feeds.join('\n'));
-
     // features from modes
     const plat = b ? b.platform : 'pleroma';
     const modes = (b && b.modes) ? b.modes.split(',').map(m => m.trim()) : [];
@@ -235,8 +227,12 @@ function openBotModal(id) {
     Object.entries(BOT_FEATURES).forEach(([cid, flag]) => _setChk(cid, modes.includes(flag)));
     _setChk('bot_ft_stats', cfg.stats_enabled);   // stats is a CONFIG flag (not a main.py mode — argparse rejects unknown)
 
-    // Anything no field covers (exotic keys) -> the rarely-shown escape hatch.
-    const known = new Set([...BOT_KNOWN_KEYS, ...BOT_KNOWN_CHECKS, 'nitter_feeds']);
+    // Anything no field covers (exotic keys) -> the rarely-shown escape hatch. A retired key lands
+    // here rather than being dropped: `nitter_feeds`/`nitter_poll_seconds` left on an existing bot
+    // now SHOW UP in the Advanced JSON box, where an operator can see and clear them. Silently
+    // discarding a config key on the first save after a feature is removed is how you lose the one
+    // record of what a bot used to do.
+    const known = new Set([...BOT_KNOWN_KEYS, ...BOT_KNOWN_CHECKS]);
     const leftover = {};
     Object.keys(cfg).forEach(k => { if (!known.has(k)) leftover[k] = cfg[k]; });
     _setVal('bot_f_advanced', Object.keys(leftover).length ? JSON.stringify(leftover, null, 2) : '');
@@ -455,13 +451,6 @@ async function saveBot() {
     BOT_KNOWN_CHECKS.forEach(k => { if (_g('bot_f_' + k) && _g('bot_f_' + k).checked) config[k] = true; });
     // Nostr Stats feature → a CONFIG flag (not a main.py mode; the app posts it on the bot's behalf).
     if (_g('bot_ft_stats') && _g('bot_ft_stats').checked) config.stats_enabled = true;
-    // nitter_feeds: textarea (one per line: "rss [room]") -> [{rss, room?}, ...] (room preserved)
-    const feedLines = _val('bot_f_nitter_feeds').split('\n').map(s => s.trim()).filter(Boolean);
-    if (feedLines.length) config.nitter_feeds = feedLines.map(line => {
-        const parts = line.split(/\s+/);
-        const room = parts.slice(1).join(' ').trim();
-        return room ? { rss: parts[0], room } : { rss: parts[0] };
-    });
     // escape hatch: only present if the bot had exotic keys (shown group)
     if (_g('bot_grp_advanced').style.display !== 'none') {
         const adv = _val('bot_f_advanced');

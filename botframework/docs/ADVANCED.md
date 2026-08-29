@@ -192,37 +192,6 @@ the `config.py` default is used.
 These are passed to the bot as the corresponding uppercase environment variables
 (`BLOCK_PROMPT`, `WELCOME_PROMPT`, `REPORT_IMAGE`, etc.).
 
-### Nitter RSS Reposting
-
-The `--nitter` mode reposts new items from [Nitter](https://github.com/zedeus/nitter)
-RSS feeds (a Twitter/X front-end) to the bot's
-**fediverse timeline** (Pleroma). Feeds are listed in the bot's
-`nitter_feeds` array:
-
-```python
-"nitter_feeds": [
-    {"rss": "https://nitter.net/PoweroftheTruth/rss"},
-    {"rss": "https://nitter.net/Andywarski/rss"},
-],
-"nitter_poll_seconds": 300,   # how often to check (default 300)
-```
-
-Add `--nitter` to the bot's `modes`. It can run **alongside** the main listener,
-e.g. `"modes": ['--pleroma', '--nitter']` runs the Pleroma chat bot and the
-reposter in the same process.
-
-Behavior:
-
-- **Destination:** each feed posts to the fediverse account this bot is configured for.
-- **No backlog flood:** the first time a feed is seen, its current items are
-  recorded as "seen" without posting. Only genuinely new items posted afterward
-  are sent. Seen state lives in `.nitter_seen.json`.
-- Each host tracks its own seen-state, so the same feed on two hosts is independent.
-- `nitter_poll_seconds` is clamped to a 60s minimum.
-
-> **Note:** public Nitter instances are frequently rate-limited or down. If posts
-> stop, it's usually the instance — point the feed at a working one.
-
 ### Running Without AI
 
 Most features work without OpenAI configured:

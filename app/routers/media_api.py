@@ -446,7 +446,7 @@ async def render_post_card(
     Identity-agnostic like /process and /screenshot. The card is built from the
     structured fields supplied by the caller and screenshotted via the shared
     headless-browser path — so it renders correctly even when the original source
-    page is empty (dead Nitter instances), where link previews fail. The bot
+    page is empty, where link previews fail. The bot
     pre-fetches any media and passes the bytes so the server does no outbound
     network (no SSRF surface here).
 

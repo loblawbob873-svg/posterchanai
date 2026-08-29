@@ -30,7 +30,7 @@ APP_KIND = 30078        # NIP-78 application-specific data (parameterized-replac
 # `d`-tag namespaces — one document per record. Keep these stable; they ARE the schema.
 NS_SETTING = "pcai:setting:"     # global settings, one doc per key       (operator-signed)
 NS_USER    = "pcai:user:"        # per-user account record (admin/can_ai)  (operator-signed)
-NS_USERCFG = "pcai:usercfg:"     # per-user UserSetting kv (mail/nitter/etc.) (operator-signed)
+NS_USERCFG = "pcai:usercfg:"     # per-user UserSetting kv (mail/caldav/etc.) (operator-signed)
 NS_BOT     = "pcai:bot:"         # bot config                              (operator-signed)
 NS_CONV    = "pcai:conv:"        # a user's conversation doc               (user-signed)
 NS_KV      = "pcai:kv:"          # misc operational key/value              (operator-signed)

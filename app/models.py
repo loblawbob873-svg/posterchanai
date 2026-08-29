@@ -513,7 +513,7 @@ class Bot(Base):
     long-running listener, or a scheduled image poster). Editable from Admin → Bots.
 
     Identity/filter fields are first-class columns (for listing + per-host filtering); the
-    remaining per-bot fields (server, username, access_token, prompt, nitter_feeds, tts_voice,
+    remaining per-bot fields (server, username, access_token, prompt, tts_voice,
     welcome_*/block_*/report_* etc.) live in `config` as a JSON object, mirroring the original
     bots_config dict shape so new bot types don't need schema changes."""
     __tablename__ = "bots"

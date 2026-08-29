@@ -71,6 +71,44 @@ html = re.sub(r'\{%\s*if nostr_only\s*%\}.*?\{%\s*endif\s*%\}', '', html, flags=
 # so is a LAN box), and that CSP would silently rewrite every fetch/WebSocket/<img> to https://<host>,
 # which does not exist. Same reasoning as the APK's strip, which learned it the hard way.
 html = re.sub(r'\{%\s*if secure\s*%\}.*?\{%\s*endif\s*%\}', '', html, flags=re.S)
+# `meta` is the server-rendered LINK PREVIEW card (og:/twitter: tags), and a bundle has no use for
+# one: this page is loaded off disk from an app:// origin, so nothing ever crawls it and there is no
+# URL for a card to describe. Dropped whole, and the <title> falls back to the app's own name — the
+# same value the server sends for every route that supplies no card.
+#
+# NESTING-AWARE, unlike the two `re.sub` strips above. Those are correct only because their blocks
+# contain no inner `{% if %}`; a non-greedy `.*?` stops at the FIRST `{% endif %}`, so on a block
+# that nests (this one does — og:image is emitted only when there IS one) it would delete the head
+# and leave the tail plus a dangling `{% endif %}` behind. The guard below would then fail the build,
+# which is the right outcome and a confusing way to learn it.
+def _drop_block(src, cond):
+    open_re = re.compile(r'\{%\s*if\s+' + re.escape(cond) + r'\s*%\}')
+    any_if = re.compile(r'\{%\s*if\b')
+    any_end = re.compile(r'\{%\s*endif\s*%\}')
+    while True:
+        m = open_re.search(src)
+        if not m:
+            return src
+        i, depth = m.end(), 1
+        while depth:
+            nxt_if, nxt_end = any_if.search(src, i), any_end.search(src, i)
+            if not nxt_end:
+                raise SystemExit('build-www: unclosed {%% if %s %%} in client.html' % cond)
+            if nxt_if and nxt_if.start() < nxt_end.start():
+                depth += 1
+                i = nxt_if.end()
+            else:
+                depth -= 1
+                i = nxt_end.end()
+        src = src[:m.start()] + src[i:]
+
+
+html = _drop_block(html, 'meta')
+# Jinja COMMENTS are template syntax too, and the guard below does not look for them — so one would
+# ship into the bundle as literal text, land in <head>, and be relocated into the page body by the
+# parser where a reader can see it. Cheap to strip, invisible when it works, ugly when it does not.
+html = re.sub(r'\{#.*?#\}', '', html, flags=re.S)
+html = html.replace('{{ meta.title if meta else "PosterChan · Nostr" }}', 'PosterChan · Nostr')
 html = html.replace('{{ default_theme|default("cyberpunk") }}', 'cyberpunk')
 html = html.replace('{{ ver }}', ver)
 # The build stamp. Substituted with the CHECKOUT's own commit rather than left for the stamping step

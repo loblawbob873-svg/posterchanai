@@ -212,20 +212,19 @@ A companion **browser extension** (Firefox, and Chrome / Brave via MV3) makes yo
 ### Bots & social
 
 - **Bot manager (Admin → Bots)**: run autonomous fediverse bots — Pleroma reply bots,
-  nitter relays, plus blockbot/welcome/report/hashtag/unfollow daemons — from a
+  plus blockbot/welcome/report/hashtag/unfollow daemons — from a
   single admin tab (add/edit, On/Off, live status), backed by the database. The bot framework is
   **bundled in this repo** (`botframework/`) and supervised in-process; no separate repo or
   hand-edited config file. See [Bot manager](docs/BOTS.md).
 - **Telegram bot** drives chat, commands, and media from your phone
 - **Social posting** to **Pleroma/Mastodon** and **Nostr**: turn any reply, link, or topic into a post with the `post` command (rewrite, verbatim, or with your own instructions). See [Social posting from the bots](#social-posting-from-the-bots).
 - **Social notification relay**: forward mentions/replies/DMs from Pleroma/Nostr to Telegram and reply right from the chat. See [Social notifications to Telegram](#social-notifications-to-telegram).
-- **Nostr** (keypair identity — no instance, no signup): run a **Nostr reply bot** and link your own `nsec` to post & reply. Handles mentions, replies, reactions, reposts, plus `geni`/image **effects** and **Nitter→Nostr** feeds; publishes to **multiple relays**; uploads media to a **Blossom** (BUD-02) or **NIP-96** host (e.g. nostr.build) embedded with `imeta`; supports **NIP-05** verification. The bot only replies when actually addressed (first mention / direct reply — no thread-spam), is **rate-limited per sender** (with an exempt list), and all bot/social egress can route through the built-in **Tor** proxy. Pure-Python signing (BIP-340) — no native deps.
+- **Nostr** (keypair identity — no instance, no signup): run a **Nostr reply bot** and link your own `nsec` to post & reply. Handles mentions, replies, reactions, reposts, plus `geni`/image **effects**; publishes to **multiple relays**; uploads media to a **Blossom** (BUD-02) or **NIP-96** host (e.g. nostr.build) embedded with `imeta`; supports **NIP-05** verification. The bot only replies when actually addressed (first mention / direct reply — no thread-spam), is **rate-limited per sender** (with an exempt list), and all bot/social egress can route through the built-in **Tor** proxy. Pure-Python signing (BIP-340) — no native deps.
 - **Fediverse ↔ Nostr bridge**: mirror a Pleroma timeline (home/global/local) onto Nostr. Each fediverse author is published under a stable **puppet** key (derived deterministically, so an author keeps one npub across restarts and instances), with avatar + display name, custom emoji as NIP-30 tags, media, quote-posts, and replies threaded via NIP-10 markers. Federated copies are deduped on the canonical AP URI, so the same post arriving from two instances mirrors once.
   - **Write-back**: a reply, reaction or repost made on Nostr is performed **back** on the fediverse under the acting user's own linked account — not the bridge's.
   - **Personal plane** (opt-in per user): your own fediverse notifications arrive as the matching Nostr events, and your fedi DMs as **NIP-17** gift-wrapped Nostr DMs, keeping their direct visibility on reply.
 
   Configure under Admin → Social. Self-serve enrolment is off by default (`fedi_bridge_self_serve`).
-- **Nitter post-cards**: per-user Nitter (X/Twitter) RSS feeds rendered as image "post cards" and delivered to your linked Telegram chat.
 - **Translate**: translate text or a replied-to message to any language (`translate`), shared across the web UI and Telegram.
 
 ### Extensibility & admin
@@ -452,7 +451,7 @@ the Arc environment.
 | Path | Description |
 |------|-------------|
 | `app/` | FastAPI app, routers (auth, chat, admin, TTS, STT, mail, torrent, bots, etc.), services |
-| `botframework/` | Merged autonomous bot framework (Pleroma/nitter listeners + daemons); spawned by `app/services/bot_manager_service.py`. See [docs/BOTS.md](docs/BOTS.md) |
+| `botframework/` | Merged autonomous bot framework (Pleroma listener + daemons); spawned by `app/services/bot_manager_service.py`. See [docs/BOTS.md](docs/BOTS.md) |
 | `templates/` | Jinja2 HTML (login, chat, admin, modals) |
 | `static/` | CSS, JS, icons, mascot assets |
 | `os/` | PosterChanOS installer, Sway session, boot theme, system helpers and Gentoo overlay |

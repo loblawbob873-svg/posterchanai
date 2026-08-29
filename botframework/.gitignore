@@ -14,8 +14,6 @@ bots_config_export.json
 .matrix_sync_token
 .matrix_blocklist
 .matrix_blocklist.tmp
-.nitter_seen.json
-.nitter_seen.json.tmp
 *_snapshot.json
 .pleroma_following_snapshot.json
 services/

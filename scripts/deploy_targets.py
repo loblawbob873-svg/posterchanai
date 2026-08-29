@@ -134,7 +134,6 @@ _OWNED = (
     # run_logs_for_admin, shared by both (and by the /logs command). A lazy import in admin.py.
     ("app/services/logs_scheduler.py", (APP, WORKER)),
     ("app/services/social_notifications_service.py", (WORKER,)),
-    ("app/services/nitter_feeds_service.py", (WORKER,)),
     ("app/services/uptime_service.py", (WORKER,)),
     # THE APP IMPORTS THIS TOO, and lazily — which is the trap. `app/routers/admin.py` does
     # `from app.services.stats_bot_service import build_stats` INSIDE the Preview and Run endpoints,

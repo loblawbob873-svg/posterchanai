@@ -14,8 +14,8 @@ async def _msg_chat(attachments, chat_id, chat_service, command_service, db, doc
                 _all_urls_in_text = [u for u in __import__('re').findall(r'https?://\S+', text_stripped)]
                 youtube_url = next((u for u in _all_urls_in_text if any(d in u for d in _yt_domains)), None)
 
-                # Detect an X/Twitter/Nitter status URL (downloadable via yt-dlp, no transcript so no
-                # Summary option). extract_download_urls returns the x.com-normalized form (nitter
+                # Detect an X/Twitter status URL (downloadable via yt-dlp, no transcript so no
+                # Summary option). extract_download_urls returns the x.com-normalized form (a mirror
                 # rewritten); keep the ORIGINAL url too so the bare/forwarded check works on the text.
                 _x_orig = _x_dl = None
                 if not youtube_url:
@@ -57,11 +57,11 @@ async def _msg_chat(attachments, chat_id, chat_service, command_service, db, doc
                     )
                     return {"ok": True}
 
-                # X/Twitter/Nitter status URL (bare or forwarded): same prompt as YouTube minus
+                # X/Twitter status URL (bare or forwarded): same prompt as YouTube minus
                 # Summary (tweets have no transcript). Reuses the yt: callbacks — the cached URL is
                 # the x.com-normalized form, so MP3/Video/Post all download via yt-dlp's Twitter path.
                 if _x_dl and (is_forwarded or not text_stripped.replace(_x_orig, '').strip()):
-                    logger.info(f"Telegram: X/Nitter URL detected, prompting action: {_x_dl}")
+                    logger.info(f"Telegram: X URL detected, prompting action: {_x_dl}")
                     _youtube_action_cache[chat_id] = _x_dl
 
                     _x_user_for_social = db.query(User).filter(

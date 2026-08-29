@@ -1,6 +1,6 @@
 """Background worker process — runs the polling schedulers off the web/API event loop.
 
-The fediverse bridge plus the social-notification / Nitter-feed / logs pollers all used to
+The fediverse bridge plus the social-notification / logs pollers all used to
 run on the app's single asyncio loop and
 contended with request serving (the bridge in particular could stall the reactor for ~90s
 on a busy global feed). They're **DB-mediated** — the bridge/relays persist their state and
@@ -29,7 +29,6 @@ logger = logging.getLogger(__name__)
 _SCHEDULERS = [
     ("logs", "app.services.logs_scheduler", "start_logs_scheduler"),
     ("social-notifications", "app.services.social_notifications_service", "start_social_notifications_scheduler"),
-    ("nitter-feeds", "app.services.nitter_feeds_service", "start_nitter_feeds_scheduler"),
     ("stats-bot", "app.services.stats_bot_service", "start_stats_bot_scheduler"),
     ("uptime", "app.services.uptime_service", "start_uptime_scheduler"),
     # Subscribed calendars (a published .ics mirrored into one of yours). In the WORKER because the

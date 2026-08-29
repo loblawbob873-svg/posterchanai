@@ -352,7 +352,7 @@ def _capture_full_page(url: str, width: int = 1280, timeout: int = 60, tight: bo
     chrome = _find_chrome()
     if chrome:
         # Serialize captures: each headless Chrome is ~350MB, and user screenshots can
-        # coincide with the nitter/social pollers' card renders (same path). Unbounded
+        # coincide with the social poller's card renders (same path). Unbounded
         # concurrency spiked memory and crashed launches. Acquire with a timeout so a
         # wedged capture (whose worker thread an asyncio wait_for cancellation can't
         # kill) can't stall the queue forever — callers get a clear "busy" instead.
@@ -377,10 +377,9 @@ def _render_post_card_png(display_name: str, handle: str, text: str,
     headless-browser path (`_capture_full_page`).
 
     Built entirely from data we control (author/text/media passed in), so it works
-    even when the source page serves nothing — e.g. Nitter instances whose RSS still
-    works but whose status pages return an empty body, defeating link previews. The
-    media (if any) is passed pre-fetched as a data: URI so the render needs no network
-    and is deterministic. Returns PNG bytes; raises if no browser is installed.
+    even when the source page serves nothing to a link-preview crawler. The media (if
+    any) is passed pre-fetched as a data: URI so the render needs no network and is
+    deterministic. Returns PNG bytes; raises if no browser is installed.
     """
     import html as _html
     import os
