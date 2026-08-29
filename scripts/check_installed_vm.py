@@ -54,6 +54,18 @@ def wait_state(binary, asar, name, wanted, env, seconds=120):
     raise RuntimeError(f"VM did not become {wanted}")
 
 
+def is_viewer_surface(node, name):
+    """Match virt-viewer on both native Wayland and its supported XWayland fallback."""
+    props = node.get("window_properties") or {}
+    identity = " ".join(str(value or "") for value in (
+        node.get("app_id"), props.get("class"), props.get("instance")
+    )).casefold()
+    title = str(node.get("name") or props.get("title") or "").casefold()
+    rect = node.get("rect") or {}
+    return ("virt-viewer" in identity and name.casefold() in title
+            and rect.get("width", 0) >= 640 and rect.get("height", 0) >= 400)
+
+
 def visible_viewer(name, env, seconds=30):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
@@ -63,10 +75,8 @@ def visible_viewer(name, env, seconds=30):
             while nodes:
                 node = nodes.pop()
                 nodes.extend(node.get("nodes", []) + node.get("floating_nodes", []))
-                rect = node.get("rect", {})
-                if (node.get("app_id") == "virt-viewer" and name in node.get("name", "")
-                        and rect.get("width", 0) >= 640 and rect.get("height", 0) >= 400):
-                    return rect
+                if is_viewer_surface(node, name):
+                    return node.get("rect") or {}
         time.sleep(.5)
     raise RuntimeError("virt-viewer never mapped a usable Sway surface")
 
