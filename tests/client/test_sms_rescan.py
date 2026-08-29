@@ -1,6 +1,6 @@
 """THE WAY BACK OUT OF "ALREADY DONE".
 
-Every marker the message archive keeps is a LATCH, and the completion one — `..._blossom_v8` — is
+Every marker the message archive keeps is a LATCH, and the completion one — `..._blossom_v9` — is
 read at the top of `migrateLocalHistory` and returns immediately when it is set. That is correct
 when it was set correctly. When it was set by an older build that believed a truncated or walled-off
 read was the whole phone, it is permanent: the device installs every fix that follows, opens Texts,
@@ -157,10 +157,22 @@ class AStuckCompletionMarker(unittest.TestCase):
         """THE BUG, stated as the thing the user sees. The latch is set, so the whole history is
         skipped and not one picture reaches encrypted storage — with no error anywhere."""
         rows = [picture(i, NOW - (100 + i) * 86400000) for i in range(1, 6)]
-        res = run(rows, {ME + "_blossom_v8": "1", ME + "_oldest_first_v1": "1", ME: str(NOW)},
+        res = run(rows, {ME + "_blossom_v9": "1", ME + "_oldest_first_v1": "1", ME: str(NOW)},
                   ["phoneLoad", "migrateAll"])
         self.assertEqual(mms_files(res), [],
                          "the latch did not actually block the migration — this test proves nothing")
+
+    def test_v8_done_is_reaudited_and_old_apk_cannot_write_v9_done(self):
+        """The combined provider can omit old MMS. Only the independent listMms walk proves them."""
+        rows = [picture(i, NOW - (100 + i) * 86400000) for i in range(1, 4)]
+        repaired = run(rows, {ME + "_blossom_v8": "1", ME: str(NOW)},
+                       ["phoneLoad", "migrateAll"])
+        self.assertEqual(len(mms_files(repaired)), 3)
+        self.assertTrue(repaired["blossomDone"])
+
+        old = run(rows, {}, ["phoneLoad", "migrateAll"], {"oldApk": True})
+        self.assertFalse(old["blossomDone"],
+                         "an APK with no independent MMS audit permanently hid historical media")
 
     def test_a_rescan_clears_the_latch_and_copies_the_whole_phone(self):
         """The way out. Same phone, same latch, one deliberate re-scan."""

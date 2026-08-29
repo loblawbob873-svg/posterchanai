@@ -58,7 +58,11 @@
    * provider query. Android capped that query at the newest MMS slice, so v6 could truthfully
    * finish everything it had been shown while never seeing older photo/video rows. The paged phone
    * load below is not a repair for an account that returns early on its old completion marker. */
-  const HWM_BLOSSOM = () => HWM() + '_blossom_v8';
+  /* v9 invalidates v8 because v8 still allowed an OLD APK with no independent `listMms` endpoint
+   * to declare the migration complete from the combined SMS page. That page can be exhausted while
+   * Android has silently capped/omitted old MMS, producing the exact durable state: new pictures
+   * archive, historical conversations remain text-only on Web for weeks. */
+  const HWM_BLOSSOM = () => HWM() + '_blossom_v9';
   /* AND A SEPARATE MARKER FOR THE REWIND ITSELF, because rewinding is a ONE-TIME ACT and finishing
    * the migration is a different question entirely.
    *
@@ -68,7 +72,7 @@
    * will not hand over is enough) that is not a slow start, it is a PERMANENT LOOP: every sweep
    * restarts at the same point, hits the same row, and republishes the same thirty days for ever.
    * Keyed on having rewound, the mark moves forward the way it is documented to. */
-  const HWM_REWOUND = () => HWM() + '_blossom_rewound_v4';
+  const HWM_REWOUND = () => HWM() + '_blossom_rewound_v5';
   /* AND A WAY BACK OUT OF "DONE", because every one of these markers is a LATCH and a latch that
    * was set wrongly is permanent.
    *
@@ -146,6 +150,7 @@
        nothing left to do and reports that it has copied the phone — so the OLDEST pictures are not
        slow to reach Blossom, they are never offered to it, and every screen says it finished. */
     mmsCapped: false,
+    mmsAudited: false,   // independent listMms walk completed; required before migration may latch
     lastRead: null,      // rows the provider returned on the last read — see countLine
     loading: false,
     error: '',
@@ -449,7 +454,7 @@
        * NB: notes.js's `_absorb` has the same shape and the same exposure.
        *
        * Kept as a marker, the ordinary "newest wins" rule handles it, and `rebuild` skips it. */
-      if(!ev.content){ S.msgs.set(d, { doc:d, _at: ev.created_at, gone:true }); continue; }
+      if(!ev.content){ forgetMessageParts(have); S.msgs.set(d, { doc:d, _at: ev.created_at, gone:true }); continue; }
       let obj = null;
       try{
         const envelope = JSON.parse(await PC.nip44dec(ME().pubkey, ev.content));
@@ -954,7 +959,8 @@
      * not in `S.msgs` at all, so the candidate set is empty for the honest reason that nothing
      * asked for them. Marked complete on that, the migration never runs again and those pictures
      * are never archived — with the screen saying it finished, which is the worst version of it. */
-    if(!archiveError && !rowErrors && !_migrationFailed.size && !S.mmsRefused && !S.mmsCapped
+    if(!archiveError && !rowErrors && !_migrationFailed.size && S.mmsAudited
+       && !S.mmsRefused && !S.mmsCapped
        && opts && opts.fullMigration && migrationRemaining <= rows.length){
       try{ localStorage.setItem(HWM_BLOSSOM(), '1'); }catch(_){ }
     }
@@ -1056,6 +1062,7 @@
        compatible combined pass above. v8's completion latch ensures phones previously called
        complete get this one-time media audit after installing the new APK. */
     const M = plug('listMms');
+    S.mmsAudited = false;
     if(M && M.listMms){
       let mmsEdge = Date.now() + 1, mmsExhausted = false;
       for(let page = 0; page < MAX_PAGES; page++){
@@ -1080,6 +1087,7 @@
         await new Promise(resolve => setTimeout(resolve, 0));
       }
       if(!mmsExhausted) mmsCap = true;
+      else S.mmsAudited = true;
     }
     rows = Array.from(byDoc.values());
     if(!exhausted) mmsCap = true;
@@ -1811,6 +1819,7 @@
 
     let archive = 0;
     for(const d of docs){
+      forgetMessageParts(S.msgs.get(d));
       const r = await PC.publish(KIND, '', [['d', d], ['l', L_TAG]], {quiet:true, noQueue:true});
       if(r && r.ok) archive++;
       try{ await PC.publish(5, '', [['a', KIND+':'+ME().pubkey+':'+d]], {quiet:true, noQueue:true}); }catch(_){ }
@@ -1947,13 +1956,23 @@
    * photo ever drawn for the life of the page. Oldest-first, which for this map is insertion order
    * and therefore the order they were opened in. */
   const ATT_MAX = 120;
+  const ATT_FAIL_RETRY_MS = 15000;
 
   function attRemember(id, v){
+    if(v) v._at = Date.now();
     ATT.set(id, v);
     while(ATT.size > ATT_MAX){
       const k = ATT.keys().next().value;
       const old = ATT.get(k);
       ATT.delete(k);
+      if(old && old.url) try{ URL.revokeObjectURL(old.url); }catch(_){ }
+    }
+  }
+
+  function forgetMessageParts(m){
+    for(const p of ((m && m.parts) || [])){
+      const id=Number(p && p.id)||0; if(!id) continue;
+      const old=ATT.get(id); ATT.delete(id);
       if(old && old.url) try{ URL.revokeObjectURL(old.url); }catch(_){ }
     }
   }
@@ -2001,7 +2020,15 @@
       }
     }
     if(!id) return { why: attLabel(p) + ' \u00b7 on your phone' };
-    if(ATT.has(id)) return ATT.get(id);
+    if(ATT.has(id)){
+      const remembered=ATT.get(id);
+      /* A provider refusal is a snapshot, not durable attachment state. MMS transactions can expose
+       * their parts after the first paint; caching a failure forever kept the bubble broken until
+       * the app restarted. Successful object URLs remain hot, while failures earn a bounded retry. */
+      if(!remembered || !remembered.why || Date.now()-Number(remembered._at||0)<ATT_FAIL_RETRY_MS)
+        return remembered;
+      ATT.delete(id);
+    }
     const P = plug('attachment');
     if(!P || !P.attachment){
       const r = { why: attLabel(p) + ' \u00b7 this app is too old to open it' };
@@ -2415,6 +2442,12 @@
       el.style.display = '';
       el.textContent = 'This phone would not let PosterChan read your picture messages, so only '
         + 'texts are shown here. The pictures are still on the phone.';
+      return;
+    }
+    if(st.canRead && S.lastRead !== null && !S.mmsAudited){
+      el.style.display = '';
+      el.textContent = 'Update PosterChan on this phone to copy older picture and video messages. '
+        + 'This build cannot audit the full MMS history, so it will not claim the backup is complete.';
       return;
     }
     /* AND THE CEILING, SAID OUT LOUD FOR THE SAME REASON. It is a smaller loss than a refusal and
