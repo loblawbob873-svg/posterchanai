@@ -512,7 +512,7 @@ function createWindow(assignment) {
       preload: path.join(__dirname, 'preload.js'),
       /* A companion display is a view, not a second background agent. The preload uses this marker
        * to withhold folder-sync ownership so adding a monitor cannot run two writers over one tree. */
-      additionalArguments: primary ? [] : ['--pc-secondary-surface'],
+      additionalArguments: ['--pc-preload-dir=' + __dirname].concat(primary ? [] : ['--pc-secondary-surface']),
     },
   });
   if(primary) win = created;
@@ -894,7 +894,9 @@ function pickScreenSource() {
           parent: win && !win.isDestroyed() ? win : undefined,
           modal: !!(win && !win.isDestroyed()), show: false, width: 880, height: 620, minWidth: 520, minHeight: 400,
           title: 'Choose what to share', backgroundColor: '#0a0a10', autoHideMenuBar: true,
-          webPreferences: { contextIsolation: true, nodeIntegration: false, preload: path.join(__dirname, 'preload.js') },
+          webPreferences: { contextIsolation: true, nodeIntegration: false,
+            preload: path.join(__dirname, 'preload.js'),
+            additionalArguments: ['--pc-preload-dir=' + __dirname] },
         });
         ipcMain.once('pc:screen:pick', (_e, id) => finish(id));
         pick.once('ready-to-show', () => { if(!pick.isDestroyed()) pick.show(); });

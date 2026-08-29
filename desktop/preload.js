@@ -33,7 +33,9 @@ function isTrustedPreloadPage(raw, localDir) {
   return ['boot.html', 'shell.html', 'picker.html'].some(name => candidate === dir + '/' + name);
 }
 
-const isOurPage = isTrustedPreloadPage(location.href, __dirname);
+const preloadDirArg = process.argv.find(v => String(v).startsWith('--pc-preload-dir='));
+const preloadDir = preloadDirArg ? String(preloadDirArg).slice('--pc-preload-dir='.length) : '';
+const isOurPage = isTrustedPreloadPage(location.href, preloadDir);
 const backgroundOwner = !process.argv.includes('--pc-secondary-surface');
 
 // Clipboard WRITE, exposed more widely than the controls below — it cannot repoint the app or enumerate
