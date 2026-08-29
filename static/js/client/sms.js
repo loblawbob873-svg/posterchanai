@@ -755,6 +755,8 @@
        * renderer then says "on your phone" instead of drawing a broken image. */
       obj.parts = cleanParts(obj.att || obj.parts);
       if(obj.att) delete obj.att;
+      // …and whether the archive has ever ANSWERED about them — see publishOne's `natt`.
+      obj.natt = obj.natt ? 1 : 0;
       S.msgs.set(d, obj);
     }
     rebuild();
@@ -1183,7 +1185,34 @@
     const ct = await PC.nip44enc(ME().pubkey, JSON.stringify(envelope));
     const r = await PC.publish(KIND, ct, [['d', m.doc], ['l', L_TAG]], {quiet:true, noQueue:true});
     const ok = !!(r && r.ok);
-    if(ok) delete m._pendingBlob;
+    if(ok){
+      delete m._pendingBlob;
+      /* THE HOLLOW TWIN, RETIRED — and only now, in this order, for the reason the delete flow
+       * below states at length: tombstone first and a publish that fails leaves the person with
+       * NEITHER document. Best effort, because a picture that arrived twice is a far smaller
+       * problem than one that did not arrive at all. */
+      if(m._bare && m._bare !== m.doc){
+        const bare = m._bare;
+        delete m._bare;
+        try{
+          const t = await PC.publish(KIND, '', [['d', bare], ['l', L_TAG]],
+                                     {quiet:true, noQueue:true});
+          if(t && t.ok){
+            try{ await PC.publish(5, '', [['a', KIND + ':' + ME().pubkey + ':' + bare]],
+                                  {quiet:true, noQueue:true}); }catch(_){ }
+            // A MARKER, not a removal — absorb keeps one for the same reason: a cached copy read
+            // back later would otherwise walk over the hole and restore the text-only twin.
+            S.msgs.set(bare, { doc:bare, _at: now(), gone:true });
+          }
+        }catch(_){ }
+      }
+      /* AND REMEMBER WHAT WE SAID, beside `_blob`. `natt` settles an attachment-less picture
+       * message, and the check reads it off the LOCAL row — which only ever learns it from a relay
+       * round trip that may not happen this session. Without this the row is offered, published and
+       * offered again on the very next pass: one relay write per picture per pass, for ever, which
+       * is the loop the answer exists to end. */
+      if(body.natt) m.natt = 1; else if(body.att) m.natt = 0;
+    }
     return ok;
   }
 
@@ -1326,8 +1355,18 @@
       const full = byId.get(Number(r.id));
       /* The MMS table's row is the WHOLE row, `doc` included — and it must be, because its address
        * counts the attachments in. Taking the parts alone would file the picture at the text-only
-       * address and every device would disagree about which document this message is. */
-      return full || r;
+       * address and every device would disagree about which document this message is.
+       *
+       * AND THE ADDRESS IT WAS FILED AT BEFORE IS CARRIED, because there is very likely a document
+       * sitting there. Every picture message this archive published while the sweep was reading the
+       * bare timeline went to the text-only address — 1,775 of them on the reporting account — and
+       * publishing the repaired one somewhere else does not replace it, it JOINS it: the thread
+       * then shows the message twice, once as text and once as a picture. Measured in the simulator
+       * before this line existed. `_bare` is local-only; publishOne tombstones it once the real
+       * document has landed, never before. */
+      if(!full) return r;
+      return String(full.doc || '') === String(r.doc || '') ? full
+                      : Object.assign({}, full, { _bare: r.doc });
     });
   }
 
@@ -1392,6 +1431,19 @@
         .sort((a,b) => (a.date || 0) - (b.date || 0));
       migrationRemaining = rows.length;
       rows = rows.slice(0, Math.max(1, (opts && opts.limit) || 60));
+      /* AND THEIR ATTACHMENTS, WHICH THIS BRANCH USED TO PUBLISH WITHOUT.
+       *
+       * `withMmsParts` was called on the live branch only. The back-fill — which is where every
+       * historical picture message in an archive comes from — took its rows straight out of the
+       * cache, where an MMS row is BARE: the phone's timeline query does not carry parts, which is
+       * the entire reason withMmsParts exists. So the whole of somebody's history was published
+       * `mms:true` with no `att`, over and over, and each pass looked like a success.
+       *
+       * The window is this BATCH's own span, not the sweep's mark: the back-fill walks backwards
+       * through years and a `since` taken from the mark would ask the MMS table about the wrong
+       * decade. */
+      const oldest = rows.reduce((t, r) => Math.min(t, r && r.date || t), Date.now());
+      rows = await withMmsParts(rows, Math.max(0, oldest - 1000), Math.max(60, rows.length * 4));
     }else{
       try{ rows = ((await P.list({ since: querySince, limit: (opts && opts.limit) || 400 })) || {}).messages || []; }
       catch(_){ return { published:0, skipped:'could not read the phone' }; }
@@ -1641,6 +1693,36 @@
       }
       if(!mmsExhausted) mmsCap = true;
       else S.mmsAudited = true;
+    }
+    /* ONE PROVIDER ROW IS ONE MESSAGE, WHATEVER ITS ADDRESS.
+     *
+     * The two walks above read the SAME picture message twice: the combined timeline hands it over
+     * bare, and the direct MMS walk hands over the complete row — and because `SmsKeys.docId`
+     * counts attachments into the address, those are two different `doc`s. Keyed on `doc`, both
+     * survive, so the thread shows the message twice (once as its caption, once as the picture) and
+     * the sweep publishes BOTH. That is the shape of every "why is this message here twice" and it
+     * is also how an archive fills with text-only twins of its own photos.
+     *
+     * The provider row id is the same on both, and it is local to this handset, which is exactly
+     * what makes it right here and wrong on the wire. The complete row wins; the address the bare
+     * one would have been filed at is carried on it as `_bare`, so publishOne can retire the
+     * document already sitting there once the real one has landed. */
+    const byRow = new Map();
+    for(const r of byDoc.values()){
+      const id = Number(r && r.id) || 0;
+      if(!id){ continue; }
+      const held = byRow.get(id);
+      if(!held){ byRow.set(id, r); continue; }
+      const rich = ((r.parts || []).length >= (held.parts || []).length) ? r : held;
+      const poor = rich === r ? held : r;
+      if(String(poor.doc || '') !== String(rich.doc || '')) rich._bare = poor.doc;
+      byRow.set(id, rich);
+    }
+    for(const r of byDoc.values()){
+      const id = Number(r && r.id) || 0;
+      if(!id) continue;
+      const winner = byRow.get(id);
+      if(winner && winner !== r) byDoc.delete(r.doc);
     }
     rows = Array.from(byDoc.values());
     if(!exhausted) mmsCap = true;
@@ -2113,6 +2195,22 @@
     return { doc: r.doc, address: r.address, body: r.body, date: r.date,
              incoming: !!r.incoming, name: r.name || '',
              _local: true,
+             /* THE PROVIDER ROW ID, KEPT AND NEVER PUBLISHED — the same rule as a part's `id`
+              * below, and for the same reason: it is local numbering, so a restored backup would
+              * re-mint every document if it ever reached an address. It is kept because it is the
+              * ONLY key `withMmsParts` can match a bare MMS row against its attachments with.
+              *
+              * Dropping it here is what emptied an entire archive of its pictures. Measured on the
+              * reporting account: 2,676 documents, 1,775 of them flagged `mms:true`, and NOT ONE
+              * carrying an `att` key — no attachment and no recorded refusal either, because the
+              * refusal path also lives inside `if(m.parts.length)`. So every screen but the phone
+              * showed "Photo · not backed up" on a message whose picture was sitting in the
+              * provider the whole time, and no amount of fixing the UPLOAD could have changed it:
+              * there was never an attachment to upload. */
+             id: Number(r.id) || 0,
+             // The address this same provider row was filed at before its attachments were read —
+             // see the de-duplication in loadFromPhone. Local only; publishOne retires it.
+             _bare: r._bare || '',
              // Carried rather than inferred from `parts` being non-empty: a picture message whose
              // attachments could not be read is still a picture message.
              mms: !!r.mms, parts: cleanParts(r.parts),

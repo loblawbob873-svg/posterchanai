@@ -620,8 +620,44 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
     anchor.offsetTop=500;list.scrollHeight=1400;S._restoreHydratedScroll(list,above);
     hydrationProbe={belowTop,aboveTop:list.scrollTop};
   }
+  /* WHAT WAS ACTUALLY ARCHIVED, opened.
+   *
+   * Every other probe here counts events, uploads and calls — all of which a sweep that publishes a
+   * picture message with NO ATTACHMENT gets perfectly right. That is not hypothetical: measured on
+   * the reporting account, 2,676 documents, 1,775 flagged `mms:true`, and NOT ONE carrying an `att`
+   * key. Every pass had reported success, because the branch that records a refusal lives inside
+   * `if(m.parts.length)` too — so a message with no parts says nothing at all, and "the upload is
+   * broken" was the wrong hunt for a week.
+   *
+   * So this opens the envelope, follows it into the drive stub, and reports the BODY. */
+  const archive = published.filter(p => String(p.d || '').startsWith('pcai:sms:')).map(p => {
+    let env, body;
+    try{ env = JSON.parse(String(p.content).slice(4)); }catch(_){ return {d:p.d, unreadable:true}; }
+    if(env && /^[0-9a-f]{64}$/i.test(String(env.blob || ''))){
+      const held = uploads[env.blob];
+      if(!held) return {d:p.d, lostBody:true};
+      try{ body = JSON.parse(held.text); }catch(_){ return {d:p.d, unreadable:true}; }
+    } else body = env;
+    const att = (body && body.att) || [];
+    return { d:p.d, mms: !!(body && body.mms), atts: att.length,
+             /* WHAT WENT ON THE WIRE. A provider row id is local numbering, so one that reached a
+              * document would re-mint every address on a restored backup. */
+             keys: Object.keys(body || {}).sort(),
+             attKeys: Array.from(new Set([].concat.apply([], att.map(a => Object.keys(a || {}))))).sort(),
+             withSha: att.filter(a => a && a.sha).length,
+             refused: att.filter(a => a && !a.sha && a.err).length };
+  });
+  const archiveProbe = {
+    docs: archive.length,
+    mms: archive.filter(a => a.mms).length,
+    /* A PICTURE MESSAGE THAT SAYS NOTHING ABOUT ITS PICTURE. Neither an attachment nor a reason —
+     * the shape a whole archive was in, and the shape no other counter here can see. */
+    mmsSilent: archive.filter(a => a.mms && !a.atts).length,
+    withMedia: archive.filter(a => a.withSha > 0).length,
+    refusedNamed: archive.filter(a => a.refused > 0).length,
+  };
   console.log(JSON.stringify({
-    calls, published, notified, uploads, scrollProbe, hydrationProbe,
+    calls, published, notified, uploads, scrollProbe, hydrationProbe, archive, archiveProbe,
     // What the phone reported about itself — see publishStatus in sms.js.
     statuses: statuses.map(x => { try{ return JSON.parse(String(x.content).slice(4)); }
                                  catch(_){ return {bad:true}; } }),

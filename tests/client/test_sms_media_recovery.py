@@ -497,6 +497,94 @@ class TheArchiveIsBuiltFromTheReadThatCarriesAttachments(unittest.TestCase):
                   steps=["phoneLoad", "mirror", "settle"])
         self.assertTrue(res["relay"], "the sweep published nothing at all: %r" % (res["relay"],))
 
+    def test_the_back_fill_publishes_the_picture_and_not_just_the_word_mms(self):
+        """THE ONE THAT EMPTIED A WHOLE ARCHIVE, and every counter in this file agreed it had not.
+
+        Measured on the reporting account: 2,676 documents, 1,775 of them flagged `mms:true`, and
+        NOT ONE carrying an `att` key — no attachment and no recorded refusal either, because the
+        branch that records a reason lives inside `if(m.parts.length)` as well. So every device but
+        the phone showed "Photo · not backed up" on messages whose pictures were in the provider the
+        whole time, every sweep reported success, and a week went into fixing the UPLOAD.
+
+        `withMmsParts` was called on the LIVE branch only. The back-fill — which is where every
+        historical picture in an archive comes from — took its rows straight out of the cache, where
+        an MMS row is bare. The tests above drive `mirror`, never `migrate`, which is why they all
+        passed against it."""
+        res = run(isPhone=True, rows=self._rows(), combinedDropsParts=True,
+                  parts={"900": {"data": "eA=="}}, steps=["phoneLoad", "migrate", "settle"])
+        p = res["archiveProbe"]
+        self.assertGreater(p["mms"], 0, "the fixture published no picture message at all: %r" % (p,))
+        self.assertEqual(p["mmsSilent"], 0,
+                         "a picture message was archived saying NOTHING about its picture — "
+                         "no attachment and no reason: %r / %r" % (p, res["archive"]))
+        self.assertGreater(p["withMedia"], 0,
+                           "the back-fill archived no media: %r / %r" % (p, res["archive"]))
+
+    def test_the_back_fill_files_it_at_the_address_that_counts_the_attachment_in(self):
+        """Same rule as the live sweep: taking the parts alone would file the picture at the
+        text-only address, and every device would then disagree about which document this is."""
+        res = run(isPhone=True, rows=self._rows(), combinedDropsParts=True,
+                  parts={"900": {"data": "eA=="}}, steps=["phoneLoad", "migrate", "settle"])
+        self.assertFalse([d for d in res["relay"] if d.endswith("-noparts")],
+                         "the back-fill filed the picture at the bare address: %r" % (res["relay"],))
+
+    def _hollow_twin(self):
+        """The archive as this account actually is: a picture message published FROM the bare
+        timeline, so it sits at the text-only address carrying no attachment at all."""
+        return blob_ev("pcai:sms:000000000000000000000001-noparts",
+                       {"address": "+15550100", "body": "look", "date": NOW,
+                        "incoming": True, "mms": True})
+
+    def test_one_provider_row_is_one_message_however_many_addresses_it_has(self):
+        """THE DUPLICATE, and it is what the repair would otherwise have done 1,775 times.
+
+        loadFromPhone reads the same picture message TWICE — the combined timeline hands it over
+        bare, the direct MMS walk hands over the complete row — and because `SmsKeys.docId` counts
+        attachments into the address, those are two different documents. With one of them already on
+        the relay (which is what a hollow archive IS), both survive the merge: the thread shows the
+        message twice, once as its caption and once as the picture. Measured in this simulator
+        before the de-duplication existed: n=2, bodies ["look", "look"], parts [0, 1]."""
+        hollow, uploads = self._hollow_twin()
+        res = run(isPhone=True, rows=self._rows(), combinedDropsParts=True,
+                  parts={"900": {"data": "eA=="}}, relay=[hollow], uploads=uploads,
+                  steps=["load", "phoneLoad", "migrate", "settle"])
+        threads = res["threads"]
+        self.assertTrue(threads, "no thread was built at all: %r" % (res["docs"],))
+        self.assertEqual(threads[0]["n"], 1,
+                         "the same message is in the thread twice: %r" % (threads[0]["order"],))
+        self.assertEqual(threads[0]["parts"], [1],
+                         "the surviving copy is the one without the picture: %r" % (threads[0],))
+
+    def test_the_text_only_twin_already_on_the_relay_is_retired(self):
+        """De-duplicating the READ is only half of it: the address the bare row would have been
+        filed at HAS a document on it — that is what the whole archive is made of. It is tombstoned
+        once the real one has landed, and never before: tombstoning first leaves a failed publish
+        with NEITHER document, which is the rule the delete flow states at length."""
+        hollow, uploads = self._hollow_twin()
+        res = run(isPhone=True, rows=self._rows(), combinedDropsParts=True,
+                  parts={"900": {"data": "eA=="}}, relay=[hollow], uploads=uploads,
+                  steps=["load", "phoneLoad", "migrate", "settle"])
+        self.assertFalse([d for d in res["docs"] if d.endswith("-noparts")],
+                         "the text-only twin is still live: %r" % (res["docs"],))
+        self.assertIn("pcai:sms:000000000000000000000001", res["docs"],
+                      "the picture's own document is not there: %r" % (res["docs"],))
+
+    def test_the_provider_row_id_never_reaches_a_document(self):
+        """`fromRow` now carries `id`, because it is the only key a bare cached MMS row can be
+        matched against the MMS table with — and the moment it is carried, it can leak.
+
+        It must not. A row id is local numbering: published, a restored backup renumbers every
+        message and re-mints the entire archive at new addresses. `publishOne` builds the body from
+        named fields for exactly this reason, and `cleanParts` keeps a part's `id` under the same
+        rule. This is what stops a later `{...m}` quietly undoing both."""
+        res = run(isPhone=True, rows=self._rows(), combinedDropsParts=True,
+                  parts={"900": {"data": "eA=="}}, steps=["phoneLoad", "migrate", "settle"])
+        for doc in res["archive"]:
+            self.assertNotIn("id", doc.get("keys", []),
+                             "a provider row id was published in the message body: %r" % (doc,))
+            self.assertNotIn("id", doc.get("attKeys", []),
+                             "a provider part id was published on an attachment: %r" % (doc,))
+
     def test_a_text_only_sweep_does_not_ask_the_mms_table_at_all(self):
         """No picture messages, no second read — the cost is paid only when there is something to
         recover."""
