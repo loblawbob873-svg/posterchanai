@@ -29,6 +29,9 @@ for(const [sha, item] of Object.entries(opt.uploads || {})) uploads[sha] = Objec
 const driveFolders = new Set();
 const driveFiles = [];
 let driveBatch = 0;
+const transientDecrypts = new Set();
+let decryptInflight = 0, decryptPeak = 0, decryptCalls = 0;
+let relayBackUp = false;
 
 /* ---- the stub phone -------------------------------------------------------------------------- */
 
@@ -211,7 +214,15 @@ global.document = {
   async _fire(name){
     for(const fn of (documentListeners.get(name) || []).slice()) await fn();
   },
-  querySelector(){ return null; }
+  querySelector(){ return null; },
+  /* drawAtt builds a real <img>/<video>/<button>. Nothing here inspects them — what the probes
+   * measure is which elements were REACHED — but a missing factory throws inside hydrateAtt's own
+   * catch, which would make an abandoned tail and a drawn one look identical. */
+  createElement(tag){
+    return {tagName:String(tag).toUpperCase(), className:'', src:'', alt:'', type:'', controls:false,
+            textContent:'', dataset:{}, children:[], style:{},
+            setAttribute(){}, appendChild(kid){ this.children.push(kid); }};
+  }
 };
 global.localStorage = (() => {
   const m = Object.assign({}, opt.storage || {});
@@ -229,22 +240,42 @@ global.localStorage = (() => {
  * `.query` undefined, every read threw into its own catch, and every test failed as though the
  * device simply had no messages. */
 global.Store = { query: filters => {
-  calls.push(['storeQuery', filters && filters[0] && filters[0]['#l'] ? 'label' : 'broad']);
+  calls.push(['storeQuery', (filters || []).map(f => f && f['#l'] ? 'label' : 'broad').join('+')]);
   if(opt.coldLoadSignerFailure) return { sort(){
     throw new Error('invalid plaintext size: must be between 1 and 65535 bytes');
   } };
-  const rows = (opt.cached || []).slice();
-  return opt.missingLabelIndex && filters && filters[0] && filters[0]['#l'] ? [] : rows;
+  const rows = (opt.cached || []).slice(), out=[];
+  for(const f of (filters || [])){
+    if(opt.missingLabelIndex && f && f['#l']) continue;
+    const hits=(opt.realArchiveFilters && f && f['#l'])
+      ? rows.filter(ev => (ev.tags || []).some(t => t[0] === 'l' && t[1] === 'pcai-sms')) : rows;
+    for(const ev of hits) if(!ev.id || !out.some(old => old.id === ev.id)) out.push(ev);
+  }
+  return out;
 } };
 global.Relay = {
   async query(filters){
+    /* WHICH FILTERS WENT TO THE RELAY, in order. The label filter is indexed and bounded to Texts;
+     * the broad one is author+kind over the whole kind-30078 datastore (measured on a real node:
+     * 19,480 folder-sync records and 17,805 mail rows beside 4,619 texts), so how OFTEN it is sent
+     * over the wire is the difference between opening a screen and downloading an account. */
+    calls.push(['relayQuery', (filters || []).map(f => f && f['#l'] ? 'label' : 'broad').join('+')]);
     if(opt.relayDown) throw new Error('no relay');
+    /* UNREACHABLE, THEN REACHABLE. "I could not ask" and "there is nothing there" are different
+     * answers, and the only way to show a client conflating them is to let the relay come back. */
+    if(opt.relayDownUntilForeground && !relayBackUp) throw new Error('no relay');
     if(opt.relayQueryDelay) await new Promise(r => setTimeout(r, Number(opt.relayQueryDelay)));
     // An UNREACHABLE relay and an EMPTY one are different answers, and the archive must treat them
     // differently — this is the switch that lets a test show it.
     if(opt.relayEmpty) return [];
-    const rows = Array.from(relay.values());
-    return opt.missingLabelIndex && filters && filters[0] && filters[0]['#l'] ? [] : rows;
+    const rows = Array.from(relay.values()), out=[];
+    for(const f of (filters || [])){
+      if(opt.missingLabelIndex && f && f['#l']) continue;
+      const hits=(opt.realArchiveFilters && f && f['#l'])
+        ? rows.filter(ev => (ev.tags || []).some(t => t[0] === 'l' && t[1] === 'pcai-sms')) : rows;
+      for(const ev of hits) if(!ev.id || !out.some(old => old.id === ev.id)) out.push(ev);
+    }
+    return out;
   },
   subscribe(filters, handlers){
     global.__smsLiveEvent = handlers && handlers.onEvent;
@@ -313,7 +344,22 @@ global.__PC = {
   // transcript is what makes a wrong body visible in a failure message.
   nip44enc: async (pk, s) => 'enc:' + s,
   nip44dec: async (pk, ct) => {
+    /* HOW MANY DECRYPTS WERE EVER IN FLIGHT AT ONCE. A signer round trip is the expensive half of
+     * opening an archived message and, with a browser extension holding the key, the half that
+     * cannot be made faster — only wider. A serial loop and a fanned-out one produce an identical
+     * transcript, so the concurrency itself has to be measured. */
+    decryptInflight++; decryptCalls++;
+    if(decryptInflight > decryptPeak) decryptPeak = decryptInflight;
+    try{ return await global.__PC._nip44dec(pk, ct); } finally{ decryptInflight--; }
+  },
+  _nip44dec: async (pk, ct) => {
     if(String(ct).slice(0, 4) !== 'enc:') throw new Error('not ours');
+    if(opt.decryptDelayAll) await new Promise(r => setTimeout(r, Number(opt.decryptDelayAll) || 0));
+    if(opt.transientDecryptOnce && String(ct).includes(String(opt.transientDecryptOnce)) &&
+       !transientDecrypts.has(String(ct))){
+      transientDecrypts.add(String(ct));
+      throw new Error('signer is locked; try again');
+    }
     const plaintext = String(ct).slice(4);
     if((opt.rejectInvalidPlaintext === true) &&
        (Buffer.byteLength(plaintext, 'utf8') < 1 || Buffer.byteLength(plaintext, 'utf8') > 65535))
@@ -348,6 +394,40 @@ global.fetch = async url => {
                               {type:item.type || 'application/octet-stream'}); } };
 };
 
+/* ---- a minimal IndexedDB, when a test is about the envelope cache -----------------------------
+ *
+ * Node has none. The cache is the single biggest win on a RE-open — it takes the signer round trip,
+ * which a browser extension gates and nothing can parallelise past a handful, out of the path
+ * entirely — so leaving it unexercised because the runtime lacks a database is how it would rot.
+ * Only what sms.js actually calls is implemented, and the requests fire asynchronously the way real
+ * ones do, because code that accidentally depends on a synchronous answer works here and nowhere. */
+if(opt.fakeIndexedDB){
+  const dbs = Object.create(null);
+  const later = (req, value) => { setTimeout(() => { req.result = value;
+    if(req.onsuccess) req.onsuccess({target:req}); }, 0); return req; };
+  global.indexedDB = {
+    open(name){
+      const req = {};
+      const fresh = !dbs[name];
+      const rows = dbs[name] || (dbs[name] = new Map());
+      const store = {
+        get: id => later({}, rows.has(id) ? rows.get(id) : undefined),
+        put: row => { rows.set(row.id, row); return later({}, row.id); },
+        count: () => later({}, rows.size),
+        clear: () => { rows.clear(); return later({}, undefined); },
+      };
+      const db = { objectStoreNames:{contains:() => !fresh}, createObjectStore(){ return store; },
+                   transaction(){ return {objectStore(){ return store; }}; } };
+      setTimeout(() => {
+        req.result = db;
+        if(fresh && req.onupgradeneeded) req.onupgradeneeded({target:req});
+        if(req.onsuccess) req.onsuccess({target:req});
+      }, 0);
+      return req;
+    }
+  };
+}
+
 require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
 
 (async () => {
@@ -368,7 +448,7 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
     // Resume the real foreground handler. This is deliberately not a direct migrateAll call: the
     // regression was that visibility only ran the recent timestamp sweep after an interrupted
     // historical migration, so the older tail could never be reached again.
-    else if(step === 'foreground'){ await document._fire('visibilitychange'); }
+    else if(step === 'foreground'){ relayBackUp = true; await document._fire('visibilitychange'); }
     /* `sendfile:<to>:<bytes>` — a send with an attachment of a given size, which is the only input
        the oversized-link decision actually turns on. */
     else if(step.slice(0, 9) === 'sendfile:'){
@@ -419,6 +499,12 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
     }
     else if(step === 'settle'){ await new Promise(r => setTimeout(r, 20)); }
     else if(step === 'absorbRaw'){ await S._absorb(opt.rawEvents || []); }
+    /* A NEW PAGE ON THE SAME BROWSER. Everything this module holds in memory is gone; the archive
+       on the relay and whatever survives on disk are all that is left. */
+    else if(step === 'forgetArchive'){
+      const st = S._state(); st.msgs.clear(); st.threads.length = 0; calls.push(['forgetArchive']);
+    }
+    else if(step === 'absorbCached'){ await S._absorb(opt.cached || []); }
     else if(step === 'liveEvent'){
       if(typeof global.__smsLiveEvent !== 'function') throw new Error('Texts live subscription missing');
       await global.__smsLiveEvent((opt.rawEvents || [])[0]);
@@ -440,6 +526,54 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
     scrollProbe = {savedReading, restoredReading:reading.scrollTop,
                    savedPinned, restoredPinned:pinned.scrollTop};
   }
+  /* ---- picture messages on a device that is NOT the phone ------------------------------------
+   *
+   * Both of these drive the shipped functions directly. There is no DOM here, and a whole-view
+   * render is exactly what a DOM-less simulator cannot do — but the two failures being pinned are
+   * a CACHE (is the same blob read twice?) and a LOOP (does one repaint abandon the rest?), and
+   * both are visible from the function's own arguments and the calls it makes. */
+  let attProbe = null;
+  if(opt.attProbe){
+    const part = Object.assign({id:0, ct:'image/jpeg', name:'p.jpg', bytes:10}, opt.attProbe);
+    const first = await S._partData(part);
+    const second = await S._partData(part);
+    attProbe = {
+      firstDrawn: !!(first && first.url), secondDrawn: !!(second && second.url),
+      firstWhy: (first && first.why) || '', preview: !!(first && first.preview),
+      // Which addresses were asked for, in order — a preview that could not be read must fall back
+      // to the original rather than losing the picture, and a second draw must ask for nothing.
+      asked: calls.filter(c => c[0] === 'encFileUrl').map(c => c[1]),
+    };
+  }
+  let hydrateProbe = null;
+  if(opt.hydrateProbe){
+    /* A conversation of picture messages, and a repaint that lands in the middle of hydrating it.
+     * `el.isConnected` going false is the ordinary consequence of paint() rebuilding #feed; read
+     * as "the view moved on" it abandoned every attachment that had not been reached yet. */
+    const parts = (opt.hydrateProbe.parts || []).map((sha, i) =>
+      ({id:0, ct:'image/jpeg', name:'p'+i+'.jpg', bytes:10, sha, thumb:''}));
+    const msgs = [{doc:'d', parts}];
+    const els = parts.map((_, i) => ({
+      isConnected: true, dataset:{m:'0', p:String(i)}, innerHTML:'', children:[],
+      appendChild(kid){ this.children.push(kid); },
+    }));
+    // The element the repaint replaced, chosen by index so the test names it.
+    const dead = Number(opt.hydrateProbe.repaint);
+    if(Number.isInteger(dead) && els[dead]) els[dead].isConnected = false;
+    // AND THE WHOLE TAIL, for the "you left the screen" case: paint() rewrites #feed, so every
+    // placeholder still queued is disconnected before its turn comes round.
+    for(const i of (opt.hydrateProbe.dead || [])) if(els[i]) els[i].isConnected = false;
+    const root = {isConnected:true, querySelectorAll(){ return els.slice(); }};
+    await S._hydrateAtt(root, msgs);
+    /* A SECOND PASS OVER A DRAWN CONVERSATION. paint() rebuilds #feed and hydration runs again;
+     * the elements it already filled in must cost nothing, or a busy thread re-reads and
+     * re-decrypts every picture in it on every keystroke. */
+    if(opt.hydrateProbe.twice) await S._hydrateAtt(root, msgs);
+    hydrateProbe = {done: els.map(el => (el.dataset && el.dataset.done) === '1' ? 1 : 0),
+                    // How many times each placeholder was DRAWN INTO. drawAtt appends the <img>,
+                    // so a second pass that re-does finished work shows up as a second child.
+                    drawn: els.map(el => el.children.length)};
+  }
   let hydrationProbe = null;
   if(opt.hydrationProbe){
     const anchor={offsetTop:300,offsetHeight:80,isConnected:true};
@@ -455,6 +589,7 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
   }
   console.log(JSON.stringify({
     calls, published, notified, uploads, scrollProbe, hydrationProbe,
+    decryptPeak, decryptCalls, attProbe, hydrateProbe,
     feedHtml: visibleFeed ? visibleFeed.innerHTML : '',
     drive: { folders:Array.from(driveFolders).sort(), files:driveFiles, batch:driveBatch },
     rows: rows.map(r => r.doc),

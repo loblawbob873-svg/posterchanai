@@ -146,6 +146,10 @@ CHECKS = {
     "check_vault_mobile":              dict(group="ui", secs=600),
     "check_websearch_mobile":          dict(group="ui", secs=600),
     "check_notes_mobile":              dict(group="ui", secs=600),
+    # Picture messages in Texts, on a device that is not the phone. The node simulator has no DOM,
+    # and the bug that hid every attachment on the old messages lived entirely in one.
+    "check_texts_media":               dict(group="ui", secs=420,
+                                            why="pictures draw, survive a repaint, read once"),
     "check_files_explorer":            dict(group="ui", secs=600),
     "check_mail_mobile":               dict(group="ui", secs=600),
     "check_concord_mobile":            dict(group="ui", secs=420),

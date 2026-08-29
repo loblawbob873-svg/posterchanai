@@ -670,14 +670,24 @@
     }else if(tag[0]==='r'){const relay=normalizeRelay(tag[1]);if(relay)relays.push(relay);}}
     return {groups:[...new Map(groups.map(g=>[g.relay+'\0'+g.id,g])).values()],relays:[...new Set(relays)]};
   }
-  async function nip29Memberships(p,viewer,signal=null){
+  async function nip29Memberships(p,viewer,signal=null,legacyRecovery=false){
     if(!viewer.pubkey)return {groups:[],relays:[]};
-    /* relayQuery already asks the connected user pool. The external half is Concord bootstrap
-       recovery only; unioning relayUrls here duplicated Damus (and any other personal relay) as a
-       fresh queryFrom WebSocket on every Discover recovery. */
-    const filters=[{kinds:[10009],authors:[viewer.pubkey],limit:8}],relays=[...CORD_RELAYS,...LEGACY_RECOVERY_RELAYS],
-      [pool,listed]=await Promise.all([p.relayQuery?p.relayQuery(filters,8000):[],p.relayQueryFrom?p.relayQueryFrom(relays,filters,{timeout:8000,max:12,exact:true,signal,purpose:'concord nip29 memberships',minInterval:1800000,allowBlocked:true,failureCooldown:1800000}):[]]),
-      queried=[...new Map([...(pool||[]),...(listed||[])].map(e=>[e.id,e])).values()],events=p.verifyRelayEvents?await p.verifyRelayEvents(queried):[],
+    /* CACHE, THEN THE USER'S OWN POOL, AND ONLY THEN ANYBODY ELSE'S RELAY — the same rule
+       `membershipEvents` was given, and this copy was left behind. Opening six external sockets in
+       parallel with the pool read, on startup and then again on the 60/120s recovery timer, is what
+       filled a Firefox console with "can't establish a connection to wss://jskitty.com/nostr",
+       "…asia.vectorapp.io/nostr" and a cooling-down Damus while Concord sat there getting ready. A
+       kind-10009 membership list is a REPLACEABLE document the user published: if the cache or
+       their own relay has it, no external relay can improve on it, and if neither does then this is
+       a fresh browser and the recovery read is worth its cost. The two historically blocked relays
+       stay reserved for an explicit recovery pass. */
+    const filters=[{kinds:[10009],authors:[viewer.pubkey],limit:8}];
+    let cached=[];try{cached=window.Store&&window.Store.query?window.Store.query(filters)||[]:[];}catch(_){}
+    const pool=p.relayQuery?await Promise.resolve(p.relayQuery(filters,8000)).catch(()=>[]):[];
+    const local=[...(cached||[]),...(pool||[])].filter(e=>e&&e.id);
+    const relays=legacyRecovery?[...CORD_RELAYS,...LEGACY_RECOVERY_RELAYS]:CORD_RELAYS;
+    const listed=!local.length&&p.relayQueryFrom?await Promise.resolve(p.relayQueryFrom(relays,filters,{timeout:8000,max:legacyRecovery?12:6,exact:true,signal,purpose:'concord nip29 memberships',minInterval:1800000,allowBlocked:legacyRecovery,failureCooldown:1800000})).catch(()=>[]):[];
+    const queried=[...new Map([...local,...(listed||[])].map(e=>[e.id,e])).values()],events=p.verifyRelayEvents?await p.verifyRelayEvents(queried):[],
       event=events.sort((a,b)=>Number(b.created_at)-Number(a.created_at)||String(a.id).localeCompare(String(b.id)))[0];
     if(!event)return {groups:[],relays:[]};
     const all=[...(event.tags||[])];
@@ -695,7 +705,7 @@
   async function syncNip29Memberships(p,viewer,allowActive=false){
     if((state.community!=null&&!allowActive)||nip29Busy||!viewer.pubkey)return;nip29Busy=true;let recovered=false;
     const signal=discoveryAbortController&&discoveryAbortController.signal;
-    try{const membership=await nip29Memberships(p,viewer,signal);if((signal&&signal.aborted)||(state.community!=null&&!allowActive))return;const byRelay=new Map();for(const g of membership.groups){if(!byRelay.has(g.relay))byRelay.set(g.relay,[]);byRelay.get(g.relay).push(g);}
+    try{const membership=await nip29Memberships(p,viewer,signal,allowActive);if((signal&&signal.aborted)||(state.community!=null&&!allowActive))return;const byRelay=new Map();for(const g of membership.groups){if(!byRelay.has(g.relay))byRelay.set(g.relay,[]);byRelay.get(g.relay).push(g);}
       const found=[];for(const [relay,listed] of byRelay){if(state.community!=null&&!allowActive)return;let metas=[];try{metas=await nip29Metadata(p,relay,listed.map(g=>g.id),signal);}catch(_){}if(state.community!=null&&!allowActive)return;const metaById=new Map(metas.map(m=>[m.id,m]));for(const g of listed){const meta=metaById.get(g.id)||g;found.push({...meta,id:g.id,relay,name:g.name||meta.name||g.id});}}recovered=found.length>0;
       if(found.length){const rooms=saved();let changed=false;for(const g of found){const identity='nip29:'+g.relay+'#'+g.id,i=rooms.findIndex(r=>roomIdentity(r)===identity),room={protocol:'nip29',communityId:identity,naddr:identity,groupId:g.id,relay:g.relay,name:g.name||g.id,description:g.description||'',icon:g.icon||'',channels:[{name:'general',id:g.id,private:false}],local:false};if(i<0){rooms.push(room);changed=true;}else if(rooms[i].protocol==='nip29'&&JSON.stringify(rooms[i])!==JSON.stringify({...rooms[i],...room})){rooms[i]={...rooms[i],...room};changed=true;}}if(changed){save(rooms);backgroundRender();}}
     }catch(e){console.warn('NIP-29 membership sync failed',e);}finally{nip29Busy=false;clearTimeout(nip29RetryTimer);if(state.community==null)nip29RetryTimer=setTimeout(()=>syncNip29Memberships(p,p.viewer?p.viewer():viewer),recovered?60000:120000);}

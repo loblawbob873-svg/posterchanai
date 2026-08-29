@@ -133,6 +133,15 @@
     return String((ev && ev.id) || (String(d || '') + ':' + Number(ev && ev.created_at || 0)));
   }
 
+  function permanentArchiveError(e){
+    const name=String((e && e.name) || ''), msg=String((e && e.message) || e || '');
+    /* JSON after a successful decrypt and NIP-44's structural/size rejections cannot heal. Signer
+     * locked/denied/busy/timeouts and Blossom/network failures can, and blacklisting those exact
+     * event ids for the session turned one transient Firefox extension failure into an empty Texts
+     * view even after the signer recovered. */
+    return name === 'SyntaxError' || /invalid plaintext size|empty ciphertext|invalid ciphertext|unknown nip-44 version|invalid payload/i.test(msg);
+  }
+
   let PC = null;
   const S = {
     msgs: new Map(),     // docId -> {address, body, date, incoming, id, gone}
@@ -199,6 +208,178 @@
       const d = String(((tags.find(t => Array.isArray(t) && t[0] === 'd')) || [])[1] || '');
       return d.startsWith(D_MSG) || d.startsWith(D_OUT);
     });
+  }
+
+  /* THE LABEL QUERY IS AN OPTIMISATION, NOT AN AUTHORITY BOUNDARY. A partially-upgraded archive can
+   * contain one new, correctly-labelled row beside years of older rows that have only their `d`
+   * address. Treating "the labelled query returned anything" as proof that its result was complete
+   * hid the entire old archive when that one row was a tombstone, an outbox receipt, or corrupt
+   * ciphertext. Ask both bounded filters, admit only the Texts namespace, and dedupe by event id.
+   *
+   * BUT ONLY THE LOCAL STORE MAY BE ASKED BOTH WAYS ON THE HOT PATH, AND THAT ASYMMETRY IS THE
+   * WHOLE POINT. `BROAD_FILTER` is author+kind with no `d` bound, and kind 30078 is this app's
+   * entire datastore: measured on this deployment, one account's own 30078 documents are 19,480
+   * `pcai:fs` sync records and 17,805 `pcai:mail` rows against 4,619 `pcai:sms` — so a broad
+   * RELAY read downloads up to `limit` documents, of which ~90% can never be a text, on every open
+   * and every refresh. Store.query is a local scan of an already-held cache and costs nothing, so
+   * it keeps both filters; the relay gets the indexed one, and the unlabelled tail is swept ONCE
+   * per session, behind the first paint, by `legacySweep`. (Measured on the same deployment: all
+   * 4,619 archive events carry `l=pcai-sms`, so the sweep is a repair path, not the ordinary one.) */
+  function archiveFilters(){ return [FILTER(), BROAD_FILTER()]; }
+  function liveFilters(){ return [FILTER()]; }
+  function archiveRows(events){
+    const seen = new Set();
+    return onlyTexts(events).filter(ev => {
+      const id = String((ev && ev.id) || '');
+      if(id && seen.has(id)) return false;
+      if(id) seen.add(id);
+      return true;
+    });
+  }
+
+  /* ---------------------------------------------------------------- opening the archive
+   *
+   * OPENING ONE DOCUMENT COSTS A SIGNER ROUND TRIP, A BLOB FETCH AND AN AES DECRYPT, AND absorb()
+   * USED TO PAY ALL THREE STRICTLY ONE MESSAGE AT A TIME.
+   *
+   * Measured on this deployment: 4,619 `pcai:sms:` documents, and EVERY one of them is a Blossom
+   * pointer (event content 220-388 bytes; the old inline-body form is gone from this archive
+   * entirely). Serialised, with a browser extension holding the key — which is the configuration
+   * this was reported from, and the one where a decrypt is a cross-process prompt rather than a
+   * function call — that is minutes of spinner on every single open of the screen.
+   *
+   * Two changes, and NEITHER of them puts a message body on disk:
+   *
+   *   1. THE ENVELOPE IS CACHED, THE BODY IS NEVER CACHED. What `nip44dec` yields for a modern row
+   *      is `{v, blob, mime}`: a content hash and a MIME type, not a word of anybody's
+   *      conversation. It is also the expensive half — an extension gates concurrent decrypt
+   *      prompts, so it is the one step that cannot be widened. An event id is the hash of an
+   *      immutable event, so a hit is exact and needs no revalidation. An envelope that is NOT a
+   *      blob pointer is refused by the writer, because on those (old, inline) rows the envelope
+   *      IS the message.
+   *   2. OPEN IN PARALLEL, COMMIT IN ORDER. The newest-wins commit loop is untouched and still
+   *      walks its list newest-first, one entry at a time; only the fetching in front of it is
+   *      fanned out, bounded, so one slow blob no longer holds up every message behind it.
+   *
+   * The lane count is deliberately small. Six is comfortably under every NIP-07 extension window
+   * cap this app has been bitten by (see the login-decrypt storm that got denied with no prompt),
+   * and the win over serial is already ~6x; racing forty decrypts to save another second is how
+   * that bug happened.
+   */
+  const OPEN_LANES = 6;
+  const ENV_DB = 'posterchan-texts', ENV_STORE = 'envelopes';
+  let _envDb;
+  function envDb(){
+    if(_envDb !== undefined) return _envDb;
+    _envDb = new Promise(resolve => {
+      try{
+        if(typeof indexedDB === 'undefined' || !indexedDB) return resolve(null);
+        const r = indexedDB.open(ENV_DB, 1);
+        r.onupgradeneeded = () => {
+          const d = r.result;
+          if(!d.objectStoreNames.contains(ENV_STORE)) d.createObjectStore(ENV_STORE, {keyPath:'id'});
+        };
+        r.onsuccess = () => resolve(prune(r.result || null));
+        r.onerror = () => resolve(null);
+        r.onblocked = () => resolve(null);
+      }catch(_){ resolve(null); }
+    });
+    return _envDb;
+  }
+  /* A CACHE THAT ONLY EVER GROWS IS NOT A CACHE. One row per archived event, and an event id is
+   * never reused, so a deleted message's row is dead the moment the message is — there is nothing
+   * to expire it against and no cheap way to ask which are still referenced. Past a generous
+   * ceiling the whole store is emptied and re-earned: every row here is reconstructible from the
+   * event it came from, so the cost of being wrong is one slow load, once. Checked once per page,
+   * when the database is opened. */
+  const ENV_MAX_ROWS = 40000;
+  function prune(db){
+    if(!db) return db;
+    try{
+      const count = db.transaction(ENV_STORE, 'readonly').objectStore(ENV_STORE).count();
+      count.onsuccess = () => {
+        if(Number(count.result) > ENV_MAX_ROWS)
+          try{ db.transaction(ENV_STORE, 'readwrite').objectStore(ENV_STORE).clear(); }catch(_){ }
+      };
+    }catch(_){ }
+    return db;
+  }
+  function envReq(req){
+    return new Promise(resolve => {
+      try{ req.onsuccess = () => resolve(req.result); req.onerror = () => resolve(null); }
+      catch(_){ resolve(null); }
+    });
+  }
+  async function envRead(id){
+    try{
+      const db = await envDb();
+      if(!db) return null;
+      const row = await envReq(db.transaction(ENV_STORE, 'readonly').objectStore(ENV_STORE).get(id));
+      const env = row && row.env;
+      /* Re-checked on the way OUT as well as on the way in. A row written by a build that stored
+       * something else, or a partially-written record, must read as a miss rather than be handed
+       * to openMessageBody as though it were a body. */
+      return (env && typeof env === 'object' && /^[0-9a-f]{64}$/i.test(String(env.blob || '')))
+        ? env : null;
+    }catch(_){ return null; }
+  }
+  function envWrite(id, env){
+    try{
+      envDb().then(db => {
+        if(!db) return;
+        try{ db.transaction(ENV_STORE, 'readwrite').objectStore(ENV_STORE)
+               .put({id, env, at: Date.now()}); }catch(_){ }
+      }).catch(() => {});
+    }catch(_){ }
+  }
+  /* One archived document, opened. The signer is asked only when the envelope is not already
+   * known; `openMessageBody` is unchanged and still returns an inline envelope verbatim. */
+  async function archiveEnvelope(ev){
+    const id = String((ev && ev.id) || '');
+    if(id){ const hit = await envRead(id); if(hit) return hit; }
+    const env = JSON.parse(await PC.nip44dec(ME().pubkey, ev.content));
+    if(id && env && typeof env === 'object' && /^[0-9a-f]{64}$/i.test(String(env.blob || '')))
+      envWrite(id, env);
+    return env;
+  }
+  /* IN-FLIGHT WORK IS SHARED, because two passes over the same archive is the ordinary state of
+   * affairs here, not a race. The cold-load drain walks the local cache while `refresh` walks the
+   * relay's answer, and those are the SAME documents — whoever committed second used to be the one
+   * that skipped, but only after paying for its own decrypt and its own blob fetch. Keyed on the
+   * event id and dropped the moment it settles, so nothing is remembered and no failure is cached:
+   * a transient signer refusal must still be retryable on the next pass. */
+  const _openInFlight = new Map();
+  function openArchiveDoc(ev){
+    const id = String((ev && ev.id) || '');
+    if(id && _openInFlight.has(id)) return _openInFlight.get(id);
+    const work = (async () => {
+      const envelope = await archiveEnvelope(ev);
+      const obj = await openMessageBody(envelope);
+      if(obj && typeof obj === 'object' && envelope && envelope.blob) obj._blob = envelope.blob;
+      return obj;
+    })();
+    if(!id) return work;
+    _openInFlight.set(id, work);
+    /* `finally` on a copy: the returned promise must keep its rejection for the caller, and a
+     * bare `.finally()` chain would create a second promise nobody handles. */
+    work.then(() => _openInFlight.delete(id), () => _openInFlight.delete(id));
+    return work;
+  }
+  /* Bounded fan-out. Failures are CARRIED, not thrown: absorb's own catch decides whether an error
+   * is permanent (and blacklists that exact version) or transient (and must stay retryable), and
+   * moving that decision in here would give one damaged row a second, differently-behaved path. */
+  async function openArchiveBatch(list){
+    const out = new Map(), queue = list.slice();
+    if(!queue.length) return out;
+    const lane = async () => {
+      while(queue.length){
+        const ev = queue.shift();
+        try{ out.set(ev, {obj: await openArchiveDoc(ev)}); }
+        catch(err){ out.set(ev, {err}); }
+      }
+    };
+    await Promise.all(Array.from({length: Math.min(OPEN_LANES, queue.length)}, lane));
+    return out;
   }
 
   function plug(method){
@@ -357,8 +538,35 @@
 
   // ---------------------------------------------------------------- the archive
 
+  /* WHAT THIS BATCH ACTUALLY HAS TO OPEN, decided with exactly the loop's own early exits so the
+   * fan-out below can never decrypt a row the commit pass was going to skip anyway. On a refresh
+   * — where the archive is already held — this is empty and the whole pass stays free. */
+  function needsOpening(list){
+    /* `list` is already newest-first, so the first version of a document wins and any older one
+     * behind it is dropped: the commit loop would skip it anyway, and opening it costs a blob
+     * fetch and a decrypt to learn that. A pool merges relays, so two versions of one addressable
+     * document in a single batch is the ordinary state of affairs for a few seconds after a
+     * delete or an edit — not an edge case. */
+    const seen = new Set();
+    return list.filter(ev => {
+      const d = ((ev.tags||[]).find(t => t[0]==='d') || [])[1] || '';
+      if(!d.startsWith(D_MSG) || !ev.content) return false;
+      if(_badArchive.has(archiveVersion(ev, d))) return false;
+      if(seen.has(d)) return false;
+      const have = S.msgs.get(d);
+      if(have && have._at >= ev.created_at) return false;
+      seen.add(d);
+      return true;
+    });
+  }
+
   async function absorb(evs){
     const list = (evs || []).slice().sort((a,b) => (b.created_at||0) - (a.created_at||0));
+    /* Opened up front, in parallel, bounded — see openArchiveBatch. The loop below is unchanged:
+     * it still walks newest-first and commits one document at a time, and anything this pass did
+     * not pre-open (an outbox receipt, a row that became interesting while we were fetching) still
+     * opens inline on its own turn. */
+    const opened = await openArchiveBatch(needsOpening(list));
     for(const ev of list){
       const d = ((ev.tags||[]).find(t => t[0]==='d') || [])[1] || '';
       /* A background handset answers a desktop send by replacing its outbox request with a signed,
@@ -457,12 +665,12 @@
       if(!ev.content){ forgetMessageParts(have); S.msgs.set(d, { doc:d, _at: ev.created_at, gone:true }); continue; }
       let obj = null;
       try{
-        const envelope = JSON.parse(await PC.nip44dec(ME().pubkey, ev.content));
-        obj = await openMessageBody(envelope);
-        if(envelope && envelope.blob) obj._blob = envelope.blob;
+        const pre = opened.get(ev);
+        if(pre && pre.err) throw pre.err;
+        obj = pre ? pre.obj : await openArchiveDoc(ev);
       }
-      catch(_){
-        _badArchive.add(badKey);
+      catch(e){
+        if(permanentArchiveError(e)) _badArchive.add(badKey);
         continue;                                 // not ours, or not decryptable with this key
       }
       if(!obj || typeof obj !== 'object') continue;
@@ -582,8 +790,7 @@
     // entirely the user's own already-synced data.
     let cached = [];
     try{
-      cached = Store().query([FILTER()]) || [];
-      if(!cached.length) cached = onlyTexts(Store().query([BROAD_FILTER()]) || []);
+      cached = archiveRows(Store().query(archiveFilters()) || []);
     }catch(_){ cached = []; }
     /* FIRST PAINT IS A PAGE, NOT THE WHOLE ARCHIVE. FILTER permits 20,000 addressable documents and
      * every one is NIP-44 encrypted. Awaiting them serially before drawing made Texts an endless
@@ -595,12 +802,25 @@
     await absorbResilient(first);
     S.ready = true;
     S.loading = false;
-    paint();
+    /* The route has already handed Texts ownership but PC.VIEW/desktop ownership can lag one turn.
+       Paint the cache explicitly before any network wait. With no cached rows, show a real loading
+       state instead of leaving the feed as an unowned black/spinner surface. */
+    if(!S.msgs.size) S.emptyWhy = 'Loading messages…';
+    paint(true);
     if(cached.length && !_cacheDrain){
       _cacheDrain = (async () => {
+        /* REPAINT ON A CLOCK, NOT ON A BATCH. A batch is 128 messages, so a 4,600-message archive
+         * used to rebuild #feed thirty-six times while somebody was reading it — every one of
+         * those throwing away the DOM under the attachment hydration and the caret in the search
+         * box. Twice a second shows the archive filling in just as well and leaves the screen
+         * usable; the final paint below is unconditional, so nothing depends on the timing. */
+        let painted = 0;
         while(cached.length){
           await absorbResilient(cached.splice(0, 128));
-          if(textsOnScreen()) paint();
+          if(textsOnScreen() && (!cached.length || Date.now() - painted > 500)){
+            painted = Date.now();
+            paint();
+          }
           /* Give navigation, typing and the compositor a turn between decrypt batches. */
           await new Promise(resolve => setTimeout(resolve, 0));
         }
@@ -617,6 +837,7 @@
      * paint race, so an existing archive looked entirely empty until another lifecycle refresh.
      * refresh() already contains relay failures and folds results into (never over) local state. */
     await refresh();
+    if(S.msgs.size && S.emptyWhy === 'Loading messages…') S.emptyWhy = '';
     })();
     try{ return await _loadingArchive; }
     finally{ S.loading=false; _loadingArchive=null; }
@@ -627,14 +848,46 @@
     if(_refreshing) return;
     _refreshing = true;
     try{
-      let live = await Relay().query([FILTER()]);
-      if(!live || !live.length) live = onlyTexts(await Relay().query([BROAD_FILTER()]));
+      const live = archiveRows(await Relay().query(liveFilters()) || []);
       // FOLDED IN, NEVER OVER. A relay that returns nothing — unreachable, throttled, merely slow —
       // must leave the archive alone. That asymmetry is the anti-wipe rule this codebase keeps
       // relearning, and here the local copy may be the only one outside the handset.
       if(live && live.length){ await absorbResilient(live); paint(); }
     }catch(_){ }
     finally{ _refreshing = false; }
+    /* AND THE UNLABELLED TAIL, BEHIND THE PAINTED SCREEN. Detached on purpose: it is a repair for
+     * archives written by builds that did not always set `l=pcai-sms`, and it is the one read here
+     * the relay cannot bound to Texts (see archiveFilters). Nobody should wait on a spinner for
+     * it, and nothing after this line depends on its result. Hung off refresh rather than load so
+     * that a sweep which could not run — an unreachable relay, a socket that was still connecting
+     * — is retried on the next focus instead of waiting for a whole new session; it guards itself,
+     * so a sweep that DID run still happens exactly once. */
+    legacySweep();
+  }
+
+  /* ONE BROAD RELAY READ PER SESSION, AND ONLY EVER ONE. `refresh` runs on entry, on focus, on
+   * every lifecycle resume and behind the live subscription; paying an unindexed author+kind read
+   * of the whole 30078 datastore on each of those is what made Texts feel like it was downloading
+   * the account rather than opening a screen. The archive is addressable, so a document this finds
+   * merges by `d` exactly as the labelled path does — running it once is not a weaker guarantee,
+   * only a cheaper schedule. Failure is silent and NOT latched: a sweep that could not run leaves
+   * the flag clear so the next refresh tries again. */
+  let _legacySweeping = false, _legacySwept = false;
+  async function legacySweep(){
+    if(_legacySwept || _legacySweeping) return;
+    _legacySweeping = true;
+    try{
+      /* BEHIND THE COLD LOAD, NOT BESIDE IT. The first refresh happens while the cache drain is
+       * still decrypting history, which is the busiest the screen ever is; adding the one heavy
+       * relay read of the session to that moment is the opposite of the point. The drain already
+       * owns its own failures, so waiting on it cannot fail. */
+      const drain = _cacheDrain;
+      if(drain) await drain;
+      const rows = archiveRows(await Relay().query([BROAD_FILTER()]) || []);
+      _legacySwept = true;
+      if(rows.length){ await absorbResilient(rows); paint(); }
+    }catch(_){ }
+    finally{ _legacySweeping = false; }
   }
 
   let _sub = null;
@@ -1977,6 +2230,12 @@
 
   function forgetMessageParts(m){
     for(const p of ((m && m.parts) || [])){
+      /* BOTH CACHES. The provider-id one is the handset's; the address-keyed one is every other
+       * device's, and a delete that cleared only the first left the picture drawable everywhere
+       * the archive is the only copy — which is everywhere the delete was for. */
+      const sha = String((p && p.sha) || '');
+      if(sha) for(const k of Array.from(ATT_ENC.keys()))
+        if(k.split('|')[0] === sha) ATT_ENC.delete(k);   // not ours to revoke — see encRemember
       const id=Number(p && p.id)||0; if(!id) continue;
       const old=ATT.get(id); ATT.delete(id);
       if(old && old.url) try{ URL.revokeObjectURL(old.url); }catch(_){ }
@@ -2009,21 +2268,69 @@
     return parts.length + ' attachments';
   }
 
+  /* THE ENCRYPTED-STORAGE COPY IS REMEMBERED BY ITS ADDRESS, NOT BY A PROVIDER ROW ID.
+   *
+   * `ATT` is keyed on the phone's own part id, and that id is 0 for every attachment that reached
+   * this device through the archive — which is every attachment on a laptop, a desktop and a
+   * tablet. So on the devices the archive exists to serve, nothing was ever remembered. `paint()`
+   * rebuilds #feed wholesale on a keystroke, a live event, a delivery receipt and every batch of
+   * the cold-load drain, and each of those re-fetched and re-decrypted every picture in the open
+   * conversation from the top. A content hash is an exact key; use it. */
+  const ATT_ENC = new Map();          // 'sha|thumb' -> {url,blob,ct,preview} | {why}
+  const ATT_ENC_MAX = 160;
+  /* EVICTED, NEVER REVOKED — and that is the difference between this cache and `ATT`.
+   * `ATT` holds object URLs this module minted from provider bytes, so it owns them and frees them.
+   * These come from `PC.encFileUrl`, which memoises one URL per blob in app.js and hands the SAME
+   * one to Notes, Files, the wallpaper picker and the next draw here. Revoking it on eviction would
+   * blank a picture somewhere else on the screen, and permanently: that cache never re-mints an
+   * address it already believes it has. Dropping the entry is the whole job. */
+  function encRemember(key, v){
+    v._at = Date.now();
+    ATT_ENC.set(key, v);
+    while(ATT_ENC.size > ATT_ENC_MAX) ATT_ENC.delete(ATT_ENC.keys().next().value);
+    return v;
+  }
+  /* One archived attachment, read out of the encrypted drive.
+   *
+   * A PREVIEW IS AN OPTIMISATION AND HAS TO FAIL LIKE ONE. The thumbnail is a separate blob with
+   * its own life: an interrupted upload, a drive-index repair, an expiry stamp written before
+   * `keep` existed. Read as the attachment's ONLY address, one missing preview lost a picture that
+   * was never lost — and it presents as "the old messages have no media", because the oldest
+   * attachments are exactly the ones whose thumbnails were written by the oldest builds. Fall
+   * back to the original, which is the thing the message is actually about. */
+  async function encPartData(p){
+    const sha = String((p && p.sha) || '');
+    const thumb = isImage(p.ct) && p.thumb ? String(p.thumb) : '';
+    const key = sha + '|' + thumb;
+    const hit = ATT_ENC.get(key);
+    if(hit && (!hit.why || Date.now() - Number(hit._at || 0) < ATT_FAIL_RETRY_MS)) return hit;
+    for(const want of (thumb ? [thumb, sha] : [sha])){
+      try{
+        const url = await PC.encFileUrl(want,
+          want === sha ? (p.ct || 'application/octet-stream') : 'image/jpeg');
+        /* `r.ok` is checked because it can be false. encFileUrl hands back an object URL in a
+         * browser (always ok) and the plain blob URL in the shells and the tests, where a blob the
+         * store no longer holds answers 404 — and `.blob()` on that is an empty file, i.e. a
+         * picture that draws as nothing with no error anywhere. */
+        const blob = await fetch(url).then(r => {
+          if(r && r.ok === false) throw new Error('blob HTTP ' + r.status);
+          return r.blob();
+        });
+        return encRemember(key, {url, blob, ct: p.ct || blob.type || '', preview: want !== sha});
+      }catch(_){ }
+    }
+    return encRemember(key, {why: attLabel(p) + ' \u00b7 could not be opened from encrypted storage'});
+  }
+
   async function partData(p){
     const id = Number(p && p.id) || 0;
     const sha = String((p && p.sha) || '');
     if(sha && PC.encFileUrl){
-      try{
-        const previewSha = isImage(p.ct) && p.thumb ? p.thumb : sha;
-        const url = await PC.encFileUrl(previewSha,
-          previewSha === sha ? (p.ct || 'application/octet-stream') : 'image/jpeg');
-        const blob = await fetch(url).then(r => r.blob());
-        return { url, blob, ct: p.ct || blob.type || '', preview: previewSha !== sha };
-      }catch(_){
-        /* A handset may still have the provider part locally. Desktop/web never does, so they get
-         * the truthful encrypted-storage error below; the phone can fall through to its own bytes. */
-        if(!id) return { why: attLabel(p) + ' \u00b7 could not be opened from encrypted storage' };
-      }
+      const d = await encPartData(p);
+      /* A handset may still have the provider part locally. Desktop/web never does, so they get
+       * the truthful encrypted-storage error; the phone falls through to its own bytes. */
+      if(d && d.url) return d;
+      if(!id) return d;
     }
     if(!id) return { why: attLabel(p) + ' \u00b7 on your phone' };
     if(ATT.has(id)){
@@ -2100,19 +2407,51 @@
   /* FILL THEM IN AFTER THE DRAW, one at a time, and never let one bad attachment cost the thread.
    * `noteHtml`'s lesson, one screen over: an exception inside a list builder takes the list AND
    * every binding made after it, which reads as three unrelated bugs. */
+  /* ONE REPAINT MUST NOT ABANDON EVERY ATTACHMENT BEHIND THE ONE IN FLIGHT.
+   *
+   * This walked the conversation one attachment at a time and RETURNED — not continued — the
+   * moment its current element was no longer in the document. Every one of those is a repaint of
+   * the same conversation: a keystroke in the search box, a delivery receipt, a live archive
+   * event, and above all the cold-load drain, which repaints after every 128 decrypted messages.
+   * So on a thread with more pictures than fitted between two repaints, hydration restarted from
+   * the top over and over and the tail was never reached at all: placeholders reading "Photo…"
+   * for ever, with the bytes present, the drive healthy and nothing in any log. That is the
+   * "no media on the old messages" report, and it got worse the LONGER the archive took to load,
+   * which is why it looked like two bugs.
+   *
+   * Now: a dead element is skipped, not fatal; only the view actually going away stops the pass
+   * (`root.isConnected`); an element already filled in is left alone, so a repaint costs the
+   * elements it added and nothing else; and the reads run in a few lanes rather than strictly one
+   * at a time. The address cache in `encPartData` is what makes a restart cheap — the second pass
+   * over a drawn conversation does no fetching and no decrypting at all. */
+  const HYDRATE_LANES = 4;
   async function hydrateAtt(root, msgs){
-    const els = Array.from(root.querySelectorAll('.sms-att'));
-    for(const el of els){
-      const m = msgs[Number(el.dataset.m)];
-      if(!m) continue;
-      const p = (m.parts || [])[Number(el.dataset.p)] || null;
-      if(!p) continue;
-      let d = null;
-      try{ d = await partData(p); }catch(_){ d = { why: 'could not be read' }; }
-      if(!el.isConnected) return;              // the view moved on while we were reading
-      if(d && d.url) drawAtt(el, p, d);
-      else el.innerHTML = '<span class="muted small">' + PC.enc(String((d && d.why) || '')) + '</span>';
-    }
+    const els = Array.from(root.querySelectorAll('.sms-att'))
+                     .filter(el => !el.dataset || el.dataset.done !== '1');
+    if(!els.length) return;
+    const queue = els.slice();
+    const lane = async () => {
+      while(queue.length){
+        if(root && root.isConnected === false) return;   // the view moved on
+        const el = queue.shift();
+        /* CHECKED BEFORE THE READ AS WELL AS AFTER IT. Leaving Texts repaints #feed, which
+         * disconnects every placeholder still queued here; asked only afterwards, this pass went
+         * on fetching and decrypting the entire rest of the conversation for a screen that was no
+         * longer on it. */
+        if(!el.isConnected) continue;
+        const m = msgs[Number(el.dataset.m)];
+        if(!m) continue;
+        const p = (m.parts || [])[Number(el.dataset.p)] || null;
+        if(!p) continue;
+        let d = null;
+        try{ d = await partData(p); }catch(_){ d = { why: 'could not be read' }; }
+        if(!el.isConnected) continue;          // this bubble was repainted; the next pass takes it
+        if(d && d.url) drawAtt(el, p, d);
+        else el.innerHTML = '<span class="muted small">' + PC.enc(String((d && d.why) || '')) + '</span>';
+        try{ el.dataset.done = '1'; }catch(_){ }
+      }
+    };
+    await Promise.all(Array.from({length: Math.min(HYDRATE_LANES, queue.length)}, lane));
   }
 
   function drawAtt(el, p, d){
@@ -3006,5 +3345,11 @@
                    // The attachment identity rules, for tests/test_android_mms.py — which runs them
                    // against SmsKeys.partKey/partsKey in Java, because a picture message filed at
                    // two addresses appears twice in the thread.
-                   _partKey: partKey, _partsKey: partsKeyOf };
+                   _partKey: partKey, _partsKey: partsKeyOf,
+                   /* The two halves of drawing a picture message on a device that is not the
+                    * phone. Both are exercised directly by tests/client/test_sms_media_recovery.py:
+                    * one repaint used to abandon every attachment behind the one in flight, and
+                    * one missing preview blob used to lose a picture whose original was intact —
+                    * and neither is reachable through a whole-view render in a DOM-less simulator. */
+                   _partData: partData, _hydrateAtt: hydrateAtt };
 })();

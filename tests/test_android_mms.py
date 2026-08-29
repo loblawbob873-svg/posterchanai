@@ -492,7 +492,9 @@ class MmsAttachmentsTravelAcrossClients(unittest.TestCase):
 
     def test_remote_clients_decrypt_the_attachment_hash(self):
         js = open(SMSJS, encoding="utf-8").read()
-        self.assertIn("PC.encFileUrl(p.sha", js)
+        # The content hash is what a device that is not the phone has to read the picture from.
+        self.assertIn("PC.encFileUrl(want", js)
+        self.assertIn("const sha = String((p && p.sha)", js)
 
     def test_threads_use_an_encrypted_thumbnail_until_the_picture_is_opened(self):
         js = open(SMSJS, encoding="utf-8").read()
@@ -501,7 +503,11 @@ class MmsAttachmentsTravelAcrossClients(unittest.TestCase):
         # preview hash beside the original. Pinning the whole expression made an unrelated addition
         # to the same object look like the thumbnail had been dropped.
         self.assertIn("thumb: p.thumb || ''", js)
-        self.assertIn("const previewSha = isImage(p.ct) && p.thumb ? p.thumb : sha", js)
+        # AND THE PREVIEW IS TRIED FIRST, THE ORIGINAL SECOND. A thumbnail is a separate blob with
+        # its own life, so reading it as the attachment's ONLY address lost pictures whose originals
+        # were intact — worst on the oldest messages, whose previews were written by the oldest
+        # builds. tests/client/test_sms_media_recovery.py runs that fallback; this pins the order.
+        self.assertIn("thumb ? [thumb, sha] : [sha]", js)
         self.assertIn("if(d.preview && p.sha && PC.encFileUrl)", js,
                       "the full picture is not deferred until the thumbnail is tapped")
 

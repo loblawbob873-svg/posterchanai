@@ -51,6 +51,12 @@ def ev(d, payload, at=1000):
             "pubkey": "me", "id": "x" + d, "tags": [["d", d], ["l", "pcai-sms"]]}
 
 
+def unlabelled_ev(d, payload, at=1000):
+    event = ev(d, payload, at)
+    event["tags"] = [["d", d]]
+    return event
+
+
 def run(**opts):
     out = subprocess.run(["node", str(SIM), json.dumps(opts)], capture_output=True, timeout=90)
     if out.returncode != 0:
@@ -93,7 +99,7 @@ class ColdArchiveFailures(unittest.TestCase):
         res = run(isPhone=False, coldLoadSignerFailure=True, steps=["render", "settle"])
         self.assertEqual(res["docs"], [])
         self.assertEqual(calls_of(res, "storeQuery"),
-                         [["storeQuery", "label"], ["storeQuery", "broad"]])
+                         [["storeQuery", "label+broad"]])
 
     def test_desktop_route_replaces_spinner_during_feed_ownership_handoff(self):
         """The route callback is authoritative for its first paint. PCOS ownership bookkeeping can
@@ -117,6 +123,32 @@ class ColdArchiveFailures(unittest.TestCase):
         self.assertEqual(res["docs"], ["pcai:sms:relay-only"])
         self.assertTrue(any("still here" in bodies for bodies in
                             (thread["bodies"] for thread in res["threads"])))
+
+    def test_one_bad_labelled_row_cannot_hide_unlabelled_relay_archive(self):
+        """The label lookup can truthfully be non-empty and still contain no readable message.
+        Older phone rows are addressed by `d` but may lack `l`; they must be merged from the broad
+        query even when a newer labelled corrupt row would previously suppress the fallback."""
+        bad = ev("pcai:sms:new-but-bad", {"body": "unused"}, at=2000)
+        bad["content"] = "enc:"
+        good = unlabelled_ev("pcai:sms:old-and-valid", {
+            "address": "+15550100", "body": "archive is still here", "date": 1,
+            "incoming": True,
+        })
+        res = run(isPhone=False, cached=[], relay=[bad, good], realArchiveFilters=True,
+                  rejectInvalidPlaintext=True, steps=["render", "settle"])
+        self.assertEqual(res["docs"], ["pcai:sms:old-and-valid"])
+        self.assertEqual(calls_of(res, "storeQuery"), [["storeQuery", "label+broad"]])
+
+    def test_transient_extension_failure_is_retried_from_relay_in_same_load(self):
+        """An event id is not corrupt merely because Firefox's signer was locked/busy once. The
+        cache attempt may fail, then the awaited relay refresh must retry that same version."""
+        archived = ev("pcai:sms:signer-retry", {
+            "address": "+15550100", "body": "signer recovered", "date": 1,
+            "incoming": True,
+        })
+        res = run(isPhone=False, cached=[archived], relay=[archived],
+                  transientDecryptOnce="signer recovered", steps=["render", "settle"])
+        self.assertEqual(res["docs"], ["pcai:sms:signer-retry"])
 
 
 @unittest.skipIf(shutil.which("node") is None, "node not installed")
@@ -189,7 +221,7 @@ class Mirror(unittest.TestCase):
         res = run(isPhone=False, cached=[malformed, good], relayEmpty=True,
                   steps=["concurrentRenderFocus", "settle"])
         self.assertEqual(res["docs"], ["pcai:sms:first-open"])
-        self.assertEqual(calls_of(res, "storeQuery"), [["storeQuery", "label"]],
+        self.assertEqual(calls_of(res, "storeQuery"), [["storeQuery", "label+broad"]],
                          "cold route and focus started two competing archive loads")
 
     def test_old_phone_archive_loads_when_label_index_is_missing(self):
@@ -204,7 +236,7 @@ class Mirror(unittest.TestCase):
                   missingLabelIndex=True, steps=["load", "settle"])
         self.assertEqual(res["docs"], ["pcai:sms:older-phone"])
         self.assertEqual(calls_of(res, "storeQuery"),
-                         [["storeQuery", "label"], ["storeQuery", "broad"]])
+                         [["storeQuery", "label+broad"]])
 
     def test_one_malformed_cache_record_cannot_hide_the_older_media_tail(self):
         """The background cache drain used to abandon its remaining 128-row batch on one throw.
