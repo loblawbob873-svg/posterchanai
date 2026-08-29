@@ -175,7 +175,7 @@
     lastRead: null,      // rows the provider returned on the last read — see countLine
     loading: false,
     error: '',
-    archive: { running:false, published:0, error:'', attempted:false },
+    archive: { running:false, published:0, error:'', attempted:false, refused:0 },
     /* One conversation can be parked while another is opened. Keep the scroll state by thread,
        not as one module-wide number, or returning to a conversation borrows the previous one's
        offset. `bottom` is intent: new content may keep a person at latest only when they were
@@ -1426,10 +1426,19 @@
      * cannot be written must never cost the archive a message. */
     pass.published = n; pass.archiveError = archiveError;
     try{ publishStatus(pass); }catch(_){ }
-    S.archive.error = archiveError || (rowErrors || _migrationFailed.size
-      ? _migrationFailed.size + ' MMS attachment' + (_migrationFailed.size === 1 ? '' : 's')
-        + ' could not be read; the other messages were copied'
-      : '');
+    /* A REFUSAL IS A TALLY NOW, NOT A STOPPAGE, AND THE SCREEN HAS TO STOP SAYING OTHERWISE.
+     *
+     * `S.archive.error` is rendered as "Message backup stopped: …", which was true when one
+     * unreadable attachment failed its row and froze the mark. It no longer does: the message is
+     * archived carrying the reason, the mark moves, and everything else is copied. Leaving the old
+     * sentence there turns working software into an alarm — reported verbatim as "message backup
+     * stopped it says / 190 mms attachments could not be read", at the exact moment the sweep was
+     * finally making progress through years of history.
+     *
+     * `archiveError` is kept separate and still IS a stoppage: the drive being unavailable, or the
+     * relay refusing, ends a pass. Only the per-attachment tally is reworded. */
+    S.archive.error = archiveError || '';
+    S.archive.refused = _migrationFailed.size;
     if(textsOnScreen()) paint();
     return { published:n, remaining:Math.max(0, migrationRemaining - rows.length),
              failed:_migrationFailed.size, skipped:archiveError || undefined };
@@ -2078,7 +2087,21 @@
     catch(_){ }
     _fullMigration = (async () => {
       let total = 0, lastRemaining = Infinity;
-      for(let batch=0; batch<1000; batch++){
+      /* BOUNDED PER ENTRY, AND RESUMABLE — the screen is not a hostage to the backlog.
+       *
+       * This loops until the queue stops shrinking, which was safe only because the queue used to
+       * stall almost immediately: a picture message whose attachment could not be stored failed its
+       * row and stopped the pass. Now that a refusal is recorded rather than fatal, the queue is
+       * the WHOLE unarchived history — on the reporting handset, 1,284 picture messages plus their
+       * bodies, each an encrypted upload and a relay write. Unbounded, that is minutes of a phone
+       * doing nothing else, and Texts "not even opening" is what it looks like from the outside:
+       * the screen HAS painted, and then every subsequent frame is starved by the sweep behind it.
+       *
+       * A batch is 60 rows, so this is ~600 per foreground. It resumes exactly where it stopped —
+       * the queue is derived from what is unarchived, not from a cursor — so a long history still
+       * completes, over several visits, without ever owning the app. */
+      const MAX_BATCHES = 10;
+      for(let batch=0; batch<MAX_BATCHES; batch++){
         const r = await mirror({fullMigration:true, limit:60});
         total += Number(r && r.published) || 0;
         if(!r || r.skipped || !r.remaining) return {published:total, remaining:(r&&r.remaining)||0,
@@ -2098,7 +2121,10 @@
         /* Let rendering/input and Android lifecycle callbacks run between upload batches. */
         await new Promise(resolve => setTimeout(resolve, 0));
       }
-      return {published:total, remaining:1, skipped:'message migration safety limit reached'};
+      /* Not an error and not a stall: the bound above was reached with work still to do, and the
+       * next foreground picks it up. Said plainly so the screen does not report a problem. */
+      return {published:total, remaining:lastRemaining === Infinity ? 1 : lastRemaining,
+              paused:'more to copy — it continues next time you open Texts'};
     })().finally(() => { _fullMigration = null; });
     return _fullMigration;
   }
@@ -2955,8 +2981,23 @@
         archive.style.display = '';
         archive.innerHTML = 'Message backup stopped: ' + PC.enc(S.archive.error)
           + ' <button class="btn small" id="sms-archive-retry">Retry now</button>';
+      }else if(S.archive.refused){
+        /* Not an alarm: everything else was copied and the sweep is still moving. Says what was
+         * skipped, and offers the one thing that offers them to the phone again. */
+        archive.style.display = '';
+        archive.innerHTML = PC.enc(S.archive.refused + ' picture message'
+            + (S.archive.refused === 1 ? '' : 's') + ' had no attachment this phone would hand '
+            + 'over \u2014 everything else was copied.')
+          + ' <button class="btn small" id="sms-archive-retry">Try those again</button>';
         const retry = archive.querySelector('#sms-archive-retry');
-        if(retry) retry.onclick = async () => { retry.disabled = true; await mirror(); };
+        if(retry) retry.onclick = async () => {
+          retry.disabled = true;
+          /* A PERSON ASKING. `mirror()` alone would skip every refused attachment — they are
+             recorded as settled precisely so a timer cannot churn on them — so the button that
+             says "try those again" has to be the deliberate path that clears that record. */
+          _migrationFailed.clear();
+          try{ await rescan(); }catch(_){ await mirror(); }
+        };
       }else if(S.archive.attempted && S.archive.published){
         archive.style.display = '';
         archive.textContent = S.archive.published + ' message'

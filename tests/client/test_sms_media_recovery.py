@@ -563,3 +563,39 @@ class ARefusedAttachmentIsSettled(unittest.TestCase):
         wrote = [p for p in res["published"] if p["d"] == doc]
         self.assertGreater(len(wrote), 1,
                            "a rescan could not offer the refused attachment to the phone again")
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class TheMigrationIsBoundedPerVisit(unittest.TestCase):
+    """THE SCREEN IS NOT A HOSTAGE TO THE BACKLOG.
+
+    `migrateLocalHistory` loops until its queue stops shrinking, which was safe only because the
+    queue used to stall almost immediately: a picture message whose attachment could not be stored
+    failed its row and stopped the pass. Once a refusal became recorded rather than fatal, the queue
+    became the WHOLE unarchived history — on the reporting handset 1,284 picture messages plus
+    their bodies, each an encrypted upload and a relay write.
+
+    Reported the same evening as "messages are not even opening on PosterChan - Texts on android",
+    and the screen HAD painted: every frame after it was starved by the sweep behind it. Bounded per
+    entry and resumable, because the queue is derived from what is unarchived rather than from a
+    cursor.
+    """
+
+    def test_one_visit_does_a_bounded_amount_of_work(self):
+        res = run(isPhone=True, generatedPictures=900, migrationBatch=60,
+                  steps=["phoneLoad", "migrateAll"])
+        published = len(res["published"])
+        self.assertGreater(published, 0, "the migration did nothing at all")
+        self.assertLessEqual(published, 600,
+                             "one foreground published %d messages — the phone belongs to the sweep "
+                             "for as long as that takes" % (published,))
+
+    def test_it_resumes_rather_than_giving_up(self):
+        """Bounded is only safe if the next visit continues. The queue is what is unarchived, so a
+        second pass must publish more — otherwise a long history is silently truncated."""
+        res = run(isPhone=True, generatedPictures=900, migrationBatch=60,
+                  steps=["phoneLoad", "migrateAll", "migrateAll"])
+        first = next(c for c in res["calls"] if c[0] == "migrateAll")
+        self.assertTrue(len(res["published"]) > 600,
+                        "a second visit added nothing: %d published" % (len(res["published"]),))
+        self.assertIsNotNone(first)
