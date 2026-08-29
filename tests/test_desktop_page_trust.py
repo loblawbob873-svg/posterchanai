@@ -49,8 +49,15 @@ def test_preload_and_main_share_the_same_trust_predicate():
     main = open(os.path.join(ROOT, "desktop", "main.js"), encoding="utf-8").read()
     assert "location.protocol === 'file:'" not in preload
     assert "from.startsWith('file://')" not in main
-    assert "isTrustedPage(location.href, __dirname)" in preload
+    assert "isTrustedPreloadPage(location.href, __dirname)" in preload
     assert "return isTrustedPage(from, __dirname)" in main
+
+
+def test_sandboxed_preload_never_requires_a_relative_module():
+    """Electron's sandboxed preload loader rejects ./page-trust even when it exists in app.asar."""
+    preload = open(os.path.join(ROOT, "desktop", "preload.js"), encoding="utf-8").read()
+    assert "require('./" not in preload
+    assert 'require("./' not in preload
 
 
 def test_screen_source_listing_checks_the_ipc_sender():

@@ -13,9 +13,27 @@
  * the sender rather than trusting this.
  */
 const { contextBridge, ipcRenderer } = require('electron');
-const { isTrustedPage } = require('./page-trust');
 
-const isOurPage = isTrustedPage(location.href, __dirname);
+/* Sandboxed Electron preloads may require Electron and a small built-in allowlist only. A relative
+ * require works in ordinary Node tests and even leaves page-trust.js inside app.asar, but fails in
+ * the real packaged renderer before ANY bridge is exposed. Keep this tiny predicate self-contained;
+ * main.js still uses the shared Node module to enforce the same boundary again at IPC. */
+function isTrustedPreloadPage(raw, localDir) {
+  let u;
+  try { u = new URL(String(raw || '')); } catch (_) { return false; }
+  if (u.protocol === 'app:') return u.hostname === 'posterchan' && !u.port && !u.username && !u.password;
+  if (u.protocol !== 'file:' || u.hostname) return false;
+  let candidate;
+  try { candidate = decodeURIComponent(u.pathname).replace(/\\/g, '/'); } catch (_) { return false; }
+  let dir = String(localDir || '').replace(/\\/g, '/').replace(/\/$/, '');
+  if (process.platform === 'win32') {
+    candidate = candidate.replace(/^\/([A-Za-z]:\/)/, '$1').toLowerCase();
+    dir = dir.toLowerCase();
+  }
+  return ['boot.html', 'shell.html', 'picker.html'].some(name => candidate === dir + '/' + name);
+}
+
+const isOurPage = isTrustedPreloadPage(location.href, __dirname);
 const backgroundOwner = !process.argv.includes('--pc-secondary-surface');
 
 // Clipboard WRITE, exposed more widely than the controls below — it cannot repoint the app or enumerate
