@@ -590,7 +590,7 @@
     save(rooms);
   }
   function startDiscovery(p){
-    if(discoveryStarted||!p.relaySubscribe)return; discoveryStarted=true;
+    if(discoveryStarted||state.community!=null||!p.relaySubscribe)return; discoveryStarted=true;
     const bySigner=new Map();
     /* Some relay pools replay their in-memory result set synchronously from subscribe(). Calling
      * render() from each callback re-entered the launch render (or replaced the home DOM hundreds
@@ -666,11 +666,11 @@
     return [...newest].map(([id,event])=>{let meta={};try{meta=JSON.parse(event.content||'{}');}catch(_){}const tags=Object.fromEntries((event.tags||[]).filter(t=>['name','about','picture'].includes(t[0])).map(t=>[t[0],t[1]]));return{id,relay,name:String(tags.name||meta.name||meta.display_name||id),description:String(tags.about||meta.about||meta.description||''),icon:normalizeIcon(tags.picture||meta.picture||meta.icon||''),source:event};});
   }
   async function syncNip29Memberships(p,viewer){
-    if(nip29Busy||!viewer.pubkey)return;nip29Busy=true;let recovered=false;
+    if(state.community!=null||nip29Busy||!viewer.pubkey)return;nip29Busy=true;let recovered=false;
     try{const membership=await nip29Memberships(p,viewer),byRelay=new Map();for(const g of membership.groups){if(!byRelay.has(g.relay))byRelay.set(g.relay,[]);byRelay.get(g.relay).push(g);}
       const found=[];for(const [relay,listed] of byRelay){const metas=await nip29Metadata(p,relay,listed.map(g=>g.id)),metaById=new Map(metas.map(m=>[m.id,m]));for(const g of listed){const meta=metaById.get(g.id)||g;found.push({...meta,id:g.id,relay,name:g.name||meta.name||g.id});}}recovered=found.length>0;
       if(found.length){const rooms=saved();let changed=false;for(const g of found){const identity='nip29:'+g.relay+'#'+g.id,i=rooms.findIndex(r=>roomIdentity(r)===identity),room={protocol:'nip29',communityId:identity,naddr:identity,groupId:g.id,relay:g.relay,name:g.name||g.id,description:g.description||'',icon:g.icon||'',channels:[{name:'general',id:g.id,private:false}],local:false};if(i<0){rooms.push(room);changed=true;}else if(rooms[i].protocol==='nip29'&&JSON.stringify(rooms[i])!==JSON.stringify({...rooms[i],...room})){rooms[i]={...rooms[i],...room};changed=true;}}if(changed){save(rooms);backgroundRender();}}
-    }catch(e){console.warn('NIP-29 membership sync failed',e);}finally{nip29Busy=false;clearTimeout(nip29RetryTimer);nip29RetryTimer=setTimeout(()=>syncNip29Memberships(p,p.viewer?p.viewer():viewer),recovered?60000:5000);}
+    }catch(e){console.warn('NIP-29 membership sync failed',e);}finally{nip29Busy=false;clearTimeout(nip29RetryTimer);if(state.community==null)nip29RetryTimer=setTimeout(()=>syncNip29Memberships(p,p.viewer?p.viewer():viewer),recovered?60000:5000);}
   }
   function foldNip29History(events,p,groupId){const scoped=events.filter(e=>(e.tags||[]).some(t=>t[0]==='h'&&t[1]===groupId)).sort((a,b)=>Number(a.created_at)-Number(b.created_at)),deletions=[],deleted=new Set(),byId=new Map(),reactions=[];for(const e of scoped){if(e.kind===5){deletions.push(e);continue;}if(e.kind===7){reactions.push(e);continue;}if(![9,10,11,12,1111].includes(e.kind))continue;const pr=p.profOf?p.profOf(e.pubkey):{};byId.set(e.id,{id:e.id,pubkey:e.pubkey,by:pr.display_name||pr.name||e.pubkey.slice(0,12)+'…',text:e.content,at:Number(e.created_at)*1000,kind:e.kind,tags:e.tags||[],reactions:{},reactionIds:{},remote:true});}const reactionById=new Map(reactions.map(e=>[e.id,e]));for(const deletion of deletions)for(const t of deletion.tags||[])if(t[0]==='e'){const target=byId.get(t[1])||reactionById.get(t[1]);if(target&&target.pubkey===deletion.pubkey)deleted.add(t[1]);}for(const id of deleted)byId.delete(id);for(const e of reactions){if(deleted.has(e.id))continue;const target=((e.tags||[]).find(t=>t[0]==='e')||[])[1],m=byId.get(target);if(!m)continue;const emoji=e.content==='+'?'👍':e.content||'👍';(m.reactions[emoji]||(m.reactions[emoji]=[])).push(e.pubkey);(m.reactionIds[emoji]||(m.reactionIds[emoji]={}))[e.pubkey]=e.id;}for(const m of byId.values())if(m.kind===1111){const target=byId.get(((m.tags||[]).find(t=>t[0]==='e')||[])[1]);if(target)m.reply={id:target.id,by:target.by,text:target.text};}return [...byId.values()].sort((a,b)=>a.at-b.at);}
   async function nip29History(p,room){const events=await nip29RelayQuery(p,room.relay,[{kinds:[5,7,9,10,11,12,1111],'#h':[room.groupId],limit:500}],10000);return foldNip29History(events,p,room.groupId);}
@@ -747,7 +747,7 @@
     return {entries,tombstones};
   }
   async function syncArmadaMemberships(p,viewer){
-    if(membershipBusy||!viewer.pubkey||!p.nip44dec)return; membershipBusy=true;
+    if(state.community!=null||membershipBusy||!viewer.pubkey||!p.nip44dec)return; membershipBusy=true;
     let recovered=false;
     try{
       if(membershipViewer!==viewer.pubkey){membershipViewer=viewer.pubkey;membershipDocs.clear();}
@@ -814,7 +814,7 @@
       membershipBusy=false;
       // Native desktop starts with an empty origin and relays may not be connected on first paint.
       // Retry a failed/empty recovery instead of permanently hiding the user's Armada rooms.
-      clearTimeout(membershipRetryTimer); membershipRetryTimer=setTimeout(()=>syncArmadaMemberships(p,p.viewer?p.viewer():viewer),recovered?60000:5000);
+      clearTimeout(membershipRetryTimer); if(state.community==null)membershipRetryTimer=setTimeout(()=>syncArmadaMemberships(p,p.viewer?p.viewer():viewer),recovered?60000:5000);
     }
   }
   async function persistArmadaMembership(p,room){
@@ -1030,20 +1030,26 @@
        (!PCOS.ownsFeedView || !PCOS.ownsFeedView('concord'))) return;
     const feed=p.$('#feed'); if(!feed) return;
     captureComposer();
-    startDiscovery(p);
     startLiveSync(p);
     // Covers the stale-service-worker compatibility entry too, which does not run switchView().
     document.body.classList.add('concord-view','rb-off');
     const rooms=saved();
     const viewer=p.viewer?p.viewer():{};
-    syncArmadaMemberships(p,viewer);
-    syncNip29Memberships(p,viewer);
     let autoOpen=-1;
     if(state.community==null&&rooms.length&&!discoveryOpen){
       const wanted=Number(localStorage.getItem('pc.concord.active')||0);
       state.community=Number.isInteger(wanted)&&wanted>=0&&wanted<rooms.length?wanted:0;
       state.channel='general';
       autoOpen=state.community;
+    }
+    /* Discovery/membership fan-out is allowed only while the Discover surface is visible. Resolve
+     * the saved active room first so an ordinary launch never opens Ditto/Vector sockets for a
+     * transient state.community=null frame. */
+    if(state.community==null){
+      startDiscovery(p);syncArmadaMemberships(p,viewer);syncNip29Memberships(p,viewer);
+    }else{
+      clearTimeout(membershipRetryTimer);membershipRetryTimer=null;
+      clearTimeout(nip29RetryTimer);nip29RetryTimer=null;
     }
     const profile=viewer.profile||{};
     const me=profile.display_name||profile.name||(profile.nip05&&p.niceNip05(profile.nip05))||(viewer.npub?viewer.npub.slice(0,12)+'…':'You');
