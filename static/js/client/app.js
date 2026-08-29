@@ -661,12 +661,15 @@
     }catch(_){}
   }
   function activateNavView(v){
-    /* Compare the destination the button REALLY names. Social is printed as `global`, but when
-     * Nostrverse is hidden switchView resolves it through the configured start timeline. Comparing
-     * the raw slug meant repeated Social taps were repeated no-op navigations to Home, never the
-     * active-timeline refresh/top gesture. Resolve first so alternate timeline preferences retain
-     * the same second-tap contract as an ordinary visible tab. */
+    /* Compare the destination the button REALLY names. `global` is the internal historical slug
+     * printed on the generic Social control; Social itself means the user's configured landing
+     * timeline even when both Home and Nostrverse remain visible. Resolve that semantic alias
+     * before deciding whether a repeated tap is the refresh/top gesture; the hidden-tab fallback
+     * below still protects every timeline destination. */
     let target=v;
+    if(target==='global'){
+      try{ target=_startTimeline(); }catch(_){}
+    }
     if(_TL_TABS.indexOf(target) >= 0){
       try{ if(tlHiddenSet().has(target)) target=_startTimeline(); }catch(_){}
     }

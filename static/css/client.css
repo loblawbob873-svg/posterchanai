@@ -1702,6 +1702,18 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
    from a different app. Scrolling itself is untouched — only the painted track/thumb is gone
    (scrollbar-width:none on the rule above covers Firefox). */
 .feed::-webkit-scrollbar{width:0;height:0}
+/* The classic desktop WebUI is a mouse-sized reading surface too.  The OS window had this override,
+   but the same Social feed outside PosterChan OS still inherited the global zero-width scrollbar,
+   leaving desktop Firefox with neither position feedback nor a draggable fallback.  Keep phones
+   edge-to-edge; expose the themed bar only when the viewport and primary pointer are desktop-like. */
+@media (min-width:821px) and (hover:hover) and (pointer:fine){
+  body:not(.os-on) .app > .main > .feed{scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+  body:not(.os-on) .app > .main > .feed::-webkit-scrollbar{width:10px;height:10px}
+  body:not(.os-on) .app > .main > .feed::-webkit-scrollbar-track{background:transparent}
+  body:not(.os-on) .app > .main > .feed::-webkit-scrollbar-thumb{background:var(--line);border-radius:8px;
+    border:2px solid transparent;background-clip:padding-box}
+  body:not(.os-on) .app > .main > .feed::-webkit-scrollbar-thumb:hover{background:var(--muted);background-clip:padding-box}
+}
 
 /* ===== note card ===== */
 .note{display:flex;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line);transition:background .15s;animation:fade .25s;cursor:pointer}

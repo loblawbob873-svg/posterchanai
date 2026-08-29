@@ -7,10 +7,12 @@ app and lose the folder you were in, and on the APK it does nothing useful at al
 """
 import os
 import re
+import json
 import shutil
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SIM = os.path.join(ROOT, "tests", "client", "preview_sim.js")
@@ -141,6 +143,30 @@ class PreviewIsReachable(unittest.TestCase):
         somebody is looking through their own drive."""
         self.assertIn("client/preview.js", self.tpl, "the module is never loaded")
         self.assertIn("'/static/js/client/preview.js'", self.sw, "not precached; absent offline")
+        self.assertIn("'/static/vendor/pdfjs/pdf.min.js'", self.sw,
+                      "the mobile PDF renderer is absent offline")
+        self.assertIn("'/static/vendor/pdfjs/pdf.worker.min.js'", self.sw,
+                      "PDF.js starts but its worker is absent offline")
+
+    def test_service_worker_install_actually_precaches_both_pdf_renderer_parts(self):
+        """Run the shipped worker install callback; list membership alone does not prove it is used."""
+        script = r"""
+const fs=require('fs'),vm=require('vm');
+const handlers={},added=[];
+global.self={location:{pathname:'/client/sw.js'},addEventListener:(k,f)=>handlers[k]=f,
+  skipWaiting:()=>{},clients:{claim:()=>Promise.resolve()}};
+global.caches={open:async()=>({add:async u=>{added.push(u)}}),keys:async()=>[]};
+global.fetch=async()=>({ok:true,status:200,clone(){return this}});
+vm.runInThisContext(fs.readFileSync(process.argv[1],'utf8'),{filename:process.argv[1]});
+let pending=Promise.resolve();handlers.install({waitUntil:p=>pending=p});
+pending.then(()=>console.log(JSON.stringify(added))).catch(e=>{console.error(e);process.exit(1)});
+"""
+        got = json.loads(subprocess.check_output(
+            ["node", "-e", script, str(Path(__file__).parents[2] / "static/js/client/sw.js")],
+            text=True,
+        ))
+        self.assertIn('/static/vendor/pdfjs/pdf.min.js', got)
+        self.assertIn('/static/vendor/pdfjs/pdf.worker.min.js', got)
 
     def test_the_back_button_closes_the_picture_not_the_folder(self):
         """It is a full-screen sheet on a phone, opened FROM a screen the person still wants."""

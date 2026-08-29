@@ -102,9 +102,10 @@ class SocialButtonTests(unittest.TestCase):
         this is a repeated activation; the second tap must refresh, not navigate to the same view."""
         self.assertEqual(self._activate("global", "home", ["global"], "home"), ["top:home"])
 
-    def test_visible_social_still_refreshes_and_other_views_still_navigate(self):
-        self.assertEqual(self._activate("global", "global", [], "home"), ["top:global"])
-        self.assertEqual(self._activate("global", "home", [], "home"), ["view:global"])
+    def test_visible_social_uses_the_configured_timeline_before_refreshing(self):
+        self.assertEqual(self._activate("global", "home", [], "home"), ["top:home"])
+        self.assertEqual(self._activate("global", "global", [], "home"), ["view:home"])
+        self.assertEqual(self._activate("global", "global", [], "global"), ["top:global"])
 
     def _double_activate(self, active, hidden, start_pref):
         """Execute both presses; switchView mutates VIEW as the shipped router does."""
@@ -131,6 +132,10 @@ class SocialButtonTests(unittest.TestCase):
     def test_double_social_from_another_view_opens_then_refreshes_configured_home(self):
         """Exact phone gesture: Messages → Social → Social with Nostrverse hidden."""
         self.assertEqual(self._double_activate("messages", ["global"], "home"),
+                         ["view:home", "top:home"])
+
+    def test_double_social_uses_configured_home_even_when_nostrverse_is_visible(self):
+        self.assertEqual(self._double_activate("messages", [], "home"),
                          ["view:home", "top:home"])
 
     def test_double_social_never_targets_a_hidden_saved_timeline(self):
