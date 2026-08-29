@@ -1188,10 +1188,37 @@
       const channelCount=applyControl(controlWraps);
       if(!channelCount)throw new Error('the control stream returned no readable channels');
       const selected=state.channel||'general',networkOrder=[...room.channels].sort((a,b)=>(a.name===selected?-1:b.name===selected?1:0));
-      for(const channel of networkOrder){
-        const cacheKey=envelopeCacheKey(loadKey,channel.id),cached=await cachedEnvelopes(cacheKey),wraps=await queryEnvelopeHistory(p,relays,channel.streamPubkeys,cached),fetched=wraps.filter(ev=>!cached.some(old=>old.id===ev.id));
+      const fetchChannel=async channel=>{
+        const cacheKey=envelopeCacheKey(loadKey,channel.id),cached=await cachedEnvelopes(cacheKey),
+          wraps=await queryEnvelopeHistory(p,relays,channel.streamPubkeys,cached),
+          fetched=wraps.filter(ev=>!cached.some(old=>old.id===ev.id));
         await cacheEnvelopes(cacheKey,fetched);await applyChannel(channel,wraps);
-      }
+      };
+      /* THE CHANNEL ON SCREEN FIRST, ALONE — it is the only one anybody is waiting for, and it is
+       * allowed to throw: failing to load the conversation somebody just opened is worth saying
+       * out loud. Everything after it is prefetch. */
+      const head=networkOrder[0];
+      if(head){ await fetchChannel(head); if(roomIdentity(saved()[state.community])===identity)backgroundRender(); }
+      /* …AND THE REST CONCURRENTLY, BECAUSE THIS USED TO BE ONE SERIAL QUEUE.
+       *
+       * Every channel waited on the previous channel's relay round trip, so a ten-channel community
+       * cost ten of them before the room was usable — reported as Concord being slow, and worst on
+       * exactly the big Armada rooms where it matters most.
+       *
+       * AND ONE CHANNEL'S FAILURE IS NOT THE ROOM'S FAILURE. A single throw in that loop abandoned
+       * every channel behind it, surfaced as "could not refresh room history", and left `hydrated`
+       * unset — so the whole room was fetched again on the next click, which made the next failure
+       * likelier and the room slower still. A channel that would not load is recorded and left to
+       * the live tick, which fetches whatever channel is actually open. */
+      const queue=networkOrder.slice(1),stalled=[];
+      await Promise.all(Array.from({length:Math.min(4,queue.length)},async()=>{
+        for(;;){
+          const channel=queue.shift(); if(!channel)return;
+          try{ await fetchChannel(channel); }
+          catch(_){ stalled.push(channel.name); }
+        }
+      }));
+      room.cord.stalled=stalled;
       room.cord.hydrated=true;hydratedRoomViews.add(identity);if(!persistRoom())return;
       /* A relay answer may return after the reader chose another community. Persisting the fetched
        * room is still useful, but repainting/scrolling the new room is not. Notification launches
