@@ -155,6 +155,8 @@ class Bunker:
         self.user_sk = os.urandom(32)
         self.user_pk = bip340.pubkey_from_seckey(self.user_sk).hex()
         self.seen = []           # every request method we decrypted, with its scheme
+        self._activity = asyncio.Event()
+        self._activity_seq = 0
         self._event_ids = set()  # a relay resend is the same signed event, not another approval
         self._approval_delayed = False
         self._task = None
@@ -211,6 +213,8 @@ class Bunker:
                 except Exception:
                     continue
                 self.seen.append((req.get("method"), scheme))
+                self._activity_seq += 1
+                self._activity.set()
                 if os.environ.get("PC_DEBUG"):
                     print(f"  DEBUG bunker <- {req.get('method')} {scheme} "
                           f"reqid={req.get('id')} evid={ev['id'][:8]}", flush=True)
@@ -271,6 +275,27 @@ class Bunker:
         self._stop = True
         if self._task:
             self._task.cancel()
+
+    async def wait_quiet(self, quiet_for=1.5, timeout=12.0):
+        """Wait for a real signer-traffic quiet window, resetting it on every decrypted request.
+
+        Login closes its gate before startApp's profile/session signatures finish. A fixed handful
+        of sleeps can therefore label that legitimate tail as traffic caused by the next probe when
+        the suite is loaded. This observes the far side instead: only a full quiet window counts,
+        with an overall bound so a broken client cannot hang the gate forever.
+        """
+        deadline = asyncio.get_running_loop().time() + timeout
+        while True:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return False
+            self._activity.clear()
+            sequence = self._activity_seq
+            try:
+                await asyncio.wait_for(self._activity.wait(), min(quiet_for, remaining))
+            except asyncio.TimeoutError:
+                if sequence == self._activity_seq:
+                    return True
 
 
 # --------------------------------------------------------------------------------------------
@@ -445,15 +470,11 @@ async def drive(url):
                     # Closing the auth gate happens before the login's profile/session signatures
                     # have all crossed the fake signer. Let that legitimate tail go quiet before
                     # attributing any new signer traffic to the oversize request below.
-                    stable = 0
-                    previous = -1
-                    for _ in range(20):
-                        current = len(bunker.seen)
-                        stable = stable + 1 if current == previous else 0
-                        if stable >= 3:
-                            break
-                        previous = current
-                        await asyncio.sleep(0.1)
+                    if not await bunker.wait_quiet():
+                        problems.append(("oversize-request", "login signer traffic never quiesced",
+                                         f"signer saw {bunker.seen}"))
+                        bunker.stop()
+                        continue
                     seen_before = len(bunker.seen)
                     b = await js(BIG, awaited=True) or {}
                     err = b.get("err") or ""
