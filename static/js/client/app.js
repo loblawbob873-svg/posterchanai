@@ -21753,6 +21753,12 @@
   }
   // Playable tracks only — the queue must never contain something that cannot be played.
   function musicTracks(list){ return musicEntries(list).filter(t=>!t.missing); }
+  /* Refresh must not turn a selected playlist into the whole library while leaving its chip lit.
+   * Rebuild the ordered set from the freshly pulled index (rather than retaining stale entry
+   * objects); callers outside a playlist keep the ordinary null = whole-library contract. */
+  function _musicRefreshedSet(only){
+    return only ? (_musicPl ? _plTracks(_musicPl) : only) : null;
+  }
   /* `only` — a restricted, ORDERED set of entries (a playlist). Passed rather than filtered inside,
    * because a playlist's order is its content: sorting it by date the way the library is sorted
    * would silently throw away the one thing the user arranged. */
@@ -22007,7 +22013,7 @@
           await MusicOffline.have(true);   // …and re-read what is downloaded, on THIS device
         }catch(_){ }
         rf.disabled=false; rf.innerHTML=label;
-        _renderMusicList(grid, null, q);   // null → use the blob list we just re-read
+        _renderMusicList(grid, null, q, _musicRefreshedSet(only));
         try{ _musicAppNow(); }catch(_){}
       }; }
     { const ga=$('#mus-getall',grid);

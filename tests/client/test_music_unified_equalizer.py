@@ -1,4 +1,6 @@
 from pathlib import Path
+import json
+import subprocess
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -104,3 +106,33 @@ def test_library_count_describes_every_visible_row_not_only_playable_tracks():
     assert "${gone} missing from the server" in count
     assert "live + ' track'" not in count
     assert 'aria-live="polite"' in count
+
+
+def test_refresh_preserves_the_selected_playlist_runtime():
+    """Execute the shipped refresh-set helper, including the full-library negative case."""
+    start = APP.index("function _musicRefreshedSet(")
+    brace = APP.index("{", start)
+    depth = 0
+    end = None
+    for pos in range(brace, len(APP)):
+        if APP[pos] == "{":
+            depth += 1
+        elif APP[pos] == "}":
+            depth -= 1
+            if depth == 0:
+                end = pos + 1
+                break
+    assert end
+    fn = APP[start:end]
+    script = "let _musicPl='road';const _plTracks=id=>[{sha:id+'-fresh'}];\n" + fn + r"""
+const old=[{sha:'stale'}];
+const selected=_musicRefreshedSet(old);
+_musicPl=null;
+console.log(JSON.stringify({selected,unselected:_musicRefreshedSet(null)}));
+"""
+    got = json.loads(subprocess.check_output(["node", "-e", script], text=True))
+    assert got == {"selected": [{"sha": "road-fresh"}], "unselected": None}
+
+    refresh = APP[APP.index("const rf=$('#mus-refresh'"):
+                  APP.index("const ga=$('#mus-getall'", APP.index("const rf=$('#mus-refresh'"))]
+    assert "_renderMusicList(grid, null, q, _musicRefreshedSet(only))" in refresh

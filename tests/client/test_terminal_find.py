@@ -1,5 +1,9 @@
 """Terminal scrollback search must stay reachable and local to xterm."""
 from pathlib import Path
+import json
+import re
+import shutil
+import subprocess
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -61,14 +65,28 @@ def test_user_scrolling_cancels_an_inflight_bottom_pin():
     mount = TERM[TERM.index("function _mountTerm"):
                  TERM.index("/* FIND LIVES IN THE RENDERER")]
     assert "addEventListener('wheel'" in mount
-    assert "Number(ev.deltaY) < 0" in mount
-    assert "addEventListener('touchmove', _stopFollowing" in mount
-    assert "closest('.xterm-viewport')" in mount
+    assert "_scrollsAway('wheel',ev.deltaY)" in mount
+    assert "addEventListener('touchmove'" in mount
+    assert "_scrollsAway('touchmove')" in mount
+    assert "addEventListener('pointerdown'" not in mount
 
     keys = TERM[TERM.index("attachCustomKeyEventHandler"):
                 TERM.index("return true;", TERM.index("attachCustomKeyEventHandler"))]
     assert "ev.key === 'PageUp'" in keys
     assert "_stopFollowing()" in keys
+
+
+def test_tap_to_focus_is_not_runtime_scroll_intent():
+    node = shutil.which("node")
+    if not node:
+        return
+    match = re.search(r"function _scrollsAway\(kind, delta\)\{[\s\S]*?\n    \}", TERM)
+    assert match, "the shipped scroll-intent decision is missing"
+    js = match.group(0) + "\nconsole.log(JSON.stringify([" + \
+         "_scrollsAway('pointerdown'),_scrollsAway('touchmove')," + \
+         "_scrollsAway('wheel',-1),_scrollsAway('wheel',1)]));"
+    got = subprocess.run([node, "-e", js], capture_output=True, text=True, check=True)
+    assert json.loads(got.stdout) == [False, True, True, False]
 
 
 def test_large_replay_stays_pinned_until_chromium_finishes_layout():

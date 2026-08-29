@@ -35,3 +35,13 @@ def test_confirm_supports_a_connected_owner_without_changing_browser_default_sco
     assert "owner.appendChild(ov)" in block
     assert ".uiconfirm-bg.uiconfirm-owned{position:absolute}" in CSS
     assert ".osw-body:has(>.uiconfirm-owned){position:relative}" in CSS
+
+
+def test_owned_delete_dialog_is_sized_by_the_vm_window_not_the_desktop_viewport():
+    owned = CSS[CSS.index(".uiconfirm-owned .uiconfirm{"):
+                CSS.index("/* ===== Node Control", CSS.index(".uiconfirm-owned .uiconfirm{"))]
+    assert "width:min(400px,100%)" in owned
+    assert "max-width:100%" in owned
+    assert ".uiconfirm-owned .uiconfirm-btns{flex-wrap:wrap}" in owned
+    assert "flex:1 1 110px" in owned
+    assert ".uiconfirm{width:min(400px,94vw)" in CSS[:CSS.index(".uiconfirm-owned .uiconfirm{")]

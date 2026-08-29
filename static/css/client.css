@@ -5411,6 +5411,13 @@ body.modal-open .mobilenav{display:none}
 .uiconfirm-msg{font-size:17px;line-height:1.45;margin-bottom:18px;text-align:center}
 .uiconfirm-btns{display:flex;gap:10px;justify-content:center}
 .uiconfirm-btns .btn{min-width:110px}
+/* An owned confirmation is constrained by its managed WINDOW, not by the page viewport.  A 360px
+   VM window previously asked for a 400px dialog (94vw is still desktop-wide), clipping Delete and
+   Cancel outside the window body.  Let the card shrink to the overlay and its actions wrap at the
+   genuinely narrow end; body-owned browser dialogs keep their established sizing. */
+.uiconfirm-owned .uiconfirm{width:min(400px,100%);max-width:100%}
+.uiconfirm-owned .uiconfirm-btns{flex-wrap:wrap}
+.uiconfirm-owned .uiconfirm-btns .btn{flex:1 1 110px;min-width:0}
 
 /* ===== Node Control panel (launcher for the agentic `node` command) ===== */
 .node-panel{display:flex;flex-direction:column;gap:12px}

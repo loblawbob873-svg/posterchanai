@@ -98,6 +98,13 @@
       if(bottomPinT){ clearTimeout(bottomPinT); bottomPinT = null; }
     }
 
+    /* A tap focuses the terminal and, on Android, opens the keyboard. It is not a scroll choice.
+     * Keep this decision pure so touch/wheel surfaces cannot drift: only movement (or an upward
+     * wheel) means the reader deliberately left current output. */
+    function _scrollsAway(kind, delta){
+      return kind==='touchmove' || (kind==='wheel' && Number(delta)<0);
+    }
+
     function _pinBottomAfterLayout(){
       if(!term) return;
       const mine = ++bottomPinEpoch;
@@ -459,11 +466,8 @@
       /* xterm's onScroll has no user/programmatic source flag. Observe the input that can only mean
        * "I am reading scrollback" before xterm handles it, so it can cancel an in-flight replay or
        * live-output pin even when that pin currently owns the onScroll guard. */
-      box.addEventListener('wheel', ev => { if(Number(ev.deltaY) < 0) _stopFollowing(); }, {passive:true});
-      box.addEventListener('touchmove', _stopFollowing, {passive:true});
-      box.addEventListener('pointerdown', ev => {
-        if(ev.target && ev.target.closest && ev.target.closest('.xterm-viewport')) _stopFollowing();
-      }, {passive:true});
+      box.addEventListener('wheel', ev => { if(_scrollsAway('wheel',ev.deltaY)) _stopFollowing(); }, {passive:true});
+      box.addEventListener('touchmove', ev => { if(_scrollsAway('touchmove')) _stopFollowing(); }, {passive:true});
 
       /* FIND LIVES IN THE RENDERER, not in the shell. Sending Ctrl+F into readline searches command
        * history; Ctrl+Shift+F searches everything xterm still holds, including program output and
