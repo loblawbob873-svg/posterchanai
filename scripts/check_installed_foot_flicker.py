@@ -67,7 +67,9 @@ def capture(node: dict, target: Path, label: str) -> tuple[float, int]:
     if w < 100 or h < 80:
         raise AssertionError(f"{label}: Foot collapsed to {w}x{h}")
     geometry = f"{int(r.get('x', 0))},{int(r.get('y', 0))} {w}x{h}"
-    proc = subprocess.Popen(["grim", "-g", geometry, str(target)], text=True,
+    # PPM is part of grim's baseline build. PNG depends on optional pixman/libpng support and the
+    # lean PosterChanOS image deliberately may not provide it; Pillow reads PPM directly.
+    proc = subprocess.Popen(["grim", "-t", "ppm", "-g", geometry, str(target)], text=True,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     time.sleep(0.08)
     # grim 1.5 waits for a damaged frame; zero-distance motion wakes the cursor plane without
@@ -148,7 +150,7 @@ def main() -> int:
                 live = foot_node(marker)
                 if not live:
                     raise AssertionError(label + ": Foot disappeared")
-                samples.append((label, *capture(live, folder / f"{len(samples):02d}.png", label)))
+                samples.append((label, *capture(live, folder / f"{len(samples):02d}.ppm", label)))
 
             for i in range(3):
                 shot("stream-baseline-" + str(i)); time.sleep(0.12)

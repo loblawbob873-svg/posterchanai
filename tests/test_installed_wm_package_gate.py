@@ -43,6 +43,8 @@ def test_installed_foot_flicker_gate_is_a_serial_release_check():
     for witness in ("sustained Codex Claude output", "focus-away", "resize-", "other-output",
                     "grim", "blank/flat"):
         assert witness in gate
+    assert '["grim", "-t", "ppm"' in gate
+    assert '.ppm"' in gate
 
 
 def test_installed_foot_gate_reports_non_sway_host_as_a_skip():
