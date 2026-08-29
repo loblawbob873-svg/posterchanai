@@ -1,0 +1,14 @@
+import fs from 'node:fs';
+const app=fs.readFileSync(new URL('../../static/js/client/app.js',import.meta.url),'utf8');
+const authStart=app.indexOf('  let _aiAuth = null;');
+const authEnd=app.indexOf('  // In-app Admin:',authStart);
+const aiStart=app.indexOf('  async function renderAI(){');
+const aiEnd=app.indexOf('  async function requestAiAccess(){',aiStart);
+const shipped=app.slice(authStart,authEnd)+app.slice(aiStart,aiEnd);
+globalThis.window=globalThis;globalThis.ME=null;globalThis.VIEW='ai';
+globalThis.requests=[];globalThis.fetch=async(...a)=>{requests.push(a);throw Error('must not fetch')};
+globalThis.sign=async()=>{throw Error('must not sign')};globalThis._sendAdminToken=()=>{};
+globalThis.enc=x=>String(x);globalThis.showAuthGate=()=>{};
+globalThis.feed={innerHTML:''};globalThis.$=sel=>sel==='#feed'?feed:null;
+const run=new Function(`return (async()=>{${shipped}await renderAI();return {html:feed.innerHTML,requests};})()`);
+process.stdout.write(JSON.stringify(await run()));

@@ -26612,6 +26612,9 @@
      * key and rebuild both the cookie and bearer. */
     if(_aiAuth && _aiToken) return _aiAuth;
     if(_aiAuthP) return _aiAuthP;   // dedupe concurrent callers (e.g. the 2.5s warm + a click) → one sign(), one login
+    // Guest/boot smoke routes have no identity to prove. Fail deliberately before building tags or
+    // touching ME.pubkey; callers can render a login-required state and no protected request leaves.
+    if(!ME || !ME.pubkey) throw new Error('sign in with a Nostr account to start an app session');
     if(_aiAuth && !_aiToken) _aiAuth=null;
     _aiAuthP = (async()=>{
       try{
@@ -26739,7 +26742,18 @@
   }
   async function renderAI(){
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
-    const a = await ensureAiSession();
+    let a;
+    try{ a=await ensureAiSession(); }
+    catch(e){
+      if(VIEW!=='ai') return;
+      const guest=!ME||!ME.pubkey;
+      feed.innerHTML=`<div class="ai-view ai-gate"><h2><svg class="ic h-ic" aria-hidden="true"><use href="#i-ai"></use></svg>PosterChan AI</h2>
+        <p class="muted">${enc(guest?'Sign in with a Nostr account to use AI.':((e&&e.message)||'Could not start an AI session.'))}</p>
+        ${guest?'<button class="btn btn-neon" id="ai-signin">Sign in</button>':'<button class="btn btn-ghost" id="ai-session-retry">Retry</button>'}</div>`;
+      const b=$(guest?'#ai-signin':'#ai-session-retry');
+      if(b) b.onclick=()=>guest?showAuthGate():renderAI();
+      return;
+    }
     if(VIEW!=='ai') return;
     if(a.error){ feed.innerHTML='<div class="empty">Could not start an AI session — try again.</div>'; return; }
     if(a.can_ai){ return aiMount(feed); }
