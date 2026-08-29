@@ -1163,6 +1163,51 @@
     }catch(_){ return false; }
   }
 
+  /* THE ARCHIVE WAS BUILT FROM THE ONE READ THAT DOES NOT CARRY ATTACHMENTS.
+   *
+   * `mirror` has always taken its rows from `P.list` — the COMBINED SMS/MMS timeline — while
+   * `loadFromPhone`, which paints the phone's own screen, reads that AND `M.listMms`, the direct
+   * MMS-table walk. That is why a handset shows its pictures perfectly and every other device gets
+   * text: the screen is fed by the read that carries parts and the archive by the read that may
+   * not. `listMms` exists precisely because the combined timeline "is intentionally a combined
+   * SMS/MMS timeline and truncates that timeline", which is not a promise about attachments.
+   *
+   * MEASURED, and this is what makes it certain rather than likely: every one of 4,619 archived
+   * documents on the reporting account is addressed with an EMPTY parts key. The document address
+   * is `SmsKeys.docId(...partsKey)`, computed on the handset from the row it is about, so an empty
+   * key means the row had no parts at the moment it was published — 1,284 picture messages, not
+   * once. `archivePart` has therefore never run there, and the drive's `MMS` folder is empty for
+   * the honest reason that nothing ever asked it to hold anything: the only code that ever wrote
+   * to it is `send()`.
+   *
+   * So: ask the MMS table for the same window and let it fill in the picture messages the combined
+   * read handed over bare. MATCHED ON THE PROVIDER ROW ID, which is the same value in both reads
+   * because both rows come from `content://mms/<id>` — the document address cannot be used, since
+   * gaining parts is exactly what changes it.
+   *
+   * Bounded and best-effort by design: an older APK has no `listMms`, and a phone whose MMS table
+   * refuses must archive its texts anyway. Neither may cost the sweep. */
+  async function withMmsParts(rows, since, limit){
+    const bare = (rows || []).filter(r => r && r.mms && !((r.parts || []).length) && Number(r.id));
+    if(!bare.length) return rows;
+    const M = plug('listMms');
+    if(!M || !M.listMms) return rows;
+    let mms = [];
+    try{ mms = ((await M.listMms({ since, limit: Math.max(limit || 0, bare.length) })) || {}).messages || []; }
+    catch(_){ return rows; }
+    const byId = new Map();
+    for(const m of mms) if(m && Number(m.id) && (m.parts || []).length) byId.set(Number(m.id), m);
+    if(!byId.size) return rows;
+    return rows.map(r => {
+      if(!r || !r.mms || (r.parts || []).length) return r;
+      const full = byId.get(Number(r.id));
+      /* The MMS table's row is the WHOLE row, `doc` included — and it must be, because its address
+       * counts the attachments in. Taking the parts alone would file the picture at the text-only
+       * address and every device would disagree about which document this message is. */
+      return full || r;
+    });
+  }
+
   /* PUBLISH WHAT THE PHONE HAS AND THE ARCHIVE DOES NOT.
    *
    * The high-water mark is a TIMESTAMP, not a row id, and that is the load-bearing choice: a row id
@@ -1227,6 +1272,7 @@
     }else{
       try{ rows = ((await P.list({ since: querySince, limit: (opts && opts.limit) || 400 })) || {}).messages || []; }
       catch(_){ return { published:0, skipped:'could not read the phone' }; }
+      rows = await withMmsParts(rows, querySince, (opts && opts.limit) || 400);
     }
 
     let n = 0, top = since, drive = null, archiveError = '', rowErrors = 0;

@@ -441,3 +441,68 @@ class TheReportSurvivesTheAutoCLEANERS(unittest.TestCase):
         self.assertNotIn("30078", line,
                          "kind 30078 became prunable — that is the app's whole datastore, not just "
                          "this report")
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class TheArchiveIsBuiltFromTheReadThatCarriesAttachments(unittest.TestCase):
+    """WHY THE PICTURES ARE NOT IN BLOSSOM.
+
+    `mirror` took its rows from `P.list` — the COMBINED SMS/MMS timeline — while `loadFromPhone`,
+    which paints the phone's own screen, reads that AND `M.listMms`, the direct MMS-table walk. So
+    a handset shows its pictures perfectly and every other device gets text: the screen is fed by
+    the read that carries parts and the archive by the read that may not.
+
+    MEASURED, and what makes this certain rather than likely: every one of 4,619 archived documents
+    on the reporting account is addressed with an EMPTY parts key. That address is
+    `SmsKeys.docId(...partsKey)`, computed on the handset from the row it is about, so an empty key
+    means the row had no parts when it was published — 1,284 picture messages, not once. So
+    `archivePart` has never run there, and the drive's MMS folder is empty for the honest reason
+    that nothing ever asked it to hold anything.
+    """
+
+    PART = {"id": 900, "ct": "image/jpeg", "name": "p.jpg", "bytes": 2048}
+
+    def _rows(self):
+        r = msg(1, addr="+15550100", body="look", incoming=True)
+        r["mms"] = True
+        r["parts"] = [self.PART]
+        return [r]
+
+    def test_a_picture_message_reaches_blossom_even_when_the_timeline_hands_it_over_bare(self):
+        res = run(isPhone=True, rows=self._rows(), combinedDropsParts=True,
+                  parts={"900": {"data": "eA=="}}, steps=["phoneLoad", "mirror", "settle"])
+        uploaded = [c for c in res["calls"] if c[0] == "uploadEncFile" and c[2] == "MMS"]
+        self.assertTrue(uploaded,
+                        "nothing was ever put in the encrypted MMS folder — archivePart never ran, "
+                        "which is exactly the production state: calls=%r"
+                        % ([c for c in res["calls"] if c[0] in ("list", "listMms")],))
+        shas = [s for row in res["threads"] for parts in row["partShas"] for s in parts]
+        self.assertTrue([s for s in shas if s],
+                        "the message was archived with no attachment address: %r" % (shas,))
+
+    def test_it_is_filed_at_the_address_that_counts_the_attachment_in(self):
+        """The whole MMS row is taken, not just its parts. `SmsKeys.docId` counts attachments into
+        the address, so filing the picture at the text-only address would make every device
+        disagree about which document this message is — and a caption-less photo would collide with
+        the next one sent in the same second."""
+        res = run(isPhone=True, rows=self._rows(), combinedDropsParts=True,
+                  parts={"900": {"data": "eA=="}}, steps=["phoneLoad", "mirror", "settle"])
+        self.assertFalse([d for d in res["relay"] if d.endswith("-noparts")],
+                         "the picture was filed at the bare timeline's address: %r" % (res["relay"],))
+
+    def test_an_apk_with_no_mms_table_still_archives_its_texts(self):
+        """Best-effort by design: an older build has no `listMms`, and that must cost the sweep
+        nothing."""
+        res = run(isPhone=True, rows=self._rows(), combinedDropsParts=True, oldApk=True,
+                  steps=["phoneLoad", "mirror", "settle"])
+        self.assertTrue(res["relay"], "the sweep published nothing at all: %r" % (res["relay"],))
+
+    def test_a_text_only_sweep_does_not_ask_the_mms_table_at_all(self):
+        """No picture messages, no second read — the cost is paid only when there is something to
+        recover."""
+        res = run(isPhone=True, rows=[msg(1, body="just words")],
+                  steps=["phoneLoad", "mirror", "settle"])
+        after_load = res["calls"][[i for i, c in enumerate(res["calls"])
+                                   if c[0] == "list"][-1]:]
+        self.assertFalse([c for c in after_load if c[0] == "listMms"],
+                         "an all-text sweep still walked the MMS table")

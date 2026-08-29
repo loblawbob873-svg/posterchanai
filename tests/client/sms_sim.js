@@ -96,6 +96,14 @@ const PLUGIN = {
     // interleaving/truncation never surfaces historical MMS rows. listMms below represents the
     // direct content://mms audit added for that already-deployed state.
     if(opt.combinedOmitsMms) found = found.filter(r => !r.mms);
+    /* THE SHAPE THE REPORTING ACCOUNT IS ACTUALLY IN. The combined timeline returns the picture
+     * message — flagged, addressed, with its caption — and NO parts, while the direct MMS walk
+     * below returns the same provider row complete. That is why a handset shows its own pictures
+     * and every other device gets text: the screen is fed by `listMms`, the archive by this. The
+     * row's `doc` changes with its parts (SmsKeys.docId counts them in), so the bare row also
+     * carries the text-only address, exactly as the handset would compute it. */
+    if(opt.combinedDropsParts) found = found.map(r => r.mms
+      ? Object.assign({}, r, {parts: [], doc: String(r.doc || '') + '-noparts'}) : r);
     if(a && a.limit){
       let want = Math.max(1, Number(a.limit) || 1);
       // Android's MMS reader caps one provider query. Asking for a larger first page never exposes
