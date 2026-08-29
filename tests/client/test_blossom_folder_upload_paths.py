@@ -116,6 +116,14 @@ def test_completed_upload_is_remembered_before_the_network_refresh():
     assert "_blobSizes.set(sha,row.size)" in helper
 
 
+def test_folder_upload_uses_the_computed_hash_when_server_url_is_opaque():
+    upload = APP[APP.index("async function uploadFilesSeq(files)") :]
+    upload = upload[: upload.index("// ---- Music:")]
+    assert "uploadBlob(files[i],{hashOut:stored})" in upload
+    assert "const sha=stored.sha||_shaFromUrl(url)" in upload
+    assert "if(!sha) throw new Error('upload completed without a content hash')" in upload
+
+
 def test_folder_upload_does_not_claim_done_when_index_save_failed():
     upload = APP[APP.index("async function uploadFilesSeq(files)") :]
     upload = upload[: upload.index("// ---- Music:")]

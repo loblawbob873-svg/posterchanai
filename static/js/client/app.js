@@ -16005,6 +16005,10 @@
     // Record NIP-92 source metadata so a note carrying this URL gets an `imeta` tag (see imetaTagsFor).
     try{ const t=file.type||''; if(/^(image|video)\//.test(t)){ _MEDIA_META.set(url, { m:t, x:hash, dim:await _mediaDim(file) }); } }catch(_){}
     if(opts && opts.folder) _fileUnder(url, file, opts.folder, hash);
+    /* Some Blossom servers return a CDN/signed URL whose path does not contain the content hash.
+     * Files still needs that hash for its encrypted index; expose the value we already computed to
+     * trusted in-process callers without changing uploadBlob's long-standing string return type. */
+    if(opts && opts.hashOut && typeof opts.hashOut==='object') opts.hashOut.sha=hash;
     return url;
   }
   /* Put an upload somewhere in the drive.
@@ -21116,9 +21120,11 @@
           if(++done%25===0){ await FilesIdx.endBatch(); FilesIdx.beginBatch(); }
         } else {
           if(stat) stat.textContent='uploading…';
-          const url=await uploadBlob(files[i]); const sha=_shaFromUrl(url);
-          if(sha){ FilesIdx.setFile(sha, {name:files[i].name, folder:_targetFolders[i], mime:files[i].type||'', size:files[i].size, ts:Math.floor(Date.now()/1000)});
-            _rememberUploadedBlob(sha,url,files[i]); }
+          const stored={};
+          const url=await uploadBlob(files[i],{hashOut:stored}); const sha=stored.sha||_shaFromUrl(url);
+          if(!sha) throw new Error('upload completed without a content hash');
+          FilesIdx.setFile(sha, {name:files[i].name, folder:_targetFolders[i], mime:files[i].type||'', size:files[i].size, ts:Math.floor(Date.now()/1000)});
+          _rememberUploadedBlob(sha,url,files[i]);
           ok++; if(stat){ stat.textContent='✓'; stat.className='up-stat ok'; }
           if(++done%25===0){ await FilesIdx.endBatch(); FilesIdx.beginBatch(); }
         }

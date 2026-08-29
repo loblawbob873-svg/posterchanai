@@ -2,6 +2,7 @@
 'use strict';
 const fs = require('fs');
 const os = require('os');
+const posterfetch = require('./posterfetch.js');
 
 let last = null;
 let processLast = new Map(), processAt = 0;
@@ -48,7 +49,7 @@ function snapshot(withProcesses){
   const dtotal=prev?cur.total-prev.total:0, didle=prev?cur.idle-prev.idle:0;
   return {at:cur.at,cpu:{percent:dtotal?Math.max(0,Math.min(100,Math.round((dtotal-didle)*100/dtotal))):0,
                          cores:os.cpus().length},memory:memory(),network:{rx:dt?(cur.rx-prev.rx)/dt:0,tx:dt?(cur.tx-prev.tx)/dt:0},
-          uptime:os.uptime(),processes:withProcesses?processes():[]};
+          gpu:posterfetch.gpu(),uptime:os.uptime(),processes:withProcesses?processes():[]};
 }
 function end(pid){
   const n=Number(pid); if(!Number.isInteger(n)||n<=1)throw new Error('invalid process');

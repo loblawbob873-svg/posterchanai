@@ -1797,6 +1797,7 @@
           <div><span>System</span><b>PosterChanOS</b></div>
           <div><span>Processors</span><b>${enc((system.cpu&&system.cpu.cores)||'—')} logical cores</b></div>
           <div><span>Memory</span><b>${system.memory&&system.memory.total?enc((system.memory.total/1073741824).toFixed(1))+' GB':'—'}</b></div>
+          <div><span>Graphics</span><b>${enc(system.gpu||'—')}</b></div>
           <div><span>Up time</span><b>${Number.isFinite(system.uptime)?enc(Math.floor(system.uptime/3600))+'h '+enc(Math.floor(system.uptime/60)%60)+'m':'—'}</b></div>
         </section></section>
         <section data-liveusb data-settings-page="liveusb" ${_osSettingsPage==='liveusb'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('drive')}</div><span><h2>Installation media</h2><p>Build PosterChanOS recovery media and write it to a removable USB drive.</p></span></header>${window.pcLiveUSB?`<div class="os-liveusb os-set-card"><div class="os-liveusb-head"><div><b>PosterChanOS installation media</b><span>Build an ISO first, then safely select where to write it.</span></div><button class="btn" data-live-refresh>Refresh</button></div>
@@ -2260,7 +2261,7 @@
     // scratchpad, and the menu's rectangle only stops covering anything once nsync has run.
     try{ await nsync(); }catch(_){}
     const focused = restore.find(w => w.focused);
-    if(focused) try{ await pcWM.focus(focused.id); }catch(_){}
+    if(focused) try{ await _focusNativeDecorated(focused.id); }catch(_){}
   }
 
   /* A PRESS THAT BEGINS A GESTURE MUST NOT HAND THE KEYBOARD TO A NATIVE APP — and this is why a
@@ -2310,7 +2311,7 @@
     /* The app has the keyboard again now that it is back on screen. After the sync, not before:
      * focusing a window that is still in the scratchpad brings it back wherever the compositor
      * feels like putting it, and the placement then has to move it a second time. */
-    try{ Promise.resolve(done).then(() => { try{ pcWM.focus(w.native); }catch(_){} }, () => {}); }
+    try{ Promise.resolve(done).then(() => { try{ _focusNativeDecorated(w.native); }catch(_){} }, () => {}); }
     catch(_){}
   }
   const _zOf = (w) => Number(w.el && w.el.style.zIndex) || 0;
@@ -5991,9 +5992,9 @@
         const w = nativeTasks.find(x => String(x.id) === b.dataset.id);
         if(!w) return;
         try{
-          if(w.focused && !w.stashed) pcWM.hide(w.id);
-          else if(w.stashed) pcWM.show(w.id).then(() => pcWM.focus(w.id));
-          else pcWM.focus(w.id);
+          if(w.focused && !w.stashed) Promise.resolve(pcWM.hide(w.id)).catch(()=>{});
+          else if(w.stashed) Promise.resolve(pcWM.show(w.id)).then(() => _focusNativeDecorated(w.id)).catch(()=>{});
+          else _focusNativeDecorated(w.id);
         }catch(_){}
         return;
       }

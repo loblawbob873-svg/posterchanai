@@ -20,8 +20,10 @@ const context={console,Set,Promise,Math,Date,saveOK:true,
     endBatch:async()=>{calls.batch.push('end');return context.saveOK;},addFolder:f=>calls.folders.push(f),
     setFile:(sha,d)=>calls.files.push([sha,d])},
   toast:x=>calls.toasts.push(x),_uploadBadge:x=>calls.badges.push(x),
-  uploadBlob:async f=>{calls.uploads.push(f.name);return 'https://blossom.test/'+
-    (f.name==='a.jpg'?'a':'b').repeat(64);},_shaFromUrl:u=>u.split('/').pop(),
+  uploadBlob:async (f,opts)=>{calls.uploads.push(f.name);const hash=(f.name==='a.jpg'?'a':f.name==='cdn.jpg'?'c':'b').repeat(64);
+    if(opts&&opts.hashOut)opts.hashOut.sha=hash;
+    return f.name==='cdn.jpg'?'https://cdn.test/download/signed-object':'https://blossom.test/'+hash;},
+  _shaFromUrl:u=>/([0-9a-f]{64})/.test(u)?u.match(/([0-9a-f]{64})/)[1]:'',
   _signUploadBatch:async()=>null,_blossomDenied:()=>false,requestBlossomAccess:()=>{},
   uploadEncFile:async()=>{},uploadMusicTrack:async()=>{},_refreshBlobHave:async()=>{},
   _looksAudio:()=>false,_musicHasSrc:()=>false,enc:String,$:()=>null,mediaServer:()=>"https://blossom.test",
@@ -38,20 +40,22 @@ globalThis.failIndex=()=>{globalThis.saveOK=false;};`,context);
 
 (async()=>{
   const files=[{name:'a.jpg',type:'image/jpeg',size:10,webkitRelativePath:'Pictures/a.jpg'},
-    {name:'b.jpg',type:'image/jpeg',size:20,webkitRelativePath:'Pictures/Trips/b.jpg'}];
+    {name:'b.jpg',type:'image/jpeg',size:20,webkitRelativePath:'Pictures/Trips/b.jpg'},
+    {name:'cdn.jpg',type:'image/jpeg',size:25,webkitRelativePath:'Pictures/CDN/cdn.jpg'}];
   await context.run(files);
   const folders=JSON.stringify(calls.folders),placed=calls.files.map(x=>x[1].folder);
-  if(folders!==JSON.stringify(['Pictures','Pictures/Trips']))throw new Error('folders not registered: '+folders);
-  if(JSON.stringify(placed)!==JSON.stringify(['Pictures','Pictures/Trips']))throw new Error('wrong indexed folders: '+placed);
+  if(folders!==JSON.stringify(['Pictures','Pictures/Trips','Pictures/CDN']))throw new Error('folders not registered: '+folders);
+  if(JSON.stringify(placed)!==JSON.stringify(['Pictures','Pictures/Trips','Pictures/CDN']))throw new Error('wrong indexed folders: '+placed);
   if(JSON.stringify(calls.batch)!==JSON.stringify(['begin','end']))throw new Error('batch did not commit: '+calls.batch);
   if(context.uploading()!==0)throw new Error('upload remained busy after completion');
   if(calls.renders!==1)throw new Error('Blossom did not refresh after completion');
   const visible=context.visible();
-  if(visible.length!==2||visible.some(b=>!b.url||!b.name||!b.type))
+  if(visible.length!==3||visible.some(b=>!b.url||!b.name||!b.type))
     throw new Error('completed uploads were not added to the visible listing: '+JSON.stringify(visible));
   if(visible.some(b=>!context.have().has(b.sha256)||context.sizes().get(b.sha256)!==b.size))
     throw new Error('blob presence/size caches were not updated with the visible listing');
-  if(!calls.toasts.some(x=>/Done.*2 added/.test(x)))throw new Error('no completion summary: '+calls.toasts);
+  if(!calls.toasts.some(x=>/Done.*3 added/.test(x)))throw new Error('no completion summary: '+calls.toasts);
+  if(!calls.files.some(x=>x[0]==='c'.repeat(64)))throw new Error('hashless CDN URL was not indexed');
   context.failIndex();
   await context.run([{name:'c.jpg',type:'image/jpeg',size:30,webkitRelativePath:'More/c.jpg'}]);
   if(!calls.toasts.some(x=>/Uploaded — folder list waiting to save.*1 added/.test(x)))

@@ -263,4 +263,6 @@ function render(env, cols) {
   return `\r\n${lines.join('\r\n')}\r\n\r\n`;
 }
 
-module.exports = { render, human, duration, meter, pciModel, gpuLabel, gpuRows, LOGO };
+/* Export the same probe used by the banner so System Settings cannot drift into a second, partial
+ * implementation (the old Settings snapshot did not report graphics at all). */
+module.exports = { render, human, duration, meter, pciModel, gpuLabel, gpuRows, gpu, LOGO };

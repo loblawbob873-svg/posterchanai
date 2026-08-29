@@ -184,6 +184,22 @@ class PosterfetchTests(unittest.TestCase):
         self.assertNotRegex(body, r"if \(name \|\| driver\) return",
                             "a second GPU would never be inspected")
 
+    def test_system_snapshot_and_settings_use_the_same_all_card_gpu_probe(self):
+        js = ("const p=require('./desktop/posterfetch.js');"
+              "p.gpu=()=> 'AMD Radeon RX 6800 / AMD Radeon RX 7900 XTX';"
+              "const s=require('./desktop/system.js').snapshot(false);"
+              "console.log(JSON.stringify(s.gpu))")
+        got = json.loads(subprocess.check_output(["node", "-e", js], cwd=ROOT, text=True))
+        self.assertEqual(got, "AMD Radeon RX 6800 / AMD Radeon RX 7900 XTX")
+        settings = (ROOT / "static/js/client/os.js").read_text()
+        self.assertIn('<div><span>Graphics</span><b>${enc(system.gpu||\'—\')}</b></div>', settings)
+
+    def test_installed_shell_package_includes_the_shared_gpu_probe(self):
+        package = json.loads((ROOT / "desktop/package.json").read_text())
+        self.assertIn("*.js", package["build"]["files"])
+        self.assertTrue((ROOT / "desktop/posterfetch.js").is_file())
+        self.assertIn("require('./posterfetch.js')", (ROOT / "desktop/system.js").read_text())
+
     def test_network_enumeration_failure_cannot_break_the_banner_or_shell(self):
         js = ("const os=require('os'); os.networkInterfaces=()=>{throw new Error('offline')}; "
               "const p=require('./desktop/posterfetch.js'); "
