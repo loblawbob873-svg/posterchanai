@@ -9,7 +9,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v1521';
+const CACHE = 'pc-nostr-v1523';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 // Content-addressed blobs fetched by JS rather than by an element: the ENCRYPTED DRIVE — Notes
 // attachments, music tracks, an offloaded note body, the files index. They land in their OWN cache,
@@ -79,6 +79,11 @@ const SHELL = [
   '/static/js/client/term.js',
   '/static/js/client/code.js',
   '/static/js/client/preview.js',
+  /* Preview loads PDF.js only when a PDF is opened. Caching preview.js without its renderer made a
+   * cached/decrypted document fail exactly when a phone was offline, then unnecessarily offered the
+   * native viewer/save fallback. These are application code, not drive bytes. */
+  '/static/vendor/pdfjs/pdf.min.js',
+  '/static/vendor/pdfjs/pdf.worker.min.js',
   '/static/vendor/xterm/xterm.css',
   '/static/vendor/xterm/xterm.js',
   '/static/vendor/xterm/fit.js',

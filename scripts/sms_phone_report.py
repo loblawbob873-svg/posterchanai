@@ -94,6 +94,8 @@ def main():
             m = r.get("markers") or {}
             print(f"  latches       : blossom-done={m.get('blossom')} rewound={m.get('rewound')} "
                   f"oldest-first={m.get('oldestFirst')} hwm={m.get('hwm')}")
+            print(f"  builds        : apk={r.get('app') or '?'} client={r.get('client') or '?'}"
+                  f"  (a stale client reports the OLD behaviour from a phone you just opened)")
             print(f"  holding       : {r.get('held')} messages"
                   + (f" · app {r['app']}" if r.get("app") else ""))
             print(f"  VERDICT       : {verdict(r)}")

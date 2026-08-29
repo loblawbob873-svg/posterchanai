@@ -1169,6 +1169,17 @@
     const body = {
       v: 1, at: now(),
       app: String((window.__PC_APP_BUILD__ || '')).slice(0, 40),
+      /* WHICH CLIENT ACTUALLY SWEPT. `app` is the APK's build number and says nothing about the
+       * JavaScript inside it: a WebView can be running a client several deploys old while the
+       * native shell is current. That cost a round trip — a report showing the pre-fix behaviour
+       * from a phone that had "just been opened", with no way to tell a stale client from a fix
+       * that did not work. The `?v=` the shell appends to every script is the answer. */
+      client: (function(){
+        try{
+          const el = document.querySelector('script[src*="client/sms.js"]');
+          return String(((el && el.src) || '').split('?v=')[1] || 'unknown').slice(0, 24);
+        }catch(_){ return 'unknown'; }
+      })(),
       // what the provider handed this phone on the pass that just ran
       rowsRead: Number(pass.rowsRead) || 0,
       mmsRows: Number(pass.mmsRows) || 0,
