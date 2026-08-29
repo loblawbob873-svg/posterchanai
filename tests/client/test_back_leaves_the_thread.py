@@ -173,10 +173,13 @@ class EveryRouteOutOfTheFeedRemembers(unittest.TestCase):
                               "this route leaves the timeline without remembering where the reader was")
 
     def test_the_helper_reads_before_the_view_changes(self):
-        """After VIEW moves there is nothing left to measure."""
-        i = self.src.index("if(VIEW !== v) _rememberTlScroll();")
-        j = self.src.index("VIEW = v;", i)
-        self.assertLess(i, j)
+        """After VIEW moves there is nothing left to measure; other leave cleanup may share the block."""
+        switch = self.src.index("function switchView(v, quiet){")
+        remember = self.src.index("_rememberTlScroll();", switch)
+        abort = self.src.index("Relay.abortQueries", remember)
+        changed = self.src.index("VIEW = v;", remember)
+        self.assertLess(remember, changed)
+        self.assertLess(remember, abort, "socket cleanup moved ahead of reading the old feed offset")
 
     def test_tapping_the_view_you_are_on_gives_up_the_saved_place(self):
         """The user's own spec for when it SHOULD reset. Dropping the scroll without dropping the

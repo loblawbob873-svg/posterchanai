@@ -73,9 +73,15 @@ const ME = { pubkey:'me' };
 const CFG = {};
 const mediaServer = ()=>'';
 const FilesIdx = null;
+// This is the AUTHENTICATED layout/interaction scenario. Mail now correctly refuses to issue any
+// protected request until the shared session proof succeeds, so the lifted IIFE needs the same
+// successful contract the full app supplies (the previous fixture accidentally relied on Mail
+// swallowing a missing ensureAiSession binding and continuing tokenless).
+const _aiToken = 'mail-harness-token';
+const ensureAiSession = async () => ({ username:'mail-harness' });
 window.__PC_API_BASE__ = 'https://mail.instance.test';
 const _instanceBase = () => window.__PC_API_BASE__;
-let VIEW='messages';
+let VIEW='mail';
 const MSGS = [
   { uid:'1', account:'me@example.com', folder:'INBOX', read:false,
     from:'Bartholomew Featherstonehaugh-Cholmondeley <bartholomew.featherstonehaugh@averylongdomainname.example.com>',
@@ -113,6 +119,7 @@ window.fetch = async (url, opts) => {
   if(u.startsWith('/api/mail/send')){ window.__sent = JSON.parse(opts.body); return j({ok:true}); }
   return j({ok:true});
 };
+window.__PC = { authFetch:(url,opts)=>window.fetch(url,opts) };
 </script>
 <script src="/static/js/client/mailharness.js"></script>
 </body></html>"""

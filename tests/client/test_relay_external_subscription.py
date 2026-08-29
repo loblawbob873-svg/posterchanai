@@ -24,7 +24,7 @@ def test_external_call_signaling_is_verified_delivered_and_closed(tmp_path):
       }}
       FakeWS.all=[];
       global.WebSocket=FakeWS;global.window=global;global.self=global;
-      global.document={{hidden:false,addEventListener(){{}}}};global.navigator={{onLine:true}};
+      global.document={{hidden:false,addEventListener(){{}}}};Object.defineProperty(global,'navigator',{{value:{{onLine:true}}}});
       global.location={{origin:'https://app.test',protocol:'https:'}};
       global.Worker=class {{
         postMessage(m){{setTimeout(()=>this.onmessage({{data:{{id:m.id,ok:true,data:[{{id:m.args.events[0].id,valid:m.args.events[0].sig==='good'}}]}}}}),0);}}
@@ -64,7 +64,7 @@ def test_one_shot_external_query_closes_immediately_when_owner_aborts(tmp_path):
       }}
       FakeWS.all=[];
       global.WebSocket=FakeWS;global.window=global;global.self=global;
-      global.document={{hidden:false,addEventListener(){{}}}};global.navigator={{onLine:true}};
+      global.document={{hidden:false,addEventListener(){{}}}};Object.defineProperty(global,'navigator',{{value:{{onLine:true}}}});
       global.location={{origin:'https://app.test',protocol:'https:'}};
       global.Worker=class {{ postMessage(){{}} }};
       require({json.dumps(str(RELAY))});
@@ -79,3 +79,29 @@ def test_one_shot_external_query_closes_immediately_when_owner_aborts(tmp_path):
     assert run.returncode == 0, run.stderr
     result = json.loads(run.stdout.strip())
     assert result == {"before": [False, False], "events": [], "closed": [True, True]}
+
+
+def test_failed_external_relay_is_single_flight_and_circuit_broken(tmp_path):
+    driver = tmp_path / "query-circuit.js"
+    driver.write_text(textwrap.dedent(f"""
+      class FakeWS {{
+        constructor(url){{this.url=url;FakeWS.all.push(this);}}
+        send(){{}} close(){{this.closed=true;}}
+        fail(){{this.onerror&&this.onerror(new Error('refused'));}}
+      }}
+      FakeWS.all=[];global.WebSocket=FakeWS;global.window=global;global.self=global;
+      global.document={{hidden:false,addEventListener(){{}}}};Object.defineProperty(global,'navigator',{{value:{{onLine:true}}}});
+      global.location={{origin:'https://app.test',protocol:'https:'}};
+      global.Worker=class{{postMessage(){{}}}};console.warn=()=>{{}};
+      require({json.dumps(str(RELAY))});
+      (async()=>{{
+      const first=Relay.queryFrom(['wss://relay.ditto.pub'],[{{kinds:[1]}}],{{exact:true,purpose:'concord explicit room'}});
+      const concurrent=await Relay.queryFrom(['wss://relay.ditto.pub'],[{{kinds:[9]}}],{{exact:true,purpose:'other poll'}});
+      const madeWhileBusy=FakeWS.all.length;FakeWS.all[0].fail();await first;
+      const cooled=await Relay.queryFrom(['wss://relay.ditto.pub'],[{{kinds:[1]}}],{{exact:true,purpose:'retry'}});
+      console.log(JSON.stringify({{madeWhileBusy,total:FakeWS.all.length,concurrent,cooled}}));
+      }})().catch(error=>{{console.error(error);process.exit(1);}});
+    """), encoding="utf-8")
+    run = subprocess.run(["node", str(driver)], capture_output=True, text=True, timeout=10)
+    assert run.returncode == 0, run.stderr
+    assert json.loads(run.stdout) == {"madeWhileBusy": 1, "total": 1, "concurrent": [], "cooled": []}

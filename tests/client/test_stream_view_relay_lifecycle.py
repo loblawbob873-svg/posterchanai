@@ -21,7 +21,7 @@ def test_switching_from_streams_aborts_damus_and_nos_lol_sockets(tmp_path):
     )
     assert helper, "Streams read-owner lifecycle is missing"
     assert "if(VIEW==='streams')_stopStreamsReads()" in APP
-    assert "{signal:readSignal}" in APP
+    assert "{signal:readSignal,purpose:'streams directory'}" in APP
     assert "readSignal&&readSignal.aborted" in APP
     stale_sweep = APP.split("async function _sweepStaleOwnLive()", 1)[1].split("async function _maybeOfferAnnounce", 1)[0]
     assert "Relay.queryFrom(STREAM_RELAYS" not in stale_sweep

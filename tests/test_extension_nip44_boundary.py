@@ -44,3 +44,20 @@ def test_provider_does_not_chunk_nip44_events():
     assert 'promise.catch(() => {})' in SRC
     block=SRC[SRC.index('function nip44Encrypt'):SRC.index('const nostr =')]
     assert ".slice(" not in block and ".substring(" not in block
+
+
+def test_empty_decrypt_is_rejected_locally_and_handled():
+    script=SRC+'''\nlet posted=0;
+globalThis.window={addEventListener:()=>{},postMessage:()=>{posted++},nostr:null};
+globalThis.document={documentElement:{setAttribute:()=>{}}};
+__pcNostrProvider();
+(async()=>{
+  let error='';try{await window.nostr.nip44.decrypt('a'.repeat(64),'');}catch(e){error=e.message}
+  window.nostr.nip44.decrypt('a'.repeat(64),null);
+  await new Promise(r=>setTimeout(r,20));
+  if(posted!==0||!error.includes('ciphertext is empty'))throw Error(JSON.stringify({posted,error}));
+})().catch(e=>{console.error(e);process.exitCode=1});'''
+    with tempfile.TemporaryDirectory() as td:
+        p=Path(td)/'decrypt-empty.js';p.write_text(script)
+        r=subprocess.run(['node','--unhandled-rejections=strict',p],text=True,capture_output=True,timeout=10)
+    assert r.returncode==0,r.stdout+r.stderr

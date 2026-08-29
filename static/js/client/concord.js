@@ -22,12 +22,12 @@
     const own=[...new Set((bundle&&bundle.relays||[]).map(normalizeRelay).filter(Boolean))];
     return (own.length?own:CORD_RELAYS).slice(0,8);
   }
-  async function cordQuery(p,relays,filters,{timeout=8000,max=8,signal=null}={}){
+  async function cordQuery(p,relays,filters,{timeout=8000,max=8,signal=null,purpose='concord room'}={}){
     /* queryFrom intentionally skips relays already owned by the shared pool. Always ask both paths:
        otherwise opening a room can silently omit the newest wraps from whichever relay is connected. */
     const jobs=[];
     if(p.relayQuery)jobs.push(Promise.resolve().then(()=>p.relayQuery(filters,timeout)));
-    if(p.relayQueryFrom)jobs.push(Promise.resolve().then(()=>p.relayQueryFrom(relays,filters,{timeout,max,signal})));
+    if(p.relayQueryFrom)jobs.push(Promise.resolve().then(()=>p.relayQueryFrom(relays,filters,{timeout,max,signal,purpose})));
     const settled=await Promise.allSettled(jobs),ok=settled.filter(result=>result.status==='fulfilled');
     if(jobs.length&&!ok.length)throw settled[0].reason;
     const batches=ok.map(result=>result.value||[]),byId=new Map();
@@ -609,7 +609,7 @@
     const onEvent=ev=>{ for(const item of discoverInvites(ev.content,ev)){ const old=bySigner.get(item.naddr); if(!old||Number(ev.created_at)>Number(old.source.created_at))bySigner.set(item.naddr,item); recoverOwnedInvite(p,item); } discovered=[...bySigner.values()].sort((a,b)=>Number(b.source.created_at)-Number(a.source.created_at)); paintDiscovery(); };
     const onEose=()=>{ discoveryLoaded=true; paintDiscovery(); };
     const filters=[{kinds:[1],search:'armada.buzz/invite',limit:100},{kinds:[1],search:'poster.place/invite',limit:100}];
-    try{ discoverySubscription=p.relaySubscribe(filters,{onEvent,onEose,live:true})||null; if(p.relayQueryFrom)p.relayQueryFrom(DISCOVER_RELAYS,filters,{timeout:6000,max:2,signal}).then(events=>{if(state.community!=null)return;events.forEach(onEvent);onEose();}); }catch(_){ discoveryLoaded=true; }
+    try{ discoverySubscription=p.relaySubscribe(filters,{onEvent,onEose,live:true})||null; if(p.relayQueryFrom)p.relayQueryFrom(DISCOVER_RELAYS,filters,{timeout:6000,max:2,signal,purpose:'concord discover listings'}).then(events=>{if(state.community!=null)return;events.forEach(onEvent);onEose();}); }catch(_){ discoveryLoaded=true; }
   }
   function stopDiscovery(){
     const subscription=discoverySubscription;discoverySubscription=null;discoveryStarted=false;
@@ -666,7 +666,7 @@
        recovery only; unioning relayUrls here duplicated Damus (and any other personal relay) as a
        fresh queryFrom WebSocket on every Discover recovery. */
     const filters=[{kinds:[10009],authors:[viewer.pubkey],limit:8}],relays=CORD_RELAYS,
-      [pool,listed]=await Promise.all([p.relayQuery?p.relayQuery(filters,8000):[],p.relayQueryFrom?p.relayQueryFrom(relays,filters,{timeout:8000,max:12,exact:true,signal}):[]]),
+      [pool,listed]=await Promise.all([p.relayQuery?p.relayQuery(filters,8000):[],p.relayQueryFrom?p.relayQueryFrom(relays,filters,{timeout:8000,max:12,exact:true,signal,purpose:'concord nip29 memberships'}):[]]),
       queried=[...new Map([...(pool||[]),...(listed||[])].map(e=>[e.id,e])).values()],events=p.verifyRelayEvents?await p.verifyRelayEvents(queried):[],
       event=events.sort((a,b)=>Number(b.created_at)-Number(a.created_at)||String(a.id).localeCompare(String(b.id)))[0];
     if(!event)return {groups:[],relays:[]};
@@ -675,7 +675,7 @@
     if(ciphertext){const methods=/\?iv=/.test(ciphertext)?['nip04dec','nip44dec']:['nip44dec','nip04dec'];for(const method of methods){if(!p[method])continue;try{const privateTags=JSON.parse(await p[method](viewer.pubkey,ciphertext));if(Array.isArray(privateTags))all.push(...privateTags);break;}catch(_){}}}
     return nip29MembershipTags(all);
   }
-  async function nip29RelayQuery(p,relay,filters,timeout=8000,signal=null){if(!p.relayQueryFrom||!p.verifyRelayEvents)throw new Error('verified listed relay queries are unavailable');const events=await p.relayQueryFrom([relay],filters,{timeout,max:1,exact:true,signal})||[];return await p.verifyRelayEvents(events);}
+  async function nip29RelayQuery(p,relay,filters,timeout=8000,signal=null){if(!p.relayQueryFrom||!p.verifyRelayEvents)throw new Error('verified listed relay queries are unavailable');const events=await p.relayQueryFrom([relay],filters,{timeout,max:1,exact:true,signal,purpose:'concord nip29 room'})||[];return await p.verifyRelayEvents(events);}
   async function nip29Metadata(p,relay,groupIds=[],signal=null){
     const filter={kinds:[39000],limit:200};if(groupIds.length)filter['#d']=groupIds;
     const events=await nip29RelayQuery(p,relay,[filter],8000,signal),newest=new Map(),requested=new Set(groupIds);
@@ -702,7 +702,7 @@
       let cached=[];try{cached=window.Store&&window.Store.query?window.Store.query([filter])||[]:[];}catch(_){}
       const [pool,remote]=await Promise.all([
         p.relayQuery?Promise.resolve(p.relayQuery([filter],8000)).catch(()=>[]):[],
-        external&&p.relayQueryFrom?Promise.resolve(p.relayQueryFrom(CORD_RELAYS,[filter],{timeout:8000,max:4,signal})).catch(()=>[]):[],
+        external&&p.relayQueryFrom?Promise.resolve(p.relayQueryFrom(CORD_RELAYS,[filter],{timeout:8000,max:4,signal,purpose:'concord armada memberships'})).catch(()=>[]):[],
       ]);
       return [...new Map([...(cached||[]),...(pool||[]),...(remote||[])].filter(e=>e&&e.id).map(e=>[e.id,e])).values()];
     };

@@ -150,6 +150,13 @@
     _verify: false,           // true when connected to user relays (untrusted -> verify sigs)
     _vq: [], _vt: null,       // verify queue for untrusted events
     _ready: false,
+    _queryFromActive: new Set(),
+    _queryFromCooldown: new Map(),
+    _queryFromStops: new Set(),
+
+    /* Ephemeral external reads belong to the screen that requested them. A route change closes all
+       of them synchronously; per-call AbortSignals remain useful for finer owners inside a view. */
+    abortQueries(){ for(const stop of [...this._queryFromStops])try{stop();}catch(_){} },
 
     // Connect to an explicit set of relays. verify=true makes the pool signature-verify every
     // incoming event (used for user-supplied relays); verify=false trusts them (built-in WoT relay).
@@ -743,29 +750,38 @@
     // non-WoT peer's NIP-17 inbox list (kind 10050), which our WoT-only relay never stored. Same
     // bounded ephemeral-socket pattern as publishTo: REQ, collect until EOSE/timeout, close. Events
     // are UNVERIFIED here (untrusted relays) — the caller must verify signatures before trusting them.
-    queryFrom(urls, filters, { timeout=4000, max=4, exact=false, signal=null } = {}){
+    queryFrom(urls, filters, { timeout=4000, max=4, exact=false, signal=null, purpose='external read' } = {}){
       /* Most external discovery reads should avoid duplicating a connected pool socket. Some
        * protocols bind truth to one named relay (notably NIP-29), so exact=true deliberately opens
        * that relay even when it is also present in the shared pool. */
-      const targets = [...new Set((urls||[]).filter(Boolean))].filter(u => exact || !this._conns.has(u)).slice(0, max);
+      const now=Date.now(),targets = [...new Set((urls||[]).filter(Boolean))]
+        .filter(u => (exact || !this._conns.has(u)) && !this._queryFromActive.has(u) && Number(this._queryFromCooldown.get(u)||0)<=now)
+        .slice(0, max);
       if (!targets.length || (signal && signal.aborted)) return Promise.resolve([]);
       const subId = 'qf' + Math.random().toString(36).slice(2,9);
       return Promise.all(targets.map(u => new Promise(resolve => {
         let ws, done = false, tm; const got = [];
-        const abort = () => fin();
-        const fin = () => { if (done) return; done = true; clearTimeout(tm);
+        const abort = () => fin('abort');
+        const stop = () => fin('abort');
+        const fin = (outcome='failure') => { if (done) return; done = true; clearTimeout(tm);
           if (signal) signal.removeEventListener('abort', abort);
+          Relay._queryFromStops.delete(stop);Relay._queryFromActive.delete(u);
+          if(outcome==='failure'){
+            Relay._queryFromCooldown.set(u,Date.now()+30000);
+            try{console.warn('[relay queryFrom]',purpose,u,'failed; cooling down 30s');}catch(_){}
+          }else if(outcome==='success')Relay._queryFromCooldown.delete(u);
           if (ws){ try{ ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null; ws.close(); }catch(_){} }
           resolve(got); };
-        if (signal){ if (signal.aborted) return fin(); signal.addEventListener('abort', abort, {once:true}); }
-        try { ws = new WebSocket(u); } catch(_){ return fin(); }
+        if (signal){ if (signal.aborted) return fin('abort'); signal.addEventListener('abort', abort, {once:true}); }
+        Relay._queryFromActive.add(u);Relay._queryFromStops.add(stop);
+        try { ws = new WebSocket(u); } catch(_){ return fin('failure'); }
         tm = setTimeout(fin, timeout);
         ws.onopen = () => { try{ ws.send(JSON.stringify(['REQ', subId, ...filters])); }catch(_){ fin(); } };
         ws.onmessage = (e) => { let m; try{ m = JSON.parse(e.data); }catch(_){ return; }
           if (m[0] === 'EVENT' && m[1] === subId && m[2]) got.push(Relay._normTags(m[2]));
-          else if ((m[0] === 'EOSE' || m[0] === 'CLOSED') && m[1] === subId) fin(); };
-        ws.onerror = () => fin();
-        ws.onclose = () => fin();
+          else if ((m[0] === 'EOSE' || m[0] === 'CLOSED') && m[1] === subId) fin('success'); };
+        ws.onerror = () => fin('failure');
+        ws.onclose = () => fin('failure');
       }))).then(rs => rs.flat());
     }
   };

@@ -27,15 +27,22 @@ var __pcNostrProvider = function () {
     if (e.source !== window) return;                       // only our own frame
     const d = e.data;
     if (!d || d.__pcnostr !== 'res' || !pending.has(d.id)) return;
-    const { resolve, reject } = pending.get(d.id);
+    const { resolve, reject, error, method, bytes } = pending.get(d.id);
     pending.delete(d.id);
-    if (d.error) reject(new Error(d.error)); else resolve(d.result);
+    if (d.error){ error.message = method + ' failed (' + bytes + ' bytes): ' + d.error; reject(error); }
+    else resolve(d.result);
   });
 
   function call(method, params) {
     const promise = new Promise((resolve, reject) => {
       const id = 'pc' + (++seq) + '.' + Math.random().toString(36).slice(2);
-      pending.set(id, { resolve, reject });
+      const value = params && (method === 'nip44.encrypt' ? params.plaintext
+                               : method === 'nip44.decrypt' ? params.ciphertext : '');
+      let bytes = 0; try{ bytes = new TextEncoder().encode(typeof value === 'string' ? value : '').length; }catch(_){}
+      // Create the error at REQUEST time so its stack points to the real page caller. The response
+      // fills in operation and size instead of leaving Firefox at this provider's message listener.
+      const error = new Error('PosterChan signer ' + method + ' (' + bytes + ' bytes)');
+      pending.set(id, { resolve, reject, error, method, bytes });
       window.postMessage({ __pcnostr: 'req', id, method, params }, '*');
       // A request that is never answered — the extension was disabled or the worker died mid-flight
       // — must reject rather than leave the site waiting on a promise forever.
@@ -71,6 +78,13 @@ var __pcNostrProvider = function () {
     return call('nip44.encrypt', { pubkey, plaintext:text });
   }
 
+  function nip44Decrypt(pubkey, ciphertext) {
+    const text = typeof ciphertext === 'string' ? ciphertext : '';
+    const size = new TextEncoder().encode(text).length;
+    if(size < 1) return rejected('NIP-44 ciphertext is empty; refusing a corrupt decrypt request.');
+    return call('nip44.decrypt', { pubkey, ciphertext:text });
+  }
+
   const nostr = {
     getPublicKey: () => call('getPublicKey'),
     signEvent: (event) => call('signEvent', { event }),
@@ -81,7 +95,7 @@ var __pcNostrProvider = function () {
     },
     nip44: {
       encrypt: nip44Encrypt,
-      decrypt: (pubkey, ciphertext) => call('nip44.decrypt', { pubkey, ciphertext }),
+      decrypt: nip44Decrypt,
     },
   };
 

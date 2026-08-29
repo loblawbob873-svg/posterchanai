@@ -1232,8 +1232,14 @@
                                        () => window.nostr.nip04.decrypt(peer, ct)),
       };
       if (window.nostr && window.nostr.nip44){   // gift-wrapped DMs via the extension's NIP-44
-        const dec = (p2, ct) => X.call('44d\u0000'+p2+'\u0000'+ct,
-                                       () => window.nostr.nip44.decrypt(p2, ct));
+        const bad44 = e => { const p=Promise.reject(e); p.catch(()=>{}); return p; };
+        const dec = (p2, ct) => {
+          const text=typeof ct==='string'?ct:'';
+          const bytes=new TextEncoder().encode(text).length;
+          if(bytes<1){ const e=new Error('NIP-44 decrypt refused empty ciphertext (caller must discard the corrupt event)'); e.nip44={op:'decrypt',bytes}; return bad44(e); }
+          return X.call('44d\u0000'+p2+'\u0000'+text,
+                        () => window.nostr.nip44.decrypt(p2, text));
+        };
         // Validate in our own call path too. Extensions are not uniform here (and an older
         // PosterChan provider may still be installed): noble's NIP-44 error otherwise escapes from
         // the page-world promise and the global action handler reports a cryptic "[pc] action
@@ -1242,8 +1248,10 @@
         const enc = (r, pt) => {
           const text = typeof pt === 'string' ? pt : '';
           const bytes = new TextEncoder().encode(text).length;
-          if(bytes < 1 || bytes > 65535)
-            return Promise.reject(new Error('Cannot encrypt an empty or over-64KB message.'));
+          if(bytes < 1 || bytes > 65535){
+            const e=new Error(`NIP-44 encrypt refused ${bytes} bytes (must be 1..65535; store large data as an attachment)`);
+            e.nip44={op:'encrypt',bytes}; return bad44(e);
+          }
           return X.call(null, () => window.nostr.nip44.encrypt(r, text));
         };
         s.nip17wrap = (peer, text) => _nip17wrapVia(pubkey, enc,
@@ -6156,7 +6164,7 @@
     // stuck as "anon" with no avatar. Pull our profile from the wider discovery relays, VERIFY the signature
     // (they're untrusted), render it, and rebroadcast to our own relay so it's cached locally from now on.
     try{
-      const ext=await Relay.queryFrom(DISCOVERY_RELAYS, [{authors:[ME.pubkey],kinds:[0],limit:1}]);
+      const ext=await Relay.queryFrom(DISCOVERY_RELAYS, [{authors:[ME.pubkey],kinds:[0],limit:1}], {purpose:'own profile discovery'});
       const p=(ext||[]).filter(ev=>{ try{ return NT().verifyEvent(ev); }catch(_){ return false; } })
                         .sort((a,b)=>b.created_at-a.created_at)[0];
       if(p){ Store.saveProfile(p); renderMe(); try{ Relay.publish(p); }catch(_){} }
@@ -6491,7 +6499,7 @@
      *
      * Saved on the way OUT, while the old view's nodes are still on screen and its scrollTop is
      * still real — after `VIEW = v` there is nothing left to measure. */
-    if(VIEW !== v){ _rememberTlScroll(); if(VIEW==='streams')_stopStreamsReads(); }
+    if(VIEW !== v){ _rememberTlScroll(); try{Relay.abortQueries&&Relay.abortQueries();}catch(_){} if(VIEW==='streams')_stopStreamsReads(); }
     // Shorts is an APP entry, not a bookmark into its transient player. Tapping its launcher/nav
     // icon again must always reopen the browse grid; renderShorts() itself never calls switchView,
     // so scrolling/repainting inside the player still keeps the current short.
@@ -9326,7 +9334,7 @@
     // Merge in streams from the wider network (background — the local list already painted). External
     // relays are UNTRUSTED, so VERIFY each event's signature before saving/rendering — an unverified
     // forgery could spoof a host or (addressable) shadow a real user's stream in the local cache.
-    Relay.queryFrom(STREAM_RELAYS, [{ kinds:[30311], limit:80 }], {signal:readSignal}).then(ext=>{
+    Relay.queryFrom(STREAM_RELAYS, [{ kinds:[30311], limit:80 }], {signal:readSignal,purpose:'streams directory'}).then(ext=>{
       if((readSignal&&readSignal.aborted)||!ext || !ext.length || VIEW!=='streams') return;
       const have=new Set(evs.map(e=>e.id)); let added=false;
       ext.forEach(e=>{ if(have.has(e.id)) return;
@@ -9743,7 +9751,7 @@
     try{ _streamChatSub=Relay.subscribe([{kinds:[1311,7], '#a':addrs, limit:150}], {onEvent:onEv, live:true}); }catch(_){}
     // Pull the same room from the public stream relays — this is what makes the chat cross-client rather
     // than poster.place-only. queryFrom is one-shot (no live external sub exists), so poll while it's open.
-    const pull=()=>{ Relay.queryFrom(relays, [{kinds:[1311,7], '#a':addrs, limit:150}])
+    const pull=()=>{ Relay.queryFrom(relays, [{kinds:[1311,7], '#a':addrs, limit:150}], {purpose:'stream chat'})
       .then(evs=>(evs||[]).forEach(onEv)).catch(()=>{}); };
     pull(); _streamChatPoll=setInterval(()=>{ if(VIEW!=='stream'){ _closeStreamChat(); return; } pull(); }, 10000);
     const inp=$('#st-chat-inp'), send=$('#st-chat-send');
@@ -23630,7 +23638,8 @@
       if(!sawRelay) throw new Error('relays silent');
       let hex = '';
       if(ev){
-        hex = String(await signer.nip44dec(ME.pubkey, ev.content || '') || '').trim();
+        if(typeof ev.content!=='string' || !ev.content) throw new Error('DM cache key event is empty or corrupt');
+        hex = String(await signer.nip44dec(ME.pubkey, ev.content) || '').trim();
         if(!/^[0-9a-f]{64}$/i.test(hex)) throw new Error('key doc is not a key');
       }else{
         const b = new Uint8Array(32); crypto.getRandomValues(b);
@@ -23996,7 +24005,7 @@
       if(!relays.length){
         // Stranger (not in our WoT) → ask external discovery relays. They're untrusted, so VERIFY
         // signatures before trusting a relay list — a forged one would misroute the (encrypted) wrap.
-        let ext=await Relay.queryFrom(DISCOVERY_RELAYS, [{ authors:[pk], kinds:[10050,10002], limit:2 }]);
+        let ext=await Relay.queryFrom(DISCOVERY_RELAYS, [{ authors:[pk], kinds:[10050,10002], limit:2 }], {purpose:'dm inbox discovery'});
         if(ext.length){ try{ const v=await Relay.worker.call('verifyBatch',{events:ext});
           const ok=new Set(v.filter(r=>r.valid).map(r=>r.id)); ext=ext.filter(e=>ok.has(e.id)); }catch(_){ ext=[]; } }
         relays=_pick10050(ext, pk); if(!relays.length) relays=_pick10002(ext, pk);
@@ -26044,7 +26053,7 @@
       // Streams (kind-30311) live + ended — lazy-fetch once (our relay + the wider stream network).
       if(tab==='streams' && !_prof.streamsLoaded){ _prof.streamsLoaded=true;
         try{ const s=await Relay.query([{authors:[pk],kinds:[30311],limit:60}]); for(const e of (s||[])) Store.saveEvent(e); }catch(_){}
-        try{ let ext=await Relay.queryFrom(STREAM_RELAYS,[{authors:[pk],kinds:[30311],limit:60}]);
+        try{ let ext=await Relay.queryFrom(STREAM_RELAYS,[{authors:[pk],kinds:[30311],limit:60}],{purpose:'profile streams'});
           if(ext&&ext.length){ try{ const v=await Relay.worker.call('verifyBatch',{events:ext});
             const ok=new Set(v.filter(r=>r.valid).map(r=>r.id)); ext=ext.filter(e=>ok.has(e.id)); }catch(_){ ext=[]; }
             for(const e of ext) Store.saveEvent(e); } }catch(_){}
@@ -26834,7 +26843,8 @@
     // Budget calls PC.nip44dec because budget.js is a separate module with its own handle; lifting
     // that line in here would have thrown on the first read and been caught by the `catch(_)` below,
     // i.e. it would have looked exactly like an undecryptable doc and silently never synced.
-    let raw=''; try{ raw = await signer.nip44dec(ME.pubkey, ev.content||''); }
+    if(typeof ev.content!=='string' || !ev.content) return _agentSavedGet();
+    let raw=''; try{ raw = await signer.nip44dec(ME.pubkey, ev.content); }
     catch(_){ return _agentSavedGet(); }        // undecryptable → never overwrite it with the cache
     let d=null; try{ d = JSON.parse(raw); }catch(_){ d = null; }
     const list = Array.isArray(d) ? d : (d && Array.isArray(d.tasks) ? d.tasks : null);
