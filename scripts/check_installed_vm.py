@@ -12,7 +12,13 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import tempfile
 import time
+
+try:  # package import under pytest / repo tooling
+    from scripts.check_livecd_vm import frame_is_graphical
+except ModuleNotFoundError:  # direct ``python scripts/check_installed_vm.py`` release invocation
+    from check_livecd_vm import frame_is_graphical
 
 
 def command(args, env=None, timeout=40):
@@ -66,6 +72,31 @@ def is_viewer_surface(node, name):
             and rect.get("width", 0) >= 640 and rect.get("height", 0) >= 400)
 
 
+def viewer_frame_is_graphical(node, env, runner=command):
+    """Prove the mapped viewer contains guest pixels, not merely a black client window.
+
+    Crop the compositor decoration and virt-viewer's chrome before applying the same framebuffer
+    classifier as the ISO gate.  A mapped virt-viewer surface appears several seconds before the
+    firmware/guest draws; treating mapping as a successful boot made both halves of this gate pass
+    against a permanently black guest.
+    """
+    rect = node.get("rect") or {}
+    x, y = int(rect.get("x", 0)) + 8, int(rect.get("y", 0)) + 40
+    width, height = int(rect.get("width", 0)) - 16, int(rect.get("height", 0)) - 48
+    if width < 600 or height < 340:
+        return False
+    with tempfile.TemporaryDirectory(prefix="pc-vm-viewer-") as raw:
+        shot = Path(raw) / "guest.ppm"
+        captured = runner(["grim", "-t", "ppm", "-g", f"{x},{y} {width}x{height}", str(shot)],
+                          env=env, timeout=10)
+        if captured.returncode or not shot.is_file():
+            return False
+        try:
+            return frame_is_graphical(shot)
+        except (OSError, ValueError):
+            return False
+
+
 def visible_viewer(name, env, seconds=30):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
@@ -75,7 +106,7 @@ def visible_viewer(name, env, seconds=30):
             while nodes:
                 node = nodes.pop()
                 nodes.extend(node.get("nodes", []) + node.get("floating_nodes", []))
-                if is_viewer_surface(node, name):
+                if is_viewer_surface(node, name) and viewer_frame_is_graphical(node, env):
                     return node.get("rect") or {}
         time.sleep(.5)
     raise RuntimeError("virt-viewer never mapped a usable Sway surface")

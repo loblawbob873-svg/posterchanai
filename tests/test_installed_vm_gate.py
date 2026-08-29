@@ -2,7 +2,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-from scripts.check_installed_vm import is_viewer_surface
+from scripts.check_installed_vm import is_viewer_surface, viewer_frame_is_graphical
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,3 +53,33 @@ def test_visible_viewer_rejects_wrong_guest_or_unusable_surface():
     assert not is_viewer_surface({"app_id": None, "name": "demo-vm",
                                   "window_properties": {"class": "Virt-viewer"},
                                   "rect": {"width": 320, "height": 200}}, "demo-vm")
+
+
+def test_mapped_viewer_must_contain_a_graphical_guest_frame(tmp_path, monkeypatch):
+    node = {"rect": {"x": 20, "y": 30, "width": 800, "height": 600}}
+    seen = []
+
+    class Result:
+        returncode = 0
+
+    def black_runner(args, env=None, timeout=None):
+        seen.append(args)
+        path = Path(args[-1])
+        width, height = 784, 552
+        path.write_bytes(f"P6\n{width} {height}\n255\n".encode() + b"\0\0\0" * width * height)
+        return Result()
+
+    assert not viewer_frame_is_graphical(node, {}, runner=black_runner)
+    assert seen[0][seen[0].index("-g") + 1] == "28,70 784x552"
+
+    def desktop_runner(args, env=None, timeout=None):
+        path = Path(args[-1])
+        width, height = 784, 552
+        pixels = bytearray()
+        for y in range(height):
+            for x in range(width):
+                pixels.extend((8 + x % 120, 5 + y % 90, 24 + (x + y) % 100))
+        path.write_bytes(f"P6\n{width} {height}\n255\n".encode() + pixels)
+        return Result()
+
+    assert viewer_frame_is_graphical(node, {}, runner=desktop_runner)
