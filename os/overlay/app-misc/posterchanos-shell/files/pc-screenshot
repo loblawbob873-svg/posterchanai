@@ -13,6 +13,16 @@ dir="${XDG_PICTURES_DIR:-${HOME}/Pictures}/Screenshots"
 mkdir -p "$dir" || exit 1
 file="$dir/PosterChan-$(date +%Y-%m-%d-%H%M%S-%N).png"
 
+# grim 1.5 waits for the next damaged frame.  Two static full-output shell surfaces can otherwise
+# leave it waiting forever.  Subscribe first, then damage the cursor plane without moving it.
+grim_capture() {
+	grim "$@" &
+	grim_pid=$!
+	sleep 0.08
+	command -v swaymsg >/dev/null 2>&1 && swaymsg -q 'seat seat0 cursor move 0 0' >/dev/null 2>&1 || true
+	wait "$grim_pid"
+}
+
 if ! command -v grim >/dev/null 2>&1; then
 	command -v notify-send >/dev/null 2>&1 && notify-send 'Screenshot failed' 'grim is not installed'
 	exit 1
@@ -26,9 +36,9 @@ case "$mode" in
 		fi
 		geometry="$(slurp)" || exit 0
 		[ -n "$geometry" ] || exit 0
-		grim -g "$geometry" "$file"
+		grim_capture -g "$geometry" "$file"
 		;;
-	screen) grim "$file" ;;
+	screen) grim_capture "$file" ;;
 	*) exit 2 ;;
 esac
 

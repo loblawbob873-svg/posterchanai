@@ -67,8 +67,19 @@ def capture(node: dict, target: Path, label: str) -> tuple[float, int]:
     if w < 100 or h < 80:
         raise AssertionError(f"{label}: Foot collapsed to {w}x{h}")
     geometry = f"{int(r.get('x', 0))},{int(r.get('y', 0))} {w}x{h}"
-    got = subprocess.run(["grim", "-g", geometry, str(target)], text=True,
-                         capture_output=True, timeout=15)
+    proc = subprocess.Popen(["grim", "-g", geometry, str(target)], text=True,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    time.sleep(0.08)
+    # grim 1.5 waits for a damaged frame; zero-distance motion wakes the cursor plane without
+    # changing pointer position or focus, matching the installed screenshot helper.
+    sway("-q", "seat seat0 cursor move 0 0", check=False)
+    try:
+        stdout, stderr = proc.communicate(timeout=15)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        stdout, stderr = proc.communicate()
+        raise AssertionError(f"{label}: grim timed out: {stderr.strip()}")
+    got = subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
     if got.returncode:
         raise AssertionError(f"{label}: grim failed: {got.stderr.strip()}")
     with Image.open(target) as image:

@@ -29,6 +29,17 @@ const path = require('path');
 const GRIM = process.env.PC_GRIM || 'grim';
 const SLURP = process.env.PC_SLURP || 'slurp';
 
+/* grim 1.5's ext-image-copy path waits for the next damaged compositor frame.  A completely
+ * static Sway output (common with two full-output shell surfaces) may not produce one, leaving
+ * grim blocked forever.  A zero-distance cursor motion damages the cursor plane without moving
+ * the pointer or changing focus.  Do it after grim has subscribed, not before. */
+function wakeCompositor() {
+  if (process.platform !== 'linux' || !process.env.SWAYSOCK) return;
+  setTimeout(() => {
+    execFile('swaymsg', ['-q', 'seat seat0 cursor move 0 0'], { timeout: 2000 }, () => {});
+  }, 75).unref();
+}
+
 function run(bin, args, opts) {
   const o = opts || {};
   return new Promise((resolve, reject) => {
@@ -114,7 +125,11 @@ async function capture(opts) {
   const args = [];
   if (geometry) args.push('-g', geometry);
   args.push(file);
-  try { await run(GRIM, args, { timeout: 20000 }); }
+  try {
+    const shot = run(GRIM, args, { timeout: 20000 });
+    wakeCompositor();
+    await shot;
+  }
   catch (e) {
     if (e.missing) return { ok: false, why: 'screenshots need grim (gui-apps/grim), which is not installed' };
     return { ok: false, why: (e && e.message) || String(e) };
