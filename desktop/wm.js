@@ -364,9 +364,11 @@ class WM {
     let y=Math.min(Math.max(Number(r.y)||t+gap,t+gap),t+oh-h-gap);
     if(direction==='right') x=l+gap; else if(direction==='left') x=l+ow-w-gap;
     else if(direction==='down') y=t+gap; else if(direction==='up') y=t+oh-h-gap;
-    await this.floating(id,true);
-    await this.command('[con_id='+Number(id)+'] resize set '+Math.round(w)+' '+Math.round(h));
-    await this.command('[con_id='+Number(id)+'] move absolute position '+Math.round(x)+' '+Math.round(y));
+    /* One compositor transaction is essential for redraw-heavy clients such as Foot. Separate
+     * floating/resize/move requests expose the resized window on the source output before the move,
+     * deliver an avoidable SIGWINCH, and make a streaming TUI visibly redraw twice during handoff. */
+    await this.command('[con_id='+Number(id)+'] floating enable, resize set '
+      +Math.round(w)+' '+Math.round(h)+', move absolute position '+Math.round(x)+' '+Math.round(y));
     return {x:Math.round(x),y:Math.round(y),w:Math.round(w),h:Math.round(h)};
   }
 

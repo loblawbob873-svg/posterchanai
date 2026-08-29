@@ -249,7 +249,10 @@ server.listen(sock,async()=>{delete process.env.SWAYSOCK;delete process.env.I3SO
         """)
         self.assertEqual(out["at"], {"x":1932,"y":132,"w":1256,"h":696})
         cmds = [s["payload"] for s in out["seen"] if s["type"] == 0]
-        self.assertIn("[con_id=11] move absolute position 1932 132", cmds)
+        geometry = [c for c in cmds if "con_id=11" in c]
+        self.assertEqual(len(geometry), 1, geometry)
+        self.assertEqual(geometry[0], "[con_id=11] floating enable, resize set 1256 696, "
+                                     "move absolute position 1932 132")
 
     def test_native_window_snaps_to_the_current_outputs_usable_half(self):
         out = self.run_js("out.ok = await wm.snap(11, 'right');")
