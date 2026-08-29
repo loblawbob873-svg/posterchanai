@@ -52,4 +52,10 @@ fi
 if command -v wl-copy >/dev/null 2>&1; then
 	wl-copy --type image/png <"$file" >/dev/null 2>&1 || true
 fi
-command -v notify-send >/dev/null 2>&1 && notify-send 'Screenshot saved' "$file"
+if command -v notify-send >/dev/null 2>&1; then
+	notify-send 'Screenshot saved' "$file" >/dev/null 2>&1 || true
+fi
+# Notification delivery is best-effort (an SSH-driven gate has no notification bus).  The image is
+# already verified above, so a missing notification daemon must not turn a successful capture into
+# exit status 1.
+exit 0
