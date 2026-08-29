@@ -63,6 +63,30 @@ def calls_of(res, name):
 
 
 @unittest.skipIf(shutil.which("node") is None, "node not installed")
+class ColdArchiveFailures(unittest.TestCase):
+
+    def test_firefox_signer_zero_and_oversize_records_do_not_block_texts(self):
+        """NIP-44 signers reject decoded plaintext outside 1..65535 bytes. A bad record in either
+        the first paint or detached history tail must be quarantined while valid siblings load, and
+        the tail rejection must not escape as window.unhandledrejection / "action failed"."""
+        cached = []
+        for n in range(40):
+            cached.append(ev("pcai:sms:valid-%02d" % n,
+                             {"address": "+15550100", "body": "ok %d" % n,
+                              "date": n + 1, "incoming": True}, at=1000 - n))
+        cached[5]["id"] = "bad-zero"
+        cached[5]["content"] = "enc:"
+        cached[35]["id"] = "bad-oversize"
+        cached[35]["content"] = "enc:" + ("x" * 65536)
+
+        res = run(isPhone=False, cached=cached, relayEmpty=True,
+                  rejectInvalidPlaintext=True, steps=["load", "settle"])
+        self.assertEqual(len(res["docs"]), 38)
+        self.assertTrue(any("ok 0" in bodies for bodies in
+                            (thread["bodies"] for thread in res["threads"])))
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
 class Mirror(unittest.TestCase):
 
     def test_the_phone_publishes_its_messages(self):

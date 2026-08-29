@@ -293,9 +293,13 @@ global.__PC = {
   nip44enc: async (pk, s) => 'enc:' + s,
   nip44dec: async (pk, ct) => {
     if(String(ct).slice(0, 4) !== 'enc:') throw new Error('not ours');
+    const plaintext = String(ct).slice(4);
+    if((opt.rejectInvalidPlaintext === true) &&
+       (Buffer.byteLength(plaintext, 'utf8') < 1 || Buffer.byteLength(plaintext, 'utf8') > 65535))
+      throw new Error('invalid plaintext size: must be between 1 and 65535 bytes');
     for(const [needle, ms] of Object.entries(opt.decryptDelays || {}))
       if(String(ct).includes(needle)) await new Promise(r => setTimeout(r, Number(ms) || 0));
-    return String(ct).slice(4);
+    return plaintext;
   },
   async publish(kind, content, tags, o){
     const d = ((tags || []).find(t => t[0] === 'd') || [])[1] || '';

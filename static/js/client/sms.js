@@ -118,6 +118,16 @@
    * an older request after the newer cancellation (including in a later refresh); without keeping
    * this watermark, that stale request recreates a sending bubble and can reach drainOutbox again. */
   const _cancelledOutboxAt = new Map();
+  /* A signer can reject a syntactically present archive event after opening it (notably old or
+   * damaged NIP-44 payloads whose decoded plaintext is zero bytes or beyond NIP-44's 65535-byte
+   * ceiling). The same event is commonly returned by both Store.query and Relay.query. Remember
+   * that exact version for this session so one corrupt row is tried once, skipped, and cannot keep
+   * reopening Firefox's signer/error path while every valid text continues to load. */
+  const _badArchive = new Set();
+
+  function archiveVersion(ev, d){
+    return String((ev && ev.id) || (String(d || '') + ':' + Number(ev && ev.created_at || 0)));
+  }
 
   let PC = null;
   const S = {
@@ -408,6 +418,8 @@
         continue;
       }
       if(!d.startsWith(D_MSG)) continue;
+      const badKey = archiveVersion(ev, d);
+      if(_badArchive.has(badKey)) continue;
       const have = S.msgs.get(d);
       if(have && have._at >= ev.created_at) continue;
       /* An empty body is a TOMBSTONE, and it is KEPT rather than deleted.
@@ -431,7 +443,10 @@
         obj = await openMessageBody(envelope);
         if(envelope && envelope.blob) obj._blob = envelope.blob;
       }
-      catch(_){ continue; }                       // not ours, or not decryptable with this key
+      catch(_){
+        _badArchive.add(badKey);
+        continue;                                 // not ours, or not decryptable with this key
+      }
       if(!obj || typeof obj !== 'object') continue;
       /* Decryption and Blossom body loading yield. Live subscriptions may deliver two replaceable
        * versions of one message while the older one is still opening; the check above then sees
@@ -568,7 +583,11 @@
           /* Give navigation, typing and the compositor a turn between decrypt batches. */
           await new Promise(resolve => setTimeout(resolve, 0));
         }
-      })().finally(() => { _cacheDrain = null; });
+      })().catch(() => {
+        /* This task is deliberately detached from load(). A damaged history record is already
+         * isolated by absorbResilient; never let an unexpected renderer/signer failure in the
+         * detached tail become window.unhandledrejection and replace Texts with "action failed". */
+      }).finally(() => { _cacheDrain = null; });
     }
     refresh();
     })();
