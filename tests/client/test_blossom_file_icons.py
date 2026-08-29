@@ -46,3 +46,13 @@ def test_restored_mime_and_supported_extension_variants_keep_their_icons():
     assert "String(type || '').toLowerCase()" in block
     for ext in ("jfif", "heif", "tiff", "ogv", "3gp", "m4b", "aiff", "mka"):
         assert ext in block
+
+
+def test_every_type_column_document_and_archive_extension_has_a_matching_icon():
+    """A restored file can have no MIME, so the extension paths must not drift apart."""
+    kinds = APP[APP.index("const _FX_KINDS"):APP.index("function _fxType")]
+    icons = APP[APP.index("function _fxIcon"):APP.index("function _fxColsHTML")]
+    for ext in ("rtf", "doc", "docx", "odt", "xls", "xlsx", "ods",
+                "ppt", "pptx", "odp", "epub", "bz2"):
+        assert ext in kinds
+        assert ext in icons

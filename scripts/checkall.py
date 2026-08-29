@@ -141,6 +141,12 @@ CHECKS = {
                                               env={"PC_CHECK_PORT": "9223"}),
     "check_installed_native_files": dict(group="ui", secs=90, serial=True,
                                            env={"PC_CHECK_PORT": "9223"}),
+    # These attach to the installed renderer on the same fixed loopback CDP endpoint. Keep them
+    # serial with the account/native gates: both temporarily change the active app/window focus.
+    "check_installed_admin_prune_preview": dict(group="ui", secs=240, serial=True,
+                                                   env={"PC_CHECK_PORT": "9223"}),
+    "check_installed_system_settings": dict(group="ui", secs=90, serial=True,
+                                               env={"PC_CHECK_PORT": "9223"}),
     # Extracts Code + the native host bridge from app.asar, then drives disposable Git restore and
     # the packaged browser editor. It owns a Chrome process and must not overlap installed gates.
     "check_installed_code_package_release": dict(group="ui", secs=600, serial=True),

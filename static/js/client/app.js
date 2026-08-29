@@ -17980,8 +17980,9 @@
     if(/video/.test(t) || /^(mp4|webm|mkv|mov|avi|m4v|mpg|mpeg|wmv|ogv|3gp)$/.test(e)) return _fxFileGlyph('video');
     if(/audio/.test(t) || /^(mp3|m4a|m4b|aac|flac|wav|ogg|oga|opus|wma|aif|aiff|ape|mka)$/.test(e)) return _fxFileGlyph('audio');
     if(/pdf/.test(t) || e === 'pdf') return _fxFileGlyph('pdf');
-    if(/zip|compress|tar|gzip|7z|rar/.test(t) || /^(zip|7z|rar|tar|gz|xz|zst)$/.test(e)) return _fxFileGlyph('archive');
-    if(/text|json|xml|csv/.test(t) || /^(txt|md|log|csv|json|xml|yml|yaml|doc|docx|odt)$/.test(e)) return _fxFileGlyph('document');
+    if(/zip|compress|tar|gzip|7z|rar/.test(t) || /^(zip|7z|rar|tar|gz|bz2|xz|zst)$/.test(e)) return _fxFileGlyph('archive');
+    if(/text|json|xml|csv|word|spreadsheet|presentation|epub/.test(t)
+       || /^(txt|md|rtf|log|csv|json|xml|yml|yaml|doc|docx|odt|xls|xlsx|ods|ppt|pptx|odp|epub)$/.test(e)) return _fxFileGlyph('document');
     return _fxFileGlyph('file');
   }
   /* The column header. It is rendered INSIDE the grid rather than above it because it carries the
@@ -21049,6 +21050,12 @@
   }
   async function uploadFilesSeq(files){
     files=files.filter(Boolean); if(!files.length) return;
+    /* The per-file loop is sequential, but the picker and drop zone can start this function again
+     * while its first invocation is awaiting a PUT.  Those invocations share cancellation state,
+     * batch authorization and the index batch: one completion can clear the other authorization
+     * and Stop cancels both.  Keep the operation single-flight and tell the user to retry rather
+     * than accepting a second selection whose ownership cannot be isolated safely. */
+    if(_uploading){ toast('Another upload is still running — wait for it to finish, then try again.'); return; }
     const folder=_filesFolder, music=folder==='Music';   // capture: navigating mid-upload won't misfile
     // A FOLDER upload (webkitdirectory / dropped dir) carries webkitRelativePath like "Top/sub/pic.jpg".
     // Preserve that structure instead of flattening everything into one folder: each file lands in a

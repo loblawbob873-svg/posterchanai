@@ -1,4 +1,10 @@
+import os
 from pathlib import Path
+import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
+import checkall
 
 
 SRC = (Path(__file__).parents[1] / "scripts" / "check_installed_system_settings.py").read_text()
@@ -36,3 +42,19 @@ def test_installed_diagnostic_cannot_write_the_real_sway_outputs_file():
     assert "diagnostic.profile" in block
     assert "sway-outputs.conf" in block
     assert "new Displays(wm(), opts)" in block
+
+
+def test_installed_settings_gate_is_a_serial_release_check():
+    job = {row["name"]: row for row in checkall.discover()}["check_installed_system_settings"]
+    assert job["registered"] is True
+    assert job["serial"] is True
+    assert job["env"] == {"PC_CHECK_PORT": "9223"}
+
+
+def test_installed_settings_gate_skips_only_when_cdp_is_unattached():
+    env = {**os.environ, "PC_CHECK_PORT": "1"}
+    result = subprocess.run([sys.executable, str(Path(__file__).parents[1] / "scripts" /
+                            "check_installed_system_settings.py")], env=env,
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 2
+    assert "SKIP installed Electron is not attached on loopback CDP" in result.stdout

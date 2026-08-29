@@ -98,6 +98,18 @@ def test_completed_folder_upload_commits_and_repaints_the_source_listing():
     assert "installed folder upload completion holds" in result.stdout
 
 
+def test_overlapping_upload_batches_cannot_corrupt_shared_batch_state():
+    result = subprocess.run(
+        ["node", str(ROOT / "tests/client/folder_upload_singleflight_sim.js")],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "folder upload is single-flight" in result.stdout
+
+
 def test_completed_folder_upload_refresh_is_not_deferred_to_a_timer():
     upload = APP[APP.index("async function uploadFilesSeq(files)") :]
     upload = upload[: upload.index("// ---- Music:")]

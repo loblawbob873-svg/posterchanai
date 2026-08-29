@@ -1,4 +1,10 @@
+import os
 from pathlib import Path
+import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
+import checkall
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -59,3 +65,19 @@ def test_diagnostic_login_still_requires_a_real_posterchanos_shell():
     assert "PCOSShell.available()" in body
     assert "if not ok:" in body
     assert "not a PosterChanOS shell" in body
+
+
+def test_admin_preview_gate_is_a_serial_release_check():
+    job = {row["name"]: row for row in checkall.discover()}["check_installed_admin_prune_preview"]
+    assert job["registered"] is True
+    assert job["serial"] is True
+    assert job["env"] == {"PC_CHECK_PORT": "9223"}
+
+
+def test_admin_preview_gate_skips_only_when_cdp_is_unattached():
+    env = {**os.environ, "PC_CHECK_PORT": "1"}
+    result = subprocess.run([sys.executable, str(ROOT / "scripts" /
+                            "check_installed_admin_prune_preview.py")], env=env,
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 2
+    assert "SKIP installed Electron is not attached on the loopback CDP port" in result.stdout
