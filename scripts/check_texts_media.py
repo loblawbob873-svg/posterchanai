@@ -71,6 +71,19 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <div id="modal-root"></div><div id="toast-root"></div>
 <script src="/static/js/client/sprite.js"></script>
 <script>
+/* EVERY CONSOLE ERROR THE PAGE PRODUCES, KEPT. The user should never be the first person to see
+   one of these. Today they reported "importKey: Argument 2 is not an object", "files-index save
+   HTTP 503" and "channel is not readable with this membership" off their own screen — each of
+   which this harness had already loaded the code for and simply was not looking. */
+window.__err = [];
+for (const k of ['error', 'warn']) {
+  const o = console[k].bind(console);
+  console[k] = (...a) => { try { window.__err.push(a.map(x => String((x && x.message) || x)).join(' ').slice(0, 200)); } catch (_) {} o(...a); };
+}
+window.addEventListener('error', e => { try { window.__err.push('uncaught: ' + String(e.message)); } catch (_) {} });
+window.addEventListener('unhandledrejection', e => { try { window.__err.push('unhandled: ' + String((e.reason && e.reason.message) || e.reason)); } catch (_) {} });
+</script>
+<script>
 const $  = (s,r)=> (r||document).querySelector(s);
 const $$ = (s,r)=> Array.from((r||document).querySelectorAll(s));
 const enc = s => String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -353,6 +366,19 @@ async def drive(url):
                         f"{len(stranded)} of {rp['atts']} attachments as bare placeholders — this "
                         f"is the 'no media on the old messages' bug: {stranded[:3]}")
 
+                # NOTHING THE PAGE THREW IS ACCEPTABLE — and this is read LAST, after a quiet
+                # second, because the failures that reach the user are the LATE ones: a rejected
+                # promise inside a batch decrypt, a 503 from a save that went out after the first
+                # paint. An earlier read passes at 350ms of page life and sees none of them.
+                # Today's three reports — "importKey: Argument 2 is not an object", "files-index
+                # save HTTP 503", "channel is not readable" — were all of that shape.
+                await asyncio.sleep(1.0)
+                spilled = await js("(window.__err||[]).filter(x=>"
+                                   "/error|failed|typeerror|uncaught|unhandled/i.test(x))"
+                                   ".slice(0,8)") or []
+                if spilled:
+                    problems.append(f"{label}: console-errors  the page reported: {spilled}")
+
         if problems:
             print("TEXTS MEDIA REGRESSIONS")
             for p in problems:
@@ -362,7 +388,14 @@ async def drive(url):
         return 0
     finally:
         proc.terminate()
-        subprocess.run(["rm", "-rf", PROFILE], check=False)
+        try:
+            proc.wait(timeout=10)
+        except Exception:
+            proc.kill()
+        # shutil, not `rm -rf`: chrome leaves a component-extension directory rm cannot empty, so
+        # every good run printed "Directory not empty" to stderr. Suite noise trains people to
+        # ignore the output, which is the opposite of what a check is for.
+        shutil.rmtree(PROFILE, ignore_errors=True)
 
 
 def main():
