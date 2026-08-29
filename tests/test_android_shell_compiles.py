@@ -59,6 +59,7 @@ package place.poster.app.signer;
 public class SignerRelayService {
   public static void archiveIncoming(android.content.Context c, String f, String b, long w) { }
   public static void archiveDelete(android.content.Context c, String id) { }
+  public static void sweepSms(android.content.Context c) { }
 }
 """,
     # MMS transport is an external Android library present in Gradle, not android.jar. Keep these

@@ -33,7 +33,9 @@ import okhttp3.WebSocketListener;
 
 import place.poster.app.MainActivity;
 import place.poster.app.R;
+import place.poster.app.sms.SmsArchive;
 import place.poster.app.sms.SmsOutbox;
+import place.poster.app.sms.SmsSweep;
 import place.poster.app.RunningNote;
 
 /**
@@ -81,6 +83,8 @@ public class SignerRelayService extends Service {
     public static final String ACTION_STOP = "place.poster.app.SIGNER_STOP";
     public static final String ACTION_RELOAD = "place.poster.app.SIGNER_RELOAD";
     public static final String ACTION_SMS_ARCHIVE = "place.poster.app.SMS_ARCHIVE";
+    /** Back-fill the phone's OWN history — what the launcher's Texts app asks for. */
+    public static final String ACTION_SMS_SWEEP = "place.poster.app.SMS_SWEEP";
 
     public static final String PREFS = "pcsigner_relay";
     private static final String K_SESSIONS = "sessions";
@@ -205,6 +209,25 @@ public class SignerRelayService extends Service {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(K_ON, on).apply();
     }
 
+    /**
+     * ARCHIVE THE PHONE'S OWN HISTORY, with no WebView anywhere.
+     *
+     * The launcher's Texts app is native and reads the provider directly, so opening it used to
+     * back up nothing at all — the mirror lived in JavaScript that only ran while somebody had
+     * PosterChan → Texts on screen. This is the door for that screen, and it is deliberately just
+     * a nudge: the service decides whether a relay is connected, and the sweep bounds itself.
+     */
+    public static void sweepSms(Context ctx) {
+        if (wanted(ctx)) { kick(ctx, ACTION_SMS_SWEEP); return; }
+        /* SAY SO RATHER THAN DO NOTHING. This service holds the relay sockets, so with it switched
+         * off there is no publish path and the back-fill genuinely cannot run — but a screen that
+         * archives nothing and reports nothing is the failure this whole feature was reported as.
+         * Turning the service on from here would be a surprising side effect of opening Texts, so
+         * the answer is written where Texts can show it instead. */
+        SmsArchive.note(ctx, "not archiving: the background signer is switched off, so this phone "
+                + "has no relay connection to publish through");
+    }
+
     /** Start (or nudge) the service, from the plugin or from BootReceiver. */
     public static void kick(Context ctx, String action) {
         Intent i = new Intent(ctx, SignerRelayService.class).setAction(action);
@@ -257,6 +280,7 @@ public class SignerRelayService extends Service {
          * maps `recv` owns. `startForeground` above stays on this thread, where the 5s deadline is. */
         handler.post(this::reload);
         handler.post(this::publishSmsArchive);
+        if (ACTION_SMS_SWEEP.equals(action)) handler.post(this::sweepSmsHistory);
         return START_STICKY;   // a signer that stops answering because of memory pressure is the bug
     }
 
@@ -710,6 +734,44 @@ public class SignerRelayService extends Service {
                     }
                 }
                 publishSmsArchive();
+            });
+        });
+    }
+
+    /**
+     * One bounded back-fill pass, published on the sockets this service already owns.
+     *
+     * THE MARK MOVES LAST, AND ONLY IF SOMETHING CARRIED THE EVENTS. A sweep that advanced its own
+     * mark with no relay connected would throw that window of history away silently, and the next
+     * pass would start after messages nobody ever archived — which is the shape of every "it says
+     * it synced and the messages are not there" report this feature has had.
+     */
+    private void sweepSmsHistory() {
+        if (socks.isEmpty()) return;                 // onOpen calls us again once a relay exists
+        final java.util.List<WebSocket> targets = new java.util.ArrayList<>(socks.values());
+        pool().execute(() -> {
+            final SmsSweep.Report rep;
+            try {
+                rep = SmsArchive.sweep(SignerRelayService.this, SmsArchive.ROWS_PER_PASS);
+            } catch (Throwable t) {
+                /* The reason is kept where a phone nobody can query will still say it: SmsArchive
+                 * records every pass under its own prefs, which is what Texts → Details reads. */
+                lastError = "sms archive: " + t;
+                return;
+            }
+            if (rep == null || rep.events.isEmpty()) return;
+            handler.post(() -> {
+                int sent = 0;
+                for (JSONObject ev : rep.events) {
+                    String wire = new JSONArray().put("EVENT").put(ev).toString();
+                    for (WebSocket ws : targets) if (ws != null && ws.send(wire)) sent++;
+                }
+                if (sent > 0) SmsArchive.commit(SignerRelayService.this, rep);
+                /* MORE HISTORY BEHIND THIS ONE, so come back for it — but through the service door,
+                 * not a loop: the pass is bounded because this phone is in somebody's hand, and
+                 * "encrypting and copying messages to blossom makes it glitchy" is what an
+                 * unbounded one feels like. */
+                if (sent > 0 && rep.more) handler.postDelayed(this::sweepSmsHistory, 4000L);
             });
         });
     }

@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Locale;
 
 import place.poster.app.R;
+import place.poster.app.signer.SignerRelayService;
 import place.poster.app.ui.PcActivity;
 import place.poster.app.ui.Skin;
 
@@ -159,6 +160,18 @@ public class ThreadListActivity extends PcActivity {
             } catch (Throwable ignored) { }
         }
         reload();
+        /* AND BACK UP WHAT IT JUST DREW.
+         *
+         * This screen is native — it reads the provider and paints its own rows — so opening it
+         * archived nothing at all: the mirror to Nostr lived in JavaScript that ran only while
+         * somebody had PosterChan → Texts on screen. Reported as "should not have to open
+         * PosterChan → Texts when we have an android launcher app called Texts", which is right.
+         *
+         * A NUDGE, NOT A SWEEP. Nothing is read or encrypted on this thread: the service decides
+         * whether a relay is even connected, and the pass it runs bounds itself, because a phone
+         * that starts encrypting a thousand pictures the moment you open your messages is the
+         * "glitchy" report this arrived with. */
+        try { SignerRelayService.sweepSms(this); } catch (Throwable ignored) { }
         // THE ONLY REFRESH TRIGGER. See the class comment: a timer here would run for ever.
         watcher = new ContentObserver(main) {
             @Override public void onChange(boolean self) { reload(); }

@@ -117,7 +117,8 @@ public final class SmsOutbox {
         return out;
     }
 
-    private static JSONObject signed(byte[] sec, String pubHex, long at, int kind,
+    /** Package-visible: SmsArchive signs the backfill with THIS, so there is one signer. */
+    static JSONObject signed(byte[] sec, String pubHex, long at, int kind,
                                      List<List<String>> tags, String content) throws Exception {
         String tagsJson = Nostr.tagsJson(tags);
         String ser = Nostr.serialize(pubHex, at, kind, tagsJson, content);
