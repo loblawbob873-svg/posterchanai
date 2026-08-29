@@ -16,7 +16,8 @@ function fn(head) {
 }
 const calls={folders:[],files:[],batch:[],toasts:[],badges:[],renders:0,uploads:[]};
 const context={console,Set,Promise,Math,Date,saveOK:true,
-  FilesIdx:{_pullDone:true,folders:()=>[],isEncFolder:()=>false,beginBatch:()=>calls.batch.push('begin'),
+  encrypted:false,
+  FilesIdx:{_pullDone:true,folders:()=>[],isEncFolder:()=>context.encrypted,beginBatch:()=>calls.batch.push('begin'),
     endBatch:async()=>{calls.batch.push('end');return context.saveOK;},addFolder:f=>calls.folders.push(f),
     setFile:(sha,d)=>calls.files.push([sha,d])},
   toast:x=>calls.toasts.push(x),_uploadBadge:x=>calls.badges.push(x),
@@ -25,7 +26,7 @@ const context={console,Set,Promise,Math,Date,saveOK:true,
     return f.name==='cdn.jpg'?'https://cdn.test/download/signed-object':'https://blossom.test/'+hash;},
   _shaFromUrl:u=>/([0-9a-f]{64})/.test(u)?u.match(/([0-9a-f]{64})/)[1]:'',
   _signUploadBatch:async()=>null,_blossomDenied:()=>false,requestBlossomAccess:()=>{},
-  uploadEncFile:async()=>{},uploadMusicTrack:async()=>{},_refreshBlobHave:async()=>{},
+  uploadEncFile:async f=>'e'.repeat(64),uploadMusicTrack:async()=>{},_refreshBlobHave:async()=>{},
   _looksAudio:()=>false,_musicHasSrc:()=>false,enc:String,$:()=>null,mediaServer:()=>"https://blossom.test",
   setTimeout:f=>{f();return 1},VIEW:'blossom',renderBlossom:()=>calls.renders++};
 vm.createContext(context);
@@ -61,5 +62,10 @@ globalThis.failIndex=()=>{globalThis.saveOK=false;};`,context);
   if(!calls.toasts.some(x=>/Uploaded — folder list waiting to save.*1 added/.test(x)))
     throw new Error('failed index was announced as complete: '+calls.toasts);
   if(context.uploading()!==0)throw new Error('failed index save left upload busy');
+  context.saveOK=true; context.encrypted=true;
+  await context.run([{name:'secret.pdf',type:'application/pdf',size:40,webkitRelativePath:'Private/secret.pdf'}]);
+  const sealed=context.visible().find(b=>b.sha256==='e'.repeat(64));
+  if(!sealed||sealed.name!=='secret.pdf'||sealed.type!=='application/pdf')
+    throw new Error('encrypted completed upload was not immediately visible: '+JSON.stringify(context.visible()));
   console.log('installed folder upload completion holds');
 })().catch(e=>{console.error(e&&e.stack||e);process.exitCode=1});

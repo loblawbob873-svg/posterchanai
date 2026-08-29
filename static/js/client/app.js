@@ -17972,10 +17972,13 @@
     return `<svg class="fx-file-ic fx-file-${enc(kind||'file')}" aria-hidden="true"><use href="#i-${icon}"></use></svg>`;
   }
   function _fxIcon(ext, type){
-    const t = String(type || ''), e = String(ext || '').toLowerCase();
-    if(/image/.test(t) || /^(jpg|jpeg|png|gif|webp|avif|bmp|svg|heic)$/.test(e)) return _fxFileGlyph('image');
-    if(/video/.test(t) || /^(mp4|webm|mkv|mov|avi|m4v)$/.test(e)) return _fxFileGlyph('video');
-    if(/audio/.test(t) || /^(mp3|m4a|aac|flac|wav|ogg|opus)$/.test(e)) return _fxFileGlyph('audio');
+    /* Restored indexes can originate on another client and MIME tokens are case-insensitive. Keep
+     * the icon decision normalized and in step with the formats Files already previews; otherwise
+     * intact restored metadata such as `Image/JPEG` or a .heif name falls back to a paperclip. */
+    const t = String(type || '').toLowerCase(), e = String(ext || '').toLowerCase();
+    if(/image/.test(t) || /^(jpg|jpeg|jfif|png|gif|webp|avif|bmp|ico|svg|heic|heif|tiff?)$/.test(e)) return _fxFileGlyph('image');
+    if(/video/.test(t) || /^(mp4|webm|mkv|mov|avi|m4v|mpg|mpeg|wmv|ogv|3gp)$/.test(e)) return _fxFileGlyph('video');
+    if(/audio/.test(t) || /^(mp3|m4a|m4b|aac|flac|wav|ogg|oga|opus|wma|aif|aiff|ape|mka)$/.test(e)) return _fxFileGlyph('audio');
     if(/pdf/.test(t) || e === 'pdf') return _fxFileGlyph('pdf');
     if(/zip|compress|tar|gzip|7z|rar/.test(t) || /^(zip|7z|rar|tar|gz|xz|zst)$/.test(e)) return _fxFileGlyph('archive');
     if(/text|json|xml|csv/.test(t) || /^(txt|md|log|csv|json|xml|yml|yaml|doc|docx|odt)$/.test(e)) return _fxFileGlyph('document');
@@ -21115,7 +21118,11 @@
           else { await uploadMusicTrack(files[i], stat); ok++; if(stat){ stat.textContent='✓'; stat.className='up-stat ok'; }
             if(++done%25===0){ await FilesIdx.endBatch(); FilesIdx.beginBatch(); } }   // checkpoint so a crash keeps progress
         } else if(_targetEncrypted[i]){
-          await uploadEncFile(files[i], _targetFolders[i], stat);
+          const sha=await uploadEncFile(files[i], _targetFolders[i], stat);
+          /* The PUT succeeded and uploadEncFile indexed the plaintext name/type. Mirror the public
+           * optimistic listing too: an eventually-consistent /list response must not make a
+           * completed encrypted folder import invisible until the next manual Refresh. */
+          _rememberUploadedBlob(sha,'',files[i]);
           ok++; if(stat){ stat.textContent='🔒'; stat.className='up-stat ok'; }
           if(++done%25===0){ await FilesIdx.endBatch(); FilesIdx.beginBatch(); }
         } else {

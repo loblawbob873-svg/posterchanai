@@ -141,6 +141,10 @@ CHECKS = {
                                               env={"PC_CHECK_PORT": "9223"}),
     "check_installed_native_files": dict(group="ui", secs=90, serial=True,
                                            env={"PC_CHECK_PORT": "9223"}),
+    # Extracts the immutable installed ASAR and runs the native-window ancestry, clipboard and
+    # cross-output Alt+Tab simulators. Keep installed-artifact reads serial with the other installed
+    # gates; the discoverable Python entry point delegates to check_installed_wm_package.sh.
+    "check_installed_wm_release": dict(group="ui", secs=90, serial=True),
     "check_sharelink":                 dict(group="ui", secs=420),
     "check_contacts_mobile":           dict(group="ui", secs=600),
     "check_vault_mobile":              dict(group="ui", secs=600),

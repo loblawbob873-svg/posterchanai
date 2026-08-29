@@ -39,3 +39,10 @@ def test_thumbnail_failures_fall_back_to_the_same_deterministic_icons():
     assert "_fxFileGlyph(kind)" in block
     assert "swap(im,'video'" in block
     assert "swap(im,'file'" in block
+
+
+def test_restored_mime_and_supported_extension_variants_keep_their_icons():
+    block = APP[APP.index("function _fxIcon"):APP.index("function _fxColsHTML")]
+    assert "String(type || '').toLowerCase()" in block
+    for ext in ("jfif", "heif", "tiff", "ogv", "3gp", "m4b", "aiff", "mka"):
+        assert ext in block

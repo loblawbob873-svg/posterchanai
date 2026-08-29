@@ -737,6 +737,16 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="nostrsigner" />
         </intent>
+        <!-- Preview's native PDF fallback asks resolveActivity() before granting its private-cache
+             content URI. Android 11+ hides otherwise installed handlers unless the matching intent
+             is declared here; without this, Adobe/Drive/etc. looked absent and Preview fell through
+             to Save even though the phone had a viewer. MIME-only keeps this narrower than package
+             visibility and matches the ACTION_VIEW intent OpenFilePlugin constructs. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.DEFAULT" />
+            <data android:mimeType="application/pdf" />
+        </intent>
         <!-- Orbot, by package: unlike the signer (any app registering the scheme will do) there is exactly
              one Orbot, and we look it up by name via getPackageInfo(), which package visibility gates the
              same way. Without this the Tor panel reports "Orbot not installed" on a phone that has it. -->

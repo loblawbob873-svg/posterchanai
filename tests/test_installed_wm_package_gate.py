@@ -1,5 +1,10 @@
 """The installed WM package gate must exercise live late-fork ancestry."""
 from pathlib import Path
+import os
+import subprocess
+import sys
+
+from scripts import checkall
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +25,22 @@ def test_gate_extracts_wm_from_the_immutable_asar():
     assert 'extract-file "$asar" www/static/css/client.css' in gate
     assert "PC_INSTALLED_CLIENT_CSS=" in gate
     assert "installed_alt_tab_cross_output_sim.js" in gate
+
+
+def test_installed_wm_gate_is_discovered_by_the_release_runner():
+    jobs = {job["name"]: job for job in checkall.discover()}
+    job = jobs["check_installed_wm_release"]
+    assert job["serial"] is True
+    assert job["registered"] is True
+
+
+def test_discoverable_gate_reports_missing_installed_artifact_as_a_skip(tmp_path):
+    gate = ROOT / "scripts" / "check_installed_wm_release.py"
+    env = {**os.environ, "PC_INSTALLED_ASAR": str(tmp_path / "missing.asar")}
+    result = subprocess.run([sys.executable, str(gate)], cwd=ROOT, env=env,
+                            capture_output=True, text=True)
+    assert result.returncode == 2
+    assert "SKIP installed ASAR is not available" in result.stdout
 
 
 def test_sim_uses_a_live_disposable_process_family():
