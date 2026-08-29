@@ -72,7 +72,7 @@ class AStuckCompletionMarker(unittest.TestCase):
         # history completes over several". Driven here the way a person drives it: open Texts,
         # again, and again.
         res = run(rows, {ME + "_blossom_v7": "1", ME: str(NOW)},
-                  ["phoneLoad"] + ["migrateAll"] * 5, {"combinedOmitsMms": True})
+                  ["phoneLoad"] + ["migrateAll"] * 12, {"combinedOmitsMms": True})
         self.assertEqual(len(mms_files(res)), 405,
                          "the migration stopped making progress across repeated visits")
         self.assertGreaterEqual(sum(1 for c in res["calls"] if c[0] == "listMms"), 2,

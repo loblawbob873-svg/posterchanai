@@ -404,7 +404,12 @@ class SendingFromAnotherDevice(unittest.TestCase):
     def test_live_cancellation_repaints_even_when_map_size_is_unchanged(self):
         web = (ROOT / "static/js/client/sms.js").read_text()
         watch = web[web.index("function watch()") : web.index("async function notifyNew")]
-        repaint = watch.index("if(textsOnScreen()) paint()")
+        # The repaint is COALESCED now (paintSoon) — a sweep publishes its own messages straight
+        # back through this subscription, so one repaint per event meant sixty full rebuilds of an
+        # open conversation. The rule this test protects is the ORDER, not the call: a tombstone
+        # mutates an entry without changing the map size, so the repaint must be reached before the
+        # size gate, not inside it.
+        repaint = watch.index("paintSoon()")
         size_gate = watch.index("if(S.msgs.size !== before)")
         self.assertLess(repaint, size_gate)
 

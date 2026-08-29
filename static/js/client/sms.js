@@ -902,6 +902,16 @@
     finally{ _legacySweeping = false; }
   }
 
+  /* A trailing coalesce. Deliberately not requestAnimationFrame: a backgrounded WebView never
+   * fires one, so a burst arriving while the phone is asleep would leave the screen stale until
+   * something else happened to repaint it. */
+  let _paintSoon = null;
+  function paintSoon(){
+    if(_paintSoon || !textsOnScreen()) return;
+    _paintSoon = setTimeout(() => { _paintSoon = null; if(textsOnScreen()) paint(); }, 250);
+    try{ if(_paintSoon && _paintSoon.unref) _paintSoon.unref(); }catch(_){ }
+  }
+
   let _sub = null;
   function watch(){
     if(_sub || !Relay().subscribe) return;
@@ -911,10 +921,19 @@
       _sub = Relay().subscribe([f], { live:true, onEvent: async (ev) => {
         const before = S.msgs.size;
         await absorbResilient([ev]);
-        /* A cancellation/tombstone mutates an existing entry to `gone`; the Map size is unchanged.
-         * Repainting only when size changed left deleted attachments visible on an open phone until
-         * navigation/reload. Always repaint the active Texts view after a live archive event. */
-        if(textsOnScreen()) paint();
+        /* ONE REPAINT PER BURST, NOT PER EVENT — and on this screen a burst is the ordinary case.
+         *
+         * A sweep publishes its own messages to the user's own relay, and this subscription
+         * delivers every one of them straight back. So archiving sixty messages meant SIXTY full
+         * repaints of the open conversation — which on the reporting account is 547 bubbles, each
+         * rebuilt from scratch because paint() replaces #feed wholesale. That is the stutter that
+         * survived deferring the sweep and shrinking its batches: the cost was never the uploading,
+         * it was the screen being rebuilt once per row.
+         *
+         * Coalesced on a short trailing timer. A tombstone still repaints — it mutates an entry
+         * without changing the map size, and the old code repainted unconditionally for exactly
+         * that reason — it just does not do so sixty times. */
+        paintSoon();
         if(S.msgs.size !== before){
           notifyNew(ev);
         }
@@ -2134,7 +2153,10 @@
        * week; the screen is not allowed to stutter. */
       const MAX_BATCHES = 2;
       for(let batch=0; batch<MAX_BATCHES; batch++){
-        const r = await mirror({fullMigration:true, limit:60});
+        /* SMALLER BURSTS. Sixty rows is sixty relay writes that come straight back through the
+         * live subscription; even coalesced, it is sixty documents absorbed before the screen can
+         * settle. Twenty keeps a pass short enough to be invisible. */
+        const r = await mirror({fullMigration:true, limit:20});
         total += Number(r && r.published) || 0;
         if(!r || r.skipped || !r.remaining) return {published:total, remaining:(r&&r.remaining)||0,
                                                      failed:(r&&r.failed)||0, skipped:r&&r.skipped};
