@@ -9,7 +9,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v1507';
+const CACHE = 'pc-nostr-v1509';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 // Content-addressed blobs fetched by JS rather than by an element: the ENCRYPTED DRIVE — Notes
 // attachments, music tracks, an offloaded note body, the files index. They land in their OWN cache,
@@ -554,7 +554,7 @@ self.addEventListener('fetch', e => {
   const isVendorOrIcon = url.pathname.startsWith('/static/vendor/') ||
     /\/static\/(icon-\d+|posterchan-relay|favicon|apple-touch-icon)\.png$/.test(url.pathname);
 
-  if (isAppCode) e.respondWith(staleWhileRevalidate(e.request));
+  if (isAppCode) e.respondWith(freshFirst(e.request));
   else if (isVendorOrIcon) e.respondWith(cacheFirst(e.request));
   // Encrypted-drive blobs (fetch(), so destination ''), BEFORE the destination rules below: a public
   // <img> pointing at the same path is ordinary media and keeps going to MEDIA_CACHE.

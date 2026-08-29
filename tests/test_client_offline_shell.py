@@ -81,6 +81,12 @@ class TestVersionedUrlMatching(unittest.TestCase):
             "previous build and no controllerchange would fire to prompt an update",
         )
 
+    def test_app_code_uses_the_network_first_path(self):
+        """A reload must receive the deployed client, not cache it only for the next reload."""
+        src = _read(_SW)
+        self.assertIn("if (isAppCode) e.respondWith(freshFirst(e.request))", src)
+        self.assertNotIn("if (isAppCode) e.respondWith(staleWhileRevalidate(e.request))", src)
+
 
 class TestNavigationsSurviveAQueryString(unittest.TestCase):
     def test_shortcut_and_share_urls_reach_the_cached_shell(self):
