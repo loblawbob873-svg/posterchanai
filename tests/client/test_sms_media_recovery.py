@@ -48,6 +48,13 @@ def ev(d, payload, at=1000, labelled=True):
             "pubkey": "me", "id": "x" + d, "tags": tags}
 
 
+def msg(n, *, addr="+15550100", body="", incoming=True):
+    """One provider row, the shape SmsPlugin.toJson emits."""
+    return {"id": n, "thread": 1, "address": addr, "body": body,
+            "date": NOW - 60000 + n * 1000, "type": 1 if incoming else 2,
+            "incoming": incoming, "read": False, "doc": "pcai:sms:%024d" % n}
+
+
 def blob_ev(d, payload, at=1000):
     """An archive row IN THE SHAPE THIS DEPLOYMENT ACTUALLY HAS. Measured on the production relay:
     every one of the 4,619 `pcai:sms:` events is 220-388 bytes of ciphertext, i.e. a Blossom
@@ -326,3 +333,111 @@ class APictureMessageWithNoPicture(unittest.TestCase):
         res = run(isPhone=False, cached=[ev("pcai:sms:a", body(1, body="hi"))], relayEmpty=True,
                   realArchiveFilters=True, steps=["load", "settle"])
         self.assertNotIn("no media backed up", res["countLine"])
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class TheHandsetSaysWhatItSaw(unittest.TestCase):
+    """THE HANDSET IS THE ONLY DEVICE THAT KNOWS WHY A PICTURE IS NOT IN THE ARCHIVE, AND IT HAD NO
+    WAY TO SAY SO.
+
+    Measured: 1,284 of one account's 1,964 archived messages are flagged `mms:true` with no
+    attachment, while the eleven that DO carry one decrypt and draw perfectly everywhere. So the
+    archive looks complete, the reader is healthy, and the whole failure lives in a phone nobody
+    can query — its provider counts, refusals, ceiling, last upload error and migration latches sit
+    in memory, localStorage and one transient sentence under a search box. Diagnosing it cost a
+    week of asking somebody to read that sentence out loud.
+
+    The phone now files a COUNTS-ONLY report per sweep: no address, no body, no filename, no hash.
+    `mmsRows` against `mmsRowsWithParts` is the number that separates "the upload is failing" from
+    "the phone never gave us an attachment to upload".
+    """
+
+    def _mms_row(self, n, parts):
+        r = msg(n, addr="+15550100", body="", incoming=True)
+        r["mms"] = True
+        r["parts"] = parts
+        return r
+
+    def test_it_separates_no_parts_offered_from_upload_refused(self):
+        """The two states that are indistinguishable from every other device."""
+        rows = [self._mms_row(1, []), self._mms_row(2, []),
+                self._mms_row(3, [{"id": 900, "ct": "image/jpeg", "name": "p.jpg", "bytes": 2048}])]
+        res = run(isPhone=True, rows=rows, steps=["phoneLoad", "mirror", "settle"])
+        self.assertTrue(res["statuses"], "the phone filed no report at all")
+        st = res["statuses"][-1]
+        self.assertEqual(st["mmsRows"], 3, st)
+        self.assertEqual(st["mmsRowsWithParts"], 1,
+                         "the report cannot tell 'no attachment was offered' from 'the upload "
+                         "failed': %r" % (st,))
+        self.assertEqual(st["partsSeen"], 1, st)
+
+    def test_it_carries_the_upload_error_verbatim(self):
+        """The sentence nobody could read off the phone's screen."""
+        rows = [self._mms_row(1, [{"id": 900, "ct": "image/jpeg", "name": "p.jpg", "bytes": 2048}])]
+        # `tooBig` is the provider answering "I have it and you cannot have it" — one of the four
+        # outcomes that reach the person as an identical broken bubble.
+        res = run(isPhone=True, rows=rows, parts={"900": {"tooBig": True}},
+                  steps=["phoneLoad", "mirror", "settle"])
+        st = res["statuses"][-1]
+        self.assertEqual(st["partsFailed"], 1, st)
+        # THE SENTENCE, not merely a count. Four different failures — a refusal, the size ceiling,
+        # a plugin too old, an encrypted-storage error — reach the person as one identical broken
+        # bubble, and only this string tells them apart. A count that something went wrong is what
+        # the screen already had.
+        self.assertTrue(st["partError"], "the report counted a failure and dropped its reason: %r"
+                                         % (st,))
+        self.assertIn("too large", st["partError"].lower(),
+                      "the reason was replaced by a generic one: %r" % (st["partError"],))
+
+    def test_it_names_every_latch_that_can_declare_the_phone_finished(self):
+        """A stuck migration and a complete one look identical from anywhere else. The markers are
+        exactly the reason, so they are reported by name rather than described."""
+        res = run(isPhone=True, rows=[msg(1)], steps=["phoneLoad", "mirror", "settle"])
+        st = res["statuses"][-1]
+        self.assertIn("markers", st)
+        for k in ("hwm", "blossom", "rewound", "oldestFirst"):
+            self.assertIn(k, st["markers"], st["markers"])
+
+    def test_it_reports_a_sweep_that_did_nothing(self):
+        """A pass that found nothing to do is exactly the state that needs explaining."""
+        res = run(isPhone=True, rows=[], steps=["phoneLoad", "mirror", "settle"])
+        self.assertTrue(res["statuses"], "a sweep with nothing to publish filed no report")
+        self.assertEqual(res["statuses"][-1]["published"], 0)
+
+    def test_it_carries_no_message_content(self):
+        """One document in Texts is written for somebody else to read. It must be counts only —
+        asserted, not promised in a comment."""
+        rows = [self._mms_row(1, [{"id": 900, "ct": "image/jpeg", "name": "secret-name.jpg",
+                                   "bytes": 2048}])]
+        rows[0]["body"] = "a private sentence"
+        rows[0]["address"] = "+15550199"
+        res = run(isPhone=True, rows=rows, steps=["phoneLoad", "mirror", "settle"])
+        blob = json.dumps(res["statuses"])
+        for leak in ("a private sentence", "5550199", "secret-name"):
+            self.assertNotIn(leak, blob, "the status report leaked %r" % (leak,))
+
+    def test_a_device_that_cannot_read_the_phone_files_nothing(self):
+        """A laptop has no answer to give and must not file an empty one over a handset's real
+        one — the same gate publishing itself has."""
+        res = run(isPhone=False, cached=[], relayEmpty=True, steps=["load", "settle"])
+        self.assertEqual(res["statuses"], [], res["statuses"])
+
+
+class TheReportSurvivesTheAutoCLEANERS(unittest.TestCase):
+    """Three auto-cleaners in this codebase have each, separately, eaten a private library and left
+    nothing in any log. The status report is a kind-30078 document in the `pcai:sms` namespace, so
+    it inherits all three exemptions — but only because the prefix check is a PREFIX. Pinned by
+    name here so a later `=== 'pcai:sms:'` tightening cannot silently start evicting it."""
+
+    def test_the_client_cache_pins_it(self):
+        src = (ROOT / "static" / "js" / "client" / "store.js").read_text(encoding="utf-8")
+        self.assertIn("t[1].startsWith('pcai:sms')", src,
+                      "the client cache no longer pins the pcai:sms namespace by prefix, so the "
+                      "handset's report is evicted by the newest-N rule like firehose content")
+
+    def test_the_paid_retention_tier_cannot_prune_it(self):
+        src = (ROOT / "app" / "services" / "nostr_relay" / "store.py").read_text(encoding="utf-8")
+        line = [l for l in src.splitlines() if l.startswith("_PRUNABLE_KINDS")][0]
+        self.assertNotIn("30078", line,
+                         "kind 30078 became prunable — that is the app's whole datastore, not just "
+                         "this report")

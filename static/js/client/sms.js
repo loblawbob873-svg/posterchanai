@@ -1080,6 +1080,89 @@
     return ok;
   }
 
+  /* ---------------------------------------------------------------- what the handset SEES
+   *
+   * THE HANDSET IS THE ONLY DEVICE THAT KNOWS WHY A PICTURE IS NOT IN THE ARCHIVE, AND IT HAD NO
+   * WAY TO SAY SO.
+   *
+   * Measured, and this is the whole reason this exists: 1,284 of one account's 1,964 archived
+   * messages are flagged `mms:true` and carry no attachment, while the eleven that DO carry one
+   * decrypt and draw perfectly on every other device. So the archive is complete-looking, the
+   * reader is healthy, and the failure lives entirely inside a phone nobody can query — its
+   * provider counts, its refusals, its ceiling, its last upload error and its migration latches
+   * are all in `S`, `localStorage` and one transient sentence under a search box. Diagnosing it
+   * cost a week of asking somebody to read that sentence out loud.
+   *
+   * So the phone writes a REPORT, once per sweep. It is a normal archive document — same kind,
+   * same relay, NIP-44 to the user's own key like every message — carrying COUNTS ONLY: no
+   * address, no body, no filename, no hash. Nothing here is content, and nothing here is
+   * readable by the node; it is the phone answering "what did you see?" in a place the other
+   * devices, and a person helping, can look.
+   *
+   * `pcai:sms-status:<device>` rather than one shared address, because two handsets on one account
+   * would otherwise overwrite each other's answer and the second phone's silence would read as the
+   * first phone's problem. The device id is derived, stable and local — it identifies a report,
+   * never a person or a SIM.
+   *
+   * Written only by a device that actually READ the phone (`st.canRead`), which is the same gate
+   * publishing itself has: a laptop has no answer to give and must not file an empty one over a
+   * handset's real one. */
+  const D_STATUS = 'pcai:sms-status:';
+  const L_STATUS = 'pcai-sms-status';
+  let _statusId = null;
+  async function statusDoc(){
+    if(_statusId) return D_STATUS + _statusId;
+    let seed = '';
+    try{ seed = String(localStorage.getItem('pc_sms_device') || ''); }catch(_){ }
+    if(!seed){
+      seed = 'd' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+      try{ localStorage.setItem('pc_sms_device', seed); }catch(_){ }
+    }
+    _statusId = (await sha256hex(String(ME().pubkey || '') + '\n' + seed)).slice(0, 16);
+    return D_STATUS + _statusId;
+  }
+  /* Every latch that can silently declare this phone finished. They are the reason a stuck
+   * migration is indistinguishable from a complete one, so they are reported by name. */
+  function statusMarkers(){
+    const read = k => { try{ return localStorage.getItem(k) ? 1 : 0; }catch(_){ return 0; } };
+    let hwm = 0;
+    try{ hwm = Number(localStorage.getItem(HWM()) || 0) || 0; }catch(_){ }
+    return { hwm, blossom: read(HWM_BLOSSOM()), rewound: read(HWM_REWOUND()),
+             oldestFirst: read(HWM_FIX()) };
+  }
+  async function publishStatus(pass){
+    if(!PC.publish) return false;
+    /* COUNTS ONLY — asserted here rather than promised in a comment, because this is the one
+     * document in Texts that is written for somebody else to read. */
+    const body = {
+      v: 1, at: now(),
+      app: String((window.__PC_APP_BUILD__ || '')).slice(0, 40),
+      // what the provider handed this phone on the pass that just ran
+      rowsRead: Number(pass.rowsRead) || 0,
+      mmsRows: Number(pass.mmsRows) || 0,
+      mmsRowsWithParts: Number(pass.mmsRowsWithParts) || 0,
+      partsSeen: Number(pass.partsSeen) || 0,
+      // what it managed to do with them
+      published: Number(pass.published) || 0,
+      partsUploaded: Number(pass.partsUploaded) || 0,
+      partsFailed: Number(pass.partsFailed) || 0,
+      // the first upload error VERBATIM, which is the sentence nobody could read off the screen
+      partError: String(pass.partError || '').slice(0, 200),
+      archiveError: String(pass.archiveError || '').slice(0, 200),
+      // and the three answers the provider gives that are not "here are your messages"
+      refused: !!S.error, mmsRefused: !!S.mmsRefused, mmsCapped: !!S.mmsCapped,
+      mmsAudited: !!S.mmsAudited,
+      markers: statusMarkers(),
+      held: S.msgs.size,
+    };
+    try{
+      const d = await statusDoc();
+      const ct = await PC.nip44enc(ME().pubkey, JSON.stringify(body));
+      const r = await PC.publish(KIND, ct, [['d', d], ['l', L_STATUS]], {quiet:true, noQueue:true});
+      return !!(r && r.ok);
+    }catch(_){ return false; }
+  }
+
   /* PUBLISH WHAT THE PHONE HAS AND THE ARCHIVE DOES NOT.
    *
    * The high-water mark is a TIMESTAMP, not a row id, and that is the load-bearing choice: a row id
@@ -1147,6 +1230,18 @@
     }
 
     let n = 0, top = since, drive = null, archiveError = '', rowErrors = 0;
+    /* WHAT THE PROVIDER ACTUALLY HANDED OVER, counted before anything is done with it — see
+     * publishStatus. `mmsRows` against `mmsRowsWithParts` is the single number that separates
+     * "the upload is failing" from "the phone never gave us an attachment to upload", and no
+     * device but this one can see it. */
+    const pass = {rowsRead: rows.length, mmsRows: 0, mmsRowsWithParts: 0, partsSeen: 0,
+                  partsUploaded: 0, partsFailed: 0, partError: ''};
+    for(const r of rows){
+      if(!r || !r.mms) continue;
+      pass.mmsRows++;
+      const seen = (r.parts || []).length;
+      if(seen){ pass.mmsRowsWithParts++; pass.partsSeen += seen; }
+    }
     /* ONCE A ROW HAS FAILED, THE MARK STOPS MOVING — but the sweep carries on. See the failure
      * branch below: those are two separate promises and they used to be made with one `break`. */
     let stuck = false;
@@ -1169,8 +1264,17 @@
         // carried, so a laptop — which has no phone book — shows a name instead of a number.
         const m = fromRow(r);
         let ok = false;
+        const sealedBefore = (m.parts || []).filter(p => p.sha).length;
         try{ ok = await publishOne(m); }
-        catch(e){ archiveError = String((e && e.message) || e); ok = false; }
+        catch(e){
+          archiveError = String((e && e.message) || e); ok = false;
+          if((m.parts || []).length){
+            pass.partsFailed += (m.parts || []).length;
+            if(!pass.partError) pass.partError = archiveError;
+          }
+        }
+        pass.partsUploaded += Math.max(0,
+          (m.parts || []).filter(p => p.sha).length - sealedBefore);
         if(!ok){
           /* ONE MMS THE PROVIDER WILL NOT HAND OVER MUST NOT BLOCK THE REST OF THE PHONE FOR EVER,
            * AND THAT IS TRUE OF THIS SWEEP TOO.
@@ -1225,6 +1329,11 @@
     }
     S.archive.running = false;
     S.archive.published = n;
+    /* FILED ON EVERY PASS, including the ones that published nothing — a sweep that found nothing
+     * to do is exactly the state that needs explaining. Detached and swallowed: a report that
+     * cannot be written must never cost the archive a message. */
+    pass.published = n; pass.archiveError = archiveError;
+    try{ publishStatus(pass); }catch(_){ }
     S.archive.error = archiveError || (rowErrors || _migrationFailed.size
       ? _migrationFailed.size + ' MMS attachment' + (_migrationFailed.size === 1 ? '' : 's')
         + ' could not be read; the other messages were copied'

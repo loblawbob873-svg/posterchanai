@@ -24,6 +24,7 @@ const opt = JSON.parse(process.argv[2] || '{}');
 const calls = [];        // every plugin call, in order
 const published = [];    // every event handed to publish(), in order
 const notified = [];
+const statuses = [];
 const uploads = Object.create(null);
 for(const [sha, item] of Object.entries(opt.uploads || {})) uploads[sha] = Object.assign({}, item);
 const driveFolders = new Set();
@@ -370,6 +371,16 @@ global.__PC = {
   },
   async publish(kind, content, tags, o){
     const d = ((tags || []).find(t => t[0] === 'd') || [])[1] || '';
+    /* THE HANDSET'S STATUS REPORT IS NOT AN ARCHIVE DOCUMENT, and must not be counted as one. It
+     * rides the same kind and the same relay by design, so a sim that folded it into `published`
+     * would shift every "how many messages landed" assertion by one per pass — the test suite
+     * disagreeing with itself about what a message is. Kept separately so it can be asserted on
+     * directly instead. */
+    if(d.startsWith('pcai:sms-status:')){
+      statuses.push({ d, content });
+      return { ok:true, ev:{ kind, content, tags, created_at: Math.floor(Date.now()/1000),
+                             pubkey:'me', id:'s' + statuses.length } };
+    }
     published.push({ kind, d, content });
     if(kind === 5) return { ok:true, ev:{ kind, tags } };
     if(refusals === 0){ return { ok:false, ev:null }; }
@@ -589,6 +600,9 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
   }
   console.log(JSON.stringify({
     calls, published, notified, uploads, scrollProbe, hydrationProbe,
+    // What the phone reported about itself — see publishStatus in sms.js.
+    statuses: statuses.map(x => { try{ return JSON.parse(String(x.content).slice(4)); }
+                                 catch(_){ return {bad:true}; } }),
     decryptPeak, decryptCalls, attProbe, hydrateProbe,
     feedHtml: visibleFeed ? visibleFeed.innerHTML : '',
     drive: { folders:Array.from(driveFolders).sort(), files:driveFiles, batch:driveBatch },
