@@ -638,7 +638,17 @@
       const d = doc();
       if(!d) return;
       try{
-        const f = await api('/file?path=' + encodeURIComponent(d.path));
+        /* A selected desktop project belongs to THIS computer. Sending its display name to the
+         * node workspace can either fail or, worse, load a same-named file from PosterChan's own
+         * checkout into this tab. Keep Reload on the same authority/path as Open and Save. */
+        let f;
+        if(d.host){
+          const H = window.PCHostFiles;
+          if(!H || !H.readText) throw new Error('this build cannot reload a local file');
+          f = await H.readText(d.host.path);
+        }else{
+          f = await api('/file?path=' + encodeURIComponent(d.path));
+        }
         d.text = f.text; d.disk = f.text; d.mtime = f.mtime || 0;
         status('Reloaded ' + d.path, 'ok');
       }catch(e){ status(e.message || 'Could not reload', 'err'); }

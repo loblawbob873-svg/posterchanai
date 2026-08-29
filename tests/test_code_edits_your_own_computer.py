@@ -118,6 +118,15 @@ class TheEditorOpensAndSavesThem(unittest.TestCase):
         self.assertIn("d.host", body)
         self.assertLess(body.index("d.host"), body.index("api("))
 
+    def test_reload_stays_on_the_selected_computer_project(self):
+        """Reload used to send only the tab's display name to the node workspace. A same-named
+        server file could silently replace the local buffer the user thought they were reloading."""
+        body = _decomment(_fn(self.code, "async function reloadDoc("))
+        self.assertIn("d.host", body)
+        self.assertIn("H.readText(d.host.path)", body)
+        self.assertLess(body.index("d.host"), body.index("api("))
+        self.assertIn("d.mtime = f.mtime || 0", body)
+
     def test_there_is_a_door_in_this_computer(self):
         """The door is the FILE, not a button beside it \u2014 "just click on the icon or double click".
         A local row already had a click (it handed the file to the machine), so the editor joins
