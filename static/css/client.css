@@ -5250,6 +5250,10 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
   .bp-explorer .bp-pick-card small{display:block}
 }
 @media (min-width:821px){.bp-locations{display:none}}
+/* A 360px picker cannot hold Locations + title + Sort + two density buttons + Close on one row.
+   Sort and location are navigation; density is optional presentation, so yield that control before
+   either a file operation is pushed off-screen or the picker grows a horizontal overflow strip. */
+@media (max-width:520px){.bp-file-picker .bp-density{display:none}}
 /* file-mode fields in the Make-something sheet */
 .gen-file-btn{margin-top:8px;min-height:46px}
 .gen-file-list{margin-top:6px;word-break:break-all}

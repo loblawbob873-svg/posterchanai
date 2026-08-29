@@ -115,6 +115,7 @@ def test_file_picker_has_bounded_desktop_and_mobile_layouts():
     assert ".bp-explorer.bp-locations-on>.bp-folders{transform:translateX(0)}" in CSS
     assert ".bp-explorer .folder-bar{flex-direction:column;overflow:visible" in CSS
     assert "white-space:normal;overflow-wrap:anywhere" in CSS
+    assert "@media (max-width:520px){.bp-file-picker .bp-density{display:none}}" in CSS
 
 
 def test_mobile_picker_identifies_each_file_beside_a_real_preview():
