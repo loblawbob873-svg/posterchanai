@@ -16,9 +16,9 @@ function renderer(remembered=''){
 }
 
 const tabs=[
-  {sid:'local:alpha',host:'local',label:''},
-  {sid:'local:bravo',host:'local',label:''},
-  {sid:'local:charlie',host:'local',label:''},
+  {sid:'local:alpha',host:'local',label:'',scroll:{pinned:true,aboveBottom:0}},
+  {sid:'local:bravo',host:'local',label:'',scroll:{pinned:false,aboveBottom:37}},
+  {sid:'local:charlie',host:'local',label:'',scroll:{pinned:false,aboveBottom:91}},
 ];
 const moved={activeSid:'local:bravo',host:'local',label:'',tabs,
   scroll:{pinned:false,aboveBottom:37}};
@@ -31,6 +31,9 @@ if(state.activeSid!=='local:bravo') throw Error('middle session identity changed
 if(state.tabs.map(x=>x.sid).join(',')!==tabs.map(x=>x.sid).join(','))
   throw Error('tab order/index changed: '+JSON.stringify(state.tabs));
 if(state.scroll.pinned!==false||state.scroll.aboveBottom!==37) throw Error('scroll choice changed');
+const inactive=state.tabs.find(x=>x.sid==='local:charlie');
+if(!inactive.scroll||inactive.scroll.pinned!==false||inactive.scroll.aboveBottom!==91)
+  throw Error('inactive tab scroll choice changed: '+JSON.stringify(inactive));
 
 /* Moving back is a second destination adoption, not an index lookup. A stale renderer may have
  * another active session remembered; the payload's stable session identity must win. */

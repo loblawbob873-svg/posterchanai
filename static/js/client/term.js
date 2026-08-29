@@ -77,6 +77,7 @@
     /* A monitor handoff crosses renderers. Tabs are PTY session identities, never numeric indexes:
      * the local/server session list may arrive in a different order on the destination monitor. */
     let handoffOrder = [], handoffScroll = null;
+    const tabScroll = new Map();             // session id -> {pinned, aboveBottom}
     /* xterm's write callback means that its parser consumed the bytes; it does NOT mean Chromium
      * has finished laying out the enlarged scrollback element.  A large reattach measured in the
      * packaged desktop landed at scrollTop 2224 with an actual maximum of 3824 even though the
@@ -765,12 +766,28 @@
       _open({ resume: id, host: hostName || '', label });
     }
 
+    function _scrollChoice(){
+      let aboveBottom=handoffScroll?Math.max(0,Number(handoffScroll.aboveBottom)||0):0;
+      try{const b=term&&term.buffer&&term.buffer.active;
+        if(b)aboveBottom=Math.max(0,Number(b.baseY||0)-Number(b.viewportY||0));}catch(_){}
+      return {pinned:followBottom!==false,aboveBottom};
+    }
+
+    function switchTab(id, hostName, labelName){
+      id=String(id||'');if(!id||id===sid)return false;
+      if(sid)tabScroll.set(String(sid),_scrollChoice());
+      const saved=tabScroll.get(id);
+      handoffScroll=saved?{pinned:saved.pinned!==false,
+        aboveBottom:Math.max(0,Number(saved.aboveBottom)||0)}:null;
+      attach(id,hostName,labelName);return true;
+    }
+
     function _cycleTab(step){
       const tabs=[...document.querySelectorAll('#tty-sessions [data-tab]')];
       if(tabs.length<2)return;
       let at=tabs.findIndex(x=>x.dataset.tab===sid);if(at<0)at=0;
       const next=tabs[(at+(step<0?-1:1)+tabs.length)%tabs.length];
-      if(next&&next.dataset.tab!==sid)attach(next.dataset.tab,next.dataset.host,next.dataset.label);
+      if(next&&next.dataset.tab!==sid)switchTab(next.dataset.tab,next.dataset.host,next.dataset.label);
     }
 
     function _open(frame){
@@ -1251,7 +1268,7 @@
           const k = ev.target.closest('[data-kill]'); if(k){ ev.stopPropagation(); return kill(k.dataset.kill); }
           const add = ev.target.closest('#tty-tab-new'); if(add) return connect();
           const a = ev.target.closest('[data-tab]');
-          if(a && a.dataset.tab !== sid) return attach(a.dataset.tab, a.dataset.host, a.dataset.label); }; }
+          if(a && a.dataset.tab !== sid) return switchTab(a.dataset.tab, a.dataset.host, a.dataset.label); }; }
       { const k = $('#tty-keys'); if(k) k.onclick = (ev) => {
           const b = ev.target.closest('[data-k]'); if(!b) return;
           ev.preventDefault(); _key(b.dataset.k); }; }
@@ -1427,14 +1444,11 @@
     }
 
     function handoffState(){
-      let aboveBottom=handoffScroll?Math.max(0,Number(handoffScroll.aboveBottom)||0):0;
-      try{
-        const b=term&&term.buffer&&term.buffer.active;
-        if(b) aboveBottom=Math.max(0,Number(b.baseY||0)-Number(b.viewportY||0));
-      }catch(_){}
+      const current=_scrollChoice();if(sid)tabScroll.set(String(sid),current);
       return {activeSid:String(sid||''),host:String(host||''),label:String(label||''),
-        tabs:live.map(x=>({sid:String(x.sid||''),host:String(x.host||''),label:String(x.label||'')}))
-          .filter(x=>x.sid),scroll:{pinned:followBottom!==false,aboveBottom}};
+        tabs:live.map(x=>({sid:String(x.sid||''),host:String(x.host||''),label:String(x.label||''),
+          scroll:tabScroll.get(String(x.sid||''))||null}))
+          .filter(x=>x.sid),scroll:current};
     }
 
     function acceptHandoff(state){
@@ -1442,7 +1456,9 @@
       const id=String(state.activeSid||state.sid||'');
       if(!id) return false;
       const tabs=Array.isArray(state.tabs)?state.tabs.filter(x=>x&&x.sid).map(x=>({
-        sid:String(x.sid),host:String(x.host||''),label:String(x.label||'')})):[];
+        sid:String(x.sid),host:String(x.host||''),label:String(x.label||''),scroll:x.scroll})):[];
+      tabScroll.clear();tabs.forEach(x=>{if(x.scroll&&typeof x.scroll==='object')tabScroll.set(x.sid,{
+        pinned:x.scroll.pinned!==false,aboveBottom:Math.max(0,Number(x.scroll.aboveBottom)||0)});});
       handoffOrder=tabs.map(x=>x.sid);
       if(tabs.length) live=tabs;
       const active=tabs.find(x=>x.sid===id);
