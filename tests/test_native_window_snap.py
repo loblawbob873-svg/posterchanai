@@ -140,7 +140,7 @@ def test_shell_move_tick_uses_state_preserving_monitor_handoff():
     assert "moveWindowToMonitor(w,p.slice(15))" in src
     move = src[src.index("async function moveWindowToMonitor"):
                src.index("function startDrag", src.index("async function moveWindowToMonitor"))]
-    assert "pcWM.handoff(w.native,direction)" in move
+    assert "pcWM.handoff(w.native,direction,nativeHandoffPlacement(w,direction))" in move
     assert "sendFrameHandoff(w,direction,0,false)" in move
     assert "/^pc:move-native:\\d+:(left|right|up|down)$/.test(p)" in src
     assert "nativeWins().find(x=>Number(x.native)===id)" in src

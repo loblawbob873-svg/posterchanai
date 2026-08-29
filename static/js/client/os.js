@@ -1988,16 +1988,17 @@
     }catch(e){list.innerHTML='<div class="vmui-empty"><b>Could not read virtual machines</b></div>';}finally{busy=false;}};
     const closeHardware=()=>{const box=$('[data-vm-edit]',w.slot);if(box){box.hidden=true;box.innerHTML='';}if(vmroot)vmroot.classList.remove('vmui-editing');};
     const editHardware=async(name)=>{const box=$('[data-vm-edit]',w.slot);if(!box)return;if(vmroot)vmroot.classList.add('vmui-editing');box.hidden=false;box.innerHTML='<div class="spinner"></div>';let d;try{d=await pcVM.details(name);}catch(e){d={ok:false,error:String(e&&e.message||e)}}if(!d.ok){box.innerHTML=`<div class="vmui-top"><div><b>${enc(name)} settings</b><span>${enc(d.error||'Could not read VM hardware')}</span></div><button class="btn btn-ghost" data-vme-close>Back to machines</button></div>`;$('[data-vme-close]',box).onclick=closeHardware;return;}
+      const cd=(d.disks||[]).find(x=>x.device==='cdrom'),iso=cd&&cd.source&&cd.source!=='-'?cd.source:'',isoName=iso.split(/[\\/]/).pop();
       box.innerHTML=`<div class="vmui-top"><div><b>${enc(name)} settings</b><span>Turn the machine off before changing hardware.</span></div><button class="btn btn-ghost" data-vme-close>Back to machines</button></div>
         <section class="vmui-section"><h3>Performance</h3><div class="vmui-spec"><label>Memory (MB)<input class="input" data-vme-ram type="number" min="512" value="${enc(d.ramMiB)}"></label><label>Processors<input class="input" data-vme-cpu type="number" min="1" value="${enc(d.cpus)}"></label><label class="vmui-check"><input data-vme-auto type="checkbox" ${d.autostart?'checked':''}> Start automatically</label></div><div class="vmui-formacts"><button class="btn" data-vme-save>Save settings</button></div></section>
-        <section class="vmui-section"><h3>Startup and installation media</h3><div class="vmui-spec"><label>Start from<select class="input" data-vme-boot><option value="disk" ${d.bootOrder==='disk'?'selected':''}>Installed system (virtual disk)</option><option value="cdrom" ${d.bootOrder==='cdrom'?'selected':''}>Installer ISO</option></select></label></div><p>When installation finishes, eject the ISO. The next start will use the installed system automatically.</p><div class="vmui-actions vmui-actions-left"><button class="btn btn-ghost" data-vme-iso>Change installer ISO…</button><button class="btn" data-vme-eject>Eject installer and use installed system</button></div></section>
+        <section class="vmui-section"><h3>Startup and installation media</h3><div class="vmui-spec"><label>Start from<select class="input" data-vme-boot><option value="disk" ${d.bootOrder==='disk'?'selected':''}>Installed system (virtual disk)</option><option value="cdrom" ${d.bootOrder==='cdrom'?'selected':''}>Installer ISO</option></select></label></div><p data-vme-media><b>Attached installer:</b> ${iso?`<span title="${enc(iso)}">${enc(isoName)}</span>`:'None'}</p><p>When installation finishes, eject the ISO. The next start will use the installed system automatically.</p><div class="vmui-actions vmui-actions-left"><button class="btn btn-ghost" data-vme-iso>Change installer ISO…</button><button class="btn" data-vme-eject>Eject installer and use installed system</button></div></section>
         <details class="vmui-advanced"><summary>Advanced hardware</summary><p>Add storage or networking, or enable relative mouse capture for games that require it.</p><div class="vmui-actions vmui-actions-left"><button class="btn btn-ghost" data-vme-disk>Add virtual disk…</button><button class="btn btn-ghost" data-vme-net>Add network adapter (${enc(d.networks)})</button><button class="btn btn-ghost" data-vme-mouse>${d.gamingMouse?'Mouse capture is on — turn off':'Enable gaming mouse capture'}</button></div></details>
         <div class="tty-state vmui-state" data-vme-state aria-live="polite"></div>`;
-      const state=t=>{const x=$('[data-vme-state]',box);if(x)x.textContent=t||'';};$('[data-vme-close]',box).onclick=closeHardware;
+      const state=t=>{const x=$('[data-vme-state]',box);if(x)x.textContent=t||'';};$('[data-vme-close]',box).onclick=closeHardware;$('[data-vme-eject]',box).disabled=!iso;
       $('[data-vme-save]',box).onclick=async()=>{const r=await pcVM.update(name,{ramMiB:Number($('[data-vme-ram]',box).value),cpus:Number($('[data-vme-cpu]',box).value),autostart:$('[data-vme-auto]',box).checked,bootOrder:$('[data-vme-boot]',box).value});state(r.ok?'VM settings saved':r.error);if(r.ok)paint();};
       $('[data-vme-disk]',box).onclick=async()=>{const gib=Number(prompt('New disk size in GB','40'));if(!gib)return;const r=await pcVM.addDisk(name,gib);state(r.ok?'Disk added':r.error);};
-      $('[data-vme-iso]',box).onclick=async()=>{const p=await pcVM.pickIso();if(!p)return;const r=await pcVM.changeIso(name,p);state(r.ok?'Installation disc changed':r.error);};
-      $('[data-vme-eject]',box).onclick=async()=>{const r=await pcVM.ejectIso(name);state(r.ok?'Installation disc ejected — the next start boots from disk':r.error);if(r.ok)paint();};
+      $('[data-vme-iso]',box).onclick=async()=>{const p=await pcVM.pickIso();if(!p)return;const r=await pcVM.changeIso(name,p);if(r.ok){await editHardware(name);state('Installation disc changed');paint();}else state(r.error);};
+      $('[data-vme-eject]',box).onclick=async()=>{const r=await pcVM.ejectIso(name);if(r.ok){await editHardware(name);state('Installation disc ejected — the next start boots from disk');paint();}else state(r.error);};
       $('[data-vme-net]',box).onclick=async()=>{const r=await pcVM.addNetwork(name);state(r.ok?'Network adapter added':r.error);};
       $('[data-vme-mouse]',box).onclick=async()=>{const r=await pcVM.gamingMouse(name,!d.gamingMouse);state(r.ok?(!d.gamingMouse?'Gaming mouse enabled — Ctrl+Alt releases it':'Desktop pointer enabled'):r.error);if(r.ok)editHardware(name);};};
     $('[data-vm-new]',w.slot).onclick=()=>{form.hidden=false;};$('[data-vm-cancel]',w.slot).onclick=()=>{form.hidden=true;};
@@ -3280,6 +3281,15 @@
     return false;
   }
 
+  function nativeHandoffPlacement(w,direction){
+    if(!w||!w.el)return {direction:String(direction||'')};
+    const horizontal=/left|right/.test(direction),width=w.el.offsetWidth,height=w.el.offsetHeight;
+    const top=parseInt(w.el.style.top,10)||0,left=parseInt(w.el.style.left,10)||0;
+    const cross=horizontal?top/Math.max(1,vhL()-TASKBAR-height):left/Math.max(1,vwL()-width);
+    return {direction:String(direction||''),width,height,overflow:0,
+      cross:Math.max(0,Math.min(1,cross))};
+  }
+
   /* A cross-output drag is convenient when Chromium reports virtual-desktop pointer coordinates.
    * Some Wayland/Electron combinations clamp them at the renderer edge, making an overflow gesture
    * physically impossible. The title-bar control is the deterministic path: try every adjacent
@@ -3289,7 +3299,7 @@
     try{
       const result=await tryMonitorDirections(async direction=>{
         const moved=w.native!=null&&pcWM.handoff
-          ? await Promise.resolve(pcWM.handoff(w.native,direction)).catch(()=>false)
+          ? await Promise.resolve(pcWM.handoff(w.native,direction,nativeHandoffPlacement(w,direction))).catch(()=>false)
           : await sendFrameHandoff(w,direction,0,false);
         if(moved&&w.native!=null&&wins.includes(w))closeWin(w,{killNative:false,preserveFocus:true});
         return moved;
@@ -3307,7 +3317,7 @@
   async function moveWindowToMonitor(w,direction){
     if(!w || !wins.includes(w) || !/^(left|right|up|down)$/.test(direction))return false;
     const moved=w.native!=null&&pcWM.handoff
-      ? await Promise.resolve(pcWM.handoff(w.native,direction)).catch(()=>false)
+      ? await Promise.resolve(pcWM.handoff(w.native,direction,nativeHandoffPlacement(w,direction))).catch(()=>false)
       : await sendFrameHandoff(w,direction,0,false);
     if(moved&&w.native!=null&&wins.includes(w))closeWin(w,{killNative:false,preserveFocus:true});
     if(!moved){keepFrameReachable(w);_natGesture(w,false);if(nativeWins().length)nsync();}
@@ -6787,7 +6797,7 @@
         const w=adoptNative(row); if(!w)return;
         /* Adopt at the destination preview's measured drop instead of openApp's cascade point. */
         const d=p&&p.drop&&typeof p.drop==='object'?p.drop:null;
-        if(d){
+        if(d&&Number(d.width)>0&&Number(d.height)>0){
           const ww=Math.max(MIN_W,Math.min(vwL()-24,Number(d.width)||MIN_W));
           const hh=Math.max(MIN_H,Math.min(vhL()-TASKBAR-24,Number(d.height)||MIN_H));
           const over=Math.max(0,Number(d.overflow)||0)/Math.max(1,zf());

@@ -43,6 +43,14 @@ def test_mobile_locations_backdrop_closes_without_opening_an_underlying_file():
     assert "},true)" in bind
 
 
+def test_mobile_picker_escape_closes_locations_before_the_picker():
+    picker = APP[APP.index("function blossomPicker(ta, onPick, opts={})"):
+                 APP.index("// ---------- Pics:")]
+    assert "_trapFocus(bg.querySelector('.modal'), closeOrDrawer)" in picker
+    assert "_popKeys(bg, '#bp-grid .file-card', el=>el.click(), closeOrDrawer)" in picker
+    assert "_popKeys(bg, '#bp-grid .file-card', el=>el.click(), close)" not in picker
+
+
 def test_mobile_source_heads_navigate_instead_of_repainting_the_same_drawer():
     start = APP.index("function _fxBindSide(")
     bind = APP[start:start + 7000]

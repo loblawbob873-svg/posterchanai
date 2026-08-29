@@ -181,6 +181,19 @@ const fs=require('fs'),os=require('os'),path=require('path'),v=require('./deskto
         self.assertIn('<details class="vmui-advanced">', ui)
         self.assertIn('Eject installer and use installed system', ui)
 
+    def test_editor_shows_and_refreshes_the_attached_installer(self):
+        ui = (ROOT / "static" / "js" / "client" / "os.js").read_text()
+        editor = ui[ui.index("const editHardware=async(name)"):ui.index("$('[data-vm-new]'", ui.index("const editHardware=async(name)"))]
+        self.assertIn("(d.disks||[]).find(x=>x.device==='cdrom')", editor)
+        self.assertIn('<p data-vme-media><b>Attached installer:</b>', editor)
+        self.assertIn("isoName=iso.split", editor)
+        self.assertIn("$('[data-vme-eject]',box).disabled=!iso", editor)
+        for operation in ("pcVM.changeIso(name,p)", "pcVM.ejectIso(name)"):
+            handler = editor[editor.index(operation):]
+            handler = handler[:handler.index(";};")]
+            self.assertIn("await editHardware(name)", handler,
+                          "successful media changes must repaint the attached ISO immediately")
+
     def test_hardware_settings_replace_the_machine_list_and_errors_can_go_back(self):
         ui = (ROOT / "static" / "js" / "client" / "os.js").read_text()
         css = (ROOT / "static" / "css" / "client.css").read_text()

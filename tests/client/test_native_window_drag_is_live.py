@@ -103,6 +103,24 @@ def test_cross_output_native_drop_geometry_reaches_destination_ack_frame():
     assert receiver.index("Object.assign(w.el.style") < receiver.index("pcWM.nativeHandoffAck(token,rect)")
 
 
+def test_button_and_keyboard_native_handoff_preserve_managed_frame_geometry():
+    src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+    helper = src[src.index("function nativeHandoffPlacement"):
+                 src.index("async function moveToOtherMonitor")]
+    assert "width=w.el.offsetWidth,height=w.el.offsetHeight" in helper
+    assert "cross:Math.max(0,Math.min(1,cross))" in helper
+    button = src[src.index("async function moveToOtherMonitor"):
+                 src.index("async function moveWindowToMonitor")]
+    keyboard = src[src.index("async function moveWindowToMonitor"):
+                   src.index("function startDrag")]
+    call = "pcWM.handoff(w.native,direction,nativeHandoffPlacement(w,direction))"
+    assert call in button
+    assert call in keyboard
+    receiver = src[src.index("pcWM.onNativeHandoffPrepare(async"):
+                   src.index("if(!_nativeHandoffOff", src.index("pcWM.onNativeHandoffPrepare(async"))]
+    assert "if(d&&Number(d.width)>0&&Number(d.height)>0)" in receiver
+
+
 def test_rejected_html_handoff_falls_back_to_the_requested_edge_snap():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
     drag = src[src.index("function startDrag"):src.index("function startResize")]

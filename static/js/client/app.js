@@ -16419,7 +16419,10 @@
     // The grid is a grid of DIVs — nothing focusable, so Tab could never reach a file and Enter had
     // nothing to press. _popKeys is the app's grid cursor (arrows, and hjkl when Vim keys are on, with
     // the row length measured from the layout), the same one the effects and emoji pickers use.
-    _popKeys(bg, '#bp-grid .file-card', el=>el.click(), close);
+    /* _popKeys owns Escape in capture phase, before the focus trap can see it. Give both handlers
+     * the same layered close operation or Escape/keyboard Back with Locations open destroys the
+     * whole picker instead of dismissing the drawer first. */
+    _popKeys(bg, '#bp-grid .file-card', el=>el.click(), closeOrDrawer);
     bg.querySelectorAll('[data-bp-size]').forEach(btn=>btn.onclick=()=>{
       const medium=btn.dataset.bpSize==='medium', explorer=bg.querySelector('.bp-explorer');
       explorer.classList.toggle('bp-medium',medium);
