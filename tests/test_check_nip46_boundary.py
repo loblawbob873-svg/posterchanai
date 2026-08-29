@@ -56,8 +56,15 @@ def test_each_signer_case_gets_a_new_document_and_waits_for_the_fake_signer():
     assert 'await call("Page.navigate", {"url": "about:blank"})' in SRC
     assert 'await call("Network.clearBrowserCookies")' in SRC
     assert "fake signer could not subscribe" in SRC
+    assert "window.__PC_BOOTED === true" in SRC
     assert "typeof document.querySelector('#btn-amber')?.onclick==='function'" in SRC
     assert "typeof document.querySelector('#btn-amber-connect')?.onclick==='function'" in SRC
+
+
+def test_login_completion_is_correlated_to_this_bunker_not_late_ui_paint():
+    assert "who() === expectedPk" in SRC
+    assert "$('#auth-gate').classList.contains('hidden') && who()" not in SRC
+    assert "json.dumps(bunker.user_pk)" in SRC
 
 
 def test_slow_fake_signer_deduplicates_identical_resends_like_a_real_signer():

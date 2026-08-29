@@ -301,7 +301,7 @@ class Bunker:
 # --------------------------------------------------------------------------------------------
 # Drive the shipped sign-in UI.
 # --------------------------------------------------------------------------------------------
-LOGIN = r"""(async (uri) => {
+LOGIN = r"""(async (uri, expectedPk) => {
   const sleep = ms => new Promise(r=>setTimeout(r,ms));
   const $ = s => document.querySelector(s);
   // Open the gate the way the guest card does — the handlers are bound at boot either way.
@@ -312,13 +312,18 @@ LOGIN = r"""(async (uri) => {
   $('#amber-input').value = uri;
   $('#btn-amber-connect').click();
   // WHO ended up signed in, not merely "the gate closed". A session resumed from an earlier case
-  // would close it too, and that is a pass this check must never be able to hand out.
+  // would close it too, and that is a pass this check must never be able to hand out. Conversely,
+  // finishAmberLogin establishes ME + saves THIS exact signer session before startApp performs its
+  // heavier profile/session startup. Under full-suite load that tail can keep the overlay visible
+  // long after authentication succeeded; waiting on its paint misreports a UI tail as a NIP-46
+  // timeout. The expected bunker key is the correlated completion signal.
   const who = () => { try{ const m = window.__PC && window.__PC.me && window.__PC.me();
                            return (m && m.pubkey) || ''; }catch(_){ return ''; } };
   // Long enough for the 12s probe plus a slow signer, and it returns the moment it is done.
   for (let i = 0; i < 300; i++) {
     await sleep(200);
-    if ($('#auth-gate').classList.contains('hidden') && who()) return { ok: true, err: '', pk: who() };
+    if (who() === expectedPk) return { ok: true, err: '', pk: who(),
+                                      gateHidden: $('#auth-gate').classList.contains('hidden') };
     const e = ($('#amber-error') || {}).textContent || '';
     if (e) return { ok: false, err: e, pk: who() };
   }
@@ -341,7 +346,7 @@ async def scenario(js, bunker, uri_relays):
     """Run one login attempt through the real UI. Returns (ok, detail)."""
     uri = "bunker://" + bunker.pk + "?" + "&".join(
         "relay=" + urllib.parse.quote(r, safe="") for r in uri_relays) + "&secret=s3cret"
-    r = await js(f"({LOGIN})({json.dumps(uri)})", awaited=True)
+    r = await js(f"({LOGIN})({json.dumps(uri)}, {json.dumps(bunker.user_pk)})", awaited=True)
     return r or {"ok": False, "err": "the page did not answer"}
 
 
@@ -437,7 +442,8 @@ async def drive(url):
                     await call("Page.navigate", {"url": url})
                     for _ in range(80):
                         await asyncio.sleep(0.25)
-                        if await js("typeof document.querySelector('#btn-amber')?.onclick==='function' && "
+                        if await js("window.__PC_BOOTED === true && "
+                                    "typeof document.querySelector('#btn-amber')?.onclick==='function' && "
                                     "typeof document.querySelector('#btn-amber-connect')?.onclick==='function'"):
                             return True
                     return False
