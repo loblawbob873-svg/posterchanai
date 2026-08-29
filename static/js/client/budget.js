@@ -83,6 +83,8 @@
 
   const D_TAG = 'pcai:budget';
   const KIND  = 30078;
+  const NIP44_MAX = 65535;
+  const nip44Bytes = text => new TextEncoder().encode(String(text == null ? '' : text)).length;
 
   const ME = () => PC.ME;
   const money = n => '$' + Math.abs(Number(n)||0).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2});
@@ -124,6 +126,13 @@
       _doc = BLANK();
       return _doc;
     }
+    /* AN EMPTY EVENT IS CORRUPT, NOT A SIGNER REQUEST. Passing it to Firefox's NIP-07 provider
+     * makes the crypto library reject `invalid plaintext size: must be between 1 and 65535 bytes`;
+     * on some Firefox versions that rejection is reported at the injected provider before this
+     * module's outer catch gets to turn it into a useful Budget error. It also burns an approval
+     * prompt/time budget on data that can never decrypt. Refuse the record at its owner boundary. */
+    const sealed = typeof ev.content === 'string' ? ev.content : '';
+    if(!sealed) throw new Error('your encrypted budget record is empty or damaged; the signer was not asked');
     let raw='';
     /* BOUNDED, because an external signer can simply never answer.
      *
@@ -139,7 +148,7 @@
      * which is the half that worked. */
     try{
       raw = await Promise.race([
-        PC.nip44dec(ME().pubkey, ev.content||''),
+        PC.nip44dec(ME().pubkey, sealed),
         new Promise((_,rej)=> setTimeout(()=> rej(new Error(
           'your signer did not answer the request to decrypt your budget')), 20000)),
       ]);
@@ -159,7 +168,15 @@
     // BACK to the caller keeps the rejection, so "Add to budget" can tell success from failure
     // instead of reporting a save that never landed.
     const done = chain.catch(()=>{}).then(async ()=>{
-      const ct = await PC.nip44enc(ME().pubkey, JSON.stringify(_doc));
+      const plain = JSON.stringify(_doc);
+      const bytes = nip44Bytes(plain);
+      /* NIP-44 IS A SINGLE 64 KiB ENVELOPE. Letting the provider discover this produces a raw
+       * extension error (and, for fire-and-forget UI actions, used to become an unhandled Firefox
+       * rejection). Chunking would invent a document format no other device understands, so keep
+       * the existing doc untouched and tell the caller exactly how far over the carrier it is. */
+      if(bytes < 1 || bytes > NIP44_MAX) throw new Error(
+        `your budget is ${bytes} bytes; encrypted budgets can be at most ${NIP44_MAX} bytes`);
+      const ct = await PC.nip44enc(ME().pubkey, plain);
       const r = await publish(KIND, ct, [['d', D_TAG]], {quiet:true});
       if(!(r && r.ok)) throw new Error('relay rejected the write');
     });

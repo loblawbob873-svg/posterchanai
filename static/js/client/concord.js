@@ -8,8 +8,12 @@
     l.href='/static/css/concord.css?v=17'; (document.head||document.documentElement).appendChild(l);
   }
   const PC=()=>window.__PC;
-  const CORD_RELAYS=['wss://jskitty.com/nostr','wss://asia.vectorapp.io/nostr','wss://nostr.computingcache.com','wss://relay.ditto.pub','wss://relay.dreamith.to'];
-  const DISCOVER_RELAYS=['wss://relay.ditto.pub','wss://relay.dreamith.to'];
+  /* Automatic reads must contain only known Concord endpoints. relay.ditto.pub currently refuses
+   * WebSocket handshakes, and copying the user's general pool into external discovery also created
+   * redundant Damus sockets. Explicit invite/bootstrap and room bundle relays remain authoritative
+   * below, even when they name one of those hosts. */
+  const CORD_RELAYS=['wss://jskitty.com/nostr','wss://asia.vectorapp.io/nostr','wss://nostr.computingcache.com','wss://relay.dreamith.to'];
+  const DISCOVER_RELAYS=['wss://relay.dreamith.to'];
   /* A community's invite is authoritative about where its encrypted stream lives. Appending the
    * global compatibility set to every read/write caused a room open to spray sockets at unrelated
    * relays and could report a successful send on a default relay Armada never reads. Defaults are
@@ -655,7 +659,10 @@
   }
   async function nip29Memberships(p,viewer,signal=null){
     if(!viewer.pubkey)return {groups:[],relays:[]};
-    const filters=[{kinds:[10009],authors:[viewer.pubkey],limit:8}],relays=[...new Set([...(p.relayUrls?p.relayUrls():[]),...CORD_RELAYS])],
+    /* relayQuery already asks the connected user pool. The external half is Concord bootstrap
+       recovery only; unioning relayUrls here duplicated Damus (and any other personal relay) as a
+       fresh queryFrom WebSocket on every Discover recovery. */
+    const filters=[{kinds:[10009],authors:[viewer.pubkey],limit:8}],relays=CORD_RELAYS,
       [pool,listed]=await Promise.all([p.relayQuery?p.relayQuery(filters,8000):[],p.relayQueryFrom?p.relayQueryFrom(relays,filters,{timeout:8000,max:12,exact:true,signal}):[]]),
       queried=[...new Map([...(pool||[]),...(listed||[])].map(e=>[e.id,e])).values()],events=p.verifyRelayEvents?await p.verifyRelayEvents(queried):[],
       event=events.sort((a,b)=>Number(b.created_at)-Number(a.created_at)||String(a.id).localeCompare(String(b.id)))[0];

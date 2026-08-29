@@ -141,6 +141,9 @@ const exactRoomRelays=PCConcord.roomRelays({relays:['wss://relay.poster.place']}
 if(JSON.stringify(exactRoomRelays)!==JSON.stringify(['wss://relay.poster.place']))
   throw new Error('room relay was polluted with global Concord defaults: '+JSON.stringify(exactRoomRelays));
 if(!PCConcord.roomRelays({relays:[]}).length)throw new Error('legacy room lost bootstrap fallback');
+if(JSON.stringify(PCConcord.roomRelays({relays:['wss://relay.ditto.pub/','wss://relay.damus.io/']}))!==
+   JSON.stringify(['wss://relay.ditto.pub','wss://relay.damus.io']))
+  throw new Error('explicit invite/room relays were incorrectly filtered');
 
 const publicLinks=PCConcord.discoverInvites('Join us https://armada.buzz/invite/naddr1qqqq#abc_DEF',{created_at:1});
 if(publicLinks.length!==1 || publicLinks[0].name!=='Join us') throw new Error('public discovery parser failed');
@@ -407,6 +410,7 @@ if(rooms.length!==1 || rooms[0].local || !rooms[0].url || !rooms[0].channels || 
 // must close it, and all ensuing history traffic must name only the relay carried by the bundle.
 const openedBeforeDiscover=calls.discoveryOpened,closedBeforeDiscover=calls.discoveryClosed;
 const ordinaryRelayQueryFrom=window.__PC.relayQueryFrom;let abortedDiscoveryReads=0;
+const queriesBeforeDiscover=calls.queryTargets.length;
 window.__PC.relayQueryFrom=(relays,filters,options={})=>{
   calls.queryTargets.push([...relays]);
   if(!options.signal)return Promise.resolve(relayFixtures(filters));
@@ -414,6 +418,10 @@ window.__PC.relayQueryFrom=(relays,filters,options={})=>{
 };
 control('cc-discovery').click();
 if(calls.discoveryOpened!==openedBeforeDiscover+1)throw new Error('Discover did not open its public relay subscription');
+await new Promise(resolve=>setTimeout(resolve,0));
+const automaticTargets=calls.queryTargets.slice(queriesBeforeDiscover).flat();
+if(automaticTargets.some(relay=>/relay\.(?:ditto\.pub|damus\.io)/.test(relay)))
+  throw new Error('automatic Concord discovery constructed a dead/general relay socket: '+JSON.stringify(automaticTargets));
 const roomButton=dollars('[data-cc-server]').find(b=>b.dataset.ccServer==='0');
 if(!roomButton)throw new Error('Discover did not render the joined room control');
 const queriesBeforeRoom=calls.queryTargets.length;
