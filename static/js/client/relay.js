@@ -37,6 +37,11 @@
   function _isRelayUrl(u){
     return _WSURL.test(String(u || '').trim());
   }
+  /* Deployment-denied relay hosts. These two consistently refuse/time out and have appeared through
+     legacy saved rooms, user relay migrations and external reads. Check at every constructor path so
+     no persisted spelling can bypass a higher-level list cleanup. */
+  var _BLOCKED_RELAY_HOST = /^wss?:\/\/(?:relay\.ditto\.pub|relay\.damus\.io)(?::\d+)?(?:[\/?#]|$)/i;
+  function _isBlockedRelay(u){ return _BLOCKED_RELAY_HOST.test(String(u||'').trim()); }
 
   // ---- one socket to one relay; reports up to the pool ----
   class Conn {
@@ -49,10 +54,10 @@
       /* NOT `_retry()`: a malformed URL cannot start working, and retrying one is how a typo becomes
          an endless stream of rejected connections nobody can trace back to it. Said once, out loud,
          because the alternative is a relay that is simply always 'off' for no stated reason. */
-      if(!_isRelayUrl(this.url)){
+      if(!_isRelayUrl(this.url)||_isBlockedRelay(this.url)){
         if(!this._badUrl){
           this._badUrl = true;
-          try{ console.warn('[relay] not a ws:// or wss:// URL, so it is being ignored:', this.url); }catch(_){}
+          try{ console.warn('[relay] unavailable or invalid relay URL ignored:', this.url); }catch(_){}
         }
         this._setStatus('off');
         return;
@@ -153,7 +158,7 @@
     _queryFromActive: new Set(),
     _queryFromCooldown: new Map(),
     _queryFromStops: new Set(),
-    _queryFromBlockedHosts: new Set(['relay.ditto.pub']),
+    _queryFromBlockedHosts: new Set(['relay.ditto.pub','relay.damus.io']),
 
     /* Ephemeral external reads belong to the screen that requested them. A route change closes all
        of them synchronously; per-call AbortSignals remain useful for finer owners inside a view. */
@@ -162,7 +167,7 @@
     // Connect to an explicit set of relays. verify=true makes the pool signature-verify every
     // incoming event (used for user-supplied relays); verify=false trusts them (built-in WoT relay).
     configure({ urls, verify } = {}){
-      urls = [...new Set((urls||[]).filter(Boolean))];
+      urls = [...new Set((urls||[]).filter(u=>u&&!_isBlockedRelay(u)))];
       this._verify = !!verify;
       this.url = urls[0] || null;
       // drop connections no longer wanted
@@ -649,7 +654,7 @@
     // Resolves with the number of relays that accepted. Skips relays already in the pool (publish()
     // covered them) and is a no-op when there are none.
     publishTo(urls, event, { timeout=5000, max=4 } = {}){
-      const targets = [...new Set((urls||[]).filter(Boolean))].filter(u => !this._conns.has(u)).slice(0, max);
+      const targets = [...new Set((urls||[]).filter(u=>u&&!_isBlockedRelay(u)))].filter(u => !this._conns.has(u)).slice(0, max);
       if (!targets.length) return Promise.resolve(0);
       return Promise.all(targets.map(u => new Promise(resolve => {
         let ws, done = false, tm;
@@ -671,7 +676,7 @@
      * events are signature-verified before delivery and sockets are closed with the returned
      * function, so discovering an IP never silently changes the user's saved relay list. */
     subscribeFrom(urls, filters, { onEvent, timeout=60000, max=4 } = {}){
-      const targets=[...new Set((urls||[]).filter(Boolean))].filter(u=>!this._conns.has(u)).slice(0,max);
+      const targets=[...new Set((urls||[]).filter(u=>u&&!_isBlockedRelay(u)))].filter(u=>!this._conns.has(u)).slice(0,max);
       const sockets=[]; let closed=false,tm=null,readyDone=false,readyResolve;
       /* Callers that bridge a realtime protocol must not report "joined" before an external
        * socket has actually sent its REQ.  The old API returned its closer immediately, while the
@@ -705,6 +710,7 @@
     // { ok, msg } like publish(). signAuth runs in the app (it owns the active signer — extension /
     // NIP-46 / local key), so relay.js stays signer-agnostic.
     publishAuthed(url, event, signAuth, { timeout = 9000 } = {}){
+      if(_isBlockedRelay(url))return Promise.resolve({ok:false,msg:'relay unavailable'});
       return new Promise(resolve => {
         let ws, done = false, tm, rtm, pgm, authSent = false, authedEventId = null, authResent = false, lastReject = '';
         const fin = (r) => { if (done) return; done = true; clearTimeout(tm); clearTimeout(rtm); clearTimeout(pgm);
