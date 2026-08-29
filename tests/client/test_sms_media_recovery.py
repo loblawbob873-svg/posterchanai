@@ -585,7 +585,14 @@ class TheMigrationIsBoundedPerVisit(unittest.TestCase):
         res = run(isPhone=True, generatedPictures=60, migrationBatch=60,
                   steps=["phoneLoad", "migrateAll"])
         published = len(res["published"])
-        self.assertGreater(published, 0, "the migration did nothing at all")
+        # A FLOOR, NOT ONLY A CEILING. This test had only an upper bound, so when I cut the batch
+        # to five rows chasing a stutter that turned out to be the per-byte base64 decode, it stayed
+        # green while a thousand-picture backlog quietly became days of work — reported as "it should
+        # have been done uploading media by now, it's been hours". A copy that is too slow to finish
+        # is as broken as one that never starts, and only a floor can say so.
+        self.assertGreaterEqual(published, 40,
+                                "one visit copied %d messages — at that rate a real backlog never "
+                                "finishes" % (published,))
         # A hundred a visit. The bound exists so the phone is never owned by the sweep; the FREEZE
         # was the per-byte base64 decode, and once that went to the browser's native decoder a tiny
         # batch stopped being caution and became the reason a thousand-picture backlog would take
