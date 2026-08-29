@@ -157,6 +157,7 @@
     _ready: false,
     _queryFromActive: new Set(),
     _queryFromCooldown: new Map(),
+    _queryFromPurposeCooldown: new Map(),
     _queryFromStops: new Set(),
     _queryFromBlockedHosts: new Set(['relay.ditto.pub','relay.damus.io']),
 
@@ -757,13 +758,13 @@
     // non-WoT peer's NIP-17 inbox list (kind 10050), which our WoT-only relay never stored. Same
     // bounded ephemeral-socket pattern as publishTo: REQ, collect until EOSE/timeout, close. Events
     // are UNVERIFIED here (untrusted relays) — the caller must verify signatures before trusting them.
-    queryFrom(urls, filters, { timeout=4000, max=4, exact=false, signal=null, purpose='external read' } = {}){
+    queryFrom(urls, filters, { timeout=4000, max=4, exact=false, signal=null, purpose='external read', minInterval=0, allowBlocked=false, failureCooldown=30000 } = {}){
       /* Most external discovery reads should avoid duplicating a connected pool socket. Some
        * protocols bind truth to one named relay (notably NIP-29), so exact=true deliberately opens
        * that relay even when it is also present in the shared pool. */
       const blocked=u=>{try{return this._queryFromBlockedHosts.has(new URL(String(u)).hostname.toLowerCase());}catch(_){return true;}},
         now=Date.now(),targets = [...new Set((urls||[]).filter(Boolean))]
-        .filter(u => !blocked(u) && (exact || !this._conns.has(u)) && !this._queryFromActive.has(u) && Number(this._queryFromCooldown.get(u)||0)<=now)
+        .filter(u => (allowBlocked || !blocked(u)) && (exact || !this._conns.has(u)) && !this._queryFromActive.has(u) && Number(this._queryFromCooldown.get(u)||0)<=now && (minInterval<=0 || Number(this._queryFromPurposeCooldown.get(u+'\0'+purpose)||0)<=now))
         .slice(0, max);
       if (!targets.length || (signal && signal.aborted)) return Promise.resolve([]);
       const subId = 'qf' + Math.random().toString(36).slice(2,9);
@@ -775,9 +776,12 @@
           if (signal) signal.removeEventListener('abort', abort);
           Relay._queryFromStops.delete(stop);Relay._queryFromActive.delete(u);
           if(outcome==='failure'){
-            Relay._queryFromCooldown.set(u,Date.now()+30000);
-            try{console.warn('[relay queryFrom]',purpose,u,'failed; cooling down 30s');}catch(_){}
-          }else if(outcome==='success')Relay._queryFromCooldown.delete(u);
+            Relay._queryFromCooldown.set(u,Date.now()+Math.max(30000,Number(failureCooldown)||0));
+            try{console.warn('[relay queryFrom]',purpose,u,'failed; cooling down');}catch(_){}
+          }else if(outcome==='success'){
+            Relay._queryFromCooldown.delete(u);
+            if(minInterval>0)Relay._queryFromPurposeCooldown.set(u+'\0'+purpose,Date.now()+minInterval);
+          }
           if (ws){ try{ ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null; ws.close(); }catch(_){} }
           resolve(got); };
         if (signal){ if (signal.aborted) return fin('abort'); signal.addEventListener('abort', abort, {once:true}); }

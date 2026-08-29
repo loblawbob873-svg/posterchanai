@@ -15,7 +15,7 @@ const p={
 };
 const joined=await api.nip29Memberships(p,viewer);
 if(nip44Calls!==1||nip04Calls!==0||joined.groups.length!==2||joined.groups[1].id!=='private')throw new Error('NIP-44 private self-list was not decoded');
-if(poolQueries!==1||listedQueries[0].relays.includes('wss://current-app.example')||listedQueries[0].relays.some(r=>/relay\.(?:damus\.io|ditto\.pub)/.test(r))||listedQueries[0].filters[0].kinds[0]!==10009||listedQueries[0].filters[0].authors[0]!==viewer.pubkey||!listedQueries[0].opts.exact)throw new Error('kind-10009 lookup skipped the connected pool or duplicated it as a general/dead external relay');
+if(poolQueries!==1||listedQueries[0].relays.includes('wss://current-app.example')||!listedQueries[0].relays.some(r=>/relay\.damus\.io/.test(r))||listedQueries[0].filters[0].kinds[0]!==10009||listedQueries[0].filters[0].authors[0]!==viewer.pubkey||!listedQueries[0].opts.exact||!listedQueries[0].opts.allowBlocked||listedQueries[0].opts.failureCooldown<1800000)throw new Error('kind-10009 lookup skipped connected/legacy membership sources or lacked a long failure circuit');
 const metadataEvent={id:'meta',kind:39000,created_at:30,tags:[['d','private'],['name','Private Room'],['about','from tags'],['picture','https://example.test/icon.png']],content:''};
 p.relayQueryFrom=async(relays,filters,opts)=>{listedQueries.push({relays,filters,opts});return [metadataEvent,{...metadataEvent,id:'forged-extra',tags:[['d','other']]}];};
 const metadata=await api.nip29Metadata(p,'wss://groups.example',['private']);

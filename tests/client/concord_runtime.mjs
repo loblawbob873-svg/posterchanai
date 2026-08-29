@@ -95,7 +95,7 @@ window.__PC = {
   osNotify:(title,body,opts)=>{ calls.mentions.push({title,body,opts}); },
   relaySubscribe:(_filters,handlers)=>{calls.discoveryOpened++;calls.discoveryHandlers=handlers;return{close(){calls.discoveryClosed++;}};},
   relayQuery:async filters=>relayFixtures(filters),
-  relayQueryFrom:async(relays,filters)=>{calls.queryTargets.push([...relays]);return relayFixtures(filters);},
+  relayQueryFrom:async(relays,filters,options={})=>{calls.queryTargets.push([...relays]);calls.queryOptions=(calls.queryOptions||[]).concat(options);return relayFixtures(filters);},
   relayUrls:()=>['wss://relay.example'], signTemplate:async template=>template,
   relayPublish:async()=>({ok:true}), relayPublishTo:async(relays,event)=>{calls.publishTargets.push([...relays]);calls.wraps.push(event);return 1;},
   publish:async()=>({}),
@@ -413,20 +413,25 @@ const ordinaryRelayQueryFrom=window.__PC.relayQueryFrom;let abortedDiscoveryRead
 const queriesBeforeDiscover=calls.queryTargets.length;
 window.__PC.relayQueryFrom=(relays,filters,options={})=>{
   calls.queryTargets.push([...relays]);
+  calls.queryOptions=(calls.queryOptions||[]).concat(options);
   if(!options.signal)return Promise.resolve(relayFixtures(filters));
   return new Promise(resolve=>options.signal.addEventListener('abort',()=>{abortedDiscoveryReads++;resolve([]);},{once:true}));
 };
 control('cc-discovery').click();
 if(calls.discoveryOpened!==openedBeforeDiscover+1)throw new Error('Discover did not open its public relay subscription');
 await new Promise(resolve=>setTimeout(resolve,0));
-const targetsBeforePassiveCard=calls.queryTargets.length;
+const optionsBeforePassiveCard=(calls.queryOptions||[]).length;
 calls.discoveryHandlers.onEvent({id:'public-card',created_at:99,pubkey:'b'.repeat(64),content:'Public https://armada.buzz/invite/naddr1qqqq#abc_DEF'});
 await new Promise(resolve=>setTimeout(resolve,0));
-if(calls.queryTargets.length!==targetsBeforePassiveCard)
+const passiveOptions=(calls.queryOptions||[]).slice(optionsBeforePassiveCard);
+if(passiveOptions.some(options=>/explicit invite|concord room$/.test(String(options.purpose||''))))
   throw new Error('passive public community card opened its invite/bootstrap relays');
-const automaticTargets=calls.queryTargets.slice(queriesBeforeDiscover).flat();
-if(automaticTargets.some(relay=>/relay\.(?:ditto\.pub|damus\.io)/.test(relay)))
-  throw new Error('automatic Concord discovery constructed a dead/general relay socket: '+JSON.stringify(automaticTargets));
+const automaticQueries=calls.queryTargets.slice(queriesBeforeDiscover),automaticTargets=automaticQueries.flat();
+for(let i=0;i<automaticQueries.length;i++)if(automaticQueries[i].some(relay=>/relay\.(?:ditto\.pub|damus\.io)/.test(relay))){
+  const options=calls.queryOptions[calls.queryOptions.length-automaticQueries.length+i]||{};
+  if(options.allowBlocked!==true||Number(options.failureCooldown)<1800000)
+    throw new Error('legacy membership recovery was not bounded: '+JSON.stringify({relays:automaticQueries[i],options}));
+}
 if(automaticTargets.length>12)
   throw new Error('one Discover paint fanned out across passive invite cards: '+JSON.stringify(automaticTargets));
 const roomButton=dollars('[data-cc-server]').find(b=>b.dataset.ccServer==='0');

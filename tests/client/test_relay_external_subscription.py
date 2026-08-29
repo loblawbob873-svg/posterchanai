@@ -128,3 +128,34 @@ def test_ditto_and_damus_are_rejected_by_external_and_pool_constructors(tmp_path
         "events": [], "sockets": ["wss://relay.good.example/"],
         "configured": ["wss://relay.good.example/"], "afterConnect": [],
     }
+
+
+def test_successful_background_poll_is_throttled_and_view_leave_closes_pending_socket(tmp_path):
+    driver = tmp_path / "query-throttle.js"
+    driver.write_text(textwrap.dedent(f"""
+      class FakeWS {{
+        constructor(url){{this.url=url;FakeWS.all.push(this);}}
+        send(value){{this.sent=JSON.parse(value);}}
+        close(){{this.closed=true;}}
+        open(){{this.onopen&&this.onopen();}}
+        receive(value){{this.onmessage&&this.onmessage({{data:JSON.stringify(value)}});}}
+      }}
+      FakeWS.all=[];global.WebSocket=FakeWS;global.window=global;global.self=global;
+      global.document={{hidden:false,addEventListener(){{}}}};Object.defineProperty(global,'navigator',{{value:{{onLine:true}}}});
+      global.location={{origin:'https://app.test',protocol:'https:'}};global.Worker=class{{postMessage(){{}}}};
+      require({json.dumps(str(RELAY))});
+      (async()=>{{
+        const opts={{exact:true,purpose:'concord room live fixture',minInterval:60000}};
+        const first=Relay.queryFrom(['wss://relay.dreamith.to'],[{{kinds:[1059]}}],opts);
+        const ws=FakeWS.all[0];ws.open();ws.receive(['EOSE',ws.sent[1]]);await first;
+        const repeated=await Promise.all(Array.from({{length:20}},()=>Relay.queryFrom(['wss://relay.dreamith.to'],[{{kinds:[1059]}}],opts)));
+        const nextPage=Relay.queryFrom(['wss://relay.dreamith.to'],[{{kinds:[1059],until:10}}],{{...opts,minInterval:0}});
+        const pageWs=FakeWS.all[1];pageWs.open();pageWs.receive(['EOSE',pageWs.sent[1]]);await nextPage;
+        const pending=Relay.queryFrom(['wss://relay.dreamith.to'],[{{kinds:[1059]}}],{{...opts,purpose:'concord room metadata fixture'}});
+        const leaving=FakeWS.all[2];Relay.abortQueries();await pending;
+        console.log(JSON.stringify({{count:FakeWS.all.length,repeated:repeated.flat(),closed:!!leaving.closed}}));
+      }})().catch(error=>{{console.error(error);process.exit(1);}});
+    """), encoding="utf-8")
+    run = subprocess.run(["node", str(driver)], capture_output=True, text=True, timeout=10)
+    assert run.returncode == 0, run.stderr
+    assert json.loads(run.stdout) == {"count": 3, "repeated": [], "closed": True}

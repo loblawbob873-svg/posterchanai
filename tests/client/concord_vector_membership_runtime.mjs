@@ -33,4 +33,14 @@ const merged=window.PCConcord.mergeArmadaBundle(complete,snapshot);
 if(merged.community_root!=='new-root'||merged.owner!=='new-owner'||merged.channels[0].key!=='general-key'||
    merged.held_roots[0].key!=='old-key'||merged.relays.length!==2)
   throw new Error('membership refresh discarded invite-only history material');
+const poolEvent={id:'pool-membership',kind:13302,created_at:20,tags:[],content:'pool'},legacyEvent={id:'legacy-membership',kind:33302,created_at:10,tags:[['d','0']],content:'legacy'};
+const queries=[];
+const distributed=await window.PCConcord.membershipEvents({
+  relayQuery:async()=>[poolEvent],
+  relayQueryFrom:async(relays,_filters,options)=>{queries.push({relays,options});return[legacyEvent];},
+},hex('9'));
+if(!distributed.some(e=>e.id===poolEvent.id)||!distributed.some(e=>e.id===legacyEvent.id))
+  throw new Error('distributed pool/legacy relay membership snapshots were not unioned');
+if(!queries.length||!queries.every(q=>q.relays.includes('wss://relay.ditto.pub')&&q.relays.includes('wss://relay.damus.io')&&q.options.allowBlocked&&q.options.failureCooldown>=1800000))
+  throw new Error('legacy membership sources were omitted or lack a bounded long circuit');
 console.log('vector membership runtime ok');

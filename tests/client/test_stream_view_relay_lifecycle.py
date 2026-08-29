@@ -13,7 +13,7 @@ RELAY = ROOT / "static/js/client/relay.js"
 pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 
 
-def test_switching_from_streams_aborts_damus_and_nos_lol_sockets(tmp_path):
+def test_switching_from_streams_aborts_external_directory_sockets(tmp_path):
     helper = re.search(
         r"let _streamsReadOwner=null;\s*function _stopStreamsReads\(\).*?\s*function _beginStreamsReads\(\).*?\}",
         APP,
@@ -41,7 +41,7 @@ def test_switching_from_streams_aborts_damus_and_nos_lol_sockets(tmp_path):
       require({json.dumps(str(RELAY))});
       {helper.group(0)}
       const signal=_beginStreamsReads();
-      const pending=Relay.queryFrom(['wss://nos.lol','wss://relay.damus.io'],[{{kinds:[30311]}}],
+      const pending=Relay.queryFrom(['wss://nos.lol','wss://relay.good-two.example'],[{{kinds:[30311]}}],
         {{timeout:60000,exact:true,signal}});
       _stopStreamsReads(); // switchView('concord')
       pending.then(events=>console.log(JSON.stringify({{events,urls:FakeWS.all.map(x=>x.url),closed:FakeWS.all.map(x=>!!x.closed)}})));
@@ -49,6 +49,6 @@ def test_switching_from_streams_aborts_damus_and_nos_lol_sockets(tmp_path):
     run = subprocess.run(["node", str(driver)], capture_output=True, text=True, timeout=10)
     assert run.returncode == 0, run.stderr
     result = json.loads(run.stdout)
-    assert result["urls"] == ["wss://nos.lol", "wss://relay.damus.io"]
+    assert result["urls"] == ["wss://nos.lol", "wss://relay.good-two.example"]
     assert result["closed"] == [True, True]
     assert result["events"] == []
