@@ -29,6 +29,11 @@ logger = logging.getLogger(__name__)
 # reload passes a shorter span (see thread._spawn_firehose) since only a reconnect, not a full boot.
 _STAGGER_SPAN = 6.0
 
+# HOW LONG A SESSION HAS TO LAST BEFORE IT COUNTS AS ONE THAT WORKED. Longer than the 45s recv
+# timeout below, so a stream that survives one keepalive cycle qualifies and one that is dropped
+# on sight does not.
+_STABLE_AFTER = 60.0
+
 # Live per-stream state for the status file → Server Stats' relay panel: {(url, label): {...}}.
 # Bumped on the receive path (one dict lookup + an int), so it costs nothing per event. It is
 # process-local and rebuilt from scratch on every (re)spawn, which is why `_prune_status` runs at
@@ -74,6 +79,7 @@ async def _run_one(relay_url: str, kinds: list, on_event, stop: asyncio.Event, d
             pass
     backoff = 2
     while not stop.is_set():
+        opened = time.monotonic()
         try:
             # Generous frame cap: long-form articles (kind 30023) can be large; too small a
             # cap would raise on a big event and drop the whole upstream connection.
@@ -86,7 +92,19 @@ async def _run_one(relay_url: str, kinds: list, on_event, stop: asyncio.Event, d
                 await ws.send(json.dumps(["REQ", sub, flt]))
                 logger.info("[nostr-relay] firehose connected: %s%s", relay_url, label)
                 _mark(relay_url, label, connected=True)
-                backoff = 2
+                # THE BACKOFF IS NOT RESET HERE, and that one line was a reconnect storm.
+                #
+                # Resetting on `connected` treats opening a socket as success, so an upstream that
+                # ACCEPTS us and then drops the stream a second later — a rate limiter, a relay that
+                # dislikes the REQ, a proxy closing idle tunnels — resets the delay to 2s on every
+                # single attempt and the exponential backoff can never engage. Measured on this
+                # node: `wss://nostr.openhoofd.nl/` reconnected 102 times in ten minutes, one every
+                # six seconds, while every other upstream reconnected once or twice. Each attempt
+                # replays a 120s look-back, and this process is also the local relay every client
+                # and the app itself talks to — which is what "timed out during opening handshake"
+                # on a files-index save actually was.
+                #
+                # Reset below instead, on a session that LASTED. Connecting is not succeeding.
                 while not stop.is_set():
                     try:
                         raw = await asyncio.wait_for(ws.recv(), timeout=45)
@@ -116,6 +134,12 @@ async def _run_one(relay_url: str, kinds: list, on_event, stop: asyncio.Event, d
             _mark(relay_url, label, connected=False)
         if stop.is_set():
             break
+        # A SESSION THAT LASTED IS THE SUCCESS SIGNAL, not one that merely opened. Anything
+        # shorter leaves the backoff climbing, so a hostile or broken upstream ends up retried once
+        # a minute rather than ten times a minute, and a healthy one that blips still comes back
+        # immediately.
+        if time.monotonic() - opened >= _STABLE_AFTER:
+            backoff = 2
         # Jittered backoff: a network/proxy blip drops every upstream at once, and without jitter
         # they'd all reconnect in lockstep and replay their look-back windows together — re-pegging
         # CPU and starving local /client handshakes (the same symptom the startup stagger targets,
