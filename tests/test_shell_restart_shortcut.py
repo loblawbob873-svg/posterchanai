@@ -225,3 +225,18 @@ def test_upgrade_restores_native_window_decorations_in_old_identity_configs():
     ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
     assert "default_floating_border[[:space:]]+none" in ebuild
     assert "default_floating_border normal 3" in ebuild
+
+
+def test_every_private_config_migration_is_parsed_and_rejects_duplicate_bindings():
+    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
+    assert 'sway -C -d -c "${cfg}"' in ebuild
+    assert "WLR_BACKENDS=headless" in ebuild
+    assert "grep -q 'Overwriting binding'" in ebuild
+    assert 'cp -p "${cfg_backup}" "${cfg}"' in ebuild
+
+
+def test_snap_bindings_are_canonicalised_instead_of_appended_over_whitespace_variants():
+    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
+    assert r"\$mod\+(Left|Right|Up)" in ebuild
+    for key in ("Left", "Right", "Up"):
+        assert f"bindsym $mod+{key} exec /usr/local/bin/pc-window-snap" in ebuild

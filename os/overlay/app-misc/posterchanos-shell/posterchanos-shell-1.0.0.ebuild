@@ -108,6 +108,8 @@ pkg_postinst() {
 	local cfg
 	for cfg in "${EROOT%/}/home/posterchan/.config/sway/config" "${EROOT%/}"/home/pc-*/.config/sway/config; do
 		[[ -f ${cfg} ]] || continue
+		local cfg_backup="${cfg}.posterchan-pre-update"
+		cp -p "${cfg}" "${cfg_backup}"
 		# These are package-owned bindings inside an otherwise user-owned file. Remove every older
 		# form first; merely checking for the keycode retained a stale command forever.
 		sed -i -E '/Ctrl\+Mod1\+(BackSpace|22).*pc-shell-(start|restart)/d' "${cfg}"
@@ -155,11 +157,15 @@ pkg_postinst() {
 		# Super+Arrow is the familiar snap gesture. Older configs used it only to move keyboard focus
 		# between outputs, leaving native Firefox/Telegram/Steam with no snapping at all.
 		sed -i -E '/^bindsym[[:space:]]+\$mod\+(Left|Right|Up|Down)[[:space:]]+focus output/d' "${cfg}"
+		# Canonicalise, do not merely append. Historical package configs used extra whitespace, so an
+		# exact grep missed Left/Up and appended the same key a second time. Sway accepts that but emits
+		# an "Overwriting binding" config error on every reload.
+		sed -i -E '/^bindsym[[:space:]]+\$mod\+(Left|Right|Up)[[:space:]]+exec[[:space:]]+\/usr\/local\/bin\/pc-window-snap[[:space:]]+(left|right|max)[[:space:]]*$/d' "${cfg}"
 		for snap in \
 			'bindsym $mod+Left exec /usr/local/bin/pc-window-snap left' \
 			'bindsym $mod+Right exec /usr/local/bin/pc-window-snap right' \
 			'bindsym $mod+Up exec /usr/local/bin/pc-window-snap max'; do
-			grep -qF "${snap}" "${cfg}" || echo "${snap}" >>"${cfg}"
+			echo "${snap}" >>"${cfg}"
 		done
 		# Never move a per-output PosterChan shell container itself. Older direct bindings bypassed
 		# the renderer handoff and left the source display black. Native apps still move directly;
@@ -204,6 +210,21 @@ pkg_postinst() {
 		# Restart only the PosterChan desktop shell; native applications remain open.
 		bindcode --no-repeat Ctrl+Mod1+22 exec /usr/local/bin/pc-shell-restart
 		SWAY_RECOVERY
+		# `sway -C` alone exits zero for duplicate keys. Debug output is part of the gate because Sway
+		# reports those as "Overwriting binding" and shows a config-error banner at reload.
+		local sway_runtime sway_check
+		sway_runtime="$(mktemp -d)"
+		chmod 0700 "${sway_runtime}"
+		sway_check="${sway_runtime}/check.log"
+		if ! XDG_RUNTIME_DIR="${sway_runtime}" WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 \
+			sway -C -d -c "${cfg}" >"${sway_check}" 2>&1 \
+			|| grep -q 'Overwriting binding' "${sway_check}"; then
+			cp -p "${cfg_backup}" "${cfg}"
+			rm -rf "${sway_runtime}" "${cfg_backup}"
+			ewarn "refused an invalid migrated Sway config; preserved ${cfg}"
+			continue
+		fi
+		rm -rf "${sway_runtime}" "${cfg_backup}"
 		# The system config includes this per-account file. It must exist before Sway parses the
 		# config; saving a display arrangement later fills it atomically.
 		local outputs="${cfg%/config}/outputs.conf"
