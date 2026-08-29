@@ -17,7 +17,11 @@ Writes are atomic (temp + os.replace) under a process lock.
 import json
 import logging
 import os
+import tempfile
 import threading
+from contextlib import contextmanager
+
+import fcntl
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +32,39 @@ _cache: dict | None = None
 
 
 _cache_stat = None
+
+
+def _load_disk() -> dict:
+    """Read the authoritative file, bypassing this process's cache.
+
+    Mutations call this only while holding ``_process_lock``.  Reloading inside that lock is what
+    turns a read/modify/write into one transaction across the app, worker and relay processes.
+    """
+    try:
+        with open(_KEYFILE, "r") as f:
+            data = json.load(f)
+    except (FileNotFoundError, ValueError, OSError):
+        data = {}
+    data.setdefault("operator_nsec", None)
+    data.setdefault("storage", {})
+    return data
+
+
+@contextmanager
+def _process_lock():
+    directory = os.path.dirname(_KEYFILE) or "."
+    os.makedirs(directory, exist_ok=True)
+    lock_path = _KEYFILE + ".lock"
+    with open(lock_path, "a+") as lock:
+        try:
+            os.chmod(lock_path, 0o600)
+        except OSError:
+            pass
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
 def _load() -> dict:
@@ -52,13 +89,7 @@ def _load() -> dict:
                 return _cache
         except OSError:
             return _cache
-    try:
-        with open(_KEYFILE, "r") as f:
-            data = json.load(f)
-    except (FileNotFoundError, ValueError, OSError):
-        data = {}
-    data.setdefault("operator_nsec", None)
-    data.setdefault("storage", {})
+    data = _load_disk()
     # Don't cache a read that produced NO operator key — it may be transient/racing; a later call re-reads
     # and picks up the real key once it's there. Once the key is present, the cache is trusted (above).
     if data.get("operator_nsec"):
@@ -72,19 +103,39 @@ def _load() -> dict:
 
 
 def _save(data: dict) -> None:
-    global _cache
-    os.makedirs(os.path.dirname(_KEYFILE), exist_ok=True)
-    tmp = _KEYFILE + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(data, f, separators=(",", ":"))
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, _KEYFILE)
+    global _cache, _cache_stat
+    directory = os.path.dirname(_KEYFILE) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=os.path.basename(_KEYFILE) + ".", suffix=".tmp",
+                               dir=directory)
     try:
-        os.chmod(_KEYFILE, 0o600)
-    except OSError:
-        pass
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, separators=(",", ":"))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, _KEYFILE)
+        # Persist the rename itself, not only the bytes inside the temporary file.
+        try:
+            dfd = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(dfd)
+            finally:
+                os.close(dfd)
+        except OSError:
+            pass
+    finally:
+        try:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+        except OSError:
+            pass
     _cache = data
+    try:
+        st = os.stat(_KEYFILE)
+        _cache_stat = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        _cache_stat = None
 
 
 # ---- per-user storage key (keyed by npub) ----
@@ -104,8 +155,8 @@ def get_storage_seckey(npub: str) -> bytes | None:
 def set_storage_seckey(npub: str, sk: bytes) -> None:
     if not npub or not sk:
         return
-    with _LOCK:
-        data = _load()
+    with _LOCK, _process_lock():
+        data = _load_disk()
         data["storage"][npub] = sk.hex()
         _save(data)
 
@@ -119,8 +170,8 @@ def get_operator_nsec() -> str | None:
 def set_operator_nsec(nsec: str) -> None:
     if not nsec:
         return
-    with _LOCK:
-        data = _load()
+    with _LOCK, _process_lock():
+        data = _load_disk()
         if data.get("operator_nsec") != nsec:
             data["operator_nsec"] = nsec
             _save(data)
@@ -132,8 +183,8 @@ def get_bridge_secret() -> bytes:
     once on first use and persisted, so a given fedi account always maps to the same npub on this
     deployment (and a DB loss can't change anyone's bridged identity). Local-only by design — it must
     never leave the node (knowing it lets one forge every puppet's posts)."""
-    with _LOCK:
-        data = _load()
+    with _LOCK, _process_lock():
+        data = _load_disk()
         hexsec = data.get("bridge_secret")
         if not hexsec:
             hexsec = os.urandom(32).hex()

@@ -164,6 +164,7 @@ function instance() {
 // touching this; it is the difference between a working app and one that hands its own URLs to
 // Windows, denies itself the camera, and ignores its own IPC.
 const { originOf, isOurs: _isOurs, isWebxdcSandbox: _isWebxdcSandbox } = require('./origin');
+const { isTrustedPage } = require('./page-trust');
 // "Ours" = the bundle, plus the instance's own pages (the client frames <instance>/admin). With no
 // instance only the bundle qualifies, which is exactly right.
 function isOurs(url) { return _isOurs(url, APP_ORIGIN, instance()); }
@@ -1017,10 +1018,11 @@ async function setTor(opts) {
 // ---- IPC ----------------------------------------------------------------------------------------
 // The bundle IS our own page, so the bridge is legitimately available to it — unlike the old shell,
 // where the client was remote and a compromised instance could otherwise have repointed the app. Every
-// handler still checks isOurs(), so a framed third party gets nothing.
+// handler still checks the shared exact-page predicate, so a framed third party or arbitrary local
+// document gets nothing.
 function fromOurPage(e) {
   const from = (e && e.senderFrame && e.senderFrame.url) || (e && e.sender && e.sender.getURL()) || '';
-  return from.startsWith('file://') || isOurs(from);   // file:// = boot.html / shell.html / picker.html
+  return isTrustedPage(from, __dirname);
 }
 
 ipcMain.on('pc:instance:sync', (e) => { e.returnValue = instance(); });
@@ -2277,12 +2279,15 @@ ipcMain.handle('pc:clip:read', async (e) => {
 });
 
 // Screen picker: thumbnails as data URLs so the page stays a plain, network-free document.
-ipcMain.handle('pc:screen:list', () => pendingSources.map((s) => ({
-  id: s.id,
-  name: s.name || 'Screen',
-  screen: String(s.id).startsWith('screen:'),
-  thumb: (() => { try { return s.thumbnail.toDataURL(); } catch (_) { return ''; } })(),
-})));
+ipcMain.handle('pc:screen:list', (e) => {
+  fsGuard(e);
+  return pendingSources.map((s) => ({
+    id: s.id,
+    name: s.name || 'Screen',
+    screen: String(s.id).startsWith('screen:'),
+    thumb: (() => { try { return s.thumbnail.toDataURL(); } catch (_) { return ''; } })(),
+  }));
+});
 
 // Second launch → focus the running window instead of opening a duplicate.
 if (!app.requestSingleInstanceLock()) { app.quit(); } else {

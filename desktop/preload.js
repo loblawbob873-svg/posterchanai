@@ -8,12 +8,14 @@
  * the bridge to do the two things a page cannot: name an instance, and drive tor.
  *
  * What must NOT get the bridge is anything remote the client embeds — the <iframe> to <instance>/admin
- * above all. That is why the test is the exact app:// origin and file://, never "not remote", and why
- * every handler in main.js re-checks the sender rather than trusting this.
+ * above all. The local exception is an exact allowlist: trusting the whole file:// scheme would give
+ * a downloaded HTML file the same native powers as shell.html. Every handler in main.js re-checks
+ * the sender rather than trusting this.
  */
 const { contextBridge, ipcRenderer } = require('electron');
+const { isTrustedPage } = require('./page-trust');
 
-const isOurPage = location.protocol === 'file:' || location.origin === 'app://posterchan';
+const isOurPage = isTrustedPage(location.href, __dirname);
 const backgroundOwner = !process.argv.includes('--pc-secondary-surface');
 
 // Clipboard WRITE, exposed more widely than the controls below — it cannot repoint the app or enumerate

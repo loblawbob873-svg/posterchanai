@@ -12,6 +12,10 @@ media host stamps the instance's real domain into an onion user's posts, permane
 Host is client-controlled, so the second half of this is the spoof guard: an arbitrary `Host: evil.onion`
 must never be echoed back as a URL we hand out. It has to match the address Tor actually generated.
 """
+import hashlib
+import hmac
+import asyncio
+import time
 import unittest
 from unittest import mock
 
@@ -125,16 +129,38 @@ class TestFileTokenFallback(unittest.TestCase):
     def test_query_token_is_accepted_exactly_like_the_cookie(self):
         from app.routers import client as c
         pk = "a" * 64
-        tok = c._mint_file_cookie(pk)
-        self.assertEqual(c._file_cookie_pubkey(tok), pk)          # cookie form
-        self.assertEqual(c._file_cookie_pubkey(tok), pk)          # same token, ?t= form
+        with mock.patch("app.services.keystore.get_operator_nsec", return_value="nsec1test"):
+            tok = c._mint_file_cookie(pk)
+            self.assertEqual(c._file_cookie_pubkey(tok), pk)          # cookie form
+            self.assertEqual(c._file_cookie_pubkey(tok), pk)          # same token, ?t= form
         self.assertNotEqual(c._file_cookie_pubkey("garbage"), pk)  # and it is still a real check
 
     def test_token_is_not_a_bearer_for_someone_elses_files(self):
         """The token must bind to ONE pubkey — otherwise ?t= would be a universal read capability."""
         from app.routers import client as c
-        tok = c._mint_file_cookie("a" * 64)
-        self.assertNotEqual(c._file_cookie_pubkey(tok), "b" * 64)
+        with mock.patch("app.services.keystore.get_operator_nsec", return_value="nsec1test"):
+            tok = c._mint_file_cookie("a" * 64)
+            self.assertNotEqual(c._file_cookie_pubkey(tok), "b" * 64)
+
+    def test_missing_durable_operator_key_cannot_mint_or_validate_a_known_fallback(self):
+        from app.routers import client as c
+        pk, exp = "a" * 64, int(time.time()) + 3600
+        known = hashlib.sha256(b"pcai-file-auth|pcai-no-operator-key").digest()
+        sig = hmac.new(known, f"{pk}.{exp}".encode(), hashlib.sha256).hexdigest()[:32]
+        with mock.patch("app.services.keystore.get_operator_nsec", return_value=None):
+            self.assertIsNone(c._mint_file_cookie(pk))
+            self.assertEqual(c._file_cookie_pubkey(f"{pk}.{exp}.{sig}"), "")
+
+    def test_signed_file_auth_fails_closed_when_the_durable_secret_is_unavailable(self):
+        from app.routers import client as c
+        pk = "a" * 64
+        with mock.patch.object(c.nostr_service, "to_pubkey_hex", return_value=pk), \
+             mock.patch.object(c, "_verify_self_auth", return_value=True), \
+             mock.patch("app.services.keystore.get_operator_nsec", return_value=None):
+            response = asyncio.run(c.client_file_auth(c.FileAuthReq(pubkey=pk, auth="signed"),
+                                                      _Req("example.test")))
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn("set-cookie", {k.lower(): v for k, v in response.headers.items()})
 
 
 if __name__ == "__main__":

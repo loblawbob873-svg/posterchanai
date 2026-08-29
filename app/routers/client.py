@@ -4037,18 +4037,23 @@ _FILE_COOKIE = "pc_file"
 _FILE_TTL = 12 * 3600
 
 
-def _file_auth_secret() -> bytes:
+def _file_auth_secret() -> bytes | None:
     """HMAC key derived from this node's operator key: stable across restarts, never leaves the box,
     and needs no new stored secret."""
     from app.services import keystore
-    seed = (keystore.get_operator_nsec() or "pcai-no-operator-key")
+    seed = keystore.get_operator_nsec()
+    if not seed:
+        return None
     return hashlib.sha256(b"pcai-file-auth|" + seed.encode()).digest()
 
 
-def _mint_file_cookie(pubkey_hex: str) -> str:
+def _mint_file_cookie(pubkey_hex: str) -> str | None:
+    secret = _file_auth_secret()
+    if secret is None:
+        return None
     exp = int(time.time()) + _FILE_TTL
     msg = f"{pubkey_hex}.{exp}".encode()
-    sig = hmac.new(_file_auth_secret(), msg, hashlib.sha256).hexdigest()[:32]
+    sig = hmac.new(secret, msg, hashlib.sha256).hexdigest()[:32]
     return f"{pubkey_hex}.{exp}.{sig}"
 
 
@@ -4058,7 +4063,10 @@ def _file_cookie_pubkey(raw: str) -> str:
         pk, exp, sig = (raw or "").split(".")
         if int(exp) < int(time.time()):
             return ""
-        good = hmac.new(_file_auth_secret(), f"{pk}.{exp}".encode(), hashlib.sha256).hexdigest()[:32]
+        secret = _file_auth_secret()
+        if secret is None:
+            return ""
+        good = hmac.new(secret, f"{pk}.{exp}".encode(), hashlib.sha256).hexdigest()[:32]
         return pk if hmac.compare_digest(sig, good) else ""
     except Exception:
         return ""
@@ -4078,6 +4086,9 @@ async def client_file_auth(data: FileAuthReq, request: Request):
     if not _verify_self_auth(data.auth, pk):
         return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
     tok = _mint_file_cookie(pk)
+    if tok is None:
+        return JSONResponse({"ok": False, "error": "file authorization is temporarily unavailable"},
+                            status_code=503)
     # Is this request on a connection where a cookie CAN'T work? An .onion is plain http, and a `Secure`
     # cookie (which SameSite=None requires) is refused over a non-HTTPS connection — so the APK, whose
     # page origin is https://localhost, has no cookie path to an onion host at all.
