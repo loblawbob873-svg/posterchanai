@@ -95,11 +95,17 @@ CHECKS = {
     # beside six Chrome-heavy UI checks starves its timers and produced two false login failures;
     # alone it repeatedly passes. This is a protocol timing test, not a CPU contention benchmark.
     "check_nip46_signer":              dict(group="ui", secs=420, serial=True),
-    "check_qr_scan":                   dict(group="ui", secs=900),
     "check_os_apps":                   dict(group="live", secs=900),
     # Two browsers, three pairings, and a clock-skew case that has to time out to prove it works.
     "check_qr_device_login":           dict(group="live", secs=900, serial=True),
     "check_repo_view_mobile":          dict(group="live", secs=420),
+    # These three drive real authenticated/client state. Treating them as self-contained made
+    # Settings and QR silently target an absent localhost:3051, while timeline uniformity queried
+    # production and called an empty incidental feed an environment skip. They must use the one
+    # instance the release runner was explicitly given, or be skipped before Chrome starts.
+    "check_user_settings_tabs":        dict(group="live", secs=420),
+    "check_timeline_uniformity":        dict(group="live", secs=600),
+    "check_qr_scan":                   dict(group="live", secs=900, serial=True),
     # Twenty cold browser sessions, each querying the production relays. Beside the parallel live
     # batch this can starve the very relay it is measuring: the full gate produced one empty first
     # profile and one timed-out first search, while the same five-session rate passed 20/20 alone.
@@ -286,6 +292,29 @@ def _captured(argv, cwd, env, timeout, output_path):
             except Exception:
                 p.kill()
             p.wait()
+        finally:
+            # A successful CHECK process is not proof that its browser tree stopped. Most drivers
+            # merely send Chromium SIGTERM in their finally block and do not wait; Chrome can still
+            # be flushing its profile when Python exits, becomes orphaned, and later owns the next
+            # check's port/profile. This process created a private session above, so every remaining
+            # member of that exact group belongs to this one check. Reap it on success as well as on
+            # timeout. Never use a name/profile-wide pkill: that could touch a user's browser.
+            if os.name != "nt":
+                try:
+                    os.killpg(p.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                deadline = time.monotonic() + 0.5
+                while time.monotonic() < deadline:
+                    try:
+                        os.killpg(p.pid, 0)
+                    except ProcessLookupError:
+                        break
+                    time.sleep(0.02)
+                try:
+                    os.killpg(p.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
         out.flush()
         out.seek(0)
         text = out.read()
@@ -299,7 +328,10 @@ def run_one(job, live, tmp, idx):
     """Run one check in its own process, with its own port, profile and clock."""
     env = dict(os.environ)
     env["PC_CHECK_PORT"] = str(PORT_BASE + idx)
-    env["PC_CHECK_PROFILE"] = str(tmp / job["name"])
+    # Logs may intentionally share --tmp across reruns; Chromium profiles may not. A check killed
+    # outside this runner can leave a browser holding yesterday's SingletonLock, so include the
+    # runner PID as well as the job index. No second invocation can attach to or delete this one.
+    env["PC_CHECK_PROFILE"] = str(tmp / "profiles" / f"{job['name']}-{os.getpid()}-{idx}")
     env.setdefault("PYTHONUNBUFFERED", "1")
     for key, value in (job.get("env") or {}).items():
         env[key] = str(value).replace("{live}", live or "")

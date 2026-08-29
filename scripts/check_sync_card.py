@@ -92,7 +92,18 @@ OPEN = r"""(async () => {
     try{
       await window.PCSync.sweep(f, { manual:true, dryRun:true });
       window.__sweepErr = '';
-      if(document.querySelector('.sync-counts span')) break;
+      /* The local journal count is intentionally allowed to paint before the shared record set.
+         Waiting for ANY chip therefore races: the pre-existing "0 here" wins and the harness
+         inspects the card before the preview's shared count repaint. Wait for the answer this
+         preview is meant to establish, not for an unrelated faster answer. */
+      for(let j = 0; j < 40; j++){
+        const counts = [...document.querySelectorAll('.sync-counts span')]
+          .map(x => x.textContent.trim());
+        if(counts.some(x => x.includes('in the folder'))) break;
+        await new Promise(r=>setTimeout(r, 50));
+      }
+      if([...document.querySelectorAll('.sync-counts span')]
+          .some(x => x.textContent.includes('in the folder'))) break;
     }catch(e){ window.__sweepErr = String((e && e.message) || e); }
     await new Promise(r=>setTimeout(r, 3000));
   }

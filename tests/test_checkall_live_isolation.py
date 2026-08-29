@@ -30,6 +30,15 @@ def test_full_sync_is_registered_live_and_isolated():
     assert check["live_args"] == ["{live}"]
 
 
+def test_instance_backed_visual_checks_never_silently_use_their_defaults():
+    checks = _checkall().CHECKS
+    for name in ("check_user_settings_tabs", "check_timeline_uniformity", "check_qr_scan"):
+        assert checks[name]["group"] == "live"
+    # Five camera/browser scenarios can starve alongside the parallel live batch and turn a login
+    # timeout into a misleading scanner skip.
+    assert checks["check_qr_scan"]["serial"] is True
+
+
 def test_installed_account_gate_keeps_the_external_electron_port():
     module = _checkall()
     check = module.CHECKS["check_installed_desktop_account"]
