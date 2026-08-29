@@ -896,9 +896,26 @@ function pickScreenSource() {
           webPreferences: { contextIsolation: true, nodeIntegration: false, preload: path.join(__dirname, 'preload.js') },
         });
         ipcMain.once('pc:screen:pick', (_e, id) => finish(id));
-        pick.once('ready-to-show', () => pick.show());
+        pick.once('ready-to-show', () => { if(!pick.isDestroyed()) pick.show(); });
         pick.on('closed', () => { ipcMain.removeAllListeners('pc:screen:pick'); finish(null); });
-        pick.loadFile(path.join(__dirname, 'picker.html'));
+        /* A picker renderer is disposable, but its PROMISE is not. A missing packaged picker.html
+         * or a renderer killed while thumbnails decode used to leave this BrowserWindow black and
+         * `pickerOpen` true forever: Cancel could not settle, and every later Share attempt was
+         * rejected as a second picker. Route both lifecycle failures through the same one-shot
+         * finish used by Close/Escape so focus returns to the owner and a retry is possible. */
+        pick.webContents.once('render-process-gone', (_event, details) => {
+          screenLog('picker renderer stopped: ' + String(details && details.reason || 'unknown'));
+          finish(null);
+        });
+        try{
+          Promise.resolve(pick.loadFile(path.join(__dirname, 'picker.html'))).catch(error => {
+            screenLog('picker page failed to load: ' + String(error && error.message || error));
+            finish(null);
+          });
+        }catch(error){
+          screenLog('picker page failed to load: ' + String(error && error.message || error));
+          finish(null);
+        }
       });
     })
     .catch((error) => {

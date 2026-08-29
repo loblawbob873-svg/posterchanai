@@ -44,7 +44,7 @@ def test_system_settings_categories_are_separate_pages_without_widget_cards():
                    'data-settings-page="displays"', 'data-settings-page="power"',
                    'data-settings-page="about"'):
         assert marker in render
-    assert "_osSettingsPage=b.dataset.page;draw()" in render
+    assert "_osSettingsPage=b.dataset.page;renderSystemSettings()" in render
     for marker in ('data-jump="widgets"', "data-widgets", "data-widget-add",
                    "data-widget-size", "data-widget-remove", "Remove widget"):
         assert marker not in render
@@ -69,7 +69,7 @@ def test_mobile_settings_keeps_every_category_reachable_when_sidebar_is_hidden()
     for destination in ("page:displays", "page:sound", "page:network", "page:bluetooth",
                         "page:power", "page:users", "page:updates", "page:about", "page:liveusb"):
         assert destination in render
-    assert "if(kind==='page'){_osSettingsPage=value;draw();}" in render
+    assert "if(kind==='page'){_osSettingsPage=value;renderSystemSettings();}" in render
     assert "else if(kind==='jump')jump(value,mobile)" in render
     assert ".os-set-mobile-nav{display:none}" in css
     mobile = css[css.index("@media(max-width:760px)", css.index(".os-settings-feed")):]
@@ -102,3 +102,14 @@ def test_installation_media_is_a_coherent_settings_page_in_both_bridge_states():
     assert '<h2>Installation media</h2>' in page
     assert '<div class="os-liveusb os-set-card">' in page
     assert 'Build an ISO first, then safely select where to write it.' in page
+
+
+def test_installation_media_can_copy_the_exact_selected_or_built_iso_path():
+    render = OS[OS.index("async function renderSystemSettings()"):
+                OS.index("function openTaskManager", OS.index("async function renderSystemSettings()"))]
+    page = render[render.index('<section data-liveusb data-settings-page="liveusb"'):]
+    assert 'data-live-copy disabled' in page
+    assert "const setIso=path=>{iso.value=String(path||'');copy.disabled=!iso.value}" in page
+    assert "if(p)setIso(p)" in page
+    assert "if(s&&s.path)setIso(s.path)" in page
+    assert "PC().copyValue(iso.value,'ISO path copied','Copy this ISO path:')" in page

@@ -1801,7 +1801,7 @@
         </section></section>
         <section data-liveusb data-settings-page="liveusb" ${_osSettingsPage==='liveusb'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('drive')}</div><span><h2>Installation media</h2><p>Build PosterChanOS recovery media and write it to a removable USB drive.</p></span></header>${window.pcLiveUSB?`<div class="os-liveusb os-set-card"><div class="os-liveusb-head"><div><b>PosterChanOS installation media</b><span>Build an ISO first, then safely select where to write it.</span></div><button class="btn" data-live-refresh>Refresh</button></div>
           <div class="os-liveusb-grid"><div><h3>Build an ISO</h3><label>Output folder<div class="os-path-pick"><input class="input" data-live-out readonly placeholder="Choose a folder"><button class="btn" data-live-dir>Choose…</button></div></label><label><input type="checkbox" data-live-home> Include personal home files <small>(recovery media only)</small></label><button class="btn primary" data-live-build>Build ISO</button></div>
-          <div><h3>Write a USB drive</h3><label>ISO file<div class="os-path-pick"><input class="input" data-live-iso readonly placeholder="Choose an ISO"><button class="btn" data-live-pick>Choose…</button></div></label><label>Removable drive<select data-live-disk><option value="">Scanning…</option></select></label><button class="btn danger" data-live-burn>Write USB…</button></div></div>
+          <div><h3>Write a USB drive</h3><label>ISO file<div class="os-path-pick"><input class="input" data-live-iso readonly placeholder="Choose an ISO"><button type="button" class="btn" data-live-copy disabled>Copy path</button><button type="button" class="btn" data-live-pick>Choose…</button></div></label><label>Removable drive<select data-live-disk><option value="">Scanning…</option></select></label><button class="btn danger" data-live-burn>Write USB…</button></div></div>
           <pre class="os-liveusb-status" data-live-status>Ready</pre></div>`:`<div class="empty">Installation-media tools are unavailable on this device.</div>`}</section>
       </main></div>`;
       wire(); controls();
@@ -1872,6 +1872,8 @@
       if(live&&window.pcLiveUSB){
         const out=live.querySelector('[data-live-out]'), iso=live.querySelector('[data-live-iso]');
         const disk=live.querySelector('[data-live-disk]'), stat=live.querySelector('[data-live-status]');
+        const copy=live.querySelector('[data-live-copy]');
+        const setIso=path=>{iso.value=String(path||'');copy.disabled=!iso.value};
         const refresh=async()=>{ try{
           const ds=await pcLiveUSB.devices();
           disk.innerHTML='<option value="">Choose a removable drive</option>'+ds.map(d=>
@@ -1881,13 +1883,14 @@
            * the write field so finishing an ISO does not make somebody browse back to the folder
            * they selected a few minutes earlier. It is still never written until a removable disk
            * is selected and the destructive confirmation is accepted. */
-          if(s.kind==='build'&&s.path&&(s.running||s.ok))iso.value=s.path;
+          if(s.kind==='build'&&s.path&&(s.running||s.ok))setIso(s.path);
           if(s.running) setTimeout(()=>{if(live.isConnected)refresh()},2000);
         }catch(e){stat.textContent=String(e&&e.message||e)} };
         live.querySelector('[data-live-refresh]').onclick=refresh;
         live.querySelector('[data-live-dir]').onclick=async()=>{const p=await pcLiveUSB.pickDir();if(p)out.value=p};
-        live.querySelector('[data-live-pick]').onclick=async()=>{const p=await pcLiveUSB.pickISO();if(p)iso.value=p};
-        live.querySelector('[data-live-build]').onclick=async e=>{try{e.target.disabled=true;const s=await pcLiveUSB.build(out.value,live.querySelector('[data-live-home]').checked);if(s&&s.path)iso.value=s.path;stat.textContent='Building ISO…';refresh();}catch(x){PC().toast(String(x&&x.message||x))}finally{e.target.disabled=false}};
+        live.querySelector('[data-live-pick]').onclick=async()=>{const p=await pcLiveUSB.pickISO();if(p)setIso(p)};
+        copy.onclick=()=>{if(iso.value)PC().copyValue(iso.value,'ISO path copied','Copy this ISO path:')};
+        live.querySelector('[data-live-build]').onclick=async e=>{try{e.target.disabled=true;const s=await pcLiveUSB.build(out.value,live.querySelector('[data-live-home]').checked);if(s&&s.path)setIso(s.path);stat.textContent='Building ISO…';refresh();}catch(x){PC().toast(String(x&&x.message||x))}finally{e.target.disabled=false}};
         live.querySelector('[data-live-burn]').onclick=async e=>{if(!iso.value||!disk.value)return PC().toast('Choose an ISO and an unmounted USB drive');
           const ok=await PC().uiConfirm('Everything on '+disk.value+' will be overwritten. Write this ISO?',{ok:'Erase and write USB'});if(!ok)return;
           try{e.target.disabled=true;await pcLiveUSB.burn(iso.value,disk.value);stat.textContent='Writing USB… do not unplug it';}catch(x){PC().toast(String(x&&x.message||x))}finally{e.target.disabled=false}};

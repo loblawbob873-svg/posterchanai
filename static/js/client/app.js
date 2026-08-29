@@ -20411,9 +20411,17 @@
    * `handlers` is a list of {id,label,hint,run}. With one handler this opens it and shows nothing —
    * a chooser with a single choice is a dialog that wastes a click. */
   function _openWithSheet(name, handlers){
-    handlers = (handlers || []).filter(Boolean);
+    /* An advertised handler without an action is worse than no handler: it draws a convincing row,
+     * closes the chooser when tapped, then throws `run is not a function` into the event loop. Keep
+     * malformed/lazy integration entries out, and route both synchronous and async launch failures
+     * to one visible verdict. */
+    handlers = (handlers || []).filter(h=>h && typeof h.run==='function');
     if(!handlers.length){ toast('nothing here can open that file'); return; }
-    if(handlers.length === 1){ handlers[0].run(); return; }
+    const run = h => { try{
+      const pending=h.run();
+      if(pending && typeof pending.catch==='function') pending.catch(e=>toast('could not open: '+((e&&e.message)||e)));
+    }catch(e){ toast('could not open: '+((e&&e.message)||e)); } };
+    if(handlers.length === 1){ run(handlers[0]); return; }
     modal(`<h3 class="cmp-hd">Open “${enc(name)}”<button class="modal-x" id="ow-x" title="Close" aria-label="Close">&#215;</button></h3>
       <div class="openwith">${handlers.map(h =>
         `<button class="ow-opt" data-ow="${enc(h.id)}"><span class="ow-ic">${h.icon}</span>
@@ -20423,7 +20431,7 @@
         $$('.ow-opt', root).forEach(b => b.onclick = () => {
           const h = handlers.find(x => x.id === b.dataset.ow);
           closeModal();                       // close FIRST: the handler opens a sheet of its own
-          if(h) h.run();
+          if(h) run(h);
         });
       });
   }

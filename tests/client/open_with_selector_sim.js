@@ -36,10 +36,10 @@ function fn(head) {
   throw new Error('unterminated ' + head);
 }
 
-let sheet = null, closed = 0, ran = [];
+let sheet = null, closed = 0, ran = [], toasts = [];
 const context = {
   CFG: { office_enabled: true }, location: { href: 'https://poster.place/' }, URL,
-  enc: s => String(s), toast() {},
+  enc: s => String(s), toast: s => toasts.push(String(s)),
   openPreviewFile() {}, openOfficeFile() {}, openSyncOfficeFile() {},
   openCodeFile() {}, openSyncCodeFile() {},
   modal(html, mount) { sheet = {html, mount}; },
@@ -103,4 +103,17 @@ context.openSheet('manual.pdf', [fake('preview',()=>ran.push(['preview',closed])
 sheet.mount({}); optClick();
 if (closed!==2 || JSON.stringify(ran)!==JSON.stringify([['office',2]]))
   throw new Error('chooser did not close before launching the selected handler');
-console.log('open-with selector holds');
+
+// A stale integration can contribute a label without its lazily loaded function. It must neither
+// render a dead option nor throw after the sheet closes. Real launch failures must be visible.
+sheet=null;
+context.openSheet('broken.conf', [fake('missing', undefined)]);
+if(sheet || !toasts.some(x=>x.includes('nothing here can open')))
+  throw new Error('undefined handler was advertised or failed silently');
+context.openSheet('throw.conf', [fake('code',()=>{throw new Error('sync boom')})]);
+context.openSheet('reject.conf', [fake('code',()=>Promise.reject(new Error('async boom')))]);
+setImmediate(()=>{
+  if(!toasts.some(x=>x.includes('sync boom')) || !toasts.some(x=>x.includes('async boom')))
+    throw new Error('Open With launch failure was not reported: '+JSON.stringify(toasts));
+  console.log('open-with selector holds');
+});

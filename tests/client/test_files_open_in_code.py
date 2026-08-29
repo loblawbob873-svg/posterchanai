@@ -337,7 +337,7 @@ class ClickingTheFileIsHowYouOpenIt(unittest.TestCase):
         self.assertIn("u.openFile(p, nm, openHere, mime)", self.host,
                       "hostfiles does not pass the machine-open through to the chooser")
         self.assertIn("openFile: async (path, name, openHere, mime) =>", self.app)
-        seg = self.app[self.app.index("openFile: async (path, name, openHere, mime) =>"):][:1500]
+        seg = self.app[self.app.index("openFile: async (path, name, openHere, mime) =>"):][:2600]
         self.assertIn("id:'host'", seg, "the chooser for a local file offers only the editor")
 
     def test_the_bridge_call_lives_in_the_file_that_knows_the_bridge(self):
@@ -406,7 +406,7 @@ class TheOpenWithChooser(unittest.TestCase):
         """A chooser with a single choice is a dialog that wastes a click."""
         body = _decomment(_fn(self.app, "function _openWithSheet("))
         self.assertIn("handlers.length === 1", body)
-        self.assertIn("handlers[0].run()", body)
+        self.assertIn("run(handlers[0])", body)
 
     def test_nothing_openable_says_so_rather_than_showing_an_empty_sheet(self):
         body = _decomment(_fn(self.app, "function _openWithSheet("))
@@ -416,7 +416,8 @@ class TheOpenWithChooser(unittest.TestCase):
         """Both are modals in one #modal-root; opening the second under the first leaves a chooser
         stacked behind a document editor."""
         body = _decomment(_fn(self.app, "function _openWithSheet("))
-        self.assertLess(body.index("closeModal()"), body.index("h.run()"))
+        launch = body.index("if(h) run(h)")
+        self.assertLess(body.rfind("closeModal()", 0, launch), launch)
 
     def test_both_sources_offer_the_same_menu_for_the_same_file(self):
         """The drive and a synced folder must not disagree about what can open a .docx."""
