@@ -6868,6 +6868,7 @@
     on = true;
     _deskLayoutSize={w:Math.round(vwL()),h:Math.round(vhL())};
     _keyboardViewport=false;
+    _desktopEditBlurUntil=0;
     realFeed = document.getElementById('feed');
     realHome = realFeed ? realFeed.parentElement : null;
     root = document.createElement('div');
@@ -7233,6 +7234,7 @@
     document.addEventListener('fullscreenchange', onFullChange);
     watchMail();
     document.addEventListener('keydown', onKey, true);
+    document.addEventListener('focusout', _noteDesktopEditBlur, true);
     window.addEventListener('resize', onResize);
     settings().set(KEY, true);
   }
@@ -7242,6 +7244,7 @@
     on = false;
     _deskLayoutSize=null;
     _keyboardViewport=false;
+    _desktopEditBlurUntil=0;
     // The shell's watcher holds a compositor subscription and a 30s timer. Left running it redraws
     // markup that is no longer in the document, for the rest of the session.
     if(_shellOff){ try{ _shellOff(); }catch(_){} _shellOff = null; }
@@ -7283,6 +7286,7 @@
     window.removeEventListener('offline', onNetChange);
     toastHost = null; notiOpen = false; netOpen = false;
     document.removeEventListener('keydown', onKey, true);
+    document.removeEventListener('focusout', _noteDesktopEditBlur, true);
     document.removeEventListener('fullscreenchange', onFullChange);
     // Leaving the desktop leaves full screen with it: a full-screen CLASSIC client with no way back
     // to the desktop is a trap, and nothing else in the app asks for the whole screen.
@@ -7317,6 +7321,24 @@
    * when Terminal takes focus; treating that as a monitor resize visibly resnaps every window. */
   let _deskLayoutSize = null;
   let _keyboardViewport = false;
+  let _desktopEditBlurUntil = 0;
+
+  function _isEditableTarget(el){
+    return !!(el&&(el.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName||'')));
+  }
+
+  /* Android/WebView sends focusout before its keyboard-height resize. At that point activeElement
+   * is already body, so testing only the current element mistakes keyboard dismissal for a monitor
+   * resize and permanently clamps Terminal/Code smaller. */
+  function _keyboardHeightChange(previous,next,editing,armed,recentBlur){
+    const heightOnly=!!(previous&&Math.abs(next.w-previous.w)<=2&&
+                                  Math.abs(next.h-previous.h)>48);
+    return heightOnly&&!!(editing||armed||recentBlur);
+  }
+
+  function _noteDesktopEditBlur(e){
+    if(_isEditableTarget(e&&e.target))_desktopEditBlurUntil=Date.now()+1200;
+  }
 
   /* Fresh entry can refuse a portrait tablet, but rotation is not a request to close the desktop.
    * Existing windows and application state survive until landscape returns. */
@@ -7328,12 +7350,13 @@
     /* Rotation/display changes alter width. A software keyboard on a tablet alters height only,
      * often by hundreds of pixels, and must not change the managed frame geometry. */
     const ae=document.activeElement;
-    const editing=!!(ae&&(ae.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName||'')));
+    const editing=_isEditableTarget(ae);
     const heightOnly=!!(_deskLayoutSize&&Math.abs(logical.w-_deskLayoutSize.w)<=2&&
                             Math.abs(logical.h-_deskLayoutSize.h)>48);
     /* A tablet using a mouse can report pointer:fine while its on-screen keyboard still resizes the
      * WebView. Remember the shrink so keyboard-hide is ignored after focus leaves the input too. */
-    if(heightOnly&&(editing||_keyboardViewport)){
+    if(_keyboardHeightChange(_deskLayoutSize,logical,editing,_keyboardViewport,
+                             Date.now()<_desktopEditBlurUntil)){
       _keyboardViewport=logical.h<_deskLayoutSize.h;
       return;
     }

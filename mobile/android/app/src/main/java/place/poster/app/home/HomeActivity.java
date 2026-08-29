@@ -333,6 +333,11 @@ public class HomeActivity extends Activity implements DeskView.Host {
         homeIntentBeforeStart = false;
         homeStartPending = false;
         main.removeCallbacks(countHomeStart);
+        /* A double-HOME gesture exists only while HOME stays on screen between its two presses.
+         * Keeping the first timestamp after a tile/app backgrounds this Activity makes the next
+         * ordinary HOME return complete a stale pair and immediately reopen PosterChan, replacing
+         * the launcher the user was trying to reach. */
+        HomeDoublePress.clear();
         LauncherState.homeHidden();
         repo.stopWatching();
         MusicService.setWatcher(null);

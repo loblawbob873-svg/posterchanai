@@ -19470,7 +19470,7 @@
     }
     const rowFor = (it) => {
       const ext = it.dir ? '' : ((String(it.name).match(/\.([A-Za-z0-9]{1,8})$/)||[])[1]||'').toLowerCase();
-      const icon = it.trashdir ? '🗑️' : (it.dir ? '📁' : _fxIcon(ext, ''));
+      const icon = it.trashdir ? '🗑️' : (it.dir ? _fxFileGlyph('folder') : _fxIcon(ext, ''));
       const type = it.dir ? (it.n + ' item' + (it.n===1?'':'s'))
                 : (it.where ? (_fxType(ext) + ' · in ' + it.where) : _fxType(ext));
       const canThumb = !it.dir && (it.sha || (it.chunks && it.chunks.length))
@@ -19899,6 +19899,7 @@
       cols: _fxColsHTML,
       row: _fxDetailsRow,
       icon: _fxIcon,
+      folderIcon: () => _fxFileGlyph('folder'),
       typeName: _fxType,
       bindBar: () => _fxBindBar(pane),
       bindCols: _fxBindCols,

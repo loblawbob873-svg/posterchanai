@@ -650,6 +650,14 @@ class Launcher(unittest.TestCase):
 
 @unittest.skipIf(not os.path.isdir(HOME), "no android sources here")
 class LauncherSources(unittest.TestCase):
+    def test_backgrounding_launcher_cancels_an_incomplete_double_home(self):
+        src = _code(open(os.path.join(HOME, "HomeActivity.java")).read())
+        stop = src[src.index("protected void onStop()"):
+                   src.index("private final Runnable reloadSoon")]
+        self.assertIn("HomeDoublePress.clear()", stop)
+        self.assertLess(stop.index("HomeDoublePress.clear()"),
+                        stop.index("LauncherState.homeHidden()"))
+
     def test_music_is_a_real_launcher_app_and_deep_link(self):
         tiles = _code(open(os.path.join(HOME, "HomeTiles.java")).read())
         app = open(os.path.join(ROOT, "static", "js", "client", "app.js"), encoding="utf-8").read()

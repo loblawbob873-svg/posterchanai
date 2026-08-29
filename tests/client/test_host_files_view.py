@@ -66,6 +66,28 @@ class HostFilesView(unittest.TestCase):
         self.assertEqual(out["f"], 4096)
         self.assertEqual(out["t"], "txt")
 
+    def test_folders_use_the_packaged_glyph_in_rows_and_tiles(self):
+        """A colour-emoji folder can be missing entirely in the minimal desktop image and varies
+        in size on mobile.  Both views must use the same shipped SVG sprite as restored folders."""
+        out = self.js(r"""
+          const folder = '<svg class="fx-file-ic fx-file-folder"><use href="#i-folder"></use></svg>';
+          const entries = [{name:'Documents', path:'/home/u/Documents', dir:true, mtime:1}];
+          const ui = {
+            folderIcon: () => folder,
+            row: o => '<div class="file-card row"><span class="fx-ic">' + o.icon + '</span></div>'
+          };
+          out.tiles = F.rowsHTML(entries, ui);
+          out.rows = F.rowsHTML(entries, Object.assign({}, ui, {view:'details'}));
+        """)
+        for view in ("tiles", "rows"):
+            self.assertIn('fx-file-folder', out[view])
+            self.assertNotIn('📁', out[view])
+
+        app = open(APP, encoding="utf-8").read()
+        self.assertIn("folderIcon: () => _fxFileGlyph('folder')", app)
+        self.assertIn("it.dir ? _fxFileGlyph('folder')", app,
+                      "synced/restored folders still bypass the packaged icon")
+
     def test_created_sort_prefers_filesystem_birth_time(self):
         out = self.js("out.at = F.keyOf({ created: 20, mtime: 90 }, 'modified');"
                       "out.old = F.keyOf({ mtime: 12 }, 'modified');")

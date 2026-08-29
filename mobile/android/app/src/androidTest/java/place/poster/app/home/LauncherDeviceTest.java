@@ -259,6 +259,38 @@ public class LauncherDeviceTest {
     }
 
     @Test
+    public void leavingHomeCancelsAnIncompleteDoublePress() throws Exception {
+        HomeRoles.enableLauncherComponent(ctx, true);
+        Instrumentation inst = InstrumentationRegistry.getInstrumentation();
+        Instrumentation.ActivityMonitor web = inst.addMonitor(
+                MainActivity.class.getName(),
+                new Instrumentation.ActivityResult(android.app.Activity.RESULT_CANCELED, null),
+                true);
+        HomeActivity homeActivity = (HomeActivity) inst.startActivitySync(
+                new Intent(ctx, HomeActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        inst.waitForIdleSync();
+        try {
+            HomeDoublePress.clear();
+            HomeDoublePress.arrived(android.os.SystemClock.elapsedRealtime());
+            inst.runOnMainSync(homeActivity::onStop);
+            inst.runOnMainSync(() -> {
+                homeActivity.onStart();
+                homeActivity.getWindow().getDecorView().dispatchWindowFocusChanged(true);
+                homeActivity.onNewIntent(
+                        new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME));
+            });
+            Thread.sleep(300);
+            assertEquals("a stale HOME press reopened PosterChan after the launcher was backgrounded",
+                    0, web.getHits());
+        } finally {
+            inst.removeMonitor(web);
+            inst.runOnMainSync(homeActivity::finish);
+            inst.waitForIdleSync();
+            HomeDoublePress.clear();
+        }
+    }
+
+    @Test
     public void everyThemeDrawsSomething() {
         // Nine palettes, applied for real. A theme whose page drawable throws would take the home
         // screen down on the one phone that had it selected — which is the sort of bug that only

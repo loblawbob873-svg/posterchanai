@@ -180,6 +180,7 @@
     const fmt = u.fmtBytes || ((n) => String(n));
     const when = u.fmtDate || ((t) => t ? new Date(t).toLocaleString() : '');
     const icon = u.icon || (() => '📎');
+    const folderIcon = u.folderIcon || (() => '📁');
     const typeName = u.typeName || ((e) => (e ? e.toUpperCase() + ' file' : 'File'));
     const details = u.view === 'details';
     if(!entries.length) return '<div class="empty">This folder is empty.</div>';
@@ -190,7 +191,7 @@
       /* A FOLDER IS NOT A FILE TYPE. It gets the folder glyph, no size and the word "Folder" —
        * `_fxIcon` would answer 📎 for it, and a size column reading "0 B" beside a directory is a
        * statement about the directory's contents that is not true. */
-      const ic = e.dir ? '📁' : (e.broken ? '⚠️' : icon(ext, e.mime || ''));
+      const ic = e.dir ? folderIcon() : (e.broken ? '⚠️' : icon(ext, e.mime || ''));
       if(details) return (u.row || (() => ''))({
         dir: e.dir, selected: sel, name: e.name + (e.link ? ' ↗' : ''), title: e.path,
         icon: ic, size: e.dir ? '' : fmt(e.size), type: e.dir ? 'Folder' : typeName(ext),
