@@ -93,7 +93,7 @@ window.__PC = {
   copyValue:value=>{ calls.copied=value; },
   openProfile:pk=>{ calls.profiles.push(pk); },
   osNotify:(title,body,opts)=>{ calls.mentions.push({title,body,opts}); },
-  relaySubscribe:()=>{calls.discoveryOpened++;return{close(){calls.discoveryClosed++;}};},
+  relaySubscribe:(_filters,handlers)=>{calls.discoveryOpened++;calls.discoveryHandlers=handlers;return{close(){calls.discoveryClosed++;}};},
   relayQuery:async filters=>relayFixtures(filters),
   relayQueryFrom:async(relays,filters)=>{calls.queryTargets.push([...relays]);return relayFixtures(filters);},
   relayUrls:()=>['wss://relay.example'], signTemplate:async template=>template,
@@ -419,9 +419,16 @@ window.__PC.relayQueryFrom=(relays,filters,options={})=>{
 control('cc-discovery').click();
 if(calls.discoveryOpened!==openedBeforeDiscover+1)throw new Error('Discover did not open its public relay subscription');
 await new Promise(resolve=>setTimeout(resolve,0));
+const targetsBeforePassiveCard=calls.queryTargets.length;
+calls.discoveryHandlers.onEvent({id:'public-card',created_at:99,pubkey:'b'.repeat(64),content:'Public https://armada.buzz/invite/naddr1qqqq#abc_DEF'});
+await new Promise(resolve=>setTimeout(resolve,0));
+if(calls.queryTargets.length!==targetsBeforePassiveCard)
+  throw new Error('passive public community card opened its invite/bootstrap relays');
 const automaticTargets=calls.queryTargets.slice(queriesBeforeDiscover).flat();
 if(automaticTargets.some(relay=>/relay\.(?:ditto\.pub|damus\.io)/.test(relay)))
   throw new Error('automatic Concord discovery constructed a dead/general relay socket: '+JSON.stringify(automaticTargets));
+if(automaticTargets.length>12)
+  throw new Error('one Discover paint fanned out across passive invite cards: '+JSON.stringify(automaticTargets));
 const roomButton=dollars('[data-cc-server]').find(b=>b.dataset.ccServer==='0');
 if(!roomButton)throw new Error('Discover did not render the joined room control');
 const queriesBeforeRoom=calls.queryTargets.length;

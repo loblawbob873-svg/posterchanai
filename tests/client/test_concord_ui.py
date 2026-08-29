@@ -250,7 +250,7 @@ def test_relay_echo_racing_optimistic_send_cannot_leave_two_messages():
         "remote decrypted rumors must not remain as plaintext localStorage"
 
 
-def test_desktop_recovery_merges_armada_list_shards_and_retries_early_empty_queries():
+def test_desktop_recovery_merges_armada_list_shards_and_backs_off_empty_queries():
     assert "function membershipEvents(p,pubkey" in CONCORD
     assert "{kinds:[13302],authors:[pubkey],limit:1}" in CONCORD
     assert "{kinds:[33302],authors:[pubkey],'#d':[''],limit:20}" in CONCORD
@@ -259,7 +259,7 @@ def test_desktop_recovery_merges_armada_list_shards_and_retries_early_empty_quer
     assert "const entries=new Map(),tombs=new Map()" in CONCORD
     assert "Math.max(Number(tombs.get(t.community_id))" in CONCORD
     assert "membershipRetryTimer=setTimeout" in CONCORD
-    assert "recovered?60000:5000" in CONCORD
+    assert "recovered?60000:120000" in CONCORD
     assert "window.PosterCordReader.inspectControl(bundle,[])" in CONCORD
 
 
@@ -346,8 +346,9 @@ def test_concord_room_icons_can_be_set_on_create_and_edited_later():
     assert '[TAG_SUBKIND, VSK_METADATA]' in CORD_READER
 
 
-def test_public_community_cards_resolve_cord_icons():
-    assert 'hydrateDiscoveredIcon(p,item)' in CONCORD
+def test_public_community_cards_do_not_fan_out_across_invite_relays():
+    on_event = CONCORD.split("const onEvent=ev=>", 1)[1].split("const onEose", 1)[0]
+    assert 'hydrateDiscoveredIcon' not in on_event
     assert 'publicRoomIcon(p,r)' in CONCORD
     assert '.cc-public-icon img' in CONCORD_CSS
     assert "u.protocol==='https:'||u.protocol==='http:'" in CONCORD

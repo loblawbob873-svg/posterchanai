@@ -95,7 +95,8 @@
   // session first: /api/auth/settings needs the nostr-login cookie, else it 401s and the saved theme
   // never applies — the "logged in but the default theme loaded despite my saved one" bug.
   async function loadThemeFromServer(){
-    try{ await ensureAiSession(); }catch(_){}
+    try{ await ensureAiSession(); }
+    catch(e){ console.warn('theme sync skipped: '+((e&&e.message)||e)); return; }
     try{ const r=await fetch('/api/auth/settings'); if(r.ok){ const s=await r.json(); if(s&&s.theme) applyTheme(s.theme); } }catch(_){}
   }
   // PWA install: capture the install prompt (fires before the app mounts) so a button can trigger it.
@@ -6490,7 +6491,7 @@
      *
      * Saved on the way OUT, while the old view's nodes are still on screen and its scrollTop is
      * still real — after `VIEW = v` there is nothing left to measure. */
-    if(VIEW !== v) _rememberTlScroll();
+    if(VIEW !== v){ _rememberTlScroll(); if(VIEW==='streams')_stopStreamsReads(); }
     // Shorts is an APP entry, not a bookmark into its transient player. Tapping its launcher/nav
     // icon again must always reopen the browse grid; renderShorts() itself never calls switchView,
     // so scrolling/repainting inside the player still keeps the current short.
@@ -9245,6 +9246,9 @@
    * is added because a stream announced only to relays that reject it is not announced at all. */
   const STREAM_RELAYS = ['wss://relay.zap.stream', 'wss://nos.lol', 'wss://relay.damus.io',
                          'wss://relay.primal.net'];
+  let _streamsReadOwner=null;
+  function _stopStreamsReads(){const owner=_streamsReadOwner;_streamsReadOwner=null;if(owner)owner.abort();}
+  function _beginStreamsReads(){_stopStreamsReads();_streamsReadOwner=typeof AbortController==='function'?new AbortController():null;return _streamsReadOwner&&_streamsReadOwner.signal;}
   /* Mirror a stream event to the PUBLIC stream relays.
    *
    * publish() only reaches OUR relay. That was fine for the recording backfill, which already
@@ -9265,6 +9269,7 @@
   }
   async function renderStreams(){
     const feed=$('#feed');
+    const readSignal=_beginStreamsReads();
     /* PAINT THE LOCAL STORE FIRST. Relay.query is network-only and a WebSocket whose peer never
      * answers can remain pending indefinitely. Awaiting it before the first paint left the entire
      * Streams window as a black spinner. Cached streams and the Go Live control need no network
@@ -9321,8 +9326,8 @@
     // Merge in streams from the wider network (background — the local list already painted). External
     // relays are UNTRUSTED, so VERIFY each event's signature before saving/rendering — an unverified
     // forgery could spoof a host or (addressable) shadow a real user's stream in the local cache.
-    Relay.queryFrom(STREAM_RELAYS, [{ kinds:[30311], limit:80 }]).then(ext=>{
-      if(!ext || !ext.length || VIEW!=='streams') return;
+    Relay.queryFrom(STREAM_RELAYS, [{ kinds:[30311], limit:80 }], {signal:readSignal}).then(ext=>{
+      if((readSignal&&readSignal.aborted)||!ext || !ext.length || VIEW!=='streams') return;
       const have=new Set(evs.map(e=>e.id)); let added=false;
       ext.forEach(e=>{ if(have.has(e.id)) return;
         if(_isDeletedStream(e)) return;   // never resurrect a stream the user deleted from an external relay
@@ -9968,8 +9973,9 @@
     }catch(_){ }
     return true;
   }
-  /* Startup sweep: ask the PUBLIC stream relays for our own 30311s BY AUTHOR and retire any that are
-   * still claiming to be live.
+  /* Startup sweep: ask the connected relay for our own 30311s BY AUTHOR and retire any that are
+   * still claiming to be live. A corrective event is still mirrored to the public relays below;
+   * the startup audit itself must not construct Damus/nos.lol sockets over an unrelated view.
    *
    * Two reasons this can't be left to the Streams view. (1) It only ran when that view was opened,
    * so a broadcast could sit ● LIVE on zap.stream for days while its owner used the app normally —
@@ -9985,7 +9991,7 @@
     if(_sweptStaleLive || GUEST || !ME || _liveStream) return;
     _sweptStaleLive=true;
     let evs=[];
-    try{ evs=await Relay.queryFrom(STREAM_RELAYS, [{ kinds:[30311], authors:[ME.pubkey] }]); }catch(_){ }
+    try{ evs=await Relay.query([{ kinds:[30311], authors:[ME.pubkey] }]); }catch(_){ }
     if(!evs || !evs.length) return;
     // Newest per address only: a replaceable event's older copies are not what any client shows, and
     // retiring against a superseded copy would publish an `ended` that is itself immediately stale.
@@ -24597,16 +24603,25 @@
   const Mail = {
     unread:0, root:null, accounts:[], acct:null, folder:'INBOX', folders:['INBOX','Sent','Drafts'], folderLabels:{}, msgs:[], openUid:null, q:'', _syncing:false, sel:null,
     async api(path, opts={}){
-      try{ await ensureAiSession(); }catch(_){}
+      await ensureAiSession();
       const r=await fetch('/api/mail'+path,{...opts,credentials:'include',headers:{...(opts.headers||{}),...(_aiToken?{'Authorization':'Bearer '+_aiToken}:{})}});
       if(!r.ok) throw new Error('http '+r.status); return r.json();
     },
     async render(root){
       this.root=root; root.innerHTML='<div class="mail-loading"><div class="spinner"></div></div>';
-      try{ const a=await this.api('/accounts'); this.accounts=a.accounts||[]; }catch(_){ this.accounts=[]; }
+      let authError=null;
+      try{ const a=await this.api('/accounts'); this.accounts=a.accounts||[]; }
+      catch(e){ this.accounts=[]; authError=e; }
       /* The mail request yields. The shared feed may have moved to Notes, Terminal, or another OS
        * window while it was in flight; a late 401/empty response must not paint Mail there. */
       if(!root.isConnected||this.root!==root||VIEW!=='mail'||root.closest('#feed')!==$('#feed'))return;
+      if(authError){
+        root.innerHTML=`<div class="mail-empty"><div class="me-ico">⚠️</div><h3>Email couldn’t sign in</h3>
+          <p class="muted">${enc((authError&&authError.message)||'could not establish your app session')}</p>
+          <button class="btn btn-ghost" id="mail-auth-retry">Retry</button></div>`;
+        const retry=$('#mail-auth-retry',root); if(retry) retry.onclick=()=>this.render(root);
+        return;
+      }
       if(!this.accounts.length){
         /* The nostr-mail expectation gap, answered where it forms: "Mobile still asking me to set
          * up an email — I just want to use nmail." An email ACCOUNT is nostr-mail's transport; the
@@ -26562,12 +26577,19 @@
     _aiAuthP = (async()=>{
       try{
         const auth = await sign(27235, 'ai-login', [['p', ME.pubkey]]);   // prove key ownership
-        const r = await fetch('/api/auth/nostr-login', { method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ pubkey: ME.pubkey, auth: btoa(JSON.stringify(auth)) }) }).then(r=>r.json());
+        const response = await fetch('/api/auth/nostr-login', { method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ pubkey: ME.pubkey, auth: btoa(JSON.stringify(auth)) }) });
+        let r=null; try{ r=await response.json(); }catch(_){}
+        if(!response.ok) throw new Error((r && (r.detail || r.error)) || ('login returned HTTP '+response.status));
         if(r && r.access_token) _setAiToken(r.access_token);
         if(r && r.user){ _aiAuth = r.user; try{ applyTermGate(); }catch(_){} return _aiAuth; }   // cache only a GOOD session
-        return { can_ai:false, error:!r };                      // transient failure → not cached, retryable
-      }catch(_){ return { can_ai:false, error:true }; }
+        throw new Error('login response did not contain a credential');
+      }catch(e){
+        const why=(e&&e.message)||String(e||'unknown error');
+        const out=new Error('could not establish your app session: '+why);
+        try{ out.cause=e; }catch(_){}
+        throw out;                                             // callers MUST NOT continue tokenless
+      }
       finally{ _aiAuthP=null; }
     })();
     return _aiAuthP;
@@ -29898,8 +29920,10 @@
     // every field that lives on a server is a pane that INSTANCE_SETTINGS_TABS has already dropped, and
     // the wipe this guard exists to prevent needs a server to wipe.
     const _solo = _standalone();
+    let authError=null;
     for(let attempt=0; _solo ? false : attempt<3; attempt++){
-      await ensureAiSession();
+      try{ await ensureAiSession(); }
+      catch(e){ authError=e; break; }          // no credential means no protected GET
       if(VIEW!=='settings') return;   // navigated away during the (first-time) sign/login
       try{ const r=await fetch('/api/auth/settings'); if(r.ok){ s=await r.json(); break; }
            // 401 = the cached session is STALE (server session expired / restarted). ensureAiSession
@@ -29915,6 +29939,13 @@
       await new Promise(r=>setTimeout(r, 400*(attempt+1)));   // brief backoff before re-warming + refetching
     }
     if(!host || VIEW!=='settings') return;
+    if(authError){
+      host.innerHTML=`<section class="set-card"><div class="set-body"><div class="muted">${enc(
+        (authError&&authError.message)||'could not establish your app session')}</div>
+        <button class="btn btn-ghost small" id="us-retry">Retry</button></div></section>`;
+      const retry=$('#us-retry',host); if(retry) retry.onclick=renderUserSettings;
+      return;
+    }
     if(_solo) s={};                    // no server to hold account settings — the client-side ones still apply
     else if(s && typeof s==='object'){ try{ localStorage.setItem('pc_settings_cache', JSON.stringify(s)); }catch(_){} }
     else if(_cachedS){ s=_cachedS; }   // network failed but we have last-good settings → show them, not an error

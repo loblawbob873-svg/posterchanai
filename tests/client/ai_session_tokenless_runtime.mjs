@@ -18,7 +18,7 @@ globalThis.fetch = async (url) => {
   const body = globalThis.posts === 1
     ? { user:{ can_ai:true, username:'cached-without-token' } }
     : { access_token:'fresh-token', user:{ can_ai:true, username:'renewed' } };
-  return { json: async () => body };
+  return { ok:true, status:200, json: async () => body };
 };
 
 const run = new Function(`return (async()=>{${shipped}
