@@ -672,15 +672,20 @@
     const viewer=p.viewer?p.viewer():{};
     return Object.entries(reactions).map(([emoji,people])=>{ const n=Array.isArray(people)?people.length:0,mine=!!(viewer.pubkey&&people.includes(viewer.pubkey)),url=/^https?:\/\//i.test(String(urls[emoji]||''))?String(urls[emoji]):'',face=url?`<img class="cc-reaction-emoji" src="${p.enc(url)}" alt="${p.enc(emoji)}" title="${p.enc(emoji)}" loading="lazy">`:`<span>${p.enc(emoji)}</span>`; return n?`<button class="cc-reaction${mine?' mine':''}" aria-pressed="${mine}" data-cc-react-toggle="${p.enc(messageId(m))}" data-cc-emoji="${p.enc(emoji)}" title="${n} reaction${n===1?'':'s'}">${face}<b>${n}</b></button>`:''; }).join('');
   }
-  function mentionSeenKey(room,channel){ return 'pc.concord.seen.'+room.naddr+':'+(channel||'general'); }
+  /* KEYED ON THE ROOM'S IDENTITY, NOT ITS naddr. `roomIdentity` is communityId||naddr||url and is
+   * what every other per-room store here uses; `naddr` alone is absent on a NIP-29 room and on one
+   * joined by community id, and those rooms got no mention notifications at all — the guard below
+   * returned before looking. A room that HAS an naddr keeps its existing cursor, so no history is
+   * re-announced; a room that never had one starts a cursor silently on its next read. */
+  function mentionSeenKey(room,channel){ return 'pc.concord.seen.'+roomIdentity(room)+':'+(channel||'general'); }
   function notifyMentions(p,room,messages,viewer,me,channel=state.channel||'general'){
-    if(!room||!room.naddr||!messages.length||!viewer.pubkey)return;
+    if(!room||!roomIdentity(room)||!messages.length||!viewer.pubkey)return;
     const key=mentionSeenKey(room,channel), newest=Math.max(...messages.map(m=>Number(m.at)||0));
     /* The original release stored one cursor for the whole community. Only #general can inherit
      * that value safely: applying its newest timestamp to every channel lets a newer general post
      * permanently suppress an older (but newly fetched) #support mention. */
     let seen=Number(localStorage.getItem(key)||0);
-    if(!seen&&channel==='general')seen=Number(localStorage.getItem('pc.concord.seen.'+room.naddr)||0);
+    if(!seen&&channel==='general'&&room.naddr)seen=Number(localStorage.getItem('pc.concord.seen.'+room.naddr)||0);
     if(!seen){ localStorage.setItem(key,String(newest)); return; } // opening history must not alert
     const profile=viewer.profile||{}, handles=[me,profile.name,profile.display_name,viewer.npub,viewer.pubkey].filter(Boolean);
     for(const m of messages){
@@ -1090,7 +1095,21 @@
         const reactions=new Map(opened.reactions||[]),reactionIds=new Map(opened.reactionIds||[]),reactionUrls=new Map(opened.reactionUrls||[]),msgs=(opened.messages||[]).map(m=>{ const pr=p.profOf?p.profOf(m.pubkey):{},rs={},ri={},ru={}; for(const [emoji,people] of reactions.get(m.id)||[])rs[emoji]=people;for(const [emoji,entries] of reactionIds.get(m.id)||[])ri[emoji]=Object.fromEntries(entries);for(const [emoji,url] of reactionUrls.get(m.id)||[])ru[emoji]=url; return {id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:m.text,at:m.at,kind:m.kind,tags:m.tags||[],reactions:rs,reactionIds:ri,reactionUrls:ru,remote:true}; });
         const msgById=new Map(msgs.map(m=>[m.id,m])); for(const m of msgs){if(m.kind!==1111)continue;const parentId=((m.tags||[]).find(t=>t[0]==='e')||[])[1],parent=msgById.get(parentId);if(parent)m.reply={id:parent.id,by:parent.by,text:parent.text};}
         const storeId=channelStoreId(room,channel.name);markRemoteStore(storeId);const prior=testMessages(storeId);
-        saveTestMessages(storeId,mergeRelayMessages(prior,msgs).sort((a,b)=>Number(a.at)-Number(b.at)));
+        const next=mergeRelayMessages(prior,msgs).sort((a,b)=>Number(a.at)-Number(b.at));
+        saveTestMessages(storeId,next);
+        /* A MENTION IN A CHANNEL YOU ARE NOT LOOKING AT IS STILL A MENTION.
+         *
+         * Both other callers pass `state.channel`, so only the channel on screen could ever raise
+         * one — and the channel on screen is the one you are already reading. Hydration walks every
+         * channel in the room, which makes this the only place that can see the rest.
+         *
+         * Announcing history is prevented by notifyMentions itself: a channel with no cursor yet
+         * records one and returns without notifying, so the first read of a room is silent and
+         * only genuinely newer messages ever raise anything. */
+        const who=p.viewer?p.viewer():{},prof=who.profile||{};
+        notifyMentions(p,room,next,who,
+                       prof.display_name||prof.name||(who.npub?who.npub.slice(0,12)+'…':'You'),
+                       channel.name);
       };
       /* Paint the encrypted on-device copy before opening sockets. This is the offline/reload path,
        * and also prevents relay latency from looking like an empty room. */
