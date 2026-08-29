@@ -679,17 +679,18 @@
   function foldNip29History(events,p,groupId){const scoped=events.filter(e=>(e.tags||[]).some(t=>t[0]==='h'&&t[1]===groupId)).sort((a,b)=>Number(a.created_at)-Number(b.created_at)),deletions=[],deleted=new Set(),byId=new Map(),reactions=[];for(const e of scoped){if(e.kind===5){deletions.push(e);continue;}if(e.kind===7){reactions.push(e);continue;}if(![9,10,11,12,1111].includes(e.kind))continue;const pr=p.profOf?p.profOf(e.pubkey):{};byId.set(e.id,{id:e.id,pubkey:e.pubkey,by:pr.display_name||pr.name||e.pubkey.slice(0,12)+'…',text:e.content,at:Number(e.created_at)*1000,kind:e.kind,tags:e.tags||[],reactions:{},reactionIds:{},remote:true});}const reactionById=new Map(reactions.map(e=>[e.id,e]));for(const deletion of deletions)for(const t of deletion.tags||[])if(t[0]==='e'){const target=byId.get(t[1])||reactionById.get(t[1]);if(target&&target.pubkey===deletion.pubkey)deleted.add(t[1]);}for(const id of deleted)byId.delete(id);for(const e of reactions){if(deleted.has(e.id))continue;const target=((e.tags||[]).find(t=>t[0]==='e')||[])[1],m=byId.get(target);if(!m)continue;const emoji=e.content==='+'?'👍':e.content||'👍';(m.reactions[emoji]||(m.reactions[emoji]=[])).push(e.pubkey);(m.reactionIds[emoji]||(m.reactionIds[emoji]={}))[e.pubkey]=e.id;}for(const m of byId.values())if(m.kind===1111){const target=byId.get(((m.tags||[]).find(t=>t[0]==='e')||[])[1]);if(target)m.reply={id:target.id,by:target.by,text:target.text};}return [...byId.values()].sort((a,b)=>a.at-b.at);}
   async function nip29History(p,room){const events=await nip29RelayQuery(p,room.relay,[{kinds:[5,7,9,10,11,12,1111],'#h':[room.groupId],limit:500}],10000);return foldNip29History(events,p,room.groupId);}
   async function hydrateNip29Room(p,index){const rooms=saved(),room=rooms[index];if(!room||room.protocol!=='nip29')return;const messages=await nip29History(p,room),storeId=channelStoreId(room,'general');markRemoteStore(storeId);saveTestMessages(storeId,messages);room.nip29Hydrated=true;rooms[index]=room;save(rooms);if(state.community===index)backgroundRender();}
-  async function membershipEvents(p,pubkey){
+  async function membershipEvents(p,pubkey,{external=true}={}){
     /* Match Armada's wire query exactly. A mixed [13302,33302] request looks harmless, but several
        relays close the WHOLE subscription when one kind is unsupported/blocked. That made a valid
        13302 vault look absent and a fresh browser showed no communities. 13302 is CORD-02's released
        replaceable vault; the addressable migration is queried separately as a compatibility source. */
     const query=async filter=>{
-      const [pool,external]=await Promise.all([
+      let cached=[];try{cached=window.Store&&window.Store.query?window.Store.query([filter])||[]:[];}catch(_){}
+      const [pool,remote]=await Promise.all([
         p.relayQuery?Promise.resolve(p.relayQuery([filter],8000)).catch(()=>[]):[],
-        p.relayQueryFrom?Promise.resolve(p.relayQueryFrom(CORD_RELAYS,[filter],{timeout:8000,max:4})).catch(()=>[]):[],
+        external&&p.relayQueryFrom?Promise.resolve(p.relayQueryFrom(CORD_RELAYS,[filter],{timeout:8000,max:4})).catch(()=>[]):[],
       ]);
-      return [...new Map([...(pool||[]),...(external||[])].filter(e=>e&&e.id).map(e=>[e.id,e])).values()];
+      return [...new Map([...(cached||[]),...(pool||[]),...(remote||[])].filter(e=>e&&e.id).map(e=>[e.id,e])).values()];
     };
     const released=await query({kinds:[13302],authors:[pubkey],limit:1});
     /* CORD-02 v2 is fragmented: Vector addresses fragment zero as d="0" (then 1, 2, ...),
@@ -750,13 +751,13 @@
     }
     return {entries,tombstones};
   }
-  async function syncArmadaMemberships(p,viewer){
-    if(state.community!=null||membershipBusy||!viewer.pubkey||!p.nip44dec)return; membershipBusy=true;
+  async function syncArmadaMemberships(p,viewer,localOnly=false){
+    if((state.community!=null&&!localOnly)||membershipBusy||!viewer.pubkey||!p.nip44dec)return; membershipBusy=true;
     let recovered=false;
     try{
       if(membershipViewer!==viewer.pubkey){membershipViewer=viewer.pubkey;membershipDocs.clear();}
-      const candidates=await membershipEvents(p,viewer.pubkey);
-      if(state.community!=null)return;
+      const candidates=await membershipEvents(p,viewer.pubkey,{external:!localOnly});
+      if(state.community!=null&&!localOnly)return;
       // Armada has emitted both kinds and may leave several list shards on relays. Decode every
       // valid snapshot: choosing one newest event can hide communities stored in another shard.
       const entries=new Map(),tombs=new Map(),decrypted=[];
@@ -781,7 +782,7 @@
       const live=[...entries.values()].filter(e=>Number(e.added_at||0)>Number(tombs.get(e.community_id)||0)); if(!live.length)return;
       const rooms=saved(); let changed=false;
       for(const e of live){
-        if(state.community!=null)return;
+        if(state.community!=null&&!localOnly)return;
         const current=e.current||{},url=inviteRefUrl(e.invite_ref),
               i=rooms.findIndex(r=>r.communityId===e.community_id||r.url===url);
         // Armada's vault `current` is a CONTROL SNAPSHOT (owner/root/relays/name), not the complete
@@ -796,8 +797,8 @@
           if(!window.PosterCordReader||!window.PosterCordReader.inspectControl)continue;
           window.PosterCordReader.inspectControl(bundle,[]);
         }catch(_){
-          if(!url)continue;
-          try{hydrated=await hydrateInvite(p,url);if(state.community!=null)return;bundle=mergeArmadaBundle(hydrated.cord.bundle,current);}
+          if(!url||localOnly)continue;
+          try{hydrated=await hydrateInvite(p,url);if(state.community!=null&&!localOnly)return;bundle=mergeArmadaBundle(hydrated.cord.bundle,current);}
           catch(__){continue;}
         }
         const channels=(bundle.channels||[]).map(c=>({name:c.name||'private',private:true,id:c.id}))
@@ -1054,6 +1055,9 @@
     if(state.community==null){
       startDiscovery(p);syncArmadaMemberships(p,viewer);syncNip29Memberships(p,viewer);
     }else{
+      /* Restore every membership already cached or present on PosterChan without opening any public
+       * discovery relay. This is what makes all joined rooms appear on an ordinary launch. */
+      syncArmadaMemberships(p,viewer,true);
       stopDiscovery();
       clearTimeout(membershipRetryTimer);membershipRetryTimer=null;
       clearTimeout(nip29RetryTimer);nip29RetryTimer=null;

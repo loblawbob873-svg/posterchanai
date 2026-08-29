@@ -251,7 +251,7 @@ def test_relay_echo_racing_optimistic_send_cannot_leave_two_messages():
 
 
 def test_desktop_recovery_merges_armada_list_shards_and_retries_early_empty_queries():
-    assert "function membershipEvents(p,pubkey)" in CONCORD
+    assert "function membershipEvents(p,pubkey" in CONCORD
     assert "{kinds:[13302],authors:[pubkey],limit:1}" in CONCORD
     assert "{kinds:[33302],authors:[pubkey],'#d':[''],limit:20}" in CONCORD
     assert "kinds:[13302,33302]" not in CONCORD
