@@ -75,3 +75,15 @@ await window.PCConcord.membershipEvents({
 },hex('7'));
 if(queries.length<=before)throw new Error('a second account inherited the first account\'s session mark');
 console.log('vector membership runtime ok');
+
+/* A ROOM WHOSE BUNDLE CARRIES NO CHANNELS CANNOT OPEN ONE, whatever its sidebar list says.
+   Measured on a real account: three of four saved communities listed 1, 13 and 7 channels beside a
+   `cord.bundle` whose own channel list was EMPTY — the shape an Armada vault snapshot produces —
+   and `inspectChat` then threw "channel is not readable with this membership" on every four-second
+   live-sync tick for the whole visit. `inspectControl` accepts that bundle (it only needs an owner
+   and a root), so the emptiness has to be asked about directly. */
+const jm = window.PCConcord.hasJoinMaterial;
+if(jm({channels:[{id:'c1'}]})!==true) throw new Error('a bundle WITH channels was called unusable');
+for(const empty of [null, undefined, {}, {channels:[]}, {channels:'nope'}])
+  if(jm(empty)!==false) throw new Error('a bundle with no channel material passed as joinable: '+JSON.stringify(empty));
+console.log('vector membership runtime ok (join material)');

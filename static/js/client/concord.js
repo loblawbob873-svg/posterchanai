@@ -494,6 +494,28 @@
     try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>max){await reader.cancel();throw new Error('community icon is too large');}parts.push(value);}}finally{try{reader.releaseLock();}catch(_){}}
     const out=new Uint8Array(size);let at=0;for(const part of parts){out.set(part,at);at+=part.byteLength;}return out;
   }
+  /* THE CACHE KEY FOR ONE ICON, AND WHY IT IS NOT `JSON.stringify(pointer)`.
+   *
+   * Three call sites build that pointer object independently — `hydrateStoredRoomIcon` from the
+   * localStorage round trip, `applyControl` from whatever `inspectControl` reconstructs out of the
+   * bundle, and the metadata refresh straight off the relay event — and `JSON.stringify` is KEY
+   * ORDER SENSITIVE. `putIcon` stores one row per room, so two orderings of the same four fields
+   * are two different `ref`s overwriting each other: every read misses, every visit re-downloads
+   * and re-decrypts an image that was already on disk, and the cache looks broken while working
+   * exactly as written. A re-ordered pointer also reads as a CHANGED icon, so it re-decrypts on
+   * every metadata pass as well.
+   *
+   * The pointer already carries `hash` — the sha256 of the plaintext image, which
+   * `decryptImagePointer` verifies before it will hand the bytes back. That is the image's
+   * identity, it cannot be reordered, and it is the same on every path. The stringified form
+   * survives only as a fallback for a pointer with no usable hash, which cannot be decrypted here
+   * anyway. */
+  function iconRef(value){
+    if(typeof value==='string')return value;
+    if(!value||typeof value!=='object')return '';
+    const h=String(value.hash||'').toLowerCase();
+    return /^[0-9a-f]{64}$/.test(h)?'h:'+h:'j:'+JSON.stringify(value);
+  }
   async function decryptImagePointer(pointer,loadKey,ref){
     try{const cached=window.PCConcordCache&&await window.PCConcordCache.getIcon(loadKey,ref);if(cached)return URL.createObjectURL(new Blob([cached.bytes],{type:cached.mime||'image/*'}));}catch(e){console.warn('Concord icon cache read failed',e);}
     const url=new URL(String(pointer&&pointer.url||''),location.href);if(!/^https?:$/.test(url.protocol))throw new Error('invalid community icon URL');
@@ -511,7 +533,7 @@
   }
   async function applyRoomIconMetadata(room,info,loadKey){
     if(!room||!info||!Object.prototype.hasOwnProperty.call(info,'icon'))return false;
-    const value=info.icon,ref=typeof value==='string'?value:JSON.stringify(value||null);
+    const value=info.icon,ref=iconRef(value);
     const cached=roomIconRefs.get(loadKey);
     if(cached&&cached.ref===ref)return false;
     const failed=failedIconRefs.get(loadKey);
@@ -534,6 +556,54 @@
       return false;
     }
   }
+  /* PAINT WHAT IS ALREADY HELD, BEFORE THE FIRST NETWORK AWAIT — the rule every other list in
+   * this app follows, and the one the community icons never did. `roomIcon()` is synchronous: with
+   * nothing in `roomIconRefs` it draws the letter glyph and only THEN kicks a per-room IndexedDB
+   * read, so a warm cache still showed two initials on every community and filled them in one
+   * repaint at a time. One transaction for the whole list, one repaint, and a cold icon falls back
+   * to the glyph exactly as before. */
+  /* RE-RUNNABLE, KEYED ON THE ROOM LIST — measured, not assumed. On a real account the saved list
+   * grows during the visit (1 room at first paint, 4 a moment later) and a room's icon POINTER
+   * only lands when its membership/metadata sync does, so a once-per-session boolean warms exactly
+   * the rooms that needed it least. The signature includes each room's pointer, so a room that
+   * gains one is re-warmed; rooms already resolved are skipped inside the loop and the whole read
+   * is still one transaction. */
+  let iconsWarmedFor='';
+  function iconWarmSignature(){
+    try{ return saved().map(r=>roomIdentity(r)+'|'+iconRef(r&&(r.iconPointer||r.icon))).join('\n'); }
+    catch(_){ return ''; }
+  }
+  async function warmRoomIcons(){
+    if(!window.PCConcordCache||!PCConcordCache.allIcons)return;
+    const sig=iconWarmSignature();
+    if(!sig||sig===iconsWarmedFor)return;
+    iconsWarmedFor=sig;
+    let rows=[];
+    try{ rows=await PCConcordCache.allIcons()||[]; }
+    catch(e){
+      /* NOT LATCHED. A cache that could not be opened (another tab holding an older version) is
+       * "could not ask", never "there is nothing there" — leave the flag clear so the next entry
+       * tries again rather than showing initials for the rest of the session. */
+      iconsWarmedFor=''; console.warn('Concord icon warm failed',e); return;
+    }
+    if(!rows.length)return;
+    const byKey=new Map(rows.map(r=>[String(r.key),r]));
+    let filled=0;
+    for(const room of saved()){
+      const loadKey=roomIdentity(room);
+      if(!loadKey||roomIconRefs.has(loadKey))continue;
+      const want=iconRef(room.iconPointer||room.icon);
+      const row=byKey.get(loadKey);
+      if(!row||!want||String(row.ref)!==want)continue;
+      try{
+        roomIconRefs.set(loadKey,{ref:want,
+          url:URL.createObjectURL(new Blob([row.bytes],{type:row.mime||'image/*'}))});
+        filled++;
+      }catch(_){ }
+    }
+    if(filled&&document.body.classList.contains('concord-view'))backgroundRender();
+  }
+
   async function hydrateStoredRoomIcon(p,room,loadKey){
     if(!room||!room.iconPointer||!loadKey||storedIconLoads.has(loadKey))return;
     storedIconLoads.add(loadKey);
@@ -835,6 +905,12 @@
     }
     return {entries,tombstones};
   }
+  /* CAN THIS BUNDLE OPEN A CHANNEL? `room.channels` is the sidebar's list and says nothing about
+   * whether the material to READ one is present; `bundle.channels` is the material. They disagree
+   * on any room restored from an Armada membership vault, which carries a control snapshot only. */
+  function hasJoinMaterial(bundle){
+    return !!(bundle&&Array.isArray(bundle.channels)&&bundle.channels.length);
+  }
   async function syncArmadaMemberships(p,viewer,localOnly=false){
     if((state.community!=null&&!localOnly)||membershipBusy||!viewer.pubkey||!p.nip44dec)return; membershipBusy=true;
     let recovered=false;
@@ -875,12 +951,27 @@
         // the catch used to `continue`, silently hiding every otherwise valid Armada membership on
         // a fresh device. Existing hydrated rooms need no work. For a missing room, resolve the
         // invite_ref exactly as Armada does and use the bundle carried by that invite.
-        if(i>=0&&rooms[i].cord&&!rooms[i].cord.armadaList)continue;
+        /* SKIPPING AN ALREADY-HYDRATED ROOM IS RIGHT; SKIPPING AN UNREADABLE ONE IS NOT.
+         * Measured on a real account: three of four saved communities carried `channels` for the
+         * sidebar (1, 13 and 7 of them) and a `cord.bundle` whose OWN channel list was EMPTY —
+         * because Armada's vault `current` is a control snapshot, not the join bundle. `inspectChat`
+         * looks the channel up in the bundle, finds nothing, and throws "channel is not readable
+         * with this membership" on EVERY live-sync tick, four seconds apart, for the life of the
+         * visit. Reported as "every time I change rooms". The room draws, the channel list draws,
+         * and nothing in it can ever be opened.
+         *
+         * `hasJoinMaterial` is the question that was never asked. A room missing it goes back
+         * through the invite below exactly as a brand-new one does. */
+        if(i>=0&&rooms[i].cord&&!rooms[i].cord.armadaList&&hasJoinMaterial(rooms[i].cord.bundle))continue;
         const existing=i>=0?rooms[i]:null,priorBundle=existing&&existing.cord&&existing.cord.bundle;
         let hydrated=null,bundle=mergeArmadaBundle(priorBundle,current);
         try{
           if(!window.PosterCordReader||!window.PosterCordReader.inspectControl)continue;
           window.PosterCordReader.inspectControl(bundle,[]);
+          /* inspectControl only needs an owner and a root, so it ACCEPTS a bundle with no channels
+           * — which is exactly the shape the vault snapshot produces. Treat that as the miss it is
+           * and take the same route a fresh join does. */
+          if(!hasJoinMaterial(bundle))throw new Error('bundle carries no channel material');
         }catch(_){
           if(!url||localOnly)continue;
           try{hydrated=await hydrateInvite(p,url);if(state.community!=null&&!localOnly)return;bundle=mergeArmadaBundle(hydrated.cord.bundle,current);}
@@ -1126,6 +1217,7 @@
     startLiveSync(p);
     // Covers the stale-service-worker compatibility entry too, which does not run switchView().
     document.body.classList.add('concord-view','rb-off');
+    void warmRoomIcons();
     const rooms=saved();
     const viewer=p.viewer?p.viewer():{};
     let autoOpen=-1;
@@ -1404,7 +1496,7 @@
     close.publish=event=>(R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={render,backgroundRender,wake,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,membershipEvents,decodeMembershipLists,mergeArmadaBundle,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
+  window.PCConcord={render,backgroundRender,wake,iconRef,warmRoomIcons,hasJoinMaterial,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,membershipEvents,decodeMembershipLists,mergeArmadaBundle,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */
