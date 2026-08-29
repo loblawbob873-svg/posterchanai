@@ -1715,23 +1715,39 @@
      * what makes it right here and wrong on the wire. The complete row wins; the address the bare
      * one would have been filed at is carried on it as `_bare`, so publishOne can retire the
      * document already sitting there once the real one has landed. */
-    const byRow = new Map();
+    const byRow = new Map(), superseded = new Set();
     for(const r of byDoc.values()){
       const id = Number(r && r.id) || 0;
-      if(!id){ continue; }
+      /* AN MMS, PAIRED ONLY WITH ANOTHER MMS — and this is not a detail.
+       *
+       * `content://sms` and `content://mms` are SEPARATE TABLES WITH SEPARATE ID SEQUENCES, so
+       * text message #5 and picture message #5 are different messages that happen to share a
+       * number. Keyed on the number alone this merged them, kept the picture (more parts) and
+       * published a tombstone for the TEXT MESSAGE's document. Measured on the reporting account
+       * before this guard existed: 748 deletions published, 392 documents gone, and a message
+       * disappearing off a screen somebody was reading.
+       *
+       * The pair this de-duplication exists for is always ONE MMS read twice — bare from the
+       * combined timeline, complete from the MMS walk — so an SMS has no business in it. */
+      if(!id || !r.mms) continue;
       const held = byRow.get(id);
       if(!held){ byRow.set(id, r); continue; }
+      /* …and only when the two reads agree about WHICH message they are. Two reads of one provider
+       * row carry that row's own timestamp; anything else is a coincidence, and acting on a
+       * coincidence here deletes somebody's message. */
+      if(Math.floor(Number(held.date || 0) / 1000) !== Math.floor(Number(r.date || 0) / 1000)) continue;
       const rich = ((r.parts || []).length >= (held.parts || []).length) ? r : held;
       const poor = rich === r ? held : r;
-      if(String(poor.doc || '') !== String(rich.doc || '')) rich._bare = poor.doc;
+      if(String(poor.doc || '') !== String(rich.doc || '')){
+        rich._bare = poor.doc;
+        /* ONLY A ROW THAT WAS ACTUALLY PAIRED IS DROPPED. Deriving this from the id map instead
+         * threw away every row that had been SKIPPED for disagreeing — the guard above would
+         * refuse to merge two messages and the removal would delete one of them anyway. */
+        superseded.add(poor.doc);
+      }
       byRow.set(id, rich);
     }
-    for(const r of byDoc.values()){
-      const id = Number(r && r.id) || 0;
-      if(!id) continue;
-      const winner = byRow.get(id);
-      if(winner && winner !== r) byDoc.delete(r.doc);
-    }
+    for(const doc of superseded) byDoc.delete(doc);
     rows = Array.from(byDoc.values());
     if(!exhausted) mmsCap = true;
     S.lastRead = rows.length;      // what the PROVIDER returned, before any of our filtering

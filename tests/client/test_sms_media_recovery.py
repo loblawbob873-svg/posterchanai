@@ -555,6 +555,51 @@ class TheArchiveIsBuiltFromTheReadThatCarriesAttachments(unittest.TestCase):
         self.assertEqual(threads[0]["parts"], [1],
                          "the surviving copy is the one without the picture: %r" % (threads[0],))
 
+    def test_a_text_message_is_never_mistaken_for_a_picture_with_the_same_row_id(self):
+        """THE ONE THAT DELETED PEOPLE'S MESSAGES.
+
+        `content://sms` and `content://mms` are separate tables with separate id sequences, so text
+        message #5 and picture message #5 are different messages that happen to share a number.
+        Keyed on the number alone the de-duplication merged them, kept the picture, and published a
+        TOMBSTONE for the text message's document. Measured on the reporting account: 748 deletions
+        published, 392 documents gone, and a message vanishing off a screen somebody was reading.
+
+        The pair this de-duplication exists for is always one MMS read twice."""
+        text = msg(5, addr="+15550100", body="just a text", incoming=True)
+        pic = msg(5, addr="+15559998888", body="", incoming=True)
+        # EARLIER, not later: NOW is the present here, and a row in the future is behind the
+        # provider's own `before` cursor — the read would drop it and prove nothing.
+        pic["date"] = text["date"] - 60000        # a different message, same provider row number
+        pic["doc"] = "pcai:sms:%024d" % 505       # its own address; only the ROW NUMBER collides
+        pic["mms"] = True
+        pic["parts"] = [self.PART]
+        res = run(isPhone=True, rows=[text, pic], combinedDropsParts=True,
+                  parts={"900": {"data": "eA=="}}, steps=["phoneLoad", "migrate", "settle"])
+        live = [d for d in res["docs"] if d.startswith("pcai:sms:")]
+        self.assertEqual(len(live), 2,
+                         "a text message and a picture message with the same provider row id were "
+                         "merged into one: %r" % (res["docs"],))
+        bodies = sorted(t for th in res["threads"] for t in th.get("bodies", []))
+        self.assertIn("just a text", bodies,
+                      "the text message was deleted by the picture's de-duplication: %r" % (bodies,))
+
+    def test_two_reads_that_disagree_about_the_message_are_not_paired(self):
+        """Two reads of ONE provider row carry that row's own timestamp. Anything else is a
+        coincidence, and acting on a coincidence here publishes a tombstone for a real message."""
+        a = msg(7, addr="+15550100", body="", incoming=True)
+        a["mms"] = True
+        a["parts"] = [self.PART]
+        b = msg(7, addr="+15550100", body="", incoming=True)
+        b["date"] = a["date"] - 3600000           # an hour apart: not the same row
+        b["mms"] = True
+        b["doc"] = "pcai:sms:%024d" % 77
+        res = run(isPhone=True, rows=[a, b], combinedDropsParts=True,
+                  parts={"900": {"data": "eA=="}}, steps=["phoneLoad", "migrate", "settle"])
+        live = [d for d in res["docs"] if d.startswith("pcai:sms:")]
+        self.assertGreaterEqual(len(live), 2,
+                                "two messages an hour apart were merged on a shared row id: %r"
+                                % (res["docs"],))
+
     def test_the_text_only_twin_already_on_the_relay_is_retired(self):
         """De-duplicating the READ is only half of it: the address the bare row would have been
         filed at HAS a document on it — that is what the whole archive is made of. It is tombstoned
