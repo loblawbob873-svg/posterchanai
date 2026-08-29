@@ -153,6 +153,7 @@
     _queryFromActive: new Set(),
     _queryFromCooldown: new Map(),
     _queryFromStops: new Set(),
+    _queryFromBlockedHosts: new Set(['relay.ditto.pub']),
 
     /* Ephemeral external reads belong to the screen that requested them. A route change closes all
        of them synchronously; per-call AbortSignals remain useful for finer owners inside a view. */
@@ -754,8 +755,9 @@
       /* Most external discovery reads should avoid duplicating a connected pool socket. Some
        * protocols bind truth to one named relay (notably NIP-29), so exact=true deliberately opens
        * that relay even when it is also present in the shared pool. */
-      const now=Date.now(),targets = [...new Set((urls||[]).filter(Boolean))]
-        .filter(u => (exact || !this._conns.has(u)) && !this._queryFromActive.has(u) && Number(this._queryFromCooldown.get(u)||0)<=now)
+      const blocked=u=>{try{return this._queryFromBlockedHosts.has(new URL(String(u)).hostname.toLowerCase());}catch(_){return true;}},
+        now=Date.now(),targets = [...new Set((urls||[]).filter(Boolean))]
+        .filter(u => !blocked(u) && (exact || !this._conns.has(u)) && !this._queryFromActive.has(u) && Number(this._queryFromCooldown.get(u)||0)<=now)
         .slice(0, max);
       if (!targets.length || (signal && signal.aborted)) return Promise.resolve([]);
       const subId = 'qf' + Math.random().toString(36).slice(2,9);

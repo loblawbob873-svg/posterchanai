@@ -226,6 +226,32 @@ def _run_migrations():
         except Exception as e:
             logger.warning(f"[MIGRATE] could not widen {_tbl}.{_col}: {e}")
 
+    # RETIRED BOT MODES. `bot.modes` is a stored comma list handed straight to
+    # `botframework/main.py`, and argparse rejects the WHOLE invocation on one unknown flag — so a
+    # flag whose feature was removed does not merely stop working, it stops the bot: a
+    # `--pleroma,--nitter` row loses its Pleroma listener too, crash-loops, and is parked by the
+    # manager's restart cap until a human re-saves it in Admin → Bots.
+    #
+    # `_cmd_for` already filters these at spawn time, which is what un-breaks a running node the
+    # moment it restarts. This is the other half: it takes the dead flag OUT of the stored value, so
+    # the Bots UI stops showing a feature that no longer exists and `_spec_sig` stops hashing it.
+    # Idempotent (the UPDATE matches nothing once clean) and never empties the column — a row left
+    # with no modes at all would silently change meaning, since `_cmd_for` reads empty as "default
+    # to the bot's own platform".
+    for _dead in ("--nitter",):
+        try:
+            if not insp.has_table("bots"):
+                break
+            with engine.begin() as conn:
+                res = conn.execute(text(
+                    "UPDATE bots SET modes = NULLIF(array_to_string(array_remove("
+                    "  string_to_array(modes, ','), :dead), ','), '') "
+                    "WHERE modes LIKE :like"), {"dead": _dead, "like": "%" + _dead + "%"})
+                if res.rowcount:
+                    logger.info("[MIGRATE] removed retired bot mode %s from %d bot(s)", _dead, res.rowcount)
+        except Exception as e:
+            logger.warning("[MIGRATE] could not strip retired mode %s: %s", _dead, e)
+
 
 # The canonical default settings, populated by init_db() — settings_store seeds these into the
 # relay datastore on first boot (there is no SQL Setting table).

@@ -69,7 +69,7 @@ def test_one_shot_external_query_closes_immediately_when_owner_aborts(tmp_path):
       global.Worker=class {{ postMessage(){{}} }};
       require({json.dumps(str(RELAY))});
       const owner=new AbortController();
-      const pending=Relay.queryFrom(['wss://relay.ditto.pub','wss://relay.damus.io'],
+      const pending=Relay.queryFrom(['wss://relay.dreamith.to','wss://relay.damus.io'],
         [{{kinds:[1]}}],{{timeout:60000,max:2,exact:true,signal:owner.signal}});
       const before=FakeWS.all.map(ws=>ws.closed===true);
       owner.abort();
@@ -95,13 +95,29 @@ def test_failed_external_relay_is_single_flight_and_circuit_broken(tmp_path):
       global.Worker=class{{postMessage(){{}}}};console.warn=()=>{{}};
       require({json.dumps(str(RELAY))});
       (async()=>{{
-      const first=Relay.queryFrom(['wss://relay.ditto.pub'],[{{kinds:[1]}}],{{exact:true,purpose:'concord explicit room'}});
-      const concurrent=await Relay.queryFrom(['wss://relay.ditto.pub'],[{{kinds:[9]}}],{{exact:true,purpose:'other poll'}});
+      const first=Relay.queryFrom(['wss://relay.dead.example'],[{{kinds:[1]}}],{{exact:true,purpose:'concord explicit room'}});
+      const concurrent=await Relay.queryFrom(['wss://relay.dead.example'],[{{kinds:[9]}}],{{exact:true,purpose:'other poll'}});
       const madeWhileBusy=FakeWS.all.length;FakeWS.all[0].fail();await first;
-      const cooled=await Relay.queryFrom(['wss://relay.ditto.pub'],[{{kinds:[1]}}],{{exact:true,purpose:'retry'}});
+      const cooled=await Relay.queryFrom(['wss://relay.dead.example'],[{{kinds:[1]}}],{{exact:true,purpose:'retry'}});
       console.log(JSON.stringify({{madeWhileBusy,total:FakeWS.all.length,concurrent,cooled}}));
       }})().catch(error=>{{console.error(error);process.exit(1);}});
     """), encoding="utf-8")
     run = subprocess.run(["node", str(driver)], capture_output=True, text=True, timeout=10)
     assert run.returncode == 0, run.stderr
     assert json.loads(run.stdout) == {"madeWhileBusy": 1, "total": 1, "concurrent": [], "cooled": []}
+
+
+def test_ditto_is_rejected_before_websocket_construction_even_when_explicit(tmp_path):
+    driver = tmp_path / "blocked-query.js"
+    driver.write_text(textwrap.dedent(f"""
+      class FakeWS {{ constructor(url){{FakeWS.all.push(url);}} }} FakeWS.all=[];
+      global.WebSocket=FakeWS;global.window=global;global.self=global;
+      global.document={{hidden:false,addEventListener(){{}}}};Object.defineProperty(global,'navigator',{{value:{{onLine:true}}}});
+      global.location={{origin:'https://app.test',protocol:'https:'}};global.Worker=class{{postMessage(){{}}}};
+      require({json.dumps(str(RELAY))});
+      Relay.queryFrom(['wss://relay.ditto.pub/'],[{{kinds:[1059]}}],{{exact:true,purpose:'legacy explicit room'}})
+        .then(events=>console.log(JSON.stringify({{events,sockets:FakeWS.all}})));
+    """), encoding="utf-8")
+    run = subprocess.run(["node", str(driver)], capture_output=True, text=True, timeout=10)
+    assert run.returncode == 0, run.stderr
+    assert json.loads(run.stdout) == {"events": [], "sockets": []}
