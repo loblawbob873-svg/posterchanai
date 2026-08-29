@@ -24,7 +24,10 @@ function writeWaylandText(text, deps) {
     let settled = false;
     let child;
     try {
-      child = start(bin, ['--type', 'text/plain;charset=utf-8'], {
+      /* Offer the baseline type understood by both GTK Firefox and Qt Telegram.  Wayland MIME
+       * offers are exact strings: advertising only text/plain;charset=utf-8 leaves clients that
+       * enumerate text/plain with no compatible-looking target, even though the bytes are UTF-8. */
+      child = start(bin, ['--type', 'text/plain'], {
         stdio: ['pipe', 'ignore', 'ignore'],
         windowsHide: true,
       });
@@ -44,7 +47,10 @@ function readWaylandText(deps) {
   const run = (deps && deps.execFile) || execFile;
   const bin = process.env.PC_WLPASTE || 'wl-paste';
   return new Promise((resolve) => {
-    run(bin, ['--no-newline', '--type', 'text/plain'], {
+    /* `text` is wl-paste's generic selector.  Native clients variously advertise text/plain,
+     * text/plain;charset=utf-8, UTF8_STRING, or several of them; requesting exact text/plain made
+     * Firefox/Telegram copies disappear whenever that exact spelling was absent. */
+    run(bin, ['--no-newline', '--type', 'text'], {
       timeout: 3000,
       maxBuffer: 65536,
       windowsHide: true,

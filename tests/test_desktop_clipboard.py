@@ -26,17 +26,19 @@ C.writeWaylandText('native-copy', {spawn:(bin,args,opts)=>{call={bin,args,opts};
 """)
     assert result["ok"] is True
     assert result["input"] == "native-copy"
-    assert result["call"]["args"] == ["--type", "text/plain;charset=utf-8"]
+    assert result["call"]["args"] == ["--type", "text/plain"]
     assert result["call"]["opts"]["stdio"] == ["pipe", "ignore", "ignore"]
 
 
 def test_wayland_read_is_bounded_and_uses_plain_text_offer():
     result = run_node(r"""
 const C=require('./desktop/clipboard.js');
-C.readWaylandText({execFile:(bin,args,opts,cb)=>cb(null,'outside-app')})
- .then(value=>console.log(JSON.stringify({value})));
+let call;
+C.readWaylandText({execFile:(bin,args,opts,cb)=>{call={bin,args,opts}; cb(null,'outside-app');}})
+ .then(value=>console.log(JSON.stringify({value,call})));
 """)
     assert result["value"] == "outside-app"
+    assert result["call"]["args"] == ["--no-newline", "--type", "text"]
 
 
 def test_main_bridge_uses_native_wayland_clipboard_both_directions():

@@ -15,9 +15,9 @@ function fn(head) {
   throw new Error('unterminated '+head);
 }
 const calls={folders:[],files:[],batch:[],toasts:[],badges:[],renders:0,uploads:[]};
-const context={console,Set,Promise,Math,Date,
+const context={console,Set,Promise,Math,Date,saveOK:true,
   FilesIdx:{_pullDone:true,folders:()=>[],isEncFolder:()=>false,beginBatch:()=>calls.batch.push('begin'),
-    endBatch:async()=>calls.batch.push('end'),addFolder:f=>calls.folders.push(f),
+    endBatch:async()=>{calls.batch.push('end');return context.saveOK;},addFolder:f=>calls.folders.push(f),
     setFile:(sha,d)=>calls.files.push([sha,d])},
   toast:x=>calls.toasts.push(x),_uploadBadge:x=>calls.badges.push(x),
   uploadBlob:async f=>{calls.uploads.push(f.name);return 'https://blossom.test/'+
@@ -33,7 +33,8 @@ ${fn('function _uploadTargetFolder(')}
 ${fn('function _rememberUploadedBlob(')}
 ${fn('async function uploadFilesSeq(')}
 globalThis.run=uploadFilesSeq;globalThis.uploading=()=>_uploading;
-globalThis.visible=()=>_filesGridList;globalThis.have=()=>_blobHave;globalThis.sizes=()=>_blobSizes;`,context);
+globalThis.visible=()=>_filesGridList;globalThis.have=()=>_blobHave;globalThis.sizes=()=>_blobSizes;
+globalThis.failIndex=()=>{globalThis.saveOK=false;};`,context);
 
 (async()=>{
   const files=[{name:'a.jpg',type:'image/jpeg',size:10,webkitRelativePath:'Pictures/a.jpg'},
@@ -51,5 +52,10 @@ globalThis.visible=()=>_filesGridList;globalThis.have=()=>_blobHave;globalThis.s
   if(visible.some(b=>!context.have().has(b.sha256)||context.sizes().get(b.sha256)!==b.size))
     throw new Error('blob presence/size caches were not updated with the visible listing');
   if(!calls.toasts.some(x=>/Done.*2 added/.test(x)))throw new Error('no completion summary: '+calls.toasts);
+  context.failIndex();
+  await context.run([{name:'c.jpg',type:'image/jpeg',size:30,webkitRelativePath:'More/c.jpg'}]);
+  if(!calls.toasts.some(x=>/Uploaded — folder list waiting to save.*1 added/.test(x)))
+    throw new Error('failed index was announced as complete: '+calls.toasts);
+  if(context.uploading()!==0)throw new Error('failed index save left upload busy');
   console.log('installed folder upload completion holds');
 })().catch(e=>{console.error(e&&e.stack||e);process.exitCode=1});

@@ -114,3 +114,11 @@ def test_completed_upload_is_remembered_before_the_network_refresh():
     assert "_filesGridList=old.filter" in helper
     assert "_blobHave.add(sha)" in helper
     assert "_blobSizes.set(sha,row.size)" in helper
+
+
+def test_folder_upload_does_not_claim_done_when_index_save_failed():
+    upload = APP[APP.index("async function uploadFilesSeq(files)") :]
+    upload = upload[: upload.index("// ---- Music:")]
+    assert "indexSaved=!!(await FilesIdx.endBatch())" in upload
+    assert "Uploaded — folder list waiting to save" in upload
+    assert "indexSaved?'Done'" in upload

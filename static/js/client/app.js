@@ -21115,10 +21115,19 @@
       _uploadBadge('Uploading '+prog);   // persists across views
       if(big){ const s=$('#up-sum'); if(s) s.textContent='Uploading… '+prog; }
     }
-    await FilesIdx.endBatch();
+    /* Bytes on Blossom are only half of a folder upload. The encrypted index is what records their
+     * names and target folders, and endBatch deliberately reports whether that write reached the
+     * server. Do not announce durable completion when it did not; _save keeps the dirty index and
+     * schedules its retry, while the optimistic blob cache below still makes the uploads visible
+     * on this device immediately. */
+    let indexSaved=false, indexErr='';
+    try{ indexSaved=!!(await FilesIdx.endBatch()); }
+    catch(e){ indexErr=String((e&&e.message)||e||'index save failed'); }
     _uploadBatchAuth=null;   // the batch auth never outlives its batch (it commits only to THESE hashes)
     _uploading=Math.max(0, _uploading-1);
-    const summary=`${_uploadCancel?'Stopped':'Done'} — ✓ ${ok} added${dup?(' · ↺ '+dup+' already there'):''}${skip?(' · ⏭ '+skip+' skipped'):''}${fail?(' · ✗ '+fail+' failed'):''}`
+    const completion=_uploadCancel?'Stopped':(indexSaved?'Done':'Uploaded — folder list waiting to save');
+    const summary=`${completion} — ✓ ${ok} added${dup?(' · ↺ '+dup+' already there'):''}${skip?(' · ⏭ '+skip+' skipped'):''}${fail?(' · ✗ '+fail+' failed'):''}`
+      + (!indexSaved && indexErr ? ` — ${indexErr}` : '')
       + ((skip||dup) && why ? ` — ${why}` : '');
     _uploadBadge(summary, true);   // self-removes after 12s (timer lives in _uploadBadge)
     if(big&&q){ const s=$('#up-sum'); if(s) s.textContent=summary; }

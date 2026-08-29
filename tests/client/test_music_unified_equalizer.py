@@ -83,9 +83,15 @@ def test_phone_library_actions_are_one_compact_row_with_count_below():
     assert "'Delete All'" in primary
     assert 'class="music-count muted small"' in body
 
-    mobile = CSS[CSS.index("@media(max-width:560px){", CSS.index(".music-head{")):]
+    mobile = CSS[CSS.index("@media(max-width:820px){", CSS.index(".music-head{")):]
     assert ".music-head-primary{order:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr))" in mobile
     assert ".music-count{order:2;flex:1 1 100%;width:100%" in mobile
+
+
+def test_compact_music_actions_cover_landscape_android_phones():
+    music = CSS[CSS.index(".music-head{"):CSS.index("/* A track", CSS.index(".music-head{"))]
+    assert "@media(max-width:820px)" in music
+    assert "@media(max-width:560px)" not in music
 
 
 def test_library_count_describes_every_visible_row_not_only_playable_tracks():

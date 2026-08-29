@@ -7814,7 +7814,9 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 .music-count{flex:1 1 180px;min-width:0}
 .music-head-secondary{margin-inline-start:auto}
 .music-head .btn[disabled]{opacity:.45;cursor:default}
-@media(max-width:560px){
+/* Android phones remain phones in landscape. The shell's own mobile boundary is 820px; stopping
+   this compact row at 560px let a rotated phone fall back to the wrapping desktop toolbar. */
+@media(max-width:820px){
   .music-head{align-items:stretch;gap:6px}
   .music-head-primary{order:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));
     width:100%;gap:5px}
