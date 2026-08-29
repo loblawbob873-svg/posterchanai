@@ -3239,6 +3239,9 @@
      * renderer creates a generic shared-feed document and can display Social inside a Music frame.
      * Send the reconstructible action alias so the destination invokes renderMusicApp again. */
     if(opened==='doc:music') return '__music';
+    /* System Settings is also opened through an action alias.  The doc:* value is only its local
+     * uniqueness key; the alias is the reconstructible application identity on another output. */
+    if(opened==='doc:os-settings') return '__ossettings';
     /* A document's key is its WINDOW identity.  A post is opened as
      * `doc:post:<event-id>` and paints the internal `thread` view inside it.  Sending `thread`
      * loses the document on the receiving renderer: openApp has no launcher app named thread, so
@@ -3248,6 +3251,40 @@
     if(opened.indexOf('doc:')===0) return opened;
     if(String(w&&w.appPath||'') || (opened==='settings'&&current==='admin')) return current;
     return opened||current;
+  }
+
+  /* An opaque document key is not automatically an application.  In particular, openApp() cannot
+   * render `doc:prof:<pubkey>`: treating it like a sidebar view claims the destination renderer's
+   * shared #feed, which may currently contain Terminal, and puts those Terminal nodes inside a
+   * correctly titled Profile frame.  That is an identity violation, not a repaint glitch.
+   *
+   * Name every document family that can be reconstructed losslessly. Unknown/private document
+   * windows fail closed and stay on their original output instead of turning into another app. */
+  function handoffDocumentKind(view){
+    view=String(view||'');
+    if(/^doc:prof:[0-9a-f]{64}$/i.test(view))return 'profile';
+    if(/^doc:post:[0-9a-f]{64}$/i.test(view))return 'post';
+    if(/^doc:pv:/.test(view))return 'preview';
+    if(/^doc:webxdc:/.test(view))return 'webxdc';
+    if(view==='doc:music')return 'music';
+    if(view==='doc:os-settings')return 'settings';
+    return view.indexOf('doc:')===0?'unsupported':'app';
+  }
+
+  function reconstructHandoffWindow(p){
+    const view=String(p&&p.view||''),kind=handoffDocumentKind(view);
+    if(kind==='profile'){
+      const pk=view.slice('doc:prof:'.length);
+      try{if(PC().openProfile)PC().openProfile(pk);}catch(_){}
+      return wins.find(w=>w.view===view)||null;
+    }
+    if(kind==='post'){
+      const id=view.slice('doc:post:'.length);
+      try{if(PC().openThread)PC().openThread(id);}catch(_){}
+      return wins.find(w=>w.view===view)||null;
+    }
+    if(kind==='unsupported'||kind==='preview'||kind==='webxdc')return null;
+    return openApp(view,String(p&&p.title||''),String(p&&p.icon||''));
   }
 
   function selectedMessagesTab(w){
@@ -3308,6 +3345,9 @@
 
   function sendFrameHandoff(w,direction,overflow,recover=true){
     if(!w || !wins.includes(w) || !window.pcWM || !pcWM.handoffFrame)return Promise.resolve(false);
+    if(handoffDocumentKind(String(w.view||''))==='unsupported'){
+      keepFrameReachable(w);return Promise.resolve(false);
+    }
     return Promise.resolve(pcWM.handoffFrame(handoffPayload(w,overflow),direction)).then(result=>{
       if(result && wins.includes(w)){
         closeWin(w,{preserveFocus:true});
@@ -7141,7 +7181,10 @@
                 keepFrameReachable(moved);restoreHandoffUI(moved,p.ui);
               }).catch(()=>{});return;
             }
-            const w=openApp(String(p.view), String(p.title||''), String(p.icon||''));
+            /* Reconstruct addressed documents through their owning feature. Never feed an opaque
+             * doc:* uniqueness key into openApp: it has no renderer and would adopt whichever
+             * shared view (often Terminal or Social) this monitor happened to show last. */
+            const w=reconstructHandoffWindow(p);
             if(!w) return;
             /* Terminal state is adopted before openApp so its stable PTY is selected by the first
              * render. Reassert the route after the frame exists: the destination renderer can still
@@ -7721,6 +7764,7 @@
                   __fitIcons: (items,pos,maxX,maxY) => fitIconPositions(items,pos,maxX,maxY),
                   __sameAppWindow: sameAppWindow,
                   __handoffIdentity: handoffIdentity,
+                  __handoffDocumentKind: handoffDocumentKind,
                   __shouldSelectMessagesTab: shouldSelectMessagesTab,
                   __selectedMessagesTab: selectedMessagesTab,
                   __tryMonitorDirections: tryMonitorDirections,

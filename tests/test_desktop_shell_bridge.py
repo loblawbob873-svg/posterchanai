@@ -243,9 +243,60 @@ class Bridge(unittest.TestCase):
         for view in views:
             self.assertNotIn("p.view==='" + view + "'&&p.ui", receive,
                              view + " fell back to a one-off handoff instead of the generic path")
-        # openApp performs the destination's one render. A second focusWin used to reload all apps.
-        after_open = receive[receive.index("const w=openApp"):]
+        # reconstructHandoffWindow performs the destination's one render. A second focusWin used
+        # to reload all apps.
+        after_open = receive[receive.index("const w=reconstructHandoffWindow"):]
         self.assertNotIn("focusWin(w);", after_open)
+
+    def test_every_registered_app_keeps_its_opened_identity_across_outputs(self):
+        """The registry is the matrix: adding an app must automatically put it under this gate.
+
+        A monitor's page-global VIEW is never an application identity. Ordinary sidebar apps are
+        reconstructed from the transferred opened view; only the explicitly asserted aliases may
+        map to another reconstructible identity.
+        """
+        client = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()
+        html = open(os.path.join(ROOT, "templates/client.html"), encoding="utf-8").read()
+        views = sorted(set(re.findall(r'data-view=["\']([^"\']+)', html)))
+        self.assertGreater(len(views), 20)
+        identity = client[client.index("function handoffIdentity("):
+                          client.index("function selectedMessagesTab(")]
+        receive = client[client.index("function reconstructHandoffWindow("):
+                         client.index("function selectedMessagesTab(")]
+        self.assertIn("return openApp(view", receive,
+                      "registered apps no longer use the transferred identity")
+        self.assertNotIn("PC().VIEW", receive,
+                         "destination-global state must not choose the received application")
+        for view in views:
+            # No registered app gets a receiver-side one-off mapping. Such mappings are where
+            # Profile became Terminal and Terminal became Social in prior releases.
+            self.assertNotIn("view==='" + view + "'", receive, view)
+        self.assertIn("return opened||current", identity)
+        for opened, expected in (("terminal", "terminal"), ("websearch", "websearch"),
+                                 ("messages", "messages"), ("concord", "messages"),
+                                 ("doc:music", "__music"),
+                                 ("doc:os-settings", "__ossettings")):
+            self.assertIn("opened==='" + opened + "'", identity)
+            self.assertIn("return '" + expected + "'", identity)
+
+    def test_profile_and_post_documents_reconstruct_their_exact_content(self):
+        """Opaque document keys may never fall through to openApp's shared-feed fallback."""
+        client = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()
+        classify = client[client.index("function handoffDocumentKind("):
+                          client.index("function reconstructHandoffWindow(")]
+        rebuild = client[client.index("function reconstructHandoffWindow("):
+                         client.index("function selectedMessagesTab(")]
+        self.assertIn("/^doc:prof:[0-9a-f]{64}$/i", classify)
+        self.assertIn("/^doc:post:[0-9a-f]{64}$/i", classify)
+        self.assertIn("PC().openProfile(pk)", rebuild)
+        self.assertIn("PC().openThread(id)", rebuild)
+        self.assertIn("wins.find(w=>w.view===view)", rebuild)
+        self.assertIn("kind==='unsupported'", rebuild)
+        send = client[client.index("function sendFrameHandoff("):
+                      client.index("function rearmFrameHandoffDestination(")]
+        self.assertIn("handoffDocumentKind(String(w.view||''))==='unsupported'", send)
+        self.assertIn("return Promise.resolve(false)", send,
+                      "unknown documents must remain on their source output")
 
     def test_video_handoff_preserves_playback_instead_of_reopening_black(self):
         """Moving a playing video across outputs recreates DOM in another renderer.
