@@ -28,7 +28,7 @@ function El(tag) {
     appendChild(c) { this.children.push(c); c.parent = this; return c; },
     remove() { const i = this.parent ? this.parent.children.indexOf(this) : -1;
                if (i >= 0) this.parent.children.splice(i, 1); },
-    load() {}, pause() { this.paused = true; },
+    load() {}, pause() { this.paused = true; }, play() { this.paused = false; return Promise.resolve(); },
     get innerHTML() { return this._html; },
     set innerHTML(v) { this._html = String(v); this._q = null; },
     querySelector(sel) { return matchIn(this, sel); },
@@ -179,19 +179,25 @@ console.log('an old Blossom MP4 returned as generic binary is playable');
   P.close();
 }
 
-console.log('a desktop monitor handoff transfers the live blob before source cleanup');
+console.log('a desktop monitor handoff transfers the live blob and playback before source cleanup');
 (async()=>{
   let sourceWindow=null, destinationWindow=null, opens=0;
   const slot=()=>El('div');
   window.PCOS={isOn:()=>true,openDoc(){const w={slot:slot()};if(!opens++)sourceWindow=w;else destinationWindow=w;return w;},
     documentWindow(){},closeDoc(){}};
-  P.open({name:'handoff.jpg',mime:'image/jpeg',blob:new global.Blob([],{type:'image/jpeg'})});
+  P.open({name:'handoff.mp4',mime:'video/mp4',blob:new global.Blob([],{type:'video/mp4'})});
+  const sourceVideo=sourceWindow.slot.querySelector('.pv-vid');
+  sourceVideo.currentTime=37.5;sourceVideo.paused=false;sourceVideo.volume=.4;
+  sourceVideo.muted=true;sourceVideo.playbackRate=1.5;
   const state=sourceWindow.handoffState();
   P.close();
   check('source close preserves the transferring blob URL',global.URL._live===1);
   check('handoff payload names Preview and its blob URL',state.preview===true&&/^blob:/.test(state.url));
   check('destination reconstructs Preview from transferred bytes',await P.acceptHandoff(state)===true);
   check('destination owns a real Preview document',!!destinationWindow&&destinationWindow.slot.classList.contains('pv-win'));
+  const destinationVideo=destinationWindow.slot.querySelector('.pv-vid');
+  check('destination preserves video time and playing state',destinationVideo.currentTime===37.5&&!destinationVideo.paused);
+  check('destination preserves video audio and rate',destinationVideo.volume===.4&&destinationVideo.muted&&destinationVideo.playbackRate===1.5);
   check('old transfer URL was replaced, not leaked',global.URL._live===1);
   P.close();delete window.PCOS;
   console.log(failures ? '\nFAILED ' + failures : '\nOK  preview holds');

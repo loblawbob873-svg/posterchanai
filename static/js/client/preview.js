@@ -311,13 +311,18 @@
         shut = function () { try { root.PCOS.closeDoc(key); } catch (_) {} done(); };
         if (w) w.onClose = done;
         if (w) {
-          w.handoffState = function () { transferring = true; return {
-            preview: true, name: String(name || ''), mime: String(mime || ''), url: String(url || '')
-          }; };
+          w.handoffState = function () { transferring = true;
+            var av = host.querySelector('.pv-vid, .pv-aud');
+            return {
+              preview: true, name: String(name || ''), mime: String(mime || ''), url: String(url || ''),
+              media: av ? { time:Number(av.currentTime)||0, paused:!!av.paused,
+                volume:Number(av.volume), muted:!!av.muted, rate:Number(av.playbackRate)||1 } : null
+            };
+          };
           w.handoffCancel = function () { transferring = false; };
         }
         mount(host, name, mime, blob.size, kind, url, shut, blob);
-        _open = { key: key, close: shut };
+        _open = { key: key, close: shut, host: host };
         root.addEventListener('keydown', onKey, true);
         return true;
       }
@@ -340,7 +345,16 @@
     if (!s.preview || !/^blob:/i.test(String(s.url || ''))) return false;
     var response = await fetch(String(s.url)), blob = await response.blob();
     try { URL.revokeObjectURL(String(s.url)); } catch (_) {}
-    return open({ name:String(s.name || 'Preview'), mime:String(s.mime || blob.type || ''), blob:blob });
+    var opened = open({ name:String(s.name || 'Preview'), mime:String(s.mime || blob.type || ''), blob:blob });
+    var media = s.media, host = _open && _open.host;
+    var av = host && host.querySelector('.pv-vid, .pv-aud');
+    if (opened && media && av) try {
+      av.currentTime = Math.max(0, Number(media.time) || 0);
+      if (Number.isFinite(Number(media.volume))) av.volume = Math.max(0, Math.min(1, Number(media.volume)));
+      av.muted = !!media.muted; av.playbackRate = Number(media.rate) || 1;
+      if (!media.paused) { var playing = av.play(); if (playing && playing.catch) playing.catch(function () {}); }
+    } catch (_) {}
+    return opened;
   }
 
   root.PCPreview = { open: open, acceptHandoff: acceptHandoff, handles: handles, kindOf: kindOf,
