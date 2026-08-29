@@ -132,9 +132,13 @@ def main():
         nw, nh, ny = width // 2, height, y
         nx = x if side == "left" else x + width - nw
     criteria = "[con_id=%d]" % int(win["id"])
-    subprocess.check_call(["swaymsg", criteria, "floating", "enable"], stdout=subprocess.DEVNULL)
-    subprocess.check_call(["swaymsg", criteria, "resize", "set", "width", str(nw), "px", "height", str(nh), "px"], stdout=subprocess.DEVNULL)
-    subprocess.check_call(["swaymsg", criteria, "move", "absolute", "position", str(nx), str(ny)], stdout=subprocess.DEVNULL)
+    # One Sway transaction keeps Firefox/Telegram focused and never exposes a half-resized surface
+    # between commands.  It also makes mouse-edge and Super+Arrow use the identical final geometry.
+    subprocess.check_call([
+        "swaymsg", criteria, "floating", "enable", ",",
+        "resize", "set", "width", str(nw), "px", "height", str(nh), "px", ",",
+        "move", "absolute", "position", str(nx), str(ny),
+    ], stdout=subprocess.DEVNULL)
 
 
 if __name__ == "__main__":

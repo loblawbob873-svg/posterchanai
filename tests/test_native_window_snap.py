@@ -267,12 +267,31 @@ def test_native_titlebar_corners_snap_to_output_quarters(monkeypatch):
         return calls
 
     top_left = run({"x": 1000, "y": 100, "width": 500, "height": 400})
-    assert top_left[-2][-6:] == ["width", "600", "px", "height", "414", "px"]
-    assert top_left[-1][-3:] == ["position", "1000", "100"]
+    assert len(top_left) == 1
+    assert top_left[0][-11:] == ["600", "px", "height", "414", "px", ",", "move",
+                                  "absolute", "position", "1000", "100"]
 
     bottom_right = run({"x": 1700, "y": 600, "width": 500, "height": 328})
-    assert bottom_right[-2][-6:] == ["width", "600", "px", "height", "414", "px"]
-    assert bottom_right[-1][-3:] == ["position", "1600", "514"]
+    assert len(bottom_right) == 1
+    assert bottom_right[0][-11:] == ["600", "px", "height", "414", "px", ",", "move",
+                                     "absolute", "position", "1600", "514"]
+
+
+def test_native_right_snap_atomically_fills_offset_outputs_usable_height(monkeypatch):
+    helper = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap"
+    module = runpy.run_path(str(helper), run_name="pc_window_snap_right_fill_test")
+    calls = []
+    monkeypatch.setattr(module["sys"], "argv", ["pc-window-snap", "right"])
+    monkeypatch.setitem(module["main"].__globals__, "sway", lambda *_: '{"nodes":[]}')
+    monkeypatch.setitem(module["main"].__globals__, "focused", lambda _tree:
+                        ({"id": 91, "app_id": "firefox", "pid": 7},
+                         {"rect": {"x": 1920, "y": 120, "width": 1280, "height": 720}}))
+    monkeypatch.setattr(module["subprocess"], "check_call",
+                        lambda argv, **_kw: calls.append(argv))
+    module["main"]()
+    assert calls == [["swaymsg", "[con_id=91]", "floating", "enable", ",", "resize", "set",
+                      "width", "640", "px", "height", "648", "px", ",", "move", "absolute",
+                      "position", "2560", "120"]]
 
 
 def test_compositor_snap_api_supports_all_four_corner_zones():
