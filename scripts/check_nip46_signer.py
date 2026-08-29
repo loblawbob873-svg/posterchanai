@@ -24,13 +24,10 @@ Each scenario is a way remote signing has actually broken:
   nip04-only       The long tail, which reads only NIP-04. The scheme has to be settled by trying,
                    and the fallback attempt has to actually happen.
 
-  oversize-request A request bigger than its ENVELOPE allows. NIP-44 refuses a plaintext over 65535
-                   bytes; NIP-04 has no ceiling. The envelope wraps whole documents — an encrypt of
-                   a Notes library or a budget, a sign_event of a large event — so once the scheme
-                   was negotiated, a session that settled on NIP-44 could no longer carry them. It
-                   throws in the client's own worker before anything is published, so the action
-                   dies with "invalid plaintext size" and no signer or relay is ever involved. Run
-                   against every signer that reads both schemes.
+  oversize-request NIP-44 has an absolute 65535-byte plaintext ceiling. A 100KB request must be
+                   refused by the client with attachment guidance and must never reach the signer;
+                   silently falling back to NIP-04 would change the requested protocol, while
+                   chunking would invent an incompatible event format.
 
   slow-approval    The signer takes longer to answer the connect than the probe waits — which is not
                    an edge case, it is a human being asked to approve on a phone. The first attempt
@@ -264,11 +261,8 @@ LOGIN = r"""(async (uri) => {
 })"""
 
 
-# A request too big for its ENVELOPE. NIP-44 refuses a plaintext over 65535 bytes and NIP-04 has no
-# ceiling, so once the scheme was negotiated a session that settled on NIP-44 could no longer carry a
-# whole document — an encrypt of a Notes library or a budget, or a sign_event of a large event. It
-# does not fail at the signer or on the relay: it throws in the client's own worker before anything is
-# published, and the action just dies.
+# A request too big for its NIP-44 envelope. Correct behavior is a local, actionable rejection and
+# zero signer traffic; large data belongs in Blossom with only its pointer encrypted.
 BIG = r"""(async () => {
   try{
     const me = window.__PC.me();
@@ -379,11 +373,19 @@ async def drive(url):
                                      f"got {str(r.get('pk'))[:12]}…, this bunker holds "
                                      f"{bunker.user_pk[:12]}…"))
                 elif kw.get("reads") == "both":
+                    seen_before = len(bunker.seen)
                     b = await js(BIG, awaited=True) or {}
-                    if not b.get("ok"):
+                    err = b.get("err") or ""
+                    if b.get("ok"):
                         problems.append(("oversize-request",
-                                         b.get("err") or "a 100KB request did not go out",
-                                         f"signer saw {bunker.seen[-1:] or 'nothing more'}"))
+                                         "a 100KB NIP-44 plaintext was accepted",
+                                         f"signer saw {bunker.seen[seen_before:] or 'nothing more'}"))
+                    elif "65535" not in err or "attachment" not in err.lower():
+                        problems.append(("oversize-request", "rejection lacked size/attachment guidance: "+err,
+                                         f"signer saw {bunker.seen[seen_before:] or 'nothing more'}"))
+                    elif len(bunker.seen) != seen_before:
+                        problems.append(("oversize-request", "rejected locally but still contacted signer",
+                                         f"signer saw {bunker.seen[seen_before:]}"))
                     elif os.environ.get("PC_DEBUG"):
                         print(f"  DEBUG oversize: {b} / {bunker.seen[-1:]}", flush=True)
                 if os.environ.get("PC_DEBUG"):

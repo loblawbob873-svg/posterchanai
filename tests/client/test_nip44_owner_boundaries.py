@@ -30,10 +30,13 @@ def test_major_document_owners_do_not_pass_default_empty_ciphertext():
 def test_public_app_crypto_boundary_rejects_invalid_nip44_before_every_signer_mode():
     """Submodules must be safe even with an old browser extension/provider installed."""
     export=APP[APP.index('window.__PC = {'):]
-    assert "NIP-44 decrypt refused an empty ciphertext" in export
-    assert "NIP-44 encrypt refused ${bytes} bytes (must be 1..65535)" in export
-    assert export.count("new TextEncoder().encode") >= 2
-    assert export.count("p.catch(()=>{})") >= 2
+    assert "signer.nip44dec(peer, ct)" in export
+    assert "signer.nip44enc(peer, text)" in export
+    crypto=export[export.index('nip44dec:'):export.index('// Blossom upload', export.index('nip44dec:'))]
+    assert "new TextEncoder" not in crypto
+    guard=APP[APP.index('function _guardSignerNip44'):APP.index('function makeSigner', APP.index('function _guardSignerNip44'))]
+    assert "new TextEncoder().encode" in guard
+    assert "p.catch(()=>{})" in guard
 
 
 def test_news_background_read_save_observes_async_publish_failure():

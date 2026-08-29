@@ -15,6 +15,7 @@ def test_active_concord_channel_keeps_polling_while_another_desktop_app_is_focus
     assert "state.community==null" in body
     assert "state.community==null||!document.body.classList.contains('concord-view')" not in body
     assert "notifyMentions(p,room,next,viewer,me,channel.name)" in body
+    assert "PCOS.parkedSlot('concord')" in body
 
 
 def test_background_poll_persists_without_repainting_the_foreground_app():

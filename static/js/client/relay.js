@@ -786,6 +786,9 @@
           resolve(got); };
         if (signal){ if (signal.aborted) return fin('abort'); signal.addEventListener('abort', abort, {once:true}); }
         Relay._queryFromActive.add(u);Relay._queryFromStops.add(stop);
+        /* Arm at construction, not only EOSE: switching windows may abort this socket before it
+           answers, and the four-second owner timer must not immediately recreate it. */
+        if(minInterval>0)Relay._queryFromPurposeCooldown.set(u+'\0'+purpose,Date.now()+minInterval);
         try { ws = new WebSocket(u); } catch(_){ return fin('failure'); }
         tm = setTimeout(fin, timeout);
         ws.onopen = () => { try{ ws.send(JSON.stringify(['REQ', subId, ...filters])); }catch(_){ fin(); } };

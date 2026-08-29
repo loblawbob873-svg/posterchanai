@@ -34763,12 +34763,7 @@
     showAuth,
     // NIP-44 decrypt with the current signer (any login type) — games use it to read their own
     // encrypted hole cards from a public game-state doc.
-    nip44dec: (peer, ct) => {
-      const text=typeof ct==='string'?ct:'';
-      const bytes=new TextEncoder().encode(text).length;
-      if(bytes<1){const p=Promise.reject(new Error('NIP-44 decrypt refused an empty ciphertext'));p.catch(()=>{});return p;}
-      return (signer && signer.nip44dec) ? signer.nip44dec(peer, text) : Promise.reject(new Error('no nip44'));
-    },
+    nip44dec: (peer, ct) => (signer && signer.nip44dec) ? signer.nip44dec(peer, ct) : Promise.reject(new Error('no nip44')),
     // NIP-51 kind-10009 may keep private NIP-29 memberships in NIP-04 ciphertext to SELF.
     // Expose only decryption through the current signer; the module never receives key material.
     nip04dec: (peer, ct) => (signer && signer.nip04dec) ? signer.nip04dec(peer, ct) : Promise.reject(new Error('no nip04')),
@@ -34776,12 +34771,7 @@
     // (budget.js). Self-encryption is nip44enc(ME.pubkey, …) — every signer mode implements it (local
     // key via the worker, nip07, Amber/NIP-55, NIP-46), so the ciphertext is readable by this user's
     // key ALONE. The server never sees a key that can open it, which is the whole point for Budget.
-    nip44enc: (peer, text) => {
-      const plain=typeof text==='string'?text:'';
-      const bytes=new TextEncoder().encode(plain).length;
-      if(bytes<1||bytes>65535){const p=Promise.reject(new Error(`NIP-44 encrypt refused ${bytes} bytes (must be 1..65535)`));p.catch(()=>{});return p;}
-      return (signer && signer.nip44enc) ? signer.nip44enc(peer, plain) : Promise.reject(new Error('no nip44'));
-    },
+    nip44enc: (peer, text) => (signer && signer.nip44enc) ? signer.nip44enc(peer, text) : Promise.reject(new Error('no nip44')),
     // Blossom upload + the cached self-auth proof + the non-native confirm — needed by any sub-module
     // that stores media or calls a /client endpoint (meme.js). uiConfirm specifically: a sub-module must
     // NEVER reach for window.confirm, which wedges the Electron renderer's focus.
