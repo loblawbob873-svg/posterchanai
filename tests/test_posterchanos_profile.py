@@ -793,16 +793,16 @@ class MoreThanOneScreenWorksWithoutConfiguring(unittest.TestCase):
     def test_a_window_can_be_moved_to_another_screen(self):
         for name, cfg in self.CONFIGS.items():
             for d in ("left", "right"):
-                self.assertIn(f"move container to output {d}", cfg,
+                self.assertIn(f"pc-window-snap move-{d}", cfg,
                               f"{name}: no way to move a window {d}")
 
     def test_the_focus_follows_the_window_it_moved(self):
         # Focus left behind reads as having closed the window.
         for name, cfg in self.CONFIGS.items():
             for line in cfg.splitlines():
-                if "move container to output" in line:
-                    self.assertIn("focus output", line,
-                                  f"{name}: moving a window leaves the focus behind: {line.strip()}")
+                if "pc-window-snap move-" in line:
+                    self.assertIn("exec /usr/local/bin/pc-window-snap", line,
+                                  f"{name}: moving a window bypasses the state-preserving helper: {line.strip()}")
 
     def test_no_binding_names_a_specific_output(self):
         # HDMI-A-1 is dead on a machine that does not have one.

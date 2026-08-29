@@ -93,8 +93,15 @@ class Bridge(unittest.TestCase):
 
     def test_a_launch_that_never_appears_is_not_reported_as_launched(self):
         i = self.main.index("'pc:wm:launch'")
-        body = self.main[i:i + 4600]
+        body = self.main[i:self.main.index("ipcMain.handle('pc:apps:list'", i)]
         self.assertIn("waitForWindow", body)
+
+    def test_running_firefox_private_window_is_matched_by_new_surface_identity(self):
+        i = self.main.index("'pc:wm:launch'")
+        body = self.main[i:self.main.index("ipcMain.handle('pc:apps:list'", i)]
+        self.assertIn("firefoxBefore", body)
+        self.assertIn("waitForNewWindow(firefoxBefore", body)
+        self.assertIn("/firefox/i.test(String(w.app||''))", body)
 
     def test_telegram_uses_the_working_xwayland_renderer_only_for_telegram(self):
         """Qt's Wayland EGL failure must not turn Telegram black or disable GPU use globally."""
