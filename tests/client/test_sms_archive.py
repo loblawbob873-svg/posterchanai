@@ -92,7 +92,8 @@ class ColdArchiveFailures(unittest.TestCase):
         render promise to settle instead of reaching window.unhandledrejection."""
         res = run(isPhone=False, coldLoadSignerFailure=True, steps=["render", "settle"])
         self.assertEqual(res["docs"], [])
-        self.assertEqual(calls_of(res, "storeQuery"), [["storeQuery"]])
+        self.assertEqual(calls_of(res, "storeQuery"),
+                         [["storeQuery", "label"], ["storeQuery", "broad"]])
 
     def test_desktop_route_replaces_spinner_during_feed_ownership_handoff(self):
         """The route callback is authoritative for its first paint. PCOS ownership bookkeeping can
@@ -176,8 +177,22 @@ class Mirror(unittest.TestCase):
         res = run(isPhone=False, cached=[malformed, good], relayEmpty=True,
                   steps=["concurrentRenderFocus", "settle"])
         self.assertEqual(res["docs"], ["pcai:sms:first-open"])
-        self.assertEqual(calls_of(res, "storeQuery"), [["storeQuery"]],
+        self.assertEqual(calls_of(res, "storeQuery"), [["storeQuery", "label"]],
                          "cold route and focus started two competing archive loads")
+
+    def test_old_phone_archive_loads_when_label_index_is_missing(self):
+        """The d-address is authoritative. An older archive or broken generic-tag index must not
+        turn a populated phone history into the desktop's no-SIM empty state."""
+        text = ev("pcai:sms:older-phone", {
+            "address": "+15550100", "body": "survives missing label index", "date": 2,
+            "incoming": True,
+        })
+        unrelated = ev("pcai:note:not-texts", {"body": "private unrelated document"})
+        res = run(isPhone=False, cached=[text, unrelated], relayEmpty=True,
+                  missingLabelIndex=True, steps=["load", "settle"])
+        self.assertEqual(res["docs"], ["pcai:sms:older-phone"])
+        self.assertEqual(calls_of(res, "storeQuery"),
+                         [["storeQuery", "label"], ["storeQuery", "broad"]])
 
     def test_one_malformed_cache_record_cannot_hide_the_older_media_tail(self):
         """The background cache drain used to abandon its remaining 128-row batch on one throw.

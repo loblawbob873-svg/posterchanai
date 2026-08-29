@@ -182,6 +182,19 @@
   const Relay = () => window.Relay;
   const Store = () => window.Store;
   const FILTER = () => ({ authors:[ME().pubkey], kinds:[KIND], '#l':[L_TAG], limit:20000 });
+  const BROAD_FILTER = () => ({ authors:[ME().pubkey], kinds:[KIND], limit:20000 });
+
+  /* Older phone builds did not consistently attach the `l=pcai-sms` index tag, and not every
+   * relay/store implementation indexes generic tags correctly.  The document address is the
+   * durable namespace, so an empty indexed lookup gets one bounded author+kind fallback and we
+   * admit only Texts documents locally.  This cannot expose Notes/passwords/etc. to absorb(). */
+  function onlyTexts(events){
+    return (events || []).filter(ev => {
+      const tags = Array.isArray(ev && ev.tags) ? ev.tags : [];
+      const d = String(((tags.find(t => Array.isArray(t) && t[0] === 'd')) || [])[1] || '');
+      return d.startsWith(D_MSG) || d.startsWith(D_OUT);
+    });
+  }
 
   function plug(method){
     try{ return PC.capPlugin ? PC.capPlugin('Sms', method) : null; }catch(_){ return null; }
@@ -563,7 +576,10 @@
     // CACHE FIRST, network behind it — the rule every list in this app follows, and the archive is
     // entirely the user's own already-synced data.
     let cached = [];
-    try{ cached = Store().query([FILTER()]) || []; }catch(_){ cached = []; }
+    try{
+      cached = Store().query([FILTER()]) || [];
+      if(!cached.length) cached = onlyTexts(Store().query([BROAD_FILTER()]) || []);
+    }catch(_){ cached = []; }
     /* FIRST PAINT IS A PAGE, NOT THE WHOLE ARCHIVE. FILTER permits 20,000 addressable documents and
      * every one is NIP-44 encrypted. Awaiting them serially before drawing made Texts an endless
      * spinner—especially with a signer, where decrypt is not a cheap local function. Newest-first is
@@ -600,7 +616,8 @@
     if(_refreshing) return;
     _refreshing = true;
     try{
-      const live = await Relay().query([FILTER()]);
+      let live = await Relay().query([FILTER()]);
+      if(!live || !live.length) live = onlyTexts(await Relay().query([BROAD_FILTER()]));
       // FOLDED IN, NEVER OVER. A relay that returns nothing — unreachable, throttled, merely slow —
       // must leave the archive alone. That asymmetry is the anti-wipe rule this codebase keeps
       // relearning, and here the local copy may be the only one outside the handset.

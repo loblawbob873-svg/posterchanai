@@ -228,19 +228,22 @@ global.localStorage = (() => {
  * `Store().query(...)` — so `window.Store` is the object itself. A stub that was a factory made
  * `.query` undefined, every read threw into its own catch, and every test failed as though the
  * device simply had no messages. */
-global.Store = { query: () => {
-  calls.push(['storeQuery']);
+global.Store = { query: filters => {
+  calls.push(['storeQuery', filters && filters[0] && filters[0]['#l'] ? 'label' : 'broad']);
   if(opt.coldLoadSignerFailure) return { sort(){
     throw new Error('invalid plaintext size: must be between 1 and 65535 bytes');
   } };
-  return (opt.cached || []).slice();
+  const rows = (opt.cached || []).slice();
+  return opt.missingLabelIndex && filters && filters[0] && filters[0]['#l'] ? [] : rows;
 } };
 global.Relay = {
-  async query(){
+  async query(filters){
     if(opt.relayDown) throw new Error('no relay');
     // An UNREACHABLE relay and an EMPTY one are different answers, and the archive must treat them
     // differently — this is the switch that lets a test show it.
-    return opt.relayEmpty ? [] : Array.from(relay.values());
+    if(opt.relayEmpty) return [];
+    const rows = Array.from(relay.values());
+    return opt.missingLabelIndex && filters && filters[0] && filters[0]['#l'] ? [] : rows;
   },
   subscribe(filters, handlers){
     global.__smsLiveEvent = handlers && handlers.onEvent;
