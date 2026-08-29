@@ -42,3 +42,20 @@ def test_installed_gate_returns_to_the_same_settings_owner_after_preview():
     assert '"hostHidden": True' in GATE
     os_js = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
     assert "view: w.view, appView: w.appView || w.view" in os_js
+
+
+def test_installed_gate_uses_the_guarded_throwaway_diagnostic_login():
+    """Release automation must not need a personal account or duplicate the nsec safety checks."""
+    assert "from check_installed_desktop_account import CDP, choose_test_page" in GATE
+    assert "page = await choose_test_page()" in GATE
+    helper = (ROOT / "scripts/check_installed_desktop_account.py").read_text(encoding="utf-8")
+    assert 'os.environ.get("PC_INSTALLED_TEST_NSEC_FILE"' in helper
+    assert "identity guard; refusing login" in helper
+
+
+def test_diagnostic_login_still_requires_a_real_posterchanos_shell():
+    start = GATE.index("async def parent_page():")
+    body = GATE[start:GATE.index("async def admin_frame()", start)]
+    assert "PCOSShell.available()" in body
+    assert "if not ok:" in body
+    assert "not a PosterChanOS shell" in body

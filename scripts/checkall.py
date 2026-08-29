@@ -141,6 +141,9 @@ CHECKS = {
                                               env={"PC_CHECK_PORT": "9223"}),
     "check_installed_native_files": dict(group="ui", secs=90, serial=True,
                                            env={"PC_CHECK_PORT": "9223"}),
+    # Extracts Code + the native host bridge from app.asar, then drives disposable Git restore and
+    # the packaged browser editor. It owns a Chrome process and must not overlap installed gates.
+    "check_installed_code_package_release": dict(group="ui", secs=600, serial=True),
     # Reads Office workspace and Email attachment behavior from the immutable installed ASAR.
     # The Python entry point delegates to the extraction/browser shell gate and makes it discoverable.
     "check_installed_document_apps_release": dict(group="ui", secs=420, serial=True),

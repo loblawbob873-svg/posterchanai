@@ -1582,6 +1582,19 @@
     return w;
   }
 
+  /* The sidebar's Social row has the historical route `global`, but the button means the user's
+   * configured landing timeline.  Phone navigation already resolves that alias in activateNavView;
+   * keep every desktop LAUNCHER surface on the same contract without changing explicit Home or
+   * Nostrverse tab navigation inside an open Social window. */
+  function openLauncherApp(view){
+    let target=view;
+    if(view==='global' && PC().socialTimeline){
+      try{ target=PC().socialTimeline()||view; }catch(_){}
+    }
+    const app=target!==view ? apps().find(a=>a.view===view) : null;
+    return openApp(target,app&&app.label,app&&app.icon);
+  }
+
   /* ✨ is a WINDOW-MANAGER capability, not another chatbot button.  Context is collected only after
    * the person opens it, selection wins over whole-window text, and nothing leaves the window until
    * they choose an action.  Native Wayland surfaces are intentionally metadata-only: the compositor
@@ -5760,7 +5773,7 @@
   function iconMenu(icon, srcFolder, x, y){
     const key = icon.dataset.view;
     const lay = layout();
-    const rows = [{ label: 'Open', run: () => openApp(key) }];
+    const rows = [{ label: 'Open', run: () => openLauncherApp(key) }];
     if(key.indexOf('folder:') === 0){
       const fk = key.slice(7);
       rows.push({ sep: true });
@@ -5874,7 +5887,7 @@
       // arrive at from a single-click UI, and a double-click that does nothing the first time reads
       // as broken. A click that is the tail of a drag is not a click, and the ONE thing that must
       // not happen is a rearranged icon also opening its app.
-      b.onclick = () => { if(Date.now() - _dragEnd < 250) return; openApp(b.dataset.view); };
+      b.onclick = () => { if(Date.now() - _dragEnd < 250) return; openLauncherApp(b.dataset.view); };
       b.oncontextmenu = (e) => { e.preventDefault(); e.stopPropagation(); iconMenu(b, folder, e.clientX, e.clientY); };
       b.addEventListener('pointerdown', (e) => startIconDrag(b, e, folder));
     });
@@ -6032,7 +6045,7 @@
     { const cb = $('#os-clock', bar); if(cb) cb.onclick = (e) => { e.stopPropagation(); toggleNoti(); }; }
     { const nb = $('#os-net', bar); if(nb) nb.onclick = (e) => { e.stopPropagation(); toggleNet(); }; }
     $$('.os-task', bar).forEach(b => b.onclick = () => {
-      if(b.dataset.kind === 'pin-view'){ openApp(b.dataset.pin.slice(5)); return; }
+      if(b.dataset.kind === 'pin-view'){ openLauncherApp(b.dataset.pin.slice(5)); return; }
       if(b.dataset.kind === 'pin-app'){
         try{ PCOSShell.launch(b.dataset.pin.slice(4)); }catch(_){}
         return;
@@ -6756,7 +6769,7 @@
         const shown = lay.items.some(a => a.view === view);
         const label = (apps().find(a => a.view === view) || {}).label || view;
         const rows = shown
-          ? [{ label: 'Open ' + label, run: () => { toggleStart(false); openApp(view); } },
+          ? [{ label: 'Open ' + label, run: () => { toggleStart(false); openLauncherApp(view); } },
              { sep: true },
              { label: 'Hide ' + label + ' from the desktop', run: () => { hideItem(view); toggleStart(false); } }]
           : [{ label: 'Add ' + label + ' to the desktop', run: () => { showItem(view); toggleStart(false); } }];
@@ -6777,7 +6790,7 @@
           }catch(e){ PC().toast(String((e && e.message) || e)); }
           return;
         }
-        toggleStart(false); openApp(b.dataset.view);
+        toggleStart(false); openLauncherApp(b.dataset.view);
       });
     };
     paint('');

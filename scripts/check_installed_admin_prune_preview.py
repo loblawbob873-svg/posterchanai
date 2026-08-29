@@ -13,7 +13,7 @@ import sys
 import urllib.error
 import urllib.request
 
-from check_installed_desktop_account import CDP
+from check_installed_desktop_account import CDP, choose_test_page
 
 
 PORT = int(os.environ.get("PC_CHECK_PORT", "9223"))
@@ -25,16 +25,18 @@ async def targets():
 
 
 async def parent_page():
-    for page in await targets():
-        if page.get("type") != "page" or not page.get("url", "").startswith("app://posterchan/"):
-            continue
-        async with CDP(page["webSocketDebuggerUrl"]) as cdp:
-            ok = await cdp.eval(
-                "!!(window.__PC&&__PC.me&&__PC.me()&&window.PCOS&&window.PCOSShell"
-                "&&PCOSShell.available())")
-            if ok:
-                return page
-    raise RuntimeError("no authenticated installed PosterChanOS page is attached")
+    # Use the same guarded throwaway-login path as the installed Files/Office gate. Release checks
+    # run in an isolated diagnostic profile and must not require an operator's personal session.
+    # choose_test_page refuses arbitrary key paths and first proves that host identity mutation is
+    # disabled, so sharing it does not weaken this gate's authority boundary.
+    page = await choose_test_page()
+    async with CDP(page["webSocketDebuggerUrl"]) as cdp:
+        ok = await cdp.eval(
+            "!!(window.__PC&&__PC.me&&__PC.me()&&window.PCOS&&window.PCOSShell"
+            "&&PCOSShell.available())")
+    if not ok:
+        raise RuntimeError("the authenticated installed page is not a PosterChanOS shell")
+    return page
 
 
 async def admin_frame():

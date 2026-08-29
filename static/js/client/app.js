@@ -34760,6 +34760,10 @@
      * holds and nothing else can fetch. */
     saveBlobAs, fetchMediaBlob,
     ensureProfile: _ensureProfile, NT, compose, switchView:requestView, switchMessagesTab, timelineTop,
+    /* `global` is the historical route printed on the generic Social launcher.  Launcher surfaces
+     * need the semantic destination, including a configured Home timeline when Nostrverse remains
+     * enabled; explicit timeline-tab navigation continues to pass its literal route. */
+    socialTimeline: () => _startTimeline(),
     /* The Messages frame crosses monitor renderers, so its selected conversation cannot remain
      * only in this renderer's dmActive binding. The OS applies this before switchView('messages'),
      * allowing the normal render to reopen the same thread without a popout or second frame. */

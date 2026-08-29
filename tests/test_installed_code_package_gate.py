@@ -1,5 +1,10 @@
 """The package gate must execute native Git from the immutable app.asar."""
 from pathlib import Path
+import os
+import subprocess
+import sys
+
+from scripts import checkall
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,3 +41,20 @@ def test_browser_harness_accepts_installed_code_and_measures_full_workspace_heig
     assert 'path == "/static/js/client/code.js"' in check
     assert 'base["codeH"] < base["feedH"] - 2' in check
     assert 'base["sideH"] < base["codeH"] - 2' in check
+
+
+def test_code_package_gate_is_discovered_and_serialized_by_release_runner():
+    jobs = {job["name"]: job for job in checkall.discover()}
+    job = jobs["check_installed_code_package_release"]
+    assert job["registered"] is True
+    assert job["serial"] is True
+    assert job["secs"] == 600
+
+
+def test_discoverable_code_gate_skips_without_an_installed_artifact(tmp_path):
+    gate = ROOT / "scripts" / "check_installed_code_package_release.py"
+    env = {**os.environ, "PC_INSTALLED_ASAR": str(tmp_path / "missing.asar")}
+    result = subprocess.run([sys.executable, str(gate)], cwd=ROOT, env=env,
+                            capture_output=True, text=True)
+    assert result.returncode == 2
+    assert "SKIP installed ASAR is not available for the Code package release gate" in result.stdout
