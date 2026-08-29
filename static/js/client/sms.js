@@ -2562,7 +2562,17 @@
       // which is worth saying, because it is a completely different situation from a refusal.
       r = { why: attLabel(p) + ' \u00b7 too large to show here \u2014 open it in your gallery' };
     } else {
-      r = { why: attLabel(p) + ' \u00b7 this phone would not hand it over' };
+      /* THE PLUGIN'S OWN WORDS, WHEN IT HAS ANY. `attachment` answers a failed read with
+       * `{data:'', error:'provider refused attachment', total:<n>}` and this branch replaced all of
+       * it with one generic sentence — so the handset report, the screen and the log all said
+       * "would not hand it over" for four different causes. `total` is the useful half: a part row
+       * that exists with zero bytes (an MMS whose media was never downloaded) and a read that threw
+       * are the same sentence otherwise, and only one of them is worth retrying. */
+      const said = String((a && a.error) || '').trim();
+      const total = a && a.total !== undefined ? Number(a.total) : null;
+      r = { why: attLabel(p) + ' \u00b7 ' + (said || 'this phone would not hand it over')
+                 + (total !== null && total <= 0 ? ' (the provider reports ' + total
+                    + ' bytes for it)' : '') };
     }
     attRemember(id, r);
     return r;

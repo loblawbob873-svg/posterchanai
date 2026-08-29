@@ -506,3 +506,23 @@ class TheArchiveIsBuiltFromTheReadThatCarriesAttachments(unittest.TestCase):
                                    if c[0] == "list"][-1]:]
         self.assertFalse([c for c in after_load if c[0] == "listMms"],
                          "an all-text sweep still walked the MMS table")
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class TheProviderIsQuotedRatherThanParaphrased(unittest.TestCase):
+    """`SmsPlugin.attachment` answers a failed read with its own reason and a byte total, and
+    partData replaced all of it with one sentence — so the handset report, the bubble and the log
+    all said "would not hand it over" for four different causes. A part row that exists with ZERO
+    bytes (an MMS whose media was never downloaded) and a read that threw are indistinguishable
+    otherwise, and only one of them is worth retrying."""
+
+    def test_the_plugins_own_reason_reaches_the_report(self):
+        row = msg(1, addr="+15550100", body="", incoming=True)
+        row["mms"] = True
+        row["parts"] = [{"id": 900, "ct": "image/jpeg", "name": "p.jpg", "bytes": 2048}]
+        res = run(isPhone=True, rows=[row], chunked=True,
+                  parts={"900": {"refuse": "provider refused attachment", "total": 0}},
+                  steps=["phoneLoad", "mirror", "settle"])
+        st = (res["statuses"] or [{}])[-1]
+        self.assertIn("provider refused", str(st.get("partError", "")).lower(),
+                      "the provider's own reason was replaced by a generic one: %r" % (st,))

@@ -175,6 +175,11 @@ const PLUGIN = {
     calls.push(['attachment', a && a.part]);
     const part = (opt.parts || {})[String(a && a.part)];
     const known = rows.some(r => (r.parts || []).some(p => Number(p.id) === Number(a && a.part)));
+    /* A READ THE PROVIDER REFUSED — the plugin's real answer shape: no bytes, its own reason, and
+     * a byte total that separates "this part has nothing in it" from "the read threw". */
+    if(part && part.refuse && a && a.offset !== undefined)
+      return { part:a.part, offset:a.offset, data:'', error:String(part.refuse),
+               total: Number(part.total) || 0, done:false };
     if(opt.chunked && a && a.offset !== undefined && (part || known)){
       const all = Buffer.from((part && part.data) || 'eA==', 'base64');
       const size = Math.max(1, Number(opt.chunkSize) || Number(a.max) || 1);
