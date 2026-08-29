@@ -45,6 +45,22 @@ def test_details_view_has_a_real_date_column_and_cell():
     assert 'class="fx-mod"' in APP
 
 
+def test_unified_results_obey_the_shared_sort_control():
+    search = APP[APP.index("async function _renderFilesEverywhere"):]
+    search = search[:search.index("\n  async function renderPublicFiles")]
+    assert "const resultCmp = _fxCompare(_fxSearchKey)" in search
+    assert "rows.sort((a,b) => (!!a.dir !== !!b.dir)" in search
+    assert ".localeCompare(String(b.name" not in search
+
+
+def test_unified_sort_normalizes_dates_and_types_from_every_source():
+    key = APP[APP.index("function _fxSearchKey"):]
+    key = key[:key.index("\n  function _fxBytes")]
+    assert "r.created || r.modified || r.mtime" in key
+    assert "r.name || r.path" in key
+    assert "r.mime" in key
+
+
 def test_unified_results_do_not_overflow_a_phone():
     assert ".fx-search-hit{display:grid" in CSS
     assert ".fx-search-path,.fx-search-date{display:none}" in CSS

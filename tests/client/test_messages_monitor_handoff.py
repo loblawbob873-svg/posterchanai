@@ -33,10 +33,17 @@ def test_cold_destination_adopts_communities_state_before_first_render():
 
 
 def test_direct_messages_carries_the_selected_conversation():
-    assert "messagesHandoffState: () => ({peer:dmActive||''})" in APP
+    assert "messagesHandoffState: () => ({peer:dmActive||'',scroll:_dmScrollState($('#dm-msgs'))})" in APP
     assert "acceptMessagesHandoff: value =>" in APP
     assert "messagesTab==='messages'&&PC().messagesHandoffState" in OS
     assert "PC().acceptMessagesHandoff(p.state)" in OS
+
+
+def test_direct_messages_handoff_preserves_scroll_pin_at_runtime():
+    script = ROOT / "tests/client/messages_scroll_handoff_runtime.mjs"
+    run = subprocess.run(["node", str(script)], capture_output=True, text=True, timeout=30)
+    assert run.returncode == 0, run.stderr
+    assert "messages scroll handoff runtime: ok" in run.stdout
 
 
 def test_handoff_uses_one_canonical_messages_window_then_restores_its_tab():

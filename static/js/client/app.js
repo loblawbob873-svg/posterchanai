@@ -17906,6 +17906,20 @@
     if(by === 'type') return extOfBlob(b, m.name ? m : { name:_fxBlobName(b), mime:m.mime }) || '';
     return String(_fxBlobName(b) || b.sha256 || '').toLowerCase();
   }
+  /* Unified-search rows come from three APIs with slightly different shapes. Normalize only the
+   * fields used by the shared file-manager sorter so changing a column keeps working after a query
+   * broadens the view from one source to all of them. */
+  function _fxSearchKey(r, by){
+    if(by === 'size') return +r.size || 0;
+    if(by === 'modified') return +(r.created || r.modified || r.mtime) || 0;
+    if(by === 'type'){
+      if(r.dir) return '';
+      const name = String(r.name || r.path || '');
+      const dot = name.lastIndexOf('.');
+      return dot > 0 ? name.slice(dot + 1).toLowerCase() : String(r.mime || '').toLowerCase();
+    }
+    return String(r.name || r.path || '').toLowerCase();
+  }
   function _fxBytes(n){ n = +n || 0; const u = ['B','KB','MB','GB','TB']; let i = 0;
     while(n >= 1024 && i < u.length-1){ n /= 1024; i++; }
     return (i && n < 10 ? n.toFixed(1) : Math.round(n)) + ' ' + u[i]; }
@@ -19966,8 +19980,11 @@
       blossom.push({ source:'blossom', sha:b.sha256, name:name||b.sha256, folder:FilesIdx.folderOf(b.sha256)||'',
         size:+b.size||0, modified:+b.uploaded||0 });
     }
-    const rows = blossom.concat(synced, local.map(e => Object.assign({source:'computer'},e)))
-      .sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),undefined,{numeric:true,sensitivity:'base'}));
+    const rows = blossom.concat(synced, local.map(e => Object.assign({source:'computer'},e)));
+    const resultCmp = _fxCompare(_fxSearchKey);
+    // Match each source's ordinary listing: folders stay above files, then the selected column and
+    // direction apply. Previously search always forced Name A-Z while displaying the sort control.
+    rows.sort((a,b) => (!!a.dir !== !!b.dir) ? (a.dir ? -1 : 1) : resultCmp(a,b));
     const results=$('#fx-search-results',pane), status=$('.fx-search-status',pane);
     if(status) status.textContent=rows.length+' result'+(rows.length===1?'':'s')+' across all locations';
     if(!results) return;
@@ -23455,6 +23472,18 @@
   // ---------- DMs: NIP-17 gift-wrapped (modern, local-key) + NIP-04 (legacy, read-compat) ----------
   const dmPeers = new Map();  // peer -> [{ev, text}]
   let dmActive = null;
+  let _dmHandoffScroll = null;
+  function _dmScrollState(el){
+    if(!el)return null;
+    const above=Math.max(0,Number(el.scrollHeight)-Number(el.scrollTop)-Number(el.clientHeight));
+    return {pinned:above<80,aboveBottom:above};
+  }
+  function _restoreDmScroll(el,state){
+    if(!el||!state)return false;
+    const max=Math.max(0,Number(el.scrollHeight)-Number(el.clientHeight));
+    el.scrollTop=state.pinned!==false?max:Math.max(0,max-Math.max(0,Number(state.aboveBottom)||0));
+    return true;
+  }
   const _dmFull = new Set();   // peers whose full DM history has been backfilled on open (once each)
   const _dmShown = new Map();  // pk -> how many recent messages are rendered (paginated)
   const _DM_INIT = 25, _DM_STEP = 30;   // show the last 25 on open (bubbles paint instantly w/ placeholders, then decrypt); "load older" reveals 30 more
@@ -25838,6 +25867,15 @@
     { const ob=$('#dm-older'); if(ob) ob.onclick=()=>{ _dmShown.set(pk, Math.min((_dmShown.get(pk)||_DM_INIT)+_DM_STEP, all.length)); _dmScrollTop=true; renderDmThread(pk); }; }
     _dmReplyBanner();
     { const m=$('#dm-msgs'); if(m){ if(_dmScrollTop){ _dmScrollTop=false; m.scrollTop=0; } else if(_atBottom) _dmPinBottom(m); } }
+    if(_dmHandoffScroll){
+      /* The generic DOM snapshot restores an absolute scrollTop once. A cold monitor decrypts and
+       * grows bubbles after that, so a bottom-pinned conversation drifts upward and a person reading
+       * history loses the same distance from the bottom. Restore the durable distance semantics
+       * after the thread exists; the decrypt tail below keeps a pinned pane pinned as it grows. */
+      const state=_dmHandoffScroll;_dmHandoffScroll=null;
+      const apply=()=>{if(dmActive===pk)_restoreDmScroll($('#dm-msgs'),state);};
+      apply();requestAnimationFrame(()=>requestAnimationFrame(apply));
+    }
     _dmLastPk=pk;
     _dmThreadSig=_threadSig(pk);   // mark what we just rendered so a debounced refresh won't re-render it
     // Decrypt the visible slice lazily and patch each bubble in place. document.querySelector targets the
@@ -34631,8 +34669,12 @@
     /* The Messages frame crosses monitor renderers, so its selected conversation cannot remain
      * only in this renderer's dmActive binding. The OS applies this before switchView('messages'),
      * allowing the normal render to reopen the same thread without a popout or second frame. */
-    messagesHandoffState: () => ({peer:dmActive||''}),
-    acceptMessagesHandoff: value => { dmActive=safePk(String(value&&value.peer||''))||null; },
+    messagesHandoffState: () => ({peer:dmActive||'',scroll:_dmScrollState($('#dm-msgs'))}),
+    acceptMessagesHandoff: value => {
+      dmActive=safePk(String(value&&value.peer||''))||null;
+      _dmHandoffScroll=value&&value.scroll&&typeof value.scroll==='object'
+        ? {pinned:value.scroll.pinned!==false,aboveBottom:Math.max(0,Number(value.scroll.aboveBottom)||0)}:null;
+    },
     // compose → News "Share as note"; switchView → nav; timelineTop → fresh desktop Social window
     timelineTop,
     /* PosterChan Code saves a Files document back to Files. The editor holds the text; the drive

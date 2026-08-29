@@ -131,11 +131,20 @@
         var base = page.getViewport({ scale: 1 });
         var available = Math.max(280, Math.min(1200, (box.clientWidth || 800) - 20));
         var viewport = page.getViewport({ scale: Math.min(2.25, available / base.width) });
+        /* PDF.js paints backing pixels, while CSS sizes the canvas. Android phones commonly have a
+         * 3x/4x device scale; using one backing pixel per CSS pixel made small document text visibly
+         * blurred. Keep the page's layout size, render at up to 2x for legibility, and cap it so a
+         * long PDF cannot multiply memory by sixteen on a 4x handset. */
+        var outputScale = Math.max(1, Math.min(2, Number(root.devicePixelRatio) || 1));
         var canvas = document.createElement('canvas');
-        canvas.className = 'pv-pdf-page'; canvas.width = Math.ceil(viewport.width);
-        canvas.height = Math.ceil(viewport.height); canvas.setAttribute('aria-label', 'Page ' + n);
+        canvas.className = 'pv-pdf-page'; canvas.width = Math.ceil(viewport.width * outputScale);
+        canvas.height = Math.ceil(viewport.height * outputScale);
+        canvas.style.width = Math.ceil(viewport.width) + 'px';
+        canvas.style.height = Math.ceil(viewport.height) + 'px';
+        canvas.setAttribute('aria-label', 'Page ' + n);
         box.appendChild(canvas);
-        await page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise;
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport,
+          transform: outputScale === 1 ? null : [outputScale, 0, 0, outputScale, 0, 0] }).promise;
       }
     } catch (e) {
       box.innerHTML = '<div class="empty pv-pdf-fallback">Could not render this PDF.<br>'
