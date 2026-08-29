@@ -3265,6 +3265,20 @@
     }finally{if(button&&button.isConnected)button.disabled=false;}
   }
 
+  /* Keyboard monitor movement names a direction, unlike the title-bar button which probes every
+   * neighbour. Keep it on the same handoff path: moving the compositor's PosterChan shell surface
+   * would strand this renderer's complete window list on the other output and leave a black source
+   * monitor. The app frame/state moves; the per-output shell never does. */
+  async function moveWindowToMonitor(w,direction){
+    if(!w || !wins.includes(w) || !/^(left|right|up|down)$/.test(direction))return false;
+    const moved=w.native!=null&&pcWM.handoff
+      ? await Promise.resolve(pcWM.handoff(w.native,direction)).catch(()=>false)
+      : await sendFrameHandoff(w,direction,0,false);
+    if(moved&&w.native!=null&&wins.includes(w))closeWin(w,{killNative:false,preserveFocus:true});
+    if(!moved){keepFrameReachable(w);_natGesture(w,false);if(nativeWins().length)nsync();}
+    return !!moved;
+  }
+
   function startDrag(w, ev){
     // Dragging used to write style.left/top on every pointermove. The window CONTAINS the live feed
     // — thousands of nodes — so each move forced a full layout of it, plus a getComputedStyle() for
@@ -6887,6 +6901,10 @@
             else if(/^pc:snap:(left|right|max)$/.test(p)){
               const w=wins.find(x=>x.el.classList.contains('focused'));
               if(w) snapTo(w, p.slice(8)==='max' ? 'max' : p.slice(8));
+            }
+            else if(/^pc:move-output:(left|right|up|down)$/.test(p)){
+              const w=wins.find(x=>x.el.classList.contains('focused'));
+              if(w)moveWindowToMonitor(w,p.slice(15));
             }
           });
           /* Arm compositor delivery immediately. PCOSShell.watch() also subscribes, but only after

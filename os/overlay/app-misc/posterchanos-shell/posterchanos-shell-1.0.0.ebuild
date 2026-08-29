@@ -161,6 +161,17 @@ pkg_postinst() {
 			'bindsym $mod+Up exec /usr/local/bin/pc-window-snap max'; do
 			grep -qF "${snap}" "${cfg}" || echo "${snap}" >>"${cfg}"
 		done
+		# Never move a per-output PosterChan shell container itself. Older direct bindings bypassed
+		# the renderer handoff and left the source display black. Native apps still move directly;
+		# a focused shell routes the selected in-app window through its state-preserving handoff.
+		sed -i -E '/^bindsym[[:space:]]+\$mod\+Shift\+(Left|Right|Up|Down)[[:space:]]+(move container|exec \/usr\/local\/bin\/pc-window-snap move-)/d' "${cfg}"
+		for move_binding in \
+			'bindsym $mod+Shift+Left exec /usr/local/bin/pc-window-snap move-left' \
+			'bindsym $mod+Shift+Right exec /usr/local/bin/pc-window-snap move-right' \
+			'bindsym $mod+Shift+Up exec /usr/local/bin/pc-window-snap move-up' \
+			'bindsym $mod+Shift+Down exec /usr/local/bin/pc-window-snap move-down'; do
+			echo "${move_binding}" >>"${cfg}"
+		done
 		# Options such as --no-repeat sit between `bindsym` and the key. The old expression did not
 		# allow that, so every package update appended another identical PrintScreen binding and Sway
 		# reported the private config as erroneous. Delete every historical form before adding one.

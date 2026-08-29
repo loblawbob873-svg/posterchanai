@@ -12,6 +12,7 @@ def test_native_snap_helper_is_shipped_and_bound_in_both_os_configs():
     assert helper.exists()
     code = helper.read_text()
     assert '"left", "right", "max", "edge"' in code
+    assert '"move-left": "left"' in code
     assert '"move", "absolute", "position"' in code
     for cfg in (
         ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config",
@@ -21,6 +22,8 @@ def test_native_snap_helper_is_shipped_and_bound_in_both_os_configs():
         assert "$mod+Left  exec /usr/local/bin/pc-window-snap left" in src
         assert "$mod+Right exec /usr/local/bin/pc-window-snap right" in src
         assert "$mod+Up    exec /usr/local/bin/pc-window-snap max" in src
+        assert "$mod+Shift+Left  exec /usr/local/bin/pc-window-snap move-left" in src
+        assert "$mod+Shift+Right exec /usr/local/bin/pc-window-snap move-right" in src
 
 
 def test_native_snap_never_resizes_a_posterchan_shell_surface(monkeypatch):
@@ -93,6 +96,50 @@ def test_repeated_super_arrows_route_to_the_internal_window_without_resizing_she
         "pc:snap:right", "pc:snap:right", "pc:snap:left",
         "pc:snap:right", "pc:snap:max", "pc:snap:left"]
     assert resized == [], "Super+Arrow resized the per-monitor shell instead of its internal window"
+
+
+def test_cross_monitor_shortcut_moves_the_in_app_window_not_the_shell(monkeypatch):
+    helper = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap"
+    module = runpy.run_path(str(helper), run_name="pc_window_move_shell_test")
+    sent = []
+    moved = []
+    monkeypatch.setattr(module["sys"], "argv", ["pc-window-snap", "move-right"])
+    monkeypatch.setitem(module["main"].__globals__, "sway",
+                        lambda *args: sent.append(args) or '{"nodes":[]}')
+    monkeypatch.setitem(module["main"].__globals__, "focused",
+                        lambda _tree: ({"id": 32, "app_id": "place.poster.desktop", "pid": 0},
+                                       {"rect": {"x": 0, "y": 0, "width": 1920, "height": 1080}}))
+    monkeypatch.setattr(module["subprocess"], "check_call",
+                        lambda argv, **_kw: moved.append(argv))
+    module["main"]()
+    assert sent[-1] == ("-t", "send_tick", "pc:move-output:right")
+    assert moved == [], "the entire per-output shell was moved and its source monitor went black"
+
+
+def test_cross_monitor_shortcut_still_moves_a_native_app(monkeypatch):
+    helper = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap"
+    module = runpy.run_path(str(helper), run_name="pc_window_move_native_test")
+    calls = []
+    monkeypatch.setattr(module["sys"], "argv", ["pc-window-snap", "move-left"])
+    monkeypatch.setitem(module["main"].__globals__, "sway", lambda *_: '{"nodes":[]}')
+    monkeypatch.setitem(module["main"].__globals__, "focused",
+                        lambda _tree: ({"id": 91, "app_id": "firefox", "pid": 7},
+                                       {"rect": {"x": 1920, "y": 0, "width": 1920, "height": 1080}}))
+    monkeypatch.setattr(module["subprocess"], "check_call",
+                        lambda argv, **_kw: calls.append(argv))
+    module["main"]()
+    assert calls == [["swaymsg", "[con_id=91]", "move", "container", "to", "output",
+                      "left", ",", "focus"]]
+
+
+def test_shell_move_tick_uses_state_preserving_monitor_handoff():
+    src = (ROOT / "static/js/client/os.js").read_text()
+    assert "/^pc:move-output:(left|right|up|down)$/.test(p)" in src
+    assert "moveWindowToMonitor(w,p.slice(15))" in src
+    move = src[src.index("async function moveWindowToMonitor"):
+               src.index("function startDrag", src.index("async function moveWindowToMonitor"))]
+    assert "pcWM.handoff(w.native,direction)" in move
+    assert "sendFrameHandoff(w,direction,0,false)" in move
 
 
 def test_mouse_edge_release_cannot_snap_the_reverse_dns_shell_surface(monkeypatch):

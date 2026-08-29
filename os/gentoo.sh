@@ -1756,10 +1756,10 @@ PROFILE
 	bindsym Ctrl+$mod+Down  focus output down
 	# The window goes with you: moved to the next screen AND followed, because a window that leaves
 	# the screen you are looking at with the focus staying behind reads as having closed it.
-	bindsym $mod+Shift+Left  move container to output left,  focus output left
-	bindsym $mod+Shift+Right move container to output right, focus output right
-	bindsym $mod+Shift+Up    move container to output up,    focus output up
-	bindsym $mod+Shift+Down  move container to output down,  focus output down
+	bindsym $mod+Shift+Left  exec /usr/local/bin/pc-window-snap move-left
+	bindsym $mod+Shift+Right exec /usr/local/bin/pc-window-snap move-right
+	bindsym $mod+Shift+Up    exec /usr/local/bin/pc-window-snap move-up
+	bindsym $mod+Shift+Down  exec /usr/local/bin/pc-window-snap move-down
 	# Closing one, which nothing else here offered. The compositor draws no chrome -- PosterChan does
 	# -- so a floating app has no titlebar and can only be closed from inside itself, and not every
 	# app has a way.

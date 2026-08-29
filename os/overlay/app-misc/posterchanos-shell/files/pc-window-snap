@@ -62,8 +62,10 @@ def is_posterchan_shell(win):
 
 def main():
     side = sys.argv[1] if len(sys.argv) > 1 else ""
-    if side not in ("left", "right", "max", "edge"):
-        raise SystemExit("usage: pc-window-snap left|right|max|edge")
+    moves = {"move-left": "left", "move-right": "right",
+             "move-up": "up", "move-down": "down"}
+    if side not in ("left", "right", "max", "edge", *moves):
+        raise SystemExit("usage: pc-window-snap left|right|max|edge|move-left|move-right|move-up|move-down")
     hit = focused(json.loads(sway("-t", "get_tree", "-r")))
     if not hit:
         return
@@ -76,8 +78,20 @@ def main():
     # the same physical key back to the shell so its ordinary snapTo() path handles the focused
     # PosterChan window.
     if is_posterchan_shell(win):
-        if side != "edge":
+        if side in moves:
+            # Each output has its own shell surface. Moving that Sway container itself leaves the
+            # source output black and bypasses the selected app's identity/state handoff. Ask the
+            # renderer to transfer its focused PosterChan window through the ordinary two-phase
+            # monitor protocol instead.
+            sway("-t", "send_tick", "pc:move-output:" + moves[side])
+        elif side != "edge":
             sway("-t", "send_tick", "pc:snap:" + side)
+        return
+    if side in moves:
+        criteria = "[con_id=%d]" % int(win["id"])
+        subprocess.check_call(
+            ["swaymsg", criteria, "move", "container", "to", "output", moves[side], ",", "focus"],
+            stdout=subprocess.DEVNULL)
         return
     box = out.get("rect") or {}
     x, y = int(box.get("x", 0)), int(box.get("y", 0))
