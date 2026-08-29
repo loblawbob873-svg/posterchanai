@@ -49,6 +49,7 @@ package place.poster.app.signer;
 public class SignerRelayService {
   public static void archiveIncoming(android.content.Context c, String f, String b, long w) { }
   public static void archiveDelete(android.content.Context c, String id) { }
+  public static void sweepSms(android.content.Context c) { }
 }
 """,
             "com/klinker/android/send_message/Settings.java": """
@@ -168,6 +169,19 @@ public class MusicWidget extends android.content.BroadcastReceiver {
         names = {os.path.basename(p) for p in self._sources()}
         for f in ("LauncherDeviceTest.java", "SmsDeviceTest.java", "DialerDeviceTest.java"):
             self.assertIn(f, names)
+
+    def test_sms_sweep_shim_matches_the_service_api_used_by_the_thread_list(self):
+        """The device harness substitutes the large signer service, so keep its SMS hook explicit."""
+        service = os.path.join(ac.JAVA, "place", "poster", "app", "signer",
+                               "SignerRelayService.java")
+        caller = os.path.join(ac.JAVA, "place", "poster", "app", "sms",
+                              "ThreadListActivity.java")
+        with open(service, encoding="utf-8") as fh:
+            service_src = fh.read()
+        with open(caller, encoding="utf-8") as fh:
+            caller_src = fh.read()
+        self.assertIn("public static void sweepSms(Context ctx)", service_src)
+        self.assertIn("SignerRelayService.sweepSms(this)", caller_src)
 
 
 if __name__ == "__main__":
