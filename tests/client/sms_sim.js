@@ -609,6 +609,10 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
                                    partShas: t.msgs.map(m => (m.parts || []).map(p => String(p.sha||''))),
                                    pending: t.msgs.map(m => !!m.pending),
                                    failed: t.msgs.map(m => !!m.failed) })),
+    /* A PICTURE MESSAGE THE ARCHIVE CARRIES NO PICTURE FOR — the shape 1,284 of one real
+       account's 1,964 messages are actually in. */
+    snippets: st.threads.map(t => t.msgs.map(m => (S._snippetOf ? S._snippetOf(m) : ''))),
+    countLine: S._countLine ? S._countLine() : '',
     mmsRefused: !!st.mmsRefused,
     mmsCapped: !!st.mmsCapped,
     blossomDone: !!global.localStorage._all[Object.keys(global.localStorage._all)

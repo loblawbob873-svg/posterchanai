@@ -2151,15 +2151,22 @@
    * is holding, how many of them are outgoing, and how many threads that makes. A missing history
    * and a missing DIRECTION look identical on screen and are different bugs. */
   function countLine(){
-    let out = 0, gone = 0;
+    let out = 0, gone = 0, noMedia = 0;
     for(const m of S.msgs.values()){
       if(m && m.gone){ gone++; continue; }
       if(m && !m.incoming) out++;
+      if(mmsWithoutMedia(m)) noMedia++;
     }
     return 'last read: ' + (S.lastRead == null ? 'not attempted' : S.lastRead + ' from the phone')
          + ' \u00b7 holding: ' + (S.msgs.size - gone)
          + ' (' + out + ' sent, ' + (S.msgs.size - gone - out) + ' received)'
-         + ' \u00b7 threads: ' + S.threads.length;
+         + ' \u00b7 threads: ' + S.threads.length
+         /* THE SIZE OF THE GAP, ON THE SCREEN THAT KNOWS IT. Counted rather than described: on the
+          * reporting account it is 1,284 of 1,964, which is not a detail and is invisible without
+          * this line. Only shown when there ARE any, so an account whose backup is complete reads
+          * exactly as it did before. */
+         + (noMedia ? ' \u00b7 ' + noMedia + ' picture message'
+                      + (noMedia === 1 ? '' : 's') + ' with no media backed up' : '');
   }
 
   /* ASK ANDROID FOR THE SMS ROLE. One implementation, two buttons — the empty state's and the one
@@ -2259,11 +2266,21 @@
 
   /* The one-line description of a message with no words in it. An empty snippet in the thread list
    * reads as a conversation that has gone quiet, which is the opposite of what happened. */
+  /* A PICTURE MESSAGE THE ARCHIVE CARRIES NO PICTURE FOR. Measured on a real account: 1,284 of
+   * 1,964 archived messages are flagged `mms:true` and carry no attachment at all, because the
+   * handset published them before it could put the bytes in encrypted storage. Every one of those
+   * renders today as an ordinary bubble — an empty one when the photo had no caption — so a
+   * conversation looks complete while the thing it was about is missing, and nothing anywhere says
+   * a photo was ever there. Saying it is not a fix for the backup; it is the difference between a
+   * gap somebody can see and a gap nobody can. */
+  function mmsWithoutMedia(m){
+    return !!(m && m.mms && !((m.parts || []).length) && !m.gone);
+  }
   function snippetOf(m){
     const body = String((m && m.body) || '').slice(0, 90);
-    if(body) return body;
     const parts = (m && m.parts) || [];
-    if(!parts.length) return '';
+    if(body) return body;
+    if(!parts.length) return mmsWithoutMedia(m) ? 'Photo \u00b7 not backed up' : '';
     if(parts.length === 1) return attLabel(parts[0]);
     return parts.length + ' attachments';
   }
@@ -2904,7 +2921,11 @@
            * part DMs do not have: MMS attachments inside the bubble. */
           const prev = t.msgs[i-1];
           const grp = !prev || !!prev.incoming !== !!m.incoming ? ' grp' : ' cont';
-          const atts = (m.parts||[]).map((p, j) => attHtml(p, enc, i, j)).join('');
+          const atts = (m.parts||[]).map((p, j) => attHtml(p, enc, i, j)).join('')
+            || (mmsWithoutMedia(m)
+                 ? '<div class="sms-att sms-att-missing" data-done="1"><span class="muted small">'
+                   + enc('Photo \u00b7 not backed up from your phone') + '</span></div>'
+                 : '');
           const retryable = !m.incoming && m.failed &&
             !ambiguousMmsError(m.error);
           return `<div class="bubble ${m.incoming ? 'in' : 'out'}${grp}${atts ? ' has-att' : ''}" data-doc="${enc(m.doc)}">`
@@ -3351,5 +3372,7 @@
                     * one repaint used to abandon every attachment behind the one in flight, and
                     * one missing preview blob used to lose a picture whose original was intact —
                     * and neither is reachable through a whole-view render in a DOM-less simulator. */
-                   _partData: partData, _hydrateAtt: hydrateAtt };
+                   _partData: partData, _hydrateAtt: hydrateAtt,
+                   /* A picture message with no picture — see mmsWithoutMedia. */
+                   _snippetOf: snippetOf, _countLine: countLine };
 })();

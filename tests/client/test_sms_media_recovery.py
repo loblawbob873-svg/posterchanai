@@ -281,3 +281,48 @@ class OneRepaintMustNotCostTheRestOfTheThread(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class APictureMessageWithNoPicture(unittest.TestCase):
+    """MEASURED on the reporting account: 1,284 of 1,964 archived messages are flagged `mms:true`
+    and carry no attachment at all — the handset published them before it could put the bytes in
+    encrypted storage. Every one rendered as an ordinary bubble, an EMPTY one whenever the photo
+    had no caption, so the conversation looked complete while the thing it was about was missing
+    and nothing anywhere said a photo had ever been there.
+
+    This does not repair the backup. It is the difference between a gap somebody can see and a gap
+    nobody can — and it is what makes the phone-side fix verifiable from the screen.
+    """
+
+    def _run(self):
+        rows = [dict(ev("pcai:sms:plain", body(1, body="just words"))["tags"] and {}) ]  # noqa
+        archive = [
+            ev("pcai:sms:plain", body(1, body="just words")),
+            ev("pcai:sms:photo-no-caption", body(2, body="", mms=True)),
+            ev("pcai:sms:photo-caption", body(3, body="look at this", mms=True)),
+        ]
+        return run(isPhone=False, cached=archive, relayEmpty=True, realArchiveFilters=True,
+                   steps=["load", "settle"])
+
+    def test_a_captionless_picture_message_is_not_an_empty_bubble(self):
+        res = self._run()
+        flat = [s for row in res["snippets"] for s in row]
+        self.assertIn("Photo · not backed up", flat,
+                      "a picture message with no media still renders as an empty bubble: %r" % (flat,))
+
+    def test_a_caption_still_wins_over_the_notice(self):
+        """The words somebody typed are the message. The notice is for the bubble that has none."""
+        flat = [s for row in self._run()["snippets"] for s in row]
+        self.assertIn("look at this", flat)
+        self.assertIn("just words", flat)
+
+    def test_the_count_is_on_the_screen_that_knows_it(self):
+        line = self._run()["countLine"]
+        self.assertIn("2 picture messages with no media backed up", line,
+                      "the size of the gap is invisible: %r" % (line,))
+
+    def test_an_archive_with_nothing_missing_reads_exactly_as_before(self):
+        res = run(isPhone=False, cached=[ev("pcai:sms:a", body(1, body="hi"))], relayEmpty=True,
+                  realArchiveFilters=True, steps=["load", "settle"])
+        self.assertNotIn("no media backed up", res["countLine"])
