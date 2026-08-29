@@ -2155,7 +2155,7 @@
        * visible progress, invisible cost — and the queue is derived from what is unarchived, so
        * the next visit continues exactly where this one stopped. A backlog is allowed to take a
        * week; the screen is not allowed to stutter. */
-      const MAX_BATCHES = 2;
+      const MAX_BATCHES = 4;
       for(let batch=0; batch<MAX_BATCHES; batch++){
         /* FIVE. NOT TWENTY, AND CERTAINLY NOT SIXTY.
          *
@@ -2169,7 +2169,11 @@
          * Five per batch, two batches, a second and a half apart: ten pictures a visit. A backlog
          * of a thousand takes a while and nobody notices it happening, which is the correct trade
          * for a background copy. The queue is derived from what is unarchived, so it resumes. */
-        const r = await mirror({fullMigration:true, limit:5});
+        /* THE FREEZE WAS THE PER-BYTE BASE64 DECODE, NOT THE VOLUME — and once that was handed to
+         * the browser's native decoder, five rows a batch stopped being caution and started being
+         * the reason a thousand-picture backlog would take days. Twenty-five, four batches: a
+         * hundred pictures a visit. */
+        const r = await mirror({fullMigration:true, limit:25});
         total += Number(r && r.published) || 0;
         if(!r || r.skipped || !r.remaining) return {published:total, remaining:(r&&r.remaining)||0,
                                                      failed:(r&&r.failed)||0, skipped:r&&r.skipped};
@@ -2189,7 +2193,7 @@
          * nothing else — the next batch starts on the very next frame and the WebView never gets a
          * chance to draw, scroll or accept a tap. A real pause is what makes a background copy feel
          * like one. */
-        await new Promise(resolve => setTimeout(resolve, 1500));
+        await new Promise(resolve => setTimeout(resolve, 600));
       }
       /* Not an error and not a stall: the bound above was reached with work still to do, and the
        * next foreground picks it up. Said plainly so the screen does not report a problem. */

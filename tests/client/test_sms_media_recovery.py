@@ -586,7 +586,11 @@ class TheMigrationIsBoundedPerVisit(unittest.TestCase):
                   steps=["phoneLoad", "migrateAll"])
         published = len(res["published"])
         self.assertGreater(published, 0, "the migration did nothing at all")
-        self.assertLessEqual(published, 24,
+        # A hundred a visit. The bound exists so the phone is never owned by the sweep; the FREEZE
+        # was the per-byte base64 decode, and once that went to the browser's native decoder a tiny
+        # batch stopped being caution and became the reason a thousand-picture backlog would take
+        # days. What must stay true is that a visit ENDS.
+        self.assertLessEqual(published, 120,
                              "one foreground published %d messages — the phone belongs to the sweep "
                              "for as long as that takes" % (published,))
 

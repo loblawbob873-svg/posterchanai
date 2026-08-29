@@ -1168,8 +1168,11 @@
        *
        * Remember only an answer that actually contained something; leave the miss unrecorded so
        * the next tick asks again. */
+      /* DO NOT REMEMBER A MISS — but do not abandon the rest of hydration either. Returning here
+       * skipped everything below, which is what makes the room vanish from the list rather than
+       * merely stay unread. Leave the cache unset so the next pass asks again, and carry on. */
       if((controlWraps||[]).length) roomControls.set(loadKey,controlWraps);
-      else { roomLoadWarning(p,loadKey,'could not read this community yet: ','no control events came back — retrying'); return; } }
+      else roomLoadWarning(p,loadKey,'could not read this community yet: ','no control events came back — retrying'); }
     const made=await reader.createChatWrap(bundle,controlWraps||[],channel.id,text,viewer.pubkey,p.signTemplate,extraTags,kind);
     const accepted=await p.relayPublishTo(relays,made.wrap); if(!accepted)throw new Error('community relays rejected the message');
     await cacheEnvelopes(envelopeCacheKey(loadKey,channel.id),[made.wrap]);
