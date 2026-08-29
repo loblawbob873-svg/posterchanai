@@ -1,8 +1,11 @@
 from pathlib import Path
+import json
 import subprocess
 import sys
 
-from scripts.check_installed_vm import is_viewer_surface, viewer_frame_is_graphical
+import pytest
+
+from scripts.check_installed_vm import is_viewer_surface, viewer_frame_is_graphical, visible_viewer
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -83,3 +86,43 @@ def test_mapped_viewer_must_contain_a_graphical_guest_frame(tmp_path, monkeypatc
         return Result()
 
     assert viewer_frame_is_graphical(node, {}, runner=desktop_runner)
+
+
+def viewer_tree_result(name="demo-vm"):
+    node = {"app_id": "virt-viewer", "name": f"Installer — {name}",
+            "rect": {"x": 10, "y": 20, "width": 1024, "height": 768}}
+
+    class Result:
+        returncode = 0
+        stdout = json.dumps({"nodes": [], "floating_nodes": [node]})
+
+    return Result(), node
+
+
+def test_visible_viewer_requires_consecutive_graphical_frames():
+    tree, node = viewer_tree_result()
+    frames = iter((False, True, True, True))
+    probes = []
+
+    def probe(candidate, env):
+        probes.append(candidate)
+        return next(frames)
+
+    rect = visible_viewer(
+        "demo-vm", {}, seconds=1, stable_samples=3, interval=0,
+        tree_runner=lambda args, env=None: tree, frame_probe=probe,
+    )
+    assert rect == node["rect"]
+    assert len(probes) == 4
+
+
+def test_visible_viewer_rejects_graphical_then_black_frame():
+    tree, _node = viewer_tree_result()
+    frames = iter((True, False))
+
+    with pytest.raises(RuntimeError, match="became black"):
+        visible_viewer(
+            "demo-vm", {}, seconds=1, stable_samples=3, interval=0,
+            tree_runner=lambda args, env=None: tree,
+            frame_probe=lambda node, env: next(frames),
+        )

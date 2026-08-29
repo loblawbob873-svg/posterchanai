@@ -41,6 +41,20 @@ C.readWaylandText({execFile:(bin,args,opts,cb)=>{call={bin,args,opts}; cb(null,'
     assert result["call"]["args"] == ["--no-newline", "--type", "text"]
 
 
+def test_wayland_write_turns_a_broken_stdin_pipe_into_a_failed_copy():
+    result = run_node(r"""
+const C=require('./desktop/clipboard.js');
+let stdinError;
+const child={
+  stdin:{once(name,fn){if(name==='error')stdinError=fn;},end(){queueMicrotask(()=>stdinError(new Error('EPIPE')));}},
+  once(name,fn){this[name]=fn;}, kill(){},
+};
+C.writeWaylandText('native-copy', {spawn:()=>child})
+ .then(ok=>console.log(JSON.stringify({ok})));
+""")
+    assert result == {"ok": False}
+
+
 def test_main_bridge_uses_native_wayland_clipboard_both_directions():
     src = (ROOT / "desktop/main.js").read_text()
     write = src[src.index("ipcMain.handle('pc:clip:write'"):src.index("/* CLIPBOARD READ")]

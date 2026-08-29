@@ -2736,13 +2736,15 @@
     return changed;
   }
 
-  function closeWin(w, opts){
-    const i = wins.indexOf(w);
-    if(i < 0) return;
-    wins.splice(i, 1);
+  /* Closing one frame and tearing down the whole desktop have the same ownership boundary.  Keep
+   * resource cleanup in one idempotent operation: exit/re-enter used to throw the DOM and `wins`
+   * away without running onClose, leaving Preview URLs, Webxdc sessions, VM pollers and remote
+   * desktop ownership alive behind the next desktop.  Those stale producers could then paint into
+   * detached nodes or collide with the newly opened app, presenting as an empty/black window. */
+  function disposeWindow(w){
+    if(!w || w.disposed) return false;
+    w.disposed = true;
     _aiContextWins.delete(w);try{if(w.aiWatch)w.aiWatch.disconnect();}catch(_){}
-    // If this window held the id, hand it back BEFORE removing the element, or `$('#feed')` briefly
-    // resolves to nothing and whatever renders next paints into a detached node.
     // Closing the Terminal window is what ends its SSH session — renderView deliberately does not,
     // because on the desktop a background window is parked and still running (see the note there).
     if(w.view === 'terminal'){ try{ if(window.PCTerm) PCTerm.unmount(); }catch(_){} }
@@ -2751,6 +2753,16 @@
      * purpose: the Terminal above is the same need answered by name, and a second hardcoded view
      * would make it a pattern of exceptions rather than a hook. */
     if(typeof w.onClose === 'function'){ try{ w.onClose(); }catch(e){ console.warn('window onClose', e); } }
+    return true;
+  }
+
+  function closeWin(w, opts){
+    const i = wins.indexOf(w);
+    if(i < 0) return;
+    wins.splice(i, 1);
+    disposeWindow(w);
+    // If this window held the id, hand it back BEFORE removing the element, or `$('#feed')` briefly
+    // resolves to nothing and whatever renders next paints into a detached node.
     /* Closing the frame closes the APP. A frame that vanished and left firefox running would leave
      * a window nobody can reach — it is floating above a desktop that has forgotten it. */
     if(w.native != null){
@@ -7326,6 +7338,10 @@
     window.removeEventListener('resize', onResize);
     // Hand the id back BEFORE the windows go, then repaint the classic view into it.
     releaseFeed();
+    /* `closeWin` cannot be used here: it focuses/repaints a successor and closes native apps on
+     * every iteration.  The desktop is disappearing as one unit, but each app must still release
+     * exactly the resources its ordinary Close path owns. */
+    wins.slice().forEach(disposeWindow);
     wins = [];
     if(root) root.remove();
     root = bar = desk = null;

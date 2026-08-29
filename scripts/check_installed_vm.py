@@ -97,19 +97,40 @@ def viewer_frame_is_graphical(node, env, runner=command):
             return False
 
 
-def visible_viewer(name, env, seconds=30):
+def visible_viewer(name, env, seconds=60, stable_samples=6, interval=1,
+                   tree_runner=command, frame_probe=viewer_frame_is_graphical):
+    """Require a sustained graphical guest surface, not one lucky rendered frame."""
+    if stable_samples < 2:
+        raise ValueError("stable_samples must be at least 2")
     deadline = time.monotonic() + seconds
+    graphical_seen = False
+    stable = 0
     while time.monotonic() < deadline:
-        tree = command(["swaymsg", "-t", "get_tree", "-r"], env=env)
+        tree = tree_runner(["swaymsg", "-t", "get_tree", "-r"], env=env)
+        viewer = None
         if tree.returncode == 0:
             nodes = [json.loads(tree.stdout)]
             while nodes:
                 node = nodes.pop()
                 nodes.extend(node.get("nodes", []) + node.get("floating_nodes", []))
-                if is_viewer_surface(node, name) and viewer_frame_is_graphical(node, env):
-                    return node.get("rect") or {}
-        time.sleep(.5)
-    raise RuntimeError("virt-viewer never mapped a usable Sway surface")
+                if is_viewer_surface(node, name):
+                    viewer = node
+                    break
+        if viewer is not None:
+            graphical = frame_probe(viewer, env)
+            if graphical_seen and not graphical:
+                raise RuntimeError("virt-viewer guest frame became black after graphics appeared")
+            if graphical:
+                graphical_seen = True
+                stable += 1
+                if stable >= stable_samples:
+                    return viewer.get("rect") or {}
+            else:
+                stable = 0
+        elif graphical_seen and tree.returncode == 0:
+            raise RuntimeError("virt-viewer disappeared after graphics appeared")
+        time.sleep(interval)
+    raise RuntimeError("virt-viewer never sustained a usable graphical Sway surface")
 
 
 def start_and_view(binary, asar, name, env):

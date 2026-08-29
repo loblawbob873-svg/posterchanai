@@ -37,6 +37,11 @@ function writeWaylandText(text, deps) {
     if (timer.unref) timer.unref();
     child.once('error', () => { clearTimeout(timer); done(false); });
     child.once('exit', (code) => { clearTimeout(timer); done(code === 0); });
+    /* spawn() succeeding does not mean wl-copy stayed alive long enough to consume stdin. A missing
+     * compositor or rejected MIME offer can close the pipe first; that EPIPE is emitted on stdin,
+     * not on the child process, and without a listener it is an uncaught exception in Electron's
+     * main process. Report the copy as failed through the existing fallback contract. */
+    if(child.stdin&&child.stdin.once)child.stdin.once('error',()=>{clearTimeout(timer);done(false);});
     try { child.stdin.end(String(text)); }
     catch (_) { clearTimeout(timer); done(false); }
   });

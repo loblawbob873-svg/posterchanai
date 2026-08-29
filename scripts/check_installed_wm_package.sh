@@ -13,12 +13,16 @@ cleanup() { rm -r "$check_dir"; }
 trap cleanup EXIT HUP INT TERM
 (cd "$check_dir" && node "$asar_cli" extract-file "$asar" wm.js)
 mv "$check_dir/wm.js" "$check_dir/installed-wm.js"
+(cd "$check_dir" && node "$asar_cli" extract-file "$asar" clipboard.js)
+mv "$check_dir/clipboard.js" "$check_dir/installed-clipboard.js"
 (cd "$check_dir" && node "$asar_cli" extract-file "$asar" www/static/js/client/os.js)
 mv "$check_dir/os.js" "$check_dir/installed-os.js"
 (cd "$check_dir" && node "$asar_cli" extract-file "$asar" www/static/css/client.css)
 mv "$check_dir/client.css" "$check_dir/installed-client.css"
 PC_INSTALLED_WM_JS="$check_dir/installed-wm.js" \
   node "$repo/tests/client/installed_wm_ancestry_sim.js"
+PC_INSTALLED_CLIPBOARD_JS="$check_dir/installed-clipboard.js" \
+  node "$repo/tests/client/installed_clipboard_sim.js"
 PC_INSTALLED_OS_JS="$check_dir/installed-os.js" \
   node "$repo/tests/client/alt_tab_switcher_sim.js"
 PC_INSTALLED_OS_JS="$check_dir/installed-os.js" PC_INSTALLED_CLIENT_CSS="$check_dir/installed-client.css" \
