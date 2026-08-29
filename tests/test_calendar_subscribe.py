@@ -287,8 +287,12 @@ def test_replaying_the_queue_is_safe_to_do_blindly():
 def test_the_queue_drains_the_moment_the_server_answers():
     """The config call reaching the server IS the proof it is reachable, and draining before the read
     means what comes back already includes it."""
-    i = CALJS.index("S.sync = await api('/api/calendar/config')")
-    assert "CalQueue.flush()" in CALJS[i:i + 500]
+    # Account-switch generation guards deliberately split the await from the assignment. Anchor on
+    # the request whose successful answer proves reachability, then require flush before discovery.
+    i = CALJS.index("await api('/api/calendar/config')")
+    flush = CALJS.index("CalQueue.flush()", i)
+    read = CALJS.index("await api('/api/calendar/calendars')", i)
+    assert i < flush < read
 
 
 def test_the_screen_says_when_it_is_showing_a_saved_copy():

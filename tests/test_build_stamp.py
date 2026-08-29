@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import unittest
+import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -47,8 +48,29 @@ class BuildStamp(unittest.TestCase):
         """It is read per page render; a subprocess there is a fork per request."""
         src = open(os.path.join(ROOT, "app", "routers", "client.py"), encoding="utf-8").read()
         i = src.index("def _build_sha()")
-        seg = src[i:i + 2200]
-        self.assertIn('".git", "HEAD"', seg, "it must read the ref files, not shell out every time")
+        seg = src[i:i + 3600]
+        self.assertIn('os.path.join(gitdir, "HEAD")', seg,
+                      "it must read the ref files, not shell out every time")
+
+    def test_it_resolves_a_linked_worktrees_git_pointer(self):
+        """CI/review runs from linked worktrees where `.git` is a file pointing at the real dir."""
+        import app.routers.client as C
+        with tempfile.TemporaryDirectory() as td:
+            root = os.path.join(td, "tree")
+            module = os.path.join(root, "app", "routers", "client.py")
+            gitdir = os.path.join(td, "repo.git", "worktrees", "review")
+            os.makedirs(os.path.dirname(module)); os.makedirs(gitdir)
+            with open(os.path.join(root, ".git"), "w", encoding="utf-8") as fh:
+                fh.write("gitdir: " + gitdir + "\n")
+            want = "1234567890abcdef" * 4
+            with open(os.path.join(gitdir, "HEAD"), "w", encoding="utf-8") as fh:
+                fh.write(want + "\n")
+            old_file, old_cache = C.__file__, C._BUILD_SHA
+            try:
+                C.__file__ = module; C._BUILD_SHA = ("", 0.0)
+                self.assertEqual(C._build_sha(), want[:8])
+            finally:
+                C.__file__, C._BUILD_SHA = old_file, old_cache
 
     def test_the_page_carries_it(self):
         tpl = open(os.path.join(ROOT, "templates", "client.html"), encoding="utf-8").read()

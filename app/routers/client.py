@@ -143,13 +143,27 @@ def _build_sha() -> str:
     out = ""
     try:
         root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        head = os.path.join(root, ".git", "HEAD")
+        dotgit = os.path.join(root, ".git")
+        gitdir = dotgit
+        if os.path.isfile(dotgit):
+            # Linked/detached worktrees have a `.git` POINTER FILE, not a directory. Joining
+            # `.git/HEAD` therefore raises NotADirectoryError and the build badge says `unknown`
+            # even though `git rev-parse HEAD` in that same tree works. Resolve the pointer without
+            # putting a subprocess on the normal hot path.
+            with open(dotgit, encoding="utf-8") as fh:
+                marker = fh.read().strip()
+            if not marker.lower().startswith("gitdir:"):
+                raise ValueError("invalid .git pointer")
+            gitdir = marker.split(":", 1)[1].strip()
+            if not os.path.isabs(gitdir):
+                gitdir = os.path.normpath(os.path.join(root, gitdir))
+        head = os.path.join(gitdir, "HEAD")
         with open(head, encoding="utf-8") as fh:
             line = fh.read().strip()
         if line.startswith("ref:"):
             ref = line.split(" ", 1)[1].strip()
             try:
-                with open(os.path.join(root, ".git", ref), encoding="utf-8") as fh:
+                with open(os.path.join(gitdir, ref), encoding="utf-8") as fh:
                     out = fh.read().strip()
             except OSError:
                 # A packed ref — no loose file for it. One subprocess is fine on this path.

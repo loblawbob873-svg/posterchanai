@@ -143,7 +143,7 @@ def test_the_desktop_does_not_open_social_on_its_own():
         "off the desktop the landing must still switch to the start screen and mark itself")
 
 
-def test_the_landing_guard_is_a_question_and_never_a_latch():
+def test_the_landing_guard_is_a_question_and_never_an_internal_boot_latch():
     """The previous boot-landing guard (`_viewChosen`) was a latch, and `applyInstanceGating` can
     switchView during boot — which made the landing skip ITSELF and shipped a broken APK. This one
     reads the screen at the moment of landing, so nothing else running during boot can set it."""
@@ -157,9 +157,16 @@ def test_the_landing_guard_is_a_question_and_never_a_latch():
     assert len(re.findall(r"_osHome", APP)) == 3, (
         "_osHome is written somewhere other than the landing that computes it")
     # And `_onLandingView` must stay unset when there is no landing view, or a late synced pref
-    # would open a window of its own through restoreClientPrefsNostr.
-    assert re.search(r"if\(!_osHome\)\{\s*switchView\(_start\w*\(\)\);\s*_onLandingView\s*=\s*true;\s*\}",
-                     boot), ("the landing must stay guarded by _osHome and set the flag only there")
+    # would open a window of its own through restoreClientPrefsNostr. A PUBLIC bridge request is the
+    # other legitimate reason not to land: native/module launchers can request an app before async
+    # boot finishes, and the default landing must not steal that destination. Unlike `_viewChosen`,
+    # this counter is not touched by internal boot switchView calls (pinned by the Android ownership
+    # test), so instance gating cannot accidentally suppress the required classic-mode landing.
+    assert re.search(
+        r"if\(!_osHome\s*&&\s*!_publicViewRequests\)\{\s*"
+        r"switchView\(_start\w*\(\)\);\s*_onLandingView\s*=\s*true;\s*\}",
+        boot,
+    ), ("the landing must yield to desktop home/public app ownership and mark only a real landing")
 
 
 @pytest.mark.skipif(not shutil.which("node"), reason="node is what runs the shipped function")
