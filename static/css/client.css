@@ -1981,6 +1981,8 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .quoted .txt img:not(.emoji-inline),.quoted .txt video{--mh:280px;max-width:100%;max-height:280px;border-radius:10px;margin-top:6px;display:block;border:1px solid var(--line)}
 .quoted .txt audio{width:100%;max-width:340px;margin-top:6px}
 .modal .quoted{max-height:46vh;overflow:auto}
+.cmp-parent{cursor:pointer;transition:border-color .15s ease,background .15s ease}
+.cmp-parent:hover,.cmp-parent:focus-visible{border-color:var(--neon);background:rgba(var(--accent-rgb),.06);outline:none}
 /* profile Replies tab: show the parent post as "↩ replying to" context above each reply */
 .reply-pair{border-bottom:1px solid var(--line)}
 .reply-pair>.note{border-bottom:none}

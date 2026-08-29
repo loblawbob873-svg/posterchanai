@@ -1233,7 +1233,18 @@
       if (window.nostr && window.nostr.nip44){   // gift-wrapped DMs via the extension's NIP-44
         const dec = (p2, ct) => X.call('44d\u0000'+p2+'\u0000'+ct,
                                        () => window.nostr.nip44.decrypt(p2, ct));
-        const enc = (r, pt) => X.call(null, () => window.nostr.nip44.encrypt(r, pt));
+        // Validate in our own call path too. Extensions are not uniform here (and an older
+        // PosterChan provider may still be installed): noble's NIP-44 error otherwise escapes from
+        // the page-world promise and the global action handler reports a cryptic "[pc] action
+        // failed". Byte length matters, not JS string length (Firefox exposed this first with
+        // emoji-heavy/empty reply payloads).
+        const enc = (r, pt) => {
+          const text = typeof pt === 'string' ? pt : '';
+          const bytes = new TextEncoder().encode(text).length;
+          if(bytes < 1 || bytes > 65535)
+            return Promise.reject(new Error('Cannot encrypt an empty or over-64KB message.'));
+          return X.call(null, () => window.nostr.nip44.encrypt(r, text));
+        };
         s.nip17wrap = (peer, text) => _nip17wrapVia(pubkey, enc,
                                                     (tpl)=>s.signEvent(tpl), peer, text);
         s.nip17unwrap = (wrap) => _nip17unwrapVia(dec, wrap);
@@ -14800,7 +14811,7 @@
       const body=(mp.text||'').trim();
       const media=(mp.items&&mp.items.length)?`<div class="media-row cmp-ctx-media">${mp.items.join('')}</div>`:'';
       return `<div class="cmp-ctx"><div class="cmp-ctx-lbl">${label}</div>
-        <div class="quoted"><div class="hd"><img class="qav" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">`
+        <div class="quoted cmp-parent" data-open="${enc(o.id)}" role="button" tabindex="0" title="Open original post"><div class="hd"><img class="qav" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">`
         +`<span class="name" data-prof="${o.pubkey}">${emojiName(o.pubkey,nm)}</span><span class="time">${timeAgo(o.created_at)}</span></div>`
         +`${body?`<div class="txt">${linkify(body)}</div>`:(media?'':'<div class="txt"><span class="muted small">(no text)</span></div>')}${media}</div></div>`;
     };
@@ -14833,6 +14844,11 @@
        * visible way out is a trap on any phone without a hardware Back button. */
       root.classList.add('cmp-modal', 'modal-sticky');
       { const x=$('#cmp-close',root); if(x) x.onclick=()=>closeModal(); }
+      // Armada-style reply context: one readable parent preview in the composer, not a permanent
+      // parent card above every message. Clicking (or pressing Enter) opens the original thread.
+      { const p=$('.cmp-parent',root); if(p){ const go=()=>{ const id=p.dataset.open; closeModal(); openThread(id); };
+        p.onclick=e=>{ if(!e.target.closest('[data-prof]')) go(); };
+        p.onkeydown=e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); go(); } }; } }
       const ta=$('#cmp',root); attachMentionAutocomplete(ta); if(text) ta.value=text;
       // Files shared IN from another app (OS share sheet → _consumeSharedFiles): upload each to Blossom
       // and append its URL, exactly like paste/attach. Runs async so the composer paints immediately.
@@ -15069,7 +15085,12 @@
         // a reply, a poll, a community post and an article comment all read ta.value from this one
         // spot, and all of them derive imeta/mention tags from the URLs in it.
         { const n=_autoCleanOnPost(ta); if(n) toast(`🧹 cleaned ${n} link${n===1?'':'s'}`); }
-        const text=ta.value.trim(); if(!text && !quote)return;   // a quote-repost may have no comment
+        const text=ta.value.trim();
+        if(!text && !quote){
+          // Do not let an empty reply reach signers/NIP-44, and do not fail as an invisible no-op.
+          const st=$('#cmp-status',root); if(st) st.textContent=reply?'Write a reply first.':'Write something first.';
+          ta.focus(); return;   // a quote-repost may have no comment; everything else needs content
+        }
         committed=true; document.removeEventListener('keydown',_escSave);   // posting → don't auto-save; drop the Escape hook
         // 📊 Poll (NIP-88 kind-1068) — only for top-level posts; question = text, options from the builder.
         { const pbox=$('#cmp-pollbox',root); if(pbox && !pbox.classList.contains('hidden')){

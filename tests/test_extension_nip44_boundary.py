@@ -22,6 +22,23 @@ __pcNostrProvider();
         r=subprocess.run(['node','--unhandled-rejections=strict',p],text=True,capture_output=True,timeout=10)
     assert r.returncode==0,r.stdout+r.stderr
 
+def test_empty_and_malformed_nip44_never_reach_extension_or_become_unhandled():
+    script=SRC+'''\nlet posted=0;
+globalThis.window={addEventListener:()=>{},postMessage:()=>{posted++},nostr:null};
+globalThis.document={documentElement:{setAttribute:()=>{}}};
+__pcNostrProvider();
+(async()=>{
+  const bad=['',null,undefined,{text:'not plaintext'}]; let errors=0;
+  for(const value of bad){ try{await window.nostr.nip44.encrypt('a'.repeat(64),value);}catch(e){if(e.message.includes('1..65535')) errors++;} }
+  window.nostr.nip44.encrypt('a'.repeat(64),undefined); // deliberately fire-and-forget
+  await new Promise(r=>setTimeout(r,20));
+  if(posted!==0||errors!==bad.length) throw Error(JSON.stringify({posted,errors}));
+})().catch(e=>{console.error(e);process.exitCode=1});'''
+    with tempfile.TemporaryDirectory() as td:
+        p=Path(td)/'boundary-empty.js';p.write_text(script)
+        r=subprocess.run(['node','--unhandled-rejections=strict',p],text=True,capture_output=True,timeout=10)
+    assert r.returncode==0,r.stdout+r.stderr
+
 def test_provider_does_not_chunk_nip44_events():
     assert 'Store large data as an attachment and encrypt only its pointer' in SRC
     assert 'promise.catch(() => {})' in SRC

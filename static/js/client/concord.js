@@ -871,16 +871,27 @@
       let cachedChannelCount=0,cachedHistoryRendered=false;
       if(controlWraps.length){
         cachedChannelCount=applyControl(controlWraps);
-        const selected=state.channel||'general',ordered=[...(room.channels||[])].sort((a,b)=>(a.name===selected?-1:b.name===selected?1:0));
+        /* Control metadata is enough to replace the saved placeholder channel list. Paint it now,
+         * before decrypting any chat page, and choose a channel that actually exists in that list.
+         * A fresh renderer commonly starts at `general`; Armada rooms are not required to have one.
+         * Keeping that missing name selected made a healthy cache paint an empty conversation until
+         * the user left and re-entered the room. */
+        const activeNow=saved()[state.community];
+        if(roomIdentity(activeNow)===identity){
+          const names=(room.channels||[]).map(channel=>channel.name),wanted=state.channel||'general';
+          if(names.length&&!names.includes(wanted))state.channel=names[0];
+          backgroundRender();
+        }
+        const selected=state.channel||((room.channels||[])[0]&&room.channels[0].name)||'general',ordered=[...(room.channels||[])].sort((a,b)=>(a.name===selected?-1:b.name===selected?1:0));
         /* Decrypt only the newest page first and paint the selected channel immediately. Loading
          * 5,000 envelopes for every channel before the first render made a healthy encrypted cache
          * look indistinguishable from a relay miss, and could exhaust an Android WebView renderer. */
         for(const channel of ordered){
           const wraps=await cachedEnvelopePage(envelopeCacheKey(loadKey,channel.id),300);
           if(wraps.length){await applyChannel(channel,wraps);if(channel.name===selected)cachedHistoryRendered=true;}
-          if(channel.name===selected&&state.community===index)backgroundRender();
+          if(channel.name===selected&&roomIdentity(saved()[state.community])===identity)backgroundRender();
         }
-        if(state.community===index)backgroundRender();
+        if(roomIdentity(saved()[state.community])===identity)backgroundRender();
       }
       try{
       const completeControl=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,controlWraps),fetchedControl=completeControl.filter(ev=>!controlWraps.some(old=>old.id===ev.id));

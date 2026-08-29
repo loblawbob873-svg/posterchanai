@@ -59,7 +59,9 @@ var __pcNostrProvider = function () {
   }
 
   function nip44Encrypt(pubkey, plaintext) {
-    const text = String(plaintext == null ? '' : plaintext);
+    // Do not stringify malformed callers. `undefined` becoming the seven-byte string "undefined"
+    // is a valid encryption of the wrong message; objects becoming "[object Object]" is worse.
+    const text = typeof plaintext === 'string' ? plaintext : '';
     const size = new TextEncoder().encode(text).length;
     // NIP-44 v2 is one event and has an absolute 1..65535-byte plaintext bound. Chunking here would
     // invent an incompatible protocol. Large media belongs in Blossom with only its pointer/key

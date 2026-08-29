@@ -111,12 +111,15 @@ window.PosterCord={
 };
 window.PosterCordReader={
   inspectControl:(bundle,wraps)=>wraps.length
-    ? {name:'Joined Armada Room',description:'Loaded immediately',icon:bundle&&bundle.slowIcon||'🛸',channels:[
+    ? {name:'Joined Armada Room',description:'Loaded immediately',icon:bundle&&bundle.slowIcon||'🛸',channels:bundle&&bundle.noGeneral?[
+        {id:'joined-lounge',name:'lounge',private:false,streamPubkeys:['9'.repeat(64)]},
+        {id:'joined-later',name:'later',private:false,streamPubkeys:['0'.repeat(64)]},
+      ]:[
         {id:'joined-general',name:'general',private:false,streamPubkeys:['6'.repeat(64)]},
         {id:'joined-support',name:'support',private:false,streamPubkeys:['7'.repeat(64)]},
       ]}
     : {controlPubkeys:['8'.repeat(64)],channels:[]},
-  inspectChat:async()=>({messages:[{id:'joined-message',pubkey:'b'.repeat(64),text:'joined history',at:12,kind:9,tags:[]}],reactions:[],reactionIds:[]}),
+  inspectChat:async(_bundle,_controls,channel)=>({messages:[{id:'joined-message-'+channel,pubkey:'b'.repeat(64),text:'joined history '+channel,at:12,kind:9,tags:[]}],reactions:[],reactionIds:[]}),
   createMetadataWrap:async()=>({wrap:{kind:1059}}),
   createChatWrap:async(_bundle,_wraps,_channel,text,_author,_sign,tags,kind)=>{calls.lastChat={text,tags,kind};return {rumorId:'f'.repeat(64),wrap:{kind:1059},ms:1234};},
 };
@@ -259,6 +262,27 @@ for(let i=0;i<20&&!feed.innerHTML.includes('joined history');i++)await new Promi
 if(!slowIconStarted||!feed.innerHTML.includes('joined history'))
   throw new Error('cached Concord history waited for the encrypted community icon');
 releaseSlowIcon();await slowHydration;
+data.delete('pc.concord.invites');concordEnvelopeCache.clear();
+
+// Armada rooms do not have to call their first channel #general. On a cold renderer, paint the
+// cached control list and its real selected channel before another channel cache or relay backfill
+// completes. This is the exact first-entry regression that previously appeared fixed on re-entry.
+const noGeneralRoom={communityId:'no-general',naddr:'no-general',name:'Cached room',channels:[{name:'general'}],cord:{bundle:{...JOIN_BUNDLE,noGeneral:true}}};
+data.set('pc.concord.invites',JSON.stringify([noGeneralRoom]));concordEnvelopeCache.clear();
+concordEnvelopeCache.set(JSON.stringify(['no-general','control']),[{id:'no-general-control',kind:1059,created_at:1}]);
+concordEnvelopeCache.set(JSON.stringify(['no-general','joined-lounge']),[{id:'lounge-chat',kind:1059,created_at:2}]);
+concordEnvelopeCache.set(JSON.stringify(['no-general','joined-later']),[{id:'later-chat',kind:1059,created_at:3}]);
+const originalCachePage=window.PCConcordCache.page;let releaseLaterPage;
+window.PCConcordCache.page=async(key,opts)=>String(key).includes('joined-later')
+  ? await new Promise(resolve=>{releaseLaterPage=()=>resolve({events:concordEnvelopeCache.get(key)||[]});})
+  : originalCachePage.call(window.PCConcordCache,key,opts);
+let coldRelayQueries=0;const coldPC={...window.__PC,relayQuery:async()=>{coldRelayQueries++;return[];},relayQueryFrom:async()=>{coldRelayQueries++;return[];}};
+const coldOpen=PCConcord.activateJoinedRoom(coldPC,0,false,'no-general');
+for(let i=0;i<20&&!feed.innerHTML.includes('joined history joined-lounge');i++)await new Promise(resolve=>setTimeout(resolve,5));
+if(!feed.innerHTML.includes('#lounge')||!feed.innerHTML.includes('joined history joined-lounge'))
+  throw new Error('cold cached Armada room did not paint its real first channel immediately');
+if(coldRelayQueries!==0)throw new Error('relay backfill started before cached room history painted');
+releaseLaterPage();await coldOpen;window.PCConcordCache.page=originalCachePage;
 data.delete('pc.concord.invites');concordEnvelopeCache.clear();
 
 // Opening a room is still successful when its encrypted control/history cache is valid but every
