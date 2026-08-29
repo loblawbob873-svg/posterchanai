@@ -4661,9 +4661,15 @@
           // for the reconnect path. Nothing is lost by skipping: relay.js re-arms the live subs on
           // reopen, so posts keep arriving, and the next navigation repaints anyway.
           if(_isTyping()) return;
-          // reset=false: no spinner-blank. It keeps the composer, the scroll position and the paging
-          // cursor — a reconnect should be invisible, not a full teardown of what you were reading.
-          try{ renderView(false); }catch(_){}
+          // A timeline already has its subscription re-armed by relay.js. Reconcile its cards in
+          // place with the visible-card anchor: preserving only the numeric scrollTop is not enough
+          // when offline catch-up inserted posts above the one being read. This also leaves the
+          // inline composer and paging cursor alone. Other listed views still use their ordinary
+          // non-blanking repaint.
+          try{
+            if(VIEW==='home'||VIEW==='global') _drawTimeline(true);
+            else renderView(false);
+          }catch(_){}
         });
     };
     connectRelays();

@@ -275,7 +275,8 @@
      * window being LOOKED AT is the one that writes, and the last write wins — which is what the
      * person means by "this is where I was". */
     try{
-      const slim = { cwd: S.cwd, hostRoot:S.hostRoot, active: S.active, termOpen: S.termOpen, termH: S.termH,
+      const slim = { cwd: S.cwd, hostRoot:S.hostRoot, active: S.active, gitOpen:S.gitOpen,
+                     termOpen: S.termOpen, termH: S.termH,
                      sideW: S.sideW, expanded: S.expanded, open: [] };
       let budget = PERSIST_MAX;
       // Unsaved buffers first — see PERSIST_MAX.
@@ -311,6 +312,7 @@
       if(!v || typeof v !== 'object') return;
       S.cwd = typeof v.cwd === 'string' ? v.cwd : '';
       S.hostRoot = typeof v.hostRoot === 'string' ? v.hostRoot : '';
+      S.gitOpen = !!v.gitOpen;
       S.termOpen = !!v.termOpen;
       S.termH = Math.max(120, Math.min(900, Number(v.termH) || 260));
       S.sideW = Math.max(150, Math.min(600, Number(v.sideW) || 250));
@@ -1057,6 +1059,7 @@
         const git=b.dataset.codeView==='git';
         S.gitOpen=git;
         if(!git)S.gitDiff=null;
+        save(true);
         paint();
         if(git)loadGit();
       }));
@@ -1228,6 +1231,10 @@
         try{
           await loadConfig();
           if(!S.gate && (!window.pcHost || !window.pcHost.pickDirectory || S.hostRoot)) await loadTree(S.cwd);
+          /* A monitor handoff restores the selected activity before this renderer has queried Git.
+           * Hydrate that destination too; otherwise the persisted Source Control view misleadingly
+           * says to choose a directory even though its local workspace was restored successfully. */
+          if(!S.gate&&S.gitOpen)await loadGit();
         }catch(e){
           S.ready = true;
           if(!S.gate) S.gate = 'Could not open this node: ' + ((e && e.message) || e);

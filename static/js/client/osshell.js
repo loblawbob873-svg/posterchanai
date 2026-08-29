@@ -1284,14 +1284,20 @@
    * once the facts have been re-read, so the desktop can redraw its OWN taskbar with them. */
   async function watch(into){
     if(!(await detect())) return () => {};
-    const tick = (typeof into === 'function')
+    const callbackMode=typeof into === 'function';
+    const tick = callbackMode
       ? async () => { await refresh(); try{ into(); }catch(_){} }
       : () => render(into);
     await tick();
     let off = () => {};
     try{
       await WM().subscribe();
-      off = WM().onEvent(tick);
+      /* os.js already owns native window reconciliation in callback mode. Feeding the same window
+       * event through this hardware/tray watcher performs a second GET_TREE + panel refresh and
+       * redraw. Foot changes its title frequently while Codex/Claude stream output, turning that
+       * duplicate pipeline into visible taskbar/chrome flashing. Non-window events still refresh
+       * the tray, while standalone render mode continues to own its own taskbar updates. */
+      off = WM().onEvent(ev=>{if(callbackMode&&ev&&ev.name==='window')return;tick();});
     }catch(_){}
     const t = setInterval(tick, 30000);                // battery and signal have no events
     return () => { try{ off(); }catch(_){} clearInterval(t); };

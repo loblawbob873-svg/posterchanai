@@ -221,6 +221,17 @@ class TheStateRules(unittest.TestCase):
         self.assertIn("localStorage.setItem(LSKEY()", self.src)
         self.assertIn("function restore()", self.src)
 
+    def test_explorer_source_control_choice_survives_a_renderer_handoff(self):
+        """The selected local folder survived, but its active sidebar destination did not."""
+        self.assertIn("gitOpen:S.gitOpen", self.src)
+        self.assertIn("S.gitOpen = !!v.gitOpen", self.src)
+        switch = self.src[self.src.index("document.querySelectorAll('[data-code-view]'"):]
+        switch = switch[:switch.index("on('#pcc-term'")]
+        self.assertLess(switch.index("S.gitOpen=git"), switch.index("save(true)"))
+        self.assertLess(switch.index("save(true)"), switch.index("paint()"))
+        render = self.src[self.src.index("async function render()"):self.src.index("window.PCCode = {")]
+        self.assertIn("if(!S.gate&&S.gitOpen)await loadGit()", render)
+
     def test_the_mirror_is_flushed_on_the_way_out(self):
         """A handoff gives no warning, so a debounce alone loses whatever was typed last."""
         for ev in ("pagehide", "blur", "visibilitychange"):
