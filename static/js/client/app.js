@@ -19925,10 +19925,17 @@
         _openWithSheet(name || path, [{
         id:'code', icon:'&lt;/&gt;', label:'PosterChan Code',
         hint:'Edit it here — saves straight back to this computer',
-        run:async() => { const code = await _withModule('code.js', 'PCCode');
-                    if(code && code.openHostFile){
-                      if(await code.openHostFile({ path })) switchView('code'); }
-                    else toast('the editor did not load'); } },
+        run:async() => {
+          /* The chooser closes before running this. Keep the entire lazy-open transaction guarded:
+           * a missing/stale packaged code.js used to reject into the event loop, leaving Files on
+           * one side of the desktop with no editor and no explanation. Do not switch views until
+           * Code confirms it owns a live buffer; a refused/binary file remains safely in Files. */
+          try{
+            const code = await _withModule('code.js', 'PCCode');
+            if(!code || typeof code.openHostFile!=='function') throw new Error('the editor did not load');
+            if(await code.openHostFile({ path })) switchView('code');
+          }catch(err){ toast('could not open in Code: ' + ((err && err.message) || err)); }
+        } },
         /* Last on the list, and never absent: this is what clicking the file did before the editor
          * existed, and for most files it is still the answer. */
         { id:'host', icon:'🖥', label:'This computer',

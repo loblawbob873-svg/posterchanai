@@ -58,6 +58,18 @@ class PreviewSim(unittest.TestCase):
         self.assertIn("Reopen the file from Files", accept)
         self.assertIn("return open({ name:String(s.name || 'Preview'), mime:'text/plain'", accept)
 
+    def test_handoff_waits_for_metadata_and_video_remains_fitted(self):
+        preview = _read("static/js/client/preview.js")
+        restore = preview[preview.index("function restoreHandoffMedia"):
+                          preview.index("function bytesOf")]
+        self.assertIn("readyState", restore)
+        self.assertIn("addEventListener('loadedmetadata', apply, { once:true })", restore)
+        css = _read("static/css/client.css")
+        rule = css[css.index(".pv-vid{"):css.index("}", css.index(".pv-vid{"))]
+        self.assertIn("width:100%", rule)
+        self.assertIn("height:100%", rule)
+        self.assertIn("object-fit:contain", rule)
+
 
 class PreviewIsReachable(unittest.TestCase):
     """A viewer nothing opens is a file in a directory."""

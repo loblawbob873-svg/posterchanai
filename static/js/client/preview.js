@@ -160,6 +160,22 @@
   function isOpen() { return !!_open; }
   function close() { if (_open) { try { _open.close(); } catch (_) {} } }
 
+  function restoreHandoffMedia(av, media) {
+    if (!av || !media) return false;
+    var apply = function () { try {
+      av.currentTime = Math.max(0, Number(media.time) || 0);
+      if (Number.isFinite(Number(media.volume))) av.volume = Math.max(0, Math.min(1, Number(media.volume)));
+      av.muted = !!media.muted; av.playbackRate = Number(media.rate) || 1;
+      if (!media.paused) { var playing = av.play(); if (playing && playing.catch) playing.catch(function () {}); }
+    } catch (_) {} };
+    /* A fresh video has no seekable timeline until metadata arrives. Applying currentTime/play on
+     * construction can throw or be reset to zero by the later metadata transition. */
+    if (Number(av.readyState) >= 1) apply();
+    else if (av.addEventListener) av.addEventListener('loadedmetadata', apply, { once:true });
+    else apply();
+    return true;
+  }
+
   function bytesOf(src) {
     if (!src) return null;
     if (src instanceof Blob) return src;
@@ -370,12 +386,7 @@
     var opened = open({ name:String(s.name || 'Preview'), mime:String(s.mime || blob.type || ''), blob:blob });
     var media = s.media, host = _open && _open.host;
     var av = host && host.querySelector('.pv-vid, .pv-aud');
-    if (opened && media && av) try {
-      av.currentTime = Math.max(0, Number(media.time) || 0);
-      if (Number.isFinite(Number(media.volume))) av.volume = Math.max(0, Math.min(1, Number(media.volume)));
-      av.muted = !!media.muted; av.playbackRate = Number(media.rate) || 1;
-      if (!media.paused) { var playing = av.play(); if (playing && playing.catch) playing.catch(function () {}); }
-    } catch (_) {}
+    if (opened && media && av) restoreHandoffMedia(av, media);
     return opened;
   }
 

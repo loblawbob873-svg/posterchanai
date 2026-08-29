@@ -29,6 +29,8 @@ function El(tag) {
     remove() { const i = this.parent ? this.parent.children.indexOf(this) : -1;
                if (i >= 0) this.parent.children.splice(i, 1); },
     load() {}, pause() { this.paused = true; }, play() { this.paused = false; return Promise.resolve(); },
+    addEventListener(k,f,o) { this._events=this._events||{};this._events[k]={f,o}; },
+    dispatch(k) { const x=this._events&&this._events[k];if(x){x.f();if(x.o&&x.o.once)delete this._events[k];} },
     get innerHTML() { return this._html; },
     set innerHTML(v) { this._html = String(v); this._q = null; },
     querySelector(sel) { return matchIn(this, sel); },
@@ -196,6 +198,8 @@ console.log('a desktop monitor handoff transfers the live blob and playback befo
   check('destination reconstructs Preview from transferred bytes',await P.acceptHandoff(state)===true);
   check('destination owns a real Preview document',!!destinationWindow&&destinationWindow.slot.classList.contains('pv-win'));
   const destinationVideo=destinationWindow.slot.querySelector('.pv-vid');
+  check('cold destination waits for media metadata',destinationVideo.currentTime!==37.5);
+  destinationVideo.dispatch('loadedmetadata');
   check('destination preserves video time and playing state',destinationVideo.currentTime===37.5&&!destinationVideo.paused);
   check('destination preserves video audio and rate',destinationVideo.volume===.4&&destinationVideo.muted&&destinationVideo.playbackRate===1.5);
   check('old transfer URL was replaced, not leaked',global.URL._live===1);

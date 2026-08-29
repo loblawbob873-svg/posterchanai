@@ -19,6 +19,18 @@ def test_installed_gate_reproduces_narrow_display_reconciliation_during_the_requ
 
 
 def test_installed_gate_proves_desktop_route_host_and_window_ownership_survive():
-    for marker in ("PCOS.isOn()", "#os-root", "os-on", "__PC.VIEW", "#admin-host", ".osw-body"):
+    for marker in ("PCOS.isOn()", "#os-root", "os-on", "__PC.VIEW", "#admin-host", ".osw"):
         assert marker in GATE
     assert "ever_off" in GATE
+    assert "frame.classList.contains('focused')" in GATE
+    assert "w.view==='settings'" in GATE
+    assert "ownerView" in GATE
+
+
+def test_installed_gate_returns_to_the_same_settings_owner_after_preview():
+    assert "RETURN_SETTINGS" in GATE
+    assert "PCOS.routeView('settings')" in GATE
+    assert "await __PC.switchView('settings')" in GATE
+    assert '"hostHidden": True' in GATE
+    os_js = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+    assert "view: w.view, appView: w.appView || w.view" in os_js

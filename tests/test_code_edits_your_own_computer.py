@@ -154,6 +154,16 @@ class TheEditorOpensAndSavesThem(unittest.TestCase):
         self.assertIn("openable(nm", render)
         self.assertNotIn("const openable", rows)
 
+    def test_host_open_with_keeps_files_when_lazy_code_open_fails(self):
+        start = self.app.index("id:'code', icon:'&lt;/&gt;', label:'PosterChan Code'",
+                               self.app.index("openFile: async (path, name, openHere, mime)"))
+        body = self.app[start:self.app.index("{ id:'host'", start)]
+        self.assertIn("try{", body)
+        self.assertIn("await _withModule('code.js', 'PCCode')", body)
+        self.assertIn("typeof code.openHostFile!=='function'", body)
+        self.assertIn("if(await code.openHostFile({ path })) switchView('code')", body)
+        self.assertIn("catch(err){ toast('could not open in Code:", body)
+
     def test_clicking_a_this_computer_video_executes_the_real_handler(self):
         """Paint and click the shipped row. This fails with the production `openable is not
         defined` exception; merely checking that the word exists in the file does not."""

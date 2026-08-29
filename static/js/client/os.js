@@ -7616,7 +7616,8 @@
                    * members have all just gone, which is the visible half of hiding a group. */
                   navChanged: refreshIcons,
                   isRepainting: () => repainting > 0, ownsFeedView, parkedSlot, noteScroll,
-                  windows: () => wins.map(w => ({ view: w.view, title: w.title, min: w.min,
+                  windows: () => wins.map(w => ({ view: w.view, appView: w.appView || w.view,
+                                                  title: w.title, min: w.min,
                                                   snap:w.snap||'', rotationSnap:w.rotationSnap||'' })),
                   /* The layout arithmetic, exposed so tests/test_desktop_layout.py can run the
                    * SHIPPED code against a list of apps and a document. Everything it decides fails

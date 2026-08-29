@@ -74,12 +74,20 @@ NARROW_RESIZE = r"""(async()=>{
 })()"""
 
 
-PARENT_STATE = r"""({on:PCOS.isOn(),root:!!document.querySelector('#os-root'),
+PARENT_STATE = r"""(()=>{const host=document.querySelector('#admin-host'),frame=host&&host.closest('.osw');
+  const owner=PCOS.windows().find(w=>w.view==='settings');return {
+  on:PCOS.isOn(),root:!!document.querySelector('#os-root'),
   osClass:document.body.classList.contains('os-on'),view:__PC.VIEW,
-  host:!!document.querySelector('#admin-host')&&
-       getComputedStyle(document.querySelector('#admin-host')).display!=='none',
-  adminWindow:!!document.querySelector('#admin-host')&&
-       !!document.querySelector('#admin-host').closest('.osw-body')})"""
+  host:!!host&&getComputedStyle(host).display!=='none',
+  adminWindow:!!frame,focused:!!frame&&frame.classList.contains('focused'),
+  ownerView:owner&&owner.appView};})()"""
+
+
+RETURN_SETTINGS = r"""(async()=>{PCOS.routeView('settings');await __PC.switchView('settings');
+  await new Promise(r=>setTimeout(r,100));const host=document.querySelector('#admin-host'),
+  owner=PCOS.windows().find(w=>w.view==='settings'),frame=host&&host.closest('.osw');return {
+  on:PCOS.isOn(),view:__PC.VIEW,hostHidden:!!host&&getComputedStyle(host).display==='none',
+  focused:!!frame&&frame.classList.contains('focused'),ownerView:owner&&owner.appView};})()"""
 
 
 async def main():
@@ -121,7 +129,11 @@ async def main():
         assert complete and not failed, "Preview auto-clean did not complete successfully"
         assert not ever_off, "Preview auto-clean exposed Classic mode while its dry run was active"
         assert state == {"on": True, "root": True, "osClass": True, "view": "admin",
-                         "host": True, "adminWindow": True}, state
+                         "host": True, "adminWindow": True, "focused": True,
+                         "ownerView": "admin"}, state
+        returned = await outer.eval(RETURN_SETTINGS)
+        assert returned == {"on": True, "view": "settings", "hostHidden": True,
+                            "focused": True, "ownerView": "settings"}, returned
 
     print("OK installed Admin Preview auto-clean stayed in its PosterChanOS window")
     return 0
@@ -133,4 +145,3 @@ if __name__ == "__main__":
     except (urllib.error.URLError, ConnectionRefusedError) as exc:
         print("SKIP installed Electron is not attached on the loopback CDP port: " + str(exc))
         raise SystemExit(2)
-
